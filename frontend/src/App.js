@@ -45,6 +45,7 @@ import {
 } from "@/pages/d2d/D2dPages";
 import { DispatchMap, ScheduleMap } from "@/pages/ops/MapPages";
 import NotFound from "@/pages/NotFound";
+import { LeadsList, CheckinsList } from "@/pages/misc/GapClosures";
 import {
   LandscapeAI, CadList, CadEditor, SatelliteMeasure, VirtualBid,
   DigitalCardList, PublicCard, WeatherHub,
@@ -206,6 +207,10 @@ export default function App() {
             <Route path="log-history" element={<OpsHub />} />
             <Route path="job-timers" element={<OpsHub />} />
             <Route path="avg-job-time" element={<OpsHub />} />
+
+            {/* Phase 13 parity-gap closures */}
+            <Route path="leads" element={<AdminOnly><LeadsList /></AdminOnly>} />
+            <Route path="checkins" element={<AdminOnly><CheckinsList /></AdminOnly>} />
 
             {/* Phase 10 — D2D Sales */}
             <Route path="d2d" element={<AdminOnly><D2dDashboard /></AdminOnly>} />
