@@ -6,7 +6,7 @@ from config import client, db, logger
 from seed import seed, seed_extras
 from routers import (
     auth, customers, technicians, jobs, quotes, leads, team, items, payments,
-    operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals,
+    operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing,
 )
 
 app = FastAPI(
@@ -18,7 +18,7 @@ app = FastAPI(
 api_router = APIRouter(prefix="/api")
 
 for module in [auth, customers, technicians, jobs, quotes, leads, team, items, payments,
-               operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals]:
+               operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing]:
     api_router.include_router(module.router)
 
 

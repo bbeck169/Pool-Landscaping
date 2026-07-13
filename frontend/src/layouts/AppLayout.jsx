@@ -20,6 +20,7 @@ import {
   MessageSquare,
   UserCircle,
   FolderClock,
+  Calculator,
 } from "lucide-react";
 
 const ADMIN_NAV = [
@@ -27,6 +28,8 @@ const ADMIN_NAV = [
   { to: "/jobs", label: "Jobs", icon: Briefcase },
   { to: "/schedule", label: "Schedule", icon: CalendarDays },
   { to: "/quotes", label: "Quotes", icon: FileText },
+  { to: "/invoices", label: "Invoices", icon: Receipt },
+  { to: "/estimator", label: "Estimator", icon: Calculator },
   { to: "/customers", label: "Customers", icon: Users },
   { to: "/tools", label: "Tools", icon: Wrench },
   { to: "/more", label: "More", icon: MoreHorizontal },

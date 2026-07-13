@@ -13,6 +13,13 @@ import CustomerChemistry from "@/pages/customers/CustomerChemistry";
 import JobsList from "@/pages/jobs/JobsList";
 import JobNew from "@/pages/jobs/JobNew";
 import JobDetail from "@/pages/jobs/JobDetail";
+import QuotesList from "@/pages/quotes/QuotesList";
+import QuoteInvoiceNew from "@/pages/quotes/QuoteInvoiceNew";
+import QuoteInvoiceDetail from "@/pages/quotes/QuoteInvoiceDetail";
+import InvoicesList from "@/pages/invoices/InvoicesList";
+import { MasterInvoicesList, MasterInvoiceNew, MasterInvoiceDetail } from "@/pages/invoices/MasterInvoice";
+import PaymentHandlesSettings from "@/pages/settings/PaymentHandles";
+import { EstimatesList, EstimatorSettings, EstimatorTemplates, EstimatorEditor } from "@/pages/estimator/Estimator";
 
 export default function App() {
   return (
@@ -39,6 +46,26 @@ export default function App() {
             <Route path="jobs/new" element={<JobNew />} />
             <Route path="jobs/:id" element={<JobDetail />} />
 
+            {/* Quotes / Invoices / Master / Estimator / Settings (Phase 3) */}
+            <Route path="quotes" element={<QuotesList />} />
+            <Route path="quotes/new" element={<QuoteInvoiceNew docType="quote" />} />
+            <Route path="quotes/:id" element={<QuoteInvoiceDetail docType="quote" />} />
+
+            <Route path="invoices" element={<InvoicesList />} />
+            <Route path="invoices/new" element={<QuoteInvoiceNew docType="invoice" />} />
+            <Route path="invoices/master" element={<MasterInvoicesList />} />
+            <Route path="invoices/master/new" element={<MasterInvoiceNew />} />
+            <Route path="invoices/master/:id" element={<MasterInvoiceDetail />} />
+            <Route path="invoices/:id" element={<QuoteInvoiceDetail docType="invoice" />} />
+
+            <Route path="estimator" element={<EstimatesList />} />
+            <Route path="estimator/settings" element={<EstimatorSettings />} />
+            <Route path="estimator/templates" element={<EstimatorTemplates />} />
+            <Route path="estimator/new" element={<EstimatorEditor />} />
+            <Route path="estimator/:id" element={<EstimatorEditor />} />
+
+            <Route path="settings/payment-handles" element={<PaymentHandlesSettings />} />
+
             {/* Shared placeholders (later phases) */}
             <Route
               path="schedule"
@@ -50,7 +77,6 @@ export default function App() {
                 />
               }
             />
-            <Route path="quotes" element={<Placeholder title="Quotes &amp; Invoices" phase={3} />} />
             <Route path="tools" element={<Placeholder title="Calculators" phase={6} />} />
             <Route path="more" element={<Placeholder title="More" phase={7} />} />
             <Route path="leads/new" element={<Placeholder title="New Lead" phase={4} />} />

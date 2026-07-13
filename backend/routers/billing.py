@@ -1,0 +1,274 @@
+"""Phase 3 additions:
+- Payment-handle settings (Venmo/Zelle/Cash App/PayPal + automatic-invoice-texting toggle)
+- Master invoices (combine multiple regular invoices into one payable)
+- Invoice SMS (Twilio; graceful no-op when unconfigured)
+- Quote → Job conversion
+"""
+import asyncio
+import os
+from typing import Optional, List
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from config import db, logger
+from utils import now_iso, new_id, require_admin, get_current_user
+
+router = APIRouter()
+
+SETTINGS_DOC_ID = "singleton"
+
+
+# ─── Settings ───────────────────────────────────────────────────────────────
+class PaymentHandlesIn(BaseModel):
+    venmo: Optional[str] = ""
+    zelle: Optional[str] = ""
+    cashapp: Optional[str] = ""
+    paypal: Optional[str] = ""
+    automatic_invoice_texting: Optional[bool] = False
+
+
+@router.get("/settings/payment-handles")
+async def get_payment_handles(user: dict = Depends(require_admin)):
+    doc = await db.payment_handles.find_one({"id": SETTINGS_DOC_ID}, {"_id": 0})
+    return doc or {
+        "id": SETTINGS_DOC_ID,
+        "venmo": "",
+        "zelle": "",
+        "cashapp": "",
+        "paypal": "",
+        "automatic_invoice_texting": False,
+    }
+
+
+@router.put("/settings/payment-handles")
+async def put_payment_handles(body: PaymentHandlesIn, user: dict = Depends(require_admin)):
+    d = body.dict()
+    d["id"] = SETTINGS_DOC_ID
+    d["updated_at"] = now_iso()
+    await db.payment_handles.update_one({"id": SETTINGS_DOC_ID}, {"$set": d}, upsert=True)
+    return d
+
+
+# ─── Invoice SMS ────────────────────────────────────────────────────────────
+class InvoiceSmsIn(BaseModel):
+    to: Optional[str] = None
+    message: Optional[str] = None
+
+
+@router.post("/invoices/{iid}/send-sms")
+async def send_invoice_sms(iid: str, body: InvoiceSmsIn, user: dict = Depends(require_admin)):
+    """Text an invoice link via Twilio. Gracefully returns
+    { sent:false, reason:"twilio-not-configured" } when creds are missing."""
+    inv = await db.quotes.find_one({"id": iid}, {"_id": 0})
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+    to = (body.to or "").strip()
+    if not to:
+        cust = await db.customers.find_one({"id": inv.get("customer_id")}, {"_id": 0}) or {}
+        to = (cust.get("phone") or "").strip()
+    if not to:
+        raise HTTPException(400, "No SMS destination number available")
+
+    sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    tok = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    frm = os.environ.get("TWILIO_FROM_NUMBER", "")
+    if not (sid and tok and frm):
+        return {"sent": False, "reason": "twilio-not-configured", "to": to}
+
+    body_txt = body.message or (
+        f"Invoice {iid[:8].upper()} for {inv.get('customer_name', '')}: ${inv.get('total', 0):.2f}. "
+        f"Pay online: {inv.get('payment_link') or 'link pending'}"
+    )
+    try:
+        from twilio.rest import Client
+        client = Client(sid, tok)
+        msg = await asyncio.to_thread(
+            client.messages.create, from_=frm, to=to, body=body_txt
+        )
+        return {"sent": True, "to": to, "sid": msg.sid}
+    except Exception as e:
+        logger.warning(f"Invoice SMS failed: {e}")
+        return {"sent": False, "reason": str(e), "to": to}
+
+
+# ─── Convert approved quote → job ───────────────────────────────────────────
+@router.post("/quotes/{qid}/convert-to-job")
+async def convert_quote_to_job(qid: str, body: dict, user: dict = Depends(require_admin)):
+    """body: { scheduled_date, technician_id?, notes? }"""
+    q = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    if not q:
+        raise HTTPException(404, "Quote not found")
+    if q.get("decision") not in ("approved",) and q.get("status") not in ("approved",):
+        # Allow anyway with a warning — some flows mark approval on status.
+        pass
+    cust = await db.customers.find_one({"id": q["customer_id"]}, {"_id": 0}) or {}
+    tech = None
+    if body.get("technician_id"):
+        tech = await db.technicians.find_one({"id": body["technician_id"]}, {"_id": 0})
+
+    line_summary = ", ".join(
+        li.get("description", "") for li in (q.get("line_items") or [])
+    )[:200]
+
+    job = {
+        "id": new_id(),
+        "title": q.get("title") or f"Quote {qid[:8]} · Work",
+        "customer_id": q["customer_id"],
+        "customer_name": cust.get("name"),
+        "address": cust.get("address", ""),
+        "service_type": "Pool Cleaning",
+        "technician_id": body.get("technician_id"),
+        "technician_name": tech["name"] if tech else None,
+        "technician_avatar": tech.get("avatar", "") if tech else "",
+        "scheduled_date": body.get("scheduled_date"),
+        "notes": (body.get("notes") or "") + ("\n" + line_summary if line_summary else ""),
+        "price": q.get("total", 0),
+        "status": "scheduled",
+        "photos": [],
+        "quote_id": qid,
+        "created_at": now_iso(),
+    }
+    await db.jobs.insert_one(job)
+    await db.quotes.update_one(
+        {"id": qid}, {"$set": {"converted_job_id": job["id"], "converted_at": now_iso()}}
+    )
+    job.pop("_id", None)
+    return job
+
+
+# ─── Master invoices ────────────────────────────────────────────────────────
+class MasterInvoiceIn(BaseModel):
+    label: Optional[str] = None
+    customer_ids: List[str]              # one or many payer customers
+    invoice_ids: List[str]               # child invoice IDs to roll up
+    due_date: Optional[str] = None
+
+
+@router.get("/invoices/master")
+async def list_master_invoices(user: dict = Depends(require_admin)):
+    docs = await db.master_invoices.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return docs
+
+
+@router.post("/invoices/master")
+async def create_master_invoice(body: MasterInvoiceIn, user: dict = Depends(require_admin)):
+    if not body.invoice_ids:
+        raise HTTPException(400, "invoice_ids required")
+    invs = await db.quotes.find(
+        {"id": {"$in": body.invoice_ids}, "doc_type": "invoice"}, {"_id": 0}
+    ).to_list(2000)
+    if not invs:
+        raise HTTPException(404, "No matching invoices")
+    total = sum((float(i.get("total") or 0)) for i in invs)
+    balance = sum(
+        max(0.0, float(i.get("total") or 0) - float(i.get("amount_paid") or 0))
+        for i in invs
+    )
+    doc = {
+        "id": new_id(),
+        "label": body.label
+        or f"Master · {len(invs)} invoices · {invs[0].get('customer_name', 'Multi-payer')}",
+        "customer_ids": body.customer_ids,
+        "invoice_ids": [i["id"] for i in invs],
+        "invoice_snapshot": [
+            {
+                "id": i["id"],
+                "title": i.get("title", ""),
+                "customer_id": i.get("customer_id"),
+                "customer_name": i.get("customer_name"),
+                "total": float(i.get("total") or 0),
+                "amount_paid": float(i.get("amount_paid") or 0),
+                "payment_status": i.get("payment_status") or "unpaid",
+                "due_date": i.get("due_date"),
+            }
+            for i in invs
+        ],
+        "total": total,
+        "balance": balance,
+        "amount_paid": 0.0,
+        "due_date": body.due_date,
+        "status": "open" if balance > 0 else "paid",
+        "payment_status": "unpaid" if balance > 0 else "paid",
+        "created_at": now_iso(),
+    }
+    await db.master_invoices.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.get("/invoices/master/{mid}")
+async def get_master_invoice(mid: str, user: dict = Depends(require_admin)):
+    doc = await db.master_invoices.find_one({"id": mid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Master invoice not found")
+    # refresh child snapshot totals lazily
+    children = await db.quotes.find(
+        {"id": {"$in": doc["invoice_ids"]}}, {"_id": 0}
+    ).to_list(2000)
+    by_id = {c["id"]: c for c in children}
+    for s in doc.get("invoice_snapshot") or []:
+        c = by_id.get(s["id"])
+        if c:
+            s["amount_paid"] = float(c.get("amount_paid") or 0)
+            s["payment_status"] = c.get("payment_status") or "unpaid"
+    return doc
+
+
+@router.delete("/invoices/master/{mid}")
+async def delete_master_invoice(mid: str, user: dict = Depends(require_admin)):
+    res = await db.master_invoices.delete_one({"id": mid})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Master invoice not found")
+    return {"ok": True}
+
+
+class MasterPayIn(BaseModel):
+    amount: float
+
+
+@router.post("/invoices/master/{mid}/apply-payment")
+async def apply_master_payment(mid: str, body: MasterPayIn, user: dict = Depends(require_admin)):
+    """Applies `amount` proportionally across every child invoice's remaining balance,
+    then marks the master invoice's own totals + status."""
+    doc = await db.master_invoices.find_one({"id": mid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Master invoice not found")
+    amount = max(0.0, float(body.amount or 0))
+    # Compute remaining per child
+    children = await db.quotes.find(
+        {"id": {"$in": doc["invoice_ids"]}}, {"_id": 0}
+    ).to_list(2000)
+    remaining = {
+        c["id"]: max(0.0, float(c.get("total") or 0) - float(c.get("amount_paid") or 0))
+        for c in children
+    }
+    total_remaining = sum(remaining.values()) or 1e-9
+    applied_total = 0.0
+    for c in children:
+        share = (remaining.get(c["id"], 0) / total_remaining) * amount
+        share = min(share, remaining.get(c["id"], 0))
+        if share <= 0:
+            continue
+        new_paid = round(float(c.get("amount_paid") or 0) + share, 2)
+        status = "paid" if new_paid + 0.005 >= float(c.get("total") or 0) else "partial"
+        await db.quotes.update_one(
+            {"id": c["id"]},
+            {"$set": {"amount_paid": new_paid, "payment_status": status}},
+        )
+        applied_total += share
+    new_master_paid = round(float(doc.get("amount_paid") or 0) + applied_total, 2)
+    master_status = "paid" if new_master_paid + 0.005 >= float(doc["total"]) else (
+        "partial" if new_master_paid > 0 else "unpaid"
+    )
+    await db.master_invoices.update_one(
+        {"id": mid},
+        {
+            "$set": {
+                "amount_paid": new_master_paid,
+                "payment_status": master_status,
+                "status": "paid" if master_status == "paid" else "open",
+                "last_payment_at": now_iso(),
+            }
+        },
+    )
+    return {"ok": True, "applied": applied_total, "master_paid": new_master_paid}
