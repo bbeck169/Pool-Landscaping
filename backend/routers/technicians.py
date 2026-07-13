@@ -32,9 +32,38 @@ async def create_technician(body: TechnicianIn, user: dict = Depends(require_adm
 
 @router.get("/technicians/{tid}")
 async def get_technician(tid: str, user: dict = Depends(get_current_user)):
+    # Techs can only view their own profile — enforce here.
+    if user.get("role") == "technician" and user.get("id") != tid and user.get("technician_id") != tid:
+        raise HTTPException(403, "You can only view your own profile")
     doc = await db.technicians.find_one({"id": tid}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Technician not found")
     doc["jobs"] = await db.jobs.find({"technician_id": tid}, {"_id": 0}).sort("scheduled_date", -1).to_list(200)
     return doc
+
+
+@router.get("/technicians/{tid}/performance")
+async def technician_performance(tid: str, user: dict = Depends(get_current_user)):
+    """Computed performance metrics over the last 90 days."""
+    if user.get("role") == "technician" and user.get("id") != tid and user.get("technician_id") != tid:
+        raise HTTPException(403, "You can only view your own profile")
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    jobs = await db.jobs.find(
+        {"technician_id": tid, "created_at": {"$gte": cutoff}}, {"_id": 0}
+    ).to_list(500)
+    total = len(jobs)
+    completed = [j for j in jobs if j.get("status") == "completed"]
+    on_time = [j for j in completed if not j.get("late")]
+    durations = [j.get("duration_min") or 0 for j in completed if j.get("duration_min")]
+    ratings = [j.get("rating") for j in completed if j.get("rating") is not None]
+    return {
+        "period_days": 90,
+        "total_jobs": total,
+        "completed_jobs": len(completed),
+        "completion_rate": round(100 * len(completed) / total, 1) if total else 0,
+        "on_time_rate": round(100 * len(on_time) / len(completed), 1) if completed else 0,
+        "avg_duration_min": round(sum(durations) / len(durations)) if durations else 0,
+        "avg_customer_rating": round(sum(ratings) / len(ratings), 2) if ratings else None,
+    }
 

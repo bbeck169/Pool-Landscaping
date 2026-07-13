@@ -46,6 +46,8 @@ import {
 import { DispatchMap, ScheduleMap } from "@/pages/ops/MapPages";
 import NotFound from "@/pages/NotFound";
 import { LeadsList, CheckinsList } from "@/pages/misc/GapClosures";
+import { CommunicationThread, TechnicianProfile, FormsList, FormEditor, PublicForm } from "@/pages/phase14/Phase14Pages";
+import { PermissionsProvider } from "@/hooks/usePermissions";
 import {
   LandscapeAI, CadList, CadEditor, SatelliteMeasure, VirtualBid,
   DigitalCardList, PublicCard, WeatherHub,
@@ -84,11 +86,13 @@ function AdminOnly({ children }) {
 export default function App() {
   return (
     <AuthProvider>
+      <PermissionsBridge>
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/public/card/:slug" element={<PublicCard />} />
+          <Route path="/f/:slug" element={<PublicForm />} />
 
           {/* Everything else lives inside the protected shell (side nav + top bar + bottom tabs). */}
           <Route path="/" element={<AppLayout />}>
@@ -212,6 +216,12 @@ export default function App() {
             <Route path="leads" element={<AdminOnly><LeadsList /></AdminOnly>} />
             <Route path="checkins" element={<AdminOnly><CheckinsList /></AdminOnly>} />
 
+            {/* Phase 14 additions */}
+            <Route path="communication/:id" element={<CommunicationThread />} />
+            <Route path="technician/:id" element={<TechnicianProfile />} />
+            <Route path="forms" element={<AdminOnly><FormsList /></AdminOnly>} />
+            <Route path="forms/:id" element={<AdminOnly><FormEditor /></AdminOnly>} />
+
             {/* Phase 10 — D2D Sales */}
             <Route path="d2d" element={<AdminOnly><D2dDashboard /></AdminOnly>} />
             <Route path="d2d/map" element={<AdminOnly><D2dMap /></AdminOnly>} />
@@ -266,6 +276,13 @@ export default function App() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
+      </PermissionsBridge>
     </AuthProvider>
   );
+}
+
+/** Bridges user from AuthProvider into PermissionsProvider (needs to be a child of AuthProvider). */
+function PermissionsBridge({ children }) {
+  const { user } = useAuth();
+  return <PermissionsProvider user={user}>{children}</PermissionsProvider>;
 }

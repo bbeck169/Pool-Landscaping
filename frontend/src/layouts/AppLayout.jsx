@@ -1,6 +1,7 @@
 import React from "react";
 import { NavLink, Outlet, useNavigate, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/auth";
+import { usePermissions } from "@/hooks/usePermissions";
 import { brandGradientCss, colors, font } from "@/theme";
 import {
   LayoutDashboard,
@@ -255,9 +256,12 @@ function AppLayout() {
       alert(e.message);
     }
   };
-  const nav =
-    user.role === "admin" ? ADMIN_NAV : user.role === "technician" ? TECH_NAV : CUSTOMER_NAV;
-  const roleLabel = user.role.charAt(0).toUpperCase() + user.role.slice(1);
+  const { previewRole, setPreviewRole, isPreviewing, effectiveRole } = usePermissions();
+  const nav = (() => {
+    const r = effectiveRole || user.role;
+    return r === "admin" ? ADMIN_NAV : r === "technician" ? TECH_NAV : CUSTOMER_NAV;
+  })();
+  const roleLabel = (effectiveRole || user.role).charAt(0).toUpperCase() + (effectiveRole || user.role).slice(1);
 
   const onLogout = () => {
     logout();
@@ -288,7 +292,24 @@ function AppLayout() {
           </button>
         </div>
       ) : null}
+      {isPreviewing ? (
+        <div
+          className="fixed top-0 left-0 right-0 z-50 px-4 py-2 flex items-center justify-between text-sm font-semibold cursor-pointer"
+          style={{ backgroundColor: "#FEF3C7", color: "#92400E", borderBottom: "1px solid #FDE68A" }}
+          onClick={() => setPreviewRole(null)}
+          data-testid="preview-banner"
+        >
+          <span>🔍 Preview mode — permissions as <strong>{previewRole}</strong>. Click to exit.</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); setPreviewRole(null); }}
+            className="text-xs font-bold px-3 py-1 rounded-md"
+            style={{ backgroundColor: "#B45309", color: "#fff" }}
+            data-testid="preview-banner-exit"
+          >Exit preview</button>
+        </div>
+      ) : null}
       <div id="impersonation-banner-slot" style={{ height: impersonating ? 40 : 0 }} />
+      <div id="preview-banner-slot" style={{ height: isPreviewing ? 40 : 0 }} />
 
       {/* Side nav (>=md) */}
       <aside

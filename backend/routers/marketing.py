@@ -23,10 +23,71 @@ async def list_forms(user: dict = Depends(require_admin)):
 async def create_form(body: FormIn, user: dict = Depends(require_admin)):
     doc = body.dict()
     doc.update({"id": new_id(), "created_at": now_iso()})
+    if not doc.get("slug"):
+        doc["slug"] = (doc.get("name") or "form").lower().replace(" ", "-") + "-" + new_id()[:6]
     await db.forms.insert_one(doc)
     doc.pop("_id", None)
     doc["submissions"] = 0
     return doc
+
+
+@router.get("/forms/{fid}")
+async def get_form(fid: str, user: dict = Depends(require_admin)):
+    form = await db.forms.find_one({"$or": [{"id": fid}, {"slug": fid}]}, {"_id": 0})
+    if not form:
+        raise HTTPException(404, "Form not found")
+    form["submissions"] = await db.form_submissions.count_documents({"form_id": form["id"]})
+    return form
+
+
+@router.patch("/forms/{fid}")
+async def update_form(fid: str, body: dict, user: dict = Depends(require_admin)):
+    upd = {k: v for k, v in (body or {}).items() if k != "id"}
+    if upd:
+        upd["updated_at"] = now_iso()
+        await db.forms.update_one({"id": fid}, {"$set": upd})
+    return await db.forms.find_one({"id": fid}, {"_id": 0})
+
+
+@router.delete("/forms/{fid}")
+async def delete_form(fid: str, user: dict = Depends(require_admin)):
+    await db.forms.delete_one({"id": fid})
+    return {"ok": True}
+
+
+@router.get("/forms/{fid}/submissions")
+async def list_form_submissions(fid: str, user: dict = Depends(require_admin)):
+    return await db.form_submissions.find({"form_id": fid}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+
+
+@router.get("/public/forms/{slug}")
+async def get_public_form(slug: str):
+    form = await db.forms.find_one({"$or": [{"slug": slug}, {"id": slug}]}, {"_id": 0})
+    if not form or form.get("status") == "draft":
+        raise HTTPException(404, "Form not found")
+    # Never leak notification recipients in the public payload
+    form.pop("notify_emails", None)
+    return form
+
+
+@router.post("/public/forms/{slug}/submit")
+async def submit_public_form(slug: str, body: dict):
+    form = await db.forms.find_one({"$or": [{"slug": slug}, {"id": slug}]}, {"_id": 0})
+    if not form:
+        raise HTTPException(404, "Form not found")
+    vals = (body or {}).get("values") or body or {}
+    sub = {"id": new_id(), "form_id": form["id"], "slug": slug, "values": vals, "created_at": now_iso()}
+    await db.form_submissions.insert_one(sub)
+    dest = (form.get("destination") or "lead").lower()
+    if dest == "lead":
+        await db.leads.insert_one({
+            "id": new_id(), "name": vals.get("name", "Website Visitor"),
+            "phone": vals.get("phone", ""), "email": vals.get("email", ""),
+            "source": form.get("name") or "Web Form", "status": "new",
+            "notes": vals.get("message") or vals.get("notes") or "",
+            "created_at": now_iso(),
+        })
+    return {"ok": True, "redirect_url": form.get("redirect_url")}
 
 
 @router.post("/forms/{fid}/submit")

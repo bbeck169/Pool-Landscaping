@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
-from typing import List, Optional
+from typing import List, Optional, Any
 import re
 
 
@@ -245,7 +245,13 @@ class RepairUpdate(BaseModel):
 class FormIn(BaseModel):
     name: str
     description: Optional[str] = ""
-    fields: List[str] = ["name", "email", "phone"]
+    slug: Optional[str] = None
+    status: Optional[str] = "draft"  # draft | published
+    fields: List[Any] = Field(default_factory=list)  # [{id,name,label,type,required,options,...}]
+    destination: Optional[str] = "lead"  # lead | customer | quote_request
+    notify_emails: Optional[List[str]] = None
+    redirect_url: Optional[str] = None
+    model_config = {"extra": "allow"}
 
 
 class FormSubmitIn(BaseModel):

@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Plus, Send, Bell, CheckSquare, Bot, Phone, Shield, Users } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { usePermissions } from "@/hooks/usePermissions";
 
 function Card({ children, className = "", testId }) {
   return <div className={`rounded-2xl ${className}`}
@@ -221,14 +222,27 @@ const ROLES = ["admin", "technician", "customer", "marketer", "sales"];
 export function AccessSettings() {
   const [matrix, setMatrix] = useState({});
   const [toast, setToast] = useState("");
+  const { previewRole, setPreviewRole } = usePermissions();
   useEffect(() => { api.get("/permissions").then(setMatrix); }, []);
   const set = (role, group, val) => setMatrix({ ...matrix, [role]: { ...(matrix[role] || {}), [group]: val } });
   const save = async () => { await api.put("/permissions", matrix); setToast("Saved"); setTimeout(() => setToast(""), 2000); };
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto" data-testid="access-settings-page">
       <H title="Access Settings" subtitle="Role × feature-group permissions matrix"
-         right={<button onClick={save} className="px-3 py-2 rounded-lg text-sm font-semibold"
-                        style={{ backgroundColor: colors.brand, color: "#fff" }} data-testid="perm-save">Save</button>} />
+         right={
+           <div className="flex items-center gap-2">
+             <label className="text-xs font-semibold" style={{ color: colors.muted }}>Test as:</label>
+             <select value={previewRole || ""} onChange={(e) => setPreviewRole(e.target.value || null)}
+                     className="px-2 py-1 rounded-lg text-xs"
+                     style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+                     data-testid="preview-role-select">
+               <option value="">off</option>
+               {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+             </select>
+             <button onClick={save} className="px-3 py-2 rounded-lg text-sm font-semibold"
+                     style={{ backgroundColor: colors.brand, color: "#fff" }} data-testid="perm-save">Save</button>
+           </div>
+         } />
       <Card className="p-0 overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
