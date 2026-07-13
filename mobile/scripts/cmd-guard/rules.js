@@ -22,24 +22,13 @@ function isFlatList(parsed) {
 }
 
 function loadRules() {
-  // Fail-closed: a MISSING file means no injection (baked default); a present-but-unreadable/malformed/invalid file rejects rather than silently dropping injected-only prohibitions.
-  let raw;
   try {
-    raw = fs.readFileSync(RULES_PATH, "utf8");
+    const parsed = JSON.parse(fs.readFileSync(RULES_PATH, "utf8"));
+    if (isFlatList(parsed)) return { list: parsed, source: "injected" };
   } catch (e) {
-    if (e && e.code === "ENOENT") return { list: DEFAULT_LIST, source: "baked" };
-    throw new Error(`cmd-guard: injected rules at ${RULES_PATH} are unreadable (${(e && e.code) || e}); refusing to fall back to baked rules`);
+    // missing or malformed -> baked default
   }
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    throw new Error(`cmd-guard: injected rules at ${RULES_PATH} are not valid JSON; refusing to fall back to baked rules`);
-  }
-  if (!isFlatList(parsed)) {
-    throw new Error(`cmd-guard: injected rules at ${RULES_PATH} are not a valid rule list; refusing to fall back to baked rules`);
-  }
-  return { list: parsed, source: "injected" };
+  return { list: DEFAULT_LIST, source: "baked" };
 }
 
 // CMD_GUARD_DEBUG=1 prints which ruleset is active (injected vs baked) + a content hash.

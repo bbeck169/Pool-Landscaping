@@ -1,0 +1,653 @@
+from fastapi import APIRouter, HTTPException, Depends, Query, Response
+from typing import List, Optional
+from datetime import datetime, timezone, timedelta
+
+from config import db, logger, EMERGENT_LLM_KEY
+from utils import (now_iso, new_id, hash_password, verify_password, create_token,
+                   get_current_user, require_admin, send_sms, notify_customer, auth_response,
+                   create_staff_notification)
+from models import *
+from emailer import send_completion_email
+
+router = APIRouter()
+
+
+def _timer_seconds(start_iso: str, stop_iso: str) -> int:
+    try:
+        a = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+        b = datetime.fromisoformat(stop_iso.replace("Z", "+00:00"))
+        return max(0, int((b - a).total_seconds()))
+    except Exception:
+        return 0
+
+
+
+# ----------------------- Jobs -----------------------
+POOL_CHECKLIST = [
+    "Test & balance water chemistry",
+    "Skim surface & empty baskets",
+    "Brush walls, steps & tile line",
+    "Vacuum pool floor",
+    "Empty pump & skimmer baskets",
+    "Check filter pressure / backwash",
+    "Inspect pump & equipment",
+    "Confirm all equipment running",
+]
+LANDSCAPING_CHECKLIST = [
+    "Mow & edge all turf areas",
+    "Trim shrubs & hedges",
+    "Blow clippings off hardscapes",
+    "Weed planting beds",
+    "Check & adjust irrigation",
+    "Inspect for pests / disease",
+    "Haul away all green waste",
+    "Final walkthrough with client",
+]
+POOL_READINGS = [
+    {"key": "ph", "label": "pH", "unit": "", "ideal": "7.4–7.6", "min": 7.4, "max": 7.6},
+    {"key": "chlorine", "label": "Free Chlorine", "unit": "ppm", "ideal": "1–3", "min": 1, "max": 3},
+    {"key": "combined_chlorine", "label": "Combined Chlorine", "unit": "ppm", "ideal": "0–0.2", "min": 0, "max": 0.2},
+    {"key": "alkalinity", "label": "Total Alkalinity", "unit": "ppm", "ideal": "80–120", "min": 80, "max": 120},
+    {"key": "calcium_hardness", "label": "Calcium Hardness", "unit": "ppm", "ideal": "200–400", "min": 200, "max": 400},
+    {"key": "cyanuric", "label": "Cyanuric Acid", "unit": "ppm", "ideal": "30–50", "min": 30, "max": 50},
+    {"key": "salt", "label": "Salt", "unit": "ppm", "ideal": "2700–3400", "min": 2700, "max": 3400},
+    {"key": "tds", "label": "Total Dissolved Solids", "unit": "ppm", "ideal": "250–1500", "min": 250, "max": 1500},
+    {"key": "phosphates", "label": "Phosphates", "unit": "ppb", "ideal": "0–100", "min": 0, "max": 100},
+    {"key": "water_temp", "label": "Water Temp", "unit": "°F", "ideal": "78–82", "min": 78, "max": 82},
+]
+
+# Common pool chemicals technicians log as individual line items (name + default unit).
+CHEMICAL_CATALOG = [
+    {"name": "Liquid Chlorine", "unit": "gal"},
+    {"name": "Chlorine Tablets", "unit": "tabs"},
+    {"name": "Shock (Cal-Hypo)", "unit": "lbs"},
+    {"name": "Muriatic Acid", "unit": "oz"},
+    {"name": "Soda Ash", "unit": "lbs"},
+    {"name": "Sodium Bicarbonate", "unit": "lbs"},
+    {"name": "Calcium Chloride", "unit": "lbs"},
+    {"name": "Cyanuric Acid", "unit": "lbs"},
+    {"name": "Pool Salt", "unit": "lbs"},
+    {"name": "Algaecide", "unit": "oz"},
+    {"name": "Clarifier", "unit": "oz"},
+    {"name": "Phosphate Remover", "unit": "oz"},
+    {"name": "Enzymes", "unit": "oz"},
+]
+
+
+def rate_reading(value: float, mn: float, mx: float) -> str:
+    """Qualitative rating shown to customers: Below Average / Average / Above Average / High."""
+    if value < mn:
+        return "Below Average"
+    if value <= mx:
+        return "Average"
+    if value <= mx + (mx - mn):
+        return "Above Average"
+    return "High"
+
+
+def classify_job(service_type: Optional[str]) -> str:
+    return "landscaping" if "landscap" in (service_type or "").lower() else "pool"
+
+
+def with_field_report(doc: dict) -> dict:
+    """Attach job_type + default checklist/reading template so technicians always
+    get the correct field report (pool vs landscaping). Also attaches customer-friendly
+    qualitative ratings for any recorded chemical readings."""
+    jt = classify_job(doc.get("service_type"))
+    doc["job_type"] = jt
+    if not doc.get("checklist"):
+        template = LANDSCAPING_CHECKLIST if jt == "landscaping" else POOL_CHECKLIST
+        doc["checklist"] = [{"id": f"c{i}", "label": lbl, "done": False} for i, lbl in enumerate(template)]
+    if jt == "pool":
+        doc["reading_fields"] = POOL_READINGS
+        doc["chemical_catalog"] = CHEMICAL_CATALOG
+        readings = doc.setdefault("chemical_readings", {})
+        doc.setdefault("chemicals_added", [])
+        report = []
+        for f in POOL_READINGS:
+            v = readings.get(f["key"])
+            if v is None or v == "":
+                continue
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                continue
+            report.append({
+                "key": f["key"], "label": f["label"], "value": fv,
+                "unit": f["unit"], "ideal": f["ideal"], "rating": rate_reading(fv, f["min"], f["max"]),
+            })
+        doc["reading_report"] = report
+    return doc
+
+
+def scope_jobs_query(user: dict, status: Optional[str], technician_id: Optional[str]) -> dict:
+    q = {}
+    if user.get("role") == "technician" and user.get("technician_id"):
+        q["technician_id"] = user["technician_id"]
+    elif user.get("role") == "customer":
+        q["customer_id"] = user.get("customer_id")
+    elif technician_id:
+        q["technician_id"] = technician_id
+    if status and status != "all":
+        q["status"] = status
+    return q
+
+
+@router.get("/jobs")
+async def list_jobs(
+    user: dict = Depends(get_current_user),
+    status: Optional[str] = None,
+    technician_id: Optional[str] = Query(None),
+):
+    q = scope_jobs_query(user, status, technician_id)
+    docs = await db.jobs.find(q, {"_id": 0}).sort("scheduled_date", 1).to_list(1000)
+    if user.get("role") == "customer":
+        for d in docs:
+            d.pop("internal_notes", None)
+    else:
+        # Surface account-level gate code + notes on each job so techs see them on the
+        # schedule without opening the job.
+        cids = list({d.get("customer_id") for d in docs if d.get("customer_id")})
+        if cids:
+            custs = await db.customers.find(
+                {"id": {"$in": cids}}, {"_id": 0, "id": 1, "notes": 1, "gate_code": 1}
+            ).to_list(1000)
+            cmap = {c["id"]: c for c in custs}
+            for d in docs:
+                c = cmap.get(d.get("customer_id"))
+                if c:
+                    d["account_notes"] = c.get("notes", "")
+                    d["gate_code"] = c.get("gate_code", "")
+    return docs
+
+
+@router.post("/jobs")
+async def create_job(body: JobIn, user: dict = Depends(require_admin)):
+    doc = body.dict()
+    customer = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
+    if not customer:
+        raise HTTPException(400, "Customer not found")
+    doc["customer_name"] = customer["name"]
+    if not doc.get("address"):
+        doc["address"] = customer.get("address", "")
+    tech_name = None
+    if body.technician_id:
+        tech = await db.technicians.find_one({"id": body.technician_id}, {"_id": 0})
+        tech_name = tech["name"] if tech else None
+        doc["technician_avatar"] = tech.get("avatar", "") if tech else ""
+    doc["technician_name"] = tech_name
+    doc.update({"id": new_id(), "photos": [], "created_at": now_iso()})
+    await db.jobs.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.post("/service-requests")
+async def create_service_request(body: ServiceRequestIn, user: dict = Depends(get_current_user)):
+    if user.get("role") != "customer" or not user.get("customer_id"):
+        raise HTTPException(403, "Only customers can request services")
+    customer = await db.customers.find_one({"id": user["customer_id"]}, {"_id": 0})
+    if not customer:
+        raise HTTPException(404, "Customer profile not found")
+    doc = {
+        "id": new_id(),
+        "title": body.title or f"{body.service_type} Request",
+        "customer_id": customer["id"],
+        "customer_name": customer["name"],
+        "technician_id": None,
+        "technician_name": None,
+        "address": customer.get("address", ""),
+        "service_type": body.service_type,
+        "scheduled_date": body.scheduled_date,
+        "notes": body.notes,
+        "price": 0.0,
+        "status": "requested",
+        "photos": [],
+        "created_at": now_iso(),
+    }
+    await db.jobs.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.get("/jobs/{jid}")
+async def get_job(jid: str, user: dict = Depends(get_current_user)):
+    doc = await db.jobs.find_one({"id": jid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Job not found")
+    if user.get("role") == "technician" and doc.get("technician_id") != user.get("technician_id"):
+        raise HTTPException(403, "Not your job")
+    if user.get("role") == "customer" and doc.get("customer_id") != user.get("customer_id"):
+        raise HTTPException(403, "Not your job")
+    doc = with_field_report(doc)
+    if user.get("role") == "customer":
+        doc.pop("internal_notes", None)
+    return doc
+
+
+@router.put("/jobs/{jid}/field-report")
+async def update_field_report(jid: str, body: FieldReportUpdate, user: dict = Depends(get_current_user)):
+    if user.get("role") == "customer":
+        raise HTTPException(403, "Not allowed")
+    job = await db.jobs.find_one({"id": jid})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
+        raise HTTPException(403, "Not your job")
+    update = {k: v for k, v in body.dict().items() if v is not None}
+    if update:
+        await db.jobs.update_one({"id": jid}, {"$set": update})
+    # Auto-bill: when chemicals are logged, accrue them onto the customer's monthly invoice.
+    if "chemicals_added" in update:
+        from routers.finances import accrue_chem_invoice
+        await accrue_chem_invoice(await db.jobs.find_one({"id": jid}, {"_id": 0}))
+    return with_field_report(await db.jobs.find_one({"id": jid}, {"_id": 0}))
+
+
+@router.get("/reports/log-history")
+async def log_history(customer_id: str, admin: dict = Depends(require_admin)):
+    """Admin service-log report for one customer: every visit's water-test readings + chemical usage."""
+    cust = await db.customers.find_one({"id": customer_id}, {"_id": 0, "id": 1, "name": 1, "address": 1})
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+    techs = {t["id"]: t.get("name", "") async for t in db.technicians.find({}, {"_id": 0, "id": 1, "name": 1})}
+    jobs = await db.jobs.find({"customer_id": customer_id}, {"_id": 0}).to_list(3000)
+    entries = []
+    for j in jobs:
+        j = with_field_report(j)
+        readings = j.get("reading_report") or []
+        chemicals = [c for c in (j.get("chemicals_added") or []) if c.get("amount") not in (None, "", 0, "0")]
+        if not readings and not chemicals:
+            continue
+        entries.append({
+            "job_id": j["id"],
+            "title": j.get("title", ""),
+            "service_type": j.get("service_type", ""),
+            "status": j.get("status", ""),
+            "date": j.get("scheduled_date") or (j.get("created_at") or "")[:10],
+            "technician": j.get("technician_name") or techs.get(j.get("technician_id"), ""),
+            "readings": readings,
+            "chemicals": chemicals,
+        })
+    entries.sort(key=lambda e: e.get("date") or "", reverse=True)
+    return {"customer": cust, "count": len(entries), "entries": entries}
+
+
+
+@router.put("/jobs/{jid}")
+async def update_job(jid: str, body: JobUpdate, user: dict = Depends(get_current_user)):
+    job = await db.jobs.find_one({"id": jid})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
+        raise HTTPException(403, "Not your job")
+    update = {k: v for k, v in body.dict().items() if v is not None}
+    if "technician_id" in update:
+        tech = await db.technicians.find_one({"id": update["technician_id"]}, {"_id": 0})
+        update["technician_name"] = tech["name"] if tech else None
+        update["technician_avatar"] = tech.get("avatar", "") if tech else ""
+    if update:
+        await db.jobs.update_one({"id": jid}, {"$set": update})
+
+    # Notify the customer of meaningful changes (in-app + optional SMS)
+    cid = job.get("customer_id")
+    if cid:
+        if update.get("status") == "pending" and job.get("status") == "requested":
+            when = update.get("scheduled_date") or job.get("scheduled_date") or "soon"
+            await notify_customer(cid, "Appointment confirmed",
+                                  f"Your {job.get('service_type', 'service')} is confirmed for {when}.", job_id=jid, sms=True)
+            # Close the booking loop: drop a confirmation into the customer's chat thread.
+            await db.messages.insert_one({
+                "id": new_id(), "customer_id": cid, "sender": "business",
+                "sender_name": "Marina (AI)", "ai": True,
+                "text": f"🎉 Good news! Your {job.get('service_type', 'service')} is confirmed for {when}. See you then!",
+                "read_by_customer": False, "read_by_staff": True, "created_at": now_iso(),
+            })
+        if update.get("technician_id") and update.get("technician_id") != job.get("technician_id"):
+            await notify_customer(cid, "Technician assigned",
+                                  f"{update.get('technician_name')} was assigned to your {job.get('service_type', 'service')}.", job_id=jid)
+        if update.get("scheduled_date") and update.get("scheduled_date") != job.get("scheduled_date"):
+            await notify_customer(cid, "Service scheduled",
+                                  f"Your service is scheduled for {update['scheduled_date']}.", job_id=jid)
+        if update.get("status") == "completed" and job.get("status") != "completed":
+            # Auto-stop the job timer (no manual stop): record duration if it was running.
+            if job.get("timer_started_at") and not job.get("timer_stopped_at"):
+                stopped = now_iso()
+                dur = _timer_seconds(job["timer_started_at"], stopped)
+                await db.jobs.update_one({"id": jid}, {"$set": {
+                    "timer_stopped_at": stopped,
+                    "timer_duration_seconds": dur,
+                    "timer_stop_method": "job_completed",
+                }})
+            await notify_customer(cid, "Service complete",
+                                  f"Your {job.get('service_type', 'service')} is complete. View your report in the app.", job_id=jid)
+            fresh = await db.jobs.find_one({"id": jid}, {"_id": 0})
+            await send_completion_email(fresh)
+            # True recurrence: auto-book the next filter/salt-cell cleaning on the cadence.
+            from routers.maintenance import create_recurring_maintenance
+            await create_recurring_maintenance(fresh)
+
+    return await db.jobs.find_one({"id": jid}, {"_id": 0})
+
+
+@router.get("/public/job-photo/{jid}/{pid}")
+async def public_job_photo(jid: str, pid: str):
+    """Unauthenticated image endpoint for embedding job photos in emails (UUID-gated)."""
+    job = await db.jobs.find_one({"id": jid}, {"_id": 0, "photos": 1})
+    if not job:
+        raise HTTPException(404, "Not found")
+    photo = next((p for p in (job.get("photos") or []) if p["id"] == pid), None)
+    if not photo:
+        raise HTTPException(404, "Not found")
+    data = photo["data"]
+    if "," in data:
+        header, b64 = data.split(",", 1)
+        media = header.split(";")[0].replace("data:", "") or "image/jpeg"
+    else:
+        b64, media = data, "image/jpeg"
+    import base64
+    return Response(content=base64.b64decode(b64), media_type=media)
+
+
+@router.delete("/jobs/{jid}")
+async def delete_job(jid: str, user: dict = Depends(require_admin)):
+    res = await db.jobs.delete_one({"id": jid})
+    await db.notifications.delete_many({"job_id": jid})
+    return {"ok": True, "deleted": res.deleted_count}
+
+
+@router.post("/jobs/{jid}/on-my-way")
+async def on_my_way(jid: str, user: dict = Depends(get_current_user)):
+    job = await db.jobs.find_one({"id": jid}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if user.get("role") == "customer":
+        raise HTTPException(403, "Not allowed")
+    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
+        raise HTTPException(403, "Not your job")
+    tech_name = job.get("technician_name") or user.get("name", "Your technician")
+    await notify_customer(
+        job.get("customer_id"),
+        "Technician on the way",
+        f"{tech_name} is on the way to your {job.get('service_type', 'service')} appointment.",
+        job_id=jid,
+        sms=True,
+    )
+    return {"ok": True, "notified": True}
+
+
+@router.post("/jobs/{jid}/arrive")
+async def job_arrive(jid: str, body: JobArriveIn, user: dict = Depends(get_current_user)):
+    """Auto-start the job timer on GPS arrival (idempotent). No manual start/stop."""
+    job = await db.jobs.find_one({"id": jid}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if user.get("role") == "customer":
+        raise HTTPException(403, "Not allowed")
+    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
+        raise HTTPException(403, "Not your job")
+    # persist geocoded site coords for geofencing/reporting if provided
+    site = {}
+    if body.site_lat is not None and body.site_lng is not None:
+        site = {"site_lat": body.site_lat, "site_lng": body.site_lng}
+    if job.get("timer_started_at"):
+        if site:
+            await db.jobs.update_one({"id": jid}, {"$set": site})
+        return {"started": True, "already_running": True, "timer_started_at": job["timer_started_at"]}
+    if job.get("status") == "completed":
+        return {"started": False, "reason": "job_completed"}
+    started = now_iso()
+    upd = {"timer_started_at": started, "timer_start_method": "gps_arrival",
+           "arrival_lat": body.lat, "arrival_lng": body.lng, **site}
+    if job.get("status") in (None, "pending", "requested", "scheduled"):
+        upd["status"] = "in_progress"
+    await db.jobs.update_one({"id": jid}, {"$set": upd})
+    return {"started": True, "already_running": False, "timer_started_at": started}
+
+
+@router.get("/reports/job-timers")
+async def job_timers_report(technician_id: Optional[str] = None, customer_id: Optional[str] = None,
+                            q: Optional[str] = None, admin: dict = Depends(require_admin)):
+    """Admin report of automated job timers, filterable by technician, customer, and free text."""
+    query: dict = {"timer_started_at": {"$exists": True, "$ne": None}}
+    if technician_id:
+        query["technician_id"] = technician_id
+    if customer_id:
+        query["customer_id"] = customer_id
+    jobs = await db.jobs.find(query, {"_id": 0}).to_list(5000)
+    cust_ids = list({j.get("customer_id") for j in jobs if j.get("customer_id")})
+    custs = {c["id"]: c async for c in db.customers.find({"id": {"$in": cust_ids}}, {"_id": 0, "id": 1, "name": 1, "address": 1})}
+    now = now_iso()
+    rows = []
+    qlc = (q or "").strip().lower()
+    for j in jobs:
+        c = custs.get(j.get("customer_id"), {})
+        running = bool(j.get("timer_started_at")) and not j.get("timer_stopped_at")
+        dur = j.get("timer_duration_seconds")
+        if running:
+            dur = _timer_seconds(j["timer_started_at"], now)
+        row = {
+            "job_id": j["id"],
+            "title": j.get("title", ""),
+            "service_type": j.get("service_type", ""),
+            "customer_id": j.get("customer_id", ""),
+            "customer_name": c.get("name", ""),
+            "address": j.get("address") or c.get("address", ""),
+            "technician_id": j.get("technician_id", ""),
+            "technician_name": j.get("technician_name", ""),
+            "date": j.get("scheduled_date") or (j.get("created_at") or "")[:10],
+            "started_at": j.get("timer_started_at"),
+            "stopped_at": j.get("timer_stopped_at"),
+            "duration_seconds": dur or 0,
+            "running": running,
+            "status": j.get("status", ""),
+        }
+        if qlc and qlc not in f"{row['customer_name']} {row['technician_name']} {row['address']} {row['service_type']}".lower():
+            continue
+        rows.append(row)
+    rows.sort(key=lambda r: r.get("started_at") or "", reverse=True)
+    total = sum(r["duration_seconds"] for r in rows)
+    return {"count": len(rows), "total_seconds": total, "rows": rows}
+
+
+@router.get("/reports/avg-job-time")
+async def avg_job_time_report(q: Optional[str] = None, admin: dict = Depends(require_admin)):
+    """Average on-site time per customer, from completed automated job timers."""
+    jobs = await db.jobs.find(
+        {"timer_duration_seconds": {"$gt": 0}, "timer_stopped_at": {"$exists": True, "$ne": None}},
+        {"_id": 0, "customer_id": 1, "timer_duration_seconds": 1, "timer_stopped_at": 1, "scheduled_date": 1},
+    ).to_list(10000)
+    cust_ids = list({j.get("customer_id") for j in jobs if j.get("customer_id")})
+    custs = {c["id"]: c async for c in db.customers.find({"id": {"$in": cust_ids}}, {"_id": 0, "id": 1, "name": 1, "address": 1})}
+    agg: dict = {}
+    for j in jobs:
+        cid = j.get("customer_id")
+        if not cid:
+            continue
+        a = agg.setdefault(cid, {"visits": 0, "total": 0, "last": ""})
+        a["visits"] += 1
+        a["total"] += int(j.get("timer_duration_seconds") or 0)
+        last = j.get("timer_stopped_at") or j.get("scheduled_date") or ""
+        if last > a["last"]:
+            a["last"] = last
+    qlc = (q or "").strip().lower()
+    rows = []
+    for cid, a in agg.items():
+        c = custs.get(cid, {})
+        name, addr = c.get("name", ""), c.get("address", "")
+        if qlc and qlc not in f"{name} {addr}".lower():
+            continue
+        rows.append({
+            "customer_id": cid,
+            "customer_name": name,
+            "address": addr,
+            "visits": a["visits"],
+            "total_seconds": a["total"],
+            "avg_seconds": round(a["total"] / a["visits"]) if a["visits"] else 0,
+            "last_visit": (a["last"] or "")[:10],
+        })
+    rows.sort(key=lambda r: r["avg_seconds"], reverse=True)
+    total_secs = sum(r["total_seconds"] for r in rows)
+    total_visits = sum(r["visits"] for r in rows)
+    return {
+        "count": len(rows),
+        "total_visits": total_visits,
+        "overall_avg_seconds": round(total_secs / total_visits) if total_visits else 0,
+        "rows": rows,
+    }
+
+
+SKIPPED_STATUSES = ["skipped", "cancelled", "canceled", "no_show", "missed"]
+
+
+def _service_week(anchor_iso: str | None):
+    """Return (monday, sunday) ISO dates for the week containing anchor (default today)."""
+    d = datetime.fromisoformat(anchor_iso[:10]).date() if anchor_iso else datetime.now(timezone.utc).date()
+    monday = d - timedelta(days=d.weekday())
+    return monday.isoformat(), (monday + timedelta(days=6)).isoformat()
+
+
+@router.get("/reports/pool-service")
+async def pool_service_report(date_from: Optional[str] = Query(None),
+                              date_to: Optional[str] = Query(None),
+                              admin: dict = Depends(require_admin)):
+    """Weekly pool-service summary: pools completed per technician (excluding skipped visits).
+
+    Meant to be pulled every Friday. Defaults to the current service week (Mon-Sun).
+    """
+    return await compute_pool_service(date_from, date_to)
+
+
+async def compute_pool_service(date_from: Optional[str] = None, date_to: Optional[str] = None):
+    if date_from and date_to:
+        week_start, week_end = date_from, date_to
+    else:
+        week_start, week_end = _service_week(date_from or date_to)
+
+    date_range = {"$gte": week_start, "$lte": week_end}
+    jobs = await db.jobs.find(
+        {"scheduled_date": date_range},
+        {"_id": 0, "technician_id": 1, "technician_name": 1, "status": 1, "scheduled_date": 1},
+    ).to_list(10000)
+
+    techs = {t["id"]: t["name"] async for t in db.technicians.find({}, {"_id": 0, "id": 1, "name": 1})}
+    agg: dict = {}
+    for j in jobs:
+        tid = j.get("technician_id")
+        if not tid:
+            continue
+        a = agg.setdefault(tid, {"completed": 0, "skipped": 0})
+        status = (j.get("status") or "").lower()
+        if status == "completed":
+            a["completed"] += 1
+        elif status in SKIPPED_STATUSES:
+            a["skipped"] += 1
+    rows = []
+    for tid, a in agg.items():
+        rows.append({
+            "technician_id": tid,
+            "technician_name": techs.get(tid, "Unknown"),
+            "completed": a["completed"],
+            "skipped": a["skipped"],
+        })
+    rows.sort(key=lambda r: r["completed"], reverse=True)
+    return {
+        "week_start": week_start,
+        "week_end": week_end,
+        "total_completed": sum(r["completed"] for r in rows),
+        "total_skipped": sum(r["skipped"] for r in rows),
+        "rows": rows,
+    }
+
+
+
+
+@router.get("/notifications")
+async def list_notifications(user: dict = Depends(get_current_user)):
+    q = {"customer_id": user.get("customer_id")} if user.get("role") == "customer" else {"user_id": user["id"]}
+    return await db.notifications.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
+
+
+@router.get("/notifications/unread-count")
+async def unread_count(user: dict = Depends(get_current_user)):
+    q = {"customer_id": user.get("customer_id")} if user.get("role") == "customer" else {"user_id": user["id"]}
+    q["read"] = False
+    return {"count": await db.notifications.count_documents(q)}
+
+
+@router.post("/notifications/read-all")
+async def read_all(user: dict = Depends(get_current_user)):
+    q = {"customer_id": user.get("customer_id")} if user.get("role") == "customer" else {"user_id": user["id"]}
+    await db.notifications.update_many(q, {"$set": {"read": True}})
+    return {"ok": True}
+
+
+@router.post("/jobs/{jid}/photos")
+async def add_job_photo(jid: str, body: PhotoIn, user: dict = Depends(get_current_user)):
+    job = await db.jobs.find_one({"id": jid})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if user.get("role") == "customer":
+        raise HTTPException(403, "Not allowed")
+    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
+        raise HTTPException(403, "Not your job")
+    photo = {"id": new_id(), "data": body.data, "label": body.label or "photo", "created_at": now_iso()}
+    await db.jobs.update_one({"id": jid}, {"$push": {"photos": photo}})
+    return await db.jobs.find_one({"id": jid}, {"_id": 0})
+
+
+@router.delete("/jobs/{jid}/photos/{pid}")
+async def delete_job_photo(jid: str, pid: str, user: dict = Depends(get_current_user)):
+    if user.get("role") == "customer":
+        raise HTTPException(403, "Not allowed")
+    await db.jobs.update_one({"id": jid}, {"$pull": {"photos": {"id": pid}}})
+    return await db.jobs.find_one({"id": jid}, {"_id": 0})
+
+
+# ----------------------- Service Issues -----------------------
+@router.post("/jobs/{jid}/issues")
+async def add_service_issue(jid: str, body: ServiceIssueIn, user: dict = Depends(get_current_user)):
+    job = await db.jobs.find_one({"id": jid})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if user.get("role") == "customer":
+        raise HTTPException(403, "Not allowed")
+    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
+        raise HTTPException(403, "Not your job")
+    issue = {
+        "id": new_id(), "description": body.description, "cost": body.cost,
+        "photo": body.photo, "status": "open", "reported_by": user.get("name", "Staff"),
+        "created_at": now_iso(), "approved_at": None,
+    }
+    await db.jobs.update_one({"id": jid}, {"$push": {"service_issues": issue}})
+    return with_field_report(await db.jobs.find_one({"id": jid}, {"_id": 0}))
+
+
+@router.post("/jobs/{jid}/issues/{iid}/approve")
+async def approve_service_issue(jid: str, iid: str, user: dict = Depends(get_current_user)):
+    job = await db.jobs.find_one({"id": jid})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if user.get("role") == "customer" and job.get("customer_id") != user.get("customer_id"):
+        raise HTTPException(403, "Not your job")
+    await db.jobs.update_one(
+        {"id": jid, "service_issues.id": iid},
+        {"$set": {"service_issues.$.status": "approved", "service_issues.$.approved_at": now_iso()}},
+    )
+    updated = await db.jobs.find_one({"id": jid}, {"_id": 0})
+    issue = next((i for i in updated.get("service_issues", []) if i["id"] == iid), None)
+    if issue:
+        await create_staff_notification(
+            "Repair approved",
+            f"{job.get('customer_name', 'A customer')} approved the fix: {issue['description'][:60]}",
+        )
+    return with_field_report(updated)
+
+
+@router.delete("/jobs/{jid}/issues/{iid}")
+async def delete_service_issue(jid: str, iid: str, user: dict = Depends(get_current_user)):
+    if user.get("role") == "customer":
+        raise HTTPException(403, "Not allowed")
+    await db.jobs.update_one({"id": jid}, {"$pull": {"service_issues": {"id": iid}}})
+    return with_field_report(await db.jobs.find_one({"id": jid}, {"_id": 0}))
+

@@ -1,0 +1,361 @@
+from fastapi import APIRouter, HTTPException, Depends, Query
+from typing import List, Optional
+from datetime import datetime, timezone, timedelta
+
+from config import db, logger, EMERGENT_LLM_KEY
+from utils import (now_iso, new_id, hash_password, verify_password, create_token,
+                   get_current_user, require_admin, send_sms, notify_customer, auth_response)
+from models import *
+
+router = APIRouter()
+
+# ----------------------- Auto chemical billing -----------------------
+# Billable chemicals a technician can log during a visit. Shock is priced per lb;
+# the rest are flat per application. Line items accrue on ONE draft invoice per
+# customer per calendar month, then auto-bill on the 1st of the following month.
+CHEM_PRICES = {
+    "Shock (Cal-Hypo)": {"unit_price": 12.0, "per_unit": True, "label": "Shock"},
+    "Phosphate Remover": {"unit_price": 45.0, "per_unit": False, "label": "Phosphate treatment"},
+    "Clarifier": {"unit_price": 25.0, "per_unit": False, "label": "Clarifier"},
+    "Enzymes": {"unit_price": 25.0, "per_unit": False, "label": "Enzymes"},
+}
+
+
+def _fmt_service_date(d: str | None) -> tuple:
+    """Return (billing_month 'YYYY-MM', pretty 'Mon D') from a YYYY-MM-DD date, defaulting to today."""
+    dt = None
+    if d:
+        try:
+            dt = datetime.fromisoformat(d[:10])
+        except Exception:
+            dt = None
+    if dt is None:
+        dt = datetime.now(timezone.utc)
+    return dt.strftime("%Y-%m"), dt.strftime("%b %-d")
+
+
+def _chem_line_items(job: dict, pretty_date: str) -> list:
+    items = []
+    for c in (job.get("chemicals_added") or []):
+        price = CHEM_PRICES.get(c.get("name"))
+        if not price:
+            continue
+        try:
+            amt = float(str(c.get("amount", "")).strip() or 0)
+        except (TypeError, ValueError):
+            amt = 0
+        if amt <= 0:
+            continue
+        if price["per_unit"]:
+            qty, unit_price = amt, price["unit_price"]
+            desc = f"{price['label']} ({amt:g} {c.get('unit', 'lbs')}) — {pretty_date}"
+        else:
+            qty, unit_price = 1, price["unit_price"]
+            desc = f"{price['label']} — {pretty_date}"
+        items.append({
+            "description": desc, "quantity": qty, "unit_price": unit_price,
+            "job_id": job.get("id"), "service_date": pretty_date,
+        })
+    return items
+
+
+async def accrue_chem_invoice(job: dict):
+    """Add/replace this job's chemical charges on the customer's current-month draft invoice."""
+    try:
+        cid = job.get("customer_id")
+        if not cid:
+            return
+        billing_month, pretty = _fmt_service_date(job.get("scheduled_date"))
+        new_items = _chem_line_items(job, pretty)
+        cust = await db.customers.find_one({"id": cid}, {"_id": 0})
+        cust_name = cust.get("name", "") if cust else ""
+        inv = await db.quotes.find_one(
+            {"doc_type": "invoice", "auto_chem": True, "customer_id": cid, "billing_month": billing_month, "status": "draft"},
+            {"_id": 0},
+        )
+        if not inv and not new_items:
+            return
+        # Rebuild line items: drop this job's prior chem lines, add the fresh ones.
+        existing = [li for li in (inv.get("line_items", []) if inv else []) if li.get("job_id") != job.get("id")]
+        line_items = existing + new_items
+        if not line_items:
+            if inv:
+                await db.quotes.delete_one({"id": inv["id"]})
+            return
+        subtotal = round(sum(float(li["quantity"]) * float(li["unit_price"]) for li in line_items), 2)
+        payload = {
+            "customer_id": cid, "customer_name": cust_name,
+            "title": f"Chemical Charges — {billing_month}", "doc_type": "invoice",
+            "line_items": line_items, "tax_rate": 0, "subtotal": subtotal, "tax": 0.0, "total": subtotal,
+            "auto_chem": True, "billing_month": billing_month, "status": "draft",
+        }
+        if inv:
+            await db.quotes.update_one({"id": inv["id"]}, {"$set": payload})
+        else:
+            payload.update({"id": new_id(), "amount_paid": 0.0, "payment_status": "unpaid", "created_at": now_iso()})
+            await db.quotes.insert_one(payload)
+    except Exception as e:
+        logger.warning(f"accrue_chem_invoice error: {e}")
+
+
+async def run_monthly_chem_billing():
+    """On/after the 1st, finalize (bill) any chemical draft invoices for months that have ended."""
+    try:
+        current_month = datetime.now(timezone.utc).strftime("%Y-%m")
+        due = (datetime.now(timezone.utc) + timedelta(days=14)).date().isoformat()
+        drafts = await db.quotes.find(
+            {"doc_type": "invoice", "auto_chem": True, "status": "draft", "billing_month": {"$lt": current_month}},
+            {"_id": 0},
+        ).to_list(1000)
+        for inv in drafts:
+            if not inv.get("line_items"):
+                await db.quotes.delete_one({"id": inv["id"]})
+                continue
+            await db.quotes.update_one({"id": inv["id"]}, {"$set": {"status": "sent", "due_date": due}})
+            cid = inv.get("customer_id")
+            total = inv.get("total", 0)
+            # Fully hands-off: charge the card/ACH on file if present, else send a payable invoice.
+            charged = False
+            cust = await db.customers.find_one({"id": cid}, {"_id": 0}) if cid else None
+            if cust and cust.get("default_payment_method_id"):
+                try:
+                    from routers.payments import charge_invoice_on_file
+                    res = await charge_invoice_on_file(inv["id"])
+                    status = res.get("status")
+                    if status == "succeeded":
+                        charged = True  # customer already notified by the charge helper
+                    elif status == "processing":
+                        charged = True
+                        if cid:
+                            await notify_customer(cid, "Payment processing",
+                                                  f"Your chemical service payment for {inv['billing_month']} (${total:,.2f}) is processing via bank transfer.")
+                except Exception as e:
+                    logger.warning(f"auto-charge chem invoice {inv['id']} failed: {e}")
+            if not charged and cid:
+                await notify_customer(
+                    cid, "New invoice",
+                    f"Your chemical service invoice for {inv['billing_month']} (${total:,.2f}) is ready. View and pay it in your portal.",
+                    sms=False,
+                )
+            logger.info(f"Auto-billed chem invoice {inv['id']} for {inv['billing_month']} (charged={charged})")
+    except Exception as e:
+        logger.warning(f"run_monthly_chem_billing error: {e}")
+
+
+
+
+# ----------------------- Finances: Auto Billing -----------------------
+FREQ_DAYS = {"weekly": 7, "monthly": 30, "quarterly": 90}
+
+
+def advance_date(iso: str, freq: str) -> str:
+    base = datetime.fromisoformat(iso) if iso else datetime.now(timezone.utc)
+    return (base + timedelta(days=FREQ_DAYS.get(freq, 30))).date().isoformat()
+
+
+# ----------------------- Income categories -----------------------
+INCOME_CATEGORIES_ID = "income_categories"
+DEFAULT_INCOME_CATEGORIES = ["Pool", "Landscaping", "Labor"]
+
+
+async def get_income_categories() -> list:
+    doc = await db.settings.find_one({"id": INCOME_CATEGORIES_ID}, {"_id": 0})
+    if not doc:
+        doc = {"id": INCOME_CATEGORIES_ID, "values": list(DEFAULT_INCOME_CATEGORIES)}
+        await db.settings.insert_one(dict(doc))
+    return doc.get("values", DEFAULT_INCOME_CATEGORIES)
+
+
+@router.get("/income-categories")
+async def list_income_categories(user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "technician"):
+        raise HTTPException(403, "Not allowed")
+    return {"categories": await get_income_categories()}
+
+
+@router.post("/income-categories")
+async def add_income_category(body: CategoryIn, admin: dict = Depends(require_admin)):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "Category name required")
+    cats = await get_income_categories()
+    if any(c.lower() == name.lower() for c in cats):
+        raise HTTPException(400, "That category already exists")
+    cats.append(name)
+    await db.settings.update_one({"id": INCOME_CATEGORIES_ID}, {"$set": {"values": cats}}, upsert=True)
+    return {"categories": cats}
+
+
+@router.delete("/income-categories/{name}")
+async def delete_income_category(name: str, admin: dict = Depends(require_admin)):
+    cats = await get_income_categories()
+    remaining = [c for c in cats if c.lower() != name.lower()]
+    if len(remaining) == len(cats):
+        raise HTTPException(404, "Category not found")
+    if not remaining:
+        raise HTTPException(400, "Keep at least one category")
+    await db.settings.update_one({"id": INCOME_CATEGORIES_ID}, {"$set": {"values": remaining}}, upsert=True)
+    return {"categories": remaining}
+
+
+@router.get("/finances/income-by-category")
+async def income_by_category(date_from: Optional[str] = Query(None),
+                             date_to: Optional[str] = Query(None),
+                             admin: dict = Depends(require_admin)):
+    return await compute_income_by_category(date_from, date_to)
+
+
+async def compute_income_by_category(date_from: Optional[str] = None, date_to: Optional[str] = None):
+    """Collected revenue attributed to line-item categories (handles partial payments)."""
+    q = {"doc_type": "invoice", "$or": [{"amount_paid": {"$gt": 0}}, {"payment_status": "paid"}]}
+    if date_from or date_to:
+        rng = {}
+        if date_from:
+            rng["$gte"] = date_from
+        if date_to:
+            rng["$lte"] = date_to + "T23:59:59"
+        q["created_at"] = rng
+    invoices = await db.quotes.find(q, {"_id": 0}).to_list(5000)
+    buckets: dict = {}
+    for inv in invoices:
+        lines = inv.get("line_items", [])
+        subtotal = sum((li.get("quantity") or 0) * (li.get("unit_price") or 0) for li in lines)
+        if subtotal <= 0:
+            continue
+        # Fully-paid invoices may not carry an explicit amount_paid; fall back to total.
+        paid = inv.get("amount_paid")
+        if not paid:
+            paid = inv.get("total", 0) if inv.get("payment_status") == "paid" else 0
+        paid = float(paid or 0)
+        if paid <= 0:
+            continue
+        for li in lines:
+            amt = (li.get("quantity") or 0) * (li.get("unit_price") or 0)
+            cat = li.get("category") or "Pool"
+            buckets[cat] = buckets.get(cat, 0.0) + paid * (amt / subtotal)
+    rows = [{"category": k, "amount": round(v, 2)} for k, v in buckets.items()]
+    rows.sort(key=lambda r: r["amount"], reverse=True)
+    total = round(sum(r["amount"] for r in rows), 2)
+    return {"total": total, "rows": rows, "invoice_count": len(invoices)}
+
+
+@router.get("/billing-plans")
+async def list_billing_plans(user: dict = Depends(require_admin)):
+    return await db.billing_plans.find({}, {"_id": 0}).sort("next_run", 1).to_list(1000)
+
+
+@router.post("/billing-plans")
+async def create_billing_plan(body: BillingPlanIn, user: dict = Depends(require_admin)):
+    cust = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
+    if not cust:
+        raise HTTPException(400, "Customer not found")
+    doc = body.dict()
+    doc.update({
+        "id": new_id(),
+        "customer_name": cust["name"],
+        "next_run": body.next_run or advance_date(now_iso(), body.frequency or "monthly"),
+        "created_at": now_iso(),
+    })
+    await db.billing_plans.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.put("/billing-plans/{pid}")
+async def update_billing_plan(pid: str, body: BillingPlanUpdate, user: dict = Depends(require_admin)):
+    upd = {k: v for k, v in body.dict().items() if v is not None}
+    if upd:
+        await db.billing_plans.update_one({"id": pid}, {"$set": upd})
+    return await db.billing_plans.find_one({"id": pid}, {"_id": 0})
+
+
+@router.post("/billing-plans/{pid}/run")
+async def run_billing_plan(pid: str, user: dict = Depends(require_admin)):
+    plan = await db.billing_plans.find_one({"id": pid}, {"_id": 0})
+    if not plan:
+        raise HTTPException(404, "Plan not found")
+    amount = plan.get("amount", 0.0)
+    tax = round(amount * 0.08, 2)
+    invoice = {
+        "id": new_id(), "customer_id": plan["customer_id"], "customer_name": plan["customer_name"],
+        "title": plan.get("service", "Recurring Service"), "doc_type": "invoice",
+        "line_items": [{"description": plan.get("service", "Recurring Service"), "quantity": 1, "unit_price": amount}],
+        "tax_rate": 8.0, "subtotal": amount, "tax": tax, "total": round(amount + tax, 2),
+        "amount_paid": 0.0, "due_date": (datetime.now(timezone.utc) + timedelta(days=14)).date().isoformat(),
+        "status": "sent", "payment_status": "unpaid", "notes": "Auto-generated from billing plan",
+        "billing_plan_id": pid, "created_at": now_iso(),
+    }
+    await db.quotes.insert_one(invoice)
+    new_next = advance_date(plan.get("next_run") or now_iso(), plan.get("frequency", "monthly"))
+    await db.billing_plans.update_one({"id": pid}, {"$set": {"next_run": new_next, "last_run": now_iso()}})
+    await notify_customer(plan["customer_id"], "New invoice",
+                          f"An invoice for {plan.get('service', 'your service')} was issued.")
+    invoice.pop("_id", None)
+    return {"ok": True, "invoice_id": invoice["id"], "next_run": new_next}
+
+
+# ----------------------- Equipment Repair -----------------------
+def _strip_cost(doc: dict) -> dict:
+    if doc:
+        doc.pop("cost", None)
+    return doc
+
+
+@router.get("/repairs")
+async def list_repairs(user: dict = Depends(get_current_user), status: Optional[str] = None):
+    if user.get("role") not in ("admin", "technician"):
+        raise HTTPException(403, "Not allowed")
+    q = {} if not status or status == "all" else {"status": status}
+    if user.get("role") == "technician":
+        q["technician_id"] = user.get("technician_id")
+    repairs = await db.repairs.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    if user.get("role") == "technician":
+        repairs = [_strip_cost(r) for r in repairs]
+    return repairs
+
+
+@router.post("/repairs")
+async def create_repair(body: RepairIn, user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "technician"):
+        raise HTTPException(403, "Not allowed")
+    cust = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
+    if not cust:
+        raise HTTPException(400, "Customer not found")
+    doc = body.dict()
+    doc["customer_name"] = cust["name"]
+    if user.get("role") == "technician":
+        # Techs report issues but never set pricing; ticket is assigned to them.
+        doc["cost"] = None
+        doc["technician_id"] = user.get("technician_id")
+    if doc.get("technician_id"):
+        tech = await db.technicians.find_one({"id": doc["technician_id"]}, {"_id": 0})
+        doc["technician_name"] = tech["name"] if tech else None
+    else:
+        doc["technician_name"] = None
+    doc.update({"id": new_id(), "created_at": now_iso()})
+    await db.repairs.insert_one(doc)
+    doc.pop("_id", None)
+    return _strip_cost(doc) if user.get("role") == "technician" else doc
+
+
+@router.put("/repairs/{rid}")
+async def update_repair(rid: str, body: RepairUpdate, user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "technician"):
+        raise HTTPException(403, "Not allowed")
+    existing = await db.repairs.find_one({"id": rid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Repair not found")
+    upd = {k: v for k, v in body.dict().items() if v is not None}
+    if user.get("role") == "technician":
+        if existing.get("technician_id") != user.get("technician_id"):
+            raise HTTPException(403, "Not your repair ticket")
+        upd.pop("cost", None)  # techs cannot change pricing
+    if "technician_id" in upd:
+        tech = await db.technicians.find_one({"id": upd["technician_id"]}, {"_id": 0})
+        upd["technician_name"] = tech["name"] if tech else None
+    if upd:
+        await db.repairs.update_one({"id": rid}, {"$set": upd})
+    doc = await db.repairs.find_one({"id": rid}, {"_id": 0})
+    return _strip_cost(doc) if user.get("role") == "technician" else doc
+
+

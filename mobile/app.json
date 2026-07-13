@@ -1,16 +1,23 @@
 {
   "expo": {
-    "name": "mobile",
-    "slug": "mobile",
+    "name": "frontend",
+    "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "mobile",
+    "scheme": "frontend",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.poolscapeaudit.qnao1d"
+      "bundleIdentifier": "com.emergent.poolappmobile.r03fw2",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Take before and after photos of service jobs",
+        "NSPhotoLibraryUsageDescription": "Attach job photos from your library",
+        "NSLocationWhenInUseUsageDescription": "Auto-start job timers when you arrive on-site",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Auto-start job timers on arrival, even in background",
+        "UIBackgroundModes": ["location"]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +25,15 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.poolscapeaudit.qnao1d"
+      "package": "com.emergent.poolappmobile.r03fw2",
+      "permissions": [
+        "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -34,6 +49,16 @@
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#000000"
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Auto-start job timers when you arrive on-site",
+          "locationAlwaysAndWhenInUsePermission": "Auto-start job timers on arrival, even in background",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ]
     ],
