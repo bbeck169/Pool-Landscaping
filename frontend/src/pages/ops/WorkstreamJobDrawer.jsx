@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { X, ChevronRight, ExternalLink, Camera, ListChecks, FlaskConical,
-         Beaker, AlertTriangle, StickyNote, Wrench, PenTool } from "lucide-react";
+         Beaker, AlertTriangle, StickyNote, Wrench, PenTool, Link2, Share2 } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 
@@ -11,30 +11,61 @@ import { colors, brandGradientCss } from "@/theme";
  *   Photos, Checklist, Chemical Readings, Chemicals Added,
  *   Service Issues, Notes, Maintenance Log, Signature
  * Empty sections render a friendly placeholder rather than blank space.
+ *
+ * `onShareToast(text)` optional — parent can render its own toast.
+ * `onPermissionDenied()` optional — parent handles unauthorised access.
  */
-export default function WorkstreamJobDrawer({ jobId, onClose }) {
+export default function WorkstreamJobDrawer({ jobId, onClose, onShareToast, onPermissionDenied }) {
   const navigate = useNavigate();
   const [job, setJob] = useState(null);
-  const [signature, setSignature] = useState(null);
   const [error, setError] = useState("");
   const [lightbox, setLightbox] = useState(null);
+  const [localToast, setLocalToast] = useState("");
 
   useEffect(() => {
     if (!jobId) return;
-    setJob(null); setError(""); setSignature(null);
+    setJob(null); setError("");
     api.get(`/jobs/${jobId}`)
        .then(setJob)
-       .catch((e) => setError(e.message || "Failed to load job"));
-    // Best-effort: some jobs may have an attached quote signature via quote linkage.
-    // The signatures collection is keyed by doc_id; we only fetch if there's a
-    // linked estimate id on the job.
-  }, [jobId]);
+       .catch((e) => {
+         const msg = e?.message || "";
+         if (/403|401|forbidden|unauthor/i.test(msg)) {
+           onPermissionDenied?.();
+         }
+         setError(msg || "Failed to load job");
+       });
+  }, [jobId, onPermissionDenied]);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  const pushToast = (text) => {
+    if (onShareToast) onShareToast(text);
+    else { setLocalToast(text); setTimeout(() => setLocalToast(""), 2500); }
+  };
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      pushToast("Link copied — anyone with access can view this activity");
+    } catch {
+      pushToast("Could not copy link");
+    }
+  };
+
+  const shareLink = async () => {
+    const url = window.location.href;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: job?.title || "Job activity", url });
+        return;
+      } catch { /* user cancelled — fall through to copy */ }
+    }
+    copyLink();
+  };
 
   if (!jobId) return null;
 
@@ -43,7 +74,7 @@ export default function WorkstreamJobDrawer({ jobId, onClose }) {
       <div className="absolute inset-0" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={onClose} />
       <aside className="absolute right-0 top-0 bottom-0 w-full sm:w-[480px] flex flex-col shadow-2xl"
              style={{ backgroundColor: colors.surface, borderLeft: `1px solid ${colors.border}` }}>
-        <div className="px-5 py-4 flex items-center justify-between"
+        <div className="px-5 py-4 flex items-center justify-between gap-2"
              style={{ borderBottom: `1px solid ${colors.border}` }}>
           <div className="min-w-0 flex-1">
             <div className="text-[10px] uppercase tracking-wide" style={{ color: colors.muted }}>Job</div>
@@ -60,6 +91,16 @@ export default function WorkstreamJobDrawer({ jobId, onClose }) {
               </div>
             )}
           </div>
+          <button onClick={shareLink} className="p-2 rounded-lg"
+                  style={{ backgroundColor: colors.surfaceSecondary }}
+                  data-testid="drawer-share" title="Share">
+            <Share2 size={16} />
+          </button>
+          <button onClick={copyLink} className="p-2 rounded-lg"
+                  style={{ backgroundColor: colors.surfaceSecondary }}
+                  data-testid="drawer-copy-link" title="Copy link">
+            <Link2 size={16} />
+          </button>
           <button onClick={onClose} className="p-2 rounded-lg"
                   style={{ backgroundColor: colors.surfaceSecondary }}
                   data-testid="drawer-close" aria-label="Close">
@@ -210,6 +251,14 @@ export default function WorkstreamJobDrawer({ jobId, onClose }) {
              onClick={() => setLightbox(null)}
              data-testid="drawer-lightbox">
           <img src={lightbox} alt="preview" className="max-h-full max-w-full rounded-xl" />
+        </div>
+      )}
+
+      {localToast && (
+        <div className="fixed bottom-6 right-6 z-[70] px-4 py-2 rounded-xl text-sm text-white shadow-lg"
+             style={{ backgroundColor: colors.onSurface }}
+             data-testid="drawer-toast">
+          {localToast}
         </div>
       )}
     </div>

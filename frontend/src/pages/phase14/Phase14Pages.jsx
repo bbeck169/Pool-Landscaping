@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
+import { Link2, Share2 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { useAuth } from "@/auth";
@@ -66,6 +67,25 @@ export function CommunicationThread() {
     finally { setBusy(false); }
   };
 
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setToast("Link copied — anyone with access can view this activity");
+    } catch { setToast("Could not copy link"); }
+  };
+  const shareLink = async () => {
+    const url = window.location.href;
+    if (navigator.share) {
+      try { await navigator.share({ title: thread?.subject || "Conversation", url }); return; } catch {}
+    }
+    copyLink();
+  };
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(""), 2600);
+    return () => clearTimeout(t);
+  }, [toast]);
+
   if (!thread) return <div className="p-8 text-sm" style={{ color: colors.onSurfaceSecondary }}>Loading thread…</div>;
   if (thread._error) return <div className="p-8 text-sm" style={{ color: colors.error }}>Thread not found.</div>;
 
@@ -83,6 +103,18 @@ export function CommunicationThread() {
             {thread.unread && <> · <Chip tone="warn">Unread</Chip></>}
           </div>
         </div>
+        <button onClick={copyLink}
+                className="p-2 rounded-lg"
+                style={{ backgroundColor: colors.surfaceSecondary }}
+                title="Copy link" data-testid="thread-copy-link">
+          <Link2 size={14} />
+        </button>
+        <button onClick={shareLink}
+                className="p-2 rounded-lg"
+                style={{ backgroundColor: colors.surfaceSecondary }}
+                title="Share" data-testid="thread-share">
+          <Share2 size={14} />
+        </button>
       </div>
 
       <Card testid="thread-messages">

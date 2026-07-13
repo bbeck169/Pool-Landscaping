@@ -54,9 +54,13 @@ class TestCSAT:
 
     def test_public_get_and_submit_detractor_creates_task(self):
         h = _login(*ADMIN)
-        # Use a job we haven't surveyed yet — pick the 5th one to be safe.
+        # Pick a job that hasn't been surveyed yet. Fall back to any job if all have surveys.
         jobs = requests.get(f"{BASE}/api/jobs", headers=h, timeout=15).json()
-        jid = jobs[5]["id"]
+        existing = requests.get(f"{BASE}/api/csat", headers=h, timeout=15).json()
+        surveyed_jids = {s.get("job_id") for s in existing.get("surveys", [])}
+        candidates = [j for j in jobs if j["id"] not in surveyed_jids]
+        assert candidates, "No un-surveyed jobs available for test"
+        jid = candidates[0]["id"]
         r = requests.post(f"{BASE}/api/csat/send/{jid}", headers=h, json={"channel": "email"}, timeout=15).json()
         token = r["survey"]["token"]
 
@@ -81,7 +85,11 @@ class TestCSAT:
     def test_double_submit_rejected(self):
         h = _login(*ADMIN)
         jobs = requests.get(f"{BASE}/api/jobs", headers=h, timeout=15).json()
-        jid = jobs[6]["id"]
+        existing = requests.get(f"{BASE}/api/csat", headers=h, timeout=15).json()
+        surveyed_jids = {s.get("job_id") for s in existing.get("surveys", [])}
+        candidates = [j for j in jobs if j["id"] not in surveyed_jids]
+        assert candidates, "No un-surveyed jobs available for test"
+        jid = candidates[0]["id"]
         token = requests.post(f"{BASE}/api/csat/send/{jid}", headers=h, json={}, timeout=15).json()["survey"]["token"]
         requests.post(f"{BASE}/api/public/csat/{token}/submit",
                       json={"nps_score": 10, "csat_score": 5}, timeout=15)

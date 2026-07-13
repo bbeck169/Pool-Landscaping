@@ -4,10 +4,12 @@ import {
   Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar,
   Activity, DollarSign, Waves, Package, History, BarChart3, Layers, PlayCircle,
   ArrowLeft, Plus, Check, X, Trash2, RefreshCw, MapPin, ChevronRight,
+  Link2, Share2,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money, brandGradientCss } from "@/theme";
 import { useAuth } from "@/auth";
+import { usePermissions } from "@/hooks/usePermissions";
 import {
   PageHeader, Button, Skeleton, StatusPill, Chip, EmptyState, TextInput, Modal, Toast, TagChip,
 } from "@/components/ui-kit";
@@ -242,20 +244,93 @@ function Workstream() {
   const [rows] = useList("/activity");
   const [drawerJobId, setDrawerJobId] = useState(null);
   const [paymentInfo, setPaymentInfo] = useState(null);
+  const [wsToast, setWsToast] = useState("");
+  const [params, setParams] = useSearchParams();
+  const { can } = usePermissions();
+
+  const showToast = (t) => { setWsToast(t); setTimeout(() => setWsToast(""), 2600); };
+
+  // On mount / when ?open= changes, auto-open the corresponding drawer/modal.
+  useEffect(() => {
+    const open = params.get("open");
+    if (!open) {
+      setDrawerJobId(null);
+      setPaymentInfo(null);
+      return;
+    }
+    const [type, id] = open.split(":");
+    if (!type || !id) return;
+    if (type === "job") {
+      if (can && can("jobs", "read") === false) {
+        showToast("You don't have permission to view this activity");
+        _mergeParams({ open: null }, { replace: true });
+        setTimeout(() => navigate("/"), 800);
+        return;
+      }
+      setDrawerJobId(id);
+    } else if (type === "payment" || type === "review") {
+      // Compact info modal — try to find the row in the current feed for context.
+      const match = (rows || []).find((r) => r?.related_ref?.type === type && r?.related_ref?.id === id);
+      setPaymentInfo(match || { title: type === "payment" ? "Payment" : "Review", detail: `#${id.slice(0, 8)}`, at: "" });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params, rows]);
+
+  const _mergeParams = (patch, opts) => {
+    const s = new URLSearchParams(params);
+    Object.entries(patch).forEach(([k, v]) => {
+      if (v === null || v === undefined || v === "") s.delete(k);
+      else s.set(k, v);
+    });
+    setParams(s, opts);
+  };
 
   const openRow = (a) => {
     const ref = a.related_ref || {};
     const t = ref.type;
     const id = ref.id;
     if (!t || !id) return;
-    if (t === "job") setDrawerJobId(id);
-    else if (t === "invoice") navigate(`/invoices/${id}`);
+    if (t === "job") {
+      setDrawerJobId(id);
+      _mergeParams({ open: `job:${id}` });
+    } else if (t === "invoice") navigate(`/invoices/${id}`);
     else if (t === "quote") navigate(`/quotes/${id}`);
     else if (t === "customer") navigate(`/customers/${id}`);
     else if (t === "communication") navigate(`/communication/${id}`);
-    else if (t === "payment") setPaymentInfo({ ...a });
-    else if (t === "review") setPaymentInfo({ ...a }); // reuse compact modal
-    else if (t === "lead") navigate(`/leads`);
+    else if (t === "payment") {
+      setPaymentInfo({ ...a });
+      _mergeParams({ open: `payment:${id}` });
+    } else if (t === "review") {
+      setPaymentInfo({ ...a });
+      _mergeParams({ open: `review:${id}` });
+    } else if (t === "lead") navigate(`/leads`);
+  };
+
+  const closeDrawer = () => {
+    setDrawerJobId(null);
+    _mergeParams({ open: null });
+  };
+  const closeModal = () => {
+    setPaymentInfo(null);
+    _mergeParams({ open: null });
+  };
+
+  const shareCurrent = async () => {
+    const url = window.location.href;
+    if (navigator.share) {
+      try { await navigator.share({ title: paymentInfo?.title || "Activity", url }); return; } catch {}
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast("Link copied — anyone with access can view this activity");
+    } catch { showToast("Could not copy link"); }
+  };
+
+  const copyCurrent = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      showToast("Link copied — anyone with access can view this activity");
+    } catch { showToast("Could not copy link"); }
   };
 
   return (
@@ -282,17 +357,42 @@ function Workstream() {
          })}
        </ul>}
       {drawerJobId && (
-        <WorkstreamJobDrawer jobId={drawerJobId} onClose={() => setDrawerJobId(null)} />
+        <WorkstreamJobDrawer
+          jobId={drawerJobId}
+          onClose={closeDrawer}
+          onShareToast={showToast}
+          onPermissionDenied={() => {
+            showToast("You don't have permission to view this activity");
+            setDrawerJobId(null);
+            _mergeParams({ open: null }, { replace: true });
+            setTimeout(() => navigate("/"), 800);
+          }}
+        />
       )}
       {paymentInfo && (
-        <Modal open onClose={() => setPaymentInfo(null)}
+        <Modal open onClose={closeModal}
                title={paymentInfo.title || "Details"}
-               footer={<Button onClick={() => setPaymentInfo(null)}>Close</Button>}>
+               footer={<>
+                 <Button variant="ghost" onClick={copyCurrent} testid="ws-info-copy">
+                   <Link2 size={12} /> Copy link
+                 </Button>
+                 <Button variant="ghost" onClick={shareCurrent} testid="ws-info-share">
+                   <Share2 size={12} /> Share
+                 </Button>
+                 <Button onClick={closeModal}>Close</Button>
+               </>}>
           <div className="space-y-2 text-sm" data-testid="workstream-info-modal">
             <div style={{ color: colors.onSurface }}>{paymentInfo.detail}</div>
             <div className="text-xs" style={{ color: colors.muted }}>{paymentInfo.at}</div>
           </div>
         </Modal>
+      )}
+      {wsToast && (
+        <div className="fixed bottom-6 right-6 z-[70] px-4 py-2 rounded-xl text-sm text-white shadow-lg"
+             style={{ backgroundColor: colors.onSurface }}
+             data-testid="workstream-toast">
+          {wsToast}
+        </div>
       )}
     </Card>
   );
