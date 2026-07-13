@@ -44,6 +44,7 @@ import {
   D2dDashboard, D2dMap, D2dKnocks, D2dOpenLeads, D2dSoldLeads, D2dReport, D2dLeaderboard,
 } from "@/pages/d2d/D2dPages";
 import { DispatchMap, ScheduleMap } from "@/pages/ops/MapPages";
+import NotFound from "@/pages/NotFound";
 import {
   LandscapeAI, CadList, CadEditor, SatelliteMeasure, VirtualBid,
   DigitalCardList, PublicCard, WeatherHub,
@@ -257,7 +258,7 @@ export default function App() {
           </Route>
 
           {/* Anything unmatched → home */}
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

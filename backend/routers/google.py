@@ -174,6 +174,10 @@ async def get_integrations_status(admin: dict = Depends(require_admin)):
     import os
     stripe_key = os.environ.get("STRIPE_API_KEY", "") or os.environ.get("STRIPE_SECRET_KEY", "")
     twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    resend_from = os.environ.get("EMAIL_FROM", "")
+    stripe_wh = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+    wp_url = os.environ.get("WORDPRESS_URL", "")
+    gbp_client = os.environ.get("GBP_CLIENT_ID", "")
     ring_key = ""
     ring_doc = await db.settings.find_one({"id": "ringcentral"}, {"_id": 0}) or {}
     if ring_doc.get("api_key"):
@@ -182,8 +186,59 @@ async def get_integrations_status(admin: dict = Depends(require_admin)):
         "emergent_llm":    {"configured": bool(EMERGENT_LLM_KEY),        "preview": _mask(EMERGENT_LLM_KEY),      "note": "OpenAI / Claude / Gemini via Emergent"},
         "google":          {"configured": bool(GOOGLE_API_KEY),          "preview": _mask(GOOGLE_API_KEY),        "note": "Places autocomplete · Geocoding · Maps tiles"},
         "openweb_ninja":   {"configured": bool(OPENWEB_NINJA_API_KEY),   "preview": _mask(OPENWEB_NINJA_API_KEY), "note": "Zillow sold-lead data for D2D"},
-        "resend":          {"configured": bool(RESEND_API_KEY),          "preview": _mask(RESEND_API_KEY),        "note": "Transactional email (test sender until domain is verified)"},
+        "resend":          {"configured": bool(RESEND_API_KEY),          "preview": _mask(RESEND_API_KEY),        "note": f"Transactional email · from {resend_from}"},
         "stripe":          {"configured": bool(stripe_key),              "preview": _mask(stripe_key),            "note": "Card payments (test mode)"},
+        "stripe_webhook":  {"configured": bool(stripe_wh),               "preview": _mask(stripe_wh),             "note": "Webhook signing secret · unsigned fallback active if missing"},
         "twilio":          {"configured": bool(twilio_sid),              "preview": _mask(twilio_sid),            "note": "SMS delivery"},
+        "wordpress":       {"configured": bool(wp_url),                  "preview": _mask(wp_url),                "note": "SEO article publishing"},
+        "gbp":             {"configured": bool(gbp_client),              "preview": _mask(gbp_client),            "note": "Google Business Profile OAuth (Client ID)"},
         "ringcentral":     {"configured": bool(ring_key),                "preview": _mask(ring_key),              "note": "Inbound call tracking"},
     }
+
+
+@router.get("/settings/integrations/health/{integration}")
+async def integration_health(integration: str, admin: dict = Depends(require_admin)):
+    """Lightweight liveness check for the specified integration."""
+    import os
+    try:
+        if integration == "google":
+            if not GOOGLE_API_KEY: return {"ok": False, "message": "GOOGLE_API_KEY unset"}
+            async with httpx.AsyncClient(timeout=8) as c:
+                r = await c.get(GEOCODE_URL, params={"address": "10840 W Saddlehorn Rd, Peoria AZ", "key": GOOGLE_API_KEY})
+                j = r.json() if r.status_code == 200 else {}
+            return {"ok": j.get("status") == "OK", "message": j.get("status", f"HTTP {r.status_code}")}
+        if integration == "openweb_ninja":
+            if not OPENWEB_NINJA_API_KEY: return {"ok": False, "message": "OPENWEB_NINJA_API_KEY unset"}
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.get("https://api.openwebninja.com/realtime-zillow-data/search_zip",
+                                params={"zip": "85383"}, headers={"x-api-key": OPENWEB_NINJA_API_KEY})
+            return {"ok": r.status_code == 200, "message": f"HTTP {r.status_code}"}
+        if integration == "resend":
+            key = os.environ.get("RESEND_API_KEY", "")
+            if not key: return {"ok": False, "message": "RESEND_API_KEY unset"}
+            async with httpx.AsyncClient(timeout=8) as c:
+                r = await c.get("https://api.resend.com/domains", headers={"Authorization": f"Bearer {key}"})
+            return {"ok": r.status_code == 200, "message": f"HTTP {r.status_code}"}
+        if integration == "stripe":
+            key = os.environ.get("STRIPE_API_KEY", "") or os.environ.get("STRIPE_SECRET_KEY", "")
+            if not key: return {"ok": False, "message": "STRIPE_API_KEY unset"}
+            async with httpx.AsyncClient(timeout=8) as c:
+                r = await c.get("https://api.stripe.com/v1/payment_intents?limit=1", headers={"Authorization": f"Bearer {key}"})
+            return {"ok": r.status_code == 200, "message": f"HTTP {r.status_code}"}
+        if integration == "emergent_llm":
+            return {"ok": bool(EMERGENT_LLM_KEY), "message": "Key present" if EMERGENT_LLM_KEY else "unset"}
+        if integration in {"twilio", "gbp", "wordpress", "ringcentral", "stripe_webhook"}:
+            # Not enough config wired yet to actually ping — report presence only.
+            keymap = {
+                "twilio": "TWILIO_ACCOUNT_SID", "gbp": "GBP_CLIENT_ID",
+                "wordpress": "WORDPRESS_URL", "ringcentral": "RINGCENTRAL_API_KEY",
+                "stripe_webhook": "STRIPE_WEBHOOK_SECRET",
+            }
+            v = os.environ.get(keymap[integration], "")
+            return {"ok": bool(v), "message": "Key present" if v else "unset"}
+        raise HTTPException(404, "Unknown integration")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"integration health {integration} failed: {e}")
+        return {"ok": False, "message": str(e)[:200]}

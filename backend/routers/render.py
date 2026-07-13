@@ -4,12 +4,16 @@ from typing import Optional, List
 from pydantic import BaseModel
 
 from config import db, logger, EMERGENT_LLM_KEY
-from utils import now_iso, new_id, get_current_user, require_admin
+from utils import now_iso, new_id, require_admin
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
 router = APIRouter()
 
 RENDER_MODEL = "gemini-3.1-flash-image-preview"
+
+
+def _strip_prefix(b64: str) -> str:
+    return b64.split(",", 1)[1] if b64.startswith("data:") else b64
 
 
 class RenderIn(BaseModel):
@@ -19,15 +23,6 @@ class RenderIn(BaseModel):
     prompt: Optional[str] = ""
     customer_id: Optional[str] = None
     lead_id: Optional[str] = None
-
-
-def _staff(user: dict):
-    if user.get("role") not in ("admin", "technician"):
-        raise HTTPException(403, "Not allowed")
-
-
-def _strip_prefix(b64: str) -> str:
-    return b64.split(",", 1)[1] if b64.startswith("data:") else b64
 
 
 def _build_prompt(style: str, elements: List[str], extra: str) -> str:
@@ -68,7 +63,41 @@ async def render_landscape(body: RenderIn, user: dict = Depends(require_admin)):
         "input_image": img, "output_image": out, "created_at": now_iso(),
     }
     await db.landscape_renders.insert_one(doc)
-    return {"id": doc["id"], "output_image": out, "created_at": doc["created_at"]}
+    # ── description + shopping list (best-effort, non-blocking on failure)
+    description = ""
+    shopping_list: list = []
+    try:
+        import json as _json, re as _re
+        chat2 = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"landscape-desc-{doc['id'][:8]}",
+                        system_message="You are a landscape designer that returns ONLY valid JSON, no prose fences.")
+        desc_prompt = (
+            f"For a Peoria AZ yard redesigned in '{body.style or 'Desert Contemporary'}' style "
+            f"with features [{', '.join(body.elements or [])}], write:\n"
+            "1) description: 2-3 sentence rationale for the design choices\n"
+            "2) shopping_list: 6-10 items in the format [{item, category, estimated_cost}] "
+            "covering plants, hardscape, and lighting.\n"
+            'Return JSON exactly like {"description": "...", "shopping_list": [{"item":"", "category":"", "estimated_cost":0}]}.'
+        )
+        chat2.with_model("anthropic", "claude-sonnet-4-5")
+        raw = await chat2.send_message(UserMessage(text=desc_prompt))
+        text = (raw if isinstance(raw, str) else str(raw)).strip()
+        if text.startswith("```"):
+            text = _re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
+        try:
+            parsed = _json.loads(text)
+        except Exception:
+            m = _re.search(r"\{.*\}", text, _re.S)
+            parsed = _json.loads(m.group(0)) if m else {}
+        description = (parsed.get("description") or "").strip()
+        shopping_list = parsed.get("shopping_list") or []
+        await db.landscape_renders.update_one({"id": doc["id"]}, {"$set": {
+            "description": description, "shopping_list": shopping_list,
+        }})
+    except Exception as e:
+        logger.warning(f"landscape description/list generation skipped: {e}")
+
+    return {"id": doc["id"], "output_image": out, "description": description,
+            "shopping_list": shopping_list, "created_at": doc["created_at"]}
 
 
 @router.get("/landscape/renders")

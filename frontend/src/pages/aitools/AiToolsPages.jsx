@@ -136,6 +136,24 @@ export function LandscapeAI() {
           {result && (
             <>
               <img alt="rendered" src={`data:image/png;base64,${result.output_image}`} className="rounded-xl w-full" data-testid="landscape-render-image" />
+              {result.description && (
+                <div className="mt-3 text-sm" style={{ color: colors.onSurface }} data-testid="landscape-description">
+                  {result.description}
+                </div>
+              )}
+              {result.shopping_list?.length > 0 && (
+                <div className="mt-4">
+                  <div className="text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: colors.onSurfaceSecondary }}>Shopping list</div>
+                  {result.shopping_list.map((it, i) => (
+                    <label key={i} className="flex items-center gap-2 py-1 text-sm cursor-pointer" data-testid={`landscape-shop-${i}`}>
+                      <input type="checkbox" defaultChecked />
+                      <span className="flex-1">{it.item}</span>
+                      <span className="text-xs" style={{ color: colors.onSurfaceSecondary }}>{it.category}</span>
+                      <span className="font-semibold">${(it.estimated_cost || 0).toLocaleString()}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
               <div className="mt-3 flex gap-2">
                 <a download="landscape.png" href={`data:image/png;base64,${result.output_image}`}
                    className="px-3 py-2 rounded-lg text-xs font-semibold" style={{ backgroundColor: colors.surfaceSecondary }} data-testid="landscape-download">
@@ -275,6 +293,20 @@ export function CadEditor() {
   };
 
   if (!design) return <div className="p-8 text-sm" style={{ color: colors.onSurfaceSecondary }}>Loading design…</div>;
+
+  // Mobile guard — the drawing surface is desktop/tablet only.
+  if (typeof window !== "undefined" && window.innerWidth < 768) {
+    return (
+      <div className="p-8 max-w-md mx-auto text-center" data-testid="cad-mobile-guard">
+        <div className="text-4xl mb-3">🖥️</div>
+        <div className="font-bold text-lg">CAD editor needs a larger screen</div>
+        <div className="text-sm mt-2" style={{ color: colors.onSurfaceSecondary }}>
+          Please use a tablet or desktop to open <strong>{design.name}</strong>.
+        </div>
+        <Link to="/cad" className="inline-block mt-4 px-4 py-2 rounded-xl text-sm font-semibold text-white" style={{ backgroundColor: colors.brand }}>← Back to designs</Link>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-4" data-testid="cad-editor-page">

@@ -3,7 +3,7 @@ from typing import Optional, List, Any
 from pydantic import BaseModel, Field
 
 from config import db
-from utils import now_iso, new_id, get_current_user, require_admin
+from utils import now_iso, new_id, require_admin
 
 router = APIRouter()
 
@@ -18,11 +18,6 @@ class MeasurementIn(BaseModel):
     acres: float = 0.0
     customer_id: Optional[str] = None
     lead_id: Optional[str] = None
-
-
-def _staff(user: dict):
-    if user.get("role") not in ("admin", "technician"):
-        raise HTTPException(403, "Not allowed")
 
 
 @router.post("/measurements")

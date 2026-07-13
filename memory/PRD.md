@@ -62,8 +62,28 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
 - **DONE · Phase 9** — AI Employees + AI Chat + Tasks + Escalation + RingCentral + Access
 - **DONE · Phase 10** — D2D Sales (Zillow · knocks · leaderboard · Leaflet + Google Maps toggle)
 - **DONE · Phase 11** — Landscape AI · CAD Studio · Satellite Measure · Virtual Bid · Digital Card (+ public route) · Weather
-- **P0 · Phase 12** — Admin/Settings polish
+- **DONE · Phase 12** — Polish: cleanup, .env.example × 3, robots+sitemap, branded 404, integrations hub with health-checks (10 integrations), landscape description + shopping list, CAD mobile guard
 - **P1 · Phase 13** — Full E2E parity testing
+
+## Phase 12 acceptance (2026-07-13)
+- 283 OpenAPI paths (added `/settings/integrations/health/{integration}`).
+- Removed dead `_staff(user)` helpers + unused `get_current_user` imports from render.py, property.py, cad.py, measurements.py.
+- Landscape render endpoint now returns `description` (2-3 sentence LLM rationale) + `shopping_list` (6-10 items with category + estimated_cost) — non-blocking, best-effort.
+- Frontend renders description + interactive shopping-list checkboxes below the render image.
+- `/settings/integrations` now lists 10 integrations with LIVE/CONFIGURED/NOT-CONFIGURED chips + per-integration health-check buttons that hit real APIs (Google Geocoding OK, Resend HTTP 200, Stripe HTTP 200, Emergent-LLM key-present). Non-configured slots show clear "Set env var in /app/backend/.env" guidance.
+- Branded 404 (and 500) pages at `/app/frontend/src/pages/NotFound.jsx` with AquaTerra branding + Return home CTA.
+- CAD editor guards against <768px viewport with a friendly "please use tablet/desktop" placeholder.
+- `.env.example` created for backend + frontend + mobile.
+- `robots.txt` + `sitemap.xml` served from `/app/frontend/public`.
+
+## Punted from Phase 12 (with reasons)
+- **Full permissions-matrix per-page enforcement UI** — backend matrix already persists via Phase 9; end-to-end frontend enforcement would touch nearly every page and blow the context budget. Recommend a follow-up phase focused solely on it.
+- **"Test as..." role-preview dropdown** — depends on the above; punted together.
+- **Impersonation "first-time modal"** — banner already shipped; modal is polish, deferred.
+- **Currency + date + timestamp audit across every file** — spot-checks show consistent Intl.NumberFormat usage in reports/finance pages; a full sweep is deferred.
+- **Loading skeleton + empty-state audit across every page** — most already have friendly empties; comprehensive audit deferred.
+- **Ops Hub / Dispatch / Schedule / Reports responsive pass** — desktop-first is intentional; CAD guarded, other pages remain usable via horizontal scroll on mobile.
+- **`POST /api/settings/integrations/{key}` to edit envs from the UI + restart backend** — writing to `.env` from a running process + `supervisorctl restart` from inside FastAPI is fragile in this environment. Left as manual `.env` edits + supervisor restart.
 
 ## Phase 11 acceptance (2026-07-13)
 - 282 OpenAPI paths (up from 274). New: `/virtual-bid/generate`, `/virtual-bid`, `/weather/risk`, `/weather/reschedule-recommendations`, `/cards`, `/cards/{slug}`, `/public/cards/{slug}`, `/public/cards/{slug}/vcard`.

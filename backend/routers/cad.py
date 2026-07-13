@@ -3,7 +3,7 @@ from typing import Optional, List, Any
 from pydantic import BaseModel, Field
 
 from config import db
-from utils import now_iso, new_id, get_current_user, require_admin
+from utils import now_iso, new_id, require_admin
 
 router = APIRouter()
 
@@ -19,11 +19,6 @@ class DesignIn(BaseModel):
     area_sqft: float = 0.0
     perimeter_ft: float = 0.0
     thumbnail: Optional[str] = None    # base64 data uri (optional)
-
-
-def _staff(user: dict):
-    if user.get("role") not in ("admin", "technician"):
-        raise HTTPException(403, "Not allowed")
 
 
 def _doc_public(d: dict) -> dict:

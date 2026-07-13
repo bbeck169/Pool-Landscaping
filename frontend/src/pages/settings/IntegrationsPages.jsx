@@ -21,6 +21,7 @@ function Card({ children, testid, className = "" }) {
 export function IntegrationsHub() {
   const [rows, setRows] = useState(null);
   const [backfillState, setBackfillState] = useState({ running: false, result: null, error: null });
+  const [health, setHealth] = useState({});
   useEffect(() => { api.get("/settings/integrations").then(setRows).catch(() => setRows({})); }, []);
   const runBackfill = async () => {
     setBackfillState({ running: true, result: null, error: null });
@@ -31,13 +32,25 @@ export function IntegrationsHub() {
       setBackfillState({ running: false, result: null, error: e.message });
     }
   };
+  const checkHealth = async (k) => {
+    setHealth((h) => ({ ...h, [k]: { running: true } }));
+    try {
+      const r = await api.get(`/settings/integrations/health/${k}`);
+      setHealth((h) => ({ ...h, [k]: { running: false, ...r } }));
+    } catch (e) {
+      setHealth((h) => ({ ...h, [k]: { running: false, ok: false, message: e.message } }));
+    }
+  };
   const INTEGRATIONS = [
     { k: "emergent_llm", label: "Emergent LLM", desc: "OpenAI · Claude · Gemini via Emergent" },
     { k: "google", label: "Google", desc: "Places autocomplete · Geocoding · Maps tiles" },
     { k: "openweb_ninja", label: "OpenWeb Ninja", desc: "Zillow sold-lead data for D2D" },
     { k: "resend", label: "Resend", desc: "Transactional email" },
     { k: "stripe", label: "Stripe", desc: "Card payments" },
+    { k: "stripe_webhook", label: "Stripe Webhook", desc: "Webhook signing secret" },
     { k: "twilio", label: "Twilio", desc: "SMS delivery" },
+    { k: "wordpress", label: "WordPress", desc: "SEO article publishing" },
+    { k: "gbp", label: "Google Business Profile", desc: "OAuth Client ID" },
     { k: "ringcentral", label: "RingCentral", desc: "Inbound call tracking" },
   ];
 
@@ -53,19 +66,49 @@ export function IntegrationsHub() {
           {rows === null && <div className="text-sm" style={{ color: colors.onSurfaceSecondary }}>Loading…</div>}
           {rows && INTEGRATIONS.map((i) => {
             const s = rows[i.k] || { configured: false, preview: "", note: "" };
+            const h = health[i.k];
+            const chipBg = s.configured
+              ? (h?.ok === false ? "#FEF3C7" : "#DCFCE7")
+              : "#FEE2E2";
+            const chipFg = s.configured
+              ? (h?.ok === false ? "#854D0E" : "#166534")
+              : "#991B1B";
+            const chipLabel = !s.configured ? "Not configured"
+              : h?.running ? "Checking…"
+              : h?.ok === false ? "Fallback"
+              : h?.ok ? "Live"
+              : "Configured";
             return (
               <div key={i.k} className="rounded-xl p-3 flex items-start gap-3"
                    style={{ border: `1px solid ${colors.border}` }}
                    data-testid={`integration-${i.k}`}>
                 <div className="w-2.5 h-2.5 rounded-full mt-1.5" style={{ backgroundColor: s.configured ? colors.brandSecondary : colors.error }} />
                 <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-sm">{i.label}</div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="font-semibold text-sm">{i.label}</div>
+                    <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full"
+                          style={{ backgroundColor: chipBg, color: chipFg }}
+                          data-testid={`integration-chip-${i.k}`}>{chipLabel}</span>
+                  </div>
                   <div className="text-xs" style={{ color: colors.onSurfaceSecondary }}>{i.desc}</div>
                   {s.configured
                     ? <div className="text-xs mt-1 font-mono" style={{ color: colors.onSurface }}>{s.preview}</div>
-                    : <div className="text-xs mt-1" style={{ color: colors.error }}>Not configured</div>
+                    : <div className="text-xs mt-1" style={{ color: colors.error }}>Set the env var in /app/backend/.env</div>
                   }
+                  {h && !h.running && (
+                    <div className="text-[11px] mt-1" style={{ color: h.ok ? "#166534" : "#991B1B" }}>
+                      {h.ok ? "✓" : "✗"} {h.message}
+                    </div>
+                  )}
                 </div>
+                {s.configured && (
+                  <button onClick={() => checkHealth(i.k)} disabled={h?.running}
+                          className="px-2 py-1 rounded-lg text-[10px] font-semibold self-start"
+                          style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurfaceSecondary }}
+                          data-testid={`integration-check-${i.k}`}>
+                    {h?.running ? "…" : "Check"}
+                  </button>
+                )}
               </div>
             );
           })}

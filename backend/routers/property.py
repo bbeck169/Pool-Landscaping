@@ -4,16 +4,11 @@ from typing import Optional, List, Any
 from pydantic import BaseModel, Field
 
 from config import db, OPENWEB_NINJA_API_KEY
-from utils import now_iso, new_id, get_current_user, require_admin
+from utils import now_iso, new_id, require_admin
 
 router = APIRouter()
 
 OWN_BASE = "https://api.openwebninja.com/realtime-zillow-data"
-
-
-def _staff(user: dict):
-    if user.get("role") not in ("admin", "technician"):
-        raise HTTPException(403, "Not allowed")
 
 
 def _extract_photos(data: dict) -> List[str]:
