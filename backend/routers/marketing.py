@@ -73,7 +73,8 @@ async def get_public_form(slug: str):
 @router.post("/public/forms/{slug}/submit")
 async def submit_public_form(slug: str, body: dict):
     form = await db.forms.find_one({"$or": [{"slug": slug}, {"id": slug}]}, {"_id": 0})
-    if not form:
+    if not form or form.get("status") != "published":
+        # Draft forms are private until published — mirror the GET behavior.
         raise HTTPException(404, "Form not found")
     vals = (body or {}).get("values") or body or {}
     sub = {"id": new_id(), "form_id": form["id"], "slug": slug, "values": vals, "created_at": now_iso()}
@@ -88,6 +89,17 @@ async def submit_public_form(slug: str, body: dict):
             "created_at": now_iso(),
         })
     return {"ok": True, "redirect_url": form.get("redirect_url")}
+
+
+@router.get("/forms/{fid}/preview")
+async def preview_form(fid: str, user: dict = Depends(require_admin)):
+    """Admin-only preview — returns the full form schema regardless of publish status."""
+    form = await db.forms.find_one({"$or": [{"id": fid}, {"slug": fid}]}, {"_id": 0})
+    if not form:
+        raise HTTPException(404, "Form not found")
+    # Do not leak internal notification recipients into the preview payload.
+    form.pop("notify_emails", None)
+    return form
 
 
 @router.post("/forms/{fid}/submit")

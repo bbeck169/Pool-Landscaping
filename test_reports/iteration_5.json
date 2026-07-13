@@ -1,0 +1,25 @@
+{
+  "summary": "Backend-only verification of draft-form public submission gating bug fix + new admin-only preview endpoint. All 6 targeted assertions pass and full 48-test regression suite (Phase 11 admin guard + D2D auth alias + E2E journeys) still 48/48. Total 54/54.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_public_form_draft_gate.py",
+    "/app/backend/tests/test_phase11_admin_guard.py",
+    "/app/backend/tests/test_d2d_auth_alias.py",
+    "/app/backend/tests/test_e2e_journeys.py",
+    "/app/test_reports/pytest/regression_48.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "marketing.py: public GET uses 'form.get(status) == draft' vs public POST uses 'form.get(status) != published'. Semantics differ if a third status ever appears (e.g. archived): GET would expose it, POST would 404. Not a bug today but flagged for consistency.",
+    "Preview endpoint correctly excludes notify_emails and requires admin; tech role receives 403 as expected."
+  ],
+  "updated_files": ["/app/backend/tests/test_public_form_draft_gate.py"],
+  "success_rate": {"backend": "100% (54/54)", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "admin@aquaterra.com / password123 ; mike@aquaterra.com / password123",
+  "seed_data_creation": "Each test creates a TEST_pool_audit_{draft|published} form via POST /api/forms and cleans it up with DELETE /api/forms/{id}; conftest teardown also purges forms with TEST_ prefix.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_public_form_draft_gate.py is the canonical regression for this fix. Uses REACT_APP_BACKEND_URL env var (must be exported before pytest run since backend .env doesn't set it). Draft slug 'poolscape-audit' is reused across tests; cleanup runs in finally blocks so parallel runs are safe.",
+  "rca of the issue": "Prior code: POST /api/public/forms/{slug}/submit only looked up form by slug/id without checking status, so submissions succeeded for draft forms while GET returned 404 (inconsistent surface). Fix in marketing.py L73-78 gates on form.status == 'published'; new GET /api/forms/{fid}/preview (L94-102) provides admin builder access to drafts without changing publish state."
+}
