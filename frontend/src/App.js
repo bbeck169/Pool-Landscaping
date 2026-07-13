@@ -35,6 +35,10 @@ import {
   SeoHub, ArticlesList, ArticleEditor, KeywordSuggest, SeoAudit, RankGrid,
   WordPressSettings, GbpHub,
 } from "@/pages/seo/SeoPages";
+import {
+  AiEmployeesList, AiEmployeeDetail, TasksPage, NotificationsPage,
+  AccessSettings, AccessHistory, RingCentralSettings, CallLogsPage,
+} from "@/pages/aiops/AiOpsPages";
 import { EstimatesList, EstimatorSettings, EstimatorTemplates, EstimatorEditor } from "@/pages/estimator/Estimator";
 import OpsHub from "@/pages/ops/OpsHub";
 import ReportsHub from "@/pages/reports/ReportsHub";
@@ -142,6 +146,17 @@ export default function App() {
             <Route path="seo/rank-grid" element={<AdminOnly><RankGrid /></AdminOnly>} />
             <Route path="seo/wordpress" element={<AdminOnly><WordPressSettings /></AdminOnly>} />
             <Route path="gbp" element={<AdminOnly><GbpHub /></AdminOnly>} />
+
+            {/* Phase 9 — AI Ops */}
+            <Route path="ai-employees" element={<AdminOnly><AiEmployeesList /></AdminOnly>} />
+            <Route path="ai-employees/:id" element={<AdminOnly><AiEmployeeDetail /></AdminOnly>} />
+            <Route path="ai-chat/:id" element={<AdminOnly><AiEmployeeDetail /></AdminOnly>} />
+            <Route path="tasks" element={<AdminOnly><TasksPage /></AdminOnly>} />
+            <Route path="notifications" element={<AdminOnly><NotificationsPage /></AdminOnly>} />
+            <Route path="access-settings" element={<AdminOnly><AccessSettings /></AdminOnly>} />
+            <Route path="access-history" element={<AdminOnly><AccessHistory /></AdminOnly>} />
+            <Route path="settings/ringcentral" element={<AdminOnly><RingCentralSettings /></AdminOnly>} />
+            <Route path="call-logs" element={<AdminOnly><CallLogsPage /></AdminOnly>} />
 
             {/* Phase 6 — Finance + Reports */}
             <Route path="reports" element={<AdminOnly><ReportsHub /></AdminOnly>} />

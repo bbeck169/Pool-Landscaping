@@ -6,7 +6,7 @@ from config import client, db, logger
 from seed import seed, seed_extras
 from routers import (
     auth, customers, technicians, jobs, quotes, leads, team, items, payments,
-    operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences,
+    operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops,
 )
 
 app = FastAPI(
@@ -18,7 +18,7 @@ app = FastAPI(
 api_router = APIRouter(prefix="/api")
 
 for module in [auth, customers, technicians, jobs, quotes, leads, team, items, payments,
-               operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences]:
+               operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops]:
     api_router.include_router(module.router)
 
 
@@ -65,6 +65,7 @@ async def startup():
     try:
         await marketing_studio._seed_templates()
         await sequences.ensure_sequences_seeded()
+        await ai_ops.ensure_ai_employees_seeded()
     except Exception as e:
         logger.warning(f"phase-7 seeds skipped: {e}")
     # Background auto-publish drip: check for due SEO articles every 10 minutes.

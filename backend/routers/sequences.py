@@ -54,7 +54,7 @@ SEEDED_SEQUENCES = [
      "steps": [
          {"delay_days": 0, "action_type": "email", "template_slug": "invoice-reminder-email"},
          {"delay_days": 15, "action_type": "sms", "template_slug": "invoice-past-due-sms", "notes": "AI-drafted reminder"},
-         {"delay_days": 30, "action_type": "task", "notes": "Escalation task to admin"},
+         {"delay_days": 30, "action_type": "escalation_task", "notes": "Escalate to admin — create a high-priority task"},
      ]},
 ]
 
@@ -66,6 +66,12 @@ async def ensure_sequences_seeded():
             doc = {"id": new_id(), **seq, "active": True, "created_at": now_iso()}
             await db.sequences.insert_one(doc)
             logger.info(f"Seeded sequence '{seq['slug']}'")
+        else:
+            # Refresh steps to pick up escalation_task upgrades on hot-reloads.
+            await db.sequences.update_one(
+                {"slug": seq["slug"]},
+                {"$set": {"steps": seq["steps"], "trigger": seq["trigger"]}},
+            )
 
 
 # ─── CRUD ──────────────────────────────────────────────────────────────────
@@ -178,6 +184,48 @@ async def run_sequences_tick():
                      "fired_at": now_iso(), "notes": step.get("notes")}
         # Stubbed side effect — real implementation would send email/SMS/task
         logger.info(f"sequences_tick: enrollment {e['id']} step {current} fired ({step.get('action_type')})")
+        # NEW — auto-create an admin task when this step is an escalation.
+        if step.get("action_type") == "escalation_task":
+            try:
+                cust = await db.customers.find_one({"id": e.get("customer_id")}, {"_id": 0}) or {}
+                inv = await db.quotes.find_one({"id": e.get("trigger_invoice_id")}, {"_id": 0}) or {}
+                admin_user = await db.users.find_one({"role": "admin", "active": {"$ne": False}}, {"_id": 0}) or {}
+                due_iso = (inv.get("due_date") or "")[:10]
+                days_past = 30
+                if due_iso:
+                    try:
+                        days_past = (datetime.now(timezone.utc).date() - datetime.fromisoformat(due_iso).date()).days
+                    except Exception:
+                        pass
+                task = {
+                    "id": new_id(),
+                    "title": f"Overdue invoice — customer {cust.get('name', '(unknown)')}",
+                    "description": (
+                        f"Auto-escalated from Overdue Invoice Sequence — invoice "
+                        f"{inv.get('id', '?')[:8]} (${inv.get('total', 0)}) is {days_past} days past due. "
+                        "Attempted email + SMS reminders, no response."
+                    ),
+                    "priority": "high",
+                    "assigned_to": admin_user.get("id"),
+                    "status": "open",
+                    "source": "sequence-escalation",
+                    "related_ref": {"type": "customer", "id": e.get("customer_id"),
+                                    "invoice_id": e.get("trigger_invoice_id")},
+                    "created_at": now_iso(),
+                }
+                await db.tasks.insert_one(task)
+                if admin_user.get("id"):
+                    await db.notifications.insert_one({
+                        "id": new_id(), "user_id": admin_user["id"],
+                        "title": f"New task: Overdue invoice — {cust.get('name', 'customer')}",
+                        "body": "Auto-escalated from sequence. Click to open the task.",
+                        "ref": {"type": "task", "id": task["id"]},
+                        "read": False, "created_at": now_iso(),
+                    })
+                log_entry["task_id"] = task["id"]
+                logger.info(f"sequences_tick: escalation task {task['id']} created for customer {e.get('customer_id')}")
+            except Exception as ex:
+                logger.warning(f"escalation task creation failed: {ex}")
         next_step = current + 1
         upd = {"$push": {"log": log_entry}, "$set": {}}
         if next_step >= len(steps):

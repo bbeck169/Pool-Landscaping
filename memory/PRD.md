@@ -57,13 +57,22 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
   - GBP not-connected state renders CTA card and Connect button surfaces the friendly 424 message.
 
 ## Prioritized backlog
-- **P0 · Phase 7** — AI Marketing Studio (see `/app/memory/phase-7-plan.md`)
-- **P1 · Phase 8** — SEO Studio + WordPress + GBP
-- **P1 · Phase 9** — AI Employees / AI Chat / access settings + RingCentral
-- **P1 · Phase 10** — D2D Sales
-- **P2 · Phase 11** — Landscape AI · CAD · Measure · Virtual Bid
+- **DONE · Phase 7** — AI Marketing Studio
+- **DONE · Phase 8** — SEO Studio + WordPress + GBP
+- **DONE · Phase 9** — AI Employees + AI Chat + Tasks + Escalation + RingCentral + Access
+- **P0 · Phase 10** — D2D Sales
+- **P1 · Phase 11** — Landscape AI · CAD · Measure · Virtual Bid
 - **P2 · Phase 12** — Admin/Settings polish
 - **P2 · Phase 13** — Full E2E parity testing
+
+## Phase 9 acceptance (2026-07-13)
+- 270 OpenAPI paths (up from ~253). 17 Phase 9 paths under `/api/ai-ops/*`, `/api/tasks`, `/api/notifications`, `/api/permissions`, `/api/settings/ringcentral`, `/api/call-logs`, `/api/ringcentral/webhook`, `/api/sequences/tick/run`.
+- Root cause of earlier 404s: `ai_ops` router imported but not in `include_router` loop in `server.py`. Fixed.
+- 8 AI personas seeded (Ava/Max/Riley/Sam/Nora + 3 marketing agents). Chat persists turns in `ai_chat_turns` with `thread_id`; stubs gracefully.
+- Task CRUD + `/tasks/{id}/complete` + `?status`/`?source` filters. Kanban lists render.
+- Sequences tick escalation VERIFIED end-to-end: overdue enrollment at step 2 → tick creates a high-priority `sequence-escalation` task + admin notification.
+- RingCentral webhook (public) accepts payloads without creds, matches customers by phone tail, auto-creates a lead on unknown numbers, and logs to `call_logs`.
+- Permissions matrix persisted in `settings/permissions_matrix` with sensible defaults.
 
 ## Known gaps / non-blockers
 - Leaflet maps for `/dispatch/map` and `/schedule/map` (deferred)
