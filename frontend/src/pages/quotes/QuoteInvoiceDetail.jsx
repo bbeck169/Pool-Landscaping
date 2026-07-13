@@ -236,8 +236,25 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
           </thead>
           <tbody>
             {(doc.line_items || []).map((li, i) => (
-              <tr key={i} style={{ borderBottom: `1px solid ${colors.divider}` }}>
-                <td className="px-2 py-2" style={{ color: colors.onSurface }}>{li.description}</td>
+              <tr key={i} style={{
+                borderBottom: `1px solid ${colors.divider}`,
+                backgroundColor: li.is_late_fee ? "#FFF7ED" : undefined,
+              }}
+                  data-testid={li.is_late_fee ? "line-item-late-fee" : undefined}>
+                <td className="px-2 py-2" style={{ color: colors.onSurface }}>
+                  <div className="flex items-center gap-2">
+                    <span>{li.description}</span>
+                    {li.is_late_fee ? (
+                      <span
+                        className="px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide"
+                        style={{ backgroundColor: "#FEE2E2", color: "#B91C1C" }}
+                        data-testid="late-fee-chip"
+                      >
+                        Late fee
+                      </span>
+                    ) : null}
+                  </div>
+                </td>
                 <td className="px-2 py-2 text-right" style={{ color: colors.onSurfaceSecondary }}>{li.quantity}</td>
                 <td className="px-2 py-2 text-right" style={{ color: colors.onSurfaceSecondary }}>{money(li.unit_price)}</td>
                 <td className="px-2 py-2 text-right font-semibold" style={{ color: colors.onSurface }}>

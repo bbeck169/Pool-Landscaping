@@ -359,3 +359,141 @@ async def update_repair(rid: str, body: RepairUpdate, user: dict = Depends(get_c
     return _strip_cost(doc) if user.get("role") == "technician" else doc
 
 
+
+
+# ────────────────────────── Automatic late fees ──────────────────────────────
+# Daily job assesses a one-time flat late fee on any unpaid/partial invoice whose
+# due_date is more than `grace_days` (default 30) days ago. Idempotent via the
+# `is_late_fee: true` marker on the line item.
+LATE_FEES_SETTINGS_ID = "late_fees_settings"
+LATE_FEE_DEFAULTS = {"enabled": True, "amount": 15.0, "grace_days": 30}
+
+
+async def _get_late_fee_settings() -> dict:
+    doc = await db.settings.find_one({"id": LATE_FEES_SETTINGS_ID}, {"_id": 0}) or {}
+    return {
+        "enabled": bool(doc.get("enabled", LATE_FEE_DEFAULTS["enabled"])),
+        "amount": float(doc.get("amount", LATE_FEE_DEFAULTS["amount"])),
+        "grace_days": int(doc.get("grace_days", LATE_FEE_DEFAULTS["grace_days"])),
+    }
+
+
+def _has_late_fee(inv: dict) -> bool:
+    return any(bool(li.get("is_late_fee")) for li in (inv.get("line_items") or []))
+
+
+async def _log_invoice_activity(invoice_id: str, kind: str, msg: str, meta: dict | None = None):
+    try:
+        await db.activity_logs.insert_one({
+            "id": new_id(),
+            "entity": "invoice",
+            "entity_id": invoice_id,
+            "type": kind,
+            "message": msg,
+            "meta": meta or {},
+            "created_at": now_iso(),
+        })
+    except Exception as e:
+        logger.warning(f"activity_log insert failed for invoice {invoice_id}: {e}")
+
+
+async def run_late_fee_assessment() -> dict:
+    """Scan invoices, add one $amount late fee to any past-due-by-grace_days doc.
+
+    Called by the daily scheduler AND by the manual admin endpoint. Idempotent.
+    Master invoices live in a separate collection (db.master_invoices) and are
+    aggregations over children — each *child* invoice gets its own late fee
+    (children are still tracked/paid individually). Master rollup totals are
+    not mutated by this job.
+    """
+    cfg = await _get_late_fee_settings()
+    if not cfg["enabled"]:
+        return {"assessed": 0, "invoice_ids": [], "skipped": "disabled"}
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=cfg["grace_days"])).date().isoformat()
+    amount = round(float(cfg["amount"]), 2)
+
+    q = {
+        "doc_type": "invoice",
+        "payment_status": {"$in": ["unpaid", "partial", "overdue"]},
+        "due_date": {"$exists": True, "$ne": None, "$lt": cutoff},
+    }
+    invs = await db.quotes.find(q, {"_id": 0}).to_list(5000)
+    assessed_ids: list[str] = []
+    for inv in invs:
+        if _has_late_fee(inv):
+            continue
+        line_items = list(inv.get("line_items") or [])
+        fee_line = {
+            "description": f"Late fee ({cfg['grace_days']}+ days past due)",
+            "quantity": 1,
+            "unit_price": amount,
+            "line_total": amount,
+            "category": "Late fee",
+            "is_late_fee": True,
+        }
+        line_items.append(fee_line)
+        subtotal = round(sum(float(li.get("quantity") or 0) * float(li.get("unit_price") or 0)
+                              for li in line_items), 2)
+        tax_rate = float(inv.get("tax_rate") or 0)
+        tax = round(subtotal * tax_rate / 100.0, 2)
+        total = round(subtotal + tax, 2)
+        amount_paid = float(inv.get("amount_paid") or 0)
+        remaining = round(max(total - amount_paid, 0.0), 2)
+        await db.quotes.update_one(
+            {"id": inv["id"]},
+            {"$set": {
+                "line_items": line_items,
+                "subtotal": subtotal,
+                "tax": tax,
+                "total": total,
+                "remaining_balance": remaining,
+                "late_fee_assessed_at": now_iso(),
+            }},
+        )
+        assessed_ids.append(inv["id"])
+        await _log_invoice_activity(
+            inv["id"], "late-fee-assessed",
+            f"${amount:.2f} late fee added — {cfg['grace_days']}+ days past due",
+            {"amount": amount, "grace_days": cfg["grace_days"]},
+        )
+        try:
+            await notify_customer(inv.get("customer_id"), "Late fee added",
+                                  f"A late fee of ${amount:.2f} has been added to invoice {inv.get('title', '')}.")
+        except Exception as e:
+            logger.warning(f"notify_customer skipped for late fee on {inv['id']}: {e}")
+    logger.info(f"Late-fee run: assessed {len(assessed_ids)} invoice(s) (cutoff before {cutoff}).")
+    return {"assessed": len(assessed_ids), "invoice_ids": assessed_ids}
+
+
+# ─── settings endpoints ─────────────────────────────────────────────────────
+class LateFeeSettingsIn(BaseModel):
+    enabled: Optional[bool] = None
+    amount: Optional[float] = None
+    grace_days: Optional[int] = None
+
+
+@router.get("/settings/late-fees")
+async def get_late_fee_settings(admin: dict = Depends(require_admin)):
+    return await _get_late_fee_settings()
+
+
+@router.put("/settings/late-fees")
+async def update_late_fee_settings(body: LateFeeSettingsIn, admin: dict = Depends(require_admin)):
+    upd = {k: v for k, v in body.dict().items() if v is not None}
+    if "amount" in upd and float(upd["amount"]) < 0:
+        raise HTTPException(400, "amount must be >= 0")
+    if "grace_days" in upd and int(upd["grace_days"]) < 0:
+        raise HTTPException(400, "grace_days must be >= 0")
+    await db.settings.update_one(
+        {"id": LATE_FEES_SETTINGS_ID},
+        {"$set": {"id": LATE_FEES_SETTINGS_ID, **upd}},
+        upsert=True,
+    )
+    return await _get_late_fee_settings()
+
+
+@router.post("/finances/late-fees/run")
+async def run_late_fees(admin: dict = Depends(require_admin)):
+    """Manually trigger the same late-fee assessment the daily scheduler runs."""
+    return await run_late_fee_assessment()

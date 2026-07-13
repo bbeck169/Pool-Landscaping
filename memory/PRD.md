@@ -29,6 +29,9 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
   - Shared `DateRangePicker.jsx` with URL-query sync (start/end/preset).
   - Sidebar Reports + Finance groups (collapsible).
   - `AdminOnly` route guard prevents technician deep-links to Phase-6 routes.
+- **Automatic Late Fees (2026-07)**
+  - Backend: `run_late_fee_assessment` (daily @ 02:00 UTC via APScheduler cron) + admin endpoints `GET/PUT /api/settings/late-fees` and `POST /api/finances/late-fees/run`. Idempotent via `is_late_fee: true` line-item marker. Recomputes subtotal/tax/total/remaining_balance and logs to `activity_logs`. Master invoices unchanged — child invoices each carry their own fee.
+  - Frontend: `/settings/late-fees` form (Enable, Amount, Grace days, Run now). Invoice detail line-items table highlights late-fee rows with a red "LATE FEE" chip + amber row background. Invoices list gains a "Has late fee" filter chip. OpenAPI now at 213 paths.
 
 ## Prioritized backlog
 - **P0 · Phase 7** — AI Marketing Studio (see `/app/memory/phase-7-plan.md`)

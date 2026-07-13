@@ -19,6 +19,7 @@ import QuoteInvoiceDetail from "@/pages/quotes/QuoteInvoiceDetail";
 import InvoicesList from "@/pages/invoices/InvoicesList";
 import { MasterInvoicesList, MasterInvoiceNew, MasterInvoiceDetail } from "@/pages/invoices/MasterInvoice";
 import PaymentHandlesSettings from "@/pages/settings/PaymentHandles";
+import LateFeesSettings from "@/pages/settings/LateFees";
 import { EstimatesList, EstimatorSettings, EstimatorTemplates, EstimatorEditor } from "@/pages/estimator/Estimator";
 import OpsHub from "@/pages/ops/OpsHub";
 import ReportsHub from "@/pages/reports/ReportsHub";
@@ -94,6 +95,7 @@ export default function App() {
             <Route path="estimator/:id" element={<EstimatorEditor />} />
 
             <Route path="settings/payment-handles" element={<PaymentHandlesSettings />} />
+            <Route path="settings/late-fees" element={<AdminOnly><LateFeesSettings /></AdminOnly>} />
 
             {/* Phase 6 — Finance + Reports */}
             <Route path="reports" element={<AdminOnly><ReportsHub /></AdminOnly>} />

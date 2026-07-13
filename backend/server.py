@@ -62,8 +62,10 @@ async def startup():
     scheduler.add_job(finances.run_monthly_chem_billing, "interval", hours=24, id="chem_billing", replace_existing=True)
     # Auto-revert temporary route coverage after its week ends (checked daily).
     scheduler.add_job(coverage.revert_expired_coverage, "interval", hours=12, id="coverage_revert", replace_existing=True)
+    # Assess automatic late fees on unpaid invoices past their grace period (daily @ 02:00 UTC).
+    scheduler.add_job(finances.run_late_fee_assessment, "cron", hour=2, minute=0, id="late_fees", replace_existing=True)
     scheduler.start()
-    logger.info("SEO auto-publish + chemical billing schedulers started")
+    logger.info("SEO auto-publish + chemical billing + late-fee schedulers started")
 
 
 @app.on_event("shutdown")

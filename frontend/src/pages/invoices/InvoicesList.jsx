@@ -18,11 +18,19 @@ export default function InvoicesList() {
   const [summary, setSummary] = useState(null);
   const [q, setQ] = useState(params.get("q") || "");
   const status = params.get("status") || "";
+  const hasLateFee = params.get("late_fee") === "1";
 
   const setStatus = (v) => {
     const s = new URLSearchParams(params);
     if (v) s.set("status", v);
     else s.delete("status");
+    setParams(s, { replace: true });
+  };
+
+  const setLateFeeFilter = (v) => {
+    const s = new URLSearchParams(params);
+    if (v) s.set("late_fee", "1");
+    else s.delete("late_fee");
     setParams(s, { replace: true });
   };
 
@@ -54,6 +62,7 @@ export default function InvoicesList() {
 
   const filtered = (rows || [])
     .filter((r) => (status ? (r.payment_status || "unpaid") === status : true))
+    .filter((r) => (hasLateFee ? (r.line_items || []).some((li) => li.is_late_fee) : true))
     .filter((r) =>
       q
         ? [r.title, r.customer_name].filter(Boolean).some((s) => s.toLowerCase().includes(q.toLowerCase()))
@@ -131,6 +140,18 @@ export default function InvoicesList() {
           <option value="partial">Partial</option>
           <option value="paid">Paid</option>
         </select>
+        <button
+          onClick={() => setLateFeeFilter(!hasLateFee)}
+          className="text-xs font-semibold px-3 py-2 rounded-lg transition"
+          style={{
+            backgroundColor: hasLateFee ? "#FEE2E2" : colors.surfaceSecondary,
+            color: hasLateFee ? "#B91C1C" : colors.onSurfaceSecondary,
+            border: `1px solid ${hasLateFee ? "#FCA5A5" : colors.border}`,
+          }}
+          data-testid="inv-filter-late-fee"
+        >
+          Has late fee{hasLateFee ? " ✓" : ""}
+        </button>
       </div>
 
       {rows === null ? (

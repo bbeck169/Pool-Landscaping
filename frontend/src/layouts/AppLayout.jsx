@@ -56,6 +56,7 @@ const ADMIN_NAV = [
       { to: "/payments", label: "Payments Ledger" },
       { to: "/auto-billing", label: "Auto-Billing" },
       { to: "/income-categories", label: "Income Categories" },
+      { to: "/settings/late-fees", label: "Late Fees" },
       { to: "/impexp", label: "Import / Export" },
     ],
   },
