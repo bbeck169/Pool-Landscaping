@@ -39,32 +39,38 @@ async def dispatch(user: dict = Depends(require_admin), date: Optional[str] = No
 # ----------------------- Operations: Work Stream -----------------------
 @router.get("/activity")
 async def activity(user: dict = Depends(require_admin), limit: int = 40):
-    """Unified reverse-chronological activity feed across the CRM."""
+    """Unified reverse-chronological activity feed across the CRM.
+    Each event carries `related_ref` = {"type", "id"} so UI can drill into
+    the source document (job, quote, invoice, customer, payment)."""
     events = []
     jobs = await db.jobs.find({}, {"_id": 0}).sort("created_at", -1).to_list(60)
     for j in jobs:
+        ref = {"type": "job", "id": j.get("id")}
         if j.get("status") == "requested":
             events.append({"type": "request", "icon": "help-buoy", "title": "Service requested",
                            "detail": f"{j.get('customer_name', 'Customer')} · {j.get('service_type', j.get('title', ''))}",
-                           "at": j.get("created_at")})
+                           "at": j.get("created_at"), "related_ref": ref})
         elif j.get("status") == "completed":
             events.append({"type": "job_done", "icon": "checkmark-done-circle", "title": "Job completed",
                            "detail": f"{j.get('title', '')} · {j.get('technician_name') or 'Unassigned'}",
-                           "at": j.get("completed_at") or j.get("created_at")})
+                           "at": j.get("completed_at") or j.get("created_at"), "related_ref": ref})
         else:
             events.append({"type": "job", "icon": "briefcase", "title": "Job created",
                            "detail": f"{j.get('title', '')} · {j.get('customer_name', '')}",
-                           "at": j.get("created_at")})
+                           "at": j.get("created_at"), "related_ref": ref})
     paid = await db.quotes.find({"payment_status": "paid"}, {"_id": 0}).sort("paid_at", -1).to_list(30)
     for q in paid:
+        ref_type = "invoice" if q.get("doc_type") == "invoice" else "quote"
         events.append({"type": "payment", "icon": "card", "title": "Payment received",
                        "detail": f"{q.get('customer_name', '')} · ${q.get('total', 0):,.2f}",
-                       "at": q.get("paid_at") or q.get("created_at")})
+                       "at": q.get("paid_at") or q.get("created_at"),
+                       "related_ref": {"type": ref_type, "id": q.get("id")}})
     leads = await db.leads.find({}, {"_id": 0}).sort("created_at", -1).to_list(30)
     for l in leads:
         events.append({"type": "lead", "icon": "magnet", "title": "New lead",
                        "detail": f"{l.get('name', '')} · {l.get('source', '')}",
-                       "at": l.get("created_at")})
+                       "at": l.get("created_at"),
+                       "related_ref": {"type": "lead", "id": l.get("id")}})
     events = [e for e in events if e.get("at")]
     events.sort(key=lambda e: e["at"], reverse=True)
     return events[:limit]

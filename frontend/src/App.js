@@ -73,6 +73,9 @@ import {
   PortalDocuments, PortalMessages, PortalProfile,
   PortalRequestService, PortalPaymentComplete,
 } from "@/pages/portal/PortalPages";
+import PortalSignPage from "@/pages/portal/PortalSign";
+import { CsatDashboard, CsatDetail, PublicCsat } from "@/pages/csat/CsatPages";
+import { RealtimeProvider } from "@/realtime/NotificationSocket";
 
 function AdminOnly({ children }) {
   const { user, loading } = useAuth();
@@ -87,12 +90,16 @@ export default function App() {
   return (
     <AuthProvider>
       <PermissionsBridge>
+      <RealtimeProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/public/card/:slug" element={<PublicCard />} />
           <Route path="/f/:slug" element={<PublicForm />} />
+          {/* Phase 15A public magic-link routes (no auth) */}
+          <Route path="/csat/:token" element={<PublicCsat />} />
+          <Route path="/portal/sign/:token" element={<PortalSignPage />} />
 
           {/* Everything else lives inside the protected shell (side nav + top bar + bottom tabs). */}
           <Route path="/" element={<AppLayout />}>
@@ -171,6 +178,10 @@ export default function App() {
             <Route path="ai-chat/:id" element={<AdminOnly><AiEmployeeDetail /></AdminOnly>} />
             <Route path="tasks" element={<AdminOnly><TasksPage /></AdminOnly>} />
             <Route path="notifications" element={<AdminOnly><NotificationsPage /></AdminOnly>} />
+
+            {/* Phase 15A — CSAT admin */}
+            <Route path="csat" element={<AdminOnly><CsatDashboard /></AdminOnly>} />
+            <Route path="csat/detail/:sid" element={<AdminOnly><CsatDetail /></AdminOnly>} />
             <Route path="access-settings" element={<AdminOnly><AccessSettings /></AdminOnly>} />
             <Route path="access-history" element={<AdminOnly><AccessHistory /></AdminOnly>} />
             <Route path="settings/ringcentral" element={<AdminOnly><RingCentralSettings /></AdminOnly>} />
@@ -276,6 +287,7 @@ export default function App() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
+      </RealtimeProvider>
       </PermissionsBridge>
     </AuthProvider>
   );

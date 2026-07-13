@@ -4,6 +4,7 @@ import { ArrowLeft, Plus, Send, Bell, CheckSquare, Bot, Phone, Shield, Users } f
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useRealtime } from "@/realtime/NotificationSocket";
 
 function Card({ children, className = "", testId }) {
   return <div className={`rounded-2xl ${className}`}
@@ -190,13 +191,28 @@ export function NotificationsPage() {
   const [rows, setRows] = useState([]);
   const load = () => api.get("/notifications").then((r) => setRows(r || []));
   useEffect(() => { load(); }, []);
+  const { subscribe, connected, transport } = useRealtime();
+  useEffect(() => {
+    const off = subscribe("notification", () => load());
+    return off;
+  }, [subscribe]);
   const readAll = async () => { await api.post("/notifications/read-all", {}); load(); };
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto" data-testid="notifications-page">
       <H title="Notifications"
-         right={<button onClick={readAll} className="px-3 py-2 rounded-lg text-sm font-semibold"
-                        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}`, color: colors.onSurface }}
-                        data-testid="mark-all-read">Mark all read</button>} />
+         right={<div className="flex items-center gap-2">
+           <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded"
+                 style={{
+                   backgroundColor: connected ? "#DCFCE7" : colors.surfaceSecondary,
+                   color: connected ? "#166534" : colors.muted,
+                 }}
+                 data-testid="realtime-status">
+             {connected ? `Live · ${transport}` : "Offline"}
+           </span>
+           <button onClick={readAll} className="px-3 py-2 rounded-lg text-sm font-semibold"
+                          style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+                          data-testid="mark-all-read">Mark all read</button>
+         </div>} />
       {rows.map((n) => (
         <Card key={n.id} className="p-3 mb-2" testId={`notif-${n.id}`}>
           <div className="flex items-center gap-2">

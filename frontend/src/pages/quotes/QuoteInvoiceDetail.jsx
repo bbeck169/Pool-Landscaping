@@ -11,6 +11,8 @@ import {
   CreditCard,
   MessageSquare,
   Trash2,
+  PenTool,
+  CheckCircle2,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -44,13 +46,17 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
   const [termsEditOpen, setTermsEditOpen] = useState(false);
   const [termsDraft, setTermsDraft] = useState("");
   const [termsDefaultForDoc, setTermsDefaultForDoc] = useState("");
+  const [signInfo, setSignInfo] = useState(null);
+  const [signOpen, setSignOpen] = useState(false);
+  const [signEmail, setSignEmail] = useState("");
+  const [signMsg, setSignMsg] = useState("");
 
   const load = async () => {
     try {
       const q = await api.get(`/quotes/${id}`);
       setDoc(q);
       if (q.customer_id) {
-        api.get(`/customers/${q.customer_id}`).then(setCustomer).catch(() => {});
+        api.get(`/customers/${q.customer_id}`).then((c) => { setCustomer(c); setSignEmail(c?.email || ""); }).catch(() => {});
         api.get(`/payments/method?customer_id=${q.customer_id}`).then(setPmethod).catch(() => setPmethod(null));
       }
       api.get("/settings/payment-handles").then(setHandles).catch(() => {});
@@ -58,6 +64,8 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
         const def = q.doc_type === "invoice" ? r.default_invoice_terms : r.default_quote_terms;
         setTermsDefaultForDoc(def || "");
       }).catch(() => {});
+      // Signature status (silently ignore errors — endpoint returns {signed:false} normally)
+      api.get(`/quotes/${id}/signature`).then(setSignInfo).catch(() => setSignInfo(null));
     } catch (e) {
       setToast({ tone: "error", message: e.message });
     }
@@ -135,6 +143,23 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
     setTimeout(() => navigate(isInvoice ? "/invoices" : "/quotes"), 300);
   };
 
+  const requestSignature = async () => {
+    try {
+      const r = await api.post(`/quotes/${id}/request-signature`, {
+        signer_email: signEmail || undefined,
+        message: signMsg || undefined,
+      });
+      setSignOpen(false);
+      setToast({
+        tone: "success",
+        message: r.emailed ? "Signature request emailed" : `Sign link: ${r.url}`,
+      });
+      await load();
+    } catch (e) {
+      setToast({ tone: "error", message: e.message });
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid={`${isInvoice ? "invoice" : "quote"}-detail`}>
       <button
@@ -157,6 +182,13 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
                 <Chip
                   label={doc.payment_status || "unpaid"}
                   tone={doc.payment_status === "paid" ? "success" : doc.payment_status === "partial" ? "warning" : "danger"}
+                />
+              ) : null}
+              {signInfo?.signed ? (
+                <Chip
+                  label={`Signed by ${signInfo.signer_name}`}
+                  tone="success"
+                  testid="signed-chip"
                 />
               ) : null}
             </div>
@@ -204,6 +236,17 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
                   <Repeat2 size={14} /> Convert to job
                 </Button>
               ) : null}
+              {!signInfo?.signed ? (
+                <Button variant="ghost" onClick={() => setSignOpen(true)} testid="qd-request-sig">
+                  <PenTool size={14} /> Send for signature
+                </Button>
+              ) : (
+                <Button variant="ghost"
+                        onClick={() => window.open(`${process.env.REACT_APP_BACKEND_URL}/api/quotes/${id}/signed-pdf`, "_blank")}
+                        testid="qd-view-signed">
+                  <CheckCircle2 size={14} /> View signed PDF
+                </Button>
+              )}
             </>
           ) : (
             <>
@@ -417,6 +460,26 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
           <Button variant="danger" onClick={del}>Cancel it</Button>
         </>}>
         <p className="text-sm" style={{ color: colors.onSurfaceSecondary }}>Marks the document as cancelled. It stays in the ledger.</p>
+      </Modal>
+
+      <Modal open={signOpen} onClose={() => setSignOpen(false)} title="Send for signature"
+        footer={<>
+          <Button variant="ghost" onClick={() => setSignOpen(false)}>Cancel</Button>
+          <Button onClick={requestSignature} testid="sig-modal-submit">Send</Button>
+        </>}>
+        <div className="space-y-3" data-testid="sig-request-modal">
+          <TextInput label="RECIPIENT EMAIL" value={signEmail} onChange={(e) => setSignEmail(e.target.value)} />
+          <div>
+            <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>PERSONAL MESSAGE (optional)</label>
+            <textarea value={signMsg} onChange={(e) => setSignMsg(e.target.value)} rows={3}
+              className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
+              style={{ backgroundColor: colors.surface, color: colors.onSurface, border: `1px solid ${colors.border}` }}
+              placeholder="Please review and sign your estimate." />
+          </div>
+          <p className="text-xs" style={{ color: colors.muted }}>
+            Sends a magic-link the customer can open without logging in.
+          </p>
+        </div>
       </Modal>
 
       <Toast toast={toast} onClose={() => setToast(null)} />

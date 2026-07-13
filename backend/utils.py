@@ -105,6 +105,7 @@ async def notify_customer(customer_id: str, title: str, body: str, job_id: str =
         "created_at": now_iso(),
     }
     await db.notifications.insert_one(notif)
+    await _push_notification(notif)
     if sms:
         cust = await db.customers.find_one({"id": customer_id}, {"_id": 0})
         if cust and cust.get("phone"):
@@ -118,22 +119,51 @@ async def notify_technician(technician_id: str, title: str, body: str, job_id: s
     u = await db.users.find_one({"technician_id": technician_id, "role": "technician"}, {"_id": 0})
     if not u:
         return
-    await db.notifications.insert_one({
+    notif = {
         "id": new_id(), "user_id": u["id"], "customer_id": None,
         "title": title, "body": body, "job_id": job_id,
         "read": False, "created_at": now_iso(),
-    })
+    }
+    await db.notifications.insert_one(notif)
+    await _push_notification(notif)
 
 
 async def create_staff_notification(title: str, body: str, job_id: str = None):
     """Create an in-app notification for every admin user."""
     admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(100)
     for a in admins:
-        await db.notifications.insert_one({
+        notif = {
             "id": new_id(), "user_id": a["id"], "customer_id": None,
             "title": title, "body": body, "job_id": job_id,
             "read": False, "created_at": now_iso(),
+        }
+        await db.notifications.insert_one(notif)
+        await _push_notification(notif)
+
+
+async def _push_notification(notif: dict) -> None:
+    """Best-effort realtime fan-out. Silent no-op if the bus isn't importable
+    (e.g. during isolated unit tests)."""
+    try:
+        from routers.realtime import bus  # local import to avoid circular
+    except Exception:
+        return
+    user_id = notif.get("user_id")
+    if not user_id:
+        return
+    try:
+        await bus.broadcast(user_id, {
+            "type": "notification",
+            "payload": {
+                "id": notif["id"],
+                "title": notif.get("title"),
+                "body": notif.get("body"),
+                "job_id": notif.get("job_id"),
+                "created_at": notif.get("created_at"),
+            },
         })
+    except Exception as e:
+        logger.warning(f"realtime push failed: {e}")
 
 
 

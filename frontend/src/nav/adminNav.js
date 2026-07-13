@@ -77,6 +77,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/marketing/sequences", label: "Sequences",    icon: Workflow,     feature: "marketing", subsection: "Sequences" },
     { to: "/marketing/templates", label: "Templates",    icon: FileText,     feature: "marketing", subsection: "Sequences" },
     { to: "/marketing/reviews",   label: "Reviews",      icon: StarIcon,     feature: "marketing", subsection: "Public" },
+    { to: "/csat",                label: "CSAT / NPS",   icon: Sparkles,     feature: "marketing", subsection: "Public" },
     { to: "/forms",               label: "Forms",        icon: FileEdit,     feature: "marketing", subsection: "Public" },
     { to: "/marketing/brand",     label: "Brand Memory", icon: Palette,      feature: "marketing", subsection: "Config" },
     { to: "/ai-employees",        label: "AI Employees", icon: Bot,          feature: "ai_employees", subsection: "AI & Comms" },

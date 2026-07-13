@@ -527,6 +527,12 @@ async def update_job(jid: str, body: JobUpdate, user: dict = Depends(get_current
             # True recurrence: auto-book the next filter/salt-cell cleaning on the cadence.
             from routers.maintenance import create_recurring_maintenance
             await create_recurring_maintenance(fresh)
+            # Phase 15A: schedule a CSAT survey 24h after completion.
+            try:
+                from routers.csat import maybe_schedule_survey_for_job
+                await maybe_schedule_survey_for_job(fresh)
+            except Exception as e:
+                logger.warning(f"csat schedule failed: {e}")
 
     return await db.jobs.find_one({"id": jid}, {"_id": 0})
 

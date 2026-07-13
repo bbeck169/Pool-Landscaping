@@ -12,6 +12,7 @@ import {
   PageHeader, Button, Skeleton, StatusPill, Chip, EmptyState, TextInput, Modal, Toast, TagChip,
 } from "@/components/ui-kit";
 import { useAttendance } from "@/hooks/useAttendance";
+import WorkstreamJobDrawer from "@/pages/ops/WorkstreamJobDrawer";
 
 /* ═══ Ops hub – one page, many tabs. Kept compact by construction. ═══ */
 
@@ -237,19 +238,62 @@ function Routes() {
 
 /* ═══════════ Work Stream ═══════════ */
 function Workstream() {
+  const navigate = useNavigate();
   const [rows] = useList("/activity");
+  const [drawerJobId, setDrawerJobId] = useState(null);
+  const [paymentInfo, setPaymentInfo] = useState(null);
+
+  const openRow = (a) => {
+    const ref = a.related_ref || {};
+    const t = ref.type;
+    const id = ref.id;
+    if (!t || !id) return;
+    if (t === "job") setDrawerJobId(id);
+    else if (t === "invoice") navigate(`/invoices/${id}`);
+    else if (t === "quote") navigate(`/quotes/${id}`);
+    else if (t === "customer") navigate(`/customers/${id}`);
+    else if (t === "communication") navigate(`/communication/${id}`);
+    else if (t === "payment") setPaymentInfo({ ...a });
+    else if (t === "review") setPaymentInfo({ ...a }); // reuse compact modal
+    else if (t === "lead") navigate(`/leads`);
+  };
+
   return (
     <Card testid="workstream-page">
       {rows === null ? <Skeleton style={{ height: 200 }} /> :
        rows.length === 0 ? <EmptyState icon={Activity} title="No activity yet" /> :
        <ul className="space-y-1 text-sm">
-         {rows.slice(0, 100).map((a) => (
-           <li key={a.id} className="flex items-start gap-2 p-2 rounded-lg" style={{ borderBottom: `1px solid ${colors.divider}` }}>
-             <Chip label={a.type} tone="brand" />
-             <div className="flex-1"><div style={{ color: colors.onSurface }}>{a.note || a.summary || a.type}</div><div className="text-xs" style={{ color: colors.muted }}>{a.at || a.created_at}</div></div>
-           </li>
-         ))}
+         {rows.slice(0, 100).map((a) => {
+           const clickable = !!(a.related_ref && a.related_ref.id);
+           return (
+             <li key={(a.related_ref?.id || "") + a.at + a.type}
+                 onClick={() => clickable && openRow(a)}
+                 className={"flex items-center gap-2 p-2 rounded-lg " + (clickable ? "cursor-pointer hover:brightness-95 transition" : "")}
+                 style={{ borderBottom: `1px solid ${colors.divider}` }}
+                 data-testid={`workstream-row-${a.related_ref?.type || "none"}-${a.related_ref?.id || ""}`}>
+               <Chip label={a.type} tone="brand" />
+               <div className="flex-1">
+                 <div style={{ color: colors.onSurface }}>{a.note || a.summary || a.title || a.type}</div>
+                 <div className="text-xs" style={{ color: colors.muted }}>{a.detail || ""}{a.detail ? " · " : ""}{a.at || a.created_at}</div>
+               </div>
+               {clickable && <ChevronRight size={14} style={{ color: colors.muted }} />}
+             </li>
+           );
+         })}
        </ul>}
+      {drawerJobId && (
+        <WorkstreamJobDrawer jobId={drawerJobId} onClose={() => setDrawerJobId(null)} />
+      )}
+      {paymentInfo && (
+        <Modal open onClose={() => setPaymentInfo(null)}
+               title={paymentInfo.title || "Details"}
+               footer={<Button onClick={() => setPaymentInfo(null)}>Close</Button>}>
+          <div className="space-y-2 text-sm" data-testid="workstream-info-modal">
+            <div style={{ color: colors.onSurface }}>{paymentInfo.detail}</div>
+            <div className="text-xs" style={{ color: colors.muted }}>{paymentInfo.at}</div>
+          </div>
+        </Modal>
+      )}
     </Card>
   );
 }

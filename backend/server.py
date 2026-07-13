@@ -7,6 +7,7 @@ from seed import seed, seed_extras
 from routers import (
     auth, customers, technicians, jobs, quotes, leads, team, items, payments,
     operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google as google_router, phase11,
+    realtime, csat, signatures,
 )
 
 app = FastAPI(
@@ -18,7 +19,8 @@ app = FastAPI(
 api_router = APIRouter(prefix="/api")
 
 for module in [auth, customers, technicians, jobs, quotes, leads, team, items, payments,
-               operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google_router, phase11]:
+               operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google_router, phase11,
+               realtime, csat, signatures]:
     api_router.include_router(module.router)
 
 
@@ -79,6 +81,8 @@ async def startup():
     # Phase 7: marketing autopost + sequence ticker.
     scheduler.add_job(marketing_studio.run_marketing_autopost, "interval", minutes=10, id="marketing_autopost", replace_existing=True)
     scheduler.add_job(sequences.run_sequences_tick, "interval", minutes=15, id="sequences_tick", replace_existing=True)
+    # Phase 15A — CSAT auto-send dispatcher (checks pending survey queue every 5 min).
+    scheduler.add_job(csat.run_csat_dispatch_tick, "interval", minutes=5, id="csat_dispatch", replace_existing=True)
     scheduler.start()
     logger.info("SEO auto-publish + chemical billing + late-fee + marketing_autopost + sequences_tick schedulers registered")
 
