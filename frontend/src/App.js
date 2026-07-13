@@ -1,6 +1,6 @@
 import React from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider } from "@/auth";
+import { AuthProvider, useAuth } from "@/auth";
 import AppLayout from "@/layouts/AppLayout";
 import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
@@ -40,6 +40,15 @@ import {
   PortalDocuments, PortalMessages, PortalProfile,
   PortalRequestService, PortalPaymentComplete,
 } from "@/pages/portal/PortalPages";
+
+function AdminOnly({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user || user.role !== "admin") {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
 
 export default function App() {
   return (
@@ -87,19 +96,19 @@ export default function App() {
             <Route path="settings/payment-handles" element={<PaymentHandlesSettings />} />
 
             {/* Phase 6 — Finance + Reports */}
-            <Route path="reports" element={<ReportsHub />} />
-            <Route path="reports/business-summary" element={<BusinessSummary />} />
-            <Route path="reports/forecast" element={<Forecast />} />
-            <Route path="reports/revenue-by-city" element={<RevenueByCity />} />
-            <Route path="reports/revenue-by-crew" element={<RevenueByCrew />} />
-            <Route path="reports/revenue-by-customer" element={<RevenueByCustomer />} />
-            <Route path="reports/gross-sales" element={<GrossSales />} />
-            <Route path="reports/invoiced-items" element={<InvoicedItems />} />
-            <Route path="income-by-category" element={<IncomeByCategory />} />
-            <Route path="income-categories" element={<IncomeCategoriesCrud />} />
-            <Route path="payments" element={<PaymentsLedger />} />
-            <Route path="auto-billing" element={<AutoBilling />} />
-            <Route path="impexp" element={<ImpExp />} />
+            <Route path="reports" element={<AdminOnly><ReportsHub /></AdminOnly>} />
+            <Route path="reports/business-summary" element={<AdminOnly><BusinessSummary /></AdminOnly>} />
+            <Route path="reports/forecast" element={<AdminOnly><Forecast /></AdminOnly>} />
+            <Route path="reports/revenue-by-city" element={<AdminOnly><RevenueByCity /></AdminOnly>} />
+            <Route path="reports/revenue-by-crew" element={<AdminOnly><RevenueByCrew /></AdminOnly>} />
+            <Route path="reports/revenue-by-customer" element={<AdminOnly><RevenueByCustomer /></AdminOnly>} />
+            <Route path="reports/gross-sales" element={<AdminOnly><GrossSales /></AdminOnly>} />
+            <Route path="reports/invoiced-items" element={<AdminOnly><InvoicedItems /></AdminOnly>} />
+            <Route path="income-by-category" element={<AdminOnly><IncomeByCategory /></AdminOnly>} />
+            <Route path="income-categories" element={<AdminOnly><IncomeCategoriesCrud /></AdminOnly>} />
+            <Route path="payments" element={<AdminOnly><PaymentsLedger /></AdminOnly>} />
+            <Route path="auto-billing" element={<AdminOnly><AutoBilling /></AdminOnly>} />
+            <Route path="impexp" element={<AdminOnly><ImpExp /></AdminOnly>} />
 
             {/* Ops hub (Phase 5) — all 16 sub-pages route into one tabbed shell */}
             <Route path="ops" element={<OpsHub />} />
