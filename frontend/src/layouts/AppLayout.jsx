@@ -26,12 +26,14 @@ import {
   ChevronDown,
   Shield,
   Sparkles,
+  DoorOpen,
 } from "lucide-react";
 
 const ADMIN_NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/jobs", label: "Jobs", icon: Briefcase },
   { to: "/dispatch", label: "Dispatch", icon: CalendarDays },
+  { to: "/dispatch/map", label: "Dispatch Map", icon: MoreHorizontal },
   { to: "/quotes", label: "Quotes", icon: FileText },
   { to: "/invoices", label: "Invoices", icon: Receipt },
   { to: "/estimator", label: "Estimator", icon: Calculator },
@@ -79,6 +81,18 @@ const ADMIN_NAV = [
     ],
   },
   {
+    group: "D2D Sales", icon: DoorOpen,
+    children: [
+      { to: "/d2d", label: "Dashboard" },
+      { to: "/d2d/map", label: "Canvassing Map" },
+      { to: "/d2d/knocks", label: "Knocks" },
+      { to: "/d2d/open-leads", label: "Open Leads" },
+      { to: "/d2d/sold-leads", label: "Sold Leads (Zillow)" },
+      { to: "/d2d/report", label: "Team Report" },
+      { to: "/d2d/leaderboard", label: "Leaderboard" },
+    ],
+  },
+  {
     group: "Finance", icon: DollarSign,
     children: [
       { to: "/invoices", label: "Invoices Ledger" },
@@ -88,6 +102,8 @@ const ADMIN_NAV = [
       { to: "/settings/late-fees", label: "Late Fees" },
       { to: "/settings/terms", label: "Terms" },
       { to: "/settings/legal", label: "Legal Docs" },
+      { to: "/settings/integrations", label: "Integrations" },
+      { to: "/settings/maps", label: "Map & Autocomplete" },
       { to: "/settings/ringcentral", label: "RingCentral" },
       { to: "/access-settings", label: "Access Settings" },
       { to: "/access-history", label: "Access History" },

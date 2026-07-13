@@ -515,26 +515,55 @@ async def auto_enroll_overdue_sequence(cutoff: Optional[str] = None) -> dict:
         )
         if active:
             continue
-        first_delay = int((steps[0] or {}).get("delay_days") or 0)
-        next_at = (datetime.now(timezone.utc) + timedelta(days=first_delay)).isoformat()
+        # ─── Fast-forward: if the invoice is already past later step thresholds,
+        # skip those steps so the escalation fires on the very next tick.
+        try:
+            days_past = (today - datetime.fromisoformat(inv["due_date"][:10]).date()).days
+        except Exception:
+            days_past = 30
+        cumulative = 0
+        current_step = 0
+        skipped_log: list[dict] = []
+        for i, s in enumerate(steps):
+            delay = int((s or {}).get("delay_days") or 0)
+            cumulative += delay
+            # Do not fast-forward THROUGH an escalation step — we want the tick to
+            # actually fire it. Stop here so it becomes `current_step` and next_at=now.
+            if (s or {}).get("action_type") == "escalation_task":
+                break
+            if cumulative <= days_past:
+                skipped_log.append({
+                    "step": i, "action_type": (s or {}).get("action_type"),
+                    "fired_at": now_iso(),
+                    "notes": f"Fast-forwarded on enrollment (invoice already {days_past} days past due)",
+                    "fast_forwarded": True,
+                })
+                current_step = i + 1
+            else:
+                break
+        # If ALL steps are past — enrollment is effectively completed; still record it
+        # so we don't re-enroll, but mark next_action_at to now so tick can close it.
+        if current_step >= len(steps):
+            next_at = now_iso()
+        else:
+            # Fire the first non-elapsed step immediately (its threshold is already the
+            # next-in-line but the customer has been waiting past all prior steps).
+            next_at = now_iso()
         enrollment = {
             "id": new_id(),
             "sequence_id": seq["id"],
             "customer_id": cid,
             "status": "active",
-            "current_step": 0,
+            "current_step": current_step,
             "next_action_at": next_at,
             "started_at": now_iso(),
-            "log": [],
+            "log": skipped_log,
             "auto_enrolled": True,
             "trigger_invoice_id": inv.get("id"),
         }
         await db.sequence_enrollments.insert_one(enrollment)
         # Compute days past due for the log message.
-        try:
-            days = (today - datetime.fromisoformat(inv["due_date"][:10]).date()).days
-        except Exception:
-            days = 30
+        days = days_past
         await _log_invoice_activity(
             inv["id"], "sequence-auto-enrolled",
             f"Auto-enrolled in Overdue Invoice Sequence — invoice {days} days past due",

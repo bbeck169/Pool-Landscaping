@@ -22,6 +22,7 @@ import PaymentHandlesSettings from "@/pages/settings/PaymentHandles";
 import LateFeesSettings from "@/pages/settings/LateFees";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
+import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
 import PortalTerms from "@/pages/portal/PortalTerms";
 import {
   MarketingHub, BrandMemory, CampaignsList, CampaignNew, CampaignDetail,
@@ -39,6 +40,10 @@ import {
   AiEmployeesList, AiEmployeeDetail, TasksPage, NotificationsPage,
   AccessSettings, AccessHistory, RingCentralSettings, CallLogsPage,
 } from "@/pages/aiops/AiOpsPages";
+import {
+  D2dDashboard, D2dMap, D2dKnocks, D2dOpenLeads, D2dSoldLeads, D2dReport, D2dLeaderboard,
+} from "@/pages/d2d/D2dPages";
+import { DispatchMap, ScheduleMap } from "@/pages/ops/MapPages";
 import { EstimatesList, EstimatorSettings, EstimatorTemplates, EstimatorEditor } from "@/pages/estimator/Estimator";
 import OpsHub from "@/pages/ops/OpsHub";
 import ReportsHub from "@/pages/reports/ReportsHub";
@@ -117,6 +122,8 @@ export default function App() {
             <Route path="settings/late-fees" element={<AdminOnly><LateFeesSettings /></AdminOnly>} />
             <Route path="settings/terms" element={<AdminOnly><TermsSettings /></AdminOnly>} />
             <Route path="settings/legal" element={<AdminOnly><LegalDocsList /></AdminOnly>} />
+            <Route path="settings/integrations" element={<AdminOnly><IntegrationsHub /></AdminOnly>} />
+            <Route path="settings/maps" element={<AdminOnly><MapSettings /></AdminOnly>} />
             <Route path="settings/legal/:slug" element={<AdminOnly><LegalDocEditor /></AdminOnly>} />
             <Route path="portal/terms" element={<PortalTerms />} />
 
@@ -176,7 +183,9 @@ export default function App() {
             {/* Ops hub (Phase 5) — all 16 sub-pages route into one tabbed shell */}
             <Route path="ops" element={<OpsHub />} />
             <Route path="dispatch" element={<OpsHub />} />
+            <Route path="dispatch/map" element={<AdminOnly><DispatchMap /></AdminOnly>} />
             <Route path="schedule" element={<OpsHub />} />
+            <Route path="schedule/map" element={<AdminOnly><ScheduleMap /></AdminOnly>} />
             <Route path="routes" element={<OpsHub />} />
             <Route path="workstream" element={<OpsHub />} />
             <Route path="crews" element={<OpsHub />} />
@@ -191,6 +200,15 @@ export default function App() {
             <Route path="log-history" element={<OpsHub />} />
             <Route path="job-timers" element={<OpsHub />} />
             <Route path="avg-job-time" element={<OpsHub />} />
+
+            {/* Phase 10 — D2D Sales */}
+            <Route path="d2d" element={<AdminOnly><D2dDashboard /></AdminOnly>} />
+            <Route path="d2d/map" element={<AdminOnly><D2dMap /></AdminOnly>} />
+            <Route path="d2d/knocks" element={<AdminOnly><D2dKnocks /></AdminOnly>} />
+            <Route path="d2d/open-leads" element={<AdminOnly><D2dOpenLeads /></AdminOnly>} />
+            <Route path="d2d/sold-leads" element={<AdminOnly><D2dSoldLeads /></AdminOnly>} />
+            <Route path="d2d/report" element={<AdminOnly><D2dReport /></AdminOnly>} />
+            <Route path="d2d/leaderboard" element={<AdminOnly><D2dLeaderboard /></AdminOnly>} />
 
             {/* Shared placeholders (later phases) */}
             <Route

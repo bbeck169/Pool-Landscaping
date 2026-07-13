@@ -137,6 +137,107 @@ def _stub_variant(channel: str, topic: str, brand: dict) -> dict:
             "cta": "Book your first visit today.", "character_limit": limit}
 
 
+async def _ai_variant(channel: str, topic: str, brand: dict, session: Optional[str] = None) -> dict:
+    """Real LLM-generated post variant. Falls back to stub if key absent or call fails."""
+    key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
+    if not key:
+        return _stub_variant(channel, topic, brand)
+    limit = CHANNEL_LIMITS.get(channel, 500)
+    tag_count = CHANNEL_HASHTAGS.get(channel, 0)
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        import json as _json, re as _re
+        zips = ", ".join(brand.get("service_zips") or [])
+        system = (
+            f"You are the {brand.get('tone', 'professional')} marketing voice for a pool & landscaping "
+            f"company serving {brand.get('service_area', 'Vistancia, Peoria AZ')} (ZIPs: {zips}). "
+            "Write ONLY valid JSON — no prose, no markdown fences."
+        )
+        prompt = (
+            f"Draft a {channel} post about '{topic}'. "
+            f"Hard cap: {limit} chars in the 'copy' field. Include exactly {tag_count} on-brand hashtags. "
+            "Return JSON: {\"copy\": str, \"hashtags\": str, \"cta\": str}."
+        )
+        chat = LlmChat(api_key=key, session_id=session or f"mkt-{new_id()[:8]}",
+                       system_message=system).with_model("anthropic", "claude-sonnet-4-5")
+        raw = await chat.send_message(UserMessage(text=prompt))
+        text = (raw if isinstance(raw, str) else str(raw)).strip()
+        if text.startswith("```"):
+            text = _re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
+        try:
+            data = _json.loads(text)
+        except Exception:
+            m = _re.search(r"\{.*\}", text, _re.S)
+            data = _json.loads(m.group(0)) if m else {}
+        copy = (data.get("copy") or "").strip()
+        hashtags = (data.get("hashtags") or "").strip()
+        cta = (data.get("cta") or "Book your first visit today.").strip()
+        return {"channel": channel, "copy": copy[:limit], "hashtags": hashtags,
+                "cta": cta, "character_limit": limit}
+    except Exception as e:
+        logger.warning(f"marketing _ai_variant fallback ({channel}/{topic}): {e}")
+        return _stub_variant(channel, topic, brand)
+
+
+async def _ai_email(topic: str, goal: str, brand: dict, session: Optional[str] = None) -> dict:
+    """LLM-generated email (subject + body). Falls back to stub."""
+    key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
+    if not key:
+        return {"subject": f"[{brand.get('tone')}] {goal[:60]}", "copy": _stub_note()}
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        import json as _json, re as _re
+        system = (
+            f"You are the {brand.get('tone', 'professional')} email marketer for a pool & landscaping "
+            f"company. Return ONLY valid JSON."
+        )
+        prompt = (
+            f"Write a marketing email supporting the campaign goal '{goal}' about '{topic}'. "
+            "150-220 words in the body. Return JSON: {\"subject\": str (<=60 chars), \"copy\": str}."
+        )
+        chat = LlmChat(api_key=key, session_id=session or f"mkt-email-{new_id()[:8]}",
+                       system_message=system).with_model("anthropic", "claude-sonnet-4-5")
+        raw = await chat.send_message(UserMessage(text=prompt))
+        text = (raw if isinstance(raw, str) else str(raw)).strip()
+        if text.startswith("```"):
+            text = _re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
+        try:
+            data = _json.loads(text)
+        except Exception:
+            m = _re.search(r"\{.*\}", text, _re.S)
+            data = _json.loads(m.group(0)) if m else {}
+        return {"subject": (data.get("subject") or "")[:80] or f"{goal[:60]}",
+                "copy": data.get("copy") or _stub_note()}
+    except Exception as e:
+        logger.warning(f"marketing _ai_email fallback: {e}")
+        return {"subject": f"[{brand.get('tone')}] {goal[:60]}", "copy": _stub_note()}
+
+
+async def _ai_sms(topic: str, goal: str, brand: dict, session: Optional[str] = None) -> str:
+    """LLM-generated SMS (<=160 chars). Falls back to stub."""
+    key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
+    if not key:
+        return f"{goal[:80]} — {_stub_note()}"[:160]
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        system = (
+            f"You are the {brand.get('tone', 'professional')} SMS copywriter for a pool & landscaping "
+            "service. Reply with ONE plaintext SMS message only — no quotes, no preface, no JSON."
+        )
+        prompt = (
+            f"Write ONE SMS (max 155 chars) supporting the goal '{goal}' about '{topic}'. "
+            "Include one clear call to action."
+        )
+        chat = LlmChat(api_key=key, session_id=session or f"mkt-sms-{new_id()[:8]}",
+                       system_message=system).with_model("anthropic", "claude-sonnet-4-5")
+        raw = await chat.send_message(UserMessage(text=prompt))
+        text = (raw if isinstance(raw, str) else str(raw)).strip().strip('"').strip("'")
+        return text[:160] or (f"{goal[:80]} — Book today"[:160])
+    except Exception as e:
+        logger.warning(f"marketing _ai_sms fallback: {e}")
+        return f"{goal[:80]} — {_stub_note()}"[:160]
+
+
 async def _create_queue_item(row: dict) -> dict:
     row.setdefault("id", new_id())
     row.setdefault("status", "pending_review")
@@ -193,42 +294,47 @@ async def generate_campaign(cid: str, admin: dict = Depends(require_admin)):
     brand = await get_brand_memory()
     channels = campaign.get("channels") or ["facebook"]
     goal = campaign.get("goal") or "Boost bookings"
+    session = f"campaign-{cid}"
     items_created = []
+    stubbed_now = not bool(EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", ""))
     # Social posts, one per channel
     for ch in channels:
         if ch in ("email", "sms"):
             continue
-        v = _stub_variant(ch, goal, brand)
+        v = await _ai_variant(ch, goal, brand, session=session)
         items_created.append(await _create_queue_item({
             "type": "social_post", "channel": ch, "campaign_id": cid,
             "copy": v["copy"], "cta": v["cta"], "hero_image_url": None,
+            "hashtags": v.get("hashtags"),
             "character_limit": v["character_limit"],
         }))
     # 2 email blasts
     if "email" in channels:
         for i in range(2):
+            em = await _ai_email(f"{goal} — variant {i+1}", goal, brand, session=session)
             items_created.append(await _create_queue_item({
                 "type": "email", "channel": "email", "campaign_id": cid,
-                "subject": f"[{brand['tone']}] {goal} — email {i+1}",
-                "copy": _stub_note(),
+                "subject": em["subject"], "copy": em["copy"],
             }))
     # 3 SMS blurbs
     if "sms" in channels:
         for i in range(3):
+            sms_copy = await _ai_sms(f"{goal} — variant {i+1}", goal, brand, session=session)
             items_created.append(await _create_queue_item({
                 "type": "sms", "channel": "sms", "campaign_id": cid,
-                "copy": f"{goal[:80]} — {_stub_note()}"[:160],
+                "copy": sms_copy,
             }))
     # 1 GBP post
     if "gbp" in channels or "google" in channels:
+        v = await _ai_variant("gbp", goal, brand, session=session)
         items_created.append(await _create_queue_item({
             "type": "gbp_post", "channel": "gbp", "campaign_id": cid,
-            "copy": _stub_variant("gbp", goal, brand)["copy"],
+            "copy": v["copy"],
         }))
     await db.marketing_campaigns.update_one({"id": cid}, {"$set": {
         "status": "generated", "item_counts.pending": len(items_created), "generated_at": now_iso()
     }})
-    return {"stubbed": STUBBED, "generated": len(items_created), "brand_snapshot": brand,
+    return {"stubbed": stubbed_now, "generated": len(items_created), "brand_snapshot": brand,
             "items": items_created}
 
 
@@ -252,16 +358,21 @@ async def campaign_agent_chat(cid: str, body: AgentChatIn, admin: dict = Depends
 @router.post("/marketing/posts/generate")
 async def generate_post_variants(body: PostGenIn, admin: dict = Depends(require_admin)):
     brand = await get_brand_memory()
-    variants = [_stub_variant(ch, body.topic, brand) for ch in body.channels]
+    session = f"posts-{new_id()[:8]}"
+    variants = []
+    for ch in body.channels:
+        variants.append(await _ai_variant(ch, body.topic, brand, session=session))
     items = []
     for v in variants:
         items.append(await _create_queue_item({
             "type": "social_post", "channel": v["channel"],
             "copy": v["copy"], "cta": v["cta"], "hero_image_url": None,
+            "hashtags": v.get("hashtags"),
             "campaign_id": None, "topic": body.topic,
             "character_limit": v["character_limit"],
         }))
-    return {"stubbed": STUBBED, "variants": items}
+    stubbed_now = not bool(EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", ""))
+    return {"stubbed": stubbed_now, "variants": items}
 
 
 @router.get("/marketing/posts")

@@ -7,12 +7,15 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 
-from config import db, logger
+from config import db, logger, EMERGENT_LLM_KEY
 from utils import now_iso, new_id, require_admin, get_current_user
 
 router = APIRouter()
 
-STUBBED = not bool(os.environ.get("EMERGENT_LLM_KEY", ""))
+
+def _stubbed() -> bool:
+    # Evaluated per-request so hot-reloads / .env changes take effect immediately.
+    return not bool(EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", ""))
 
 # ─── seed AI Employees ─────────────────────────────────────────────────────
 SEEDED_EMPLOYEES = [
@@ -112,17 +115,50 @@ async def chat_with_employee(eid: str, body: ChatIn, admin: dict = Depends(requi
     emp = await db.ai_employees.find_one({"$or": [{"id": eid}, {"slug": eid}]}, {"_id": 0})
     if not emp: raise HTTPException(404, "Not found")
     thread_id = body.thread_id or new_id()
-    stub_response = (
-        f"[{emp['name']} · {emp['role']}] Placeholder response — real AI activates once "
-        "EMERGENT_LLM_KEY is configured. Guardrails: "
-        + (", ".join(emp.get("guardrails") or []) or "none")
-    )
+    stubbed = _stubbed()
+    if stubbed:
+        response_text = (
+            f"[{emp['name']} · {emp['role']}] Placeholder response — real AI activates once "
+            "EMERGENT_LLM_KEY is configured. Guardrails: "
+            + (", ".join(emp.get("guardrails") or []) or "none")
+        )
+    else:
+        try:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage
+            guardrail_block = (
+                "\n\nStrict guardrails (never violate):\n- "
+                + "\n- ".join(emp.get("guardrails") or ["Be helpful and safe."])
+            )
+            fallback_sys = f"You are {emp['name']}, a helpful assistant."
+            system = (
+                (emp.get('system_prompt') or fallback_sys)
+                + guardrail_block + "\n\nBe concise (under 200 words) and action-oriented."
+            )
+            chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=thread_id,
+                system_message=system,
+            ).with_model("anthropic", "claude-sonnet-4-5")
+            # Replay prior turns for context (last 20 to stay under token limits).
+            prior = await db.ai_chat_turns.find(
+                {"thread_id": thread_id}, {"_id": 0}
+            ).sort("created_at", 1).to_list(20)
+            for t in prior:
+                if t.get("role") == "user":
+                    await chat.send_message(UserMessage(text=t.get("content", "")))
+            raw = await chat.send_message(UserMessage(text=body.message))
+            response_text = raw if isinstance(raw, str) else str(raw)
+        except Exception as e:
+            logger.warning(f"ai-ops chat LLM call failed: {e}")
+            response_text = f"[{emp['name']}] AI service hit an error — please retry. ({type(e).__name__})"
+            stubbed = True
+
     turn = {"id": new_id(), "employee_id": emp["id"], "user_id": admin["id"],
             "thread_id": thread_id, "role": "user", "content": body.message, "created_at": now_iso()}
     reply = {"id": new_id(), "employee_id": emp["id"], "user_id": admin["id"],
-             "thread_id": thread_id, "role": "assistant", "content": stub_response, "created_at": now_iso()}
+             "thread_id": thread_id, "role": "assistant", "content": response_text, "created_at": now_iso()}
     await db.ai_chat_turns.insert_many([turn, reply])
-    return {"response": stub_response, "thread_id": thread_id, "stubbed": STUBBED}
+    return {"response": response_text, "thread_id": thread_id, "stubbed": stubbed}
 
 
 @router.get("/ai-ops/employees/{eid}/memory")
@@ -284,12 +320,35 @@ async def list_call_logs(admin: dict = Depends(require_admin)):
 
 @router.post("/ringcentral/webhook")
 async def ringcentral_webhook(request: Request):
-    """Public — RingCentral posts here. Signature check skipped when unconfigured."""
+    """Public — RingCentral posts here. Signature check skipped when unconfigured.
+
+    Accepts BOTH shapes:
+      • Legacy: {"from":{"phoneNumber":"..."},"to":{"phoneNumber":"..."},"duration":45,"recording":{"contentUri":"..."}}
+      • Nested: {"call":{"from":"+14805551212","to":"+16028874400","duration":45,"direction":"inbound","recording_url":"..."}}
+    """
     body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-    from_number = (body.get("from") or {}).get("phoneNumber") or body.get("from_number") or ""
-    to_number = (body.get("to") or {}).get("phoneNumber") or body.get("to_number") or ""
-    duration = body.get("duration") or 0
-    recording_url = (body.get("recording") or {}).get("contentUri") or body.get("recording_url")
+
+    # Detect shape: nested `call.*` (new) vs top-level (legacy).
+    call = body.get("call") if isinstance(body.get("call"), dict) else None
+    if call:
+        src = call
+        from_raw = src.get("from")
+        to_raw = src.get("to")
+        from_number = from_raw if isinstance(from_raw, str) else (from_raw or {}).get("phoneNumber", "")
+        to_number = to_raw if isinstance(to_raw, str) else (to_raw or {}).get("phoneNumber", "")
+        duration = src.get("duration") or 0
+        recording_url = (
+            src.get("recording_url")
+            or ((src.get("recording") or {}).get("contentUri") if isinstance(src.get("recording"), dict) else None)
+        )
+        direction = src.get("direction")
+    else:
+        from_number = (body.get("from") or {}).get("phoneNumber") or body.get("from_number") or ""
+        to_number = (body.get("to") or {}).get("phoneNumber") or body.get("to_number") or ""
+        duration = body.get("duration") or 0
+        recording_url = (body.get("recording") or {}).get("contentUri") or body.get("recording_url")
+        direction = body.get("direction")
+
     # Match customer by phone
     match = None
     if from_number:
@@ -298,6 +357,7 @@ async def ringcentral_webhook(request: Request):
     log = {
         "id": new_id(), "from_number": from_number, "to_number": to_number,
         "duration": duration, "recording_url": recording_url,
+        "direction": direction,
         "customer_id": (match or {}).get("id"),
         "customer_name": (match or {}).get("name"),
         "created_at": now_iso(), "raw": body,

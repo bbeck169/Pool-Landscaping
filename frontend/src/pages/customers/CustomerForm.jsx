@@ -10,6 +10,7 @@ import {
   Toast,
 } from "@/components/ui-kit";
 import { X, Plus, ArrowLeft } from "lucide-react";
+import AddressAutocomplete from "@/components/AddressAutocomplete";
 
 const TAG_PRESETS = ["VIP", "Specialty"];
 
@@ -135,7 +136,19 @@ export default function CustomerForm() {
             <TextInput label="ALERT EMAIL (after-hours)" id="alert_email" type="email" value={form.alert_email} onChange={set("alert_email")} testid="cf-alert-email" />
             <TextInput label="ALERT PHONE / SMS (after-hours)" id="alert_phone" value={form.alert_phone} onChange={set("alert_phone")} testid="cf-alert-phone" />
           </div>
-          <TextInput label="PRIMARY ADDRESS" id="address" value={form.address} onChange={set("address")} testid="cf-address" />
+          <div>
+            <div className="text-xs font-semibold mb-1" style={{ color: colors.onSurfaceSecondary }}>PRIMARY ADDRESS</div>
+            <AddressAutocomplete
+              value={form.address}
+              onChange={(v) => setForm((f) => ({ ...f, address: v }))}
+              onSelect={(p) => setForm((f) => ({
+                ...f, address: p.formatted, lat: p.lat, lng: p.lng,
+                city: p.city, state: p.state, zip: p.zip, place_id: p.place_id,
+              }))}
+              placeholder="Primary service address"
+              testid="cf-address"
+            />
+          </div>
           <TextInput label="BILLING ADDRESS" id="billing_address" value={form.billing_address} onChange={set("billing_address")} testid="cf-billing" />
         </div>
 

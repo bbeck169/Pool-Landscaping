@@ -60,21 +60,30 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
 - **DONE · Phase 7** — AI Marketing Studio
 - **DONE · Phase 8** — SEO Studio + WordPress + GBP
 - **DONE · Phase 9** — AI Employees + AI Chat + Tasks + Escalation + RingCentral + Access
-- **P0 · Phase 10** — D2D Sales
-- **P1 · Phase 11** — Landscape AI · CAD · Measure · Virtual Bid
+- **DONE · Phase 10** — D2D Sales (Zillow · knocks · leaderboard · Leaflet + Google Maps toggle)
+- **P0 · Phase 11** — Landscape AI · CAD · Measure · Virtual Bid
 - **P2 · Phase 12** — Admin/Settings polish
 - **P2 · Phase 13** — Full E2E parity testing
 
-## Phase 9 acceptance (2026-07-13)
-- 270 OpenAPI paths (up from ~253). 17 Phase 9 paths under `/api/ai-ops/*`, `/api/tasks`, `/api/notifications`, `/api/permissions`, `/api/settings/ringcentral`, `/api/call-logs`, `/api/ringcentral/webhook`, `/api/sequences/tick/run`.
-- Root cause of earlier 404s: `ai_ops` router imported but not in `include_router` loop in `server.py`. Fixed.
-- 8 AI personas seeded (Ava/Max/Riley/Sam/Nora + 3 marketing agents). Chat persists turns in `ai_chat_turns` with `thread_id`; stubs gracefully.
-- Task CRUD + `/tasks/{id}/complete` + `?status`/`?source` filters. Kanban lists render.
-- Sequences tick escalation VERIFIED end-to-end: overdue enrollment at step 2 → tick creates a high-priority `sequence-escalation` task + admin notification.
-- RingCentral webhook (public) accepts payloads without creds, matches customers by phone tail, auto-creates a lead on unknown numbers, and logs to `call_logs`.
-- Permissions matrix persisted in `settings/permissions_matrix` with sensible defaults.
+## Phase 10 acceptance (2026-07-13)
+- 274 OpenAPI paths. New: `/api/d2d/*` (already wired), `/api/settings/maps`, `/api/settings/integrations`, `/api/public/map-settings`, `/api/admin/geocode-addresses`.
+- D2D module: dashboard, canvassing map (Leaflet), knocks list, open leads, sold-leads (Zillow live), team report + CSV, gamified leaderboard.
+- Retroactive Leaflet: `/dispatch/map` (today's jobs by status + tech pins) and `/schedule/map` (per-tech route polylines).
+- `MapView` component swaps between Leaflet ↔ Google Maps based on `settings.map_provider`; `/settings/maps` UI toggle.
+- `/settings/integrations` shows masked previews of all 7 integrations (LLM/Google/OpenWeb Ninja/Resend/Stripe/Twilio/RingCentral).
+- `AddressAutocomplete` component (Google Places, lazy-loaded on first focus) wired into `/customers/new` + `/customers/:id/edit`.
+- Geocode backfill: 13 seed customers geocoded on first run (`processed=13, updated=13, errors=0`).
+- Fix A (sequences fast-forward): 61-day-old invoices now enroll at the escalation step; verified 3 tasks created on next tick.
+- Fix B (RingCentral): webhook parses BOTH legacy `{from:{phoneNumber}}` and nested `{call:{from:"..."}}` shapes.
+
+## Now-live integrations
+- Stripe (test key), Emergent LLM, OpenWeb Ninja (Zillow), Resend (test sender), Google (Places + Geocoding + Maps tiles).
+
+## Not-configured integrations
+- Twilio (SMS), Google Business Profile OAuth (Client Secret pending), WordPress publish, Stripe webhook signing secret, RingCentral outbound API.
 
 ## Known gaps / non-blockers
-- Leaflet maps for `/dispatch/map` and `/schedule/map` (deferred)
-- `EMERGENT_LLM_KEY`, `RESEND_API_KEY`, `TWILIO_ACCOUNT_SID` missing — degrades gracefully
-- Route optimization uses greedy TSP (AI upgrade planned)
+- Resend account is in test mode: emails only deliver to `brianbeckmanaz@gmail.com` until a verified sender domain is added.
+- Google API key is unrestricted — recommend restricting to app domains + specific APIs in Google Cloud Console.
+- Address autocomplete not yet wired into `/jobs/new` (jobs inherit customer coords), `/portal/request-service`, or quote/invoice billing addresses — deferrable to Phase 12 polish.
+- Route optimization still uses greedy TSP (AI upgrade planned).

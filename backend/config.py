@@ -20,6 +20,7 @@ RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 EMAIL_FROM = os.environ.get('EMAIL_FROM', 'onboarding@resend.dev')
 APP_PUBLIC_URL = os.environ.get('APP_PUBLIC_URL', '').rstrip('/')
 OPENWEB_NINJA_API_KEY = os.environ.get('OPENWEB_NINJA_API_KEY', '')
+GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("pool_crm")
