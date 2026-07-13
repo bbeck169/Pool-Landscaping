@@ -23,6 +23,14 @@ import LateFeesSettings from "@/pages/settings/LateFees";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 import PortalTerms from "@/pages/portal/PortalTerms";
+import {
+  MarketingHub, BrandMemory, CampaignsList, CampaignNew, CampaignDetail,
+  Posts, ApprovalQueue, ContentCalendar, SchedulingConfig, Performance,
+  TemplatesHub, Reviews,
+} from "@/pages/marketing/MarketingPages";
+import {
+  SequencesList, SequenceNew, SequenceDetail,
+} from "@/pages/marketing/SequencePages";
 import { EstimatesList, EstimatorSettings, EstimatorTemplates, EstimatorEditor } from "@/pages/estimator/Estimator";
 import OpsHub from "@/pages/ops/OpsHub";
 import ReportsHub from "@/pages/reports/ReportsHub";
@@ -103,6 +111,23 @@ export default function App() {
             <Route path="settings/legal" element={<AdminOnly><LegalDocsList /></AdminOnly>} />
             <Route path="settings/legal/:slug" element={<AdminOnly><LegalDocEditor /></AdminOnly>} />
             <Route path="portal/terms" element={<PortalTerms />} />
+
+            {/* Phase 7 — Marketing Studio */}
+            <Route path="marketing" element={<AdminOnly><MarketingHub /></AdminOnly>} />
+            <Route path="marketing/brand" element={<AdminOnly><BrandMemory /></AdminOnly>} />
+            <Route path="marketing/campaigns" element={<AdminOnly><CampaignsList /></AdminOnly>} />
+            <Route path="marketing/campaigns/new" element={<AdminOnly><CampaignNew /></AdminOnly>} />
+            <Route path="marketing/campaigns/:id" element={<AdminOnly><CampaignDetail /></AdminOnly>} />
+            <Route path="marketing/posts" element={<AdminOnly><Posts /></AdminOnly>} />
+            <Route path="marketing/queue" element={<AdminOnly><ApprovalQueue /></AdminOnly>} />
+            <Route path="marketing/calendar" element={<AdminOnly><ContentCalendar /></AdminOnly>} />
+            <Route path="marketing/scheduling" element={<AdminOnly><SchedulingConfig /></AdminOnly>} />
+            <Route path="marketing/performance" element={<AdminOnly><Performance /></AdminOnly>} />
+            <Route path="marketing/templates" element={<AdminOnly><TemplatesHub /></AdminOnly>} />
+            <Route path="marketing/reviews" element={<AdminOnly><Reviews /></AdminOnly>} />
+            <Route path="marketing/sequences" element={<AdminOnly><SequencesList /></AdminOnly>} />
+            <Route path="marketing/sequences/new" element={<AdminOnly><SequenceNew /></AdminOnly>} />
+            <Route path="marketing/sequences/:id" element={<AdminOnly><SequenceDetail /></AdminOnly>} />
 
             {/* Phase 6 — Finance + Reports */}
             <Route path="reports" element={<AdminOnly><ReportsHub /></AdminOnly>} />

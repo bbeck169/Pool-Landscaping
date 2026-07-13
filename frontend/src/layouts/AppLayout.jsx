@@ -25,6 +25,7 @@ import {
   DollarSign,
   ChevronDown,
   Shield,
+  Sparkles,
 } from "lucide-react";
 
 const ADMIN_NAV = [
@@ -48,6 +49,22 @@ const ADMIN_NAV = [
       { to: "/reports/gross-sales", label: "Gross Sales" },
       { to: "/reports/invoiced-items", label: "Invoiced Items" },
       { to: "/income-by-category", label: "Income by Category" },
+    ],
+  },
+  {
+    group: "Marketing", icon: Sparkles,
+    children: [
+      { to: "/marketing", label: "Studio Hub" },
+      { to: "/marketing/campaigns", label: "Campaigns" },
+      { to: "/marketing/posts", label: "Posts" },
+      { to: "/marketing/queue", label: "Approval Queue" },
+      { to: "/marketing/calendar", label: "Calendar" },
+      { to: "/marketing/scheduling", label: "Scheduling" },
+      { to: "/marketing/performance", label: "Performance" },
+      { to: "/marketing/sequences", label: "Sequences" },
+      { to: "/marketing/templates", label: "Templates" },
+      { to: "/marketing/reviews", label: "Reviews" },
+      { to: "/marketing/brand", label: "Brand Memory" },
     ],
   },
   {

@@ -38,6 +38,15 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
 - **Legal Documents CMS + Portal ToS (2026-07)**
   - Backend: `db.legal_documents` collection seeded on startup with the verbatim Pool Maintenance Terms of Service scraped from `poolandlandscapingofvistancia.com`. Endpoints: `GET /api/legal/{slug}` (public), `GET /api/legal` + `PUT /api/legal/{slug}` (admin, bumps version), `POST /api/portal/terms/acknowledge` + `GET /api/portal/terms/status` (customer). Acks stored on `customer.tos_acknowledgements`. OpenAPI 220 paths.
   - Frontend: `/portal/terms` renders markdown via `react-markdown` with print styles + "I have read and agree" flow; portal-home yellow nudge banner appears until ack. Admin `/settings/legal` list + `/settings/legal/{slug}` two-panel markdown editor with live preview.
+- **Phase 7 — AI Marketing Studio + Sequence Automations (2026-07)**
+  - Backend: 2 new routers — `marketing_studio.py` (21 endpoints) and `sequences.py` (7 endpoints), plus 5 public/embed endpoints. **OpenAPI now at 252 paths.**
+  - All AI paths **degrade gracefully** with `{stubbed: true, ...}` responses when `EMERGENT_LLM_KEY` is absent — full UI stays wired end-to-end.
+  - Endpoints: brand memory · campaigns CRUD + generate + agent-chat · post variants (platform-tuned char limits) · visuals (picsum placeholder) · queue approve/reject/bulk-approve/publish · scheduling slots · performance · review-reply drafts · agents list · campaign/email/SMS template libraries · sequences CRUD + enroll/pause/resume/unenroll/enrollments · public /checkins /company-card /portal-widget.js /ai-chat-widget.js
+  - Two new APScheduler jobs — `marketing_autopost` (every 10 min) + `sequences_tick` (every 15 min). Startup log confirms `SEO + chem + late-fee + marketing_autopost + sequences_tick schedulers registered`.
+  - **Seeds (idempotent) on startup**: 6 campaign templates, 5 email templates, 3 SMS templates, 3 sequences (Welcome / Review Request / **Overdue Invoice Sequence** fulfilling the aging-nudge deferral).
+  - Frontend: `MarketingPages.jsx` + `SequencePages.jsx` — 13 pages consolidated (Hub, Brand, Campaigns list/new/detail, Posts, Approval Queue, Calendar, Scheduling, Performance, Templates, Reviews, Sequences list/new/detail). Admin sidebar Marketing group with 11 children. All routes AdminOnly-guarded.
+  - Publish endpoint enforces approval at API level — 400 if item not approved.
+  - Sub-features from source repo (forms, automations, reviews, rank-grid, checkins) are reachable via existing `/api/forms/*`, `/api/automations/*`, `/api/reviews/*`, `/api/rank-grid`, `/api/checkins` endpoints — UI polish deferred to a future pass.
 
 ## Prioritized backlog
 - **P0 · Phase 7** — AI Marketing Studio (see `/app/memory/phase-7-plan.md`)

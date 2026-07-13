@@ -6,7 +6,7 @@ from config import client, db, logger
 from seed import seed, seed_extras
 from routers import (
     auth, customers, technicians, jobs, quotes, leads, team, items, payments,
-    operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal,
+    operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences,
 )
 
 app = FastAPI(
@@ -18,7 +18,7 @@ app = FastAPI(
 api_router = APIRouter(prefix="/api")
 
 for module in [auth, customers, technicians, jobs, quotes, leads, team, items, payments,
-               operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal]:
+               operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences]:
     api_router.include_router(module.router)
 
 
@@ -61,6 +61,12 @@ async def startup():
         await legal.ensure_seeded()
     except Exception as e:
         logger.warning(f"legal doc seed skipped: {e}")
+    # Seed marketing templates + sequences (idempotent, Phase 7).
+    try:
+        await marketing_studio._seed_templates()
+        await sequences.ensure_sequences_seeded()
+    except Exception as e:
+        logger.warning(f"phase-7 seeds skipped: {e}")
     # Background auto-publish drip: check for due SEO articles every 10 minutes.
     scheduler.add_job(seo.run_due_publishes, "interval", minutes=10, id="seo_drip", replace_existing=True)
     # Auto-bill accrued chemical invoices once a month (checked daily; bills months that have ended).
@@ -69,8 +75,11 @@ async def startup():
     scheduler.add_job(coverage.revert_expired_coverage, "interval", hours=12, id="coverage_revert", replace_existing=True)
     # Assess automatic late fees on unpaid invoices past their grace period (daily @ 02:00 UTC).
     scheduler.add_job(finances.run_late_fee_assessment, "cron", hour=2, minute=0, id="late_fees", replace_existing=True)
+    # Phase 7: marketing autopost + sequence ticker.
+    scheduler.add_job(marketing_studio.run_marketing_autopost, "interval", minutes=10, id="marketing_autopost", replace_existing=True)
+    scheduler.add_job(sequences.run_sequences_tick, "interval", minutes=15, id="sequences_tick", replace_existing=True)
     scheduler.start()
-    logger.info("SEO auto-publish + chemical billing + late-fee schedulers started")
+    logger.info("SEO auto-publish + chemical billing + late-fee + marketing_autopost + sequences_tick schedulers registered")
 
 
 @app.on_event("shutdown")
