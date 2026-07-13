@@ -20,6 +20,15 @@ import InvoicesList from "@/pages/invoices/InvoicesList";
 import { MasterInvoicesList, MasterInvoiceNew, MasterInvoiceDetail } from "@/pages/invoices/MasterInvoice";
 import PaymentHandlesSettings from "@/pages/settings/PaymentHandles";
 import { EstimatesList, EstimatorSettings, EstimatorTemplates, EstimatorEditor } from "@/pages/estimator/Estimator";
+import PortalHome from "@/pages/portal/PortalHome";
+import {
+  PortalServices, PortalServiceDetail,
+  PortalInvoices, PortalInvoiceDetail,
+  PortalEstimates, PortalEstimateDetail,
+  PortalPayments, PortalPaymentMethod,
+  PortalDocuments, PortalMessages, PortalProfile,
+  PortalRequestService, PortalPaymentComplete,
+} from "@/pages/portal/PortalPages";
 
 export default function App() {
   return (
@@ -81,15 +90,21 @@ export default function App() {
             <Route path="more" element={<Placeholder title="More" phase={7} />} />
             <Route path="leads/new" element={<Placeholder title="New Lead" phase={4} />} />
 
-            {/* Customer portal placeholders */}
-            <Route path="portal/home" element={<Placeholder title="Customer Home" phase={4} />} />
-            <Route path="portal/services" element={<Placeholder title="My Services" phase={4} />} />
-            <Route path="portal/invoices" element={<Placeholder title="My Invoices" phase={4} />} />
-            <Route path="portal/estimates" element={<Placeholder title="My Estimates" phase={4} />} />
-            <Route path="portal/payments" element={<Placeholder title="Payments" phase={4} />} />
-            <Route path="portal/documents" element={<Placeholder title="Documents" phase={4} />} />
-            <Route path="portal/messages" element={<Placeholder title="Messages" phase={4} />} />
-            <Route path="portal/profile" element={<Placeholder title="Profile" phase={4} />} />
+            {/* Customer portal (Phase 4) */}
+            <Route path="portal/home" element={<PortalHome />} />
+            <Route path="portal/services" element={<PortalServices />} />
+            <Route path="portal/services/:id" element={<PortalServiceDetail />} />
+            <Route path="portal/invoices" element={<PortalInvoices />} />
+            <Route path="portal/invoices/:id" element={<PortalInvoiceDetail />} />
+            <Route path="portal/estimates" element={<PortalEstimates />} />
+            <Route path="portal/estimates/:id" element={<PortalEstimateDetail />} />
+            <Route path="portal/payments" element={<PortalPayments />} />
+            <Route path="portal/payment-method" element={<PortalPaymentMethod />} />
+            <Route path="portal/documents" element={<PortalDocuments />} />
+            <Route path="portal/messages" element={<PortalMessages />} />
+            <Route path="portal/profile" element={<PortalProfile />} />
+            <Route path="portal/request-service" element={<PortalRequestService />} />
+            <Route path="portal/payment-complete" element={<PortalPaymentComplete />} />
           </Route>
 
           {/* Anything unmatched → home */}

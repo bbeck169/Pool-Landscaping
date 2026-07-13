@@ -1,0 +1,704 @@
+import React, { useEffect, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  ArrowLeft,
+  CreditCard,
+  Waves,
+  Check,
+  X as XIcon,
+  Send,
+  Sparkles,
+  Download,
+  FileText,
+  Plus,
+} from "lucide-react";
+import { api } from "@/api";
+import { colors, money } from "@/theme";
+import { useAuth } from "@/auth";
+import {
+  PageHeader,
+  Button,
+  Skeleton,
+  Chip,
+  StatusPill,
+  TextInput,
+  EmptyState,
+  Toast,
+  Modal,
+} from "@/components/ui-kit";
+
+// ──────────────── /portal/services ────────────────
+export function PortalServices() {
+  const navigate = useNavigate();
+  const [tab, setTab] = useState("upcoming");
+  const [jobs, setJobs] = useState(null);
+  useEffect(() => {
+    api.get("/portal/home").then((d) => {
+      api.get("/jobs").then((all) => {
+        // /jobs already filters by customer on backend for customer role
+        setJobs(all || []);
+      }).catch(() => setJobs([]));
+    });
+  }, []);
+  const today = new Date().toISOString().slice(0, 10);
+  const upcoming = (jobs || []).filter((j) =>
+    ["scheduled", "active", "pending", "requested"].includes(j.status) &&
+    (!j.scheduled_date || j.scheduled_date >= today)
+  );
+  const past = (jobs || []).filter(
+    (j) => j.status === "completed" || j.status === "cancelled" || (j.scheduled_date && j.scheduled_date < today)
+  );
+  const list = tab === "upcoming" ? upcoming : past;
+
+  return (
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-services">
+      <PageHeader title="My Services" subtitle="Upcoming visits and history." />
+      <div className="flex gap-2 mb-4">
+        {[
+          { k: "upcoming", label: `Upcoming (${upcoming.length})` },
+          { k: "past", label: `Past (${past.length})` },
+        ].map((t) => (
+          <button
+            key={t.k}
+            onClick={() => setTab(t.k)}
+            className="px-4 py-2 rounded-full text-sm font-semibold"
+            style={{
+              backgroundColor: tab === t.k ? colors.brandTertiary : colors.surface,
+              color: tab === t.k ? colors.onBrandTertiary : colors.muted,
+              border: `1px solid ${tab === t.k ? colors.brandTertiary : colors.border}`,
+            }}
+            data-testid={`svc-tab-${t.k}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {jobs === null ? <Skeleton style={{ height: 180 }} /> :
+       list.length === 0 ? <EmptyState icon={Waves} title="Nothing here yet" /> :
+       <ul className="space-y-2">
+         {list.map((j) => (
+           <li key={j.id} onClick={() => navigate(`/portal/services/${j.id}`)}
+             className="cursor-pointer flex items-center gap-3 p-4 rounded-xl transition hover:brightness-95"
+             style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+             data-testid={`svc-${j.id}`}>
+             <div className="w-11 h-11 rounded-xl flex items-center justify-center" style={{ backgroundColor: colors.brandTertiary, color: colors.brand }}>
+               <Waves size={18} />
+             </div>
+             <div className="flex-1 min-w-0">
+               <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>{j.title}</div>
+               <div className="text-xs" style={{ color: colors.muted }}>{j.scheduled_date || "TBD"} · {j.technician_name || "Unassigned"}</div>
+             </div>
+             <StatusPill status={j.status} />
+           </li>
+         ))}
+       </ul>}
+    </div>
+  );
+}
+
+export function PortalServiceDetail() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [j, setJ] = useState(null);
+  useEffect(() => { api.get(`/jobs/${id}`).then(setJ).catch(() => {}); }, [id]);
+  if (!j) return <div className="max-w-3xl mx-auto p-6"><Skeleton style={{ height: 200 }} /></div>;
+  return (
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-svc-detail">
+      <button onClick={() => navigate("/portal/services")} className="flex items-center gap-1 text-sm font-semibold mb-4" style={{ color: colors.muted }}>
+        <ArrowLeft size={14} /> My services
+      </button>
+      <div className="rounded-2xl p-6 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        <StatusPill status={j.status} />
+        <h1 className="text-2xl font-bold mt-2" style={{ color: colors.onSurface }}>{j.title}</h1>
+        <p className="text-sm mt-1" style={{ color: colors.muted }}>{j.scheduled_date} · {j.technician_name}</p>
+      </div>
+      {(j.checklist || []).length ? (
+        <div className="rounded-2xl p-5 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+          <h3 className="font-bold mb-2" style={{ color: colors.onSurface }}>Service checklist</h3>
+          <ul className="space-y-1 text-sm">
+            {j.checklist.map((c) => (
+              <li key={c.id} style={{ color: c.done ? colors.muted : colors.onSurface, textDecoration: c.done ? "line-through" : "none" }}>
+                {c.done ? "✓ " : "○ "}{c.label}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {(j.chemical_readings && Object.keys(j.chemical_readings).length) ? (
+        <div className="rounded-2xl p-5 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+          <h3 className="font-bold mb-2" style={{ color: colors.onSurface }}>Water readings</h3>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(j.chemical_readings).map(([k, v]) => <Chip key={k} label={`${k.toUpperCase()} · ${v}`} tone="brand" />)}
+          </div>
+        </div>
+      ) : null}
+      {(j.photos || []).length ? (
+        <div className="rounded-2xl p-5" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+          <h3 className="font-bold mb-2" style={{ color: colors.onSurface }}>Photos</h3>
+          <div className="grid grid-cols-3 gap-2">
+            {j.photos.map((p, i) => (
+              <img key={i} src={p.url || p.data_url || p} alt="" className="w-full aspect-square object-cover rounded-lg"
+                style={{ border: `1px solid ${colors.border}` }} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ──────────────── /portal/invoices ────────────────
+export function PortalInvoices() {
+  const navigate = useNavigate();
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    api.get("/quotes?doc_type=invoice").then(setRows).catch(() => setRows([]));
+  }, []);
+  const total = (rows || []).reduce(
+    (s, r) => s + Math.max(0, Number(r.total || 0) - Number(r.amount_paid || 0)),
+    0
+  );
+  return (
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-invoices">
+      <PageHeader title="My Invoices" subtitle="Pay online, download receipts." />
+      <div className="rounded-2xl p-5 mb-4" style={{ background: "linear-gradient(90deg, #0284C7, #16A34A)", color: "#fff" }}>
+        <div className="text-sm opacity-85">Total outstanding</div>
+        <div className="text-3xl font-bold mt-1" data-testid="port-outstanding">{money(total)}</div>
+      </div>
+      {rows === null ? <Skeleton style={{ height: 220 }} /> :
+       rows.length === 0 ? <EmptyState icon={FileText} title="No invoices yet" /> :
+       <ul className="space-y-2">
+         {rows.map((r) => {
+           const balance = Math.max(0, Number(r.total || 0) - Number(r.amount_paid || 0));
+           return (
+             <li key={r.id} onClick={() => navigate(`/portal/invoices/${r.id}`)}
+               className="cursor-pointer flex items-center gap-3 p-4 rounded-xl"
+               style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+               data-testid={`port-inv-${r.id}`}>
+               <div className="flex-1 min-w-0">
+                 <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>{r.title}</div>
+                 <div className="text-xs" style={{ color: colors.muted }}>{r.due_date ? `Due ${r.due_date}` : "No due date"}</div>
+               </div>
+               <div className="text-right">
+                 <div className="font-semibold" style={{ color: colors.onSurface }}>{money(r.total)}</div>
+                 <Chip label={r.payment_status || "unpaid"} tone={r.payment_status === "paid" ? "success" : balance > 0 ? "danger" : "warning"} />
+               </div>
+             </li>
+           );
+         })}
+       </ul>}
+    </div>
+  );
+}
+
+export function PortalInvoiceDetail() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [doc, setDoc] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState(null);
+  useEffect(() => { api.get(`/quotes/${id}`).then(setDoc).catch(() => {}); }, [id]);
+
+  const pay = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post(`/payments/checkout/${id}`, {
+        return_url: `${window.location.origin}/portal/payment-complete`,
+      });
+      if (r.url) window.location.href = r.url;
+    } catch (e) {
+      setToast({ tone: "error", message: e.message });
+      setBusy(false);
+    }
+  };
+
+  if (!doc) return <div className="max-w-2xl mx-auto p-6"><Skeleton style={{ height: 200 }} /></div>;
+  const balance = Math.max(0, Number(doc.total || 0) - Number(doc.amount_paid || 0));
+  return (
+    <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-inv-detail">
+      <button onClick={() => navigate("/portal/invoices")} className="flex items-center gap-1 text-sm font-semibold mb-4" style={{ color: colors.muted }}>
+        <ArrowLeft size={14} /> My invoices
+      </button>
+      <div className="rounded-2xl p-6 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        <Chip label={doc.payment_status || "unpaid"} tone={doc.payment_status === "paid" ? "success" : "danger"} />
+        <h1 className="text-2xl font-bold mt-2" style={{ color: colors.onSurface }}>{doc.title}</h1>
+        <div className="text-3xl font-bold mt-2" style={{ color: colors.brand }}>{money(doc.total)}</div>
+        <div className="text-sm mt-1" style={{ color: colors.muted }}>Balance {money(balance)}</div>
+        {balance > 0 ? (
+          <Button onClick={pay} disabled={busy} testid="port-pay" className="mt-4">
+            <CreditCard size={16} /> {busy ? "Redirecting…" : "Pay online (Stripe)"}
+          </Button>
+        ) : null}
+      </div>
+      <div className="rounded-2xl p-5" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        <h3 className="font-bold mb-2" style={{ color: colors.onSurface }}>Line items</h3>
+        <table className="w-full text-sm">
+          <tbody>
+            {(doc.line_items || []).map((li, i) => (
+              <tr key={i} style={{ borderBottom: `1px solid ${colors.divider}` }}>
+                <td className="py-2">{li.description}</td>
+                <td className="py-2 text-right" style={{ color: colors.muted }}>{li.quantity} × {money(li.unit_price)}</td>
+                <td className="py-2 text-right font-semibold">{money((li.quantity || 0) * (li.unit_price || 0))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Toast toast={toast} onClose={() => setToast(null)} />
+    </div>
+  );
+}
+
+// ──────────────── /portal/estimates ────────────────
+export function PortalEstimates() {
+  const navigate = useNavigate();
+  const [rows, setRows] = useState(null);
+  useEffect(() => { api.get("/quotes?doc_type=quote").then(setRows).catch(() => setRows([])); }, []);
+  return (
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-estimates">
+      <PageHeader title="Estimates" subtitle="Approve or decline proposals." />
+      {rows === null ? <Skeleton style={{ height: 180 }} /> :
+       rows.length === 0 ? <EmptyState icon={FileText} title="No estimates yet" /> :
+       <ul className="space-y-2">
+         {rows.map((r) => (
+           <li key={r.id} onClick={() => navigate(`/portal/estimates/${r.id}`)}
+             className="cursor-pointer flex items-center gap-3 p-4 rounded-xl"
+             style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+             data-testid={`port-est-${r.id}`}>
+             <div className="flex-1 min-w-0">
+               <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>{r.title}</div>
+               <div className="text-xs" style={{ color: colors.muted }}>{money(r.total)}</div>
+             </div>
+             <StatusPill status={r.decision || r.status} />
+           </li>
+         ))}
+       </ul>}
+    </div>
+  );
+}
+
+export function PortalEstimateDetail() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [doc, setDoc] = useState(null);
+  const [toast, setToast] = useState(null);
+  const load = () => api.get(`/quotes/${id}`).then(setDoc).catch(() => {});
+  useEffect(() => { load(); }, [id]);
+  const decide = async (d) => {
+    try {
+      await api.post(`/quotes/${id}/decision?decision=${d}`);
+      setToast({ tone: "success", message: `${d[0].toUpperCase()}${d.slice(1)} recorded` });
+      await load();
+    } catch (e) { setToast({ tone: "error", message: e.message }); }
+  };
+  if (!doc) return <div className="max-w-2xl mx-auto p-6"><Skeleton style={{ height: 200 }} /></div>;
+  const pending = !doc.decision || doc.decision === "pending";
+  return (
+    <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-est-detail">
+      <button onClick={() => navigate("/portal/estimates")} className="flex items-center gap-1 text-sm font-semibold mb-4" style={{ color: colors.muted }}>
+        <ArrowLeft size={14} /> Estimates
+      </button>
+      <div className="rounded-2xl p-6 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        <StatusPill status={doc.decision || doc.status} />
+        <h1 className="text-2xl font-bold mt-2">{doc.title}</h1>
+        <div className="text-3xl font-bold mt-2" style={{ color: colors.brand }}>{money(doc.total)}</div>
+        {pending ? (
+          <div className="mt-4 flex gap-2">
+            <Button onClick={() => decide("approved")} testid="port-est-approve"><Check size={16} /> Approve</Button>
+            <Button variant="danger" onClick={() => decide("declined")} testid="port-est-decline"><XIcon size={16} /> Decline</Button>
+          </div>
+        ) : null}
+      </div>
+      <div className="rounded-2xl p-5" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        <h3 className="font-bold mb-2">Line items</h3>
+        <table className="w-full text-sm">
+          <tbody>
+            {(doc.line_items || []).map((li, i) => (
+              <tr key={i} style={{ borderBottom: `1px solid ${colors.divider}` }}>
+                <td className="py-2">{li.description}</td>
+                <td className="py-2 text-right font-semibold">{money((li.quantity || 0) * (li.unit_price || 0))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Toast toast={toast} onClose={() => setToast(null)} />
+    </div>
+  );
+}
+
+// ──────────────── /portal/payments + /portal/payment-method ────────────────
+export function PortalPayments() {
+  const navigate = useNavigate();
+  const [payments, setPayments] = useState(null);
+  const [pm, setPm] = useState(null);
+  useEffect(() => {
+    api.get("/me/payments").then(setPayments).catch(() => setPayments([]));
+    api.get("/payments/method").then(setPm).catch(() => setPm(null));
+  }, []);
+  return (
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-payments">
+      <PageHeader title="Payments" subtitle="History + saved card." />
+      <div className="rounded-2xl p-5 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-xs uppercase font-semibold" style={{ color: colors.muted }}>Card on file</div>
+            {pm?.brand ? (
+              <div className="text-base font-semibold mt-1" style={{ color: colors.onSurface }} data-testid="pm-summary">
+                {pm.brand} · •••• {pm.last4}
+              </div>
+            ) : (
+              <div className="text-sm mt-1" style={{ color: colors.muted }}>No saved card</div>
+            )}
+          </div>
+          <Button variant="ghost" onClick={() => navigate("/portal/payment-method")}>Manage</Button>
+        </div>
+      </div>
+      {payments === null ? <Skeleton style={{ height: 200 }} /> :
+       payments.length === 0 ? <EmptyState icon={CreditCard} title="No payments yet" /> :
+       <ul className="space-y-2">
+         {payments.map((p, i) => (
+           <li key={i} className="flex items-center gap-3 p-3 rounded-xl" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+             <div className="flex-1">
+               <div className="text-sm font-semibold">{money(p.amount)}</div>
+               <div className="text-xs" style={{ color: colors.muted }}>{p.paid_at || p.created_at}</div>
+             </div>
+             <Chip label={p.method || "Stripe"} tone="brand" />
+           </li>
+         ))}
+       </ul>}
+    </div>
+  );
+}
+
+export function PortalPaymentMethod() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const [pm, setPm] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState(null);
+  useEffect(() => { api.get("/payments/method").then(setPm).catch(() => setPm(null)); }, []);
+  const addCard = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post("/payments/setup-session", {
+        customer_id: user.customer_id,
+        return_url: `${window.location.origin}/portal/payment-method?setup=1`,
+      });
+      if (r.url) window.location.href = r.url;
+    } catch (e) { setToast({ tone: "error", message: e.message }); setBusy(false); }
+  };
+  return (
+    <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-pm">
+      <button onClick={() => navigate("/portal/payments")} className="flex items-center gap-1 text-sm font-semibold mb-4" style={{ color: colors.muted }}>
+        <ArrowLeft size={14} /> Payments
+      </button>
+      <PageHeader title="Payment Method" subtitle="Save a card so admin can charge you for approved services without another checkout." />
+      <div className="rounded-2xl p-6" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        {pm?.brand ? (
+          <div>
+            <div className="text-lg font-semibold" style={{ color: colors.onSurface }}>
+              {pm.brand} · •••• {pm.last4}
+            </div>
+            <div className="text-sm mt-1" style={{ color: colors.muted }}>Saved · expires {pm.exp_month}/{pm.exp_year}</div>
+            <Button variant="ghost" onClick={addCard} disabled={busy} className="mt-3">
+              <CreditCard size={16} /> {busy ? "…" : "Replace card"}
+            </Button>
+          </div>
+        ) : (
+          <div>
+            <p className="text-sm mb-3" style={{ color: colors.onSurfaceSecondary }}>No card on file yet.</p>
+            <Button onClick={addCard} disabled={busy} testid="pm-add">
+              <CreditCard size={16} /> {busy ? "Redirecting…" : "Add card"}
+            </Button>
+          </div>
+        )}
+      </div>
+      <Toast toast={toast} onClose={() => setToast(null)} />
+    </div>
+  );
+}
+
+// ──────────────── /portal/documents ────────────────
+export function PortalDocuments() {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { api.get("/me/documents").then(setRows).catch(() => setRows([])); }, []);
+  return (
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-docs">
+      <PageHeader title="Documents" subtitle="Contracts, receipts, warranties." />
+      {rows === null ? <Skeleton style={{ height: 180 }} /> :
+       rows.length === 0 ? <EmptyState icon={FileText} title="No documents yet" /> :
+       <ul className="space-y-2">
+         {rows.map((d) => (
+           <li key={d.id} className="flex items-center gap-3 p-4 rounded-xl" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+             <FileText size={22} color={colors.muted} />
+             <div className="flex-1">
+               <div className="text-sm font-semibold">{d.name}</div>
+               <div className="text-xs" style={{ color: colors.muted }}>{d.uploaded_at}</div>
+             </div>
+             <a href={d.url} download><Button variant="ghost"><Download size={14} /> Download</Button></a>
+           </li>
+         ))}
+       </ul>}
+    </div>
+  );
+}
+
+// ──────────────── /portal/messages ────────────────
+export function PortalMessages() {
+  const [threads, setThreads] = useState(null);
+  const [active, setActive] = useState(null);
+  const [text, setText] = useState("");
+  const [aiOn, setAiOn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState(null);
+  const hasAI = true;
+
+  const load = async () => {
+    try {
+      const r = await api.get("/me/messages");
+      setThreads(Array.isArray(r) ? r : (r?.threads || []));
+    } catch { setThreads([]); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const send = async () => {
+    if (!text.trim()) return;
+    setBusy(true);
+    try {
+      let final = text;
+      if (aiOn) {
+        try {
+          const r = await api.post("/comms/refine", { text }, 15000);
+          if (r?.refined) final = r.refined;
+        } catch { /* leave text as-is if refine unavailable */ }
+      }
+      await api.post("/me/messages", { message: final });
+      setText("");
+      await load();
+    } catch (e) {
+      setToast({ tone: "error", message: e.message });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-messages">
+      <PageHeader title="Messages" subtitle="Talk to your service team." />
+      <div className="rounded-2xl overflow-hidden mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}`, minHeight: 320 }}>
+        <div className="p-4 space-y-2 max-h-[50vh] overflow-y-auto">
+          {threads === null ? <Skeleton style={{ height: 60 }} /> :
+           threads.length === 0 ? <p className="text-sm text-center py-8" style={{ color: colors.muted }}>No messages yet. Start the conversation below.</p> :
+           threads.map((m, i) => {
+             const mine = m.from_role === "customer";
+             return (
+               <div key={i} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                 <div className="max-w-[75%] rounded-2xl px-3 py-2 text-sm"
+                   style={{
+                     backgroundColor: mine ? colors.brand : colors.surfaceSecondary,
+                     color: mine ? "#fff" : colors.onSurface,
+                   }}>
+                   {m.message || m.text}
+                 </div>
+               </div>
+             );
+           })}
+        </div>
+      </div>
+      <div className="rounded-2xl p-3 flex items-center gap-2" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Write a message…" rows={1}
+          className="flex-1 px-3 py-2 text-sm rounded-lg outline-none resize-none focus:ring-2"
+          style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+          data-testid="msg-input" />
+        {hasAI ? (
+          <button onClick={() => setAiOn(!aiOn)}
+            className="px-2 py-2 rounded-lg text-xs font-semibold"
+            style={{
+              backgroundColor: aiOn ? colors.brandTertiary : colors.surfaceSecondary,
+              color: aiOn ? colors.onBrandTertiary : colors.muted,
+              border: `1px solid ${colors.border}`,
+            }}
+            data-testid="msg-ai-toggle">
+            <Sparkles size={14} /> AI {aiOn ? "on" : "off"}
+          </button>
+        ) : null}
+        <Button onClick={send} disabled={busy || !text.trim()} testid="msg-send"><Send size={14} /></Button>
+      </div>
+      <Toast toast={toast} onClose={() => setToast(null)} />
+    </div>
+  );
+}
+
+// ──────────────── /portal/profile ────────────────
+export function PortalProfile() {
+  const { user, me } = useAuth();
+  const [customer, setCustomer] = useState(null);
+  const [oldPw, setOldPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState(null);
+  useEffect(() => {
+    if (user?.customer_id) api.get(`/me`).then(setCustomer).catch(() => {});
+    else me?.().then(setCustomer);
+  }, []);
+  const changePw = async () => {
+    setBusy(true);
+    try {
+      await api.post("/auth/change-password", { old_password: oldPw, new_password: newPw });
+      setToast({ tone: "success", message: "Password changed" });
+      setOldPw(""); setNewPw("");
+    } catch (e) { setToast({ tone: "error", message: e.message }); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-profile">
+      <PageHeader title="Profile" subtitle="Contact info is managed by your service team." />
+      <div className="rounded-2xl p-5 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        <ReadOnly label="Name" value={user?.name} />
+        <ReadOnly label="Email" value={user?.email} />
+        <ReadOnly label="Phone" value={customer?.phone} />
+        <ReadOnly label="Address" value={customer?.address} />
+        <p className="text-xs mt-2" style={{ color: colors.muted }}>Contact admin to update your contact info.</p>
+      </div>
+      <div className="rounded-2xl p-5" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        <h3 className="font-bold mb-2" style={{ color: colors.onSurface }}>Change password</h3>
+        <div className="space-y-3">
+          <TextInput label="CURRENT PASSWORD" type="password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} testid="pf-old-pw" />
+          <TextInput label="NEW PASSWORD (≥8 chars, upper+lower+digit)" type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} testid="pf-new-pw" />
+        </div>
+        <div className="mt-3">
+          <Button onClick={changePw} disabled={busy || !oldPw || !newPw} testid="pf-change">
+            {busy ? "Saving…" : "Change password"}
+          </Button>
+        </div>
+      </div>
+      <Toast toast={toast} onClose={() => setToast(null)} />
+    </div>
+  );
+}
+function ReadOnly({ label, value }) {
+  return (
+    <div className="mb-2">
+      <div className="text-xs uppercase font-semibold" style={{ color: colors.muted }}>{label}</div>
+      <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>{value || "—"}</div>
+    </div>
+  );
+}
+
+// ──────────────── /portal/request-service ────────────────
+export function PortalRequestService() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const [form, setForm] = useState({ service_type: "Pool Cleaning", preferred_date: "", notes: "" });
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState(null);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api.post("/leads", {
+        name: user.name,
+        email: user.email,
+        phone: "",
+        source: "portal",
+        customer_id: user.customer_id,
+        service_type: form.service_type,
+        notes: `Preferred date: ${form.preferred_date || "flexible"}\n${form.notes || ""}`,
+      });
+      setToast({ tone: "success", message: "Request sent — we'll be in touch" });
+      setTimeout(() => navigate("/portal/home"), 800);
+    } catch (err) { setToast({ tone: "error", message: err.message }); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-request">
+      <PageHeader title="Request Service" subtitle="Tell us what you need." />
+      <form onSubmit={submit} className="rounded-2xl p-5 space-y-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        <div>
+          <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>SERVICE TYPE</label>
+          <select value={form.service_type} onChange={set("service_type")}
+            className="w-full px-3.5 py-2.5 rounded-lg outline-none text-sm focus:ring-2"
+            style={{ backgroundColor: colors.surface, color: colors.onSurface, border: `1px solid ${colors.border}` }}
+            data-testid="rs-type">
+            <option>Pool Cleaning</option>
+            <option>Chemical Rebalance</option>
+            <option>Equipment Repair</option>
+            <option>Landscape</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <TextInput label="PREFERRED DATE" type="date" value={form.preferred_date} onChange={set("preferred_date")} testid="rs-date" />
+        <div>
+          <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>DETAILS</label>
+          <textarea value={form.notes} onChange={set("notes")} rows={4} placeholder="Anything we should know?"
+            className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
+            style={{ backgroundColor: colors.surface, color: colors.onSurface, border: `1px solid ${colors.border}` }}
+            data-testid="rs-notes" />
+        </div>
+        <div className="flex justify-end pt-2">
+          <Button type="submit" disabled={busy} testid="rs-submit"><Plus size={14} /> {busy ? "Sending…" : "Send request"}</Button>
+        </div>
+      </form>
+      <Toast toast={toast} onClose={() => setToast(null)} />
+    </div>
+  );
+}
+
+// ──────────────── /portal/payment-complete ────────────────
+export function PortalPaymentComplete() {
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const sid = params.get("session_id");
+  const [status, setStatus] = useState("checking");
+  const [invoice, setInvoice] = useState(null);
+
+  useEffect(() => {
+    if (!sid) { setStatus("no_session"); return; }
+    let cancelled = false;
+    let tries = 0;
+    const poll = async () => {
+      while (!cancelled && tries < 5) {
+        try {
+          const r = await api.get(`/payments/status/${sid}`);
+          if (r.status === "paid") {
+            setStatus("paid");
+            if (r.invoice_id) api.get(`/quotes/${r.invoice_id}`).then(setInvoice).catch(() => {});
+            return;
+          }
+        } catch {}
+        await new Promise((res) => setTimeout(res, 1500));
+        tries++;
+      }
+      if (!cancelled) setStatus("pending");
+    };
+    poll();
+    return () => { cancelled = true; };
+  }, [sid]);
+
+  return (
+    <div className="max-w-md mx-auto px-4 sm:px-6 lg:px-8 py-10 text-center" data-testid="portal-pay-complete">
+      {status === "checking" ? <Skeleton style={{ height: 120 }} /> :
+       status === "paid" ? (
+         <>
+           <div className="w-16 h-16 mx-auto rounded-full flex items-center justify-center"
+             style={{ backgroundColor: colors.success + "20", color: colors.success }}>
+             <Check size={28} />
+           </div>
+           <h1 className="text-2xl font-bold mt-4" style={{ color: colors.onSurface }}>Payment successful</h1>
+           {invoice ? <p className="text-sm mt-2" style={{ color: colors.muted }}>{invoice.title} · {money(invoice.total)}</p> : null}
+           <Button className="mt-6" onClick={() => navigate("/portal/invoices")} testid="pc-back">Back to invoices</Button>
+         </>
+       ) : (
+         <>
+           <div className="w-16 h-16 mx-auto rounded-full flex items-center justify-center"
+             style={{ backgroundColor: "#FEF9C3", color: "#A16207" }}>
+             <XIcon size={28} />
+           </div>
+           <h1 className="text-2xl font-bold mt-4" style={{ color: colors.onSurface }}>Still processing</h1>
+           <p className="text-sm mt-2" style={{ color: colors.muted }}>Your payment may still be finishing. Check invoices in a minute.</p>
+           <Button className="mt-6" onClick={() => navigate("/portal/invoices")}>Back to invoices</Button>
+         </>
+       )}
+    </div>
+  );
+}

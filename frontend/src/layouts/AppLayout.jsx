@@ -48,6 +48,7 @@ const TECH_NAV = [
 const CUSTOMER_NAV = [
   { to: "/portal/home", label: "Home", icon: HomeIcon, end: true },
   { to: "/portal/services", label: "Services", icon: Waves },
+  { to: "/portal/request-service", label: "Request", icon: Magnet },
   { to: "/portal/invoices", label: "Invoices", icon: Receipt },
   { to: "/portal/estimates", label: "Estimates", icon: FileText },
   { to: "/portal/payments", label: "Payments", icon: CreditCard },
@@ -82,6 +83,32 @@ function ProtectedShell() {
 function AppLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+
+  // Detect impersonation: the JWT carries an `act` claim (RFC 8693) when admin
+  // acts as a customer. We decode the payload client-side (no verification —
+  // display only; the backend re-verifies every request).
+  const impersonating = React.useMemo(() => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) return null;
+      const payload = JSON.parse(atob(token.split(".")[1] || ""));
+      return payload?.act ? { adminName: payload.act.name || "admin" } : null;
+    } catch { return null; }
+  }, []);
+
+  const revertImpersonation = async () => {
+    try {
+      const { api } = await import("@/api");
+      const r = await api.post("/auth/revert-impersonation");
+      if (r?.access_token) {
+        localStorage.setItem("token", r.access_token);
+        if (r.user) localStorage.setItem("user", JSON.stringify(r.user));
+        window.location.href = "/";
+      }
+    } catch (e) {
+      alert(e.message);
+    }
+  };
   const nav =
     user.role === "admin" ? ADMIN_NAV : user.role === "technician" ? TECH_NAV : CUSTOMER_NAV;
   const roleLabel = user.role.charAt(0).toUpperCase() + user.role.slice(1);
@@ -97,8 +124,25 @@ function AppLayout() {
       style={{ fontFamily: font.family, backgroundColor: colors.surfaceSecondary }}
       data-testid="app-shell"
     >
-      {/* Impersonation banner slot — filled in Phase 12 */}
-      <div id="impersonation-banner-slot" />
+      {/* Impersonation banner (Phase 4 partial fold-in) */}
+      {impersonating ? (
+        <div
+          className="fixed top-0 left-0 right-0 z-50 px-4 py-2 flex items-center justify-between text-sm font-semibold"
+          style={{ backgroundColor: "#FEF3C7", color: "#92400E", borderBottom: "1px solid #FDE68A" }}
+          data-testid="impersonation-banner"
+        >
+          <span>👤 Viewing as <strong>{user?.name || user?.email}</strong> · Admin session paused</span>
+          <button
+            onClick={revertImpersonation}
+            className="text-xs font-bold px-3 py-1 rounded-md"
+            style={{ backgroundColor: "#B45309", color: "#fff" }}
+            data-testid="revert-impersonation"
+          >
+            Return to admin
+          </button>
+        </div>
+      ) : null}
+      <div id="impersonation-banner-slot" style={{ height: impersonating ? 40 : 0 }} />
 
       {/* Side nav (>=md) */}
       <aside

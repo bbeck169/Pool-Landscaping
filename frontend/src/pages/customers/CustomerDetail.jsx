@@ -272,23 +272,7 @@ export default function CustomerDetail() {
           ) : null}
 
           {tab === "portal" ? (
-            <div>
-              {customer.has_login ? (
-                <div className="text-sm" style={{ color: colors.onSurface }}>
-                  Portal login already active for <strong>{customer.email}</strong>.
-                </div>
-              ) : (
-                <>
-                  <div className="text-sm mb-3" style={{ color: colors.onSurfaceSecondary }}>
-                    Create a customer portal login. They can sign in at <code>/login</code> with
-                    the email + password you choose here.
-                  </div>
-                  <Button onClick={() => setLoginModal(true)} testid="cd-create-login">
-                    <UserPlus size={14} /> Create login
-                  </Button>
-                </>
-              )}
-            </div>
+            <PortalAccessPanel customer={customer} onDone={load} onToast={(t) => setToast(t)} openLogin={() => setLoginModal(true)} />
           ) : null}
         </div>
       </div>
@@ -341,6 +325,89 @@ function Info({ label, value, preserveNewlines }) {
       >
         {value || "—"}
       </div>
+    </div>
+  );
+}
+
+
+function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
+  const [busy, setBusy] = React.useState("");
+  const [inviteLink, setInviteLink] = React.useState(null);
+  const [tempPassword, setTempPassword] = React.useState(null);
+
+  const doAction = async (endpoint, label) => {
+    setBusy(endpoint);
+    setInviteLink(null);
+    setTempPassword(null);
+    try {
+      const r = await api.post(`/customers/${customer.id}/${endpoint}`);
+      if (r?.emailed) {
+        onToast({ tone: "success", message: `${label} email sent to ${r.email}` });
+      } else if (r?.password) {
+        setInviteLink(r.login_url);
+        setTempPassword(r.password);
+        onToast({ tone: "info", message: `${label} link ready — share it manually` });
+      } else {
+        onToast({ tone: "success", message: `${label} done` });
+      }
+      await onDone();
+    } catch (e) {
+      onToast({ tone: "error", message: e.message });
+    } finally { setBusy(""); }
+  };
+
+  const impersonate = async () => {
+    setBusy("impersonate");
+    try {
+      const r = await api.post(`/admin/impersonate/${customer.id}`);
+      if (r?.access_token) {
+        localStorage.setItem("token", r.access_token);
+        if (r.user) localStorage.setItem("user", JSON.stringify(r.user));
+        window.location.href = "/portal/home";
+      }
+    } catch (e) { onToast({ tone: "error", message: e.message }); }
+    finally { setBusy(""); }
+  };
+
+  return (
+    <div className="space-y-4">
+      {customer.has_login ? (
+        <div className="text-sm" style={{ color: colors.onSurface }}>
+          Portal login active for <strong>{customer.email}</strong>.
+        </div>
+      ) : (
+        <div className="text-sm" style={{ color: colors.onSurfaceSecondary }}>
+          No portal login yet. Send an invite (auto-generated password) or create one manually.
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={() => doAction("portal-invite", "Portal invite")} disabled={busy === "portal-invite"} testid="cd-portal-invite">
+          {busy === "portal-invite" ? "Sending…" : "Send portal invite"}
+        </Button>
+        {customer.has_login ? (
+          <>
+            <Button variant="ghost" onClick={() => doAction("portal-reset", "Portal reset")} disabled={busy === "portal-reset"} testid="cd-portal-reset">
+              {busy === "portal-reset" ? "Resetting…" : "Reset password"}
+            </Button>
+            <Button variant="ghost" onClick={impersonate} disabled={busy === "impersonate"} testid="cd-impersonate">
+              View as customer
+            </Button>
+            <Button variant="danger" onClick={() => doAction("portal-revoke", "Portal revoked")} disabled={busy === "portal-revoke"} testid="cd-portal-revoke">
+              Revoke access
+            </Button>
+          </>
+        ) : (
+          <Button variant="ghost" onClick={openLogin}>Manual create…</Button>
+        )}
+      </div>
+      {inviteLink && tempPassword ? (
+        <div className="rounded-lg p-3 text-sm" style={{ backgroundColor: colors.brandTertiary, color: colors.onBrandTertiary }} data-testid="portal-invite-payload">
+          <div className="font-semibold mb-1">Share these credentials manually:</div>
+          <div>Login: <a href={inviteLink} className="underline" target="_blank" rel="noreferrer">{inviteLink}</a></div>
+          <div>Email: <code>{customer.email}</code></div>
+          <div>Temp password: <code>{tempPassword}</code></div>
+        </div>
+      ) : null}
     </div>
   );
 }

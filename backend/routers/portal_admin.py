@@ -1,0 +1,205 @@
+"""Phase 4 additions:
+- Portal home aggregate dashboard
+- Portal invite / reset / revoke admin actions
+
+Existing portal endpoints (`/me/*`, `/documents`, `/communications`, `/payments/checkout/{qid}`, `/setup-session`) are reused unchanged.
+"""
+import secrets
+import string
+from datetime import datetime, timezone
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
+from typing import Optional
+
+from config import db, logger, APP_PUBLIC_URL
+from utils import now_iso, new_id, require_admin, get_current_user, hash_password
+
+router = APIRouter()
+
+
+def _random_password(n: int = 12) -> str:
+    """Generate a compliant password: >=8 chars, has upper+lower+digit."""
+    alpha_lower = "abcdefghjkmnpqrstuvwxyz"
+    alpha_upper = "ABCDEFGHJKMNPQRSTUVWXYZ"
+    digits = "23456789"
+    seed = [
+        secrets.choice(alpha_upper),
+        secrets.choice(alpha_lower),
+        secrets.choice(digits),
+    ]
+    pool = alpha_upper + alpha_lower + digits
+    seed += [secrets.choice(pool) for _ in range(max(1, n - 3))]
+    secrets.SystemRandom().shuffle(seed)
+    return "".join(seed)
+
+
+# ─── Portal home aggregate ──────────────────────────────────────────────────
+@router.get("/portal/home")
+async def portal_home(user: dict = Depends(get_current_user)):
+    """Aggregated dashboard payload for the logged-in customer."""
+    if user.get("role") != "customer" or not user.get("customer_id"):
+        raise HTTPException(403, "Not a customer")
+    cid = user["customer_id"]
+    now = datetime.now(timezone.utc)
+    today_iso = now.date().isoformat()
+
+    customer = await db.customers.find_one({"id": cid}, {"_id": 0}) or {}
+    jobs = await db.jobs.find({"customer_id": cid}, {"_id": 0}).sort("scheduled_date", 1).to_list(200)
+
+    upcoming = [
+        j for j in jobs
+        if (j.get("status") in ("scheduled", "active", "pending", "requested"))
+        and (not j.get("scheduled_date") or str(j["scheduled_date"])[:10] >= today_iso)
+    ]
+    past = [
+        j for j in jobs
+        if j.get("status") in ("completed", "cancelled") or (j.get("scheduled_date") and str(j["scheduled_date"])[:10] < today_iso)
+    ]
+    past.sort(key=lambda j: j.get("completed_at") or j.get("scheduled_date") or "", reverse=True)
+
+    invs = await db.quotes.find(
+        {"customer_id": cid, "doc_type": "invoice"}, {"_id": 0}
+    ).to_list(500)
+    overdue_count = 0
+    outstanding = 0.0
+    for i in invs:
+        remaining = max(0.0, float(i.get("total") or 0) - float(i.get("amount_paid") or 0))
+        outstanding += remaining
+        if remaining > 0 and i.get("due_date") and str(i["due_date"])[:10] < today_iso:
+            overdue_count += 1
+
+    estimates = await db.quotes.find(
+        {"customer_id": cid, "doc_type": "quote"}, {"_id": 0}
+    ).to_list(500)
+    pending_estimates = [
+        e for e in estimates
+        if e.get("status") in ("sent", "draft") and e.get("decision") not in ("approved", "declined")
+    ]
+
+    unread_msgs = 0
+    try:
+        threads = await db.communications.find(
+            {"customer_id": cid}, {"messages": 1, "_id": 0}
+        ).to_list(200)
+        for t in threads:
+            for m in (t.get("messages") or []):
+                if not m.get("read_by_customer") and m.get("from_role") in ("admin", "technician", "assistant"):
+                    unread_msgs += 1
+    except Exception:
+        pass
+
+    return {
+        "customer": customer,
+        "next_visit": upcoming[0] if upcoming else None,
+        "last_visit": past[0] if past else None,
+        "counts": {
+            "upcoming_jobs": len(upcoming),
+            "overdue_invoices": overdue_count,
+            "outstanding_total": round(outstanding, 2),
+            "pending_estimates": len(pending_estimates),
+            "unread_messages": unread_msgs,
+        },
+    }
+
+
+# ─── Portal invite / reset / revoke ────────────────────────────────────────
+class PortalInviteResp(BaseModel):
+    ok: bool = True
+    email: str
+    login_url: str
+    password: Optional[str] = None
+    emailed: bool = False
+
+
+async def _upsert_customer_user(cid: str, email: str, password: str) -> None:
+    hashed = hash_password(password)
+    existing = await db.users.find_one({"customer_id": cid}, {"_id": 0})
+    if existing:
+        await db.users.update_one(
+            {"id": existing["id"]},
+            {"$set": {"password_hash": hashed, "email": email.lower(), "active": True}},
+        )
+    else:
+        await db.users.insert_one({
+            "id": new_id(),
+            "name": (await db.customers.find_one({"id": cid}) or {}).get("name", ""),
+            "email": email.lower(),
+            "password_hash": hashed,
+            "role": "customer",
+            "avatar": "",
+            "technician_id": None,
+            "customer_id": cid,
+            "active": True,
+            "created_at": now_iso(),
+        })
+    await db.customers.update_one(
+        {"id": cid}, {"$set": {"email": email.lower(), "has_login": True}}
+    )
+
+
+async def _try_send_reset_email(to: str, name: str, temp_password: str, login_url: str) -> bool:
+    from config import RESEND_API_KEY, EMAIL_FROM
+    if not RESEND_API_KEY:
+        return False
+    try:
+        import resend
+        resend.api_key = RESEND_API_KEY
+        resend.Emails.send({
+            "from": EMAIL_FROM or "onboarding@resend.dev",
+            "to": [to],
+            "subject": "Your customer portal login",
+            "html": (
+                f"<p>Hi {name or ''},</p>"
+                f"<p>Your portal login is ready.</p>"
+                f"<p><strong>Email:</strong> {to}<br>"
+                f"<strong>Temporary password:</strong> <code>{temp_password}</code></p>"
+                f"<p><a href='{login_url}'>Sign in here</a> and change your password from Profile.</p>"
+            ),
+        })
+        return True
+    except Exception as e:
+        logger.warning(f"Portal invite email failed: {e}")
+        return False
+
+
+@router.post("/customers/{cid}/portal-invite", response_model=PortalInviteResp)
+async def portal_invite(cid: str, user: dict = Depends(require_admin)):
+    """Provisions the customer's portal login with an auto-generated password.
+    Emails it via Resend if configured; otherwise returns the password in-body
+    so the admin can send it manually."""
+    cust = await db.customers.find_one({"id": cid}, {"_id": 0})
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+    email = (cust.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "Customer has no email on file")
+
+    password = _random_password()
+    await _upsert_customer_user(cid, email, password)
+    login_url = f"{APP_PUBLIC_URL or ''}/login"
+    emailed = await _try_send_reset_email(email, cust.get("name", ""), password, login_url)
+    return PortalInviteResp(
+        email=email,
+        login_url=login_url,
+        password=None if emailed else password,
+        emailed=emailed,
+    )
+
+
+@router.post("/customers/{cid}/portal-reset", response_model=PortalInviteResp)
+async def portal_reset(cid: str, user: dict = Depends(require_admin)):
+    """Same as invite but explicitly a reset — rotates the password."""
+    return await portal_invite(cid, user)
+
+
+@router.post("/customers/{cid}/portal-revoke")
+async def portal_revoke(cid: str, user: dict = Depends(require_admin)):
+    """Deactivates the customer's portal login. Sets `active:false` on their
+    user record so subsequent logins fail; existing tokens stay valid until
+    the customer signs out or the token expires — that's an acceptable trade-off."""
+    res = await db.users.update_many(
+        {"customer_id": cid, "role": "customer"},
+        {"$set": {"active": False, "revoked_at": now_iso()}},
+    )
+    await db.customers.update_one({"id": cid}, {"$set": {"has_login": False}})
+    return {"ok": True, "revoked": res.modified_count}
