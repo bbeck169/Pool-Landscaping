@@ -21,6 +21,9 @@ import {
   UserCircle,
   FolderClock,
   Calculator,
+  BarChart3,
+  DollarSign,
+  ChevronDown,
 } from "lucide-react";
 
 const ADMIN_NAV = [
@@ -32,6 +35,30 @@ const ADMIN_NAV = [
   { to: "/estimator", label: "Estimator", icon: Calculator },
   { to: "/customers", label: "Customers", icon: Users },
   { to: "/ops", label: "Ops", icon: Wrench },
+  {
+    group: "Reports", icon: BarChart3,
+    children: [
+      { to: "/reports", label: "Reports Hub" },
+      { to: "/reports/business-summary", label: "Business Summary" },
+      { to: "/reports/forecast", label: "Revenue Forecast" },
+      { to: "/reports/revenue-by-city", label: "Revenue by City" },
+      { to: "/reports/revenue-by-crew", label: "Revenue by Crew" },
+      { to: "/reports/revenue-by-customer", label: "Revenue by Customer" },
+      { to: "/reports/gross-sales", label: "Gross Sales" },
+      { to: "/reports/invoiced-items", label: "Invoiced Items" },
+      { to: "/income-by-category", label: "Income by Category" },
+    ],
+  },
+  {
+    group: "Finance", icon: DollarSign,
+    children: [
+      { to: "/invoices", label: "Invoices Ledger" },
+      { to: "/payments", label: "Payments Ledger" },
+      { to: "/auto-billing", label: "Auto-Billing" },
+      { to: "/income-categories", label: "Income Categories" },
+      { to: "/impexp", label: "Import / Export" },
+    ],
+  },
 ];
 
 // Tech nav intentionally omits Landscape AI / CAD / Virtual Bid / Measure —
@@ -55,6 +82,62 @@ const CUSTOMER_NAV = [
   { to: "/portal/messages", label: "Messages", icon: MessageSquare },
   { to: "/portal/profile", label: "Profile", icon: UserCircle },
 ];
+
+function NavGroup({ item }) {
+  const location = useLocation();
+  const containsActive = item.children.some((c) =>
+    location.pathname === c.to || location.pathname.startsWith(c.to + "/")
+  );
+  const [open, setOpen] = React.useState(containsActive);
+  React.useEffect(() => {
+    if (containsActive) setOpen(true);
+  }, [containsActive]);
+  const Icon = item.icon;
+  return (
+    <div className="space-y-0.5" data-testid={`nav-group-${item.group.toLowerCase()}`}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold hover:brightness-95 transition"
+        style={{
+          backgroundColor: "transparent",
+          color: colors.onSurfaceSecondary,
+        }}
+        data-testid={`nav-group-toggle-${item.group.toLowerCase()}`}
+      >
+        <Icon size={18} />
+        <span className="flex-1 text-left">{item.group}</span>
+        <ChevronDown size={14} style={{
+          transform: open ? "rotate(0deg)" : "rotate(-90deg)",
+          transition: "transform 150ms",
+        }} />
+      </button>
+      {open && (
+        <div className="ml-4 pl-2 space-y-0.5"
+             style={{ borderLeft: `2px solid ${colors.border}` }}>
+          {item.children.map((c) => (
+            <NavLink
+              key={c.to}
+              to={c.to}
+              end
+              className={({ isActive }) =>
+                `block px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                  isActive ? "" : "hover:brightness-95"
+                }`
+              }
+              style={({ isActive }) => ({
+                backgroundColor: isActive ? colors.brandTertiary : "transparent",
+                color: isActive ? colors.onBrandTertiary : colors.onSurfaceSecondary,
+              })}
+              data-testid={`nav-child-${c.label.toLowerCase().replace(/\s+/g, "-")}`}
+            >
+              {c.label}
+            </NavLink>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ProtectedShell() {
   const { user, loading } = useAuth();
@@ -176,7 +259,10 @@ function AppLayout() {
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-          {nav.map((item) => {
+          {nav.map((item, idx) => {
+            if (item.group) {
+              return <NavGroup key={`group-${item.group}`} item={item} />;
+            }
             const Icon = item.icon;
             return (
               <NavLink
@@ -292,7 +378,7 @@ function AppLayout() {
           }}
           data-testid="bottom-nav"
         >
-          {nav.slice(0, 5).map((item) => {
+          {nav.filter((n) => !n.group).slice(0, 5).map((item) => {
             const Icon = item.icon;
             return (
               <NavLink

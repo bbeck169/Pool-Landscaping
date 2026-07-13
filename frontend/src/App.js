@@ -21,6 +21,16 @@ import { MasterInvoicesList, MasterInvoiceNew, MasterInvoiceDetail } from "@/pag
 import PaymentHandlesSettings from "@/pages/settings/PaymentHandles";
 import { EstimatesList, EstimatorSettings, EstimatorTemplates, EstimatorEditor } from "@/pages/estimator/Estimator";
 import OpsHub from "@/pages/ops/OpsHub";
+import ReportsHub from "@/pages/reports/ReportsHub";
+import BusinessSummary from "@/pages/reports/BusinessSummary";
+import Forecast from "@/pages/reports/Forecast";
+import IncomeByCategory from "@/pages/reports/IncomeByCategoryPage";
+import {
+  RevenueByCity, RevenueByCrew, RevenueByCustomer, GrossSales, InvoicedItems,
+} from "@/pages/reports/RevenueSlices";
+import {
+  PaymentsLedger, AutoBilling, ImpExp, IncomeCategoriesCrud,
+} from "@/pages/finance/FinancePages";
 import PortalHome from "@/pages/portal/PortalHome";
 import {
   PortalServices, PortalServiceDetail,
@@ -75,6 +85,21 @@ export default function App() {
             <Route path="estimator/:id" element={<EstimatorEditor />} />
 
             <Route path="settings/payment-handles" element={<PaymentHandlesSettings />} />
+
+            {/* Phase 6 — Finance + Reports */}
+            <Route path="reports" element={<ReportsHub />} />
+            <Route path="reports/business-summary" element={<BusinessSummary />} />
+            <Route path="reports/forecast" element={<Forecast />} />
+            <Route path="reports/revenue-by-city" element={<RevenueByCity />} />
+            <Route path="reports/revenue-by-crew" element={<RevenueByCrew />} />
+            <Route path="reports/revenue-by-customer" element={<RevenueByCustomer />} />
+            <Route path="reports/gross-sales" element={<GrossSales />} />
+            <Route path="reports/invoiced-items" element={<InvoicedItems />} />
+            <Route path="income-by-category" element={<IncomeByCategory />} />
+            <Route path="income-categories" element={<IncomeCategoriesCrud />} />
+            <Route path="payments" element={<PaymentsLedger />} />
+            <Route path="auto-billing" element={<AutoBilling />} />
+            <Route path="impexp" element={<ImpExp />} />
 
             {/* Ops hub (Phase 5) — all 16 sub-pages route into one tabbed shell */}
             <Route path="ops" element={<OpsHub />} />

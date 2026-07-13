@@ -1,0 +1,37 @@
+{
+  "summary": "Phase 6 (Reports + Finance) end-to-end tested. All 11 Phase-6 backend endpoints pass with correct shapes; all return 403 for non-admin (technician); openapi.json includes all 11 new paths; regression endpoints (/reports/business-summary and /finances/income-by-category) still work. Frontend: ReportsHub renders with 11 tiles + KPI strip; DateRangePicker with all 6 presets updates ?start&end&preset; all 12 pages (business-summary, forecast, revenue-by-city/crew/customer, gross-sales, invoiced-items, income-by-category, income-categories, payments, auto-billing, impexp) render without console errors; Forecast 30d/60d/90d toggles work; slice-export CSV button, recharts charts and tables render; payments-export and payments table present; auto-billing shows 3 toggles + Run all due opens run-confirm-modal and confirming succeeds; impexp upload-input/run-import/run-export all present (run-export appears after Export tab click); income-categories CRUD add+delete works using new-cat-input/new-cat-add and cat-del-{name} (window.confirm accepted); sidebar nav-group-toggle-reports/finance both toggle. Regression on customer portal (/portal/home) works.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Route guard on /reports, /payments, /auto-billing, /impexp, /income-categories, /income-by-category and all /reports/* sub-pages",
+        "issue": "Technician user (mike@aquaterra.com) can navigate directly to /reports and every Phase-6 admin page — the full ReportsHub UI renders (all 11 tiles + KPI strip) with $0.00 values because API calls 403 and the pages fall back to empty state instead of redirecting. Sidebar correctly hides the groups, but there is no client-side admin-only <Route guard>. The spec says 'technician mike@aquaterra.com cannot access /reports (should redirect or 403)'. Same issue for /payments (renders with 0 records), etc.",
+        "selector": "/reports, /payments, /auto-billing, /impexp, /income-categories, /income-by-category, /reports/*",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase6_reports_finance.py",
+    "/app/test_reports/pytest/phase6.xml"
+  ],
+  "action_items": [
+    "Add a client-side admin guard (e.g., <RequireRole role='admin'>) around Phase-6 routes in /app/frontend/src/App.js so non-admin users are redirected to /dashboard (or /jobs for techs) instead of seeing the ReportsHub shell with $0.00 fallbacks."
+  ],
+  "critical_code_review_comments": [
+    "Frontend routes for Phase-6 pages are not wrapped with an admin-role check — hiding nav is not enough; users can deep-link to /reports and see the shell rendered.",
+    "Backend properly enforces require_admin on all 11 endpoints (403 verified), so the risk is UI-level information exposure only, but pages showing $0.00 values without an 'access denied' message is confusing UX."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase6_reports_finance.py (new)"
+  ],
+  "success_rate": {"backend": "100% (25/25 pytest tests pass)", "frontend": "92% (all 12 pages + all data-testids + flows work; 1 access-control regression)"},
+  "test_credentials": "admin@aquaterra.com / password123, mike@aquaterra.com / password123, customer@aquaterra.com / password123",
+  "seed_data_creation": "TEST_CAT_X income category was added and then deleted during CRUD test — no leftover.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend Phase-6 fully green. Only outstanding issue is a client-side admin guard on Phase-6 routes so techs cannot see the pages by deep-linking. After main agent adds the guard, re-verify by logging in as mike@aquaterra.com and visiting /reports, /payments, /auto-billing, /impexp, /income-categories, /income-by-category — each should redirect or show a 403/forbidden view.",
+  "rca of the issue": "AppLayout hides the Reports/Finance nav groups for non-admin users, but the corresponding <Route path='/reports' element={<ReportsHub/>}/> entries in /app/frontend/src/App.js do not check user role, so any authenticated user can navigate directly. Fix: wrap those routes with an admin-role check component, e.g. element={user.role==='admin' ? <ReportsHub/> : <Navigate to='/dashboard'/>}"
+}
