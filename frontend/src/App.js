@@ -44,6 +44,10 @@ import {
   D2dDashboard, D2dMap, D2dKnocks, D2dOpenLeads, D2dSoldLeads, D2dReport, D2dLeaderboard,
 } from "@/pages/d2d/D2dPages";
 import { DispatchMap, ScheduleMap } from "@/pages/ops/MapPages";
+import {
+  LandscapeAI, CadList, CadEditor, SatelliteMeasure, VirtualBid,
+  DigitalCardList, PublicCard, WeatherHub,
+} from "@/pages/aitools/AiToolsPages";
 import { EstimatesList, EstimatorSettings, EstimatorTemplates, EstimatorEditor } from "@/pages/estimator/Estimator";
 import OpsHub from "@/pages/ops/OpsHub";
 import ReportsHub from "@/pages/reports/ReportsHub";
@@ -82,6 +86,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+          <Route path="/public/card/:slug" element={<PublicCard />} />
 
           {/* Everything else lives inside the protected shell (side nav + top bar + bottom tabs). */}
           <Route path="/" element={<AppLayout />}>
@@ -209,6 +214,15 @@ export default function App() {
             <Route path="d2d/sold-leads" element={<AdminOnly><D2dSoldLeads /></AdminOnly>} />
             <Route path="d2d/report" element={<AdminOnly><D2dReport /></AdminOnly>} />
             <Route path="d2d/leaderboard" element={<AdminOnly><D2dLeaderboard /></AdminOnly>} />
+
+            {/* Phase 11 — AI & Tools (admin-only) */}
+            <Route path="landscape" element={<AdminOnly><LandscapeAI /></AdminOnly>} />
+            <Route path="cad" element={<AdminOnly><CadList /></AdminOnly>} />
+            <Route path="cad/editor/:id" element={<AdminOnly><CadEditor /></AdminOnly>} />
+            <Route path="measure" element={<AdminOnly><SatelliteMeasure /></AdminOnly>} />
+            <Route path="virtual-bid" element={<AdminOnly><VirtualBid /></AdminOnly>} />
+            <Route path="card" element={<AdminOnly><DigitalCardList /></AdminOnly>} />
+            <Route path="weather" element={<AdminOnly><WeatherHub /></AdminOnly>} />
 
             {/* Shared placeholders (later phases) */}
             <Route

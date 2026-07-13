@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { brandGradientCss, colors, money } from "@/theme";
+import { WeatherWidget } from "@/pages/aitools/AiToolsPages";
 import { useAuth } from "@/auth";
 
 function Skeleton({ className = "", style = {} }) {
@@ -327,6 +328,12 @@ export default function AdminDashboard() {
           {error}
         </div>
       ) : null}
+
+      {user?.role === "admin" && (
+        <div className="mb-6">
+          <WeatherWidget />
+        </div>
+      )}
 
       {/* Hero KPI card */}
       <div

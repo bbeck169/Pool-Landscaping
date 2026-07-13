@@ -27,6 +27,7 @@ import {
   Shield,
   Sparkles,
   DoorOpen,
+  Wand2,
 } from "lucide-react";
 
 const ADMIN_NAV = [
@@ -78,6 +79,17 @@ const ADMIN_NAV = [
       { to: "/tasks", label: "Tasks" },
       { to: "/notifications", label: "Notifications" },
       { to: "/call-logs", label: "Call Logs" },
+    ],
+  },
+  {
+    group: "AI & Tools", icon: Wand2,
+    children: [
+      { to: "/landscape", label: "Landscape AI" },
+      { to: "/cad", label: "CAD Studio" },
+      { to: "/measure", label: "Satellite Measure" },
+      { to: "/virtual-bid", label: "Virtual Bid" },
+      { to: "/weather", label: "Weather" },
+      { to: "/card", label: "Digital Card" },
     ],
   },
   {

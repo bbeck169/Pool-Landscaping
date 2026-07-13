@@ -61,9 +61,19 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
 - **DONE · Phase 8** — SEO Studio + WordPress + GBP
 - **DONE · Phase 9** — AI Employees + AI Chat + Tasks + Escalation + RingCentral + Access
 - **DONE · Phase 10** — D2D Sales (Zillow · knocks · leaderboard · Leaflet + Google Maps toggle)
-- **P0 · Phase 11** — Landscape AI · CAD · Measure · Virtual Bid
-- **P2 · Phase 12** — Admin/Settings polish
-- **P2 · Phase 13** — Full E2E parity testing
+- **DONE · Phase 11** — Landscape AI · CAD Studio · Satellite Measure · Virtual Bid · Digital Card (+ public route) · Weather
+- **P0 · Phase 12** — Admin/Settings polish
+- **P1 · Phase 13** — Full E2E parity testing
+
+## Phase 11 acceptance (2026-07-13)
+- 282 OpenAPI paths (up from 274). New: `/virtual-bid/generate`, `/virtual-bid`, `/weather/risk`, `/weather/reschedule-recommendations`, `/cards`, `/cards/{slug}`, `/public/cards/{slug}`, `/public/cards/{slug}/vcard`.
+- Landscape AI wired to `POST /api/landscape/render` (Gemini image gen via emergentintegrations). Yard photo → styled photoreal redesign.
+- CAD Studio: list + editor with click-to-place elements (rect, circle, palm, cactus, spa, fire pit, text), persistent JSON serialization via `/api/designs/{id}`.
+- Satellite Measure: Esri satellite tiles + Leaflet click-to-polygon with live shoelace area calculation in sq ft. Save creates `/api/measurements` doc.
+- Virtual Bid: Zillow lookup via `/property/lookup` → LLM-generated bid narrative + tiered pricing (14k/16k/22k gal buckets). Verified with 10840 W Saddlehorn Rd → 22k gal / $179/mo / $485 cleanup with real Claude narrative.
+- Digital Card: admin CRUD + public route at `/public/card/{slug}` (no auth) + `.vcf` download (VCARD 3.0).
+- Weather: 7-day risk grid (precip/wind/UV → good/fair/poor score), reschedule recommendations query real jobs on poor days, WeatherWidget on admin dashboard.
+- **Tech-role guard verified**: mike@aquaterra.com direct-URL attempts on `/landscape`, `/cad`, `/measure`, `/virtual-bid`, `/card`, `/weather`, `/d2d` all redirect to `/`. AI & Tools + D2D Sales groups absent from tech sidebar.
 
 ## Phase 10 acceptance (2026-07-13)
 - 274 OpenAPI paths. New: `/api/d2d/*` (already wired), `/api/settings/maps`, `/api/settings/integrations`, `/api/public/map-settings`, `/api/admin/geocode-addresses`.
