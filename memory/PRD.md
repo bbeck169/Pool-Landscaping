@@ -46,7 +46,15 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
   - **Seeds (idempotent) on startup**: 6 campaign templates, 5 email templates, 3 SMS templates, 3 sequences (Welcome / Review Request / **Overdue Invoice Sequence** fulfilling the aging-nudge deferral).
   - Frontend: `MarketingPages.jsx` + `SequencePages.jsx` — 13 pages consolidated (Hub, Brand, Campaigns list/new/detail, Posts, Approval Queue, Calendar, Scheduling, Performance, Templates, Reviews, Sequences list/new/detail). Admin sidebar Marketing group with 11 children. All routes AdminOnly-guarded.
   - Publish endpoint enforces approval at API level — 400 if item not approved.
-  - Sub-features from source repo (forms, automations, reviews, rank-grid, checkins) are reachable via existing `/api/forms/*`, `/api/automations/*`, `/api/reviews/*`, `/api/rank-grid`, `/api/checkins` endpoints — UI polish deferred to a future pass.
+- **Phase 8 — SEO Studio + WordPress + GBP + Overdue Auto-Enrollment (2026-07)**
+  - **Overdue Invoice Sequence auto-enrollment**: extended `run_late_fee_assessment` to also enroll customers with 30+ day past-due invoices into the seeded sequence — piggybacks on the existing daily 02:00 UTC cron (no new scheduler). Idempotent (skips active enrollments), re-enrolls unenrolled customers. Logs `type: "sequence-auto-enrolled"` to activity_logs. Also added `POST /api/sequences/auto-enroll/overdue-run` for manual/testing runs.
+  - Backend SEO: added `PATCH /api/seo/articles/{aid}` for editor updates + `_ai_json` stub-fallback so keyword suggest / article generate / audit all degrade gracefully to placeholder skeletons keyed by request.
+  - Backend GBP: added `GET /api/gbp/status` (connection-state probe), `GET /api/gbp/oauth/auth-url` (returns 424 with friendly message when unconfigured), `POST /api/gbp/oauth/callback` alias. Existing GBP endpoints untouched.
+  - **OpenAPI now at 256 paths.**
+  - Frontend: `SeoPages.jsx` — 7 pages (Hub, Articles list, Article editor with markdown + live preview, Keyword Suggest, SEO Audit, Rank Grid, WordPress settings) plus GBP Hub. Admin sidebar Marketing group extended with SEO + GBP children.
+  - Article editor supports save, schedule, meta description, markdown editing + preview.
+  - WordPress settings: connection form + test connection + weekly auto-drip toggle.
+  - GBP not-connected state renders CTA card and Connect button surfaces the friendly 424 message.
 
 ## Prioritized backlog
 - **P0 · Phase 7** — AI Marketing Studio (see `/app/memory/phase-7-plan.md`)

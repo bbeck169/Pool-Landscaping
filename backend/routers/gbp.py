@@ -402,3 +402,41 @@ async def auto_gbp_from_article(article: dict):
         logger.info(f"Auto GBP post created for article {article.get('id')} (status={rec['status']})")
     except Exception as e:
         logger.warning(f"auto_gbp_from_article error: {e}")
+
+
+
+# ─── Phase 8 additions ──────────────────────────────────────────────────────
+@router.get("/gbp/status")
+async def gbp_status(user: dict = Depends(require_admin)):
+    """Lightweight connection-state probe for the UI."""
+    cfg = await _get_config()
+    tokens = await db.gbp_settings.find_one({"id": TOKENS_ID}, {"_id": 0}) or {}
+    has_client = bool(cfg and cfg.get("client_id") and cfg.get("redirect_uri"))
+    has_tokens = bool(tokens.get("access_token"))
+    return {
+        "connected": bool(has_client and has_tokens),
+        "credentials_configured": has_client,
+        "has_tokens": has_tokens,
+        "message": (
+            "Not connected — configure OAuth credentials in Business Info first."
+            if not has_client else
+            "Credentials saved but Google consent not granted yet — click 'Connect'."
+            if not has_tokens else
+            "Connected to Google Business Profile."
+        ),
+    }
+
+
+@router.get("/gbp/oauth/auth-url")
+async def gbp_oauth_auth_url(user: dict = Depends(require_admin)):
+    """Alias for /gbp/auth-url with friendly 424 when creds absent (for UI)."""
+    cfg = await _get_config()
+    if not cfg or not (cfg.get("client_id") and cfg.get("redirect_uri")):
+        raise HTTPException(424, "GBP not connected — save Client ID, Secret and Redirect URI first.")
+    return await gbp_auth_url(user)
+
+
+@router.post("/gbp/oauth/callback")
+async def gbp_oauth_callback_post(code: str = "", error: str = ""):
+    """POST alias for the OAuth callback (browser-side)."""
+    return await gbp_callback(code=code, error=error)

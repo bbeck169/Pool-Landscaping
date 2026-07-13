@@ -463,7 +463,93 @@ async def run_late_fee_assessment() -> dict:
         except Exception as e:
             logger.warning(f"notify_customer skipped for late fee on {inv['id']}: {e}")
     logger.info(f"Late-fee run: assessed {len(assessed_ids)} invoice(s) (cutoff before {cutoff}).")
-    return {"assessed": len(assessed_ids), "invoice_ids": assessed_ids}
+    # Auto-enroll customers with 30+ day past-due invoices into the seeded
+    # "Overdue Invoice Sequence" (idempotent).
+    try:
+        enrolled = await auto_enroll_overdue_sequence(cutoff)
+    except Exception as e:
+        logger.warning(f"overdue-sequence auto-enroll skipped: {e}")
+        enrolled = {"enrolled": 0, "customer_ids": []}
+    return {
+        "assessed": len(assessed_ids),
+        "invoice_ids": assessed_ids,
+        "sequence_auto_enroll": enrolled,
+    }
+
+
+async def auto_enroll_overdue_sequence(cutoff: Optional[str] = None) -> dict:
+    """Auto-enroll customers whose invoices crossed the 30-day past-due threshold
+    into the seeded ``overdue-invoice-sequence``. Idempotent — skips customers
+    already actively enrolled; re-enrolls customers whose prior enrollment was
+    unenrolled/completed.
+    """
+    if cutoff is None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).date().isoformat()
+    seq = await db.sequences.find_one({"slug": "overdue-invoice-sequence"}, {"_id": 0})
+    if not seq:
+        return {"enrolled": 0, "customer_ids": [], "reason": "sequence not found"}
+    if not seq.get("active", True):
+        return {"enrolled": 0, "customer_ids": [], "reason": "sequence paused"}
+
+    q = {
+        "doc_type": "invoice",
+        "payment_status": {"$in": ["unpaid", "partial", "overdue"]},
+        "due_date": {"$exists": True, "$ne": None, "$lt": cutoff},
+    }
+    invs = await db.quotes.find(q, {"_id": 0}).to_list(5000)
+    seen_customers: set[str] = set()
+    enrolled_ids: list[str] = []
+    today = datetime.now(timezone.utc).date()
+
+    steps = seq.get("steps") or []
+    if not steps:
+        return {"enrolled": 0, "customer_ids": [], "reason": "sequence has no steps"}
+
+    for inv in invs:
+        cid = inv.get("customer_id")
+        if not cid or cid in seen_customers:
+            continue
+        seen_customers.add(cid)
+        active = await db.sequence_enrollments.find_one(
+            {"sequence_id": seq["id"], "customer_id": cid, "status": "active"}, {"_id": 0}
+        )
+        if active:
+            continue
+        first_delay = int((steps[0] or {}).get("delay_days") or 0)
+        next_at = (datetime.now(timezone.utc) + timedelta(days=first_delay)).isoformat()
+        enrollment = {
+            "id": new_id(),
+            "sequence_id": seq["id"],
+            "customer_id": cid,
+            "status": "active",
+            "current_step": 0,
+            "next_action_at": next_at,
+            "started_at": now_iso(),
+            "log": [],
+            "auto_enrolled": True,
+            "trigger_invoice_id": inv.get("id"),
+        }
+        await db.sequence_enrollments.insert_one(enrollment)
+        # Compute days past due for the log message.
+        try:
+            days = (today - datetime.fromisoformat(inv["due_date"][:10]).date()).days
+        except Exception:
+            days = 30
+        await _log_invoice_activity(
+            inv["id"], "sequence-auto-enrolled",
+            f"Auto-enrolled in Overdue Invoice Sequence — invoice {days} days past due",
+            {"sequence_id": seq["id"], "customer_id": cid, "days_past_due": days},
+        )
+        enrolled_ids.append(cid)
+    if enrolled_ids:
+        logger.info(f"overdue-invoice auto-enroll: {len(enrolled_ids)} customer(s) enrolled.")
+    return {"enrolled": len(enrolled_ids), "customer_ids": enrolled_ids}
+
+
+@router.post("/sequences/auto-enroll/overdue-run")
+async def run_overdue_auto_enroll(admin: dict = Depends(require_admin)):
+    """Manual trigger for the overdue-invoice auto-enroll pass."""
+    return await auto_enroll_overdue_sequence()
 
 
 # ─── settings endpoints ─────────────────────────────────────────────────────

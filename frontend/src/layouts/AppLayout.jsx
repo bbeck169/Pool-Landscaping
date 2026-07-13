@@ -65,6 +65,13 @@ const ADMIN_NAV = [
       { to: "/marketing/templates", label: "Templates" },
       { to: "/marketing/reviews", label: "Reviews" },
       { to: "/marketing/brand", label: "Brand Memory" },
+      { to: "/seo", label: "SEO Studio" },
+      { to: "/seo/articles", label: "SEO Articles" },
+      { to: "/seo/keywords", label: "Keywords" },
+      { to: "/seo/audit", label: "Audit" },
+      { to: "/seo/rank-grid", label: "Rank Grid" },
+      { to: "/seo/wordpress", label: "WordPress" },
+      { to: "/gbp", label: "Google Business Profile" },
     ],
   },
   {

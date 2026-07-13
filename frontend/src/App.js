@@ -31,6 +31,10 @@ import {
 import {
   SequencesList, SequenceNew, SequenceDetail,
 } from "@/pages/marketing/SequencePages";
+import {
+  SeoHub, ArticlesList, ArticleEditor, KeywordSuggest, SeoAudit, RankGrid,
+  WordPressSettings, GbpHub,
+} from "@/pages/seo/SeoPages";
 import { EstimatesList, EstimatorSettings, EstimatorTemplates, EstimatorEditor } from "@/pages/estimator/Estimator";
 import OpsHub from "@/pages/ops/OpsHub";
 import ReportsHub from "@/pages/reports/ReportsHub";
@@ -128,6 +132,16 @@ export default function App() {
             <Route path="marketing/sequences" element={<AdminOnly><SequencesList /></AdminOnly>} />
             <Route path="marketing/sequences/new" element={<AdminOnly><SequenceNew /></AdminOnly>} />
             <Route path="marketing/sequences/:id" element={<AdminOnly><SequenceDetail /></AdminOnly>} />
+
+            {/* Phase 8 — SEO + GBP */}
+            <Route path="seo" element={<AdminOnly><SeoHub /></AdminOnly>} />
+            <Route path="seo/articles" element={<AdminOnly><ArticlesList /></AdminOnly>} />
+            <Route path="seo/articles/:id" element={<AdminOnly><ArticleEditor /></AdminOnly>} />
+            <Route path="seo/keywords" element={<AdminOnly><KeywordSuggest /></AdminOnly>} />
+            <Route path="seo/audit" element={<AdminOnly><SeoAudit /></AdminOnly>} />
+            <Route path="seo/rank-grid" element={<AdminOnly><RankGrid /></AdminOnly>} />
+            <Route path="seo/wordpress" element={<AdminOnly><WordPressSettings /></AdminOnly>} />
+            <Route path="gbp" element={<AdminOnly><GbpHub /></AdminOnly>} />
 
             {/* Phase 6 — Finance + Reports */}
             <Route path="reports" element={<AdminOnly><ReportsHub /></AdminOnly>} />
