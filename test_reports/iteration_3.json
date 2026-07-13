@@ -1,0 +1,25 @@
+{
+  "summary": "Independently verified Phase 11 admin-guard regression fix. All 31 new tests + 14 D2D regression tests pass (45/45). Primary 4 endpoints (POST /landscape/render, GET /property/lookup, POST /designs, POST /measurements) correctly return 403 'Admin access required' for technician JWT and succeed (or non-403) for admin. All 11 related endpoints in the same 4 routers (render.py, property.py, cad.py, measurements.py) are consistently gated admin-only. Public digital-card endpoints (GET /api/public/cards/{slug}, /vcard) remain unauthenticated (200 without any Authorization header). Regression: Phase 9 GET /api/notifications and GET /api/ai-ops/employees (8 personas) still work for admin. D2D auth-alias suite still 100% green.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_phase11_admin_guard.py",
+    "/app/test_reports/pytest/phase11_admin_guard.xml",
+    "/app/test_reports/pytest/d2d_auth_alias_rerun.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Dead code: unused `_staff(user)` helper still present in render.py, property.py, cad.py, measurements.py after the require_admin refactor. Not a bug, but should be removed to avoid future misuse.",
+    "Unused import `get_current_user` also still imported in those 4 routers. Cosmetic only."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase11_admin_guard.py (new — 31 tests)"
+  ],
+  "success_rate": {"backend": "100% (45/45 = 31 new + 14 D2D regression)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "admin@aquaterra.com / password123, mike@aquaterra.com / password123",
+  "seed_data_creation": "Created & cleaned up: 1 design (TEST_admin_design), 1 measurement (TEST_admin_m), 1 saved_property (TEST_addr Phase11), 1 digital_card (slug=alex-admin). Zillow /property/lookup called ONCE as admin and ONCE as tech (tech was rejected pre-network at auth layer). Landscape /render admin call used a 3-char base64 which fails fast at provider (no billable image generated).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_phase11_admin_guard.py is idempotent — safe to re-run. Reads REACT_APP_BACKEND_URL from env OR falls back to /app/frontend/.env. Every created record is deleted in the same test.",
+  "rca of the issue": "N/A — fix verified working. Main agent's switch from get_current_user+_staff to require_admin is complete and consistent across all 4 Phase 11 routers."
+}

@@ -4,7 +4,7 @@ from typing import Optional, List
 from pydantic import BaseModel
 
 from config import db, logger, EMERGENT_LLM_KEY
-from utils import now_iso, new_id, get_current_user
+from utils import now_iso, new_id, get_current_user, require_admin
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
 router = APIRouter()
@@ -44,8 +44,7 @@ def _build_prompt(style: str, elements: List[str], extra: str) -> str:
 
 
 @router.post("/landscape/render")
-async def render_landscape(body: RenderIn, user: dict = Depends(get_current_user)):
-    _staff(user)
+async def render_landscape(body: RenderIn, user: dict = Depends(require_admin)):
     img = _strip_prefix(body.image_base64 or "")
     if not img:
         raise HTTPException(400, "A yard photo is required")
@@ -74,8 +73,7 @@ async def render_landscape(body: RenderIn, user: dict = Depends(get_current_user
 
 @router.get("/landscape/renders")
 async def list_renders(customer_id: Optional[str] = Query(None), lead_id: Optional[str] = Query(None),
-                       user: dict = Depends(get_current_user)):
-    _staff(user)
+                       user: dict = Depends(require_admin)):
     q: dict = {}
     if customer_id:
         q["customer_id"] = customer_id
@@ -86,7 +84,6 @@ async def list_renders(customer_id: Optional[str] = Query(None), lead_id: Option
 
 
 @router.delete("/landscape/renders/{rid}")
-async def delete_render(rid: str, user: dict = Depends(get_current_user)):
-    _staff(user)
+async def delete_render(rid: str, user: dict = Depends(require_admin)):
     await db.landscape_renders.delete_one({"id": rid})
     return {"ok": True}

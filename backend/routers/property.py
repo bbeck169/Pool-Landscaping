@@ -4,7 +4,7 @@ from typing import Optional, List, Any
 from pydantic import BaseModel, Field
 
 from config import db, OPENWEB_NINJA_API_KEY
-from utils import now_iso, new_id, get_current_user
+from utils import now_iso, new_id, get_current_user, require_admin
 
 router = APIRouter()
 
@@ -73,9 +73,8 @@ def _norm_detail(data: dict) -> dict:
 
 
 @router.get("/property/lookup")
-async def lookup(address: str = Query(...), user: dict = Depends(get_current_user)):
+async def lookup(address: str = Query(...), user: dict = Depends(require_admin)):
     """Pull a Zillow listing (photos + facts) by full street address for virtual bidding."""
-    _staff(user)
     address = (address or "").strip()
     if len(address) < 5:
         raise HTTPException(400, "Enter a full property address")
@@ -124,8 +123,7 @@ class SaveIn(BaseModel):
 
 
 @router.post("/property/save")
-async def save_property(body: SaveIn, user: dict = Depends(get_current_user)):
-    _staff(user)
+async def save_property(body: SaveIn, user: dict = Depends(require_admin)):
     now = now_iso()
     lead_id = body.lead_id
     lead_created = False
@@ -184,8 +182,7 @@ async def save_property(body: SaveIn, user: dict = Depends(get_current_user)):
 
 @router.get("/property/saved")
 async def list_saved(customer_id: Optional[str] = Query(None), lead_id: Optional[str] = Query(None),
-                     user: dict = Depends(get_current_user)):
-    _staff(user)
+                     user: dict = Depends(require_admin)):
     q: dict = {}
     if customer_id:
         q["customer_id"] = customer_id
@@ -195,7 +192,6 @@ async def list_saved(customer_id: Optional[str] = Query(None), lead_id: Optional
 
 
 @router.delete("/property/saved/{pid}")
-async def delete_saved(pid: str, user: dict = Depends(get_current_user)):
-    _staff(user)
+async def delete_saved(pid: str, user: dict = Depends(require_admin)):
     await db.saved_properties.delete_one({"id": pid})
     return {"ok": True}

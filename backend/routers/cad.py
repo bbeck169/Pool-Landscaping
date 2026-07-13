@@ -3,7 +3,7 @@ from typing import Optional, List, Any
 from pydantic import BaseModel, Field
 
 from config import db
-from utils import now_iso, new_id, get_current_user
+from utils import now_iso, new_id, get_current_user, require_admin
 
 router = APIRouter()
 
@@ -32,8 +32,7 @@ def _doc_public(d: dict) -> dict:
 
 
 @router.post("/designs")
-async def create_design(body: DesignIn, user: dict = Depends(get_current_user)):
-    _staff(user)
+async def create_design(body: DesignIn, user: dict = Depends(require_admin)):
     now = now_iso()
     doc = {
         "id": new_id(),
@@ -58,8 +57,7 @@ async def create_design(body: DesignIn, user: dict = Depends(get_current_user)):
 
 @router.get("/designs")
 async def list_designs(customer_id: Optional[str] = Query(None), lead_id: Optional[str] = Query(None),
-                       user: dict = Depends(get_current_user)):
-    _staff(user)
+                       user: dict = Depends(require_admin)):
     q: dict = {}
     if customer_id:
         q["customer_id"] = customer_id
@@ -74,8 +72,7 @@ async def list_designs(customer_id: Optional[str] = Query(None), lead_id: Option
 
 
 @router.get("/designs/{did}")
-async def get_design(did: str, user: dict = Depends(get_current_user)):
-    _staff(user)
+async def get_design(did: str, user: dict = Depends(require_admin)):
     d = await db.designs.find_one({"id": did}, {"_id": 0})
     if not d:
         raise HTTPException(404, "Design not found")
@@ -83,8 +80,7 @@ async def get_design(did: str, user: dict = Depends(get_current_user)):
 
 
 @router.put("/designs/{did}")
-async def update_design(did: str, body: DesignIn, user: dict = Depends(get_current_user)):
-    _staff(user)
+async def update_design(did: str, body: DesignIn, user: dict = Depends(require_admin)):
     d = await db.designs.find_one({"id": did})
     if not d:
         raise HTTPException(404, "Design not found")
@@ -106,7 +102,6 @@ async def update_design(did: str, body: DesignIn, user: dict = Depends(get_curre
 
 
 @router.delete("/designs/{did}")
-async def delete_design(did: str, user: dict = Depends(get_current_user)):
-    _staff(user)
+async def delete_design(did: str, user: dict = Depends(require_admin)):
     await db.designs.delete_one({"id": did})
     return {"ok": True}

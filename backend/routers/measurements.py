@@ -3,7 +3,7 @@ from typing import Optional, List, Any
 from pydantic import BaseModel, Field
 
 from config import db
-from utils import now_iso, new_id, get_current_user
+from utils import now_iso, new_id, get_current_user, require_admin
 
 router = APIRouter()
 
@@ -26,8 +26,7 @@ def _staff(user: dict):
 
 
 @router.post("/measurements")
-async def create_measurement(body: MeasurementIn, user: dict = Depends(get_current_user)):
-    _staff(user)
+async def create_measurement(body: MeasurementIn, user: dict = Depends(require_admin)):
     doc = {
         "id": new_id(),
         "created_by": user["id"],
@@ -50,8 +49,7 @@ async def create_measurement(body: MeasurementIn, user: dict = Depends(get_curre
 
 @router.get("/measurements")
 async def list_measurements(customer_id: Optional[str] = Query(None), lead_id: Optional[str] = Query(None),
-                            user: dict = Depends(get_current_user)):
-    _staff(user)
+                            user: dict = Depends(require_admin)):
     q: dict = {}
     if customer_id:
         q["customer_id"] = customer_id
@@ -61,7 +59,6 @@ async def list_measurements(customer_id: Optional[str] = Query(None), lead_id: O
 
 
 @router.delete("/measurements/{mid}")
-async def delete_measurement(mid: str, user: dict = Depends(get_current_user)):
-    _staff(user)
+async def delete_measurement(mid: str, user: dict = Depends(require_admin)):
     await db.measurements.delete_one({"id": mid})
     return {"ok": True}
