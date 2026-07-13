@@ -6,7 +6,7 @@ from config import client, db, logger
 from seed import seed, seed_extras
 from routers import (
     auth, customers, technicians, jobs, quotes, leads, team, items, payments,
-    operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports,
+    operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal,
 )
 
 app = FastAPI(
@@ -18,7 +18,7 @@ app = FastAPI(
 api_router = APIRouter(prefix="/api")
 
 for module in [auth, customers, technicians, jobs, quotes, leads, team, items, payments,
-               operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports]:
+               operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal]:
     api_router.include_router(module.router)
 
 
@@ -56,6 +56,11 @@ async def startup():
             logger.info(f"Backfilled income category on {res.modified_count} quote/invoice docs")
     except Exception as e:
         logger.warning(f"income category backfill skipped: {e}")
+    # Seed legal documents (idempotent).
+    try:
+        await legal.ensure_seeded()
+    except Exception as e:
+        logger.warning(f"legal doc seed skipped: {e}")
     # Background auto-publish drip: check for due SEO articles every 10 minutes.
     scheduler.add_job(seo.run_due_publishes, "interval", minutes=10, id="seo_drip", replace_existing=True)
     # Auto-bill accrued chemical invoices once a month (checked daily; bills months that have ended).

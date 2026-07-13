@@ -102,6 +102,21 @@ class QuoteIn(BaseModel):
     tax_rate: float = 0.0
     due_date: Optional[str] = None  # YYYY-MM-DD (invoices)
     notes: Optional[str] = ""
+    terms: Optional[str] = None  # None → auto-fill from /settings/terms defaults
+
+
+class QuoteUpdate(BaseModel):
+    title: Optional[str] = None
+    notes: Optional[str] = None
+    terms: Optional[str] = None
+    tax_rate: Optional[float] = None
+    due_date: Optional[str] = None
+    line_items: Optional[List[LineItem]] = None
+
+
+class TermsSettingsIn(BaseModel):
+    default_quote_terms: Optional[str] = None
+    default_invoice_terms: Optional[str] = None
 
 
 class RecordPaymentIn(BaseModel):
@@ -473,6 +488,7 @@ class EstimateIn(BaseModel):
     overhead_pct: float = 0.0
     margin_pct: float = 0.0
     notes: Optional[str] = ""
+    terms: Optional[str] = None  # None → auto-fill from /settings/terms defaults
 
 
 class EstimateSettingsIn(BaseModel):

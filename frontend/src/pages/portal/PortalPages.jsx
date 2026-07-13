@@ -244,6 +244,15 @@ export function PortalInvoiceDetail() {
           </tbody>
         </table>
       </div>
+      <div className="rounded-2xl p-5 mt-3" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+           data-testid="portal-invoice-terms">
+        <h3 className="font-bold mb-2" style={{ color: colors.onSurface }}>Terms &amp; Conditions</h3>
+        {(doc.terms || "").trim() ? (
+          <p className="text-sm whitespace-pre-wrap" style={{ color: colors.onSurface }}>{doc.terms}</p>
+        ) : (
+          <p className="text-sm italic" style={{ color: colors.muted }}>No terms provided.</p>
+        )}
+      </div>
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
@@ -321,6 +330,15 @@ export function PortalEstimateDetail() {
             ))}
           </tbody>
         </table>
+      </div>
+      <div className="rounded-2xl p-5 mt-3" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+           data-testid="portal-estimate-terms">
+        <h3 className="font-bold mb-2">Terms &amp; Conditions</h3>
+        {(doc.terms || "").trim() ? (
+          <p className="text-sm whitespace-pre-wrap" style={{ color: colors.onSurface }}>{doc.terms}</p>
+        ) : (
+          <p className="text-sm italic" style={{ color: colors.muted }}>No terms provided.</p>
+        )}
       </div>
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>

@@ -41,6 +41,9 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
   const [payOpen, setPayOpen] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [termsEditOpen, setTermsEditOpen] = useState(false);
+  const [termsDraft, setTermsDraft] = useState("");
+  const [termsDefaultForDoc, setTermsDefaultForDoc] = useState("");
 
   const load = async () => {
     try {
@@ -51,6 +54,10 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
         api.get(`/payments/method?customer_id=${q.customer_id}`).then(setPmethod).catch(() => setPmethod(null));
       }
       api.get("/settings/payment-handles").then(setHandles).catch(() => {});
+      api.get("/settings/terms").then((r) => {
+        const def = q.doc_type === "invoice" ? r.default_invoice_terms : r.default_quote_terms;
+        setTermsDefaultForDoc(def || "");
+      }).catch(() => {});
     } catch (e) {
       setToast({ tone: "error", message: e.message });
     }
@@ -275,6 +282,39 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
         </div>
       </div>
 
+      {/* Terms & Conditions */}
+      <div
+        className="rounded-2xl p-5 mb-4"
+        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+        data-testid="doc-terms-card"
+      >
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs uppercase font-semibold tracking-wide"
+               style={{ color: colors.muted }}>
+            Terms &amp; Conditions
+          </div>
+          <button
+            onClick={() => { setTermsDraft(doc.terms || ""); setTermsEditOpen(true); }}
+            className="text-xs font-semibold hover:underline"
+            style={{ color: colors.brand }}
+            data-testid="doc-terms-edit"
+          >
+            Edit
+          </button>
+        </div>
+        {(doc.terms || "").trim() ? (
+          <p className="text-sm whitespace-pre-wrap" style={{ color: colors.onSurface }}
+             data-testid="doc-terms-text">
+            {doc.terms}
+          </p>
+        ) : (
+          <p className="text-sm italic" style={{ color: colors.muted }}
+             data-testid="doc-terms-empty">
+            No terms provided.
+          </p>
+        )}
+      </div>
+
       {/* Payment handles chips */}
       {isInvoice && handles && (handles.venmo || handles.zelle || handles.cashapp || handles.paypal) ? (
         <div
@@ -294,6 +334,52 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
       ) : null}
 
       {/* Payment link modal */}
+      <Modal
+        open={termsEditOpen}
+        onClose={() => setTermsEditOpen(false)}
+        title="Edit Terms & Conditions"
+        footer={
+          <div className="flex justify-between items-center w-full flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setTermsDraft(termsDefaultForDoc)}
+              className="text-xs font-semibold hover:underline"
+              style={{ color: colors.brand }}
+              data-testid="doc-terms-reset"
+            >
+              Reset to default
+            </button>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => setTermsEditOpen(false)}>Cancel</Button>
+              <Button
+                onClick={async () => {
+                  try {
+                    await api.put(`/quotes/${id}`, { terms: termsDraft });
+                    setTermsEditOpen(false);
+                    setToast({ tone: "success", message: "Terms saved" });
+                    await load();
+                  } catch (e) {
+                    setToast({ tone: "error", message: e.message });
+                  }
+                }}
+                testid="doc-terms-save"
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <textarea
+          rows={8}
+          value={termsDraft}
+          onChange={(e) => setTermsDraft(e.target.value)}
+          placeholder="Legal terms rendered on the document + PDF."
+          className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
+          style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface, border: `1px solid ${colors.border}` }}
+          data-testid="doc-terms-textarea"
+        />
+      </Modal>
       <Modal open={linkOpen} onClose={() => setLinkOpen(false)} title="Stripe Payment Link"
         footer={<Button onClick={() => setLinkOpen(false)}>Close</Button>}>
         <p className="text-sm mb-3" style={{ color: colors.onSurfaceSecondary }}>Copy and share this link to collect payment.</p>

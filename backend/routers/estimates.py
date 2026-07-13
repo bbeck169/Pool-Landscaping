@@ -131,11 +131,15 @@ async def create_estimate(body: EstimateIn, user: dict = Depends(require_admin))
         raise HTTPException(400, "Customer not found")
     items = [li.dict() for li in body.line_items]
     calc = compute_estimate(items, body.overhead_pct, body.margin_pct)
+    terms = body.terms
+    if terms is None:
+        from routers.finances import get_terms_defaults
+        terms = (await get_terms_defaults())["default_quote_terms"]
     doc = {
         "id": new_id(), "customer_id": body.customer_id, "customer_name": customer["name"],
         "title": body.title, "line_items": items,
         "overhead_pct": body.overhead_pct, "margin_pct": body.margin_pct,
-        "notes": body.notes or "", "status": "draft",
+        "notes": body.notes or "", "terms": terms, "status": "draft",
         "converted_quote_id": None, "created_at": now_iso(), "updated_at": now_iso(), **calc,
     }
     await db.estimates.insert_one(doc)
@@ -166,6 +170,8 @@ async def update_estimate(eid: str, body: EstimateIn, user: dict = Depends(requi
         "line_items": items, "overhead_pct": body.overhead_pct, "margin_pct": body.margin_pct,
         "notes": body.notes or "", "updated_at": now_iso(), **calc,
     }
+    if body.terms is not None:
+        upd["terms"] = body.terms
     await db.estimates.update_one({"id": eid}, {"$set": upd})
     return await db.estimates.find_one({"id": eid}, {"_id": 0})
 
@@ -187,13 +193,19 @@ async def convert_estimate_to_quote(eid: str, user: dict = Depends(require_admin
     sell = float(est.get("sell_price") or 0)
     if sell <= 0:
         raise HTTPException(400, "Add line items before converting")
+    # Carry over the estimate's terms; if it has none, fall back to the tenant default quote terms.
+    terms = est.get("terms")
+    if not terms:
+        from routers.finances import get_terms_defaults
+        terms = (await get_terms_defaults())["default_quote_terms"]
     quote = {
         "id": new_id(), "customer_id": est["customer_id"], "customer_name": est.get("customer_name", ""),
         "title": est.get("title", "Estimate"), "doc_type": "quote",
         "line_items": [{"description": est.get("title", "Project"), "quantity": 1, "unit_price": sell}],
         "tax_rate": 0.0, "subtotal": sell, "tax": 0.0, "total": sell,
         "amount_paid": 0.0, "due_date": None, "status": "draft", "payment_status": "unpaid",
-        "notes": est.get("notes", ""), "from_estimate_id": eid, "created_at": now_iso(),
+        "notes": est.get("notes", ""), "terms": terms,
+        "from_estimate_id": eid, "created_at": now_iso(),
     }
     await db.quotes.insert_one(quote)
     quote.pop("_id", None)

@@ -21,14 +21,21 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
     doc_type: docType,
     tax_rate: 0,
     notes: "",
+    terms: "",
     due_date: "",
     line_items: [{ description: "", quantity: 1, unit_price: 0, category: "Pool" }],
   });
+  const [termsDefault, setTermsDefault] = useState("");
 
   useEffect(() => {
     api.get("/customers").then(setCustomers).catch(() => {});
     api.get("/items").then(setItems).catch(() => {});
-  }, []);
+    api.get("/settings/terms").then((r) => {
+      const def = docType === "invoice" ? r.default_invoice_terms : r.default_quote_terms;
+      setTermsDefault(def || "");
+      setForm((f) => (f.terms ? f : { ...f, terms: def || "" }));
+    }).catch(() => {});
+  }, [docType]);
 
   const totals = useMemo(() => {
     const subtotal = form.line_items.reduce(
@@ -75,6 +82,7 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
         tax_rate: Number(form.tax_rate) || 0,
         due_date: form.due_date || undefined,
         notes: form.notes,
+        terms: form.terms,
         line_items: form.line_items
           .filter((li) => (li.description || "").trim())
           .map((li) => ({
@@ -264,6 +272,34 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
             className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
             style={{ backgroundColor: colors.surface, color: colors.onSurface, border: `1px solid ${colors.border}` }}
             data-testid="qf-notes"
+          />
+        </div>
+
+        <div
+          className="rounded-2xl p-5 mb-4"
+          style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+        >
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-xs font-semibold tracking-wide block" style={{ color: colors.onSurfaceSecondary }}>
+              TERMS &amp; CONDITIONS
+            </label>
+            {termsDefault && form.terms !== termsDefault ? (
+              <button type="button" onClick={() => setForm((f) => ({ ...f, terms: termsDefault }))}
+                      className="text-xs font-semibold hover:underline"
+                      style={{ color: colors.brand }}
+                      data-testid="qf-terms-reset">
+                Reset to default
+              </button>
+            ) : null}
+          </div>
+          <textarea
+            rows={5}
+            value={form.terms}
+            onChange={setField("terms")}
+            placeholder="Legal terms shown at the bottom of the document and PDF."
+            className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
+            style={{ backgroundColor: colors.surface, color: colors.onSurface, border: `1px solid ${colors.border}` }}
+            data-testid="qf-terms"
           />
         </div>
 

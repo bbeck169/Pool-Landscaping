@@ -32,6 +32,12 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
 - **Automatic Late Fees (2026-07)**
   - Backend: `run_late_fee_assessment` (daily @ 02:00 UTC via APScheduler cron) + admin endpoints `GET/PUT /api/settings/late-fees` and `POST /api/finances/late-fees/run`. Idempotent via `is_late_fee: true` line-item marker. Recomputes subtotal/tax/total/remaining_balance and logs to `activity_logs`. Master invoices unchanged — child invoices each carry their own fee.
   - Frontend: `/settings/late-fees` form (Enable, Amount, Grace days, Run now). Invoice detail line-items table highlights late-fee rows with a red "LATE FEE" chip + amber row background. Invoices list gains a "Has late fee" filter chip. OpenAPI now at 213 paths.
+- **Terms & Conditions field (2026-07)**
+  - Backend: `terms: Optional[str]` added to `QuoteIn`/`EstimateIn`. Auto-fills from `/api/settings/terms` defaults on create if not provided. New `PUT /api/quotes/{qid}` for partial doc updates. New `GET /api/quotes/{qid}/pdf` renderer includes terms. Work-order PDF pulls terms from linked quote/invoice. OpenAPI 216 paths.
+  - Frontend: `/settings/terms` (default quote + invoice terms editor with Save/Reset). New-quote/invoice/estimator forms auto-fill terms with a "Reset to default" link. Detail pages show Terms section with inline edit modal. Portal invoice + estimate details show terms too.
+- **Legal Documents CMS + Portal ToS (2026-07)**
+  - Backend: `db.legal_documents` collection seeded on startup with the verbatim Pool Maintenance Terms of Service scraped from `poolandlandscapingofvistancia.com`. Endpoints: `GET /api/legal/{slug}` (public), `GET /api/legal` + `PUT /api/legal/{slug}` (admin, bumps version), `POST /api/portal/terms/acknowledge` + `GET /api/portal/terms/status` (customer). Acks stored on `customer.tos_acknowledgements`. OpenAPI 220 paths.
+  - Frontend: `/portal/terms` renders markdown via `react-markdown` with print styles + "I have read and agree" flow; portal-home yellow nudge banner appears until ack. Admin `/settings/legal` list + `/settings/legal/{slug}` two-panel markdown editor with live preview.
 
 ## Prioritized backlog
 - **P0 · Phase 7** — AI Marketing Studio (see `/app/memory/phase-7-plan.md`)

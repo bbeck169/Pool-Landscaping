@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Response
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 
@@ -41,6 +41,12 @@ async def create_quote(body: QuoteIn, user: dict = Depends(require_admin)):
     due_date = body.due_date
     if body.doc_type == "invoice" and not due_date:
         due_date = (datetime.now(timezone.utc) + timedelta(days=14)).date().isoformat()
+    # Auto-fill terms from tenant defaults when the caller did not explicitly send one.
+    terms = body.terms
+    if terms is None:
+        from routers.finances import get_terms_defaults
+        defaults = await get_terms_defaults()
+        terms = defaults["default_invoice_terms"] if body.doc_type == "invoice" else defaults["default_quote_terms"]
     doc = {
         "id": new_id(),
         "customer_id": body.customer_id,
@@ -57,11 +63,43 @@ async def create_quote(body: QuoteIn, user: dict = Depends(require_admin)):
         "status": "draft",
         "payment_status": "unpaid",
         "notes": body.notes,
+        "terms": terms,
         "created_at": now_iso(),
     }
     await db.quotes.insert_one(doc)
     doc.pop("_id", None)
     return doc
+
+
+@router.put("/quotes/{qid}")
+async def update_quote(qid: str, body: QuoteUpdate, user: dict = Depends(require_admin)):
+    """Partial update of quote/invoice fields (title, notes, terms, tax_rate, due_date, line_items).
+
+    Preserves existing values when a field is omitted. Recomputes totals if
+    line_items or tax_rate change.
+    """
+    existing = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Not found")
+    upd = {k: v for k, v in body.dict().items() if v is not None}
+    if "line_items" in upd:
+        # Normalize LineItem models → dicts for storage.
+        upd["line_items"] = [li if isinstance(li, dict) else li.dict() for li in upd["line_items"]]
+    if "line_items" in upd or "tax_rate" in upd:
+        items = upd.get("line_items", existing.get("line_items", []))
+        tax_rate = float(upd.get("tax_rate", existing.get("tax_rate", 0)) or 0)
+        subtotal, tax, total = compute_totals(items, tax_rate)
+        amount_paid = float(existing.get("amount_paid") or 0)
+        upd.update({
+            "tax_rate": tax_rate,
+            "subtotal": subtotal,
+            "tax": tax,
+            "total": total,
+            "remaining_balance": round(max(total - amount_paid, 0.0), 2),
+        })
+    upd["updated_at"] = now_iso()
+    await db.quotes.update_one({"id": qid}, {"$set": upd})
+    return await db.quotes.find_one({"id": qid}, {"_id": 0})
 
 
 @router.get("/quotes/{qid}")
@@ -294,4 +332,131 @@ async def pay_quote(qid: str, user: dict = Depends(require_admin)):
                               f"Your payment for '{doc.get('title', 'invoice')}' was recorded. Thank you!")
     return await db.quotes.find_one({"id": qid}, {"_id": 0})
 
+
+
+# ────────────────────────────── PDF export ───────────────────────────────────
+@router.get("/quotes/{qid}/pdf")
+async def quote_or_invoice_pdf(qid: str, user: dict = Depends(get_current_user)):
+    """Streams a printable PDF for a quote or invoice, including the terms section."""
+    doc = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Not found")
+    if user.get("role") == "technician":
+        raise HTTPException(403, "Not allowed")
+    if user.get("role") == "customer" and doc.get("customer_id") != user.get("customer_id"):
+        raise HTTPException(403, "Not allowed")
+
+    from io import BytesIO
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors as rlcolors
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+    is_invoice = doc.get("doc_type") == "invoice"
+    label = "Invoice" if is_invoice else "Estimate"
+    buf = BytesIO()
+    pdf_doc = SimpleDocTemplate(buf, pagesize=letter, title=f"{label} {qid[:8]}")
+    styles = getSampleStyleSheet()
+    story = []
+    story.append(Paragraph(f"<b>{label}</b>", styles["Title"]))
+    story.append(Paragraph("Pool &amp; Landscaping of Vistancia — AquaTerra", styles["Normal"]))
+    story.append(Spacer(1, 12))
+
+    header_rows = [
+        [f"{label} #", qid[:8].upper()],
+        ["Title", doc.get("title", "")],
+        ["Customer", doc.get("customer_name", "")],
+        ["Status", (doc.get("status") or "").title()],
+    ]
+    if is_invoice:
+        header_rows.append(["Due", doc.get("due_date") or "—"])
+        header_rows.append(["Payment", (doc.get("payment_status") or "unpaid").title()])
+    header_rows.append(["Created", (doc.get("created_at") or "")[:10]])
+    t = Table(header_rows, colWidths=[1.4 * inch, 5.0 * inch])
+    t.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, -1), "Helvetica", 10),
+        ("FONT", (0, 0), (0, -1), "Helvetica-Bold", 10),
+        ("BACKGROUND", (0, 0), (0, -1), rlcolors.HexColor("#F4F4F5")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.25, rlcolors.HexColor("#E4E4E7")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 16))
+
+    # Line items
+    line_rows = [["Description", "Qty", "Unit", "Total"]]
+    for li in (doc.get("line_items") or []):
+        qty = float(li.get("quantity") or 0)
+        unit = float(li.get("unit_price") or 0)
+        line_rows.append([li.get("description", ""), f"{qty:g}", f"${unit:,.2f}", f"${qty * unit:,.2f}"])
+    lt = Table(line_rows, colWidths=[3.6 * inch, 0.8 * inch, 1.1 * inch, 1.1 * inch])
+    lt.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, -1), "Helvetica", 9),
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 9),
+        ("BACKGROUND", (0, 0), (-1, 0), rlcolors.HexColor("#F4F4F5")),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.25, rlcolors.HexColor("#E4E4E7")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(lt)
+    story.append(Spacer(1, 8))
+
+    # Totals block
+    subtotal = float(doc.get("subtotal") or 0)
+    tax_amt = float(doc.get("tax") or 0)
+    total = float(doc.get("total") or 0)
+    tot_rows = [
+        ["Subtotal", f"${subtotal:,.2f}"],
+        [f"Tax ({doc.get('tax_rate', 0)}%)", f"${tax_amt:,.2f}"],
+        ["Total", f"${total:,.2f}"],
+    ]
+    tt = Table(tot_rows, colWidths=[5.0 * inch, 1.4 * inch])
+    tt.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, -1), "Helvetica", 10),
+        ("FONT", (0, -1), (-1, -1), "Helvetica-Bold", 11),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("LINEABOVE", (0, -1), (-1, -1), 0.5, rlcolors.HexColor("#0284C7")),
+        ("TEXTCOLOR", (0, -1), (-1, -1), rlcolors.HexColor("#0284C7")),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    story.append(tt)
+    story.append(Spacer(1, 14))
+
+    notes = (doc.get("notes") or "").strip()
+    if notes:
+        story.append(Paragraph("<b>Notes</b>", styles["Heading3"]))
+        story.append(Paragraph(notes.replace("\n", "<br/>"), styles["Normal"]))
+        story.append(Spacer(1, 10))
+
+    # Terms & Conditions — persisted on the doc; fall back to tenant default.
+    terms_text = doc.get("terms")
+    if not terms_text:
+        try:
+            from routers.finances import get_terms_defaults
+            defaults = await get_terms_defaults()
+            terms_text = defaults["default_invoice_terms"] if is_invoice else defaults["default_quote_terms"]
+        except Exception:
+            terms_text = ""
+    if terms_text:
+        story.append(Paragraph("<b>Terms &amp; Conditions</b>", styles["Heading3"]))
+        story.append(Paragraph(terms_text.replace("\n", "<br/>"), styles["Normal"]))
+
+    pdf_doc.build(story)
+    pdf = buf.getvalue()
+    buf.close()
+    filename = f"{label.lower()}-{qid[:8]}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 

@@ -497,3 +497,68 @@ async def update_late_fee_settings(body: LateFeeSettingsIn, admin: dict = Depend
 async def run_late_fees(admin: dict = Depends(require_admin)):
     """Manually trigger the same late-fee assessment the daily scheduler runs."""
     return await run_late_fee_assessment()
+
+# ────────────────────────── Terms & Conditions ──────────────────────────────
+# Global defaults applied when a new quote/invoice/estimate is created without
+# an explicit `terms` value. Also editable via the /settings/terms admin page.
+TERMS_SETTINGS_ID = "terms_defaults"
+
+DEFAULT_QUOTE_TERMS = (
+    "Estimate valid for 30 days from date of issue. Prices are subject to change "
+    "if scope changes. All work is performed by licensed and insured technicians. "
+    "A 50% deposit may be required to schedule."
+)
+DEFAULT_INVOICE_TERMS = (
+    "Payment is due within 30 days of invoice date. Invoices past due may incur "
+    "a $15 late fee. Please make checks payable to Pool & Landscaping of "
+    "Vistancia. For questions, contact billing@aquaterra.com."
+)
+
+
+async def get_terms_defaults() -> dict:
+    """Return the two-key terms defaults. Seed on first read."""
+    doc = await db.settings.find_one({"id": TERMS_SETTINGS_ID}, {"_id": 0})
+    if not doc:
+        doc = {
+            "id": TERMS_SETTINGS_ID,
+            "default_quote_terms": DEFAULT_QUOTE_TERMS,
+            "default_invoice_terms": DEFAULT_INVOICE_TERMS,
+        }
+        await db.settings.insert_one(dict(doc))
+    return {
+        "default_quote_terms": doc.get("default_quote_terms") or DEFAULT_QUOTE_TERMS,
+        "default_invoice_terms": doc.get("default_invoice_terms") or DEFAULT_INVOICE_TERMS,
+    }
+
+
+@router.get("/settings/terms")
+async def get_terms_settings(admin: dict = Depends(require_admin)):
+    return await get_terms_defaults()
+
+
+@router.put("/settings/terms")
+async def update_terms_settings(body: TermsSettingsIn, admin: dict = Depends(require_admin)):
+    upd = {k: v for k, v in body.dict().items() if v is not None}
+    if upd:
+        await db.settings.update_one(
+            {"id": TERMS_SETTINGS_ID},
+            {"$set": {"id": TERMS_SETTINGS_ID, **upd}},
+            upsert=True,
+        )
+    return await get_terms_defaults()
+
+
+@router.post("/settings/terms/reset")
+async def reset_terms_settings(admin: dict = Depends(require_admin)):
+    """Reset both default terms strings back to their seeded values."""
+    await db.settings.update_one(
+        {"id": TERMS_SETTINGS_ID},
+        {"$set": {
+            "id": TERMS_SETTINGS_ID,
+            "default_quote_terms": DEFAULT_QUOTE_TERMS,
+            "default_invoice_terms": DEFAULT_INVOICE_TERMS,
+        }},
+        upsert=True,
+    )
+    return await get_terms_defaults()
+

@@ -187,12 +187,18 @@ export function EstimatorEditor() {
     line_items: [{ description: "", quantity: 1, unit_price: 0 }],
     tax_rate: 0,
     notes: "",
+    terms: "",
   });
+  const [termsDefault, setTermsDefault] = useState("");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
 
   useEffect(() => {
     api.get("/customers").then(setCustomers).catch(() => {});
+    api.get("/settings/terms").then((r) => {
+      setTermsDefault(r.default_quote_terms || "");
+      setForm((f) => (f.terms ? f : { ...f, terms: r.default_quote_terms || "" }));
+    }).catch(() => {});
     if (!isNew) {
       api.get(`/estimates/${id}`).then((d) =>
         setForm({
@@ -201,6 +207,7 @@ export function EstimatorEditor() {
           line_items: d.line_items || [],
           tax_rate: d.tax_rate || 0,
           notes: d.notes || "",
+          terms: d.terms || "",
         })
       ).catch(() => {});
     }
@@ -278,6 +285,32 @@ export function EstimatorEditor() {
           </div>
         </div>
       </div>
+
+      <div className="rounded-2xl p-4 mt-3 space-y-2" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-semibold tracking-wide" style={{ color: colors.onSurfaceSecondary }}>
+            TERMS &amp; CONDITIONS
+          </div>
+          {termsDefault && form.terms !== termsDefault ? (
+            <button type="button" onClick={() => setForm((f) => ({ ...f, terms: termsDefault }))}
+                    className="text-xs font-semibold hover:underline"
+                    style={{ color: colors.brand }}
+                    data-testid="est-terms-reset">
+              Reset to default
+            </button>
+          ) : null}
+        </div>
+        <textarea
+          rows={5}
+          value={form.terms || ""}
+          onChange={(e) => setForm((f) => ({ ...f, terms: e.target.value }))}
+          placeholder="Legal terms shown on the estimate and converted quote."
+          className="w-full px-3 py-2 text-sm rounded-lg outline-none"
+          style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface, border: `1px solid ${colors.border}` }}
+          data-testid="est-terms"
+        />
+      </div>
+
       <div className="flex justify-end mt-4 pb-8"><Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save estimate"}</Button></div>
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>

@@ -310,6 +310,24 @@ async def work_order_pdf(jid: str, user: dict = Depends(get_current_user)):
             mark = "[x]" if item.get("done") else "[ ]"
             story.append(Paragraph(f"{mark} {item.get('label', '')}", styles["Normal"]))
         story.append(Spacer(1, 12))
+    # Terms & Conditions — pulled from a linked quote/invoice if the job has one,
+    # otherwise from tenant defaults so every work order still carries our terms.
+    linked_quote_id = job.get("quote_id") or job.get("invoice_id")
+    terms_text = None
+    if linked_quote_id:
+        linked = await db.quotes.find_one({"id": linked_quote_id}, {"_id": 0, "terms": 1})
+        if linked:
+            terms_text = linked.get("terms")
+    if not terms_text:
+        try:
+            from routers.finances import get_terms_defaults
+            terms_text = (await get_terms_defaults())["default_quote_terms"]
+        except Exception:
+            terms_text = ""
+    if terms_text:
+        story.append(Paragraph("<b>Terms &amp; Conditions</b>", styles["Heading3"]))
+        story.append(Paragraph(terms_text.replace("\n", "<br/>"), styles["Normal"]))
+        story.append(Spacer(1, 12))
     story.append(Spacer(1, 40))
     story.append(Paragraph("Technician Signature: ______________________________", styles["Normal"]))
     story.append(Spacer(1, 20))

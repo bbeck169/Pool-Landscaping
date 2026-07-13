@@ -20,6 +20,9 @@ import InvoicesList from "@/pages/invoices/InvoicesList";
 import { MasterInvoicesList, MasterInvoiceNew, MasterInvoiceDetail } from "@/pages/invoices/MasterInvoice";
 import PaymentHandlesSettings from "@/pages/settings/PaymentHandles";
 import LateFeesSettings from "@/pages/settings/LateFees";
+import TermsSettings from "@/pages/settings/Terms";
+import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
+import PortalTerms from "@/pages/portal/PortalTerms";
 import { EstimatesList, EstimatorSettings, EstimatorTemplates, EstimatorEditor } from "@/pages/estimator/Estimator";
 import OpsHub from "@/pages/ops/OpsHub";
 import ReportsHub from "@/pages/reports/ReportsHub";
@@ -96,6 +99,10 @@ export default function App() {
 
             <Route path="settings/payment-handles" element={<PaymentHandlesSettings />} />
             <Route path="settings/late-fees" element={<AdminOnly><LateFeesSettings /></AdminOnly>} />
+            <Route path="settings/terms" element={<AdminOnly><TermsSettings /></AdminOnly>} />
+            <Route path="settings/legal" element={<AdminOnly><LegalDocsList /></AdminOnly>} />
+            <Route path="settings/legal/:slug" element={<AdminOnly><LegalDocEditor /></AdminOnly>} />
+            <Route path="portal/terms" element={<PortalTerms />} />
 
             {/* Phase 6 — Finance + Reports */}
             <Route path="reports" element={<AdminOnly><ReportsHub /></AdminOnly>} />

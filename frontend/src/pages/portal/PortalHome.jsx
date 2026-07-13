@@ -10,6 +10,7 @@ import {
   ChevronRight,
   AlertCircle,
   Plus,
+  Shield,
 } from "lucide-react";
 import { api } from "@/api";
 import { brandGradientCss, colors, money } from "@/theme";
@@ -20,9 +21,11 @@ export default function PortalHome() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [data, setData] = useState(null);
+  const [tosStatus, setTosStatus] = useState(null);
 
   useEffect(() => {
     api.get("/portal/home").then(setData).catch(() => setData({ counts: {} }));
+    api.get("/portal/terms/status").then(setTosStatus).catch(() => {});
   }, []);
 
   if (user && user.role !== "customer") return <Navigate to="/" replace />;
@@ -30,6 +33,40 @@ export default function PortalHome() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-home">
+      {tosStatus && !tosStatus.acknowledged && tosStatus.current_version ? (
+        <div
+          className="rounded-2xl p-4 mb-4 flex items-center gap-3 flex-wrap"
+          style={{
+            backgroundColor: "#FEF3C7",
+            border: "1px solid #FCD34D",
+          }}
+          data-testid="tos-nudge-banner"
+        >
+          <div
+            className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+            style={{ backgroundColor: "#FDE68A", color: "#92400E" }}
+          >
+            <Shield size={18} />
+          </div>
+          <div className="flex-1 min-w-[200px]">
+            <div className="text-sm font-semibold" style={{ color: "#92400E" }}>
+              Please review our updated Terms of Service
+            </div>
+            <div className="text-xs mt-0.5" style={{ color: "#92400E", opacity: 0.85 }}>
+              Version {tosStatus.current_version} · A quick read and acknowledgement keeps your service active.
+            </div>
+          </div>
+          <button
+            onClick={() => navigate("/portal/terms")}
+            className="px-3 py-2 text-xs font-semibold rounded-lg hover:brightness-95"
+            style={{ backgroundColor: "#B45309", color: "#fff" }}
+            data-testid="tos-nudge-view"
+          >
+            View
+          </button>
+        </div>
+      ) : null}
+
       {/* Hero */}
       <div
         className="rounded-2xl p-6 md:p-8 mb-4 text-white relative overflow-hidden"

@@ -24,6 +24,7 @@ import {
   BarChart3,
   DollarSign,
   ChevronDown,
+  Shield,
 } from "lucide-react";
 
 const ADMIN_NAV = [
@@ -57,6 +58,8 @@ const ADMIN_NAV = [
       { to: "/auto-billing", label: "Auto-Billing" },
       { to: "/income-categories", label: "Income Categories" },
       { to: "/settings/late-fees", label: "Late Fees" },
+      { to: "/settings/terms", label: "Terms" },
+      { to: "/settings/legal", label: "Legal Docs" },
       { to: "/impexp", label: "Import / Export" },
     ],
   },
@@ -82,6 +85,7 @@ const CUSTOMER_NAV = [
   { to: "/portal/documents", label: "Documents", icon: Files },
   { to: "/portal/messages", label: "Messages", icon: MessageSquare },
   { to: "/portal/profile", label: "Profile", icon: UserCircle },
+  { to: "/portal/terms", label: "Terms of Service", icon: Shield },
 ];
 
 function NavGroup({ item }) {
