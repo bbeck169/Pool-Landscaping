@@ -101,8 +101,9 @@ async def list_virtual_bids(customer_id: Optional[str] = None, user: dict = Depe
 # ─── /weather/risk ─────────────────────────────────────────────────────────
 @router.get("/weather/risk")
 async def weather_risk(lat: float = 33.7897, lng: float = -112.3226,
-                       days: int = 3, user: dict = Depends(get_current_user)):
-    """Service-risk read for the next N days — combines precip + wind + temp signals."""
+                       days: int = 7, user: dict = Depends(get_current_user)):
+    """Service-risk read for the next N days — combines precip + wind + temp signals.
+    Default expanded to 7 days so the 5-day widget has buffer + rescheduler can look ahead."""
     try:
         async with httpx.AsyncClient(timeout=15) as c:
             r = await c.get(OPEN_METEO, params={
@@ -149,16 +150,38 @@ async def weather_risk(lat: float = 33.7897, lng: float = -112.3226,
 
 
 @router.get("/weather/reschedule-recommendations")
-async def reschedule_recs(user: dict = Depends(require_admin)):
-    """Return jobs scheduled in the next 3 days that fall on 'poor' weather days."""
+async def reschedule_recs(user: dict = Depends(get_current_user)):
+    """Return jobs scheduled in the next 7 days that fall on 'poor' weather days.
+    Scoped by caller role:
+      - admin → all impacted jobs
+      - technician → only jobs assigned to them
+      - customer → only their own scheduled visits
+      - other → empty list
+    """
     risk = await weather_risk(user=user)  # type: ignore
     poor_days = {d["date"] for d in risk["days"] if d["service_risk_rating"] == "poor"}
     if not poor_days:
         return {"suggested": [], "poor_days": []}
-    jobs = await db.jobs.find(
-        {"scheduled_date": {"$exists": True, "$ne": None}, "status": {"$nin": ["completed", "canceled"]}},
-        {"_id": 0},
-    ).to_list(500)
+    q: dict = {"scheduled_date": {"$exists": True, "$ne": None},
+               "status": {"$nin": ["completed", "canceled"]}}
+    role = user.get("role")
+    if role == "technician":
+        # Resolve the tech's technician_id from the user record.
+        tech_id = user.get("technician_id")
+        if not tech_id:
+            u = await db.users.find_one({"id": user["id"]}, {"_id": 0}) or {}
+            tech_id = u.get("technician_id")
+        if not tech_id:
+            return {"suggested": [], "poor_days": sorted(poor_days)}
+        q["technician_id"] = tech_id
+    elif role == "customer":
+        cust_id = user.get("customer_id")
+        if not cust_id:
+            return {"suggested": [], "poor_days": sorted(poor_days)}
+        q["customer_id"] = cust_id
+    elif role != "admin":
+        return {"suggested": [], "poor_days": sorted(poor_days)}
+    jobs = await db.jobs.find(q, {"_id": 0}).to_list(500)
     suggested = [j for j in jobs if (j.get("scheduled_date") or "")[:10] in poor_days]
     return {"suggested": suggested, "poor_days": sorted(poor_days)}
 

@@ -10,6 +10,7 @@ from routers import (
     realtime, csat, signatures,
     analytics, onboarding,
     lead_requests, mobile_push,
+    tenants,
 )
 
 app = FastAPI(
@@ -24,7 +25,8 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google_router, phase11,
                realtime, csat, signatures,
                analytics, onboarding,
-               lead_requests, mobile_push]:
+               lead_requests, mobile_push,
+               tenants]:
     api_router.include_router(module.router)
 
 
@@ -84,6 +86,12 @@ async def startup():
         await lead_requests._seed_lead_request_form()
     except Exception as e:
         logger.warning(f"lead-request form seed skipped: {e}")
+    # Phase 15D Stage 1: seed default tenant + backfill tenant_id on every
+    # collection. Idempotent — only touches rows missing the field.
+    try:
+        await tenants.run_tenant_backfill()
+    except Exception as e:
+        logger.warning(f"tenant backfill skipped: {e}")
     # Background auto-publish drip: check for due SEO articles every 10 minutes.
     scheduler.add_job(seo.run_due_publishes, "interval", minutes=10, id="seo_drip", replace_existing=True)
     # Auto-bill accrued chemical invoices once a month (checked daily; bills months that have ended).
