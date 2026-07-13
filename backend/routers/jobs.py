@@ -182,6 +182,189 @@ async def create_job(body: JobIn, user: dict = Depends(require_admin)):
     return doc
 
 
+# ─── Phase 2 additive endpoints ────────────────────────────────────────────
+
+@router.post("/jobs/recurrence-preview")
+async def jobs_recurrence_preview(body: dict, user: dict = Depends(require_admin)):
+    """Preview the next N visits for a recurring job (weekly / biweekly / monthly).
+    body: { start_date: "YYYY-MM-DD", cadence: "weekly|biweekly|monthly", count?: int }
+    """
+    from datetime import date, timedelta
+    start_raw = body.get("start_date")
+    cadence = body.get("cadence", "weekly")
+    count = int(body.get("count", 4))
+    if not start_raw:
+        raise HTTPException(400, "start_date is required")
+    try:
+        start = date.fromisoformat(start_raw)
+    except ValueError:
+        raise HTTPException(400, "start_date must be YYYY-MM-DD")
+    step = {"weekly": 7, "biweekly": 14}.get(cadence)
+    dates: list[str] = []
+    cur = start
+    for _ in range(max(1, min(24, count))):
+        dates.append(cur.isoformat())
+        if step:
+            cur = cur + timedelta(days=step)
+        elif cadence == "monthly":
+            m = cur.month + 1
+            y = cur.year + (1 if m > 12 else 0)
+            m = m if m <= 12 else m - 12
+            try:
+                cur = cur.replace(year=y, month=m)
+            except ValueError:
+                # e.g. Jan 31 -> Feb 28
+                cur = cur.replace(year=y, month=m, day=28)
+        else:
+            raise HTTPException(400, f"Unknown cadence: {cadence}")
+    return {"cadence": cadence, "count": len(dates), "dates": dates}
+
+
+@router.post("/jobs/{jid}/reopen")
+async def reopen_job(jid: str, user: dict = Depends(require_admin)):
+    """Flip a completed job back to 'active' and log an activity entry."""
+    job = await db.jobs.find_one({"id": jid}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("status") not in ("completed", "cancelled"):
+        raise HTTPException(400, "Only completed or cancelled jobs can be reopened")
+    await db.jobs.update_one(
+        {"id": jid},
+        {"$set": {"status": "active", "reopened_at": now_iso()}, "$unset": {"completed_at": ""}},
+    )
+    try:
+        await db.activity_logs.insert_one({
+            "id": new_id(),
+            "job_id": jid,
+            "type": "reopen",
+            "actor_id": user["id"],
+            "actor_name": user.get("name", ""),
+            "at": now_iso(),
+            "note": "Job reopened by admin",
+        })
+    except Exception:
+        pass
+    updated = await db.jobs.find_one({"id": jid}, {"_id": 0})
+    return updated
+
+
+@router.get("/jobs/{jid}/work-order.pdf")
+async def work_order_pdf(jid: str, user: dict = Depends(get_current_user)):
+    """Streams a printable work-order PDF for the given job."""
+    job = await db.jobs.find_one({"id": jid}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    # role scoping
+    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
+        raise HTTPException(403, "Not your job")
+    if user.get("role") == "customer" and job.get("customer_id") != user.get("customer_id"):
+        raise HTTPException(403, "Not your job")
+
+    from io import BytesIO
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors as rlcolors
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    )
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter, title=f"Work Order {jid[:8]}")
+    styles = getSampleStyleSheet()
+    story = []
+    story.append(Paragraph("<b>Work Order</b>", styles["Title"]))
+    story.append(Paragraph(
+        "Pool &amp; Landscaping of Vistancia — AquaTerra", styles["Normal"]
+    ))
+    story.append(Spacer(1, 12))
+    rows = [
+        ["Work Order #", jid[:8].upper()],
+        ["Job Title", job.get("title", "")],
+        ["Service Type", job.get("service_type", "")],
+        ["Status", (job.get("status") or "").title()],
+        ["Scheduled", job.get("scheduled_date") or "—"],
+        ["Customer", job.get("customer_name", "")],
+        ["Address", job.get("address", "")],
+        ["Technician", job.get("technician_name") or "Unassigned"],
+        ["Notes", job.get("notes", "") or "—"],
+    ]
+    t = Table(rows, colWidths=[1.4 * inch, 5.0 * inch])
+    t.setStyle(TableStyle([
+        ("FONT", (0, 0), (-1, -1), "Helvetica", 10),
+        ("FONT", (0, 0), (0, -1), "Helvetica-Bold", 10),
+        ("BACKGROUND", (0, 0), (0, -1), rlcolors.HexColor("#F4F4F5")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.25, rlcolors.HexColor("#E4E4E7")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 18))
+    checklist = (job.get("field_report") or {}).get("checklist") or []
+    if checklist:
+        story.append(Paragraph("<b>Checklist</b>", styles["Heading3"]))
+        for item in checklist:
+            mark = "[x]" if item.get("done") else "[ ]"
+            story.append(Paragraph(f"{mark} {item.get('label', '')}", styles["Normal"]))
+        story.append(Spacer(1, 12))
+    story.append(Spacer(1, 40))
+    story.append(Paragraph("Technician Signature: ______________________________", styles["Normal"]))
+    story.append(Spacer(1, 20))
+    story.append(Paragraph("Customer Signature: ________________________________", styles["Normal"]))
+    doc.build(story)
+    pdf = buf.getvalue()
+    buf.close()
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="work-order-{jid[:8]}.pdf"'},
+    )
+
+
+@router.post("/jobs/{jid}/work-order/email")
+async def email_work_order(jid: str, body: dict, user: dict = Depends(require_admin)):
+    """Emails the work-order PDF to the given address via Resend.
+    body: { to?: str, subject?: str, message?: str }
+    Falls back gracefully with `sent=False, reason='resend-not-configured'` if RESEND_API_KEY absent."""
+    import base64
+    from config import RESEND_API_KEY
+    job = await db.jobs.find_one({"id": jid}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    to = (body.get("to") or "").strip().lower()
+    if not to:
+        customer = await db.customers.find_one({"id": job["customer_id"]}, {"_id": 0}) or {}
+        to = (customer.get("email") or "").strip().lower()
+    if not to:
+        raise HTTPException(400, "No recipient email available")
+    if not RESEND_API_KEY:
+        return {"sent": False, "reason": "resend-not-configured", "to": to}
+    # Reuse the PDF builder above by re-calling it — simplest is to re-render inline.
+    pdf_resp = await work_order_pdf(jid, user)
+    pdf_bytes = pdf_resp.body
+    try:
+        import resend
+        from config import EMAIL_FROM
+        resend.api_key = RESEND_API_KEY
+        resend.Emails.send({
+            "from": EMAIL_FROM or "onboarding@resend.dev",
+            "to": [to],
+            "subject": body.get("subject") or f"Work Order · {job.get('title', 'Service')}",
+            "html": body.get("message") or f"<p>Attached is the work order for <strong>{job.get('title', '')}</strong>.</p>",
+            "attachments": [{
+                "filename": f"work-order-{jid[:8]}.pdf",
+                "content": base64.b64encode(pdf_bytes).decode("ascii"),
+            }],
+        })
+        return {"sent": True, "to": to}
+    except Exception as e:
+        logger.warning(f"Work-order email failed: {e}")
+        return {"sent": False, "reason": str(e), "to": to}
+
+
 @router.post("/service-requests")
 async def create_service_request(body: ServiceRequestIn, user: dict = Depends(get_current_user)):
     if user.get("role") != "customer" or not user.get("customer_id"):

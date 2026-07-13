@@ -36,15 +36,58 @@ async def update_my_profile(body: CustomerProfileUpdate, user: dict = Depends(ge
 
 
 @router.get("/customers")
-async def list_customers(user: dict = Depends(get_current_user), search: Optional[str] = None):
+async def list_customers(
+    user: dict = Depends(get_current_user),
+    search: Optional[str] = None,
+    tag: Optional[str] = None,
+    waitlisted: Optional[bool] = None,
+    unscheduled: Optional[bool] = None,
+):
     # RBAC: only staff (admin/technician) may list customer records. Customers use /me.
     if user.get("role") not in ("admin", "technician"):
         raise HTTPException(403, "Not allowed")
-    q = {}
+    q: dict = {}
     if search:
-        q = {"name": {"$regex": search, "$options": "i"}}
-    docs = await db.customers.find(q, {"_id": 0}).sort("name", 1).to_list(1000)
+        rx = {"$regex": search, "$options": "i"}
+        q["$or"] = [{"name": rx}, {"email": rx}, {"phone": rx}, {"address": rx}]
+    if tag:
+        q["tags"] = tag
+    if waitlisted is not None:
+        q["waitlisted"] = bool(waitlisted)
+    docs = await db.customers.find(q, {"_id": 0}).sort("name", 1).to_list(2000)
+    # If unscheduled=true, filter out customers who have any non-completed/cancelled job.
+    if unscheduled:
+        scheduled_ids = set(
+            [d["customer_id"] async for d in db.jobs.find(
+                {"status": {"$nin": ["completed", "cancelled"]}},
+                {"customer_id": 1, "_id": 0},
+            )]
+        )
+        docs = [d for d in docs if d["id"] not in scheduled_ids]
     return docs
+
+
+@router.post("/customers/bulk")
+async def customers_bulk(body: CustomerBulkAction, user: dict = Depends(require_admin)):
+    """Bulk-update or bulk-delete a selection of customers."""
+    if not body.ids:
+        return {"ok": True, "updated": 0}
+    q = {"id": {"$in": body.ids}}
+    if body.action == "delete":
+        res = await db.customers.delete_many(q)
+        return {"ok": True, "deleted": res.deleted_count}
+    if body.action in ("add_tag", "remove_tag"):
+        if not body.tag:
+            raise HTTPException(400, "tag is required")
+        op = "$addToSet" if body.action == "add_tag" else "$pull"
+        res = await db.customers.update_many(q, {op: {"tags": body.tag}})
+        return {"ok": True, "updated": res.modified_count}
+    if body.action in ("add_waitlist", "remove_waitlist"):
+        res = await db.customers.update_many(
+            q, {"$set": {"waitlisted": body.action == "add_waitlist"}}
+        )
+        return {"ok": True, "updated": res.modified_count}
+    raise HTTPException(400, f"Unknown action: {body.action}")
 
 
 @router.post("/customers")

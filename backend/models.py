@@ -30,6 +30,18 @@ class CustomerIn(BaseModel):
     gate_code: Optional[str] = ""
     notes: Optional[str] = ""
     avatar: Optional[str] = ""
+    # Phase 2 additions:
+    tags: Optional[List[str]] = []           # e.g. ["VIP", "Specialty"] plus arbitrary custom tags
+    alert_email: Optional[str] = ""          # after-hours escalation channel
+    alert_phone: Optional[str] = ""          # after-hours SMS escalation
+    waitlisted: Optional[bool] = False       # unscheduled customer flagged as waiting for a slot
+    secondary_addresses: Optional[List[str]] = []
+
+
+class CustomerBulkAction(BaseModel):
+    ids: List[str]
+    action: str                                   # "add_tag" | "remove_tag" | "add_waitlist" | "remove_waitlist" | "delete"
+    tag: Optional[str] = None
 
 
 class TechnicianIn(BaseModel):

@@ -6,6 +6,13 @@ import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
 import AdminDashboard from "@/pages/admin/Dashboard";
 import Placeholder from "@/pages/Placeholder";
+import CustomersList from "@/pages/customers/CustomersList";
+import CustomerForm from "@/pages/customers/CustomerForm";
+import CustomerDetail from "@/pages/customers/CustomerDetail";
+import CustomerChemistry from "@/pages/customers/CustomerChemistry";
+import JobsList from "@/pages/jobs/JobsList";
+import JobNew from "@/pages/jobs/JobNew";
+import JobDetail from "@/pages/jobs/JobDetail";
 
 export default function App() {
   return (
@@ -20,8 +27,19 @@ export default function App() {
             {/* Admin */}
             <Route index element={<AdminDashboard />} />
 
-            {/* Shared placeholders (built in later phases) */}
-            <Route path="jobs" element={<Placeholder title="Jobs" phase={2} />} />
+            {/* Customers (Phase 2) */}
+            <Route path="customers" element={<CustomersList />} />
+            <Route path="customers/new" element={<CustomerForm />} />
+            <Route path="customers/:id" element={<CustomerDetail />} />
+            <Route path="customers/:id/edit" element={<CustomerForm />} />
+            <Route path="customers/:id/chemistry" element={<CustomerChemistry />} />
+
+            {/* Jobs (Phase 2) */}
+            <Route path="jobs" element={<JobsList />} />
+            <Route path="jobs/new" element={<JobNew />} />
+            <Route path="jobs/:id" element={<JobDetail />} />
+
+            {/* Shared placeholders (later phases) */}
             <Route
               path="schedule"
               element={
@@ -33,7 +51,6 @@ export default function App() {
               }
             />
             <Route path="quotes" element={<Placeholder title="Quotes &amp; Invoices" phase={3} />} />
-            <Route path="customers" element={<Placeholder title="Customers" phase={2} />} />
             <Route path="tools" element={<Placeholder title="Calculators" phase={6} />} />
             <Route path="more" element={<Placeholder title="More" phase={7} />} />
             <Route path="leads/new" element={<Placeholder title="New Lead" phase={4} />} />
