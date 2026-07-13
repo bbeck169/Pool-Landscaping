@@ -20,6 +20,7 @@ import InvoicesList from "@/pages/invoices/InvoicesList";
 import { MasterInvoicesList, MasterInvoiceNew, MasterInvoiceDetail } from "@/pages/invoices/MasterInvoice";
 import PaymentHandlesSettings from "@/pages/settings/PaymentHandles";
 import { EstimatesList, EstimatorSettings, EstimatorTemplates, EstimatorEditor } from "@/pages/estimator/Estimator";
+import OpsHub from "@/pages/ops/OpsHub";
 import PortalHome from "@/pages/portal/PortalHome";
 import {
   PortalServices, PortalServiceDetail,
@@ -75,9 +76,28 @@ export default function App() {
 
             <Route path="settings/payment-handles" element={<PaymentHandlesSettings />} />
 
+            {/* Ops hub (Phase 5) — all 16 sub-pages route into one tabbed shell */}
+            <Route path="ops" element={<OpsHub />} />
+            <Route path="dispatch" element={<OpsHub />} />
+            <Route path="schedule" element={<OpsHub />} />
+            <Route path="routes" element={<OpsHub />} />
+            <Route path="workstream" element={<OpsHub />} />
+            <Route path="crews" element={<OpsHub />} />
+            <Route path="team" element={<OpsHub />} />
+            <Route path="timesheets" element={<OpsHub />} />
+            <Route path="timeclock/today" element={<OpsHub />} />
+            <Route path="coverage" element={<OpsHub />} />
+            <Route path="maintenance" element={<OpsHub />} />
+            <Route path="pool-service" element={<OpsHub />} />
+            <Route path="equipment" element={<OpsHub />} />
+            <Route path="price-book" element={<OpsHub />} />
+            <Route path="log-history" element={<OpsHub />} />
+            <Route path="job-timers" element={<OpsHub />} />
+            <Route path="avg-job-time" element={<OpsHub />} />
+
             {/* Shared placeholders (later phases) */}
             <Route
-              path="schedule"
+              path="schedule-info"
               element={
                 <Placeholder
                   title="Schedule"
@@ -86,8 +106,8 @@ export default function App() {
                 />
               }
             />
-            <Route path="tools" element={<Placeholder title="Calculators" phase={6} />} />
-            <Route path="more" element={<Placeholder title="More" phase={7} />} />
+            <Route path="tools" element={<OpsHub />} />
+            <Route path="more" element={<OpsHub />} />
             <Route path="leads/new" element={<Placeholder title="New Lead" phase={4} />} />
 
             {/* Customer portal (Phase 4) */}
