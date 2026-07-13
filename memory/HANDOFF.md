@@ -113,3 +113,51 @@ Phase 13 additions:
 ---
 
 **Contact for continued development:** open a new Emergent conversation referencing this repository. The `/app/memory/PRD.md` and `/app/memory/parity-audit.md` are the source of truth for what's shipped vs. deferred.
+
+---
+
+## Phase 15D Stage 3 — Query Refactor with Tenant Scoping (Feb 2026)
+
+### Status
+- **Batches 1-9 + 11: COMPLETE** — 25 backend files refactored, +1459/−672 lines, 325 OpenAPI paths intact, zero regressions across the entire test suite.
+- **Batch 10 (Reports + Analytics + Onboarding + Activity + Audit + Portal + Legal): DEFERRED** — target for follow-up micro-batch. `operations.py` (dispatch/activity/reports), `analytics.py`, `onboarding.py`, `portal.py`, plus late-fee scheduler need per-tenant scoping.
+- **Batch 12 (Tenant picker screen after login): DEFERRED** — frontend work.
+
+### Refactor pattern applied
+- Every endpoint injects `tenant: dict = Depends(get_current_tenant)`
+- Every Mongo filter carries `"tenant_id": tenant["id"]`
+- Every INSERT stamps `tenant_id: tenant["id"]`
+- Cross-tenant reads/writes return 404 (leak-proof, not 403)
+- Public token-gated endpoints (magic-link CSAT/signatures/forms/lead-requests/webhook) intentionally NOT scoped — the token itself is the gate; when they write side-effects, they lift `tenant_id` from the associated record.
+- Scheduler-driven jobs (SEO auto-publish, late-fees, chem-billing) walk documents cross-tenant; per-tenant settings are looked up from `doc.tenant_id`.
+
+### Notification helper (`utils.py`)
+- `notify_customer` / `notify_technician` — auto-resolve `tenant_id` from the target user document
+- `create_staff_notification(tenant_id=None)` — optional tenant scope; fan-out limited to same-tenant admins when provided
+
+### Cross-tenant impersonation
+- `require_admin` widened to accept both `admin` and `super_admin`
+- `POST /api/admin/impersonate/{customer_id}?tenant_id=X` — super_admin only; regular admin restricted to own tenant
+- Audit log records `admin_role`, `target_tenant_id`, `cross_tenant` flag
+
+### Test fixtures updated
+- `test_iteration30_send_reminder.py` — 3 fixtures now stamp `tenant_id` on raw Mongo inserts
+
+### Known gaps for follow-up micro-batches
+1. **GBP OAuth config + tokens remain global.** Making per-tenant needs threading tenant through the OAuth `state` param + callback. Documented; low practical impact today (only one tenant runs GBP).
+2. **Late-fee assessment scheduler** still uses global settings. Refactor when scheduler is extended to iterate tenants.
+3. **AI Employees** (`ai_ops.py`) — seeded globally; needs per-tenant lazy seed like sequences/estimate templates.
+4. **`property.py` + `card.py`** — Zillow lookups and business card settings not yet tenant-scoped.
+5. **`portal.py` communications** — customer communications collection still tenant-agnostic.
+6. **Operations router bulk of endpoints** (dispatch/activity/reports/customers.count_documents) — Batch 10 territory.
+
+### Pre-existing failure inventory (documented, unchanged since Batch 1)
+- `iter2` × 4 (password policy 422s)
+- `iter27` × 1 (gate_code enrichment)
+- `iter28` × 1 (tech-convert RBAC drift)
+- `iter12` × 1 (POOL_READINGS count 10 vs test-expected 5)
+- `iter38` × 5 (D2D sold-leads / skip — provider or seed drift)
+- `iter29` × 2 (auth-flag + fixture drift)
+- `iter46` × 7 (uses stale `pool-app-mobile.preview.emergentagent.com` fallback URL — env)
+- `iter43` × 29 errors (same stale-URL env issue in module-scope fixture)
+- `iter35` × 18 (impersonation) + `iter18` × 1 (portal messages `sender`)

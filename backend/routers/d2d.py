@@ -1,18 +1,4 @@
-"""D2D Sales router.
-
-Authorization gating (post-2026-07-13 audit):
-- **admin-only** (`require_admin`):
-    - GET  /api/d2d/sold-leads      — paid Zillow feed
-    - GET  /api/d2d/report          — team analytics
-- **canvasser** (admin OR technician, via `_require_sales`):
-    - POST /api/d2d/knocks          — log a knock (accepts `outcome` or `disposition`)
-    - GET  /api/d2d/knocks          — list (techs scoped to their own knocks)
-    - PUT/DELETE /api/d2d/knocks/{kid}
-    - POST /api/d2d/knocks/{kid}/convert  — promote to customer
-    - GET  /api/d2d/open-leads      — CRM leads pipeline mirror
-    - GET  /api/d2d/leaderboard     — team gamification (safe to expose)
-    - POST/DELETE /api/d2d/skip/{zpid}  — personal skip list (per-user scoped)
-"""
+"""D2D Sales router (tenant-scoped)."""
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 import time
@@ -21,26 +7,26 @@ import httpx
 
 from config import db, OPENWEB_NINJA_API_KEY
 from utils import now_iso, new_id, get_current_user, require_admin
+from routers.tenants import get_current_tenant
 from models import D2DKnockIn, D2DKnockUpdate
 
 router = APIRouter()
 
 DISPOSITIONS = {"not_home", "not_interested", "callback", "interested", "sold"}
 OWN_BASE = "https://api.openwebninja.com/realtime-zillow-data"
-LEAD_DISPOS = {"interested", "sold"}  # dispositions that create a sales lead
+LEAD_DISPOS = {"interested", "sold"}
 
 
 def _rep(user: dict):
-    """Attribution identity for the sales rep (technician_id when present, else user id)."""
     return user.get("technician_id") or user.get("id"), user.get("name", "")
 
 
 def _require_sales(user: dict):
-    if user.get("role") not in ("admin", "technician"):
+    if user.get("role") not in ("admin", "technician", "super_admin"):
         raise HTTPException(403, "Not allowed")
 
 
-async def _sync_lead(knock: dict):
+async def _sync_lead(knock: dict, tenant_id: str):
     """Mirror interested/sold knocks into the shared Leads pipeline (source Door-to-door)."""
     if knock.get("disposition") not in LEAD_DISPOS:
         return knock.get("lead_id")
@@ -52,48 +38,60 @@ async def _sync_lead(knock: dict):
         "knock_id": knock["id"], "tech_id": knock.get("tech_id"), "tech_name": knock.get("tech_name"),
         "address": knock.get("address", ""), "lat": knock.get("lat"), "lng": knock.get("lng"),
     }
-    if lead_id and await db.leads.find_one({"id": lead_id}):
-        await db.leads.update_one({"id": lead_id}, {"$set": fields})
+    if lead_id and await db.leads.find_one({"id": lead_id, "tenant_id": tenant_id}):
+        await db.leads.update_one({"id": lead_id, "tenant_id": tenant_id}, {"$set": fields})
         return lead_id
     lead_id = new_id()
-    await db.leads.insert_one({**fields, "id": lead_id, "status": "new", "est_value": 0.0,
+    await db.leads.insert_one({**fields, "id": lead_id, "tenant_id": tenant_id,
+                               "status": "new", "est_value": 0.0,
                                "created_at": now_iso(), "created_by": knock.get("tech_id")})
-    await db.d2d_knocks.update_one({"id": knock["id"]}, {"$set": {"lead_id": lead_id}})
+    await db.d2d_knocks.update_one(
+        {"id": knock["id"], "tenant_id": tenant_id},
+        {"$set": {"lead_id": lead_id}},
+    )
     return lead_id
 
 
 @router.post("/d2d/knocks")
-async def create_knock(body: D2DKnockIn, user: dict = Depends(get_current_user)):
+async def create_knock(body: D2DKnockIn,
+                       user: dict = Depends(get_current_user),
+                       tenant: dict = Depends(get_current_tenant)):
     _require_sales(user)
     if body.disposition not in DISPOSITIONS:
         raise HTTPException(400, "Invalid disposition")
     tech_id, tech_name = _rep(user)
     knock = body.dict()
-    knock.update({"id": new_id(), "tech_id": tech_id, "tech_name": tech_name,
+    knock.update({"id": new_id(), "tenant_id": tenant["id"], "tech_id": tech_id, "tech_name": tech_name,
                   "converted": False, "customer_id": None, "lead_id": None,
                   "created_at": now_iso(), "updated_at": now_iso()})
     await db.d2d_knocks.insert_one(knock)
     knock.pop("_id", None)
-    knock["lead_id"] = await _sync_lead(knock)
+    knock["lead_id"] = await _sync_lead(knock, tenant["id"])
     return knock
 
 
 @router.get("/d2d/knocks")
-async def list_knocks(user: dict = Depends(get_current_user), tech_id: Optional[str] = None):
+async def list_knocks(user: dict = Depends(get_current_user),
+                      tenant: dict = Depends(get_current_tenant),
+                      tech_id: Optional[str] = None):
     _require_sales(user)
-    q = {}
+    q: dict = {"tenant_id": tenant["id"]}
     if user.get("role") == "technician":
-        q["tech_id"] = user.get("technician_id") or user.get("id")  # techs see only their own
+        q["tech_id"] = user.get("technician_id") or user.get("id")
     elif tech_id:
         q["tech_id"] = tech_id
     return await db.d2d_knocks.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
 
 
 @router.get("/d2d/open-leads")
-async def open_leads(user: dict = Depends(get_current_user)):
+async def open_leads(user: dict = Depends(get_current_user),
+                     tenant: dict = Depends(get_current_tenant)):
     """Open CRM leads (not won/lost) as D2D map pins."""
     _require_sales(user)
-    leads = await db.leads.find({"status": {"$nin": ["won", "lost"]}}, {"_id": 0}).to_list(3000)
+    leads = await db.leads.find(
+        {"tenant_id": tenant["id"], "status": {"$nin": ["won", "lost"]}},
+        {"_id": 0},
+    ).to_list(3000)
     out = [{
         "id": l["id"],
         "name": l.get("name", ""),
@@ -131,13 +129,10 @@ def _norm_sold(p: dict) -> dict:
 @router.get("/d2d/sold-leads")
 async def sold_leads(zip: str, days: int = 30, page: int = 1,
                      min_price: Optional[float] = None, max_price: Optional[float] = None,
-                     min_beds: Optional[int] = None, admin: dict = Depends(require_admin)):
-    """Recently-sold homes in a ZIP (Zillow via OpenWeb Ninja) as canvassing targets.
-
-    Authorization: **admin-only**. This calls the paid OpenWeb Ninja API — techs
-    should not be able to consume paid data. If you want a canvasser view, use
-    `/d2d/open-leads` (leads pipeline mirror) which is safe for the whole team.
-    """
+                     min_beds: Optional[int] = None,
+                     admin: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant)):
+    """Recently-sold homes in a ZIP (Zillow via OpenWeb Ninja) as canvassing targets."""
     user = admin
     _require_sales(user)
     zip = (zip or "").strip()
@@ -172,49 +167,61 @@ async def sold_leads(zip: str, days: int = 30, page: int = 1,
         if min_beds is not None and (p.get("bedrooms") is None or p.get("bedrooms") < min_beds):
             continue
         props.append(_norm_sold(p))
-    # Flag zpids already logged as knocks so the UI can dedupe pins
     zpids = [p["zpid"] for p in props if p["zpid"]]
     logged = set()
     skipped = set()
     me = _rep(user)[0]
     if zpids:
-        async for k in db.d2d_knocks.find({"zpid": {"$in": zpids}}, {"_id": 0, "zpid": 1}):
+        async for k in db.d2d_knocks.find(
+            {"zpid": {"$in": zpids}, "tenant_id": tenant["id"]}, {"_id": 0, "zpid": 1}
+        ):
             if k.get("zpid"):
                 logged.add(k["zpid"])
-        async for s in db.d2d_skips.find({"zpid": {"$in": zpids}, "tech_id": me}, {"_id": 0, "zpid": 1}):
+        async for s in db.d2d_skips.find(
+            {"zpid": {"$in": zpids}, "tech_id": me, "tenant_id": tenant["id"]},
+            {"_id": 0, "zpid": 1},
+        ):
             if s.get("zpid"):
                 skipped.add(s["zpid"])
     for p in props:
         p["logged"] = p["zpid"] in logged
         p["skipped"] = p["zpid"] in skipped
-    props.sort(key=lambda x: x.get("date_sold") or float("inf"))  # oldest sold first
+    props.sort(key=lambda x: x.get("date_sold") or float("inf"))
     return {"zip": zip, "days": days, "count": len(props), "properties": props,
             "filters": {"min_price": min_price, "max_price": max_price, "min_beds": min_beds}}
 
 
 @router.post("/d2d/skip/{zpid}")
-async def skip_sold(zpid: str, user: dict = Depends(get_current_user)):
-    """Mark a recently-sold home as 'walked/passed' for this rep (greys it out on the map)."""
+async def skip_sold(zpid: str,
+                    user: dict = Depends(get_current_user),
+                    tenant: dict = Depends(get_current_tenant)):
     _require_sales(user)
     me = _rep(user)[0]
     await db.d2d_skips.update_one(
-        {"zpid": zpid, "tech_id": me},
-        {"$setOnInsert": {"zpid": zpid, "tech_id": me, "created_at": now_iso()}},
+        {"zpid": zpid, "tech_id": me, "tenant_id": tenant["id"]},
+        {"$setOnInsert": {"zpid": zpid, "tech_id": me,
+                           "tenant_id": tenant["id"], "created_at": now_iso()}},
         upsert=True,
     )
     return {"zpid": zpid, "skipped": True}
 
 
 @router.delete("/d2d/skip/{zpid}")
-async def unskip_sold(zpid: str, user: dict = Depends(get_current_user)):
+async def unskip_sold(zpid: str,
+                      user: dict = Depends(get_current_user),
+                      tenant: dict = Depends(get_current_tenant)):
     _require_sales(user)
     me = _rep(user)[0]
-    await db.d2d_skips.delete_one({"zpid": zpid, "tech_id": me})
+    await db.d2d_skips.delete_one(
+        {"zpid": zpid, "tech_id": me, "tenant_id": tenant["id"]}
+    )
     return {"zpid": zpid, "skipped": False}
 
 
-async def _get_owned_knock(kid: str, user: dict):
-    knock = await db.d2d_knocks.find_one({"id": kid}, {"_id": 0})
+async def _get_owned_knock(kid: str, user: dict, tenant_id: str):
+    knock = await db.d2d_knocks.find_one(
+        {"id": kid, "tenant_id": tenant_id}, {"_id": 0}
+    )
     if not knock:
         raise HTTPException(404, "Knock not found")
     if user.get("role") == "technician" and knock.get("tech_id") not in (user.get("technician_id"), user.get("id")):
@@ -223,53 +230,71 @@ async def _get_owned_knock(kid: str, user: dict):
 
 
 @router.put("/d2d/knocks/{kid}")
-async def update_knock(kid: str, body: D2DKnockUpdate, user: dict = Depends(get_current_user)):
+async def update_knock(kid: str, body: D2DKnockUpdate,
+                       user: dict = Depends(get_current_user),
+                       tenant: dict = Depends(get_current_tenant)):
     _require_sales(user)
-    await _get_owned_knock(kid, user)
+    await _get_owned_knock(kid, user, tenant["id"])
     upd = {k: v for k, v in body.dict().items() if v is not None}
     if "disposition" in upd and upd["disposition"] not in DISPOSITIONS:
         raise HTTPException(400, "Invalid disposition")
     if upd:
         upd["updated_at"] = now_iso()
-        await db.d2d_knocks.update_one({"id": kid}, {"$set": upd})
-    knock = await db.d2d_knocks.find_one({"id": kid}, {"_id": 0})
-    knock["lead_id"] = await _sync_lead(knock)
+        await db.d2d_knocks.update_one(
+            {"id": kid, "tenant_id": tenant["id"]}, {"$set": upd}
+        )
+    knock = await db.d2d_knocks.find_one({"id": kid, "tenant_id": tenant["id"]}, {"_id": 0})
+    knock["lead_id"] = await _sync_lead(knock, tenant["id"])
     return knock
 
 
 @router.delete("/d2d/knocks/{kid}")
-async def delete_knock(kid: str, user: dict = Depends(get_current_user)):
+async def delete_knock(kid: str,
+                       user: dict = Depends(get_current_user),
+                       tenant: dict = Depends(get_current_tenant)):
     _require_sales(user)
-    knock = await _get_owned_knock(kid, user)
-    await db.d2d_knocks.delete_one({"id": kid})
+    knock = await _get_owned_knock(kid, user, tenant["id"])
+    await db.d2d_knocks.delete_one({"id": kid, "tenant_id": tenant["id"]})
     if knock.get("lead_id"):
-        await db.leads.delete_one({"id": knock["lead_id"], "status": {"$ne": "won"}})
+        await db.leads.delete_one(
+            {"id": knock["lead_id"], "tenant_id": tenant["id"], "status": {"$ne": "won"}}
+        )
     return {"ok": True}
 
 
 @router.post("/d2d/knocks/{kid}/convert")
-async def convert_knock(kid: str, user: dict = Depends(get_current_user)):
+async def convert_knock(kid: str,
+                        user: dict = Depends(get_current_user),
+                        tenant: dict = Depends(get_current_tenant)):
     """Turn a door-to-door lead into a customer and mark it converted."""
     from routers.leads import _ensure_customer_from_lead
     _require_sales(user)
-    knock = await _get_owned_knock(kid, user)
+    knock = await _get_owned_knock(kid, user, tenant["id"])
     if knock.get("disposition") not in LEAD_DISPOS:
         raise HTTPException(400, "Only interested/sold doors can convert to a customer")
-    lead_id = await _sync_lead(knock)
-    lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
-    cust = await _ensure_customer_from_lead(lead)
-    await db.leads.update_one({"id": lead_id}, {"$set": {"status": "won", "converted": {"type": "customer", "id": cust["id"]}}})
-    await db.d2d_knocks.update_one({"id": kid}, {"$set": {"converted": True, "customer_id": cust["id"], "updated_at": now_iso()}})
+    lead_id = await _sync_lead(knock, tenant["id"])
+    lead = await db.leads.find_one({"id": lead_id, "tenant_id": tenant["id"]}, {"_id": 0})
+    cust = await _ensure_customer_from_lead(lead, tenant["id"])
+    await db.leads.update_one(
+        {"id": lead_id, "tenant_id": tenant["id"]},
+        {"$set": {"status": "won", "converted": {"type": "customer", "id": cust["id"]}}},
+    )
+    await db.d2d_knocks.update_one(
+        {"id": kid, "tenant_id": tenant["id"]},
+        {"$set": {"converted": True, "customer_id": cust["id"], "updated_at": now_iso()}},
+    )
     return cust
 
 
-async def _aggregate():
-    knocks = await db.d2d_knocks.find({}, {"_id": 0}).to_list(5000)
-    # A knock counts as converted if flagged, or its linked lead was won/converted.
+async def _aggregate(tenant_id: str):
+    knocks = await db.d2d_knocks.find({"tenant_id": tenant_id}, {"_id": 0}).to_list(5000)
     lead_ids = [k["lead_id"] for k in knocks if k.get("lead_id")]
     conv_leads = set()
     if lead_ids:
-        async for l in db.leads.find({"id": {"$in": lead_ids}, "converted": {"$exists": True}}, {"_id": 0, "id": 1}):
+        async for l in db.leads.find(
+            {"id": {"$in": lead_ids}, "tenant_id": tenant_id, "converted": {"$exists": True}},
+            {"_id": 0, "id": 1},
+        ):
             conv_leads.add(l["id"])
     reps: dict = {}
     for k in knocks:
@@ -292,8 +317,9 @@ async def _aggregate():
 
 
 @router.get("/d2d/report")
-async def d2d_report(admin: dict = Depends(require_admin)):
-    reps = await _aggregate()
+async def d2d_report(admin: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant)):
+    reps = await _aggregate(tenant["id"])
     reps.sort(key=lambda r: (-r["conversions"], -r["sold"], -r["knocks"]))
     totals = {"knocks": 0, "leads": 0, "sold": 0, "conversions": 0}
     for r in reps:
@@ -304,9 +330,10 @@ async def d2d_report(admin: dict = Depends(require_admin)):
 
 
 @router.get("/d2d/leaderboard")
-async def d2d_leaderboard(user: dict = Depends(get_current_user)):
+async def d2d_leaderboard(user: dict = Depends(get_current_user),
+                          tenant: dict = Depends(get_current_tenant)):
     _require_sales(user)
-    reps = await _aggregate()
+    reps = await _aggregate(tenant["id"])
     reps.sort(key=lambda r: (-r["sold"], -r["conversions"], -r["knocks"]))
     me = user.get("technician_id") or user.get("id")
     for i, r in enumerate(reps):

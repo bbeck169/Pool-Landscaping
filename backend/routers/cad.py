@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from config import db
 from utils import now_iso, new_id, require_admin
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -12,13 +13,13 @@ class DesignIn(BaseModel):
     name: str = "Untitled design"
     customer_id: Optional[str] = None
     lead_id: Optional[str] = None
-    canvas_w_ft: float = 60.0          # real-world width the canvas represents
+    canvas_w_ft: float = 60.0
     canvas_h_ft: float = 40.0
-    boundary: List[Any] = Field(default_factory=list)   # [{x,y}] in 0..1 normalized canvas coords
-    elements: List[Any] = Field(default_factory=list)   # [{id,type,kind,x,y,w,h,rotation,color,label}]
+    boundary: List[Any] = Field(default_factory=list)
+    elements: List[Any] = Field(default_factory=list)
     area_sqft: float = 0.0
     perimeter_ft: float = 0.0
-    thumbnail: Optional[str] = None    # base64 data uri (optional)
+    thumbnail: Optional[str] = None
 
 
 def _doc_public(d: dict) -> dict:
@@ -27,10 +28,13 @@ def _doc_public(d: dict) -> dict:
 
 
 @router.post("/designs")
-async def create_design(body: DesignIn, user: dict = Depends(require_admin)):
+async def create_design(body: DesignIn,
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
     now = now_iso()
     doc = {
         "id": new_id(),
+        "tenant_id": tenant["id"],
         "created_by": user["id"],
         "created_by_name": user.get("name", ""),
         "name": body.name or "Untitled design",
@@ -51,14 +55,15 @@ async def create_design(body: DesignIn, user: dict = Depends(require_admin)):
 
 
 @router.get("/designs")
-async def list_designs(customer_id: Optional[str] = Query(None), lead_id: Optional[str] = Query(None),
-                       user: dict = Depends(require_admin)):
-    q: dict = {}
+async def list_designs(customer_id: Optional[str] = Query(None),
+                       lead_id: Optional[str] = Query(None),
+                       user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    q: dict = {"tenant_id": tenant["id"]}
     if customer_id:
         q["customer_id"] = customer_id
     if lead_id:
         q["lead_id"] = lead_id
-    # list view excludes heavy element/boundary payloads; keeps thumbnail for previews
     docs = await db.designs.find(
         q,
         {"_id": 0, "elements": 0, "boundary": 0},
@@ -67,16 +72,20 @@ async def list_designs(customer_id: Optional[str] = Query(None), lead_id: Option
 
 
 @router.get("/designs/{did}")
-async def get_design(did: str, user: dict = Depends(require_admin)):
-    d = await db.designs.find_one({"id": did}, {"_id": 0})
+async def get_design(did: str,
+                     user: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant)):
+    d = await db.designs.find_one({"id": did, "tenant_id": tenant["id"]}, {"_id": 0})
     if not d:
         raise HTTPException(404, "Design not found")
     return d
 
 
 @router.put("/designs/{did}")
-async def update_design(did: str, body: DesignIn, user: dict = Depends(require_admin)):
-    d = await db.designs.find_one({"id": did})
+async def update_design(did: str, body: DesignIn,
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    d = await db.designs.find_one({"id": did, "tenant_id": tenant["id"]})
     if not d:
         raise HTTPException(404, "Design not found")
     update = {
@@ -92,11 +101,13 @@ async def update_design(did: str, body: DesignIn, user: dict = Depends(require_a
         "thumbnail": body.thumbnail,
         "updated_at": now_iso(),
     }
-    await db.designs.update_one({"id": did}, {"$set": update})
-    return await get_design(did, user)
+    await db.designs.update_one({"id": did, "tenant_id": tenant["id"]}, {"$set": update})
+    return await get_design(did, user, tenant)
 
 
 @router.delete("/designs/{did}")
-async def delete_design(did: str, user: dict = Depends(require_admin)):
-    await db.designs.delete_one({"id": did})
+async def delete_design(did: str,
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    await db.designs.delete_one({"id": did, "tenant_id": tenant["id"]})
     return {"ok": True}

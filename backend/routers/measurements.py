@@ -4,14 +4,15 @@ from pydantic import BaseModel, Field
 
 from config import db
 from utils import now_iso, new_id, require_admin
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
 
 class MeasurementIn(BaseModel):
     name: str = "Measurement"
-    mode: str = "area"                 # "distance" | "area"
-    points: List[Any] = Field(default_factory=list)   # [{latitude, longitude}]
+    mode: str = "area"
+    points: List[Any] = Field(default_factory=list)
     distance_ft: float = 0.0
     perimeter_ft: float = 0.0
     area_sqft: float = 0.0
@@ -21,9 +22,12 @@ class MeasurementIn(BaseModel):
 
 
 @router.post("/measurements")
-async def create_measurement(body: MeasurementIn, user: dict = Depends(require_admin)):
+async def create_measurement(body: MeasurementIn,
+                             user: dict = Depends(require_admin),
+                             tenant: dict = Depends(get_current_tenant)):
     doc = {
         "id": new_id(),
+        "tenant_id": tenant["id"],
         "created_by": user["id"],
         "created_by_name": user.get("name", ""),
         "name": body.name or "Measurement",
@@ -43,9 +47,11 @@ async def create_measurement(body: MeasurementIn, user: dict = Depends(require_a
 
 
 @router.get("/measurements")
-async def list_measurements(customer_id: Optional[str] = Query(None), lead_id: Optional[str] = Query(None),
-                            user: dict = Depends(require_admin)):
-    q: dict = {}
+async def list_measurements(customer_id: Optional[str] = Query(None),
+                            lead_id: Optional[str] = Query(None),
+                            user: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
+    q: dict = {"tenant_id": tenant["id"]}
     if customer_id:
         q["customer_id"] = customer_id
     if lead_id:
@@ -54,6 +60,8 @@ async def list_measurements(customer_id: Optional[str] = Query(None), lead_id: O
 
 
 @router.delete("/measurements/{mid}")
-async def delete_measurement(mid: str, user: dict = Depends(require_admin)):
-    await db.measurements.delete_one({"id": mid})
+async def delete_measurement(mid: str,
+                             user: dict = Depends(require_admin),
+                             tenant: dict = Depends(get_current_tenant)):
+    await db.measurements.delete_one({"id": mid, "tenant_id": tenant["id"]})
     return {"ok": True}

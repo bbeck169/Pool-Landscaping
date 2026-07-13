@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
+from routers.tenants import get_current_tenant
 from emailer import send_invoice_reminder_email
 from models import *
 
@@ -19,10 +20,12 @@ def compute_totals(line_items: List[dict], tax_rate: float):
 
 
 @router.get("/quotes")
-async def list_quotes(user: dict = Depends(get_current_user), doc_type: Optional[str] = None):
+async def list_quotes(user: dict = Depends(get_current_user),
+                      tenant: dict = Depends(get_current_tenant),
+                      doc_type: Optional[str] = None):
     if user.get("role") == "technician":
         raise HTTPException(403, "Not allowed")
-    q = {}
+    q: dict = {"tenant_id": tenant["id"]}
     if user.get("role") == "customer":
         q["customer_id"] = user.get("customer_id")
     if doc_type:
@@ -32,8 +35,12 @@ async def list_quotes(user: dict = Depends(get_current_user), doc_type: Optional
 
 
 @router.post("/quotes")
-async def create_quote(body: QuoteIn, user: dict = Depends(require_admin)):
-    customer = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
+async def create_quote(body: QuoteIn,
+                       user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    customer = await db.customers.find_one(
+        {"id": body.customer_id, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not customer:
         raise HTTPException(400, "Customer not found")
     items = [li.dict() for li in body.line_items]
@@ -49,6 +56,7 @@ async def create_quote(body: QuoteIn, user: dict = Depends(require_admin)):
         terms = defaults["default_invoice_terms"] if body.doc_type == "invoice" else defaults["default_quote_terms"]
     doc = {
         "id": new_id(),
+        "tenant_id": tenant["id"],
         "customer_id": body.customer_id,
         "customer_name": customer["name"],
         "title": body.title,
@@ -72,18 +80,17 @@ async def create_quote(body: QuoteIn, user: dict = Depends(require_admin)):
 
 
 @router.put("/quotes/{qid}")
-async def update_quote(qid: str, body: QuoteUpdate, user: dict = Depends(require_admin)):
-    """Partial update of quote/invoice fields (title, notes, terms, tax_rate, due_date, line_items).
-
-    Preserves existing values when a field is omitted. Recomputes totals if
-    line_items or tax_rate change.
-    """
-    existing = await db.quotes.find_one({"id": qid}, {"_id": 0})
+async def update_quote(qid: str, body: QuoteUpdate,
+                       user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    """Partial update of quote/invoice fields (title, notes, terms, tax_rate, due_date, line_items)."""
+    existing = await db.quotes.find_one(
+        {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not existing:
         raise HTTPException(404, "Not found")
     upd = {k: v for k, v in body.dict().items() if v is not None}
     if "line_items" in upd:
-        # Normalize LineItem models → dicts for storage.
         upd["line_items"] = [li if isinstance(li, dict) else li.dict() for li in upd["line_items"]]
     if "line_items" in upd or "tax_rate" in upd:
         items = upd.get("line_items", existing.get("line_items", []))
@@ -98,15 +105,17 @@ async def update_quote(qid: str, body: QuoteUpdate, user: dict = Depends(require
             "remaining_balance": round(max(total - amount_paid, 0.0), 2),
         })
     upd["updated_at"] = now_iso()
-    await db.quotes.update_one({"id": qid}, {"$set": upd})
-    return await db.quotes.find_one({"id": qid}, {"_id": 0})
+    await db.quotes.update_one({"id": qid, "tenant_id": tenant["id"]}, {"$set": upd})
+    return await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 @router.get("/quotes/{qid}")
-async def get_quote(qid: str, user: dict = Depends(get_current_user)):
+async def get_quote(qid: str,
+                    user: dict = Depends(get_current_user),
+                    tenant: dict = Depends(get_current_tenant)):
     if user.get("role") == "technician":
         raise HTTPException(403, "Not allowed")
-    doc = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Quote not found")
     if user.get("role") == "customer" and doc.get("customer_id") != user.get("customer_id"):
@@ -115,11 +124,14 @@ async def get_quote(qid: str, user: dict = Depends(get_current_user)):
 
 
 @router.post("/quotes/{qid}/decision")
-async def customer_quote_decision(qid: str, decision: str = Query(...), user: dict = Depends(get_current_user)):
+async def customer_quote_decision(qid: str,
+                                  decision: str = Query(...),
+                                  user: dict = Depends(get_current_user),
+                                  tenant: dict = Depends(get_current_tenant)):
     """Customer approves or declines their own estimate."""
     if user.get("role") != "customer":
         raise HTTPException(403, "Customers only")
-    doc = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Estimate not found")
     if doc.get("customer_id") != user.get("customer_id"):
@@ -130,20 +142,23 @@ async def customer_quote_decision(qid: str, decision: str = Query(...), user: di
     upd = {"status": status}
     if status == "accepted":
         upd["accepted_at"] = now_iso()
-    await db.quotes.update_one({"id": qid}, {"$set": upd})
-    return await db.quotes.find_one({"id": qid}, {"_id": 0})
+    await db.quotes.update_one({"id": qid, "tenant_id": tenant["id"]}, {"$set": upd})
+    return await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 @router.get("/quotes/ready-to-schedule")
-async def ready_to_schedule(admin: dict = Depends(require_admin)):
+async def ready_to_schedule(admin: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
     """Approved online estimates not yet turned into a scheduled job."""
     docs = await db.quotes.find(
-        {"doc_type": "quote", "status": "accepted", "scheduled_job_id": {"$in": [None, ""]}},
+        {"tenant_id": tenant["id"], "doc_type": "quote", "status": "accepted",
+         "scheduled_job_id": {"$in": [None, ""]}},
         {"_id": 0},
     ).sort("accepted_at", -1).to_list(500)
     # Include legacy accepted quotes that predate the scheduled_job_id field.
     extra = await db.quotes.find(
-        {"doc_type": "quote", "status": "accepted", "scheduled_job_id": {"$exists": False}},
+        {"tenant_id": tenant["id"], "doc_type": "quote", "status": "accepted",
+         "scheduled_job_id": {"$exists": False}},
         {"_id": 0},
     ).to_list(500)
     seen = {d["id"] for d in docs}
@@ -156,27 +171,34 @@ async def ready_to_schedule(admin: dict = Depends(require_admin)):
 
 
 @router.post("/quotes/{qid}/schedule")
-async def schedule_from_estimate(qid: str, body: MaintBulkIn, admin: dict = Depends(require_admin)):
+async def schedule_from_estimate(qid: str, body: MaintBulkIn,
+                                 admin: dict = Depends(require_admin),
+                                 tenant: dict = Depends(get_current_tenant)):
     """Turn an approved estimate into a scheduled job in one tap."""
     try:
         datetime.fromisoformat(body.scheduled_date[:10])
     except (ValueError, TypeError):
         raise HTTPException(400, "scheduled_date must be YYYY-MM-DD")
-    doc = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Estimate not found")
     if doc.get("doc_type") != "quote" or doc.get("status") != "accepted":
         raise HTTPException(400, "Only approved estimates can be scheduled")
     if doc.get("scheduled_job_id"):
         raise HTTPException(400, "This estimate is already scheduled")
-    customer = await db.customers.find_one({"id": doc.get("customer_id")}, {"_id": 0})
+    customer = await db.customers.find_one(
+        {"id": doc.get("customer_id"), "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     tech_name, tech_avatar = None, ""
     if body.technician_id:
-        tech = await db.technicians.find_one({"id": body.technician_id}, {"_id": 0})
+        tech = await db.technicians.find_one(
+            {"id": body.technician_id, "tenant_id": tenant["id"]}, {"_id": 0}
+        )
         tech_name = tech["name"] if tech else None
         tech_avatar = tech.get("avatar", "") if tech else ""
     job = {
-        "id": new_id(), "title": doc.get("title", "Service"), "customer_id": doc.get("customer_id"),
+        "id": new_id(), "tenant_id": tenant["id"],
+        "title": doc.get("title", "Service"), "customer_id": doc.get("customer_id"),
         "customer_name": doc.get("customer_name", ""), "technician_id": body.technician_id,
         "technician_name": tech_name, "technician_avatar": tech_avatar,
         "address": (customer or {}).get("address", ""), "service_type": doc.get("title", "Service"),
@@ -186,7 +208,10 @@ async def schedule_from_estimate(qid: str, body: MaintBulkIn, admin: dict = Depe
     }
     await db.jobs.insert_one(job)
     job.pop("_id", None)
-    await db.quotes.update_one({"id": qid}, {"$set": {"scheduled_job_id": job["id"], "status": "scheduled"}})
+    await db.quotes.update_one(
+        {"id": qid, "tenant_id": tenant["id"]},
+        {"$set": {"scheduled_job_id": job["id"], "status": "scheduled"}},
+    )
     if doc.get("customer_id"):
         await notify_customer(doc["customer_id"], "Service scheduled",
                               f"Your approved estimate '{doc.get('title')}' is scheduled for {body.scheduled_date}.", job_id=job["id"])
@@ -194,15 +219,21 @@ async def schedule_from_estimate(qid: str, body: MaintBulkIn, admin: dict = Depe
 
 
 @router.put("/quotes/{qid}/status")
-async def update_quote_status(qid: str, status: str = Query(...), user: dict = Depends(require_admin)):
-    await db.quotes.update_one({"id": qid}, {"$set": {"status": status}})
-    return await db.quotes.find_one({"id": qid}, {"_id": 0})
+async def update_quote_status(qid: str, status: str = Query(...),
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    await db.quotes.update_one(
+        {"id": qid, "tenant_id": tenant["id"]}, {"$set": {"status": status}}
+    )
+    return await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 @router.post("/quotes/{qid}/send-reminder")
-async def send_reminder(qid: str, user: dict = Depends(require_admin)):
+async def send_reminder(qid: str,
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
     """One-tap payment reminder for an outstanding invoice: in-app + SMS + email."""
-    inv = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    inv = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not inv:
         raise HTTPException(404, "Invoice not found")
     if not inv.get("customer_id"):
@@ -212,25 +243,30 @@ async def send_reminder(qid: str, user: dict = Depends(require_admin)):
     balance = round(float(inv.get("total") or 0) - float(inv.get("amount_paid") or 0), 2)
     title = "Payment reminder"
     body = f"'{inv.get('title', 'Your invoice')}' has an outstanding balance of ${balance:,.2f}. Please pay at your earliest convenience."
-    # In-app + SMS (SMS only fires if Twilio is configured; otherwise in-app still delivered)
     await notify_customer(inv["customer_id"], title, body, sms=True)
     email_sent = await send_invoice_reminder_email(inv)
     count = int(inv.get("reminder_count") or 0) + 1
-    await db.quotes.update_one({"id": qid}, {"$set": {"last_reminder_at": now_iso(), "reminder_count": count}})
+    await db.quotes.update_one(
+        {"id": qid, "tenant_id": tenant["id"]},
+        {"$set": {"last_reminder_at": now_iso(), "reminder_count": count}},
+    )
     return {"ok": True, "email_sent": email_sent, "reminder_count": count, "last_reminder_at": now_iso()}
 
 
 @router.get("/invoices/overview")
-async def invoices_overview(user: dict = Depends(require_admin)):
+async def invoices_overview(user: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
     """Admin AR dashboard: all outstanding invoices tagged pending / past_due / partial."""
-    docs = await db.quotes.find({"doc_type": "invoice"}, {"_id": 0}).sort("due_date", 1).to_list(2000)
+    docs = await db.quotes.find(
+        {"tenant_id": tenant["id"], "doc_type": "invoice"}, {"_id": 0}
+    ).sort("due_date", 1).to_list(2000)
     today = datetime.now(timezone.utc).date().isoformat()
-    # Look up which customers have a saved card/ACH on file.
     cust_ids = list({d.get("customer_id") for d in docs if d.get("customer_id")})
     pm_map = {}
     if cust_ids:
         custs = await db.customers.find(
-            {"id": {"$in": cust_ids}}, {"_id": 0, "id": 1, "default_payment_method_id": 1, "pm_brand": 1, "pm_last4": 1}
+            {"id": {"$in": cust_ids}, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "default_payment_method_id": 1, "pm_brand": 1, "pm_last4": 1},
         ).to_list(2000)
         for c in custs:
             if c.get("default_payment_method_id"):
@@ -250,7 +286,7 @@ async def invoices_overview(user: dict = Depends(require_admin)):
         balance = round(total - paid, 2)
         is_paid = d.get("payment_status") == "paid" or balance <= 0.01
         if is_paid:
-            continue  # AR view only shows money still owed
+            continue
         due = d.get("due_date")
         past_due = bool(due and due < today)
         partial = paid > 0.009
@@ -291,9 +327,11 @@ async def invoices_overview(user: dict = Depends(require_admin)):
 
 
 @router.post("/quotes/{qid}/record-payment")
-async def record_payment(qid: str, body: RecordPaymentIn, user: dict = Depends(require_admin)):
+async def record_payment(qid: str, body: RecordPaymentIn,
+                         user: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
     """Admin records a full or PARTIAL offline payment against an invoice."""
-    doc = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Invoice not found")
     if body.amount <= 0:
@@ -308,37 +346,43 @@ async def record_payment(qid: str, body: RecordPaymentIn, user: dict = Depends(r
     }
     if fully_paid:
         update.update({"status": "accepted", "paid_at": now_iso(), "payment_method": "manual"})
-    await db.quotes.update_one({"id": qid}, {"$set": update})
+    await db.quotes.update_one({"id": qid, "tenant_id": tenant["id"]}, {"$set": update})
     if doc.get("customer_id"):
         msg = ("Your payment was received in full. Thank you!" if fully_paid
                else f"A partial payment of ${body.amount:,.2f} was recorded. Remaining balance: ${max(total - paid, 0):,.2f}.")
         await notify_customer(doc["customer_id"], "Payment recorded", msg)
-    return await db.quotes.find_one({"id": qid}, {"_id": 0})
+    return await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 @router.post("/quotes/{qid}/pay")
-async def pay_quote(qid: str, user: dict = Depends(require_admin)):
+async def pay_quote(qid: str,
+                    user: dict = Depends(require_admin),
+                    tenant: dict = Depends(get_current_tenant)):
     """Admin-only: record a manual/offline FULL payment (cash, check, external card)."""
-    doc = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Quote not found")
     await db.quotes.update_one(
-        {"id": qid},
-        {"$set": {"payment_status": "paid", "status": "accepted", "amount_paid": float(doc.get("total") or 0),
-                  "paid_at": now_iso(), "payment_method": "manual", "charge_failed": False, "charge_error": ""}},
+        {"id": qid, "tenant_id": tenant["id"]},
+        {"$set": {"payment_status": "paid", "status": "accepted",
+                  "amount_paid": float(doc.get("total") or 0),
+                  "paid_at": now_iso(), "payment_method": "manual",
+                  "charge_failed": False, "charge_error": ""}},
     )
     if doc.get("customer_id"):
         await notify_customer(doc["customer_id"], "Payment received",
                               f"Your payment for '{doc.get('title', 'invoice')}' was recorded. Thank you!")
-    return await db.quotes.find_one({"id": qid}, {"_id": 0})
+    return await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 
 # ────────────────────────────── PDF export ───────────────────────────────────
 @router.get("/quotes/{qid}/pdf")
-async def quote_or_invoice_pdf(qid: str, user: dict = Depends(get_current_user)):
+async def quote_or_invoice_pdf(qid: str,
+                               user: dict = Depends(get_current_user),
+                               tenant: dict = Depends(get_current_tenant)):
     """Streams a printable PDF for a quote or invoice, including the terms section."""
-    doc = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Not found")
     if user.get("role") == "technician":
@@ -388,7 +432,6 @@ async def quote_or_invoice_pdf(qid: str, user: dict = Depends(get_current_user))
     story.append(t)
     story.append(Spacer(1, 16))
 
-    # Line items
     line_rows = [["Description", "Qty", "Unit", "Total"]]
     for li in (doc.get("line_items") or []):
         qty = float(li.get("quantity") or 0)
@@ -409,7 +452,6 @@ async def quote_or_invoice_pdf(qid: str, user: dict = Depends(get_current_user))
     story.append(lt)
     story.append(Spacer(1, 8))
 
-    # Totals block
     subtotal = float(doc.get("subtotal") or 0)
     tax_amt = float(doc.get("tax") or 0)
     total = float(doc.get("total") or 0)
@@ -437,7 +479,6 @@ async def quote_or_invoice_pdf(qid: str, user: dict = Depends(get_current_user))
         story.append(Paragraph(notes.replace("\n", "<br/>"), styles["Normal"]))
         story.append(Spacer(1, 10))
 
-    # Terms & Conditions — persisted on the doc; fall back to tenant default.
     terms_text = doc.get("terms")
     if not terms_text:
         try:
@@ -459,4 +500,3 @@ async def quote_or_invoice_pdf(qid: str, user: dict = Depends(get_current_user))
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
-

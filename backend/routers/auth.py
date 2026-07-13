@@ -119,19 +119,37 @@ async def me(user: dict = Depends(get_current_user)):
 
 
 @router.post("/admin/impersonate/{customer_id}")
-async def impersonate_customer(customer_id: str, admin: dict = Depends(require_admin)):
+async def impersonate_customer(customer_id: str,
+                                tenant_id: Optional[str] = None,
+                                admin: dict = Depends(require_admin)):
     """Admin obtains a customer-scoped session token to view the app exactly as the customer.
-    The token carries an `act` claim identifying the admin so the session can be reverted."""
-    customer = await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    The token carries an `act` claim identifying the admin so the session can be reverted.
+
+    Super admins may pass `?tenant_id=X` to impersonate a customer in a different tenant.
+    Regular admins are restricted to their own tenant."""
+    q = {"id": customer_id}
+    if admin.get("role") == "super_admin" and tenant_id:
+        q["tenant_id"] = tenant_id
+    else:
+        # Regular admin — restrict to their own tenant
+        q["tenant_id"] = admin.get("tenant_id")
+    customer = await db.customers.find_one(q, {"_id": 0})
     if not customer:
         raise HTTPException(404, "Customer not found")
-    cust_user = await db.users.find_one({"customer_id": customer_id, "role": "customer"}, {"_id": 0})
+    cust_user_q = {"customer_id": customer_id, "role": "customer",
+                   "tenant_id": customer.get("tenant_id")}
+    cust_user = await db.users.find_one(cust_user_q, {"_id": 0})
     if not cust_user:
         raise HTTPException(400, "This customer has no login yet. Create a login for them first.")
     await db.audit_logs.insert_one({
-        "id": new_id(), "event": "impersonation_started",
+        "id": new_id(),
+        "tenant_id": customer.get("tenant_id"),
+        "event": "impersonation_started",
         "admin_id": admin["id"], "admin_name": admin.get("name", ""),
+        "admin_role": admin.get("role"),
         "target_customer_id": customer_id, "target_user_id": cust_user["id"],
+        "target_tenant_id": customer.get("tenant_id"),
+        "cross_tenant": admin.get("tenant_id") != customer.get("tenant_id"),
         "created_at": now_iso(),
     })
     return auth_response(cust_user, impersonator_id=admin["id"], impersonator_name=admin.get("name", "Admin"))
@@ -143,11 +161,15 @@ async def revert_impersonation(user: dict = Depends(get_current_user)):
     admin_id = user.get("impersonator_id")
     if not admin_id:
         raise HTTPException(403, "Not an active impersonation session")
-    admin_user = await db.users.find_one({"id": admin_id, "role": "admin"}, {"_id": 0})
+    admin_user = await db.users.find_one(
+        {"id": admin_id, "role": {"$in": ["admin", "super_admin"]}}, {"_id": 0}
+    )
     if not admin_user:
         raise HTTPException(403, "Admin authorization is no longer valid")
     await db.audit_logs.insert_one({
-        "id": new_id(), "event": "impersonation_ended",
+        "id": new_id(),
+        "tenant_id": user.get("tenant_id"),
+        "event": "impersonation_ended",
         "admin_id": admin_id, "target_user_id": user.get("id"),
         "created_at": now_iso(),
     })

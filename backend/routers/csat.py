@@ -19,6 +19,7 @@ from utils import (
     create_staff_notification, send_sms,
 )
 from routers.realtime import bus
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -56,6 +57,7 @@ async def _send_survey_email(customer: dict, url: str) -> bool:
 
 async def _dispatch_survey(job: dict, channel: str = "email") -> dict:
     """Idempotent per (job_id): if a survey already exists for this job, return it."""
+    tid = job.get("tenant_id")
     existing = await db.csat_surveys.find_one({"job_id": job["id"]}, {"_id": 0})
     if existing:
         return existing
@@ -65,6 +67,7 @@ async def _dispatch_survey(job: dict, channel: str = "email") -> dict:
     token = _mk_token()
     doc = {
         "id": new_id(),
+        "tenant_id": tid,
         "token": token,
         "customer_id": job.get("customer_id"),
         "customer_name": cust.get("name", ""),
@@ -98,8 +101,9 @@ class SendSurveyIn(BaseModel):
 
 @router.post("/csat/send/{job_id}")
 async def send_csat(job_id: str, body: Optional[SendSurveyIn] = None,
-                    admin: dict = Depends(require_admin)):
-    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+                    admin: dict = Depends(require_admin),
+                    tenant: dict = Depends(get_current_tenant)):
+    job = await db.jobs.find_one({"id": job_id, "tenant_id": tenant["id"]}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     channel = (body.channel if body else "email") or "email"
@@ -109,10 +113,11 @@ async def send_csat(job_id: str, body: Optional[SendSurveyIn] = None,
 
 @router.get("/csat")
 async def list_csat(admin: dict = Depends(require_admin),
+                    tenant: dict = Depends(get_current_tenant),
                     min_nps: Optional[int] = Query(None),
                     max_nps: Optional[int] = Query(None),
                     channel: Optional[str] = Query(None)):
-    q: dict = {}
+    q: dict = {"tenant_id": tenant["id"]}
     if channel:
         q["channel"] = channel
     if min_nps is not None:
@@ -150,8 +155,12 @@ async def list_csat(admin: dict = Depends(require_admin),
 
 
 @router.get("/csat/{sid}")
-async def get_csat(sid: str, admin: dict = Depends(require_admin)):
-    doc = await db.csat_surveys.find_one({"id": sid}, {"_id": 0})
+async def get_csat(sid: str,
+                   admin: dict = Depends(require_admin),
+                   tenant: dict = Depends(get_current_tenant)):
+    doc = await db.csat_surveys.find_one(
+        {"id": sid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not doc:
         raise HTTPException(404, "Survey not found")
     doc["url"] = _survey_url(doc["token"])
@@ -206,6 +215,7 @@ async def public_submit_csat(token: str, body: SubmitCsatIn):
     try:
         await db.activity_log.insert_one({
             "id": new_id(),
+            "tenant_id": doc.get("tenant_id"),
             "kind": "csat_response",
             "customer_id": doc.get("customer_id"),
             "job_id": doc.get("job_id"),
@@ -222,9 +232,14 @@ async def public_submit_csat(token: str, body: SubmitCsatIn):
 
 async def _route_promoter(survey: dict) -> None:
     """Promoter → enroll in Review Request sequence (if seeded) + activity log."""
-    seq = await db.sequences.find_one({"slug": "review-request"}, {"_id": 0})
+    tid = survey.get("tenant_id")
+    seq = await db.sequences.find_one(
+        {"slug": "review-request", "tenant_id": tid}, {"_id": 0}
+    )
+    if not seq:
+        # Fallback to global default (nullable tenant) if per-tenant not seeded yet.
+        seq = await db.sequences.find_one({"slug": "review-request"}, {"_id": 0})
     if seq and survey.get("customer_id"):
-        # Idempotent: skip if already actively enrolled
         existing = await db.sequence_enrollments.find_one({
             "sequence_id": seq["id"],
             "customer_id": survey["customer_id"],
@@ -232,7 +247,7 @@ async def _route_promoter(survey: dict) -> None:
         }, {"_id": 0})
         if not existing:
             enrollment = {
-                "id": new_id(),
+                "id": new_id(), "tenant_id": tid,
                 "sequence_id": seq["id"],
                 "customer_id": survey["customer_id"],
                 "status": "active",
@@ -246,16 +261,18 @@ async def _route_promoter(survey: dict) -> None:
 
 async def _route_detractor(survey: dict) -> None:
     """Detractor → high-priority task + admin notification + realtime push."""
+    tid = survey.get("tenant_id")
     cust_name = survey.get("customer_name", "customer")
     excerpt = (survey.get("comment") or "")[:200]
     task = {
         "id": new_id(),
+        "tenant_id": tid,
         "title": f"Negative feedback from {cust_name}",
         "description": f"NPS {survey.get('nps_score')}. Comment: {excerpt or '(no comment)'}",
         "priority": "high",
         "status": "open",
         "source": "csat-detractor",
-        "assigned_to": None,  # left null so first available admin can claim
+        "assigned_to": None,
         "customer_id": survey.get("customer_id"),
         "job_id": survey.get("job_id"),
         "created_at": now_iso(),
@@ -265,9 +282,12 @@ async def _route_detractor(survey: dict) -> None:
         "Negative feedback received",
         f"NPS {survey.get('nps_score')} from {cust_name}. Review and follow up.",
         job_id=survey.get("job_id"),
+        tenant_id=tid,
     )
-    # Realtime fan-out to all admins.
-    admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(100)
+    # Realtime fan-out to this tenant's admins only.
+    admins = await db.users.find(
+        {"role": "admin", "tenant_id": tid}, {"_id": 0, "id": 1}
+    ).to_list(100)
     for a in admins:
         await bus.broadcast(a["id"], {
             "type": "csat_detractor",
@@ -292,6 +312,7 @@ async def maybe_schedule_survey_for_job(job: dict) -> None:
     scheduled_for = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
     await db.csat_pending.insert_one({
         "id": new_id(),
+        "tenant_id": job.get("tenant_id"),
         "job_id": job["id"],
         "customer_id": job["customer_id"],
         "channel": "email",

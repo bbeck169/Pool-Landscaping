@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from config import db, logger, APP_PUBLIC_URL, RESEND_API_KEY, EMAIL_FROM
 from utils import now_iso, new_id, require_admin, get_current_user, send_sms
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -125,7 +126,9 @@ async def _send_email(to: str, url: str, business_name: str, expiry_hours: int, 
 
 # ─── Admin endpoints ────────────────────────────────────────────────────────
 @router.post("/lead-requests/generate")
-async def generate(body: GenerateIn, admin: dict = Depends(require_admin)):
+async def generate(body: GenerateIn,
+                   admin: dict = Depends(require_admin),
+                   tenant: dict = Depends(get_current_tenant)):
     branding = await _get_branding()
     token = _mk_token()
     now = datetime.now(timezone.utc)
@@ -135,6 +138,7 @@ async def generate(body: GenerateIn, admin: dict = Depends(require_admin)):
 
     dispatch = {
         "id": new_id(),
+        "tenant_id": tenant["id"],
         "admin_id": admin["id"],
         "admin_name": admin.get("name") or admin.get("email"),
         "method": body.method,
@@ -185,9 +189,10 @@ async def generate(body: GenerateIn, admin: dict = Depends(require_admin)):
 
 @router.get("/lead-requests")
 async def list_dispatches(admin: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant),
                           method: Optional[str] = None,
                           status: Optional[str] = None):
-    q: dict = {}
+    q: dict = {"tenant_id": tenant["id"]}
     if method and method != "all":
         q["method"] = method
     rows = await db.lead_request_dispatches.find(q, {"_id": 0}).sort("sent_at", -1).to_list(500)
@@ -201,20 +206,29 @@ async def list_dispatches(admin: dict = Depends(require_admin),
 
 
 @router.get("/lead-requests/{did}")
-async def get_dispatch(did: str, admin: dict = Depends(require_admin)):
-    d = await db.lead_request_dispatches.find_one({"id": did}, {"_id": 0})
+async def get_dispatch(did: str,
+                       admin: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    d = await db.lead_request_dispatches.find_one(
+        {"id": did, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not d:
         raise HTTPException(404, "Dispatch not found")
     lead = None
     if d.get("resulting_lead_id"):
-        lead = await db.leads.find_one({"id": d["resulting_lead_id"]}, {"_id": 0})
+        lead = await db.leads.find_one(
+            {"id": d["resulting_lead_id"], "tenant_id": tenant["id"]}, {"_id": 0}
+        )
     return {"dispatch": d, "lead": lead}
 
 
 @router.post("/lead-requests/{did}/revoke")
-async def revoke(did: str, admin: dict = Depends(require_admin)):
+async def revoke(did: str,
+                 admin: dict = Depends(require_admin),
+                 tenant: dict = Depends(get_current_tenant)):
     r = await db.lead_request_dispatches.update_one(
-        {"id": did}, {"$set": {"revoked": True, "revoked_at": now_iso()}}
+        {"id": did, "tenant_id": tenant["id"]},
+        {"$set": {"revoked": True, "revoked_at": now_iso()}},
     )
     if not r.matched_count:
         raise HTTPException(404, "Dispatch not found")
@@ -222,8 +236,12 @@ async def revoke(did: str, admin: dict = Depends(require_admin)):
 
 
 @router.post("/lead-requests/{did}/resend")
-async def resend(did: str, admin: dict = Depends(require_admin)):
-    d = await db.lead_request_dispatches.find_one({"id": did}, {"_id": 0})
+async def resend(did: str,
+                 admin: dict = Depends(require_admin),
+                 tenant: dict = Depends(get_current_tenant)):
+    d = await db.lead_request_dispatches.find_one(
+        {"id": did, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not d:
         raise HTTPException(404, "Dispatch not found")
     if d.get("submitted_at"):
@@ -247,10 +265,12 @@ async def resend(did: str, admin: dict = Depends(require_admin)):
         if not sent:
             reason = "resend-not-configured-or-failed"
     else:
-        # Link method — nothing to re-send, just report ok.
         sent = True
 
-    await db.lead_request_dispatches.update_one({"id": did}, {"$set": {"sent_at": now_iso()}})
+    await db.lead_request_dispatches.update_one(
+        {"id": did, "tenant_id": tenant["id"]},
+        {"$set": {"sent_at": now_iso()}},
+    )
     return {"ok": True, "sent": sent, "reason": reason}
 
 
@@ -299,6 +319,7 @@ async def _create_lead_from_payload(dispatch: dict, payload: dict, files_meta: l
     lead_id = new_id()
     lead = {
         "id": lead_id,
+        "tenant_id": dispatch.get("tenant_id"),
         "name": f"{(payload.get('first_name') or '').strip()} {(payload.get('last_name') or '').strip()}".strip() or (payload.get("company_name") or "Prospect"),
         "email": payload.get("email"),
         "phone": payload.get("cell_phone"),
@@ -374,6 +395,7 @@ async def public_submit(token: str, request: Request):
     try:
         await db.activity_log.insert_one({
             "id": new_id(),
+            "tenant_id": d.get("tenant_id"),
             "kind": "lead_request_submitted",
             "dispatch_id": d["id"],
             "lead_id": lead_id,

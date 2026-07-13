@@ -64,7 +64,7 @@ async def get_current_user(creds: HTTPAuthorizationCredentials = Depends(securit
 
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") != "admin":
+    if user.get("role") not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
@@ -94,8 +94,14 @@ async def notify_customer(customer_id: str, title: str, body: str, job_id: str =
     if not customer_id:
         return
     cust_user = await db.users.find_one({"customer_id": customer_id, "role": "customer"}, {"_id": 0})
+    # Resolve tenant so the notification is visible under the tenant-scoped GET /notifications.
+    tenant_id = (cust_user or {}).get("tenant_id")
+    if not tenant_id:
+        cust_doc = await db.customers.find_one({"id": customer_id}, {"_id": 0, "tenant_id": 1})
+        tenant_id = (cust_doc or {}).get("tenant_id")
     notif = {
         "id": new_id(),
+        "tenant_id": tenant_id,
         "user_id": cust_user["id"] if cust_user else None,
         "customer_id": customer_id,
         "title": title,
@@ -120,7 +126,8 @@ async def notify_technician(technician_id: str, title: str, body: str, job_id: s
     if not u:
         return
     notif = {
-        "id": new_id(), "user_id": u["id"], "customer_id": None,
+        "id": new_id(), "tenant_id": u.get("tenant_id"),
+        "user_id": u["id"], "customer_id": None,
         "title": title, "body": body, "job_id": job_id,
         "read": False, "created_at": now_iso(),
     }
@@ -128,12 +135,16 @@ async def notify_technician(technician_id: str, title: str, body: str, job_id: s
     await _push_notification(notif)
 
 
-async def create_staff_notification(title: str, body: str, job_id: str = None):
-    """Create an in-app notification for every admin user."""
-    admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(100)
+async def create_staff_notification(title: str, body: str, job_id: str = None, tenant_id: str = None):
+    """Create an in-app notification for every admin user (optionally scoped to one tenant)."""
+    q = {"role": "admin"}
+    if tenant_id:
+        q["tenant_id"] = tenant_id
+    admins = await db.users.find(q, {"_id": 0, "id": 1, "tenant_id": 1}).to_list(500)
     for a in admins:
         notif = {
-            "id": new_id(), "user_id": a["id"], "customer_id": None,
+            "id": new_id(), "tenant_id": a.get("tenant_id") or tenant_id,
+            "user_id": a["id"], "customer_id": None,
             "title": title, "body": body, "job_id": job_id,
             "read": False, "created_at": now_iso(),
         }

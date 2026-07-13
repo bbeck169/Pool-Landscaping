@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import now_iso, new_id, require_admin, create_staff_notification
+from routers.tenants import get_current_tenant
 from models import (
     SeoKeywordReq, SeoArticleReq, SeoAuditReq, WpSettingsIn, SeoPublishReq,
     SeoScheduleReq, SeoScheduleSettings,
@@ -47,7 +48,9 @@ async def _ai_json(system: str, prompt: str, session: str, stub: dict | None = N
 
 # ----------------------- Keyword ideas (AI-estimated) -----------------------
 @router.post("/seo/keywords/suggest")
-async def suggest_keywords(body: SeoKeywordReq, user: dict = Depends(require_admin)):
+async def suggest_keywords(body: SeoKeywordReq,
+                           user: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
     system = (
         "You are an SEO strategist for a pool & landscaping service company. "
         "Return ONLY valid JSON, no prose."
@@ -68,7 +71,7 @@ async def suggest_keywords(body: SeoKeywordReq, user: dict = Depends(require_adm
         ],
     })
     keywords = data if isinstance(data, list) else data.get("keywords", [])
-    doc = {"id": new_id(), "seed": body.seed, "location": body.location,
+    doc = {"id": new_id(), "tenant_id": tenant["id"], "seed": body.seed, "location": body.location,
            "keywords": keywords, "created_at": now_iso()}
     await db.seo_keywords.insert_one(doc)
     doc.pop("_id", None)
@@ -76,13 +79,18 @@ async def suggest_keywords(body: SeoKeywordReq, user: dict = Depends(require_adm
 
 
 @router.get("/seo/keywords")
-async def list_keyword_research(user: dict = Depends(require_admin)):
-    return await db.seo_keywords.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
+async def list_keyword_research(user: dict = Depends(require_admin),
+                                tenant: dict = Depends(get_current_tenant)):
+    return await db.seo_keywords.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
 
 
 # ----------------------- AI Article generator -----------------------
 @router.post("/seo/articles")
-async def generate_article(body: SeoArticleReq, user: dict = Depends(require_admin)):
+async def generate_article(body: SeoArticleReq,
+                           user: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
     system = (
         "You are an expert SEO copywriter for a pool & landscaping company in Vistancia, Arizona. "
         "Write helpful, original, E-E-A-T-friendly content optimized for the target keyword without keyword stuffing. "
@@ -114,6 +122,7 @@ async def generate_article(body: SeoArticleReq, user: dict = Depends(require_adm
     })
     doc = {
         "id": new_id(),
+        "tenant_id": tenant["id"],
         "keyword": body.keyword,
         "title": art.get("title", body.title or body.keyword),
         "slug": art.get("slug", ""),
@@ -131,21 +140,30 @@ async def generate_article(body: SeoArticleReq, user: dict = Depends(require_adm
 
 
 @router.get("/seo/articles")
-async def list_articles(user: dict = Depends(require_admin)):
-    return await db.seo_articles.find({}, {"_id": 0, "body_markdown": 0, "faqs": 0}).sort("created_at", -1).to_list(200)
+async def list_articles(user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    return await db.seo_articles.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0, "body_markdown": 0, "faqs": 0}
+    ).sort("created_at", -1).to_list(200)
 
 
 @router.get("/seo/articles/{aid}")
-async def get_article(aid: str, user: dict = Depends(require_admin)):
-    doc = await db.seo_articles.find_one({"id": aid}, {"_id": 0})
+async def get_article(aid: str,
+                      user: dict = Depends(require_admin),
+                      tenant: dict = Depends(get_current_tenant)):
+    doc = await db.seo_articles.find_one(
+        {"id": aid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not doc:
         raise HTTPException(404, "Article not found")
     return doc
 
 
 @router.delete("/seo/articles/{aid}")
-async def delete_article(aid: str, user: dict = Depends(require_admin)):
-    await db.seo_articles.delete_one({"id": aid})
+async def delete_article(aid: str,
+                         user: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
+    await db.seo_articles.delete_one({"id": aid, "tenant_id": tenant["id"]})
     return {"ok": True}
 
 
@@ -162,23 +180,31 @@ class SeoArticlePatch(BaseModel):
 
 
 @router.patch("/seo/articles/{aid}")
-async def patch_article(aid: str, body: SeoArticlePatch, user: dict = Depends(require_admin)):
+async def patch_article(aid: str, body: SeoArticlePatch,
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
     upd = {k: v for k, v in body.dict().items() if v is not None}
     upd["updated_at"] = now_iso()
     if "body_markdown" in upd:
         upd["word_count"] = len((upd["body_markdown"] or "").split())
-    r = await db.seo_articles.update_one({"id": aid}, {"$set": upd})
+    r = await db.seo_articles.update_one(
+        {"id": aid, "tenant_id": tenant["id"]}, {"$set": upd}
+    )
     if not r.matched_count:
         raise HTTPException(404, "Article not found")
-    return await db.seo_articles.find_one({"id": aid}, {"_id": 0})
+    return await db.seo_articles.find_one({"id": aid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 # ----------------------- Content SEO audit -----------------------
 @router.post("/seo/audit")
-async def audit_content(body: SeoAuditReq, user: dict = Depends(require_admin)):
+async def audit_content(body: SeoAuditReq,
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
     content = body.content
     if not content and body.article_id:
-        art = await db.seo_articles.find_one({"id": body.article_id}, {"_id": 0})
+        art = await db.seo_articles.find_one(
+            {"id": body.article_id, "tenant_id": tenant["id"]}, {"_id": 0}
+        )
         if art:
             content = f"{art.get('title','')}\n{art.get('meta_description','')}\n{art.get('body_markdown','')}"
     if not content:
@@ -216,13 +242,17 @@ async def audit_content(body: SeoAuditReq, user: dict = Depends(require_admin)):
 
 
 # ----------------------- WordPress connection settings -----------------------
-async def _get_wp_settings() -> dict | None:
-    return await db.seo_settings.find_one({"id": WP_SETTINGS_ID}, {"_id": 0})
+async def _get_wp_settings(tenant_id: str | None = None) -> dict | None:
+    q = {"id": WP_SETTINGS_ID}
+    if tenant_id:
+        q["tenant_id"] = tenant_id
+    return await db.seo_settings.find_one(q, {"_id": 0})
 
 
 @router.get("/seo/wp-settings")
-async def get_wp_settings(user: dict = Depends(require_admin)):
-    s = await _get_wp_settings()
+async def get_wp_settings(user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    s = await _get_wp_settings(tenant["id"])
     if not s:
         return {"connected": False, "url": "", "username": ""}
     return {
@@ -233,24 +263,31 @@ async def get_wp_settings(user: dict = Depends(require_admin)):
 
 
 @router.put("/seo/wp-settings")
-async def save_wp_settings(body: WpSettingsIn, user: dict = Depends(require_admin)):
+async def save_wp_settings(body: WpSettingsIn,
+                            user: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
     url = body.url.strip().rstrip("/")
     if not url.startswith("http"):
         raise HTTPException(400, "Site URL must start with http:// or https://")
     doc = {
         "id": WP_SETTINGS_ID,
+        "tenant_id": tenant["id"],
         "url": url,
         "username": body.username.strip(),
         "app_password": body.app_password.strip(),
         "updated_at": now_iso(),
     }
-    await db.seo_settings.update_one({"id": WP_SETTINGS_ID}, {"$set": doc}, upsert=True)
+    await db.seo_settings.update_one(
+        {"id": WP_SETTINGS_ID, "tenant_id": tenant["id"]},
+        {"$set": doc}, upsert=True,
+    )
     return {"connected": True, "url": doc["url"], "username": doc["username"]}
 
 
 @router.post("/seo/wp-settings/test")
-async def test_wp_settings(user: dict = Depends(require_admin)):
-    s = await _get_wp_settings()
+async def test_wp_settings(user: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
+    s = await _get_wp_settings(tenant["id"])
     if not s or not s.get("url"):
         raise HTTPException(400, "WordPress is not configured yet")
     try:
@@ -289,7 +326,7 @@ class WpError(Exception):
 
 async def _publish_to_wp(art: dict, status: str) -> dict:
     """Publish an article to WordPress. Raises WpError on failure. Returns wp response dict."""
-    s = await _get_wp_settings()
+    s = await _get_wp_settings(art.get("tenant_id"))
     if not s or not (s.get("url") and s.get("username") and s.get("app_password")):
         raise WpError(400, "Connect your WordPress site first (Connect tab).")
     status = "publish" if status not in ("draft", "publish") else status
@@ -335,8 +372,12 @@ async def _publish_to_wp(art: dict, status: str) -> dict:
 
 # ----------------------- Publish article to WordPress -----------------------
 @router.post("/seo/articles/{aid}/publish")
-async def publish_article(aid: str, body: SeoPublishReq, user: dict = Depends(require_admin)):
-    art = await db.seo_articles.find_one({"id": aid}, {"_id": 0})
+async def publish_article(aid: str, body: SeoPublishReq,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    art = await db.seo_articles.find_one(
+        {"id": aid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not art:
         raise HTTPException(404, "Article not found")
     try:
@@ -350,9 +391,12 @@ async def publish_article(aid: str, body: SeoPublishReq, user: dict = Depends(re
 DEFAULT_SCHEDULE = {"enabled": True, "paused": False, "day_of_week": 0, "hour": 9, "minute": 0, "publish_as": "draft"}
 
 
-async def _get_schedule() -> dict:
-    doc = await db.seo_settings.find_one({"id": "schedule"}, {"_id": 0}) or {}
-    return {**DEFAULT_SCHEDULE, **{k: v for k, v in doc.items() if k != "id"}}
+async def _get_schedule(tenant_id: str | None = None) -> dict:
+    q = {"id": "schedule"}
+    if tenant_id:
+        q["tenant_id"] = tenant_id
+    doc = await db.seo_settings.find_one(q, {"_id": 0}) or {}
+    return {**DEFAULT_SCHEDULE, **{k: v for k, v in doc.items() if k not in ("id", "tenant_id")}}
 
 
 def _next_weekly_slot(after: datetime, dow: int, hour: int, minute: int) -> datetime:
@@ -365,27 +409,37 @@ def _next_weekly_slot(after: datetime, dow: int, hour: int, minute: int) -> date
 
 
 @router.get("/seo/schedule")
-async def get_schedule(user: dict = Depends(require_admin)):
-    sched = await _get_schedule()
+async def get_schedule(user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    sched = await _get_schedule(tenant["id"])
     queued = await db.seo_articles.find(
-        {"status": "scheduled"}, {"_id": 0, "body_markdown": 0, "faqs": 0}
+        {"tenant_id": tenant["id"], "status": "scheduled"},
+        {"_id": 0, "body_markdown": 0, "faqs": 0}
     ).sort("scheduled_for", 1).to_list(200)
     return {"settings": sched, "queued": queued}
 
 
 @router.put("/seo/schedule")
-async def update_schedule(body: SeoScheduleSettings, user: dict = Depends(require_admin)):
-    doc = {"id": "schedule", **body.model_dump(exclude_none=True)}
-    await db.seo_settings.update_one({"id": "schedule"}, {"$set": doc}, upsert=True)
-    return await _get_schedule()
+async def update_schedule(body: SeoScheduleSettings,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    doc = {"id": "schedule", "tenant_id": tenant["id"], **body.model_dump(exclude_none=True)}
+    await db.seo_settings.update_one(
+        {"id": "schedule", "tenant_id": tenant["id"]}, {"$set": doc}, upsert=True
+    )
+    return await _get_schedule(tenant["id"])
 
 
 @router.post("/seo/articles/{aid}/schedule")
-async def schedule_article(aid: str, body: SeoScheduleReq, user: dict = Depends(require_admin)):
-    art = await db.seo_articles.find_one({"id": aid}, {"_id": 0})
+async def schedule_article(aid: str, body: SeoScheduleReq,
+                           user: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
+    art = await db.seo_articles.find_one(
+        {"id": aid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not art:
         raise HTTPException(404, "Article not found")
-    sched = await _get_schedule()
+    sched = await _get_schedule(tenant["id"])
     now = datetime.now(timezone.utc)
 
     if body.mode == "manual":
@@ -398,9 +452,8 @@ async def schedule_article(aid: str, body: SeoScheduleReq, user: dict = Depends(
         except Exception:
             raise HTTPException(400, "Invalid date format.")
     else:
-        # auto weekly drip: one week after the last auto-queued item, else the next weekly slot
         last = await db.seo_articles.find_one(
-            {"status": "scheduled", "queue_mode": "auto"},
+            {"tenant_id": tenant["id"], "status": "scheduled", "queue_mode": "auto"},
             {"_id": 0, "scheduled_for": 1}, sort=[("scheduled_for", -1)],
         )
         if last and last.get("scheduled_for"):
@@ -410,43 +463,49 @@ async def schedule_article(aid: str, body: SeoScheduleReq, user: dict = Depends(
             when = _next_weekly_slot(now, sched["day_of_week"], sched["hour"], sched["minute"])
 
     await db.seo_articles.update_one(
-        {"id": aid},
+        {"id": aid, "tenant_id": tenant["id"]},
         {"$set": {"status": "scheduled", "queue_mode": body.mode, "scheduled_for": when.isoformat()}},
     )
     return {"ok": True, "scheduled_for": when.isoformat(), "mode": body.mode}
 
 
 @router.post("/seo/articles/{aid}/unschedule")
-async def unschedule_article(aid: str, user: dict = Depends(require_admin)):
-    art = await db.seo_articles.find_one({"id": aid}, {"_id": 0})
+async def unschedule_article(aid: str,
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    art = await db.seo_articles.find_one(
+        {"id": aid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not art:
         raise HTTPException(404, "Article not found")
     await db.seo_articles.update_one(
-        {"id": aid}, {"$set": {"status": "draft", "scheduled_for": None, "queue_mode": None}}
+        {"id": aid, "tenant_id": tenant["id"]},
+        {"$set": {"status": "draft", "scheduled_for": None, "queue_mode": None}},
     )
     return {"ok": True}
 
 
 async def run_due_publishes():
-    """Called by the background scheduler: publish any scheduled articles whose time has arrived."""
+    """Called by the background scheduler: publish any scheduled articles whose time has arrived.
+    Runs cross-tenant — each article carries its own tenant_id."""
     try:
-        sched = await _get_schedule()
-        if sched.get("paused") or not sched.get("enabled"):
-            return
         now = datetime.now(timezone.utc).isoformat()
         due = await db.seo_articles.find(
             {"status": "scheduled", "scheduled_for": {"$lte": now}}, {"_id": 0}
         ).to_list(50)
         for art in due:
             try:
+                sched = await _get_schedule(art.get("tenant_id"))
+                if sched.get("paused") or not sched.get("enabled"):
+                    continue
                 res = await _publish_to_wp(art, sched.get("publish_as", "draft"))
                 await create_staff_notification(
                     "SEO article published",
                     f"'{art.get('title','')}' was auto-published to WordPress ({res['wp_status']}).",
+                    tenant_id=art.get("tenant_id"),
                 )
                 logger.info(f"Auto-published SEO article {art['id']}")
             except WpError as e:
                 logger.warning(f"Auto-publish skipped for {art['id']}: {e.detail}")
-                # Leave it scheduled so it retries on the next tick (e.g. WP temporarily unreachable)
     except Exception as e:
         logger.warning(f"run_due_publishes error: {e}")

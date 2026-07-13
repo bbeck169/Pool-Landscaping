@@ -3,6 +3,7 @@ from typing import List, Optional
 
 from config import db
 from utils import now_iso, new_id, get_current_user, require_admin, notify_customer
+from routers.tenants import get_current_tenant
 from models import EstimateIn, EstimateSettingsIn, EstimateTemplateIn
 
 router = APIRouter()
@@ -11,13 +12,9 @@ SETTINGS_ID = "estimate_settings"
 
 
 def compute_estimate(line_items: List[dict], overhead_pct: float, margin_pct: float) -> dict:
-    """Gross-margin pricing with overhead recovery.
-
-    direct cost -> + overhead recovery -> burdened cost -> apply target gross margin -> sell price.
-    """
+    """Gross-margin pricing with overhead recovery."""
     direct_cost = round(sum((li.get("quantity") or 0) * (li.get("unit_cost") or 0) for li in line_items), 2)
     overhead_pct = max(0.0, float(overhead_pct or 0))
-    # Margin must be < 100% to avoid an infinite/negative price.
     m = min(max(0.0, float(margin_pct or 0)), 99.0) / 100.0
     overhead_amount = round(direct_cost * overhead_pct / 100.0, 2)
     burdened_cost = round(direct_cost + overhead_amount, 2)
@@ -36,19 +33,29 @@ def compute_estimate(line_items: List[dict], overhead_pct: float, margin_pct: fl
 
 # ----------------------- Settings (company defaults) -----------------------
 @router.get("/estimates/settings")
-async def get_estimate_settings(user: dict = Depends(require_admin)):
-    s = await db.settings.find_one({"id": SETTINGS_ID}, {"_id": 0})
+async def get_estimate_settings(user: dict = Depends(require_admin),
+                                tenant: dict = Depends(get_current_tenant)):
+    s = await db.settings.find_one(
+        {"id": SETTINGS_ID, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not s:
-        s = {"id": SETTINGS_ID, "overhead_pct": 15.0, "margin_pct": 30.0}
+        s = {"id": SETTINGS_ID, "tenant_id": tenant["id"],
+             "overhead_pct": 15.0, "margin_pct": 30.0}
         await db.settings.insert_one(dict(s))
     return {"overhead_pct": s.get("overhead_pct", 15.0), "margin_pct": s.get("margin_pct", 30.0)}
 
 
 @router.put("/estimates/settings")
-async def put_estimate_settings(body: EstimateSettingsIn, user: dict = Depends(require_admin)):
+async def put_estimate_settings(body: EstimateSettingsIn,
+                                user: dict = Depends(require_admin),
+                                tenant: dict = Depends(get_current_tenant)):
     upd = {k: v for k, v in body.dict().items() if v is not None}
-    await db.settings.update_one({"id": SETTINGS_ID}, {"$set": {"id": SETTINGS_ID, **upd}}, upsert=True)
-    return await get_estimate_settings(user)
+    await db.settings.update_one(
+        {"id": SETTINGS_ID, "tenant_id": tenant["id"]},
+        {"$set": {"id": SETTINGS_ID, "tenant_id": tenant["id"], **upd}},
+        upsert=True,
+    )
+    return await get_estimate_settings(user, tenant)
 
 
 # ----------------------- Templates -----------------------
@@ -83,26 +90,33 @@ PREBUILT_TEMPLATES = [
 ]
 
 
-async def _ensure_templates_seeded():
-    if await db.estimate_templates.count_documents({}) == 0:
+async def _ensure_templates_seeded(tenant_id: str):
+    """Seed prebuilt templates once per tenant."""
+    if await db.estimate_templates.count_documents({"tenant_id": tenant_id}) == 0:
         for t in PREBUILT_TEMPLATES:
             await db.estimate_templates.insert_one({
-                "id": new_id(), "name": t["name"], "line_items": t["line_items"],
+                "id": new_id(), "tenant_id": tenant_id,
+                "name": t["name"], "line_items": t["line_items"],
                 "overhead_pct": t["overhead_pct"], "margin_pct": t["margin_pct"],
                 "prebuilt": True, "created_at": now_iso(),
             })
 
 
 @router.get("/estimate-templates")
-async def list_templates(user: dict = Depends(require_admin)):
-    await _ensure_templates_seeded()
-    return await db.estimate_templates.find({}, {"_id": 0}).sort("name", 1).to_list(500)
+async def list_templates(user: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
+    await _ensure_templates_seeded(tenant["id"])
+    return await db.estimate_templates.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("name", 1).to_list(500)
 
 
 @router.post("/estimate-templates")
-async def create_template(body: EstimateTemplateIn, user: dict = Depends(require_admin)):
+async def create_template(body: EstimateTemplateIn,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
     doc = {
-        "id": new_id(), "name": body.name,
+        "id": new_id(), "tenant_id": tenant["id"], "name": body.name,
         "line_items": [li.dict() for li in body.line_items],
         "overhead_pct": body.overhead_pct, "margin_pct": body.margin_pct,
         "prebuilt": False, "created_at": now_iso(),
@@ -113,20 +127,31 @@ async def create_template(body: EstimateTemplateIn, user: dict = Depends(require
 
 
 @router.delete("/estimate-templates/{tid}")
-async def delete_template(tid: str, user: dict = Depends(require_admin)):
-    await db.estimate_templates.delete_one({"id": tid, "prebuilt": {"$ne": True}})
+async def delete_template(tid: str,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    await db.estimate_templates.delete_one(
+        {"id": tid, "tenant_id": tenant["id"], "prebuilt": {"$ne": True}}
+    )
     return {"ok": True}
 
 
 # ----------------------- Estimates -----------------------
 @router.get("/estimates")
-async def list_estimates(user: dict = Depends(require_admin)):
-    return await db.estimates.find({}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+async def list_estimates(user: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
+    return await db.estimates.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(1000)
 
 
 @router.post("/estimates")
-async def create_estimate(body: EstimateIn, user: dict = Depends(require_admin)):
-    customer = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
+async def create_estimate(body: EstimateIn,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    customer = await db.customers.find_one(
+        {"id": body.customer_id, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not customer:
         raise HTTPException(400, "Customer not found")
     items = [li.dict() for li in body.line_items]
@@ -136,7 +161,8 @@ async def create_estimate(body: EstimateIn, user: dict = Depends(require_admin))
         from routers.finances import get_terms_defaults
         terms = (await get_terms_defaults())["default_quote_terms"]
     doc = {
-        "id": new_id(), "customer_id": body.customer_id, "customer_name": customer["name"],
+        "id": new_id(), "tenant_id": tenant["id"],
+        "customer_id": body.customer_id, "customer_name": customer["name"],
         "title": body.title, "line_items": items,
         "overhead_pct": body.overhead_pct, "margin_pct": body.margin_pct,
         "notes": body.notes or "", "terms": terms, "status": "draft",
@@ -148,19 +174,29 @@ async def create_estimate(body: EstimateIn, user: dict = Depends(require_admin))
 
 
 @router.get("/estimates/{eid}")
-async def get_estimate(eid: str, user: dict = Depends(require_admin)):
-    doc = await db.estimates.find_one({"id": eid}, {"_id": 0})
+async def get_estimate(eid: str,
+                       user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    doc = await db.estimates.find_one(
+        {"id": eid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not doc:
         raise HTTPException(404, "Estimate not found")
     return doc
 
 
 @router.put("/estimates/{eid}")
-async def update_estimate(eid: str, body: EstimateIn, user: dict = Depends(require_admin)):
-    existing = await db.estimates.find_one({"id": eid}, {"_id": 0})
+async def update_estimate(eid: str, body: EstimateIn,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    existing = await db.estimates.find_one(
+        {"id": eid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not existing:
         raise HTTPException(404, "Estimate not found")
-    customer = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
+    customer = await db.customers.find_one(
+        {"id": body.customer_id, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not customer:
         raise HTTPException(400, "Customer not found")
     items = [li.dict() for li in body.line_items]
@@ -172,20 +208,30 @@ async def update_estimate(eid: str, body: EstimateIn, user: dict = Depends(requi
     }
     if body.terms is not None:
         upd["terms"] = body.terms
-    await db.estimates.update_one({"id": eid}, {"$set": upd})
-    return await db.estimates.find_one({"id": eid}, {"_id": 0})
+    await db.estimates.update_one(
+        {"id": eid, "tenant_id": tenant["id"]}, {"$set": upd}
+    )
+    return await db.estimates.find_one(
+        {"id": eid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
 
 
 @router.delete("/estimates/{eid}")
-async def delete_estimate(eid: str, user: dict = Depends(require_admin)):
-    await db.estimates.delete_one({"id": eid})
+async def delete_estimate(eid: str,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    await db.estimates.delete_one({"id": eid, "tenant_id": tenant["id"]})
     return {"ok": True}
 
 
 @router.post("/estimates/{eid}/convert")
-async def convert_estimate_to_quote(eid: str, user: dict = Depends(require_admin)):
+async def convert_estimate_to_quote(eid: str,
+                                    user: dict = Depends(require_admin),
+                                    tenant: dict = Depends(get_current_tenant)):
     """Turn an estimate into a customer-facing quote showing only the final sell price."""
-    est = await db.estimates.find_one({"id": eid}, {"_id": 0})
+    est = await db.estimates.find_one(
+        {"id": eid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not est:
         raise HTTPException(404, "Estimate not found")
     if est.get("converted_quote_id"):
@@ -193,13 +239,13 @@ async def convert_estimate_to_quote(eid: str, user: dict = Depends(require_admin
     sell = float(est.get("sell_price") or 0)
     if sell <= 0:
         raise HTTPException(400, "Add line items before converting")
-    # Carry over the estimate's terms; if it has none, fall back to the tenant default quote terms.
     terms = est.get("terms")
     if not terms:
         from routers.finances import get_terms_defaults
         terms = (await get_terms_defaults())["default_quote_terms"]
     quote = {
-        "id": new_id(), "customer_id": est["customer_id"], "customer_name": est.get("customer_name", ""),
+        "id": new_id(), "tenant_id": tenant["id"],
+        "customer_id": est["customer_id"], "customer_name": est.get("customer_name", ""),
         "title": est.get("title", "Estimate"), "doc_type": "quote",
         "line_items": [{"description": est.get("title", "Project"), "quantity": 1, "unit_price": sell}],
         "tax_rate": 0.0, "subtotal": sell, "tax": 0.0, "total": sell,
@@ -209,5 +255,8 @@ async def convert_estimate_to_quote(eid: str, user: dict = Depends(require_admin
     }
     await db.quotes.insert_one(quote)
     quote.pop("_id", None)
-    await db.estimates.update_one({"id": eid}, {"$set": {"converted_quote_id": quote["id"], "status": "converted"}})
+    await db.estimates.update_one(
+        {"id": eid, "tenant_id": tenant["id"]},
+        {"$set": {"converted_quote_id": quote["id"], "status": "converted"}},
+    )
     return quote

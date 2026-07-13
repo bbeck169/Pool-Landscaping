@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import now_iso, new_id, require_admin
+from routers.tenants import get_current_tenant
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
 router = APIRouter()
@@ -39,7 +40,9 @@ def _build_prompt(style: str, elements: List[str], extra: str) -> str:
 
 
 @router.post("/landscape/render")
-async def render_landscape(body: RenderIn, user: dict = Depends(require_admin)):
+async def render_landscape(body: RenderIn,
+                           user: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
     img = _strip_prefix(body.image_base64 or "")
     if not img:
         raise HTTPException(400, "A yard photo is required")
@@ -57,7 +60,8 @@ async def render_landscape(body: RenderIn, user: dict = Depends(require_admin)):
         raise HTTPException(502, "No image was generated. Try a clearer photo or different options.")
     out = images[0]["data"]  # base64 string
     doc = {
-        "id": new_id(), "created_by": user["id"], "created_by_name": user.get("name", ""),
+        "id": new_id(), "tenant_id": tenant["id"],
+        "created_by": user["id"], "created_by_name": user.get("name", ""),
         "customer_id": body.customer_id, "lead_id": body.lead_id,
         "style": body.style or "", "elements": body.elements or [], "prompt": body.prompt or "",
         "input_image": img, "output_image": out, "created_at": now_iso(),
@@ -90,9 +94,10 @@ async def render_landscape(body: RenderIn, user: dict = Depends(require_admin)):
             parsed = _json.loads(m.group(0)) if m else {}
         description = (parsed.get("description") or "").strip()
         shopping_list = parsed.get("shopping_list") or []
-        await db.landscape_renders.update_one({"id": doc["id"]}, {"$set": {
-            "description": description, "shopping_list": shopping_list,
-        }})
+        await db.landscape_renders.update_one(
+            {"id": doc["id"], "tenant_id": tenant["id"]},
+            {"$set": {"description": description, "shopping_list": shopping_list}},
+        )
     except Exception as e:
         logger.warning(f"landscape description/list generation skipped: {e}")
 
@@ -102,8 +107,9 @@ async def render_landscape(body: RenderIn, user: dict = Depends(require_admin)):
 
 @router.get("/landscape/renders")
 async def list_renders(customer_id: Optional[str] = Query(None), lead_id: Optional[str] = Query(None),
-                       user: dict = Depends(require_admin)):
-    q: dict = {}
+                       user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    q: dict = {"tenant_id": tenant["id"]}
     if customer_id:
         q["customer_id"] = customer_id
     if lead_id:
@@ -113,6 +119,8 @@ async def list_renders(customer_id: Optional[str] = Query(None), lead_id: Option
 
 
 @router.delete("/landscape/renders/{rid}")
-async def delete_render(rid: str, user: dict = Depends(require_admin)):
-    await db.landscape_renders.delete_one({"id": rid})
+async def delete_render(rid: str,
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    await db.landscape_renders.delete_one({"id": rid, "tenant_id": tenant["id"]})
     return {"ok": True}

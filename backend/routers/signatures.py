@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from config import db, logger, APP_PUBLIC_URL, RESEND_API_KEY, EMAIL_FROM
 from utils import now_iso, new_id, require_admin, notify_customer
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -66,11 +67,14 @@ class RequestSignatureIn(BaseModel):
 
 @router.post("/quotes/{qid}/request-signature")
 async def request_signature(qid: str, body: Optional[RequestSignatureIn] = None,
-                            admin: dict = Depends(require_admin)):
-    doc = await db.quotes.find_one({"id": qid}, {"_id": 0})
+                            admin: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
+    doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Quote not found")
-    cust = await db.customers.find_one({"id": doc.get("customer_id")}, {"_id": 0}) or {}
+    cust = await db.customers.find_one(
+        {"id": doc.get("customer_id"), "tenant_id": tenant["id"]}, {"_id": 0}
+    ) or {}
     signer_email = (body.signer_email if body and body.signer_email else cust.get("email") or "").strip().lower()
     if not signer_email:
         raise HTTPException(400, "No signer email on file")
@@ -79,6 +83,7 @@ async def request_signature(qid: str, body: Optional[RequestSignatureIn] = None,
     payload_hash = _hash_doc(doc)
     sig_req = {
         "id": new_id(),
+        "tenant_id": tenant["id"],
         "token": token,
         "doc_type": doc.get("doc_type", "quote"),
         "doc_id": qid,
@@ -98,7 +103,7 @@ async def request_signature(qid: str, body: Optional[RequestSignatureIn] = None,
     url = _sign_url(token)
     emailed = await _send_sign_email(cust, url, doc.get("title", "Estimate"), (body.message if body else "") or "")
     await db.quotes.update_one(
-        {"id": qid},
+        {"id": qid, "tenant_id": tenant["id"]},
         {"$set": {"signature_requested_at": now_iso(), "signature_token": token}},
     )
     return {"ok": True, "url": url, "token": token, "emailed": emailed}
@@ -185,6 +190,7 @@ async def public_submit_signature(token: str, body: SubmitSignatureIn, request: 
     try:
         await db.activity_log.insert_one({
             "id": new_id(),
+            "tenant_id": sig.get("tenant_id"),
             "kind": "signature_submitted",
             "doc_id": sig["doc_id"],
             "signer_name": body.signer_name.strip(),
@@ -200,11 +206,16 @@ async def public_submit_signature(token: str, body: SubmitSignatureIn, request: 
 
 
 @router.get("/quotes/{qid}/signature")
-async def admin_get_signature(qid: str, admin: dict = Depends(require_admin)):
-    sig = await db.signatures.find_one({"doc_id": qid, "signed_at": {"$ne": None}}, {"_id": 0})
+async def admin_get_signature(qid: str,
+                              admin: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    sig = await db.signatures.find_one(
+        {"doc_id": qid, "tenant_id": tenant["id"], "signed_at": {"$ne": None}},
+        {"_id": 0},
+    )
     if not sig:
         return {"signed": False}
-    doc = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     current_hash = _hash_doc(doc) if doc else None
     return {
         "signed": True,
@@ -322,11 +333,16 @@ async def public_signed_pdf(token: str):
 
 
 @router.get("/quotes/{qid}/signed-pdf")
-async def admin_signed_pdf(qid: str, admin: dict = Depends(require_admin)):
-    sig = await db.signatures.find_one({"doc_id": qid, "signed_at": {"$ne": None}}, {"_id": 0})
+async def admin_signed_pdf(qid: str,
+                           admin: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
+    sig = await db.signatures.find_one(
+        {"doc_id": qid, "tenant_id": tenant["id"], "signed_at": {"$ne": None}},
+        {"_id": 0},
+    )
     if not sig:
         raise HTTPException(404, "Not signed yet")
-    doc = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Document not found")
     pdf = _build_signed_pdf(doc, sig)

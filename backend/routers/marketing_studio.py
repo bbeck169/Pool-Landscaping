@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from config import db, logger
 from utils import now_iso, new_id, require_admin, get_current_user
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -100,24 +101,36 @@ class AgentChatIn(BaseModel):
 
 
 # ─── brand memory ───────────────────────────────────────────────────────────
-async def get_brand_memory() -> dict:
-    doc = await db.marketing_brand.find_one({"id": BRAND_ID}, {"_id": 0})
+async def get_brand_memory(tenant_id: str | None = None) -> dict:
+    """Fetch this tenant's brand memory (per-tenant singleton).
+    Falls back to a global singleton for pre-multi-tenant callers."""
+    q = {"id": BRAND_ID}
+    if tenant_id:
+        q["tenant_id"] = tenant_id
+    doc = await db.marketing_brand.find_one(q, {"_id": 0})
     if not doc:
-        doc = {"id": BRAND_ID, **BRAND_DEFAULTS, "updated_at": now_iso()}
+        doc = {"id": BRAND_ID, "tenant_id": tenant_id, **BRAND_DEFAULTS, "updated_at": now_iso()}
         await db.marketing_brand.insert_one(dict(doc))
-    return {**BRAND_DEFAULTS, **{k: v for k, v in doc.items() if v is not None and k != "id"}}
+    return {**BRAND_DEFAULTS, **{k: v for k, v in doc.items() if v is not None and k not in ("id", "tenant_id")}}
 
 
 @router.get("/marketing/brand")
-async def get_brand(admin: dict = Depends(require_admin)):
-    return await get_brand_memory()
+async def get_brand(admin: dict = Depends(require_admin),
+                    tenant: dict = Depends(get_current_tenant)):
+    return await get_brand_memory(tenant["id"])
 
 
 @router.put("/marketing/brand")
-async def put_brand(body: BrandIn, admin: dict = Depends(require_admin)):
+async def put_brand(body: BrandIn,
+                    admin: dict = Depends(require_admin),
+                    tenant: dict = Depends(get_current_tenant)):
     upd = {k: v for k, v in body.dict().items() if v is not None}
     upd["updated_at"] = now_iso()
-    await db.marketing_brand.update_one({"id": BRAND_ID}, {"$set": {"id": BRAND_ID, **upd}}, upsert=True)
+    await db.marketing_brand.update_one(
+        {"id": BRAND_ID, "tenant_id": tenant["id"]},
+        {"$set": {"id": BRAND_ID, "tenant_id": tenant["id"], **upd}},
+        upsert=True,
+    )
     return await get_brand_memory()
 
 
@@ -238,10 +251,12 @@ async def _ai_sms(topic: str, goal: str, brand: dict, session: Optional[str] = N
         return f"{goal[:80]} — {_stub_note()}"[:160]
 
 
-async def _create_queue_item(row: dict) -> dict:
+async def _create_queue_item(row: dict, tenant_id: str | None = None) -> dict:
     row.setdefault("id", new_id())
     row.setdefault("status", "pending_review")
     row.setdefault("created_at", now_iso())
+    if tenant_id and "tenant_id" not in row:
+        row["tenant_id"] = tenant_id
     await db.marketing_queue.insert_one(row)
     row.pop("_id", None)
     return row
@@ -249,13 +264,18 @@ async def _create_queue_item(row: dict) -> dict:
 
 # ─── campaign briefs ────────────────────────────────────────────────────────
 @router.get("/marketing/campaigns")
-async def list_campaigns(admin: dict = Depends(require_admin)):
-    return await db.marketing_campaigns.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+async def list_campaigns(admin: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
+    return await db.marketing_campaigns.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
 
 
 @router.post("/marketing/campaigns")
-async def create_campaign(body: CampaignIn, admin: dict = Depends(require_admin)):
-    doc = {"id": new_id(), **body.dict(), "status": "draft",
+async def create_campaign(body: CampaignIn,
+                          admin: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    doc = {"id": new_id(), "tenant_id": tenant["id"], **body.dict(), "status": "draft",
            "created_at": now_iso(), "item_counts": {"pending": 0, "approved": 0}}
     await db.marketing_campaigns.insert_one(doc)
     doc.pop("_id", None)
@@ -263,41 +283,58 @@ async def create_campaign(body: CampaignIn, admin: dict = Depends(require_admin)
 
 
 @router.get("/marketing/campaigns/{cid}")
-async def get_campaign(cid: str, admin: dict = Depends(require_admin)):
-    c = await db.marketing_campaigns.find_one({"id": cid}, {"_id": 0})
+async def get_campaign(cid: str,
+                       admin: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    c = await db.marketing_campaigns.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not c:
         raise HTTPException(404, "Not found")
-    items = await db.marketing_queue.find({"campaign_id": cid}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    items = await db.marketing_queue.find(
+        {"campaign_id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", 1).to_list(500)
     return {**c, "items": items}
 
 
 @router.patch("/marketing/campaigns/{cid}")
-async def patch_campaign(cid: str, body: CampaignUpdate, admin: dict = Depends(require_admin)):
+async def patch_campaign(cid: str, body: CampaignUpdate,
+                         admin: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
     upd = {k: v for k, v in body.dict().items() if v is not None}
     upd["updated_at"] = now_iso()
-    await db.marketing_campaigns.update_one({"id": cid}, {"$set": upd})
-    return await db.marketing_campaigns.find_one({"id": cid}, {"_id": 0})
+    await db.marketing_campaigns.update_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"$set": upd}
+    )
+    return await db.marketing_campaigns.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
 
 
 @router.delete("/marketing/campaigns/{cid}")
-async def delete_campaign(cid: str, admin: dict = Depends(require_admin)):
-    await db.marketing_campaigns.delete_one({"id": cid})
-    await db.marketing_queue.delete_many({"campaign_id": cid})
+async def delete_campaign(cid: str,
+                          admin: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    await db.marketing_campaigns.delete_one({"id": cid, "tenant_id": tenant["id"]})
+    await db.marketing_queue.delete_many({"campaign_id": cid, "tenant_id": tenant["id"]})
     return {"ok": True}
 
 
 @router.post("/marketing/campaigns/{cid}/generate")
-async def generate_campaign(cid: str, admin: dict = Depends(require_admin)):
-    campaign = await db.marketing_campaigns.find_one({"id": cid}, {"_id": 0})
+async def generate_campaign(cid: str,
+                            admin: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
+    campaign = await db.marketing_campaigns.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not campaign:
         raise HTTPException(404, "Not found")
-    brand = await get_brand_memory()
+    brand = await get_brand_memory(tenant["id"])
     channels = campaign.get("channels") or ["facebook"]
     goal = campaign.get("goal") or "Boost bookings"
     session = f"campaign-{cid}"
     items_created = []
     stubbed_now = not bool(EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", ""))
-    # Social posts, one per channel
     for ch in channels:
         if ch in ("email", "sms"):
             continue
@@ -307,47 +344,47 @@ async def generate_campaign(cid: str, admin: dict = Depends(require_admin)):
             "copy": v["copy"], "cta": v["cta"], "hero_image_url": None,
             "hashtags": v.get("hashtags"),
             "character_limit": v["character_limit"],
-        }))
-    # 2 email blasts
+        }, tenant_id=tenant["id"]))
     if "email" in channels:
         for i in range(2):
             em = await _ai_email(f"{goal} — variant {i+1}", goal, brand, session=session)
             items_created.append(await _create_queue_item({
                 "type": "email", "channel": "email", "campaign_id": cid,
                 "subject": em["subject"], "copy": em["copy"],
-            }))
-    # 3 SMS blurbs
+            }, tenant_id=tenant["id"]))
     if "sms" in channels:
         for i in range(3):
             sms_copy = await _ai_sms(f"{goal} — variant {i+1}", goal, brand, session=session)
             items_created.append(await _create_queue_item({
                 "type": "sms", "channel": "sms", "campaign_id": cid,
                 "copy": sms_copy,
-            }))
-    # 1 GBP post
+            }, tenant_id=tenant["id"]))
     if "gbp" in channels or "google" in channels:
         v = await _ai_variant("gbp", goal, brand, session=session)
         items_created.append(await _create_queue_item({
             "type": "gbp_post", "channel": "gbp", "campaign_id": cid,
             "copy": v["copy"],
-        }))
-    await db.marketing_campaigns.update_one({"id": cid}, {"$set": {
-        "status": "generated", "item_counts.pending": len(items_created), "generated_at": now_iso()
-    }})
+        }, tenant_id=tenant["id"]))
+    await db.marketing_campaigns.update_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"$set": {"status": "generated", "item_counts.pending": len(items_created), "generated_at": now_iso()}},
+    )
     return {"stubbed": stubbed_now, "generated": len(items_created), "brand_snapshot": brand,
             "items": items_created}
 
 
 @router.post("/marketing/campaigns/{cid}/agent-chat")
-async def campaign_agent_chat(cid: str, body: AgentChatIn, admin: dict = Depends(require_admin)):
-    brand = await get_brand_memory()
+async def campaign_agent_chat(cid: str, body: AgentChatIn,
+                              admin: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    brand = await get_brand_memory(tenant["id"])
     replies = []
     for m in (body.mentions or ["content-writer"]):
         replies.append({
             "persona": m,
             "message": f"@{m}: {_stub_note()} (Tone: {brand['tone']}, ZIPs: {','.join(brand['service_zips'])})",
         })
-    doc = {"id": new_id(), "campaign_id": cid, "message": body.message,
+    doc = {"id": new_id(), "tenant_id": tenant["id"], "campaign_id": cid, "message": body.message,
            "mentions": body.mentions, "replies": replies, "created_at": now_iso()}
     await db.marketing_threads.insert_one(doc)
     doc.pop("_id", None)
@@ -356,8 +393,10 @@ async def campaign_agent_chat(cid: str, body: AgentChatIn, admin: dict = Depends
 
 # ─── posts / variants ────────────────────────────────────────────────────────
 @router.post("/marketing/posts/generate")
-async def generate_post_variants(body: PostGenIn, admin: dict = Depends(require_admin)):
-    brand = await get_brand_memory()
+async def generate_post_variants(body: PostGenIn,
+                                 admin: dict = Depends(require_admin),
+                                 tenant: dict = Depends(get_current_tenant)):
+    brand = await get_brand_memory(tenant["id"])
     session = f"posts-{new_id()[:8]}"
     variants = []
     for ch in body.channels:
@@ -370,15 +409,17 @@ async def generate_post_variants(body: PostGenIn, admin: dict = Depends(require_
             "hashtags": v.get("hashtags"),
             "campaign_id": None, "topic": body.topic,
             "character_limit": v["character_limit"],
-        }))
+        }, tenant_id=tenant["id"]))
     stubbed_now = not bool(EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", ""))
     return {"stubbed": stubbed_now, "variants": items}
 
 
 @router.get("/marketing/posts")
-async def list_posts(admin: dict = Depends(require_admin), status: Optional[str] = None,
+async def list_posts(admin: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant),
+                     status: Optional[str] = None,
                      channel: Optional[str] = None, campaign_id: Optional[str] = None):
-    q = {}
+    q = {"tenant_id": tenant["id"]}
     if status: q["status"] = status
     if channel: q["channel"] = channel
     if campaign_id: q["campaign_id"] = campaign_id
@@ -386,11 +427,15 @@ async def list_posts(admin: dict = Depends(require_admin), status: Optional[str]
 
 
 @router.patch("/marketing/posts/{pid}")
-async def patch_post(pid: str, body: ItemUpdate, admin: dict = Depends(require_admin)):
+async def patch_post(pid: str, body: ItemUpdate,
+                     admin: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant)):
     upd = {k: v for k, v in body.dict().items() if v is not None}
     upd["updated_at"] = now_iso()
-    await db.marketing_queue.update_one({"id": pid}, {"$set": upd})
-    return await db.marketing_queue.find_one({"id": pid}, {"_id": 0})
+    await db.marketing_queue.update_one(
+        {"id": pid, "tenant_id": tenant["id"]}, {"$set": upd}
+    )
+    return await db.marketing_queue.find_one({"id": pid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 # ─── visuals ─────────────────────────────────────────────────────────────────
@@ -403,9 +448,11 @@ async def generate_visual(body: VisualIn, admin: dict = Depends(require_admin)):
 
 # ─── approval queue ─────────────────────────────────────────────────────────
 @router.get("/marketing/queue")
-async def get_queue(admin: dict = Depends(require_admin), status: Optional[str] = None,
+async def get_queue(admin: dict = Depends(require_admin),
+                    tenant: dict = Depends(get_current_tenant),
+                    status: Optional[str] = None,
                     channel: Optional[str] = None, campaign_id: Optional[str] = None):
-    q = {}
+    q = {"tenant_id": tenant["id"]}
     if status: q["status"] = status
     if channel: q["channel"] = channel
     if campaign_id: q["campaign_id"] = campaign_id
@@ -413,15 +460,21 @@ async def get_queue(admin: dict = Depends(require_admin), status: Optional[str] 
 
 
 @router.post("/marketing/queue/{item_id}/approve")
-async def approve_item(item_id: str, admin: dict = Depends(require_admin)):
-    r = await db.marketing_queue.update_one({"id": item_id}, {"$set": {"status": "approved", "approved_at": now_iso()}})
+async def approve_item(item_id: str,
+                       admin: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    r = await db.marketing_queue.update_one(
+        {"id": item_id, "tenant_id": tenant["id"]},
+        {"$set": {"status": "approved", "approved_at": now_iso()}},
+    )
     if not r.matched_count:
         raise HTTPException(404, "Item not found")
-    fresh = await db.marketing_queue.find_one({"id": item_id}, {"_id": 0})
-    # Phase 15C — realtime push
+    fresh = await db.marketing_queue.find_one({"id": item_id, "tenant_id": tenant["id"]}, {"_id": 0})
     try:
         from routers.realtime import bus
-        admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(100)
+        admins = await db.users.find(
+            {"role": "admin", "tenant_id": tenant["id"]}, {"_id": 0, "id": 1}
+        ).to_list(100)
         for a in admins:
             await bus.broadcast(a["id"], {"type": "approval_change",
                 "payload": {"item_id": item_id, "status": "approved"}})
@@ -431,17 +484,21 @@ async def approve_item(item_id: str, admin: dict = Depends(require_admin)):
 
 
 @router.post("/marketing/queue/{item_id}/reject")
-async def reject_item(item_id: str, body: RejectIn, admin: dict = Depends(require_admin)):
+async def reject_item(item_id: str, body: RejectIn,
+                      admin: dict = Depends(require_admin),
+                      tenant: dict = Depends(get_current_tenant)):
     r = await db.marketing_queue.update_one(
-        {"id": item_id},
+        {"id": item_id, "tenant_id": tenant["id"]},
         {"$set": {"status": "rejected", "rejected_at": now_iso(), "reject_reason": body.reason or ""}},
     )
     if not r.matched_count:
         raise HTTPException(404, "Item not found")
-    fresh = await db.marketing_queue.find_one({"id": item_id}, {"_id": 0})
+    fresh = await db.marketing_queue.find_one({"id": item_id, "tenant_id": tenant["id"]}, {"_id": 0})
     try:
         from routers.realtime import bus
-        admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(100)
+        admins = await db.users.find(
+            {"role": "admin", "tenant_id": tenant["id"]}, {"_id": 0, "id": 1}
+        ).to_list(100)
         for a in admins:
             await bus.broadcast(a["id"], {"type": "approval_change",
                 "payload": {"item_id": item_id, "status": "rejected", "reason": body.reason or ""}})
@@ -451,37 +508,53 @@ async def reject_item(item_id: str, body: RejectIn, admin: dict = Depends(requir
 
 
 @router.post("/marketing/queue/bulk-approve")
-async def bulk_approve(ids: List[str], admin: dict = Depends(require_admin)):
-    r = await db.marketing_queue.update_many({"id": {"$in": ids}}, {"$set": {"status": "approved", "approved_at": now_iso()}})
+async def bulk_approve(ids: List[str],
+                       admin: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    r = await db.marketing_queue.update_many(
+        {"id": {"$in": ids}, "tenant_id": tenant["id"]},
+        {"$set": {"status": "approved", "approved_at": now_iso()}},
+    )
     return {"approved": r.modified_count}
 
 
 @router.post("/marketing/publish/{item_id}")
-async def publish_item(item_id: str, admin: dict = Depends(require_admin)):
-    item = await db.marketing_queue.find_one({"id": item_id}, {"_id": 0})
+async def publish_item(item_id: str,
+                       admin: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    item = await db.marketing_queue.find_one(
+        {"id": item_id, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not item:
         raise HTTPException(404, "Not found")
     if item.get("status") not in ("approved", "scheduled"):
         raise HTTPException(400, "Item must be approved before publishing")
-    # Real publish would call channel adapter; we stub for all channels except GBP.
     new_status = "published_stubbed" if item.get("channel") != "gbp" else "published"
-    await db.marketing_queue.update_one({"id": item_id}, {"$set": {"status": new_status, "published_at": now_iso()}})
+    await db.marketing_queue.update_one(
+        {"id": item_id, "tenant_id": tenant["id"]},
+        {"$set": {"status": new_status, "published_at": now_iso()}},
+    )
     logger.info(f"marketing_autopost: would publish {item_id} to {item.get('channel')} — stubbed={new_status}")
     return {"ok": True, "status": new_status}
 
 
 # ─── scheduling slots ────────────────────────────────────────────────────────
 @router.get("/marketing/scheduling")
-async def get_scheduling(admin: dict = Depends(require_admin)):
-    docs = await db.marketing_scheduling.find({}, {"_id": 0}).to_list(50)
+async def get_scheduling(admin: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
+    docs = await db.marketing_scheduling.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).to_list(50)
     return docs
 
 
 @router.post("/marketing/scheduling")
-async def upsert_scheduling(body: SchedulingIn, admin: dict = Depends(require_admin)):
+async def upsert_scheduling(body: SchedulingIn,
+                            admin: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
     await db.marketing_scheduling.update_one(
-        {"channel": body.channel},
-        {"$set": {"channel": body.channel, "slots": body.slots, "updated_at": now_iso()}},
+        {"channel": body.channel, "tenant_id": tenant["id"]},
+        {"$set": {"tenant_id": tenant["id"], "channel": body.channel, "slots": body.slots, "updated_at": now_iso()}},
         upsert=True,
     )
     return await db.marketing_scheduling.find_one({"channel": body.channel}, {"_id": 0})

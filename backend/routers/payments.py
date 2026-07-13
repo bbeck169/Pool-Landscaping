@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 
 from config import db, logger
 from utils import now_iso, get_current_user, require_admin, notify_customer, deny_impersonation
+from routers.tenants import get_current_tenant
 from models import CheckoutRequest, SetupSessionReq
 
 router = APIRouter()
@@ -31,11 +32,11 @@ async def _clear_charge_failed(qid: str):
     }})
 
 
-async def _get_payable_invoice(qid: str, user: dict) -> dict:
-    """Fetch an invoice and enforce role/ownership + payable state."""
+async def _get_payable_invoice(qid: str, user: dict, tenant: dict) -> dict:
+    """Fetch an invoice and enforce role/ownership + payable state (tenant-scoped)."""
     if user.get("role") == "technician":
         raise HTTPException(403, "Not allowed")
-    doc = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Invoice not found")
     if user.get("role") == "customer" and doc.get("customer_id") != user.get("customer_id"):
@@ -62,11 +63,13 @@ async def _mark_paid(invoice_id: str):
 
 # ----------------------- Payments list (admin) -----------------------
 @router.get("/me/payments")
-async def my_payments(user: dict = Depends(get_current_user)):
+async def my_payments(user: dict = Depends(get_current_user),
+                      tenant: dict = Depends(get_current_tenant)):
     if user.get("role") != "customer" or not user.get("customer_id"):
         raise HTTPException(403, "Customers only")
     paid = await db.quotes.find(
-        {"customer_id": user["customer_id"], "payment_status": "paid"}, {"_id": 0}
+        {"customer_id": user["customer_id"], "tenant_id": tenant["id"], "payment_status": "paid"},
+        {"_id": 0},
     ).sort("paid_at", -1).to_list(1000)
     total = round(sum(q.get("total", 0.0) for q in paid), 2)
     return {
@@ -80,19 +83,25 @@ async def my_payments(user: dict = Depends(get_current_user)):
 
 
 @router.get("/payments")
-async def list_payments(user: dict = Depends(require_admin)):
-    paid = await db.quotes.find({"payment_status": "paid"}, {"_id": 0}).sort("paid_at", -1).to_list(1000)
+async def list_payments(user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    paid = await db.quotes.find(
+        {"tenant_id": tenant["id"], "payment_status": "paid"}, {"_id": 0}
+    ).sort("paid_at", -1).to_list(1000)
     return [{"id": q["id"], "customer_name": q["customer_name"], "title": q["title"],
              "amount": q["total"], "paid_at": q.get("paid_at"), "method": "Card"} for q in paid]
 
 
 # ----------------------- Payments summary widget (admin) -----------------------
 @router.get("/payments/summary")
-async def payments_summary(user: dict = Depends(require_admin)):
+async def payments_summary(user: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
     now = datetime.now(timezone.utc)
     month_key = f"{now.year}-{now.month:02d}"
 
-    paid = await db.quotes.find({"payment_status": "paid"}, {"_id": 0}).to_list(3000)
+    paid = await db.quotes.find(
+        {"tenant_id": tenant["id"], "payment_status": "paid"}, {"_id": 0}
+    ).to_list(3000)
     collected_month = 0.0
     for q in paid:
         ds = q.get("paid_at") or q.get("created_at") or ""
@@ -100,7 +109,8 @@ async def payments_summary(user: dict = Depends(require_admin)):
             collected_month += q.get("total", 0.0)
 
     unpaid = await db.quotes.find(
-        {"doc_type": "invoice", "payment_status": "unpaid"}, {"_id": 0}
+        {"tenant_id": tenant["id"], "doc_type": "invoice", "payment_status": "unpaid"},
+        {"_id": 0},
     ).sort("created_at", 1).to_list(2000)
     outstanding_total = round(sum(q.get("total", 0.0) for q in unpaid), 2)
 
@@ -131,8 +141,10 @@ async def payments_summary(user: dict = Depends(require_admin)):
 
 
 @router.post("/quotes/{qid}/remind")
-async def remind_invoice(qid: str, user: dict = Depends(require_admin)):
-    doc = await db.quotes.find_one({"id": qid}, {"_id": 0})
+async def remind_invoice(qid: str,
+                         user: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
+    doc = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Invoice not found")
     if doc.get("payment_status") == "paid":
@@ -145,7 +157,7 @@ async def remind_invoice(qid: str, user: dict = Depends(require_admin)):
     )
     entry = {"at": now_iso(), "by": user.get("name", "Admin")}
     await db.quotes.update_one(
-        {"id": qid},
+        {"id": qid, "tenant_id": tenant["id"]},
         {"$set": {"reminded_at": entry["at"]}, "$push": {"reminders": entry}},
     )
     return {"ok": True, "reminded_at": entry["at"], "reminders": (doc.get("reminders") or []) + [entry]}
@@ -153,11 +165,13 @@ async def remind_invoice(qid: str, user: dict = Depends(require_admin)):
 
 # ----------------------- Stripe Checkout -----------------------
 @router.post("/payments/checkout/{qid}")
-async def create_checkout_session(qid: str, body: CheckoutRequest, user: dict = Depends(get_current_user)):
+async def create_checkout_session(qid: str, body: CheckoutRequest,
+                                  user: dict = Depends(get_current_user),
+                                  tenant: dict = Depends(get_current_tenant)):
     deny_impersonation(user)
     if not stripe.api_key:
         raise HTTPException(503, "Payments are not configured")
-    doc = await _get_payable_invoice(qid, user)
+    doc = await _get_payable_invoice(qid, user, tenant)
     try:
         session = await asyncio.to_thread(
             stripe.checkout.Session.create,
@@ -205,10 +219,12 @@ async def check_payment_status(session_id: str, user: dict = Depends(get_current
 
 
 @router.post("/payments/admin/generate-link/{qid}")
-async def admin_generate_payment_link(qid: str, user: dict = Depends(require_admin)):
+async def admin_generate_payment_link(qid: str,
+                                       user: dict = Depends(require_admin),
+                                       tenant: dict = Depends(get_current_tenant)):
     if not stripe.api_key:
         raise HTTPException(503, "Payments are not configured")
-    doc = await _get_payable_invoice(qid, user)
+    doc = await _get_payable_invoice(qid, user, tenant)
     try:
         price = await asyncio.to_thread(
             stripe.Price.create,
@@ -324,10 +340,13 @@ async def setup_status(session_id: str, user: dict = Depends(get_current_user)):
 
 
 @router.get("/payments/method")
-async def my_payment_method(user: dict = Depends(get_current_user)):
+async def my_payment_method(user: dict = Depends(get_current_user),
+                            tenant: dict = Depends(get_current_tenant)):
     if user.get("role") != "customer" or not user.get("customer_id"):
         raise HTTPException(403, "Customers only")
-    cust = await db.customers.find_one({"id": user["customer_id"]}, {"_id": 0}) or {}
+    cust = await db.customers.find_one(
+        {"id": user["customer_id"], "tenant_id": tenant["id"]}, {"_id": 0}
+    ) or {}
     has = bool(cust.get("default_payment_method_id"))
     label = ""
     if has:
@@ -337,8 +356,12 @@ async def my_payment_method(user: dict = Depends(get_current_user)):
 
 
 @router.post("/payments/request-method/{customer_id}")
-async def request_payment_method(customer_id: str, user: dict = Depends(require_admin)):
-    cust = await db.customers.find_one({"id": customer_id}, {"_id": 0})
+async def request_payment_method(customer_id: str,
+                                 user: dict = Depends(require_admin),
+                                 tenant: dict = Depends(get_current_tenant)):
+    cust = await db.customers.find_one(
+        {"id": customer_id, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not cust:
         raise HTTPException(404, "Customer not found")
     await notify_customer(

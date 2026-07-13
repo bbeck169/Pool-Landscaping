@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse
 
 from config import db, logger, EMERGENT_LLM_KEY, APP_PUBLIC_URL
 from utils import now_iso, new_id, require_admin
+from routers.tenants import get_current_tenant
 from models import (
     GbpSettingsIn, GbpPostIn, GbpReplyIn, GbpAiPostReq, GbpAiReplyReq, GbpBusinessUpdate,
     GbpAutopost, GbpCalendarEdit,
@@ -285,8 +286,12 @@ async def _draft_post_from_article(art: dict, session: str) -> str:
 
 
 @router.post("/gbp/ai/post-from-article")
-async def ai_post_from_article(body: GbpAiPostReq, user: dict = Depends(require_admin)):
-    art = await db.seo_articles.find_one({"id": body.article_id}, {"_id": 0})
+async def ai_post_from_article(body: GbpAiPostReq,
+                                user: dict = Depends(require_admin),
+                                tenant: dict = Depends(get_current_tenant)):
+    art = await db.seo_articles.find_one(
+        {"id": body.article_id, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not art:
         raise HTTPException(404, "Article not found")
     text = await _draft_post_from_article(art, f"gbp-post-{user['id']}")
@@ -328,30 +333,41 @@ async def set_autopost(body: GbpAutopost, user: dict = Depends(require_admin)):
 
 
 @router.get("/gbp/calendar")
-async def gbp_calendar(user: dict = Depends(require_admin)):
-    return await db.gbp_posts.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+async def gbp_calendar(user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    return await db.gbp_posts.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
 
 
 @router.patch("/gbp/calendar/{pid}")
-async def gbp_calendar_edit(pid: str, body: GbpCalendarEdit, user: dict = Depends(require_admin)):
+async def gbp_calendar_edit(pid: str, body: GbpCalendarEdit,
+                            user: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
     patch = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     if patch:
-        await db.gbp_posts.update_one({"id": pid}, {"$set": patch})
-    doc = await db.gbp_posts.find_one({"id": pid}, {"_id": 0})
+        await db.gbp_posts.update_one(
+            {"id": pid, "tenant_id": tenant["id"]}, {"$set": patch}
+        )
+    doc = await db.gbp_posts.find_one({"id": pid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Not found")
     return doc
 
 
 @router.delete("/gbp/calendar/{pid}")
-async def gbp_calendar_delete(pid: str, user: dict = Depends(require_admin)):
-    await db.gbp_posts.delete_one({"id": pid})
+async def gbp_calendar_delete(pid: str,
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    await db.gbp_posts.delete_one({"id": pid, "tenant_id": tenant["id"]})
     return {"ok": True}
 
 
 @router.post("/gbp/calendar/{pid}/publish")
-async def gbp_calendar_publish(pid: str, user: dict = Depends(require_admin)):
-    rec = await db.gbp_posts.find_one({"id": pid}, {"_id": 0})
+async def gbp_calendar_publish(pid: str,
+                                user: dict = Depends(require_admin),
+                                tenant: dict = Depends(get_current_tenant)):
+    rec = await db.gbp_posts.find_one({"id": pid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not rec:
         raise HTTPException(404, "Not found")
     token = await _access_token()
@@ -377,6 +393,7 @@ async def auto_gbp_from_article(article: dict):
         summary = await _draft_post_from_article(article, f"gbp-auto-{article.get('id')}")
         rec = {
             "id": new_id(),
+            "tenant_id": article.get("tenant_id"),
             "article_id": article.get("id"),
             "article_title": article.get("title", ""),
             "summary": summary,

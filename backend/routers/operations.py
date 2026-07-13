@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
+from routers.tenants import get_current_tenant
 from models import *
 
 router = APIRouter()
@@ -189,7 +190,8 @@ async def _compute_reports(date_from: str | None = None, date_to: str | None = N
 @router.get("/reports/business-summary")
 async def business_summary(date_from: Optional[str] = Query(None),
                            date_to: Optional[str] = Query(None),
-                           user: dict = Depends(require_admin)):
+                           user: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
     """One-call aggregate of all key business metrics for the reporting hub + export."""
     from routers.finances import compute_income_by_category
     from routers.jobs import compute_pool_service
@@ -198,7 +200,7 @@ async def business_summary(date_from: Optional[str] = Query(None),
     core = await _compute_reports(date_from, date_to)
     income = await compute_income_by_category(date_from, date_to)
     # Pool service: use the selected range if given, else the current week.
-    pool = await compute_pool_service(date_from, date_to) if (date_from and date_to) else await compute_pool_service()
+    pool = await compute_pool_service(tenant["id"], date_from, date_to) if (date_from and date_to) else await compute_pool_service(tenant["id"])
 
     # Labor hours: within selected range, else this week.
     now = datetime.now(timezone.utc).date()

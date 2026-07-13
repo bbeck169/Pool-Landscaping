@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
+from routers.tenants import get_current_tenant
 from models import *
 
 router = APIRouter()
@@ -240,18 +241,26 @@ async def compute_income_by_category(date_from: Optional[str] = None, date_to: O
 
 
 @router.get("/billing-plans")
-async def list_billing_plans(user: dict = Depends(require_admin)):
-    return await db.billing_plans.find({}, {"_id": 0}).sort("next_run", 1).to_list(1000)
+async def list_billing_plans(user: dict = Depends(require_admin),
+                             tenant: dict = Depends(get_current_tenant)):
+    return await db.billing_plans.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("next_run", 1).to_list(1000)
 
 
 @router.post("/billing-plans")
-async def create_billing_plan(body: BillingPlanIn, user: dict = Depends(require_admin)):
-    cust = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
+async def create_billing_plan(body: BillingPlanIn,
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    cust = await db.customers.find_one(
+        {"id": body.customer_id, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not cust:
         raise HTTPException(400, "Customer not found")
     doc = body.dict()
     doc.update({
         "id": new_id(),
+        "tenant_id": tenant["id"],
         "customer_name": cust["name"],
         "next_run": body.next_run or advance_date(now_iso(), body.frequency or "monthly"),
         "created_at": now_iso(),
@@ -262,22 +271,33 @@ async def create_billing_plan(body: BillingPlanIn, user: dict = Depends(require_
 
 
 @router.put("/billing-plans/{pid}")
-async def update_billing_plan(pid: str, body: BillingPlanUpdate, user: dict = Depends(require_admin)):
+async def update_billing_plan(pid: str, body: BillingPlanUpdate,
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
     upd = {k: v for k, v in body.dict().items() if v is not None}
     if upd:
-        await db.billing_plans.update_one({"id": pid}, {"$set": upd})
-    return await db.billing_plans.find_one({"id": pid}, {"_id": 0})
+        await db.billing_plans.update_one(
+            {"id": pid, "tenant_id": tenant["id"]}, {"$set": upd}
+        )
+    return await db.billing_plans.find_one(
+        {"id": pid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
 
 
 @router.post("/billing-plans/{pid}/run")
-async def run_billing_plan(pid: str, user: dict = Depends(require_admin)):
-    plan = await db.billing_plans.find_one({"id": pid}, {"_id": 0})
+async def run_billing_plan(pid: str,
+                           user: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
+    plan = await db.billing_plans.find_one(
+        {"id": pid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not plan:
         raise HTTPException(404, "Plan not found")
     amount = plan.get("amount", 0.0)
     tax = round(amount * 0.08, 2)
     invoice = {
-        "id": new_id(), "customer_id": plan["customer_id"], "customer_name": plan["customer_name"],
+        "id": new_id(), "tenant_id": tenant["id"],
+        "customer_id": plan["customer_id"], "customer_name": plan["customer_name"],
         "title": plan.get("service", "Recurring Service"), "doc_type": "invoice",
         "line_items": [{"description": plan.get("service", "Recurring Service"), "quantity": 1, "unit_price": amount}],
         "tax_rate": 8.0, "subtotal": amount, "tax": tax, "total": round(amount + tax, 2),
@@ -287,7 +307,10 @@ async def run_billing_plan(pid: str, user: dict = Depends(require_admin)):
     }
     await db.quotes.insert_one(invoice)
     new_next = advance_date(plan.get("next_run") or now_iso(), plan.get("frequency", "monthly"))
-    await db.billing_plans.update_one({"id": pid}, {"$set": {"next_run": new_next, "last_run": now_iso()}})
+    await db.billing_plans.update_one(
+        {"id": pid, "tenant_id": tenant["id"]},
+        {"$set": {"next_run": new_next, "last_run": now_iso()}},
+    )
     await notify_customer(plan["customer_id"], "New invoice",
                           f"An invoice for {plan.get('service', 'your service')} was issued.")
     invoice.pop("_id", None)

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import now_iso, new_id, require_admin, get_current_user
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -239,11 +240,14 @@ async def routes_optimize(body: RouteOptimizeIn, user: dict = Depends(require_ad
 
 # ═══ Timeclock aggregate ═══════════════════════════════════════════════════
 @router.get("/timeclock/today")
-async def timeclock_today(user: dict = Depends(require_admin)):
+async def timeclock_today(user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
     from datetime import datetime, timezone
     today = datetime.now(timezone.utc).date().isoformat()
-    techs = await db.technicians.find({}, {"_id": 0}).to_list(200)
-    sheets = await db.timesheets.find({"date": today}, {"_id": 0}).to_list(500)
+    techs = await db.technicians.find({"tenant_id": tenant["id"]}, {"_id": 0}).to_list(200)
+    sheets = await db.timesheets.find(
+        {"date": today, "tenant_id": tenant["id"]}, {"_id": 0}
+    ).to_list(500)
     smap = {s.get("technician_id"): s for s in sheets}
     rows = []
     for t in techs:
@@ -269,7 +273,9 @@ class TimesheetPatch(BaseModel):
 
 
 @router.post("/timesheets/{tid}/action")
-async def timesheet_action(tid: str, body: TimesheetPatch, user: dict = Depends(require_admin)):
+async def timesheet_action(tid: str, body: TimesheetPatch,
+                           user: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
     if body.action not in ("approve", "dispute"):
         raise HTTPException(400, "Unknown action")
     upd = {
@@ -279,20 +285,23 @@ async def timesheet_action(tid: str, body: TimesheetPatch, user: dict = Depends(
     }
     if body.reason:
         upd["review_reason"] = body.reason
-    r = await db.timesheets.update_one({"id": tid}, {"$set": upd})
+    r = await db.timesheets.update_one(
+        {"id": tid, "tenant_id": tenant["id"]}, {"$set": upd}
+    )
     if r.matched_count == 0:
         raise HTTPException(404, "Timesheet not found")
-    return await db.timesheets.find_one({"id": tid}, {"_id": 0})
+    return await db.timesheets.find_one({"id": tid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 # ═══ Timesheets list (helper for the grid) ═════════════════════════════════
 @router.get("/timesheets")
 async def list_timesheets(
     user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
     start: Optional[str] = None,
     end: Optional[str] = None,
 ):
-    q: dict = {}
+    q: dict = {"tenant_id": tenant["id"]}
     if user.get("role") == "technician":
         q["technician_id"] = user.get("technician_id")
     if start:

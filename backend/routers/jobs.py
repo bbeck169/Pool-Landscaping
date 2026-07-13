@@ -6,6 +6,7 @@ from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response,
                    create_staff_notification)
+from routers.tenants import get_current_tenant
 from models import *
 from emailer import send_completion_email
 
@@ -120,8 +121,8 @@ def with_field_report(doc: dict) -> dict:
     return doc
 
 
-def scope_jobs_query(user: dict, status: Optional[str], technician_id: Optional[str]) -> dict:
-    q = {}
+def scope_jobs_query(user: dict, tenant: dict, status: Optional[str], technician_id: Optional[str]) -> dict:
+    q = {"tenant_id": tenant["id"]}
     if user.get("role") == "technician" and user.get("technician_id"):
         q["technician_id"] = user["technician_id"]
     elif user.get("role") == "customer":
@@ -136,10 +137,11 @@ def scope_jobs_query(user: dict, status: Optional[str], technician_id: Optional[
 @router.get("/jobs")
 async def list_jobs(
     user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
     status: Optional[str] = None,
     technician_id: Optional[str] = Query(None),
 ):
-    q = scope_jobs_query(user, status, technician_id)
+    q = scope_jobs_query(user, tenant, status, technician_id)
     docs = await db.jobs.find(q, {"_id": 0}).sort("scheduled_date", 1).to_list(1000)
     if user.get("role") == "customer":
         for d in docs:
@@ -150,7 +152,8 @@ async def list_jobs(
         cids = list({d.get("customer_id") for d in docs if d.get("customer_id")})
         if cids:
             custs = await db.customers.find(
-                {"id": {"$in": cids}}, {"_id": 0, "id": 1, "notes": 1, "gate_code": 1}
+                {"id": {"$in": cids}, "tenant_id": tenant["id"]},
+                {"_id": 0, "id": 1, "notes": 1, "gate_code": 1},
             ).to_list(1000)
             cmap = {c["id"]: c for c in custs}
             for d in docs:
@@ -162,9 +165,13 @@ async def list_jobs(
 
 
 @router.post("/jobs")
-async def create_job(body: JobIn, user: dict = Depends(require_admin)):
+async def create_job(body: JobIn,
+                     user: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant)):
     doc = body.dict()
-    customer = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
+    customer = await db.customers.find_one(
+        {"id": body.customer_id, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not customer:
         raise HTTPException(400, "Customer not found")
     doc["customer_name"] = customer["name"]
@@ -172,11 +179,13 @@ async def create_job(body: JobIn, user: dict = Depends(require_admin)):
         doc["address"] = customer.get("address", "")
     tech_name = None
     if body.technician_id:
-        tech = await db.technicians.find_one({"id": body.technician_id}, {"_id": 0})
+        tech = await db.technicians.find_one(
+            {"id": body.technician_id, "tenant_id": tenant["id"]}, {"_id": 0}
+        )
         tech_name = tech["name"] if tech else None
         doc["technician_avatar"] = tech.get("avatar", "") if tech else ""
     doc["technician_name"] = tech_name
-    doc.update({"id": new_id(), "photos": [], "created_at": now_iso()})
+    doc.update({"id": new_id(), "tenant_id": tenant["id"], "photos": [], "created_at": now_iso()})
     await db.jobs.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -221,20 +230,23 @@ async def jobs_recurrence_preview(body: dict, user: dict = Depends(require_admin
 
 
 @router.post("/jobs/{jid}/reopen")
-async def reopen_job(jid: str, user: dict = Depends(require_admin)):
+async def reopen_job(jid: str,
+                     user: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant)):
     """Flip a completed job back to 'active' and log an activity entry."""
-    job = await db.jobs.find_one({"id": jid}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     if job.get("status") not in ("completed", "cancelled"):
         raise HTTPException(400, "Only completed or cancelled jobs can be reopened")
     await db.jobs.update_one(
-        {"id": jid},
+        {"id": jid, "tenant_id": tenant["id"]},
         {"$set": {"status": "active", "reopened_at": now_iso()}, "$unset": {"completed_at": ""}},
     )
     try:
         await db.activity_logs.insert_one({
             "id": new_id(),
+            "tenant_id": tenant["id"],
             "job_id": jid,
             "type": "reopen",
             "actor_id": user["id"],
@@ -244,22 +256,13 @@ async def reopen_job(jid: str, user: dict = Depends(require_admin)):
         })
     except Exception:
         pass
-    updated = await db.jobs.find_one({"id": jid}, {"_id": 0})
+    updated = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     return updated
 
 
-@router.get("/jobs/{jid}/work-order.pdf")
-async def work_order_pdf(jid: str, user: dict = Depends(get_current_user)):
-    """Streams a printable work-order PDF for the given job."""
-    job = await db.jobs.find_one({"id": jid}, {"_id": 0})
-    if not job:
-        raise HTTPException(404, "Job not found")
-    # role scoping
-    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
-        raise HTTPException(403, "Not your job")
-    if user.get("role") == "customer" and job.get("customer_id") != user.get("customer_id"):
-        raise HTTPException(403, "Not your job")
-
+async def _build_work_order_pdf(job: dict, tenant: dict) -> bytes:
+    """Shared PDF builder so both work_order_pdf and email_work_order can produce
+    the same output without one calling the other (avoiding tenant-plumbing pain)."""
     from io import BytesIO
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors as rlcolors
@@ -269,6 +272,7 @@ async def work_order_pdf(jid: str, user: dict = Depends(get_current_user)):
         SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     )
 
+    jid = job["id"]
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter, title=f"Work Order {jid[:8]}")
     styles = getSampleStyleSheet()
@@ -315,7 +319,10 @@ async def work_order_pdf(jid: str, user: dict = Depends(get_current_user)):
     linked_quote_id = job.get("quote_id") or job.get("invoice_id")
     terms_text = None
     if linked_quote_id:
-        linked = await db.quotes.find_one({"id": linked_quote_id}, {"_id": 0, "terms": 1})
+        linked = await db.quotes.find_one(
+            {"id": linked_quote_id, "tenant_id": tenant["id"]},
+            {"_id": 0, "terms": 1},
+        )
         if linked:
             terms_text = linked.get("terms")
     if not terms_text:
@@ -335,6 +342,23 @@ async def work_order_pdf(jid: str, user: dict = Depends(get_current_user)):
     doc.build(story)
     pdf = buf.getvalue()
     buf.close()
+    return pdf
+
+
+@router.get("/jobs/{jid}/work-order.pdf")
+async def work_order_pdf(jid: str,
+                         user: dict = Depends(get_current_user),
+                         tenant: dict = Depends(get_current_tenant)):
+    """Streams a printable work-order PDF for the given job."""
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    # role scoping
+    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
+        raise HTTPException(403, "Not your job")
+    if user.get("role") == "customer" and job.get("customer_id") != user.get("customer_id"):
+        raise HTTPException(403, "Not your job")
+    pdf = await _build_work_order_pdf(job, tenant)
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -343,26 +367,28 @@ async def work_order_pdf(jid: str, user: dict = Depends(get_current_user)):
 
 
 @router.post("/jobs/{jid}/work-order/email")
-async def email_work_order(jid: str, body: dict, user: dict = Depends(require_admin)):
+async def email_work_order(jid: str, body: dict,
+                           user: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
     """Emails the work-order PDF to the given address via Resend.
     body: { to?: str, subject?: str, message?: str }
     Falls back gracefully with `sent=False, reason='resend-not-configured'` if RESEND_API_KEY absent."""
     import base64
     from config import RESEND_API_KEY
-    job = await db.jobs.find_one({"id": jid}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     to = (body.get("to") or "").strip().lower()
     if not to:
-        customer = await db.customers.find_one({"id": job["customer_id"]}, {"_id": 0}) or {}
+        customer = await db.customers.find_one(
+            {"id": job["customer_id"], "tenant_id": tenant["id"]}, {"_id": 0}
+        ) or {}
         to = (customer.get("email") or "").strip().lower()
     if not to:
         raise HTTPException(400, "No recipient email available")
     if not RESEND_API_KEY:
         return {"sent": False, "reason": "resend-not-configured", "to": to}
-    # Reuse the PDF builder above by re-calling it — simplest is to re-render inline.
-    pdf_resp = await work_order_pdf(jid, user)
-    pdf_bytes = pdf_resp.body
+    pdf_bytes = await _build_work_order_pdf(job, tenant)
     try:
         import resend
         from config import EMAIL_FROM
@@ -384,14 +410,19 @@ async def email_work_order(jid: str, body: dict, user: dict = Depends(require_ad
 
 
 @router.post("/service-requests")
-async def create_service_request(body: ServiceRequestIn, user: dict = Depends(get_current_user)):
+async def create_service_request(body: ServiceRequestIn,
+                                 user: dict = Depends(get_current_user),
+                                 tenant: dict = Depends(get_current_tenant)):
     if user.get("role") != "customer" or not user.get("customer_id"):
         raise HTTPException(403, "Only customers can request services")
-    customer = await db.customers.find_one({"id": user["customer_id"]}, {"_id": 0})
+    customer = await db.customers.find_one(
+        {"id": user["customer_id"], "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not customer:
         raise HTTPException(404, "Customer profile not found")
     doc = {
         "id": new_id(),
+        "tenant_id": tenant["id"],
         "title": body.title or f"{body.service_type} Request",
         "customer_id": customer["id"],
         "customer_name": customer["name"],
@@ -412,8 +443,10 @@ async def create_service_request(body: ServiceRequestIn, user: dict = Depends(ge
 
 
 @router.get("/jobs/{jid}")
-async def get_job(jid: str, user: dict = Depends(get_current_user)):
-    doc = await db.jobs.find_one({"id": jid}, {"_id": 0})
+async def get_job(jid: str,
+                  user: dict = Depends(get_current_user),
+                  tenant: dict = Depends(get_current_tenant)):
+    doc = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "technician" and doc.get("technician_id") != user.get("technician_id"):
@@ -427,32 +460,47 @@ async def get_job(jid: str, user: dict = Depends(get_current_user)):
 
 
 @router.put("/jobs/{jid}/field-report")
-async def update_field_report(jid: str, body: FieldReportUpdate, user: dict = Depends(get_current_user)):
+async def update_field_report(jid: str, body: FieldReportUpdate,
+                              user: dict = Depends(get_current_user),
+                              tenant: dict = Depends(get_current_tenant)):
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
-    job = await db.jobs.find_one({"id": jid})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
         raise HTTPException(403, "Not your job")
     update = {k: v for k, v in body.dict().items() if v is not None}
     if update:
-        await db.jobs.update_one({"id": jid}, {"$set": update})
+        await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": update})
     # Auto-bill: when chemicals are logged, accrue them onto the customer's monthly invoice.
     if "chemicals_added" in update:
         from routers.finances import accrue_chem_invoice
-        await accrue_chem_invoice(await db.jobs.find_one({"id": jid}, {"_id": 0}))
-    return with_field_report(await db.jobs.find_one({"id": jid}, {"_id": 0}))
+        await accrue_chem_invoice(
+            await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+        )
+    return with_field_report(
+        await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    )
 
 
 @router.get("/reports/log-history")
-async def log_history(customer_id: str, admin: dict = Depends(require_admin)):
+async def log_history(customer_id: str,
+                      admin: dict = Depends(require_admin),
+                      tenant: dict = Depends(get_current_tenant)):
     """Admin service-log report for one customer: every visit's water-test readings + chemical usage."""
-    cust = await db.customers.find_one({"id": customer_id}, {"_id": 0, "id": 1, "name": 1, "address": 1})
+    cust = await db.customers.find_one(
+        {"id": customer_id, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "name": 1, "address": 1},
+    )
     if not cust:
         raise HTTPException(404, "Customer not found")
-    techs = {t["id"]: t.get("name", "") async for t in db.technicians.find({}, {"_id": 0, "id": 1, "name": 1})}
-    jobs = await db.jobs.find({"customer_id": customer_id}, {"_id": 0}).to_list(3000)
+    techs = {t["id"]: t.get("name", "") async for t in db.technicians.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0, "id": 1, "name": 1}
+    )}
+    jobs = await db.jobs.find(
+        {"customer_id": customer_id, "tenant_id": tenant["id"]}, {"_id": 0}
+    ).to_list(3000)
     entries = []
     for j in jobs:
         j = with_field_report(j)
@@ -476,19 +524,23 @@ async def log_history(customer_id: str, admin: dict = Depends(require_admin)):
 
 
 @router.put("/jobs/{jid}")
-async def update_job(jid: str, body: JobUpdate, user: dict = Depends(get_current_user)):
-    job = await db.jobs.find_one({"id": jid})
+async def update_job(jid: str, body: JobUpdate,
+                     user: dict = Depends(get_current_user),
+                     tenant: dict = Depends(get_current_tenant)):
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
         raise HTTPException(403, "Not your job")
     update = {k: v for k, v in body.dict().items() if v is not None}
     if "technician_id" in update:
-        tech = await db.technicians.find_one({"id": update["technician_id"]}, {"_id": 0})
+        tech = await db.technicians.find_one(
+            {"id": update["technician_id"], "tenant_id": tenant["id"]}, {"_id": 0}
+        )
         update["technician_name"] = tech["name"] if tech else None
         update["technician_avatar"] = tech.get("avatar", "") if tech else ""
     if update:
-        await db.jobs.update_one({"id": jid}, {"$set": update})
+        await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": update})
 
     # Phase 15C — realtime broadcast of status changes to assigned tech + admins.
     if update.get("status") and update["status"] != job.get("status"):
@@ -503,10 +555,14 @@ async def update_job(jid: str, body: JobUpdate, user: dict = Depends(get_current
             }
             tid = update.get("technician_id") or job.get("technician_id")
             if tid:
-                tech_user = await db.users.find_one({"technician_id": tid}, {"_id": 0})
+                tech_user = await db.users.find_one(
+                    {"technician_id": tid, "tenant_id": tenant["id"]}, {"_id": 0}
+                )
                 if tech_user:
                     await bus.broadcast(tech_user["id"], {"type": "job_status_change", "payload": payload})
-            admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(100)
+            admins = await db.users.find(
+                {"role": "admin", "tenant_id": tenant["id"]}, {"_id": 0, "id": 1}
+            ).to_list(100)
             for a in admins:
                 await bus.broadcast(a["id"], {"type": "job_status_change", "payload": payload})
         except Exception as e:
@@ -521,7 +577,8 @@ async def update_job(jid: str, body: JobUpdate, user: dict = Depends(get_current
                                   f"Your {job.get('service_type', 'service')} is confirmed for {when}.", job_id=jid, sms=True)
             # Close the booking loop: drop a confirmation into the customer's chat thread.
             await db.messages.insert_one({
-                "id": new_id(), "customer_id": cid, "sender": "business",
+                "id": new_id(), "tenant_id": tenant["id"],
+                "customer_id": cid, "sender": "business",
                 "sender_name": "Marina (AI)", "ai": True,
                 "text": f"🎉 Good news! Your {job.get('service_type', 'service')} is confirmed for {when}. See you then!",
                 "read_by_customer": False, "read_by_staff": True, "created_at": now_iso(),
@@ -537,14 +594,14 @@ async def update_job(jid: str, body: JobUpdate, user: dict = Depends(get_current
             if job.get("timer_started_at") and not job.get("timer_stopped_at"):
                 stopped = now_iso()
                 dur = _timer_seconds(job["timer_started_at"], stopped)
-                await db.jobs.update_one({"id": jid}, {"$set": {
+                await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": {
                     "timer_stopped_at": stopped,
                     "timer_duration_seconds": dur,
                     "timer_stop_method": "job_completed",
                 }})
             await notify_customer(cid, "Service complete",
                                   f"Your {job.get('service_type', 'service')} is complete. View your report in the app.", job_id=jid)
-            fresh = await db.jobs.find_one({"id": jid}, {"_id": 0})
+            fresh = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
             await send_completion_email(fresh)
             # True recurrence: auto-book the next filter/salt-cell cleaning on the cadence.
             from routers.maintenance import create_recurring_maintenance
@@ -556,12 +613,13 @@ async def update_job(jid: str, body: JobUpdate, user: dict = Depends(get_current
             except Exception as e:
                 logger.warning(f"csat schedule failed: {e}")
 
-    return await db.jobs.find_one({"id": jid}, {"_id": 0})
+    return await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 @router.get("/public/job-photo/{jid}/{pid}")
 async def public_job_photo(jid: str, pid: str):
-    """Unauthenticated image endpoint for embedding job photos in emails (UUID-gated)."""
+    """Unauthenticated image endpoint for embedding job photos in emails (UUID-gated).
+    Intentionally NOT tenant-scoped — the {jid}+{pid} pair acts as the magic token."""
     job = await db.jobs.find_one({"id": jid}, {"_id": 0, "photos": 1})
     if not job:
         raise HTTPException(404, "Not found")
@@ -579,15 +637,19 @@ async def public_job_photo(jid: str, pid: str):
 
 
 @router.delete("/jobs/{jid}")
-async def delete_job(jid: str, user: dict = Depends(require_admin)):
-    res = await db.jobs.delete_one({"id": jid})
-    await db.notifications.delete_many({"job_id": jid})
+async def delete_job(jid: str,
+                     user: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant)):
+    res = await db.jobs.delete_one({"id": jid, "tenant_id": tenant["id"]})
+    await db.notifications.delete_many({"job_id": jid, "tenant_id": tenant["id"]})
     return {"ok": True, "deleted": res.deleted_count}
 
 
 @router.post("/jobs/{jid}/on-my-way")
-async def on_my_way(jid: str, user: dict = Depends(get_current_user)):
-    job = await db.jobs.find_one({"id": jid}, {"_id": 0})
+async def on_my_way(jid: str,
+                    user: dict = Depends(get_current_user),
+                    tenant: dict = Depends(get_current_tenant)):
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer":
@@ -606,9 +668,11 @@ async def on_my_way(jid: str, user: dict = Depends(get_current_user)):
 
 
 @router.post("/jobs/{jid}/arrive")
-async def job_arrive(jid: str, body: JobArriveIn, user: dict = Depends(get_current_user)):
+async def job_arrive(jid: str, body: JobArriveIn,
+                     user: dict = Depends(get_current_user),
+                     tenant: dict = Depends(get_current_tenant)):
     """Auto-start the job timer on GPS arrival (idempotent). No manual start/stop."""
-    job = await db.jobs.find_one({"id": jid}, {"_id": 0})
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer":
@@ -621,7 +685,7 @@ async def job_arrive(jid: str, body: JobArriveIn, user: dict = Depends(get_curre
         site = {"site_lat": body.site_lat, "site_lng": body.site_lng}
     if job.get("timer_started_at"):
         if site:
-            await db.jobs.update_one({"id": jid}, {"$set": site})
+            await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": site})
         return {"started": True, "already_running": True, "timer_started_at": job["timer_started_at"]}
     if job.get("status") == "completed":
         return {"started": False, "reason": "job_completed"}
@@ -630,22 +694,27 @@ async def job_arrive(jid: str, body: JobArriveIn, user: dict = Depends(get_curre
            "arrival_lat": body.lat, "arrival_lng": body.lng, **site}
     if job.get("status") in (None, "pending", "requested", "scheduled"):
         upd["status"] = "in_progress"
-    await db.jobs.update_one({"id": jid}, {"$set": upd})
+    await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$set": upd})
     return {"started": True, "already_running": False, "timer_started_at": started}
 
 
 @router.get("/reports/job-timers")
 async def job_timers_report(technician_id: Optional[str] = None, customer_id: Optional[str] = None,
-                            q: Optional[str] = None, admin: dict = Depends(require_admin)):
+                            q: Optional[str] = None,
+                            admin: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
     """Admin report of automated job timers, filterable by technician, customer, and free text."""
-    query: dict = {"timer_started_at": {"$exists": True, "$ne": None}}
+    query: dict = {"tenant_id": tenant["id"], "timer_started_at": {"$exists": True, "$ne": None}}
     if technician_id:
         query["technician_id"] = technician_id
     if customer_id:
         query["customer_id"] = customer_id
     jobs = await db.jobs.find(query, {"_id": 0}).to_list(5000)
     cust_ids = list({j.get("customer_id") for j in jobs if j.get("customer_id")})
-    custs = {c["id"]: c async for c in db.customers.find({"id": {"$in": cust_ids}}, {"_id": 0, "id": 1, "name": 1, "address": 1})}
+    custs = {c["id"]: c async for c in db.customers.find(
+        {"id": {"$in": cust_ids}, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "name": 1, "address": 1},
+    )}
     now = now_iso()
     rows = []
     qlc = (q or "").strip().lower()
@@ -680,14 +749,23 @@ async def job_timers_report(technician_id: Optional[str] = None, customer_id: Op
 
 
 @router.get("/reports/avg-job-time")
-async def avg_job_time_report(q: Optional[str] = None, admin: dict = Depends(require_admin)):
+async def avg_job_time_report(q: Optional[str] = None,
+                              admin: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
     """Average on-site time per customer, from completed automated job timers."""
     jobs = await db.jobs.find(
-        {"timer_duration_seconds": {"$gt": 0}, "timer_stopped_at": {"$exists": True, "$ne": None}},
+        {
+            "tenant_id": tenant["id"],
+            "timer_duration_seconds": {"$gt": 0},
+            "timer_stopped_at": {"$exists": True, "$ne": None},
+        },
         {"_id": 0, "customer_id": 1, "timer_duration_seconds": 1, "timer_stopped_at": 1, "scheduled_date": 1},
     ).to_list(10000)
     cust_ids = list({j.get("customer_id") for j in jobs if j.get("customer_id")})
-    custs = {c["id"]: c async for c in db.customers.find({"id": {"$in": cust_ids}}, {"_id": 0, "id": 1, "name": 1, "address": 1})}
+    custs = {c["id"]: c async for c in db.customers.find(
+        {"id": {"$in": cust_ids}, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "name": 1, "address": 1},
+    )}
     agg: dict = {}
     for j in jobs:
         cid = j.get("customer_id")
@@ -739,15 +817,18 @@ def _service_week(anchor_iso: str | None):
 @router.get("/reports/pool-service")
 async def pool_service_report(date_from: Optional[str] = Query(None),
                               date_to: Optional[str] = Query(None),
-                              admin: dict = Depends(require_admin)):
+                              admin: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
     """Weekly pool-service summary: pools completed per technician (excluding skipped visits).
 
     Meant to be pulled every Friday. Defaults to the current service week (Mon-Sun).
     """
-    return await compute_pool_service(date_from, date_to)
+    return await compute_pool_service(tenant["id"], date_from, date_to)
 
 
-async def compute_pool_service(date_from: Optional[str] = None, date_to: Optional[str] = None):
+async def compute_pool_service(tenant_id: str,
+                               date_from: Optional[str] = None,
+                               date_to: Optional[str] = None):
     if date_from and date_to:
         week_start, week_end = date_from, date_to
     else:
@@ -755,11 +836,13 @@ async def compute_pool_service(date_from: Optional[str] = None, date_to: Optiona
 
     date_range = {"$gte": week_start, "$lte": week_end}
     jobs = await db.jobs.find(
-        {"scheduled_date": date_range},
+        {"tenant_id": tenant_id, "scheduled_date": date_range},
         {"_id": 0, "technician_id": 1, "technician_name": 1, "status": 1, "scheduled_date": 1},
     ).to_list(10000)
 
-    techs = {t["id"]: t["name"] async for t in db.technicians.find({}, {"_id": 0, "id": 1, "name": 1})}
+    techs = {t["id"]: t["name"] async for t in db.technicians.find(
+        {"tenant_id": tenant_id}, {"_id": 0, "id": 1, "name": 1}
+    )}
     agg: dict = {}
     for j in jobs:
         tid = j.get("technician_id")
@@ -792,28 +875,36 @@ async def compute_pool_service(date_from: Optional[str] = None, date_to: Optiona
 
 
 @router.get("/notifications")
-async def list_notifications(user: dict = Depends(get_current_user)):
+async def list_notifications(user: dict = Depends(get_current_user),
+                             tenant: dict = Depends(get_current_tenant)):
     q = {"customer_id": user.get("customer_id")} if user.get("role") == "customer" else {"user_id": user["id"]}
+    q["tenant_id"] = tenant["id"]
     return await db.notifications.find(q, {"_id": 0}).sort("created_at", -1).to_list(100)
 
 
 @router.get("/notifications/unread-count")
-async def unread_count(user: dict = Depends(get_current_user)):
+async def unread_count(user: dict = Depends(get_current_user),
+                       tenant: dict = Depends(get_current_tenant)):
     q = {"customer_id": user.get("customer_id")} if user.get("role") == "customer" else {"user_id": user["id"]}
+    q["tenant_id"] = tenant["id"]
     q["read"] = False
     return {"count": await db.notifications.count_documents(q)}
 
 
 @router.post("/notifications/read-all")
-async def read_all(user: dict = Depends(get_current_user)):
+async def read_all(user: dict = Depends(get_current_user),
+                   tenant: dict = Depends(get_current_tenant)):
     q = {"customer_id": user.get("customer_id")} if user.get("role") == "customer" else {"user_id": user["id"]}
+    q["tenant_id"] = tenant["id"]
     await db.notifications.update_many(q, {"$set": {"read": True}})
     return {"ok": True}
 
 
 @router.post("/jobs/{jid}/photos")
-async def add_job_photo(jid: str, body: PhotoIn, user: dict = Depends(get_current_user)):
-    job = await db.jobs.find_one({"id": jid})
+async def add_job_photo(jid: str, body: PhotoIn,
+                        user: dict = Depends(get_current_user),
+                        tenant: dict = Depends(get_current_tenant)):
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer":
@@ -821,22 +912,28 @@ async def add_job_photo(jid: str, body: PhotoIn, user: dict = Depends(get_curren
     if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
         raise HTTPException(403, "Not your job")
     photo = {"id": new_id(), "data": body.data, "label": body.label or "photo", "created_at": now_iso()}
-    await db.jobs.update_one({"id": jid}, {"$push": {"photos": photo}})
-    return await db.jobs.find_one({"id": jid}, {"_id": 0})
+    await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$push": {"photos": photo}})
+    return await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 @router.delete("/jobs/{jid}/photos/{pid}")
-async def delete_job_photo(jid: str, pid: str, user: dict = Depends(get_current_user)):
+async def delete_job_photo(jid: str, pid: str,
+                           user: dict = Depends(get_current_user),
+                           tenant: dict = Depends(get_current_tenant)):
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
-    await db.jobs.update_one({"id": jid}, {"$pull": {"photos": {"id": pid}}})
-    return await db.jobs.find_one({"id": jid}, {"_id": 0})
+    await db.jobs.update_one(
+        {"id": jid, "tenant_id": tenant["id"]}, {"$pull": {"photos": {"id": pid}}}
+    )
+    return await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 # ----------------------- Service Issues -----------------------
 @router.post("/jobs/{jid}/issues")
-async def add_service_issue(jid: str, body: ServiceIssueIn, user: dict = Depends(get_current_user)):
-    job = await db.jobs.find_one({"id": jid})
+async def add_service_issue(jid: str, body: ServiceIssueIn,
+                            user: dict = Depends(get_current_user),
+                            tenant: dict = Depends(get_current_tenant)):
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer":
@@ -848,22 +945,28 @@ async def add_service_issue(jid: str, body: ServiceIssueIn, user: dict = Depends
         "photo": body.photo, "status": "open", "reported_by": user.get("name", "Staff"),
         "created_at": now_iso(), "approved_at": None,
     }
-    await db.jobs.update_one({"id": jid}, {"$push": {"service_issues": issue}})
-    return with_field_report(await db.jobs.find_one({"id": jid}, {"_id": 0}))
+    await db.jobs.update_one(
+        {"id": jid, "tenant_id": tenant["id"]}, {"$push": {"service_issues": issue}}
+    )
+    return with_field_report(
+        await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    )
 
 
 @router.post("/jobs/{jid}/issues/{iid}/approve")
-async def approve_service_issue(jid: str, iid: str, user: dict = Depends(get_current_user)):
-    job = await db.jobs.find_one({"id": jid})
+async def approve_service_issue(jid: str, iid: str,
+                                user: dict = Depends(get_current_user),
+                                tenant: dict = Depends(get_current_tenant)):
+    job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
     if not job:
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer" and job.get("customer_id") != user.get("customer_id"):
         raise HTTPException(403, "Not your job")
     await db.jobs.update_one(
-        {"id": jid, "service_issues.id": iid},
+        {"id": jid, "tenant_id": tenant["id"], "service_issues.id": iid},
         {"$set": {"service_issues.$.status": "approved", "service_issues.$.approved_at": now_iso()}},
     )
-    updated = await db.jobs.find_one({"id": jid}, {"_id": 0})
+    updated = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     issue = next((i for i in updated.get("service_issues", []) if i["id"] == iid), None)
     if issue:
         await create_staff_notification(
@@ -874,9 +977,15 @@ async def approve_service_issue(jid: str, iid: str, user: dict = Depends(get_cur
 
 
 @router.delete("/jobs/{jid}/issues/{iid}")
-async def delete_service_issue(jid: str, iid: str, user: dict = Depends(get_current_user)):
+async def delete_service_issue(jid: str, iid: str,
+                               user: dict = Depends(get_current_user),
+                               tenant: dict = Depends(get_current_tenant)):
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
-    await db.jobs.update_one({"id": jid}, {"$pull": {"service_issues": {"id": iid}}})
-    return with_field_report(await db.jobs.find_one({"id": jid}, {"_id": 0}))
-
+    await db.jobs.update_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"$pull": {"service_issues": {"id": iid}}},
+    )
+    return with_field_report(
+        await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    )

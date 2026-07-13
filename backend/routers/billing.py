@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from config import db, logger
 from utils import now_iso, new_id, require_admin, get_current_user
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -28,10 +29,14 @@ class PaymentHandlesIn(BaseModel):
 
 
 @router.get("/settings/payment-handles")
-async def get_payment_handles(user: dict = Depends(require_admin)):
-    doc = await db.payment_handles.find_one({"id": SETTINGS_DOC_ID}, {"_id": 0})
+async def get_payment_handles(user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    doc = await db.payment_handles.find_one(
+        {"id": SETTINGS_DOC_ID, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     return doc or {
         "id": SETTINGS_DOC_ID,
+        "tenant_id": tenant["id"],
         "venmo": "",
         "zelle": "",
         "cashapp": "",
@@ -41,11 +46,18 @@ async def get_payment_handles(user: dict = Depends(require_admin)):
 
 
 @router.put("/settings/payment-handles")
-async def put_payment_handles(body: PaymentHandlesIn, user: dict = Depends(require_admin)):
+async def put_payment_handles(body: PaymentHandlesIn,
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
     d = body.dict()
     d["id"] = SETTINGS_DOC_ID
+    d["tenant_id"] = tenant["id"]
     d["updated_at"] = now_iso()
-    await db.payment_handles.update_one({"id": SETTINGS_DOC_ID}, {"$set": d}, upsert=True)
+    await db.payment_handles.update_one(
+        {"id": SETTINGS_DOC_ID, "tenant_id": tenant["id"]},
+        {"$set": d},
+        upsert=True,
+    )
     return d
 
 
@@ -56,15 +68,19 @@ class InvoiceSmsIn(BaseModel):
 
 
 @router.post("/invoices/{iid}/send-sms")
-async def send_invoice_sms(iid: str, body: InvoiceSmsIn, user: dict = Depends(require_admin)):
+async def send_invoice_sms(iid: str, body: InvoiceSmsIn,
+                           user: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
     """Text an invoice link via Twilio. Gracefully returns
     { sent:false, reason:"twilio-not-configured" } when creds are missing."""
-    inv = await db.quotes.find_one({"id": iid}, {"_id": 0})
+    inv = await db.quotes.find_one({"id": iid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not inv:
         raise HTTPException(404, "Invoice not found")
     to = (body.to or "").strip()
     if not to:
-        cust = await db.customers.find_one({"id": inv.get("customer_id")}, {"_id": 0}) or {}
+        cust = await db.customers.find_one(
+            {"id": inv.get("customer_id"), "tenant_id": tenant["id"]}, {"_id": 0}
+        ) or {}
         to = (cust.get("phone") or "").strip()
     if not to:
         raise HTTPException(400, "No SMS destination number available")
@@ -93,18 +109,24 @@ async def send_invoice_sms(iid: str, body: InvoiceSmsIn, user: dict = Depends(re
 
 # ─── Convert approved quote → job ───────────────────────────────────────────
 @router.post("/quotes/{qid}/convert-to-job")
-async def convert_quote_to_job(qid: str, body: dict, user: dict = Depends(require_admin)):
+async def convert_quote_to_job(qid: str, body: dict,
+                               user: dict = Depends(require_admin),
+                               tenant: dict = Depends(get_current_tenant)):
     """body: { scheduled_date, technician_id?, notes? }"""
-    q = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    q = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not q:
         raise HTTPException(404, "Quote not found")
     if q.get("decision") not in ("approved",) and q.get("status") not in ("approved",):
         # Allow anyway with a warning — some flows mark approval on status.
         pass
-    cust = await db.customers.find_one({"id": q["customer_id"]}, {"_id": 0}) or {}
+    cust = await db.customers.find_one(
+        {"id": q["customer_id"], "tenant_id": tenant["id"]}, {"_id": 0}
+    ) or {}
     tech = None
     if body.get("technician_id"):
-        tech = await db.technicians.find_one({"id": body["technician_id"]}, {"_id": 0})
+        tech = await db.technicians.find_one(
+            {"id": body["technician_id"], "tenant_id": tenant["id"]}, {"_id": 0}
+        )
 
     line_summary = ", ".join(
         li.get("description", "") for li in (q.get("line_items") or [])
@@ -112,6 +134,7 @@ async def convert_quote_to_job(qid: str, body: dict, user: dict = Depends(requir
 
     job = {
         "id": new_id(),
+        "tenant_id": tenant["id"],
         "title": q.get("title") or f"Quote {qid[:8]} · Work",
         "customer_id": q["customer_id"],
         "customer_name": cust.get("name"),
@@ -130,7 +153,8 @@ async def convert_quote_to_job(qid: str, body: dict, user: dict = Depends(requir
     }
     await db.jobs.insert_one(job)
     await db.quotes.update_one(
-        {"id": qid}, {"$set": {"converted_job_id": job["id"], "converted_at": now_iso()}}
+        {"id": qid, "tenant_id": tenant["id"]},
+        {"$set": {"converted_job_id": job["id"], "converted_at": now_iso()}},
     )
     job.pop("_id", None)
     return job
@@ -145,17 +169,23 @@ class MasterInvoiceIn(BaseModel):
 
 
 @router.get("/invoices/master")
-async def list_master_invoices(user: dict = Depends(require_admin)):
-    docs = await db.master_invoices.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+async def list_master_invoices(user: dict = Depends(require_admin),
+                               tenant: dict = Depends(get_current_tenant)):
+    docs = await db.master_invoices.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
     return docs
 
 
 @router.post("/invoices/master")
-async def create_master_invoice(body: MasterInvoiceIn, user: dict = Depends(require_admin)):
+async def create_master_invoice(body: MasterInvoiceIn,
+                                user: dict = Depends(require_admin),
+                                tenant: dict = Depends(get_current_tenant)):
     if not body.invoice_ids:
         raise HTTPException(400, "invoice_ids required")
     invs = await db.quotes.find(
-        {"id": {"$in": body.invoice_ids}, "doc_type": "invoice"}, {"_id": 0}
+        {"id": {"$in": body.invoice_ids}, "tenant_id": tenant["id"], "doc_type": "invoice"},
+        {"_id": 0},
     ).to_list(2000)
     if not invs:
         raise HTTPException(404, "No matching invoices")
@@ -166,6 +196,7 @@ async def create_master_invoice(body: MasterInvoiceIn, user: dict = Depends(requ
     )
     doc = {
         "id": new_id(),
+        "tenant_id": tenant["id"],
         "label": body.label
         or f"Master · {len(invs)} invoices · {invs[0].get('customer_name', 'Multi-payer')}",
         "customer_ids": body.customer_ids,
@@ -197,13 +228,18 @@ async def create_master_invoice(body: MasterInvoiceIn, user: dict = Depends(requ
 
 
 @router.get("/invoices/master/{mid}")
-async def get_master_invoice(mid: str, user: dict = Depends(require_admin)):
-    doc = await db.master_invoices.find_one({"id": mid}, {"_id": 0})
+async def get_master_invoice(mid: str,
+                             user: dict = Depends(require_admin),
+                             tenant: dict = Depends(get_current_tenant)):
+    doc = await db.master_invoices.find_one(
+        {"id": mid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not doc:
         raise HTTPException(404, "Master invoice not found")
     # refresh child snapshot totals lazily
     children = await db.quotes.find(
-        {"id": {"$in": doc["invoice_ids"]}}, {"_id": 0}
+        {"id": {"$in": doc["invoice_ids"]}, "tenant_id": tenant["id"]},
+        {"_id": 0},
     ).to_list(2000)
     by_id = {c["id"]: c for c in children}
     for s in doc.get("invoice_snapshot") or []:
@@ -215,8 +251,10 @@ async def get_master_invoice(mid: str, user: dict = Depends(require_admin)):
 
 
 @router.delete("/invoices/master/{mid}")
-async def delete_master_invoice(mid: str, user: dict = Depends(require_admin)):
-    res = await db.master_invoices.delete_one({"id": mid})
+async def delete_master_invoice(mid: str,
+                                user: dict = Depends(require_admin),
+                                tenant: dict = Depends(get_current_tenant)):
+    res = await db.master_invoices.delete_one({"id": mid, "tenant_id": tenant["id"]})
     if res.deleted_count == 0:
         raise HTTPException(404, "Master invoice not found")
     return {"ok": True}
@@ -227,16 +265,20 @@ class MasterPayIn(BaseModel):
 
 
 @router.post("/invoices/master/{mid}/apply-payment")
-async def apply_master_payment(mid: str, body: MasterPayIn, user: dict = Depends(require_admin)):
+async def apply_master_payment(mid: str, body: MasterPayIn,
+                               user: dict = Depends(require_admin),
+                               tenant: dict = Depends(get_current_tenant)):
     """Applies `amount` proportionally across every child invoice's remaining balance,
     then marks the master invoice's own totals + status."""
-    doc = await db.master_invoices.find_one({"id": mid}, {"_id": 0})
+    doc = await db.master_invoices.find_one(
+        {"id": mid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not doc:
         raise HTTPException(404, "Master invoice not found")
     amount = max(0.0, float(body.amount or 0))
-    # Compute remaining per child
     children = await db.quotes.find(
-        {"id": {"$in": doc["invoice_ids"]}}, {"_id": 0}
+        {"id": {"$in": doc["invoice_ids"]}, "tenant_id": tenant["id"]},
+        {"_id": 0},
     ).to_list(2000)
     remaining = {
         c["id"]: max(0.0, float(c.get("total") or 0) - float(c.get("amount_paid") or 0))
@@ -252,7 +294,7 @@ async def apply_master_payment(mid: str, body: MasterPayIn, user: dict = Depends
         new_paid = round(float(c.get("amount_paid") or 0) + share, 2)
         status = "paid" if new_paid + 0.005 >= float(c.get("total") or 0) else "partial"
         await db.quotes.update_one(
-            {"id": c["id"]},
+            {"id": c["id"], "tenant_id": tenant["id"]},
             {"$set": {"amount_paid": new_paid, "payment_status": status}},
         )
         applied_total += share
@@ -261,7 +303,7 @@ async def apply_master_payment(mid: str, body: MasterPayIn, user: dict = Depends
         "partial" if new_master_paid > 0 else "unpaid"
     )
     await db.master_invoices.update_one(
-        {"id": mid},
+        {"id": mid, "tenant_id": tenant["id"]},
         {
             "$set": {
                 "amount_paid": new_master_paid,

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import now_iso, new_id, require_admin, get_current_user
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -193,9 +194,11 @@ class TaskUpdate(BaseModel):
 
 
 @router.get("/tasks")
-async def list_tasks(admin: dict = Depends(require_admin), status: Optional[str] = None,
+async def list_tasks(admin: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant),
+                     status: Optional[str] = None,
                      assigned_to: Optional[str] = None, source: Optional[str] = None):
-    q = {}
+    q: dict = {"tenant_id": tenant["id"]}
     if status: q["status"] = status
     if assigned_to: q["assigned_to"] = assigned_to
     if source: q["source"] = source
@@ -203,64 +206,89 @@ async def list_tasks(admin: dict = Depends(require_admin), status: Optional[str]
 
 
 @router.post("/tasks")
-async def create_task(body: TaskIn, admin: dict = Depends(require_admin)):
-    doc = {"id": new_id(), **body.dict(), "status": "open",
+async def create_task(body: TaskIn,
+                      admin: dict = Depends(require_admin),
+                      tenant: dict = Depends(get_current_tenant)):
+    doc = {"id": new_id(), "tenant_id": tenant["id"], **body.dict(), "status": "open",
            "created_at": now_iso(), "created_by": admin["id"]}
     await db.tasks.insert_one(doc); doc.pop("_id", None); return doc
 
 
 @router.get("/tasks/{tid}")
-async def get_task(tid: str, admin: dict = Depends(require_admin)):
-    d = await db.tasks.find_one({"id": tid}, {"_id": 0})
+async def get_task(tid: str,
+                   admin: dict = Depends(require_admin),
+                   tenant: dict = Depends(get_current_tenant)):
+    d = await db.tasks.find_one({"id": tid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not d: raise HTTPException(404, "Not found")
     return d
 
 
 @router.patch("/tasks/{tid}")
-async def patch_task(tid: str, body: TaskUpdate, admin: dict = Depends(require_admin)):
+async def patch_task(tid: str, body: TaskUpdate,
+                     admin: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant)):
     upd = {k: v for k, v in body.dict().items() if v is not None}
     upd["updated_at"] = now_iso()
-    await db.tasks.update_one({"id": tid}, {"$set": upd})
-    return await db.tasks.find_one({"id": tid}, {"_id": 0})
+    await db.tasks.update_one({"id": tid, "tenant_id": tenant["id"]}, {"$set": upd})
+    return await db.tasks.find_one({"id": tid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 @router.delete("/tasks/{tid}")
-async def del_task(tid: str, admin: dict = Depends(require_admin)):
-    await db.tasks.delete_one({"id": tid}); return {"ok": True}
+async def del_task(tid: str,
+                   admin: dict = Depends(require_admin),
+                   tenant: dict = Depends(get_current_tenant)):
+    await db.tasks.delete_one({"id": tid, "tenant_id": tenant["id"]}); return {"ok": True}
 
 
 @router.post("/tasks/{tid}/complete")
-async def complete_task(tid: str, admin: dict = Depends(require_admin)):
-    await db.tasks.update_one({"id": tid}, {"$set": {"status": "done", "completed_at": now_iso()}})
-    return await db.tasks.find_one({"id": tid}, {"_id": 0})
+async def complete_task(tid: str,
+                        admin: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    await db.tasks.update_one(
+        {"id": tid, "tenant_id": tenant["id"]},
+        {"$set": {"status": "done", "completed_at": now_iso()}},
+    )
+    return await db.tasks.find_one({"id": tid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 # ─── Notifications ─────────────────────────────────────────────────────────
 @router.get("/notifications")
-async def list_notifications(user: dict = Depends(get_current_user)):
+async def list_notifications(user: dict = Depends(get_current_user),
+                             tenant: dict = Depends(get_current_tenant)):
     return await db.notifications.find(
-        {"user_id": {"$in": [user["id"], "*"]}}, {"_id": 0}
+        {"tenant_id": tenant["id"], "user_id": {"$in": [user["id"], "*"]}}, {"_id": 0}
     ).sort("created_at", -1).to_list(200)
 
 
 @router.post("/notifications/{nid}/read")
-async def mark_read(nid: str, user: dict = Depends(get_current_user)):
-    await db.notifications.update_one({"id": nid}, {"$set": {"read": True, "read_at": now_iso()}})
+async def mark_read(nid: str,
+                    user: dict = Depends(get_current_user),
+                    tenant: dict = Depends(get_current_tenant)):
+    await db.notifications.update_one(
+        {"id": nid, "tenant_id": tenant["id"]},
+        {"$set": {"read": True, "read_at": now_iso()}},
+    )
     return {"ok": True}
 
 
 @router.post("/notifications/read-all")
-async def read_all(user: dict = Depends(get_current_user)):
+async def read_all(user: dict = Depends(get_current_user),
+                   tenant: dict = Depends(get_current_tenant)):
     r = await db.notifications.update_many(
-        {"user_id": {"$in": [user["id"], "*"]}, "read": {"$ne": True}},
+        {"tenant_id": tenant["id"], "user_id": {"$in": [user["id"], "*"]}, "read": {"$ne": True}},
         {"$set": {"read": True, "read_at": now_iso()}},
     )
     return {"marked": r.modified_count}
 
 
-async def create_notification(user_id: str, title: str, body: str, ref: dict | None = None):
-    doc = {"id": new_id(), "user_id": user_id, "title": title, "body": body,
-           "ref": ref or {}, "read": False, "created_at": now_iso()}
+async def create_notification(user_id: str, title: str, body: str, ref: dict | None = None, tenant_id: str = None):
+    # Look up tenant from the target user if not passed.
+    if not tenant_id:
+        u = await db.users.find_one({"id": user_id}, {"_id": 0, "tenant_id": 1})
+        tenant_id = (u or {}).get("tenant_id")
+    doc = {"id": new_id(), "tenant_id": tenant_id, "user_id": user_id,
+           "title": title, "body": body, "ref": ref or {},
+           "read": False, "created_at": now_iso()}
     await db.notifications.insert_one(doc)
     return doc
 

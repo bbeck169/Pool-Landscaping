@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from config import db, logger
 from utils import now_iso, new_id, require_admin
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -60,65 +61,98 @@ SEEDED_SEQUENCES = [
 
 
 async def ensure_sequences_seeded():
+    """Global startup: seed cross-tenant defaults (no tenant_id).
+    Per-tenant sequences will be seeded lazily on first list_sequences call."""
     for seq in SEEDED_SEQUENCES:
-        existing = await db.sequences.find_one({"slug": seq["slug"]}, {"_id": 0})
+        existing = await db.sequences.find_one({"slug": seq["slug"], "tenant_id": {"$in": [None, ""]}}, {"_id": 0})
         if not existing:
-            doc = {"id": new_id(), **seq, "active": True, "created_at": now_iso()}
+            doc = {"id": new_id(), "tenant_id": None, **seq, "active": True, "created_at": now_iso()}
             await db.sequences.insert_one(doc)
-            logger.info(f"Seeded sequence '{seq['slug']}'")
+            logger.info(f"Seeded global sequence '{seq['slug']}'")
         else:
-            # Refresh steps to pick up escalation_task upgrades on hot-reloads.
             await db.sequences.update_one(
-                {"slug": seq["slug"]},
+                {"slug": seq["slug"], "tenant_id": {"$in": [None, ""]}},
                 {"$set": {"steps": seq["steps"], "trigger": seq["trigger"]}},
             )
 
 
+async def _ensure_tenant_sequences(tenant_id: str):
+    """Ensure a tenant has its own copy of the seeded sequences on first access."""
+    if await db.sequences.count_documents({"tenant_id": tenant_id}) == 0:
+        for seq in SEEDED_SEQUENCES:
+            await db.sequences.insert_one({
+                "id": new_id(), "tenant_id": tenant_id, **seq,
+                "active": True, "created_at": now_iso(),
+            })
+
+
 # ─── CRUD ──────────────────────────────────────────────────────────────────
 @router.get("/sequences")
-async def list_sequences(admin: dict = Depends(require_admin)):
-    rows = await db.sequences.find({}, {"_id": 0}).sort("created_at", 1).to_list(200)
+async def list_sequences(admin: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
+    await _ensure_tenant_sequences(tenant["id"])
+    rows = await db.sequences.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", 1).to_list(200)
     for r in rows:
         r["enrolled_count"] = await db.sequence_enrollments.count_documents(
-            {"sequence_id": r["id"], "status": {"$in": ["active", "paused"]}})
+            {"sequence_id": r["id"], "tenant_id": tenant["id"],
+             "status": {"$in": ["active", "paused"]}})
         r["steps_count"] = len(r.get("steps", []))
     return rows
 
 
 @router.post("/sequences")
-async def create_sequence(body: SequenceIn, admin: dict = Depends(require_admin)):
-    doc = {"id": new_id(), "slug": None, **body.dict(), "created_at": now_iso()}
+async def create_sequence(body: SequenceIn,
+                          admin: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    doc = {"id": new_id(), "tenant_id": tenant["id"], "slug": None,
+           **body.dict(), "created_at": now_iso()}
     await db.sequences.insert_one(doc)
     doc.pop("_id", None)
     return doc
 
 
 @router.get("/sequences/{sid}")
-async def get_sequence(sid: str, admin: dict = Depends(require_admin)):
-    doc = await db.sequences.find_one({"id": sid}, {"_id": 0})
+async def get_sequence(sid: str,
+                       admin: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    doc = await db.sequences.find_one(
+        {"id": sid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not doc:
         raise HTTPException(404, "Not found")
     return doc
 
 
 @router.patch("/sequences/{sid}")
-async def patch_sequence(sid: str, body: SequenceUpdate, admin: dict = Depends(require_admin)):
+async def patch_sequence(sid: str, body: SequenceUpdate,
+                         admin: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
     upd = {k: v for k, v in body.dict().items() if v is not None}
     upd["updated_at"] = now_iso()
-    await db.sequences.update_one({"id": sid}, {"$set": upd})
-    return await db.sequences.find_one({"id": sid}, {"_id": 0})
+    await db.sequences.update_one(
+        {"id": sid, "tenant_id": tenant["id"]}, {"$set": upd}
+    )
+    return await db.sequences.find_one({"id": sid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 @router.delete("/sequences/{sid}")
-async def delete_sequence(sid: str, admin: dict = Depends(require_admin)):
-    await db.sequences.delete_one({"id": sid})
+async def delete_sequence(sid: str,
+                          admin: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    await db.sequences.delete_one({"id": sid, "tenant_id": tenant["id"]})
     return {"ok": True}
 
 
 # ─── enrollment ─────────────────────────────────────────────────────────────
 @router.post("/sequences/{sid}/enroll")
-async def enroll(sid: str, customer_id: str, admin: dict = Depends(require_admin)):
-    seq = await db.sequences.find_one({"id": sid}, {"_id": 0})
+async def enroll(sid: str, customer_id: str,
+                 admin: dict = Depends(require_admin),
+                 tenant: dict = Depends(get_current_tenant)):
+    seq = await db.sequences.find_one(
+        {"id": sid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
     if not seq:
         raise HTTPException(404, "Sequence not found")
     if not (seq.get("steps") or []):
@@ -126,7 +160,8 @@ async def enroll(sid: str, customer_id: str, admin: dict = Depends(require_admin
     first_delay = int((seq["steps"][0] or {}).get("delay_days") or 0)
     next_at = (datetime.now(timezone.utc) + timedelta(days=first_delay)).isoformat()
     doc = {
-        "id": new_id(), "sequence_id": sid, "customer_id": customer_id,
+        "id": new_id(), "tenant_id": tenant["id"],
+        "sequence_id": sid, "customer_id": customer_id,
         "status": "active", "current_step": 0,
         "next_action_at": next_at, "started_at": now_iso(), "log": [],
     }
@@ -136,26 +171,41 @@ async def enroll(sid: str, customer_id: str, admin: dict = Depends(require_admin
 
 
 @router.get("/sequences/{sid}/enrollments")
-async def list_enrollments(sid: str, admin: dict = Depends(require_admin)):
-    return await db.sequence_enrollments.find({"sequence_id": sid}, {"_id": 0}).sort("started_at", -1).to_list(500)
+async def list_enrollments(sid: str,
+                           admin: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
+    return await db.sequence_enrollments.find(
+        {"sequence_id": sid, "tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("started_at", -1).to_list(500)
 
 
 @router.post("/sequences/{sid}/pause")
-async def pause_seq(sid: str, admin: dict = Depends(require_admin)):
-    await db.sequences.update_one({"id": sid}, {"$set": {"active": False}})
+async def pause_seq(sid: str,
+                    admin: dict = Depends(require_admin),
+                    tenant: dict = Depends(get_current_tenant)):
+    await db.sequences.update_one(
+        {"id": sid, "tenant_id": tenant["id"]}, {"$set": {"active": False}}
+    )
     return {"ok": True}
 
 
 @router.post("/sequences/{sid}/resume")
-async def resume_seq(sid: str, admin: dict = Depends(require_admin)):
-    await db.sequences.update_one({"id": sid}, {"$set": {"active": True}})
+async def resume_seq(sid: str,
+                     admin: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant)):
+    await db.sequences.update_one(
+        {"id": sid, "tenant_id": tenant["id"]}, {"$set": {"active": True}}
+    )
     return {"ok": True}
 
 
 @router.post("/sequences/{sid}/unenroll/{customer_id}")
-async def unenroll(sid: str, customer_id: str, admin: dict = Depends(require_admin)):
+async def unenroll(sid: str, customer_id: str,
+                   admin: dict = Depends(require_admin),
+                   tenant: dict = Depends(get_current_tenant)):
     r = await db.sequence_enrollments.update_many(
-        {"sequence_id": sid, "customer_id": customer_id, "status": {"$in": ["active", "paused"]}},
+        {"sequence_id": sid, "customer_id": customer_id,
+         "tenant_id": tenant["id"], "status": {"$in": ["active", "paused"]}},
         {"$set": {"status": "unenrolled", "ended_at": now_iso()}},
     )
     return {"unenrolled": r.modified_count}

@@ -74,7 +74,8 @@ def customer_ctx(mongo_db):
     assert user, "customer user missing"
     cid = user.get("customer_id")
     assert cid, "customer user has no customer_id"
-    return {"user_id": user["id"], "customer_id": cid}
+    tid = user.get("tenant_id")
+    return {"user_id": user["id"], "customer_id": cid, "tenant_id": tid}
 
 
 @pytest.fixture
@@ -82,7 +83,8 @@ def outstanding_invoice(mongo_db, customer_ctx):
     """Create a fresh outstanding invoice for the seeded customer."""
     inv_id = f"test-iter30-outstanding-{datetime.now(timezone.utc).timestamp()}"
     doc = {
-        "id": inv_id, "customer_id": customer_ctx["customer_id"], "customer_name": "TEST",
+        "id": inv_id, "tenant_id": customer_ctx["tenant_id"],
+        "customer_id": customer_ctx["customer_id"], "customer_name": "TEST",
         "title": "TEST_ITER30 Outstanding Invoice", "doc_type": "invoice",
         "line_items": [{"description": "svc", "quantity": 1, "unit_price": 250.0}],
         "tax_rate": 0.0, "subtotal": 250.0, "tax": 0.0, "total": 250.0,
@@ -101,7 +103,8 @@ def outstanding_invoice(mongo_db, customer_ctx):
 def paid_invoice(mongo_db, customer_ctx):
     inv_id = f"test-iter30-paid-{datetime.now(timezone.utc).timestamp()}"
     doc = {
-        "id": inv_id, "customer_id": customer_ctx["customer_id"], "customer_name": "TEST",
+        "id": inv_id, "tenant_id": customer_ctx["tenant_id"],
+        "customer_id": customer_ctx["customer_id"], "customer_name": "TEST",
         "title": "TEST_ITER30 Paid Invoice", "doc_type": "invoice",
         "line_items": [{"description": "svc", "quantity": 1, "unit_price": 100.0}],
         "tax_rate": 0.0, "subtotal": 100.0, "tax": 0.0, "total": 100.0,
@@ -116,10 +119,11 @@ def paid_invoice(mongo_db, customer_ctx):
 
 
 @pytest.fixture
-def no_customer_invoice(mongo_db):
+def no_customer_invoice(mongo_db, customer_ctx):
     inv_id = f"test-iter30-nocust-{datetime.now(timezone.utc).timestamp()}"
     doc = {
-        "id": inv_id, "customer_id": None, "customer_name": "",
+        "id": inv_id, "tenant_id": customer_ctx["tenant_id"],
+        "customer_id": None, "customer_name": "",
         "title": "TEST_ITER30 No Customer Invoice", "doc_type": "invoice",
         "line_items": [{"description": "svc", "quantity": 1, "unit_price": 50.0}],
         "tax_rate": 0.0, "subtotal": 50.0, "tax": 0.0, "total": 50.0,
