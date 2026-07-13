@@ -8,6 +8,8 @@ from routers import (
     auth, customers, technicians, jobs, quotes, leads, team, items, payments,
     operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google as google_router, phase11,
     realtime, csat, signatures,
+    analytics, onboarding,
+    lead_requests,
 )
 
 app = FastAPI(
@@ -20,7 +22,9 @@ api_router = APIRouter(prefix="/api")
 
 for module in [auth, customers, technicians, jobs, quotes, leads, team, items, payments,
                operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google_router, phase11,
-               realtime, csat, signatures]:
+               realtime, csat, signatures,
+               analytics, onboarding,
+               lead_requests]:
     api_router.include_router(module.router)
 
 
@@ -70,6 +74,16 @@ async def startup():
         await ai_ops.ensure_ai_employees_seeded()
     except Exception as e:
         logger.warning(f"phase-7 seeds skipped: {e}")
+    # Phase 15B: mark demo admin as onboarded so the wizard doesn't hijack the demo.
+    try:
+        await onboarding._seed_completed_for_demo()
+    except Exception as e:
+        logger.warning(f"onboarding demo seed skipped: {e}")
+    # Phase 15B slot-in: seed the Lead Request form template (idempotent).
+    try:
+        await lead_requests._seed_lead_request_form()
+    except Exception as e:
+        logger.warning(f"lead-request form seed skipped: {e}")
     # Background auto-publish drip: check for due SEO articles every 10 minutes.
     scheduler.add_job(seo.run_due_publishes, "interval", minutes=10, id="seo_drip", replace_existing=True)
     # Auto-bill accrued chemical invoices once a month (checked daily; bills months that have ended).

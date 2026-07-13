@@ -76,6 +76,10 @@ import {
 import PortalSignPage from "@/pages/portal/PortalSign";
 import { CsatDashboard, CsatDetail, PublicCsat } from "@/pages/csat/CsatPages";
 import { RealtimeProvider } from "@/realtime/NotificationSocket";
+import AnalyticsPage from "@/pages/analytics/AnalyticsPage";
+import OnboardingPage, { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
+import LeadRequestPage from "@/pages/leads/LeadRequestPage";
+import PublicLeadRequestPage from "@/pages/public/PublicLeadRequest";
 
 function AdminOnly({ children }) {
   const { user, loading } = useAuth();
@@ -100,6 +104,8 @@ export default function App() {
           {/* Phase 15A public magic-link routes (no auth) */}
           <Route path="/csat/:token" element={<PublicCsat />} />
           <Route path="/portal/sign/:token" element={<PortalSignPage />} />
+          {/* Phase 15B slot-in — Lead Request public form (no auth) */}
+          <Route path="/lead-request/:token" element={<PublicLeadRequestPage />} />
 
           {/* Everything else lives inside the protected shell (side nav + top bar + bottom tabs). */}
           <Route path="/" element={<AppLayout />}>
@@ -182,6 +188,14 @@ export default function App() {
             {/* Phase 15A — CSAT admin */}
             <Route path="csat" element={<AdminOnly><CsatDashboard /></AdminOnly>} />
             <Route path="csat/detail/:sid" element={<AdminOnly><CsatDetail /></AdminOnly>} />
+
+            {/* Phase 15B — Analytics + Onboarding */}
+            <Route path="analytics" element={<AdminOnly><AnalyticsPage /></AdminOnly>} />
+            <Route path="onboarding" element={<AdminOnly><OnboardingPage /></AdminOnly>} />
+            <Route path="settings/onboarding" element={<AdminOnly><OnboardingPage /></AdminOnly>} />
+
+            {/* Phase 15B slot-in — Lead Request Distributor */}
+            <Route path="leads/request" element={<AdminOnly><LeadRequestPage /></AdminOnly>} />
             <Route path="access-settings" element={<AdminOnly><AccessSettings /></AdminOnly>} />
             <Route path="access-history" element={<AdminOnly><AccessHistory /></AdminOnly>} />
             <Route path="settings/ringcentral" element={<AdminOnly><RingCentralSettings /></AdminOnly>} />

@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate, Navigate, useLocation } from "react-route
 import { useAuth } from "@/auth";
 import { usePermissions } from "@/hooks/usePermissions";
 import AdminSidebar from "@/layouts/AdminSidebar";
+import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
 import { brandGradientCss, colors, font } from "@/theme";
 import {
   LayoutDashboard,
@@ -282,6 +283,8 @@ function AppLayout() {
       data-testid="app-shell"
     >
       {/* Impersonation banner (Phase 4 partial fold-in) */}
+      {/* Phase 15B — first-login onboarding modal (admin only, sessionStorage-guarded) */}
+      {(effectiveRole || user.role) === "admin" ? <OnboardingLoginModal /> : null}
       {impersonating ? (
         <div
           className="fixed top-0 left-0 right-0 z-50 px-4 py-2 flex items-center justify-between text-sm font-semibold"

@@ -28,8 +28,9 @@ export const ADMIN_NAV_V2 = [
   ]},
 
   { key: "sales", label: "Sales", icon: DoorOpen, entries: [
-    { to: "/leads",      label: "Leads",      icon: UserPlus,    feature: "customers" },
-    { to: "/customers",  label: "Customers",  icon: Users,       feature: "customers" },
+    { to: "/leads",         label: "Leads",         icon: UserPlus,    feature: "customers" },
+    { to: "/leads/request", label: "Lead Requests", icon: Send,        feature: "customers" },
+    { to: "/customers",     label: "Customers",     icon: Users,       feature: "customers" },
     { to: "/quotes",     label: "Quotes",     icon: FileText,    feature: "quotes" },
     { to: "/estimator",  label: "Estimator",  icon: Calculator,  feature: "estimator" },
     { to: "/d2d",        label: "D2D",        icon: DoorOpen,    feature: "d2d",    hard_rule: "admin_only" },
@@ -61,6 +62,7 @@ export const ADMIN_NAV_V2 = [
 
   { key: "reports", label: "Reports", icon: BarChart3, entries: [
     { to: "/reports",                     label: "Reports Hub",       icon: BarChart3, feature: "reports" },
+    { to: "/analytics",                   label: "Analytics",         icon: TrendingUp, feature: "reports" },
     { to: "/reports/business-summary",    label: "Business Summary",  icon: PieChart,  feature: "reports" },
     { to: "/reports/forecast",            label: "Forecast",          icon: TrendingUp,feature: "reports" },
     { to: "/reports/revenue-slices",      label: "Revenue Slices",    icon: PieChart,  feature: "reports" },
@@ -109,6 +111,7 @@ export const ADMIN_NAV_V2 = [
   ]},
 
   { key: "settings", label: "Settings", icon: Settings, entries: [
+    { to: "/settings/onboarding",    label: "Onboarding",      icon: Sparkles,    feature: "settings" },
     { to: "/access-settings",        label: "Access Settings", icon: Shield,      feature: "permissions" },
     { to: "/access-history",         label: "Access History",  icon: ScrollText,  feature: "audit_logs" },
     { to: "/settings/integrations",  label: "Integrations",    icon: Compass,     feature: "settings" },

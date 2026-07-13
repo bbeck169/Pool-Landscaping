@@ -3,6 +3,7 @@ import base64
 import json
 import os
 from pathlib import Path
+from typing import Optional
 
 import requests
 from dotenv import dotenv_values
@@ -12,6 +13,21 @@ BASE = (_FE_ENV.get("REACT_APP_BACKEND_URL") or os.environ.get("REACT_APP_BACKEN
 assert BASE, "REACT_APP_BACKEND_URL must be set"
 
 ADMIN = ("admin@aquaterra.com", "password123")
+
+
+def _pick_unsurveyed_real_job(headers) -> Optional[str]:
+    """Return the id of an un-surveyed job whose customer exists in the DB.
+    Skips fake seed jobs whose customer_id is placeholder.
+    """
+    jobs = requests.get(f"{BASE}/api/jobs", headers=headers, timeout=15).json()
+    existing = requests.get(f"{BASE}/api/csat", headers=headers, timeout=15).json()
+    surveyed = {s.get("job_id") for s in existing.get("surveys", [])}
+    customers = {c["id"] for c in requests.get(f"{BASE}/api/customers", headers=headers, timeout=15).json()}
+    for j in jobs:
+        cid = j.get("customer_id")
+        if cid and cid in customers and j["id"] not in surveyed:
+            return j["id"]
+    return None
 
 
 def _login(email, password):
@@ -54,13 +70,10 @@ class TestCSAT:
 
     def test_public_get_and_submit_detractor_creates_task(self):
         h = _login(*ADMIN)
-        # Pick a job that hasn't been surveyed yet. Fall back to any job if all have surveys.
-        jobs = requests.get(f"{BASE}/api/jobs", headers=h, timeout=15).json()
-        existing = requests.get(f"{BASE}/api/csat", headers=h, timeout=15).json()
-        surveyed_jids = {s.get("job_id") for s in existing.get("surveys", [])}
-        candidates = [j for j in jobs if j["id"] not in surveyed_jids]
-        assert candidates, "No un-surveyed jobs available for test"
-        jid = candidates[0]["id"]
+        jid = _pick_unsurveyed_real_job(h)
+        if not jid:
+            import pytest
+            pytest.skip("No un-surveyed jobs with a real customer available")
         r = requests.post(f"{BASE}/api/csat/send/{jid}", headers=h, json={"channel": "email"}, timeout=15).json()
         token = r["survey"]["token"]
 
@@ -84,12 +97,10 @@ class TestCSAT:
 
     def test_double_submit_rejected(self):
         h = _login(*ADMIN)
-        jobs = requests.get(f"{BASE}/api/jobs", headers=h, timeout=15).json()
-        existing = requests.get(f"{BASE}/api/csat", headers=h, timeout=15).json()
-        surveyed_jids = {s.get("job_id") for s in existing.get("surveys", [])}
-        candidates = [j for j in jobs if j["id"] not in surveyed_jids]
-        assert candidates, "No un-surveyed jobs available for test"
-        jid = candidates[0]["id"]
+        jid = _pick_unsurveyed_real_job(h)
+        if not jid:
+            import pytest
+            pytest.skip("No un-surveyed jobs with a real customer available")
         token = requests.post(f"{BASE}/api/csat/send/{jid}", headers=h, json={}, timeout=15).json()["survey"]["token"]
         requests.post(f"{BASE}/api/public/csat/{token}/submit",
                       json={"nps_score": 10, "csat_score": 5}, timeout=15)
