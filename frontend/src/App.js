@@ -80,11 +80,12 @@ import AnalyticsPage from "@/pages/analytics/AnalyticsPage";
 import OnboardingPage, { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
 import LeadRequestPage from "@/pages/leads/LeadRequestPage";
 import PublicLeadRequestPage from "@/pages/public/PublicLeadRequest";
+import TenantsAdminPage, { TenantBrandSettings } from "@/pages/tenants/TenantsAdminPage";
 
 function AdminOnly({ children }) {
   const { user, loading } = useAuth();
   if (loading) return null;
-  if (!user || user.role !== "admin") {
+  if (!user || (user.role !== "admin" && user.role !== "super_admin")) {
     return <Navigate to="/" replace />;
   }
   return children;
@@ -196,6 +197,10 @@ export default function App() {
 
             {/* Phase 15B slot-in — Lead Request Distributor */}
             <Route path="leads/request" element={<AdminOnly><LeadRequestPage /></AdminOnly>} />
+
+            {/* Phase 15D Stage 2 — Tenants (super-admin) + own brand editor (admin) */}
+            <Route path="tenants" element={<AdminOnly><TenantsAdminPage /></AdminOnly>} />
+            <Route path="settings/tenant" element={<AdminOnly><TenantBrandSettings /></AdminOnly>} />
             <Route path="access-settings" element={<AdminOnly><AccessSettings /></AdminOnly>} />
             <Route path="access-history" element={<AdminOnly><AccessHistory /></AdminOnly>} />
             <Route path="settings/ringcentral" element={<AdminOnly><RingCentralSettings /></AdminOnly>} />

@@ -92,6 +92,11 @@ async def startup():
         await tenants.run_tenant_backfill()
     except Exception as e:
         logger.warning(f"tenant backfill skipped: {e}")
+    # Phase 15D Stage 2: seed super_admin account.
+    try:
+        await tenants._seed_super_admin()
+    except Exception as e:
+        logger.warning(f"super_admin seed skipped: {e}")
     # Background auto-publish drip: check for due SEO articles every 10 minutes.
     scheduler.add_job(seo.run_due_publishes, "interval", minutes=10, id="seo_drip", replace_existing=True)
     # Auto-bill accrued chemical invoices once a month (checked daily; bills months that have ended).

@@ -1,21 +1,25 @@
-"""Phase 15D — Multi-tenant foundation (Stage 1: substrate only).
+"""Phase 15D — Multi-tenant foundation (Stage 1 + Stage 2).
 
-Stage 1 goals:
-1. `tenants` collection with a default `aquaterra` tenant seeded on startup.
-2. Backfill `tenant_id` on every existing document across every collection.
-3. `TenantContext` dependency resolving from JWT `tenant_id` claim → `X-Tenant-Slug`
-   header → default tenant.
-4. `GET /api/tenants/current` returning the resolved tenant.
+Stage 1 (shipped): substrate — tenants collection, tenant_id backfill,
+`get_current_tenant` dependency, `GET /api/tenants/current`.
 
-**Stage 1 does NOT refactor any query to filter by tenant.** Existing endpoints
-continue working exactly as they do today. Stage 2-5 will layer isolation on top.
+Stage 2 (this file, additive):
+- `super_admin` role (seat above `admin`)
+- Idempotent seed of `super@aquaterra.com` on startup
+- Super-admin-only CRUD: `GET/POST /api/tenants`, `GET/PATCH /api/tenants/{id}`
+- Admin-only brand editor: `PATCH /api/tenants/mine/brand`
+- Optional `tenant_memberships` collection for multi-tenant users
+
+**Stage 2 does NOT refactor entity queries.** Isolation ships in Stage 3.
 """
-from typing import Optional
+import os
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from config import db, logger
-from utils import now_iso, new_id, get_current_user
+from utils import now_iso, new_id, get_current_user, hash_password
 
 router = APIRouter()
 
@@ -129,3 +133,150 @@ async def current_tenant(request: Request,
         "plan_tier": tenant.get("plan_tier"),
         "resolved_via": resolved_via,
     }
+
+
+# ─── Stage 2 — Super-admin role ────────────────────────────────────────────
+def require_super_admin(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Super-admin access required")
+    return user
+
+
+async def _seed_super_admin() -> None:
+    """Idempotent seed of super@aquaterra.com. Uses the default tenant so
+    the account can also manage aquaterra directly."""
+    existing = await db.users.find_one({"email": "super@aquaterra.com"}, {"_id": 0})
+    if existing:
+        # Upgrade role if seed was created before super_admin existed.
+        if existing.get("role") != "super_admin":
+            await db.users.update_one({"id": existing["id"]}, {"$set": {"role": "super_admin"}})
+        return
+    tenant = await _ensure_default_tenant()
+    await db.users.insert_one({
+        "id": new_id(),
+        "name": "Super Admin",
+        "email": "super@aquaterra.com",
+        "password_hash": hash_password("password123"),
+        "role": "super_admin",
+        "tenant_id": tenant["id"],
+        "created_at": now_iso(),
+    })
+
+
+# ─── Stage 2 — Tenant CRUD (super-admin only) ──────────────────────────────
+class TenantCreate(BaseModel):
+    name: str
+    slug: str = Field(..., pattern=r"^[a-z0-9][a-z0-9-]{1,40}$")
+    brand_primary: Optional[str] = "#0284C7"
+    brand_secondary: Optional[str] = "#16A34A"
+    custom_domain: Optional[str] = None
+    plan_tier: Optional[str] = "free"
+
+
+class TenantUpdate(BaseModel):
+    name: Optional[str] = None
+    brand_primary: Optional[str] = None
+    brand_secondary: Optional[str] = None
+    custom_domain: Optional[str] = None
+    plan_tier: Optional[str] = None
+    active: Optional[bool] = None
+
+
+@router.get("/tenants")
+async def list_tenants(admin: dict = Depends(require_super_admin)):
+    rows = await db.tenants.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return rows
+
+
+@router.post("/tenants")
+async def create_tenant(body: TenantCreate, admin: dict = Depends(require_super_admin)):
+    if await db.tenants.find_one({"slug": body.slug}, {"_id": 0}):
+        raise HTTPException(400, "slug already taken")
+    doc = {
+        "id": new_id(),
+        "name": body.name,
+        "slug": body.slug,
+        "brand_primary": body.brand_primary,
+        "brand_secondary": body.brand_secondary,
+        "custom_domain": body.custom_domain,
+        "plan_tier": body.plan_tier,
+        "active": True,
+        "created_at": now_iso(),
+    }
+    await db.tenants.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.get("/tenants/{tid}")
+async def get_tenant(tid: str, admin: dict = Depends(require_super_admin)):
+    t = await db.tenants.find_one({"id": tid}, {"_id": 0})
+    if not t:
+        raise HTTPException(404, "Tenant not found")
+    return t
+
+
+@router.patch("/tenants/{tid}")
+async def patch_tenant(tid: str, body: TenantUpdate,
+                        admin: dict = Depends(require_super_admin)):
+    upd = {k: v for k, v in body.dict().items() if v is not None}
+    if not upd:
+        raise HTTPException(400, "Nothing to update")
+    if "custom_domain" in upd and upd["custom_domain"]:
+        # Ensure custom_domain uniqueness.
+        clash = await db.tenants.find_one(
+            {"custom_domain": upd["custom_domain"], "id": {"$ne": tid}}, {"_id": 0}
+        )
+        if clash:
+            raise HTTPException(400, "custom_domain already assigned to another tenant")
+    upd["updated_at"] = now_iso()
+    r = await db.tenants.update_one({"id": tid}, {"$set": upd})
+    if not r.matched_count:
+        raise HTTPException(404, "Tenant not found")
+    return await db.tenants.find_one({"id": tid}, {"_id": 0})
+
+
+# ─── Stage 2 — Admin-only brand editor (their own tenant) ─────────────────
+class BrandUpdate(BaseModel):
+    brand_primary: Optional[str] = None
+    brand_secondary: Optional[str] = None
+    logo_url: Optional[str] = None
+
+
+@router.patch("/tenants/mine/brand")
+async def patch_own_brand(body: BrandUpdate, user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin access required")
+    tid = user.get("tenant_id")
+    if not tid:
+        raise HTTPException(400, "User has no tenant")
+    upd = {k: v for k, v in body.dict().items() if v is not None}
+    if not upd:
+        raise HTTPException(400, "Nothing to update")
+    upd["updated_at"] = now_iso()
+    await db.tenants.update_one({"id": tid}, {"$set": upd})
+    return await db.tenants.find_one({"id": tid}, {"_id": 0})
+
+
+# ─── Stage 2 — Membership listing (multi-tenant users) ────────────────────
+@router.get("/tenants/memberships/mine")
+async def my_memberships(user: dict = Depends(get_current_user)):
+    """Return every tenant this user can act on. Includes their primary
+    tenant (from user.tenant_id) plus any rows in `tenant_memberships`.
+    Super admins see all active tenants."""
+    if user.get("role") == "super_admin":
+        rows = await db.tenants.find({"active": True}, {"_id": 0}).to_list(500)
+        return [{"tenant_id": r["id"], "slug": r["slug"], "name": r["name"], "role": "super_admin"} for r in rows]
+    out = []
+    if user.get("tenant_id"):
+        t = await db.tenants.find_one({"id": user["tenant_id"]}, {"_id": 0})
+        if t:
+            out.append({"tenant_id": t["id"], "slug": t["slug"], "name": t["name"], "role": user.get("role")})
+    memberships = await db.tenant_memberships.find({"user_id": user["id"]}, {"_id": 0}).to_list(50)
+    for m in memberships:
+        if any(o["tenant_id"] == m.get("tenant_id") for o in out):
+            continue
+        t = await db.tenants.find_one({"id": m["tenant_id"]}, {"_id": 0})
+        if t:
+            out.append({"tenant_id": t["id"], "slug": t["slug"], "name": t["name"], "role": m.get("role")})
+    return out

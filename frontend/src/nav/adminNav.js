@@ -112,6 +112,8 @@ export const ADMIN_NAV_V2 = [
 
   { key: "settings", label: "Settings", icon: Settings, entries: [
     { to: "/settings/onboarding",    label: "Onboarding",      icon: Sparkles,    feature: "settings" },
+    { to: "/settings/tenant",        label: "Tenant Brand",    icon: Sparkles,    feature: "settings" },
+    { to: "/tenants",                label: "Tenants (super)", icon: Shield,      feature: "settings", hard_rule: "super_admin_only" },
     { to: "/access-settings",        label: "Access Settings", icon: Shield,      feature: "permissions" },
     { to: "/access-history",         label: "Access History",  icon: ScrollText,  feature: "audit_logs" },
     { to: "/settings/integrations",  label: "Integrations",    icon: Compass,     feature: "settings" },

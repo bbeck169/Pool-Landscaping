@@ -78,6 +78,7 @@ export default function AdminSidebar() {
     ...g,
     entries: g.entries.filter((e) => {
       if (e.hard_rule === "admin_only" && effectiveRole !== "admin") return false;
+      if (e.hard_rule === "super_admin_only" && effectiveRole !== "super_admin") return false;
       return can(e.feature || "dashboard", "read") || effectiveRole === "admin";
     }),
   })).filter((g) => g.entries.length > 0), [can, effectiveRole]);
