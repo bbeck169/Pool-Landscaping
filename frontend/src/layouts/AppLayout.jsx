@@ -2,6 +2,7 @@ import React from "react";
 import { NavLink, Outlet, useNavigate, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/auth";
 import { usePermissions } from "@/hooks/usePermissions";
+import AdminSidebar from "@/layouts/AdminSidebar";
 import { brandGradientCss, colors, font } from "@/theme";
 import {
   LayoutDashboard,
@@ -29,6 +30,8 @@ import {
   Sparkles,
   DoorOpen,
   Wand2,
+  Menu as MenuIcon,
+  X as XIcon,
 } from "lucide-react";
 
 const ADMIN_NAV = [
@@ -230,6 +233,10 @@ function ProtectedShell() {
 function AppLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
+  // Close drawer on route change
+  React.useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
 
   // Detect impersonation: the JWT carries an `act` claim (RFC 8693) when admin
   // acts as a customer. We decode the payload client-side (no verification —
@@ -343,8 +350,10 @@ function AppLayout() {
           </div>
         </div>
 
-        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-          {nav.map((item, idx) => {
+        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto" data-testid="admin-sidebar-scroll">
+          {(effectiveRole || user.role) === "admin" ? (
+            <AdminSidebar />
+          ) : nav.map((item, idx) => {
             if (item.group) {
               return <NavGroup key={`group-${item.group}`} item={item} />;
             }
@@ -420,6 +429,21 @@ function AppLayout() {
           }}
         >
           <div className="flex items-center gap-2">
+            {(effectiveRole || user.role) === "admin" && (
+              <button
+                onClick={() => setDrawerOpen(true)}
+                className="w-9 h-9 rounded-lg flex items-center justify-center"
+                style={{
+                  backgroundColor: colors.surfaceSecondary,
+                  border: `1px solid ${colors.border}`,
+                  color: colors.onSurface,
+                }}
+                data-testid="mobile-nav-open"
+                aria-label="Open navigation"
+              >
+                <MenuIcon size={18} />
+              </button>
+            )}
             <div
               className="w-8 h-8 rounded-lg flex items-center justify-center text-white"
               style={{ background: brandGradientCss }}
@@ -451,6 +475,60 @@ function AppLayout() {
             Sign out
           </button>
         </header>
+
+        {/* Mobile slide-out drawer (admin only) */}
+        {(effectiveRole || user.role) === "admin" && drawerOpen && (
+          <div
+            className="fixed inset-0 z-50 md:hidden"
+            data-testid="mobile-nav-drawer"
+          >
+            <div
+              className="absolute inset-0"
+              style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
+              onClick={() => setDrawerOpen(false)}
+              data-testid="mobile-nav-backdrop"
+            />
+            <aside
+              className="absolute left-0 top-0 bottom-0 w-72 flex flex-col shadow-2xl"
+              style={{
+                backgroundColor: colors.surface,
+                borderRight: `1px solid ${colors.border}`,
+              }}
+            >
+              <div
+                className="px-4 py-3 flex items-center justify-between"
+                style={{ borderBottom: `1px solid ${colors.border}` }}
+              >
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-white"
+                    style={{ background: brandGradientCss }}
+                  >
+                    <FolderClock size={16} />
+                  </div>
+                  <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>
+                    AquaTerra
+                  </div>
+                </div>
+                <button
+                  onClick={() => setDrawerOpen(false)}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center"
+                  style={{
+                    backgroundColor: colors.surfaceSecondary,
+                    color: colors.onSurface,
+                  }}
+                  data-testid="mobile-nav-close"
+                  aria-label="Close navigation"
+                >
+                  <XIcon size={16} />
+                </button>
+              </div>
+              <div className="flex-1 py-3 overflow-y-auto" data-testid="mobile-nav-scroll">
+                <AdminSidebar />
+              </div>
+            </aside>
+          </div>
+        )}
 
         <Outlet />
 
