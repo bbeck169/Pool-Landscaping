@@ -108,6 +108,18 @@ async def send_my_message(body: MessageIn, user: dict = Depends(get_current_user
     await db.messages.insert_one(doc)
     doc.pop("_id", None)
 
+    # Phase 15C — realtime push to all admins so inbox refreshes without polling.
+    try:
+        from routers.realtime import bus
+        admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(100)
+        for a in admins:
+            await bus.broadcast(a["id"], {
+                "type": "new_message",
+                "payload": {"customer_id": cid, "text": (body.text or "")[:200], "sender": "customer"},
+            })
+    except Exception:
+        pass
+
     # AI employee (Marina) auto-handles the message unless an admin paused AI for this customer.
     ai_doc = None
     cust = await db.customers.find_one({"id": cid}, {"_id": 0}) or {}

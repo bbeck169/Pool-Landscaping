@@ -9,7 +9,7 @@ from routers import (
     operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google as google_router, phase11,
     realtime, csat, signatures,
     analytics, onboarding,
-    lead_requests,
+    lead_requests, mobile_push,
 )
 
 app = FastAPI(
@@ -24,7 +24,7 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google_router, phase11,
                realtime, csat, signatures,
                analytics, onboarding,
-               lead_requests]:
+               lead_requests, mobile_push]:
     api_router.include_router(module.router)
 
 

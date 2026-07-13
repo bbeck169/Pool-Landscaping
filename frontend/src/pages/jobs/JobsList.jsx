@@ -23,6 +23,7 @@ import {
 } from "@/components/ui-kit";
 import { useAuth } from "@/auth";
 import { useAttendance } from "@/hooks/useAttendance";
+import WeatherWidget5Day from "@/pages/aitools/WeatherWidget5Day";
 
 const STATUS_ORDER = ["scheduled", "active", "pending", "requested", "completed", "reopened", "cancelled"];
 
@@ -95,6 +96,11 @@ export default function JobsList() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="jobs-page">
+      {isTech && (
+        <div className="mb-4" data-testid="tech-weather-strip">
+          <WeatherWidget5Day role="technician" />
+        </div>
+      )}
       <PageHeader
         title="Jobs"
         subtitle={

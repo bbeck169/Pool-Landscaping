@@ -164,6 +164,13 @@ async def _push_notification(notif: dict) -> None:
         })
     except Exception as e:
         logger.warning(f"realtime push failed: {e}")
+    # Phase 15C — also fire an Expo mobile push if the user has registered devices.
+    try:
+        from routers.mobile_push import send_push_to_user
+        await send_push_to_user(user_id, notif.get("title", ""), notif.get("body", ""),
+                                data={"notification_id": notif.get("id"), "job_id": notif.get("job_id")})
+    except Exception:
+        pass
 
 
 

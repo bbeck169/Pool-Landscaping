@@ -490,6 +490,28 @@ async def update_job(jid: str, body: JobUpdate, user: dict = Depends(get_current
     if update:
         await db.jobs.update_one({"id": jid}, {"$set": update})
 
+    # Phase 15C — realtime broadcast of status changes to assigned tech + admins.
+    if update.get("status") and update["status"] != job.get("status"):
+        try:
+            from routers.realtime import bus
+            payload = {
+                "job_id": jid,
+                "old_status": job.get("status"),
+                "new_status": update["status"],
+                "customer_name": job.get("customer_name"),
+                "title": job.get("title"),
+            }
+            tid = update.get("technician_id") or job.get("technician_id")
+            if tid:
+                tech_user = await db.users.find_one({"technician_id": tid}, {"_id": 0})
+                if tech_user:
+                    await bus.broadcast(tech_user["id"], {"type": "job_status_change", "payload": payload})
+            admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(100)
+            for a in admins:
+                await bus.broadcast(a["id"], {"type": "job_status_change", "payload": payload})
+        except Exception as e:
+            logger.warning(f"realtime job_status_change broadcast failed: {e}")
+
     # Notify the customer of meaningful changes (in-app + optional SMS)
     cid = job.get("customer_id")
     if cid:

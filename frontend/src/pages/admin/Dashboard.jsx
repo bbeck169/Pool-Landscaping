@@ -27,6 +27,7 @@ import {
 import { api } from "@/api";
 import { brandGradientCss, colors, money } from "@/theme";
 import { WeatherWidget } from "@/pages/aitools/AiToolsPages";
+import WeatherWidget5Day from "@/pages/aitools/WeatherWidget5Day";
 import { useAuth } from "@/auth";
 
 function Skeleton({ className = "", style = {} }) {
@@ -331,7 +332,7 @@ export default function AdminDashboard() {
 
       {user?.role === "admin" && (
         <div className="mb-6">
-          <WeatherWidget />
+          <WeatherWidget5Day role="admin" />
         </div>
       )}
 

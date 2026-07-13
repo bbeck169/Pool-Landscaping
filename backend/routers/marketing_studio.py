@@ -417,7 +417,17 @@ async def approve_item(item_id: str, admin: dict = Depends(require_admin)):
     r = await db.marketing_queue.update_one({"id": item_id}, {"$set": {"status": "approved", "approved_at": now_iso()}})
     if not r.matched_count:
         raise HTTPException(404, "Item not found")
-    return await db.marketing_queue.find_one({"id": item_id}, {"_id": 0})
+    fresh = await db.marketing_queue.find_one({"id": item_id}, {"_id": 0})
+    # Phase 15C — realtime push
+    try:
+        from routers.realtime import bus
+        admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(100)
+        for a in admins:
+            await bus.broadcast(a["id"], {"type": "approval_change",
+                "payload": {"item_id": item_id, "status": "approved"}})
+    except Exception:
+        pass
+    return fresh
 
 
 @router.post("/marketing/queue/{item_id}/reject")
@@ -428,7 +438,16 @@ async def reject_item(item_id: str, body: RejectIn, admin: dict = Depends(requir
     )
     if not r.matched_count:
         raise HTTPException(404, "Item not found")
-    return await db.marketing_queue.find_one({"id": item_id}, {"_id": 0})
+    fresh = await db.marketing_queue.find_one({"id": item_id}, {"_id": 0})
+    try:
+        from routers.realtime import bus
+        admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(100)
+        for a in admins:
+            await bus.broadcast(a["id"], {"type": "approval_change",
+                "payload": {"item_id": item_id, "status": "rejected", "reason": body.reason or ""}})
+    except Exception:
+        pass
+    return fresh
 
 
 @router.post("/marketing/queue/bulk-approve")
