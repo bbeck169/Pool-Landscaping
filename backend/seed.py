@@ -241,3 +241,43 @@ async def seed_extras():
             {"id": new_id(), "keyword": "pool repair Arizona", "grid": g(7), "created_at": now_iso()},
         ]
         await db.rank_grid.insert_many(rg)
+
+    # Phase 4 fix: seed a pending estimate for Jennifer so the portal
+    # approve/decline flow has something real to act on. Idempotent — only
+    # seeds when Jennifer has zero draft/sent quotes.
+    jennifer = await db.customers.find_one({"email": "jennifer@example.com"}, {"_id": 0}) \
+        or await db.customers.find_one({"name": {"$regex": "^Jennifer Carson", "$options": "i"}}, {"_id": 0})
+    if jennifer:
+        existing = await db.quotes.count_documents({
+            "customer_id": jennifer["id"],
+            "doc_type": "quote",
+            "status": {"$in": ["draft", "sent"]},
+        })
+        if existing == 0:
+            from datetime import datetime, timedelta, timezone
+            valid = (datetime.now(timezone.utc) + timedelta(days=30)).date().isoformat()
+            line_items = [
+                {"description": "6\" tile replacement (linear ft)", "quantity": 42, "unit_price": 18.5, "category": "Pool"},
+                {"description": "Grout & waterline sealant", "quantity": 1, "unit_price": 145, "category": "Pool"},
+                {"description": "Labor · half day", "quantity": 4, "unit_price": 65, "category": "Pool"},
+            ]
+            subtotal = round(sum(li["quantity"] * li["unit_price"] for li in line_items), 2)
+            tax_rate = 8.0
+            tax = round(subtotal * tax_rate / 100, 2)
+            await db.quotes.insert_one({
+                "id": new_id(),
+                "customer_id": jennifer["id"],
+                "customer_name": jennifer.get("name", "Jennifer Carson"),
+                "title": "Pool tile replacement estimate",
+                "doc_type": "quote",
+                "status": "sent",
+                "decision": "pending",
+                "line_items": line_items,
+                "subtotal": subtotal,
+                "tax_rate": tax_rate,
+                "tax": tax,
+                "total": round(subtotal + tax, 2),
+                "valid_until": valid,
+                "notes": "Waterline tile is chipped along 42 linear feet. Includes grout + sealant. Quote valid 30 days.",
+                "created_at": now_iso(),
+            })

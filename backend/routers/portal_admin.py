@@ -167,6 +167,28 @@ async def portal_invite(cid: str, user: dict = Depends(require_admin)):
     """Provisions the customer's portal login with an auto-generated password.
     Emails it via Resend if configured; otherwise returns the password in-body
     so the admin can send it manually."""
+    return await _do_portal_provision(cid, explicit_password=None)
+
+
+class PortalResetBody(BaseModel):
+    password: Optional[str] = None
+
+
+@router.post("/customers/{cid}/portal-reset", response_model=PortalInviteResp)
+async def portal_reset(
+    cid: str,
+    body: Optional[PortalResetBody] = None,
+    user: dict = Depends(require_admin),
+):
+    """Rotates the customer's portal password.
+    If `password` is provided in body, sets it explicitly (validated against
+    the standard password policy). Otherwise generates a random one."""
+    explicit = (body.password if body else None) or None
+    return await _do_portal_provision(cid, explicit_password=explicit)
+
+
+async def _do_portal_provision(cid: str, explicit_password: Optional[str]) -> PortalInviteResp:
+    from models import validate_password_strength
     cust = await db.customers.find_one({"id": cid}, {"_id": 0})
     if not cust:
         raise HTTPException(404, "Customer not found")
@@ -174,22 +196,28 @@ async def portal_invite(cid: str, user: dict = Depends(require_admin)):
     if not email:
         raise HTTPException(400, "Customer has no email on file")
 
-    password = _random_password()
+    if explicit_password:
+        try:
+            validate_password_strength(explicit_password)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        password = explicit_password
+    else:
+        password = _random_password()
+
     await _upsert_customer_user(cid, email, password)
     login_url = f"{APP_PUBLIC_URL or ''}/login"
-    emailed = await _try_send_reset_email(email, cust.get("name", ""), password, login_url)
+    # Only try to email a fresh copy when we generated the password ourselves —
+    # if admin set a specific one they likely already have a share channel.
+    emailed = False
+    if not explicit_password:
+        emailed = await _try_send_reset_email(email, cust.get("name", ""), password, login_url)
     return PortalInviteResp(
         email=email,
         login_url=login_url,
-        password=None if emailed else password,
+        password=password if not emailed else None,
         emailed=emailed,
     )
-
-
-@router.post("/customers/{cid}/portal-reset", response_model=PortalInviteResp)
-async def portal_reset(cid: str, user: dict = Depends(require_admin)):
-    """Same as invite but explicitly a reset — rotates the password."""
-    return await portal_invite(cid, user)
 
 
 @router.post("/customers/{cid}/portal-revoke")
