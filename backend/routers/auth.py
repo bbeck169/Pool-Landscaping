@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
+from routers.tenants import _ensure_default_tenant
 from models import *
 
 router = APIRouter()
@@ -82,14 +83,27 @@ async def signup(request: Request, body: SignupRequest):
     ip = _client_ip(request)
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="An account with this email already exists")
+    # Resolve tenant from X-Tenant-Slug header if provided; else default tenant.
+    tenant = None
+    slug = request.headers.get("x-tenant-slug")
+    if slug:
+        tenant = await db.tenants.find_one({"slug": slug, "active": True}, {"_id": 0})
+    if not tenant:
+        host = (request.headers.get("host") or "").split(":")[0].lower()
+        if host:
+            tenant = await db.tenants.find_one({"custom_domain": host, "active": True}, {"_id": 0})
+    if not tenant:
+        tenant = await _ensure_default_tenant()
+    tid = tenant["id"]
     # Create a customer record for the new self-signed-up client
     customer = {
-        "id": new_id(), "name": body.name, "email": email, "phone": body.phone or "",
-        "address": body.address or "", "notes": "", "created_at": now_iso(),
+        "id": new_id(), "tenant_id": tid, "name": body.name, "email": email,
+        "phone": body.phone or "", "address": body.address or "", "notes": "",
+        "created_at": now_iso(),
     }
     await db.customers.insert_one(customer)
     user = {
-        "id": new_id(), "name": body.name, "email": email,
+        "id": new_id(), "tenant_id": tid, "name": body.name, "email": email,
         "password_hash": hash_password(body.password), "role": "customer",
         "avatar": "", "technician_id": None, "customer_id": customer["id"],
         "failed_login_attempts": 0, "lockout_until": None,
