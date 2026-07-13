@@ -1,0 +1,18 @@
+{
+  "summary": "Independently verified two D2D backend fixes: (1) GET /api/d2d/sold-leads now enforces admin-only (403 for technician, 200 for admin with count+properties for ZIP 85383); (2) POST /api/d2d/knocks correctly maps outcome->disposition via Pydantic model_validator (outcome:'interested' -> disposition:'interested'), preserves backward compat (disposition:'sold' passes through), and preserves default 'not_home' when neither field is present. Full authorization audit passed: /d2d/report admin-only (tech 403, admin 200 with totals+reps); /d2d/knocks GET+POST, /d2d/leaderboard, /d2d/open-leads all 200 for technician; /d2d/skip/{id} POST+DELETE 200 for technician. Created knocks were cleaned up.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_d2d_auth_alias.py",
+    "/app/test_reports/pytest/d2d_auth_alias.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": ["/app/backend/tests/test_d2d_auth_alias.py (new)"],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "admin@aquaterra.com / password123, mike@aquaterra.com / password123",
+  "seed_data_creation": "3 admin knocks (alias-test-1/2/3) + 1 tech knock (tech-knock) created and all cleaned up via DELETE /api/d2d/knocks/{id}. Zillow pin 95101886 was skipped then unskipped (net-neutral).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Both fixes verified. sold-leads called exactly once as admin and once as tech (per request to avoid hammering paid Zillow API). test_d2d_auth_alias.py can be re-run as-is for regression coverage."
+}

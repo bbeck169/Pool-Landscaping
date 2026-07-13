@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr, field_validator
+from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
 from typing import List, Optional
 import re
 
@@ -514,6 +514,16 @@ class D2DKnockIn(BaseModel):
     zpid: Optional[str] = None  # Zillow property id when logged from a sold-lead pin
     sold_price: Optional[float] = None
 
+    model_config = {"populate_by_name": True, "extra": "allow"}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _outcome_alias(cls, data):
+        # Accept `outcome` as an alias for `disposition` (mobile clients).
+        if isinstance(data, dict) and "outcome" in data and not data.get("disposition"):
+            data = {**data, "disposition": data["outcome"]}
+        return data
+
 
 class D2DKnockUpdate(BaseModel):
     lat: Optional[float] = None
@@ -523,6 +533,15 @@ class D2DKnockUpdate(BaseModel):
     phone: Optional[str] = None
     disposition: Optional[str] = None
     notes: Optional[str] = None
+
+    model_config = {"populate_by_name": True, "extra": "allow"}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _outcome_alias(cls, data):
+        if isinstance(data, dict) and "outcome" in data and not data.get("disposition"):
+            data = {**data, "disposition": data["outcome"]}
+        return data
 
 
 class MaintLogIn(BaseModel):

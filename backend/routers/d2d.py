@@ -1,3 +1,18 @@
+"""D2D Sales router.
+
+Authorization gating (post-2026-07-13 audit):
+- **admin-only** (`require_admin`):
+    - GET  /api/d2d/sold-leads      — paid Zillow feed
+    - GET  /api/d2d/report          — team analytics
+- **canvasser** (admin OR technician, via `_require_sales`):
+    - POST /api/d2d/knocks          — log a knock (accepts `outcome` or `disposition`)
+    - GET  /api/d2d/knocks          — list (techs scoped to their own knocks)
+    - PUT/DELETE /api/d2d/knocks/{kid}
+    - POST /api/d2d/knocks/{kid}/convert  — promote to customer
+    - GET  /api/d2d/open-leads      — CRM leads pipeline mirror
+    - GET  /api/d2d/leaderboard     — team gamification (safe to expose)
+    - POST/DELETE /api/d2d/skip/{zpid}  — personal skip list (per-user scoped)
+"""
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 import time
@@ -116,8 +131,14 @@ def _norm_sold(p: dict) -> dict:
 @router.get("/d2d/sold-leads")
 async def sold_leads(zip: str, days: int = 30, page: int = 1,
                      min_price: Optional[float] = None, max_price: Optional[float] = None,
-                     min_beds: Optional[int] = None, user: dict = Depends(get_current_user)):
-    """Recently-sold homes in a ZIP (Zillow via OpenWeb Ninja) as canvassing targets."""
+                     min_beds: Optional[int] = None, admin: dict = Depends(require_admin)):
+    """Recently-sold homes in a ZIP (Zillow via OpenWeb Ninja) as canvassing targets.
+
+    Authorization: **admin-only**. This calls the paid OpenWeb Ninja API — techs
+    should not be able to consume paid data. If you want a canvasser view, use
+    `/d2d/open-leads` (leads pipeline mirror) which is safe for the whole team.
+    """
+    user = admin
     _require_sales(user)
     zip = (zip or "").strip()
     if not re.fullmatch(r"\d{5}", zip):
