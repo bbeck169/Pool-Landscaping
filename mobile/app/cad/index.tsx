@@ -5,11 +5,20 @@ import { Image } from "expo-image";
 import { useRouter, useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
+import { AdminOnly } from "@/src/components/AdminOnly";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { PrimaryButton, EmptyState, Loading } from "@/src/components/ui";
 
 export default function CadList() {
+  return (
+    <AdminOnly>
+      <CadListScreen />
+    </AdminOnly>
+  );
+}
+
+function CadListScreen() {
   const router = useRouter();
   const [designs, setDesigns] = useState<any[] | null>(null);
 

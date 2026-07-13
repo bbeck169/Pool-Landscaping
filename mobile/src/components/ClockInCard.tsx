@@ -12,7 +12,7 @@ const fmtTime = (iso?: string | null) => {
   try { return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); } catch { return ""; }
 };
 
-export default function ClockInCard() {
+export default function ClockInCard({ onChange }: { onChange?: () => void } = {}) {
   const [status, setStatus] = useState<any>({ clocked_in: false, clocked_out: false, timesheet: null });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -60,6 +60,7 @@ export default function ClockInCard() {
       if (!coords) return; // blocked without GPS
       await api.post(`/attendance/${kind}`, coords);
       await load();
+      onChange?.();
     } catch (e: any) {
       Alert.alert("Error", e.message || "Could not update your timesheet.");
     } finally {

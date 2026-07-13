@@ -18,6 +18,7 @@ import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system/legacy";
 import { useFocusEffect } from "expo-router";
 
+import { AdminOnly } from "@/src/components/AdminOnly";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
@@ -53,6 +54,14 @@ type AttachMode = "none" | "customer" | "lead";
 const asUri = (b64: string) => (b64.startsWith("data:") ? b64 : `data:image/png;base64,${b64}`);
 
 export default function LandscapeAI() {
+  return (
+    <AdminOnly>
+      <LandscapeAIScreen />
+    </AdminOnly>
+  );
+}
+
+function LandscapeAIScreen() {
   const [inputB64, setInputB64] = useState<string | null>(null); // data uri
   const [style, setStyle] = useState<string>("");
   const [elements, setElements] = useState<string[]>([]);

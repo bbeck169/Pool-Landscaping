@@ -17,6 +17,7 @@ import * as Location from "expo-location";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { AdminOnly } from "@/src/components/AdminOnly";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
 import MeasureMap from "@/src/components/measure/MeasureMap";
@@ -62,6 +63,14 @@ function polygonPerimeterM(pts: Coord[]) {
 const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: n < 100 ? 1 : 0 });
 
 export default function Measure() {
+  return (
+    <AdminOnly>
+      <MeasureScreen />
+    </AdminOnly>
+  );
+}
+
+function MeasureScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const mapRef = useRef<any>(null);

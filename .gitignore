@@ -84,3 +84,4 @@ android-sdk/
 # Expo
 mobile/.expo/
 mobile/.metro-cache/
+frontend/node_modules/.cache/default-development/5.pack

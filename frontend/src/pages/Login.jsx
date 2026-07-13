@@ -9,17 +9,25 @@ const DEMO_ACCOUNTS = [
   { role: "Customer", email: "customer@aquaterra.com" },
 ];
 
+// Role -> home landing (mirrors the Expo app's tab targeting).
+function landingFor(role) {
+  if (role === "admin") return "/";
+  if (role === "technician") return "/jobs";
+  if (role === "customer") return "/portal/home";
+  return "/";
+}
+
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login } = useAuth();
+  const { login, me } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  const from = location.state?.from || "/";
+  const forced = location.state?.from;
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -27,7 +35,10 @@ export default function Login() {
     setSubmitting(true);
     try {
       await login(email.trim().toLowerCase(), password);
-      navigate(from, { replace: true });
+      // Refresh /auth/me to normalize the user object; then land based on role.
+      const user = await me().catch(() => null);
+      const role = user?.role;
+      navigate(forced && role === "admin" ? forced : landingFor(role), { replace: true });
     } catch (err) {
       setError(err.message || "Login failed");
     } finally {

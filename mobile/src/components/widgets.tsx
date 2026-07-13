@@ -88,16 +88,22 @@ export function IconButton({ icon, onPress, testID }: { icon: any; onPress: () =
   );
 }
 
-export function JobCard({ job, testID }: { job: any; testID?: string }) {
+export function JobCard({ job, testID, locked }: { job: any; testID?: string; locked?: boolean }) {
   const router = useRouter();
   const { user } = useAuth();
   const hidePrice = user?.role === "technician";
   return (
     <Pressable
       testID={testID}
-      onPress={() => router.push(`/job/${job.id}`)}
-      style={({ pressed }) => [styles.jobCard, pressed && { opacity: 0.9 }]}
+      onPress={() => (locked ? undefined : router.push(`/job/${job.id}`))}
+      disabled={locked}
+      style={({ pressed }) => [styles.jobCard, pressed && !locked && { opacity: 0.9 }, locked && styles.jobCardLocked]}
     >
+      {locked ? (
+        <View style={styles.lockBadge}>
+          <Ionicons name="lock-closed" size={12} color={colors.muted} />
+        </View>
+      ) : null}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
         <View style={{ flex: 1, paddingRight: spacing.sm }}>
           <Text style={styles.jobTitle} numberOfLines={1}>
@@ -246,6 +252,21 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     marginBottom: spacing.md,
     gap: spacing.sm,
+  },
+  jobCardLocked: { opacity: 0.55 },
+  lockBadge: {
+    position: "absolute",
+    top: spacing.sm,
+    right: spacing.sm,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1,
   },
   jobTitle: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
   jobCustomer: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurfaceSecondary, marginTop: 2 },

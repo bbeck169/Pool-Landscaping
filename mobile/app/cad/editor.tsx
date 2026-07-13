@@ -19,6 +19,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
+import { AdminOnly } from "@/src/components/AdminOnly";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
@@ -405,6 +406,14 @@ function DraggableEl({
 }
 
 export default function CadEditor() {
+  return (
+    <AdminOnly>
+      <CadEditorScreen />
+    </AdminOnly>
+  );
+}
+
+function CadEditorScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const router = useRouter();
   const shotRef = useRef<ViewShot>(null);

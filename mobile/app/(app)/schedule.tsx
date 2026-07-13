@@ -6,6 +6,7 @@ import * as Location from "expo-location";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useAttendance } from "@/src/hooks/useAttendance";
 import { useOnline, cacheJobs, getCachedJobs, flushPendingPhotos, flushPendingMutations } from "@/src/offline";
 import { colors, spacing, font, fontSize, radius } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
@@ -17,6 +18,9 @@ const DEFAULT_LOC = { lat: 33.7405, lng: -112.3373 }; // service-area fallback
 
 export default function Schedule() {
   const { user } = useAuth();
+  const attendance = useAttendance();
+  const isTech = user?.role === "technician";
+  const locked = isTech && !attendance.clockedIn;
   const online = useOnline();
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,7 +89,15 @@ export default function Schedule() {
     <View style={styles.root}>
       <Header title="Schedule" subtitle="Grouped by date" />
       {usingCache ? <OfflineBanner /> : null}
-      {user?.role === "technician" ? <ClockInCard /> : null}
+      {isTech ? <ClockInCard onChange={attendance.refresh} /> : null}
+      {locked ? (
+        <View style={styles.lockBanner} testID="schedule-lock-banner">
+          <Ionicons name="lock-closed-outline" size={16} color="#92400E" />
+          <Text style={styles.lockBannerText}>
+            Clock in to open jobs. Your schedule is read-only until then.
+          </Text>
+        </View>
+      ) : null}
       {loading ? (
         <Loading testID="schedule-loading" />
       ) : sections.length === 0 ? (
@@ -117,7 +129,7 @@ export default function Schedule() {
               </View>
             );
           }}
-          renderItem={({ item }) => <JobCard job={item} testID={`schedule-job-${item.id}`} />}
+          renderItem={({ item }) => <JobCard job={item} locked={locked} testID={`schedule-job-${item.id}`} />}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
         />
       )}
@@ -136,6 +148,20 @@ function formatDate(d: string) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  lockBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  lockBannerText: { flex: 1, fontFamily: font.semibold, fontSize: fontSize.sm, color: "#92400E" },
   dateHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.md, marginBottom: spacing.sm },
   dateHeader: {
     fontFamily: font.bold,

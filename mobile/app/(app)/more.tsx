@@ -15,15 +15,13 @@ export default function More() {
   const isTech = user?.role === "technician";
   const roleLabel = user?.role === "admin" ? "Administrator" : user?.role === "customer" ? "Customer" : "Technician";
 
+  // Landscape AI, CAD Design Studio, Measure (Satellite), and Virtual Bid are admin-only
+  // and intentionally omitted from the technician nav.
   const techLinks = [
     { icon: "magnet-outline", label: "New Lead", onPress: () => router.push("/leads/new") },
     { icon: "footsteps-outline", label: "Door-to-Door", onPress: () => router.push("/d2d") },
     { icon: "trophy-outline", label: "D2D Leaderboard", onPress: () => router.push("/d2d/leaderboard") },
     { icon: "id-card-outline", label: "Business Card", onPress: () => router.push("/card") },
-    { icon: "leaf-outline", label: "Landscape AI", onPress: () => router.push("/landscape") },
-    { icon: "grid-outline", label: "Design Studio (CAD)", onPress: () => router.push("/cad") },
-    { icon: "earth-outline", label: "Measure (Satellite)", onPress: () => router.push("/measure") },
-    { icon: "home-outline", label: "Virtual Bid", onPress: () => router.push("/virtual-bid") },
     { icon: "build-outline", label: "Equipment Repair", onPress: () => router.push("/equipment") },
   ];
 

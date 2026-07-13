@@ -9,6 +9,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useAttendance } from "@/src/hooks/useAttendance";
 import { useOnline, queuePhoto, pendingForJob, flushPendingPhotos, getCachedJobs, cacheJob, getCachedJob, queueMutation, flushPendingMutations } from "@/src/offline";
 import { colors, spacing, money, IMAGES } from "@/src/theme";
 import { Loading, StatusChip, PrimaryButton, Sheet } from "@/src/components/ui";
@@ -24,6 +25,7 @@ export default function JobDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
   const router = useRouter();
+  const attendance = useAttendance();
   const insets = useSafeAreaInsets();
   const [job, setJob] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -37,6 +39,15 @@ export default function JobDetail() {
   const [onWaySent, setOnWaySent] = useState(false);
   const [pendingPhotos, setPendingPhotos] = useState<any[]>([]);
   const online = useOnline();
+
+  // Belt-and-suspenders: technicians must be clocked in to view job details.
+  // The schedule already locks the row, but a tech typing/deep-linking to /job/<id>
+  // hits this guard instead of the field-report screen.
+  React.useEffect(() => {
+    if (user?.role === "technician" && !attendance.loading && !attendance.clockedIn) {
+      router.replace("/(app)/schedule");
+    }
+  }, [user?.role, attendance.loading, attendance.clockedIn, router]);
 
   const load = useCallback(async () => {
     try {

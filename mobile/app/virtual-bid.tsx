@@ -17,6 +17,7 @@ import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 
 import { api } from "@/src/api";
+import { AdminOnly } from "@/src/components/AdminOnly";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
@@ -25,6 +26,14 @@ const W = Dimensions.get("window").width;
 const num = (n: any) => (n === null || n === undefined || n === "" ? "—" : Number(n).toLocaleString());
 
 export default function VirtualBid() {
+  return (
+    <AdminOnly>
+      <VirtualBidScreen />
+    </AdminOnly>
+  );
+}
+
+function VirtualBidScreen() {
   const router = useRouter();
   const [address, setAddress] = useState("");
   const [loading, setLoading] = useState(false);
