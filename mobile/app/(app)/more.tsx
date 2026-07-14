@@ -11,8 +11,13 @@ import { Header } from "@/src/components/widgets";
 export default function More() {
   const { user, logout } = useAuth();
   const router = useRouter();
-  const isAdmin = user?.role === "admin";
-  const isTech = user?.role === "technician";
+  const role = (user?.role as string) || "";
+  const isAdmin = role === "admin";
+  const isSuperAdmin = role === "super_admin";
+  const isTech = role === "technician";
+  const isMarketing = role === "marketing";
+  const showAdminSection = isAdmin || isSuperAdmin || isMarketing;
+  const showSeoSection = isAdmin || isSuperAdmin;
   const roleLabel = user?.role === "admin" ? "Administrator" : user?.role === "customer" ? "Customer" : "Technician";
 
   // Landscape AI, CAD Design Studio, Measure (Satellite), and Virtual Bid are admin-only
@@ -26,6 +31,18 @@ export default function More() {
     { icon: "location-outline", label: "Auto Clock-In", onPress: () => router.push("/(app)/settings/auto-clockin" as any) },
     { icon: "clipboard-outline", label: "My Onboarding", onPress: () => router.push("/(app)/onboarding/mine" as any) },
     { icon: "cube-outline", label: "My Equipment", onPress: () => router.push("/(app)/assets" as any) },
+  ];
+
+  const seoLinks = [
+    { icon: "search-outline", label: "Site Auditor", onPress: () => router.push("/admin/seo/audits" as any) },
+    { icon: "analytics-outline", label: "Content Scorer", onPress: () => router.push("/admin/seo/content-scorer" as any) },
+    { icon: "grid-outline", label: "Rank Heatmap", onPress: () => router.push("/admin/seo/rank-heatmap" as any) },
+    { icon: "git-network-outline", label: "Topical Map", onPress: () => router.push("/admin/seo/topical-map" as any) },
+    { icon: "sparkles-outline", label: "LLM Visibility", onPress: () => router.push("/admin/seo/llm-visibility" as any) },
+    { icon: "chatbubbles-outline", label: "Atlas Agent", onPress: () => router.push("/admin/seo/atlas" as any) },
+    { icon: "construct-outline", label: "OTTO Auto-Fix", onPress: () => router.push("/admin/seo/otto" as any) },
+    { icon: "document-text-outline", label: "Website Studio", onPress: () => router.push("/admin/seo/studio" as any) },
+    { icon: "reader-outline", label: "White-Label Reports", onPress: () => router.push("/admin/seo/reports" as any) },
   ];
 
   const adminLinks = [
@@ -101,6 +118,21 @@ export default function More() {
             <Text style={styles.sectionTitle}>Management</Text>
             {adminLinks.map((l) => (
               <Pressable key={l.label} style={styles.link} onPress={l.onPress} testID={`more-link-${l.label.split(" ")[0].toLowerCase()}`}>
+                <View style={styles.linkIcon}>
+                  <Ionicons name={l.icon as any} size={20} color={colors.brand} />
+                </View>
+                <Text style={styles.linkLabel}>{l.label}</Text>
+                <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
+        {showSeoSection ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>SEO</Text>
+            {seoLinks.map((l) => (
+              <Pressable key={l.label} style={styles.link} onPress={l.onPress} testID={`more-seo-${l.label.split(" ")[0].toLowerCase()}`}>
                 <View style={styles.linkIcon}>
                   <Ionicons name={l.icon as any} size={20} color={colors.brand} />
                 </View>

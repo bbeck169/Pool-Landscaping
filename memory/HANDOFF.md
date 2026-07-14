@@ -1542,3 +1542,82 @@ GET  /api/seo/reports/{id}/download?format=pdf →
 - Studio drag-and-drop section reordering — sections are add/remove today;
   reorder is a nice-to-have.
 - Reports scheduling (recurring monthly report auto-generation) — deferred.
+
+---
+
+## Phase 17 · Mobile SEO Suite parity (Feb 2026)
+
+All 9 SEO web pages ported to Expo screens under `/app/mobile/app/admin/seo/`.
+Admin-only, tenant-scoped, consumes the same `/api/seo/*` endpoints as web.
+Zero new backend endpoints.
+
+### New mobile files (11 route files + 1 shared helper)
+- `admin/seo/_shared.tsx` — `AdminOnlyGate`, `ScoreChip`, `SeverityDot`,
+  `BrandPill`, `CenterLoader`, `DesktopHint` (underscore-prefixed →
+  expo-router ignores it as a route).
+- `admin/seo/audits.tsx` — 17A list with score chip per audit + FAB.
+- `admin/seo/audits/[id].tsx` — 17A detail: 4-score ring row + tabbed
+  Issues / Pages / OTTO Fixes. Auto-refresh while queued/running.
+- `admin/seo/content-scorer.tsx` — 17A HTML/URL toggle, keyword input,
+  8-bar breakdown + AI recommendations.
+- `admin/seo/rank-heatmap.tsx` — 17A form + **table view** (lat/lng/rank/
+  top URL). Includes “Best viewed on desktop” hint. Polls until scan done.
+- `admin/seo/topical-map.tsx` — 17B seed form + **collapsible pillar → cluster
+  → supporting tree** with intent color badges. Desktop hint for graph.
+- `admin/seo/llm-visibility.tsx` — 17B tabs: **Queries** (CRUD + Run scan)
+  and **Dashboard** (mention %, avg position, engine pills w/ “not
+  configured” labels, top competitors).
+- `admin/seo/atlas.tsx` — 17B chat: conversation history drawer, tool-call
+  cards inline (name, args, status pill, JSON result), keyboard-avoiding
+  composer, streaming feel via optimistic user message + spinner.
+- `admin/seo/otto.tsx` — 17C cross-audit fix list. Status + patch-type
+  chip filters. Tap → detail.
+- `admin/seo/otto/[id].tsx` — 17C stacked before/after diff (red / green
+  cards), monospace patch snippet block, **Copy patch** (expo-clipboard),
+  **Mark applied**, **Dismiss**.
+- `admin/seo/studio.tsx` — 17C read-only page list. Tap → WebView
+  live-preview (published) or draft summary. Mobile actions: **AI Auto-Fill**
+  and **Publish** are 1-tap. Section editing intentionally desktop-only.
+- `admin/seo/reports.tsx` — 17C list + New Report modal (title, brand
+  name, audit picker, LLM toggle) + **Share PDF** via
+  `FileSystem.downloadAsync` (legacy API) → `Sharing.shareAsync`.
+
+### Nav update — `(app)/more.tsx`
+- Added `showSeoSection = admin || super_admin` guard.
+- New **SEO** section between Management and Tools with the 9 entries
+  (icons + labels + testIDs `more-seo-*`).
+- Fixed a latent bug: `showAdminSection` was previously referenced but
+  never defined (admin Management section was invisible). Now defined as
+  `admin || super_admin || marketing`.
+
+### Style consistency
+- Reused `colors`, `spacing`, `radius`, `font`, `fontSize` from
+  `@/src/theme` and the `Header` widget — no new visual system.
+- All list rows / chips / cards match the existing `(app)/*` conventions
+  (surface + border + rounded, brand-tint pills).
+
+### Mobile-specific tradeoffs (explicitly labeled in-app)
+- **Rank Heatmap** map overlay → table view + `DesktopHint`.
+- **Topical Map** graph → collapsible list + `DesktopHint`.
+- **Studio** section editor → read-only page list; only Publish + AI
+  Auto-Fill work on mobile; editing routed to desktop.
+- Rest (Audits, Content Scorer, LLM Visibility, Atlas, OTTO, Reports) are
+  full-feature parity.
+
+### 403 gating
+Every screen wraps its body in `<AdminOnlyGate>` — non-admin users see a
+lock icon + “Admins only” empty state. Non-admin roles never see the
+mobile SEO nav section either.
+
+### TypeScript
+`tsc --noEmit` on the 12 new/edited files: **0 errors**.
+(22 pre-existing errors elsewhere in the codebase, none touched by this pass.)
+
+### Verification
+- Container Expo web preview unavailable in this environment — no
+  screenshots captured. Code confirmed TS-clean; every route file exports
+  a default component; `_shared.tsx` is underscore-prefixed so expo-router
+  skips it as a route.
+- Human-required check: run `yarn --cwd /app/mobile web` (or scan the
+  Expo Go QR from `expo start`) and walk the 9 SEO screens with
+  `admin@aquaterra.com / password123`.
