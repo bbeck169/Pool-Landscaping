@@ -14,9 +14,12 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Take before and after photos of service jobs",
         "NSPhotoLibraryUsageDescription": "Attach job photos from your library",
-        "NSLocationWhenInUseUsageDescription": "Auto-start job timers when you arrive on-site",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Auto-start job timers on arrival, even in background",
-        "UIBackgroundModes": ["location"]
+        "NSLocationWhenInUseUsageDescription": "Enables auto clock-in when you arrive at a scheduled job's site.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Enables auto clock-in when you arrive at a scheduled job's site.",
+        "UIBackgroundModes": [
+          "fetch",
+          "location"
+        ]
       }
     },
     "android": {
@@ -27,12 +30,14 @@
       "edgeToEdgeEnabled": true,
       "package": "com.emergent.poolappmobile.r03fw2",
       "permissions": [
-        "CAMERA",
-        "READ_MEDIA_IMAGES",
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
-        "FOREGROUND_SERVICE"
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "CAMERA",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "READ_MEDIA_IMAGES"
       ]
     },
     "web": {

@@ -364,6 +364,52 @@ async def submit_service_report(jid: str,
         )
     except Exception as e:
         logger.warning(f"submit-driven clock-out failed: {e}")
+
+    # Phase 20A.2 — auto-generate an invoice when the tenant setting allows,
+    # the job is billable, and it has a positive price. Reuses the referral-
+    # credit application path so 50%-off credits still land correctly.
+    invoice_id = None
+    try:
+        settings = (tenant.get("settings") or {})
+        auto_invoice = settings.get("auto_invoice_on_submit", True)
+        billable = job.get("billable") is not False
+        price = float(job.get("price") or job.get("total_price") or 0)
+        skip_types = {"warranty callback", "estimate", "warranty",
+                       "quote", "service call — warranty"}
+        service_type = (job.get("service_type") or "").strip().lower()
+        if (auto_invoice and billable and price > 0
+                and service_type not in skip_types):
+            inv_id = new_id()
+            line_items = [{
+                "description": job.get("title") or job.get("service_type") or "Service",
+                "quantity": 1, "unit_price": price,
+            }]
+            subtotal = round(price, 2)
+            invoice = {
+                "id": inv_id,
+                "tenant_id": tenant["id"],
+                "customer_id": job.get("customer_id"),
+                "customer_name": job.get("customer_name"),
+                "job_id": jid,
+                "doc_type": "invoice",
+                "title": f"Service — {job.get('title') or service_type or 'Job'}",
+                "line_items": line_items,
+                "tax_rate": 0, "subtotal": subtotal, "tax": 0.0, "total": subtotal,
+                "amount_paid": 0.0, "payment_status": "unpaid", "status": "draft",
+                "auto_created_from_report": True,
+                "created_at": now_iso(),
+            }
+            # Apply any pending referral credits — same helper Phase 19 uses.
+            try:
+                from routers.referrals import apply_referral_credits_to_invoice
+                invoice = await apply_referral_credits_to_invoice(invoice)
+            except Exception as e:
+                logger.warning(f"invoice credit apply skipped: {e}")
+            await db.quotes.insert_one(invoice)
+            invoice_id = inv_id
+    except Exception as e:
+        logger.warning(f"auto-invoice failed: {e}")
+
     out = await db.service_reports.find_one(
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id}, {"_id": 0}
     )
@@ -374,6 +420,8 @@ async def submit_service_report(jid: str,
             "mileage_miles": clock_out_summary.get("mileage_miles"),
             "origin": clock_out_summary.get("origin"),
         }
+    if invoice_id:
+        out["invoice_id"] = invoice_id
     return out
 
 

@@ -16,6 +16,7 @@ from routers import (
     service_reports,
     referrals,
     public_social,
+    route_optimization,
 )
 
 app = FastAPI(
@@ -35,7 +36,8 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                business_os,
                schedule, social,
                service_reports,
-               referrals]:
+               referrals,
+               route_optimization]:
     api_router.include_router(module.router)
 
 
