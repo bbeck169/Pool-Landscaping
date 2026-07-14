@@ -981,3 +981,128 @@ POST /api/jobs/a21195…/service-report/submit
   expire, confirm the report screen loads.
 - Confirm geofence radius (`tenants.settings.geofence_radius_m`) is set to a
   practical value per tenant (default 100 m).
+
+---
+
+## Phase 20A · Batch Dispatch — Route Opt + Auto-Invoicing + Background GPS (Feb 2026)
+
+### Backend — 410 → 411 OpenAPI paths (+1 new; Route Opt was already registered)
+
+**Module 1 · Route Optimization** (`routers/route_optimization.py`)
+- `POST /api/schedule/optimize-route` `{date?, start_lat?, start_lng?, user_id?}` →
+  `{ ordered_job_ids, total_distance_m, total_duration_s, legs[], cached, algorithm }`
+- Google Distance-Matrix path with waypoint-order optimization when
+  `GOOGLE_MAPS_API_KEY` present. Falls back to nearest-neighbor Haversine
+  when Google unavailable / quota exceeded / <2 GPS-tagged jobs.
+- Cache collection `route_optimizations` keyed by
+  `(tenant_id, user_id, date, waypoints_hash)`. Hits return immediately with
+  `cached:true` and skip Google call.
+- Admins may pass `user_id` to plan another tech's day; techs can only plan
+  their own.
+- WS event `route_optimized` fired to the target user.
+
+**Module 2 · Auto-Invoicing on submit** (`routers/service_reports.py`)
+- `POST /api/jobs/{id}/service-report/submit` now:
+  1. Checks tenant `settings.auto_invoice_on_submit` (default `true`).
+  2. Skips if the job is non-billable OR has no positive priced line items.
+  3. Calls the existing `_create_invoice_for_job` helper (invoice pipeline
+     — no duplication of Invoice model).
+  4. Auto-applies pending `service_credits` for that customer via the
+     Phase 19 referral-credit path.
+  5. Returns `{ invoice_id: str | null, ... }` so tech UI can toast.
+- New admin-gated tenant setting endpoint:
+  - `GET  /api/settings/billing` → `{ auto_invoice_on_submit }`
+  - `PUT  /api/settings/billing` `{ auto_invoice_on_submit: bool }`
+- Web admin toggle at `/settings/billing` (Billing Rules in the sidebar).
+
+**Module 3 · Background GPS (native-build ready)**
+- `mobile/src/background/autoClockin.ts`:
+  - Task name `BACKGROUND_AUTOCLOCK_TASK`
+  - `Accuracy.Balanced`, `distanceInterval: 25 m`, `timeInterval: 60 s`
+  - Android foreground service: title `"AquaTerra is tracking arrival"`,
+    body `"Auto clock-in enabled"`, color `#0EA5E9`.
+- Wrapped in dynamic `await import()` guarded by try/catch. In Expo Go
+  (where `expo-task-manager` background APIs are unavailable) the helper
+  returns `{started:false, reason:"not_supported_in_expo_go"}` and the UI
+  shows an Alert explaining a native EAS build is required — no crash.
+- Opt-in toggle at `/app/mobile/app/(app)/settings/auto-clockin.tsx`
+  (default OFF, persists via AsyncStorage). Requires role=technician,
+  logged in, not currently clocked in — those short-circuits mirror the
+  server `auto-clock-in` endpoint.
+- `mobile/app.json`:
+  - iOS `infoPlist`: `NSLocationAlwaysAndWhenInUseUsageDescription`,
+    `NSLocationWhenInUseUsageDescription`, `UIBackgroundModes:["fetch","location"]`.
+  - Android `permissions`: `ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE`,
+    `FOREGROUND_SERVICE_LOCATION`.
+
+### Frontend web
+- `TodaySchedule.jsx`: "Optimize Route" primary button (brand gradient) +
+  "Reset order" secondary in the header when ≥2 jobs. On click, calls
+  `/schedule/optimize-route`, reorders cards via `orderedJobItems` memo,
+  shows a green savings chip: `Saved X.X mi · Y min`. Chip uses the
+  server total minus client-side Haversine baseline of the scheduled-start
+  order, matched to the server's 35 km/h assumption.
+- `ServiceReport.jsx`: submit response with `invoice_id` shows a green
+  fixed-position toast "Report submitted · Invoice #XXXXXXXX created"
+  for 2s before navigating back to `/schedule/today`.
+- `BillingSettings.jsx` (new) at `/settings/billing`; nav entry
+  "Billing Rules" added to admin sidebar under Invoices.
+
+### Mobile
+- `today.tsx`: same Optimize/Reset buttons + savings chip below the
+  view-mode toggle. Uses `Location.getCurrentPositionAsync` for start
+  coords when foreground permission granted.
+- `service-report/[id].tsx`: submit success with `invoice_id` shows an
+  `Alert.alert("Auto-invoiced", "Report submitted · Invoice #XXXXXXXX created")`
+  before returning to `/today`.
+- `more.tsx`: new "Auto Clock-In" entry in the tech mini-menu routing
+  to the toggle screen.
+
+### Tests
+- `tests/test_phase20a.py` — 8/8 green: route ordering (3-job), cache
+  hit (second call short-circuits the Google/nearest-neighbor loop),
+  tenant isolation, billable → invoice created, non-billable → skipped,
+  toggle off → skipped, credit auto-applied, admin can plan another tech.
+- `tests/test_service_report.py`, `tests/test_auto_clockin.py`,
+  `tests/test_service_templates.py`, `tests/test_schedule.py`,
+  `tests/test_social_phase18a1.py` all still green (58 tests total on
+  the touched surface).
+
+### Live proof (external ingress)
+```
+POST /api/schedule/optimize-route → 200
+{ordered_job_ids:[...], total_distance_m:0, total_duration_s:0,
+ legs:[], cached:false, algorithm:"trivial"}
+
+GET  /api/settings/billing (admin) → 200 { auto_invoice_on_submit:true }
+PUT  /api/settings/billing (admin) → 200 { auto_invoice_on_submit:true }
+```
+
+### Files touched
+- `backend/routers/service_reports.py` (billing settings endpoints)
+- `frontend/src/pages/schedule/TodaySchedule.jsx` (Optimize UI + reorder)
+- `frontend/src/pages/tech/ServiceReport.jsx` (invoice toast)
+- `frontend/src/pages/settings/BillingSettings.jsx` (new)
+- `frontend/src/App.js` (route)
+- `frontend/src/nav/adminNav.js` (Billing Rules link)
+- `mobile/app/(app)/today.tsx` (Optimize UI + reorder)
+- `mobile/app/(app)/service-report/[id].tsx` (invoice Alert)
+- `mobile/app/(app)/more.tsx` (Auto Clock-In link)
+
+### Native build required
+Actual background execution of `BACKGROUND_AUTOCLOCK_TASK` requires cutting
+an EAS native build (Expo Go's TaskManager stubs are effectively no-ops).
+Code path is Expo-Go-safe today; enable via `eas build --profile production`
+once the store submission cycle is ready.
+
+### Human verification suggested
+- Optimize a real 3+ job day with distinct GPS coords → confirm the chip
+  reports a non-zero savings and the card list visually reorders.
+- Submit a service report on a billable job with `auto_invoice_on_submit=true`
+  → confirm a draft invoice appears in `/invoices` with the job linked.
+- Toggle billing setting OFF, submit again → confirm no invoice created.
+- Apply a pending referral credit and submit → confirm the invoice's
+  balance reflects the credit.
+- EAS build sanity: flip the mobile Auto Clock-In toggle ON, background
+  the app, drive to a job site, confirm the foreground-service notification
+  appears and an entry is auto-created.

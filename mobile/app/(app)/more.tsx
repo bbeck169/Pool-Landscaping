@@ -23,6 +23,7 @@ export default function More() {
     { icon: "trophy-outline", label: "D2D Leaderboard", onPress: () => router.push("/d2d/leaderboard") },
     { icon: "id-card-outline", label: "Business Card", onPress: () => router.push("/card") },
     { icon: "build-outline", label: "Equipment Repair", onPress: () => router.push("/equipment") },
+    { icon: "location-outline", label: "Auto Clock-In", onPress: () => router.push("/(app)/settings/auto-clockin" as any) },
   ];
 
   const adminLinks = [

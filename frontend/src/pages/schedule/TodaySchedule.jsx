@@ -13,7 +13,7 @@ import WeatherWidget5Day from "@/pages/aitools/WeatherWidget5Day";
 import {
   Clock, MapPin, Navigation, Car, Coffee, PlayCircle, StopCircle,
   AlertTriangle, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare,
-  Key, StickyNote,
+  Key, StickyNote, Route as RouteIcon, RotateCcw,
 } from "lucide-react";
 
 const GOOGLE_LIBS = ["places"];
@@ -242,6 +242,77 @@ export default function TodaySchedule() {
     [data]
   );
 
+  // ── Optimize Route (Phase 20A.1) ──────────────────────────────────────
+  const [optimizedIds, setOptimizedIds] = useState(null);   // list of job_ids or null
+  const [optimizeMeta, setOptimizeMeta] = useState(null);   // { saved_m, saved_s, total_m, total_s }
+  const [optimizing, setOptimizing] = useState(false);
+
+  const haversineM = (aLat, aLng, bLat, bLng) => {
+    if (aLat == null || aLng == null || bLat == null || bLng == null) return 0;
+    const R = 6371000, toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(bLat - aLat), dLng = toRad(bLng - aLng);
+    const s = Math.sin(dLat / 2) ** 2 +
+              Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(s));
+  };
+
+  const originalDistanceM = useMemo(() => {
+    // Baseline = jobs in server order (scheduled_start), summed via Haversine.
+    let sum = 0;
+    for (let i = 1; i < jobItems.length; i++) {
+      const a = jobItems[i - 1], b = jobItems[i];
+      sum += haversineM(a.site_lat ?? a.lat, a.site_lng ?? a.lng,
+                        b.site_lat ?? b.lat, b.site_lng ?? b.lng);
+    }
+    return sum;
+  }, [jobItems]);
+
+  const handleOptimize = async () => {
+    if (optimizing) return;
+    setOptimizing(true);
+    try {
+      let coords = {};
+      try {
+        coords = await new Promise((res) => {
+          if (!navigator.geolocation) return res({});
+          navigator.geolocation.getCurrentPosition(
+            (p) => res({ start_lat: p.coords.latitude, start_lng: p.coords.longitude }),
+            () => res({}),
+            { enableHighAccuracy: true, timeout: 4000 },
+          );
+        });
+      } catch {}
+      const r = await api.post("/schedule/optimize-route", {
+        date: selectedDate, ...coords,
+      });
+      const ids = r?.ordered_job_ids || [];
+      if (ids.length === 0) {
+        alert("Nothing to optimize (need at least 2 jobs with GPS coordinates).");
+        return;
+      }
+      setOptimizedIds(ids);
+      const total_m = r.total_distance_m || 0;
+      const total_s = r.total_duration_s || 0;
+      const saved_m = Math.max(0, originalDistanceM - total_m);
+      // Rough conversion: same 35km/h assumption used server-side.
+      const saved_s = Math.round(saved_m / (35 * 1000 / 3600));
+      setOptimizeMeta({ total_m, total_s, saved_m, saved_s, cached: !!r.cached });
+    } catch (e) { alert(e.message); }
+    finally { setOptimizing(false); }
+  };
+
+  const resetOrder = () => { setOptimizedIds(null); setOptimizeMeta(null); };
+
+  const orderedJobItems = useMemo(() => {
+    if (!optimizedIds || optimizedIds.length === 0) return jobItems;
+    const byId = Object.fromEntries(jobItems.map((j) => [j.id, j]));
+    const out = optimizedIds.map((id) => byId[id]).filter(Boolean);
+    // Append any jobs missing from the optimized list (e.g., no GPS) at the end.
+    const seen = new Set(optimizedIds);
+    for (const j of jobItems) if (!seen.has(j.id)) out.push(j);
+    return out;
+  }, [jobItems, optimizedIds]);
+
   // View mode: "list" (default) | "timeline". Persist per-user.
   const [viewMode, setViewMode] = useState(() => {
     try { return localStorage.getItem("schedule_view_mode") || "list"; }
@@ -318,6 +389,24 @@ export default function TodaySchedule() {
                   data-testid="schedule-refresh">
             <RefreshCw size={14}/> Refresh
           </button>
+          {jobItems.length >= 2 && (
+            <button onClick={handleOptimize} disabled={optimizing}
+                    className="px-3 py-2 rounded-xl text-sm font-bold flex items-center gap-1 disabled:opacity-60 transition-all"
+                    style={{ background: brandGradientCss, color: "#fff",
+                             transform: optimizing ? "scale(0.98)" : "scale(1)" }}
+                    data-testid="schedule-optimize-route">
+              <RouteIcon size={14}/> {optimizing ? "Optimizing…" : "Optimize Route"}
+            </button>
+          )}
+          {optimizedIds && (
+            <button onClick={resetOrder}
+                    className="px-3 py-2 rounded-xl text-sm font-semibold flex items-center gap-1"
+                    style={{ backgroundColor: colors.surface, color: colors.onSurface,
+                             border: `1px solid ${colors.border}` }}
+                    data-testid="schedule-reset-order">
+              <RotateCcw size={14}/> Reset order
+            </button>
+          )}
         </div>
       </div>
 
@@ -362,6 +451,24 @@ export default function TodaySchedule() {
         )}
       </div>
 
+      {/* Optimized-route savings chip */}
+      {optimizeMeta && (
+        <div className="mb-4 rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap animate-in fade-in"
+             style={{ backgroundColor: "#ECFDF5", border: "1px solid #6EE7B7", color: "#065F46" }}
+             data-testid="schedule-optimize-chip">
+          <RouteIcon size={16}/>
+          <span className="text-sm font-bold">
+            Saved {(optimizeMeta.saved_m / 1609.344).toFixed(1)} mi ·{" "}
+            {Math.max(1, Math.round(optimizeMeta.saved_s / 60))} min
+          </span>
+          <span className="text-xs opacity-80">
+            New total: {(optimizeMeta.total_m / 1609.344).toFixed(1)} mi ·{" "}
+            {Math.max(1, Math.round(optimizeMeta.total_s / 60))} min
+            {optimizeMeta.cached ? " · cached" : ""}
+          </span>
+        </div>
+      )}
+
       {/* Phase 16C add-on — 5-day forecast on tech landing */}
       {isTech && (
         <div className="mb-4" data-testid="schedule-weather-widget">
@@ -401,7 +508,7 @@ export default function TodaySchedule() {
 
       {/* List view — default */}
       {data && data.items.length > 0 && viewMode === "list" && (
-        <ScheduleCardList jobs={jobItems} tz={data.tz}
+        <ScheduleCardList jobs={orderedJobItems} tz={data.tz}
                           isTech={isTech}
                           onOpen={(id) => navigate(`/jobs/${id}`)}
                           onClockIn={async (job) => {

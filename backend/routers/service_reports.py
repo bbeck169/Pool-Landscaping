@@ -517,6 +517,36 @@ async def upsert_service_template(
     return await _get_template(tenant["id"], body.kind)
 
 
+# ─── Billing settings (Phase 20A.2) ─────────────────────────────────────────
+class BillingSettingsIn(BaseModel):
+    auto_invoice_on_submit: bool
+
+
+@router.get("/settings/billing")
+async def get_billing_settings(
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    settings = (tenant.get("settings") or {})
+    return {
+        "auto_invoice_on_submit": bool(settings.get("auto_invoice_on_submit", True)),
+    }
+
+
+@router.put("/settings/billing")
+async def put_billing_settings(
+    body: BillingSettingsIn,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    await db.tenants.update_one(
+        {"id": tenant["id"]},
+        {"$set": {"settings.auto_invoice_on_submit": body.auto_invoice_on_submit,
+                  "updated_at": now_iso()}},
+    )
+    return {"auto_invoice_on_submit": body.auto_invoice_on_submit}
+
+
 @router.post("/settings/service-templates/{kind}/reset-defaults")
 async def reset_template_defaults(
     kind: str,

@@ -231,6 +231,72 @@ export default function TodayScheduleScreen() {
     [items]
   );
 
+  // ── Optimize Route (Phase 20A.1) ────────────────────────────────────
+  const [optimizedIds, setOptimizedIds] = useState<string[] | null>(null);
+  const [optimizeMeta, setOptimizeMeta] = useState<any>(null);
+  const [optimizing, setOptimizing] = useState(false);
+
+  const haversineM = (aLat: any, aLng: any, bLat: any, bLng: any): number => {
+    if (aLat == null || aLng == null || bLat == null || bLng == null) return 0;
+    const R = 6371000, toRad = (d: number) => (d * Math.PI) / 180;
+    const dLat = toRad(bLat - aLat), dLng = toRad(bLng - aLng);
+    const s = Math.sin(dLat / 2) ** 2 +
+              Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(s));
+  };
+
+  const originalDistanceM = useMemo(() => {
+    let sum = 0;
+    for (let i = 1; i < jobItems.length; i++) {
+      const a: any = jobItems[i - 1], b: any = jobItems[i];
+      sum += haversineM(a.site_lat ?? a.lat, a.site_lng ?? a.lng,
+                        b.site_lat ?? b.lat, b.site_lng ?? b.lng);
+    }
+    return sum;
+  }, [jobItems]);
+
+  const orderedJobItems = useMemo(() => {
+    if (!optimizedIds || optimizedIds.length === 0) return jobItems;
+    const byId: Record<string, any> = {};
+    jobItems.forEach((j: any) => { byId[j.id] = j; });
+    const out = optimizedIds.map((id) => byId[id]).filter(Boolean);
+    const seen = new Set(optimizedIds);
+    jobItems.forEach((j: any) => { if (!seen.has(j.id)) out.push(j); });
+    return out;
+  }, [jobItems, optimizedIds]);
+
+  const handleOptimize = async () => {
+    if (optimizing) return;
+    setOptimizing(true);
+    try {
+      let coords: any = {};
+      try {
+        const perm = await Location.requestForegroundPermissionsAsync();
+        if (perm.granted) {
+          const p = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          coords = { start_lat: p.coords.latitude, start_lng: p.coords.longitude };
+        }
+      } catch {}
+      const r: any = await api.post("/schedule/optimize-route",
+                                     { date: selectedDate, ...coords });
+      const ids: string[] = r?.ordered_job_ids || [];
+      if (ids.length === 0) {
+        Alert.alert("Optimize", "Need at least 2 jobs with GPS coordinates to optimize.");
+        return;
+      }
+      setOptimizedIds(ids);
+      const total_m: number = r.total_distance_m || 0;
+      const total_s: number = r.total_duration_s || 0;
+      const saved_m = Math.max(0, originalDistanceM - total_m);
+      const saved_s = Math.round(saved_m / (35 * 1000 / 3600));
+      setOptimizeMeta({ total_m, total_s, saved_m, saved_s, cached: !!r.cached });
+    } catch (e: any) {
+      Alert.alert("Optimize failed", e?.message || "");
+    } finally { setOptimizing(false); }
+  };
+
+  const resetOrder = () => { setOptimizedIds(null); setOptimizeMeta(null); };
+
   if (!data) {
     return (
       <View style={styles.root}>
@@ -309,6 +375,37 @@ export default function TodayScheduleScreen() {
           ))}
         </View>
 
+        {/* Optimize Route (Phase 20A.1) */}
+        {jobItems.length >= 2 && (
+          <View style={styles.optimizeRow}>
+            <Pressable onPress={handleOptimize} disabled={optimizing}
+                       style={[styles.optimizeBtn, optimizing && { opacity: 0.6 }]}
+                       testID="schedule-optimize-route">
+              <Ionicons name="git-network-outline" size={14} color="#fff"/>
+              <Text style={styles.optimizeText}>
+                {optimizing ? "Optimizing…" : "Optimize Route"}
+              </Text>
+            </Pressable>
+            {optimizedIds && (
+              <Pressable onPress={resetOrder} style={styles.resetBtn}
+                         testID="schedule-reset-order">
+                <Ionicons name="refresh" size={14} color={colors.onSurface}/>
+                <Text style={styles.resetText}>Reset</Text>
+              </Pressable>
+            )}
+          </View>
+        )}
+        {optimizeMeta && (
+          <View style={styles.savedChip} testID="schedule-optimize-chip">
+            <Ionicons name="checkmark-circle" size={14} color="#065F46"/>
+            <Text style={styles.savedText}>
+              Saved {(optimizeMeta.saved_m / 1609.344).toFixed(1)} mi ·{" "}
+              {Math.max(1, Math.round(optimizeMeta.saved_s / 60))} min
+              {optimizeMeta.cached ? " · cached" : ""}
+            </Text>
+          </View>
+        )}
+
         {/* Date picker — prev / date / next / Today */}
         <View style={styles.dateNav} testID="schedule-date-picker">
           <Pressable onPress={() => {
@@ -363,7 +460,7 @@ export default function TodayScheduleScreen() {
         )}
 
         {items.length > 0 && viewMode === "list" && (
-          <ScheduleCardList jobs={jobItems} tz={data.tz}
+          <ScheduleCardList jobs={orderedJobItems} tz={data.tz}
                             isTech={isTech}
                             onOpen={(id: string) => router.push(`/job/${id}` as any)}
                             onOpenReport={(id: string) => router.push(`/(app)/service-report/${id}` as any)}
@@ -558,6 +655,20 @@ const styles = StyleSheet.create({
   toggleLbl: { fontFamily: font.bold, fontSize: 11, color: colors.onSurfaceSecondary,
                 letterSpacing: 0.5 },
   toggleLblActive: { color: "#fff" },
+  optimizeRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: spacing.md, flexWrap: "wrap" },
+  optimizeBtn: { flexDirection: "row", alignItems: "center", gap: 6,
+                 backgroundColor: colors.brand, paddingHorizontal: spacing.md,
+                 paddingVertical: spacing.sm, borderRadius: radius.md },
+  optimizeText: { fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff" },
+  resetBtn: { flexDirection: "row", alignItems: "center", gap: 6,
+              backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+              paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md },
+  resetText: { fontFamily: font.semiBold, fontSize: fontSize.sm, color: colors.onSurface },
+  savedChip: { flexDirection: "row", alignItems: "center", gap: 6,
+               backgroundColor: "#ECFDF5", borderWidth: 1, borderColor: "#6EE7B7",
+               paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+               borderRadius: radius.md, marginBottom: spacing.md, alignSelf: "flex-start" },
+  savedText: { fontFamily: font.bold, fontSize: fontSize.sm, color: "#065F46" },
   cardList: { borderRadius: radius.lg, backgroundColor: colors.surface,
                borderWidth: 1, borderColor: colors.border, overflow: "hidden" },
   cardRow: { flexDirection: "row", padding: spacing.md, gap: spacing.sm },

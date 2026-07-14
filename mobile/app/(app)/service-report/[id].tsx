@@ -168,9 +168,16 @@ export default function ServiceReportScreen() {
               checklist_items: report.checklist_items,
               notes: report.notes,
             });
-            await api.post(`/jobs/${id}/service-report/submit`, {});
+            const submitted: any = await api.post(`/jobs/${id}/service-report/submit`, {});
             try { await api.post("/workforce/clock-out", {}); } catch {}
-            router.replace("/(app)/today");
+            if (submitted?.invoice_id) {
+              const iid = String(submitted.invoice_id).slice(0, 8);
+              Alert.alert("Auto-invoiced",
+                          `Report submitted · Invoice #${iid} created`,
+                          [{ text: "OK", onPress: () => router.replace("/(app)/today") }]);
+            } else {
+              router.replace("/(app)/today");
+            }
           } catch (e: any) {
             Alert.alert("Submit failed", e?.message || "");
           }

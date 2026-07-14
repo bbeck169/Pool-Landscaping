@@ -21,6 +21,7 @@ import InvoicesList from "@/pages/invoices/InvoicesList";
 import { MasterInvoicesList, MasterInvoiceNew, MasterInvoiceDetail } from "@/pages/invoices/MasterInvoice";
 import PaymentHandlesSettings from "@/pages/settings/PaymentHandles";
 import LateFeesSettings from "@/pages/settings/LateFees";
+import BillingSettings from "@/pages/settings/BillingSettings";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
@@ -177,6 +178,7 @@ export default function App() {
 
             <Route path="settings/payment-handles" element={<PaymentHandlesSettings />} />
             <Route path="settings/late-fees" element={<AdminOnly><LateFeesSettings /></AdminOnly>} />
+            <Route path="settings/billing" element={<AdminOnly><BillingSettings /></AdminOnly>} />
             <Route path="settings/terms" element={<AdminOnly><TermsSettings /></AdminOnly>} />
             <Route path="settings/legal" element={<AdminOnly><LegalDocsList /></AdminOnly>} />
             <Route path="settings/integrations" element={<AdminOnly><IntegrationsHub /></AdminOnly>} />

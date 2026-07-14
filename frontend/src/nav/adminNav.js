@@ -42,6 +42,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/payments",         label: "Payments",        icon: CreditCard,feature: "payments" },
     { to: "/auto-billing",     label: "Auto-billing",    icon: Repeat,    feature: "invoices" },
     { to: "/settings/late-fees", label: "Late Fees",     icon: DollarSign,feature: "invoices" },
+    { to: "/settings/billing",   label: "Billing Rules", icon: Cog,       feature: "invoices" },
     { to: "/master-invoices",  label: "Master Invoices", icon: Layers,    feature: "invoices" },
   ]},
 

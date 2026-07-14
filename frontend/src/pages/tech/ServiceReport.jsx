@@ -41,6 +41,7 @@ export default function ServiceReport() {
   const [dirty, setDirty] = useState(false);
   const [saveState, setSaveState] = useState("idle"); // idle | saving | saved | error
   const [submitting, setSubmitting] = useState(false);
+  const [postSubmitToast, setPostSubmitToast] = useState("");
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
 
@@ -179,7 +180,14 @@ export default function ServiceReport() {
         // clock-out failure isn't fatal for submission
         console.warn("clock-out skipped:", e.message);
       }
-      navigate("/schedule/today");
+      if (submitted?.invoice_id) {
+        const iid = String(submitted.invoice_id);
+        setPostSubmitToast(`Report submitted · Invoice #${iid.slice(0, 8)} created`);
+        // Give the user 2s to notice before we navigate away.
+        setTimeout(() => navigate("/schedule/today"), 2000);
+      } else {
+        navigate("/schedule/today");
+      }
     } catch (e) {
       alert(e.message);
     } finally { setSubmitting(false); }
@@ -190,6 +198,16 @@ export default function ServiceReport() {
 
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-6" data-testid="svc-report-page">
+      {postSubmitToast && (
+        <div className="fixed top-4 right-4 z-50 rounded-xl shadow-xl p-4 max-w-sm"
+             style={{ background: "#059669", color: "#fff" }}
+             data-testid="svc-report-invoice-toast">
+          <div className="text-xs uppercase font-bold tracking-wider opacity-80">
+            ✓ Auto-invoiced
+          </div>
+          <div className="text-sm font-bold mt-1">{postSubmitToast}</div>
+        </div>
+      )}
       <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm mb-3"
               style={{ color: colors.muted }} data-testid="svc-report-back">
         <ChevronLeft size={16}/> Back
