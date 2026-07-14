@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Query
 
 from config import db
 from utils import require_admin, now_iso
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -58,28 +59,30 @@ def _tier(v: float) -> str:
 
 # ─── Overview ───────────────────────────────────────────────────────────────
 @router.get("/analytics/overview")
-async def overview(user: dict = Depends(require_admin)):
+async def overview(user: dict = Depends(require_admin),
+                   tenant: dict = Depends(get_current_tenant)):
+    tid = tenant["id"]
     now = datetime.now(timezone.utc)
     this_month_key = now.strftime("%Y-%m")
     last_month = (now.replace(day=1) - timedelta(days=1))
     last_month_key = last_month.strftime("%Y-%m")
 
-    invoices = await db.quotes.find({"doc_type": "invoice", "payment_status": "paid"}, {"_id": 0}).to_list(3000)
+    invoices = await db.quotes.find(
+        {"tenant_id": tid, "doc_type": "invoice", "payment_status": "paid"}, {"_id": 0}
+    ).to_list(3000)
     this_mo = sum(float(i.get("total") or 0) for i in invoices if (i.get("paid_at") or "").startswith(this_month_key))
     last_mo = sum(float(i.get("total") or 0) for i in invoices if (i.get("paid_at") or "").startswith(last_month_key))
 
     pct = round(((this_mo - last_mo) / last_mo) * 100, 1) if last_mo else 0.0
 
-    # CAC placeholder: sum of d2d + marketing spend (if tracked) / new customers this month.
     d2d_spend = 0.0
-    campaigns = await db.marketing_campaigns.find({}, {"_id": 0}).to_list(500)
+    campaigns = await db.marketing_campaigns.find({"tenant_id": tid}, {"_id": 0}).to_list(500)
     marketing_spend = sum(float(c.get("spend") or 0) for c in campaigns)
     new_customers = await db.customers.count_documents(
-        {"created_at": {"$gte": now.replace(day=1).isoformat()}}
+        {"tenant_id": tid, "created_at": {"$gte": now.replace(day=1).isoformat()}}
     )
     cac = round((d2d_spend + marketing_spend) / max(1, new_customers), 2)
 
-    # LTV: avg paid revenue per customer × avg retention months (best-effort placeholder).
     ltv_by_cust = _lifetime_revenue_by_customer(invoices)
     avg_ltv = round(sum(ltv_by_cust.values()) / max(1, len(ltv_by_cust)), 2) if ltv_by_cust else 0.0
 
@@ -96,9 +99,13 @@ async def overview(user: dict = Depends(require_admin)):
 
 # ─── Customer LTV ───────────────────────────────────────────────────────────
 @router.get("/analytics/customer-ltv")
-async def customer_ltv(user: dict = Depends(require_admin)):
-    customers = await db.customers.find({}, {"_id": 0}).to_list(2000)
-    invoices = await db.quotes.find({"doc_type": "invoice", "payment_status": "paid"}, {"_id": 0}).to_list(5000)
+async def customer_ltv(user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    tid = tenant["id"]
+    customers = await db.customers.find({"tenant_id": tid}, {"_id": 0}).to_list(2000)
+    invoices = await db.quotes.find(
+        {"tenant_id": tid, "doc_type": "invoice", "payment_status": "paid"}, {"_id": 0}
+    ).to_list(5000)
 
     per_cust = defaultdict(lambda: {"revenue": 0.0, "invoice_count": 0, "last_paid": None})
     for inv in invoices:
@@ -136,14 +143,16 @@ async def customer_ltv(user: dict = Depends(require_admin)):
 
 # ─── Churn Risk ─────────────────────────────────────────────────────────────
 @router.get("/analytics/churn-risk")
-async def churn_risk(user: dict = Depends(require_admin)):
+async def churn_risk(user: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant)):
+    tid = tenant["id"]
     now = datetime.now(timezone.utc)
-    customers = await db.customers.find({}, {"_id": 0}).to_list(2000)
-    jobs = await db.jobs.find({}, {"_id": 0}).to_list(5000)
-    invoices = await db.quotes.find({"doc_type": "invoice"}, {"_id": 0}).to_list(5000)
-    csats = await db.csat_surveys.find({"nps_score": {"$ne": None}}, {"_id": 0}).to_list(2000)
-    comms = await db.communications.find({}, {"_id": 0}).to_list(5000)
-    plans = await db.billing_plans.find({}, {"_id": 0}).to_list(2000)
+    customers = await db.customers.find({"tenant_id": tid}, {"_id": 0}).to_list(2000)
+    jobs = await db.jobs.find({"tenant_id": tid}, {"_id": 0}).to_list(5000)
+    invoices = await db.quotes.find({"tenant_id": tid, "doc_type": "invoice"}, {"_id": 0}).to_list(5000)
+    csats = await db.csat_surveys.find({"tenant_id": tid, "nps_score": {"$ne": None}}, {"_id": 0}).to_list(2000)
+    comms = await db.communications.find({"tenant_id": tid}, {"_id": 0}).to_list(5000)
+    plans = await db.billing_plans.find({"tenant_id": tid}, {"_id": 0}).to_list(2000)
 
     # Index by customer.
     last_visit_by_cust = {}
@@ -252,17 +261,20 @@ async def churn_risk(user: dict = Depends(require_admin)):
 # ─── Tech Productivity Heatmap ──────────────────────────────────────────────
 @router.get("/analytics/tech-productivity")
 async def tech_productivity(user: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant),
                             start: Optional[str] = Query(None),
                             end: Optional[str] = Query(None)):
     """Matrix: techs × weekdays (Mon..Sun) with jobs completed / avg duration / on-time %."""
+    tid_ = tenant["id"]
     now = datetime.now(timezone.utc)
     if not start:
         start = (now - timedelta(days=30)).date().isoformat()
     if not end:
         end = now.date().isoformat()
 
-    techs = await db.technicians.find({}, {"_id": 0}).to_list(500)
+    techs = await db.technicians.find({"tenant_id": tid_}, {"_id": 0}).to_list(500)
     jobs = await db.jobs.find({
+        "tenant_id": tid_,
         "status": "completed",
         "completed_at": {"$gte": start, "$lte": end + "T23:59:59+00:00"},
     }, {"_id": 0}).to_list(5000)
@@ -325,10 +337,12 @@ async def tech_productivity(user: dict = Depends(require_admin),
 # ─── Revenue Anomalies ──────────────────────────────────────────────────────
 @router.get("/analytics/revenue-anomalies")
 async def revenue_anomalies(user: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant),
                             days: int = Query(120, ge=30, le=730)):
     now = datetime.now(timezone.utc)
     start = (now - timedelta(days=days)).date().isoformat()
     invoices = await db.quotes.find({
+        "tenant_id": tenant["id"],
         "doc_type": "invoice",
         "payment_status": "paid",
         "paid_at": {"$gte": start},
@@ -383,6 +397,7 @@ _SEASONALITY = {  # month index (1..12) → multiplier
 
 @router.get("/analytics/forecast-v2")
 async def forecast_v2(user: dict = Depends(require_admin),
+                      tenant: dict = Depends(get_current_tenant),
                       days: int = Query(90, ge=30, le=365)):
     """P10/P50/P90 daily revenue projection built on trailing 90-day mean × seasonality
     and a weather-adjustment factor (rainy days ≈ 15% fewer visits, approximated as flat 3%)."""
@@ -390,6 +405,7 @@ async def forecast_v2(user: dict = Depends(require_admin),
     lookback = 90
     start = (now - timedelta(days=lookback)).date().isoformat()
     invoices = await db.quotes.find({
+        "tenant_id": tenant["id"],
         "doc_type": "invoice",
         "payment_status": "paid",
         "paid_at": {"$gte": start},

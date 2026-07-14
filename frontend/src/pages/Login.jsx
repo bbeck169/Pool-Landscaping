@@ -38,6 +38,20 @@ export default function Login() {
       // Refresh /auth/me to normalize the user object; then land based on role.
       const user = await me().catch(() => null);
       const role = user?.role;
+      // Multi-tenant: if the user belongs to >1 active tenant, show the picker.
+      // Reset any stale tenant_slug from a previous session first.
+      localStorage.removeItem("tenant_slug");
+      localStorage.removeItem("tenant_name");
+      try {
+        const memberships = await (await import("@/api")).api.get("/tenants/memberships/mine");
+        const list = Array.isArray(memberships) ? memberships : (memberships?.memberships || []);
+        if (list.length > 1) {
+          navigate("/tenant-picker", { replace: true });
+          return;
+        }
+      } catch (_) {
+        // fall through to normal landing
+      }
       navigate(forced && role === "admin" ? forced : landingFor(role), { replace: true });
     } catch (err) {
       setError(err.message || "Login failed");

@@ -202,13 +202,17 @@ async def delete_income_category(name: str, admin: dict = Depends(require_admin)
 @router.get("/finances/income-by-category")
 async def income_by_category(date_from: Optional[str] = Query(None),
                              date_to: Optional[str] = Query(None),
-                             admin: dict = Depends(require_admin)):
-    return await compute_income_by_category(date_from, date_to)
+                             admin: dict = Depends(require_admin),
+                             tenant: dict = Depends(get_current_tenant)):
+    return await compute_income_by_category(tenant["id"], date_from, date_to)
 
 
-async def compute_income_by_category(date_from: Optional[str] = None, date_to: Optional[str] = None):
-    """Collected revenue attributed to line-item categories (handles partial payments)."""
-    q = {"doc_type": "invoice", "$or": [{"amount_paid": {"$gt": 0}}, {"payment_status": "paid"}]}
+async def compute_income_by_category(tenant_id: str,
+                                     date_from: Optional[str] = None,
+                                     date_to: Optional[str] = None):
+    """Collected revenue attributed to line-item categories (tenant-scoped)."""
+    q = {"tenant_id": tenant_id, "doc_type": "invoice",
+         "$or": [{"amount_paid": {"$gt": 0}}, {"payment_status": "paid"}]}
     if date_from or date_to:
         rng = {}
         if date_from:

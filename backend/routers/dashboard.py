@@ -5,20 +5,24 @@ from datetime import datetime, timezone, timedelta
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
+from routers.tenants import get_current_tenant
 from models import *
 
 router = APIRouter()
 
 
 @router.get("/dashboard")
-async def dashboard(user: dict = Depends(get_current_user)):
+async def dashboard(user: dict = Depends(get_current_user),
+                    tenant: dict = Depends(get_current_tenant)):
+    tid = tenant["id"]
     if user.get("role") == "technician":
-        tid = user.get("technician_id")
-        pending = await db.jobs.count_documents({"technician_id": tid, "status": "pending"})
-        active = await db.jobs.count_documents({"technician_id": tid, "status": "active"})
-        completed = await db.jobs.count_documents({"technician_id": tid, "status": "completed"})
+        techn_id = user.get("technician_id")
+        base = {"technician_id": techn_id, "tenant_id": tid}
+        pending = await db.jobs.count_documents({**base, "status": "pending"})
+        active = await db.jobs.count_documents({**base, "status": "active"})
+        completed = await db.jobs.count_documents({**base, "status": "completed"})
         upcoming = await db.jobs.find(
-            {"technician_id": tid, "status": {"$in": ["pending", "active"]}}, {"_id": 0}
+            {**base, "status": {"$in": ["pending", "active"]}}, {"_id": 0}
         ).sort("scheduled_date", 1).to_list(10)
         return {
             "role": "technician",
@@ -30,25 +34,26 @@ async def dashboard(user: dict = Depends(get_current_user)):
 
     if user.get("role") == "customer":
         cid = user.get("customer_id")
-        active = await db.jobs.count_documents({"customer_id": cid, "status": {"$in": ["pending", "active"]}})
-        completed = await db.jobs.count_documents({"customer_id": cid, "status": "completed"})
+        base = {"customer_id": cid, "tenant_id": tid}
+        active = await db.jobs.count_documents({**base, "status": {"$in": ["pending", "active"]}})
+        completed = await db.jobs.count_documents({**base, "status": "completed"})
         unpaid_docs = await db.quotes.find(
-            {"customer_id": cid, "doc_type": "invoice", "payment_status": "unpaid"}, {"_id": 0}
+            {**base, "doc_type": "invoice", "payment_status": "unpaid"}, {"_id": 0}
         ).to_list(1000)
         outstanding = round(sum(q["total"] for q in unpaid_docs), 2)
         pending_estimates = await db.quotes.count_documents(
-            {"customer_id": cid, "doc_type": "quote", "status": {"$nin": ["accepted", "declined"]}}
+            {**base, "doc_type": "quote", "status": {"$nin": ["accepted", "declined"]}}
         )
         upcoming = await db.jobs.find(
-            {"customer_id": cid, "status": {"$in": ["pending", "active", "requested"]}}, {"_id": 0}
+            {**base, "status": {"$in": ["pending", "active", "requested"]}}, {"_id": 0}
         ).sort("scheduled_date", 1).to_list(20)
         next_service = upcoming[0] if upcoming else None
-        recent = await db.jobs.find(
-            {"customer_id": cid}, {"_id": 0}
-        ).sort("created_at", -1).to_list(5)
-        cust = await db.customers.find_one({"id": cid}, {"_id": 0}) or {}
-        unread_messages = await db.messages.count_documents({"customer_id": cid, "sender": "business", "read_by_customer": False})
-        documents_count = await db.documents.count_documents({"customer_id": cid})
+        recent = await db.jobs.find(base, {"_id": 0}).sort("created_at", -1).to_list(5)
+        cust = await db.customers.find_one({"id": cid, "tenant_id": tid}, {"_id": 0}) or {}
+        unread_messages = await db.messages.count_documents(
+            {**base, "sender": "business", "read_by_customer": False}
+        )
+        documents_count = await db.documents.count_documents(base)
         return {
             "role": "customer",
             "active_jobs": active,
@@ -63,21 +68,22 @@ async def dashboard(user: dict = Depends(get_current_user)):
             "recent_jobs": recent,
         }
 
-    paid = await db.quotes.find({"payment_status": "paid"}, {"_id": 0}).to_list(1000)
+    # Admin / super_admin
+    tenant_q = {"tenant_id": tid}
+    paid = await db.quotes.find({**tenant_q, "payment_status": "paid"}, {"_id": 0}).to_list(1000)
     revenue = round(sum(q["total"] for q in paid), 2)
     outstanding_docs = await db.quotes.find(
-        {"doc_type": "invoice", "payment_status": "unpaid"}, {"_id": 0}
+        {**tenant_q, "doc_type": "invoice", "payment_status": "unpaid"}, {"_id": 0}
     ).to_list(1000)
     outstanding = round(sum(q["total"] for q in outstanding_docs), 2)
-    active = await db.jobs.count_documents({"status": "active"})
-    pending = await db.jobs.count_documents({"status": "pending"})
-    completed = await db.jobs.count_documents({"status": "completed"})
-    requested = await db.jobs.count_documents({"status": "requested"})
-    total_customers = await db.customers.count_documents({})
-    total_techs = await db.technicians.count_documents({})
-    recent = await db.jobs.find({}, {"_id": 0}).sort("created_at", -1).to_list(6)
+    active = await db.jobs.count_documents({**tenant_q, "status": "active"})
+    pending = await db.jobs.count_documents({**tenant_q, "status": "pending"})
+    completed = await db.jobs.count_documents({**tenant_q, "status": "completed"})
+    requested = await db.jobs.count_documents({**tenant_q, "status": "requested"})
+    total_customers = await db.customers.count_documents(tenant_q)
+    total_techs = await db.technicians.count_documents(tenant_q)
+    recent = await db.jobs.find(tenant_q, {"_id": 0}).sort("created_at", -1).to_list(6)
 
-    # Revenue trend — last 6 months
     now = datetime.now(timezone.utc)
     seq = []
     yy, mm = now.year, now.month
@@ -101,9 +107,8 @@ async def dashboard(user: dict = Depends(get_current_user)):
     month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     revenue_series = [{"label": month_names[m - 1], "value": round(buckets[f"{y}-{m:02d}"], 2)} for (y, m) in seq]
 
-    # Revenue by service (from all jobs)
     svc: dict = {}
-    alljobs = await db.jobs.find({}, {"_id": 0}).to_list(2000)
+    alljobs = await db.jobs.find(tenant_q, {"_id": 0}).to_list(2000)
     for j in alljobs:
         k = j.get("service_type") or "Other"
         svc[k] = svc.get(k, 0.0) + (j.get("price") or 0.0)
@@ -111,15 +116,14 @@ async def dashboard(user: dict = Depends(get_current_user)):
         [{"label": k, "value": round(v, 2)} for k, v in svc.items() if v > 0], key=lambda x: -x["value"]
     )[:6]
 
-    # Recurring vs project revenue (from paid invoices)
     recurring = round(sum(q["total"] for q in paid if any(w in (q.get("title", "").lower()) for w in ["monthly", "weekly", "recurring"])), 2)
     project = round(max(0.0, revenue - recurring), 2)
 
-    total_leads = await db.leads.count_documents({})
-    open_leads = await db.leads.count_documents({"status": {"$in": ["new", "contacted", "quoted"]}})
+    total_leads = await db.leads.count_documents(tenant_q)
+    open_leads = await db.leads.count_documents({**tenant_q, "status": {"$in": ["new", "contacted", "quoted"]}})
 
     return {
-        "role": "admin",
+        "role": user.get("role", "admin"),
         "revenue": revenue,
         "outstanding": outstanding,
         "active_jobs": active,
@@ -135,5 +139,3 @@ async def dashboard(user: dict = Depends(get_current_user)):
         "revenue_by_service": revenue_by_service,
         "recurring_vs_project": {"recurring": recurring, "project": project},
     }
-
-

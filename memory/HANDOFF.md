@@ -161,3 +161,34 @@ Phase 13 additions:
 - `iter46` × 7 (uses stale `pool-app-mobile.preview.emergentagent.com` fallback URL — env)
 - `iter43` × 29 errors (same stale-URL env issue in module-scope fixture)
 - `iter35` × 18 (impersonation) + `iter18` × 1 (portal messages `sender`)
+
+---
+
+## Phase 15D Stage 3 — FULLY CLOSED (Feb 2026)
+
+### Batches 1-12 + Isolation + Stage 4 + Stage 5 all complete.
+
+**New this pass:**
+- **Batch 10**: dashboard.py, operations.py (dispatch/activity/reports/business-summary), analytics.py (6 endpoints), onboarding.py, portal.py, property.py, card.py, finances.py (income-by-category) — all tenant-scoped
+- **Batch 12**: `/tenant-picker` route in React SPA; localStorage `tenant_slug` attached as `X-Tenant-Slug` header on every API call via `api.js`; login redirects to picker when memberships > 1; logout clears the slug; `TenantChip` component for header
+- **Cross-tenant fix**: `get_current_tenant` now respects `X-Tenant-Slug` header for `super_admin` role (path 1 in the resolver) — enables super to work as any tenant admin
+
+### Multi-tenant isolation verified (15/15 tests)
+- **Stage 3 test** (`test_phase15d_stage3_isolation.py::TestIsolation`) — 7 tests: throwaway tenant, cross-tenant read/write 404, super_admin cross-tenant, jobs isolation, notifications isolation
+- **Stage 4 test** (same file, `TestStage4Isolation`) — 8 tests: aquaterra vs sunbelt customers/jobs/quotes/leads never overlap, dashboards return tenant-specific numbers, `/tenants/current` returns correct slug per token, super_admin can switch via `X-Tenant-Slug` header
+
+### Stage 5 — 2nd demo tenant `sunbelt` seeded
+- Tenant: `sunbelt` (brand `#F97316`), 1 customer + 1 job + 1 invoice + 1 tech + 1 admin
+- Login table updated in `/app/memory/test_credentials.md`
+- `super@aquaterra.com` is a member of BOTH tenants → tenant picker fires on their login
+- `test_phase15d_stage2.py` cleanup updated to preserve `sunbelt` (was previously deleted as smoke test artifact)
+
+### Files changed (final Batch 10 + 12 tally, cumulative Stage 3 diff)
+- 33 backend files, 4 frontend files, 3 memory files
+- Additive: `pages/TenantPicker.jsx`, `tests/test_phase15d_stage3_isolation.py`
+- OpenAPI: 325 paths (unchanged)
+
+### Test results
+- **Isolation suite:** 15/15 pass
+- **Regression suite:** 104 passed / 1 failed / 18 errors — identical pre-existing inventory (env-URL drift + password-policy 422s)
+- **Zero new regressions** across all 12 batches

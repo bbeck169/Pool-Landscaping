@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from config import db, logger
 from utils import now_iso, new_id, require_admin
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -50,13 +51,14 @@ async def _seed_completed_for_demo() -> None:
 
 
 @router.get("/onboarding")
-async def get_state(user: dict = Depends(require_admin)):
+async def get_state(user: dict = Depends(require_admin),
+                    tenant: dict = Depends(get_current_tenant)):
     doc = await db.onboarding_state.find_one({"admin_id": user["id"]}, {"_id": 0})
     if not doc:
-        # Lazy-initialise for new admins.
         doc = {
             "id": new_id(),
             "admin_id": user["id"],
+            "tenant_id": tenant["id"],
             "current_step": 0,
             "completed": False,
             "skipped": False,
@@ -69,12 +71,15 @@ async def get_state(user: dict = Depends(require_admin)):
 
 
 @router.post("/onboarding/progress")
-async def update_progress(body: UpdateProgressIn, user: dict = Depends(require_admin)):
+async def update_progress(body: UpdateProgressIn,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
     doc = await db.onboarding_state.find_one({"admin_id": user["id"]}, {"_id": 0})
     if not doc:
         doc = {
             "id": new_id(),
             "admin_id": user["id"],
+            "tenant_id": tenant["id"],
             "current_step": 0,
             "completed": False,
             "skipped": False,

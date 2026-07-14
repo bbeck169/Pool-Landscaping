@@ -109,7 +109,8 @@ def test_zzz_cleanup():
 
     async def _clean():
         await db.tenants.delete_many({"slug": {"$regex": "^testphase15d-", "$options": "i"}})
-        await db.tenants.delete_many({"slug": "sunbelt"})  # from smoke test
+        # Note: `sunbelt` used to be created as a smoke test artifact in Stage 2; it is
+        # now a permanent Stage 5 demo tenant. Do NOT delete it here.
     asyncio.run(_clean())
     client.close()
     # Restore aquaterra brand primary

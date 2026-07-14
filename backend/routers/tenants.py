@@ -93,24 +93,28 @@ async def get_current_tenant(
     x_tenant_slug: Optional[str] = Header(None, alias="X-Tenant-Slug"),
 ) -> dict:
     """Resolve tenant from:
-      1. User document's `tenant_id` (backfilled in Stage 1)
-      2. `X-Tenant-Slug` header (for cross-tenant super-admin scenarios later)
-      3. Custom domain matching `Host` header
-      4. Fallback → default tenant
+      1. `X-Tenant-Slug` header — SUPER_ADMIN ONLY may use this to cross tenants.
+      2. User document's `tenant_id` (backfilled in Stage 1)
+      3. `X-Tenant-Slug` header (for anonymous / non-super callers)
+      4. Custom domain matching `Host` header
+      5. Fallback → default tenant
     """
     tenant = None
-    # 1. User's tenant_id (populated by backfill).
-    if user.get("tenant_id"):
+    # 1. Super admin explicit cross-tenant override.
+    if x_tenant_slug and user.get("role") == "super_admin":
+        tenant = await db.tenants.find_one({"slug": x_tenant_slug, "active": True}, {"_id": 0})
+    # 2. User's own tenant.
+    if not tenant and user.get("tenant_id"):
         tenant = await db.tenants.find_one({"id": user["tenant_id"], "active": True}, {"_id": 0})
-    # 2. Header override.
+    # 3. Anonymous header fallback.
     if not tenant and x_tenant_slug:
         tenant = await db.tenants.find_one({"slug": x_tenant_slug, "active": True}, {"_id": 0})
-    # 3. Custom domain.
+    # 4. Custom domain.
     if not tenant:
         host = (request.headers.get("host") or "").split(":")[0].lower()
         if host:
             tenant = await db.tenants.find_one({"custom_domain": host, "active": True}, {"_id": 0})
-    # 4. Default.
+    # 5. Default.
     if not tenant:
         tenant = await _ensure_default_tenant()
     return tenant

@@ -6,8 +6,10 @@ export const TOKEN_KEY = "token";
 
 function authHeaders() {
   const token = localStorage.getItem(TOKEN_KEY) || "";
+  const tenantSlug = localStorage.getItem("tenant_slug") || "";
   const headers = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (tenantSlug) headers["X-Tenant-Slug"] = tenantSlug;
   return headers;
 }
 

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from config import db, OPENWEB_NINJA_API_KEY
 from utils import now_iso, new_id, require_admin
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -118,7 +119,9 @@ class SaveIn(BaseModel):
 
 
 @router.post("/property/save")
-async def save_property(body: SaveIn, user: dict = Depends(require_admin)):
+async def save_property(body: SaveIn,
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
     now = now_iso()
     lead_id = body.lead_id
     lead_created = False
@@ -133,6 +136,7 @@ async def save_property(body: SaveIn, user: dict = Depends(require_admin)):
         )
         lead = {
             "id": new_id(),
+            "tenant_id": tenant["id"],
             "name": body.address,
             "phone": "",
             "email": "",
@@ -150,6 +154,7 @@ async def save_property(body: SaveIn, user: dict = Depends(require_admin)):
 
     doc = {
         "id": new_id(),
+        "tenant_id": tenant["id"],
         "created_by": user["id"],
         "created_by_name": user.get("name", ""),
         "address": body.address,
@@ -177,8 +182,9 @@ async def save_property(body: SaveIn, user: dict = Depends(require_admin)):
 
 @router.get("/property/saved")
 async def list_saved(customer_id: Optional[str] = Query(None), lead_id: Optional[str] = Query(None),
-                     user: dict = Depends(require_admin)):
-    q: dict = {}
+                     user: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant)):
+    q: dict = {"tenant_id": tenant["id"]}
     if customer_id:
         q["customer_id"] = customer_id
     if lead_id:
@@ -187,6 +193,8 @@ async def list_saved(customer_id: Optional[str] = Query(None), lead_id: Optional
 
 
 @router.delete("/property/saved/{pid}")
-async def delete_saved(pid: str, user: dict = Depends(require_admin)):
-    await db.saved_properties.delete_one({"id": pid})
+async def delete_saved(pid: str,
+                       user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    await db.saved_properties.delete_one({"id": pid, "tenant_id": tenant["id"]})
     return {"ok": True}

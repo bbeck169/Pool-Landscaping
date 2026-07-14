@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from "@/auth";
 import AppLayout from "@/layouts/AppLayout";
 import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
+import TenantPicker from "@/pages/TenantPicker";
 import AdminDashboard from "@/pages/admin/Dashboard";
 import Placeholder from "@/pages/Placeholder";
 import CustomersList from "@/pages/customers/CustomersList";
@@ -100,6 +101,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+          <Route path="/tenant-picker" element={<TenantPicker />} />
           <Route path="/public/card/:slug" element={<PublicCard />} />
           <Route path="/f/:slug" element={<PublicForm />} />
           {/* Phase 15A public magic-link routes (no auth) */}

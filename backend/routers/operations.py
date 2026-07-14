@@ -13,14 +13,19 @@ router = APIRouter()
 
 # ----------------------- Operations: Dispatch -----------------------
 @router.get("/dispatch")
-async def dispatch(user: dict = Depends(require_admin), date: Optional[str] = None):
+async def dispatch(user: dict = Depends(require_admin),
+                   tenant: dict = Depends(get_current_tenant),
+                   date: Optional[str] = None):
     """Technicians with their jobs for a given day, plus an unassigned bucket."""
     day = (date or now_iso())[:10]
     jobs = await db.jobs.find(
-        {"status": {"$in": ["pending", "active", "requested", "completed"]}}, {"_id": 0}
+        {"tenant_id": tenant["id"], "status": {"$in": ["pending", "active", "requested", "completed"]}},
+        {"_id": 0},
     ).to_list(2000)
     day_jobs = [j for j in jobs if (j.get("scheduled_date") or "")[:10] == day]
-    techs = await db.technicians.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
+    techs = await db.technicians.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("name", 1).to_list(1000)
     columns = []
     for t in techs:
         tjobs = [j for j in day_jobs if j.get("technician_id") == t["id"]]
@@ -39,12 +44,13 @@ async def dispatch(user: dict = Depends(require_admin), date: Optional[str] = No
 
 # ----------------------- Operations: Work Stream -----------------------
 @router.get("/activity")
-async def activity(user: dict = Depends(require_admin), limit: int = 40):
-    """Unified reverse-chronological activity feed across the CRM.
-    Each event carries `related_ref` = {"type", "id"} so UI can drill into
-    the source document (job, quote, invoice, customer, payment)."""
+async def activity(user: dict = Depends(require_admin),
+                   tenant: dict = Depends(get_current_tenant),
+                   limit: int = 40):
+    """Unified reverse-chronological activity feed across the CRM."""
+    tid = tenant["id"]
     events = []
-    jobs = await db.jobs.find({}, {"_id": 0}).sort("created_at", -1).to_list(60)
+    jobs = await db.jobs.find({"tenant_id": tid}, {"_id": 0}).sort("created_at", -1).to_list(60)
     for j in jobs:
         ref = {"type": "job", "id": j.get("id")}
         if j.get("status") == "requested":
@@ -59,14 +65,16 @@ async def activity(user: dict = Depends(require_admin), limit: int = 40):
             events.append({"type": "job", "icon": "briefcase", "title": "Job created",
                            "detail": f"{j.get('title', '')} · {j.get('customer_name', '')}",
                            "at": j.get("created_at"), "related_ref": ref})
-    paid = await db.quotes.find({"payment_status": "paid"}, {"_id": 0}).sort("paid_at", -1).to_list(30)
+    paid = await db.quotes.find(
+        {"tenant_id": tid, "payment_status": "paid"}, {"_id": 0}
+    ).sort("paid_at", -1).to_list(30)
     for q in paid:
         ref_type = "invoice" if q.get("doc_type") == "invoice" else "quote"
         events.append({"type": "payment", "icon": "card", "title": "Payment received",
                        "detail": f"{q.get('customer_name', '')} · ${q.get('total', 0):,.2f}",
                        "at": q.get("paid_at") or q.get("created_at"),
                        "related_ref": {"type": ref_type, "id": q.get("id")}})
-    leads = await db.leads.find({}, {"_id": 0}).sort("created_at", -1).to_list(30)
+    leads = await db.leads.find({"tenant_id": tid}, {"_id": 0}).sort("created_at", -1).to_list(30)
     for l in leads:
         events.append({"type": "lead", "icon": "magnet", "title": "New lead",
                        "detail": f"{l.get('name', '')} · {l.get('source', '')}",
@@ -79,8 +87,9 @@ async def activity(user: dict = Depends(require_admin), limit: int = 40):
 
 # ----------------------- Operations: Reports -----------------------
 @router.get("/reports")
-async def reports(user: dict = Depends(require_admin)):
-    return await _compute_reports()
+async def reports(user: dict = Depends(require_admin),
+                  tenant: dict = Depends(get_current_tenant)):
+    return await _compute_reports(tenant["id"])
 
 
 def _in_range(iso: str | None, date_from: str | None, date_to: str | None) -> bool:
@@ -96,17 +105,17 @@ def _in_range(iso: str | None, date_from: str | None, date_to: str | None) -> bo
     return True
 
 
-async def _compute_reports(date_from: str | None = None, date_to: str | None = None):
-    paid_all = await db.quotes.find({"payment_status": "paid"}, {"_id": 0}).to_list(2000)
+async def _compute_reports(tenant_id: str, date_from: str | None = None, date_to: str | None = None):
+    tq = {"tenant_id": tenant_id}
+    paid_all = await db.quotes.find({**tq, "payment_status": "paid"}, {"_id": 0}).to_list(2000)
     paid = [q for q in paid_all if _in_range(q.get("paid_at") or q.get("created_at"), date_from, date_to)]
     revenue = round(sum(q["total"] for q in paid), 2)
     outstanding_docs = await db.quotes.find(
-        {"doc_type": "invoice", "payment_status": "unpaid"}, {"_id": 0}
+        {**tq, "doc_type": "invoice", "payment_status": "unpaid"}, {"_id": 0}
     ).to_list(2000)
     outstanding_docs = [q for q in outstanding_docs if _in_range(q.get("created_at"), date_from, date_to)]
     outstanding = round(sum(q["total"] for q in outstanding_docs), 2)
 
-    # Revenue trend — last 6 months (always full trend, uses all paid invoices)
     now = datetime.now(timezone.utc)
     seq = []
     yy, mm = now.year, now.month
@@ -129,8 +138,7 @@ async def _compute_reports(date_from: str | None = None, date_to: str | None = N
     month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     revenue_series = [{"label": month_names[m - 1], "value": round(buckets[f"{y}-{m:02d}"], 2)} for (y, m) in seq]
 
-    # Jobs by status
-    all_jobs = await db.jobs.find({}, {"_id": 0}).to_list(3000)
+    all_jobs = await db.jobs.find(tq, {"_id": 0}).to_list(3000)
     all_jobs = [j for j in all_jobs if _in_range(j.get("scheduled_date") or j.get("created_at"), date_from, date_to)]
     status_counts: dict = {}
     for j in all_jobs:
@@ -138,7 +146,6 @@ async def _compute_reports(date_from: str | None = None, date_to: str | None = N
         status_counts[s] = status_counts.get(s, 0) + 1
     jobs_by_status = [{"label": k, "value": v} for k, v in status_counts.items()]
 
-    # Revenue by service
     svc: dict = {}
     for j in all_jobs:
         k = j.get("service_type") or "Other"
@@ -147,7 +154,6 @@ async def _compute_reports(date_from: str | None = None, date_to: str | None = N
         [{"label": k, "value": round(v, 2)} for k, v in svc.items() if v > 0], key=lambda x: -x["value"]
     )[:6]
 
-    # Top customers by paid revenue
     cust_rev: dict = {}
     for q in paid:
         name = q.get("customer_name", "Unknown")
@@ -156,8 +162,7 @@ async def _compute_reports(date_from: str | None = None, date_to: str | None = N
         [{"label": k, "value": round(v, 2)} for k, v in cust_rev.items()], key=lambda x: -x["value"]
     )[:5]
 
-    # Technician performance — completed jobs count
-    techs = await db.technicians.find({}, {"_id": 0}).to_list(1000)
+    techs = await db.technicians.find(tq, {"_id": 0}).to_list(1000)
     tech_perf = []
     for t in techs:
         completed = sum(1 for j in all_jobs if j.get("technician_id") == t["id"] and j.get("status") == "completed")
@@ -197,32 +202,32 @@ async def business_summary(date_from: Optional[str] = Query(None),
     from routers.jobs import compute_pool_service
     from routers.card import _company
 
-    core = await _compute_reports(date_from, date_to)
-    income = await compute_income_by_category(date_from, date_to)
-    # Pool service: use the selected range if given, else the current week.
-    pool = await compute_pool_service(tenant["id"], date_from, date_to) if (date_from and date_to) else await compute_pool_service(tenant["id"])
+    tid = tenant["id"]
+    core = await _compute_reports(tid, date_from, date_to)
+    income = await compute_income_by_category(tid, date_from, date_to)
+    pool = await compute_pool_service(tid, date_from, date_to) if (date_from and date_to) else await compute_pool_service(tid)
 
-    # Labor hours: within selected range, else this week.
     now = datetime.now(timezone.utc).date()
     if date_from and date_to:
         lo, hi = date_from, date_to
     else:
         lo = (now - timedelta(days=now.weekday())).isoformat()
         hi = (now - timedelta(days=now.weekday()) + timedelta(days=6)).isoformat()
-    ts = await db.timesheets.find({"date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(2000)
+    ts = await db.timesheets.find(
+        {"tenant_id": tid, "date": {"$gte": lo, "$lte": hi}}, {"_id": 0}
+    ).to_list(2000)
     hours_by_tech: dict = {}
     for t in ts:
         hours_by_tech[t.get("technician_name", "?")] = round(hours_by_tech.get(t.get("technician_name", "?"), 0.0) + float(t.get("hours") or 0), 2)
     labor_rows = [{"label": k, "value": v} for k, v in sorted(hours_by_tech.items(), key=lambda x: -x[1])]
 
-    # Pipeline counts (current, not range-scoped)
-    open_leads = await db.leads.count_documents({"status": {"$nin": ["won", "lost"]}})
-    active_coverage = await db.route_coverage.count_documents({"active": True})
-    total_customers = await db.customers.count_documents({})
+    open_leads = await db.leads.count_documents({"tenant_id": tid, "status": {"$nin": ["won", "lost"]}})
+    active_coverage = await db.route_coverage.count_documents({"tenant_id": tid, "active": True})
+    total_customers = await db.customers.count_documents({"tenant_id": tid})
 
     return {
         "generated_at": now_iso(),
-        "company": await _company(),
+        "company": await _company(tid),
         "date_from": date_from,
         "date_to": date_to,
         "kpis": {

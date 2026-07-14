@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import now_iso, new_id, get_current_user, require_admin, notify_customer, create_staff_notification
+from routers.tenants import get_current_tenant
 from models import MessageIn, DocumentIn, BookIn
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
@@ -90,28 +91,38 @@ async def generate_ai_reply(cid: str, incoming: str):
 
 # ----------------------- Customer messages -----------------------
 @router.get("/me/messages")
-async def my_messages(user: dict = Depends(get_current_user)):
+async def my_messages(user: dict = Depends(get_current_user),
+                      tenant: dict = Depends(get_current_tenant)):
     cid = _require_customer(user)
-    msgs = await db.messages.find({"customer_id": cid}, {"_id": 0}).sort("created_at", 1).to_list(1000)
-    await db.messages.update_many({"customer_id": cid, "read_by_customer": False}, {"$set": {"read_by_customer": True}})
+    msgs = await db.messages.find(
+        {"customer_id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", 1).to_list(1000)
+    await db.messages.update_many(
+        {"customer_id": cid, "tenant_id": tenant["id"], "read_by_customer": False},
+        {"$set": {"read_by_customer": True}},
+    )
     return msgs
 
 
 @router.post("/me/messages")
-async def send_my_message(body: MessageIn, user: dict = Depends(get_current_user)):
+async def send_my_message(body: MessageIn,
+                          user: dict = Depends(get_current_user),
+                          tenant: dict = Depends(get_current_tenant)):
     cid = _require_customer(user)
     doc = {
-        "id": new_id(), "customer_id": cid, "sender": "customer",
+        "id": new_id(), "tenant_id": tenant["id"],
+        "customer_id": cid, "sender": "customer",
         "sender_name": user.get("name", "Customer"), "text": body.text,
         "read_by_customer": True, "read_by_staff": False, "created_at": now_iso(),
     }
     await db.messages.insert_one(doc)
     doc.pop("_id", None)
 
-    # Phase 15C — realtime push to all admins so inbox refreshes without polling.
     try:
         from routers.realtime import bus
-        admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(100)
+        admins = await db.users.find(
+            {"role": "admin", "tenant_id": tenant["id"]}, {"_id": 0, "id": 1}
+        ).to_list(100)
         for a in admins:
             await bus.broadcast(a["id"], {
                 "type": "new_message",
@@ -120,14 +131,14 @@ async def send_my_message(body: MessageIn, user: dict = Depends(get_current_user
     except Exception:
         pass
 
-    # AI employee (Marina) auto-handles the message unless an admin paused AI for this customer.
     ai_doc = None
-    cust = await db.customers.find_one({"id": cid}, {"_id": 0}) or {}
+    cust = await db.customers.find_one({"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}) or {}
     if not cust.get("ai_paused"):
         ai_text, slots = await generate_ai_reply(cid, body.text)
         if ai_text:
             ai_doc = {
-                "id": new_id(), "customer_id": cid, "sender": "business",
+                "id": new_id(), "tenant_id": tenant["id"],
+                "customer_id": cid, "sender": "business",
                 "sender_name": AI_SUPPORT_NAME, "text": ai_text, "ai": True,
                 "read_by_customer": True, "read_by_staff": True, "created_at": now_iso(),
             }
@@ -139,35 +150,48 @@ async def send_my_message(body: MessageIn, user: dict = Depends(get_current_user
 
 
 @router.post("/me/book")
-async def book_slot(body: BookIn, user: dict = Depends(get_current_user)):
+async def book_slot(body: BookIn,
+                    user: dict = Depends(get_current_user),
+                    tenant: dict = Depends(get_current_tenant)):
     cid = _require_customer(user)
-    cust = await db.customers.find_one({"id": cid}, {"_id": 0}) or {}
+    cust = await db.customers.find_one({"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}) or {}
     job = {
-        "id": new_id(), "title": "Service Request", "service_type": "Pool Cleaning",
+        "id": new_id(), "tenant_id": tenant["id"],
+        "title": "Service Request", "service_type": "Pool Cleaning",
         "customer_id": cid, "customer_name": cust.get("name", "Customer"),
         "address": cust.get("address", ""), "status": "requested",
         "scheduled_date": body.date, "price": 0, "photos": [],
         "notes": f"Requested via chat: {body.label}", "created_at": now_iso(),
     }
     await db.jobs.insert_one(job)
-    # confirmation message from Marina and clear any pending slot chips
     msg = {
-        "id": new_id(), "customer_id": cid, "sender": "business",
+        "id": new_id(), "tenant_id": tenant["id"],
+        "customer_id": cid, "sender": "business",
         "sender_name": AI_SUPPORT_NAME, "ai": True,
         "text": f"✅ Great! I've requested {body.label}. Our team will confirm your appointment shortly.",
         "read_by_customer": True, "read_by_staff": False, "created_at": now_iso(),
     }
     await db.messages.insert_one(msg)
     msg.pop("_id", None)
-    await db.messages.update_many({"customer_id": cid, "slots": {"$exists": True}}, {"$unset": {"slots": ""}})
-    await create_staff_notification("New booking request", f"{cust.get('name', 'A customer')} requested {body.label}")
+    await db.messages.update_many(
+        {"customer_id": cid, "tenant_id": tenant["id"], "slots": {"$exists": True}},
+        {"$unset": {"slots": ""}},
+    )
+    await create_staff_notification(
+        "New booking request",
+        f"{cust.get('name', 'A customer')} requested {body.label}",
+        tenant_id=tenant["id"],
+    )
     return {"message": msg}
 
 
 # ----------------------- Admin communications -----------------------
 @router.get("/communications")
-async def list_threads(user: dict = Depends(require_admin)):
-    msgs = await db.messages.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+async def list_threads(user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    msgs = await db.messages.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(5000)
     threads: dict = {}
     for m in msgs:
         cid = m.get("customer_id")
@@ -179,16 +203,23 @@ async def list_threads(user: dict = Depends(require_admin)):
         if m.get("sender") == "customer" and not m.get("read_by_staff"):
             threads[cid]["unread"] += 1
     for cid, t in threads.items():
-        cust = await db.customers.find_one({"id": cid}, {"_id": 0})
+        cust = await db.customers.find_one({"id": cid, "tenant_id": tenant["id"]}, {"_id": 0})
         t["customer_name"] = cust.get("name", "Customer") if cust else "Customer"
     return sorted(threads.values(), key=lambda x: x["last_at"], reverse=True)
 
 
 @router.get("/communications/{cid}")
-async def get_thread(cid: str, user: dict = Depends(require_admin)):
-    msgs = await db.messages.find({"customer_id": cid}, {"_id": 0}).sort("created_at", 1).to_list(1000)
-    await db.messages.update_many({"customer_id": cid, "read_by_staff": False}, {"$set": {"read_by_staff": True}})
-    cust = await db.customers.find_one({"id": cid}, {"_id": 0})
+async def get_thread(cid: str,
+                     user: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant)):
+    msgs = await db.messages.find(
+        {"customer_id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", 1).to_list(1000)
+    await db.messages.update_many(
+        {"customer_id": cid, "tenant_id": tenant["id"], "read_by_staff": False},
+        {"$set": {"read_by_staff": True}},
+    )
+    cust = await db.customers.find_one({"id": cid, "tenant_id": tenant["id"]}, {"_id": 0})
     return {
         "customer_name": cust.get("name", "Customer") if cust else "Customer",
         "ai_paused": bool(cust.get("ai_paused")) if cust else False,
@@ -197,15 +228,23 @@ async def get_thread(cid: str, user: dict = Depends(require_admin)):
 
 
 @router.post("/communications/{cid}/ai-toggle")
-async def toggle_ai(cid: str, paused: bool = Query(...), user: dict = Depends(require_admin)):
-    await db.customers.update_one({"id": cid}, {"$set": {"ai_paused": paused}})
+async def toggle_ai(cid: str,
+                    paused: bool = Query(...),
+                    user: dict = Depends(require_admin),
+                    tenant: dict = Depends(get_current_tenant)):
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"$set": {"ai_paused": paused}}
+    )
     return {"ai_paused": paused}
 
 
 @router.post("/communications/{cid}/reply")
-async def reply_thread(cid: str, body: MessageIn, user: dict = Depends(require_admin)):
+async def reply_thread(cid: str, body: MessageIn,
+                       user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
     doc = {
-        "id": new_id(), "customer_id": cid, "sender": "business",
+        "id": new_id(), "tenant_id": tenant["id"],
+        "customer_id": cid, "sender": "business",
         "sender_name": user.get("name", "Support"), "text": body.text,
         "read_by_customer": False, "read_by_staff": True, "created_at": now_iso(),
     }
@@ -217,23 +256,33 @@ async def reply_thread(cid: str, body: MessageIn, user: dict = Depends(require_a
 
 # ----------------------- Documents -----------------------
 @router.get("/me/documents")
-async def my_documents(user: dict = Depends(get_current_user)):
+async def my_documents(user: dict = Depends(get_current_user),
+                       tenant: dict = Depends(get_current_tenant)):
     cid = _require_customer(user)
-    return await db.documents.find({"customer_id": cid}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return await db.documents.find(
+        {"customer_id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(1000)
 
 
 @router.get("/documents")
-async def list_documents(customer_id: str = Query(...), user: dict = Depends(require_admin)):
-    return await db.documents.find({"customer_id": customer_id}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+async def list_documents(customer_id: str = Query(...),
+                         user: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
+    return await db.documents.find(
+        {"customer_id": customer_id, "tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(1000)
 
 
 @router.post("/documents")
-async def upload_document(body: DocumentIn, user: dict = Depends(require_admin)):
-    cust = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
+async def upload_document(body: DocumentIn,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    cust = await db.customers.find_one({"id": body.customer_id, "tenant_id": tenant["id"]}, {"_id": 0})
     if not cust:
         raise HTTPException(404, "Customer not found")
     doc = {
-        "id": new_id(), "customer_id": body.customer_id, "name": body.name,
+        "id": new_id(), "tenant_id": tenant["id"],
+        "customer_id": body.customer_id, "name": body.name,
         "type": body.type, "data": body.data, "uploaded_by": user.get("name", "Admin"),
         "created_at": now_iso(),
     }
@@ -244,6 +293,8 @@ async def upload_document(body: DocumentIn, user: dict = Depends(require_admin))
 
 
 @router.delete("/documents/{did}")
-async def delete_document(did: str, user: dict = Depends(require_admin)):
-    await db.documents.delete_one({"id": did})
+async def delete_document(did: str,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    await db.documents.delete_one({"id": did, "tenant_id": tenant["id"]})
     return {"ok": True}
