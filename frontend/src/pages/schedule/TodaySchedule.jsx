@@ -12,7 +12,7 @@ import { useAuth } from "@/auth";
 import WeatherWidget5Day from "@/pages/aitools/WeatherWidget5Day";
 import {
   Clock, MapPin, Navigation, Car, Coffee, PlayCircle, StopCircle,
-  AlertTriangle, ChevronRight, RefreshCw,
+  AlertTriangle, ChevronRight, RefreshCw, CalendarCheck, Square, CheckSquare,
 } from "lucide-react";
 
 const GOOGLE_LIBS = ["places"];
@@ -150,6 +150,20 @@ export default function TodaySchedule() {
   const nowY = useMemo(() => yFor(nowIso), [nowIso, minH]);
 
   const s = data?.summary || {};
+  const jobItems = useMemo(
+    () => (data?.items || []).filter((it) => it.type === "job"),
+    [data]
+  );
+
+  // View mode: "list" (default) | "timeline". Persist per-user.
+  const [viewMode, setViewMode] = useState(() => {
+    try { return localStorage.getItem("schedule_view_mode") || "list"; }
+    catch { return "list"; }
+  });
+  const setMode = (m) => {
+    setViewMode(m);
+    try { localStorage.setItem("schedule_view_mode", m); } catch {}
+  };
 
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto" data-testid="today-schedule-page">
@@ -160,13 +174,30 @@ export default function TodaySchedule() {
             {data?.date ? new Date(data.date + "T12:00:00").toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }) : "…"} · {data?.tz}
           </p>
         </div>
-        <button onClick={load}
-                className="px-3 py-2 rounded-xl text-sm font-semibold flex items-center gap-1"
-                style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface,
-                         border: `1px solid ${colors.border}` }}
-                data-testid="schedule-refresh">
-          <RefreshCw size={14}/> Refresh
-        </button>
+        <div className="flex gap-2">
+          <div className="rounded-xl flex items-center overflow-hidden"
+               style={{ border: `1px solid ${colors.border}` }}
+               data-testid="schedule-view-toggle">
+            {["list", "timeline"].map((m) => (
+              <button key={m} onClick={() => setMode(m)}
+                      className="px-3 py-2 text-xs font-bold uppercase tracking-wide"
+                      style={{
+                        backgroundColor: viewMode === m ? colors.brand : "transparent",
+                        color: viewMode === m ? "#fff" : colors.onSurfaceSecondary,
+                      }}
+                      data-testid={`schedule-view-${m}`}>
+                {m}
+              </button>
+            ))}
+          </div>
+          <button onClick={load}
+                  className="px-3 py-2 rounded-xl text-sm font-semibold flex items-center gap-1"
+                  style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface,
+                           border: `1px solid ${colors.border}` }}
+                  data-testid="schedule-refresh">
+            <RefreshCw size={14}/> Refresh
+          </button>
+        </div>
       </div>
 
       {/* Phase 16C add-on — 5-day forecast on tech landing */}
@@ -206,7 +237,12 @@ export default function TodaySchedule() {
         </div>
       )}
 
-      {data && data.items.length > 0 && (
+      {/* List view — default */}
+      {data && data.items.length > 0 && viewMode === "list" && (
+        <ScheduleCardList jobs={jobItems} tz={data.tz} onOpen={(id) => navigate(`/jobs/${id}`)} />
+      )}
+
+      {data && data.items.length > 0 && viewMode === "timeline" && (
         <div className="relative" data-testid="schedule-timeline"
              style={{ height: (maxH - minH + 1) * HOUR_ROW,
                       backgroundColor: colors.surface,
@@ -380,3 +416,113 @@ function StatusPill({ status }) {
     </span>
   );
 }
+
+/* ────────────────────────────────────────────────────────────────────
+   Card List view — the new default per user reference screenshot.
+   Vertical stack of job cards: checkbox · service type (red) · customer ·
+   full address · status pill · BH duration · chevron.
+   ──────────────────────────────────────────────────────────────────── */
+function billableHours(startIso, endIso) {
+  if (!startIso || !endIso) return 0;
+  try {
+    const s = new Date(startIso).getTime();
+    const e = new Date(endIso).getTime();
+    return Math.max(0, (e - s) / 3600_000);
+  } catch { return 0; }
+}
+
+function cardStatusTone(status) {
+  const s = (status || "").toLowerCase();
+  if (["completed", "closed", "done"].includes(s))
+    return { bg: "#DCFCE7", fg: "#166534", label: s === "closed" ? "Closed" : "Completed" };
+  if (["active", "in_progress"].includes(s))
+    return { bg: "#FEF3C7", fg: "#92400E", label: "In Progress" };
+  if (s === "cancelled")
+    return { bg: "#FEE2E2", fg: "#991B1B", label: "Cancelled" };
+  return { bg: "#DBEAFE", fg: "#1E40AF", label: "Scheduled" };
+}
+
+function ScheduleCardList({ jobs, tz, onOpen }) {
+  const [checked, setChecked] = useState(() => new Set());
+  const toggle = (id) => {
+    const s = new Set(checked);
+    if (s.has(id)) s.delete(id); else s.add(id);
+    setChecked(s);
+  };
+  if (!jobs.length) return null;
+  return (
+    <div className="rounded-2xl overflow-hidden"
+         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+         data-testid="schedule-card-list">
+      {jobs.map((j, i) => {
+        const bh = billableHours(j.scheduled_start, j.scheduled_end);
+        const tone = cardStatusTone(j.status);
+        const isChecked = checked.has(j.id);
+        const streetLine = j.address || "—";
+        const cityLine = [j.city, j.state, j.zip].filter(Boolean).join(", ");
+        return (
+          <div key={j.id || i}
+               style={{ borderBottom: i < jobs.length - 1 ? `1px solid ${colors.border}` : "none" }}
+               data-testid={`schedule-card-${j.id}`}>
+            <div className="flex items-start gap-3 p-4 hover:brightness-[0.98] cursor-pointer"
+                 onClick={() => onOpen(j.id)}>
+              {/* Checkbox */}
+              <button onClick={(e) => { e.stopPropagation(); toggle(j.id); }}
+                      className="mt-1 flex-shrink-0"
+                      style={{ color: isChecked ? colors.brand : colors.muted }}
+                      data-testid={`schedule-card-check-${j.id}`}
+                      aria-label={isChecked ? "Uncheck" : "Check"}>
+                {isChecked ? <CheckSquare size={20}/> : <Square size={20}/>}
+              </button>
+
+              {/* Body */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <div className="text-sm font-extrabold uppercase tracking-wide"
+                       style={{ color: "#DC2626" }}
+                       data-testid={`schedule-card-service-${j.id}`}>
+                    {j.service_type || j.title || "Service"}
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide flex-shrink-0"
+                        style={{ backgroundColor: tone.bg, color: tone.fg }}
+                        data-testid={`schedule-card-status-${j.id}`}>
+                    {tone.label}
+                  </span>
+                </div>
+                <div className="text-base font-bold" style={{ color: colors.onSurface }}
+                     data-testid={`schedule-card-customer-${j.id}`}>
+                  {j.customer_name || "—"}
+                </div>
+                <div className="text-sm" style={{ color: colors.onSurfaceSecondary }}
+                     data-testid={`schedule-card-address-${j.id}`}>
+                  {streetLine}
+                </div>
+                {cityLine && (
+                  <div className="text-sm" style={{ color: colors.onSurfaceSecondary }}>
+                    {cityLine}
+                  </div>
+                )}
+                <div className="flex items-center justify-between mt-2">
+                  <div className="flex items-center gap-1 text-xs" style={{ color: colors.muted }}>
+                    <CalendarCheck size={13}/>
+                    <span>{j.scheduled_start
+                      ? new Date(j.scheduled_start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: tz })
+                      : "No start time"}</span>
+                  </div>
+                  <div className="text-sm font-bold" style={{ color: colors.onSurface }}
+                       data-testid={`schedule-card-bh-${j.id}`}>
+                    {bh.toFixed(2)} BH
+                  </div>
+                </div>
+              </div>
+
+              {/* Chevron */}
+              <ChevronRight size={20} style={{ color: "#DC2626", flexShrink: 0, marginTop: 4 }}/>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+

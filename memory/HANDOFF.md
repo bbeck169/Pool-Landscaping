@@ -416,3 +416,49 @@ D2D promoted), plus the retirement of the pricing-tier system.
   physically happens on mobile (by design — GPS on web is unreliable).
 - SOP per-role visibility filter (deferred from Phase 16B)
 - Sprint burndown chart (deferred from Phase 16B)
+
+---
+
+## Phase 16C Follow-up · Card-List Schedule + Dashboard removed for techs (Feb 2026)
+
+Small, focused UX pass on top of Phase 16C.
+
+### 1) Schedule → Card-List view (new default)
+- Web (`/app/frontend/src/pages/schedule/TodaySchedule.jsx`) and mobile
+  (`/app/mobile/app/(app)/today.tsx`) now render a stacked card list of jobs
+  by default (matches the user's reference screenshot):
+  * Checkbox · **service type (red)** · customer name (bold) · street ·
+    city/state/zip · start-time chip · **X.XX BH** · status pill (blue
+    Scheduled / amber In-Progress / green Completed / red Cancelled) · red chevron.
+  * Tap card → job detail (existing `/jobs/{id}` route).
+- Timeline is preserved as a secondary view; a **LIST | TIMELINE** toggle in
+  the header persists per-user via `localStorage` (web) /
+  `AsyncStorage` (mobile, key `schedule_view_mode`).
+- Backend `schedule.py` now emits `service_type`, `job_type`, `city`, `state`,
+  `zip` on each `type=job` item (schema-additive — no client breakage).
+
+### 2) Dashboard removed for `role === "technician"`
+- **Web root guard**: `/app/frontend/src/App.js` — added `<RoleAwareIndex>`
+  wrapping the `/` index route so techs `<Navigate to="/schedule/today">`,
+  customers `<Navigate to="/portal/home">`, admin/super sees `AdminDashboard`.
+- Direct URL entry `poolscape-audit.preview.emergentagent.com/` as tech now
+  redirects — Playwright DOM probe returned
+  `has-Dashboard-text: False, has-$-on-tech-view: False`.
+- Mobile was already correct: `(app)/index.tsx` redirects
+  `role === "technician"` to `/(app)/today` and the tab bar's Dashboard tab
+  has `href: isAdmin ? "/(app)" : null`.
+- `TECH_NAV` in `AppLayout.jsx` unchanged: **Schedule · D2D · Huddle · Time
+  Clock · Profile** — no Home / Dashboard / Overview entry.
+
+### Files touched (only)
+- `backend/routers/schedule.py` — extra job fields on payload
+- `frontend/src/App.js` — new `RoleAwareIndex` component + route wrap
+- `frontend/src/pages/schedule/TodaySchedule.jsx` — LIST/TIMELINE toggle +
+  new `<ScheduleCardList>` component (default), persistence
+- `mobile/app/(app)/today.tsx` — mirror LIST/TIMELINE toggle +
+  `<ScheduleCardList>` component + persistence
+- `memory/HANDOFF.md` — this section
+
+### Tests still 10/10 green (schedule + tech-revenue-strip)
+No new tests required — this is a pure UX refactor on top of existing
+`/api/schedule/today` payload.

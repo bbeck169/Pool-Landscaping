@@ -5,6 +5,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, Linking } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -147,6 +148,25 @@ export default function TodayScheduleScreen() {
 
   const s = data?.summary || {};
 
+  // View mode toggle (list default), persisted per device.
+  const [viewMode, setViewMode] = useState<"list" | "timeline">("list");
+  useEffect(() => {
+    (async () => {
+      try {
+        const v = await AsyncStorage.getItem("schedule_view_mode");
+        if (v === "timeline" || v === "list") setViewMode(v);
+      } catch {}
+    })();
+  }, []);
+  const setMode = (m: "list" | "timeline") => {
+    setViewMode(m);
+    AsyncStorage.setItem("schedule_view_mode", m).catch(() => {});
+  };
+  const jobItems = useMemo(
+    () => items.filter((it: any) => it.type === "job"),
+    [items]
+  );
+
   if (!data) {
     return (
       <View style={styles.root}>
@@ -182,6 +202,19 @@ export default function TodayScheduleScreen() {
           </View>
         )}
 
+        {/* View mode toggle */}
+        <View style={styles.toggle} testID="schedule-view-toggle">
+          {(["list", "timeline"] as const).map((m) => (
+            <Pressable key={m} onPress={() => setMode(m)}
+                       style={[styles.toggleBtn, viewMode === m ? styles.toggleBtnActive : null]}
+                       testID={`schedule-view-${m}`}>
+              <Text style={[styles.toggleLbl, viewMode === m ? styles.toggleLblActive : null]}>
+                {m.toUpperCase()}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
         {items.length === 0 && (
           <View style={styles.empty} testID="schedule-empty">
             <Ionicons name="checkmark-done-circle-outline" size={32} color={colors.brand}/>
@@ -193,7 +226,11 @@ export default function TodayScheduleScreen() {
           </View>
         )}
 
-        {items.length > 0 && (
+        {items.length > 0 && viewMode === "list" && (
+          <ScheduleCardList jobs={jobItems} tz={data.tz} onOpen={(id: string) => router.push(`/job/${id}` as any)} />
+        )}
+
+        {items.length > 0 && viewMode === "timeline" && (
           <View style={[styles.timeline, { height: (maxH - minH + 1) * HOUR_ROW }]}>
             {Array.from({ length: (maxH - minH + 1) }).map((_, i) => {
               const hr = minH + i;
@@ -353,4 +390,113 @@ const styles = StyleSheet.create({
              backgroundColor: colors.brandTertiary, paddingHorizontal: 8, paddingVertical: 2,
              borderRadius: 999 },
   legChipText: { fontFamily: font.semiBold, fontSize: 11, color: colors.onBrandTertiary },
+  toggle: { flexDirection: "row", borderWidth: 1, borderColor: colors.border,
+             borderRadius: radius.md, overflow: "hidden", alignSelf: "flex-start",
+             marginBottom: spacing.md },
+  toggleBtn: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  toggleBtnActive: { backgroundColor: colors.brand },
+  toggleLbl: { fontFamily: font.bold, fontSize: 11, color: colors.onSurfaceSecondary,
+                letterSpacing: 0.5 },
+  toggleLblActive: { color: "#fff" },
+  cardList: { borderRadius: radius.lg, backgroundColor: colors.surface,
+               borderWidth: 1, borderColor: colors.border, overflow: "hidden" },
+  cardRow: { flexDirection: "row", padding: spacing.md, gap: spacing.sm },
+  cardChevron: { color: "#DC2626", marginTop: 4 },
+  cardService: { fontFamily: font.bold, fontSize: 12, color: "#DC2626",
+                  textTransform: "uppercase", letterSpacing: 0.4 },
+  cardCustomer: { fontFamily: font.bold, fontSize: 15, color: colors.onSurface, marginTop: 2 },
+  cardAddr: { fontFamily: font.regular, fontSize: 13, color: colors.onSurfaceSecondary },
+  cardBH: { fontFamily: font.bold, fontSize: 13, color: colors.onSurface },
+  cardStatusPill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
+  cardStatusText: { fontFamily: font.bold, fontSize: 10, textTransform: "uppercase",
+                     letterSpacing: 0.4 },
 });
+
+/* ────────────────────────────────────────────────────────────────────
+   Card List — new default per user reference screenshot.
+   ──────────────────────────────────────────────────────────────────── */
+function billableHours(startIso?: string, endIso?: string): number {
+  if (!startIso || !endIso) return 0;
+  try {
+    return Math.max(0, (new Date(endIso).getTime() - new Date(startIso).getTime()) / 3600_000);
+  } catch { return 0; }
+}
+function cardStatusTone(status?: string) {
+  const s = (status || "").toLowerCase();
+  if (["completed", "closed", "done"].includes(s))
+    return { bg: "#DCFCE7", fg: "#166534", label: s === "closed" ? "Closed" : "Completed" };
+  if (["active", "in_progress"].includes(s))
+    return { bg: "#FEF3C7", fg: "#92400E", label: "In Progress" };
+  if (s === "cancelled")
+    return { bg: "#FEE2E2", fg: "#991B1B", label: "Cancelled" };
+  return { bg: "#DBEAFE", fg: "#1E40AF", label: "Scheduled" };
+}
+
+function ScheduleCardList({ jobs, tz, onOpen }: any) {
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const toggle = (id: string) => setChecked((s) => ({ ...s, [id]: !s[id] }));
+  return (
+    <View style={styles.cardList} testID="schedule-card-list">
+      {jobs.map((j: any, i: number) => {
+        const bh = billableHours(j.scheduled_start, j.scheduled_end);
+        const tone = cardStatusTone(j.status);
+        const isChecked = !!checked[j.id];
+        const cityLine = [j.city, j.state, j.zip].filter(Boolean).join(", ");
+        return (
+          <Pressable key={j.id || i} onPress={() => onOpen(j.id)}
+                     style={[styles.cardRow, {
+                       borderBottomWidth: i < jobs.length - 1 ? 1 : 0,
+                       borderBottomColor: colors.border,
+                     }]}
+                     testID={`schedule-card-${j.id}`}>
+            <Pressable onPress={(e) => { e.stopPropagation && e.stopPropagation(); toggle(j.id); }}
+                       hitSlop={8}
+                       style={{ marginTop: 3 }}
+                       testID={`schedule-card-check-${j.id}`}>
+              <Ionicons name={isChecked ? "checkbox" : "square-outline"}
+                        size={20} color={isChecked ? colors.brand : colors.muted}/>
+            </Pressable>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                <Text style={styles.cardService} numberOfLines={1}
+                      testID={`schedule-card-service-${j.id}`}>
+                  {j.service_type || j.title || "Service"}
+                </Text>
+                <View style={[styles.cardStatusPill, { backgroundColor: tone.bg }]}
+                      testID={`schedule-card-status-${j.id}`}>
+                  <Text style={[styles.cardStatusText, { color: tone.fg }]}>{tone.label}</Text>
+                </View>
+              </View>
+              <Text style={styles.cardCustomer} numberOfLines={1}
+                    testID={`schedule-card-customer-${j.id}`}>
+                {j.customer_name || "—"}
+              </Text>
+              <Text style={styles.cardAddr} numberOfLines={1}
+                    testID={`schedule-card-address-${j.id}`}>
+                {j.address || "—"}
+              </Text>
+              {cityLine ? (
+                <Text style={styles.cardAddr} numberOfLines={1}>{cityLine}</Text>
+              ) : null}
+              <View style={{ flexDirection: "row", justifyContent: "space-between",
+                              alignItems: "center", marginTop: 6 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                  <Ionicons name="calendar-clear-outline" size={13} color={colors.muted}/>
+                  <Text style={{ fontFamily: font.regular, fontSize: 11, color: colors.muted }}>
+                    {j.scheduled_start
+                      ? new Date(j.scheduled_start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+                      : "No start time"}
+                  </Text>
+                </View>
+                <Text style={styles.cardBH} testID={`schedule-card-bh-${j.id}`}>
+                  {bh.toFixed(2)} BH
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#DC2626" style={styles.cardChevron}/>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}

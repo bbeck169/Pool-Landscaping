@@ -104,6 +104,17 @@ function AdminOnly({ children }) {
   return children;
 }
 
+/** Root "/" gate: admin/super sees the AdminDashboard, techs get their
+ *  schedule (Dashboard is removed for tech role in Phase 16C add-on),
+ *  customers get sent to their portal home. */
+function RoleAwareIndex() {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (user?.role === "technician") return <Navigate to="/schedule/today" replace />;
+  if (user?.role === "customer") return <Navigate to="/portal/home" replace />;
+  return <AdminDashboard />;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -124,8 +135,8 @@ export default function App() {
 
           {/* Everything else lives inside the protected shell (side nav + top bar + bottom tabs). */}
           <Route path="/" element={<AppLayout />}>
-            {/* Admin */}
-            <Route index element={<AdminDashboard />} />
+            {/* Root — techs are redirected to their schedule (Dashboard removed for tech role). */}
+            <Route index element={<RoleAwareIndex />} />
 
             {/* Customers (Phase 2) */}
             <Route path="customers" element={<CustomersList />} />
