@@ -496,7 +496,7 @@ export default function TodayScheduleScreen() {
                   <View style={{ position: "absolute", left: 52, right: 0, top: i * HOUR_ROW,
                                  height: 1, backgroundColor: colors.border }}/>
                   <Text style={{ position: "absolute", left: 4, top: i * HOUR_ROW - 8,
-                                 fontSize: 10, fontFamily: font.semiBold, color: colors.muted }}>
+                                 fontSize: 10, fontFamily: font.semibold, color: colors.muted }}>
                     {String(((hr + 11) % 12) + 1)}{hr < 12 ? "a" : "p"}
                   </Text>
                 </React.Fragment>
@@ -623,7 +623,7 @@ const styles = StyleSheet.create({
   empty: { alignItems: "center", padding: spacing["2xl"],
            backgroundColor: colors.surface, borderRadius: radius.lg,
            borderWidth: 1, borderColor: colors.border, gap: spacing.sm },
-  emptyTitle: { fontFamily: font.semiBold, fontSize: 16, color: colors.onSurface },
+  emptyTitle: { fontFamily: font.semibold, fontSize: 16, color: colors.onSurface },
   emptyText: { fontFamily: font.regular, fontSize: 13, color: colors.muted, textAlign: "center" },
   emptyBtn: { backgroundColor: colors.brand, paddingHorizontal: spacing.lg,
               paddingVertical: spacing.md, borderRadius: radius.md, marginTop: spacing.sm },
@@ -633,10 +633,10 @@ const styles = StyleSheet.create({
   jobCard: { position: "absolute", right: 12, borderRadius: radius.md, padding: spacing.sm,
              backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
   jobTime: { fontFamily: font.bold, fontSize: 11, color: colors.brand, marginBottom: 2 },
-  jobTitle: { fontFamily: font.semiBold, fontSize: 13, color: colors.onSurface },
+  jobTitle: { fontFamily: font.semibold, fontSize: 13, color: colors.onSurface },
   jobCustomer: { fontFamily: font.regular, fontSize: 12, color: colors.muted },
   jobAddr: { flex: 1, fontFamily: font.regular, fontSize: 11, color: colors.onSurfaceSecondary },
-  jobLink: { fontFamily: font.semiBold, fontSize: 11, color: colors.brand },
+  jobLink: { fontFamily: font.semibold, fontSize: 11, color: colors.brand },
   shift: { position: "absolute", left: 54, width: 12, borderWidth: 1, borderRadius: 4 },
   break: { position: "absolute", left: 40, width: 10, borderWidth: 1, borderRadius: 3,
            backgroundColor: "#FEF3C7", borderColor: "#92400E" },
@@ -646,7 +646,7 @@ const styles = StyleSheet.create({
   legChip: { flexDirection: "row", alignItems: "center", gap: 4,
              backgroundColor: colors.brandTertiary, paddingHorizontal: 8, paddingVertical: 2,
              borderRadius: 999 },
-  legChipText: { fontFamily: font.semiBold, fontSize: 11, color: colors.onBrandTertiary },
+  legChipText: { fontFamily: font.semibold, fontSize: 11, color: colors.onBrandTertiary },
   toggle: { flexDirection: "row", borderWidth: 1, borderColor: colors.border,
              borderRadius: radius.md, overflow: "hidden", alignSelf: "flex-start",
              marginBottom: spacing.md },
@@ -663,7 +663,7 @@ const styles = StyleSheet.create({
   resetBtn: { flexDirection: "row", alignItems: "center", gap: 6,
               backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
               paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md },
-  resetText: { fontFamily: font.semiBold, fontSize: fontSize.sm, color: colors.onSurface },
+  resetText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.onSurface },
   savedChip: { flexDirection: "row", alignItems: "center", gap: 6,
                backgroundColor: "#ECFDF5", borderWidth: 1, borderColor: "#6EE7B7",
                paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
@@ -696,7 +696,7 @@ const styles = StyleSheet.create({
                  justifyContent: "center", gap: 6, paddingVertical: spacing.md,
                  borderWidth: 1, borderColor: colors.border,
                  borderRadius: radius.md, backgroundColor: colors.surface },
-  dateText: { fontFamily: font.semiBold, fontSize: 13, color: colors.onSurface },
+  dateText: { fontFamily: font.semibold, fontSize: 13, color: colors.onSurface },
   datePill: { backgroundColor: colors.brand, paddingHorizontal: spacing.md,
                paddingVertical: spacing.sm, borderRadius: radius.md },
   datePillText: { color: "#fff", fontFamily: font.bold, fontSize: 10,
@@ -803,10 +803,10 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn, onOpenReport }:
                         <Ionicons name="document-text-outline" size={11} color={colors.muted}
                                   style={{ marginTop: 2 }}/>
                         <Text style={styles.notesText} numberOfLines={isExpanded ? 20 : 2}>
-                          <Text style={{ fontFamily: font.semiBold }}>Notes: </Text>
+                          <Text style={{ fontFamily: font.semibold }}>Notes: </Text>
                           {isExpanded ? notesFull : notesPreview}
                           {notesFull.length > 100 ? (
-                            <Text style={{ fontFamily: font.semiBold, color: colors.brand }}>
+                            <Text style={{ fontFamily: font.semibold, color: colors.brand }}>
                               {isExpanded ? "  less" : "  more"}
                             </Text>
                           ) : null}

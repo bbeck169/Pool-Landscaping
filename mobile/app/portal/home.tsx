@@ -13,11 +13,15 @@ import { Header, NotificationBell } from "@/src/components/widgets";
 
 const SECTIONS: { key: string; label: string; icon: any; route: string }[] = [
   { key: "services", label: "Service Records", icon: "clipboard-outline", route: "/portal/services" },
+  { key: "book",     label: "Book Service",    icon: "calendar-outline", route: "/portal/book" },
+  { key: "appts",    label: "Appointments",    icon: "checkmark-done-outline", route: "/portal/appointments" },
+  { key: "photos",   label: "Photos",          icon: "images-outline", route: "/portal/photos" },
+  { key: "chats",    label: "Chat Threads",    icon: "chatbubbles-outline", route: "/portal/chats" },
   { key: "invoices", label: "Invoices", icon: "receipt-outline", route: "/portal/invoices" },
   { key: "estimates", label: "Estimates", icon: "document-text-outline", route: "/portal/estimates" },
   { key: "payments", label: "Payments", icon: "card-outline", route: "/portal/payments" },
   { key: "paymethod", label: "Payment Method", icon: "wallet-outline", route: "/portal/payment-method" },
-  { key: "messages", label: "Messages", icon: "chatbubbles-outline", route: "/portal/messages" },
+  { key: "messages", label: "Messages (AI)", icon: "chatbubble-outline", route: "/portal/messages" },
   { key: "documents", label: "Documents", icon: "folder-open-outline", route: "/portal/documents" },
   { key: "request", label: "Work Request", icon: "add-circle-outline", route: "/request-service" },
   { key: "card", label: "Business Card", icon: "id-card-outline", route: "/card" },

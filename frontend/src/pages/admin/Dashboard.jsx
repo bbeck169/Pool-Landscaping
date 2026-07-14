@@ -66,6 +66,48 @@ function KpiCard({ icon: Icon, label, value, onClick, testId }) {
   );
 }
 
+/** Phase 20B module B — Referral Revenue tile. */
+function ReferralRevenueTile() {
+  const navigate = useNavigate();
+  const [data, setData] = React.useState(null);
+  React.useEffect(() => {
+    api.get("/referrals/admin/analytics/v2")
+      .then(setData)
+      .catch(() => setData(null));
+  }, []);
+  if (!data) return null;
+  const rev = data?.revenue_attribution?.total_usd || 0;
+  const converted = data?.funnel?.converted || 0;
+  return (
+    <button
+      onClick={() => navigate("/admin/referrals/analytics")}
+      className="w-full text-left mb-6 rounded-2xl p-5 flex items-center gap-4 transition hover:brightness-95 active:scale-[0.99]"
+      style={{
+        background: `linear-gradient(135deg, ${colors.brand} 0%, ${colors.brandSecondary || colors.brand} 100%)`,
+      }}
+      data-testid="tile-referral-revenue"
+    >
+      <div className="w-14 h-14 rounded-xl flex items-center justify-center"
+           style={{ backgroundColor: "rgba(255,255,255,0.2)", color: "#fff" }}>
+        <TrendingUp size={26} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-xs font-bold uppercase tracking-wider"
+             style={{ color: "rgba(255,255,255,0.85)" }}>
+          Referral Revenue
+        </div>
+        <div className="text-3xl font-bold mt-1" style={{ color: "#fff" }}>
+          ${rev.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+        </div>
+        <div className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.8)" }}>
+          {converted} referral{converted === 1 ? "" : "s"} converted · view analytics
+        </div>
+      </div>
+      <ChevronRight size={20} color="#fff" />
+    </button>
+  );
+}
+
 function StatusChip({ status }) {
   const meta = {
     requested: { bg: "#FFEDD5", fg: "#C2410C", label: "Requested" },
@@ -442,6 +484,9 @@ export default function AdminDashboard() {
           [0, 1, 2, 3].map((i) => <Skeleton key={i} style={{ height: 120 }} />)
         )}
       </div>
+
+      {/* Referral Revenue tile — Phase 20B module B */}
+      <ReferralRevenueTile />
 
       {/* Revenue chart + payments */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">

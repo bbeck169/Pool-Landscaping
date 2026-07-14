@@ -95,6 +95,8 @@ export default function Dashboard() {
           <Kpi icon="construct" label="Technicians" value={data.total_technicians} onPress={() => router.push("/technicians")} />
         </View>
 
+        <ReferralRevenueTile />
+
         <RevenueChart series={data.revenue_series || []} outstanding={data.outstanding} />
 
         <PaymentsWidget onOpen={() => router.push("/payments")} onOpenInvoice={(id: string) => router.push(`/quote/${id}`)} />
@@ -557,8 +559,49 @@ function Kpi({ icon, label, value, onPress }: { icon: any; label: string; value:
   );
 }
 
+/** Phase 20B module B — Referral Revenue tile (mobile). */
+function ReferralRevenueTile() {
+  const router = useRouter();
+  const [data, setData] = React.useState<any>(null);
+  React.useEffect(() => {
+    api.get("/referrals/admin/analytics/v2").then(setData).catch(() => setData(null));
+  }, []);
+  if (!data) return null;
+  const rev = data?.revenue_attribution?.total_usd || 0;
+  const converted = data?.funnel?.converted || 0;
+  return (
+    <Pressable onPress={() => router.push("/admin/referrals" as any)}
+               style={styles.refTile} testID="tile-referral-revenue">
+      <View style={styles.refIcon}>
+        <Ionicons name="trending-up" size={22} color="#fff" />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.refLabel}>Referral Revenue</Text>
+        <Text style={styles.refValue}>${rev.toLocaleString()}</Text>
+        <Text style={styles.refSub}>
+          {converted} converted · tap to open analytics
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={20} color="#fff" />
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  refTile: { flexDirection: "row", alignItems: "center", gap: spacing.md,
+             backgroundColor: colors.brand, padding: spacing.lg,
+             borderRadius: radius.lg, marginBottom: spacing.lg },
+  refIcon: { width: 44, height: 44, borderRadius: 22,
+             backgroundColor: "rgba(255,255,255,0.22)",
+             alignItems: "center", justifyContent: "center" },
+  refLabel: { fontFamily: font.bold, fontSize: 10,
+              color: "rgba(255,255,255,0.85)",
+              letterSpacing: 0.8, textTransform: "uppercase" },
+  refValue: { fontFamily: font.bold, fontSize: 26, color: "#fff",
+              marginTop: 2 },
+  refSub: { fontFamily: font.regular, fontSize: 12,
+            color: "rgba(255,255,255,0.85)", marginTop: 2 },
   hero: { height: 160, borderRadius: radius.lg, overflow: "hidden", marginBottom: spacing.lg },
   heroInner: { flex: 1, padding: spacing.lg, justifyContent: "flex-end" },
   heroLabel: { fontFamily: font.medium, fontSize: fontSize.base, color: "rgba(255,255,255,0.85)" },

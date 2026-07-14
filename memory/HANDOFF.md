@@ -1216,3 +1216,55 @@ GET  /api/referrals/settings               → 200 {tiers:[{1-1:25%1mo},{2-3:50%
    referral, confirm the issued credit matches the picked tier.
 4. Add an asset with a `next_due_at` inside 7 days, hit
    `/assets/reminders/due` → confirm the WS toast fires.
+
+---
+
+## Phase 20B · Wave 1 · Mobile parity + Referral Revenue tile (Feb 2026)
+
+### Module A · Mobile screens (Expo)
+Built 7 new files exercising every Phase 20B module. All type-clean (`tsc --noEmit` reports 0 new errors on the touched surface).
+
+- **A.1 · Chat threads**
+  - `mobile/app/portal/chats.tsx` — thread list with unread badge + New FAB.
+  - `mobile/app/portal/chats/[id].tsx` — thread detail with keyboard-avoiding composer + 4s polling for near-realtime.
+- **A.2 · Appointment booking**
+  - `mobile/app/portal/book.tsx` — service-type chips + window grid from
+    `/api/portal/availability` + notes + submission → confirmation screen.
+  - `mobile/app/portal/appointments.tsx` — customer's own list with pending/confirmed/rejected pills.
+- **A.3 · Photo history**
+  - `mobile/app/portal/photos.tsx` — 3-column grid + full-screen modal viewer + filter chips.
+- **A.4 · Employee onboarding**
+  - `mobile/app/(app)/onboarding/mine.tsx` — assignment cards with progress ring + expandable step sheet with `task | doc_upload | video (WebView) | quiz | policy_ack` handling; quiz gate at 80%.
+- **A.5 · Assets**
+  - `mobile/app/(app)/assets/index.tsx` — role-aware list (tech = "My Equipment", admin = full inventory with category filter and Add-FAB).
+  - `mobile/app/(app)/assets/[id].tsx` — detail with hero + metadata + maintenance timeline + admin-only "Log maintenance" sheet (kind/cost/notes/next_due).
+
+### Tab bar & nav
+- `mobile/app/(app)/_layout.tsx`: added **Equipment** tab for technicians between Time Clock and More.
+  Tech tab bar now: **Schedule · D2D · Huddle · Time Clock · Equipment · Profile** (6 tabs).
+- `mobile/app/portal/home.tsx`: portal home cards now include Book Service, Appointments, Photos, Chat Threads.
+- `mobile/app/(app)/more.tsx`: added Assets + My Onboarding entries for admin nav and My Equipment + My Onboarding shortcuts for tech.
+- `mobile/app/(app)/today.tsx`: existing `font.semiBold` → `font.semibold` correction (was invalid pre-existing TS typo from Phase 20A).
+
+### Module B · Referral Revenue tile
+- **Web** (`frontend/src/pages/admin/Dashboard.jsx`): new `ReferralRevenueTile` component under the KPI grid — brand-gradient card showing `$X` from `revenue_attribution.total_usd` + "N referrals converted · view analytics" subline, navigates to `/admin/referrals/analytics`. Uses shared `api` client.
+- **Mobile** (`mobile/app/(app)/index.tsx`): mirror tile with same data, deep-links to `/admin/referrals`.
+- No new endpoint — both tiles consume the existing `GET /api/referrals/admin/analytics/v2`.
+
+### Tests
+- `tests/test_dashboard_referral_tile.py` — asserts the analytics response provides the fields the tile depends on (funnel.converted int, revenue_attribution.total_usd numeric).
+- Full Phase 20B + 20A surface: **30/30 green** in 16.8s (all portal, onboarding, assets, referral tiers, route optimization, phase20a, dashboard tile).
+
+### Live proof
+- Web dashboard screenshot captured — the "REFERRAL REVENUE $0" tile renders inline below the KPI grid with the expected "1 referral converted · view analytics" subline.
+
+### Files touched
+- **backend**: none (pure UI consumers) + 1 new test file.
+- **frontend web**: `pages/admin/Dashboard.jsx` (+ ReferralRevenueTile).
+- **mobile**: 7 new screens, `_layout.tsx` (Equipment tab), `portal/home.tsx` (nav cards), `more.tsx` (menu entries), `today.tsx` (font-name fix).
+
+### Known limitations & human checks
+- Real-device push notifications: chat polling uses 4s intervals; WS delivery over Expo requires a native build to fire silently in the background.
+- Photo upload for onboarding `doc_upload` step is currently "mark complete" (assumes files are uploaded elsewhere); wiring `expo-image-picker` end-to-end to the multipart endpoint is a Wave 2 follow-up.
+- Asset photo capture (camera) is not yet wired — admins currently pass `photo_url` when creating assets manually.
+- Expo Web bundle isn't served in this environment, so mobile UI screenshots were not captured; the code is TS-clean.

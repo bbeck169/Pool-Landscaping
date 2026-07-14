@@ -110,6 +110,22 @@ export default function AppLayout() {
         }}
       />
       <Tabs.Screen
+        name="assets"
+        options={{
+          title: "Equipment",
+          href: isTech ? "/(app)/assets" : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="construct-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="onboarding"
+        options={{
+          title: "Onboarding",
+          href: null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="clipboard-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="quotes"
         options={{
           title: isCustomer ? "Invoices" : "Quotes",

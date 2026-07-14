@@ -24,6 +24,8 @@ export default function More() {
     { icon: "id-card-outline", label: "Business Card", onPress: () => router.push("/card") },
     { icon: "build-outline", label: "Equipment Repair", onPress: () => router.push("/equipment") },
     { icon: "location-outline", label: "Auto Clock-In", onPress: () => router.push("/(app)/settings/auto-clockin" as any) },
+    { icon: "clipboard-outline", label: "My Onboarding", onPress: () => router.push("/(app)/onboarding/mine" as any) },
+    { icon: "cube-outline", label: "My Equipment", onPress: () => router.push("/(app)/assets" as any) },
   ];
 
   const adminLinks = [
@@ -67,6 +69,8 @@ export default function More() {
     { icon: "lock-closed-outline", label: "Access Settings", onPress: () => router.push("/access-settings") },
     { icon: "eye-outline", label: "Access History", onPress: () => router.push("/access-history") },
     { icon: "construct-outline", label: "Technicians", onPress: () => router.push("/technicians") },
+    { icon: "cube-outline", label: "Assets", onPress: () => router.push("/(app)/assets" as any) },
+    { icon: "clipboard-outline", label: "My Onboarding", onPress: () => router.push("/(app)/onboarding/mine" as any) },
     { icon: "people-outline", label: "Customers", onPress: () => router.push("/(app)/customers") },
     { icon: "document-text-outline", label: "Quotes & Invoices", onPress: () => router.push("/(app)/quotes") },
   ];
