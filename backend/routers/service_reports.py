@@ -336,9 +336,27 @@ async def submit_service_report(jid: str,
                   "service_report_submitted_at": now,
                   "updated_at": now}},
     )
-    return await db.service_reports.find_one(
+    # Mandatory clock-out when the entry originated from GPS auto-clock-in;
+    # best-effort for manual entries (unchanged behavior for that case).
+    clock_out_summary = None
+    try:
+        from routers.workforce import force_clock_out_if_auto
+        clock_out_summary = await force_clock_out_if_auto(
+            tenant["id"], user["id"], jid
+        )
+    except Exception as e:
+        logger.warning(f"submit-driven clock-out failed: {e}")
+    out = await db.service_reports.find_one(
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id}, {"_id": 0}
     )
+    if clock_out_summary:
+        out["clock_out_summary"] = {
+            "entry_id": clock_out_summary.get("id"),
+            "duration_minutes": clock_out_summary.get("duration_minutes"),
+            "mileage_miles": clock_out_summary.get("mileage_miles"),
+            "origin": clock_out_summary.get("origin"),
+        }
+    return out
 
 
 # ─── Admin template settings (stubs — full editor UI can land later) ───────

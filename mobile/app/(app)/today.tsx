@@ -3,7 +3,7 @@
  * Vertical hourly timeline with route ETA chips between consecutive jobs.
  * Uses Google Directions API via EXPO_PUBLIC_GOOGLE_API_KEY.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, Linking, Alert } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
@@ -53,6 +53,9 @@ export default function TodayScheduleScreen() {
   const { user } = useAuth();
   const router = useRouter();
   const isTech = user?.role === "technician";
+  const [autoToast, setAutoToast] = useState<any>(null);
+  const autoToastRef = useRef<any>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [showPicker, setShowPicker] = useState(false);
   const [data, setData] = useState<any>(null);
@@ -149,6 +152,62 @@ export default function TodayScheduleScreen() {
 
   const [now, setNow] = useState(new Date());
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 60000); return () => clearInterval(t); }, []);
+
+  // Phase 19 · Auto-clock-in via GPS (tech only). Foreground watcher.
+  useFocusEffect(useCallback(() => {
+    if (!isTech) return;
+    let sub: any = null;
+    let cancelled = false;
+    let lastCall = 0;
+    (async () => {
+      try {
+        const Location = await import("expo-location");
+        const perm = await Location.requestForegroundPermissionsAsync();
+        if (!perm.granted) return;
+        sub = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.High, timeInterval: 15000, distanceInterval: 25 },
+          async (pos) => {
+            const nowMs = Date.now();
+            if (nowMs - lastCall < 15000) return;
+            if (autoToastRef.current || cancelled) return;
+            lastCall = nowMs;
+            try {
+              const r = await api.post("/workforce/auto-clock-in", {
+                lat: pos.coords.latitude, lng: pos.coords.longitude,
+                accuracy: pos.coords.accuracy,
+              });
+              if (r?.clocked_in) {
+                setAutoToast(r);
+                autoToastRef.current = r;
+                setTimeout(() => {
+                  if (autoToastRef.current) {
+                    router.push(`/(app)/service-report/${r.job_id}` as any);
+                    autoToastRef.current = null;
+                    setAutoToast(null);
+                  }
+                }, 10000);
+              }
+            } catch (e) { /* stay silent — manual clock-in still works */ }
+          },
+        );
+      } catch (e) { /* Location module unavailable in Expo Go on desktop — ignore */ }
+    })();
+    return () => { cancelled = true; if (sub?.remove) sub.remove(); };
+  }, [isTech, router]));
+
+  const cancelAutoClockIn = async () => {
+    if (!autoToast) return;
+    setCancelling(true);
+    try {
+      await api.post(`/workforce/cancel-auto-clock-in/${autoToast.entry_id}`, {});
+    } catch (e: any) {
+      Alert.alert("Cancel failed", e?.message || "");
+    } finally {
+      autoToastRef.current = null;
+      setAutoToast(null);
+      setCancelling(false);
+    }
+  };
   const nowY = (now.getHours() + now.getMinutes() / 60 - minH) * HOUR_ROW;
 
   const s = data?.summary || {};
@@ -184,6 +243,36 @@ export default function TodayScheduleScreen() {
   return (
     <View style={styles.root} testID="today-schedule-screen">
       <Header title="Today's Schedule" subtitle={data?.date || ""} />
+      {autoToast && (
+        <View style={autoToastStyles.wrap} testID="auto-clockin-toast">
+          <Text style={autoToastStyles.head}>▶ Arrived — clocking in now</Text>
+          <Text style={autoToastStyles.title}>
+            {autoToast.customer_name || autoToast.job_title}
+          </Text>
+          <Text style={autoToastStyles.sub}>
+            {autoToast.distance_m != null ? `${Math.round(autoToast.distance_m)}m from site · ` : ""}
+            Opening report in 10s…
+          </Text>
+          <View style={autoToastStyles.row}>
+            <Pressable onPress={cancelAutoClockIn} disabled={cancelling}
+                       style={autoToastStyles.cancelBtn}
+                       testID="auto-clockin-cancel">
+              <Text style={autoToastStyles.cancelText}>
+                {cancelling ? "Cancelling…" : "Cancel"}
+              </Text>
+            </Pressable>
+            <Pressable onPress={() => {
+                         autoToastRef.current = null;
+                         router.push(`/(app)/service-report/${autoToast.job_id}` as any);
+                         setAutoToast(null);
+                       }}
+                       style={autoToastStyles.openBtn}
+                       testID="auto-clockin-open-now">
+              <Text style={autoToastStyles.openText}>Open now →</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
       <ScrollView
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
@@ -636,6 +725,53 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn, onOpenReport }:
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                   <Pressable
                     onPress={(e: any) => { e.stopPropagation && e.stopPropagation();
+
+const autoToastStyles = StyleSheet.create({
+  wrap: {
+    marginHorizontal: spacing.md,
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.lg,
+    backgroundColor: "#0F172A",
+  },
+  head: {
+    color: "#fff",
+    fontFamily: font.bold,
+    fontSize: 11,
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    opacity: 0.85,
+  },
+  title: {
+    color: "#fff",
+    fontFamily: font.bold,
+    fontSize: 18,
+    marginTop: 4,
+  },
+  sub: {
+    color: "#fff",
+    opacity: 0.8,
+    fontFamily: font.regular,
+    fontSize: 12,
+    marginTop: 4,
+  },
+  row: { flexDirection: "row", gap: 8, marginTop: 10 },
+  cancelBtn: {
+    backgroundColor: "#fff",
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  cancelText: { color: "#0F172A", fontFamily: font.bold, fontSize: 12 },
+  openBtn: {
+    backgroundColor: colors.brand,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  openText: { color: "#fff", fontFamily: font.bold, fontSize: 12 },
+});
+
                                             onClockIn && onClockIn(j); }}
                     style={{ backgroundColor: "#DC2626", paddingHorizontal: 12,
                              paddingVertical: 7, borderRadius: 8 }}

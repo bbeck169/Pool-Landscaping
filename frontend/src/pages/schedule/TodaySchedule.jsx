@@ -41,6 +41,10 @@ export default function TodaySchedule() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isTech = user?.role === "technician";
+  // Auto-clock-in state (tech only)
+  const [autoToast, setAutoToast] = useState(null); // {entry_id, job_id, job_title, customer_name}
+  const autoToastRef = useRef(null);
+  const [pendingCancel, setPendingCancel] = useState(false);
   // Selected date — from URL query or today.
   const [selectedDate, setSelectedDate] = useState(() => {
     try {
@@ -89,6 +93,62 @@ export default function TodaySchedule() {
     const t = setInterval(() => setNowIso(new Date().toISOString()), 60_000);
     return () => clearInterval(t);
   }, []);
+
+  // Phase 19 · Auto-clock-in via GPS (tech only, foreground schedule tab)
+  useEffect(() => {
+    if (!isTech || !navigator.geolocation) return;
+    let lastCall = 0;
+    let cancelled = false;
+    const tryAuto = async (pos) => {
+      const now = Date.now();
+      if (now - lastCall < 15_000) return;  // 15s poll gate (server also throttles)
+      if (autoToastRef.current || cancelled) return;
+      lastCall = now;
+      try {
+        const r = await api.post("/workforce/auto-clock-in", {
+          lat: pos.coords.latitude, lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+        });
+        if (r?.clocked_in) {
+          setAutoToast(r);
+          autoToastRef.current = r;
+        }
+      } catch (e) { /* ignore transient errors — user can still manual */ }
+    };
+    const watchId = navigator.geolocation.watchPosition(
+      tryAuto, () => {}, { enableHighAccuracy: true, maximumAge: 5_000, timeout: 15_000 }
+    );
+    return () => {
+      cancelled = true;
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [isTech]);
+
+  // 10-second grace window before we auto-navigate to the report.
+  useEffect(() => {
+    if (!autoToast) return;
+    const t = setTimeout(() => {
+      if (autoToastRef.current) {
+        navigate(`/jobs/${autoToast.job_id}/service-report`);
+        autoToastRef.current = null;
+        setAutoToast(null);
+      }
+    }, 10_000);
+    return () => clearTimeout(t);
+  }, [autoToast, navigate]);
+
+  const cancelAutoClockIn = async () => {
+    if (!autoToast) return;
+    setPendingCancel(true);
+    try {
+      await api.post(`/workforce/cancel-auto-clock-in/${autoToast.entry_id}`);
+    } catch (e) { alert(e.message); }
+    finally {
+      autoToastRef.current = null;
+      setAutoToast(null);
+      setPendingCancel(false);
+    }
+  };
 
   // Hydrate route-leg distances via Google Distance Matrix (client-side)
   useEffect(() => {
@@ -194,6 +254,40 @@ export default function TodaySchedule() {
 
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto" data-testid="today-schedule-page">
+      {autoToast && (
+        <div className="fixed top-4 right-4 z-50 rounded-xl shadow-xl p-4 max-w-sm"
+             style={{ background: "#0F172A", color: "#fff" }}
+             data-testid="auto-clockin-toast">
+          <div className="text-xs uppercase font-bold tracking-wider opacity-80">
+            ▶ Arrived — clocking in now
+          </div>
+          <div className="text-lg font-bold mt-1">
+            {autoToast.customer_name || autoToast.job_title}
+          </div>
+          <div className="text-xs opacity-80 mt-1">
+            {autoToast.distance_m != null ? `${Math.round(autoToast.distance_m)}m from site · ` : ""}
+            Opening service report in 10s…
+          </div>
+          <div className="flex gap-2 mt-3">
+            <button onClick={cancelAutoClockIn} disabled={pendingCancel}
+                    className="px-3 py-1 rounded text-xs font-bold"
+                    style={{ background: "#fff", color: "#0F172A" }}
+                    data-testid="auto-clockin-cancel">
+              {pendingCancel ? "Cancelling…" : "Cancel"}
+            </button>
+            <button onClick={() => {
+                      autoToastRef.current = null;
+                      navigate(`/jobs/${autoToast.job_id}/service-report`);
+                      setAutoToast(null);
+                    }}
+                    className="px-3 py-1 rounded text-xs font-bold"
+                    style={{ background: colors.brand, color: "#fff" }}
+                    data-testid="auto-clockin-open-now">
+              Open now →
+            </button>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div>
           <h1 className="text-3xl font-bold" style={{ color: colors.onSurface }}>Today's Schedule</h1>

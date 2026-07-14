@@ -10,13 +10,12 @@ from routers import (
     realtime, csat, signatures,
     analytics, onboarding,
     lead_requests, mobile_push,
-    tenants,
-    workforce,
+    tenants, workforce,
     business_os,
-    schedule,
-    social,
-    public_social,
+    schedule, social,
     service_reports,
+    referrals,
+    public_social,
 )
 
 app = FastAPI(
@@ -35,7 +34,8 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                tenants, workforce,
                business_os,
                schedule, social,
-               service_reports]:
+               service_reports,
+               referrals]:
     api_router.include_router(module.router)
 
 

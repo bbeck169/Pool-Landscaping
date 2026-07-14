@@ -27,8 +27,9 @@ Endpoints (all under /api/workforce/*, tenant-scoped)
 import csv
 import io
 import math
+import os
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -660,3 +661,243 @@ async def export_csv(from_: Optional[str] = Query(None, alias="from"),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# GPS-based auto clock-in + cancel grace-window
+# ═══════════════════════════════════════════════════════════════════════════
+class AutoClockInReq(BaseModel):
+    lat: float
+    lng: float
+    accuracy: Optional[float] = None
+
+
+# Simple in-memory 60s rate limit per user (best-effort — nothing sensitive).
+_AUTO_LAST: Dict[str, float] = {}
+_AUTO_MIN_GAP_S = 60
+_AUTO_ACC_MAX_M = 100.0
+_AUTO_TIME_WINDOW_H = 2
+
+
+@router.post("/workforce/_test/reset-autoclock")
+async def _reset_autoclock_ratelimit(user: dict = Depends(get_current_user)):
+    """Test-only hook — clears the in-memory rate-limit map for the current
+    user. Gated by env var so it's a no-op in production."""
+    if not os.environ.get("ALLOW_TEST_HOOKS"):
+        raise HTTPException(404, "Not found")
+    _AUTO_LAST.pop(user["id"], None)
+    return {"ok": True, "cleared": user["id"]}
+
+
+def _log_auto_decision(tenant_id: str, user_id: str, lat: float, lng: float,
+                        decision: str, extra: dict | None = None):
+    try:
+        # Fire-and-forget audit trail via location_pings.decision field.
+        # We DON'T await this — it's audit only, don't block the endpoint.
+        import asyncio
+        async def _write():
+            ping = {
+                "id": new_id(), "tenant_id": tenant_id, "user_id": user_id,
+                "lat": lat, "lng": lng, "ts": now_iso(),
+                "kind": "auto_clockin_decision", "decision": decision,
+            }
+            if extra:
+                ping.update(extra)
+            try:
+                await db.location_pings.insert_one(ping)
+            except Exception as e:
+                logger.warning(f"auto-clockin audit insert failed: {e}")
+        asyncio.create_task(_write())
+    except Exception:
+        pass
+
+
+@router.post("/workforce/auto-clock-in")
+async def auto_clock_in(body: AutoClockInReq,
+                        user: dict = Depends(get_current_user),
+                        tenant: dict = Depends(get_current_tenant)):
+    """GPS-triggered auto-clock-in.
+
+    Fires when the tech is inside a scheduled job's geofence AND within ±2h of
+    the job's `scheduled_start`. Rate-limited to once per 60s per user. Returns
+    `clocked_in:false` (with a reason) instead of a 4xx so the client can just
+    keep polling as the tech moves around.
+    """
+    import time as _time
+    uid = user["id"]
+    now_epoch = _time.time()
+    last = _AUTO_LAST.get(uid, 0)
+    if now_epoch - last < _AUTO_MIN_GAP_S:
+        raise HTTPException(429, "auto-clock-in throttled — try again in a moment")
+    _AUTO_LAST[uid] = now_epoch
+
+    # Low-accuracy fix → refuse (spec says >100m is unusable).
+    if body.accuracy is not None and body.accuracy > _AUTO_ACC_MAX_M:
+        _log_auto_decision(tenant["id"], uid, body.lat, body.lng, "low_accuracy",
+                           {"accuracy": body.accuracy})
+        return {"clocked_in": False, "reason": "low_accuracy",
+                "accuracy_m": body.accuracy}
+
+    # Already clocked in? Skip — never auto-switch jobs.
+    open_entry = await db.time_entries.find_one(
+        {"tenant_id": tenant["id"], "user_id": uid, "clock_out_at": None},
+        {"_id": 0},
+    )
+    if open_entry:
+        _log_auto_decision(tenant["id"], uid, body.lat, body.lng, "already_clocked_in",
+                           {"open_entry_id": open_entry["id"]})
+        return {"clocked_in": False, "reason": "already_clocked_in",
+                "open_entry_id": open_entry["id"],
+                "open_job_id": open_entry.get("job_id")}
+
+    s = _settings(tenant)
+    radius = s.get("geofence_radius_m", 100)
+
+    # Find jobs assigned to this user within ±2h window.
+    now_dt = datetime.now(timezone.utc)
+    window_start = (now_dt - timedelta(hours=_AUTO_TIME_WINDOW_H)).isoformat()
+    window_end = (now_dt + timedelta(hours=_AUTO_TIME_WINDOW_H)).isoformat()
+    query = {
+        "tenant_id": tenant["id"],
+        "$or": [
+            {"technician_id": uid},
+            {"technician_id": user.get("technician_id")},
+            {"assigned_technician_id": uid},
+        ],
+        "status": {"$nin": ["completed", "cancelled"]},
+        "scheduled_start": {"$gte": window_start, "$lte": window_end},
+    }
+    jobs = await db.jobs.find(query, {"_id": 0}).to_list(50)
+    if not jobs:
+        _log_auto_decision(tenant["id"], uid, body.lat, body.lng, "no_jobs_in_window")
+        return {"clocked_in": False, "reason": "out_of_time_window"}
+
+    best = None
+    best_dist = float("inf")
+    for j in jobs:
+        site_lat = j.get("site_lat") or j.get("lat")
+        site_lng = j.get("site_lng") or j.get("lng")
+        if site_lat is None or site_lng is None:
+            continue
+        d = _haversine_m(site_lat, site_lng, body.lat, body.lng)
+        if d <= radius and d < best_dist:
+            best = j
+            best_dist = d
+
+    if not best:
+        _log_auto_decision(tenant["id"], uid, body.lat, body.lng,
+                           "not_at_any_scheduled_site")
+        return {"clocked_in": False, "reason": "not_at_any_scheduled_site"}
+
+    # Clock the tech in.
+    now = now_iso()
+    doc = {
+        "id": new_id(),
+        "tenant_id": tenant["id"],
+        "user_id": uid,
+        "user_name": user.get("name") or user.get("email"),
+        "job_id": best["id"],
+        "job_title": best.get("title"),
+        "customer_id": best.get("customer_id"),
+        "clock_in_at": now,
+        "clock_out_at": None,
+        "clock_in_geo": {"lat": body.lat, "lng": body.lng,
+                          "accuracy": body.accuracy},
+        "clock_out_geo": None,
+        "out_of_geofence": False,
+        "photo_url": None,
+        "breaks": [],
+        "duration_minutes": 0,
+        "mileage_miles": 0,
+        "status": "open",
+        "notes": "",
+        "origin": "gps_auto",
+        "distance_m_from_site": round(best_dist, 1),
+        "created_at": now,
+    }
+    await db.time_entries.insert_one(doc)
+    doc.pop("_id", None)
+    await _broadcast(uid, "workforce.clock_in",
+                     {"entry_id": doc["id"], "job_id": doc["job_id"],
+                      "auto": True, "distance_m": doc["distance_m_from_site"]})
+    _log_auto_decision(tenant["id"], uid, body.lat, body.lng, "clocked_in",
+                       {"job_id": best["id"], "distance_m": doc["distance_m_from_site"]})
+    return {
+        "clocked_in": True,
+        "entry_id": doc["id"],
+        "job_id": best["id"],
+        "job_title": best.get("title"),
+        "customer_name": best.get("customer_name"),
+        "distance_m": doc["distance_m_from_site"],
+    }
+
+
+@router.post("/workforce/cancel-auto-clock-in/{entry_id}")
+async def cancel_auto_clock_in(entry_id: str,
+                               user: dict = Depends(get_current_user),
+                               tenant: dict = Depends(get_current_tenant)):
+    """Void a gps_auto time_entry within a 30-second grace window."""
+    entry = await db.time_entries.find_one(
+        {"id": entry_id, "tenant_id": tenant["id"], "user_id": user["id"]},
+        {"_id": 0},
+    )
+    if not entry:
+        raise HTTPException(404, "Time entry not found")
+    if entry.get("origin") != "gps_auto":
+        raise HTTPException(400, "Only gps_auto entries can be cancelled — clock out normally")
+    if entry.get("clock_out_at"):
+        raise HTTPException(400, "Entry already closed — cannot cancel")
+    if entry.get("breaks"):
+        raise HTTPException(400, "Grace window expired (breaks recorded)")
+    # Enforce 30-second grace window.
+    try:
+        started = datetime.fromisoformat(entry["clock_in_at"].replace("Z", "+00:00"))
+        age = (datetime.now(timezone.utc) - started).total_seconds()
+    except Exception:
+        age = 999
+    if age > 30:
+        raise HTTPException(400, "Grace window expired — clock out normally instead")
+    await db.time_entries.delete_one({"id": entry_id, "tenant_id": tenant["id"]})
+    await _broadcast(user["id"], "workforce.clock_in_cancelled",
+                     {"entry_id": entry_id})
+    return {"ok": True, "entry_id": entry_id, "cancelled": True}
+
+
+async def force_clock_out_if_auto(tenant_id: str, user_id: str, job_id: str) -> Optional[dict]:
+    """Called by service-report submit to guarantee clock-out on gps_auto entries.
+    Returns the closed entry summary if a clock-out happened, else None.
+    """
+    entry = await db.time_entries.find_one(
+        {"tenant_id": tenant_id, "user_id": user_id, "job_id": job_id,
+         "clock_out_at": None},
+        {"_id": 0},
+    )
+    if not entry:
+        return None
+    # Only mandatory for gps_auto; manual best-effort keeps existing behavior.
+    is_auto = entry.get("origin") == "gps_auto"
+    now = now_iso()
+    breaks = list(entry.get("breaks") or [])
+    if breaks and not breaks[-1].get("end"):
+        breaks[-1]["end"] = now
+    duration = _minutes_between(entry["clock_in_at"], now) - _sum_break_minutes(breaks)
+    tenant_doc = await db.tenants.find_one({"id": tenant_id}, {"_id": 0}) or {}
+    settings = _settings(tenant_doc)
+    miles = await _entry_mileage_miles(
+        tenant_id, entry["id"], user_id, entry.get("clock_in_at"), now, settings
+    )
+    upd = {
+        "clock_out_at": now,
+        "clock_out_geo": entry.get("clock_in_geo"),  # best-effort — client already left the geofence
+        "breaks": breaks,
+        "duration_minutes": max(0, duration),
+        "mileage_miles": miles,
+        "status": "submitted",
+        "closed_by_report": True,
+    }
+    await db.time_entries.update_one({"id": entry["id"]}, {"$set": upd})
+    await _broadcast(user_id, "workforce.clock_out",
+                     {"entry_id": entry["id"], "auto": is_auto})
+    entry.update(upd)
+    return entry
+

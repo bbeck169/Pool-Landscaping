@@ -883,3 +883,101 @@ Liquid Chlorine amount_options: ['0.5', '1', '1.5', ..., '10']
 - OpenAPI count unchanged at **395** (spec: no new endpoints, just
   enrichment of existing template response).
 - Landscape template unaffected.
+
+---
+
+## GPS-based auto clock-in + auto clock-out on submit (Feb 2026)
+
+### Backend — +3 endpoints (395 → 406 counted incl. Phase 19 referrals; new for this feature: +2 public + 1 test hook)
+- `POST /api/workforce/auto-clock-in` — request `{lat, lng, accuracy}`. Never
+  4xx on business misses — returns `{clocked_in:false, reason}` so the client
+  can just keep polling. Reasons: `low_accuracy`, `already_clocked_in`,
+  `out_of_time_window`, `not_at_any_scheduled_site`.
+- `POST /api/workforce/cancel-auto-clock-in/{entry_id}` — 30-second grace
+  window, gps_auto entries only, deletes the row entirely.
+- `POST /api/workforce/_test/reset-autoclock` — dev-only hook (gated by
+  `ALLOW_TEST_HOOKS=1` env var) to reset the in-memory rate-limit map.
+  Never registered in production without the flag.
+- `time_entries` docs extended with `origin: "manual" | "gps_auto"`,
+  `distance_m_from_site`, `closed_by_report`.
+- `_haversine_m` + `_settings.geofence_radius_m` reused from existing manual
+  clock-in — no drift.
+- Rate limit: 60s per user via in-memory `_AUTO_LAST` dict (returns 429).
+- Audit: every accept/reject decision logs a `location_pings` doc with
+  `kind: "auto_clockin_decision"`, `decision: "clocked_in" | "low_accuracy" |
+  "already_clocked_in" | "no_jobs_in_window" | "not_at_any_scheduled_site"`.
+
+### Service-report submit (mandatory clock-out on gps_auto)
+- New helper `force_clock_out_if_auto(tenant_id, user_id, job_id)` in
+  `workforce.py`. Called by `POST /api/jobs/{jid}/service-report/submit`.
+- Guarantees the entry closes when the report was clock-in-triggered via GPS;
+  best-effort behavior preserved for `origin == "manual"` entries.
+- Response now carries `clock_out_summary: { entry_id, duration_minutes,
+  mileage_miles, origin }` when submit closed a shift.
+
+### Frontend web (`TodaySchedule.jsx`)
+- `navigator.geolocation.watchPosition` while the tech schedule tab is
+  focused. Polls the auto-clock-in endpoint every 15s (client) — server-side
+  60s throttle still governs. Silent failure on transient errors.
+- On successful auto-clock-in: renders a dark corner toast with customer
+  name, distance-from-site, and two buttons: `Cancel` (calls
+  `cancel-auto-clock-in`) or `Open now →`. After 10 s of no interaction, the
+  page auto-routes to `/jobs/{id}/service-report`.
+
+### Mobile (`(app)/today.tsx`)
+- `expo-location.watchPositionAsync` inside `useFocusEffect` — starts when
+  the screen focuses, tears down cleanly on blur.
+- Same toast UX (bottom bar over the schedule): customer + distance + Cancel
+  + Open now.
+- 10-second timer → `router.push("/(app)/service-report/{id}")`.
+- Manual `Clock In & Start` + `Open Report` buttons on each schedule card
+  remain — GPS is additive, not a replacement.
+
+### Tests — `test_auto_clockin.py` (9/9 green in ~6 s)
+Uses the `_test/reset-autoclock` hook + `ALLOW_TEST_HOOKS=1` env var to
+deterministically clear the rate-limit map between tests. Test file:
+- Inside geofence + within ±2h window → `clocked_in:true`, origin=`gps_auto`.
+- Outside geofence → `reason:"not_at_any_scheduled_site"`.
+- `accuracy > 100m` → `reason:"low_accuracy"`.
+- Pre-existing open entry → `reason:"already_clocked_in"`.
+- 2 calls within 60 s → second returns **429**.
+- Cancel within 30 s → entry deleted; cancel after 30 s → 400.
+- Submit on gps_auto entry → `clock_out_summary` present, `closed_by_report:
+  true`.
+- Aquaterra tech's coords at a Sunbelt job's site → no cross-tenant match.
+
+### Files touched
+- **New**: `backend/tests/test_auto_clockin.py`.
+- **Extended**: `backend/routers/workforce.py` (+ auto-clock-in, cancel,
+  force_clock_out_if_auto, test-reset hook), `backend/routers/service_reports.py`
+  (submit calls `force_clock_out_if_auto`), `backend/.env`
+  (`ALLOW_TEST_HOOKS=1`), `frontend/src/pages/schedule/TodaySchedule.jsx`
+  (geolocation watcher + toast), `mobile/app/(app)/today.tsx`
+  (expo-location watcher + toast).
+
+### Live proof (external ingress)
+```
+POST /api/workforce/auto-clock-in {"lat":33.7005,"lng":-112.228,"accuracy":8}
+→ 200 { "clocked_in":true, "entry_id":"5f6b1091-…", "job_id":"a21195…",
+        "job_title":"Weekly Pool Service", "customer_name":"Jennifer Carson",
+        "distance_m":0.0 }
+
+POST /api/jobs/a21195…/service-report/submit
+→ 200 { "submitted_at":"2026-07-14T03:55:29Z",
+        "clock_out_summary": {"entry_id":"5f6b1091-…",
+                              "duration_minutes":0.0037,
+                              "mileage_miles":0.0,
+                              "origin":"gps_auto"} }
+```
+
+### Deferred (real device only)
+- Background-location updates via `expo-task-manager` — foreground watcher
+  covers the primary use case (tech opens the app on arrival). Spec called
+  this optional.
+
+### Human verification suggested
+- Real GPS walk-in test on Expo build: watch the toast appear, tap Cancel
+  within 10 s, watch the entry vanish. Then walk in again, let the timer
+  expire, confirm the report screen loads.
+- Confirm geofence radius (`tenants.settings.geofence_radius_m`) is set to a
+  practical value per tenant (default 100 m).

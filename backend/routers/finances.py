@@ -86,10 +86,17 @@ async def accrue_chem_invoice(job: dict):
         subtotal = round(sum(float(li["quantity"]) * float(li["unit_price"]) for li in line_items), 2)
         payload = {
             "customer_id": cid, "customer_name": cust_name,
+            "tenant_id": job.get("tenant_id"),
             "title": f"Chemical Charges — {billing_month}", "doc_type": "invoice",
             "line_items": line_items, "tax_rate": 0, "subtotal": subtotal, "tax": 0.0, "total": subtotal,
             "auto_chem": True, "billing_month": billing_month, "status": "draft",
         }
+        # Phase 19 — auto-apply any unredeemed referral credit for this customer.
+        try:
+            from routers.referrals import apply_referral_credits_to_invoice
+            payload = await apply_referral_credits_to_invoice(payload)
+        except Exception as e:
+            logger.warning(f"referral credit apply skipped: {e}")
         if inv:
             await db.quotes.update_one({"id": inv["id"]}, {"$set": payload})
         else:

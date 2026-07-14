@@ -231,7 +231,8 @@ async def public_submit_csat(token: str, body: SubmitCsatIn):
 
 
 async def _route_promoter(survey: dict) -> None:
-    """Promoter → enroll in Review Request sequence (if seeded) + activity log."""
+    """Promoter → enroll in Review Request sequence (if seeded) + activity log
+    + Phase 19 referral prompt (WS event) with a 30-day dedupe window."""
     tid = survey.get("tenant_id")
     seq = await db.sequences.find_one(
         {"slug": "review-request", "tenant_id": tid}, {"_id": 0}
@@ -257,6 +258,39 @@ async def _route_promoter(survey: dict) -> None:
                 "created_at": now_iso(),
             }
             await db.sequence_enrollments.insert_one(enrollment)
+
+    # Phase 19 — fire a referral prompt WS event (30-day dedupe).
+    cust_id = survey.get("customer_id")
+    if not cust_id:
+        return
+    from datetime import datetime, timezone, timedelta
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    recent = await db.referral_prompts.find_one({
+        "tenant_id": tid,
+        "customer_id": cust_id,
+        "sent_at": {"$gte": since},
+    }, {"_id": 0}) if hasattr(db, "referral_prompts") else None
+    if recent:
+        return
+    try:
+        await db.referral_prompts.insert_one({
+            "id": new_id(), "tenant_id": tid, "customer_id": cust_id,
+            "trigger": "nps_promoter", "nps_score": survey.get("nps_score"),
+            "sent_at": now_iso(),
+        })
+    except Exception as e:
+        logger.warning(f"referral_prompts log failed: {e}")
+    try:
+        from routers.realtime import bus
+        await bus.broadcast(cust_id, {
+            "type": "referral_prompt",
+            "payload": {
+                "copy": "Loved your service? Refer a friend and get 50% off 1 month!",
+                "cta_url": "/portal/refer",
+            },
+        })
+    except Exception as e:
+        logger.warning(f"referral WS notify failed: {e}")
 
 
 async def _route_detractor(survey: dict) -> None:
