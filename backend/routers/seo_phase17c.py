@@ -1040,6 +1040,8 @@ async def create_report(body: ReportIn,
     }
     await db.seo_reports.insert_one(dict(doc))
     doc.pop("_id", None)
+    doc["file_url"] = (f"/api/seo/reports/{doc['id']}/download?format=pdf"
+                        if doc.get("status") == "ready" else None)
     return doc
 
 
@@ -1062,6 +1064,8 @@ async def get_report(rid: str,
     )
     if not r:
         raise HTTPException(404, "Report not found")
+    r["file_url"] = (f"/api/seo/reports/{rid}/download?format=pdf"
+                      if r.get("status") == "ready" else None)
     return r
 
 

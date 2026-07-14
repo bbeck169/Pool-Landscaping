@@ -1114,7 +1114,9 @@ async def scan_llm_visibility(body: LlmScanIn,
     ).to_list(200)
     if not queries: return {"scan_id": None, "results": [],
                              "engines_configured": _configured_engines(),
-                             "engines_scanned": _configured_engines()}
+                             "engines_scanned": _configured_engines(),
+                             "competitors": [],
+                             "competitors_mentioned": []}
     scan_id = new_id()
     results = []
     engines = _configured_engines()
@@ -1122,12 +1124,14 @@ async def scan_llm_visibility(body: LlmScanIn,
         for engine in engines:
             if engine != "claude": continue  # only claude wired today
             r = await _run_query_on_claude(q["query_text"], q["expected_brand"])
+            competitors = r.get("competitors") or []
             doc = {
                 "id": new_id(), "tenant_id": tenant["id"], "scan_id": scan_id,
                 "query_id": q["id"], "engine": engine,
                 "brand_mentioned": r["brand_mentioned"],
                 "position": r.get("position"),
-                "competitors": r.get("competitors") or [],
+                "competitors": competitors,
+                "competitors_mentioned": competitors,  # deprecated alias
                 "quote": r.get("quote"), "sentiment": r.get("sentiment"),
                 "raw_response": r["raw_response"],
                 "mocked": r.get("mocked", False),
@@ -1136,9 +1140,19 @@ async def scan_llm_visibility(body: LlmScanIn,
             await db.seo_llm_scans.insert_one(dict(doc))
             doc.pop("_id", None)
             results.append(doc)
+    # Scan-level aggregate of competitors across all results
+    scan_comp_counts: Dict[str, int] = {}
+    for res in results:
+        for c in res.get("competitors") or []:
+            scan_comp_counts[c] = scan_comp_counts.get(c, 0) + 1
+    scan_competitors = [{"name": n, "mentions": c}
+                          for n, c in sorted(scan_comp_counts.items(),
+                                              key=lambda x: -x[1])]
     return {"scan_id": scan_id, "results": results,
             "engines_configured": engines,
             "engines_scanned": engines,  # deprecated alias
+            "competitors": scan_competitors,
+            "competitors_mentioned": scan_competitors,  # deprecated alias
             "engines_pending": [e for e in ("openai", "gemini", "perplexity")
                                  if e not in engines]}
 
@@ -1147,9 +1161,14 @@ async def scan_llm_visibility(body: LlmScanIn,
 async def get_scan(scan_id: str,
                     user: dict = Depends(require_admin),
                     tenant: dict = Depends(get_current_tenant)):
-    return await db.seo_llm_scans.find(
+    rows = await db.seo_llm_scans.find(
         {"scan_id": scan_id, "tenant_id": tenant["id"]}, {"_id": 0}
     ).to_list(500)
+    # Backfill deprecated alias for any docs stored before the polish.
+    for r in rows:
+        if "competitors_mentioned" not in r:
+            r["competitors_mentioned"] = r.get("competitors") or []
+    return rows
 
 
 @router.get("/seo/llm-visibility/dashboard")

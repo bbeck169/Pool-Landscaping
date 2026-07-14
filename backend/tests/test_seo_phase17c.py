@@ -458,3 +458,64 @@ def test_report_tenant_isolation_and_role(admin_h, sunbelt_admin_h,
     assert empty.status_code == 400
     dbc.seo_audits.delete_one({"id": aid})
     dbc.seo_reports.delete_one({"id": r["id"]})
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Polish fixes from the 17C tester
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_report_response_has_file_url(admin_h, dbc):
+    aid = _seed_audit_done(dbc)
+    r = requests.post(f"{API}/seo/reports", headers=admin_h,
+                       json={"title": "File-URL Test",
+                              "audit_id": aid,
+                              "include_llm_visibility": False},
+                       timeout=90).json()
+    # Create response
+    assert "file_url" in r
+    assert r["file_url"] is not None
+    assert r["file_url"] == f"/api/seo/reports/{r['id']}/download?format=pdf"
+    # GET response
+    det = requests.get(f"{API}/seo/reports/{r['id']}", headers=admin_h,
+                        timeout=15).json()
+    assert "file_url" in det
+    assert det["file_url"] == f"/api/seo/reports/{r['id']}/download?format=pdf"
+    # The advertised URL actually works
+    dl = requests.get(f"{BASE}{det['file_url']}", headers=admin_h, timeout=30)
+    assert dl.status_code == 200
+    dbc.seo_audits.delete_one({"id": aid})
+    dbc.seo_reports.delete_one({"id": r["id"]})
+
+
+def test_scan_has_competitors_mentioned_alias(admin_h, dbc):
+    q = requests.post(f"{API}/seo/llm-visibility/queries", headers=admin_h,
+                       json={"query_text":
+                              "best pool cleaning services in Phoenix",
+                              "expected_brand": "AquaTerra",
+                              "category": "local"}, timeout=15).json()
+    r = requests.post(f"{API}/seo/llm-visibility/scan", headers=admin_h,
+                       json={"query_ids": [q["id"]]}, timeout=120).json()
+    # Scan-level: both keys present with identical values
+    assert "competitors" in r
+    assert "competitors_mentioned" in r
+    assert r["competitors"] == r["competitors_mentioned"]
+
+    # Per-result: both keys present with identical values
+    assert len(r["results"]) >= 1
+    for res in r["results"]:
+        assert "competitors" in res
+        assert "competitors_mentioned" in res
+        assert res["competitors"] == res["competitors_mentioned"]
+
+    # GET /scans/{id} also emits the alias
+    got = requests.get(f"{API}/seo/llm-visibility/scans/{r['scan_id']}",
+                        headers=admin_h, timeout=15).json()
+    assert len(got) >= 1
+    for row in got:
+        assert "competitors" in row
+        assert "competitors_mentioned" in row
+        assert row["competitors"] == row["competitors_mentioned"]
+
+    requests.delete(f"{API}/seo/llm-visibility/queries/{q['id']}",
+                     headers=admin_h, timeout=15)
+    dbc.seo_llm_scans.delete_many({"scan_id": r["scan_id"]})
