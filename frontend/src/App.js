@@ -82,6 +82,10 @@ import OnboardingPage, { OnboardingLoginModal } from "@/pages/onboarding/Onboard
 import LeadRequestPage from "@/pages/leads/LeadRequestPage";
 import PublicLeadRequestPage from "@/pages/public/PublicLeadRequest";
 import TenantsAdminPage, { TenantBrandSettings } from "@/pages/tenants/TenantsAdminPage";
+import {
+  TimesheetsPage as WorkforceTimesheets, CrewMapPage as WorkforceCrewMap,
+  JobCostingPage as WorkforceJobCosting, MileagePage as WorkforceMileage,
+} from "@/pages/workforce/WorkforcePages";
 
 function AdminOnly({ children }) {
   const { user, loading } = useAuth();
@@ -207,6 +211,12 @@ export default function App() {
             <Route path="access-history" element={<AdminOnly><AccessHistory /></AdminOnly>} />
             <Route path="settings/ringcentral" element={<AdminOnly><RingCentralSettings /></AdminOnly>} />
             <Route path="call-logs" element={<AdminOnly><CallLogsPage /></AdminOnly>} />
+
+            {/* Phase 16A — Workforce Ops */}
+            <Route path="workforce/timesheets" element={<AdminOnly><WorkforceTimesheets /></AdminOnly>} />
+            <Route path="workforce/crew-map" element={<AdminOnly><WorkforceCrewMap /></AdminOnly>} />
+            <Route path="workforce/job-costing" element={<AdminOnly><WorkforceJobCosting /></AdminOnly>} />
+            <Route path="workforce/mileage" element={<AdminOnly><WorkforceMileage /></AdminOnly>} />
 
             {/* Phase 6 — Finance + Reports */}
             <Route path="reports" element={<AdminOnly><ReportsHub /></AdminOnly>} />

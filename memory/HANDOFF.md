@@ -192,3 +192,66 @@ Phase 13 additions:
 - **Isolation suite:** 15/15 pass
 - **Regression suite:** 104 passed / 1 failed / 18 errors — identical pre-existing inventory (env-URL drift + password-policy 422s)
 - **Zero new regressions** across all 12 batches
+
+---
+
+## Phase 16A — Workyard-style Workforce Ops (Feb 2026)
+
+GPS time clock, geofenced job clock-in, offline-tolerant mileage tracking,
+per-job cost/margin P&L, and a live crew map. Multi-tenant from day one
+(every route `Depends(get_current_tenant)`, every doc carries `tenant_id`).
+
+### Backend
+- **New router**: `/app/backend/routers/workforce.py` — 12 endpoints under
+  `/api/workforce/*`:
+  - POST `/clock-in`, `/clock-out`, `/break/start`, `/break/end`, `/location-ping`
+  - GET  `/timesheets`, `/mileage`, `/crew-map`, `/job-cost/{job_id}`,
+         `/export/timesheets.csv` (StreamingResponse, raw text/csv)
+  - POST `/timesheets/{id}/approve` and `/reject` (admin)
+- **New collections** (all tenant-scoped, indexed):
+  - `time_entries` (composite `(tenant_id, user_id, clock_in_at)` +
+    `(tenant_id, job_id)`)
+  - `location_pings` (TTL 30 days via `created_at_dt`)
+- **Tenant settings** live on `tenants.settings.workforce.{geofence_radius_m,
+  mileage_rate_usd, overtime_daily_hours, overtime_weekly_hours,
+  require_photo_clock_in, ping_min_seconds, mileage_max_speed_mph,
+  mileage_min_hop_m}` — sensible defaults inline.
+- Real-time WS notifications fired on clock-in, clock-out, and
+  approve/reject via the existing `routers.realtime.bus`.
+- **Total OpenAPI paths: 337** (up from 325). No existing endpoint touched.
+
+### Web (React)
+- New pages in `/app/frontend/src/pages/workforce/WorkforcePages.jsx`:
+  - `/workforce/timesheets` — filter by date range / tech / status,
+    per-row Approve/Reject, overtime + out-of-geofence badges, CSV export
+  - `/workforce/crew-map` — live Google Maps with tech markers
+    (auto-refresh 30 s, side-card + click drill-down)
+  - `/workforce/job-costing` — per-job revenue/labor/materials/mileage
+    P&L table + margin drill-down modal
+  - `/workforce/mileage` — per-tech, per-day miles report
+- Sidebar: new **Workforce** group added to
+  `/app/frontend/src/nav/adminNav.js` with 4 entries.
+
+### Mobile (Expo)
+- New screen `/app/mobile/app/time-clock.tsx`:
+  - Pick assigned job → Clock In (foreground GPS + geofence pill)
+  - Live shift timer, break start/end, Clock Out with summary alert
+  - 30 s ping loop while clocked in; offline pings queue in
+    AsyncStorage (`workforce_ping_queue_v1`) and flush on reconnect via
+    `@react-native-community/netinfo`.
+  - **Background pings (app closed) still require a native build** —
+    `expo-task-manager` is intentionally NOT registered here so the screen
+    remains Expo Go / web compatible. Native-build integration is a
+    follow-up (registration hook + `TaskManager.defineTask` + BG
+    permissions already granted in `app.json`).
+
+### Tests
+- `/app/backend/tests/test_workforce.py` — 6/6 green
+  (geofence in, geofence out flag, tenant isolation, OT split, CSV stream
+  content-type + disposition, ping rate-limit).
+
+### Human verification required
+- Real-device GPS clock-in on the mobile app (Expo Go, iOS or Android)
+- Background-location ping loop (needs a dev/native build to certify)
+- Google Maps API restriction — the current key is unrestricted; lock it
+  to the deployed domain for production

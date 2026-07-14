@@ -7,6 +7,7 @@ import {
   Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit,
   BadgeCheck, Shield, Bell as BellIcon, Settings, MapIcon, ScrollText,
   Grid3x3, Compass, Rss, Wand2, PencilRuler, Building2,
+  Map as MapPinIcon, Gauge, Timer as StopwatchIcon,
 } from "lucide-react";
 
 /**
@@ -58,6 +59,13 @@ export const ADMIN_NAV_V2 = [
     { to: "/job-timers",   label: "Job Timers",  icon: TimerIcon,  feature: "jobs" },
     { to: "/avg-job-time", label: "Avg Job Time",icon: TrendingUp, feature: "jobs" },
     { to: "/checkins",     label: "Check-ins",   icon: MapPin,     feature: "jobs" },
+  ]},
+
+  { key: "workforce", label: "Workforce", icon: StopwatchIcon, entries: [
+    { to: "/workforce/timesheets",  label: "Timesheets",  icon: Clock,       feature: "jobs" },
+    { to: "/workforce/crew-map",    label: "Crew Map",    icon: MapPinIcon,  feature: "jobs" },
+    { to: "/workforce/job-costing", label: "Job Costing", icon: Gauge,       feature: "reports" },
+    { to: "/workforce/mileage",     label: "Mileage",     icon: TrendingUp,  feature: "reports" },
   ]},
 
   { key: "reports", label: "Reports", icon: BarChart3, entries: [

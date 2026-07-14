@@ -11,6 +11,7 @@ from routers import (
     analytics, onboarding,
     lead_requests, mobile_push,
     tenants,
+    workforce,
 )
 
 app = FastAPI(
@@ -26,7 +27,7 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                realtime, csat, signatures,
                analytics, onboarding,
                lead_requests, mobile_push,
-               tenants]:
+               tenants, workforce]:
     api_router.include_router(module.router)
 
 
