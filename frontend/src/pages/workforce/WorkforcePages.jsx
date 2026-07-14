@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { GoogleMap, Marker as GMarker, useJsApiLoader } from "@react-google-maps/api";
 import { api } from "@/api";
 import { colors, brandGradientCss, money } from "@/theme";
 import {
@@ -239,13 +240,17 @@ export function TimesheetsPage() {
 /* ────────────────────────────────────────────────────────────────────
    /workforce/crew-map — Google Maps live crew view
    ──────────────────────────────────────────────────────────────────── */
+const GOOGLE_LIBS = ["places"];
+
 export function CrewMapPage() {
   const [rows, setRows] = useState([]);
   const [selected, setSelected] = useState(null);
-  const [loaded, setLoaded] = useState(false);
-  const mapRef = React.useRef(null);
-  const gmapRef = React.useRef(null);
-  const markersRef = React.useRef({});
+  const [gmap, setGmap] = useState(null);
+  const { isLoaded } = useJsApiLoader({
+    id: "gm-script",  // shared with the rest of the app so we don't double-load
+    googleMapsApiKey: process.env.REACT_APP_GOOGLE_API_KEY,
+    libraries: GOOGLE_LIBS,
+  });
 
   const refresh = useCallback(async () => {
     try { setRows(await api.get("/workforce/crew-map")); } catch { /* ignore */ }
@@ -256,59 +261,26 @@ export function CrewMapPage() {
     return () => clearInterval(t);
   }, [refresh]);
 
-  // Google Maps script load
-  useEffect(() => {
-    if (window.google?.maps) { setLoaded(true); return; }
-    const key = process.env.REACT_APP_GOOGLE_API_KEY;
-    if (!key) { setLoaded(true); return; }
-    const s = document.createElement("script");
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${key}`;
-    s.async = true; s.onload = () => setLoaded(true);
-    document.head.appendChild(s);
-  }, []);
-
-  // Init map
-  useEffect(() => {
-    if (!loaded || !window.google?.maps || gmapRef.current || !mapRef.current) return;
-    gmapRef.current = new window.google.maps.Map(mapRef.current, {
-      zoom: 11,
-      center: rows[0]?.last_ping
-        ? { lat: rows[0].last_ping.lat, lng: rows[0].last_ping.lng }
-        : { lat: 33.7005, lng: -112.2280 },  // Vistancia, AZ default
-      streetViewControl: false,
-      mapTypeControl: false,
-    });
-  }, [loaded, rows]);
-
-  // Sync markers
-  useEffect(() => {
-    if (!gmapRef.current || !window.google?.maps) return;
-    const seen = new Set();
-    rows.forEach((r) => {
-      const pos = { lat: r.last_ping.lat, lng: r.last_ping.lng };
-      seen.add(r.user.id);
-      if (markersRef.current[r.user.id]) {
-        markersRef.current[r.user.id].setPosition(pos);
-      } else {
-        const m = new window.google.maps.Marker({
-          position: pos, map: gmapRef.current, title: r.user.name || r.user.email,
-          label: { text: (r.user.name || "T")[0], color: "#fff", fontWeight: "700" },
-          icon: {
-            path: window.google.maps.SymbolPath.CIRCLE,
-            scale: 12,
-            fillColor: r.clocked_in ? colors.success : colors.muted,
-            fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2,
-          },
-        });
-        m.addListener("click", () => setSelected(r));
-        markersRef.current[r.user.id] = m;
-      }
-    });
-    // Remove stale
-    Object.keys(markersRef.current).forEach((uid) => {
-      if (!seen.has(uid)) { markersRef.current[uid].setMap(null); delete markersRef.current[uid]; }
-    });
+  const center = useMemo(() => {
+    if (rows[0]?.last_ping) {
+      return { lat: rows[0].last_ping.lat, lng: rows[0].last_ping.lng };
+    }
+    return { lat: 33.7005, lng: -112.2280 };  // Vistancia, AZ default
   }, [rows]);
+
+  // Fit map to all pins once loaded + we have any rows.
+  // Single-pin fitBounds over-zooms; center+reasonable-zoom in that case.
+  useEffect(() => {
+    if (!gmap || !window.google?.maps || rows.length === 0) return;
+    if (rows.length === 1) {
+      gmap.panTo({ lat: rows[0].last_ping.lat, lng: rows[0].last_ping.lng });
+      gmap.setZoom(12);
+      return;
+    }
+    const bounds = new window.google.maps.LatLngBounds();
+    rows.forEach((r) => bounds.extend({ lat: r.last_ping.lat, lng: r.last_ping.lng }));
+    gmap.fitBounds(bounds, 60);
+  }, [gmap, rows]);
 
   return (
     <Section
@@ -319,7 +291,45 @@ export function CrewMapPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">
           <Card className="overflow-hidden" testId="crewmap-canvas-card">
-            <div ref={mapRef} style={{ width: "100%", height: 520 }} data-testid="crewmap-canvas"/>
+            <div style={{ width: "100%", height: 520 }} data-testid="crewmap-canvas">
+              {isLoaded ? (
+                <GoogleMap
+                  mapContainerStyle={{ width: "100%", height: "100%" }}
+                  center={center}
+                  zoom={11}
+                  onLoad={setGmap}
+                  options={{
+                    streetViewControl: false,
+                    mapTypeControl: false,
+                    fullscreenControl: false,
+                  }}
+                >
+                  {rows.map((r) => (
+                    <GMarker
+                      key={r.user.id}
+                      position={{ lat: r.last_ping.lat, lng: r.last_ping.lng }}
+                      title={r.user.name || r.user.email}
+                      onClick={() => setSelected(r)}
+                      icon={window.google?.maps ? {
+                        path: window.google.maps.SymbolPath.CIRCLE,
+                        scale: 12,
+                        fillColor: r.clocked_in ? colors.success : colors.muted,
+                        fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2,
+                      } : undefined}
+                      label={{
+                        text: ((r.user.name || r.user.email || "T")[0] || "T").toUpperCase(),
+                        color: "#fff", fontWeight: "700",
+                      }}
+                    />
+                  ))}
+                </GoogleMap>
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-sm"
+                     style={{ color: colors.muted }}>
+                  Loading Google Maps…
+                </div>
+              )}
+            </div>
           </Card>
         </div>
         <div className="space-y-2" data-testid="crewmap-side">
