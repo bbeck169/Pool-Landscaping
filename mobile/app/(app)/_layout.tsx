@@ -48,7 +48,7 @@ export default function AppLayout() {
       <Tabs.Screen
         name="today"
         options={{
-          title: "Today",
+          title: "Schedule",
           href: isTech ? "/(app)/today" : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="today-outline" size={size} color={color} />,
         }}
@@ -57,7 +57,7 @@ export default function AppLayout() {
         name="new-lead"
         options={{
           title: "New Lead",
-          href: isTech ? "/(app)/new-lead" : null,
+          href: null,
           tabBarIcon: ({ color, size }) => <Ionicons name="magnet-outline" size={size} color={color} />,
         }}
       />
@@ -65,7 +65,7 @@ export default function AppLayout() {
         name="jobs"
         options={{
           title: "Jobs",
-          href: isTech ? "/(app)/jobs" : null,
+          href: null,
           tabBarIcon: ({ color, size }) => <Ionicons name="briefcase-outline" size={size} color={color} />,
         }}
       />
@@ -81,8 +81,32 @@ export default function AppLayout() {
         name="tools"
         options={{
           title: "Tools",
-          href: isTech ? "/(app)/tools" : null,
+          href: null,
           tabBarIcon: ({ color, size }) => <Ionicons name="calculator-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="d2d"
+        options={{
+          title: "D2D",
+          href: isTech ? "/(app)/d2d" : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="log-in-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="huddle"
+        options={{
+          title: "Huddle",
+          href: isTech ? "/(app)/huddle" : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="time-clock"
+        options={{
+          title: "Time Clock",
+          href: isTech ? "/(app)/time-clock" : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="time-outline" size={size} color={color} />,
         }}
       />
       <Tabs.Screen

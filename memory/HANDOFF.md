@@ -510,3 +510,84 @@ Techs now see practical property-access info right on each schedule card.
 - `memory/HANDOFF.md` — this section
 
 No new endpoints. OpenAPI path count still 361.
+
+---
+
+## Phase 16C Follow-up · Date picker + startup seed + mobile tabs (Feb 2026)
+
+Three-part follow-up shipped in one pass.
+
+### 1) Date picker on tech schedule
+- Backend `/api/schedule/today` now accepts `?date=YYYY-MM-DD` query. New
+  alias `/api/schedule/day` (identical payload). Missing/invalid date
+  defaults to today in the tenant tz.
+- Web: prev / date-input / next chevrons + a Today pill in the schedule
+  header; selected date persists in the URL query (`?date=...`).
+- Mobile: same UX using `@react-native-community/datetimepicker` (already
+  a dep). Tap the date center → native date picker.
+- 5-day forecast strip is NOT date-shifted (weather API is real-time only,
+  as spec'd).
+
+### 2) Startup seed guarantees Mike has today's jobs
+- New idempotent helper `seed.seed_tech_today_demo()` (called from
+  `server.py::startup`):
+  * Ensures Jennifer Carson has `gate_code=1234#` + friendly notes.
+  * Ensures The Whitmore HOA has `gate_code=0713*` + service-gate notes.
+  * Inserts 2 jobs for TODAY assigned to Mike (`mike@aquaterra.com`):
+    - 09:00-10:00 · Weekly Pool Service · Jennifer Carson
+    - 11:00-12:30 · Monthly Landscaping · The Whitmore HOA
+  * Guarded by `(tenant, customer, tech, YYYY-MM-DD)` idempotency check —
+    safe to run every restart.
+- Verified via `curl /api/schedule/today` after backend restart:
+  Mike sees exactly 2 jobs with both gate codes populated.
+
+### 3) Mobile tech tab bar strict spec
+- Renamed today tab title `"Today" → "Schedule"`.
+- New tab files (thin re-exports so expo-router registers them):
+  * `(app)/d2d.tsx` → `../d2d/index.tsx`
+  * `(app)/huddle.tsx` → `../huddle.tsx`
+  * `(app)/time-clock.tsx` → `../time-clock.tsx`
+- `_layout.tsx` tech tabs now exactly:
+  **Schedule · D2D · Huddle · Time Clock · Profile**.
+  New Lead / Jobs / Tools / (admin) Schedule / Quotes / Customers all
+  `href: null` for `isTech` — admins keep their existing set.
+- Job detail deep-link from Schedule card still works via `router.push("/job/{id}")`.
+
+### Tests — 14/14 green
+- **New**: `test_schedule_accepts_date_query` — round-trips yesterday /
+  today / `/schedule/day` alias.
+- **New**: `test_schedule_date_query_tenant_isolation` — date param does
+  not weaken tenant scoping.
+- All other schedule + revenue-strip + gate-code tests still pass.
+
+### Endpoint spec (final)
+- `GET /api/schedule/today[?date=YYYY-MM-DD]` — canonical.
+- `GET /api/schedule/day[?date=YYYY-MM-DD]` — alias.
+- Missing/malformed date falls back to today in tenant tz.
+- Response `date` field echoes the requested day (YYYY-MM-DD).
+
+### Live verifications on preview
+- Login as `mike@aquaterra.com`:
+  * 2 job cards render today with gate codes 1234# and 0713* ✅
+  * Prev chevron → URL becomes `?date=2026-07-13`, header switches to
+    "Monday, Jul 13", card list shows 0 jobs (nothing scheduled yesterday) ✅
+  * Today pill appears + jumps back to `/schedule/today` ✅
+  * `/api/schedule/today?date=2026-07-13` echoes `date: "2026-07-13"` ✅
+
+### Files touched
+- `backend/routers/schedule.py` — `date` query + `/day` alias
+- `backend/seed.py` — `seed_tech_today_demo()` helper
+- `backend/server.py` — wire new seed at startup + import
+- `backend/tests/test_schedule.py` — 2 new tests
+- `frontend/src/pages/schedule/TodaySchedule.jsx` — date picker UI + URL sync
+- `mobile/app/(app)/today.tsx` — date picker UI (native `DateTimePicker`)
+- `mobile/app/(app)/_layout.tsx` — strict tech tab set
+- `mobile/app/(app)/d2d.tsx`, `huddle.tsx`, `time-clock.tsx` — new re-export tab files
+- `memory/HANDOFF.md` — this section
+
+No new endpoints beyond `/schedule/day` alias. Total OpenAPI paths: 362.
+
+### Human verification required
+- On a real Expo build, confirm the native date picker opens and
+  selection round-trips (works cross-platform, but iOS calendar UI vs
+  Android spinner differ visually — no code change needed).

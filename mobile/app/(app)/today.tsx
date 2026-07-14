@@ -8,6 +8,7 @@ import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, Linking,
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 import * as Clipboard from "expo-clipboard";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
@@ -51,15 +52,17 @@ async function distanceLeg(from: { lat: number; lng: number },
 export default function TodayScheduleScreen() {
   const { user } = useAuth();
   const router = useRouter();
+  const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [showPicker, setShowPicker] = useState(false);
   const [data, setData] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [legMap, setLegMap] = useState<Record<string, any>>({});
   const [firstLeg, setFirstLeg] = useState<any>(null);  // You-are-here → first job
 
   const load = useCallback(async () => {
-    try { setData(await api.get("/schedule/today")); } catch {}
+    try { setData(await api.get(`/schedule/today?date=${selectedDate}`)); } catch {}
     finally { setRefreshing(false); }
-  }, []);
+  }, [selectedDate]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -215,6 +218,48 @@ export default function TodayScheduleScreen() {
             </Pressable>
           ))}
         </View>
+
+        {/* Date picker — prev / date / next / Today */}
+        <View style={styles.dateNav} testID="schedule-date-picker">
+          <Pressable onPress={() => {
+            const d = new Date(selectedDate + "T12:00:00"); d.setDate(d.getDate() - 1);
+            setSelectedDate(d.toISOString().slice(0, 10));
+          }} hitSlop={8} style={styles.dateArrow} testID="schedule-date-prev">
+            <Ionicons name="chevron-back" size={18} color={colors.onSurface}/>
+          </Pressable>
+          <Pressable onPress={() => setShowPicker(true)}
+                     style={styles.dateCenter} testID="schedule-date-center">
+            <Ionicons name="calendar-outline" size={14} color={colors.brand}/>
+            <Text style={styles.dateText} numberOfLines={1}>
+              {selectedDate === new Date().toISOString().slice(0, 10) ? "Today · " : ""}
+              {new Date(selectedDate + "T12:00:00").toLocaleDateString([], {
+                weekday: "short", month: "short", day: "numeric",
+              })}
+            </Text>
+          </Pressable>
+          <Pressable onPress={() => {
+            const d = new Date(selectedDate + "T12:00:00"); d.setDate(d.getDate() + 1);
+            setSelectedDate(d.toISOString().slice(0, 10));
+          }} hitSlop={8} style={styles.dateArrow} testID="schedule-date-next">
+            <Ionicons name="chevron-forward" size={18} color={colors.onSurface}/>
+          </Pressable>
+          {selectedDate !== new Date().toISOString().slice(0, 10) && (
+            <Pressable onPress={() => setSelectedDate(new Date().toISOString().slice(0, 10))}
+                       style={styles.datePill} testID="schedule-date-today">
+              <Text style={styles.datePillText}>TODAY</Text>
+            </Pressable>
+          )}
+        </View>
+        {showPicker && (
+          <DateTimePicker
+            value={new Date(selectedDate + "T12:00:00")}
+            mode="date" display="default"
+            onChange={(_, d) => {
+              setShowPicker(false);
+              if (d) setSelectedDate(d.toISOString().slice(0, 10));
+            }}
+          />
+        )}
 
         {items.length === 0 && (
           <View style={styles.empty} testID="schedule-empty">
@@ -418,6 +463,19 @@ const styles = StyleSheet.create({
                fontVariant: ["tabular-nums"] },
   notesText: { flex: 1, fontFamily: font.regular, fontSize: 12,
                 color: colors.onSurfaceSecondary },
+  dateNav: { flexDirection: "row", alignItems: "center", gap: spacing.sm,
+              marginBottom: spacing.md },
+  dateArrow: { padding: spacing.sm, borderWidth: 1, borderColor: colors.border,
+                borderRadius: radius.md, backgroundColor: colors.surface },
+  dateCenter: { flex: 1, flexDirection: "row", alignItems: "center",
+                 justifyContent: "center", gap: 6, paddingVertical: spacing.md,
+                 borderWidth: 1, borderColor: colors.border,
+                 borderRadius: radius.md, backgroundColor: colors.surface },
+  dateText: { fontFamily: font.semiBold, fontSize: 13, color: colors.onSurface },
+  datePill: { backgroundColor: colors.brand, paddingHorizontal: spacing.md,
+               paddingVertical: spacing.sm, borderRadius: radius.md },
+  datePillText: { color: "#fff", fontFamily: font.bold, fontSize: 10,
+                    textTransform: "uppercase", letterSpacing: 0.5 },
 });
 
 /* ────────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ from starlette.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import client, db, logger
-from seed import seed, seed_extras
+from seed import seed, seed_extras, seed_tech_today_demo
 from routers import (
     auth, customers, technicians, jobs, quotes, leads, team, items, payments,
     operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google as google_router, phase11,
@@ -107,6 +107,11 @@ async def startup():
         await business_os.seed_business_os()
     except Exception as e:
         logger.warning(f"phase 16B seeds skipped: {e}")
+    # Phase 16C follow-up — Mike-today demo jobs + gate codes.
+    try:
+        await seed_tech_today_demo()
+    except Exception as e:
+        logger.warning(f"tech today demo seed skipped: {e}")
     # Background auto-publish drip: check for due SEO articles every 10 minutes.
     scheduler.add_job(seo.run_due_publishes, "interval", minutes=10, id="seo_drip", replace_existing=True)
     # Auto-bill accrued chemical invoices once a month (checked daily; bills months that have ended).

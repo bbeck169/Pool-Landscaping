@@ -281,3 +281,84 @@ async def seed_extras():
                 "notes": "Waterline tile is chipped along 42 linear feet. Includes grout + sealant. Quote valid 30 days.",
                 "created_at": now_iso(),
             })
+
+
+# ─── Phase 16C follow-up · idempotent Mike-today jobs + gate codes ──────
+async def seed_tech_today_demo():
+    """Ensure Mike (tech) has 2 demo jobs assigned for TODAY so the schedule
+    always shows real cards with gate codes on the preview.
+    Idempotent — skips inserts when a job with the same (date, customer, tech)
+    tuple already exists."""
+    from datetime import datetime, timezone
+    tenant = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0})
+    if not tenant:
+        return
+    tid = tenant["id"]
+    mike = await db.users.find_one({"email": "mike@aquaterra.com"})
+    if not mike:
+        return
+    uid = mike["id"]
+
+    # Backfill gate codes + notes on the two demo customers.
+    await db.customers.update_one(
+        {"tenant_id": tid, "name": "Jennifer Carson"},
+        {"$set": {"gate_code": "1234#",
+                  "notes": "Dog in yard — friendly. Please close pool gate behind you."}},
+    )
+    await db.customers.update_one(
+        {"tenant_id": tid, "name": "The Whitmore HOA"},
+        {"$set": {"gate_code": "0713*",
+                  "notes": "Enter through south service gate. Skimmer basket in shed by pump."}},
+    )
+
+    jen = await db.customers.find_one({"tenant_id": tid, "name": "Jennifer Carson"})
+    hoa = await db.customers.find_one({"tenant_id": tid, "name": "The Whitmore HOA"})
+
+    now = datetime.now(timezone.utc)
+    today_prefix = now.date().isoformat()  # "YYYY-MM-DD"
+
+    demo_jobs = [
+        {
+            "customer": jen, "hour_start": 9, "hour_end_h": 10, "hour_end_m": 0,
+            "service_type": "Weekly Pool Service",
+            "title": "Weekly Pool Service",
+        },
+        {
+            "customer": hoa, "hour_start": 11, "hour_end_h": 12, "hour_end_m": 30,
+            "service_type": "Monthly Landscaping",
+            "title": "Monthly Landscaping",
+        },
+    ]
+    for d in demo_jobs:
+        c = d["customer"]
+        if not c:
+            continue
+        # Idempotency guard: same tech + same customer + same day already scheduled.
+        existing = await db.jobs.find_one({
+            "tenant_id": tid, "customer_id": c["id"],
+            "technician_id": uid,
+            "scheduled_date": {"$regex": f"^{today_prefix}"},
+        })
+        if existing:
+            continue
+        start_iso = now.replace(hour=d["hour_start"], minute=0, second=0, microsecond=0).isoformat()
+        end_iso = now.replace(hour=d["hour_end_h"], minute=d["hour_end_m"], second=0, microsecond=0).isoformat()
+        await db.jobs.insert_one({
+            "id": new_id(),
+            "tenant_id": tid,
+            "title": d["title"],
+            "service_type": d["service_type"],
+            "customer_id": c["id"],
+            "customer_name": c["name"],
+            "address": c.get("address", ""),
+            "assigned_technician_id": uid,
+            "technician_id": uid,
+            "assigned_to": uid,
+            "technician_name": mike.get("name") or "Mike Rivera",
+            "scheduled_date": start_iso,
+            "scheduled_end": end_iso,
+            "status": "scheduled",
+            "site_lat": 33.7005, "site_lng": -112.2280,
+            "created_at": now_iso(),
+        })
+

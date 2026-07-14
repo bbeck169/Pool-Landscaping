@@ -12,7 +12,7 @@ import { useAuth } from "@/auth";
 import WeatherWidget5Day from "@/pages/aitools/WeatherWidget5Day";
 import {
   Clock, MapPin, Navigation, Car, Coffee, PlayCircle, StopCircle,
-  AlertTriangle, ChevronRight, RefreshCw, CalendarCheck, Square, CheckSquare,
+  AlertTriangle, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare,
   Key, StickyNote,
 } from "lucide-react";
 
@@ -41,6 +41,15 @@ export default function TodaySchedule() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const isTech = user?.role === "technician";
+  // Selected date — from URL query or today.
+  const [selectedDate, setSelectedDate] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const d = p.get("date");
+      if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    } catch {}
+    return new Date().toISOString().slice(0, 10);
+  });
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [nowIso, setNowIso] = useState(new Date().toISOString());
@@ -53,10 +62,27 @@ export default function TodaySchedule() {
 
   const load = useCallback(async () => {
     setBusy(true);
-    try { setData(await api.get("/schedule/today")); }
+    try { setData(await api.get(`/schedule/today?date=${selectedDate}`)); }
     finally { setBusy(false); }
-  }, []);
+  }, [selectedDate]);
   useEffect(() => { load(); }, [load]);
+  // Sync selectedDate → URL query so refresh preserves the view.
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      const today = new Date().toISOString().slice(0, 10);
+      if (selectedDate === today) url.searchParams.delete("date");
+      else url.searchParams.set("date", selectedDate);
+      window.history.replaceState({}, "", url.toString());
+    } catch {}
+  }, [selectedDate]);
+
+  const shiftDate = (delta) => {
+    const d = new Date(selectedDate + "T12:00:00");
+    d.setDate(d.getDate() + delta);
+    setSelectedDate(d.toISOString().slice(0, 10));
+  };
+  const isToday = selectedDate === new Date().toISOString().slice(0, 10);
 
   // "Now" indicator ticks
   useEffect(() => {
@@ -199,6 +225,47 @@ export default function TodaySchedule() {
             <RefreshCw size={14}/> Refresh
           </button>
         </div>
+      </div>
+
+      {/* Date picker — prev / date / next / Today */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap" data-testid="schedule-date-picker">
+        <button onClick={() => shiftDate(-1)}
+                className="p-2 rounded-lg flex items-center justify-center"
+                style={{ border: `1px solid ${colors.border}`, backgroundColor: colors.surface,
+                         color: colors.onSurface }}
+                data-testid="schedule-date-prev" aria-label="Previous day">
+          <ChevronLeft size={16}/>
+        </button>
+        <label className="flex-1 min-w-[220px] px-3 py-2 rounded-lg flex items-center justify-center gap-2 cursor-pointer"
+               style={{ border: `1px solid ${colors.border}`, backgroundColor: colors.surface }}>
+          <CalendarCheck size={14} style={{ color: colors.brand }}/>
+          <span className="text-sm font-semibold" style={{ color: colors.onSurface }}>
+            {isToday ? "Today · " : ""}
+            {new Date(selectedDate + "T12:00:00").toLocaleDateString([], {
+              weekday: "short", month: "short", day: "numeric", year: "numeric",
+            })}
+          </span>
+          <input type="date" value={selectedDate}
+                 onChange={(e) => setSelectedDate(e.target.value)}
+                 className="ml-2 text-xs"
+                 style={{ backgroundColor: "transparent", color: colors.muted, cursor: "pointer" }}
+                 data-testid="schedule-date-input"/>
+        </label>
+        <button onClick={() => shiftDate(1)}
+                className="p-2 rounded-lg flex items-center justify-center"
+                style={{ border: `1px solid ${colors.border}`, backgroundColor: colors.surface,
+                         color: colors.onSurface }}
+                data-testid="schedule-date-next" aria-label="Next day">
+          <ChevronRight size={16}/>
+        </button>
+        {!isToday && (
+          <button onClick={() => setSelectedDate(new Date().toISOString().slice(0, 10))}
+                  className="px-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wide"
+                  style={{ backgroundColor: colors.brand, color: "#fff" }}
+                  data-testid="schedule-date-today">
+            Today
+          </button>
+        )}
       </div>
 
       {/* Phase 16C add-on — 5-day forecast on tech landing */}

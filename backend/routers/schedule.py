@@ -31,17 +31,20 @@ router = APIRouter()
 DEFAULT_TZ = "America/Phoenix"  # AquaTerra HQ, no DST → consistent
 
 
-def _today_bounds_utc(tz_name: str) -> tuple:
-    """Return (start_iso, end_iso) UTC ISO strings covering *today* in the given tz.
-    Simplified: Phoenix is UTC-7 year-round (no DST), sunbelt tenant is same.
-    For other zones we still bucket by UTC midnight — good enough for the
-    schedule endpoint. Client renders in local tz."""
-    # Anchor "today" to UTC midnight, expand ±14h to safely catch jobs
-    # scheduled in the tenant local day even for East-Coast tenants. The
-    # client filters again by local tz when rendering.
-    now = datetime.now(timezone.utc)
-    start = (now - timedelta(hours=14)).replace(microsecond=0)
-    end = (now + timedelta(hours=14)).replace(microsecond=0)
+def _today_bounds_utc(tz_name: str, date_str: Optional[str] = None) -> tuple:
+    """Return (start_iso, end_iso) UTC ISO strings covering the requested day
+    (or *today* in the given tz when date_str is None). Simplified: bucket by
+    UTC midnight ±14h so we safely catch every reasonable tz. Client filters
+    again in local tz when rendering."""
+    if date_str:
+        try:
+            anchor = datetime.fromisoformat(date_str + "T12:00:00+00:00")
+        except Exception:
+            anchor = datetime.now(timezone.utc)
+    else:
+        anchor = datetime.now(timezone.utc)
+    start = (anchor - timedelta(hours=14)).replace(microsecond=0)
+    end = (anchor + timedelta(hours=14)).replace(microsecond=0)
     return start.isoformat(), end.isoformat()
 
 
@@ -50,12 +53,23 @@ def _cache_key(from_lat, from_lng, to_lat, to_lng):
 
 
 @router.get("/schedule/today")
-async def schedule_today(user: dict = Depends(get_current_user),
+async def schedule_today(date: Optional[str] = None,
+                         user: dict = Depends(get_current_user),
                          tenant: dict = Depends(get_current_tenant)):
+    """Return the tech's timeline for `date` (YYYY-MM-DD) or today when omitted.
+    Alias `/schedule/day` accepts the same query."""
     tid = tenant["id"]
     tz_name = (tenant.get("settings") or {}).get("tz") or DEFAULT_TZ
-    start_iso, end_iso = _today_bounds_utc(tz_name)
-    today_yyyymmdd = datetime.now(timezone.utc).date().isoformat()
+    start_iso, end_iso = _today_bounds_utc(tz_name, date)
+    if date:
+        # Validate strict YYYY-MM-DD
+        try:
+            requested = datetime.strptime(date, "%Y-%m-%d").date().isoformat()
+        except Exception:
+            requested = datetime.now(timezone.utc).date().isoformat()
+    else:
+        requested = datetime.now(timezone.utc).date().isoformat()
+    today_yyyymmdd = requested
 
     # Jobs — assigned to *this* user for today. Support several assignment field
     # names the codebase has used historically.
@@ -233,3 +247,12 @@ async def cache_route_legs(body: RouteLegCacheReq,
         )
         written += 1
     return {"ok": True, "written": written}
+
+
+@router.get("/schedule/day")
+async def schedule_day(date: Optional[str] = None,
+                        user: dict = Depends(get_current_user),
+                        tenant: dict = Depends(get_current_tenant)):
+    """Alias for `/schedule/today?date=…` — cleaner URL when browsing history."""
+    return await schedule_today(date=date, user=user, tenant=tenant)
+
