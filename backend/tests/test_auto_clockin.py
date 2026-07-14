@@ -128,8 +128,8 @@ def test_auto_clockin_inside_geofence(tech_h, dbc):
 
 
 def test_auto_clockin_outside_geofence(tech_h, dbc):
+    """Coords far from any of today's jobs → not_at_any_scheduled_site."""
     _cleanup_entries(dbc, "mike@aquaterra.com")
-    # ratelimit cleared by _reset_ratelimit fixture
     jid = _seed_job(dbc, "aquaterra", "mike@aquaterra.com",
                     site_lat=33.6, site_lng=-112.2, minutes_from_now=15)
     try:
@@ -140,6 +140,53 @@ def test_auto_clockin_outside_geofence(tech_h, dbc):
         assert r.json() == {"clocked_in": False, "reason": "not_at_any_scheduled_site"}
     finally:
         _cleanup_job(dbc, jid)
+
+
+def test_auto_clockin_in_geofence_but_out_of_window(tech_h, dbc):
+    """Tech is AT the site coords but the job is 10h from now → out_of_time_window."""
+    _cleanup_entries(dbc, "mike@aquaterra.com")
+    jid = _seed_job(dbc, "aquaterra", "mike@aquaterra.com",
+                    site_lat=33.6, site_lng=-112.2, minutes_from_now=10 * 60)
+    try:
+        r = requests.post(f"{API}/workforce/auto-clock-in", headers=tech_h,
+                          json={"lat": 33.6, "lng": -112.2, "accuracy": 10}, timeout=15)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["clocked_in"] is False and d["reason"] == "out_of_time_window"
+    finally:
+        _cleanup_job(dbc, jid)
+
+
+def test_already_clocked_in_returns_specific_reason(tech_h, dbc):
+    """User with an open time_entry gets `already_clocked_in` BEFORE any
+    throttle or accuracy check."""
+    _cleanup_entries(dbc, "mike@aquaterra.com")
+    u = dbc.users.find_one({"email": "mike@aquaterra.com"})
+    tenant = dbc.tenants.find_one({"slug": "aquaterra"})
+    existing_id = str(uuid.uuid4())
+    dbc.time_entries.insert_one({
+        "id": existing_id,
+        "tenant_id": tenant["id"],
+        "user_id": u["id"],
+        "job_id": "existing-open-job",
+        "clock_in_at": datetime.now(timezone.utc).isoformat(),
+        "clock_out_at": None,
+        "origin": "manual",
+        "status": "open",
+        "breaks": [],
+    })
+    try:
+        # Even with garbage/low-accuracy coords, the already_clocked_in short-
+        # circuit runs first → we still get the specific reason.
+        r = requests.post(f"{API}/workforce/auto-clock-in", headers=tech_h,
+                          json={"lat": 0, "lng": 0, "accuracy": 999}, timeout=15)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["clocked_in"] is False
+        assert d["reason"] == "already_clocked_in"
+        assert d["open_entry_id"] == existing_id
+    finally:
+        _cleanup_entries(dbc, "mike@aquaterra.com")
 
 
 def test_auto_clockin_low_accuracy(tech_h, dbc):
@@ -187,17 +234,18 @@ def test_auto_clockin_already_clocked_in(tech_h, dbc):
         _cleanup_job(dbc, jid)
 
 
-def test_auto_clockin_rate_limit_429(tech_h, dbc):
+def test_auto_clockin_rate_limit_returns_reason_throttled(tech_h, dbc):
+    """Two calls inside the 60s window: second gets `reason: throttled`
+    (200, not 429) and it lands AFTER the already_clocked_in check."""
     _cleanup_entries(dbc, "mike@aquaterra.com")
-    # NOTE: this test intentionally does NOT reset the rate-limit hook between
-    # its two endpoint calls — that's the behaviour under test.
     r1 = requests.post(f"{API}/workforce/auto-clock-in", headers=tech_h,
                       json={"lat": 0, "lng": 0, "accuracy": 10}, timeout=15)
-    assert r1.status_code == 200  # returns reason: not_at_any_scheduled_site
-    # Second call within 60s → 429
+    assert r1.status_code == 200  # returns not_at_any_scheduled_site
+    # Second call within 60s → 200 with reason=throttled
     r2 = requests.post(f"{API}/workforce/auto-clock-in", headers=tech_h,
                       json={"lat": 0, "lng": 0, "accuracy": 10}, timeout=15)
-    assert r2.status_code == 429
+    assert r2.status_code == 200, r2.text
+    assert r2.json() == {"clocked_in": False, "reason": "throttled"}
 
 
 def test_cancel_within_grace_window(tech_h, dbc):
@@ -264,6 +312,33 @@ def test_submit_report_mandates_clockout_on_auto(tech_h, dbc):
         e = dbc.time_entries.find_one({"id": eid})
         assert e["clock_out_at"] is not None
         assert e.get("closed_by_report") is True
+    finally:
+        _cleanup_entries(dbc, "mike@aquaterra.com")
+        _cleanup_job(dbc, jid)
+
+
+def test_seed_in_window_job_hook(tech_h, dbc):
+    """Dev-only seed hook creates a fresh in-window job scoped to the caller."""
+    _cleanup_entries(dbc, "mike@aquaterra.com")
+    r = requests.post(f"{API}/workforce/_test/seed-in-window-job",
+                      headers=tech_h, timeout=15)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    jid = data["job_id"]
+    try:
+        assert data["site_lat"] == 33.7005
+        assert data["site_lng"] == -112.228
+        j = dbc.jobs.find_one({"id": jid})
+        assert j is not None
+        assert j["technician_id"] is not None
+        assert j["status"] == "scheduled"
+        # And the endpoint should now accept a clock-in at those coords.
+        r2 = requests.post(f"{API}/workforce/auto-clock-in", headers=tech_h,
+                           json={"lat": 33.7005, "lng": -112.228, "accuracy": 8},
+                           timeout=15)
+        assert r2.status_code == 200
+        assert r2.json()["clocked_in"] is True
+        assert r2.json()["job_id"] == jid
     finally:
         _cleanup_entries(dbc, "mike@aquaterra.com")
         _cleanup_job(dbc, jid)

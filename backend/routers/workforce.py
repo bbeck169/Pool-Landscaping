@@ -689,6 +689,45 @@ async def _reset_autoclock_ratelimit(user: dict = Depends(get_current_user)):
     return {"ok": True, "cleared": user["id"]}
 
 
+@router.post("/workforce/_test/seed-in-window-job")
+async def _seed_in_window_job(user: dict = Depends(get_current_user),
+                              tenant: dict = Depends(get_current_tenant)):
+    """Test-only hook — creates a fresh scheduled job at Jennifer Carson's
+    coordinates, scheduled `now() + 5 minutes`, assigned to the calling tech.
+    Idempotent-ish: each call creates a new job (safe to call repeatedly).
+    Returns { job_id }. Env-gated via ALLOW_TEST_HOOKS.
+    """
+    if not os.environ.get("ALLOW_TEST_HOOKS"):
+        raise HTTPException(404, "Not found")
+    tech_id = user.get("id")
+    if user.get("role") != "technician":
+        # Restrict this seed to techs — no need to seed jobs for admins here.
+        raise HTTPException(400, "Only techs can seed a personal in-window job")
+    scheduled_start = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    scheduled_end = (datetime.now(timezone.utc) + timedelta(minutes=65)).isoformat()
+    jid = new_id()
+    doc = {
+        "id": jid,
+        "tenant_id": tenant["id"],
+        "customer_name": "TEST_ auto-clockin (seed hook)",
+        "title": "Weekly Pool Service",
+        "service_type": "Weekly Pool Service",
+        "job_type": "Weekly Pool Service",
+        "status": "scheduled",
+        "technician_id": tech_id,
+        "site_lat": 33.7005,
+        "site_lng": -112.228,
+        "scheduled_start": scheduled_start,
+        "scheduled_end": scheduled_end,
+        "photos": [],
+        "created_at": now_iso(),
+        "seed_source": "auto_clockin_test_hook",
+    }
+    await db.jobs.insert_one(doc)
+    return {"job_id": jid, "scheduled_start": scheduled_start,
+            "site_lat": 33.7005, "site_lng": -112.228}
+
+
 def _log_auto_decision(tenant_id: str, user_id: str, lat: float, lng: float,
                         decision: str, extra: dict | None = None):
     try:
@@ -719,26 +758,21 @@ async def auto_clock_in(body: AutoClockInReq,
     """GPS-triggered auto-clock-in.
 
     Fires when the tech is inside a scheduled job's geofence AND within ±2h of
-    the job's `scheduled_start`. Rate-limited to once per 60s per user. Returns
-    `clocked_in:false` (with a reason) instead of a 4xx so the client can just
-    keep polling as the tech moves around.
+    the job's `scheduled_start`. Rate-limited to once per 60s per user.
+    Returns 200 with `clocked_in:false` (and a `reason`) instead of 4xx for
+    business misses, so the client can keep polling as the tech moves around.
+
+    Reason ordering (short-circuits, most-useful first):
+      1. already_clocked_in
+      2. throttled            (rate limit)
+      3. low_accuracy
+      4. not_at_any_scheduled_site   (no today's job is within geofence)
+      5. out_of_time_window           (a geofence match exists but not in ±2h)
     """
     import time as _time
     uid = user["id"]
-    now_epoch = _time.time()
-    last = _AUTO_LAST.get(uid, 0)
-    if now_epoch - last < _AUTO_MIN_GAP_S:
-        raise HTTPException(429, "auto-clock-in throttled — try again in a moment")
-    _AUTO_LAST[uid] = now_epoch
 
-    # Low-accuracy fix → refuse (spec says >100m is unusable).
-    if body.accuracy is not None and body.accuracy > _AUTO_ACC_MAX_M:
-        _log_auto_decision(tenant["id"], uid, body.lat, body.lng, "low_accuracy",
-                           {"accuracy": body.accuracy})
-        return {"clocked_in": False, "reason": "low_accuracy",
-                "accuracy_m": body.accuracy}
-
-    # Already clocked in? Skip — never auto-switch jobs.
+    # 1) Already clocked in? Never auto-switch jobs.
     open_entry = await db.time_entries.find_one(
         {"tenant_id": tenant["id"], "user_id": uid, "clock_out_at": None},
         {"_id": 0},
@@ -750,11 +784,30 @@ async def auto_clock_in(body: AutoClockInReq,
                 "open_entry_id": open_entry["id"],
                 "open_job_id": open_entry.get("job_id")}
 
+    # 2) Rate-limit — keep AFTER #1 so a user already clocked in gets the more
+    #    useful message. Returns 200 with reason so the client can just poll.
+    now_epoch = _time.time()
+    last = _AUTO_LAST.get(uid, 0)
+    if now_epoch - last < _AUTO_MIN_GAP_S:
+        _log_auto_decision(tenant["id"], uid, body.lat, body.lng, "throttled")
+        return {"clocked_in": False, "reason": "throttled"}
+    _AUTO_LAST[uid] = now_epoch
+
+    # 3) Low-accuracy fix → refuse (spec says >100m is unusable).
+    if body.accuracy is not None and body.accuracy > _AUTO_ACC_MAX_M:
+        _log_auto_decision(tenant["id"], uid, body.lat, body.lng, "low_accuracy",
+                           {"accuracy": body.accuracy})
+        return {"clocked_in": False, "reason": "low_accuracy",
+                "accuracy_m": body.accuracy}
+
+    # 4) & 5) Fetch ALL of TODAY's assigned jobs, then split by geofence and
+    #         ±2h window so we can hand back the right reason string.
     s = _settings(tenant)
     radius = s.get("geofence_radius_m", 100)
-
-    # Find jobs assigned to this user within ±2h window.
     now_dt = datetime.now(timezone.utc)
+    day_start = now_dt.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    day_end = (now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                + timedelta(days=1)).isoformat()
     window_start = (now_dt - timedelta(hours=_AUTO_TIME_WINDOW_H)).isoformat()
     window_end = (now_dt + timedelta(hours=_AUTO_TIME_WINDOW_H)).isoformat()
     query = {
@@ -765,29 +818,40 @@ async def auto_clock_in(body: AutoClockInReq,
             {"assigned_technician_id": uid},
         ],
         "status": {"$nin": ["completed", "cancelled"]},
-        "scheduled_start": {"$gte": window_start, "$lte": window_end},
+        "scheduled_start": {"$gte": day_start, "$lt": day_end},
     }
-    jobs = await db.jobs.find(query, {"_id": 0}).to_list(50)
-    if not jobs:
-        _log_auto_decision(tenant["id"], uid, body.lat, body.lng, "no_jobs_in_window")
-        return {"clocked_in": False, "reason": "out_of_time_window"}
+    jobs_today = await db.jobs.find(query, {"_id": 0}).to_list(50)
 
-    best = None
-    best_dist = float("inf")
-    for j in jobs:
+    # Split by geofence first.
+    in_geofence: list = []
+    for j in jobs_today:
         site_lat = j.get("site_lat") or j.get("lat")
         site_lng = j.get("site_lng") or j.get("lng")
         if site_lat is None or site_lng is None:
             continue
         d = _haversine_m(site_lat, site_lng, body.lat, body.lng)
-        if d <= radius and d < best_dist:
-            best = j
-            best_dist = d
+        if d <= radius:
+            in_geofence.append((d, j))
 
-    if not best:
+    if not in_geofence:
         _log_auto_decision(tenant["id"], uid, body.lat, body.lng,
                            "not_at_any_scheduled_site")
         return {"clocked_in": False, "reason": "not_at_any_scheduled_site"}
+
+    # Of the geofence matches, keep only those in the ±2h window.
+    in_window = [
+        (d, j) for (d, j) in in_geofence
+        if (j.get("scheduled_start") or "") >= window_start
+        and (j.get("scheduled_start") or "") <= window_end
+    ]
+    if not in_window:
+        _log_auto_decision(tenant["id"], uid, body.lat, body.lng,
+                           "out_of_time_window")
+        return {"clocked_in": False, "reason": "out_of_time_window"}
+
+    # Nearest of the qualifying jobs.
+    in_window.sort(key=lambda t: t[0])
+    best_dist, best = in_window[0]
 
     # Clock the tech in.
     now = now_iso()
