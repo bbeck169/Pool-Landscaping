@@ -56,27 +56,73 @@ def a_customer_id(dbc):
 # ═══════════════════════════════════════════════════════════════════════
 
 def test_rate_catalog_seed_and_update(admin_h, dbc):
-    # First fetch → seeds starter items
-    r = requests.get(f"{API}/estimator/rate-catalog",
-                      headers=admin_h, timeout=15).json()
-    codes = {i["code"] for i in r["items"]}
+    # Reset first so we start from a known 20-item baseline
+    rst = requests.post(f"{API}/estimator/rate-catalog/reset-defaults",
+                         headers=admin_h, timeout=15).json()
+    codes = {i["code"] for i in rst["items"]}
     for req in ("pool_tech_hourly", "landscape_crew_hourly", "mulch",
                  "pool_tile", "pool_permit"):
         assert req in codes, f"starter catalog missing {req}"
-    # PUT overwrites
-    put = requests.put(f"{API}/estimator/rate-catalog", headers=admin_h,
-                        json={"items": [{"code": "test_code",
-                                           "description": "Test",
-                                           "category": "misc", "unit": "ea",
-                                           "default_price": 1.23}]},
-                        timeout=15).json()
+
+    # Explicit replace-all wipes and installs exactly the payload
+    put = requests.post(f"{API}/estimator/rate-catalog/replace-all",
+                         headers=admin_h,
+                         json={"items": [{"code": "test_code",
+                                            "description": "Test",
+                                            "category": "misc", "unit": "ea",
+                                            "default_price": 1.23}]},
+                         timeout=15).json()
     assert len(put["items"]) == 1
     assert put["items"][0]["code"] == "test_code"
+
     # Reset restores starter
     rst = requests.post(f"{API}/estimator/rate-catalog/reset-defaults",
                          headers=admin_h, timeout=15).json()
     codes2 = {i["code"] for i in rst["items"]}
     assert "pool_tech_hourly" in codes2
+
+
+def test_rate_catalog_put_merges_by_code(admin_h, dbc):
+    """PUT is merge-by-code: updates existing rows, appends new ones,
+    and does NOT touch codes absent from the payload."""
+    rst = requests.post(f"{API}/estimator/rate-catalog/reset-defaults",
+                         headers=admin_h, timeout=15).json()
+    n = len(rst["items"])
+    assert n >= 20
+    other_code = "landscape_crew_hourly"
+    other_before = next(i for i in rst["items"]
+                          if i["code"] == other_code)["default_price"]
+
+    # PUT with 1 new + 1 existing (change its price)
+    put = requests.put(f"{API}/estimator/rate-catalog", headers=admin_h,
+                        json={"items": [
+                            {"code": "brand_new_row",
+                              "description": "Newly added",
+                              "category": "misc", "unit": "ea",
+                              "default_price": 42.42},
+                            {"code": "pool_tech_hourly",
+                              "description": "Pool tech (hourly)",
+                              "category": "labor", "unit": "hr",
+                              "default_price": 111.11},
+                        ]}, timeout=15).json()
+    codes_after = {i["code"]: i for i in put["items"]}
+    # +1 net growth
+    assert len(put["items"]) == n + 1, (
+        f"expected {n + 1} rows after merge PUT, got {len(put['items'])}")
+    # Existing code updated in place (not duplicated)
+    assert sum(1 for i in put["items"]
+               if i["code"] == "pool_tech_hourly") == 1
+    assert codes_after["pool_tech_hourly"]["default_price"] == 111.11
+    # Untouched code kept its original value
+    assert codes_after[other_code]["default_price"] == other_before
+    # New code appended
+    assert codes_after["brand_new_row"]["default_price"] == 42.42
+
+    # DELETE /items/{code} removes a single row
+    dl = requests.delete(f"{API}/estimator/rate-catalog/items/brand_new_row",
+                          headers=admin_h, timeout=15).json()
+    assert "brand_new_row" not in {i["code"] for i in dl["items"]}
+    assert len(dl["items"]) == n  # back to the reset baseline count
 
 
 # ═══════════════════════════════════════════════════════════════════════

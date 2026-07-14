@@ -641,7 +641,7 @@ export function EstimatorRates() {
   const save = async () => {
     setSaving(true);
     try {
-      await api.put("/estimator/rate-catalog", {
+      await api.post("/estimator/rate-catalog/replace-all", {
         items: items.map(({ code, description, category, unit, default_price }) =>
           ({ code, description, category, unit, default_price })),
       });

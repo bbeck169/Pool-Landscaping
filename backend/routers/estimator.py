@@ -164,6 +164,37 @@ async def get_rate_catalog(user: dict = Depends(require_admin_or_tech),
 async def put_rate_catalog(body: RateCatalogIn,
                              user: dict = Depends(require_admin),
                              tenant: dict = Depends(get_current_tenant)):
+    """Merge-by-code upsert. Existing rows with a matching `code` have
+    their fields updated; new codes are appended; codes NOT in the
+    payload are left alone. Use POST /rate-catalog/replace-all for the
+    destructive path or DELETE /rate-catalog/items/{code} to remove a
+    single row.
+    """
+    doc = await _get_catalog(tenant["id"])
+    by_code = {i.get("code"): dict(i)
+                for i in (doc.get("items") or []) if i.get("code")}
+    for incoming in body.items:
+        payload = incoming.model_dump() | {"updated_by": user["id"],
+                                              "updated_at": now_iso()}
+        by_code[payload["code"]] = {**by_code.get(payload["code"], {}),
+                                       **payload}
+    merged = list(by_code.values())
+    await db.estimator_rate_catalog.update_one(
+        {"tenant_id": tenant["id"]},
+        {"$set": {"items": merged, "updated_at": now_iso()},
+         "$setOnInsert": {"tenant_id": tenant["id"],
+                           "created_at": now_iso()}},
+        upsert=True,
+    )
+    return await _get_catalog(tenant["id"])
+
+
+@router.post("/estimator/rate-catalog/replace-all")
+async def replace_rate_catalog(body: RateCatalogIn,
+                                  user: dict = Depends(require_admin),
+                                  tenant: dict = Depends(get_current_tenant)):
+    """Explicit destructive replace — wipes the existing catalog and
+    installs exactly the items in the payload."""
     items = [i.model_dump() | {"updated_by": user["id"],
                                  "updated_at": now_iso()}
              for i in body.items]
@@ -173,6 +204,19 @@ async def put_rate_catalog(body: RateCatalogIn,
          "$setOnInsert": {"tenant_id": tenant["id"],
                            "created_at": now_iso()}},
         upsert=True,
+    )
+    return await _get_catalog(tenant["id"])
+
+
+@router.delete("/estimator/rate-catalog/items/{code}")
+async def delete_rate_catalog_item(code: str,
+                                       user: dict = Depends(require_admin),
+                                       tenant: dict = Depends(get_current_tenant)):
+    doc = await _get_catalog(tenant["id"])
+    items = [i for i in (doc.get("items") or []) if i.get("code") != code]
+    await db.estimator_rate_catalog.update_one(
+        {"tenant_id": tenant["id"]},
+        {"$set": {"items": items, "updated_at": now_iso()}},
     )
     return await _get_catalog(tenant["id"])
 
