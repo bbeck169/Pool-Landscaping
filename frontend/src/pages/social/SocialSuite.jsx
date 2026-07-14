@@ -10,6 +10,7 @@ import {
   Facebook, Instagram, Twitter, Linkedin, Youtube, MapPin, Globe,
   Music2, Send, Sparkles, ImageIcon, CalendarDays, Trash2, Copy, Edit,
   Save, Clock, Plug, ChevronLeft, ChevronRight, X, Upload,
+  ShieldCheck, Link as LinkIcon, Target,
 } from "lucide-react";
 
 const NETWORKS = [
@@ -54,6 +55,8 @@ const BtnGhost = ({ children, testId, ...rest }) => (
 );
 
 /* ═══════════ COMPOSER ═══════════ */
+const URL_RE = /https?:\/\/[^\s<>"']+/i;
+
 export function ComposerPage() {
   const [caption, setCaption] = useState("");
   const [hashtags, setHashtags] = useState([]);
@@ -66,6 +69,12 @@ export function ComposerPage() {
   const [aiBusy, setAiBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
+  const [linkToolsOpen, setLinkToolsOpen] = useState(null); // 'shorten' | 'utm' | null
+  const [utmForm, setUtmForm] = useState({ source: "", medium: "social", campaign: "" });
+  const [aliasInput, setAliasInput] = useState("");
+  const [linkBusy, setLinkBusy] = useState(false);
+
+  const detectedUrl = useMemo(() => (caption.match(URL_RE) || [null])[0], [caption]);
 
   const toggle = (k) => {
     const s = new Set(selected);
@@ -108,6 +117,55 @@ export function ComposerPage() {
     finally { setSaving(false); }
   };
 
+  const submitForApproval = async () => {
+    if (!selected.size) { alert("Pick at least one network"); return; }
+    if (!caption.trim()) { alert("Write a caption first"); return; }
+    setSaving(true);
+    try {
+      const post = await api.post("/social/posts", {
+        networks: [...selected], caption, hashtags,
+        scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : null,
+        first_comment: firstComment || null,
+      });
+      await api.post(`/social/posts/${post.id}/submit-for-approval`);
+      setToast("Submitted for approval");
+      setCaption(""); setHashtags([]); setScheduledAt(""); setFirstComment("");
+      setTimeout(() => setToast(""), 2500);
+    } catch (e) { alert(e.message); }
+    finally { setSaving(false); }
+  };
+
+  const applyUtm = async () => {
+    if (!detectedUrl) return;
+    setLinkBusy(true);
+    try {
+      const r = await api.post("/social/utm/build", {
+        url: detectedUrl,
+        source: utmForm.source || undefined,
+        medium: utmForm.medium || undefined,
+        campaign: utmForm.campaign || undefined,
+      });
+      setCaption(caption.replace(detectedUrl, r.tagged_url));
+      setLinkToolsOpen(null);
+    } catch (e) { alert(e.message); }
+    finally { setLinkBusy(false); }
+  };
+
+  const applyShorten = async () => {
+    if (!detectedUrl) return;
+    setLinkBusy(true);
+    try {
+      const r = await api.post("/social/short-links", {
+        target_url: detectedUrl,
+        alias: aliasInput || undefined,
+      });
+      setCaption(caption.replace(detectedUrl, r.short_url));
+      setAliasInput("");
+      setLinkToolsOpen(null);
+    } catch (e) { alert(e.message); }
+    finally { setLinkBusy(false); }
+  };
+
   return (
     <Section title="Composer"
              subtitle="Write once, publish to many. Drafts & schedules stored — publishing lands in Phase 18B.">
@@ -132,6 +190,67 @@ export function ComposerPage() {
           <div className="text-xs mb-4" style={{ color: overLimit ? colors.error : colors.muted }}>
             {caption.length} / {tightestLimit} chars (tightest network limit)
           </div>
+
+          {detectedUrl && (
+            <div className="mb-3 p-2 rounded-lg flex items-center gap-2 flex-wrap"
+                 style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+                 data-testid="composer-url-tools">
+              <LinkIcon size={13} style={{ color: colors.brand }}/>
+              <span className="text-xs font-mono truncate max-w-[240px]" style={{ color: colors.onSurface }}>
+                {detectedUrl}
+              </span>
+              <button onClick={() => setLinkToolsOpen(linkToolsOpen === "shorten" ? null : "shorten")}
+                      className="text-xs font-bold px-2 py-1 rounded"
+                      style={{ backgroundColor: colors.brand, color: "#fff" }}
+                      data-testid="composer-shorten-btn">
+                <LinkIcon size={11} className="inline mr-1"/> Shorten
+              </button>
+              <button onClick={() => setLinkToolsOpen(linkToolsOpen === "utm" ? null : "utm")}
+                      className="text-xs font-bold px-2 py-1 rounded"
+                      style={{ backgroundColor: colors.surface, color: colors.brand,
+                               border: `1px solid ${colors.brand}` }}
+                      data-testid="composer-utm-btn">
+                <Target size={11} className="inline mr-1"/> UTM
+              </button>
+              {linkToolsOpen === "shorten" && (
+                <div className="w-full mt-2 flex gap-2 items-center">
+                  <input placeholder="custom-alias (optional)"
+                         value={aliasInput} onChange={(e) => setAliasInput(e.target.value)}
+                         className="flex-1 px-2 py-1 rounded text-xs"
+                         style={{ border: `1px solid ${colors.border}` }}
+                         data-testid="composer-shorten-alias"/>
+                  <BtnPrimary onClick={applyShorten} disabled={linkBusy}
+                              testId="composer-shorten-apply">Replace URL</BtnPrimary>
+                </div>
+              )}
+              {linkToolsOpen === "utm" && (
+                <div className="w-full mt-2 grid grid-cols-3 gap-2 items-center">
+                  <input placeholder="source"
+                         value={utmForm.source}
+                         onChange={(e) => setUtmForm({ ...utmForm, source: e.target.value })}
+                         className="px-2 py-1 rounded text-xs"
+                         style={{ border: `1px solid ${colors.border}` }}
+                         data-testid="composer-utm-source"/>
+                  <input placeholder="medium (social)"
+                         value={utmForm.medium}
+                         onChange={(e) => setUtmForm({ ...utmForm, medium: e.target.value })}
+                         className="px-2 py-1 rounded text-xs"
+                         style={{ border: `1px solid ${colors.border}` }}
+                         data-testid="composer-utm-medium"/>
+                  <input placeholder="campaign"
+                         value={utmForm.campaign}
+                         onChange={(e) => setUtmForm({ ...utmForm, campaign: e.target.value })}
+                         className="px-2 py-1 rounded text-xs"
+                         style={{ border: `1px solid ${colors.border}` }}
+                         data-testid="composer-utm-campaign"/>
+                  <div className="col-span-3">
+                    <BtnPrimary onClick={applyUtm} disabled={linkBusy}
+                                testId="composer-utm-apply">Apply UTM to URL</BtnPrimary>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {hashtags.length > 0 && (
             <div className="flex flex-wrap gap-1 mb-3" data-testid="composer-hashtags">
@@ -161,6 +280,10 @@ export function ComposerPage() {
           <div className="flex gap-2 flex-wrap">
             <BtnGhost onClick={() => save(false)} disabled={saving || !caption.trim()}
                      testId="composer-save-draft"><Save size={14}/> Save Draft</BtnGhost>
+            <BtnGhost onClick={submitForApproval} disabled={saving || !caption.trim()}
+                     testId="composer-submit-approval">
+              <ShieldCheck size={14}/> Submit for Approval
+            </BtnGhost>
             <BtnPrimary onClick={() => save(true)} disabled={saving || !caption.trim()}
                         testId="composer-schedule">
               <Clock size={14}/> Schedule

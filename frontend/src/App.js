@@ -96,6 +96,9 @@ import TodaySchedule from "@/pages/schedule/TodaySchedule";
 import { TechHuddlePage, TechTimeClockPage } from "@/pages/tech/TechPages";
 import { ComposerPage as SocialComposer, CalendarPage as SocialCalendar,
          LibraryPage as SocialLibrary, DraftsPage as SocialDrafts } from "@/pages/social/SocialSuite";
+import { ApprovalsPage as SocialApprovals, BulkUploadPage as SocialBulkUpload,
+         ShortLinksPage as SocialShortLinks, BrandKitPage as SocialBrandKit }
+  from "@/pages/social/SocialExtras";
 
 function AdminOnly({ children }) {
   const { user, loading } = useAuth();
@@ -249,6 +252,11 @@ export default function App() {
             <Route path="social/calendar" element={<AdminOnly><SocialCalendar /></AdminOnly>} />
             <Route path="social/library" element={<AdminOnly><SocialLibrary /></AdminOnly>} />
             <Route path="social/drafts" element={<AdminOnly><SocialDrafts /></AdminOnly>} />
+            {/* Phase 18A.1 — approvals · bulk · short-links · brand kit */}
+            <Route path="social/approvals" element={<AdminOnly><SocialApprovals /></AdminOnly>} />
+            <Route path="social/bulk-upload" element={<AdminOnly><SocialBulkUpload /></AdminOnly>} />
+            <Route path="social/short-links" element={<AdminOnly><SocialShortLinks /></AdminOnly>} />
+            <Route path="social/brand-kit" element={<AdminOnly><SocialBrandKit /></AdminOnly>} />
 
             {/* Phase 16B — Business OS */}
             <Route path="os" element={<AdminOnly><BusinessOSLayout /></AdminOnly>}>

@@ -131,6 +131,37 @@ export default function SocialComposerMobile() {
     }
   };
 
+  const submitForApproval = async () => {
+    if (selected.length === 0) {
+      Alert.alert("Pick a network", "Select at least one target network.");
+      return;
+    }
+    if (!caption.trim()) {
+      Alert.alert("Caption required", "Write a caption before submitting.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const post = await api.post("/social/posts", {
+        networks: selected,
+        caption,
+        first_comment: firstComment || undefined,
+        scheduled_at: scheduledAt ? scheduledAt.toISOString() : null,
+        status: "draft",
+      });
+      await api.post(`/social/posts/${post.id}/submit-for-approval`, {});
+      Alert.alert(
+        "Submitted for approval",
+        "An admin will review this post before it schedules.",
+        [{ text: "OK", onPress: () => router.back() }],
+      );
+    } catch (e: any) {
+      Alert.alert("Submit failed", e?.message || "Could not submit the post.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const overLimit = tightestLimit != null && caption.length > tightestLimit;
 
   return (
@@ -273,6 +304,16 @@ export default function SocialComposerMobile() {
             <Text style={styles.btnPrimaryText}>Schedule</Text>
           </Pressable>
         </View>
+
+        <Pressable
+          style={[styles.btn, styles.btnGhost, { marginTop: spacing.md }]}
+          onPress={submitForApproval}
+          disabled={saving || overLimit || !caption.trim()}
+          testID="social-submit-approval"
+        >
+          <Ionicons name="shield-checkmark-outline" size={18} color={colors.brand} />
+          <Text style={styles.btnGhostText}>Submit for Approval</Text>
+        </Pressable>
 
         <View style={styles.publishNote} testID="social-publish-note">
           <Ionicons name="lock-closed-outline" size={16} color={colors.muted} />

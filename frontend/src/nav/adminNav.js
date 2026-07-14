@@ -80,10 +80,14 @@ export const ADMIN_NAV_V2 = [
   ]},
 
   { key: "social", label: "Social", icon: Rss, entries: [
-    { to: "/social/composer", label: "Composer", icon: FileEdit,     feature: "marketing" },
-    { to: "/social/calendar", label: "Calendar", icon: CalendarDays, feature: "marketing" },
-    { to: "/social/library",  label: "Library",  icon: Image,        feature: "marketing" },
-    { to: "/social/drafts",   label: "Drafts",   icon: ListChecks,   feature: "marketing" },
+    { to: "/social/composer",     label: "Composer",     icon: FileEdit,     feature: "marketing" },
+    { to: "/social/calendar",     label: "Calendar",     icon: CalendarDays, feature: "marketing" },
+    { to: "/social/library",      label: "Library",      icon: Image,        feature: "marketing" },
+    { to: "/social/drafts",       label: "Drafts",       icon: ListChecks,   feature: "marketing" },
+    { to: "/social/approvals",    label: "Approvals",    icon: BadgeCheck,   feature: "marketing" },
+    { to: "/social/bulk-upload",  label: "Bulk Upload",  icon: FileEdit,     feature: "marketing" },
+    { to: "/social/short-links",  label: "Short Links",  icon: MapPin,       feature: "marketing" },
+    { to: "/social/brand-kit",    label: "Brand Kit",    icon: Palette,      feature: "marketing" },
   ]},
 
   { key: "reports", label: "Reports", icon: BarChart3, entries: [

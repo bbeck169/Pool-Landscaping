@@ -15,6 +15,7 @@ from routers import (
     business_os,
     schedule,
     social,
+    public_social,
 )
 
 app = FastAPI(
@@ -41,7 +42,15 @@ async def root():
     return {"message": "Pool CRM API"}
 
 
+# Public short-link redirect — Phase 18A.1.
+# Register into api_router (→ /api/r/{alias}) so the URL works through the
+# Kubernetes ingress (which only forwards `/api/*`). Also mount at the app
+# root (/r/{alias}) so the endpoint stays reachable when hitting the backend
+# directly (dev, curl, tests). Must be registered BEFORE app.include_router.
+api_router.include_router(public_social.router)
+
 app.include_router(api_router)
+app.include_router(public_social.router)
 
 app.add_middleware(
     CORSMiddleware,

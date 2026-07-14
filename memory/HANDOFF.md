@@ -637,11 +637,120 @@ POST /api/social/ai/caption {"topic":"3 tips ... July","networks":["instagram","
 ### Mobile (added in follow-up)
 - New screen `/app/mobile/app/social.tsx` — lightweight composer:
   caption + 9-network chip grid ("🔌 not connected" on each) + first-comment
-  + native date/time picker + Save Draft / Schedule + "Publish Now available in
-  Phase 18B" note. AI Suggest button hits `/api/social/ai/caption`.
+  + native date/time picker + Save Draft / Schedule / **Submit for Approval**
+  + "Publish Now available in Phase 18B" note. AI Suggest button hits
+  `/api/social/ai/caption`.
 - Screen self-guards: `role in {admin, super_admin, marketing}` → forbid card
   shown to techs/customers.
 - More menu (`/app/mobile/app/(app)/more.tsx`) now surfaces:
   * `showAdminSection = admin || super_admin || marketing`
   * new "Social Media" link → `/social` (right below Marketing)
   * techs never see the admin section, so the Social entry stays hidden from them.
+
+---
+
+## Phase 18A.1 · Social Suite Parallel Build (Feb 2026)
+
+Five parallel modules built while OAuth keys for Phase 18B are still being
+collected. All admin/marketing-only, tenant-scoped, zero regressions on 18A.
+
+### Backend — +19 endpoints (373 → 391 OpenAPI paths, +1 public `/r/{alias}`)
+
+**Module 1 — Approval Workflow** (`social_post_approvals` collection)
+- `POST /social/posts/{id}/submit-for-approval` (creator, marketing role ok)
+- `POST /social/posts/{id}/approve` (admin/super_admin only → moves post to
+  `scheduled` if `scheduled_at` set, else `draft`)
+- `POST /social/posts/{id}/reject` (requires `comment`)
+- `POST /social/posts/{id}/request-changes` (requires `comment`)
+- `POST /social/posts/{id}/comment` (thread append)
+- `GET  /social/approvals?status=…` (reviewer queue with post preview join)
+- Realtime `social.approval.submitted` event fires to all in-tenant admins.
+
+**Module 2 — Bulk CSV / JSON** — `POST /social/posts/bulk`
+Accepts multipart CSV upload OR JSON body. 500-row cap. Per-row error report
+(`row`, `msg`). Media URLs in a CSV row are materialized into
+`social_media_assets` so composer can reuse them.
+
+**Module 3 — UTM Builder** (`utm_presets` collection)
+- `POST /social/utm/build` → `{ tagged_url }` (never mutates original params)
+- `GET  /social/utm/presets`, `POST /social/utm/presets`, `DELETE /social/utm/presets/{id}`
+
+**Module 4 — Short Links** (`short_links` + `short_link_hits` collections; unique index on `alias` global)
+- `POST /social/short-links` (auto-generates 6-char base62 alias if none passed)
+- `GET  /social/short-links` (with `clicks_total`)
+- `GET  /social/short-links/{id}/stats` (click_series by day + top_referrers)
+- `DELETE /social/short-links/{id}` (cascades hits)
+- Public `GET /api/r/{alias}` → 302 redirect (+ 90-day TTL on hits collection).
+  Also registered at `/r/{alias}` for backend-direct access.
+  Cluster ingress only forwards `/api/*`, so external `short_url` returned to
+  the UI uses `/api/r/{alias}`.
+
+**Module 5 — Content Library upgrades**
+- Folders: `POST/GET /social/media/folders`, `DELETE /social/media/folders/{id}`
+  (cascade → contained assets go back to root).
+- Brand Kit: `GET /social/brand-kit`, `PUT /social/brand-kit` (upsert per tenant).
+- Alt-text: added `alt_text` (+ `folder_id`) fields to `social_media_assets`;
+  new `PATCH /social/media/{id}` for manual edit;
+  `POST /social/ai/alt-text` — vision-enabled Claude call via `EMERGENT_LLM_KEY`
+  (returns `mocked:false` when key present).
+
+### Frontend web — 4 new pages + composer enhancements
+- `/app/frontend/src/pages/social/SocialExtras.jsx` exports:
+  - `ApprovalsPage` — status filter, approve / reject / request-changes with
+    comment field, expandable discussion thread per post.
+  - `BulkUploadPage` — drag-drop CSV, live per-row validation preview
+    (truncated to 20 rows), downloadable CSV template, submit + result panel.
+  - `ShortLinksPage` — create with optional custom alias, table with copy /
+    stats (modal shows click_series + top_referrers) / delete.
+  - `BrandKitPage` — color pickers, logo URL, font, tagline, live gradient
+    preview.
+- `SocialSuite.jsx` composer now shows:
+  - **URL Tools strip** (only when caption contains `http(s)://…`) — Shorten
+    (replaces URL with short link, optional custom alias) + UTM (source /
+    medium / campaign fields, applies via `/social/utm/build`).
+  - **Submit for Approval** button (moves the post to `pending_approval`).
+
+### Frontend nav — Social group grew to 8 entries
+Composer · Calendar · Library · Drafts · **Approvals · Bulk Upload · Short
+Links · Brand Kit**.
+
+### Mobile
+- `/app/mobile/app/social.tsx` composer: added Submit for Approval button
+  under Save Draft / Schedule.
+
+### Tests — `test_social_phase18a1.py` (13/13 green)
+- Approval submit→approve→scheduled path, reject requires comment, tech 403,
+  tenant isolation on the queue.
+- Bulk CSV creates valid rows, reports invalid rows with row numbers,
+  501-row upload rejected with a 400 mentioning "500".
+- UTM build appends utm_source/medium/campaign, presets tenant-isolated.
+- Short-link create + follow via `/api/r/{alias}` returns 302 → target URL,
+  stats reflect the click; alias globally unique across tenants (409 on clash).
+- Folder create/list, cascade delete moves assets back to root.
+- Brand kit GET returns defaults, PUT persists.
+- Alt-text: manual PATCH + AI vision call (mocked:false with key present).
+
+### Live verifications on preview URL
+- `POST /api/social/short-links` → 200 with
+  `short_url: https://poolscape-audit.preview.emergentagent.com/api/r/summer27`.
+- `GET /api/r/summer27` (through ingress) → **302** →
+  `https://aquaterra.com/summer-promo` ✅.
+- `POST /api/social/ai/alt-text` → `mocked:false`, real vision output:
+  *"A modern rectangular swimming pool with blue water surrounded by a
+  concrete deck and contemporary outdoor furniture."* ✅.
+
+### Files touched
+- **New**: `backend/routers/public_social.py`,
+  `backend/tests/test_social_phase18a1.py`,
+  `frontend/src/pages/social/SocialExtras.jsx`.
+- **Extended**: `backend/routers/social.py` (+19 endpoints, alt_text/folder_id
+  on MediaIn, brand kit + short link helpers), `backend/server.py`
+  (public_social double-mount at `/api/r/{alias}` + `/r/{alias}`),
+  `frontend/src/App.js` (+4 routes), `frontend/src/nav/adminNav.js`
+  (Social group +4 entries), `frontend/src/pages/social/SocialSuite.jsx`
+  (URL Tools strip + Submit for Approval), `mobile/app/social.tsx`
+  (Submit for Approval).
+
+### Deferred to Phase 18B
+- OAuth for the 9 networks + real Publish Now (unchanged).
+- Bulk / UTM / Brand Kit exposure on mobile (spec explicitly deferred).
