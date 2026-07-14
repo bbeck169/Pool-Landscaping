@@ -1113,6 +1113,7 @@ async def scan_llm_visibility(body: LlmScanIn,
         q_filter, {"_id": 0}
     ).to_list(200)
     if not queries: return {"scan_id": None, "results": [],
+                             "engines_configured": _configured_engines(),
                              "engines_scanned": _configured_engines()}
     scan_id = new_id()
     results = []
@@ -1136,7 +1137,8 @@ async def scan_llm_visibility(body: LlmScanIn,
             doc.pop("_id", None)
             results.append(doc)
     return {"scan_id": scan_id, "results": results,
-            "engines_scanned": engines,
+            "engines_configured": engines,
+            "engines_scanned": engines,  # deprecated alias
             "engines_pending": [e for e in ("openai", "gemini", "perplexity")
                                  if e not in engines]}
 
@@ -1171,6 +1173,8 @@ async def llm_dashboard(range: str = Query("30d"),
         for c in s.get("competitors") or []:
             comp_counts[c] = comp_counts.get(c, 0) + 1
     top_competitors = sorted(comp_counts.items(), key=lambda x: -x[1])[:10]
+    top_competitors_list = [{"name": n, "mentions": c}
+                              for n, c in top_competitors]
     # Trend by day
     trend: Dict[str, Dict[str, int]] = {}
     for s in scans:
@@ -1185,14 +1189,22 @@ async def llm_dashboard(range: str = Query("30d"),
          "total": v["total"]}
         for d, v in sorted(trend.items())
     ]
+    mention_rate = round(100 * mentioned / max(1, total), 1)
+    engines = _configured_engines()
     return {
         "range": range,
         "total_scans": total,
-        "mention_rate_pct": round(100 * mentioned / max(1, total), 1),
+        # Canonical keys
+        "mention_rate_pct": mention_rate,
+        "competitors": top_competitors_list,
+        "engines_configured": engines,
+        # Deprecated aliases (kept for one release)
+        "mentions_rate_pct": mention_rate,
+        "competitors_mentioned": top_competitors_list,
+        "engines_scanned": engines,
+        "top_competitors": top_competitors_list,
         "avg_position": avg_pos,
-        "top_competitors": [{"name": n, "mentions": c} for n, c in top_competitors],
         "trend": trend_series,
-        "engines_configured": _configured_engines(),
     }
 
 

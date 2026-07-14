@@ -37,6 +37,9 @@ import RankHeatmap from "@/pages/seo/RankHeatmap";
 import TopicalMap from "@/pages/seo/TopicalMap";
 import LlmVisibility from "@/pages/seo/LlmVisibility";
 import AtlasAgent from "@/pages/seo/AtlasAgent";
+import OttoAutoFix from "@/pages/seo/OttoAutoFix";
+import WebsiteStudio, { WebsiteStudioEditor } from "@/pages/seo/WebsiteStudio";
+import WhiteLabelReports, { WhiteLabelReportDetail } from "@/pages/seo/WhiteLabelReports";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
@@ -407,6 +410,11 @@ export default function App() {
             <Route path="admin/seo/topical-map" element={<AdminOnly><TopicalMap /></AdminOnly>} />
             <Route path="admin/seo/llm-visibility" element={<AdminOnly><LlmVisibility /></AdminOnly>} />
             <Route path="admin/seo/atlas" element={<AdminOnly><AtlasAgent /></AdminOnly>} />
+            <Route path="admin/seo/audits/:id/otto" element={<AdminOnly><OttoAutoFix /></AdminOnly>} />
+            <Route path="admin/seo/studio" element={<AdminOnly><WebsiteStudio /></AdminOnly>} />
+            <Route path="admin/seo/studio/:id" element={<AdminOnly><WebsiteStudioEditor /></AdminOnly>} />
+            <Route path="admin/seo/reports" element={<AdminOnly><WhiteLabelReports /></AdminOnly>} />
+            <Route path="admin/seo/reports/:id" element={<AdminOnly><WhiteLabelReportDetail /></AdminOnly>} />
           </Route>
 
           {/* Anything unmatched → home */}

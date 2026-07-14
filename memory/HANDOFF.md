@@ -1388,3 +1388,157 @@ POST /api/seo/atlas/chat "Run an audit on https://example.com"
 - **OpenAI / Gemini / Perplexity keys needed** to expand LLM Visibility beyond Claude. Adapter functions `_scan_openai() / _scan_gemini() / _scan_perplexity()` are commented in `_configured_engines()` — enable + wire when keys arrive.
 - Atlas tool-calling currently uses strict-JSON prompting (works reliably against Claude Sonnet 4.6). Migrating to Anthropic's native tool-use API is a nice-to-have later.
 - **17C queued**: OTTO Auto-Fix + Website Studio + White-Label Reports.
+
+---
+
+## Phase 17C · OTTO Auto-Fix + Website Studio + White-Label Reports (Feb 2026)
+
+**The 9-module Agentic SEO Suite is now COMPLETE (9/9).** Modules shipped in
+this pass:
+1. Site Auditor · 2. Content Scoring · 3. Rank Heatmap (17A)
+4. Topical Map · 5. LLM Visibility Tracker · 6. Atlas Agent (17B)
+**7. OTTO Auto-Fix · 8. Website Studio · 9. White-Label Reports (17C)**
+
+### Backend — 455 → 470 OpenAPI paths (+15 across 1 new router)
+
+New router: `/app/backend/routers/seo_phase17c.py` (registered in
+`server.py` alongside `seo_agentic`).
+
+**17C.1 · OTTO Auto-Fix** — concrete, ready-to-paste patches
+- `POST /api/seo/otto/generate-fixes` `{audit_id, max_fixes?}` — walks the
+  audit's pages, produces a patch per issue via **Claude Sonnet 4.6 (LIVE,
+  `mocked:false`)**. Falls back to a deterministic static template for
+  `CANONICAL_MISSING / JSONLD_MISSING / OG_MISSING / SITEMAP_MISSING` when
+  the LLM is silent. De-duplicates: repeat calls do NOT recreate pending
+  fixes for the same (page_url, issue_code).
+- `GET  /api/seo/otto/fixes/{audit_id}?status=…` — list + totals grouped
+  by pending / applied / dismissed.
+- `POST /api/seo/otto/fixes/{fix_id}/mark-applied`
+- `POST /api/seo/otto/fixes/{fix_id}/dismiss`
+- `GET  /api/seo/otto/fixes/{fix_id}/patch-file` — downloadable `.html` snippet.
+- Collection: `seo_otto_fixes` (tenant-scoped; unique per pending fix).
+- Patch types: `title / meta / h1 / alt / canonical / schema / broken_link /
+  content / og / sitemap`.
+
+**17C.2 · Website Studio** — page builder with AI section auto-fill
+- `POST /api/seo/studio/pages`, `PUT /…/{id}`, `GET /…`, `GET /…/{id}`
+- `POST /api/seo/studio/pages/{id}/auto-fill` `{business_context,
+  target_keyword}` — **Claude LIVE (`mocked:false`)** generates 5–8 sections
+  with typed heading / subheading / body / items. Verified live: 8 sections
+  produced (hero, services, features, benefits, testimonials, faq, cta,
+  local_business_schema).
+- `POST /api/seo/studio/pages/{id}/publish`
+- `GET  /api/seo/studio/pages/{id}/export?format=html|markdown|json`
+- Public **`GET /api/preview/studio/{slug}`** — no-auth HTML render;
+  draft pages 403, missing 404, published render fully-styled HTML page.
+- Section types (validated on write): hero, features, benefits, services,
+  testimonials, faq, cta, local_business_schema.
+- Slug is unique per tenant (409 on collision).
+- Collection: `seo_studio_pages`.
+
+**17C.3 · White-Label Reports** — branded PDF (reportlab) + HTML fallback
+- `POST /api/seo/reports` `{title, brand_name?, brand_color?, logo_url?,
+  audit_id?, heatmap_id?, topical_map_id?, include_llm_visibility?,
+  range_days?}` — hydrates data blob, runs **Claude LIVE** for exec summary
+  (`{summary, key_wins:[str], top_opportunities:[str]}`). Cross-tenant ids
+  → 404. Missing data source (no audit/heatmap/topical/llm) → 400.
+- `GET  /api/seo/reports` (list, `data` blob stripped for weight)
+- `GET  /api/seo/reports/{id}` (full detail)
+- `GET  /api/seo/reports/{id}/download?format=pdf|html` — real PDF via
+  reportlab (verified 3537-byte PDF w/ header, score table, exec summary,
+  audit block); HTML fallback with `X-Pdf-Fallback: true` header if PDF
+  generation ever fails.
+- `POST /api/seo/reports/{id}/send` `{to, subject?, message?}` — Resend
+  email + PDF attachment (or HTML attachment if PDF gen failed).
+  Returns `{sent:false, reason:'resend-not-configured', ...}` when
+  `RESEND_API_KEY` is unset (verified graceful path).
+- Collection: `seo_reports`.
+
+### 17B naming polish shipped alongside (backwards-compatible)
+LLM Visibility endpoints canonicalize on `mention_rate_pct`, `competitors`,
+`engines_configured`. Deprecated aliases `mentions_rate_pct`,
+`competitors_mentioned`, `engines_scanned` are still returned for one
+release. Applies to both `/scan` and `/dashboard` endpoints. Live curl:
+```
+GET /api/seo/llm-visibility/dashboard
+canonical: mention_rate_pct=T, competitors=T, engines_configured=T
+aliases:  mentions_rate_pct=T, competitors_mentioned=T, engines_scanned=T
+```
+
+### Frontend web
+- New pages under `/app/frontend/src/pages/seo/`:
+  - `OttoAutoFix.jsx` — reachable at `/admin/seo/audits/:id/otto` and from a
+    new **Auto-Fixes** button on the audit detail header.
+  - `WebsiteStudio.jsx` — list at `/admin/seo/studio` + editor at
+    `/admin/seo/studio/:id` with LIST + auto-fill + publish + export bar
+    (HTML / Markdown / JSON) + open-live-preview button when published.
+  - `WhiteLabelReports.jsx` — list at `/admin/seo/reports` + detail at
+    `/admin/seo/reports/:id` (branded header, score table, exec summary,
+    key wins, top opportunities, PDF/HTML download + Email modal).
+- Two new admin sidebar entries in `adminNav.js`:
+  **Website Studio** + **White-Label Reports**.
+
+### Tests — `test_seo_phase17c.py` (11/11 green in ~91s)
+- LLM naming polish: dashboard has canonical + aliases; scan response
+  includes `engines_configured` mirrored to `engines_scanned`.
+- OTTO: generate creates patches (`mocked:false` verified), mark-applied +
+  dismiss flip status, patch-file download returns attachment, tenant
+  isolation returns 404 across tenants, tech → 403, duplicate-fix guard.
+- Studio: full CRUD + publish + public preview (200 for published, 403 for
+  draft, 404 for missing), export in all 3 formats, live auto-fill returns
+  8+ sections all of allowed types, tenant isolation + role gate + slug
+  uniqueness.
+- Reports: create + list (data blob stripped) + detail + PDF/HTML download,
+  send email graceful fallback + bad-email 400 + no-data 400, tenant
+  isolation + tech/customer 403 + cross-tenant references 404.
+
+Full SEO regression suite: **26/26 green** (15 prior 17A/17B + 11 new).
+
+### Live proof (external ingress)
+```
+# 17C.1 · OTTO Auto-Fix
+POST /api/seo/otto/generate-fixes {"audit_id":"..."} →
+  count=1, mocked:false, first fix:
+  issue_code=CANONICAL_MISSING patch_type=canonical
+  patch_snippet=<link rel="canonical" href="https://example.com/otto" />
+
+# 17C.2 · Website Studio auto-fill
+POST /api/seo/studio/pages/{id}/auto-fill →
+  mocked:false, count=8, sections=[hero, services, features, benefits,
+                                     testimonials, ...]
+  first heading: "Phoenix's Most Trusted Pool Service —
+                   Crystal Clear Water, Every Week"
+GET  /api/preview/studio/{slug} → 200 text/html
+                                    (published page renders with title tag)
+
+# 17C.3 · White-Label Reports
+POST /api/seo/reports {audit_id, include_llm_visibility:true} →
+  status:ready, mocked:false, key_wins=3
+  exec_summary: "AquaTerra's digital presence shows a moderate foundation
+                  with a site audit score of 75/100 across three audited
+                  pages, indicating a functional but improvable technical
+                  baseline. ..."
+GET  /api/seo/reports/{id}/download?format=pdf →
+                                200 application/pdf, 3537 bytes
+```
+
+### Files touched
+- **New**: `backend/routers/seo_phase17c.py`,
+  `backend/tests/test_seo_phase17c.py`,
+  `frontend/src/pages/seo/OttoAutoFix.jsx`,
+  `frontend/src/pages/seo/WebsiteStudio.jsx`,
+  `frontend/src/pages/seo/WhiteLabelReports.jsx`.
+- **Edited**: `backend/server.py` (register new router),
+  `backend/routers/seo_agentic.py` (LLM Visibility naming polish — canonical
+  + deprecated aliases), `frontend/src/App.js` (5 new routes),
+  `frontend/src/nav/adminNav.js` (2 new SEO entries),
+  `frontend/src/pages/seo/SeoAudits.jsx` (Auto-Fixes button on audit detail),
+  `memory/HANDOFF.md` (this section).
+
+### Deferred / non-blocking
+- OTTO's "apply to WordPress" one-click — for now the patch is downloadable
+  as an HTML snippet and marked applied when the user hits the button.
+  Auto-apply through the existing WordPress integration is a future upgrade.
+- Studio drag-and-drop section reordering — sections are add/remove today;
+  reorder is a nice-to-have.
+- Reports scheduling (recurring monthly report auto-generation) — deferred.

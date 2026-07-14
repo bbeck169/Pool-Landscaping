@@ -258,6 +258,14 @@ export function SeoAuditDetail() {
             Status: <b>{audit.status}</b> · Pages: {audit.summary?.pages_crawled ?? "…"}
           </p>
         </div>
+        <button onClick={() => nav(`/admin/seo/audits/${id}/otto`)}
+                className="px-3 py-2 text-sm font-bold rounded-xl"
+                style={{ backgroundColor: colors.surface,
+                          border: `1px solid ${colors.border}`,
+                          color: colors.onSurface }}
+                data-testid="seo-audit-otto-btn">
+          Auto-Fixes
+        </button>
         <button onClick={rerun}
                 className="px-3 py-2 text-sm font-bold rounded-xl"
                 style={{ background: brandGradientCss, color: "#fff" }}

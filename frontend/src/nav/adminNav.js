@@ -139,6 +139,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/seo/topical-map",    label: "Topical Map",      icon: Grid3x3,    feature: "seo" },
     { to: "/admin/seo/llm-visibility", label: "LLM Visibility",   icon: SearchIcon, feature: "seo" },
     { to: "/admin/seo/atlas",          label: "Atlas Agent",      icon: SearchIcon, feature: "seo" },
+    { to: "/admin/seo/studio",         label: "Website Studio",   icon: FileText,   feature: "seo" },
+    { to: "/admin/seo/reports",        label: "White-Label Reports", icon: FileText, feature: "seo" },
     { to: "/gbp",              label: "GBP Hub",       icon: Building2,  feature: "gbp" },
     { to: "/gbp/posts",        label: "GBP Posts",     icon: FileText,   feature: "gbp" },
     { to: "/gbp/reviews",      label: "GBP Reviews",   icon: StarIcon,   feature: "gbp" },
