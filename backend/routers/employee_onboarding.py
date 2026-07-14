@@ -166,7 +166,16 @@ async def list_assignments(
     tenant: dict = Depends(get_current_tenant),
 ):
     q: Dict[str, Any] = {"tenant_id": tenant["id"]}
-    if user_id: q["user_id"] = user_id
+    if user_id:
+        # Cross-tenant hardening — match the route-optimize pattern.
+        other = await db.users.find_one(
+            {"id": user_id}, {"_id": 0, "id": 1, "tenant_id": 1}
+        )
+        if not other:
+            raise HTTPException(404, "user_id not found")
+        if other.get("tenant_id") != tenant["id"]:
+            raise HTTPException(403, "user_id not in current tenant")
+        q["user_id"] = user_id
     return await db.onboarding_assignments.find(q, {"_id": 0}).sort("started_at", -1).to_list(1000)
 
 

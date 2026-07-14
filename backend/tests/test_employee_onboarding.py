@@ -137,3 +137,37 @@ def test_quiz_scoring_gate_at_80pct(admin_h, tech_h, dbc):
     dbc.onboarding_assignments.delete_one({"id": a["id"]})
     requests.delete(f"{API}/onboarding/templates/{tmpl['id']}",
                     headers=admin_h, timeout=15)
+
+
+
+# ─── 20B.2 · Cross-tenant hardening ────────────────────────────────────
+@pytest.fixture(scope="module")
+def sunbelt_admin_h():
+    try:
+        return {"Authorization": f"Bearer {_login('admin@sunbelt.com')['access_token']}"}
+    except Exception:
+        pytest.skip("sunbelt admin missing")
+
+
+def test_onboarding_assignments_cross_tenant_403(sunbelt_admin_h, admin_h, dbc):
+    """Sunbelt admin queries an Aquaterra user's assignments → 403.
+    Fake user_id → 404. Same-tenant → 200."""
+    import uuid as _uuid
+    aqua_user = dbc.users.find_one({"email": "mike@aquaterra.com"})
+    assert aqua_user
+
+    # Cross-tenant → 403 with the standard detail string.
+    r = requests.get(f"{API}/onboarding/assignments?user_id={aqua_user['id']}",
+                     headers=sunbelt_admin_h, timeout=15)
+    assert r.status_code == 403, f"expected 403 cross-tenant, got {r.status_code} {r.text[:200]}"
+    assert "not in current tenant" in r.text
+
+    # Ghost user_id → 404.
+    r404 = requests.get(f"{API}/onboarding/assignments?user_id={_uuid.uuid4()}",
+                       headers=sunbelt_admin_h, timeout=15)
+    assert r404.status_code == 404, f"expected 404 ghost, got {r404.status_code} {r404.text[:200]}"
+
+    # Same-tenant user_id → 200 (still works after hardening).
+    r_ok = requests.get(f"{API}/onboarding/assignments?user_id={aqua_user['id']}",
+                       headers=admin_h, timeout=15)
+    assert r_ok.status_code == 200, r_ok.text

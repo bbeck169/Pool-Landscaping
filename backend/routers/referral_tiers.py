@@ -227,6 +227,9 @@ async def analytics_v2(
                 for k, v in sorted(by_referrer.items(), key=lambda x: -x[1])[:10]
             ],
         },
+        # Phase 20B polish · expose canonical `cohort` alongside the legacy
+        # `cohort_curve` alias for one release. Frontends may read either.
+        "cohort": cohort_curve,
         "cohort_curve": cohort_curve,
         "leaderboard": {
             "page": leaderboard_page,
