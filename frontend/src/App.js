@@ -22,6 +22,15 @@ import { MasterInvoicesList, MasterInvoiceNew, MasterInvoiceDetail } from "@/pag
 import PaymentHandlesSettings from "@/pages/settings/PaymentHandles";
 import LateFeesSettings from "@/pages/settings/LateFees";
 import BillingSettings from "@/pages/settings/BillingSettings";
+import PortalPhotos from "@/pages/portal/PortalPhotos";
+import PortalBook from "@/pages/portal/PortalBook";
+import PortalChatsPage from "@/pages/portal/PortalChatsPage";
+import AppointmentsQueue from "@/pages/admin/AppointmentsQueue";
+import AdminAssets from "@/pages/admin/AdminAssets";
+import MyOnboarding, { OnboardingTemplates, OnboardingQueue }
+  from "@/pages/onboarding/EmployeeOnboarding";
+import ReferralAnalyticsV2, { ReferralTiers }
+  from "@/pages/admin/ReferralInsights";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
@@ -371,9 +380,20 @@ export default function App() {
             <Route path="portal/payment-method" element={<PortalPaymentMethod />} />
             <Route path="portal/documents" element={<PortalDocuments />} />
             <Route path="portal/messages" element={<PortalMessages />} />
+            <Route path="portal/chats" element={<PortalChatsPage />} />
+            <Route path="portal/book" element={<PortalBook />} />
+            <Route path="portal/photos" element={<PortalPhotos />} />
             <Route path="portal/profile" element={<PortalProfile />} />
             <Route path="portal/request-service" element={<PortalRequestService />} />
             <Route path="portal/payment-complete" element={<PortalPaymentComplete />} />
+            <Route path="onboarding/mine" element={<MyOnboarding />} />
+            <Route path="admin/portal-inbox" element={<AdminOnly><PortalChatsPage /></AdminOnly>} />
+            <Route path="admin/appointments" element={<AdminOnly><AppointmentsQueue /></AdminOnly>} />
+            <Route path="admin/assets" element={<AdminOnly><AdminAssets /></AdminOnly>} />
+            <Route path="admin/onboarding/templates" element={<AdminOnly><OnboardingTemplates /></AdminOnly>} />
+            <Route path="admin/onboarding/queue" element={<AdminOnly><OnboardingQueue /></AdminOnly>} />
+            <Route path="admin/referrals/settings" element={<AdminOnly><ReferralTiers /></AdminOnly>} />
+            <Route path="admin/referrals/analytics" element={<AdminOnly><ReferralAnalyticsV2 /></AdminOnly>} />
           </Route>
 
           {/* Anything unmatched → home */}

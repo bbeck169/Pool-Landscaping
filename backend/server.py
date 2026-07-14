@@ -17,6 +17,8 @@ from routers import (
     referrals,
     public_social,
     route_optimization,
+    portal_chats, portal_appointments, portal_photos,
+    employee_onboarding, assets, referral_tiers,
 )
 
 app = FastAPI(
@@ -37,7 +39,9 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                schedule, social,
                service_reports,
                referrals,
-               route_optimization]:
+               route_optimization,
+               portal_chats, portal_appointments, portal_photos,
+               employee_onboarding, assets, referral_tiers]:
     api_router.include_router(module.router)
 
 

@@ -1106,3 +1106,113 @@ once the store submission cycle is ready.
 - EAS build sanity: flip the mobile Auto Clock-In toggle ON, background
   the app, drive to a job site, confirm the foreground-service notification
   appears and an entry is auto-created.
+
+---
+
+## Phase 20B · Customer Portal + Employee Onboarding + Assets + Referral Analytics (Feb 2026)
+
+### Backend — 411 → 434 OpenAPI paths (+23 across 6 new routers)
+
+**Module 20B.1 · Customer portal upgrades** — 3 sub-features
+- **20B.1a · Chat threads** (`routers/portal_chats.py`) — new
+  `portal_chats` + `portal_chat_messages` collections. Endpoints
+  `POST/GET /api/portal/chats`, `GET/POST /api/portal/chats/{id}/messages`,
+  `POST /api/portal/chats/{id}/read`. Bus event `portal_chat_message`.
+  Techs → 403 across the surface.
+- **20B.1b · Appointment booking** (`routers/portal_appointments.py`) —
+  `GET /api/portal/availability`, `POST/GET /api/portal/appointments`,
+  `POST /api/portal/appointments/{id}/confirm|reject`. Confirmation
+  auto-creates a job via the standard pipeline with `source_appointment_id`.
+  Bus events: `portal_appointment_pending|confirmed|rejected`.
+- **20B.1c · Photo history** (`routers/portal_photos.py`) —
+  `GET /api/portal/photos` returns flat list of every service-report photo
+  the calling customer can view, with filters for service_type + date range.
+
+**Module 20B.2 · Employee onboarding** (`routers/employee_onboarding.py`)
+- `onboarding_templates` (per-tenant, per-role) + `onboarding_assignments`.
+- Endpoints: template CRUD, assign, mine, per-step complete/upload/quiz.
+- Auto-seeds a `technician` default template with 6 steps (W-4/W-9 upload,
+  safety video, chemical quiz, uniform/PPE acks, GPS auto-clockin intro).
+- Assignment status transitions `not_started → in_progress → complete`;
+  quiz gate = 80% pass mark.
+
+**Module 20B.3 · Assets & maintenance** (`routers/assets.py`)
+- `assets`, `asset_maintenance`, `asset_assignments_log`. Endpoints:
+  full CRUD + `POST /api/assets/{id}/assign`, maintenance list/create,
+  assignment log, and `GET /api/assets/reminders/due?days=` for the
+  "next 7 days" reminder scan (emits `asset_maintenance_due` WS events).
+- Techs see only assets currently assigned to them; customers → 403.
+
+**Module 20B.4 · Referral tiers + advanced analytics** (`routers/referral_tiers.py`)
+- `referral_program_settings` collection + `GET/PUT /api/referrals/settings`
+  with non-overlap validation + auto-seeded 100% back-compat default.
+- `admin_approve` in `routers/referrals.py` now consults `pick_tier`
+  based on the referrer's Nth approved conversion and issues credits at
+  the matched `credit_pct` + `credit_months`.
+- `GET /api/referrals/admin/analytics/v2` returns funnel (invites →
+  signups → converted → credits_redeemed), revenue attribution
+  (customers acquired via referral, sum of invoiced totals), cohort
+  curve (referrer's first-invite month × conversion month), and
+  paginated leaderboard with revenue per referrer.
+
+### Frontend web
+- Customer portal sidebar gains `/portal/book`, `/portal/photos`,
+  `/portal/chats` — 3 new pages with a matching visual language.
+- Admin sidebar gains `Assets`, `Portal Inbox`, `Appointments`,
+  `Onboarding Templates`, `Onboarding Queue`, `Referral Analytics`,
+  `Referral Tiers`.
+- `/onboarding/mine` — self-service employee checklist reachable by
+  any authenticated user; shows progress bar per template.
+- `AdminAssets` — filterable table (vehicles/equipment/tools) + detail
+  drawer with assign dropdown + maintenance history + log form.
+- `ReferralTiers` — table editor for tier bands with live "N% off Mmo"
+  preview per row; overlap validation surfaces 400 from server.
+- `ReferralAnalyticsV2` — funnel bars, revenue tile, cohort chips,
+  and top-referrer leaderboard.
+
+### Tests — 17 new (58 → 75 relevant), all green
+- `tests/test_portal_20b.py` — 5 (chat flow + isolation, appt flow +
+  isolation, photos scoped).
+- `tests/test_employee_onboarding.py` — 4 (default seed, template CRUD,
+  status transitions, quiz 80% gate).
+- `tests/test_assets.py` — 4 (CRUD, assign log, tech-scoped list,
+  maintenance + due reminders).
+- `tests/test_referral_tiers.py` — 4 (settings default, PUT, overlap
+  rejection, `pick_tier` band correctness, analytics v2 sections).
+
+### Live proof
+```
+POST /api/portal/chats                     → 200 {id, subject, ...}
+GET  /api/portal/availability?date_range=5 → 200 {windows: 6, capacity_per_window: 3}
+GET  /api/onboarding/templates             → 200 [1 default seeded, 6 steps]
+GET  /api/assets/reminders/due?days=30     → 200 {overdue:0, upcoming:0, count:0}
+GET  /api/referrals/settings               → 200 {tiers:[{1-1:25%1mo},{2-3:50%1mo},{4+:50%2mo}]}
+```
+
+### Files touched
+- **backend**: 6 new routers (`portal_chats`, `portal_appointments`,
+  `portal_photos`, `employee_onboarding`, `assets`, `referral_tiers`),
+  patched `referrals.py` (tier-aware approve), `server.py` (registration).
+- **frontend**: 8 new pages (`PortalPhotos`, `PortalBook`,
+  `PortalChatsPage`, `AppointmentsQueue`, `AdminAssets`,
+  `EmployeeOnboarding` (3 exports), `ReferralInsights` (2 exports));
+  updated `App.js` routes, `adminNav.js` links, `AppLayout.jsx`
+  customer nav.
+
+### Known limitations
+- Mobile-native UI (Expo) parity for these 4 modules is deferred to a
+  follow-up phase — the API surface is mobile-ready today.
+- Photo storage remains inline in `service_reports.photos`; the
+  photos endpoint just proxies. No CDN thumbnails yet.
+- The default onboarding template seeds only for the `technician` role;
+  admin/marketing defaults can be added later via the template editor UI.
+
+### Human verification suggested
+1. Log in as `customer@aquaterra.com` → visit `/portal/book`, submit
+   a test booking, log in as admin, confirm at `/admin/appointments`,
+   verify the job appears in `/schedule`.
+2. `/portal/photos` — verify photos from prior service reports appear.
+3. Edit tiers at `/admin/referrals/settings`, approve a pending
+   referral, confirm the issued credit matches the picked tier.
+4. Add an asset with a `next_due_at` inside 7 days, hit
+   `/assets/reminders/due` → confirm the WS toast fires.

@@ -380,14 +380,31 @@ async def admin_approve(
     if conv["status"] == "approved":
         return conv  # idempotent
     now = now_iso()
-    # Issue the 50%-off-1-month service credit.
+    # Determine which tier applies (Phase 20B.4). This is the referrer's
+    # Nth approved conversion (counting the one about to be approved).
+    prior_approved = await db.referral_conversions.count_documents(
+        {"tenant_id": tenant["id"], "status": "approved",
+         "referrer_customer_id": conv["referrer_customer_id"]}
+    )
+    nth = prior_approved + 1
+    try:
+        from routers.referral_tiers import get_settings, pick_tier
+        settings = await get_settings(tenant["id"])
+        tier = pick_tier(settings, nth)
+        reward_pct = float(tier.get("credit_pct", _REWARD_PCT))
+        months = int(tier.get("credit_months", 1))
+    except Exception as e:
+        logger.warning(f"tier lookup failed, using default: {e}")
+        reward_pct = float(_REWARD_PCT)
+        months = 1
+    # Issue the tiered service credit.
     credit = {
         "id": new_id(),
         "tenant_id": tenant["id"],
         "customer_id": conv["referrer_customer_id"],
         "kind": "percent_off_month",
-        "pct": _REWARD_PCT,
-        "months_remaining": 1,
+        "pct": reward_pct,
+        "months_remaining": months,
         "source": "referral",
         "source_conversion_id": cid,
         "granted_at": now,
@@ -401,6 +418,7 @@ async def admin_approve(
         {"$set": {
             "status": "approved", "decided_by": user["id"], "decided_at": now,
             "credit_id": credit["id"], "admin_notes": body.notes,
+            "tier_applied": {"pct": reward_pct, "months": months, "nth": nth},
         }},
     )
     # Notify the referring customer via WS.
@@ -408,13 +426,14 @@ async def admin_approve(
         from routers.realtime import bus
         await bus.broadcast(conv["referrer_customer_id"], {
             "type": "referral.approved",
-            "payload": {"credit_id": credit["id"], "pct": _REWARD_PCT},
+            "payload": {"credit_id": credit["id"], "pct": reward_pct,
+                        "months": months},
         })
     except Exception as e:
         logger.warning(f"WS notify failed: {e}")
     return {
         "ok": True, "credit_id": credit["id"], "status": "approved",
-        "reward_pct": _REWARD_PCT,
+        "reward_pct": reward_pct, "months": months, "nth_conversion": nth,
     }
 
 
