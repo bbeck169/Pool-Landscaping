@@ -31,6 +31,9 @@ import MyOnboarding, { OnboardingTemplates, OnboardingQueue }
   from "@/pages/onboarding/EmployeeOnboarding";
 import ReferralAnalyticsV2, { ReferralTiers }
   from "@/pages/admin/ReferralInsights";
+import SeoAudits, { SeoAuditDetail } from "@/pages/seo/SeoAudits";
+import ContentScorer from "@/pages/seo/ContentScorer";
+import RankHeatmap from "@/pages/seo/RankHeatmap";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
@@ -394,6 +397,10 @@ export default function App() {
             <Route path="admin/onboarding/queue" element={<AdminOnly><OnboardingQueue /></AdminOnly>} />
             <Route path="admin/referrals/settings" element={<AdminOnly><ReferralTiers /></AdminOnly>} />
             <Route path="admin/referrals/analytics" element={<AdminOnly><ReferralAnalyticsV2 /></AdminOnly>} />
+            <Route path="admin/seo/audits" element={<AdminOnly><SeoAudits /></AdminOnly>} />
+            <Route path="admin/seo/audits/:id" element={<AdminOnly><SeoAuditDetail /></AdminOnly>} />
+            <Route path="admin/seo/content-scorer" element={<AdminOnly><ContentScorer /></AdminOnly>} />
+            <Route path="admin/seo/rank-heatmap" element={<AdminOnly><RankHeatmap /></AdminOnly>} />
           </Route>
 
           {/* Anything unmatched → home */}

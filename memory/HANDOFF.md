@@ -1268,3 +1268,64 @@ Built 7 new files exercising every Phase 20B module. All type-clean (`tsc --noEm
 - Photo upload for onboarding `doc_upload` step is currently "mark complete" (assumes files are uploaded elsewhere); wiring `expo-image-picker` end-to-end to the multipart endpoint is a Wave 2 follow-up.
 - Asset photo capture (camera) is not yet wired — admins currently pass `photo_url` when creating assets manually.
 - Expo Web bundle isn't served in this environment, so mobile UI screenshots were not captured; the code is TS-clean.
+
+---
+
+## Phase 17A · Agentic SEO Suite — Foundation Layer (Feb 2026)
+
+### Backend — 434 → 444 OpenAPI paths (+10 in `routers/seo_agentic.py`)
+
+Added `beautifulsoup4==4.15.0` to requirements. `httpx` already present.
+
+**17A.1 · Site Auditor** — real HTML crawler (not stubbed)
+- `POST /api/seo/audits` — background crawl via FastAPI BackgroundTasks; returns `{audit_id, status:"queued"}`.
+- `GET /api/seo/audits` · `GET /api/seo/audits/{id}` · `GET /api/seo/audits/{id}/pages` · `POST /api/seo/audits/{id}/cancel` · `POST /api/seo/audits/{id}/rerun` · `GET /api/seo/ping`.
+- Crawler: httpx + BeautifulSoup, concurrency 5, 20s per-page timeout, same-host only, respects `robots.txt`/`sitemap.xml` presence.
+- 15+ checks: title/meta length, H1 count, canonical, thin content, alt %, broken links, redirect chains, mixed content, OG/JSON-LD, LCP proxy, duplicate title/meta.
+- Scoring: weighted rubric → `{technical, on_page, ux, overall}` all 0–100.
+- Collections: `seo_audits`, `seo_audit_pages`.
+
+**17A.2 · Content Scoring** — 8-dimension breakdown + live Claude critique
+- `POST /api/seo/content-score` `{url? | html?, target_keyword, secondary_keywords?}` → `{score, breakdown{readability, keyword_density, heading_structure, meta, internal_links, image_alt, content_length, semantic_relevance}, recommendations[], mocked, target_keyword, word_count, kw_density_pct}`.
+- `POST /api/seo/content-suggestions` → AI-drafted H2 outline + 3 FAQ pairs + suggested internal links. Live Claude call via `EMERGENT_LLM_KEY`, graceful stub fallback if key absent.
+- Flesch reading ease, keyword density scoring, heading/meta/link/alt/length rubrics all implemented locally.
+
+**17A.3 · Rank Heatmap** — geo-grid local rank preview
+- `POST /api/seo/rank-heatmaps` `{keyword, center_lat, center_lng, grid_size, radius_miles}` → background task, response flagged `mocked:true` up-front so the UI can label results.
+- `GET /api/seo/rank-heatmaps` · `GET /api/seo/rank-heatmaps/{id}`.
+- Grid geometry via lat/lng deltas × cos(lat), deterministic-random rank synthesis seeded by `(tenant_id, keyword)` so results are stable across pages.
+- **No silent mocking**: response includes `mocked:true` + `mocked_reason` explaining a real SERP provider (SerpAPI / DataForSEO / Google Local) needs configuration.
+- Collection: `seo_rank_heatmaps`.
+
+### Frontend web
+- New sidebar entries under **SEO & GBP** section: Site Auditor, Content Scorer, Rank Heatmap.
+- `/admin/seo/audits` — list + New Audit modal (URL/depth/max_pages) + live polling.
+- `/admin/seo/audits/:id` — score cards (Overall/Technical/On-page/UX) + severity-filterable issue list + Rerun button.
+- `/admin/seo/content-scorer` — HTML/URL toggle + keyword + Analyze → 8-bar breakdown + recommendations + "Improve" button that fetches AI outline suggestions.
+- `/admin/seo/rank-heatmap` — form + colored 5×5 grid (green rank 1-3 → red 20+), avg/top-10/cell drilldown, "SERP provider not configured" banner clearly visible at top when mocked.
+
+### Tests — 6/6 green in 13.9s
+- `tests/test_seo_phase17a.py` — audit lifecycle + tenant isolation + tech/customer 403; cancel + rerun paths; content-score full breakdown + role gating; **live LLM call with `mocked:false` semantic score = 72**; heatmap mocked flag + 3×3 grid + isolation + role gating; `/seo/ping` admin-only.
+
+### Live proof (curl)
+```
+POST /api/seo/audits              → {audit_id, status:"queued"}
+POST /api/seo/content-score       → {score:52, mocked:false, semantic:72, recs:4}
+POST /api/seo/rank-heatmaps       → {heatmap_id, status:"queued", mocked:true,
+                                     reason:"No SERP provider configured..."}
+```
+
+### Screenshots
+- Site Auditor list + detail (score 32 on example.com — expected low from a tiny page).
+- Content Scorer input pane rendered correctly.
+- Rank Heatmap 5×5 grid: avg 11.6, 8/25 top-10 cells, mocked banner visible.
+
+### Files touched
+- **backend**: new `routers/seo_agentic.py` (~600 LOC), `server.py` registration, `requirements.txt` (+ beautifulsoup4).
+- **frontend**: new `pages/seo/SeoAudits.jsx` (+ SeoAuditDetail), `pages/seo/ContentScorer.jsx`, `pages/seo/RankHeatmap.jsx`; `App.js` routes; `nav/adminNav.js` links.
+
+### Known limitations & human checks
+- **SERP provider**: Rank Heatmap needs a real SERP integration (SerpAPI, DataForSEO, or Google Maps Local key) before results reflect reality. When configured, add a provider adapter in `_generate_heatmap` and stop flagging `mocked:true`.
+- **Crawler**: outbound `example.com` reach works in this environment; real customer domains behind Cloudflare/WAFs may block the UA — expose a User-Agent config in the admin UI later.
+- **17B (next)**: Topical Map, LLM Visibility Tracker, Atlas Agent — queued.
+- **17C**: OTTO Auto-Fix, Website Studio, White-Label Reports — queued.
