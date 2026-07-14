@@ -255,3 +255,77 @@ per-job cost/margin P&L, and a live crew map. Multi-tenant from day one
 - Background-location ping loop (needs a dev/native build to certify)
 - Google Maps API restriction — the current key is unrestricted; lock it
   to the deployed domain for production
+
+---
+
+## Phase 16B — Business Operating System (LeanScaper-inspired) (Feb 2026)
+
+Reused + finished the scaffolded `/app/backend/routers/business_os.py`,
+`/app/backend/routers/tenant_plans.py`, and
+`/app/frontend/src/pages/os/BusinessOS.jsx`. Added Lana AI chat + KPI
+auto-recompute + plans catalog + tenant plan assignment + mobile huddle.
+
+### Backend
+- **Registered routers** in `server.py`: `business_os`, `tenant_plans`.
+- **New endpoints** (all admin-only, tenant-scoped):
+  - SOPs: `GET/POST /sops`, `PUT/DELETE /sops/{sid}`, `POST /sops/generate` (Lana AI)
+  - Role definitions: `GET/POST /role-definitions`, `PUT/DELETE /role-definitions/{rid}`
+  - KPI scorecards: `GET /kpi-scorecards`, `POST /kpi-scorecards` (upsert per role)
+  - Huddles: `GET/POST /huddles`, `GET /huddles/{hid}`, `POST /huddles/{hid}/agenda` (Lana), `POST /huddles/{hid}/action-items` (auto-creates task)
+  - LeanBoards: `GET /leanboards`, `GET/POST /leanboards/{bid}/cards`, `POST /leanboards/cards/{cid}/move`, `DELETE /leanboards/cards/{cid}`
+  - Sprints: `GET/POST /sprints`, `GET /sprints/{sid}`, `PUT /sprints/{sid}/review`, `POST /sprints/{sid}/retro-ai`
+  - Four Pillars overview: `GET /os/overview`
+  - Business OS meta: `POST /business-os/kpis/recompute`, `POST /business-os/lana/chat`, `GET /business-os/lana/conversations`
+  - Plans: `GET /plans`, `POST /plans/assign/{tenant_id}` (super-admin), `GET /plans/history/{tenant_id}`
+- **New collections** (all tenant-scoped): `sops`, `role_definitions`,
+  `kpi_scorecards`, `huddles`, `leanboards`, `leanboard_cards`, `sprints`,
+  `lana_conversations`, `plans` (global), `tenant_plan_assignments`.
+- **Startup seed** — per tenant: 10 pool/landscape SOPs, 8 canonical roles,
+  3 SOP-tied LeanBoards, KPI scorecards derived from each role's KPIs.
+- **`/api/tenants/current` patched** to surface `plan_features` (auto-backfill on-read).
+- **Lana AI persona** added as the 9th AI Employee (`ai_ops.SEEDED_EMPLOYEES`, slug `lana`).
+- **Total OpenAPI paths: 337 → 365** (28 new endpoints).
+
+### Web
+- Wired `/os/*` nested routing in `App.js` using `BusinessOSLayout` +
+  9 children: `dashboard`, `sops`, `roles`, `scorecards`, `huddle`,
+  `leanboards`, `sprints`, `lana`, `plans`.
+- New sidebar group **"Business OS"** in `adminNav.js` with all 9 entries;
+  Plans marked `super_admin_only`.
+- New file `/app/frontend/src/pages/os/LanaAndPlans.jsx` — Lana chat page
+  (streams messages, shows `MOCK MODE` badge when `mocked:true`) and Plans
+  admin (tier cards + tenant-by-tenant assign buttons).
+
+### Mobile
+- New Expo screen `/app/mobile/app/huddle.tsx` — tech enters yesterday /
+  today / blockers; each non-empty line is posted as a huddle action-item
+  which auto-creates a task in `db.tasks`. Reference SOP list included.
+
+### Tests
+- `/app/backend/tests/test_business_os.py` — **8/8 pass** (seed, SOP CRUD +
+  tenant isolation, role CRUD, KPI recompute, huddle → task, Lana chat
+  live+mocked-flag, plans catalog + super-admin-only assignment, LeanBoard
+  card move).
+- Workforce suite (Phase 16A) still 6/6 green.
+
+### Live verifications on preview URL
+- `/api/business-os/lana/chat` returns `mocked:false` and a real Claude
+  Sonnet 4.5 answer with `EMERGENT_LLM_KEY`.
+- `/api/tenants/current` surfaces `plan_features` (aquaterra=enterprise,
+  sunbelt=pro, new signups default to `free`).
+- Screenshots confirm Four Pillars overview, SOP Library grid, Lana chat
+  all render with the Business OS sub-nav.
+
+### Human verification required
+- **Plans re-tier UX** — assign flip on `/os/plans` (super@aquaterra.com only)
+- **Lana chat streaming feel** — right now `/lana/chat` is request/response;
+  streaming SSE was deferred (playbook Anthropic streaming path).
+- **SOP rich-text** — content is currently plain markdown/textarea, not a
+  WYSIWYG editor. Attached-checklist is stored in `content` inline; a
+  structured `checklist:[{text,done}]` field is a future add.
+
+### Deferred / partial
+- Sprint burndown chart (backend collects goals + reviews; a real burndown
+  needs an in-day `sprint_items` collection — not blocking the phase).
+- SOP per-role visibility filter — schema supports `owner_role` but the UI
+  currently shows all SOPs to every admin. Trivial to gate later.

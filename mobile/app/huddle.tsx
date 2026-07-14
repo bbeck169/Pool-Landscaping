@@ -1,0 +1,126 @@
+/**
+ * Phase 16B · Technician daily huddle entry.
+ * yesterday / today / blockers → posts to /api/huddles + huddles/{id}/action-items
+ */
+import React, { useState, useEffect } from "react";
+import { View, Text, StyleSheet, TextInput, Pressable, ScrollView, Alert } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+
+import { useAuth } from "@/src/auth";
+import { api } from "@/src/api";
+import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+
+export default function HuddleScreen() {
+  const { user } = useAuth();
+  const today = new Date().toISOString().slice(0, 10);
+  const [yesterday, setYesterday] = useState("");
+  const [todayText, setTodayText] = useState("");
+  const [blockers, setBlockers] = useState("");
+  const [huddle, setHuddle] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const [recentSops, setRecentSops] = useState<any[]>([]);
+
+  useEffect(() => {
+    // Best-effort: check if today's huddle already exists.
+    (async () => {
+      try {
+        const rows = await api.get("/huddles");
+        const found = (rows || []).find((h: any) => h.date === today);
+        if (found) setHuddle(found);
+        const s = await api.get("/sops");
+        setRecentSops((s || []).slice(0, 5));
+      } catch { /* ignore */ }
+    })();
+  }, []);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      let h = huddle;
+      if (!h) {
+        h = await api.post("/huddles", { date: today, title: "Daily Huddle" });
+        setHuddle(h);
+      }
+      // Post each non-empty line as an action-item — creates a task.
+      const lines = [
+        ...(yesterday.split("\n").map((s) => s.trim()).filter(Boolean)
+          .map((t) => `[Yesterday] ${t}`)),
+        ...(todayText.split("\n").map((s) => s.trim()).filter(Boolean)
+          .map((t) => `[Today] ${t}`)),
+        ...(blockers.split("\n").map((s) => s.trim()).filter(Boolean)
+          .map((t) => `[Blocker] ${t}`)),
+      ];
+      for (const text of lines) {
+        await api.post(`/huddles/${h.id}/action-items`, {
+          huddle_id: h.id, text, owner_user_id: user?.id,
+        });
+      }
+      Alert.alert("Huddle submitted", `${lines.length} note(s) posted for ${today}.`);
+      setYesterday(""); setTodayText(""); setBlockers("");
+    } catch (e: any) {
+      Alert.alert("Submit failed", e?.message || "Try again");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <ScrollView style={styles.root} contentContainerStyle={{ padding: spacing.lg, paddingBottom: 120 }}
+                testID="huddle-screen">
+      <Text style={styles.h1}>Daily Huddle</Text>
+      <Text style={styles.hint}>{today} · your notes flow to the admin's Business OS.</Text>
+
+      <View style={styles.card}>
+        <Text style={styles.label}>What did you finish yesterday?</Text>
+        <TextInput value={yesterday} onChangeText={setYesterday} multiline placeholder="One per line"
+                   style={styles.input} testID="huddle-yesterday"/>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>What are you doing today?</Text>
+        <TextInput value={todayText} onChangeText={setTodayText} multiline placeholder="One per line"
+                   style={styles.input} testID="huddle-today"/>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>Any blockers?</Text>
+        <TextInput value={blockers} onChangeText={setBlockers} multiline placeholder="One per line"
+                   style={styles.input} testID="huddle-blockers"/>
+      </View>
+
+      <Pressable onPress={submit} disabled={busy} style={styles.submitBtn} testID="huddle-submit">
+        <Ionicons name="paper-plane-outline" size={18} color="#fff"/>
+        <Text style={styles.submitLbl}>{busy ? "Submitting…" : "Submit huddle"}</Text>
+      </Pressable>
+
+      {recentSops.length > 0 && (
+        <View style={{ marginTop: spacing.xl }}>
+          <Text style={styles.h2}>Reference SOPs</Text>
+          {recentSops.map((s) => (
+            <View key={s.id} style={styles.sopRow} testID={`huddle-sop-${s.slug}`}>
+              <Ionicons name="document-text-outline" size={14} color={colors.brand}/>
+              <Text style={styles.sopTitle}>{s.title}</Text>
+              <Text style={styles.sopCat}>{s.category}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  h1: { fontFamily: font.bold, fontSize: 26, color: colors.onSurface },
+  h2: { fontFamily: font.semiBold, fontSize: 16, color: colors.onSurface, marginBottom: spacing.sm },
+  hint: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted,
+          marginBottom: spacing.lg },
+  card: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md,
+          borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md },
+  label: { fontFamily: font.semiBold, fontSize: 13, color: colors.onSurface, marginBottom: spacing.sm },
+  input: { minHeight: 90, fontFamily: font.regular, fontSize: 14, color: colors.onSurface,
+           textAlignVertical: "top" },
+  submitBtn: { backgroundColor: colors.brand, borderRadius: radius.md, padding: spacing.md,
+               flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm },
+  submitLbl: { color: "#fff", fontFamily: font.bold, fontSize: 15 },
+  sopRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm,
+            paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
+  sopTitle: { flex: 1, fontFamily: font.semiBold, fontSize: 13, color: colors.onSurface },
+  sopCat: { fontFamily: font.regular, fontSize: 11, color: colors.muted },
+});

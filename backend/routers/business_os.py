@@ -702,3 +702,200 @@ async def four_pillars(admin: dict = Depends(require_admin),
             "csat_avg": csat_avg,
         },
     }
+
+
+# ─── Item C+ · KPI auto-recompute ──────────────────────────────────────────
+async def _tenant_kpi_actuals(tenant_id: str) -> dict:
+    """Compute a small canonical set of live KPI values from real collections.
+    Only the labels that match are auto-populated; the rest keep their manual value."""
+    from datetime import timedelta as _td
+    now = datetime.now(timezone.utc)
+    month_ago = (now - _td(days=30)).isoformat()
+    seven_ago = (now - _td(days=7)).isoformat()
+
+    completed_last30 = await db.jobs.count_documents(
+        {"tenant_id": tenant_id, "status": "completed",
+         "updated_at": {"$gte": month_ago}}
+    )
+    # On-time %: jobs completed on or before scheduled_date over last 30d.
+    on_time_ok = await db.jobs.count_documents(
+        {"tenant_id": tenant_id, "status": "completed",
+         "updated_at": {"$gte": month_ago},
+         "$expr": {"$lte": ["$updated_at", "$scheduled_date"]}}
+    )
+    on_time_pct = round(100 * on_time_ok / completed_last30, 1) if completed_last30 else 0
+
+    # Revenue last 30d (from paid invoices)
+    paid_cursor = db.quotes.find(
+        {"tenant_id": tenant_id, "doc_type": "invoice",
+         "payment_status": "paid", "paid_at": {"$gte": month_ago}},
+        {"_id": 0, "total": 1},
+    )
+    revenue_30 = round(sum([(d.get("total") or 0) async for d in paid_cursor]), 2)
+
+    # Callbacks: any job in last 7d flagged as callback (best-effort — some tenants tag it).
+    callbacks = await db.jobs.count_documents(
+        {"tenant_id": tenant_id, "callback": True, "updated_at": {"$gte": seven_ago}}
+    )
+    # CSAT avg
+    csat_avg = 0.0
+    try:
+        csat_docs = await db.csat_surveys.find(
+            {"tenant_id": tenant_id, "score": {"$exists": True}},
+            {"_id": 0, "score": 1}
+        ).to_list(500)
+        if csat_docs:
+            csat_avg = round(sum(d["score"] for d in csat_docs) / len(csat_docs), 2)
+    except Exception:
+        pass
+
+    return {
+        "Net profit %": None,          # left manual
+        "On-time %": on_time_pct,
+        "First-visit fix %": None,
+        "Callback rate": callbacks,
+        "CSAT ≥ 4.7": csat_avg,
+        "CSAT ≥ 4.6": csat_avg,
+        "Hours billable": None,
+        "Stops/day": None,
+        "Close rate": None,
+        "Avg ticket": None,
+        "MQL/month": None,
+        "Blog rank ≥ #10": None,
+        "Review rate ≥ 20%": None,
+        "Route density": None,
+        "Owner hours/week": None,
+        "Cash-on-hand": None,
+        "Photo compliance %": None,
+        "Speed-to-lead ≤ 5 min": None,
+        "First-response ≤ 10 min": None,
+        "Tickets closed/day": None,
+        "Portal usage %": None,
+        "AR aging ≤ 45d avg": None,
+        "Invoices sent ≤ 24hr": None,
+        "_revenue_30": revenue_30,
+        "_completed_last30": completed_last30,
+    }
+
+
+@router.post("/business-os/kpis/recompute")
+async def kpi_recompute(admin: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    """Pull actuals from `jobs`, `quotes`, `csat_surveys` and update every
+    KPI scorecard row where the metric label matches a known auto-source."""
+    tid = tenant["id"]
+    actuals = await _tenant_kpi_actuals(tid)
+    scorecards = await db.kpi_scorecards.find({"tenant_id": tid}, {"_id": 0}).to_list(500)
+    updated = 0
+    for row in scorecards:
+        dirty = False
+        for m in row.get("metrics", []):
+            val = actuals.get(m.get("label"))
+            if val is not None:
+                m["actual"] = float(val)
+                dirty = True
+        if dirty:
+            await db.kpi_scorecards.update_one(
+                {"tenant_id": tid, "role_slug": row["role_slug"]},
+                {"$set": {"metrics": row["metrics"],
+                          "auto_recomputed_at": now_iso()}},
+            )
+            updated += 1
+    return {"ok": True, "updated_scorecards": updated,
+            "revenue_30d": actuals.get("_revenue_30"),
+            "completed_30d": actuals.get("_completed_last30")}
+
+
+# ─── Item H · Lana AI chat ────────────────────────────────────────────────
+class LanaChatIn(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None
+
+
+@router.post("/business-os/lana/chat")
+async def lana_chat(body: LanaChatIn,
+                     user: dict = Depends(get_current_user),
+                     tenant: dict = Depends(get_current_tenant)):
+    """Chat with Lana — the "COO in a box" AI persona scoped to business ops.
+    Persists per-conversation thread in `lana_conversations`.
+    Uses EMERGENT_LLM_KEY when set; otherwise returns a MOCKED response with
+    the `mocked:true` flag (per spec — never silently mocked)."""
+    conv_id = body.conversation_id or new_id()
+    thread = await db.lana_conversations.find_one(
+        {"id": conv_id, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    history: List[dict] = (thread or {}).get("messages", [])
+    history.append({"role": "user", "text": body.message, "ts": now_iso()})
+
+    # Load tenant context so Lana speaks from your data.
+    open_jobs = await db.jobs.count_documents(
+        {"tenant_id": tenant["id"], "status": {"$in": ["pending", "active"]}}
+    )
+    open_tasks = await db.tasks.count_documents(
+        {"tenant_id": tenant["id"], "status": {"$ne": "done"}}
+    )
+    sop_titles = [s["title"] for s in await db.sops.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0, "title": 1}).to_list(30)]
+    role_titles = [r["title"] for r in await db.role_definitions.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0, "title": 1}).to_list(20)]
+
+    system = (
+        f"{LANA_SYSTEM}\n\n"
+        f"You are speaking with {user.get('name') or user.get('email')} "
+        f"(role={user.get('role')}) at tenant {tenant.get('name')}.\n"
+        f"Live context: {open_jobs} open jobs, {open_tasks} open tasks.\n"
+        f"Known SOPs: {sop_titles or 'none'}.\n"
+        f"Defined roles: {role_titles or 'none'}.\n"
+        f"When asked to draft SOPs, role docs, or huddle agendas, respond in bullets."
+    )
+
+    mocked = False
+    key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
+    if not key:
+        reply = ("(Lana is running in MOCK mode — set EMERGENT_LLM_KEY to "
+                 "enable real answers.) I noted your question: "
+                 f"\"{body.message}\". In production I would draft a response "
+                 "using your tenant's live SOPs, roles, KPIs, and huddle history.")
+        mocked = True
+    else:
+        try:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage
+            chat = (LlmChat(api_key=key, session_id=conv_id,
+                            system_message=system)
+                    .with_model("anthropic", "claude-sonnet-4-5"))
+            resp = await chat.send_message(UserMessage(text=body.message))
+            reply = str(resp)
+        except Exception as e:
+            logger.warning(f"Lana chat error: {e}")
+            reply = f"(Lana AI unavailable — {e})"
+            mocked = True
+
+    history.append({"role": "assistant", "text": reply, "ts": now_iso()})
+    await db.lana_conversations.update_one(
+        {"id": conv_id, "tenant_id": tenant["id"]},
+        {"$set": {"messages": history, "updated_at": now_iso(),
+                  "user_id": user["id"]},
+         "$setOnInsert": {"id": conv_id, "tenant_id": tenant["id"],
+                          "created_at": now_iso()}},
+        upsert=True,
+    )
+    return {
+        "conversation_id": conv_id,
+        "reply": reply,
+        "mocked": mocked,
+        "messages": history,
+    }
+
+
+@router.get("/business-os/lana/conversations")
+async def lana_list_conversations(user: dict = Depends(get_current_user),
+                                   tenant: dict = Depends(get_current_tenant)):
+    rows = await db.lana_conversations.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0, "id": 1, "updated_at": 1, "messages": 1}
+    ).sort("updated_at", -1).to_list(50)
+    for r in rows:
+        msgs = r.get("messages") or []
+        r["last_message"] = msgs[-1]["text"] if msgs else ""
+        r["message_count"] = len(msgs)
+        r.pop("messages", None)
+    return rows

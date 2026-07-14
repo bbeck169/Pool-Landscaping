@@ -37,7 +37,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from config import db, logger
-from utils import now_iso, get_current_user
+from utils import now_iso, new_id, get_current_user
 from routers.tenants import get_current_tenant, require_super_admin
 
 router = APIRouter()
@@ -263,3 +263,86 @@ async def get_usage(tid: str, admin: dict = Depends(require_super_admin)):
         {"tenant_id": tid}, {"_id": 0}
     ).sort("month_yyyy_mm", -1).to_list(6)
     return {"current": usage, "history": six}
+
+
+# ─── Plans catalog + assignment (Item I) ───────────────────────────────────
+SEED_PLANS = [
+    {"slug": "free", "name": "Starter", "price_monthly": 0,
+     "highlights": ["Up to 3 users", "50 AI calls / month", "Core CRM"]},
+    {"slug": "pro", "name": "Pro", "price_monthly": 129,
+     "highlights": ["Up to 15 users", "2,000 AI calls / month",
+                    "D2D sales", "Sequences", "Custom branding"]},
+    {"slug": "enterprise", "name": "Enterprise", "price_monthly": 399,
+     "highlights": ["Unlimited users + AI", "Custom domain",
+                    "White-label reports", "Priority support"]},
+]
+
+
+async def seed_plans() -> None:
+    """Idempotent: seed the 3 canonical plans if missing, backfill features
+    from PLAN_MATRIX so the plans-catalog stays in sync with feature gating."""
+    for p in SEED_PLANS:
+        existing = await db.plans.find_one({"slug": p["slug"]}, {"_id": 0})
+        features = PLAN_MATRIX[p["slug"]]
+        if existing:
+            await db.plans.update_one(
+                {"slug": p["slug"]},
+                {"$set": {**p, "features": features, "updated_at": now_iso()}},
+            )
+        else:
+            await db.plans.insert_one({
+                "id": new_id(),
+                **p,
+                "features": features,
+                "created_at": now_iso(),
+            })
+    logger.info(f"Plans catalog seeded ({len(SEED_PLANS)} tiers).")
+
+
+@router.get("/plans")
+async def list_plans(user: dict = Depends(get_current_user)):
+    """Public-ish (auth required) list of plans for upgrade UI."""
+    return await db.plans.find({}, {"_id": 0}).sort("price_monthly", 1).to_list(50)
+
+
+class AssignPlanReq(BaseModel):
+    plan_slug: str
+
+
+@router.post("/plans/assign/{tenant_id}")
+async def assign_plan_to_tenant(tenant_id: str, body: AssignPlanReq,
+                                 admin: dict = Depends(require_super_admin)):
+    """Super admin assigns a tier to a tenant. Records history in
+    `tenant_plan_assignments` and updates the tenant's `plan_tier` +
+    `plan_features` to the tier defaults."""
+    if body.plan_slug not in PLAN_MATRIX:
+        raise HTTPException(400, f"Unknown plan slug: {body.plan_slug}")
+    t = await db.tenants.find_one({"id": tenant_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(404, "Tenant not found")
+    features = _plan_defaults(body.plan_slug)
+    await db.tenants.update_one(
+        {"id": tenant_id},
+        {"$set": {"plan_tier": body.plan_slug,
+                  "plan_features": features,
+                  "plan_updated_at": now_iso()}},
+    )
+    assignment = {
+        "id": new_id(),
+        "tenant_id": tenant_id,
+        "plan_slug": body.plan_slug,
+        "assigned_by": admin["id"],
+        "assigned_at": now_iso(),
+        "features": features,
+    }
+    await db.tenant_plan_assignments.insert_one(assignment)
+    assignment.pop("_id", None)
+    return assignment
+
+
+@router.get("/plans/history/{tenant_id}")
+async def plan_history(tenant_id: str,
+                        admin: dict = Depends(require_super_admin)):
+    return await db.tenant_plan_assignments.find(
+        {"tenant_id": tenant_id}, {"_id": 0}
+    ).sort("assigned_at", -1).to_list(50)

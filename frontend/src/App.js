@@ -86,6 +86,12 @@ import {
   TimesheetsPage as WorkforceTimesheets, CrewMapPage as WorkforceCrewMap,
   JobCostingPage as WorkforceJobCosting, MileagePage as WorkforceMileage,
 } from "@/pages/workforce/WorkforcePages";
+import {
+  BusinessOSLayout, OverviewPage as OsOverview, SopsPage as OsSops,
+  RolesPage as OsRoles, ScorecardsPage as OsScorecards, HuddlesPage as OsHuddles,
+  LeanboardsPage as OsLeanboards, SprintsPage as OsSprints,
+} from "@/pages/os/BusinessOS";
+import { LanaChatPage as OsLana, PlansAdminPage as OsPlans } from "@/pages/os/LanaAndPlans";
 
 function AdminOnly({ children }) {
   const { user, loading } = useAuth();
@@ -217,6 +223,21 @@ export default function App() {
             <Route path="workforce/crew-map" element={<AdminOnly><WorkforceCrewMap /></AdminOnly>} />
             <Route path="workforce/job-costing" element={<AdminOnly><WorkforceJobCosting /></AdminOnly>} />
             <Route path="workforce/mileage" element={<AdminOnly><WorkforceMileage /></AdminOnly>} />
+
+            {/* Phase 16B — Business OS */}
+            <Route path="os" element={<AdminOnly><BusinessOSLayout /></AdminOnly>}>
+              <Route index element={<OsOverview />} />
+              <Route path="dashboard" element={<OsOverview />} />
+              <Route path="sops" element={<OsSops />} />
+              <Route path="roles" element={<OsRoles />} />
+              <Route path="scorecards" element={<OsScorecards />} />
+              <Route path="huddle" element={<OsHuddles />} />
+              <Route path="huddles" element={<OsHuddles />} />
+              <Route path="leanboards" element={<OsLeanboards />} />
+              <Route path="sprints" element={<OsSprints />} />
+              <Route path="lana" element={<OsLana />} />
+              <Route path="plans" element={<OsPlans />} />
+            </Route>
 
             {/* Phase 6 — Finance + Reports */}
             <Route path="reports" element={<AdminOnly><ReportsHub /></AdminOnly>} />

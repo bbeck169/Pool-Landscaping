@@ -68,6 +68,18 @@ export const ADMIN_NAV_V2 = [
     { to: "/workforce/mileage",     label: "Mileage",     icon: TrendingUp,  feature: "reports" },
   ]},
 
+  { key: "business_os", label: "Business OS", icon: Compass, entries: [
+    { to: "/os/dashboard",  label: "Four Pillars", icon: Compass,       feature: "settings" },
+    { to: "/os/sops",       label: "SOPs",         icon: BookOpen,      feature: "settings" },
+    { to: "/os/roles",      label: "Roles",        icon: UsersRound,    feature: "settings" },
+    { to: "/os/scorecards", label: "Scorecards",   icon: Gauge,         feature: "settings" },
+    { to: "/os/huddle",     label: "Huddles",      icon: MessageSquare, feature: "settings" },
+    { to: "/os/leanboards", label: "LeanBoards",   icon: ListChecks,    feature: "settings" },
+    { to: "/os/sprints",    label: "Sprints",      icon: Workflow,      feature: "settings" },
+    { to: "/os/lana",       label: "Lana AI",      icon: Sparkles,      feature: "settings" },
+    { to: "/os/plans",      label: "Plans (super)", icon: Shield,       feature: "settings", hard_rule: "super_admin_only" },
+  ]},
+
   { key: "reports", label: "Reports", icon: BarChart3, entries: [
     { to: "/reports",                     label: "Reports Hub",       icon: BarChart3, feature: "reports" },
     { to: "/analytics",                   label: "Analytics",         icon: TrendingUp, feature: "reports" },
