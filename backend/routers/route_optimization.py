@@ -57,6 +57,16 @@ async def optimize_route(
     elif user_id and user_id != user["id"]:
         raise HTTPException(403, "Cannot optimize another user's route")
 
+    # Hard cross-tenant guard: if the caller is planning for someone else,
+    # that user must exist and belong to the caller's current tenant.
+    if target_uid != user["id"]:
+        other = await db.users.find_one({"id": target_uid},
+                                        {"_id": 0, "id": 1, "tenant_id": 1})
+        if not other:
+            raise HTTPException(404, "user_id not found")
+        if other.get("tenant_id") != tenant["id"]:
+            raise HTTPException(403, "user_id not in current tenant")
+
     date_str = body.date or datetime.now(timezone.utc).date().isoformat()
     day_start = f"{date_str}T00:00:00+00:00"
     day_end   = f"{date_str}T23:59:59+00:00"
