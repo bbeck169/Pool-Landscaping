@@ -76,79 +76,129 @@ app.add_middleware(
 scheduler = AsyncIOScheduler(timezone="UTC")
 
 
-@app.on_event("startup")
-async def startup():
-    await seed()
-    await seed_extras()
-    # Backfill: ensure every existing invoice/quote line item has an income category.
+# ── Cold-start optimization ───────────────────────────────────────────
+# Only the demo-admin `seed()` + a Mongo ping stay on the sync boot path
+# so that /api/auth/login is answerable within ~1s of process start.
+# All heavier idempotent seeds and the APScheduler registration run in a
+# background task fired 2s after boot. `/api/health/seeds` exposes the
+# progress so the frontend / monitoring can display a "warming" hint.
+
+SEEDS_COMPLETE: bool = False
+SEEDS_PHASE: str = "pending"
+SEEDS_STARTED_AT: str | None = None
+SEEDS_COMPLETED_AT: str | None = None
+
+
+async def _background_seed():
+    """Runs every heavy, idempotent seed off the boot path.
+    Every step is wrapped so one bad seed can't block the rest."""
+    global SEEDS_COMPLETE, SEEDS_PHASE, SEEDS_COMPLETED_AT
+    from datetime import datetime, timezone as _tz
+    import asyncio
+    SEEDS_PHASE = "running"
+    logger.info("Background seed pipeline starting…")
+
+    async def step(name: str, coro):
+        global SEEDS_PHASE
+        SEEDS_PHASE = name
+        try:
+            await coro
+        except Exception as e:
+            logger.warning(f"seed step {name} skipped: {e}")
+
+    await step("seed_extras", seed_extras())
+    # Backfill income category — kept as a raw update, not a helper.
     try:
+        SEEDS_PHASE = "income_category_backfill"
         res = await db.quotes.update_many(
-            {"$or": [{"line_items.category": {"$exists": False}}, {"line_items.category": None}]},
+            {"$or": [{"line_items.category": {"$exists": False}},
+                        {"line_items.category": None}]},
             {"$set": {"line_items.$[el].category": "Pool"}},
-            array_filters=[{"$or": [{"el.category": {"$exists": False}}, {"el.category": None}]}],
+            array_filters=[{"$or": [{"el.category": {"$exists": False}},
+                                     {"el.category": None}]}],
         )
         if res.modified_count:
-            logger.info(f"Backfilled income category on {res.modified_count} quote/invoice docs")
+            logger.info(f"Backfilled income category on {res.modified_count} docs")
     except Exception as e:
         logger.warning(f"income category backfill skipped: {e}")
-    # Seed legal documents (idempotent).
+
+    await step("legal_docs", legal.ensure_seeded())
+    await step("marketing_templates", marketing_studio._seed_templates())
+    await step("sequences", sequences.ensure_sequences_seeded())
+    await step("ai_employees", ai_ops.ensure_ai_employees_seeded())
+    await step("onboarding_demo", onboarding._seed_completed_for_demo())
+    await step("lead_request_form", lead_requests._seed_lead_request_form())
+    await step("tenant_backfill", tenants.run_tenant_backfill())
+    await step("super_admin", tenants._seed_super_admin())
+    await step("business_os", business_os.seed_business_os())
+    await step("tech_today_demo", seed_tech_today_demo())
+
+    # Scheduler registration (needs the DB but not auth).
     try:
-        await legal.ensure_seeded()
+        SEEDS_PHASE = "scheduler"
+        scheduler.add_job(seo.run_due_publishes, "interval", minutes=10,
+                            id="seo_drip", replace_existing=True)
+        scheduler.add_job(finances.run_monthly_chem_billing, "interval",
+                            hours=24, id="chem_billing", replace_existing=True)
+        scheduler.add_job(coverage.revert_expired_coverage, "interval",
+                            hours=12, id="coverage_revert",
+                            replace_existing=True)
+        scheduler.add_job(finances.run_late_fee_assessment, "cron",
+                            hour=2, minute=0, id="late_fees",
+                            replace_existing=True)
+        scheduler.add_job(marketing_studio.run_marketing_autopost,
+                            "interval", minutes=10,
+                            id="marketing_autopost", replace_existing=True)
+        scheduler.add_job(sequences.run_sequences_tick, "interval",
+                            minutes=15, id="sequences_tick",
+                            replace_existing=True)
+        scheduler.add_job(csat.run_csat_dispatch_tick, "interval",
+                            minutes=5, id="csat_dispatch",
+                            replace_existing=True)
+        scheduler.start()
     except Exception as e:
-        logger.warning(f"legal doc seed skipped: {e}")
-    # Seed marketing templates + sequences (idempotent, Phase 7).
+        logger.warning(f"scheduler registration skipped: {e}")
+
+    SEEDS_COMPLETED_AT = datetime.now(_tz.utc).isoformat()
+    SEEDS_PHASE = "complete"
+    SEEDS_COMPLETE = True
+    logger.info("Background seed pipeline complete.")
+
+
+@app.on_event("startup")
+async def startup():
+    global SEEDS_STARTED_AT
+    import asyncio
+    from datetime import datetime, timezone as _tz
+    # Sync boot path — auth-critical only.
     try:
-        await marketing_studio._seed_templates()
-        await sequences.ensure_sequences_seeded()
-        await ai_ops.ensure_ai_employees_seeded()
+        await client.admin.command("ping")
+        logger.info("MongoDB ping OK")
     except Exception as e:
-        logger.warning(f"phase-7 seeds skipped: {e}")
-    # Phase 15B: mark demo admin as onboarded so the wizard doesn't hijack the demo.
-    try:
-        await onboarding._seed_completed_for_demo()
-    except Exception as e:
-        logger.warning(f"onboarding demo seed skipped: {e}")
-    # Phase 15B slot-in: seed the Lead Request form template (idempotent).
-    try:
-        await lead_requests._seed_lead_request_form()
-    except Exception as e:
-        logger.warning(f"lead-request form seed skipped: {e}")
-    # Phase 15D Stage 1: seed default tenant + backfill tenant_id on every
-    # collection. Idempotent — only touches rows missing the field.
-    try:
-        await tenants.run_tenant_backfill()
-    except Exception as e:
-        logger.warning(f"tenant backfill skipped: {e}")
-    # Phase 15D Stage 2: seed super_admin account.
-    try:
-        await tenants._seed_super_admin()
-    except Exception as e:
-        logger.warning(f"super_admin seed skipped: {e}")
-    # Phase 16B — seed Business OS assets (SOPs / roles / KPIs / LeanBoards).
-    try:
-        await business_os.seed_business_os()
-    except Exception as e:
-        logger.warning(f"phase 16B seeds skipped: {e}")
-    # Phase 16C follow-up — Mike-today demo jobs + gate codes.
-    try:
-        await seed_tech_today_demo()
-    except Exception as e:
-        logger.warning(f"tech today demo seed skipped: {e}")
-    # Background auto-publish drip: check for due SEO articles every 10 minutes.
-    scheduler.add_job(seo.run_due_publishes, "interval", minutes=10, id="seo_drip", replace_existing=True)
-    # Auto-bill accrued chemical invoices once a month (checked daily; bills months that have ended).
-    scheduler.add_job(finances.run_monthly_chem_billing, "interval", hours=24, id="chem_billing", replace_existing=True)
-    # Auto-revert temporary route coverage after its week ends (checked daily).
-    scheduler.add_job(coverage.revert_expired_coverage, "interval", hours=12, id="coverage_revert", replace_existing=True)
-    # Assess automatic late fees on unpaid invoices past their grace period (daily @ 02:00 UTC).
-    scheduler.add_job(finances.run_late_fee_assessment, "cron", hour=2, minute=0, id="late_fees", replace_existing=True)
-    # Phase 7: marketing autopost + sequence ticker.
-    scheduler.add_job(marketing_studio.run_marketing_autopost, "interval", minutes=10, id="marketing_autopost", replace_existing=True)
-    scheduler.add_job(sequences.run_sequences_tick, "interval", minutes=15, id="sequences_tick", replace_existing=True)
-    # Phase 15A — CSAT auto-send dispatcher (checks pending survey queue every 5 min).
-    scheduler.add_job(csat.run_csat_dispatch_tick, "interval", minutes=5, id="csat_dispatch", replace_existing=True)
-    scheduler.start()
-    logger.info("SEO auto-publish + chemical billing + late-fee + marketing_autopost + sequences_tick schedulers registered")
+        logger.error(f"MongoDB ping FAILED at startup: {e}")
+    await seed()  # idempotent, ~ms after first run; creates demo admin.
+    SEEDS_STARTED_AT = datetime.now(_tz.utc).isoformat()
+
+    async def _defer():
+        try:
+            await asyncio.sleep(2)
+            await _background_seed()
+        except Exception as e:
+            logger.warning(f"background seed task crashed: {e}")
+
+    asyncio.create_task(_defer())
+    logger.info("Boot path complete — API is now accepting requests.")
+
+
+@app.get("/api/health/seeds")
+async def health_seeds():
+    """Cold-start progress indicator. Anyone can poll this."""
+    return {
+        "complete": bool(SEEDS_COMPLETE),
+        "phase": SEEDS_PHASE,
+        "started_at": SEEDS_STARTED_AT,
+        "completed_at": SEEDS_COMPLETED_AT,
+    }
 
 
 @app.on_event("shutdown")
