@@ -98,6 +98,49 @@ def test_get_service_report_pool_template(admin_h, tech_h, tech_user, dbc):
         assert data["template"] == "pool"
         assert any(f["name"] == "pH" for f in data["chemical_readings"])
         assert len(data["checklist_items"]) >= 6
+        # Phase 18B follow-up 2: pool template must surface source-repo enrichment
+        assert "chemical_reading_fields" in data
+        assert "chemicals_catalog" in data
+        assert "chemical_units" in data
+        # Reading fields carry picker options
+        ph = next(f for f in data["chemical_reading_fields"] if f["key"] == "ph")
+        assert ph["type"] == "select"
+        assert "7.4" in ph["options"] and "7.6" in ph["options"]
+        assert ph["ideal"] == "7.4–7.6"
+        # Catalog has all 13 source-repo chemicals + unit dropdown
+        assert len(data["chemicals_catalog"]) == 13
+        names = [k["name"] for k in data["chemicals_catalog"]]
+        for expected in ["Liquid Chlorine", "Chlorine Tablets", "Shock (Cal-Hypo)",
+                         "Muriatic Acid", "Cyanuric Acid"]:
+            assert expected in names
+        assert data["chemical_units"] == ["gal", "lbs", "oz", "tabs"]
+        # Tablet chemicals have whole-number amount options; others have 0.5-step
+        tabs = next(k for k in data["chemicals_catalog"] if k["name"] == "Chlorine Tablets")
+        assert tabs["amount_options"][0] == "1" and tabs["amount_options"][-1] == "10"
+        liquid = next(k for k in data["chemicals_catalog"] if k["name"] == "Liquid Chlorine")
+        assert liquid["amount_options"][0] == "0.5"
+    finally:
+        _cleanup_job(dbc, jid)
+
+
+def test_pool_template_catalog_persist_roundtrip(tech_h, tech_user, dbc):
+    """PATCH with a catalog-based chemical row must round-trip via GET."""
+    tid = tech_user["user"].get("technician_id") or tech_user["user"]["id"]
+    jid = _make_job_direct(dbc, "aquaterra", tid, "Weekly Pool Service")
+    try:
+        requests.get(f"{API}/jobs/{jid}/service-report", headers=tech_h, timeout=15)
+        r = requests.patch(f"{API}/jobs/{jid}/service-report", headers=tech_h, json={
+            "chemicals_added": [
+                {"id": "a1", "name": "Muriatic Acid", "amount": "8", "unit": "oz"},
+                {"id": "a2", "name": "Chlorine Tablets", "amount": "3", "unit": "tabs"},
+            ],
+        }, timeout=15)
+        assert r.status_code == 200, r.text
+        got = requests.get(f"{API}/jobs/{jid}/service-report", headers=tech_h, timeout=15).json()
+        assert [c["name"] for c in got["chemicals_added"]] == ["Muriatic Acid", "Chlorine Tablets"]
+        assert got["chemicals_added"][0]["amount"] == "8"
+        assert got["chemicals_added"][0]["unit"] == "oz"
+        assert got["chemicals_added"][1]["unit"] == "tabs"
     finally:
         _cleanup_job(dbc, jid)
 

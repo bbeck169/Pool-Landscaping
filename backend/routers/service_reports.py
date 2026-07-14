@@ -34,25 +34,82 @@ POOL_CHECKLIST_DEFAULT = [
     "Confirm no visible algae or debris",
 ]
 POOL_READING_FIELDS_DEFAULT = [
-    {"name": "pH",              "unit": "",     "type": "number"},
-    {"name": "Total Chlorine",  "unit": "ppm",  "type": "number"},
-    {"name": "Free Chlorine",   "unit": "ppm",  "type": "number"},
-    {"name": "Alkalinity",      "unit": "ppm",  "type": "number"},
-    {"name": "Cyanuric Acid",   "unit": "ppm",  "type": "number"},
-    {"name": "Calcium Hardness","unit": "ppm",  "type": "number"},
-    {"name": "Water Temp",      "unit": "°F",   "type": "number"},
-    {"name": "Salt",            "unit": "ppm",  "type": "number"},
+    # key=machine, name=user label, ideal=text hint, min/max=picker range, step=picker step
+    {"key": "ph",                "name": "pH",                "unit": "",     "type": "select",
+     "ideal": "7.4–7.6",  "min": 6,    "max": 8.5,  "step": 0.1},
+    {"key": "chlorine",          "name": "Free Chlorine",     "unit": "ppm",  "type": "select",
+     "ideal": "1–3",      "min": 0,    "max": 20,   "step": 0.1},
+    {"key": "combined_chlorine", "name": "Combined Chlorine", "unit": "ppm",  "type": "select",
+     "ideal": "0–0.2",    "min": 0,    "max": 20,   "step": 0.1},
+    {"key": "alkalinity",        "name": "Total Alkalinity",  "unit": "ppm",  "type": "select",
+     "ideal": "80–120",   "min": 0,    "max": 500,  "step": 20},
+    {"key": "calcium_hardness",  "name": "Calcium Hardness",  "unit": "ppm",  "type": "select",
+     "ideal": "200–400",  "min": 0,    "max": 1000, "step": 50},
+    {"key": "cyanuric",          "name": "Cyanuric Acid",     "unit": "ppm",  "type": "select",
+     "ideal": "30–50",    "min": 0,    "max": 600,  "step": 10},
+    {"key": "salt",              "name": "Salt",              "unit": "ppm",  "type": "select",
+     "ideal": "2700–3400","min": 0,    "max": 5000, "step": 100},
+    {"key": "tds",               "name": "Total Dissolved Solids", "unit": "ppm", "type": "select",
+     "ideal": "250–1500", "min": 0,    "max": 3000, "step": 100},
+    {"key": "phosphates",        "name": "Phosphates",        "unit": "ppb",  "type": "select",
+     "ideal": "0–100",    "min": 0,    "max": 1000, "step": 50},
+    {"key": "water_temp",        "name": "Water Temp",        "unit": "°F",   "type": "select",
+     "ideal": "78–82",    "min": 50,   "max": 105,  "step": 1},
 ]
+
+
+def _build_options(min_v, max_v, step):
+    """Precompute the picker option list (strings) exactly like the source repo."""
+    dec = 1 if step < 1 else 0
+    count = int(round((max_v - min_v) / step))
+    out = []
+    for i in range(count + 1):
+        v = min_v + i * step
+        out.append(f"{v:.1f}" if dec else str(int(round(v))))
+    return out
+
+
+# Attach the ready-to-render options[] to each field.
+for _f in POOL_READING_FIELDS_DEFAULT:
+    if _f.get("type") == "select":
+        _f["options"] = _build_options(_f["min"], _f["max"], _f["step"])
+
+
+# ── Source-repo chemical amount pickers ────────────────────────────────────
+# Chemicals measured in gal/lbs/oz use a 0.5-step dropdown (up to 10);
+# tabs use whole numbers 1..10.
+CHEM_STEP_OPTIONS = [f"{(i + 1) * 0.5:g}" for i in range(20)]
+CHEM_TAB_OPTIONS = [str(i + 1) for i in range(10)]
+
+CHEMICAL_UNITS_DEFAULT = ["gal", "lbs", "oz", "tabs"]
+
 POOL_CHEMICALS_CATALOG_DEFAULT = [
-    {"name": "Chlorine tabs",       "default_unit": "tabs"},
-    {"name": "Liquid chlorine",     "default_unit": "gal"},
-    {"name": "Muriatic acid",       "default_unit": "gal"},
-    {"name": "Sodium bicarb",       "default_unit": "lb"},
-    {"name": "Cal-Hypo shock",      "default_unit": "lb"},
-    {"name": "Cyanuric acid",       "default_unit": "lb"},
-    {"name": "Salt",                "default_unit": "lb"},
-    {"name": "Algaecide",           "default_unit": "oz"},
-    {"name": "DE powder",           "default_unit": "lb"},
+    {"name": "Liquid Chlorine",    "default_unit": "gal",  "common_units": ["gal", "oz"],
+     "amount_options": CHEM_STEP_OPTIONS},
+    {"name": "Chlorine Tablets",   "default_unit": "tabs", "common_units": ["tabs"],
+     "amount_options": CHEM_TAB_OPTIONS},
+    {"name": "Shock (Cal-Hypo)",   "default_unit": "lbs",  "common_units": ["lbs", "oz"],
+     "amount_options": CHEM_STEP_OPTIONS},
+    {"name": "Muriatic Acid",      "default_unit": "oz",   "common_units": ["oz", "gal"],
+     "amount_options": CHEM_STEP_OPTIONS},
+    {"name": "Soda Ash",           "default_unit": "lbs",  "common_units": ["lbs", "oz"],
+     "amount_options": CHEM_STEP_OPTIONS},
+    {"name": "Sodium Bicarbonate", "default_unit": "lbs",  "common_units": ["lbs", "oz"],
+     "amount_options": CHEM_STEP_OPTIONS},
+    {"name": "Calcium Chloride",   "default_unit": "lbs",  "common_units": ["lbs", "oz"],
+     "amount_options": CHEM_STEP_OPTIONS},
+    {"name": "Cyanuric Acid",      "default_unit": "lbs",  "common_units": ["lbs", "oz"],
+     "amount_options": CHEM_STEP_OPTIONS},
+    {"name": "Pool Salt",          "default_unit": "lbs",  "common_units": ["lbs"],
+     "amount_options": CHEM_STEP_OPTIONS},
+    {"name": "Algaecide",          "default_unit": "oz",   "common_units": ["oz", "gal"],
+     "amount_options": CHEM_STEP_OPTIONS},
+    {"name": "Clarifier",          "default_unit": "oz",   "common_units": ["oz"],
+     "amount_options": CHEM_STEP_OPTIONS},
+    {"name": "Phosphate Remover",  "default_unit": "oz",   "common_units": ["oz"],
+     "amount_options": CHEM_STEP_OPTIONS},
+    {"name": "Enzymes",            "default_unit": "oz",   "common_units": ["oz"],
+     "amount_options": CHEM_STEP_OPTIONS},
 ]
 LANDSCAPE_CHECKLIST_DEFAULT = [
     "Mow all turf areas",
@@ -96,6 +153,7 @@ def _default_template(kind: str) -> dict:
             "checklist_items": list(POOL_CHECKLIST_DEFAULT),
             "chemical_reading_fields": [dict(x) for x in POOL_READING_FIELDS_DEFAULT],
             "chemicals_catalog": [dict(x) for x in POOL_CHEMICALS_CATALOG_DEFAULT],
+            "chemical_units": list(CHEMICAL_UNITS_DEFAULT),
         }
     if kind == "landscape":
         return {
@@ -103,12 +161,14 @@ def _default_template(kind: str) -> dict:
             "checklist_items": list(LANDSCAPE_CHECKLIST_DEFAULT),
             "chemical_reading_fields": [],
             "chemicals_catalog": [],
+            "chemical_units": [],
         }
     return {
         "kind": "generic",
         "checklist_items": list(GENERIC_CHECKLIST_DEFAULT),
         "chemical_reading_fields": [],
         "chemicals_catalog": [],
+        "chemical_units": [],
     }
 
 
@@ -132,7 +192,8 @@ async def _bootstrap_report(tenant_id: str, job: dict, tech_id: str) -> dict:
         "tech_id": tech_id,
         "template": kind,
         "chemical_readings": [
-            {"name": f["name"], "unit": f.get("unit"), "value": None, "ts": None}
+            {"key": f.get("key") or f["name"], "name": f["name"],
+             "unit": f.get("unit"), "value": None, "ts": None}
             for f in tpl.get("chemical_reading_fields", [])
         ],
         "chemicals_added": [],
@@ -187,8 +248,13 @@ async def get_service_report(jid: str,
         existing = await _bootstrap_report(tenant["id"], job, tech_id)
         await db.service_reports.insert_one(existing)
         existing.pop("_id", None)
-    # Attach live job.photos so the UI shows the canonical count/state.
+    # Attach live job.photos + tenant template metadata so the UI can render
+    # dropdowns for chemical readings + chemicals-added catalog.
     existing["photos"] = job.get("photos") or []
+    tpl = await _get_template(tenant["id"], existing.get("template", "generic"))
+    existing["chemical_reading_fields"] = tpl.get("chemical_reading_fields", [])
+    existing["chemicals_catalog"] = tpl.get("chemicals_catalog", [])
+    existing["chemical_units"] = tpl.get("chemical_units", [])
     existing["job"] = {
         "id": job["id"],
         "title": job.get("title"),

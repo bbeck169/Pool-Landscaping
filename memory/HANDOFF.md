@@ -806,3 +806,80 @@ persistence, submit locks (409 on subsequent PATCH), job flips to
 ### Human verification suggested
 - Real device: GPS clock-in on iOS/Android via Expo build; camera capture
   path (permission → capture → upload); 10-photo cap in mobile UI.
+
+---
+
+## Phase 18B follow-up 2 · Chemical form patterns ported from source repo (Feb 2026)
+
+One-time authorized clone of the source GitHub repo (deleted immediately
+after extraction) to import the exact reading fields, ideal ranges, picker
+step logic, and full chemical catalog into our tenant-scoped service report
+template.
+
+### Backend enrichment (`routers/service_reports.py`)
+Pool template now carries:
+- **10** `chemical_reading_fields` (was 8) — pH, Free/Combined Chlorine, Total
+  Alkalinity, Calcium Hardness, Cyanuric Acid, Salt, Total Dissolved Solids,
+  Phosphates, Water Temp. Each has `{key, name, unit, type: "select", ideal,
+  min, max, step, options: [...]}`.
+- Picker `options` precomputed on module import — pH 6.0→8.5 step 0.1 (26
+  values), chlorine 0→20 step 0.1, alkalinity 0→500 step 20, and so on.
+- **13** chemicals in `chemicals_catalog` (was 9). Each entry has
+  `default_unit`, `common_units`, and `amount_options` — 20-value 0.5-step
+  list for most, 10-value whole-number list for `Chlorine Tablets`.
+- New top-level `chemical_units: ["gal","lbs","oz","tabs"]` for generic unit
+  picker fallback.
+- GET response also surfaces `chemical_reading_fields`, `chemicals_catalog`,
+  and `chemical_units` at the top level so old bootstrapped reports pick up
+  the new schema on next reload (no destructive migration needed).
+
+### Frontend (`ServiceReport.jsx`)
+- Chemical Readings section renders straight from `chemical_reading_fields`
+  (not from the stored `chemical_readings` array), then looks up the value.
+  This means every existing report picks up the new fields immediately.
+- `<select>` dropdown for fields with `options`; falls back to `<input
+  type="number">` if a tenant admin later removes options for a field.
+- "ideal X" hint printed under each field, exactly like the source repo.
+- Chemicals Added: chemical name is a `<select>` from `chemicals_catalog`.
+  Selecting a chemical auto-populates the default unit. Amount becomes a
+  `<select>` when the catalog entry has `amount_options`, else stays numeric.
+  Unit is a `<select>` from the catalog entry's `common_units` (falls back
+  to top-level `chemical_units`).
+- Button label: **+ Add another chemical**.
+
+### Mobile (`service-report/[id].tsx`)
+- Same dropdowns implemented as a bottom-sheet Modal + `FlatList` (no new
+  dependencies). Same picker used for readings, chemical names, amounts, and
+  units.
+
+### Tests — added 2, none removed (57/57 green)
+- `test_get_service_report_pool_template` extended: assert
+  `chemical_reading_fields`, `chemicals_catalog`, and `chemical_units` are
+  present; pH is `type: "select"` with `7.4` + `7.6` in `options`; catalog
+  count == 13 with all expected names; `Chlorine Tablets` amount options are
+  whole numbers 1..10, others are 0.5-step.
+- `test_pool_template_catalog_persist_roundtrip` — PATCH with two catalog-
+  based chemical rows (Muriatic Acid 8 oz + Chlorine Tablets 3 tabs) round-
+  trips through GET.
+
+### Live pool template snippet (verified via curl)
+```
+template = pool
+chemical_reading_fields count = 10   (all select, each carries ideal + 26+ opts)
+  pH options: ['6.0','6.1','6.2','6.3','6.4','6.5', ...]
+chemicals_catalog count = 13
+  names: Liquid Chlorine, Chlorine Tablets, Shock (Cal-Hypo), Muriatic Acid,
+         Soda Ash, Sodium Bicarbonate, Calcium Chloride, Cyanuric Acid,
+         Pool Salt, Algaecide, Clarifier, Phosphate Remover, Enzymes
+chemical_units: ['gal', 'lbs', 'oz', 'tabs']
+Chlorine Tablets amount_options: ['1'..'10']
+Liquid Chlorine amount_options: ['0.5', '1', '1.5', ..., '10']
+```
+
+### Cleanup
+- `/tmp/pool-src-readonly` and `/tmp/pool-landscaping-src` deleted after
+  extraction. No source-repo code copied wholesale — only the constants
+  (field names, ideal ranges, step values, chemical catalog).
+- OpenAPI count unchanged at **395** (spec: no new endpoints, just
+  enrichment of existing template response).
+- Landscape template unaffected.

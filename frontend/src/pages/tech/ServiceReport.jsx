@@ -275,19 +275,58 @@ export default function ServiceReport() {
         <Section title="Chemical Readings" icon={<FlaskConical size={16}/>}
                  testId="svc-report-readings">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {(report.chemical_readings || []).map((r, i) => (
-              <div key={r.name} data-testid={`svc-reading-${r.name}`}>
-                <label className="text-xs font-bold uppercase tracking-wider block mb-1"
-                       style={{ color: colors.muted }}>
-                  {r.name} {r.unit ? `(${r.unit})` : ""}
-                </label>
-                <input type="number" step="any"
-                       value={r.value ?? ""} disabled={locked}
-                       onChange={(e) => updChemistryReading(i, { value: e.target.value === "" ? null : parseFloat(e.target.value) })}
-                       className="w-full px-2 py-2 rounded-lg text-sm"
-                       style={{ border: `1px solid ${colors.border}` }}/>
-              </div>
-            ))}
+            {(report.chemical_reading_fields || []).map((field) => {
+              const key = field.key || field.name;
+              const existingIdx = (report.chemical_readings || []).findIndex(
+                (r) => (r.key || r.name) === key
+              );
+              const r = existingIdx >= 0
+                ? report.chemical_readings[existingIdx]
+                : { key, name: field.name, unit: field.unit, value: null };
+              const opts = field.options || [];
+              const upd = (patch) => {
+                let arr = [...(report.chemical_readings || [])];
+                if (existingIdx >= 0) {
+                  arr[existingIdx] = { ...arr[existingIdx], ...patch, ts: new Date().toISOString() };
+                } else {
+                  arr = [...arr, { ...r, ...patch, ts: new Date().toISOString() }];
+                }
+                setReport({ ...report, chemical_readings: arr });
+                markDirty();
+              };
+              return (
+                <div key={key} data-testid={`svc-reading-${key}`}>
+                  <label className="text-xs font-bold uppercase tracking-wider block mb-1"
+                         style={{ color: colors.muted }}>
+                    {field.name} {field.unit ? `(${field.unit})` : ""}
+                  </label>
+                  {opts.length > 0 ? (
+                    <select value={r.value == null ? "" : String(r.value)} disabled={locked}
+                            onChange={(e) => upd({
+                              value: e.target.value === "" ? null : parseFloat(e.target.value),
+                            })}
+                            className="w-full px-2 py-2 rounded-lg text-sm"
+                            style={{ border: `1px solid ${colors.border}`, background: colors.surface }}>
+                      <option value="">—</option>
+                      {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <input type="number" step="any"
+                           value={r.value ?? ""} disabled={locked}
+                           onChange={(e) => upd({
+                             value: e.target.value === "" ? null : parseFloat(e.target.value),
+                           })}
+                           className="w-full px-2 py-2 rounded-lg text-sm"
+                           style={{ border: `1px solid ${colors.border}` }}/>
+                  )}
+                  {field.ideal && (
+                    <div className="text-[10px] mt-1" style={{ color: colors.muted }}>
+                      ideal {field.ideal}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </Section>
       )}
@@ -300,43 +339,73 @@ export default function ServiceReport() {
                            className="text-sm font-bold flex items-center gap-1"
                            style={{ color: colors.brand }}
                            data-testid="svc-add-chemical">
-                     <Plus size={14}/> Add
+                     <Plus size={14}/> Add another chemical
                    </button>
                  )}>
           {(report.chemicals_added || []).length === 0 && (
             <div className="text-sm" style={{ color: colors.muted }}>No chemicals added yet.</div>
           )}
           <div className="space-y-2">
-            {(report.chemicals_added || []).map((c, i) => (
-              <div key={c.id || i}
-                   className="grid grid-cols-12 gap-2 items-center"
-                   data-testid={`svc-chem-row-${i}`}>
-                <input value={c.name} disabled={locked}
-                       onChange={(e) => updChemical(i, { name: e.target.value })}
-                       placeholder="Chemical"
-                       className="col-span-6 px-2 py-2 rounded-lg text-sm"
-                       style={{ border: `1px solid ${colors.border}` }}/>
-                <input type="number" step="any" value={c.amount} disabled={locked}
-                       onChange={(e) => updChemical(i, { amount: e.target.value })}
-                       placeholder="Amount"
-                       className="col-span-3 px-2 py-2 rounded-lg text-sm"
-                       style={{ border: `1px solid ${colors.border}` }}/>
-                <select value={c.unit} disabled={locked}
-                        onChange={(e) => updChemical(i, { unit: e.target.value })}
-                        className="col-span-2 px-2 py-2 rounded-lg text-sm"
-                        style={{ border: `1px solid ${colors.border}`, background: colors.surface }}>
-                  {CHEM_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-                </select>
-                {!locked && (
-                  <button onClick={() => removeChemical(i)}
-                          className="col-span-1 p-2 rounded"
-                          style={{ color: colors.error }}
-                          data-testid={`svc-chem-remove-${i}`}>
-                    <Trash2 size={14}/>
-                  </button>
-                )}
-              </div>
-            ))}
+            {(report.chemicals_added || []).map((c, i) => {
+              const catalogEntry = (report.chemicals_catalog || []).find((k) => k.name === c.name);
+              const amountOpts = catalogEntry?.amount_options || [];
+              const unitOpts = catalogEntry?.common_units?.length
+                ? catalogEntry.common_units
+                : (report.chemical_units && report.chemical_units.length
+                    ? report.chemical_units : CHEM_UNITS);
+              return (
+                <div key={c.id || i}
+                     className="grid grid-cols-12 gap-2 items-center"
+                     data-testid={`svc-chem-row-${i}`}>
+                  <select value={c.name} disabled={locked}
+                          onChange={(e) => {
+                            const nm = e.target.value;
+                            const entry = (report.chemicals_catalog || []).find((k) => k.name === nm);
+                            updChemical(i, { name: nm, unit: entry?.default_unit || c.unit });
+                          }}
+                          className="col-span-6 px-2 py-2 rounded-lg text-sm"
+                          style={{ border: `1px solid ${colors.border}`, background: colors.surface }}
+                          data-testid={`svc-chem-name-${i}`}>
+                    <option value="">Select chemical…</option>
+                    {(report.chemicals_catalog || []).map((k) => (
+                      <option key={k.name} value={k.name}>{k.name}</option>
+                    ))}
+                  </select>
+                  {amountOpts.length > 0 ? (
+                    <select value={c.amount} disabled={locked}
+                            onChange={(e) => updChemical(i, { amount: e.target.value })}
+                            className="col-span-3 px-2 py-2 rounded-lg text-sm"
+                            style={{ border: `1px solid ${colors.border}`, background: colors.surface }}
+                            data-testid={`svc-chem-amount-${i}`}>
+                      <option value="">—</option>
+                      {amountOpts.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <input type="number" step="any" value={c.amount} disabled={locked}
+                           onChange={(e) => updChemical(i, { amount: e.target.value })}
+                           placeholder="Amount"
+                           className="col-span-3 px-2 py-2 rounded-lg text-sm"
+                           style={{ border: `1px solid ${colors.border}` }}
+                           data-testid={`svc-chem-amount-${i}`}/>
+                  )}
+                  <select value={c.unit} disabled={locked}
+                          onChange={(e) => updChemical(i, { unit: e.target.value })}
+                          className="col-span-2 px-2 py-2 rounded-lg text-sm"
+                          style={{ border: `1px solid ${colors.border}`, background: colors.surface }}
+                          data-testid={`svc-chem-unit-${i}`}>
+                    {unitOpts.map((u) => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                  {!locked && (
+                    <button onClick={() => removeChemical(i)}
+                            className="col-span-1 p-2 rounded"
+                            style={{ color: colors.error }}
+                            data-testid={`svc-chem-remove-${i}`}>
+                      <Trash2 size={14}/>
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </Section>
       )}

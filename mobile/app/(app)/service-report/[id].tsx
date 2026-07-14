@@ -5,7 +5,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  ActivityIndicator, Alert, Platform,
+  ActivityIndicator, Alert, Platform, Modal, FlatList,
 } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
@@ -27,6 +27,10 @@ export default function ServiceReportScreen() {
   const [saveState, setSaveState] = useState<"idle"|"saving"|"saved"|"error">("idle");
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
+
+  const [picker, setPicker] = useState<null | {
+    title: string; options: string[]; current: string; onSelect: (v: string) => void;
+  }>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -248,22 +252,142 @@ export default function ServiceReportScreen() {
         {isPool && (
           <SectionCard title="Chemical Readings" testID="svc-report-readings">
             <View style={styles.readingGrid}>
-              {(report.chemical_readings || []).map((r: any, i: number) => (
-                <View key={r.name} style={styles.readingCell}>
-                  <Text style={styles.readingLabel}>
-                    {r.name}{r.unit ? ` (${r.unit})` : ""}
-                  </Text>
-                  <TextInput
-                    keyboardType="decimal-pad"
-                    editable={!locked}
-                    value={r.value == null ? "" : String(r.value)}
-                    onChangeText={(v) => updChem(i, v)}
-                    style={styles.input}
-                    testID={`svc-reading-${r.name}`}
-                  />
-                </View>
-              ))}
+              {(report.chemical_readings || []).map((r: any, i: number) => {
+                const field = (report.chemical_reading_fields || []).find(
+                  (f: any) => (f.key || f.name) === (r.key || r.name)
+                );
+                const opts: string[] = field?.options || [];
+                return (
+                  <View key={r.key || r.name} style={styles.readingCell}>
+                    <Text style={styles.readingLabel}>
+                      {r.name}{r.unit ? ` (${r.unit})` : ""}
+                    </Text>
+                    {opts.length > 0 ? (
+                      <Pressable
+                        onPress={() => !locked && setPicker({
+                          title: r.name,
+                          options: opts,
+                          current: r.value == null ? "" : String(r.value),
+                          onSelect: (v) => { updChem(i, v); setPicker(null); },
+                        })}
+                        style={styles.selectBox}
+                        testID={`svc-reading-${r.key || r.name}`}>
+                        <Text style={r.value == null ? styles.selectPlaceholder : styles.selectValue}>
+                          {r.value == null ? "—" : String(r.value)}
+                        </Text>
+                        <Ionicons name="chevron-down" size={15} color={colors.muted}/>
+                      </Pressable>
+                    ) : (
+                      <TextInput
+                        keyboardType="decimal-pad"
+                        editable={!locked}
+                        value={r.value == null ? "" : String(r.value)}
+                        onChangeText={(v) => updChem(i, v)}
+                        style={styles.input}
+                        testID={`svc-reading-${r.key || r.name}`}
+                      />
+                    )}
+                  </View>
+                );
+              })}
             </View>
+          </SectionCard>
+        )}
+
+        {/* Chemicals Added — pool only */}
+        {isPool && (
+          <SectionCard title="Chemicals Added" testID="svc-report-chems"
+            subtitle={`${(report.chemicals_added || []).length} added`}>
+            {(report.chemicals_added || []).map((c: any, i: number) => {
+              const entry = (report.chemicals_catalog || []).find((k: any) => k.name === c.name);
+              const amountOpts: string[] = entry?.amount_options || [];
+              const unitOpts: string[] = (entry?.common_units?.length
+                ? entry.common_units
+                : (report.chemical_units || ["gal", "lbs", "oz", "tabs"]));
+              return (
+                <View key={c.id || i} style={styles.chemRow} testID={`svc-chem-row-${i}`}>
+                  <Pressable style={[styles.selectBox, { flex: 3 }]}
+                    onPress={() => !locked && setPicker({
+                      title: "Chemical",
+                      options: (report.chemicals_catalog || []).map((k: any) => k.name),
+                      current: c.name,
+                      onSelect: (v) => {
+                        const en = (report.chemicals_catalog || []).find((k: any) => k.name === v);
+                        const next = [...report.chemicals_added];
+                        next[i] = { ...next[i], name: v, unit: en?.default_unit || next[i].unit };
+                        setReport({ ...report, chemicals_added: next });
+                        markDirty(); setPicker(null);
+                      },
+                    })}
+                    testID={`svc-chem-name-${i}`}>
+                    <Text style={c.name ? styles.selectValue : styles.selectPlaceholder}>
+                      {c.name || "Select chemical…"}
+                    </Text>
+                    <Ionicons name="chevron-down" size={15} color={colors.muted}/>
+                  </Pressable>
+                  <Pressable style={[styles.selectBox, { flex: 2 }]}
+                    onPress={() => !locked && setPicker({
+                      title: "Amount",
+                      options: amountOpts.length ? amountOpts : ["0.5","1","1.5","2","2.5","3"],
+                      current: String(c.amount || ""),
+                      onSelect: (v) => {
+                        const next = [...report.chemicals_added];
+                        next[i] = { ...next[i], amount: v };
+                        setReport({ ...report, chemicals_added: next });
+                        markDirty(); setPicker(null);
+                      },
+                    })}
+                    testID={`svc-chem-amount-${i}`}>
+                    <Text style={c.amount ? styles.selectValue : styles.selectPlaceholder}>
+                      {c.amount || "—"}
+                    </Text>
+                    <Ionicons name="chevron-down" size={15} color={colors.muted}/>
+                  </Pressable>
+                  <Pressable style={[styles.selectBox, { flex: 2 }]}
+                    onPress={() => !locked && setPicker({
+                      title: "Unit",
+                      options: unitOpts,
+                      current: c.unit || "",
+                      onSelect: (v) => {
+                        const next = [...report.chemicals_added];
+                        next[i] = { ...next[i], unit: v };
+                        setReport({ ...report, chemicals_added: next });
+                        markDirty(); setPicker(null);
+                      },
+                    })}
+                    testID={`svc-chem-unit-${i}`}>
+                    <Text style={c.unit ? styles.selectValue : styles.selectPlaceholder}>
+                      {c.unit || "unit"}
+                    </Text>
+                    <Ionicons name="chevron-down" size={15} color={colors.muted}/>
+                  </Pressable>
+                  {!locked && (
+                    <Pressable onPress={() => {
+                        const next = report.chemicals_added.filter((_: any, x: number) => x !== i);
+                        setReport({ ...report, chemicals_added: next });
+                        markDirty();
+                      }}
+                      testID={`svc-chem-remove-${i}`}>
+                      <Ionicons name="trash-outline" size={20} color={colors.error}/>
+                    </Pressable>
+                  )}
+                </View>
+              );
+            })}
+            {!locked && (
+              <Pressable
+                onPress={() => {
+                  const next = [...(report.chemicals_added || []),
+                    { id: Math.random().toString(36).slice(2), name: "", amount: "", unit: "lbs" }];
+                  setReport({ ...report, chemicals_added: next });
+                  markDirty();
+                }}
+                style={styles.addChemBtn}
+                testID="svc-add-chemical">
+                <Ionicons name="add" size={16} color={colors.brand}/>
+                <Text style={styles.addChemText}>Add another chemical</Text>
+              </Pressable>
+            )}
           </SectionCard>
         )}
 
@@ -400,4 +524,43 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   submitBtnText: { fontFamily: font.bold, color: "#fff", fontSize: fontSize.lg },
+  selectBox: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
+    paddingHorizontal: spacing.sm, paddingVertical: 10,
+    backgroundColor: colors.surface,
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+  },
+  selectValue: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
+  selectPlaceholder: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted },
+  chemRow: {
+    flexDirection: "row", gap: spacing.xs, alignItems: "center",
+    marginBottom: spacing.sm,
+  },
+  addChemBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 6, paddingVertical: 10, borderRadius: radius.md,
+    borderWidth: 2, borderStyle: "dashed", borderColor: colors.brand,
+    marginTop: spacing.sm,
+  },
+  addChemText: { fontFamily: font.bold, color: colors.brand, fontSize: fontSize.sm },
+  pickerBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)" },
+  pickerSheet: {
+    position: "absolute", bottom: 0, left: 0, right: 0,
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingBottom: 30,
+  },
+  pickerHead: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  pickerTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface },
+  pickerRow: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: spacing.lg, paddingVertical: 14,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  pickerRowOn: { backgroundColor: colors.brandTertiary },
+  pickerRowText: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface },
+  pickerRowTextOn: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.brand },
 });
