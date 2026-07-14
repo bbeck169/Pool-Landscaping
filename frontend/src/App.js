@@ -94,6 +94,8 @@ import {
 import { LanaChatPage as OsLana } from "@/pages/os/LanaAndPlans";
 import TodaySchedule from "@/pages/schedule/TodaySchedule";
 import { TechHuddlePage, TechTimeClockPage } from "@/pages/tech/TechPages";
+import { ComposerPage as SocialComposer, CalendarPage as SocialCalendar,
+         LibraryPage as SocialLibrary, DraftsPage as SocialDrafts } from "@/pages/social/SocialSuite";
 
 function AdminOnly({ children }) {
   const { user, loading } = useAuth();
@@ -241,6 +243,12 @@ export default function App() {
             <Route path="schedule/today" element={<TodaySchedule />} />
             <Route path="tech/huddle" element={<TechHuddlePage />} />
             <Route path="tech/time-clock" element={<TechTimeClockPage />} />
+
+            {/* Phase 18A — Social Suite (admin/marketing only) */}
+            <Route path="social/composer" element={<AdminOnly><SocialComposer /></AdminOnly>} />
+            <Route path="social/calendar" element={<AdminOnly><SocialCalendar /></AdminOnly>} />
+            <Route path="social/library" element={<AdminOnly><SocialLibrary /></AdminOnly>} />
+            <Route path="social/drafts" element={<AdminOnly><SocialDrafts /></AdminOnly>} />
 
             {/* Phase 16B — Business OS */}
             <Route path="os" element={<AdminOnly><BusinessOSLayout /></AdminOnly>}>

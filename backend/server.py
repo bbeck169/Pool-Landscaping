@@ -14,6 +14,7 @@ from routers import (
     workforce,
     business_os,
     schedule,
+    social,
 )
 
 app = FastAPI(
@@ -31,7 +32,7 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                lead_requests, mobile_push,
                tenants, workforce,
                business_os,
-               schedule]:
+               schedule, social]:
     api_router.include_router(module.router)
 
 

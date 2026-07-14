@@ -58,6 +58,7 @@ export default function More() {
     { icon: "leaf-outline", label: "Landscape AI", onPress: () => router.push("/landscape") },
     { icon: "grid-outline", label: "Design Studio (CAD)", onPress: () => router.push("/cad") },
     { icon: "megaphone-outline", label: "Marketing", onPress: () => router.push("/marketing") },
+    { icon: "share-social-outline", label: "Social Media", onPress: () => router.push("/social") },
     { icon: "chatbubbles-outline", label: "Communication", onPress: () => router.push("/communications") },
     { icon: "sparkles-outline", label: "AI Employees", onPress: () => router.push("/ai-employees") },
     { icon: "rocket-outline", label: "SEO Studio", onPress: () => router.push("/seo") },
@@ -90,7 +91,7 @@ export default function More() {
           </View>
         </View>
 
-        {isAdmin ? (
+        {showAdminSection ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Management</Text>
             {adminLinks.map((l) => (

@@ -591,3 +591,57 @@ No new endpoints beyond `/schedule/day` alias. Total OpenAPI paths: 362.
 - On a real Expo build, confirm the native date picker opens and
   selection round-trips (works cross-platform, but iOS calendar UI vs
   Android spinner differ visually — no code change needed).
+
+---
+
+## Phase 18A · Social Media Suite Foundation (Feb 2026)
+
+Hootsuite-inspired admin/marketing suite. Posts stay draft/scheduled; OAuth + real publishing lands in Phase 18B. AI captions are **LIVE via `EMERGENT_LLM_KEY`** (verified `mocked:false`).
+
+### Backend — 11 new endpoints (362 → 373 OpenAPI paths)
+- Router `/app/backend/routers/social.py`
+- Posts: `POST /social/posts`, `GET /social/posts`, `GET /social/posts/{id}`, `PATCH /social/posts/{id}`, `DELETE /social/posts/{id}`, `POST /social/posts/{id}/reschedule`, `POST /social/posts/{id}/duplicate`
+- Calendar: `GET /social/calendar?year=Y&month=M`
+- AI: `POST /social/ai/caption`, `POST /social/ai/hashtags`
+- Media: `POST /social/media` (+ `/upload` alias), `GET /social/media`, `DELETE /social/media/{id}`, `POST /social/media/{id}/tag`
+- New collections (tenant-scoped): `social_posts`, `social_media_assets`
+- Role gate: `require_marketing` (admin/super_admin/marketing) — technicians get 403
+
+### Web
+- `/app/frontend/src/pages/social/SocialSuite.jsx` exports Composer / Calendar / Library / Drafts
+- Routes wired under `<AdminOnly>` at `/social/composer`, `/social/calendar`, `/social/library`, `/social/drafts`
+- New "Social" group in `adminNav.js`
+- Composer: adaptive char counter (tightest limit across selected networks), 9-network grid with "🔌 Not connected" pill on each, live per-network preview cards, AI drawer, disabled "Publish Now (available in Phase 18B)" clearly labeled
+- Calendar: month grid with HTML5 drag-and-drop → `POST /social/posts/{id}/reschedule`
+
+### Tests — 7/7 green
+- Create draft + list, scheduled_status_when_future, tenant isolation, technician forbidden (403), AI caption `mocked:false` when key present, reschedule + duplicate, media upload + list
+
+### Live-verified via curl on preview
+```
+POST /api/social/ai/caption {"topic":"3 tips ... July","networks":["instagram","facebook"]}
+→ mocked: False, captions: 3, hashtags: 12
+   e.g. "☀️ July heat got your Arizona pool looking cloudy? …"
+   #ArizonaPoolCare #PoolMaintenance #CrystalClearPool …
+```
+
+### Deferred to Phase 18B (not silently mocked — clearly labeled)
+- OAuth for all 9 networks (button reads "🔌 Not connected — connect account in Settings (Phase 18B)")
+- Actual publishing (button reads "Publish Now (available in Phase 18B)")
+- Per-network analytics + inbox
+
+### Files touched
+- New: `backend/routers/social.py`, `backend/tests/test_social.py`, `frontend/src/pages/social/SocialSuite.jsx`
+- Edited: `backend/server.py` (register router), `frontend/src/App.js` (4 routes), `frontend/src/nav/adminNav.js` (Social group), `memory/HANDOFF.md`
+
+### Mobile (added in follow-up)
+- New screen `/app/mobile/app/social.tsx` — lightweight composer:
+  caption + 9-network chip grid ("🔌 not connected" on each) + first-comment
+  + native date/time picker + Save Draft / Schedule + "Publish Now available in
+  Phase 18B" note. AI Suggest button hits `/api/social/ai/caption`.
+- Screen self-guards: `role in {admin, super_admin, marketing}` → forbid card
+  shown to techs/customers.
+- More menu (`/app/mobile/app/(app)/more.tsx`) now surfaces:
+  * `showAdminSection = admin || super_admin || marketing`
+  * new "Social Media" link → `/social` (right below Marketing)
+  * techs never see the admin section, so the Social entry stays hidden from them.

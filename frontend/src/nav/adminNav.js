@@ -79,6 +79,13 @@ export const ADMIN_NAV_V2 = [
     { to: "/os/lana",       label: "Lana AI",      icon: Sparkles,      feature: "settings" },
   ]},
 
+  { key: "social", label: "Social", icon: Rss, entries: [
+    { to: "/social/composer", label: "Composer", icon: FileEdit,     feature: "marketing" },
+    { to: "/social/calendar", label: "Calendar", icon: CalendarDays, feature: "marketing" },
+    { to: "/social/library",  label: "Library",  icon: Image,        feature: "marketing" },
+    { to: "/social/drafts",   label: "Drafts",   icon: ListChecks,   feature: "marketing" },
+  ]},
+
   { key: "reports", label: "Reports", icon: BarChart3, entries: [
     { to: "/reports",                     label: "Reports Hub",       icon: BarChart3, feature: "reports" },
     { to: "/analytics",                   label: "Analytics",         icon: TrendingUp, feature: "reports" },
