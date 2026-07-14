@@ -173,12 +173,27 @@ def _default_template(kind: str) -> dict:
 
 
 async def _get_template(tenant_id: str, kind: str) -> dict:
+    """Merge tenant customizations onto built-in defaults. This is critical:
+    a partial admin PUT (e.g. only checklist_items) must not wipe the
+    chemical_reading_fields / chemicals_catalog / chemical_units sections that
+    the tech UI depends on.
+    """
+    defaults = _default_template(kind)
     doc = await db.service_report_templates.find_one(
         {"tenant_id": tenant_id, "kind": kind}, {"_id": 0}
     )
-    if doc:
-        return doc
-    return _default_template(kind)
+    if not doc:
+        return defaults
+    merged = dict(defaults)
+    for field in ("checklist_items", "chemical_reading_fields",
+                  "chemicals_catalog", "chemical_units"):
+        if doc.get(field) is not None:
+            merged[field] = doc[field]
+    # Also carry admin audit fields.
+    for f in ("updated_by", "updated_at", "created_at"):
+        if doc.get(f) is not None:
+            merged[f] = doc[f]
+    return merged
 
 
 async def _bootstrap_report(tenant_id: str, job: dict, tech_id: str) -> dict:
@@ -198,7 +213,10 @@ async def _bootstrap_report(tenant_id: str, job: dict, tech_id: str) -> dict:
         ],
         "chemicals_added": [],
         "checklist_items": [
-            {"id": new_id(), "label": x, "checked": False, "notes": None}
+            {"id": new_id(),
+             "label": (x if isinstance(x, str) else x.get("label", "")),
+             "required": (False if isinstance(x, str) else bool(x.get("required"))),
+             "checked": False, "notes": None}
             for x in tpl.get("checklist_items", [])
         ],
         "notes": "",
@@ -362,9 +380,62 @@ async def submit_service_report(jid: str,
 # ─── Admin template settings (stubs — full editor UI can land later) ───────
 class TemplateSetIn(BaseModel):
     kind: str  # pool | landscape | generic
-    checklist_items: Optional[List[str]] = None
+    checklist_items: Optional[List[Any]] = None  # allow either List[str] or List[dict]
     chemical_reading_fields: Optional[List[Dict[str, Any]]] = None
     chemicals_catalog: Optional[List[Dict[str, Any]]] = None
+    chemical_units: Optional[List[str]] = None
+
+
+def _validate_template_payload(body: "TemplateSetIn") -> None:
+    """Server-side validation. Raises HTTPException(422) on any bad shape."""
+    if body.kind not in ("pool", "landscape", "generic"):
+        raise HTTPException(422, "kind must be pool | landscape | generic")
+
+    # Checklist items — accept `["label", ...]` or `[{label, required?, id?}, ...]`.
+    if body.checklist_items is not None:
+        for i, it in enumerate(body.checklist_items):
+            if isinstance(it, str):
+                if not it.strip():
+                    raise HTTPException(422, f"checklist item #{i}: empty label")
+            elif isinstance(it, dict):
+                if not (it.get("label") or "").strip():
+                    raise HTTPException(422, f"checklist item #{i}: label required")
+            else:
+                raise HTTPException(422, f"checklist item #{i}: unsupported shape")
+
+    if body.chemical_reading_fields is not None:
+        seen_keys = set()
+        for i, f in enumerate(body.chemical_reading_fields):
+            name = (f.get("name") or "").strip()
+            if not name:
+                raise HTTPException(422, f"reading field #{i}: name required")
+            key = (f.get("key") or name).lower().replace(" ", "_")
+            if key in seen_keys:
+                raise HTTPException(422, f"reading field #{i}: duplicate key '{key}'")
+            seen_keys.add(key)
+            ftype = f.get("type") or "number"
+            if ftype not in ("number", "select"):
+                raise HTTPException(422, f"reading field '{name}': type must be number|select")
+            if ftype == "select":
+                opts = f.get("options") or []
+                if not opts:
+                    raise HTTPException(422, f"reading field '{name}': options required for select type")
+            # Numeric bounds check (only if provided)
+            mn, mx, st = f.get("min"), f.get("max"), f.get("step")
+            if mn is not None and mx is not None and mn > mx:
+                raise HTTPException(422, f"reading field '{name}': min > max")
+            if st is not None and st <= 0:
+                raise HTTPException(422, f"reading field '{name}': step must be > 0")
+
+    if body.chemicals_catalog is not None:
+        for i, c in enumerate(body.chemicals_catalog):
+            if not (c.get("name") or "").strip():
+                raise HTTPException(422, f"chemical #{i}: name required")
+
+    if body.chemical_units is not None:
+        for u in body.chemical_units:
+            if not (u or "").strip():
+                raise HTTPException(422, "chemical unit cannot be empty")
 
 
 @router.get("/settings/service-templates")
@@ -384,8 +455,7 @@ async def upsert_service_template(
     user: dict = Depends(require_admin),
     tenant: dict = Depends(get_current_tenant),
 ):
-    if body.kind not in ("pool", "landscape", "generic"):
-        raise HTTPException(400, "kind must be pool | landscape | generic")
+    _validate_template_payload(body)
     upd = {k: v for k, v in body.dict(exclude_unset=True).items() if k != "kind"}
     upd["tenant_id"] = tenant["id"]
     upd["kind"] = body.kind
@@ -397,3 +467,18 @@ async def upsert_service_template(
         upsert=True,
     )
     return await _get_template(tenant["id"], body.kind)
+
+
+@router.post("/settings/service-templates/{kind}/reset-defaults")
+async def reset_template_defaults(
+    kind: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Restore the built-in defaults for `kind` on this tenant only."""
+    if kind not in ("pool", "landscape", "generic"):
+        raise HTTPException(400, "kind must be pool | landscape | generic")
+    await db.service_report_templates.delete_one(
+        {"tenant_id": tenant["id"], "kind": kind}
+    )
+    return _default_template(kind)

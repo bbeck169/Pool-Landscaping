@@ -100,6 +100,7 @@ import { ComposerPage as SocialComposer, CalendarPage as SocialCalendar,
 import { ApprovalsPage as SocialApprovals, BulkUploadPage as SocialBulkUpload,
          ShortLinksPage as SocialShortLinks, BrandKitPage as SocialBrandKit }
   from "@/pages/social/SocialExtras";
+import ServiceTemplatesEditor from "@/pages/admin/ServiceTemplatesEditor";
 
 function AdminOnly({ children }) {
   const { user, loading } = useAuth();
@@ -260,6 +261,8 @@ export default function App() {
             <Route path="social/bulk-upload" element={<AdminOnly><SocialBulkUpload /></AdminOnly>} />
             <Route path="social/short-links" element={<AdminOnly><SocialShortLinks /></AdminOnly>} />
             <Route path="social/brand-kit" element={<AdminOnly><SocialBrandKit /></AdminOnly>} />
+            {/* Admin editor for service report templates (pool/landscape/generic) */}
+            <Route path="admin/settings/service-templates" element={<AdminOnly><ServiceTemplatesEditor /></AdminOnly>} />
 
             {/* Phase 16B — Business OS */}
             <Route path="os" element={<AdminOnly><BusinessOSLayout /></AdminOnly>}>
