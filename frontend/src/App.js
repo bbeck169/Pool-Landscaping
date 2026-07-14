@@ -40,6 +40,7 @@ import AtlasAgent from "@/pages/seo/AtlasAgent";
 import OttoAutoFix from "@/pages/seo/OttoAutoFix";
 import WebsiteStudio, { WebsiteStudioEditor } from "@/pages/seo/WebsiteStudio";
 import WhiteLabelReports, { WhiteLabelReportDetail } from "@/pages/seo/WhiteLabelReports";
+import EstimatorList, { EstimatorNew, EstimatorDetail, EstimatorRates } from "@/pages/estimator/EstimatorPages";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
@@ -415,6 +416,10 @@ export default function App() {
             <Route path="admin/seo/studio/:id" element={<AdminOnly><WebsiteStudioEditor /></AdminOnly>} />
             <Route path="admin/seo/reports" element={<AdminOnly><WhiteLabelReports /></AdminOnly>} />
             <Route path="admin/seo/reports/:id" element={<AdminOnly><WhiteLabelReportDetail /></AdminOnly>} />
+            <Route path="admin/estimator" element={<AdminOnly><EstimatorList /></AdminOnly>} />
+            <Route path="admin/estimator/new" element={<AdminOnly><EstimatorNew /></AdminOnly>} />
+            <Route path="admin/estimator/rates" element={<AdminOnly><EstimatorRates /></AdminOnly>} />
+            <Route path="admin/estimator/:id" element={<AdminOnly><EstimatorDetail /></AdminOnly>} />
           </Route>
 
           {/* Anything unmatched → home */}

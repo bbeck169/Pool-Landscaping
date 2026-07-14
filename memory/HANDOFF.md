@@ -1621,3 +1621,130 @@ mobile SEO nav section either.
 - Human-required check: run `yarn --cwd /app/mobile web` (or scan the
   Expo Go QR from `expo start`) and walk the 9 SEO screens with
   `admin@aquaterra.com / password123`.
+
+---
+
+## Phase 21 · Field Estimator (Feb 2026)
+
+SimplyWise-inspired AI cost estimator. Users: **admins AND technicians**.
+Photos + scope → Claude vision → line items priced against the tenant's
+rate catalog → upsells → 1-tap **Convert to Quote** into the existing
+quotes pipeline.
+
+### Backend — 470 → 483 OpenAPI paths (+13, new `routers/estimator.py`)
+
+Endpoints (mounted under `/api/estimator/*`):
+- **Estimates**: POST /estimates, POST /estimates/{id}/generate (Claude
+  vision LIVE), GET list, GET detail, PATCH edit, POST add-line-item,
+  DELETE line-items/{iid}, POST regenerate-upsells,
+  POST convert-to-quote (admin-only), POST pdf, GET pdf.file,
+  POST send-to-customer (Resend, graceful when key absent).
+- **Rate catalog**: GET, PUT (admin), POST reset-defaults — starter
+  catalog of 20 items (labor, materials, equipment, permits).
+- **Settings**: GET/PUT tenant `settings.estimator` (default_markup_pct=20,
+  tax_rate_pct=0, include_upsells=true).
+
+### AI pipeline (backend `_call_generate` + `_apply_catalog`)
+Vision-enabled Claude Sonnet 4.6 via `EMERGENT_LLM_KEY`. Photos passed as
+`ImageContent` (up to 6 per call). Room-scan payload from LiDAR is folded
+into the prompt when present. Strict JSON output → line items + upsells.
+Merge step matches AI `code` against the catalog → stamps
+`unit_price_source: "tenant_rate"` (confidence=1.0) when found, else
+`"ai_estimate"` with Claude's 0-1 confidence carried through.
+Manual line items stamped `"manual"`.
+
+### Convert-to-quote
+Folds the estimate's markup into per-line prices so the resulting quote's
+total matches the estimate's total. Sets `estimate.status = "converted"`,
+persists `quote_id`, writes `source_estimate_id` on the quote. Idempotent:
+second call returns `{quote_id, already_converted: true}` without
+creating a duplicate quote.
+
+### Collections
+- `estimator_estimates` — full doc (photos, room_scan, line_items,
+  upsells, totals, status, quote_id, pdf_url, mocked, timestamps).
+- `estimator_rate_catalog` — one doc per tenant, items array.
+
+### Frontend web — `/admin/estimator/*`
+- List `/admin/estimator` — status filter chips, per-row status pill +
+  total, "New estimate" + "Rate catalog" actions.
+- New `/admin/estimator/new` — title, service_type, customer picker,
+  address, scope textarea, up-to-10 photo URLs, "Generate estimate"
+  fires create + generate + redirects to detail.
+- Detail `/admin/estimator/{id}` — inline-editable line item table (qty +
+  unit price), per-item source pill (green "✓ From your rate catalog"
+  or amber "AI estimate — adjust for your market · confidence %"),
+  totals sidebar, upsell cards with "+ Add to estimate" one-tap,
+  Download PDF, Email modal, Convert to Quote CTA.
+- Rate editor `/admin/estimator/rates` — 20-row table, add/edit/delete,
+  reset-to-defaults, save.
+
+### Frontend mobile — Expo screens
+- `/(app)/estimator/index.tsx` — list with status pills + `+` FAB.
+- `/(app)/estimator/new.tsx` — multi-select photo picker (up to 10)
+  via `expo-image-picker`, service type chips, customer chips, LiDAR
+  scan section (visible only when opted-in from settings).
+- `/(app)/estimator/[id].tsx` — totals card, share-PDF via
+  `expo-sharing`, convert-to-quote button, line items with source pills,
+  upsell cards with "Add to estimate".
+- `/(app)/settings/lidar.tsx` — LiDAR toggle. Uses `expo-constants`
+  `ExecutionEnvironment` to detect Expo Go vs. native build → shows
+  friendly "safe no-op" or "native ready" banner.
+- More menu: **Field Estimator** entry added to both admin and tech
+  link arrays. **LiDAR Settings** entry added to admin menu.
+
+### Tests — `test_estimator.py` (7/7 green in ~33s)
+1. Rate catalog seed + PUT + reset.
+2. Create + generate — Claude LIVE, `mocked:false`, ≥4 line items, ≥3
+   upsells, extended_price math verified.
+3. Rate catalog price match — direct unit test of `_apply_catalog`
+   confirming a seeded `pool_tech_hourly` at $88.50 stamps
+   `unit_price_source:"tenant_rate"` while unmatched code falls back to
+   `"ai_estimate"`.
+4. Convert-to-quote — real quote doc created, source_estimate_id set,
+   estimate.status flipped, second call idempotent.
+5. PDF — 200 with `application/pdf` (or HTML fallback with the same
+   header contract), Content-Disposition attachment.
+6. Tenant isolation — sunbelt admin 404 on aquaterra estimate.
+7. Role gating — customer 403 on all endpoints; tech CAN create but
+   CANNOT convert-to-quote and CANNOT edit rate catalog.
+
+**17C regression suite: 13/13 still green.** TypeScript: 0 errors on
+all new mobile files.
+
+### Live proof (external ingress)
+```
+POST /api/estimator/estimates {...pool resurface...} → estimate_id
+POST /api/estimator/estimates/{id}/generate →
+  mocked:false, line_items=10, upsells=5, total=$16,188
+  first item: "PebbleTec pool resurfacing …" qty=400 sqft
+              $/u=$12.50  src=ai_estimate  conf=0.88
+POST /api/estimator/estimates/{id}/convert-to-quote →
+  quote_id created, quote.total == estimate.total ($16,188)
+PUT  /api/estimator/rate-catalog {items:[...]}  → 200, items overwritten
+```
+
+### Files touched
+- **New backend**: `backend/routers/estimator.py`,
+  `backend/tests/test_estimator.py`.
+- **New web**: `frontend/src/pages/estimator/EstimatorPages.jsx`
+  (list + new + detail + rates in one file, 4 exports).
+- **New mobile**: `mobile/app/(app)/estimator/index.tsx`,
+  `mobile/app/(app)/estimator/new.tsx`,
+  `mobile/app/(app)/estimator/[id].tsx`,
+  `mobile/app/(app)/settings/lidar.tsx`.
+- **Edited**: `backend/server.py` (register router),
+  `frontend/src/App.js` (4 routes),
+  `frontend/src/nav/adminNav.js` (Field Estimator nav entry),
+  `mobile/app/(app)/more.tsx` (Field Estimator on both admin + tech
+   link lists, LiDAR Settings on admin).
+
+### Human-required checks
+- **LiDAR native binding** — the wrapper ships as a placeholder that's
+  safe-no-op in Expo Go. To activate real ARKit RoomPlan scans, an
+  EAS iOS build + community RoomPlan module (or a custom native module)
+  is required. The toggle in `/settings/lidar` persists user intent
+  and will pick up the module at runtime once installed.
+- **Real photo QA** — smoke tests used stock Unsplash pool photos.
+  Snap a real tech-in-the-field photo and confirm Claude's line-item
+  breakdown holds up (quantities, category classification).

@@ -23,6 +23,7 @@ export default function More() {
   // Landscape AI, CAD Design Studio, Measure (Satellite), and Virtual Bid are admin-only
   // and intentionally omitted from the technician nav.
   const techLinks = [
+    { icon: "calculator-outline", label: "Field Estimator", onPress: () => router.push("/(app)/estimator" as any) },
     { icon: "magnet-outline", label: "New Lead", onPress: () => router.push("/leads/new") },
     { icon: "footsteps-outline", label: "Door-to-Door", onPress: () => router.push("/d2d") },
     { icon: "trophy-outline", label: "D2D Leaderboard", onPress: () => router.push("/d2d/leaderboard") },
@@ -46,6 +47,8 @@ export default function More() {
   ];
 
   const adminLinks = [
+    { icon: "calculator-outline", label: "Field Estimator", onPress: () => router.push("/(app)/estimator" as any) },
+    { icon: "cube-outline", label: "LiDAR Settings", onPress: () => router.push("/(app)/settings/lidar" as any) },
     { icon: "magnet-outline", label: "New Lead", onPress: () => router.push("/leads/new") },
     { icon: "earth-outline", label: "Measure (Satellite)", onPress: () => router.push("/measure") },
     { icon: "home-outline", label: "Virtual Bid", onPress: () => router.push("/virtual-bid") },

@@ -34,6 +34,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/customers",     label: "Customers",     icon: Users,       feature: "customers" },
     { to: "/quotes",     label: "Quotes",     icon: FileText,    feature: "quotes" },
     { to: "/estimator",  label: "Estimator",  icon: Calculator,  feature: "estimator" },
+    { to: "/admin/estimator", label: "Field Estimator", icon: Wrench, feature: "estimator" },
     { to: "/d2d",        label: "D2D",        icon: DoorOpen,    feature: "d2d",    hard_rule: "admin_only" },
   ]},
 
