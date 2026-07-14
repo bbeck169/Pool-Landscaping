@@ -34,6 +34,9 @@ import ReferralAnalyticsV2, { ReferralTiers }
 import SeoAudits, { SeoAuditDetail } from "@/pages/seo/SeoAudits";
 import ContentScorer from "@/pages/seo/ContentScorer";
 import RankHeatmap from "@/pages/seo/RankHeatmap";
+import TopicalMap from "@/pages/seo/TopicalMap";
+import LlmVisibility from "@/pages/seo/LlmVisibility";
+import AtlasAgent from "@/pages/seo/AtlasAgent";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
@@ -401,6 +404,9 @@ export default function App() {
             <Route path="admin/seo/audits/:id" element={<AdminOnly><SeoAuditDetail /></AdminOnly>} />
             <Route path="admin/seo/content-scorer" element={<AdminOnly><ContentScorer /></AdminOnly>} />
             <Route path="admin/seo/rank-heatmap" element={<AdminOnly><RankHeatmap /></AdminOnly>} />
+            <Route path="admin/seo/topical-map" element={<AdminOnly><TopicalMap /></AdminOnly>} />
+            <Route path="admin/seo/llm-visibility" element={<AdminOnly><LlmVisibility /></AdminOnly>} />
+            <Route path="admin/seo/atlas" element={<AdminOnly><AtlasAgent /></AdminOnly>} />
           </Route>
 
           {/* Anything unmatched → home */}

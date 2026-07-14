@@ -430,7 +430,9 @@ async def get_audit_pages(aid: str,
     q = {"audit_id": aid, "tenant_id": tenant["id"]}
     rows = await db.seo_audit_pages.find(q, {"_id": 0}).skip(offset).limit(limit).to_list(limit)
     total = await db.seo_audit_pages.count_documents(q)
-    return {"rows": rows, "offset": offset, "limit": limit, "total": total}
+    # 17B polish · standard REST shape: return `items` + total (kept `rows` alias for one release).
+    return {"items": rows, "total": total, "offset": offset, "limit": limit,
+            "rows": rows}
 
 
 @router.post("/seo/audits/{aid}/cancel")
@@ -479,7 +481,15 @@ async def seo_ping(user: dict = Depends(require_admin),
     running = await db.seo_audits.count_documents(
         {"tenant_id": tenant["id"], "status": {"$in": ["queued", "running"]}}
     )
-    return {"running_audits": running, "timestamp": now_iso()}
+    return {
+        "ok": True,
+        "running_audits": running,
+        "timestamp": now_iso(),
+        "crawler_available": True,
+        "llm_available": bool(EMERGENT_LLM_KEY),
+        "serp_provider_available": False,
+        "mocked_domains": ["rank_heatmap"],
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -843,3 +853,549 @@ async def get_heatmap(hid: str,
     )
     if not d: raise HTTPException(404, "Heatmap not found")
     return d
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 17B.1 · Topical Map
+# ═══════════════════════════════════════════════════════════════════════
+
+class TopicalMapIn(BaseModel):
+    seed_keyword: str
+    business_context: Optional[str] = None
+    depth: int = Field(2, ge=1, le=3)
+
+
+class GenerateContentIn(BaseModel):
+    node_id: str
+
+
+async def _generate_tree(seed: str, ctx: str) -> Dict[str, Any]:
+    """Ask Claude for a hierarchical topic tree. Returns nodes+edges or a stub."""
+    if not EMERGENT_LLM_KEY:
+        return {"estimated": True, "mocked": True,
+                "nodes": [{"id": "root", "title": seed, "intent": "informational",
+                           "estimated_search_volume": 1000,
+                           "suggested_url_slug": seed.lower().replace(" ", "-"),
+                           "parent": None, "level": 0}],
+                "edges": []}
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
+                        system_message=(
+                            "You are an SEO strategist. Given a seed keyword, "
+                            "produce a topical map as strict JSON:\n"
+                            "{\"nodes\":[{\"id\":str,\"title\":str,"
+                            "\"intent\":\"informational|commercial|navigational|transactional\","
+                            "\"estimated_search_volume\":int,\"suggested_url_slug\":str,"
+                            "\"parent\":str|null,\"level\":int (0=pillar,1=cluster,2=support)}],"
+                            "\"edges\":[{\"from\":str,\"to\":str}]}. "
+                            "1 pillar (level 0), 5-8 clusters (level 1), "
+                            "3-5 supports per cluster (level 2). "
+                            "Volumes are ROUGH estimates."
+                        )).with_model("anthropic", "claude-sonnet-4-6"))
+        prompt = f"Seed keyword: {seed}\nBusiness context: {ctx or 'general'}"
+        raw = await chat.send_message(UserMessage(text=prompt))
+        text = raw if isinstance(raw, str) else str(raw)
+        text = text.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
+        try:
+            tree = json.loads(text)
+        except Exception:
+            m = re.search(r"(\{.*\})", text, re.S)
+            tree = json.loads(m.group(1)) if m else {"nodes": [], "edges": []}
+        tree["estimated"] = True
+        tree["mocked"] = False
+        return tree
+    except Exception as e:
+        logger.warning(f"topical-map LLM failed: {e}")
+        return {"estimated": True, "mocked": True,
+                "nodes": [], "edges": [], "error": str(e)}
+
+
+@router.post("/seo/topical-maps")
+async def create_topical_map(body: TopicalMapIn,
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    tree = await _generate_tree(body.seed_keyword, body.business_context or "")
+    doc = {
+        "id": new_id(),
+        "tenant_id": tenant["id"],
+        "created_by": user["id"],
+        "seed_keyword": body.seed_keyword,
+        "business_context": body.business_context or "",
+        "depth": body.depth,
+        "tree": {"nodes": tree.get("nodes", []),
+                 "edges": tree.get("edges", [])},
+        "estimated": True,
+        "mocked": bool(tree.get("mocked")),
+        "status": "done" if tree.get("nodes") else "failed",
+        "error": tree.get("error"),
+        "created_at": now_iso(),
+    }
+    await db.seo_topical_maps.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return {"map_id": doc["id"], "status": doc["status"],
+            "mocked": doc["mocked"], "node_count": len(tree.get("nodes", []))}
+
+
+@router.get("/seo/topical-maps")
+async def list_topical_maps(user: dict = Depends(require_admin),
+                             tenant: dict = Depends(get_current_tenant)):
+    return await db.seo_topical_maps.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+
+
+@router.get("/seo/topical-maps/{mid}")
+async def get_topical_map(mid: str,
+                           user: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
+    d = await db.seo_topical_maps.find_one(
+        {"id": mid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not d: raise HTTPException(404, "Map not found")
+    return d
+
+
+@router.post("/seo/topical-maps/{mid}/generate-content")
+async def generate_node_content(mid: str, body: GenerateContentIn,
+                                 user: dict = Depends(require_admin),
+                                 tenant: dict = Depends(get_current_tenant)):
+    d = await db.seo_topical_maps.find_one(
+        {"id": mid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not d: raise HTTPException(404, "Map not found")
+    node = next((n for n in d["tree"].get("nodes", []) if n["id"] == body.node_id), None)
+    if not node: raise HTTPException(404, "Node not found in map")
+    if not EMERGENT_LLM_KEY:
+        return {"mocked": True, "outline": [], "first_draft_html": ""}
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
+                        system_message=(
+                            "SEO editor. Given a topic node, return strict JSON "
+                            "{\"outline\":[{\"h2\":str,\"points\":[str]}],"
+                            "\"first_draft_html\":str}. 5 H2s, 3 points each, "
+                            "~500 word HTML draft."
+                        )).with_model("anthropic", "claude-sonnet-4-6"))
+        prompt = (f"Node: {node['title']}\nIntent: {node.get('intent')}\n"
+                  f"Pillar keyword: {d['seed_keyword']}")
+        raw = await chat.send_message(UserMessage(text=prompt))
+        text = raw if isinstance(raw, str) else str(raw)
+        text = text.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
+        try:
+            out = json.loads(text)
+        except Exception:
+            m = re.search(r"(\{.*\})", text, re.S)
+            out = json.loads(m.group(1)) if m else {}
+        out["mocked"] = False
+        return out
+    except Exception as e:
+        raise HTTPException(502, f"AI failed: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 17B.2 · LLM Visibility Tracker
+# ═══════════════════════════════════════════════════════════════════════
+
+class LlmQueryIn(BaseModel):
+    query_text: str
+    expected_brand: str
+    category: Optional[str] = None
+
+
+class LlmScanIn(BaseModel):
+    query_ids: Optional[List[str]] = None
+
+
+def _configured_engines() -> List[str]:
+    """Only list LLM providers we actually have keys for."""
+    engines: List[str] = []
+    if EMERGENT_LLM_KEY: engines.append("claude")
+    # Adapter stubs — will populate once user provides these:
+    # if os.environ.get("OPENAI_API_KEY"):      engines.append("openai")
+    # if os.environ.get("GEMINI_API_KEY"):      engines.append("gemini")
+    # if os.environ.get("PERPLEXITY_API_KEY"):  engines.append("perplexity")
+    return engines
+
+
+@router.post("/seo/llm-visibility/queries")
+async def add_tracked_query(body: LlmQueryIn,
+                             user: dict = Depends(require_admin),
+                             tenant: dict = Depends(get_current_tenant)):
+    doc = {
+        "id": new_id(),
+        "tenant_id": tenant["id"],
+        "created_by": user["id"],
+        "query_text": body.query_text,
+        "expected_brand": body.expected_brand,
+        "category": body.category or "general",
+        "created_at": now_iso(),
+    }
+    await db.seo_llm_tracked_queries.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@router.get("/seo/llm-visibility/queries")
+async def list_tracked_queries(user: dict = Depends(require_admin),
+                                tenant: dict = Depends(get_current_tenant)):
+    return await db.seo_llm_tracked_queries.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
+
+
+@router.delete("/seo/llm-visibility/queries/{qid}")
+async def delete_tracked_query(qid: str,
+                                user: dict = Depends(require_admin),
+                                tenant: dict = Depends(get_current_tenant)):
+    r = await db.seo_llm_tracked_queries.delete_one(
+        {"id": qid, "tenant_id": tenant["id"]}
+    )
+    if r.deleted_count == 0: raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+async def _run_query_on_claude(query_text: str, expected_brand: str) -> Dict[str, Any]:
+    """Ask Claude the raw query, then a second pass to extract brand mention."""
+    if not EMERGENT_LLM_KEY:
+        return {"mocked": True, "reason": "no LLM key",
+                "raw_response": "", "brand_mentioned": False,
+                "position": None, "competitors": [],
+                "quote": "", "sentiment": "unknown"}
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    # Step 1: raw answer
+    ans_chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
+                        system_message="You are a helpful assistant. Answer briefly.")
+                .with_model("anthropic", "claude-sonnet-4-6"))
+    raw = await ans_chat.send_message(UserMessage(text=query_text))
+    raw_text = raw if isinstance(raw, str) else str(raw)
+
+    # Step 2: analysis
+    analyze = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
+                       system_message=(
+                           "Analyze if the target brand appears in the response. "
+                           "Return strict JSON: {\"brand_mentioned\":bool,"
+                           "\"position\":int|null (1-based rank in list, else null),"
+                           "\"competitors\":[str],\"quote\":str,"
+                           "\"sentiment\":\"positive|neutral|negative\"}."
+                       )).with_model("anthropic", "claude-sonnet-4-6"))
+    prompt = (f"Target brand: {expected_brand}\n\nResponse to analyze:\n{raw_text}")
+    analysis_raw = await analyze.send_message(UserMessage(text=prompt))
+    analysis_text = analysis_raw if isinstance(analysis_raw, str) else str(analysis_raw)
+    analysis_text = analysis_text.strip()
+    if analysis_text.startswith("```"):
+        analysis_text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", analysis_text).strip()
+    try:
+        parsed = json.loads(analysis_text)
+    except Exception:
+        m = re.search(r"(\{.*\})", analysis_text, re.S)
+        parsed = json.loads(m.group(1)) if m else {}
+
+    return {"mocked": False, "raw_response": raw_text[:4000],
+            "brand_mentioned": bool(parsed.get("brand_mentioned")),
+            "position": parsed.get("position"),
+            "competitors": parsed.get("competitors") or [],
+            "quote": (parsed.get("quote") or "")[:300],
+            "sentiment": parsed.get("sentiment") or "neutral"}
+
+
+@router.post("/seo/llm-visibility/scan")
+async def scan_llm_visibility(body: LlmScanIn,
+                               user: dict = Depends(require_admin),
+                               tenant: dict = Depends(get_current_tenant)):
+    q_filter: Dict[str, Any] = {"tenant_id": tenant["id"]}
+    if body.query_ids: q_filter["id"] = {"$in": body.query_ids}
+    queries = await db.seo_llm_tracked_queries.find(
+        q_filter, {"_id": 0}
+    ).to_list(200)
+    if not queries: return {"scan_id": None, "results": [],
+                             "engines_scanned": _configured_engines()}
+    scan_id = new_id()
+    results = []
+    engines = _configured_engines()
+    for q in queries:
+        for engine in engines:
+            if engine != "claude": continue  # only claude wired today
+            r = await _run_query_on_claude(q["query_text"], q["expected_brand"])
+            doc = {
+                "id": new_id(), "tenant_id": tenant["id"], "scan_id": scan_id,
+                "query_id": q["id"], "engine": engine,
+                "brand_mentioned": r["brand_mentioned"],
+                "position": r.get("position"),
+                "competitors": r.get("competitors") or [],
+                "quote": r.get("quote"), "sentiment": r.get("sentiment"),
+                "raw_response": r["raw_response"],
+                "mocked": r.get("mocked", False),
+                "scanned_at": now_iso(),
+            }
+            await db.seo_llm_scans.insert_one(dict(doc))
+            doc.pop("_id", None)
+            results.append(doc)
+    return {"scan_id": scan_id, "results": results,
+            "engines_scanned": engines,
+            "engines_pending": [e for e in ("openai", "gemini", "perplexity")
+                                 if e not in engines]}
+
+
+@router.get("/seo/llm-visibility/scans/{scan_id}")
+async def get_scan(scan_id: str,
+                    user: dict = Depends(require_admin),
+                    tenant: dict = Depends(get_current_tenant)):
+    return await db.seo_llm_scans.find(
+        {"scan_id": scan_id, "tenant_id": tenant["id"]}, {"_id": 0}
+    ).to_list(500)
+
+
+@router.get("/seo/llm-visibility/dashboard")
+async def llm_dashboard(range: str = Query("30d"),
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    days = int(range.rstrip("d")) if range.endswith("d") else 30
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    scans = await db.seo_llm_scans.find(
+        {"tenant_id": tenant["id"], "scanned_at": {"$gte": cutoff}},
+        {"_id": 0},
+    ).to_list(5000)
+    total = len(scans)
+    mentioned = sum(1 for s in scans if s.get("brand_mentioned"))
+    positions = [s["position"] for s in scans
+                 if isinstance(s.get("position"), (int, float))]
+    avg_pos = round(sum(positions) / max(1, len(positions)), 2) if positions else None
+    comp_counts: Dict[str, int] = {}
+    for s in scans:
+        for c in s.get("competitors") or []:
+            comp_counts[c] = comp_counts.get(c, 0) + 1
+    top_competitors = sorted(comp_counts.items(), key=lambda x: -x[1])[:10]
+    # Trend by day
+    trend: Dict[str, Dict[str, int]] = {}
+    for s in scans:
+        day = (s.get("scanned_at") or "")[:10]
+        if not day: continue
+        trend.setdefault(day, {"total": 0, "mentioned": 0})
+        trend[day]["total"] += 1
+        if s.get("brand_mentioned"): trend[day]["mentioned"] += 1
+    trend_series = [
+        {"date": d, "mention_rate":
+            round(100 * v["mentioned"] / max(1, v["total"]), 1),
+         "total": v["total"]}
+        for d, v in sorted(trend.items())
+    ]
+    return {
+        "range": range,
+        "total_scans": total,
+        "mention_rate_pct": round(100 * mentioned / max(1, total), 1),
+        "avg_position": avg_pos,
+        "top_competitors": [{"name": n, "mentions": c} for n, c in top_competitors],
+        "trend": trend_series,
+        "engines_configured": _configured_engines(),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 17B.3 · Atlas Agent (tool-calling)
+# ═══════════════════════════════════════════════════════════════════════
+
+class AtlasChatIn(BaseModel):
+    message: str
+    conversation_id: Optional[str] = None
+
+
+_ATLAS_SYSTEM = (
+    "You are Atlas, an SEO operations agent. You have these tools:\n"
+    " - run_site_audit(url)\n"
+    " - score_content(html_or_url, keyword)\n"
+    " - generate_topical_map(keyword, business_context?)\n"
+    " - generate_rank_heatmap(keyword, lat, lng)\n"
+    " - scan_llm_visibility(query_ids?)\n"
+    " - list_audits() / list_topical_maps()\n"
+    " - get_audit_summary(audit_id)\n"
+    "\n"
+    "When a user's message clearly maps to a tool, respond with STRICT JSON:\n"
+    "{\"tool\":\"<name>\",\"args\":{...},\"assistant\":\"<one-line explanation>\"}\n"
+    "Otherwise respond with STRICT JSON:\n"
+    "{\"tool\":null,\"assistant\":\"<free-form answer>\"}\n"
+    "Never wrap responses in prose, always emit JSON only."
+)
+
+
+async def _atlas_route(message: str, tenant_id: str, user: dict) -> Dict[str, Any]:
+    """Ask Claude to pick a tool + args. Then invoke the tool and return
+    a rich payload for the FE to render."""
+    if not EMERGENT_LLM_KEY:
+        return {"assistant": "LLM key not configured.", "tool_calls": [],
+                "mocked": True}
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
+                        system_message=_ATLAS_SYSTEM)
+                .with_model("anthropic", "claude-sonnet-4-6"))
+        raw = await chat.send_message(UserMessage(text=message))
+        text = raw if isinstance(raw, str) else str(raw)
+        text = text.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
+        try:
+            plan = json.loads(text)
+        except Exception:
+            m = re.search(r"(\{.*\})", text, re.S)
+            plan = json.loads(m.group(1)) if m else {"tool": None,
+                                                     "assistant": text[:400]}
+    except Exception as e:
+        return {"assistant": f"AI error: {e}", "tool_calls": [], "mocked": False}
+
+    assistant_msg = plan.get("assistant") or ""
+    tool_name = plan.get("tool")
+    tool_calls = []
+
+    if tool_name and isinstance(tool_name, str):
+        args = plan.get("args") or {}
+        call = {"name": tool_name, "args": args, "status": "ok", "result": None}
+        try:
+            if tool_name == "run_site_audit":
+                url = args.get("url") or "https://example.com"
+                aid = new_id()
+                doc = {"id": aid, "tenant_id": tenant_id,
+                       "initiated_by": user["id"], "url": url,
+                       "depth": 2, "max_pages": 20, "status": "queued",
+                       "started_at": None, "finished_at": None,
+                       "summary": None, "error": None,
+                       "created_at": now_iso()}
+                await db.seo_audits.insert_one(dict(doc))
+                asyncio.create_task(_run_audit(aid, tenant_id, url, 2, 20))
+                call["result"] = {"audit_id": aid, "status": "queued"}
+            elif tool_name == "list_audits":
+                rows = await db.seo_audits.find(
+                    {"tenant_id": tenant_id}, {"_id": 0, "id": 1, "url": 1,
+                                                "status": 1, "summary": 1}
+                ).sort("created_at", -1).limit(10).to_list(10)
+                call["result"] = {"audits": rows}
+            elif tool_name == "get_audit_summary":
+                aid = args.get("audit_id")
+                a = await db.seo_audits.find_one(
+                    {"id": aid, "tenant_id": tenant_id}, {"_id": 0}
+                )
+                call["result"] = a or {"error": "not found"}
+            elif tool_name == "generate_topical_map":
+                seed = args.get("keyword") or args.get("seed") or ""
+                tree = await _generate_tree(seed, args.get("business_context") or "")
+                doc = {"id": new_id(), "tenant_id": tenant_id,
+                       "created_by": user["id"], "seed_keyword": seed,
+                       "business_context": args.get("business_context") or "",
+                       "depth": 2, "tree": {"nodes": tree.get("nodes", []),
+                                             "edges": tree.get("edges", [])},
+                       "estimated": True, "mocked": bool(tree.get("mocked")),
+                       "status": "done", "created_at": now_iso()}
+                await db.seo_topical_maps.insert_one(dict(doc))
+                call["result"] = {"map_id": doc["id"],
+                                   "node_count": len(tree.get("nodes", []))}
+            elif tool_name == "list_topical_maps":
+                rows = await db.seo_topical_maps.find(
+                    {"tenant_id": tenant_id},
+                    {"_id": 0, "id": 1, "seed_keyword": 1, "created_at": 1}
+                ).sort("created_at", -1).limit(10).to_list(10)
+                call["result"] = {"maps": rows}
+            elif tool_name == "score_content":
+                target = args.get("keyword") or args.get("target_keyword") or ""
+                url = args.get("url") or args.get("html_or_url") or ""
+                html = args.get("html") or ""
+                # tiny inline runner
+                if url and not html:
+                    async with httpx.AsyncClient(timeout=10.0) as c:
+                        r = await c.get(url, follow_redirects=True)
+                        html = r.text
+                soup = BeautifulSoup(html or "", "html.parser")
+                plain = soup.get_text(separator=" ", strip=True)
+                word_count = len(re.findall(r"[A-Za-z][A-Za-z']*", plain))
+                readability = _flesch_reading_ease(plain) if plain else 0.0
+                call["result"] = {"score_stub": round(readability),
+                                   "word_count": word_count,
+                                   "note": "Use /seo/content-score for the full breakdown."}
+            elif tool_name == "generate_rank_heatmap":
+                kw = args.get("keyword", "")
+                lat = float(args.get("lat", 0.0))
+                lng = float(args.get("lng", 0.0))
+                hid = new_id()
+                doc = {"id": hid, "tenant_id": tenant_id,
+                       "initiated_by": user["id"], "keyword": kw,
+                       "center": {"lat": lat, "lng": lng},
+                       "grid_size": 5, "radius_miles": 5.0,
+                       "status": "queued", "started_at": None, "finished_at": None,
+                       "points": [], "avg_rank": None, "top_position_count": 0,
+                       "mocked": True, "mocked_reason": None,
+                       "created_at": now_iso()}
+                await db.seo_rank_heatmaps.insert_one(dict(doc))
+                asyncio.create_task(_generate_heatmap(hid, tenant_id, kw,
+                                                       lat, lng, 5, 5.0))
+                call["result"] = {"heatmap_id": hid, "status": "queued",
+                                   "mocked": True}
+            elif tool_name == "scan_llm_visibility":
+                # Small default scan (no bulk here).
+                qs = await db.seo_llm_tracked_queries.find(
+                    {"tenant_id": tenant_id}, {"_id": 0}
+                ).to_list(5)
+                call["result"] = {"tracked_queries_count": len(qs),
+                                   "engines_configured": _configured_engines()}
+            else:
+                call["status"] = "unknown_tool"
+                call["result"] = {"error": f"Unknown tool: {tool_name}"}
+        except Exception as e:
+            call["status"] = "error"
+            call["result"] = {"error": str(e)}
+        tool_calls.append(call)
+
+    return {"assistant": assistant_msg, "tool_calls": tool_calls, "mocked": False}
+
+
+@router.post("/seo/atlas/chat")
+async def atlas_chat(body: AtlasChatIn,
+                      user: dict = Depends(require_admin),
+                      tenant: dict = Depends(get_current_tenant)):
+    conv_id = body.conversation_id or new_id()
+    conv = await db.seo_atlas_conversations.find_one(
+        {"id": conv_id, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not conv:
+        conv = {"id": conv_id, "tenant_id": tenant["id"],
+                "user_id": user["id"], "messages": [],
+                "created_at": now_iso(), "last_message_at": now_iso()}
+        await db.seo_atlas_conversations.insert_one(dict(conv))
+
+    result = await _atlas_route(body.message, tenant["id"], user)
+    now = now_iso()
+    user_msg = {"role": "user", "content": body.message, "at": now}
+    assistant_msg = {"role": "assistant",
+                     "content": result["assistant"],
+                     "tool_calls": result.get("tool_calls") or [],
+                     "at": now}
+    await db.seo_atlas_conversations.update_one(
+        {"id": conv_id, "tenant_id": tenant["id"]},
+        {"$push": {"messages": {"$each": [user_msg, assistant_msg]}},
+         "$set": {"last_message_at": now}},
+    )
+    return {"conversation_id": conv_id,
+            "assistant": assistant_msg,
+            "mocked": bool(result.get("mocked"))}
+
+
+@router.get("/seo/atlas/conversations")
+async def list_conversations(user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    return await db.seo_atlas_conversations.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0, "messages": 0}
+    ).sort("last_message_at", -1).to_list(100)
+
+
+@router.get("/seo/atlas/conversations/{cid}")
+async def get_conversation(cid: str,
+                            user: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
+    c = await db.seo_atlas_conversations.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not c: raise HTTPException(404, "Conversation not found")
+    return c

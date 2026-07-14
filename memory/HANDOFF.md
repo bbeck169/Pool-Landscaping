@@ -1329,3 +1329,62 @@ POST /api/seo/rank-heatmaps       → {heatmap_id, status:"queued", mocked:true,
 - **Crawler**: outbound `example.com` reach works in this environment; real customer domains behind Cloudflare/WAFs may block the UA — expose a User-Agent config in the admin UI later.
 - **17B (next)**: Topical Map, LLM Visibility Tracker, Atlas Agent — queued.
 - **17C**: OTTO Auto-Fix, Website Studio, White-Label Reports — queued.
+
+---
+
+## Phase 17B · Topical Map + LLM Visibility + Atlas Agent (Feb 2026)
+
+### Shape polish shipped ahead of the modules
+- `GET /api/seo/audits/{id}/pages` now returns `{ items, total, offset, limit }` (with `rows` kept as a deprecated alias for one release).
+- `GET /api/seo/ping` now returns `{ ok, running_audits, timestamp, crawler_available, llm_available, serp_provider_available, mocked_domains }` — capability flags UI can badge.
+
+### Backend — 444 → 455 OpenAPI paths (+11 in `routers/seo_agentic.py`)
+
+**17B.1 · Topical Map** — real Claude-driven pillar → cluster → support graph
+- `POST /api/seo/topical-maps` `{seed_keyword, business_context?, depth?}` — one-shot LLM call; response is a tree of nodes (id/title/intent/estimated_search_volume/suggested_url_slug/parent/level) + edges. Every response is flagged `estimated:true` so nothing is silently promised.
+- `GET /api/seo/topical-maps` · `GET /api/seo/topical-maps/{id}`.
+- `POST /api/seo/topical-maps/{id}/generate-content` `{node_id}` — drafts a 5-H2 outline + ~500-word HTML for the picked node.
+- Live proof: seed `pool cleaning phoenix` produced **43 nodes** via Claude in ~30s.
+
+**17B.2 · LLM Visibility Tracker** — track brand mentions across AI answers
+- `POST/GET/DELETE /api/seo/llm-visibility/queries` — CRUD tracked queries.
+- `POST /api/seo/llm-visibility/scan` — runs each query on Claude, then a second LLM pass extracts `{brand_mentioned, position, competitors, quote, sentiment}` per response.
+- `GET /api/seo/llm-visibility/scans/{scan_id}` · `GET /api/seo/llm-visibility/dashboard?range=30d` — mention rate %, avg position, top competitors, per-day trend.
+- **Honest engine labeling**: response includes `engines_scanned: ["claude"]` (only actually-configured providers) + `engines_pending: ["openai","gemini","perplexity"]`. No silent stubs. Adapter slots are in place for when the user provides those keys.
+
+**17B.3 · Atlas Agent** — natural-language SEO ops with tool-calling
+- `POST /api/seo/atlas/chat` `{message, conversation_id?}` — Claude picks a tool (`run_site_audit`, `score_content`, `generate_topical_map`, `generate_rank_heatmap`, `scan_llm_visibility`, `list_audits`, `list_topical_maps`, `get_audit_summary`) via strict-JSON output. Server executes the tool and returns `{assistant, tool_calls:[{name, args, status, result}]}`.
+- `GET /api/seo/atlas/conversations` · `GET /api/seo/atlas/conversations/{id}` — transcript persistence.
+- Live proof: "Run an audit on https://example.com" produced a `run_site_audit` tool call, invoked the crawler, returned an audit_id, and persisted the audit doc. Tenant isolation on conversations verified.
+
+### Frontend web
+- New sidebar entries: Topical Map, LLM Visibility, Atlas Agent.
+- `/admin/seo/topical-map` — 3-column pillar/cluster/support view, intent color-coded (blue/green/purple/red), CSV export, node drawer with "Generate outline" button.
+- `/admin/seo/llm-visibility` — tabs for Queries + Dashboard; honest engine pills at top (`claude` green, `openai|gemini|perplexity` grey with "not configured" label).
+- `/admin/seo/atlas` — chat + history sidebar; tool_calls rendered inline with name/args/result JSON.
+
+### Tests — 15/15 green
+- `tests/test_seo_phase17a.py` — 6/6 (audit lifecycle, content scoring live LLM, heatmap mocked flag, ping, +2 polish assertions).
+- `tests/test_seo_phase17b.py` — 9/9 (audit `items` shape, ping capability flags, topical map structure + isolation, LLM visibility CRUD + honest engines, scan live, Atlas tool-calling + tenant isolation).
+- Total combined with Phase 20A/route-optimization: **26/26 green in 131s**.
+
+### Live proof (curl)
+```
+POST /api/seo/topical-maps
+  seed="pool cleaning phoenix" → {map_id, node_count:43, mocked:false}
+GET  /api/seo/llm-visibility/dashboard
+  → {engines_configured:["claude"], mention_rate_pct:0, total_scans:0}
+POST /api/seo/atlas/chat "Run an audit on https://example.com"
+  → tool_calls:[{name:"run_site_audit",args:{url},status:"ok",
+                 result:{audit_id, status:"queued"}}]
+```
+
+### Files touched
+- **backend**: extended `routers/seo_agentic.py` (+~700 LOC), no new file.
+- **frontend**: `pages/seo/TopicalMap.jsx`, `pages/seo/LlmVisibility.jsx`, `pages/seo/AtlasAgent.jsx`; `App.js` + `nav/adminNav.js`.
+
+### Known limitations & human checks
+- SERP provider still unconfigured (17A limitation carries through).
+- **OpenAI / Gemini / Perplexity keys needed** to expand LLM Visibility beyond Claude. Adapter functions `_scan_openai() / _scan_gemini() / _scan_perplexity()` are commented in `_configured_engines()` — enable + wire when keys arrive.
+- Atlas tool-calling currently uses strict-JSON prompting (works reliably against Claude Sonnet 4.6). Migrating to Anthropic's native tool-use API is a nice-to-have later.
+- **17C queued**: OTTO Auto-Fix + Website Studio + White-Label Reports.
