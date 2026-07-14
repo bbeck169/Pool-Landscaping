@@ -922,8 +922,20 @@ async def add_job_photo(jid: str, body: PhotoIn,
         raise HTTPException(404, "Job not found")
     if user.get("role") == "customer":
         raise HTTPException(403, "Not allowed")
-    if user.get("role") == "technician" and job.get("technician_id") != user.get("technician_id"):
-        raise HTTPException(403, "Not your job")
+    if user.get("role") == "technician":
+        assigned = job.get("technician_id")
+        if assigned not in (user.get("id"), user.get("technician_id")):
+            raise HTTPException(403, "Not your job")
+    existing = len(job.get("photos") or [])
+    if existing >= 10:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "msg": "10-photo cap reached — remove one before uploading another",
+                "remaining_slots": 0,
+                "existing": existing,
+            },
+        )
     photo = {"id": new_id(), "data": body.data, "label": body.label or "photo", "created_at": now_iso()}
     await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$push": {"photos": photo}})
     return await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})

@@ -94,6 +94,7 @@ import {
 import { LanaChatPage as OsLana } from "@/pages/os/LanaAndPlans";
 import TodaySchedule from "@/pages/schedule/TodaySchedule";
 import { TechHuddlePage, TechTimeClockPage } from "@/pages/tech/TechPages";
+import ServiceReport from "@/pages/tech/ServiceReport";
 import { ComposerPage as SocialComposer, CalendarPage as SocialCalendar,
          LibraryPage as SocialLibrary, DraftsPage as SocialDrafts } from "@/pages/social/SocialSuite";
 import { ApprovalsPage as SocialApprovals, BulkUploadPage as SocialBulkUpload,
@@ -246,6 +247,8 @@ export default function App() {
             <Route path="schedule/today" element={<TodaySchedule />} />
             <Route path="tech/huddle" element={<TechHuddlePage />} />
             <Route path="tech/time-clock" element={<TechTimeClockPage />} />
+            {/* Phase 18B follow-up — Service Report (auto-opens on clock-in) */}
+            <Route path="jobs/:id/service-report" element={<ServiceReport />} />
 
             {/* Phase 18A — Social Suite (admin/marketing only) */}
             <Route path="social/composer" element={<AdminOnly><SocialComposer /></AdminOnly>} />

@@ -307,7 +307,31 @@ export default function TodaySchedule() {
 
       {/* List view — default */}
       {data && data.items.length > 0 && viewMode === "list" && (
-        <ScheduleCardList jobs={jobItems} tz={data.tz} onOpen={(id) => navigate(`/jobs/${id}`)} />
+        <ScheduleCardList jobs={jobItems} tz={data.tz}
+                          isTech={isTech}
+                          onOpen={(id) => navigate(`/jobs/${id}`)}
+                          onClockIn={async (job) => {
+                            // Try to grab GPS (best-effort); still clock-in without it.
+                            const geo = await new Promise((res) => {
+                              if (!navigator.geolocation) return res({});
+                              navigator.geolocation.getCurrentPosition(
+                                (p) => res({ lat: p.coords.latitude, lng: p.coords.longitude,
+                                             accuracy: p.coords.accuracy }),
+                                () => res({}),
+                                { enableHighAccuracy: true, timeout: 5000 },
+                              );
+                            });
+                            try {
+                              await api.post("/workforce/clock-in", { job_id: job.id, ...geo });
+                            } catch (e) {
+                              // If already clocked in on this job, still open the report.
+                              if (!/open shift/i.test(e.message || "")) {
+                                alert(e.message);
+                                return;
+                              }
+                            }
+                            navigate(`/jobs/${job.id}/service-report`);
+                          }}/>
       )}
 
       {data && data.items.length > 0 && viewMode === "timeline" && (
@@ -510,7 +534,7 @@ function cardStatusTone(status) {
   return { bg: "#DBEAFE", fg: "#1E40AF", label: "Scheduled" };
 }
 
-function ScheduleCardList({ jobs, tz, onOpen }) {
+function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
   const [checked, setChecked] = useState(() => new Set());
   const [expanded, setExpanded] = useState(() => new Set());
   const toggle = (id) => {
@@ -632,6 +656,31 @@ function ScheduleCardList({ jobs, tz, onOpen }) {
                     {bh.toFixed(2)} BH
                   </div>
                 </div>
+
+                {/* Phase 18B follow-up — Tech quick actions */}
+                {isTech && (j.status || "").toLowerCase() !== "completed" && (
+                  <div className="flex gap-2 mt-3 flex-wrap">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onClockIn && onClockIn(j); }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1"
+                      style={{ background: "#DC2626", color: "#fff" }}
+                      data-testid={`schedule-card-clockin-${j.id}`}>
+                      ▶ Clock In & Start Report
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.location.assign(`/jobs/${j.id}/service-report`);
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold"
+                      style={{ backgroundColor: colors.surfaceSecondary,
+                               color: colors.onSurface,
+                               border: `1px solid ${colors.border}` }}
+                      data-testid={`schedule-card-open-report-${j.id}`}>
+                      Open Report
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Chevron */}

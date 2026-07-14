@@ -754,3 +754,55 @@ Links · Brand Kit**.
 ### Deferred to Phase 18B
 - OAuth for the 9 networks + real Publish Now (unchanged).
 - Bulk / UTM / Brand Kit exposure on mobile (spec explicitly deferred).
+
+---
+
+## Phase 18B follow-up · Auto-open Service Checklist on Tech Clock-In (Feb 2026)
+
+When a tech taps **Clock In & Start Report** on a schedule card, the app
+auto-detects the job's service type and opens the correct in-progress
+checklist form. Pool = chemical readings + chemicals-added + pool checklist.
+Landscape = grooming checklist. Both allow up to **10** photos per job,
+server-enforced.
+
+### Backend — +5 endpoints (392 → 395 unique OpenAPI paths)
+- `GET   /api/jobs/{jid}/service-report`, `PATCH …`, `POST …/submit`
+- `GET  /api/settings/service-templates`, `PUT …`
+- Existing `POST /api/jobs/{jid}/photos` now enforces 10-photo cap
+  (`400 { msg, remaining_slots: 0, existing }`).
+- New collections: `service_reports`, `service_report_templates`.
+- Detection over `service_type + job_type + title`:
+  pool/chem → pool · landscap/mow/lawn/garden/trim/blow → landscape · else generic.
+- Tenant/RBAC: techs match either `job.technician_id == user.id` or
+  `== user.technician_id`. Customer → 403. Admin can view any tenant scope.
+
+### Frontend
+- `/app/frontend/src/pages/tech/ServiceReport.jsx` — header with elapsed
+  timer + saved-state, photo grid (10 slots), pool-only Chemical Readings +
+  Chemicals Added, checklist with per-item notes, notes textarea, sticky
+  footer `Save now` + `Submit Report & Clock Out`. Autosaves every 5s.
+- Route: `/jobs/:id/service-report` (works for admins too).
+- `TodaySchedule.jsx`: each pending tech card gets **▶ Clock In & Start
+  Report** (posts `/workforce/clock-in` with browser GPS → routes to report)
+  and **Open Report** (skips clock-in).
+- Mobile: `service-report/[id].tsx` mirrors the web — `expo-image-picker`
+  for camera + library, autosave, checklist, submit + clock-out.
+  `today.tsx` shows same two buttons for techs.
+
+### Tests — `test_service_report.py` (7/7 green)
+Template detection (pool / landscape / generic), 10-photo cap, autosave
+persistence, submit locks (409 on subsequent PATCH), job flips to
+`completed`, tenant isolation, customer 403.
+
+### Files touched
+- **New**: `backend/routers/service_reports.py`,
+  `backend/tests/test_service_report.py`,
+  `frontend/src/pages/tech/ServiceReport.jsx`,
+  `mobile/app/(app)/service-report/[id].tsx`.
+- **Extended**: `backend/server.py`, `backend/routers/jobs.py` (photo cap +
+  liberal tech auth), `frontend/src/App.js`,
+  `frontend/src/pages/schedule/TodaySchedule.jsx`, `mobile/app/(app)/today.tsx`.
+
+### Human verification suggested
+- Real device: GPS clock-in on iOS/Android via Expo build; camera capture
+  path (permission → capture → upload); 10-photo cap in mobile UI.

@@ -86,6 +86,24 @@ def test_approval_submit_then_approve_moves_to_scheduled(admin_h):
         _cleanup_post(admin_h, pid)
 
 
+def test_approve_accepts_bare_body(admin_h):
+    """Approve requires no body — a bare POST must return 200, not 422."""
+    from datetime import datetime, timedelta, timezone
+    future = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    post = _new_post(admin_h, caption="TEST_ 18a1 approve-bare-body", scheduled_at=future)
+    pid = post["id"]
+    try:
+        assert requests.post(f"{API}/social/posts/{pid}/submit-for-approval",
+                             headers=admin_h, timeout=15).status_code == 200
+        # Bare POST — no body, no Content-Type payload.
+        r = requests.post(f"{API}/social/posts/{pid}/approve",
+                          headers=admin_h, timeout=15)
+        assert r.status_code == 200, r.text
+        assert r.json()["post_status"] == "scheduled"
+    finally:
+        _cleanup_post(admin_h, pid)
+
+
 def test_approval_reject_requires_comment(admin_h):
     post = _new_post(admin_h, caption="TEST_ 18a1 reject-no-comment")
     pid = post["id"]
@@ -146,6 +164,32 @@ def test_bulk_csv_creates_valid_rows_and_reports_errors(admin_h):
     assert len(data["errors"]) == 2
     assert {e["row"] for e in data["errors"]} == {3, 4}
     # cleanup
+    for pid in data.get("preview_ids", []):
+        _cleanup_post(admin_h, pid)
+
+
+def test_bulk_rejects_invalid_scheduled_at(admin_h):
+    """Regression: invalid ISO 8601 in scheduled_at must fail the row, not persist a
+    post with a garbage date string."""
+    csv_body = (
+        "caption,networks,scheduled_at,media_urls,hashtags,first_comment\n"
+        "TEST_ 18a1 bulk valid row,facebook,,,,\n"
+        "TEST_ 18a1 bulk valid future,linkedin,2026-08-01T09:00:00Z,,,\n"
+        "TEST_ 18a1 bulk BAD DATE,facebook,not-a-date,,,\n"
+    )
+    files = {"file": ("bulk.csv", csv_body, "text/csv")}
+    r = requests.post(f"{API}/social/posts/bulk", headers=admin_h,
+                      files=files, timeout=30)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    # exactly 2 created (rows 2 & 3 in the CSV — data rows 1 & 2)
+    assert data["created"] == 2, data
+    assert len(data["errors"]) == 1, data
+    err = data["errors"][0]
+    # The BAD DATE row is CSV line 4 (row index 3 in the endpoint's numbering).
+    assert err["row"] == 3
+    assert "invalid scheduled_at" in err["msg"].lower()
+    assert "not-a-date" in err["msg"]
     for pid in data.get("preview_ids", []):
         _cleanup_post(admin_h, pid)
 

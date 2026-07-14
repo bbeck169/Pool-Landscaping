@@ -52,6 +52,7 @@ async function distanceLeg(from: { lat: number; lng: number },
 export default function TodayScheduleScreen() {
   const { user } = useAuth();
   const router = useRouter();
+  const isTech = user?.role === "technician";
   const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [showPicker, setShowPicker] = useState(false);
   const [data, setData] = useState<any>(null);
@@ -273,7 +274,31 @@ export default function TodayScheduleScreen() {
         )}
 
         {items.length > 0 && viewMode === "list" && (
-          <ScheduleCardList jobs={jobItems} tz={data.tz} onOpen={(id: string) => router.push(`/job/${id}` as any)} />
+          <ScheduleCardList jobs={jobItems} tz={data.tz}
+                            isTech={isTech}
+                            onOpen={(id: string) => router.push(`/job/${id}` as any)}
+                            onOpenReport={(id: string) => router.push(`/(app)/service-report/${id}` as any)}
+                            onClockIn={async (job: any) => {
+                              let geo: any = {};
+                              try {
+                                const Location = await import("expo-location");
+                                const perm = await Location.requestForegroundPermissionsAsync();
+                                if (perm.granted) {
+                                  const p = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+                                  geo = { lat: p.coords.latitude, lng: p.coords.longitude,
+                                          accuracy: p.coords.accuracy };
+                                }
+                              } catch {}
+                              try {
+                                await api.post("/workforce/clock-in", { job_id: job.id, ...geo });
+                              } catch (e: any) {
+                                if (!/open shift/i.test(e?.message || "")) {
+                                  Alert.alert("Clock-in failed", e?.message || "");
+                                  return;
+                                }
+                              }
+                              router.push(`/(app)/service-report/${job.id}` as any);
+                            }}/>
         )}
 
         {items.length > 0 && viewMode === "timeline" && (
@@ -498,7 +523,7 @@ function cardStatusTone(status?: string) {
   return { bg: "#DBEAFE", fg: "#1E40AF", label: "Scheduled" };
 }
 
-function ScheduleCardList({ jobs, tz, onOpen }: any) {
+function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn, onOpenReport }: any) {
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const toggle = (id: string) => setChecked((s) => ({ ...s, [id]: !s[id] }));
@@ -606,6 +631,32 @@ function ScheduleCardList({ jobs, tz, onOpen }: any) {
                   {bh.toFixed(2)} BH
                 </Text>
               </View>
+
+              {isTech && (j.status || "").toLowerCase() !== "completed" && (
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                  <Pressable
+                    onPress={(e: any) => { e.stopPropagation && e.stopPropagation();
+                                            onClockIn && onClockIn(j); }}
+                    style={{ backgroundColor: "#DC2626", paddingHorizontal: 12,
+                             paddingVertical: 7, borderRadius: 8 }}
+                    testID={`schedule-card-clockin-${j.id}`}>
+                    <Text style={{ color: "#fff", fontFamily: font.bold, fontSize: 12 }}>
+                      ▶ Clock In & Start
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={(e: any) => { e.stopPropagation && e.stopPropagation();
+                                            onOpenReport && onOpenReport(j.id); }}
+                    style={{ backgroundColor: colors.surfaceSecondary,
+                             borderWidth: 1, borderColor: colors.border,
+                             paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8 }}
+                    testID={`schedule-card-open-report-${j.id}`}>
+                    <Text style={{ color: colors.onSurface, fontFamily: font.bold, fontSize: 12 }}>
+                      Open Report
+                    </Text>
+                  </Pressable>
+                </View>
+              )}
             </View>
             <Ionicons name="chevron-forward" size={20} color="#DC2626" style={styles.cardChevron}/>
           </Pressable>

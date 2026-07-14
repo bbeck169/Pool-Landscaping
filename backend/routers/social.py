@@ -541,7 +541,7 @@ async def submit_for_approval(pid: str,
 
 
 @router.post("/social/posts/{pid}/approve")
-async def approve_post(pid: str, body: ApprovalDecisionIn,
+async def approve_post(pid: str, body: Optional[ApprovalDecisionIn] = None,
                        user: dict = Depends(require_approver),
                        tenant: dict = Depends(get_current_tenant)):
     post = await _find_post_or_404(pid, tenant["id"])
@@ -549,6 +549,7 @@ async def approve_post(pid: str, body: ApprovalDecisionIn,
         raise HTTPException(400, "Post is not pending approval")
     next_status = _status_for(post.get("scheduled_at"))
     now = now_iso()
+    comment = body.comment if body else None
     await db.social_posts.update_one(
         {"id": pid, "tenant_id": tenant["id"]},
         {"$set": {"status": next_status, "updated_at": now}},
@@ -556,7 +557,7 @@ async def approve_post(pid: str, body: ApprovalDecisionIn,
     await db.social_post_approvals.update_one(
         {"post_id": pid, "tenant_id": tenant["id"]},
         {"$set": {"status": "approved", "reviewer": user["id"],
-                  "decided_at": now, "comment": body.comment}},
+                  "decided_at": now, "comment": comment}},
     )
     return {"ok": True, "post_status": next_status}
 
@@ -669,6 +670,7 @@ def _split_semi(cell: Optional[str]) -> List[str]:
 
 
 async def _create_bulk_row(row: dict, user: dict, tenant_id: str):
+    # ─ networks
     nets = _split_semi(row.get("networks")) if not isinstance(row.get("networks"), list) else [
         n.strip() for n in row["networks"] if str(n).strip()
     ]
@@ -677,10 +679,39 @@ async def _create_bulk_row(row: dict, user: dict, tenant_id: str):
     for n in nets:
         if n not in SUPPORTED_NETWORKS:
             raise ValueError(f"Unknown network '{n}'")
-    caption = (row.get("caption") or "").strip()
+
+    # ─ caption (must be non-empty string)
+    caption = row.get("caption")
+    if not isinstance(caption, str):
+        raise ValueError("caption must be a string")
+    caption = caption.strip()
     if not caption:
         raise ValueError("caption required")
-    scheduled_at = row.get("scheduled_at") or None
+
+    # ─ scheduled_at (optional but must parse as ISO 8601 if provided)
+    scheduled_raw = row.get("scheduled_at")
+    scheduled_at: Optional[str] = None
+    if scheduled_raw not in (None, "", []):
+        raw_str = str(scheduled_raw).strip()
+        if raw_str:
+            try:
+                # Accept trailing Z as UTC (datetime.fromisoformat is strict pre-3.11).
+                datetime.fromisoformat(raw_str.replace("Z", "+00:00"))
+            except Exception:
+                raise ValueError(f"invalid scheduled_at ISO8601: {raw_str}")
+            scheduled_at = raw_str
+
+    # ─ first_comment (optional; if present must be a non-empty string)
+    first_comment_raw = row.get("first_comment")
+    first_comment: Optional[str] = None
+    if first_comment_raw not in (None, "", []):
+        if not isinstance(first_comment_raw, str):
+            raise ValueError("first_comment must be a string")
+        fc = first_comment_raw.strip()
+        if not fc:
+            raise ValueError("first_comment must be non-empty when provided")
+        first_comment = fc
+
     media_urls = (
         _split_semi(row.get("media_urls"))
         if not isinstance(row.get("media_urls"), list)
@@ -720,7 +751,7 @@ async def _create_bulk_row(row: dict, user: dict, tenant_id: str):
         "published_at": None,
         "status": _status_for(scheduled_at),
         "per_network_status": {n: "draft" for n in nets},
-        "first_comment": row.get("first_comment") or None,
+        "first_comment": first_comment,
         "utm": {},
         "network_metadata": {},
         "error": None,
