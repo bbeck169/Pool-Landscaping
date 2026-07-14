@@ -170,3 +170,57 @@ def test_route_leg_cache_roundtrip(tech_h, db, aquaterra_id):
     assert doc["duration_seconds"] == 940.0
     # cleanup
     db.distance_matrix_cache.delete_one({"key": key})
+
+
+# ─── Test 6 · Gate code + notes surface on the tech's schedule item ──────
+def test_schedule_surfaces_gate_code_and_notes(tech_h, db, aquaterra_id):
+    """Assign one of Jennifer Carson's jobs to Mike; her seeded gate_code
+    '1234#' + notes must appear on the schedule item."""
+    user = db.users.find_one({"email": "mike@aquaterra.com"})
+    jen = db.customers.find_one({"tenant_id": aquaterra_id, "name": "Jennifer Carson"})
+    assert jen and jen.get("gate_code"), "expected Jennifer Carson to have a seeded gate_code"
+    # Insert a job for today assigned to Mike for Jennifer.
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc)
+    job = {
+        "id": "TEST_GATE_JOB_1",
+        "tenant_id": aquaterra_id,
+        "title": "TEST_ gate code job",
+        "service_type": "Pool Chem Service",
+        "customer_id": jen["id"],
+        "customer_name": jen["name"],
+        "assigned_technician_id": user["id"],
+        "technician_id": user["id"],
+        "assigned_to": user["id"],
+        "scheduled_date": now.replace(hour=10, minute=0, second=0, microsecond=0).isoformat(),
+        "status": "pending",
+        "notes": "Test job notes.",
+    }
+    db.jobs.replace_one({"id": job["id"]}, job, upsert=True)
+    try:
+        r = requests.get(f"{API}/schedule/today", headers=tech_h, timeout=20)
+        assert r.status_code == 200
+        row = next((it for it in r.json()["items"]
+                    if it.get("type") == "job" and it.get("id") == job["id"]), None)
+        assert row, "expected our test job in schedule"
+        assert row["gate_code"] == jen["gate_code"]
+        assert row["customer_notes"] and "Dog" in row["customer_notes"]
+        assert row["job_notes"] and "Test job notes" in row["job_notes"]
+        # No revenue keys leaked
+        for k in ("price", "cost", "total", "revenue", "margin"):
+            assert k not in row
+    finally:
+        db.jobs.delete_one({"id": job["id"]})
+
+
+# ─── Test 7 · Sunbelt tech cannot see aquaterra gate codes ────────────────
+def test_gate_code_tenant_isolation(db):
+    # A sunbelt-assigned tech should not see the aquaterra gate codes at all.
+    r = requests.post(f"{API}/auth/login",
+                      json={"email": "admin@sunbelt.com", "password": "password123"},
+                      timeout=20)
+    r.raise_for_status()
+    sb_admin = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    resp = requests.get(f"{API}/schedule/today", headers=sb_admin, timeout=20)
+    body = resp.text
+    assert "1234#" not in body and "0713*" not in body

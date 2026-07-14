@@ -70,6 +70,16 @@ async def schedule_today(user: dict = Depends(get_current_user),
     }
     jobs = await db.jobs.find(job_q, {"_id": 0}).sort("scheduled_date", 1).to_list(200)
 
+    # Phase 16C follow-up · fetch customer gate codes + notes for the tech.
+    cids = list({j.get("customer_id") for j in jobs if j.get("customer_id")})
+    cust_map: dict = {}
+    if cids:
+        for c in await db.customers.find(
+            {"id": {"$in": cids}, "tenant_id": tid},
+            {"_id": 0, "id": 1, "gate_code": 1, "notes": 1, "access_notes": 1},
+        ).to_list(500):
+            cust_map[c["id"]] = c
+
     # Time entries + break intervals for *today* (by user).
     entries = await db.time_entries.find(
         {"tenant_id": tid, "user_id": user["id"],
@@ -79,6 +89,8 @@ async def schedule_today(user: dict = Depends(get_current_user),
 
     items: list = []
     for j in jobs:
+        cust = cust_map.get(j.get("customer_id")) or {}
+        job_notes_raw = "\n".join(filter(None, [j.get("notes"), j.get("internal_notes")]))
         items.append({
             "type": "job",
             "id": j.get("id"),
@@ -97,6 +109,10 @@ async def schedule_today(user: dict = Depends(get_current_user),
             "scheduled_end": j.get("scheduled_end"),
             "status": j.get("status"),
             "priority": j.get("priority"),
+            "gate_code": cust.get("gate_code") or None,
+            "access_notes": cust.get("access_notes") or None,
+            "customer_notes": cust.get("notes") or None,
+            "job_notes": job_notes_raw or None,
         })
 
     for e in entries:

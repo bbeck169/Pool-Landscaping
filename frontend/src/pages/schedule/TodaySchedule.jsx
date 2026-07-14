@@ -13,6 +13,7 @@ import WeatherWidget5Day from "@/pages/aitools/WeatherWidget5Day";
 import {
   Clock, MapPin, Navigation, Car, Coffee, PlayCircle, StopCircle,
   AlertTriangle, ChevronRight, RefreshCw, CalendarCheck, Square, CheckSquare,
+  Key, StickyNote,
 } from "lucide-react";
 
 const GOOGLE_LIBS = ["places"];
@@ -444,11 +445,19 @@ function cardStatusTone(status) {
 
 function ScheduleCardList({ jobs, tz, onOpen }) {
   const [checked, setChecked] = useState(() => new Set());
+  const [expanded, setExpanded] = useState(() => new Set());
   const toggle = (id) => {
     const s = new Set(checked);
     if (s.has(id)) s.delete(id); else s.add(id);
     setChecked(s);
   };
+  const toggleExpand = (id) => {
+    const s = new Set(expanded);
+    if (s.has(id)) s.delete(id); else s.add(id);
+    setExpanded(s);
+  };
+  const combinedNotes = (j) =>
+    [j.job_notes, j.access_notes, j.customer_notes].filter(Boolean).join("\n\n");
   if (!jobs.length) return null;
   return (
     <div className="rounded-2xl overflow-hidden"
@@ -458,7 +467,9 @@ function ScheduleCardList({ jobs, tz, onOpen }) {
         const bh = billableHours(j.scheduled_start, j.scheduled_end);
         const tone = cardStatusTone(j.status);
         const isChecked = checked.has(j.id);
-        const streetLine = j.address || "—";
+        const isExpanded = expanded.has(j.id);
+        const notesFull = combinedNotes(j);
+        const notesPreview = notesFull.length > 100 ? notesFull.slice(0, 100) + "…" : notesFull;
         const cityLine = [j.city, j.state, j.zip].filter(Boolean).join(", ");
         return (
           <div key={j.id || i}
@@ -495,13 +506,53 @@ function ScheduleCardList({ jobs, tz, onOpen }) {
                 </div>
                 <div className="text-sm" style={{ color: colors.onSurfaceSecondary }}
                      data-testid={`schedule-card-address-${j.id}`}>
-                  {streetLine}
+                  {j.address || "—"}
                 </div>
                 {cityLine && (
                   <div className="text-sm" style={{ color: colors.onSurfaceSecondary }}>
                     {cityLine}
                   </div>
                 )}
+
+                {/* Gate code + notes preview (Phase 16C follow-up) */}
+                {(j.gate_code || notesFull) && (
+                  <div className="mt-2 flex items-start gap-2 flex-wrap">
+                    {j.gate_code && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          try { navigator.clipboard.writeText(j.gate_code); } catch {}
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold cursor-copy"
+                        style={{ backgroundColor: "#FEF3C7", color: "#92400E",
+                                 fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                                 border: "1px solid #FDE68A" }}
+                        title="Click to copy"
+                        data-testid={`schedule-card-gate-${j.id}`}>
+                        <Key size={11}/> {j.gate_code}
+                      </button>
+                    )}
+                    {notesFull && (
+                      <button onClick={(e) => { e.stopPropagation(); toggleExpand(j.id); }}
+                              className="inline-flex items-start gap-1 text-xs text-left"
+                              style={{ color: colors.onSurfaceSecondary }}
+                              data-testid={`schedule-card-notes-${j.id}`}>
+                        <StickyNote size={11} className="mt-0.5 flex-shrink-0"
+                                    style={{ color: colors.muted }}/>
+                        <span>
+                          <span className="font-semibold">Notes: </span>
+                          {isExpanded ? notesFull : notesPreview}
+                          {notesFull.length > 100 && (
+                            <span className="ml-1 font-semibold" style={{ color: colors.brand }}>
+                              {isExpanded ? "less" : "more"}
+                            </span>
+                          )}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between mt-2">
                   <div className="flex items-center gap-1 text-xs" style={{ color: colors.muted }}>
                     <CalendarCheck size={13}/>

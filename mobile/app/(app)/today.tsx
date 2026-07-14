@@ -4,9 +4,10 @@
  * Uses Google Directions API via EXPO_PUBLIC_GOOGLE_API_KEY.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, Linking } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, Linking, Alert } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
+import * as Clipboard from "expo-clipboard";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
@@ -410,6 +411,13 @@ const styles = StyleSheet.create({
   cardStatusPill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
   cardStatusText: { fontFamily: font.bold, fontSize: 10, textTransform: "uppercase",
                      letterSpacing: 0.4 },
+  gatePill: { flexDirection: "row", alignItems: "center", gap: 4,
+               backgroundColor: "#FEF3C7", borderWidth: 1, borderColor: "#FDE68A",
+               paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+  gateText: { fontFamily: font.bold, fontSize: 12, color: "#92400E",
+               fontVariant: ["tabular-nums"] },
+  notesText: { flex: 1, fontFamily: font.regular, fontSize: 12,
+                color: colors.onSurfaceSecondary },
 });
 
 /* ────────────────────────────────────────────────────────────────────
@@ -434,13 +442,26 @@ function cardStatusTone(status?: string) {
 
 function ScheduleCardList({ jobs, tz, onOpen }: any) {
   const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const toggle = (id: string) => setChecked((s) => ({ ...s, [id]: !s[id] }));
+  const toggleExpand = (id: string) => setExpanded((s) => ({ ...s, [id]: !s[id] }));
+  const combinedNotes = (j: any) =>
+    [j.job_notes, j.access_notes, j.customer_notes].filter(Boolean).join("\n\n");
+  const copyCode = async (code: string) => {
+    try {
+      await Clipboard.setStringAsync(code);
+      Alert.alert("Gate code copied", code);
+    } catch { /* ignore */ }
+  };
   return (
     <View style={styles.cardList} testID="schedule-card-list">
       {jobs.map((j: any, i: number) => {
         const bh = billableHours(j.scheduled_start, j.scheduled_end);
         const tone = cardStatusTone(j.status);
         const isChecked = !!checked[j.id];
+        const isExpanded = !!expanded[j.id];
+        const notesFull = combinedNotes(j);
+        const notesPreview = notesFull.length > 100 ? notesFull.slice(0, 100) + "…" : notesFull;
         const cityLine = [j.city, j.state, j.zip].filter(Boolean).join(", ");
         return (
           <Pressable key={j.id || i} onPress={() => onOpen(j.id)}
@@ -478,6 +499,41 @@ function ScheduleCardList({ jobs, tz, onOpen }: any) {
               {cityLine ? (
                 <Text style={styles.cardAddr} numberOfLines={1}>{cityLine}</Text>
               ) : null}
+
+              {/* Gate code + notes preview (Phase 16C follow-up) */}
+              {(j.gate_code || notesFull) ? (
+                <View style={{ marginTop: 6, flexDirection: "row", alignItems: "flex-start",
+                                gap: 8, flexWrap: "wrap" }}>
+                  {j.gate_code ? (
+                    <Pressable onPress={(e) => { e.stopPropagation && e.stopPropagation(); copyCode(j.gate_code); }}
+                                hitSlop={4} style={styles.gatePill}
+                                testID={`schedule-card-gate-${j.id}`}>
+                      <Ionicons name="key" size={11} color="#92400E"/>
+                      <Text style={styles.gateText}>{j.gate_code}</Text>
+                    </Pressable>
+                  ) : null}
+                  {notesFull ? (
+                    <Pressable onPress={(e) => { e.stopPropagation && e.stopPropagation(); toggleExpand(j.id); }}
+                                hitSlop={4} style={{ flex: 1, minWidth: 0 }}
+                                testID={`schedule-card-notes-${j.id}`}>
+                      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 4 }}>
+                        <Ionicons name="document-text-outline" size={11} color={colors.muted}
+                                  style={{ marginTop: 2 }}/>
+                        <Text style={styles.notesText} numberOfLines={isExpanded ? 20 : 2}>
+                          <Text style={{ fontFamily: font.semiBold }}>Notes: </Text>
+                          {isExpanded ? notesFull : notesPreview}
+                          {notesFull.length > 100 ? (
+                            <Text style={{ fontFamily: font.semiBold, color: colors.brand }}>
+                              {isExpanded ? "  less" : "  more"}
+                            </Text>
+                          ) : null}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+
               <View style={{ flexDirection: "row", justifyContent: "space-between",
                               alignItems: "center", marginTop: 6 }}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>

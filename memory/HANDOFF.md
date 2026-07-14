@@ -462,3 +462,51 @@ Small, focused UX pass on top of Phase 16C.
 ### Tests still 10/10 green (schedule + tech-revenue-strip)
 No new tests required — this is a pure UX refactor on top of existing
 `/api/schedule/today` payload.
+
+---
+
+## Phase 16C Follow-up · Gate Codes + Notes on schedule cards (Feb 2026)
+
+Techs now see practical property-access info right on each schedule card.
+
+### Backend
+- `GET /api/schedule/today` payload — each `type=job` item now includes:
+  - `gate_code: str | null` (joined from `customers.gate_code`, tenant-scoped)
+  - `access_notes: str | null` (if the customer has that field set)
+  - `customer_notes: str | null` (from `customers.notes`)
+  - `job_notes: str | null` (concatenates `jobs.notes` + `jobs.internal_notes`)
+- No revenue leaks (revenue-strip unchanged).
+- Customer seed patched — Jennifer Carson `gate_code=1234#`, The Whitmore HOA `gate_code=0713*` + friendly access notes so the preview shows real data.
+
+### Web (`TodaySchedule.jsx`)
+- On each card, below the address block:
+  - **🔑 gate pill** — amber background, monospaced, tap-to-copy via `navigator.clipboard`.
+  - **📝 Notes preview** — first 100 chars of combined notes, `more`/`less` inline toggle expands full text without leaving the list.
+- Card tap still opens `/jobs/{id}`; the notes toggle stops propagation so tapping "more" doesn't navigate.
+
+### Mobile (`(app)/today.tsx`)
+- Mirror of the web card, plus **tap-to-copy** on the gate pill via
+  `expo-clipboard` (`Clipboard.setStringAsync`) with an `Alert` confirmation.
+- Uses `Ionicons key` for the gate glyph, `document-text-outline` for notes.
+
+### Tests — 12/12 green
+- **`test_schedule_surfaces_gate_code_and_notes`** — asserts gate_code +
+  customer_notes + job_notes appear on the tech's schedule item and no
+  revenue keys leak.
+- **`test_gate_code_tenant_isolation`** — sunbelt admin's `/schedule/today`
+  response text contains none of the aquaterra seeded gate codes.
+- Existing schedule + revenue-strip tests still green.
+
+### Live-verified on preview
+- Logged in as `mike@aquaterra.com`, visited `/schedule/today`:
+  `has-$: False`, `has-1234#: True`, `has-0713*: True`, `has-notes-preview: True`.
+- Expanded The Whitmore HOA notes — `more → less` toggle works inline.
+
+### Files touched
+- `backend/routers/schedule.py` — customer join + 4 new fields per job item
+- `frontend/src/pages/schedule/TodaySchedule.jsx` — gate pill + notes preview + expand
+- `mobile/app/(app)/today.tsx` — same, with clipboard-copy on tap
+- `backend/tests/test_schedule.py` — 2 new tests
+- `memory/HANDOFF.md` — this section
+
+No new endpoints. OpenAPI path count still 361.
