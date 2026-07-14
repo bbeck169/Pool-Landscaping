@@ -28,6 +28,7 @@ import {
   DollarSign,
   ChevronDown,
   Shield,
+  Clock,
   Sparkles,
   DoorOpen,
   Wand2,
@@ -129,14 +130,14 @@ const ADMIN_NAV = [
   },
 ];
 
-// Tech nav intentionally omits Landscape AI / CAD / Virtual Bid / Measure —
-// same rule as the Expo mobile technician menu.
+// Tech nav — Phase 16C add-on: Schedule / D2D / Huddle / Time Clock / Profile.
+// No Jobs top-level entry, no revenue-adjacent pages.
 const TECH_NAV = [
-  { to: "/jobs", label: "Jobs", icon: Briefcase, end: true },
-  { to: "/schedule", label: "Schedule", icon: CalendarDays },
-  { to: "/routes", label: "Routes", icon: Wrench },
-  { to: "/timesheets", label: "Timesheets", icon: MoreHorizontal },
-  { to: "/leads/new", label: "New Lead", icon: Magnet },
+  { to: "/schedule/today", label: "Schedule",   icon: CalendarDays, end: true },
+  { to: "/d2d",            label: "D2D",        icon: DoorOpen },
+  { to: "/tech/huddle",    label: "Huddle",     icon: MessageSquare },
+  { to: "/tech/time-clock",label: "Time Clock", icon: Clock },
+  { to: "/portal/profile", label: "Profile",    icon: UserCircle },
 ];
 
 const CUSTOMER_NAV = [

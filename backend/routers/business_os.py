@@ -387,7 +387,7 @@ class HuddleActionIn(BaseModel):
 
 
 @router.get("/huddles")
-async def list_huddles(admin: dict = Depends(require_admin),
+async def list_huddles(user: dict = Depends(get_current_user),
                        tenant: dict = Depends(get_current_tenant)):
     rows = await db.huddles.find(
         {"tenant_id": tenant["id"]}, {"_id": 0}
@@ -396,7 +396,8 @@ async def list_huddles(admin: dict = Depends(require_admin),
 
 
 @router.post("/huddles")
-async def create_huddle(body: HuddleIn, admin: dict = Depends(require_admin),
+async def create_huddle(body: HuddleIn,
+                        user: dict = Depends(get_current_user),
                         tenant: dict = Depends(get_current_tenant)):
     doc = {"id": new_id(), "tenant_id": tenant["id"],
            "created_at": now_iso(), "action_items": [],
@@ -450,7 +451,7 @@ async def draft_agenda(hid: str, admin: dict = Depends(require_admin),
 
 @router.post("/huddles/{hid}/action-items")
 async def add_action_item(hid: str, body: HuddleActionIn,
-                          admin: dict = Depends(require_admin),
+                          user: dict = Depends(get_current_user),
                           tenant: dict = Depends(get_current_tenant)):
     huddle = await db.huddles.find_one(
         {"id": hid, "tenant_id": tenant["id"]}, {"_id": 0}

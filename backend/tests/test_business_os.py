@@ -137,36 +137,8 @@ def test_lana_chat_returns_reply_and_mocked_flag(admin_h):
     assert d.get("conversation_id")
 
 
-# ─── Plans catalog + assignment (super-admin) ─────────────────────────────
-def test_plans_catalog_and_assignment(admin_h, super_h, db):
-    plans = requests.get(f"{API}/plans", headers=admin_h, timeout=20).json()
-    slugs = {p["slug"] for p in plans}
-    assert {"free", "pro", "enterprise"}.issubset(slugs)
-
-    # Regular admin cannot assign — 403
-    tenant = db.tenants.find_one({"slug": "sunbelt"})
-    r = requests.post(f"{API}/plans/assign/{tenant['id']}", headers=admin_h,
-                      json={"plan_slug": "enterprise"}, timeout=20)
-    assert r.status_code == 403
-
-    # Super admin can assign; reverts to pro (sunbelt's canonical) after
-    r = requests.post(f"{API}/plans/assign/{tenant['id']}", headers=super_h,
-                      json={"plan_slug": "enterprise"}, timeout=20)
-    assert r.status_code == 200
-    assert r.json()["plan_slug"] == "enterprise"
-
-    # /api/tenants/current for sunbelt admin now returns enterprise features
-    sb = requests.get(f"{API}/auth/login", timeout=20)  # noop, just for coverage
-    sb_admin = {"Authorization": f"Bearer {_login('admin@sunbelt.com')}"}
-    r = requests.get(f"{API}/tenants/current", headers=sb_admin, timeout=20)
-    assert r.status_code == 200
-    tc = r.json()
-    assert tc["plan_tier"] == "enterprise"
-    assert tc["plan_features"]["custom_domain"] is True
-
-    # Restore sunbelt back to pro to not pollute state
-    requests.post(f"{API}/plans/assign/{tenant['id']}", headers=super_h,
-                  json={"plan_slug": "pro"}, timeout=20)
+# ─── Plans catalog removed — pricing tier system deleted in Phase 16C add-on.
+# The former `test_plans_catalog_and_assignment` test has been dropped.
 
 
 # ─── LeanBoard card move (kanban integrity) ───────────────────────────────

@@ -46,6 +46,14 @@ export default function AppLayout() {
         }}
       />
       <Tabs.Screen
+        name="today"
+        options={{
+          title: "Today",
+          href: isTech ? "/(app)/today" : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="today-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="new-lead"
         options={{
           title: "New Lead",
@@ -57,7 +65,7 @@ export default function AppLayout() {
         name="jobs"
         options={{
           title: "Jobs",
-          href: null,
+          href: isTech ? "/(app)/jobs" : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="briefcase-outline" size={size} color={color} />,
         }}
       />
@@ -65,7 +73,7 @@ export default function AppLayout() {
         name="schedule"
         options={{
           title: "Schedule",
-          href: isTech || isAdmin ? "/(app)/schedule" : null,
+          href: isAdmin ? "/(app)/schedule" : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="calendar-outline" size={size} color={color} />,
         }}
       />

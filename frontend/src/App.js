@@ -91,7 +91,9 @@ import {
   RolesPage as OsRoles, ScorecardsPage as OsScorecards, HuddlesPage as OsHuddles,
   LeanboardsPage as OsLeanboards, SprintsPage as OsSprints,
 } from "@/pages/os/BusinessOS";
-import { LanaChatPage as OsLana, PlansAdminPage as OsPlans } from "@/pages/os/LanaAndPlans";
+import { LanaChatPage as OsLana } from "@/pages/os/LanaAndPlans";
+import TodaySchedule from "@/pages/schedule/TodaySchedule";
+import { TechHuddlePage, TechTimeClockPage } from "@/pages/tech/TechPages";
 
 function AdminOnly({ children }) {
   const { user, loading } = useAuth();
@@ -224,6 +226,11 @@ export default function App() {
             <Route path="workforce/job-costing" element={<AdminOnly><WorkforceJobCosting /></AdminOnly>} />
             <Route path="workforce/mileage" element={<AdminOnly><WorkforceMileage /></AdminOnly>} />
 
+            {/* Phase 16C — Tech Today Schedule */}
+            <Route path="schedule/today" element={<TodaySchedule />} />
+            <Route path="tech/huddle" element={<TechHuddlePage />} />
+            <Route path="tech/time-clock" element={<TechTimeClockPage />} />
+
             {/* Phase 16B — Business OS */}
             <Route path="os" element={<AdminOnly><BusinessOSLayout /></AdminOnly>}>
               <Route index element={<OsOverview />} />
@@ -236,7 +243,6 @@ export default function App() {
               <Route path="leanboards" element={<OsLeanboards />} />
               <Route path="sprints" element={<OsSprints />} />
               <Route path="lana" element={<OsLana />} />
-              <Route path="plans" element={<OsPlans />} />
             </Route>
 
             {/* Phase 6 — Finance + Reports */}
@@ -285,14 +291,14 @@ export default function App() {
             <Route path="forms" element={<AdminOnly><FormsList /></AdminOnly>} />
             <Route path="forms/:id" element={<AdminOnly><FormEditor /></AdminOnly>} />
 
-            {/* Phase 10 — D2D Sales */}
-            <Route path="d2d" element={<AdminOnly><D2dDashboard /></AdminOnly>} />
-            <Route path="d2d/map" element={<AdminOnly><D2dMap /></AdminOnly>} />
-            <Route path="d2d/knocks" element={<AdminOnly><D2dKnocks /></AdminOnly>} />
-            <Route path="d2d/open-leads" element={<AdminOnly><D2dOpenLeads /></AdminOnly>} />
-            <Route path="d2d/sold-leads" element={<AdminOnly><D2dSoldLeads /></AdminOnly>} />
+            {/* Phase 10 — D2D Sales (open to admin + technician) */}
+            <Route path="d2d" element={<D2dDashboard />} />
+            <Route path="d2d/map" element={<D2dMap />} />
+            <Route path="d2d/knocks" element={<D2dKnocks />} />
+            <Route path="d2d/open-leads" element={<D2dOpenLeads />} />
+            <Route path="d2d/sold-leads" element={<D2dSoldLeads />} />
             <Route path="d2d/report" element={<AdminOnly><D2dReport /></AdminOnly>} />
-            <Route path="d2d/leaderboard" element={<AdminOnly><D2dLeaderboard /></AdminOnly>} />
+            <Route path="d2d/leaderboard" element={<D2dLeaderboard />} />
 
             {/* Phase 11 — AI & Tools (admin-only) */}
             <Route path="landscape" element={<AdminOnly><LandscapeAI /></AdminOnly>} />

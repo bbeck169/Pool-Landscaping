@@ -96,11 +96,7 @@ export default function JobsList() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="jobs-page">
-      {isTech && (
-        <div className="mb-4" data-testid="tech-weather-strip">
-          <WeatherWidget5Day role="technician" />
-        </div>
-      )}
+      {/* Phase 16C add-on: tech weather moved to /schedule/today; not on Jobs anymore. */}
       <PageHeader
         title="Jobs"
         subtitle={

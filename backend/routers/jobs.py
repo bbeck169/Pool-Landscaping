@@ -161,6 +161,13 @@ async def list_jobs(
                 if c:
                     d["account_notes"] = c.get("notes", "")
                     d["gate_code"] = c.get("gate_code", "")
+    # Phase 16C add-on: strip revenue/pricing fields for technicians.
+    if user.get("role") == "technician":
+        for d in docs:
+            for k in ("price", "cost", "total", "subtotal", "tax_amount",
+                      "revenue", "invoice_total", "quote_total", "margin",
+                      "labor_cost", "materials_cost", "gross_margin"):
+                d.pop(k, None)
     return docs
 
 
@@ -456,6 +463,12 @@ async def get_job(jid: str,
     doc = with_field_report(doc)
     if user.get("role") == "customer":
         doc.pop("internal_notes", None)
+    # Phase 16C add-on: strip revenue/pricing fields from technician responses.
+    if user.get("role") == "technician":
+        for k in ("price", "cost", "total", "subtotal", "tax_amount",
+                  "revenue", "invoice_total", "quote_total", "margin",
+                  "labor_cost", "materials_cost", "gross_margin"):
+            doc.pop(k, None)
     return doc
 
 

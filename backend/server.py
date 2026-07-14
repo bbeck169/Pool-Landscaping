@@ -12,7 +12,8 @@ from routers import (
     lead_requests, mobile_push,
     tenants,
     workforce,
-    business_os, tenant_plans,
+    business_os,
+    schedule,
 )
 
 app = FastAPI(
@@ -29,7 +30,8 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                analytics, onboarding,
                lead_requests, mobile_push,
                tenants, workforce,
-               business_os, tenant_plans]:
+               business_os,
+               schedule]:
     api_router.include_router(module.router)
 
 
@@ -100,10 +102,8 @@ async def startup():
         await tenants._seed_super_admin()
     except Exception as e:
         logger.warning(f"super_admin seed skipped: {e}")
-    # Phase 16B — seed plans catalog + backfill plan_features + Business OS assets.
+    # Phase 16B — seed Business OS assets (SOPs / roles / KPIs / LeanBoards).
     try:
-        await tenant_plans.seed_plans()
-        await tenant_plans.seed_plan_features()
         await business_os.seed_business_os()
     except Exception as e:
         logger.warning(f"phase 16B seeds skipped: {e}")

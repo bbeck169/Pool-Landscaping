@@ -1,0 +1,382 @@
+/**
+ * Phase 16C · Tech Today Schedule
+ * Vertical hourly timeline for the logged-in user: jobs + shifts + breaks,
+ * with driving-time chips between consecutive jobs (Google Distance Matrix).
+ */
+import React, { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
+import { api } from "@/api";
+import { colors, brandGradientCss } from "@/theme";
+import { useJsApiLoader } from "@react-google-maps/api";
+import { useAuth } from "@/auth";
+import WeatherWidget5Day from "@/pages/aitools/WeatherWidget5Day";
+import {
+  Clock, MapPin, Navigation, Car, Coffee, PlayCircle, StopCircle,
+  AlertTriangle, ChevronRight, RefreshCw,
+} from "lucide-react";
+
+const GOOGLE_LIBS = ["places"];
+
+function fmtTime(iso, tz) {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleTimeString([], {
+      hour: "numeric", minute: "2-digit", timeZone: tz,
+    });
+  } catch { return iso.slice(11, 16); }
+}
+function fmtDur(sec) {
+  if (sec == null) return "—";
+  const m = Math.round(sec / 60);
+  if (m < 60) return `${m} min`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+function fmtMi(m) {
+  if (m == null) return "—";
+  return `${(m / 1609.344).toFixed(1)} mi`;
+}
+
+export default function TodaySchedule() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const isTech = user?.role === "technician";
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [nowIso, setNowIso] = useState(new Date().toISOString());
+  const [legMap, setLegMap] = useState({});  // {`from|to`: {distance,duration}}
+  const { isLoaded } = useJsApiLoader({
+    id: "gm-script",
+    googleMapsApiKey: process.env.REACT_APP_GOOGLE_API_KEY,
+    libraries: GOOGLE_LIBS,
+  });
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    try { setData(await api.get("/schedule/today")); }
+    finally { setBusy(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // "Now" indicator ticks
+  useEffect(() => {
+    const t = setInterval(() => setNowIso(new Date().toISOString()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Hydrate route-leg distances via Google Distance Matrix (client-side)
+  useEffect(() => {
+    if (!isLoaded || !data?.route_legs?.length || !window.google?.maps) return;
+    const uncached = data.route_legs.filter((l) => !l.cached);
+    if (uncached.length === 0) {
+      // Populate legMap from server cache
+      const seed = {};
+      data.route_legs.forEach((l) => {
+        seed[`${l.from_job_id}|${l.to_job_id}`] = {
+          distance_meters: l.distance_meters, duration_seconds: l.duration_seconds,
+        };
+      });
+      setLegMap(seed);
+      return;
+    }
+    const svc = new window.google.maps.DistanceMatrixService();
+    // One request per leg keeps it simple + billable per element only.
+    Promise.all(uncached.map((l) => new Promise((resolve) => {
+      svc.getDistanceMatrix({
+        origins: [{ lat: l.from_lat, lng: l.from_lng }],
+        destinations: [{ lat: l.to_lat, lng: l.to_lng }],
+        travelMode: window.google.maps.TravelMode.DRIVING,
+      }, (res, status) => {
+        if (status !== "OK" || !res?.rows?.[0]?.elements?.[0]) { resolve(null); return; }
+        const el = res.rows[0].elements[0];
+        if (el.status !== "OK") { resolve(null); return; }
+        resolve({
+          from_lat: l.from_lat, from_lng: l.from_lng,
+          to_lat: l.to_lat, to_lng: l.to_lng,
+          from_job_id: l.from_job_id, to_job_id: l.to_job_id,
+          distance_meters: el.distance.value,
+          duration_seconds: el.duration.value,
+        });
+      });
+    }))).then(async (results) => {
+      const ok = results.filter(Boolean);
+      const cachePayload = { legs: ok.map(({ from_lat, from_lng, to_lat, to_lng, distance_meters, duration_seconds }) =>
+        ({ from_lat, from_lng, to_lat, to_lng, distance_meters, duration_seconds })) };
+      const merged = { ...legMap };
+      // Merge server-cached first
+      data.route_legs.filter((l) => l.cached).forEach((l) => {
+        merged[`${l.from_job_id}|${l.to_job_id}`] = {
+          distance_meters: l.distance_meters, duration_seconds: l.duration_seconds,
+        };
+      });
+      ok.forEach((l) => {
+        merged[`${l.from_job_id}|${l.to_job_id}`] = {
+          distance_meters: l.distance_meters, duration_seconds: l.duration_seconds,
+        };
+      });
+      setLegMap(merged);
+      if (ok.length) { try { await api.post("/schedule/route-leg", cachePayload); } catch {} }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded, data]);
+
+  // Timeline hour window: 6am–8pm default, expanded to first/last item ±1h.
+  const [minH, maxH] = useMemo(() => {
+    let lo = 6, hi = 20;
+    if (data?.items?.length) {
+      const hours = data.items.map((it) => {
+        const s = it.scheduled_start || it.clock_in_at || it.start;
+        if (!s) return null;
+        try { return new Date(s).getHours(); } catch { return null; }
+      }).filter((h) => h !== null);
+      if (hours.length) {
+        lo = Math.min(lo, Math.min(...hours) - 1);
+        hi = Math.max(hi, Math.max(...hours) + 1);
+      }
+    }
+    return [Math.max(0, lo), Math.min(23, hi)];
+  }, [data]);
+
+  const HOUR_ROW = 84;  // px per hour
+
+  const yFor = (iso) => {
+    if (!iso) return 0;
+    try {
+      const d = new Date(iso);
+      const decimalHour = d.getHours() + d.getMinutes() / 60;
+      return (decimalHour - minH) * HOUR_ROW;
+    } catch { return 0; }
+  };
+
+  const nowY = useMemo(() => yFor(nowIso), [nowIso, minH]);
+
+  const s = data?.summary || {};
+
+  return (
+    <div className="p-4 md:p-8 max-w-5xl mx-auto" data-testid="today-schedule-page">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div>
+          <h1 className="text-3xl font-bold" style={{ color: colors.onSurface }}>Today's Schedule</h1>
+          <p className="text-sm mt-1" style={{ color: colors.muted }}>
+            {data?.date ? new Date(data.date + "T12:00:00").toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" }) : "…"} · {data?.tz}
+          </p>
+        </div>
+        <button onClick={load}
+                className="px-3 py-2 rounded-xl text-sm font-semibold flex items-center gap-1"
+                style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface,
+                         border: `1px solid ${colors.border}` }}
+                data-testid="schedule-refresh">
+          <RefreshCw size={14}/> Refresh
+        </button>
+      </div>
+
+      {/* Phase 16C add-on — 5-day forecast on tech landing */}
+      {isTech && (
+        <div className="mb-4" data-testid="schedule-weather-widget">
+          <WeatherWidget5Day role="technician" />
+        </div>
+      )}
+
+      {/* Summary bar */}
+      <div className="rounded-2xl p-4 mb-6 flex items-center gap-6 flex-wrap"
+           style={{ background: brandGradientCss, color: "#fff" }}
+           data-testid="schedule-summary">
+        <Stat label="Jobs" value={s.job_count ?? 0} testId="stat-jobs"/>
+        <Stat label="Scheduled" value={`${s.scheduled_hours ?? 0}h`} testId="stat-scheduled"/>
+        <Stat label="Clocked in" value={s.clocked_in ? "Yes" : "No"} testId="stat-clocked"/>
+        <Stat label="Miles today" value={`${s.miles_logged_today ?? 0}`} testId="stat-miles"/>
+        <Stat label="Hours logged" value={`${s.hours_logged_today ?? 0}h`} testId="stat-hours"/>
+      </div>
+
+      {busy && !data && <div style={{ color: colors.muted }} data-testid="schedule-loading">Loading…</div>}
+
+      {data && data.items.length === 0 && (
+        <div className="rounded-2xl p-10 text-center"
+             style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+             data-testid="schedule-empty">
+          <div className="text-lg font-semibold mb-2" style={{ color: colors.onSurface }}>Nothing on the books today.</div>
+          <div className="text-sm mb-4" style={{ color: colors.muted }}>
+            Enjoy the breather — or head over to Jobs to pick something up.
+          </div>
+          <button onClick={() => navigate("/jobs")}
+                  className="px-4 py-2 rounded-xl text-white font-bold text-sm"
+                  style={{ background: brandGradientCss }}
+                  data-testid="schedule-go-to-jobs">
+            View all jobs
+          </button>
+        </div>
+      )}
+
+      {data && data.items.length > 0 && (
+        <div className="relative" data-testid="schedule-timeline"
+             style={{ height: (maxH - minH + 1) * HOUR_ROW,
+                      backgroundColor: colors.surface,
+                      border: `1px solid ${colors.border}`,
+                      borderRadius: 20, padding: 12 }}>
+          {/* Hour gridlines + labels */}
+          {Array.from({ length: (maxH - minH + 1) }).map((_, i) => {
+            const hr = minH + i;
+            return (
+              <React.Fragment key={hr}>
+                <div style={{ position: "absolute", left: 60, right: 8,
+                              top: i * HOUR_ROW, borderTop: `1px dashed ${colors.border}` }}/>
+                <div style={{ position: "absolute", left: 8, top: i * HOUR_ROW - 6,
+                              fontSize: 11, color: colors.muted, fontWeight: 600 }}>
+                  {String(((hr + 11) % 12) + 1)} {hr < 12 ? "AM" : "PM"}
+                </div>
+              </React.Fragment>
+            );
+          })}
+
+          {/* Now line */}
+          {nowY >= 0 && nowY <= (maxH - minH + 1) * HOUR_ROW && (
+            <div data-testid="schedule-now-line"
+                 style={{ position: "absolute", left: 60, right: 8, top: nowY, height: 2,
+                          backgroundColor: colors.error, zIndex: 5 }}>
+              <div style={{ position: "absolute", left: -6, top: -4, width: 10, height: 10,
+                            borderRadius: 999, backgroundColor: colors.error }}/>
+              <div style={{ position: "absolute", right: 0, top: -20, fontSize: 10,
+                            fontWeight: 700, color: colors.error }}>NOW</div>
+            </div>
+          )}
+
+          {/* Items */}
+          {data.items.map((it, i) => (
+            <TimelineItem
+              key={i} item={it} idx={i} yFor={yFor}
+              tz={data.tz}
+              onOpen={() => it.type === "job" && it.id && navigate(`/jobs/${it.id}`)}
+            />
+          ))}
+
+          {/* Route legs — render on the left column between consecutive jobs */}
+          {data.route_legs.map((l, idx) => {
+            const fromItem = data.items.find((it) => it.type === "job" && it.id === l.from_job_id);
+            const toItem = data.items.find((it) => it.type === "job" && it.id === l.to_job_id);
+            if (!fromItem || !toItem) return null;
+            const yStart = yFor(fromItem.scheduled_end || fromItem.scheduled_start);
+            const yEnd = yFor(toItem.scheduled_start);
+            const leg = legMap[`${l.from_job_id}|${l.to_job_id}`] || {};
+            return (
+              <div key={idx}
+                   style={{ position: "absolute", left: 60, right: 8,
+                            top: yStart + 4, height: Math.max(20, yEnd - yStart - 8) }}
+                   className="flex items-center gap-2 pointer-events-none"
+                   data-testid={`route-leg-${l.from_job_id}-${l.to_job_id}`}>
+                <div style={{ borderLeft: `2px dashed ${colors.brandSecondary}`, height: "100%",
+                              marginLeft: 12 }}/>
+                <span className="text-xs font-semibold flex items-center gap-1 px-2 py-0.5 rounded-full pointer-events-auto"
+                      style={{ backgroundColor: colors.brandTertiary, color: colors.onBrandTertiary }}>
+                  <Car size={12}/>
+                  {leg.duration_seconds != null
+                    ? `${fmtDur(leg.duration_seconds)} · ${fmtMi(leg.distance_meters)}`
+                    : "…"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, testId }) {
+  return (
+    <div data-testid={testId}>
+      <div className="text-2xl font-bold">{value}</div>
+      <div className="text-xs opacity-90">{label}</div>
+    </div>
+  );
+}
+
+function TimelineItem({ item, idx, yFor, tz, onOpen }) {
+  const startIso = item.scheduled_start || item.clock_in_at || item.start;
+  const endIso   = item.scheduled_end   || item.clock_out_at || item.end;
+  const y = yFor(startIso);
+  const yEnd = endIso ? yFor(endIso) : y + 60;
+  const height = Math.max(48, yEnd - y);
+  const left = item.type === "job" ? 84 : (item.type === "shift" ? 20 : 40);
+  const right = item.type === "job" ? 8 : 40;
+
+  if (item.type === "job") {
+    return (
+      <div onClick={onOpen}
+           className="rounded-xl p-3 cursor-pointer overflow-hidden"
+           style={{
+             position: "absolute", top: y, left, right, height,
+             backgroundColor: colors.surface,
+             border: `1px solid ${colors.border}`,
+             boxShadow: `0 1px 3px rgba(0,0,0,0.05)`,
+           }}
+           data-testid={`schedule-job-${item.id}`}>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-xs font-bold" style={{ color: colors.brand }}>
+            {fmtTime(startIso, tz)}{endIso ? ` – ${fmtTime(endIso, tz)}` : ""}
+          </span>
+          <StatusPill status={item.status}/>
+        </div>
+        <div className="font-bold text-sm" style={{ color: colors.onSurface }}>{item.title}</div>
+        <div className="text-xs" style={{ color: colors.muted }}>
+          {item.customer_name || "—"}
+        </div>
+        {item.address && (
+          <div className="flex items-center gap-1 text-xs mt-1" style={{ color: colors.onSurfaceSecondary }}>
+            <MapPin size={11}/> <span className="truncate">{item.address}</span>
+          </div>
+        )}
+        {item.lat && item.lng && (
+          <a href={`https://www.google.com/maps/dir/?api=1&destination=${item.lat},${item.lng}`}
+             target="_blank" rel="noreferrer"
+             onClick={(e) => e.stopPropagation()}
+             className="inline-flex items-center gap-1 mt-2 text-xs font-semibold"
+             style={{ color: colors.brand }}
+             data-testid={`schedule-job-directions-${item.id}`}>
+            <Navigation size={11}/> Directions
+          </a>
+        )}
+      </div>
+    );
+  }
+
+  if (item.type === "shift") {
+    return (
+      <div className="rounded-xl px-2 py-1"
+           style={{
+             position: "absolute", top: y, left: 62, width: 18,
+             height: Math.max(24, height),
+             backgroundColor: item.out_of_geofence ? "#FEE2E2" : "#DCFCE7",
+             border: `1px solid ${item.out_of_geofence ? colors.error : colors.success}`,
+           }}
+           title={item.out_of_geofence ? "Clocked out of geofence" : "Shift"}
+           data-testid={`schedule-shift-${item.entry_id}`}/>
+    );
+  }
+
+  // Break
+  return (
+    <div style={{ position: "absolute", top: y, left: 45, width: 12,
+                  height: Math.max(18, height),
+                  backgroundColor: "#FEF3C7",
+                  border: `1px solid #92400E`,
+                  borderRadius: 4 }}
+         title="Break"
+         data-testid={`schedule-break-${item.entry_id}-${idx}`}/>
+  );
+}
+
+function StatusPill({ status }) {
+  const map = {
+    pending: { bg: colors.surfaceSecondary, fg: colors.muted },
+    active: { bg: "#DCFCE7", fg: colors.success },
+    in_progress: { bg: "#DCFCE7", fg: colors.success },
+    completed: { bg: colors.brandTertiary, fg: colors.onBrandTertiary },
+    cancelled: { bg: "#FEE2E2", fg: colors.error },
+  };
+  const c = map[status] || map.pending;
+  return (
+    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide"
+          style={{ backgroundColor: c.bg, color: c.fg }}>
+      {status || "—"}
+    </span>
+  );
+}

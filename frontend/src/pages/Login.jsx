@@ -12,7 +12,7 @@ const DEMO_ACCOUNTS = [
 // Role -> home landing (mirrors the Expo app's tab targeting).
 function landingFor(role) {
   if (role === "admin") return "/";
-  if (role === "technician") return "/jobs";
+  if (role === "technician") return "/schedule/today";  // Phase 16C
   if (role === "customer") return "/portal/home";
   return "/";
 }

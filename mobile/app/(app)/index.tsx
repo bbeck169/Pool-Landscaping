@@ -34,8 +34,9 @@ export default function Dashboard() {
     }, [load])
   );
 
-  // Technicians don't have a Dashboard tab — send them to their Schedule.
-  if (user?.role === "technician" || user?.role === "customer") return <Redirect href="/(app)/schedule" />;
+  // Technicians don't have a Dashboard tab — send them to their Today's Schedule.
+  if (user?.role === "technician") return <Redirect href="/(app)/today" />;
+  if (user?.role === "customer") return <Redirect href="/(app)/schedule" />;
 
   if (loading) {
     return (

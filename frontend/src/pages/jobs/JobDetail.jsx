@@ -259,12 +259,12 @@ export default function JobDetail() {
           ) : null}
         </div>
 
-        {/* Meta strip */}
+        {/* Meta strip — Price hidden for technicians (Phase 16C add-on). */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5">
           {[
             { icon: Clock, label: "Scheduled", value: job.scheduled_date || "Not scheduled" },
             { icon: User, label: "Technician", value: job.technician_name || "Unassigned" },
-            { icon: MapPin, label: "Price", value: money(job.price || 0) },
+            ...(isTech ? [] : [{ icon: MapPin, label: "Price", value: money(job.price || 0) }]),
           ].map((c) => (
             <div
               key={c.label}

@@ -329,3 +329,90 @@ auto-recompute + plans catalog + tenant plan assignment + mobile huddle.
   needs an in-day `sprint_items` collection — not blocking the phase).
 - SOP per-role visibility filter — schema supports `owner_role` but the UI
   currently shows all SOPs to every admin. Trivial to gate later.
+
+---
+
+## Phase 16C — Tech Today Schedule + Tech-role UX Overhaul (Feb 2026)
+
+Delivered in one pass: the new tech-facing timeline, plus four tech-only
+UX changes (weather on schedule, revenue hidden, Jobs removed from nav,
+D2D promoted), plus the retirement of the pricing-tier system.
+
+### Backend
+- **New router** `/app/backend/routers/schedule.py`:
+  - `GET  /api/schedule/today` — current-user's jobs + shifts + breaks +
+    route legs (with `distance_matrix_cache` hydration) + summary.
+  - `POST /api/schedule/route-leg` — client posts distance/duration after
+    a Google Distance Matrix call; upserts into `distance_matrix_cache`.
+- `GET /api/jobs` and `GET /api/jobs/{jid}` **strip** the following keys
+  when `user.role == "technician"`: `price, cost, total, subtotal,
+  tax_amount, revenue, invoice_total, quote_total, margin, labor_cost,
+  materials_cost, gross_margin`.
+- Huddle endpoints loosened to accept both admin AND technician
+  (`GET/POST /huddles`, `POST /huddles/{hid}/action-items`) so techs can
+  submit huddle notes from the web + mobile.
+- **Pricing tier system removed** — `/app/backend/routers/tenant_plans.py`
+  deleted, unregistered from `server.py`, seeds gone, `/api/tenants/current`
+  no longer emits `plan_features`. All 6 `/plans*` endpoints gone.
+
+### Web
+- **Login redirect** — techs now land on `/schedule/today` (was `/jobs`).
+- **New pages**:
+  - `/app/frontend/src/pages/schedule/TodaySchedule.jsx` — vertical hourly
+    timeline with 5-day forecast at top (techs), summary bar, "NOW" line,
+    Google Distance Matrix route-leg chips between consecutive jobs.
+  - `/app/frontend/src/pages/tech/TechPages.jsx` — `TechHuddlePage` +
+    `TechTimeClockPage` (self-scoped, no admin-only wrapper).
+- **`TECH_NAV`** in `AppLayout.jsx` is now exactly
+  **[Schedule, D2D, Huddle, Time Clock, Profile]** — no Jobs top-level entry.
+- **D2D routes** — removed `<AdminOnly>` from `/d2d`, `/d2d/map`, `/d2d/knocks`,
+  `/d2d/open-leads`, `/d2d/sold-leads`, `/d2d/leaderboard`; `/d2d/report`
+  stays admin-only.
+- **Revenue hidden on tech views**: `JobDetail.jsx` skips the "Price" meta
+  chip for `isTech`; `JobsList.jsx` no longer shows the tech weather strip
+  (moved to schedule).
+- **Plans admin removed** — `/os/plans` route dropped, Plans nav entry
+  removed, `PlansAdminPage` deleted from `LanaAndPlans.jsx` (only `LanaChatPage`
+  remains).
+
+### Mobile (Expo)
+- **New tab** `today` (first for techs) — `/app/mobile/app/(app)/today.tsx`
+  mirrors the web timeline: 5-day forecast context, "You are here → next
+  job" ETA leg via `expo-location` + Google Directions API, driving-time
+  chips between jobs, tap-to-navigate.
+- `(app)/index.tsx` redirects techs to `/(app)/today` (was `/(app)/schedule`).
+- `(app)/_layout.tsx` tab bar for techs is now
+  **Today · New Lead · Jobs · Tools · More** (Today first). Admins keep
+  their existing tab set including Schedule.
+
+### Tests — 23/23 passing
+- **New**: `/app/backend/tests/test_schedule.py` (5 tests — shape, tenant
+  isolation, user scoping, shift/break inclusion, route-leg cache round-trip)
+- **New**: `/app/backend/tests/test_tech_revenue_strip.py` (5 tests —
+  list/detail strip revenue for tech, admin still sees, `/tenants/current`
+  no plan_features, `/plans` endpoints return 404)
+- Updated `test_business_os.py` — removed the plan-assignment test
+  (feature no longer exists); all remaining 7 tests green.
+- Workforce (6/6) untouched.
+- **OpenAPI paths: 365 → 361** (net −4: added 2 schedule endpoints, removed
+  6 plan endpoints).
+
+### Live verifications on preview URL
+- Login as `mike@aquaterra.com` → lands on `/schedule/today`
+- Nav is exactly [Schedule, D2D, Huddle, Time Clock, Profile]
+- 5-day forecast renders at the top
+- **No `$` character on the tech landing screen** (Playwright DOM probe
+  returned `has-$-on-tech-landing: False`)
+- `GET /api/tenants/current` no longer contains a `plan_features` block
+- `GET /api/plans` returns 404 (endpoint removed)
+
+### Human verification required
+- Real-device GPS for the "You are here → next job" leg on mobile (foreground)
+- Verify admin dashboard weather widget still renders unchanged (should —
+  we only removed the tech's weather strip on Jobs; admin's is in Dashboard)
+
+### Not implemented (explicit deferrals, non-blocking)
+- Tech time-clock **on web** shows self-timesheet only; actual clock-in
+  physically happens on mobile (by design — GPS on web is unreliable).
+- SOP per-role visibility filter (deferred from Phase 16B)
+- Sprint burndown chart (deferred from Phase 16B)

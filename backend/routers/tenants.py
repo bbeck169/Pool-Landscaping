@@ -127,16 +127,7 @@ async def current_tenant(request: Request,
                          user: dict = Depends(get_current_user)):
     resolved_via = "user-record" if user.get("tenant_id") == tenant["id"] else \
                    ("header" if request.headers.get("x-tenant-slug") else "default")
-    # Phase 16B — surface plan_features so the frontend can gate UI actions.
-    plan_features = tenant.get("plan_features")
-    if not plan_features:
-        # Lazy-backfill from tenant_plans defaults.
-        try:
-            from routers.tenant_plans import _ensure_plan_features
-            merged = await _ensure_plan_features(dict(tenant))
-            plan_features = merged.get("plan_features")
-        except Exception:
-            plan_features = None
+    # Phase 16C add-on: pricing tiers removed — every tenant gets every feature.
     return {
         "id": tenant["id"],
         "slug": tenant["slug"],
@@ -145,7 +136,6 @@ async def current_tenant(request: Request,
         "brand_secondary": tenant.get("brand_secondary"),
         "custom_domain": tenant.get("custom_domain"),
         "plan_tier": tenant.get("plan_tier"),
-        "plan_features": plan_features,
         "resolved_via": resolved_via,
     }
 
