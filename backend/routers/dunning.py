@@ -1,0 +1,735 @@
+"""Phase 22 · Automated invoice follow-ups (dunning).
+
+Configurable per-tenant reminder cadence + AR aging analytics + manual
+reminder trigger + pause/resume + scheduled scanner.
+
+Channels:
+ - Email via Resend (LIVE when RESEND_API_KEY is set)
+ - SMS via Twilio (queued as `pending_twilio` when key absent — no silent
+   mock)
+
+Payment link:
+ - Stripe hosted PaymentLink when `STRIPE_SECRET_KEY` is set (created
+   lazily on first reminder, then cached on the invoice)
+ - Otherwise in-app portal URL `{APP_PUBLIC_URL}/portal/invoices/{id}/pay`
+"""
+import asyncio
+import base64
+import os
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+
+from config import (
+    db, logger, RESEND_API_KEY, EMAIL_FROM, APP_PUBLIC_URL,
+)
+from utils import now_iso, new_id, require_admin, get_current_user
+from routers.tenants import get_current_tenant
+
+router = APIRouter()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Defaults + settings
+# ═══════════════════════════════════════════════════════════════════════
+
+DEFAULT_STAGES: List[Dict[str, Any]] = [
+    {
+        "id": "pre_due_3d", "name": "3-day heads-up",
+        "offset_days": -3, "channels": ["email"],
+        "subject_template": "Reminder: invoice {invoice_number} due in 3 days",
+        "body_template": (
+            "Hi {customer_name},\n\n"
+            "Just a friendly reminder that invoice {invoice_number} for "
+            "${invoice_total} is due on {due_date}.\n\n"
+            "Pay online: {payment_link}\n\n"
+            "Thanks,\n{tenant_name}"
+        ),
+        "sms_template": (
+            "{tenant_name}: invoice {invoice_number} (${invoice_total}) "
+            "due {due_date}. Pay: {payment_link}"
+        ),
+    },
+    {
+        "id": "on_due_day", "name": "Due today",
+        "offset_days": 0, "channels": ["email"],
+        "subject_template": "Invoice {invoice_number} is due today",
+        "body_template": (
+            "Hi {customer_name},\n\n"
+            "Invoice {invoice_number} for ${invoice_total} is due today. "
+            "Pay online: {payment_link}\n\n"
+            "Thanks,\n{tenant_name}"
+        ),
+        "sms_template": (
+            "{tenant_name}: invoice {invoice_number} (${invoice_total}) "
+            "is due today. Pay: {payment_link}"
+        ),
+    },
+    {
+        "id": "past_due_7d", "name": "7 days past due",
+        "offset_days": 7, "channels": ["email"],
+        "subject_template": "Past due: invoice {invoice_number} ({days_past_due}d)",
+        "body_template": (
+            "Hi {customer_name},\n\n"
+            "Invoice {invoice_number} for ${invoice_total} is now "
+            "{days_past_due} days past due. Please settle at your "
+            "earliest convenience.\n\nPay online: {payment_link}\n\n"
+            "Questions? Call {tenant_phone}.\n\n{tenant_name}"
+        ),
+        "sms_template": (
+            "{tenant_name}: invoice {invoice_number} is {days_past_due}d "
+            "past due (${invoice_total}). Pay: {payment_link}"
+        ),
+    },
+    {
+        "id": "past_due_14d", "name": "14 days past due",
+        "offset_days": 14, "channels": ["email", "sms"],
+        "subject_template": "Second notice: invoice {invoice_number}",
+        "body_template": (
+            "Hi {customer_name},\n\n"
+            "This is a second reminder that invoice {invoice_number} for "
+            "${invoice_total} is {days_past_due} days past due. Please "
+            "pay to avoid further follow-up.\n\nPay online: {payment_link}\n\n"
+            "{tenant_name} · {tenant_phone}"
+        ),
+        "sms_template": (
+            "{tenant_name}: SECOND NOTICE — invoice {invoice_number} is "
+            "{days_past_due}d past due. Pay: {payment_link}"
+        ),
+    },
+    {
+        "id": "past_due_30d", "name": "30 days past due (final)",
+        "offset_days": 30, "channels": ["email", "sms"],
+        "subject_template": "Final notice: invoice {invoice_number}",
+        "body_template": (
+            "Hi {customer_name},\n\n"
+            "Invoice {invoice_number} is now 30+ days past due. This is "
+            "our final courtesy reminder before your account is flagged "
+            "at risk. Please pay ${invoice_total} today.\n\n"
+            "Pay online: {payment_link}\n\n{tenant_name} · {tenant_phone}"
+        ),
+        "sms_template": (
+            "{tenant_name}: FINAL NOTICE — invoice {invoice_number} is 30d+ "
+            "past due (${invoice_total}). Pay: {payment_link}"
+        ),
+    },
+    {
+        "id": "past_due_60d", "name": "60 days past due (collections)",
+        "offset_days": 60, "channels": ["email", "sms"],
+        "subject_template": "Collections notice: invoice {invoice_number}",
+        "body_template": (
+            "Hi {customer_name},\n\n"
+            "Invoice {invoice_number} (${invoice_total}) is now 60+ days "
+            "past due. Your account has been flagged for collections. "
+            "Please contact us immediately at {tenant_phone}.\n\n"
+            "Pay online: {payment_link}\n\n{tenant_name}"
+        ),
+        "sms_template": (
+            "{tenant_name}: your account is flagged for collections. "
+            "Invoice {invoice_number} 60d+ past due. Call {tenant_phone}."
+        ),
+    },
+]
+
+DEFAULT_ESCALATION = {"at_risk_days": 30, "in_collections_days": 60}
+
+
+async def _get_settings(tenant_id: str) -> Dict[str, Any]:
+    doc = await db.dunning_settings.find_one(
+        {"tenant_id": tenant_id}, {"_id": 0}
+    )
+    if not doc:
+        doc = {
+            "tenant_id": tenant_id,
+            "enabled": True,
+            "stages": [dict(s) for s in DEFAULT_STAGES],
+            "escalation": dict(DEFAULT_ESCALATION),
+            "stripe_payment_link_enabled": True,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+        await db.dunning_settings.insert_one(dict(doc))
+        doc.pop("_id", None)
+    return doc
+
+
+class Stage(BaseModel):
+    id: str
+    name: str
+    offset_days: int = Field(..., ge=-90, le=365)
+    channels: List[str]
+    subject_template: str = ""
+    body_template: str
+    sms_template: str = ""
+
+
+class Escalation(BaseModel):
+    at_risk_days: int = Field(30, ge=1, le=365)
+    in_collections_days: int = Field(60, ge=1, le=730)
+
+
+class SettingsIn(BaseModel):
+    enabled: Optional[bool] = None
+    stages: Optional[List[Stage]] = None
+    escalation: Optional[Escalation] = None
+    stripe_payment_link_enabled: Optional[bool] = None
+
+
+@router.get("/dunning/settings")
+async def get_settings(user: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
+    return await _get_settings(tenant["id"])
+
+
+@router.put("/dunning/settings")
+async def put_settings(body: SettingsIn,
+                         user: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
+    updates: Dict[str, Any] = {"updated_at": now_iso(),
+                                 "updated_by": user["id"]}
+    if body.enabled is not None: updates["enabled"] = body.enabled
+    if body.stages is not None:
+        stages = [s.model_dump() for s in body.stages]
+        # Validate uniqueness
+        ids = [s["id"] for s in stages]
+        if len(set(ids)) != len(ids):
+            raise HTTPException(400, "Stage ids must be unique")
+        offsets = [s["offset_days"] for s in stages]
+        if len(set(offsets)) != len(offsets):
+            raise HTTPException(400, "Stage offset_days must be unique")
+        for s in stages:
+            if not s["channels"]:
+                raise HTTPException(400,
+                    f"Stage {s['id']} must have at least one channel")
+            for ch in s["channels"]:
+                if ch not in {"email", "sms"}:
+                    raise HTTPException(400, f"Bad channel {ch}")
+        updates["stages"] = stages
+    if body.escalation is not None:
+        updates["escalation"] = body.escalation.model_dump()
+    if body.stripe_payment_link_enabled is not None:
+        updates["stripe_payment_link_enabled"] = body.stripe_payment_link_enabled
+    await db.dunning_settings.update_one(
+        {"tenant_id": tenant["id"]},
+        {"$set": updates,
+         "$setOnInsert": {"tenant_id": tenant["id"],
+                           "created_at": now_iso()}},
+        upsert=True,
+    )
+    return await _get_settings(tenant["id"])
+
+
+@router.post("/dunning/settings/reset-defaults")
+async def reset_defaults(user: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
+    await db.dunning_settings.update_one(
+        {"tenant_id": tenant["id"]},
+        {"$set": {"stages": [dict(s) for s in DEFAULT_STAGES],
+                    "escalation": dict(DEFAULT_ESCALATION),
+                    "enabled": True,
+                    "stripe_payment_link_enabled": True,
+                    "updated_at": now_iso()},
+         "$setOnInsert": {"tenant_id": tenant["id"],
+                           "created_at": now_iso()}},
+        upsert=True,
+    )
+    return await _get_settings(tenant["id"])
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Send-reminder core (used by manual endpoint + scanner)
+# ═══════════════════════════════════════════════════════════════════════
+
+def _render(template: str, ctx: Dict[str, Any]) -> str:
+    if not template: return ""
+    try:
+        return template.format(**ctx)
+    except Exception:
+        return template
+
+
+async def _payment_link_for(invoice: Dict[str, Any],
+                              settings: Dict[str, Any]) -> str:
+    """Return a Stripe hosted PaymentLink URL (created + cached on the
+    invoice), or an in-app portal URL as fallback."""
+    cached = invoice.get("payment_link")
+    if cached: return cached
+    if settings.get("stripe_payment_link_enabled"):
+        key = os.environ.get("STRIPE_SECRET_KEY") or ""
+        if key:
+            try:
+                import stripe
+                stripe.api_key = key
+                total_cents = int(round(float(invoice.get("total", 0)) * 100))
+                if total_cents > 0:
+                    pl = await asyncio.to_thread(
+                        stripe.PaymentLink.create,
+                        line_items=[{
+                            "price_data": {
+                                "currency": "usd",
+                                "product_data": {
+                                    "name": invoice.get("title")
+                                              or f"Invoice {invoice['id'][:8]}",
+                                },
+                                "unit_amount": total_cents,
+                            },
+                            "quantity": 1,
+                        }],
+                        metadata={"invoice_id": invoice["id"],
+                                    "tenant_id": invoice["tenant_id"]},
+                    )
+                    url = pl.url
+                    await db.quotes.update_one(
+                        {"id": invoice["id"],
+                          "tenant_id": invoice["tenant_id"]},
+                        {"$set": {"payment_link": url}},
+                    )
+                    return url
+            except Exception as e:
+                logger.warning(f"Stripe PaymentLink failed for {invoice['id']}: {e}")
+    base = APP_PUBLIC_URL or ""
+    return f"{base}/portal/invoices/{invoice['id']}/pay"
+
+
+async def _build_context(invoice: Dict[str, Any], tenant: Dict[str, Any],
+                           settings: Dict[str, Any]) -> Dict[str, Any]:
+    customer = None
+    if invoice.get("customer_id"):
+        customer = await db.customers.find_one(
+            {"id": invoice["customer_id"], "tenant_id": tenant["id"]},
+            {"_id": 0},
+        )
+    due = invoice.get("due_date") or ""
+    days_past_due = 0
+    try:
+        if due:
+            d = datetime.fromisoformat(str(due)[:10]).date()
+            days_past_due = max(0, (datetime.now(timezone.utc).date() - d).days)
+    except Exception:
+        pass
+    return {
+        "customer_name": (customer or {}).get("name") or "there",
+        "invoice_number": invoice["id"][:8],
+        "invoice_total": f"{float(invoice.get('total', 0)):.2f}",
+        "due_date": due or "TBD",
+        "days_past_due": days_past_due,
+        "payment_link": await _payment_link_for(invoice, settings),
+        "tenant_name": tenant.get("name") or "Your Business",
+        "tenant_phone": (tenant.get("phone")
+                           or (tenant.get("settings") or {}).get("phone")
+                           or ""),
+        "customer_email": (customer or {}).get("email") or "",
+        "customer_phone": (customer or {}).get("phone") or "",
+    }
+
+
+async def _send_email(to: str, subject: str, body: str,
+                       tenant_name: str) -> Dict[str, Any]:
+    if not RESEND_API_KEY:
+        return {"status": "pending_resend", "reason": "resend-not-configured"}
+    if not to or "@" not in to:
+        return {"status": "failed", "error": "no-recipient"}
+    try:
+        import resend
+        resend.api_key = RESEND_API_KEY
+        html_body = "<p>" + body.replace("\n\n", "</p><p>").replace(
+            "\n", "<br>") + "</p>"
+        resend.Emails.send({
+            "from": EMAIL_FROM or "onboarding@resend.dev",
+            "to": [to], "subject": subject or "Invoice reminder",
+            "html": html_body,
+        })
+        return {"status": "sent"}
+    except Exception as e:
+        logger.warning(f"dunning email send failed: {e}")
+        return {"status": "failed", "error": str(e)}
+
+
+async def _send_sms(to: str, body: str) -> Dict[str, Any]:
+    key = os.environ.get("TWILIO_ACCOUNT_SID") or ""
+    tok = os.environ.get("TWILIO_AUTH_TOKEN") or ""
+    frm = os.environ.get("TWILIO_FROM") or ""
+    if not (key and tok and frm):
+        return {"status": "pending_twilio",
+                 "reason": "twilio-not-configured"}
+    if not to:
+        return {"status": "failed", "error": "no-recipient"}
+    try:
+        from twilio.rest import Client
+        client = Client(key, tok)
+        await asyncio.to_thread(
+            client.messages.create, body=body, from_=frm, to=to,
+        )
+        return {"status": "sent"}
+    except Exception as e:
+        logger.warning(f"dunning sms send failed: {e}")
+        return {"status": "failed", "error": str(e)}
+
+
+async def _send_reminder(invoice: Dict[str, Any], stage: Dict[str, Any],
+                            tenant: Dict[str, Any], settings: Dict[str, Any],
+                            channels: Optional[List[str]] = None,
+                            custom_message: Optional[str] = None,
+                            triggered_by: str = "auto") -> List[Dict[str, Any]]:
+    """Send a reminder on the given stage. Returns list of persisted
+    `dunning_reminders` docs (one per channel actually attempted)."""
+    ctx = await _build_context(invoice, tenant, settings)
+    chans = channels or stage["channels"]
+    subject = _render(stage.get("subject_template") or "", ctx)
+    body_text = _render(custom_message or stage.get("body_template") or "", ctx)
+    sms_text = _render(stage.get("sms_template") or stage.get("body_template")
+                        or "", ctx)
+    persisted: List[Dict[str, Any]] = []
+
+    for ch in chans:
+        if ch == "email":
+            result = await _send_email(
+                ctx.get("customer_email") or "",
+                subject, body_text, ctx["tenant_name"])
+            doc = {
+                "id": new_id(), "tenant_id": tenant["id"],
+                "invoice_id": invoice["id"],
+                "stage_id": stage["id"], "channel": "email",
+                "recipient": ctx.get("customer_email") or "",
+                "subject": subject, "body": body_text,
+                "status": result["status"],
+                "error": result.get("error") or result.get("reason"),
+                "sent_at": now_iso(),
+                "triggered_by": triggered_by,
+            }
+        elif ch == "sms":
+            result = await _send_sms(
+                ctx.get("customer_phone") or "", sms_text)
+            doc = {
+                "id": new_id(), "tenant_id": tenant["id"],
+                "invoice_id": invoice["id"],
+                "stage_id": stage["id"], "channel": "sms",
+                "recipient": ctx.get("customer_phone") or "",
+                "subject": "", "body": sms_text,
+                "status": result["status"],
+                "error": result.get("error") or result.get("reason"),
+                "sent_at": now_iso(),
+                "triggered_by": triggered_by,
+            }
+        else:
+            continue
+        await db.dunning_reminders.insert_one(dict(doc))
+        doc.pop("_id", None)
+        persisted.append(doc)
+    return persisted
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Manual send + history + pause/resume
+# ═══════════════════════════════════════════════════════════════════════
+
+class ManualSendIn(BaseModel):
+    stage_id: Optional[str] = None
+    channels: Optional[List[str]] = None
+    custom_message: Optional[str] = None
+
+
+async def _fetch_invoice(iid: str, tenant_id: str) -> Dict[str, Any]:
+    inv = await db.quotes.find_one(
+        {"id": iid, "tenant_id": tenant_id, "doc_type": "invoice"},
+        {"_id": 0},
+    )
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+    return inv
+
+
+@router.post("/dunning/invoices/{iid}/send-reminder")
+async def manual_send(iid: str, body: ManualSendIn,
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    inv = await _fetch_invoice(iid, tenant["id"])
+    settings = await _get_settings(tenant["id"])
+    stage_id = body.stage_id or "manual"
+    stage = next((s for s in settings["stages"] if s["id"] == stage_id), None)
+    if not stage:
+        # Manual send with no stage → synthesize a minimal stage
+        stage = {
+            "id": "manual", "name": "Manual reminder", "offset_days": 0,
+            "channels": body.channels or ["email"],
+            "subject_template":
+                "Reminder: invoice {invoice_number} — ${invoice_total}",
+            "body_template": (body.custom_message
+                or "Hi {customer_name},\n\nA reminder that invoice "
+                "{invoice_number} for ${invoice_total} remains unpaid.\n\n"
+                "Pay online: {payment_link}\n\nThanks,\n{tenant_name}"),
+            "sms_template":
+                "{tenant_name}: invoice {invoice_number} (${invoice_total}) "
+                "unpaid. Pay: {payment_link}",
+        }
+    docs = await _send_reminder(inv, stage, tenant, settings,
+                                  channels=body.channels,
+                                  custom_message=body.custom_message,
+                                  triggered_by=f"manual:{user['id']}")
+    return {"reminders": docs, "count": len(docs)}
+
+
+@router.get("/dunning/invoices/{iid}/history")
+async def reminder_history(iid: str,
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    await _fetch_invoice(iid, tenant["id"])
+    rows = await db.dunning_reminders.find(
+        {"invoice_id": iid, "tenant_id": tenant["id"]}, {"_id": 0},
+    ).sort("sent_at", -1).to_list(500)
+    return {"items": rows, "total": len(rows)}
+
+
+@router.post("/dunning/pause/{iid}")
+async def pause_invoice(iid: str,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    inv = await _fetch_invoice(iid, tenant["id"])
+    await db.quotes.update_one(
+        {"id": iid, "tenant_id": tenant["id"]},
+        {"$set": {"dunning_paused": True,
+                    "dunning_paused_at": now_iso(),
+                    "dunning_paused_by": user["id"]}},
+    )
+    return {"invoice_id": iid, "dunning_paused": True}
+
+
+@router.post("/dunning/resume/{iid}")
+async def resume_invoice(iid: str,
+                            user: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
+    inv = await _fetch_invoice(iid, tenant["id"])
+    await db.quotes.update_one(
+        {"id": iid, "tenant_id": tenant["id"]},
+        {"$set": {"dunning_paused": False,
+                    "dunning_resumed_at": now_iso()}},
+    )
+    return {"invoice_id": iid, "dunning_paused": False}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Scanner (called by APScheduler)
+# ═══════════════════════════════════════════════════════════════════════
+
+def _due_date_utc(inv: Dict[str, Any]) -> Optional[datetime]:
+    due = inv.get("due_date")
+    if not due: return None
+    try:
+        return datetime.fromisoformat(str(due)[:10]).replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+async def _scan_tenant(tenant: Dict[str, Any], now: datetime) -> Dict[str, Any]:
+    settings = await _get_settings(tenant["id"])
+    if not settings.get("enabled"):
+        return {"tenant": tenant["id"], "skipped": "disabled"}
+    invoices = await db.quotes.find(
+        {"tenant_id": tenant["id"], "doc_type": "invoice",
+          "status": {"$in": ["sent", "past_due", "draft"]},
+          "payment_status": {"$ne": "paid"}},
+        {"_id": 0},
+    ).to_list(5000)
+    esc = settings.get("escalation") or DEFAULT_ESCALATION
+    stages = settings.get("stages") or []
+    fired_total = 0
+    for inv in invoices:
+        if inv.get("dunning_paused"):
+            continue
+        due = _due_date_utc(inv)
+        if not due:
+            continue
+        days_past = (now.date() - due.date()).days
+        # Auto-flip sent → past_due once we're past due.
+        if days_past > 0 and inv.get("status") == "sent":
+            await db.quotes.update_one(
+                {"id": inv["id"], "tenant_id": tenant["id"]},
+                {"$set": {"status": "past_due"}},
+            )
+            inv["status"] = "past_due"
+        # Escalation flags (soft label).
+        new_risk = None
+        if days_past >= esc.get("in_collections_days", 60):
+            new_risk = "in_collections"
+        elif days_past >= esc.get("at_risk_days", 30):
+            new_risk = "at_risk"
+        if new_risk and inv.get("risk_status") != new_risk:
+            await db.quotes.update_one(
+                {"id": inv["id"], "tenant_id": tenant["id"]},
+                {"$set": {"risk_status": new_risk,
+                            f"risk_status_{new_risk}_at": now_iso()}},
+            )
+            inv["risk_status"] = new_risk
+        # Fire any stage that is due AND hasn't fired for this invoice yet.
+        for stage in stages:
+            offset = int(stage.get("offset_days", 0))
+            if days_past < offset:
+                continue
+            # Idempotency: skip if already sent for (invoice, stage).
+            already = await db.dunning_reminders.find_one({
+                "tenant_id": tenant["id"], "invoice_id": inv["id"],
+                "stage_id": stage["id"],
+            }, {"_id": 0, "id": 1})
+            if already:
+                continue
+            try:
+                await _send_reminder(inv, stage, tenant, settings,
+                                        triggered_by="auto")
+                fired_total += 1
+            except Exception as e:
+                logger.warning(f"scanner reminder failed for "
+                                f"{inv['id']}/{stage['id']}: {e}")
+    return {"tenant": tenant["id"], "invoices": len(invoices),
+             "fired": fired_total}
+
+
+async def run_dunning_scan() -> Dict[str, Any]:
+    """Registered on APScheduler. Iterates every tenant that has an
+    active dunning settings doc (or any tenant → we lazy-seed on first
+    scan pass so a brand-new tenant automatically gets the defaults)."""
+    now = datetime.now(timezone.utc)
+    tenants = await db.tenants.find({}, {"_id": 0}).to_list(500)
+    summary = []
+    for t in tenants:
+        try:
+            summary.append(await _scan_tenant(t, now))
+        except Exception as e:
+            logger.warning(f"scan_tenant failed for {t.get('id')}: {e}")
+            summary.append({"tenant": t.get("id"), "error": str(e)})
+    total_fired = sum(s.get("fired", 0) for s in summary)
+    if total_fired:
+        logger.info(f"dunning scan fired {total_fired} reminders "
+                     f"across {len(tenants)} tenants")
+    return {"scanned_at": now.isoformat(),
+             "tenants": len(tenants),
+             "total_fired": total_fired,
+             "summary": summary}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Queue preview + AR aging analytics
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/dunning/queue")
+async def get_queue(days: int = 7,
+                      user: dict = Depends(require_admin),
+                      tenant: dict = Depends(get_current_tenant)):
+    """Return reminders scheduled to fire in the next N days."""
+    settings = await _get_settings(tenant["id"])
+    if not settings.get("enabled"):
+        return {"items": [], "note": "dunning disabled"}
+    now = datetime.now(timezone.utc)
+    horizon = now + timedelta(days=days)
+    invoices = await db.quotes.find(
+        {"tenant_id": tenant["id"], "doc_type": "invoice",
+          "status": {"$in": ["sent", "past_due", "draft"]},
+          "payment_status": {"$ne": "paid"},
+          "dunning_paused": {"$ne": True}},
+        {"_id": 0},
+    ).to_list(2000)
+    items: List[Dict[str, Any]] = []
+    for inv in invoices:
+        due = _due_date_utc(inv)
+        if not due: continue
+        for stage in settings.get("stages") or []:
+            fire_date = (due + timedelta(days=int(stage["offset_days"]))).date()
+            if not (now.date() <= fire_date <= horizon.date()):
+                continue
+            already = await db.dunning_reminders.find_one({
+                "tenant_id": tenant["id"], "invoice_id": inv["id"],
+                "stage_id": stage["id"]}, {"_id": 0, "id": 1})
+            if already: continue
+            items.append({
+                "invoice_id": inv["id"],
+                "invoice_title": inv.get("title") or "",
+                "customer_id": inv.get("customer_id"),
+                "customer_name": inv.get("customer_name") or "",
+                "amount": float(inv.get("total", 0)),
+                "due_date": inv.get("due_date"),
+                "stage_id": stage["id"], "stage_name": stage["name"],
+                "channels": stage["channels"],
+                "fire_date": fire_date.isoformat(),
+            })
+    items.sort(key=lambda x: (x["fire_date"], x["stage_id"]))
+    return {"items": items, "total": len(items),
+             "window_days": days}
+
+
+@router.get("/dunning/analytics/ar-aging")
+async def ar_aging(user: dict = Depends(require_admin),
+                     tenant: dict = Depends(get_current_tenant)):
+    """DSO + collection-rate + 4-bucket AR aging."""
+    now = datetime.now(timezone.utc)
+    invoices = await db.quotes.find(
+        {"tenant_id": tenant["id"], "doc_type": "invoice"},
+        {"_id": 0},
+    ).to_list(10000)
+    buckets = {"current": 0.0, "aging_30": 0.0,
+                "aging_60": 0.0, "aging_90": 0.0}
+    total_outstanding = 0.0
+    at_risk_count = 0
+    in_collections_count = 0
+    dso_num = 0.0  # Σ (days_outstanding × total) for unpaid
+    dso_den = 0.0
+    paid_last_30 = 0.0
+    invoiced_last_30 = 0.0
+    for inv in invoices:
+        total = float(inv.get("total", 0) or 0)
+        paid = float(inv.get("amount_paid", 0) or 0)
+        balance = max(0.0, total - paid)
+        pay_status = inv.get("payment_status") or "unpaid"
+        due = _due_date_utc(inv)
+        # DSO + collection rate windows.
+        created_dt = None
+        try:
+            if inv.get("created_at"):
+                created_dt = datetime.fromisoformat(
+                    str(inv["created_at"]).replace("Z", "+00:00"))
+        except Exception:
+            pass
+        if created_dt and (now - created_dt).days <= 30:
+            invoiced_last_30 += total
+        if pay_status == "paid" and created_dt \
+                and (now - created_dt).days <= 30:
+            paid_last_30 += paid or total
+        if pay_status == "paid" or balance <= 0:
+            continue
+        total_outstanding += balance
+        days_past = 0
+        if due:
+            days_past = max(0, (now.date() - due.date()).days)
+            dso_num += balance * days_past
+            dso_den += balance
+        if days_past <= 0:
+            buckets["current"] += balance
+        elif days_past <= 30:
+            buckets["aging_30"] += balance
+        elif days_past <= 60:
+            buckets["aging_60"] += balance
+        else:
+            buckets["aging_90"] += balance
+        rs = inv.get("risk_status")
+        if rs == "at_risk":
+            at_risk_count += 1
+        elif rs == "in_collections":
+            in_collections_count += 1
+    dso_days = round(dso_num / dso_den, 1) if dso_den > 0 else 0.0
+    collection_rate = (
+        round(100 * paid_last_30 / invoiced_last_30, 1)
+        if invoiced_last_30 > 0 else 0.0
+    )
+    return {
+        "current": round(buckets["current"], 2),
+        "aging_30": round(buckets["aging_30"], 2),
+        "aging_60": round(buckets["aging_60"], 2),
+        "aging_90": round(buckets["aging_90"], 2),
+        "aging_total": round(total_outstanding, 2),
+        "dso_days": dso_days,
+        "collection_rate_30d": collection_rate,
+        "at_risk_count": at_risk_count,
+        "in_collections_count": in_collections_count,
+        "invoiced_last_30d": round(invoiced_last_30, 2),
+        "paid_last_30d": round(paid_last_30, 2),
+    }

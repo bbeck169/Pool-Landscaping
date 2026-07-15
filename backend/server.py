@@ -20,7 +20,7 @@ from routers import (
     portal_chats, portal_appointments, portal_photos,
     employee_onboarding, assets, referral_tiers,
     seo_agentic, seo_phase17c,
-    estimator,
+    estimator, dunning,
 )
 
 app = FastAPI(
@@ -45,7 +45,7 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                portal_chats, portal_appointments, portal_photos,
                employee_onboarding, assets, referral_tiers,
                seo_agentic, seo_phase17c,
-               estimator]:
+               estimator, dunning]:
     api_router.include_router(module.router)
 
 
@@ -154,6 +154,9 @@ async def _background_seed():
                             replace_existing=True)
         scheduler.add_job(csat.run_csat_dispatch_tick, "interval",
                             minutes=5, id="csat_dispatch",
+                            replace_existing=True)
+        scheduler.add_job(dunning.run_dunning_scan, "interval",
+                            minutes=60, id="dunning_scan",
                             replace_existing=True)
         scheduler.start()
     except Exception as e:

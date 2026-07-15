@@ -1748,3 +1748,112 @@ PUT  /api/estimator/rate-catalog {items:[...]}  → 200, items overwritten
 - **Real photo QA** — smoke tests used stock Unsplash pool photos.
   Snap a real tech-in-the-field photo and confirm Claude's line-item
   breakdown holds up (quantities, category classification).
+
+---
+
+## Phase 22 · Automated invoice dunning (Feb 2026)
+
+Configurable per-tenant reminder cadence + AR aging analytics. Backend
+scanner runs every 60 min via APScheduler.
+
+### Backend — 486 → 494 OpenAPI paths (+8)
+
+New router `routers/dunning.py`:
+- **Settings** GET / PUT / POST reset-defaults
+- **Manual send** POST /invoices/{id}/send-reminder
+- **History** GET /invoices/{id}/history
+- **Pause/Resume** POST /pause/{id}, /resume/{id}
+- **Queue** GET /queue?days=N
+- **Analytics** GET /analytics/ar-aging
+
+Default cadence (6 stages, one settings doc per tenant):
+`pre_due_3d` (–3d, email) → `on_due_day` (0d, email) →
+`past_due_7d` (7d, email) → `past_due_14d` (14d, email + sms) →
+`past_due_30d` (30d, email + sms, flag `at_risk`) →
+`past_due_60d` (60d, email + sms, flag `in_collections`).
+
+Templates use `{customer_name}`, `{invoice_number}`, `{invoice_total}`,
+`{due_date}`, `{days_past_due}`, `{payment_link}`, `{tenant_name}`,
+`{tenant_phone}`. **Payment link** = Stripe hosted `PaymentLink` when
+`STRIPE_SECRET_KEY` is set (cached on the invoice), else in-app
+`{APP_PUBLIC_URL}/portal/invoices/{id}/pay`.
+
+Scanner (`run_dunning_scan`, registered as APScheduler job every 60 min):
+walks every tenant → active-dunning invoices → for each due stage
+computes `days_past = today - due_date`, fires stages where
+`days_past >= offset` AND no prior `dunning_reminders` doc exists for
+`(invoice, stage)`. Also flips `sent → past_due` when due, and stamps
+`risk_status = at_risk / in_collections` at the escalation thresholds.
+
+Channels:
+- **Email** LIVE via Resend when `RESEND_API_KEY` set. Persists a
+  `dunning_reminders` doc with real status (`sent | failed | pending_resend`).
+- **SMS** via Twilio — returns `status: "pending_twilio"` with
+  `error: "twilio-not-configured"` when keys absent. **No silent mock.**
+
+### Collections
+- `dunning_settings` (one per tenant)
+- `dunning_reminders` (indexed by tenant_id + invoice_id + sent_at)
+
+### Frontend web — 3 admin pages
+- `/admin/dunning/settings` — full cadence editor (enable toggle,
+  at_risk/in_collections thresholds, per-stage name + offset days +
+  channel checkboxes + subject/email/SMS templates).
+- `/admin/dunning/queue` — table of next-N-days reminders with Send-now
+  + Pause per row.
+- `/admin/dunning/analytics` — 4 KPI cards (total outstanding, DSO,
+  collection rate, at-risk/in-collections counts) + horizontal bar chart
+  of the 4 aging buckets.
+
+Sidebar entries added under Billing: **Dunning queue · AR aging · Dunning setup.**
+
+### Frontend mobile
+`(app)/dunning/queue.tsx` — read-only queue with tap-to-send-now (admin
+gated via `AdminOnly`-style check in the component). Nav entry added to
+`more.tsx` admin link array. Full editing stays on desktop.
+
+### Tests — `test_dunning.py` (11/11 green in ~17s)
+1. Default settings seeded on first GET after wipe.
+2. PUT validates unique offsets, non-empty channels; reset-defaults works.
+3. Manual send persists a `dunning_reminders` doc with honest status
+   (sent / pending_resend / failed with error surfaced).
+4. SMS returns `pending_twilio` with clear reason when keys absent.
+5. Scanner fires the correct stage on an 8-day past-due invoice AND is
+   idempotent — second scan does not re-fire.
+6. Pause blocks scanner; resume + rescan fires again.
+7. Escalation: 31d → `risk_status: "at_risk"`, 61d → `"in_collections"`.
+8. Queue lists upcoming reminders in the window.
+9. AR aging analytics correctly buckets 4 seeded invoices across
+   `current / aging_30 / aging_60 / aging_90`.
+10. Tenant isolation — sunbelt admin 404 on aquaterra invoice history.
+11. Role gating — tech + customer 403 on all 5 dunning endpoints
+    (settings, queue, analytics, history, manual send).
+
+**Regression: prior 8 estimator + 13 SEO 17C tests still green.**
+
+### Live proof (external ingress)
+```
+GET  /api/dunning/settings → 6 stages seeded, escalation {30, 60}
+PUT  /api/dunning/settings {escalation:{25,55}} → 200
+POST /api/dunning/invoices/{id}/send-reminder →
+  channel=email, status=failed
+  error="You can only send testing emails to your own email address …"
+  (Resend live, sandbox restriction — HONEST failure surfaced)
+GET  /api/dunning/queue?days=30 → 18 reminders scheduled
+GET  /api/dunning/analytics/ar-aging →
+  current=$871, aging_30=$250, aging_60=$754, aging_90=$280
+  aging_total=$2155, DSO=29.9d, collection_rate=21%
+  at_risk=3, in_collections=1
+```
+
+### Human-required checks
+- **Verify a domain on Resend** — currently the sandbox restricts sends
+  to the account owner. Verify a domain at resend.com/domains and set
+  `EMAIL_FROM` to `hello@<yourdomain>` so reminders reach real customers.
+- **Provide Twilio credentials** — set `TWILIO_ACCOUNT_SID`,
+  `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM` (a purchased phone number) to
+  activate SMS. Until then, SMS rows write `pending_twilio`.
+- **Real Stripe** — the code uses `stripe.PaymentLink.create` for hosted
+  payment links. It needs a live `STRIPE_SECRET_KEY`. Without it,
+  reminders fall back to the in-app portal URL — still works, just not
+  a Stripe-hosted page.

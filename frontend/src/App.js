@@ -41,6 +41,7 @@ import OttoAutoFix from "@/pages/seo/OttoAutoFix";
 import WebsiteStudio, { WebsiteStudioEditor } from "@/pages/seo/WebsiteStudio";
 import WhiteLabelReports, { WhiteLabelReportDetail } from "@/pages/seo/WhiteLabelReports";
 import EstimatorList, { EstimatorNew, EstimatorDetail, EstimatorRates } from "@/pages/estimator/EstimatorPages";
+import DunningSettings, { DunningQueue, DunningAnalytics } from "@/pages/dunning/DunningPages";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
@@ -420,6 +421,9 @@ export default function App() {
             <Route path="admin/estimator/new" element={<AdminOnly><EstimatorNew /></AdminOnly>} />
             <Route path="admin/estimator/rates" element={<AdminOnly><EstimatorRates /></AdminOnly>} />
             <Route path="admin/estimator/:id" element={<AdminOnly><EstimatorDetail /></AdminOnly>} />
+            <Route path="admin/dunning/settings" element={<AdminOnly><DunningSettings /></AdminOnly>} />
+            <Route path="admin/dunning/queue" element={<AdminOnly><DunningQueue /></AdminOnly>} />
+            <Route path="admin/dunning/analytics" element={<AdminOnly><DunningAnalytics /></AdminOnly>} />
           </Route>
 
           {/* Anything unmatched → home */}

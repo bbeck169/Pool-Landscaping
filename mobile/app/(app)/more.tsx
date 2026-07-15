@@ -48,6 +48,7 @@ export default function More() {
 
   const adminLinks = [
     { icon: "calculator-outline", label: "Field Estimator", onPress: () => router.push("/(app)/estimator" as any) },
+    { icon: "mail-open-outline", label: "Dunning queue", onPress: () => router.push("/(app)/dunning/queue" as any) },
     { icon: "cube-outline", label: "LiDAR Settings", onPress: () => router.push("/(app)/settings/lidar" as any) },
     { icon: "magnet-outline", label: "New Lead", onPress: () => router.push("/leads/new") },
     { icon: "earth-outline", label: "Measure (Satellite)", onPress: () => router.push("/measure") },

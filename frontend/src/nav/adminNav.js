@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, Briefcase, CalendarDays, Truck, Route, Workflow, DoorOpen,
-  Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Layers,
+  Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers,
   UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History,
   Timer as TimerIcon, BarChart3, TrendingUp, PieChart, MegaphoneIcon, Megaphone, Palette,
   MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Search,
@@ -35,6 +35,9 @@ export const ADMIN_NAV_V2 = [
     { to: "/quotes",     label: "Quotes",     icon: FileText,    feature: "quotes" },
     { to: "/estimator",  label: "Estimator",  icon: Calculator,  feature: "estimator" },
     { to: "/admin/estimator", label: "Field Estimator", icon: Wrench, feature: "estimator" },
+    { to: "/admin/dunning/queue",     label: "Dunning queue",   icon: Repeat,    feature: "invoicing" },
+    { to: "/admin/dunning/analytics", label: "AR aging",        icon: DollarSign, feature: "invoicing" },
+    { to: "/admin/dunning/settings",  label: "Dunning setup",   icon: Zap,       feature: "invoicing" },
     { to: "/d2d",        label: "D2D",        icon: DoorOpen,    feature: "d2d",    hard_rule: "admin_only" },
   ]},
 
