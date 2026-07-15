@@ -111,6 +111,13 @@ const ADMIN_SECTIONS: Section[] = [
       { key: "payroll-batch", icon: "cash-outline", label: "Batch Checks & Payroll CSV", desc: "Write many checks at once + CSV import", route: "/(app)/payroll/batch" },
     ],
   },
+  {
+    key: "adm-finance",
+    title: "Finance",
+    tiles: [
+      { key: "cfo", icon: "trending-up-outline", label: "AI CFO", desc: "Revenue, expenses, cash, AR — this month", route: "/(app)/cfo" },
+    ],
+  },
 ];
 
 function Tile({ tile, onPress }: { tile: Tile; onPress: () => void }) {

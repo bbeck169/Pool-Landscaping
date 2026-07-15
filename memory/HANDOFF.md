@@ -2940,3 +2940,170 @@ show real categories once a categorizer run has happened.
 **Still deferred to Step 2 (UI) / Wave 3** — no change from the
 original Step 1 note.
 
+#### Phase 32 · Step 2 — AI CFO UI (web + mobile mirror) (Feb 15 2026)
+
+Read-only UI over the frozen Step-1 endpoints. Web ships the full
+Wave-1+2 dashboard (KPIs, charts, forecast, anomalies, auto-categorize
+modal, LLM usage strip); mobile ships a compact card-only mirror.
+Backend and tests are untouched — this is pure client wiring.
+
+**Endpoints consumed (frozen — no new backend calls invented)**
+- `GET  /api/cfo/dashboard?period=…&start=&end=`
+- `GET  /api/cfo/forecast?horizon=…`
+- `GET  /api/cfo/anomalies?window_days=90&z=2.0`
+- `POST /api/cfo/categorize?dry_run=…&force=…`
+- `GET  /api/cfo/llm-usage`
+
+**Web — `/app/frontend/src/pages/cfo/CFODashboard.jsx`**
+- Route registered at `/cfo` in `App.js` (in-page RBAC via
+  `role === "admin" || "super_admin"`, falls through to the shared
+  `<Forbidden>` block for anyone else — the `Finance` perm doesn't
+  exist in the matrix so we didn't invent it, per the brief).
+- Nav entry inserted at the top of the `billing` group in
+  `adminNav.js`: "AI CFO" (lucide `TrendingUp`), `feature:"reports"`
+  with `hard_rule:"admin_only"`.
+- Sections top-down:
+  1. Period pills: MTD / QTD / YTD / Custom (Custom reveals
+     `<input type=date>` from/to fields).
+  2. KPI tiles (Revenue, Expenses, Gross Profit, Profit Margin,
+     Cash on Hand, AR 0-30/31-60/61-90/90+, plus a full-width
+     yellow AP-aging tile that renders the honest
+     `"AP bills collection is not wired…"` reason string and a
+     `mocked-badge`).
+  3. Revenue by source — `recharts.BarChart`.
+  4. Expenses by category — `recharts.PieChart` with a fixed
+     category legend order matching the LLM enum (labor / chemicals
+     / fuel / equipment / marketing / insurance / subscription / tax
+     / other).
+  5. Cash Flow Forecast — `recharts.ComposedChart` (area for `cash_in`
+     + `cash_out`, line for `net`) plus a horizon toggle
+     (`30d / 60d / 90d / 180d`) and a `Net projected` footer with a
+     runway-days pill (green "Positive cash flow projected." when
+     `net ≥ 0`).
+  6. Anomalies — sortable table (by |current − mean|) with a red
+     "anomaly" pill on rows where `is_anomaly=true`.
+  7. Auto-Categorize action — clicks a modal that first calls
+     `?dry_run=true&force=true` for a preview (shows `scanned`,
+     `would categorize`, `tokens (est)`, `quota used`), then a
+     Confirm button hits `?dry_run=false&force=true` and shows the
+     write count + fresh usage counter. Dashboard reloads on close.
+  8. LLM usage strip — always-visible footer with
+     `request_count/quota` + `tokens_used`, plus a soft-quota-hit
+     pill when the daily limit is reached.
+- Charts library: `recharts@^3.6.0` was already in `package.json` —
+  no dependency added.
+
+**Honest UI convention**
+- Any backend field with `mocked: true` renders through the shared
+  `<MockedBadge reason=…>` component: dim value (opacity 0.6),
+  `data-testid="mocked-badge"`, hover tooltip carrying the reason
+  string. Applied to Cash on Hand (empty-tenant case) and the
+  AP-aging tile (`no ap_bills collection wired`). Forecast card
+  also renders the badge next to its title if the backend flags
+  history <30d.
+
+**Mobile — `/app/mobile/app/(app)/cfo/index.tsx`**
+- Compact card-only mirror; only consumes `GET /api/cfo/dashboard`.
+- Sections: period pills (MTD / QTD / YTD), 2-column KPI grid
+  (Revenue / Expenses / Gross / Margin / Cash / AR 0-30 / 31-60 /
+  61-90 / 90+), AP-aging warning row with `MockedBadge`, "Top 3
+  revenue sources" list, "Top 3 expense categories" list, a foot
+  note explaining forecast/anomalies/auto-categorize live on
+  desktop.
+- Charts intentionally skipped per brief — pull-to-refresh instead.
+- Admin-only guard: `useAuth().role in {admin, super_admin}` →
+  otherwise render a padlock "AI CFO is admin-only." block.
+- Discoverable via the Tools Hub — added an "adm-finance" section
+  with a single "AI CFO" tile in `mobile/app/(app)/tools.tsx`.
+
+**Test IDs shipped** (both platforms unless noted)
+- `cfo-dashboard` (web root), `cfo-mobile` (mobile root)
+- `cfo-period-pills`, `cfo-period-mtd | -qtd | -ytd | -custom`
+- Custom-range inputs (web): `cfo-period-custom-start | -end`
+- `cfo-kpi-revenue`, `-expenses`, `-gross-profit`, `-margin`, `-cash-on-hand`
+- `cfo-ar-0-30 | -31-60 | -61-90 | -90-plus`
+- `cfo-ap-aging` (both platforms; ships with a nested `mocked-badge`)
+- `cfo-revenue-source`, `cfo-expense-category`
+- `cfo-forecast`, `cfo-forecast-horizon-30 | 60 | 90 | 180` (web only)
+- `cfo-anomalies-list`, `cfo-anomaly-item`, `cfo-anomalies-empty` (web only)
+- `cfo-run-categorize`, `cfo-categorize-preview`,
+  `cfo-categorize-preview-body`, `cfo-categorize-confirm`,
+  `cfo-categorize-cancel`, `cfo-categorize-result`,
+  `cfo-categorize-error` (web only)
+- `cfo-llm-usage` (web only)
+- `cfo-refresh`, `cfo-error` (web only)
+- `mocked-badge` (both platforms — applied wherever a mocked value renders)
+
+**Files added (2)**
+- `frontend/src/pages/cfo/CFODashboard.jsx`
+- `mobile/app/(app)/cfo/index.tsx`
+
+**Files edited (3)**
+- `frontend/src/App.js` — import + `<Route path="cfo" element={<CFODashboard />} />`.
+- `frontend/src/nav/adminNav.js` — "AI CFO" entry at top of the
+  billing group.
+- `mobile/app/(app)/tools.tsx` — new `adm-finance` section with one
+  tile.
+- `memory/HANDOFF.md` — this section.
+
+**Not touched (per hard rules)**
+- Backend routers / schema / seed / tests — zero diffs.
+- Mobile schedule / checklist / workstream / other screens.
+- Web workstream / schedule / checklist / any other page.
+- Customer portal.
+- RBAC matrix.
+
+**Verification**
+- **Webpack (web)**: `bundle.js` → HTTP 200, **13.95 MB**, "Compiled
+  successfully!" tail on supervisor logs. `CFODashboard | cfo-dashboard
+  | cfo-run-categorize | mocked-badge` = **321 combined matches** in
+  the bundle.
+- **Metro (mobile)**: `entry.bundle?platform=web` → HTTP 200,
+  **11.30 MB**, zero SyntaxError/UnableToResolve frames.
+  `cfo/index | cfo-mobile | cfo-kpi-revenue | cfo-ap-aging |
+   cfo-period-pills` = **8 combined matches**.
+- **Backend regression**: `pytest -x -q tests/test_phase32_cfo.py` →
+  **13/13 passed** in 9.4 s. No backend files touched.
+- **Browser E2E** (Playwright, real preview URL, screenshots in reply):
+  1. `/cfo?period=ytd` — full dashboard renders with real numbers:
+     Revenue **$2,948**, Expenses **$101**, Gross **$2,847**,
+     Margin **96.6 %**, Cash **$5,000**, AR aging all zeros, AP-aging
+     tile shows the yellow `mocked` badge + reason string. Revenue-by-
+     source bar chart renders both segments (paid_invoices vs
+     warranty_contracts). Expense donut renders `chemicals` slice.
+     Forecast composed chart draws cash_in / cash_out / net across
+     the 9 weekly buckets (60d default), `Net projected: $1,685`
+     with the green "Positive cash flow projected." tag.
+  2. Period pill switch — clicking MTD retargets the endpoint;
+     dashboard re-renders with Revenue **$518**, Expenses **$101**,
+     Gross **$417**, Margin **80.5 %**. Cash-on-hand unchanged
+     (period-agnostic).
+  3. Auto-categorize modal — click on `cfo-run-categorize` opens
+     the preview modal with the LLM disclaimer + category list,
+     preview API call succeeds (`scanned:0` in the test tenant
+     because the earlier LLM run already categorized everything;
+     the confirm button remains visible for tenants that still have
+     uncategorized checks). Cancel + Confirm buttons both wired.
+- **Live-preview smoke** — `admin@aquaterra.com` login, `/cfo` page,
+  all screenshot-captured selectors present in the DOM.
+
+**Test credentials** (unchanged)
+- `admin@aquaterra.com / password123` — sees `/cfo` + mobile tile.
+- `mike@aquaterra.com / password123` (technician) — sees `<Forbidden>`
+  block on both.
+- `customer@aquaterra.com / password123` — same.
+
+**Deferred (per brief)**
+- **Phase 33 · NL Q&A + Scenario Planning** — separate window.
+- **Board PDF export** — explicitly skipped by user.
+- **Mobile parity for forecast / anomalies / auto-categorize** —
+  admin flow stays on desktop for now; if a fork agent later wants
+  to add them, the endpoints are already there and the mobile
+  screen just needs a new tab or accordion.
+- **Live-refresh sockets on /cfo** — Refresh button + browser tab
+  focus are the current strategy.
+- **`Finance` permission key** — not added; if the RBAC matrix
+  gains one later, swap the in-page `role in {admin, super_admin}`
+  check for `<RequirePermission perm="Finance">`. Backend is
+  already `require_admin`-gated.
+

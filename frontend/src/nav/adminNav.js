@@ -47,6 +47,7 @@ export const ADMIN_NAV_V2 = [
   ]},
 
   { key: "billing", label: "Billing", icon: Receipt, entries: [
+    { to: "/cfo",              label: "AI CFO",           icon: TrendingUp, feature: "reports", hard_rule: "admin_only" },
     { to: "/invoices",         label: "Invoices",        icon: Receipt,   feature: "invoices" },
     { to: "/payments",         label: "Payments",        icon: CreditCard,feature: "payments" },
     { to: "/auto-billing",     label: "Auto-billing",    icon: Repeat,    feature: "invoices" },

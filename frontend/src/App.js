@@ -13,6 +13,7 @@ import CustomerDetail from "@/pages/customers/CustomerDetail";
 import CustomerChemistry from "@/pages/customers/CustomerChemistry";
 import CalendarSchedule from "@/pages/schedule/CalendarSchedule";
 import WorkstreamPage from "@/pages/workstream/WorkstreamPage";
+import CFODashboard from "@/pages/cfo/CFODashboard";
 import JobNew from "@/pages/jobs/JobNew";
 import JobDetail from "@/pages/jobs/JobDetail";
 import QuotesList from "@/pages/quotes/QuotesList";
@@ -283,6 +284,8 @@ export default function App() {
             <Route path="schedule/legacy-timeline" element={<TodaySchedule />} />
             {/* Phase 31 · Step 2b — Workstream (tap-job telemetry feed) */}
             <Route path="workstream" element={<WorkstreamPage />} />
+            {/* Phase 32 · Step 2 — AI CFO dashboard (admin only, RBAC in-page) */}
+            <Route path="cfo" element={<CFODashboard />} />
             <Route path="tech/huddle" element={<TechHuddlePage />} />
             <Route path="tech/time-clock" element={<TechTimeClockPage />} />
             {/* Phase 29 — All My Tools hub (tech + admin). Non-role users are
