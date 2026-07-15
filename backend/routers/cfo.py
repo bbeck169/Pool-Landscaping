@@ -147,6 +147,16 @@ async def _revenue(tenant_id: str, s: datetime, e: datetime) -> Dict[str, Any]:
 async def _expenses(tenant_id: str, s: datetime, e: datetime) -> Dict[str, Any]:
     total = 0.0
     by_cat: Dict[str, float] = {}
+    # Prefer the LLM-derived category from expense_categories when present,
+    # then fall back to `checks.category`, then "other". Keeps the
+    # dashboard honest once the categorizer has run.
+    cat_map: Dict[str, str] = {}
+    async for c in db.expense_categories.find(
+        {"tenant_id": tenant_id, "source": "check"},
+        {"_id": 0, "transaction_id": 1, "category": 1},
+    ):
+        cat_map[c["transaction_id"]] = c["category"]
+
     cur = db.checks.find(
         {"tenant_id": tenant_id, "voided_at": None},
         {"_id": 0, "amount": 1, "date": 1, "category": 1, "id": 1},
@@ -157,10 +167,10 @@ async def _expenses(tenant_id: str, s: datetime, e: datetime) -> Dict[str, Any]:
             continue
         v = _to_float(ch.get("amount"))
         total += v
-        cat = (ch.get("category") or "other").lower()
+        cat = (cat_map.get(ch["id"])
+               or (ch.get("category") or "other")).lower()
         by_cat[cat] = by_cat.get(cat, 0.0) + v
 
-    # If category is still mostly missing, note it (still returns real numbers).
     return {
         "total": round(total, 2),
         "by_category": [{"category": k, "total": round(v, 2)}
@@ -449,7 +459,7 @@ async def _llm_classify(items: List[Dict[str, str]]) -> Tuple[Optional[List[Dict
         chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
                          system_message=_LLM_SYSTEM)
                 .with_model(*_MODEL)
-                .with_max_tokens(_LLM_MAX_OUTPUT_TOKENS))
+                .with_params(max_tokens=_LLM_MAX_OUTPUT_TOKENS))
         raw = await chat.send_message(UserMessage(text=_build_prompt(items)))
         text = raw if isinstance(raw, str) else str(raw)
         text = text.strip()

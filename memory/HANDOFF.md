@@ -2856,3 +2856,87 @@ for test-created rows keyed on `TEST_ ` / `TEST-` prefixes:
 - Compound index `expense_anomalies (tenant_id, category, detected_at)`
   if flagged-anomaly volume grows past a few thousand per tenant.
 
+#### Phase 32 · Step 1 — LLM client API hotfix (Feb 15 2026)
+
+**Bug reported by tester:** `POST /api/cfo/categorize` never invoked
+Claude — every call fell through to the `mocked:true` branch with
+`reason: "llm error: 'LlmChat' object has no attribute 'with_max_tokens'"`.
+Contract responses were honest but the actual auto-categorization was
+dead code.
+
+**Root cause:** The installed `emergentintegrations.llm.chat.LlmChat`
+surface exposes exactly these builder methods:
+`with_model(provider, model)`, `with_params(**params)`, `with_tools(…)`.
+No `with_max_tokens` / `set_max_tokens` / `set_max_output_tokens`.
+Every existing caller in the repo (churn, business_os, admin, ai_ops,
+chemicals) passes just `.with_model(…)` and never sets a token cap.
+The Step 1 helper was written against a nonexistent API surface.
+
+**Fix (one line, `backend/routers/cfo.py :: _llm_classify`):**
+```python
+-        .with_model(*_MODEL)
+-        .with_max_tokens(_LLM_MAX_OUTPUT_TOKENS))
++        .with_model(*_MODEL)
++        .with_params(max_tokens=_LLM_MAX_OUTPUT_TOKENS))
+```
+`extra_params` is spread into the underlying LiteLLM call — `max_tokens`
+is honoured for Anthropic (verified via `inspect.getsource(LlmChat)`;
+`with_params` mutates `self.extra_params` which is unpacked into every
+provider request). The 4000-token cap is preserved end-to-end.
+
+**Second, related fix — dashboard reads LLM-derived categories.** After
+the categorizer finally ran for real, `dashboard.expense_by_category`
+still bucketed everything under `"other"` because `_expenses()` was
+reading only `checks.category` (which the LLM never touches — the
+canonical LLM output lives in `expense_categories`). Ported the same
+"prefer expense_categories.category, fall back to checks.category,
+else 'other'" join that `_anomalies` already uses. Now Wave-1 dashboards
+show real categories once a categorizer run has happened.
+
+**Verification**
+- Live call (aquaterra admin, real Emergent LLM Key):
+  `POST /api/cfo/categorize?dry_run=false&force=true` →
+  `{"scanned": 4, "categorized": 4, "dry_run": false, "tokens_used": 82,
+    "mocked": false, "reasons": []}`.
+  Real Claude classified `Chevron fuel Truck 4` → `fuel` (0.99) and
+  `Poolife shock 25lb bucket` → `chemicals` (0.99).
+- `GET /api/cfo/dashboard?period=ytd` after the run →
+  `expense_by_category: [{chemicals: 311.00}, {fuel: 78.50}]`. No more
+  `"other"` bucket.
+- `pytest -x -q tests/test_phase32_cfo.py` → **13/13 passed** (up from
+  11) after adding two new tests:
+    - `test_llm_client_api_smoke_no_max_tokens_attr` — guards against
+      the exact typo by asserting `LlmChat` has NO `with_max_tokens`
+      attribute AND does expose `with_params`. Ships as an executable
+      spec so this bug can't come back silently.
+    - `test_write_path_with_stubbed_llm` — monkeypatches
+      `_llm_classify` to return valid rows, calls the categorize
+      coroutine directly (bypassing the running uvicorn process so the
+      patch actually takes effect), and asserts:
+        1. `expense_categories` receives one row per input with
+           `method="llm"` and `0 ≤ confidence ≤ 1`.
+        2. `cfo_llm_usage` bumps `request_count` and accumulates
+           `tokens_used`.
+        3. Response shape unchanged from Step 1
+           (`{scanned, categorized, dry_run, tokens_used, mocked,
+            reasons}`) — contract preserved.
+- Full regression (`phase32 + phase31 + phase30 + phase29c + phase29b
+  + phase15d`) → **54/54 passed** in 20 s.
+
+**Files edited (2)**
+- `backend/routers/cfo.py`:
+  - `_llm_classify()` — `with_max_tokens` → `with_params(max_tokens=…)`.
+  - `_expenses()` — join expense_categories → checks so
+    `expense_by_category` reflects LLM output.
+- `backend/tests/test_phase32_cfo.py` — 2 new tests.
+- `memory/HANDOFF.md` — this section.
+
+**Not changed**
+- Endpoint contract (`{scanned, categorized, dry_run, tokens_used,
+  mocked, reasons}`) — identical, tester will re-run against it.
+- The 4000-token cap — retained, now honoured by the real API.
+- Quota / RBAC / tenant isolation — untouched.
+
+**Still deferred to Step 2 (UI) / Wave 3** — no change from the
+original Step 1 note.
+

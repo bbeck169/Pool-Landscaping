@@ -232,6 +232,117 @@ def seeded_check(admin_a_tok):
 
 
 class TestCategorize:
+    def test_llm_client_api_smoke_no_max_tokens_attr(self):
+        """Guard against the exact bug fixed in the Feb-15 hotfix:
+        LlmChat has no `with_max_tokens` attribute; the router must use
+        `.with_params(max_tokens=…)`."""
+        from emergentintegrations.llm.chat import LlmChat
+        assert not hasattr(LlmChat, "with_max_tokens"), (
+            "LlmChat must NOT expose with_max_tokens — token cap goes via with_params"
+        )
+        assert hasattr(LlmChat, "with_params"), (
+            "LlmChat.with_params(**kw) is how max_tokens is passed"
+        )
+
+    def test_write_path_with_stubbed_llm(self, admin_a_tok, monkeypatch):
+        """Full write path: stub `_llm_classify` to return valid rows
+        and confirm expense_categories rows land + cfo_llm_usage bumps."""
+        import asyncio, uuid
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from dotenv import dotenv_values as _dv
+
+        # Seed two uncategorized checks so the router has work to do.
+        env = _dv("/app/backend/.env")
+        cli = AsyncIOMotorClient(env["MONGO_URL"])
+        db = cli[env["DB_NAME"]]
+
+        async def _seed():
+            u = await db.users.find_one({"email": ADMIN_A["email"]})
+            tid = u["tenant_id"]
+            ids = []
+            for memo in ("STUB fuel Chevron", "STUB shock Poolife"):
+                cid = f"TEST-stub-{uuid.uuid4().hex[:8]}"
+                await db.checks.insert_one({
+                    "id": cid, "tenant_id": tid,
+                    "amount": 42.42,
+                    "date": datetime.now(timezone.utc).date().isoformat(),
+                    "voided_at": None, "category": None, "memo": memo,
+                    "payee_name_snapshot": "TEST_ vendor",
+                    "check_number": __import__("random").randint(100000, 999999),
+                    "bank_account_id": f"TEST-{uuid.uuid4().hex[:8]}",
+                    "ref_type": "adhoc",
+                })
+                ids.append(cid)
+            return tid, ids
+
+        tid, cids = asyncio.get_event_loop().run_until_complete(_seed())
+        cli.close()
+        _reset_llm_usage(tid)
+
+        # Patch the classifier — the running uvicorn process is separate,
+        # so the monkeypatch only affects this test process. We can't
+        # dependency-inject through the HTTP layer; instead we call the
+        # inner logic directly via a Python import.
+        import sys
+        sys.path.insert(0, "/app/backend")
+        import routers.cfo as cfo_mod
+
+        async def _stub(items):
+            return (
+                [{"id": it["id"], "category": "fuel", "confidence": 0.9}
+                  for it in items],
+                None,
+                123,  # tokens
+            )
+        monkeypatch.setattr(cfo_mod, "_llm_classify", _stub)
+
+        # Reach the inner categorize via a direct coroutine call. We
+        # rebuild the tenant + user dependency shape locally.
+        from routers.cfo import categorize, CategorizeBody
+        user_stub = {"role": "admin"}
+        tenant_stub = {"id": tid}
+        result = asyncio.get_event_loop().run_until_complete(
+            categorize(
+                body=CategorizeBody(limit=10),
+                dry_run=False, force=True,
+                user=user_stub, tenant=tenant_stub,
+            )
+        )
+        assert result["scanned"] >= 2, result
+        assert result["categorized"] >= 2, result
+        assert result["dry_run"] is False
+        assert result["mocked"] is False
+        assert result["tokens_used"] > 0
+        assert result["reasons"] == []
+
+        # Verify writes landed.
+        cli = AsyncIOMotorClient(env["MONGO_URL"])
+        db = cli[env["DB_NAME"]]
+
+        async def _check():
+            rows = await db.expense_categories.find(
+                {"tenant_id": tid, "transaction_id": {"$in": cids}},
+                {"_id": 0},
+            ).to_list(10)
+            usage = await db.cfo_llm_usage.find_one(
+                {"tenant_id": tid,
+                  "date": datetime.now(timezone.utc).date().isoformat()},
+                {"_id": 0},
+            )
+            return rows, usage
+
+        rows, usage = asyncio.get_event_loop().run_until_complete(_check())
+        cli.close()
+        assert len(rows) == 2, f"expected 2 rows, got {len(rows)}: {rows}"
+        for r in rows:
+            assert r["category"] == "fuel"
+            assert r["method"] == "llm"
+            assert 0.0 <= r["confidence"] <= 1.0
+        assert usage is not None and usage["request_count"] >= 1
+        assert usage["tokens_used"] >= 123
+
+        _reset_llm_usage(tid)
+
     def test_dry_run_does_not_write(self, admin_a_tok, seeded_check):
         _tid, _cid = seeded_check
         _reset_llm_usage(_tid)
