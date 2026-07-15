@@ -92,20 +92,18 @@ const RANGE_PRESETS = [
 ];
 
 function jobToEvent(job) {
+  // Phase 30X · schedule is date-only. All events are all-day; landscaping /
+  // pool service is booked by day, not by hour.
   const dateStr = job.scheduled_date;
   if (!dateStr) return null;
-  const base = new Date(`${dateStr}T00:00:00`);
-  if (Number.isNaN(base.getTime())) return null;
-  const time = (job.scheduled_time || "09:00").split(":");
-  const start = new Date(base);
-  start.setHours(parseInt(time[0] || "9", 10), parseInt(time[1] || "0", 10), 0, 0);
-  const durationMin = Number(job.duration_minutes) || 60;
-  const end = new Date(start.getTime() + durationMin * 60000);
+  const start = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(start.getTime())) return null;
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
   const status = (job.status || "scheduled").toLowerCase();
   return {
     id: job.id,
     title: `${job.customer_name || "Job"}${job.service_type ? ` · ${job.service_type}` : ""}`,
-    start, end,
+    start, end, allDay: true,
     resource: {
       job,
       status,
@@ -151,7 +149,7 @@ export default function CalendarSchedule() {
   const [toast, setToast] = useState(null);              // {text, kind:"info"|"err"}
   const [reorderUnavailable, setReorderUnavailable] = useState(false);
 
-  const [view, setView] = useState(params.get("view") || "week");   // day | week | month | agenda
+  const [view, setView] = useState(params.get("view") || "month");   // Phase 30X · month default
   const [date, setDate] = useState(() => {
     const d = params.get("date");
     return d ? new Date(`${d}T00:00:00`) : new Date();
@@ -241,9 +239,9 @@ export default function CalendarSchedule() {
   };
 
   const onSelectSlot = (slot) => {
+    // Phase 30X · date-only. Ignore any time bit the calendar hands us.
     const d = format(slot.start, "yyyy-MM-dd");
-    const t = format(slot.start, "HH:mm");
-    navigate(`/jobs/new?date=${d}&time=${t}`);
+    navigate(`/jobs/new?date=${d}`);
   };
   const onSelectEvent = (ev) => {
     navigate(`/jobs/${ev.id}`);
@@ -264,10 +262,9 @@ export default function CalendarSchedule() {
   const focusISO = format(date, "yyyy-MM-dd");
   const dayJobs = useMemo(() => {
     const list = filteredJobs.filter((j) => (j.scheduled_date || "").slice(0, 10) === focusISO);
-    list.sort((a, b) =>
-      ((a.route_order ?? 999) - (b.route_order ?? 999))
-      || ((a.scheduled_time || "").localeCompare(b.scheduled_time || "")),
-    );
+    // Phase 30X · date-only surface. Order by route position only — no
+    // time-of-day tiebreaker (schedule is per-day, not hourly).
+    list.sort((a, b) => (a.route_order ?? 999) - (b.route_order ?? 999));
     return list;
   }, [filteredJobs, focusISO]);
   useEffect(() => { setReorderList(dayJobs); }, [dayJobs]);
@@ -571,7 +568,7 @@ export default function CalendarSchedule() {
           onView={(v) => { setView(v); setParam("view", v); }}
           date={date}
           onNavigate={(d) => { setDate(d); setParam("date", format(d, "yyyy-MM-dd")); }}
-          views={["day", "week", "month", "agenda"]}
+          views={["month", "agenda"]}
           startAccessor="start"
           endAccessor="end"
           style={{ height: 640, fontSize: 13 }}
@@ -580,6 +577,12 @@ export default function CalendarSchedule() {
           onSelectSlot={onSelectSlot}
           onSelectEvent={onSelectEvent}
           popup
+          formats={{
+            timeGutterFormat: () => "",
+            eventTimeRangeFormat: () => "",
+            agendaTimeFormat: () => "",
+            agendaTimeRangeFormat: () => "",
+          }}
         />
       </div>
       ) : (
@@ -850,7 +853,7 @@ function GridPanel({
                   <div className="flex items-center gap-2 mt-1 text-xs" style={{ color: colors.muted }}>
                     <FileText size={11} />
                     <span>{jobHours(j)}</span>
-                    {j.scheduled_time ? <><span>·</span><span>{j.scheduled_time}</span></> : null}
+                    {/* Phase 30X · time-of-day removed. Schedule is per-day. */}
                   </div>
                 </div>
                 <div

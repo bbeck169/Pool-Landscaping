@@ -2218,3 +2218,42 @@ Web-only mirror of the Phase 30 mobile fix pass. `/app/frontend/src/pages/schedu
 
 **Known noise (unchanged from Phase 30)**
 - 13 `react-big-calendar` "duplicate key" console warnings when multiple events share a slot. Pre-existing; cosmetic; scoped for a future silencing pass.
+
+#### Phase 30X · Remove time-of-day from Schedule surface (Feb 15 2026)
+
+The Schedule surface is now **date-only** on web AND mobile. Landscaping / pool service is booked per-day; the UI no longer implies hourly slotting. Backend schema (`scheduled_date`, `scheduled_time`, `duration_minutes`) is unchanged — Job Detail can still show / edit time-of-day internally, but the Schedule listing no longer surfaces it.
+
+**Web (`frontend/src/pages/schedule/CalendarSchedule.jsx`)**
+- `jobToEvent()` now emits `allDay: true`, `start = 00:00:00`, `end = 23:59:59.999`. No more `job.scheduled_time` reads, no `setHours`, no `duration_minutes`.
+- Default `view` state flipped `"week"` → `"month"`.
+- RBC `views` prop trimmed from `["day","week","month","agenda"]` to `["month","agenda"]` — Day & Week buttons no longer render in the toolbar.
+- Added `formats={{ timeGutterFormat, eventTimeRangeFormat, agendaTimeFormat, agendaTimeRangeFormat: () => "" }}` — belt-and-suspenders blanking of any time labels the built-in formatter might still emit.
+- `onSelectSlot` no longer appends `&time=…` to the create URL — just `?date=YYYY-MM-DD`.
+- Grid-panel row: removed the `{j.scheduled_time ? … }` fragment on the meta row; only the `FileText` icon + BH value remain.
+- Grid sort: dropped the `scheduled_time` tiebreaker, sorts by `route_order` alone.
+- Cleaned up a stray leftover-code block at EOF that had been silently living below the module close.
+
+**Mobile (`mobile/app/(app)/schedule/calendar.tsx`)**
+- Grid `JobRow` meta row no longer renders the `time-outline` icon + `job.scheduled_time`; only notepad + billable-hours remain.
+- Calendar-view multi-day column sort dropped the time comparator — order matches the API response (stable, per-day).
+- Grid sort likewise sheds the `scheduled_time` tiebreaker.
+- `scheduled_time` field intact on the `Job` type so the file still typechecks against the shared shape.
+
+**Files touched**
+- `frontend/src/pages/schedule/CalendarSchedule.jsx`
+- `mobile/app/(app)/schedule/calendar.tsx`
+
+**Untouched (per hard rules)**
+- Backend endpoints, job schema, job-detail page (`/jobs/:id`), customer portal, mobile customer flow.
+
+**Verification**
+- Backend regression: `test_phase30_schedule` + `test_phase29c_rbac` = **13/13 passed** in 4.6 s.
+- Webpack: **compiled with 1 warning** (pre-existing esbuild deprecation only).
+- Metro/Expo: clean, no new SyntaxErrors.
+- Live browser (Playwright, admin@aquaterra.com):
+  - `?mode=calendar` → RBC toolbar text is exactly `"Today Back Next July 2026 Month Agenda"` — **Day** and **Week** buttons gone; Month is the active view; `.rbc-month-view` rendered; `.rbc-time-gutter` absent; **8 events** rendered as full-day coloured bars; first event text contains no `HH:mm` pattern.
+  - `?mode=grid` → 4 seeded job cards render with `0.00 BH` on the meta row and **zero** matches for `\b\d{1,2}:\d{2}\b` across all cards.
+- Phase 29C RBAC gates and Phase 30W Grid/Calendar toggle both intact (verified by re-clicking the toggle mid-test).
+
+**Deferred (unchanged)**
+- The 13 `react-big-calendar` "duplicate key" console warnings still trigger when multiple events share a day. Cosmetic; scoped for a future silencing pass.

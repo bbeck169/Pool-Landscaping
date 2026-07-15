@@ -150,8 +150,8 @@ export default function ScheduleCalendar() {
   const focusISO = iso(focus);
   const dayJobs = useMemo(() => {
     const list = jobs.filter((j) => j.scheduled_date === focusISO);
-    list.sort((a, b) => (a.route_order ?? 999) - (b.route_order ?? 999)
-      || (a.scheduled_time || "").localeCompare(b.scheduled_time || ""));
+    list.sort((a, b) => (a.route_order ?? 999) - (b.route_order ?? 999));
+    // Phase 30X · schedule is per-day; no time-of-day tiebreaker.
     return list;
   }, [jobs, focusISO]);
 
@@ -496,12 +496,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
         <View style={gStyles.metaRow}>
           <Ionicons name="reader-outline" size={12} color={colors.muted} />
           <Text style={gStyles.metaText}>{jobHours(job)}</Text>
-          {job.scheduled_time ? (
-            <>
-              <Ionicons name="time-outline" size={12} color={colors.muted} style={{ marginLeft: 8 }} />
-              <Text style={gStyles.metaText}>{job.scheduled_time}</Text>
-            </>
-          ) : null}
+          {/* Phase 30X · time-of-day removed. Schedule is per-day. */}
         </View>
       </View>
       <View style={[gStyles.statusPill, { backgroundColor: pill.bg }]}>
@@ -543,9 +538,8 @@ function CalendarView({
         <View style={{ flexDirection: "row" }}>
           {weekDays.map((d: Date) => {
             const key = iso(d);
-            const dayJ: Job[] = (jobsByDay[key] || []).slice().sort(
-              (a: Job, b: Job) => (a.scheduled_time || "").localeCompare(b.scheduled_time || ""),
-            );
+            const dayJ: Job[] = (jobsByDay[key] || []).slice();
+            // Phase 30X · date-only. Stable original-order (no time sort).
             const isToday = key === iso(new Date());
             return (
               <View key={key} style={cStyles.col} testID={`calendar-col-${key}`}>
