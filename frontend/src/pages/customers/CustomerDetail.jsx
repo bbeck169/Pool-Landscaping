@@ -14,6 +14,8 @@ import {
   Briefcase,
   FileText,
   StickyNote,
+  Droplets,
+  Star,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -111,9 +113,25 @@ export default function CustomerDetail() {
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-3xl font-bold" style={{ color: colors.onSurface }}>
-              {customer.name}
-            </h1>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="text-3xl font-bold" style={{ color: colors.onSurface }}>
+                {customer.name}
+              </h1>
+              {customer.is_vip ? (
+                <span
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider"
+                  style={{
+                    backgroundColor: "#FEF3C7",
+                    color: "#92400E",
+                    border: "1px solid #F59E0B",
+                  }}
+                  data-testid="customer-vip-badge"
+                  title="VIP customer"
+                >
+                  <Star size={12} fill="#F59E0B" color="#F59E0B" /> VIP
+                </span>
+              ) : null}
+            </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               {(customer.tags || []).map((t) => (
                 <TagChip tag={t} key={t} />
@@ -143,6 +161,15 @@ export default function CustomerDetail() {
           {[
             { icon: Phone, label: "Phone", value: customer.phone },
             { icon: Mail, label: "Email", value: customer.email },
+            {
+              icon: Droplets,
+              label: "Pool",
+              value:
+                customer.pool_gallons != null
+                  ? `${Number(customer.pool_gallons).toLocaleString()} gal`
+                  : "— (not set)",
+              testid: "customer-pool-gallons-display",
+            },
             { icon: BellRing, label: "Alert phone", value: customer.alert_phone, warn: true },
             { icon: BellRing, label: "Alert email", value: customer.alert_email, warn: true },
           ].map((c) => (
@@ -153,6 +180,7 @@ export default function CustomerDetail() {
                 backgroundColor: colors.surfaceSecondary,
                 border: `1px solid ${colors.border}`,
               }}
+              data-testid={c.testid}
             >
               <div className="flex items-center gap-1.5 text-xs mb-1" style={{ color: c.warn ? "#A16207" : colors.muted }}>
                 <c.icon size={12} />

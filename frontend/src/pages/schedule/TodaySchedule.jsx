@@ -13,7 +13,7 @@ import WeatherWidget5Day from "@/pages/aitools/WeatherWidget5Day";
 import {
   Clock, MapPin, Navigation, Car, Coffee, PlayCircle, StopCircle,
   AlertTriangle, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare,
-  Key, StickyNote, Route as RouteIcon, RotateCcw,
+  Key, StickyNote, Route as RouteIcon, RotateCcw, Star,
 } from "lucide-react";
 
 const GOOGLE_LIBS = ["places"];

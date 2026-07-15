@@ -163,7 +163,7 @@ async def list_jobs(
         if cids:
             custs = await db.customers.find(
                 {"id": {"$in": cids}, "tenant_id": tenant["id"]},
-                {"_id": 0, "id": 1, "notes": 1, "gate_code": 1},
+                {"_id": 0, "id": 1, "notes": 1, "gate_code": 1, "is_vip": 1},
             ).to_list(1000)
             cmap = {c["id"]: c for c in custs}
             for d in docs:
@@ -171,6 +171,12 @@ async def list_jobs(
                 if c:
                     d["account_notes"] = c.get("notes", "")
                     d["gate_code"] = c.get("gate_code", "")
+                    # Phase 34d-follow — surface VIP flag on the job payload
+                    # so schedule/dispatch cards can render a badge without an
+                    # extra roundtrip. Missing/legacy docs → False.
+                    d["customer_is_vip"] = bool(c.get("is_vip"))
+                else:
+                    d["customer_is_vip"] = False
     # Phase 16C add-on: strip revenue/pricing fields for technicians.
     if user.get("role") == "technician":
         for d in docs:

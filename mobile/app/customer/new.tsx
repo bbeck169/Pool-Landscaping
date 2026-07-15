@@ -15,7 +15,7 @@ export default function CustomerForm() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const router = useRouter();
   const editing = !!id;
-  const [form, setForm] = useState({ name: "", email: "", phone: "", address: "", billing_address: "", gate_code: "", notes: "", avatar: "" });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", address: "", billing_address: "", gate_code: "", notes: "", avatar: "", pool_gallons: "", is_vip: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -25,6 +25,8 @@ export default function CustomerForm() {
         setForm({
           name: c.name || "", email: c.email || "", phone: c.phone || "", address: c.address || "",
           billing_address: c.billing_address || "", gate_code: c.gate_code || "", notes: c.notes || "", avatar: c.avatar || "",
+          pool_gallons: c.pool_gallons == null ? "" : String(c.pool_gallons),
+          is_vip: !!c.is_vip,
         })
       );
     }
@@ -45,11 +47,22 @@ export default function CustomerForm() {
       setError("Name is required");
       return;
     }
+    // Phase 34d — pool_gallons: blank → null; else must be integer 1..500000.
+    let poolGallonsPayload: number | null = null;
+    if (form.pool_gallons !== "" && form.pool_gallons != null) {
+      const n = Number(form.pool_gallons);
+      if (!Number.isInteger(n) || n < 1 || n > 500000) {
+        setError("Pool volume must be a whole number between 1 and 500,000 gallons.");
+        return;
+      }
+      poolGallonsPayload = n;
+    }
     setBusy(true);
     setError("");
     try {
-      if (editing) await api.put(`/customers/${id}`, form);
-      else await api.post("/customers", form);
+      const payload = { ...form, pool_gallons: poolGallonsPayload, is_vip: !!form.is_vip };
+      if (editing) await api.put(`/customers/${id}`, payload);
+      else await api.post("/customers", payload);
       router.back();
     } catch (e: any) {
       setError(e.message || "Failed to save");
@@ -87,6 +100,28 @@ export default function CustomerForm() {
         <Field label="Service Address" value={form.address} onChangeText={set("address")} placeholder="Street, City, State" testID="customer-address-input" />
         <Field label="Billing Address" value={form.billing_address} onChangeText={set("billing_address")} placeholder="If different from service address" testID="customer-billing-input" />
         <Field label="Gate Code" value={form.gate_code} onChangeText={set("gate_code")} placeholder="e.g. #1234" testID="customer-gate-input" />
+        <Field
+          label="Pool Volume (gallons)"
+          value={form.pool_gallons}
+          onChangeText={set("pool_gallons")}
+          placeholder="e.g. 20000"
+          keyboardType="number-pad"
+          testID="customer-pool-gallons-input"
+        />
+        <Text style={styles.hint}>Used for chemical dosing recommendations. Leave blank if unknown.</Text>
+        <View style={styles.vipRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.vipLabel}>VIP customer</Text>
+            <Text style={styles.vipHint}>Highlights on tech routes and dispatch board.</Text>
+          </View>
+          <Switch
+            testID="customer-vip-toggle"
+            value={!!form.is_vip}
+            onValueChange={(v) => setForm((f) => ({ ...f, is_vip: v }))}
+            trackColor={{ false: colors.border, true: "#F59E0B" }}
+            thumbColor={form.is_vip ? "#FEF3C7" : "#f4f3f4"}
+          />
+        </View>
         <Field label="Notes" value={form.notes} onChangeText={set("notes")} placeholder="Access instructions, pets, preferences…" multiline testID="customer-notes-input" />
         {error ? <Text style={styles.error} testID="customer-form-error">{error}</Text> : null}
         <View style={{ height: spacing.lg }} />
@@ -138,4 +173,13 @@ const styles = StyleSheet.create({
   },
   multiline: { height: 100, paddingTop: spacing.md, textAlignVertical: "top" },
   error: { color: colors.error, fontFamily: font.medium, fontSize: fontSize.base, marginTop: spacing.sm },
+  hint: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: -spacing.sm, marginBottom: spacing.md },
+  vipRow: {
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: spacing.md,
+    marginBottom: spacing.md,
+  },
+  vipLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
+  vipHint: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
 });

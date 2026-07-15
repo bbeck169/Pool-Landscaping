@@ -3689,3 +3689,166 @@ Button + modal wired to spec:
   (`churn-create-campaign-btn`, `churn-campaign-modal`, slider,
    count-preview, channel, confirm, cancel, mocked-reason,
    success-banner, open-editor).
+
+#### Phase 34d · pool_gallons + is_vip on Customer (Feb 15 2026)
+
+Two additive fields on `CustomerIn`; zero migration. Ships in a single
+web + mobile pass — no separate `-follow` phase.
+
+**Backend — `backend/models.py`**
+- `pool_gallons: Optional[int] = None` with a `@field_validator` that
+  accepts only `None` or a plain integer in `[1, 500000]`. Rejects
+  booleans (bool is int subclass), floats, strings, arrays, and objects
+  with `ValueError` → FastAPI returns 422.
+- `is_vip: Optional[bool] = False`. Missing/legacy docs read back as
+  `undefined` on GET, which is falsy in React + RN; POST/PUT echo the
+  field explicitly.
+
+**Backend — `backend/routers/jobs.py :: list_jobs`**
+- Existing customer projection extended from `{notes, gate_code}` to
+  `{notes, gate_code, is_vip}`.
+- Every job in the response gets a `customer_is_vip: bool` computed
+  field (missing customer row → `False`). Job schema is untouched —
+  the flag is a read-time join.
+
+**Web — `frontend/src/pages/customers/CustomerForm.jsx`**
+- Numeric `pool_gallons` input in the primary contact card:
+  `type="number"`, `min=1 max=500000 step=1`, help text
+  "Used for chemical dosing recommendations. Leave blank if unknown."
+  Test-id `customer-pool-gallons-input`.
+- VIP toggle checkbox next to the waitlist toggle, labeled
+  "VIP customer" with sub-text "Highlights on tech routes and
+  dispatch board." Test-id `customer-vip-toggle`.
+- Submit sanitises the numeric field: blank → `null`; non-integer or
+  out-of-range → inline toast error, no POST fired.
+
+**Web — `frontend/src/pages/customers/CustomerDetail.jsx`**
+- New "Pool" stat card in the 4-tile header grid (Phone / Email / Pool
+  / Alert channels). Renders `20,000 gal` when set (locale grouping),
+  `— (not set)` when null. Test-id
+  `customer-pool-gallons-display`. Uses `Droplets` from lucide.
+- Gold `VIP` pill (star + text, `#FEF3C7` bg, `#92400E` text,
+  `#F59E0B` border) inline with the customer name at the top-right
+  of the header card. Test-id `customer-vip-badge`.
+
+**Web — schedule VIP badges**
+- `pages/schedule/TodaySchedule.jsx` (tech route today view) — gold
+  VIP pill rendered inline with `customer_name` when
+  `j.customer_is_vip`. Test-id per-row `job-vip-badge-<jobId>`.
+- `pages/schedule/CalendarSchedule.jsx` — grid mode gets the same
+  inline pill next to the customer name. Calendar (RBC) mode gets a
+  leading `★ ` glyph in the event title so the tile carries the same
+  visual weight without needing a custom EventComponent.
+
+**Mobile — `mobile/app/customer/new.tsx`**
+- `pool_gallons` numeric field (`keyboardType="number-pad"`) with the
+  same help text and validation as web. Test-id
+  `customer-pool-gallons-input`.
+- VIP `Switch` block with label + help text. Test-id
+  `customer-vip-toggle`. Sends `is_vip: bool` on POST/PUT.
+
+**Mobile — `mobile/app/customer/[id].tsx`**
+- Gold VIP badge (star + "VIP") rendered above the contact card when
+  `c.is_vip`. Test-id `customer-vip-badge`.
+- New always-visible `ContactRow`-style row for
+  `Pool: X,XXX gal` (or `Pool: — (not set)`). Test-id
+  `customer-pool-gallons-display`. `water-outline` Ionicon.
+
+**Mobile — schedule VIP badges**
+- `app/(app)/schedule/calendar.tsx` grid card: inline gold pill next
+  to `customer_name`. Test-id `job-vip-badge-<jobId>`.
+- Same file, calendar column events: leading `★ ` glyph on the
+  customer_name Text.
+- `src/components/widgets.tsx :: JobCard` (used by `schedule/index.tsx`
+  and other listings): gold pill next to `job.customer_name`.
+  Test-id `job-vip-badge-<jobId>`.
+
+**Test IDs (final list)**
+`customer-pool-gallons-input`, `customer-pool-gallons-display`,
+`customer-vip-toggle`, `customer-vip-badge`,
+`job-vip-badge-<jobId>` (present on every schedule/dispatch card
+where the job's customer is VIP; missing on non-VIP jobs).
+
+**Tests — `backend/tests/test_phase34d_pool_gallons.py`**
+`18 passed` in 8.8 s (14 pool_gallons + 4 VIP):
+1. `test_create_with_pool_gallons_roundtrips`
+2. `test_create_without_pool_gallons_returns_null`
+3. `test_update_sets_pool_gallons` (full-body PUT; no PATCH exists)
+4. `test_update_to_null`
+5. `test_invalid_pool_gallons_rejected` — parametrised over
+   `[-1, 0, 500001, "abc", 1.5, [], {}]` → all 422.
+6. `test_boundaries_accepted` — 1 and 500,000 both round-trip.
+7. `test_tech_cannot_create_customer` — RBAC unchanged, tech = 403.
+8. `test_list_customers_includes_pool_gallons` — no projection strips.
+9. `test_create_with_is_vip_true`
+10. `test_default_is_vip_false`
+11. `test_toggle_is_vip_via_put` (both directions)
+12. `test_jobs_endpoint_surfaces_customer_is_vip` — seeds VIP customer
+    + job, verifies `GET /api/jobs` returns `customer_is_vip: true` on
+    that job and the field is present (even as `False`) on other jobs.
+
+**Deviation from brief** — brief mentioned PATCH for updates. There
+is no PATCH endpoint on `/customers/{id}` today; PUT is the full-body
+update path and Pydantic accepts a name-only body with
+`pool_gallons: null` / `is_vip: false`. Tests use PUT accordingly.
+Called out inline in the test docstring so the next agent doesn't
+re-derive this. Adding a proper PATCH is deferred as a small
+one-endpoint follow-up if partial updates become common.
+
+**OpenAPI verification** (live pod):
+```
+CustomerIn.pool_gallons: {anyOf:[integer, null], title: "Pool Gallons"}
+CustomerIn.is_vip:       {anyOf:[boolean, null], default: false}
+```
+
+**Live web verification** — logged in as `admin@aquaterra.com`,
+seeded a VIP customer with `pool_gallons=20000`. Detail page shows
+the gold `VIP` pill next to the name AND a `Pool 20,000 gal` stat
+tile in the header grid (screenshot captured to
+`/tmp/vip_customer_detail.png`). Testids
+`customer-vip-badge` and `customer-pool-gallons-display` both
+resolve. Webpack recompiled clean.
+
+**Files added (0)** — appended tests to existing 34d file.
+
+**Files edited (8)**
+- `backend/models.py`
+- `backend/routers/jobs.py`
+- `backend/tests/test_phase34d_pool_gallons.py` (appended VIP block)
+- `frontend/src/pages/customers/CustomerForm.jsx`
+- `frontend/src/pages/customers/CustomerDetail.jsx`
+- `frontend/src/pages/schedule/TodaySchedule.jsx`
+- `frontend/src/pages/schedule/CalendarSchedule.jsx`
+- `mobile/app/customer/new.tsx`
+- `mobile/app/customer/[id].tsx`
+- `mobile/app/(app)/schedule/calendar.tsx`
+- `mobile/src/components/widgets.tsx` (JobCard widget)
+- `memory/HANDOFF.md` — this section.
+
+**Not touched (per hard rules)**
+- Customer schema: only the two named fields added — no pump/filter/
+  salt-vs-chlorine and no additional pool profile fields.
+- Job schema: untouched; `customer_is_vip` is a read-time join.
+- Dispatch board — VIP flag naturally propagates through the same
+  `/api/jobs` payload; existing dispatch card renders will get the
+  badge once they read `customer_is_vip` (no dispatch UI edits made
+  in this pass beyond the two schedule surfaces the brief called
+  out explicitly). If dispatch board cards should also show the
+  badge, it is a 1-line addition in `pages/dispatch/*` — flagged
+  for the next pass.
+- Customer portal (public) — 0 diffs.
+
+**Housekeeping flag (pre-existing, NOT caused by this phase)**
+Running the full 34* suite hit one failure in
+`test_phase34b_retention_bridge.py::test_threshold_filter_and_write`:
+`target_count == 3` instead of 2. Cause is stale
+`customer_churn_scores` docs from an earlier run — the module-scoped
+fixture's cleanup left seeds behind. Not related to 34d. Add a broad
+`TEST-retention-*` cleanup to `backend/tests/conftest.py` when
+touching that file next — one-liner regex sweep.
+
+**Deferred**
+- Dispatch board VIP badge (1-line follow-up if needed).
+- Proper `PATCH /customers/{id}` endpoint for partial updates.
+- Phase 34e — AI chemical dosing recommendations, which now has
+  `pool_gallons` to consume.

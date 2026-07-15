@@ -134,11 +134,29 @@ export default function CustomerDetail() {
         }
       />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}>
+        {c.is_vip ? (
+          <View style={styles.vipBadge} testID="customer-vip-badge">
+            <Ionicons name="star" size={14} color="#92400E" />
+            <Text style={styles.vipBadgeText}>VIP</Text>
+          </View>
+        ) : null}
         <View style={styles.card}>
           <ContactRow icon="call-outline" value={c.phone} onPress={() => c.phone && Linking.openURL(`tel:${c.phone}`)} />
           <ContactRow icon="mail-outline" value={c.email} onPress={() => c.email && Linking.openURL(`mailto:${c.email}`)} />
           <ContactRow icon="location-outline" value={c.address} />
           <ContactRow icon="card-outline" value={c.billing_address ? `Billing: ${c.billing_address}` : ""} />
+          {/* Phase 34d — always render (with placeholder when null) so it has
+              the same visual weight as phone/email. */}
+          <View style={styles.contactRow} testID="customer-pool-gallons-display">
+            <View style={styles.contactIcon}>
+              <Ionicons name="water-outline" size={18} color={colors.brand} />
+            </View>
+            <Text style={styles.contactValue}>
+              {c.pool_gallons != null
+                ? `Pool: ${Number(c.pool_gallons).toLocaleString()} gal`
+                : "Pool: — (not set)"}
+            </Text>
+          </View>
         </View>
 
         {isAdmin && c.has_login ? (
@@ -313,4 +331,14 @@ const styles = StyleSheet.create({
   pmValue: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 1 },
   pmRequest: { backgroundColor: colors.brandTertiary, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill },
   pmRequestText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand },
+  vipBadge: {
+    flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
+    gap: 4, backgroundColor: "#FEF3C7", borderColor: "#F59E0B", borderWidth: 1,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill,
+    marginBottom: spacing.md,
+  },
+  vipBadgeText: {
+    fontFamily: font.bold, fontSize: fontSize.xs, color: "#92400E",
+    letterSpacing: 1, textTransform: "uppercase",
+  },
 });

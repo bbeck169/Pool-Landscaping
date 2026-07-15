@@ -36,6 +36,29 @@ class CustomerIn(BaseModel):
     alert_phone: Optional[str] = ""          # after-hours SMS escalation
     waitlisted: Optional[bool] = False       # unscheduled customer flagged as waiting for a slot
     secondary_addresses: Optional[List[str]] = []
+    # Phase 34d — pool volume in US gallons. Feeds Phase 34e chemical dosing.
+    # Optional; existing customer docs read back as null. When provided,
+    # must be a plain integer between 1 and 500,000 gallons.
+    pool_gallons: Optional[int] = None
+    # Phase 34d-follow — VIP flag. Surfaces a gold badge on the customer
+    # header and on every schedule/dispatch card that references this
+    # customer. Existing docs without the field read back as False on the
+    # client (JSON `undefined` is falsy in both React and RN).
+    is_vip: Optional[bool] = False
+
+    @field_validator("pool_gallons")
+    @classmethod
+    def _check_pool_gallons(cls, v):
+        if v is None:
+            return v
+        # Reject booleans (bool is a subtype of int in Python).
+        if isinstance(v, bool):
+            raise ValueError("pool_gallons must be an integer")
+        if not isinstance(v, int):
+            raise ValueError("pool_gallons must be an integer")
+        if v < 1 or v > 500000:
+            raise ValueError("pool_gallons must be between 1 and 500000")
+        return v
 
 
 class CustomerBulkAction(BaseModel):

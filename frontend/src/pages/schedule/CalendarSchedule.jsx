@@ -26,7 +26,7 @@ import { enUS } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import { Plus, Search, X as XIcon, Filter, ChevronLeft, ChevronRight,
          CheckCircle2, Move as MoveIcon, ArrowUp, ArrowDown, FileText,
-         Save as SaveIcon } from "lucide-react";
+         Save as SaveIcon, Star } from "lucide-react";
 
 import { api } from "@/api";
 import { colors, font } from "@/theme";
@@ -879,8 +879,22 @@ function GridPanel({
                        style={{ color: svc.tag }}>
                     {isRecurring(j) ? "🔁 " : ""}{j.service_type || "General"}
                   </div>
-                  <div className="text-sm font-bold" style={{ color: colors.onSurface }}>
-                    {j.customer_name || "Unknown"}
+                  <div className="text-sm font-bold flex items-center gap-1.5" style={{ color: colors.onSurface }}>
+                    <span>{j.customer_name || "Unknown"}</span>
+                    {j.customer_is_vip ? (
+                      <span
+                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider"
+                        style={{
+                          backgroundColor: "#FEF3C7",
+                          color: "#92400E",
+                          border: "1px solid #F59E0B",
+                        }}
+                        data-testid={`job-vip-badge-${j.id}`}
+                        title="VIP customer"
+                      >
+                        <Star size={9} fill="#F59E0B" color="#F59E0B" /> VIP
+                      </span>
+                    ) : null}
                   </div>
                   {j.address ? (
                     <div className="text-xs truncate" style={{ color: colors.muted }}>{j.address}</div>

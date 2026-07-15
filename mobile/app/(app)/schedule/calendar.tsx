@@ -506,6 +506,12 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
           {(job.service_type || "General").toUpperCase()}
         </Text>
         <Text style={gStyles.cust} numberOfLines={1}>{job.customer_name || "Unknown"}</Text>
+        {job.customer_is_vip ? (
+          <View style={gStyles.vipBadge} testID={`job-vip-badge-${job.id}`}>
+            <Ionicons name="star" size={9} color="#92400E" />
+            <Text style={gStyles.vipText}>VIP</Text>
+          </View>
+        ) : null}
         {job.address ? (
           <Text style={gStyles.addr} numberOfLines={1}>{job.address}</Text>
         ) : null}
@@ -582,7 +588,7 @@ function CalendarView({
                           {j.service_type || j.title || "Job"}
                         </Text>
                         <Text style={[cStyles.eventCust, { color: svc.fg }]} numberOfLines={1}>
-                          {j.customer_name || "—"}
+                          {j.customer_is_vip ? "★ " : ""}{j.customer_name || "—"}
                         </Text>
                         {showBH ? (
                           <Text style={[cStyles.eventBH, { color: svc.fg }]}>{jobHours(j)}</Text>
@@ -629,6 +635,16 @@ const styles = StyleSheet.create({
 });
 
 const gStyles = StyleSheet.create({
+  vipBadge: {
+    flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
+    gap: 2, backgroundColor: "#FEF3C7", borderColor: "#F59E0B", borderWidth: 1,
+    paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.pill,
+    marginTop: 2,
+  },
+  vipText: {
+    fontFamily: font.bold, fontSize: 9, color: "#92400E",
+    letterSpacing: 0.8, textTransform: "uppercase",
+  },
   dayHead: {
     flexDirection: "row", alignItems: "center", gap: spacing.xs,
     marginBottom: spacing.sm,

@@ -36,6 +36,8 @@ export default function CustomerForm() {
     waitlisted: false,
     tags: [],
     secondary_addresses: [],
+    pool_gallons: "",
+    is_vip: false,
   });
   const [busy, setBusy] = useState(false);
   const [newTag, setNewTag] = useState("");
@@ -57,6 +59,7 @@ export default function CustomerForm() {
         waitlisted: !!c.waitlisted,
         tags: c.tags || [],
         secondary_addresses: c.secondary_addresses || [],
+        pool_gallons: c.pool_gallons == null ? "" : String(c.pool_gallons),
       })
     );
   }, [id, isEdit]);
@@ -94,9 +97,27 @@ export default function CustomerForm() {
       setToast({ tone: "error", message: "Name is required" });
       return;
     }
+    // Phase 34d — pool_gallons: blank → null; else must be a plain integer 1..500000.
+    let poolGallonsPayload = null;
+    if (form.pool_gallons !== "" && form.pool_gallons != null) {
+      const n = Number(form.pool_gallons);
+      if (!Number.isInteger(n) || n < 1 || n > 500000) {
+        setToast({
+          tone: "error",
+          message: "Pool volume must be a whole number between 1 and 500,000 gallons.",
+        });
+        return;
+      }
+      poolGallonsPayload = n;
+    }
     setBusy(true);
     try {
-      const doc = { ...form, email: (form.email || "").trim().toLowerCase() };
+      const doc = {
+        ...form,
+        email: (form.email || "").trim().toLowerCase(),
+        pool_gallons: poolGallonsPayload,
+        is_vip: !!form.is_vip,
+      };
       const saved = isEdit
         ? await api.put(`/customers/${id}`, doc)
         : await api.post("/customers", doc);
@@ -150,6 +171,36 @@ export default function CustomerForm() {
             />
           </div>
           <TextInput label="BILLING ADDRESS" id="billing_address" value={form.billing_address} onChange={set("billing_address")} testid="cf-billing" />
+          <div>
+            <label
+              className="text-xs font-semibold tracking-wide mb-1 block"
+              style={{ color: colors.onSurfaceSecondary }}
+              htmlFor="pool_gallons"
+            >
+              POOL VOLUME (GALLONS)
+            </label>
+            <input
+              id="pool_gallons"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={500000}
+              step={1}
+              value={form.pool_gallons}
+              onChange={set("pool_gallons")}
+              placeholder="e.g. 20000"
+              className="w-full px-3.5 py-2.5 rounded-lg outline-none focus:ring-2 text-sm"
+              style={{
+                backgroundColor: colors.surface,
+                color: colors.onSurface,
+                border: `1px solid ${colors.border}`,
+              }}
+              data-testid="customer-pool-gallons-input"
+            />
+            <div className="text-xs mt-1" style={{ color: colors.muted }}>
+              Used for chemical dosing recommendations. Leave blank if unknown.
+            </div>
+          </div>
         </div>
 
         {/* Tags */}
@@ -274,6 +325,21 @@ export default function CustomerForm() {
               data-testid="cf-waitlist"
             />
             <span style={{ color: colors.onSurface }}>Add to waitlist (no scheduled visit)</span>
+          </label>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={!!form.is_vip}
+              onChange={set("is_vip")}
+              data-testid="customer-vip-toggle"
+              className="mt-0.5"
+            />
+            <span>
+              <span style={{ color: colors.onSurface, fontWeight: 600 }}>VIP customer</span>
+              <span className="block text-xs" style={{ color: colors.muted }}>
+                Highlights on tech routes and dispatch board.
+              </span>
+            </span>
           </label>
         </div>
 

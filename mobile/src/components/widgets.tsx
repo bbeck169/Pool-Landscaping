@@ -109,7 +109,15 @@ export function JobCard({ job, testID, locked }: { job: any; testID?: string; lo
           <Text style={styles.jobTitle} numberOfLines={1}>
             {job.title}
           </Text>
-          <Text style={styles.jobCustomer}>{job.customer_name}</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <Text style={styles.jobCustomer}>{job.customer_name}</Text>
+            {job.customer_is_vip ? (
+              <View style={styles.vipBadgeSm} testID={`job-vip-badge-${job.id}`}>
+                <Ionicons name="star" size={9} color="#92400E" />
+                <Text style={styles.vipBadgeSmText}>VIP</Text>
+              </View>
+            ) : null}
+          </View>
         </View>
         <StatusChip status={job.status} />
       </View>
@@ -194,6 +202,15 @@ export function FilterRow({
 }
 
 const styles = StyleSheet.create({
+  vipBadgeSm: {
+    flexDirection: "row", alignItems: "center", gap: 2,
+    backgroundColor: "#FEF3C7", borderColor: "#F59E0B", borderWidth: 1,
+    paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999,
+  },
+  vipBadgeSmText: {
+    fontFamily: font.bold, fontSize: 9, color: "#92400E",
+    letterSpacing: 0.8, textTransform: "uppercase",
+  },
   header: {
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.md,
