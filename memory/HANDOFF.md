@@ -4849,3 +4849,7 @@ surface `SomethingRef` names, not gate finishes on regex quirks.
 - Pre-existing pytest flakiness in `test_phase34b_retention_bridge.py` and `test_auto_clockin.py::test_auto_clockin_in_geofence_but_out_of_window` NOT touched by Phase 37 (backend untouched). Left as-is.
 
 **Not touched (per brief):** photos section, backend routers/models, customer portal.
+
+##### Hotfix: auto-collapse row after option pick
+- Both `ChemicalDropdownStack` components now call `setOpenSlug(null)` at the tail of `upsert()`, so tapping any preset (or the "No X Used" sentinel) closes the row immediately and reveals the updated `chemicals-row-{slug}-current` line.
+- Playwright verification: `option-3-tabs` visible before click = 1, after click = 0; `chemicals-row-chlorine-tablets-current` reads "3 Tabs". Preflight still exit 0. No backend / schema change.

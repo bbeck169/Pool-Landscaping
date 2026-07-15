@@ -140,6 +140,8 @@ export default function ChemicalDropdownStack({
       else next.push(entry);
     }
     onChange({ chemicals_added: next });
+    // Phase 37 hotfix — auto-collapse the row after any selection.
+    setOpenSlug(null);
   };
 
   return (
