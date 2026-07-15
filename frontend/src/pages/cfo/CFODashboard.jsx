@@ -26,6 +26,8 @@ import {
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { Forbidden } from "@/hooks/usePermissions";
+import QnAPanel from "@/components/cfo/QnAPanel";
+import ScenarioPanel from "@/components/cfo/ScenarioPanel";
 
 const c = {
   brand: "#0EA5E9", brandDark: "#075985",
@@ -558,6 +560,18 @@ export default function CFODashboard() {
           // Auto-dismiss after 6s so the banner doesn't linger.
           setTimeout(() => setCategorizeBanner(null), 6000);
         }}
+      />
+
+      {/* Phase 33 · Step 2 — Wave 3 UI: NL Q&A + Scenario Planner */}
+      <QnAPanel
+        period={period}
+        customStart={customStart}
+        customEnd={customEnd}
+        onUsageChange={load}
+      />
+      <ScenarioPanel
+        topCustomers={dash?.top_customers /* falls through when dashboard hasn't hydrated top_customers */ || []}
+        onUsageChange={load}
       />
     </div>
   );

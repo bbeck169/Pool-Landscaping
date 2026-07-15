@@ -3296,3 +3296,149 @@ test_phase29c` = **49/49 passed** in 17.9 s.
 
 **Board PDF export** — still skipped per user.
 
+#### Phase 33 · Step 2 — AI CFO Wave 3 UI (web only) (Feb 15 2026)
+
+Two new panels mounted below the existing `/cfo` dashboard: "Ask AI CFO"
+(NL Q&A over the tenant's financials) and "Scenario Planner" (12-month
+P&L delta with structured params + free-text prompt). Both call the
+frozen Phase 33 · Step 1 endpoints — no backend changes, no new deps
+(reuses `recharts` already in the project). Mobile parity intentionally
+skipped per brief (admin flow stays on desktop).
+
+**Endpoints consumed (all pre-existing)**
+- `POST /api/cfo/qna`
+- `GET  /api/cfo/qna/history?limit=20`
+- `POST /api/cfo/scenario`
+- `GET  /api/cfo/scenario/history?limit=20`
+- `POST /api/cfo/scenario/{id}/save-as-favorite?favorite=…`
+
+Both bare-array history endpoints are normalized on the client
+(`Array.isArray(rows) ? rows : rows?.items || []`).
+
+**New components (2) — `/app/frontend/src/components/cfo/`**
+- `QnAPanel.jsx` — textarea + Ask button, period pill inherited from
+  the dashboard (passed as prop so users always see the same context
+  their KPIs use), history drawer via chevron toggle. Quota-soft-block
+  banner renders with a `cfo-qna-force-submit` "Force submit" button
+  that re-fires with `?force=true`. Answers render honestly: `mocked:true`
+  responses dim the text, attach a `mocked-badge` with the `reason`
+  tooltip, and surface `LLM unavailable — {reason}` in a yellow strip
+  above the (empty) answer. Clicking a history row loads its Q&A
+  read-only.
+- `ScenarioPanel.jsx` — structured inputs (hire techs numeric,
+  hourly rate numeric, price change % range slider, customers-to-churn
+  multi-select) plus a free-text `cfo-scenario-prompt` textarea; both
+  travel together on `POST /api/cfo/scenario`. When only the sliders
+  are touched, an internal `_synthesizePrompt(structured)` synthesizes
+  a prompt like `"Scenario: hire 2 techs at $22/hr; change prices by
+  10%."` so the LLM always has narrative context. Result renders as:
+  assumptions card + `cfo-scenario-monthly-chart` (recharts LineChart
+  with revenue/expense/net deltas across 12 months, green/red/purple)
+  + 4-tile annual card + confidence pill (green/amber/red for
+  high/med/low) + optional caveats card + `cfo-scenario-favorite`
+  toggle. Honest render: `result.mocked===true` shows a yellow
+  banner with the `reason` string prominently AND still renders the
+  zero-filled chart so the layout doesn't collapse. History drawer
+  sorts favorites first (star icon), then created_at DESC.
+
+**Shared LLM usage strip** — the Phase 32 `cfo-llm-usage` footer
+widget already existed; both new panels invoke the dashboard-level
+`load()` via `onUsageChange` prop after each successful submit so
+the counter auto-refreshes without extra plumbing.
+
+**Top-customers wiring** — the churn multi-select consumes
+`dash.top_customers` if the dashboard payload ships it. The Step 1
+context builder DOES compute a top-5-by-revenue list but only inside
+Q&A / Scenario context snapshots — the dashboard aggregate doesn't
+return `top_customers` yet. The panel handles that gracefully with a
+`cfo-scenario-churn-empty` italic note ("No top customers loaded
+yet."). Adding `top_customers` to `/cfo/dashboard` is a one-liner
+backend change deferred to a Step 2b.
+
+**File edits — `pages/cfo/CFODashboard.jsx`**
+- Imported `QnAPanel` and `ScenarioPanel`.
+- Rendered both below the existing sections, wired to the same
+  `period` / `customStart` / `customEnd` state and to `load` for
+  usage refresh.
+- Zero changes to the dashboard/forecast/anomalies/categorize logic.
+
+**Test IDs shipped** (all required by brief + a few bonuses)
+Panels: `cfo-qna-panel`, `cfo-scenario-panel`.
+Q&A: `cfo-qna-input`, `cfo-qna-submit`, `cfo-qna-answer`,
+`cfo-qna-history-toggle`, `cfo-qna-history-list`, `cfo-qna-history-item`,
+`cfo-qna-history-empty`, `cfo-qna-loading`, `cfo-qna-error`,
+`cfo-qna-quota-banner`, `cfo-qna-force-submit`, `cfo-qna-mocked-reason`.
+Scenario: `cfo-scenario-prompt`, `cfo-scenario-hire-techs`,
+`cfo-scenario-hourly-rate`, `cfo-scenario-price-change`,
+`cfo-scenario-churn`, `cfo-scenario-churn-empty`, `cfo-scenario-submit`,
+`cfo-scenario-result`, `cfo-scenario-history-toggle`,
+`cfo-scenario-history-list`, `cfo-scenario-history-item`,
+`cfo-scenario-history-empty`, `cfo-scenario-favorite`,
+`cfo-scenario-loading`, `cfo-scenario-error`, `cfo-scenario-quota-banner`,
+`cfo-scenario-force-submit`, `cfo-scenario-mocked-reason`,
+`cfo-scenario-monthly-chart`, `cfo-scenario-annual`,
+`cfo-scenario-annual-revenue`, `cfo-scenario-annual-expense`,
+`cfo-scenario-annual-net`, `cfo-scenario-annual-margin`,
+`cfo-scenario-confidence`, `cfo-scenario-caveats`.
+Shared: `mocked-badge` reused on any mocked field.
+
+**Files added (2)**
+- `frontend/src/components/cfo/QnAPanel.jsx`
+- `frontend/src/components/cfo/ScenarioPanel.jsx`
+
+**Files edited (1)**
+- `frontend/src/pages/cfo/CFODashboard.jsx` — import + mount both
+  panels + wire `onUsageChange={load}`.
+- `memory/HANDOFF.md` — this section.
+
+**Not touched (per hard rules)**
+- Backend (routers, tests, schema) — 0 diffs.
+- Mobile app — 0 diffs (mobile Q&A/Scenario intentionally out of scope).
+- Other web pages — 0 diffs.
+- Customer portal — 0 diffs.
+- No new npm dependencies (recharts already installed for Phase 32).
+
+**Verification**
+- Webpack: `bundle.js` HTTP 200, 14.08 MB, "Compiled successfully!"
+  in supervisor logs. Combined match count for `cfo-qna-panel |
+  cfo-scenario-panel | QnAPanel | ScenarioPanel | cfo-qna-input |
+  cfo-scenario-submit` = **348** in the compiled bundle.
+- Backend regression: `pytest -x -q tests/test_phase33_cfo_qna.py` →
+  **14/14 passed** in 3.3 s. Zero backend files touched.
+- **Live browser E2E** (Playwright, real preview URL, real Emergent
+  LLM Key — see screenshots in the reply):
+  1. `/cfo` loads with both panels visible below the dashboard.
+     Test IDs `cfo-qna-panel` and `cfo-scenario-panel` present.
+  2. Q&A round trip — filled `cfo-qna-input` with "What is my YTD
+     gross profit and margin percent?", clicked `cfo-qna-submit`,
+     Claude returned a formatted markdown table (Revenue $2,948.40 /
+     Gross $2,847.40 / Margin 96.57%) plus honest caveats about the
+     mocked AP-aging + missing COGS. Tokens 233. Answer rendered in
+     `cfo-qna-answer`. History drawer toggled — 2 items rendered
+     including a prior "What is our YTD revenue?" from earlier
+     testing.
+  3. Scenario round trip — set hire_techs=2, hourly=22,
+     price_change=10, prompt "Hire 2 techs at $22/hr and raise
+     prices 10%." Clicked `cfo-scenario-submit`. Claude returned a
+     real projection: **Annual Δ Net = −$99,043** (red tile),
+     **Confidence: low** (red pill), 12-slot line chart rendered
+     with revenue/expense/net_delta lines, assumptions bulleted,
+     caveats block populated. Clicked `cfo-scenario-favorite` →
+     button text flipped to "Favorited" (POST returned 200).
+  4. LLM usage widget auto-updated to `2/100 · 1449 tokens` after
+     both submits (no page reload).
+
+**Test credentials** (unchanged) — `admin@aquaterra.com / password123`.
+
+**Deferred**
+- Mobile parity for Q&A + Scenario (admin flow stays on desktop
+  per brief).
+- Streaming answers (fine to render on completion; can bolt on
+  Sonnet streaming later if the SDK exposes it).
+- Top-customers hydration on `GET /api/cfo/dashboard` so the churn
+  multi-select fills with real data on first paint. Currently the
+  select gracefully shows "No top customers loaded yet." until a Q&A
+  runs (context_snapshot exposes it). One-liner backend follow-up
+  when the fork asks.
+- Board PDF export — still skipped per user.
+
