@@ -1911,3 +1911,11 @@ Batch Checks + Payroll CSV) into the Expo app. Backend / DB / web untouched.
   `mobile/app/(app)/more.tsx`, `mobile/src/api.ts`.
 
 **Backend, DB, web: untouched (per phase brief).**
+
+### Phase 29A · Fix pass (Feb 15 2026, post-tester)
+Tester (T2) surfaced two defects on the Dispatch Board mobile screen. Fixed in `mobile/app/(app)/dispatch/board.tsx` only; no backend, no other screens.
+
+- **Defect 1 (tech dedup key wrong).** The duplicate rows for the same tech return different `id` AND `user_id` values but the same email. Replaced the `user_id || id` key with a three-tier fallback: `email → name → id`, all trimmed and lowercased. When two rows share a key, the one with more populated `preferred_service_types` wins. Verified by curling `/api/dispatch/technician-skills` as admin: 3 raw rows (2× Mike Rivera + 1× Sara Nguyen) collapse to 2 unique techs (`email:mike@aquaterra.com` and `email:sara@aquaterra.com`). Backend dedup deferred to a future P3 pass as instructed.
+- **Defect 2 (bulk auto-assign silent).** The success message was being nuked by the immediate `await load()` call that resets msg state. Reordered to `load()` first, then set the toast, and additionally show a native `Alert.alert()` popup (guaranteed visible even if the list scrolls) with `"{ok} jobs assigned · {fail} skipped"`. Errors surface the first API error message in the alert body. Matches the existing inline-toast idiom used by the Weather screen — no new library added.
+
+Backend regression re-run after the fix: **18/18 green** (`test_phase26_wave_a` 13 + `test_phase26_polish_p21_audit` 5).

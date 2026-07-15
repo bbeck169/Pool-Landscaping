@@ -15,7 +15,7 @@
  */
 import React, { useCallback, useMemo, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator,
+  View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -79,18 +79,30 @@ export default function DispatchBoardMobile() {
         && (j.scheduled_date || "").slice(0, 10) >= today
       ));
       setSettings(sRes);
-      // Known cosmetic dup issue (P26 polish HANDOFF): technicians may appear
-      // twice if their `technicians` row and legacy `users` row don't share
-      // ids. Dedupe by (user_id || id).
-      const seen = new Set<string>();
-      const deduped: TechSkill[] = [];
+      // Dedup techs. The backend returns the same person from both the
+      // `technicians` collection and a legacy `users` row with DIFFERENT ids
+      // (known Phase 26 polish cosmetic issue — HANDOFF_P26_POLISH.md#40).
+      // Since the two rows share the human identity but not any id field, we
+      // key by (email → name → id) instead of user_id, and when a duplicate
+      // shows up we keep whichever row has more populated skill fields.
+      const skillScore = (t: TechSkill) =>
+        (t.preferred_service_types?.filter((s) => (s || "").trim()).length || 0);
+      const key = (t: TechSkill) => {
+        const e = (t.email || "").trim().toLowerCase();
+        if (e) return `e:${e}`;
+        const n = (t.name || "").trim().toLowerCase();
+        if (n) return `n:${n}`;
+        return `i:${t.user_id || t.id}`;
+      };
+      const byKey = new Map<string, TechSkill>();
       for (const t of (tRes.items || []) as TechSkill[]) {
-        const k = t.user_id || t.id;
-        if (seen.has(k)) continue;
-        seen.add(k);
-        deduped.push(t);
+        const k = key(t);
+        const existing = byKey.get(k);
+        if (!existing || skillScore(t) > skillScore(existing)) {
+          byKey.set(k, t);
+        }
       }
-      setTechs(deduped);
+      setTechs(Array.from(byKey.values()));
     } catch (e: any) {
       setMsg({ text: e.message || "Failed to load", kind: "err" });
     } finally { setLoading(false); }
@@ -403,6 +415,29 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brand,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs + 2,
+    borderRadius: radius.md,
+    minWidth: 66,
+    justifyContent: "center",
+  },
+  assignBtnText: { fontFamily: font.bold, fontSize: fontSize.xs, color: "#fff" },
+  empty: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing["3xl"],
+    gap: spacing.xs,
+  },
+  emptyText: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface, marginTop: spacing.xs },
+  emptySub: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, textAlign: "center" },
+  emptyLine: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
+  moreHint: {
+    marginTop: spacing.md,
+    fontFamily: font.regular,
+    fontSize: fontSize.xs,
+    color: colors.muted,
+    textAlign: "center",
+  },
+});
+cal: spacing.xs + 2,
     borderRadius: radius.md,
     minWidth: 66,
     justifyContent: "center",
