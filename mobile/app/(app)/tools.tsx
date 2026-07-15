@@ -96,6 +96,21 @@ const ADMIN_SECTIONS: Section[] = [
       { key: "dunning", icon: "mail-open-outline", label: "Dunning Queue", desc: "Overdue invoices workflow", route: "/(app)/dunning/queue" },
     ],
   },
+  {
+    key: "adm-dispatch",
+    title: "Dispatch",
+    tiles: [
+      { key: "dispatch-board", icon: "git-network-outline", label: "Dispatch Board", desc: "Auto-route unassigned jobs", route: "/(app)/dispatch/board" },
+      { key: "dispatch-weather", icon: "cloud-outline", label: "Weather Reschedule", desc: "Move outdoor jobs when rain / wind spikes", route: "/(app)/dispatch/weather" },
+    ],
+  },
+  {
+    key: "adm-payroll",
+    title: "Payroll",
+    tiles: [
+      { key: "payroll-batch", icon: "cash-outline", label: "Batch Checks & Payroll CSV", desc: "Write many checks at once + CSV import", route: "/(app)/payroll/batch" },
+    ],
+  },
 ];
 
 function Tile({ tile, onPress }: { tile: Tile; onPress: () => void }) {

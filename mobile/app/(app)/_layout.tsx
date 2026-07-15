@@ -128,6 +128,31 @@ export default function AppLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="construct-outline" size={size} color={color} />,
         }}
       />
+      {/* Phase 29A · Mobile Wave A parity — admin-only, hidden from tab bar. */}
+      <Tabs.Screen
+        name="dispatch/board"
+        options={{
+          title: "Dispatch",
+          href: null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="git-network-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="dispatch/weather"
+        options={{
+          title: "Weather",
+          href: null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="cloud-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="payroll/batch"
+        options={{
+          title: "Payroll",
+          href: null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="cash-outline" size={size} color={color} />,
+        }}
+      />
       <Tabs.Screen
         name="onboarding"
         options={{

@@ -3,6 +3,14 @@ import { storage } from "@/src/utils/storage";
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
 export const TOKEN_KEY = "pool_crm_token";
 
+/** Full public base for the FastAPI backend, without `/api`. */
+export const api_base = () => `${BASE}/api`;
+
+/** Read the raw bearer token (async — SecureStore on iOS, AsyncStorage on Android). */
+export async function getAuthToken(): Promise<string> {
+  return (await storage.secureGet<string>(TOKEN_KEY, "")) || "";
+}
+
 async function authHeaders() {
   const token = await storage.secureGet<string>(TOKEN_KEY, "");
   const headers: Record<string, string> = { "Content-Type": "application/json" };

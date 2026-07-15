@@ -1857,3 +1857,57 @@ GET  /api/dunning/analytics/ar-aging →
   payment links. It needs a live `STRIPE_SECRET_KEY`. Without it,
   reminders fall back to the in-app portal URL — still works, just not
   a Stripe-hosted page.
+
+---
+
+## Phase 29A · Mobile Wave A Parity (Feb 15 2026)
+
+Mobile-only port of Phase 26 Wave A (Dispatch Board, Weather Reschedule,
+Batch Checks + Payroll CSV) into the Expo app. Backend / DB / web untouched.
+
+### Screens
+- `/(app)/dispatch/board.tsx` — unassigned-jobs list, per-row auto-assign,
+  bulk auto-assign, `auto_assign_on_create` toggle, active-tech list
+  (deduped by `user_id || id` to hide the known Phase 26 polish
+  cosmetic dup).
+- `/(app)/dispatch/weather.tsx` — mode picker (manual / auto), threshold
+  summary, "Run weather scan" button, proposed-events accept/reject
+  with optional YYYY-MM-DD override date, decided-events history.
+- `/(app)/payroll/batch.tsx` — two tabs: manual batch (bank + payees +
+  lines, live total, open PDF in browser) and Payroll CSV
+  (`expo-document-picker` → preview → execute → open PDF).
+
+### Nav wiring
+- Mobile Tools Hub (`(app)/tools.tsx`) admin sections got two new groups
+  **Dispatch** (Board + Weather) and **Payroll** (Batch/CSV).
+- `(app)/more.tsx` admin Management list retargets **Dispatch** to
+  `/(app)/dispatch/board` and adds Weather + Batch entries.
+- Three hidden `<Tabs.Screen>` registrations in `(app)/_layout.tsx`
+  (href: null — reachable via router.push, invisible on the tab bar).
+
+### API helper
+- `mobile/src/api.ts` gained `api_base()` and async `getAuthToken()` so the
+  CSV upload can attach the bearer through `multipart/form-data` without
+  hijacking the JSON wrapper.
+
+### Verification
+- Backend regression: **42/42 green** across Phase 26/27/28/checks/inventory
+  suites in 106s.
+- Curl-verified all 7 endpoints my screens hit return 200 as
+  `admin@aquaterra.com` on the external ingress URL.
+- Metro bundler clean (no new SyntaxErrors in mobile logs).
+
+### Deferred
+- Native date picker on weather override (currently plain text field).
+- Route batch-PDF through `expo-sharing` instead of `Linking.openURL()`.
+- CSV column-mapper UI (mobile caps at 20 preview rows).
+
+### Files touched
+- **New**: `mobile/app/(app)/dispatch/board.tsx`,
+  `mobile/app/(app)/dispatch/weather.tsx`,
+  `mobile/app/(app)/payroll/batch.tsx`,
+  `memory/HANDOFF_P29A_MOBILE_WAVE_A.md`.
+- **Edited**: `mobile/app/(app)/_layout.tsx`, `mobile/app/(app)/tools.tsx`,
+  `mobile/app/(app)/more.tsx`, `mobile/src/api.ts`.
+
+**Backend, DB, web: untouched (per phase brief).**
