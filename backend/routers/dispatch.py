@@ -607,39 +607,81 @@ async def maybe_auto_assign_on_create(tenant_id: str,
 @router.get("/dispatch/technician-skills")
 async def list_technician_skills(user: dict = Depends(require_admin),
                                        tenant: dict = Depends(get_current_tenant)):
-    """Every active technician's skill profile — for the settings panel."""
-    techs = await db.technicians.find(
-        {"tenant_id": tenant["id"], "is_active": {"$ne": False}},
-        {"_id": 0, "id": 1, "user_id": 1, "name": 1, "email": 1,
-          "preferred_service_types": 1},
-    ).to_list(500)
-    for te in techs:
-        uid = te.get("user_id") or te.get("id")
-        u = await db.users.find_one(
-            {"id": uid, "tenant_id": tenant["id"]},
-            {"_id": 0, "preferred_service_types": 1}) or {}
-        te["preferred_service_types"] = (
-            te.get("preferred_service_types")
-            or u.get("preferred_service_types")
-            or [])
-    # Include user-only technicians without a `technicians` row (legacy).
+    """Every active technician's skill profile — for the settings panel.
+
+    Phase 34a fix — the previous version returned duplicate rows when a
+    tech had entries in BOTH `technicians` and `users` (some legacy
+    seed data shipped `technicians` rows with `user_id=None`, so the
+    id-only dedup set never merged them). Now we dedup on email (with
+    id/user_id as a secondary key) and always PREFER the `users` row
+    when both exist — that row has the richer profile.
+    """
+    tenant_id = tenant["id"]
+
+    # Canonical set — users with role "technician".
     urows = await db.users.find(
-        {"tenant_id": tenant["id"], "role": "technician"},
+        {"tenant_id": tenant_id, "role": "technician"},
         {"_id": 0, "id": 1, "name": 1, "email": 1,
           "preferred_service_types": 1},
     ).to_list(500)
-    seen = ({te.get("id") for te in techs}
-              | {te.get("user_id") for te in techs})
+
+    by_email: Dict[str, Dict[str, Any]] = {}
+    by_uid: Dict[str, Dict[str, Any]] = {}
     for u in urows:
-        if u["id"] in seen: continue
-        techs.append({
-            "id": u["id"], "user_id": u["id"],
+        row = {
+            "id": u["id"],
+            "user_id": u["id"],
             "name": u.get("name") or u.get("email"),
-            "email": u.get("email"),
-            "preferred_service_types":
-                u.get("preferred_service_types") or [],
-        })
-    return {"items": techs, "total": len(techs)}
+            "email": (u.get("email") or "").lower() or None,
+            "preferred_service_types": u.get("preferred_service_types") or [],
+        }
+        if row["email"]:
+            by_email[row["email"]] = row
+        by_uid[u["id"]] = row
+
+    # Merge/append rows from the `technicians` collection.
+    tech_rows = await db.technicians.find(
+        {"tenant_id": tenant_id, "is_active": {"$ne": False}},
+        {"_id": 0, "id": 1, "user_id": 1, "name": 1, "email": 1,
+          "preferred_service_types": 1},
+    ).to_list(500)
+
+    for te in tech_rows:
+        email = (te.get("email") or "").lower() or None
+        uid = te.get("user_id")
+        existing = None
+        if email and email in by_email:
+            existing = by_email[email]
+        elif uid and uid in by_uid:
+            existing = by_uid[uid]
+
+        if existing is not None:
+            # Prefer users' fields, fall back to technicians for anything empty.
+            if not existing["preferred_service_types"]:
+                existing["preferred_service_types"] = (
+                    te.get("preferred_service_types") or []
+                )
+            if not existing.get("name"):
+                existing["name"] = te.get("name")
+            # keep the users.id as the canonical id (already set)
+            continue
+
+        # Standalone technician (no user login) — include as-is.
+        row = {
+            "id": te.get("id"),
+            "user_id": te.get("user_id"),
+            "name": te.get("name") or te.get("email"),
+            "email": email,
+            "preferred_service_types": te.get("preferred_service_types") or [],
+        }
+        if email:
+            by_email[email] = row
+        else:
+            # No email → key on tech id to still dedup future scans.
+            by_email[f"__tech_id__:{te.get('id')}"] = row
+
+    items = list(by_email.values())
+    return {"items": items, "total": len(items)}
 
 
 class SkillProfilePatch(BaseModel):

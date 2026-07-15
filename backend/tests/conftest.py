@@ -45,6 +45,8 @@ _CLEANUP = {
     "cfo_llm_usage": {"tenant_id": {"$regex": "TEST_"}},
     "cfo_qna_history": {"actor_user_id": {"$regex": "^TEST-"}},
     "cfo_scenarios": {"actor_user_id": {"$regex": "^TEST-"}},
+    "users": {"email": {"$regex": "^TEST_dedup_|^TEST_solo_"}},
+    "technicians": {"id": {"$regex": "^TEST-tech"}},
 }
 
 

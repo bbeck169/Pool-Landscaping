@@ -3442,3 +3442,124 @@ Shared: `mocked-badge` reused on any mocked field.
   when the fork asks.
 - Board PDF export — still skipped per user.
 
+#### Phase 34a · Backend dedup + RBC key warnings (Feb 15 2026)
+
+Two small cleanups landed in one pass.
+
+**Part 1 — `/api/dispatch/technician-skills` backend dedup (B1)**
+
+Root cause confirmed: `technicians` collection shipped Mike Rivera
+with `user_id=None` (legacy seed) while `users` had Mike as a
+technician row. The old router built its dedup set from
+`{tech.id, tech.user_id}` — with `user_id=None`, Mike's user row
+never merged. Result: 3 items for a 2-human tenant, with the mobile
+client hiding it via an email dedup workaround from Phase 29A.
+
+Fix in `backend/routers/dispatch.py :: list_technician_skills`:
+- Users (role="technician") load FIRST as the canonical set, indexed
+  by `email.lower()` AND `id` (so both the tech's login id and their
+  email match a merge later).
+- Technicians rows scan next; each row that matches an existing
+  entry by email OR user_id merges (preferring users' non-empty
+  fields for `preferred_service_types` and `name`). Standalone
+  `technicians` rows (no matching login by email or user_id) still
+  land in the response so techs without accounts remain visible.
+- Response `id` is now stable — prefers `users.id` when a merge
+  occurred, else the technicians row's own id.
+
+Live verification (aquaterra admin):
+```
+$ curl /api/dispatch/technician-skills
+{"total":2, "items":[
+  {email: mike@aquaterra.com, id: 4a109cbe-...  <- users id wins>, name: "Mike Rivera"},
+  {email: sara@aquaterra.com, id: af475a29-...,                    name: "Sara Nguyen"}
+]}
+```
+Previously returned 3. Now returns 2.
+
+**Belt-and-suspenders preserved** — mobile
+`app/(app)/dispatch/board.tsx` still runs its client-side
+email-dedup from Phase 29A. Untouched — kept as a defense-in-depth
+safety net per the brief.
+
+**Part 2 — react-big-calendar duplicate-key guard (B7)**
+
+`frontend/src/pages/schedule/CalendarSchedule.jsx` — the `events`
+`useMemo` was `filteredJobs.map(jobToEvent).filter(Boolean)`. Now a
+`Set`-based dedup on `ev.id` runs first so any duplicate job id
+(from a stale backend join or a page refresh race) can't reach RBC.
+Any duplicate is silently skipped — the first occurrence wins.
+
+**Honest note on residual warnings**
+After the fix, `/schedule` still emits some React "two children
+with the same key" warnings. Playwright capture showed **6 warnings
+in a full Month → Week → Next → Next navigation session**. The
+warning template `Encountered two children with the same key, %s.`
+uses a `%s` template that console suppresses, so the actual key
+value isn't logged — but a git diff confirms the fix is applied and
+each event object handed to RBC now has a unique id (verified via
+`console.log(events.map(e=>e.id))` locally). The residual 6
+warnings appear to originate outside CalendarSchedule.jsx (likely
+the sidebar/nav where "Schedule" renders twice in the "Recent"
+strip — a separate rendering path). Investigating that is out of
+scope for this pass; noted as a follow-up.
+
+**Tests — `backend/tests/test_phase34a_dispatch_dedup.py`**
+`4 passed` in 4.7 s:
+1. `test_existing_dedup_aquaterra_returns_two_techs` — snapshot
+   guard: aquaterra endpoint returns exactly 2 unique emails, no
+   duplicates.
+2. `test_synthetic_double_row_dedups_to_one` — seeds a
+   `TEST_dedup_<uuid>@aquaterra.com` in BOTH `users` (id
+   `TEST-user-…`, `preferred_service_types: ["pool"]`) and
+   `technicians` (id `TEST-tech-…`, `user_id: None`,
+   `preferred_service_types: ["landscape"]`). Asserts endpoint
+   returns 1 row for that email, `id == user_id` (users wins),
+   `preferred_service_types == ["pool"]` (non-empty from users
+   preserved), `name == "TEST Rivera (users)"`. Cleans up in a
+   `finally` block.
+3. `test_tech_role_forbidden` — RBAC 403 preserved for non-admin.
+4. `test_standalone_technician_without_user_still_included` —
+   confirms techs without a user login still surface.
+
+Regression: `pytest -x -q test_phase34a + test_phase33 + test_phase32
++ test_phase31` = **40/40 passed** in 31.7 s.
+
+**Files added (1)**
+- `backend/tests/test_phase34a_dispatch_dedup.py`
+
+**Files edited (3)**
+- `backend/routers/dispatch.py` — `list_technician_skills` dedup
+  rewrite.
+- `frontend/src/pages/schedule/CalendarSchedule.jsx` — `events`
+  `useMemo` gains a `Set`-based id dedup.
+- `backend/tests/conftest.py` — two new cleanup entries
+  (`users {email: /^TEST_dedup_|^TEST_solo_/}`,
+  `technicians {id: /^TEST-tech/}`).
+- `memory/HANDOFF.md` — this section.
+
+**Conftest cleanup** — the `users` cleanup query intentionally uses
+narrow regexes so it can never sweep real admin/tech/customer
+accounts.
+
+**Not touched (per hard rules)**
+- Mobile dispatch board (Phase 29A dedup workaround retained).
+- Mobile calendar view.
+- Any other page.
+
+**Verification recap**
+- `curl /api/dispatch/technician-skills` (aquaterra admin) → **2
+  items**, correct ids, correct emails.
+- `pytest -x -q tests/test_phase34a_dispatch_dedup.py` → **4/4 passed**.
+- Full regression → **40/40 passed**.
+- Browser console on `/schedule?mode=calendar&view=week` after
+  event-array dedup — **residual 6 warnings** (not from
+  CalendarSchedule.jsx events; likely sidebar nav duplication —
+  follow-up TODO).
+
+**Follow-up TODO (deferred, out of scope for Phase 34a)**
+- Investigate the 6 non-event `Encountered two children with the
+  same key` console warnings on `/schedule`. Likely candidates: the
+  sidebar "Recent" strip in the shell layout, or the RBC toolbar's
+  custom day-name headers. Cosmetic only — no functional impact.
+

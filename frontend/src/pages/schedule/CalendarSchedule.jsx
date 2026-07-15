@@ -213,7 +213,23 @@ export default function CalendarSchedule() {
   }, [rawJobs, q, techId, status, service]);
 
   const events = useMemo(
-    () => filteredJobs.map(jobToEvent).filter(Boolean),
+    () => {
+      // Phase 34a fix — dedup by job.id BEFORE handing to react-big-calendar.
+      // RBC uses event identity to key DOM nodes when segments span days;
+      // any duplicate id in the source list triggers React
+      // "duplicate key" warnings on the /schedule route. This dedup is a
+      // belt-and-suspenders guard on top of the backend cleanup.
+      const seen = new Set();
+      const out = [];
+      for (const j of filteredJobs) {
+        const ev = jobToEvent(j);
+        if (!ev) continue;
+        if (seen.has(ev.id)) continue;
+        seen.add(ev.id);
+        out.push(ev);
+      }
+      return out;
+    },
     [filteredJobs],
   );
 
