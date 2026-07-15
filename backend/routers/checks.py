@@ -18,6 +18,7 @@ faking.
 import base64
 import hashlib
 import io
+import os
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -35,27 +36,76 @@ router = APIRouter()
 
 
 # ─── Encryption ──────────────────────────────────────────────────────
-def _fernet() -> Fernet:
-    """Deterministic Fernet key derived from JWT_SECRET. Documented as
-    development-grade in the phase 24 HANDOFF — a dedicated
-    CHECKS_ENCRYPTION_KEY should be provisioned before production."""
+# Phase 29B (Feb 2026): rotated off the JWT_SECRET-derived key onto a
+# dedicated `CHECKS_ENCRYPTION_KEY` env var. Reads still try the legacy
+# key as a fallback so any bank-account rows written before the rotation
+# keep decrypting cleanly; run `POST /api/checks/admin/re-encrypt` to
+# migrate them onto the new key. Writes always use the new key.
+def _legacy_fernet() -> Fernet:
+    """Deterministic Fernet key derived from JWT_SECRET. Used ONLY as a
+    read-side fallback for rows written before Phase 29B."""
     digest = hashlib.sha256(JWT_SECRET.encode("utf-8")).digest()
     return Fernet(base64.urlsafe_b64encode(digest))
+
+
+def _load_new_fernet() -> Optional[Fernet]:
+    """Read `CHECKS_ENCRYPTION_KEY` from the env; return None if unset."""
+    raw = (os.environ.get("CHECKS_ENCRYPTION_KEY") or "").strip()
+    if not raw:
+        return None
+    try:
+        return Fernet(raw.encode("ascii"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "CHECKS_ENCRYPTION_KEY is set but invalid (%s); "
+            "falling back to legacy JWT_SECRET-derived key.", exc,
+        )
+        return None
+
+
+# Cache both, but let tests reload after monkey-patching the env.
+_NEW_FERNET: Optional[Fernet] = _load_new_fernet()
+if _NEW_FERNET is None:
+    logger.warning(
+        "CHECKS_ENCRYPTION_KEY not set — using legacy JWT_SECRET-derived key. "
+        "This is dev-grade only; provision the env var before production.",
+    )
+
+
+def _fernet_write() -> Fernet:
+    """Fernet instance to use for encryption (new key if available, else legacy)."""
+    return _NEW_FERNET or _legacy_fernet()
 
 
 def _encrypt(value: str) -> str:
     if not value:
         return ""
-    return _fernet().encrypt(value.encode("utf-8")).decode("ascii")
+    return _fernet_write().encrypt(value.encode("utf-8")).decode("ascii")
 
 
 def _decrypt(token: str) -> str:
+    """Try the new key first, then the legacy JWT_SECRET-derived key.
+    Returns empty string if both fail (matches the pre-P29B behavior)."""
     if not token:
         return ""
+    raw = token.encode("ascii")
+    if _NEW_FERNET is not None:
+        try:
+            return _NEW_FERNET.decrypt(raw).decode("utf-8")
+        except InvalidToken:
+            pass
     try:
-        return _fernet().decrypt(token.encode("ascii")).decode("utf-8")
+        return _legacy_fernet().decrypt(raw).decode("utf-8")
     except InvalidToken:
         return ""
+
+
+def _reload_fernet_from_env() -> None:
+    """Test hook: re-read `CHECKS_ENCRYPTION_KEY` from the environment.
+    Production code never calls this — the module-level singleton is fine
+    for the app's whole lifetime."""
+    global _NEW_FERNET
+    _NEW_FERNET = _load_new_fernet()
 
 
 # ─── Amount to words ─────────────────────────────────────────────────
@@ -312,6 +362,67 @@ async def delete_bank_account(bid: str,
     if r.deleted_count == 0:
         raise HTTPException(404, "Bank account not found")
     return {"deleted": True}
+
+
+# ─── Phase 29B · Key-rotation migration ──────────────────────────────
+@router.post("/checks/admin/re-encrypt")
+async def re_encrypt_bank_accounts(
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """One-shot migration: re-encrypt every bank account for the current
+    tenant with the new `CHECKS_ENCRYPTION_KEY`. Rows that were written
+    with the legacy JWT_SECRET-derived key decrypt via the fallback
+    inside `_decrypt`, then get re-written with the new key.
+
+    Idempotent: rows already on the new key are decrypted with the new
+    key (no fallback needed) and re-written unchanged.
+
+    Returns per-row counts. Nothing here reveals plaintext account
+    numbers — this endpoint operates entirely on ciphertext round-trips.
+    """
+    rows = await db.bank_accounts.find(
+        {"tenant_id": tenant["id"]}, {"id": 1, "account_number_encrypted": 1},
+    ).to_list(1000)
+    scanned = migrated = failed = skipped = 0
+    for r in rows:
+        scanned += 1
+        cipher = r.get("account_number_encrypted") or ""
+        if not cipher:
+            skipped += 1
+            continue
+        plain = _decrypt(cipher)
+        if not plain:
+            # Neither key worked — row is corrupt or was written by some
+            # other process. Don't silently pretend we migrated it.
+            failed += 1
+            continue
+        try:
+            new_cipher = _encrypt(plain)
+        except Exception:  # noqa: BLE001
+            failed += 1
+            continue
+        if new_cipher == cipher:
+            # Already on the new key; nothing to do, but count as migrated
+            # so the caller sees an accurate "all rows are now on the new
+            # key" answer.
+            migrated += 1
+            continue
+        await db.bank_accounts.update_one(
+            {"id": r["id"], "tenant_id": tenant["id"]},
+            {"$set": {
+                "account_number_encrypted": new_cipher,
+                "updated_at": now_iso(),
+            }},
+        )
+        migrated += 1
+    return {
+        "scanned": scanned,
+        "migrated": migrated,
+        "skipped": skipped,
+        "failed": failed,
+        "using_dedicated_key": _NEW_FERNET is not None,
+    }
 
 
 # ═══════════ PAYEES ══════════════════════════════════════════════════

@@ -1919,3 +1919,36 @@ Tester (T2) surfaced two defects on the Dispatch Board mobile screen. Fixed in `
 - **Defect 2 (bulk auto-assign silent).** The success message was being nuked by the immediate `await load()` call that resets msg state. Reordered to `load()` first, then set the toast, and additionally show a native `Alert.alert()` popup (guaranteed visible even if the list scrolls) with `"{ok} jobs assigned · {fail} skipped"`. Errors surface the first API error message in the alert body. Matches the existing inline-toast idiom used by the Weather screen — no new library added.
 
 Backend regression re-run after the fix: **18/18 green** (`test_phase26_wave_a` 13 + `test_phase26_polish_p21_audit` 5).
+
+---
+
+### Phase 29B · Check Writer key rotation (Feb 15 2026)
+
+Rotated the Check Writer's symmetric encryption off the shared JWT_SECRET-derived key onto a dedicated `CHECKS_ENCRYPTION_KEY` env var. Backend + a single migration endpoint only. Web/mobile untouched. MICR E-13B font work remains deferred pending a licensed asset.
+
+**Env var** — `CHECKS_ENCRYPTION_KEY` in `/app/backend/.env`, generated once via `base64.urlsafe_b64encode(os.urandom(32))`. Kept in the standard `.env` file per the env-additive-only rule. If the var is missing at boot the module logs a WARNING (`"CHECKS_ENCRYPTION_KEY not set — using legacy JWT_SECRET-derived key…"`) and the app keeps running on the legacy key — never crashes.
+
+**Read path** (`_decrypt`) — tries the new key first, then the legacy JWT_SECRET-derived key as fallback. Returns empty string only if both fail (matches pre-P29B behavior).
+
+**Write path** (`_encrypt`) — always uses `_fernet_write()`, which returns the new key if loaded and the legacy key as a last-resort fallback so the app is never brick-locked by a bad env var.
+
+**Migration endpoint** — `POST /api/checks/admin/re-encrypt`. Admin-only, tenant-scoped. Walks every `bank_accounts` row for the current tenant, decrypts with either key, re-encrypts with the new key, updates the row. Idempotent — already-migrated rows still decrypt (with the new key alone) and get re-written with a fresh ciphertext.
+
+Response shape: `{scanned, migrated, skipped, failed, using_dedicated_key}`.
+
+**Test hook** — `_reload_fernet_from_env()` re-reads the env var for the module-level singleton so pytest can force env states without a full restart.
+
+**Files touched**
+- `backend/routers/checks.py` — new `_legacy_fernet` / `_load_new_fernet` / `_reload_fernet_from_env` / `_fernet_write` helpers; `_encrypt` / `_decrypt` rewired; `POST /checks/admin/re-encrypt` added.
+- `backend/.env` — appended `CHECKS_ENCRYPTION_KEY=…` (new secret, base64 urlsafe, 32-byte).
+- `backend/tests/test_phase29b_check_crypto.py` — new (4 tests).
+
+**Test results**
+- New suite: **4/4 passed**.
+- Phase 29B + `test_checks` + `test_phase26_wave_a` + `test_phase28_warranties`: **37/37 passed** in 16 s.
+- Full boot test: with `CHECKS_ENCRYPTION_KEY` removed the backend restarted cleanly, logged the exact warning, and `/api/openapi.json` + `/api/checks/bank-accounts` both returned 200.
+- OpenAPI still lists all previously-registered paths; new endpoint `/api/checks/admin/re-encrypt` visible.
+
+**Deferred (P29B-follow-up)**
+- MICR E-13B TTF font — still blocked on the licensed asset. Current PDF renderer left completely untouched. When the font ships, the `/checks/checks/{cid}/print` path is where the glyphs need to be wired in.
+- Optional: a "rotate secret" job that generates a new key, migrates all tenants, and archives the previous key envelope. Not urgent — the current model already survives one rotation gracefully.
