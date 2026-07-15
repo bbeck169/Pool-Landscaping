@@ -628,7 +628,7 @@ async def print_check(cid: str,
     if c["status"] == "voided":
         raise HTTPException(409, "Cannot print a voided check")
     now = now_iso()
-    file_url = f"/api/checks/checks/{cid}/pdf"
+    file_url = f"/api/checks/{cid}/pdf"
     upd = {"pdf_url": file_url, "updated_at": now}
     if c["status"] == "draft":
         upd["status"] = "printed"
@@ -948,7 +948,7 @@ def _render_check_pdf(c: Dict[str, Any], ba: Dict[str, Any],
     return buf.getvalue()
 
 
-@router.get("/checks/checks/{cid}/pdf")
+@router.get("/checks/{cid}/pdf")
 async def check_pdf(cid: str,
                       user: dict = Depends(require_admin),
                       tenant: dict = Depends(get_current_tenant)):

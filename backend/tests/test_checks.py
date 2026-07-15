@@ -145,7 +145,7 @@ def test_print_check_returns_real_pdf(admin_h, bank_account, payee, dbc):
                        headers=admin_h, timeout=15).json()
     assert p["status"] == "printed"
     assert p["pdf_url"].endswith("/pdf")
-    pdf = requests.get(f"{API}/checks/checks/{c['id']}/pdf",
+    pdf = requests.get(f"{API}/checks/{c['id']}/pdf",
                         headers=admin_h, timeout=20)
     assert pdf.status_code == 200
     assert pdf.headers.get("content-type", "").startswith("application/pdf")

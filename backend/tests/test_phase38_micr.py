@@ -145,7 +145,7 @@ def test_print_endpoint_returns_pdf(admin_h):
                              headers=admin_h, timeout=15).json()
     assert printed.get("status") == "printed", printed
 
-    pdf = requests.get(f"{API}/checks/checks/{check['id']}/pdf",
+    pdf = requests.get(f"{API}/checks/{check['id']}/pdf",
                         headers=admin_h, timeout=20)
     assert pdf.status_code == 200
     assert pdf.headers.get("content-type", "").startswith("application/pdf")

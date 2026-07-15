@@ -568,7 +568,7 @@ export function CheckDetail() {
     setBusy(true); setMsg("");
     try {
       await api.post(`/checks/checks/${id}/print`);
-      window.open(`${window.location.origin}/api/checks/checks/${id}/pdf`,
+      window.open(`${window.location.origin}/api/checks/${id}/pdf`,
                    "_blank");
       await load();
     } catch (e) { setMsg(e.message); }

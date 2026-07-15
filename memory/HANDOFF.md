@@ -4905,3 +4905,21 @@ surface `SomethingRef` names, not gate finishes on regex quirks.
 - Sample PDF: **`/tmp/sample_check_phase38_1004.pdf`** (12668 bytes, PDF 1.4). `strings` confirms the PDF references `AAAAAA+GnuMICR` (Registry + CMapName) and embeds the copyright header — MICR line is really rendered in the E-13B glyphs.
 
 **Not touched (per brief):** frontend / mobile UI, non-check backend routes, LLM keys.
+
+##### Phase 38b · Fix: normalize doubled check PDF URL path
+- `routers/checks.py` line 951: `@router.get("/checks/checks/{cid}/pdf")` → `@router.get("/checks/{cid}/pdf")`. Also updated the pdf_url returned by `/print`: `/api/checks/checks/{cid}/pdf` → `/api/checks/{cid}/pdf`. Router has no prefix, so other doubled routes (`/checks/checks/{cid}/print|void|mark-*`) are intentionally left alone per the trivial-fix brief.
+- Frontend: `pages/checks/ChecksPages.jsx` — updated the `window.open` call site.
+- Tests: `tests/test_phase38_micr.py` + `tests/test_checks.py` — updated the PDF-download curl paths to the normalized URL. `18/18` pytest passing.
+- Curl proof: new path `GET /api/checks/{id}/pdf` → `200 application/pdf`; old doubled path `GET /api/checks/checks/{id}/pdf` → `404 application/json` (as expected).
+
+##### Hotfix: chemicals-added dropdown regression — NOT REPRODUCIBLE
+- User reported "Chemicals added drop down is not working". Full behavioural repro attempted via Playwright as admin on the Weekly Pool Service modal. All 6 behaviours from the checklist pass:
+  a) row header responds to tap (options visible after tap = True),
+  b) row visually expands (10 chlorine tab options render),
+  c) row collapses on option pick (`options visible = 0`),
+  d) current-selection text updates ("5 Tabs" after picking `option-5-tabs`; "No Tabs Used" after picking `option-none`),
+  e) autosave pill visibly transitions `saving` → `saved` → `idle` in the header,
+  f) selection persists across a modal close + reopen (`3 Tabs` persisted).
+- Cross-row independence also verified: expanding Liquid Chlorine while Chlorine Tablets is closed still lists 10 gallon options and correctly reports `Liquid Chlorine · 1/2 Gallon` after pick.
+- `git status` on dropdown files shows no untracked/dirty edits since the Phase 37 hotfix. Preflight `exit 0`, 135 pre-existing advisory unresolved-identifier warnings unchanged.
+- **Conclusion**: no code regression. Most likely a stale user session or browser cache from before the Phase 37 auto-collapse landed. If the tester still sees it, ask for a hard-refresh (Cmd/Ctrl-Shift-R) and the browser console error trace so we can debug against real state.
