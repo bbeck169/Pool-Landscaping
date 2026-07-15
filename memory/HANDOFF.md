@@ -4877,3 +4877,31 @@ surface `SomethingRef` names, not gate finishes on regex quirks.
 **Not touched (per brief):** web, backend, LLM keys, streaming, board PDF, custom-range Q&A period.
 
 **Session wrap suggestion (mine, not yours):** with Phase 34c live, the entire mobile Expo build now mirrors the web CFO stack. If the tester wants to close the mobile CFO gap fully, the last remaining desktop-only pieces are Forecast, Anomalies, and Auto-Categorize — all listed in the footer note on the mobile page.
+
+#### Phase 38 · Check Writer MICR font + encryption key production hardening
+
+**Font asset**
+- Bundled `/app/backend/assets/fonts/gnumicr.ttf` (4760 bytes, TrueType, Copyright © 2000-2003 Eric Sandeen) via GitHub mirror `alerque/gnumicr@master`. SourceForge is dead / redirects to a "create project" page; the alerque fork is the canonical live mirror. Also stored `gnumicr.COPYING.txt` and `gnumicr.README.txt` alongside the TTF for provenance.
+- License: **GPL v2** (per COPYING). GPL fonts are safe for internally-generated documents like company-owned checks — the check PDF is the *output* of the font, not a redistribution of the font itself, and no third-party receives the TTF binary. If we ever ship a client-facing PDF-generation SaaS we should re-license or swap for an OFL/Apache MICR alternative.
+
+**Wiring** (`/app/backend/routers/checks.py`)
+- New helper `_register_micr_font()` lazily registers the TTF with reportlab (`pdfmetrics.registerFont(TTFont("GnuMICR", path))`) the first time a check is rendered, then caches the result via a module-level `_MICR_REGISTERED` flag. Font path is `os.environ["MICR_FONT_PATH"]` else `/app/backend/assets/fonts/gnumicr.ttf`. Missing file → one-shot `logger.warning("MICR font missing at %s; using placeholder", path)`, no crash, `MICR_AVAILABLE` stays `False`, Courier-Bold fallback applies and the `TEST_ONLY_NOT_MICR_ENCODED` watermark still fires.
+- `_render_check_pdf` now calls `_register_micr_font()` at render-time and switches the MICR line between `GnuMICR` (14pt) and `Courier-Bold` (14pt) based on availability. The `X-Check-Warnings` header on `/api/checks/checks/{id}/pdf` also honors the fresh flag.
+
+**Encryption key**
+- `CHECKS_ENCRYPTION_KEY` already set in `/app/backend/.env` from Phase 29B; no regeneration required. Left untouched.
+
+**Tests** (`/app/backend/tests/test_phase38_micr.py`, 5 unit + 1 integration)
+1. `test_gnumicr_ttf_present_and_valid` — TTF magic (SFNT scaler) matches.
+2. `test_reportlab_can_register_gnumicr` — `pdfmetrics.registerFont(TTFont(...))` succeeds and `getFont` resolves.
+3. `test_render_embeds_gnumicr_when_available` — with `MICR_FONT_PATH` pointing at the bundled TTF the returned PDF contains the literal string `GnuMICR` and `MICR_AVAILABLE` flips to `True`.
+4. `test_render_falls_back_when_font_missing` — with `MICR_FONT_PATH=/nonexistent/...`, the render still returns a valid `%PDF-` document, `MICR_AVAILABLE` stays `False`, and the `TEST_ONLY_NOT_MICR_ENCODED` watermark IS baked into the PDF face.
+5. `test_print_endpoint_returns_pdf` — full `/api/checks/checks/{id}/print` → `/pdf` round-trip returns HTTP 200 with `Content-Type: application/pdf` and `SAMPLE_MODE` in `X-Check-Warnings`.
+- Existing `test_checks.py::test_print_check_returns_real_pdf` updated to be MICR-aware: it now conditionally checks that when the font IS loaded, the placeholder watermark is *absent* and only the SAMPLE_MODE watermark remains.
+
+**Verification**
+- All 6 targeted tests green (`pytest tests/test_phase38_micr.py tests/test_checks.py::test_print_check_returns_real_pdf -q` → `6 passed`).
+- `bash /app/scripts/preflight.sh` → `preflight OK` (exit 0).
+- Sample PDF: **`/tmp/sample_check_phase38_1004.pdf`** (12668 bytes, PDF 1.4). `strings` confirms the PDF references `AAAAAA+GnuMICR` (Registry + CMapName) and embeds the copyright header — MICR line is really rendered in the E-13B glyphs.
+
+**Not touched (per brief):** frontend / mobile UI, non-check backend routes, LLM keys.

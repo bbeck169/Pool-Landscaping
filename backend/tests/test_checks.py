@@ -152,15 +152,22 @@ def test_print_check_returns_real_pdf(admin_h, bank_account, payee, dbc):
     assert len(pdf.content) > 500
     # PDF preamble
     assert pdf.content[:4] == b"%PDF", "not a real PDF"
-    # Non-silent MICR + SAMPLE overlay: verify via explicit response headers
-    # (PDF stream bytes are non-deterministic across reportlab versions).
+    # Non-silent warnings: MICR warning is conditional on font availability
+    # (Phase 38 embeds GnuMICR when present). SAMPLE_MODE always fires on
+    # a bank account with live_mode=False.
     warnings = pdf.headers.get("X-Check-Warnings", "")
-    assert "TEST_ONLY_NOT_MICR_ENCODED" in warnings, warnings
     assert "SAMPLE_MODE" in warnings, warnings
-    # Also verify the plain-text watermark IS in the (uncompressed) stream.
-    assert b"TEST_ONLY_NOT_MICR_ENCODED" in pdf.content \
-        or b"NOT NEGOTIABLE" in pdf.content, \
-        "warning watermarks missing from PDF face"
+    # If MICR fell back to placeholder, verify the loud watermark IS in
+    # the (uncompressed) stream.
+    if "TEST_ONLY_NOT_MICR_ENCODED" in warnings:
+        assert b"TEST_ONLY_NOT_MICR_ENCODED" in pdf.content \
+            or b"NOT NEGOTIABLE" in pdf.content, \
+            "warning watermarks missing from PDF face"
+    else:
+        # MICR font loaded — the placeholder watermark must NOT appear.
+        assert b"TEST_ONLY_NOT_MICR_ENCODED" not in pdf.content
+        assert b"NOT NEGOTIABLE" in pdf.content, \
+            "SAMPLE_MODE watermark missing from PDF face"
     dbc.checks.delete_one({"id": c["id"]})
 
 

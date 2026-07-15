@@ -693,6 +693,52 @@ async def mark_uncleared(cid: str,
 
 MICR_AVAILABLE = False  # We do not ship an E-13B TTF. Print warns loudly.
 
+# Phase 38 — GnuMICR (GPL) font, optional TrueType embed. When the file
+# exists and reportlab successfully registers it, MICR_AVAILABLE flips to
+# True and the check face renders the routing line in real E-13B glyphs.
+# The path can be overridden with the `MICR_FONT_PATH` env var; when
+# unset we look under `/app/backend/assets/fonts/gnumicr.ttf`. A missing
+# file is logged (once) and rendering falls back to the placeholder
+# Courier-Bold line with the honest `TEST_ONLY_NOT_MICR_ENCODED`
+# watermark. Registration is idempotent — reportlab reuses the cached
+# TTFont on later requests.
+MICR_FONT_NAME = "GnuMICR"
+_MICR_REGISTERED = False
+_MICR_WARNED = False
+
+def _register_micr_font() -> bool:
+    """Register the GnuMICR TTF with reportlab. Returns True on success.
+
+    Idempotent: subsequent calls are a no-op once the font has been
+    registered. Logs a single warning if the font file is missing so
+    the fallback path is observable in prod without spamming logs.
+    """
+    global _MICR_REGISTERED, MICR_AVAILABLE, _MICR_WARNED
+    if _MICR_REGISTERED:
+        return MICR_AVAILABLE
+    path = os.environ.get("MICR_FONT_PATH") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "assets", "fonts", "gnumicr.ttf",
+    )
+    if not os.path.isfile(path):
+        if not _MICR_WARNED:
+            logger.warning("MICR font missing at %s; using placeholder", path)
+            _MICR_WARNED = True
+        _MICR_REGISTERED = True
+        MICR_AVAILABLE = False
+        return False
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        pdfmetrics.registerFont(TTFont(MICR_FONT_NAME, path))
+        MICR_AVAILABLE = True
+    except Exception as e:  # noqa: BLE001 — any font-load failure falls back.
+        logger.warning("MICR font failed to load from %s: %s; using placeholder",
+                       path, e)
+        MICR_AVAILABLE = False
+    _MICR_REGISTERED = True
+    return MICR_AVAILABLE
+
 
 def _render_check_pdf(c: Dict[str, Any], ba: Dict[str, Any],
                         payee: Dict[str, Any],
@@ -822,17 +868,29 @@ def _render_check_pdf(c: Dict[str, Any], ba: Dict[str, Any],
     c_pdf.drawCentredString((sig_x + W - 0.4 * inch) / 2, sig_y - 0.1 * inch,
                                 "AUTHORIZED SIGNATURE")
 
-    # MICR line (bottom of check face, roughly 5/8" from bottom of check)
+    # MICR line (bottom of check face, roughly 5/8" from bottom of check).
+    # Phase 38 — attempt to register GnuMICR at render-time so the process
+    # picks up a freshly-installed font without a restart. When available,
+    # render the E-13B line at 14pt (~3pt glyph height on a 0.625" baseline
+    # is the ANSI/ABA target for 10pt but reportlab measures in points and
+    # GnuMICR is designed at 14pt); otherwise fall back to Courier-Bold.
+    micr_available = _register_micr_font()
     micr_y = check_bot + 0.25 * inch
-    c_pdf.setFont("Courier-Bold", 14)
+    if micr_available:
+        c_pdf.setFont(MICR_FONT_NAME, 14)
+    else:
+        c_pdf.setFont("Courier-Bold", 14)
     c_pdf.setFillColor(rlc.HexColor("#0F172A"))
+    # Real E-13B uses special transit / on-us / dash / amount symbols;
+    # GnuMICR maps them to A/B/C/D at ASCII. When the font is not loaded
+    # we still ship a human-readable string so techs can proof-read.
     micr = (f"C{c.get('check_number','')}C  "
              f"A{ba.get('routing_number','')}A  {account_number}C")
     c_pdf.drawString(0.4 * inch, micr_y, micr)
 
     # Warnings (non-silent)
     warn: List[str] = []
-    if not MICR_AVAILABLE:
+    if not micr_available:
         warn.append("TEST_ONLY_NOT_MICR_ENCODED")
     if not live:
         warn.append("SAMPLE — NOT NEGOTIABLE")
