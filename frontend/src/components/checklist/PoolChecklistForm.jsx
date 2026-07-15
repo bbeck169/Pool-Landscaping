@@ -16,7 +16,7 @@
  * string verbatim.
  */
 import React, { useRef, useState, useEffect, useMemo, useCallback } from "react";
-import { Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FlaskConical, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { api } from "@/api";
 
 const colors = {

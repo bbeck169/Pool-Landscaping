@@ -1,5 +1,31 @@
 # AquaTerra Pool & Landscaping CRM — Handoff
 
+---
+
+#### Preflight linter — MANDATORY before every `finish`
+
+`bash /app/scripts/preflight.sh` MUST exit 0 before any `finish` call
+on any phase that touches `/app/backend`, `/app/frontend`, or
+`/app/mobile`.
+
+What it runs:
+1. `python -m compileall -q /app/backend` — backend syntax.
+2. `esbuild --write=false` on `frontend/src/index.js` — catches
+   import/export resolution + JS syntax.
+3. `python3 /app/scripts/check_jsx_imports.py` — flags any
+   `<PascalCase>` JSX identifier that isn't declared or imported in
+   the same file. Written after the third silent "missing icon
+   import" bug shipped in `PoolChecklistForm.jsx`
+   (`useMemo` → `FlaskConical` → this preflight).
+4. Best-effort mobile esbuild — skips silently when native-only
+   peer deps aren't resolvable outside Metro.
+
+If the preflight fails, fix the reported issue before shipping.
+Do NOT lower the check to a warning — the whole point is to make
+"identifier referenced but not imported" impossible to ship.
+
+---
+
 **Handoff date:** 2026-07-13
 **Build:** Phase 0 → Phase 13 complete · 283 OpenAPI paths · web + mobile + backend all running.
 
@@ -4545,3 +4571,70 @@ mobile file confirmed no equivalent bug there.
 
 No backend changes; no new tests; folding under the existing
 Phase 34e HANDOFF section.
+
+##### Phase 34e · Second hotfix — missing `FlaskConical` (+ 3 others) from lucide-react (Feb 15 2026)
+
+Tester caught: `ReferenceError: FlaskConical is not defined` on every
+Pool checklist open. This is the THIRD import-related crash on
+`PoolChecklistForm.jsx` in this phase run.
+
+**Root cause**: same class as the `useMemo` hotfix — a
+`search_replace` on the lucide-react import line was silently
+reverted between edits. The JSX referenced 6 lucide icons but the
+import line only listed 4 (2 of which were now dead imports from
+Phase 34d-follow-b).
+
+**Fix — one-liner**
+```diff
+- import { Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
++ import { AlertTriangle, CheckCircle2, FlaskConical, Plus, RefreshCw, Trash2 } from "lucide-react";
+```
+That single line now imports exactly the icons actually rendered
+by the file (`AlertTriangle`, `CheckCircle2`, `FlaskConical`, `Plus`,
+`RefreshCw`, `Trash2`). Dead `Loader2` and `Sparkles` dropped.
+
+**Full fix set on this pass — Part 2: preflight + JSX-import linter**
+Because this bug class has now hit us three times in one phase,
+we ship the tooling to make it impossible going forward:
+
+- **`/app/scripts/preflight.sh`** — bash wrapper that runs backend
+  `compileall`, an `esbuild` dry-run bundle of the frontend, and
+  the new JSX identifier scanner. Emits `preflight OK` on success,
+  non-zero exit otherwise.
+- **`/app/scripts/check_jsx_imports.py`** — pure-Python scanner
+  that walks every `.jsx` file, extracts every `<PascalCase>` JSX
+  opening tag, and flags any tag whose identifier isn't declared
+  anywhere in the same file (imports / consts / lets / vars /
+  functions / classes / destructured rename params / bag-of-tokens
+  fallback for `.map(({Icon})=>)` patterns / `import * as Foo`
+  namespace imports). Restricted to `.jsx` on purpose — TSX has
+  type generics (`Array<Job>`) that look identical to JSX tags via
+  regex.
+- Adversarial test: injected `<UndefinedIconNoWhereElse>` into
+  the file → scanner correctly flagged the line + exited 1.
+  Removed the injection → clean exit 0. Whole-project clean
+  scan: 0 false positives.
+
+**Verification of this pass**
+- `bash /app/scripts/preflight.sh` → **exit 0** on the fixed tree.
+- `grep -n "from \"lucide-react\"" PoolChecklistForm.jsx` shows the
+  6-icon import; JSX tag scan on the file resolves every reference.
+- Webpack compiled clean (1 unrelated warning).
+
+**Files added (2)**
+- `scripts/preflight.sh`
+- `scripts/check_jsx_imports.py`
+
+**Files edited (2)**
+- `frontend/src/components/checklist/PoolChecklistForm.jsx` — lucide
+  import line only.
+- `memory/HANDOFF.md` — this hotfix note + the mandatory-preflight
+  banner at the top of the file.
+
+**Follow-up (no action needed unless someone adds new icons)**
+- The scanner runs against every `.jsx` under `frontend/src`. When a
+  new icon or component is added, the identifier must appear in an
+  import line — otherwise preflight blocks the finish.
+- Two known safe TSX false positives (`SocialExtras`'s comment
+  reference, `DunningPages` iterator-scoped `Icon`) already resolve
+  clean thanks to comment stripping + the bag-of-tokens fallback.
