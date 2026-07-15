@@ -3107,3 +3107,58 @@ Backend and tests are untouched — this is pure client wiring.
   check for `<RequirePermission perm="Finance">`. Backend is
   already `require_admin`-gated.
 
+#### Phase 32 · Step 2 — T2 fix: categorize modal auto-closes (Feb 15 2026)
+
+**Bug:** After clicking `cfo-categorize-confirm`, the preview modal
+flipped to a "Done — N rows written" panel but stayed open. Users had
+to manually dismiss.
+
+**Fix (single file — `frontend/src/pages/cfo/CFODashboard.jsx`):**
+- `CategorizeModal.confirm()` — on successful POST, calls
+  `onConfirmed(r)` + `onClose()` synchronously in the same tick.
+  Removed the internal `result` state and the "Done" panel — the
+  modal has no post-confirm state anymore.
+- `CFODashboard` (parent) — new `categorizeBanner` state
+  `{kind: "ok"|"warn", text}` populated inside the `onConfirmed`
+  callback. `kind` flips to `"warn"` if the response has
+  `mocked:true` or non-empty `reasons[]` (so LLM soft-warnings still
+  surface). Auto-dismisses after 6 s (`setTimeout → setCategorizeBanner(null)`).
+- Banner renders as a top-of-page pill with `data-testid="cfo-categorize-done"`
+  (+ nested `cfo-categorize-done-dismiss` button). Green when OK,
+  amber when warn — reuses the same `okBg / warn` colour tokens
+  already in the file.
+- `onConfirmed` also calls `load()` — one refresh call covers
+  dashboard KPIs, expense_by_category, anomalies, AND llm-usage
+  since they share the same `load()` function.
+
+**Cancel behaviour unchanged.** Preview-load errors and quota
+soft-blocks still render inside the (still-open) modal so the tech
+can retry — only the success path auto-closes.
+
+**Verification**
+- Webpack: "Compiled successfully!" · `bundle.js` HTTP 200 · 13.95 MB.
+  `cfo-categorize-done | categorizeBanner | Dismiss` = **15 matches**
+  in the compiled bundle.
+- Backend regression: `pytest -x -q tests/test_phase32_cfo.py` →
+  **13/13 passed** in 13.0 s. Zero backend diffs.
+- Playwright (real preview URL, aquaterra admin, freshly seeded
+  uncategorized check):
+    - `cfo-run-categorize` opens the modal → preview body renders.
+    - `cfo-categorize-confirm` clicked.
+    - Assertion `wait_for_selector('[data-testid="cfo-categorize-preview"]',
+       state="detached")` → **MODAL_CLOSED: PASS**.
+    - `cfo-categorize-done` banner text:
+      `"Categorized 1 transactions · used 17 tokens"` (green).
+    - Post-click DOM check: `modal_still_present: False`.
+    - Dashboard auto-refreshed — Expenses jumped $101 → $157 as the
+      freshly-categorized check flowed into a real category bucket.
+- Test cleanup: seeded row + LLM usage stub swept via mongo delete.
+
+**Files edited (1)**
+- `frontend/src/pages/cfo/CFODashboard.jsx` — modal `confirm()`,
+  parent `categorizeBanner` state + JSX.
+- `memory/HANDOFF.md` — this note.
+
+**Not touched**
+- Backend endpoints or tests. Mobile. Any other UI section.
+

@@ -88,14 +88,15 @@ function KPI({ testid, label, value, icon: Icon, mocked, reason, sub }) {
 }
 
 // ─── Categorize preview modal ─────────────────────────────────────────
+// Phase 32 · Step 2 · T2 fix — modal now auto-closes after a successful
+// confirm. The parent handles the success/warning banner + refresh.
 function CategorizeModal({ open, onClose, onConfirmed }) {
   const [preview, setPreview] = useState(null);
-  const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    if (!open) { setPreview(null); setResult(null); setBusy(false); setErr(""); return; }
+    if (!open) { setPreview(null); setBusy(false); setErr(""); return; }
     (async () => {
       setBusy(true); setErr("");
       try {
@@ -112,10 +113,15 @@ function CategorizeModal({ open, onClose, onConfirmed }) {
     try {
       const r = await api.post("/cfo/categorize?dry_run=false&force=true",
                                 { limit: 100 });
-      setResult(r);
+      // T2 fix: bubble the result to the parent and close the modal in
+      // the same tick. The parent renders the success/warning banner
+      // and triggers the dashboard refresh — no post-confirm state
+      // survives inside the modal.
       onConfirmed?.(r);
-    } catch (e) { setErr(e?.message || "Categorize failed."); }
-    finally { setBusy(false); }
+      onClose?.();
+    } catch (e) {
+      setErr(e?.message || "Categorize failed.");
+    } finally { setBusy(false); }
   };
 
   if (!open) return null;
@@ -140,7 +146,7 @@ function CategorizeModal({ open, onClose, onConfirmed }) {
           {" "}{CATEGORY_ORDER.join(", ")}.
         </div>
 
-        {busy && !preview && !result ? (
+        {busy && !preview ? (
           <div className="py-6 flex items-center justify-center">
             <Loader2 className="animate-spin" size={22} color={c.brand} />
           </div>
@@ -152,7 +158,7 @@ function CategorizeModal({ open, onClose, onConfirmed }) {
                data-testid="cfo-categorize-error">{err}</div>
         ) : null}
 
-        {preview && !result ? (
+        {preview ? (
           <div className="space-y-2 text-sm" data-testid="cfo-categorize-preview-body">
             <div>Scanned: <b>{preview.scanned}</b> uncategorized checks.</div>
             <div>Would categorize (dry-run): <b>{preview.categorized}</b></div>
@@ -169,18 +175,6 @@ function CategorizeModal({ open, onClose, onConfirmed }) {
           </div>
         ) : null}
 
-        {result ? (
-          <div className="space-y-2 text-sm" data-testid="cfo-categorize-result">
-            <div className="text-sm font-bold" style={{ color: c.ok }}>
-              Done — {result.categorized} rows written.
-            </div>
-            <div className="text-xs" style={{ color: c.muted }}>
-              Tokens used: {result.tokens_used} · Quota now:
-              {" "}{result.usage?.request_count}/{result.usage?.quota}
-            </div>
-          </div>
-        ) : null}
-
         <div className="flex items-center gap-2 mt-4">
           <div style={{ flex: 1 }} />
           <button
@@ -190,21 +184,19 @@ function CategorizeModal({ open, onClose, onConfirmed }) {
                       color: c.onSurface, cursor: "pointer" }}
             data-testid="cfo-categorize-cancel"
           >
-            {result ? "Close" : "Cancel"}
+            Cancel
           </button>
-          {!result ? (
-            <button
-              onClick={confirm}
-              disabled={busy || !preview}
-              className="px-3 py-1.5 rounded-md text-sm font-bold"
-              style={{ background: c.brand, color: "#fff", border: 0,
-                        cursor: busy ? "wait" : "pointer",
-                        opacity: (busy || !preview) ? 0.6 : 1 }}
-              data-testid="cfo-categorize-confirm"
-            >
-              {busy ? "Running…" : "Run auto-categorize"}
-            </button>
-          ) : null}
+          <button
+            onClick={confirm}
+            disabled={busy || !preview}
+            className="px-3 py-1.5 rounded-md text-sm font-bold"
+            style={{ background: c.brand, color: "#fff", border: 0,
+                      cursor: busy ? "wait" : "pointer",
+                      opacity: (busy || !preview) ? 0.6 : 1 }}
+            data-testid="cfo-categorize-confirm"
+          >
+            {busy ? "Running…" : "Run auto-categorize"}
+          </button>
         </div>
       </div>
     </div>
@@ -228,6 +220,9 @@ export default function CFODashboard() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [categorizeOpen, setCategorizeOpen] = useState(false);
+  // T2 fix — top-of-page banner surfaced after the categorize modal
+  // closes. `{kind: 'ok'|'warn', text}`. Auto-dismisses after 6s.
+  const [categorizeBanner, setCategorizeBanner] = useState(null);
 
   const load = useCallback(async () => {
     if (!allowed) return;
@@ -292,6 +287,31 @@ export default function CFODashboard() {
         <div className="rounded-md p-3 text-sm mb-4"
              style={{ background: c.dangerBg, color: c.danger, border: `1px solid ${c.danger}` }}
              data-testid="cfo-error">{err}</div>
+      ) : null}
+
+      {/* T2 fix — categorize completion banner (auto-dismisses in 6s). */}
+      {categorizeBanner ? (
+        <div
+          className="rounded-md p-3 text-sm mb-4 flex items-center gap-2"
+          style={{
+            background: categorizeBanner.kind === "ok" ? c.okBg : c.warnBg,
+            color: categorizeBanner.kind === "ok" ? c.ok : c.warn,
+            border: `1px solid ${categorizeBanner.kind === "ok" ? c.ok : c.warn}`,
+          }}
+          data-testid="cfo-categorize-done"
+        >
+          <Sparkles size={14} />
+          <span style={{ flex: 1 }}>{categorizeBanner.text}</span>
+          <button
+            onClick={() => setCategorizeBanner(null)}
+            className="text-xs font-bold"
+            style={{ background: "transparent", border: 0, cursor: "pointer",
+                      color: "inherit" }}
+            data-testid="cfo-categorize-done-dismiss"
+          >
+            Dismiss
+          </button>
+        </div>
       ) : null}
 
       {/* Period pills */}
@@ -526,7 +546,18 @@ export default function CFODashboard() {
       <CategorizeModal
         open={categorizeOpen}
         onClose={() => setCategorizeOpen(false)}
-        onConfirmed={() => { load(); }}
+        onConfirmed={(r) => {
+          // T2 fix — modal closed itself; show the banner + refresh
+          // dashboard/anomalies/llm-usage in one call.
+          const kind = (r?.mocked || (r?.reasons || []).length > 0) ? "warn" : "ok";
+          const text = kind === "ok"
+            ? `Categorized ${r?.categorized ?? 0} transactions · used ${r?.tokens_used ?? 0} tokens`
+            : `Categorized ${r?.categorized ?? 0} transactions · LLM warning: ${(r?.reasons || []).join(" · ") || "partial mock"}`;
+          setCategorizeBanner({ kind, text });
+          load();
+          // Auto-dismiss after 6s so the banner doesn't linger.
+          setTimeout(() => setCategorizeBanner(null), 6000);
+        }}
       />
     </div>
   );
