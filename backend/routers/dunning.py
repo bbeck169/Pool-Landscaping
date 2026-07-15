@@ -525,7 +525,8 @@ def _due_date_utc(inv: Dict[str, Any]) -> Optional[datetime]:
 async def _scan_tenant(tenant: Dict[str, Any], now: datetime) -> Dict[str, Any]:
     settings = await _get_settings(tenant["id"])
     if not settings.get("enabled"):
-        return {"tenant": tenant["id"], "skipped": "disabled"}
+        return {"tenant": tenant["id"], "skipped": "disabled",
+                 "fired": 0, "escalated": 0}
     invoices = await db.quotes.find(
         {"tenant_id": tenant["id"], "doc_type": "invoice",
           "status": {"$in": ["sent", "past_due", "draft"]},
@@ -535,6 +536,7 @@ async def _scan_tenant(tenant: Dict[str, Any], now: datetime) -> Dict[str, Any]:
     esc = settings.get("escalation") or DEFAULT_ESCALATION
     stages = settings.get("stages") or []
     fired_total = 0
+    escalated_total = 0
     for inv in invoices:
         if inv.get("dunning_paused"):
             continue
@@ -562,6 +564,7 @@ async def _scan_tenant(tenant: Dict[str, Any], now: datetime) -> Dict[str, Any]:
                             f"risk_status_{new_risk}_at": now_iso()}},
             )
             inv["risk_status"] = new_risk
+            escalated_total += 1
         # Fire any stage that is due AND hasn't fired for this invoice yet.
         for stage in stages:
             offset = int(stage.get("offset_days", 0))
@@ -582,7 +585,7 @@ async def _scan_tenant(tenant: Dict[str, Any], now: datetime) -> Dict[str, Any]:
                 logger.warning(f"scanner reminder failed for "
                                 f"{inv['id']}/{stage['id']}: {e}")
     return {"tenant": tenant["id"], "invoices": len(invoices),
-             "fired": fired_total}
+             "fired": fired_total, "escalated": escalated_total}
 
 
 async def run_dunning_scan() -> Dict[str, Any]:
@@ -597,14 +600,17 @@ async def run_dunning_scan() -> Dict[str, Any]:
             summary.append(await _scan_tenant(t, now))
         except Exception as e:
             logger.warning(f"scan_tenant failed for {t.get('id')}: {e}")
-            summary.append({"tenant": t.get("id"), "error": str(e)})
+            summary.append({"tenant": t.get("id"), "error": str(e),
+                              "fired": 0, "escalated": 0})
     total_fired = sum(s.get("fired", 0) for s in summary)
+    total_escalated = sum(s.get("escalated", 0) for s in summary)
     if total_fired:
         logger.info(f"dunning scan fired {total_fired} reminders "
                      f"across {len(tenants)} tenants")
     return {"scanned_at": now.isoformat(),
              "tenants": len(tenants),
              "total_fired": total_fired,
+             "total_escalated": total_escalated,
              "summary": summary}
 
 
@@ -616,10 +622,17 @@ async def run_dunning_scan() -> Dict[str, Any]:
 async def get_queue(days: int = 7,
                       user: dict = Depends(require_admin),
                       tenant: dict = Depends(get_current_tenant)):
-    """Return reminders scheduled to fire in the next N days."""
+    """Return reminders scheduled to fire in the next N days.
+
+    Response envelope: `{items, total, window_days}`. Each item includes
+    both `fire_date` (canonical, ISO date) and `fire_at` (deprecated
+    alias, ISO datetime at 00:00 UTC) — the alias is kept for one
+    release to ease client migration.
+    """
     settings = await _get_settings(tenant["id"])
     if not settings.get("enabled"):
-        return {"items": [], "note": "dunning disabled"}
+        return {"items": [], "total": 0, "window_days": days,
+                 "note": "dunning disabled"}
     now = datetime.now(timezone.utc)
     horizon = now + timedelta(days=days)
     invoices = await db.quotes.find(
@@ -641,6 +654,7 @@ async def get_queue(days: int = 7,
                 "tenant_id": tenant["id"], "invoice_id": inv["id"],
                 "stage_id": stage["id"]}, {"_id": 0, "id": 1})
             if already: continue
+            fire_date_iso = fire_date.isoformat()
             items.append({
                 "invoice_id": inv["id"],
                 "invoice_title": inv.get("title") or "",
@@ -650,7 +664,9 @@ async def get_queue(days: int = 7,
                 "due_date": inv.get("due_date"),
                 "stage_id": stage["id"], "stage_name": stage["name"],
                 "channels": stage["channels"],
-                "fire_date": fire_date.isoformat(),
+                "fire_date": fire_date_iso,
+                # Deprecated alias — kept for one release.
+                "fire_at": f"{fire_date_iso}T00:00:00+00:00",
             })
     items.sort(key=lambda x: (x["fire_date"], x["stage_id"]))
     return {"items": items, "total": len(items),
@@ -732,4 +748,28 @@ async def ar_aging(user: dict = Depends(require_admin),
         "in_collections_count": in_collections_count,
         "invoiced_last_30d": round(invoiced_last_30, 2),
         "paid_last_30d": round(paid_last_30, 2),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Test hook — gated by ALLOW_TEST_HOOKS=1
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.post("/dunning/_test/run-scan-now")
+async def _test_run_scan_now(user: dict = Depends(require_admin),
+                                 tenant: dict = Depends(get_current_tenant)):
+    """Dev-only synchronous scanner trigger. Invokes the same
+    `run_dunning_scan` the APScheduler cron calls; returns the exact
+    counts of reminders created and invoices whose `risk_status` was
+    escalated during this pass. Gated by `ALLOW_TEST_HOOKS=1`.
+    """
+    if not os.environ.get("ALLOW_TEST_HOOKS"):
+        raise HTTPException(403, "test hooks are disabled")
+    result = await run_dunning_scan()
+    return {
+        "ran": True,
+        "reminders_created": int(result.get("total_fired", 0)),
+        "invoices_escalated": int(result.get("total_escalated", 0)),
+        "scanned_at": result.get("scanned_at"),
+        "tenants": result.get("tenants", 0),
     }

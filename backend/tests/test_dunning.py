@@ -313,3 +313,135 @@ def test_role_gating(tech_h, customer_h, dbc):
                             timeout=15)
         assert r2.status_code == 403
     dbc.quotes.delete_one({"id": iid})
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Fix 1 · Dev test-hook driven scanner tests
+# ═══════════════════════════════════════════════════════════════════════
+
+def _run_scan(admin_h):
+    r = requests.post(f"{API}/dunning/_test/run-scan-now",
+                       headers=admin_h, timeout=60)
+    assert r.status_code == 200, (
+        f"test hook returned {r.status_code}: {r.text[:200]}")
+    return r.json()
+
+
+def test_dunning_test_hook_available(admin_h):
+    r = _run_scan(admin_h)
+    for k in ("ran", "reminders_created", "invoices_escalated",
+              "scanned_at", "tenants"):
+        assert k in r
+    assert r["ran"] is True
+
+
+def test_scanner_creates_reminder_at_stage(admin_h, dbc):
+    # Ensure defaults (past_due_7d at offset 7).
+    requests.post(f"{API}/dunning/settings/reset-defaults",
+                   headers=admin_h, timeout=15)
+    iid = _seed_invoice(dbc, days_past=8)
+    dbc.dunning_reminders.delete_many({"invoice_id": iid})
+    _run_scan(admin_h)
+    n = dbc.dunning_reminders.count_documents({
+        "invoice_id": iid, "stage_id": "past_due_7d"})
+    assert n == 1, f"past_due_7d should have fired once, got {n}"
+    dbc.quotes.delete_one({"id": iid})
+    dbc.dunning_reminders.delete_many({"invoice_id": iid})
+
+
+def test_scanner_idempotency(admin_h, dbc):
+    requests.post(f"{API}/dunning/settings/reset-defaults",
+                   headers=admin_h, timeout=15)
+    iid = _seed_invoice(dbc, days_past=8)
+    dbc.dunning_reminders.delete_many({"invoice_id": iid})
+    _run_scan(admin_h)
+    n1 = dbc.dunning_reminders.count_documents({"invoice_id": iid})
+    _run_scan(admin_h)
+    n2 = dbc.dunning_reminders.count_documents({"invoice_id": iid})
+    assert n1 == n2, (
+        f"second scan created duplicates: before={n1}, after={n2}")
+    assert n1 >= 1
+    dbc.quotes.delete_one({"id": iid})
+    dbc.dunning_reminders.delete_many({"invoice_id": iid})
+
+
+def test_scanner_escalates_at_risk_at_30d(admin_h, dbc):
+    requests.post(f"{API}/dunning/settings/reset-defaults",
+                   headers=admin_h, timeout=15)
+    iid = _seed_invoice(dbc, days_past=32)
+    _run_scan(admin_h)
+    inv = dbc.quotes.find_one({"id": iid})
+    assert inv["risk_status"] == "at_risk", (
+        f"expected at_risk at 32d past due, got {inv.get('risk_status')}")
+    dbc.quotes.delete_one({"id": iid})
+    dbc.dunning_reminders.delete_many({"invoice_id": iid})
+
+
+def test_scanner_escalates_in_collections_at_60d(admin_h, dbc):
+    requests.post(f"{API}/dunning/settings/reset-defaults",
+                   headers=admin_h, timeout=15)
+    iid = _seed_invoice(dbc, days_past=62)
+    _run_scan(admin_h)
+    inv = dbc.quotes.find_one({"id": iid})
+    assert inv["risk_status"] == "in_collections", (
+        f"expected in_collections at 62d past due, got "
+        f"{inv.get('risk_status')}")
+    dbc.quotes.delete_one({"id": iid})
+    dbc.dunning_reminders.delete_many({"invoice_id": iid})
+
+
+def test_scanner_skips_paused_invoice(admin_h, dbc):
+    requests.post(f"{API}/dunning/settings/reset-defaults",
+                   headers=admin_h, timeout=15)
+    iid = _seed_invoice(dbc, days_past=8)
+    dbc.dunning_reminders.delete_many({"invoice_id": iid})
+    requests.post(f"{API}/dunning/pause/{iid}",
+                   headers=admin_h, timeout=15)
+    _run_scan(admin_h)
+    n_after_pause = dbc.dunning_reminders.count_documents(
+        {"invoice_id": iid})
+    assert n_after_pause == 0, (
+        f"paused invoice should NOT get reminders, got {n_after_pause}")
+    # Resume + rescan → now it fires.
+    requests.post(f"{API}/dunning/resume/{iid}",
+                   headers=admin_h, timeout=15)
+    _run_scan(admin_h)
+    n_after_resume = dbc.dunning_reminders.count_documents(
+        {"invoice_id": iid})
+    assert n_after_resume >= 1
+    dbc.quotes.delete_one({"id": iid})
+    dbc.dunning_reminders.delete_many({"invoice_id": iid})
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Fix 2 · Queue response alias
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_queue_has_fire_at_alias(admin_h, dbc):
+    tenant = dbc.tenants.find_one({"slug": "aquaterra"})
+    c = dbc.customers.find_one({"tenant_id": tenant["id"]})
+    due = (datetime.now(timezone.utc)
+             + timedelta(days=3)).date().isoformat()
+    iid = "queue-alias-" + str(int(time.time() * 1000))
+    dbc.quotes.insert_one({
+        "id": iid, "tenant_id": tenant["id"], "doc_type": "invoice",
+        "status": "sent", "payment_status": "unpaid",
+        "customer_id": c["id"], "customer_name": c["name"],
+        "total": 100.0, "amount_paid": 0.0,
+        "due_date": due,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    q = requests.get(f"{API}/dunning/queue?days=10",
+                      headers=admin_h, timeout=15).json()
+    # Envelope shape preserved
+    for k in ("items", "total", "window_days"):
+        assert k in q
+    row = next((x for x in q["items"] if x["invoice_id"] == iid), None)
+    assert row is not None
+    # Both canonical + deprecated alias present with identical dates
+    assert "fire_date" in row
+    assert "fire_at" in row
+    assert row["fire_at"].startswith(row["fire_date"])
+    # fire_at is a full ISO datetime
+    datetime.fromisoformat(row["fire_at"])
+    dbc.quotes.delete_one({"id": iid})
