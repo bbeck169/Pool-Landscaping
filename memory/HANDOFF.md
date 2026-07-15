@@ -4813,3 +4813,39 @@ surface `SomethingRef` names, not gate finishes on regex quirks.
 **Not touched (per brief):** web files, backend, Recommendations card, Chemicals Added section, customer portal.
 
 **Blocking issues after change:** none.
+
+#### Phase 37 · Refined chip scales + chemicals-added dropdown stack
+
+**Part A — 36b mobile hotfixes**
+- Testids: added a `canonicalReadingKey()` helper on **both** platforms so backend keys like `chlorine` / `alkalinity` / `cyanuric` still resolve to the canonical `pool-reading-free_chlorine-slider`, `pool-reading-total_alkalinity-slider`, `pool-reading-cyanuric_acid-slider` selectors (verified live in Playwright — modal now exposes exactly those testids).
+- Autosave pill: in both `ChecklistModal.jsx` (web) and `app/job/[id]/checklist.tsx` (mobile) the pill now flips to `saving` **immediately** on any edit inside `scheduleAutosave` (not just when the network request fires), and is held on `saving` for a minimum `MIN_SAVING_MS=400ms` via `savingShownAtRef`. Playwright pill trace confirms: `saved → saving (100ms) → saving (400ms) → saved (900ms)` after a chip tap.
+
+**Part B — Refined chip scales (web PoolChecklistForm.jsx + mobile ReadingChipRow.tsx)**
+- Total / Free / Combined Chlorine: `0..20` in **0.5** ppm increments (all built via `_seqInc`).
+- pH: `["<6", 6.0, 6.1, ..., 8.5]` in **0.1** increments. `<6` chip stores as numeric `5.9` (backend-safe); in-range 7.2–7.6 still gets the green palette override.
+- Alkalinity / Total Alkalinity: `20..200` in **10** ppm increments.
+- Cyanuric Acid: `["N/A", 20, 30, ..., 490, 500, ">500"]`. `>500` stores as `501`.
+- Water Temp: `["N/A", 40, 45, ..., 100]` (5 °F).
+- Filter PSI: `["N/A", 0, 2.5, 5, ..., 30]` (2.5 psi).
+- Kept CYA / Cal Hardness / Phosphate / Salt / TDS unchanged (per spec).
+- Chip → value coercion moved into the shared helpers `_chipToValue` / `_isChipSelected` (web) and `chipToValue` / `isChipSelected` (mobile). `updReading` now safely accepts `null | number | string` — no more silent `NaN`.
+
+**Part C — Chemicals Added dropdown stack**
+- **New files:**
+  - `/app/frontend/src/components/checklist/ChemicalDropdownStack.jsx` — 9 collapsible rows, testids `chemicals-stack`, `chemicals-row-{slug}`, `chemicals-row-{slug}-header`, `chemicals-row-{slug}-option-{slug|none}`, `chemicals-row-{slug}-current`. Live-verified: all 9 rows render (`chlorine-tablets`, `liquid-chlorine`, `liquid-acid`, `calhypo-shock`, `clarifier`, `phosphate-remover`, `salt`, `pool-enzymes`, `algaecide`). Expanding **Liquid Chlorine** shows the 9-preset grid; selecting `1/4 Gallon` upserts an entry into `chemicals_added` and the current-selection line reads "1/4 Gallon".
+  - `/app/frontend/src/components/checklist/chemicalTypes.js` — shared `CHEM_TYPES` config (options, aliases, section headers, per-type units).
+  - `/app/mobile/src/components/checklist/ChemicalDropdownStack.tsx` — mirror component + inline `CHEM_TYPES` config (config duplicated to keep the mobile bundle self-contained). Exposes the same testIDs via React Native `testID` props.
+- **Both platforms** call `snapRecommendationToPreset(rec.chemical, rec.quantity)` from the "Add" button on each Phase-34e recommendation card. A snapped row now shows a small italic "Snapped from X unit" note beneath the current selection. If a chemical has no configured stack entry we fall back to the legacy raw-row append so the tech never loses the recommendation.
+- Wired into **web** `PoolChecklistForm.jsx` (old repeatable-rows block replaced) and **mobile** `PoolChecklistForm.tsx` (old row list + "Add chemical" button replaced). Backend `chemicals_added` shape untouched — entries persist as `{chemical, name, quantity, amount, unit, raw_label, source?, snapped_from?}`, all fields the schema already accepted.
+
+**Verification**
+- `bash /app/scripts/preflight.sh` → `preflight OK` (exit 0). Advisory unresolved-identifier warnings unchanged.
+- `esbuild` transformSync on all 8 touched/new files → clean.
+- `tsc --noEmit -p /app/mobile` → zero new errors on the four touched mobile files (only pre-existing project-wide `spacing.xs` + role-comparison drift).
+- Live web verification via Playwright:
+  - Modal `checklist-modal-pool` exposes 294 relevant testids, including `pool-reading-free_chlorine-slider`, `pool-reading-total_alkalinity-slider`, `pool-reading-ph-chip-<6`, `pool-reading-ph-chip-7.4`, and all 40 Free-Chlorine `0..20` chips.
+  - Chemicals stack shows all 9 rows in the correct order with correct default no-X labels ("No Tabs Used", "No Liquid Chlorine Used", …).
+  - Autosave pill trace after a chip tap: `saved → saving @100ms → saving @400ms → saved @900ms` (400ms min-hold is enforced end-to-end).
+- Pre-existing pytest flakiness in `test_phase34b_retention_bridge.py` and `test_auto_clockin.py::test_auto_clockin_in_geofence_but_out_of_window` NOT touched by Phase 37 (backend untouched). Left as-is.
+
+**Not touched (per brief):** photos section, backend routers/models, customer portal.

@@ -26,6 +26,40 @@ import * as ImagePicker from "expo-image-picker";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import ReadingChipRow from "./ReadingChipRow";
+import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDropdownStack";
+
+// Phase 37 — canonical testid key (parity with web PoolChecklistForm.jsx).
+const _NAME_TO_CANONICAL: Record<string, string> = {
+  "free chlorine": "free_chlorine",
+  "total chlorine": "total_chlorine",
+  "combined chlorine": "combined_chlorine",
+  "chlorine": "free_chlorine",
+  "ph": "ph",
+  "ph level": "ph",
+  "total alkalinity": "total_alkalinity",
+  "alkalinity": "total_alkalinity",
+  "calcium hardness": "calcium_hardness",
+  "cyanuric acid": "cyanuric_acid",
+  "cya": "cyanuric_acid",
+  "cyanuric": "cyanuric_acid",
+  "salt": "salt",
+  "total dissolved solids": "tds",
+  "tds": "tds",
+  "phosphates": "phosphates",
+  "phosphate": "phosphates",
+  "water temp": "water_temp",
+  "water temperature": "water_temp",
+  "temperature": "water_temp",
+  "filter psi": "filter_psi",
+  "psi": "filter_psi",
+};
+function canonicalReadingKey(r: { key?: string; name?: string }): string {
+  const name = String(r?.name || "").toLowerCase().trim();
+  if (_NAME_TO_CANONICAL[name]) return _NAME_TO_CANONICAL[name];
+  const rawKey = String(r?.key || r?.name || "").toLowerCase().trim();
+  if (_NAME_TO_CANONICAL[rawKey]) return _NAME_TO_CANONICAL[rawKey];
+  return rawKey.replace(/[\s()]+/g, "_").replace(/[^a-z0-9_]/g, "");
+}
 
 type Reading = {
   key?: string; name: string; unit?: string; value: number | string | null;
@@ -162,6 +196,32 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
 
   const addChemFromRec = (r: Rec) => {
     if (locked) return;
+    // Phase 37 — snap to the closest preset in the matching chemical
+    // dropdown row (parity with web). Falls back to a raw row entry if
+    // the chemical isn't part of the configured dropdown catalog.
+    const snapped = snapRecommendationToPreset(r.chemical, r.quantity);
+    if (snapped) {
+      const { type, option, snappedFrom } = snapped;
+      const existingIdx = chemicalsAdded.findIndex(
+        (c: any) => String(c?.chemical || c?.name || "").toLowerCase() === type.name.toLowerCase()
+      );
+      const entry: any = {
+        chemical: type.name,
+        name: type.name,
+        quantity: option.quantity,
+        amount: String(option.quantity),
+        unit: type.unit,
+        raw_label: option.label,
+        source: "recommendation",
+        reading_key: r.reading_key,
+        snapped_from: snappedFrom,
+      };
+      const next = [...chemicalsAdded];
+      if (existingIdx >= 0) next[existingIdx] = { ...next[existingIdx], ...entry };
+      else next.push(entry);
+      onChange({ chemicals_added: next });
+      return;
+    }
     const next: ChemAdded[] = [
       ...chemicalsAdded,
       {
@@ -214,8 +274,11 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
       <Text style={styles.sectionTitle}>Chemical Readings</Text>
       <View>
         {readings.map((r, i) => {
-          const key = (r.key || r.name) as string;
-          const prev = lastReadings[key];
+          // Phase 37 — canonical snake_case key for testid parity with web.
+          const key = canonicalReadingKey(r);
+          const prev = lastReadings[key]
+            || lastReadings[(r.key as string) || ""]
+            || lastReadings[r.name];
           return (
             <ReadingChipRow
               key={key}
@@ -345,59 +408,15 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
         ) : null}
       </View>
 
-      {/* Chemicals Added */}
+      {/* Chemicals Added — Phase 37 stacked dropdown rows */}
       <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>
         Chemicals Added
       </Text>
-      {chemicalsAdded.map((c, i) => (
-        <View key={c.id || i} style={styles.chemRow} testID={`pool-chem-row-${i}`}>
-          <TextInput
-            editable={!locked}
-            value={c.name}
-            placeholder="Chemical"
-            placeholderTextColor={colors.muted}
-            onChangeText={(v) => updChem(i, { name: v })}
-            style={[styles.input, { flex: 3 }]}
-            testID={`pool-chem-name-${i}`}
-          />
-          <TextInput
-            editable={!locked}
-            keyboardType="decimal-pad"
-            value={String(c.amount || "")}
-            placeholder="Qty"
-            placeholderTextColor={colors.muted}
-            onChangeText={(v) => updChem(i, { amount: v })}
-            style={[styles.input, { flex: 2 }]}
-            testID={`pool-chem-amount-${i}`}
-          />
-          <TextInput
-            editable={!locked}
-            value={c.unit || ""}
-            placeholder="unit"
-            placeholderTextColor={colors.muted}
-            onChangeText={(v) => updChem(i, { unit: v })}
-            style={[styles.input, { flex: 2 }]}
-            testID={`pool-chem-unit-${i}`}
-          />
-          {!locked && (
-            <Pressable onPress={() => rmChem(i)} testID={`pool-chem-rm-${i}`}>
-              <Ionicons name="trash-outline" size={20} color={colors.error} />
-            </Pressable>
-          )}
-        </View>
-      ))}
-      {!locked && (
-        <Pressable style={styles.addChemBtn} onPress={addChem} testID="pool-chem-add">
-          <Ionicons name="add" size={16} color={colors.brand} />
-          <Text style={styles.addChemText}>Add chemical</Text>
-        </Pressable>
-      )}
-      {chemicalsCatalog.length > 0 && (
-        <Text style={styles.hint}>
-          Catalog: {chemicalsCatalog.slice(0, 6).map((c) => c.name).join(", ")}
-          {chemicalsCatalog.length > 6 ? "…" : ""}
-        </Text>
-      )}
+      <ChemicalDropdownStack
+        chemicalsAdded={chemicalsAdded as any}
+        locked={locked}
+        onChange={onChange as any}
+      />
 
       {/* Checklist */}
       <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>Checklist</Text>

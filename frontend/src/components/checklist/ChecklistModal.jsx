@@ -36,6 +36,10 @@ import GenericChecklistForm from "@/components/checklist/GenericChecklistForm";
 import PhotoUploader from "@/components/checklist/PhotoUploader";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
+// Phase 37 — minimum time the pill stays on "Saving…" so techs actually
+// see the state change after a chip tap. Prevents the pill from flashing
+// through "saving → saved" faster than the eye can register.
+const MIN_SAVING_MS = 400;
 const PHOTO_CAP = 10;
 
 const c = {
@@ -70,6 +74,10 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
   const timerRef = useRef(null);
+  // Phase 37 — track when "Saving…" was first shown, so the pill holds
+  // for at least MIN_SAVING_MS before flipping to "Saved". Techs need to
+  // actually see the transition after a chip tap.
+  const savingShownAtRef = useRef(0);
   // Phase 34e third hotfix — reportRef mirrors the latest `report` state
   // so the debounced autosave never PATCHes with a stale closure snapshot.
   const reportRef = useRef(null);
@@ -110,6 +118,9 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
     if (!cur || cur.submitted_at) return;
     if (!dirtyRef.current || savingRef.current) return;
     savingRef.current = true;
+    // If patchReport already flipped us to "saving", keep the timestamp;
+    // otherwise stamp it now so the min-hold still applies.
+    if (!savingShownAtRef.current) savingShownAtRef.current = Date.now();
     setSaveState("saving");
     try {
       const patched = await api.patch(`/jobs/${jobId}/service-report`, {
@@ -123,11 +134,19 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
         reportRef.current = patched;
       }
       dirtyRef.current = false;
-      setSaveState("saved");
-      setLastSavedAt(new Date());
-      setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1200);
+      // Hold "Saving…" for at least MIN_SAVING_MS before flipping to
+      // "Saved", so the transition is visible to the tech.
+      const elapsed = Date.now() - (savingShownAtRef.current || Date.now());
+      const holdMs = Math.max(0, MIN_SAVING_MS - elapsed);
+      setTimeout(() => {
+        setSaveState("saved");
+        setLastSavedAt(new Date());
+        savingShownAtRef.current = 0;
+        setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1200);
+      }, holdMs);
     } catch (e) {
       setSaveState("error");
+      savingShownAtRef.current = 0;
     } finally {
       savingRef.current = false;
     }
@@ -135,6 +154,12 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
 
   const scheduleAutosave = useCallback(() => {
     dirtyRef.current = true;
+    // Phase 37 — flip the pill to "saving" immediately on any edit, so
+    // the tech sees feedback even before the 800ms debounce window ends.
+    if (!savingRef.current) {
+      savingShownAtRef.current = Date.now();
+      setSaveState("saving");
+    }
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => { flushSave(); }, AUTOSAVE_DEBOUNCE_MS);
   }, [flushSave]);

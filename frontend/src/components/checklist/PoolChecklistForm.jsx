@@ -18,27 +18,55 @@
 import React, { useRef, useState, useEffect, useMemo, useCallback } from "react";
 import { AlertTriangle, CheckCircle2, FlaskConical, Plus, RefreshCw, Trash2, Pencil, X as CloseX } from "lucide-react";
 import { api } from "@/api";
+import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDropdownStack";
 
-// Phase 36 — chip-scale defaults per reading key.
+// Phase 37 — refined chip-scale defaults per reading key.
+// Chlorine: 0.5 ppm increments up to 20. pH: 0.1 increments 6.0..8.5 with
+// a "<6" sentinel chip. Alkalinity: 10 ppm increments 20..200. Temp:
+// 5 °F increments. Filter PSI: 2.5 psi increments.
+const _seqInc = (start, stop, step) => {
+  const out = [];
+  const n = Math.round((stop - start) / step) + 1;
+  for (let i = 0; i < n; i += 1) {
+    const v = start + i * step;
+    // Fix float noise (0.30000000000000004) so testids stay stable.
+    out.push(Number(v.toFixed(2)));
+  }
+  return out;
+};
+const _chlorineVals = _seqInc(0, 20, 0.5);           // 0, 0.5, ... 20
+const _phVals = ["<6", ..._seqInc(6.0, 8.5, 0.1)];   // <6, 6.0, ... 8.5
+const _alkVals = _seqInc(20, 200, 10);               // 20, 30, ... 200
+const _tempVals = ["N/A", 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100];
+const _psiVals  = ["N/A", 0, 2.5, 5, 7.5, 10, 12.5, 15, 17.5, 20, 22.5, 25, 30];
+
+// The "<6" chip stores as numeric 5.9 (backend accepts float; no schema
+// change). isSelected matches any value < 6.0 so tapping stays honest.
+const PH_UNDER_SIX_VALUE = 5.9;
+
+const _cyaVals = ["N/A", ...Array.from({ length: 49 }, (_, i) => 20 + i * 10), ">500"];
+// The ">500" chip stores as numeric 501; N/A stays null.
+const CYA_OVER_500_VALUE = 501;
+
 const CHIP_SCALES = {
-  total_chlorine:    { values: [0, 0.5, 1, 2, 3, 5, 10],                       palette: "chlorine" },
-  free_chlorine:     { values: [0, 0.5, 1, 2, 3, 5, 10],                       palette: "chlorine" },
-  chlorine:          { values: [0, 0.5, 1, 2, 3, 5, 10],                       palette: "chlorine" },
-  combined_chlorine: { values: [0, 0.2, 0.5, 1, 2],                            palette: "chlorine" },
-  ph:                { values: [6.2, 6.6, 7.0, 7.2, 7.4, 7.6, 7.8, 8.0, 8.4], palette: "ph" },
-  alkalinity:        { values: ["N/A", 0, 40, 60, 80, 100, 120, 140, 180, 240], palette: "alkalinity" },
-  total_alkalinity:  { values: ["N/A", 0, 40, 60, 80, 100, 120, 140, 180, 240], palette: "alkalinity" },
-  cyanuric_acid:     { values: ["N/A", 0, 20, 30, 40, 50, 60, 80, 100],       palette: "optional" },
-  cya:               { values: ["N/A", 0, 20, 30, 40, 50, 60, 80, 100],       palette: "optional" },
-  calcium_hardness:  { values: ["N/A", 0, 100, 150, 200, 250, 300, 400, 500], palette: "optional" },
-  phosphate:         { values: ["N/A", 0, 125, 250, 500, 1000, 2500],         palette: "optional" },
-  phosphates:        { values: ["N/A", 0, 125, 250, 500, 1000, 2500],         palette: "optional" },
-  salt:              { values: ["N/A", 0, 1000, 2000, 2700, 3200, 3600, 4500], palette: "optional" },
-  tds:               { values: ["N/A", 0, 500, 1000, 1500, 2000, 3000],       palette: "optional" },
-  water_temp:        { values: ["N/A", 40, 50, 60, 65, 70, 75, 80, 85, 90],   palette: "optional" },
-  temperature:       { values: ["N/A", 40, 50, 60, 65, 70, 75, 80, 85, 90],   palette: "optional" },
-  filter_psi:        { values: ["N/A", 0, 5, 10, 15, 20, 25, 30],              palette: "optional" },
-  psi:               { values: ["N/A", 0, 5, 10, 15, 20, 25, 30],              palette: "optional" },
+  total_chlorine:    { values: _chlorineVals,    palette: "chlorine" },
+  free_chlorine:     { values: _chlorineVals,    palette: "chlorine" },
+  chlorine:          { values: _chlorineVals,    palette: "chlorine" },
+  combined_chlorine: { values: _chlorineVals,    palette: "chlorine" },
+  ph:                { values: _phVals,          palette: "ph" },
+  alkalinity:        { values: _alkVals,         palette: "alkalinity" },
+  total_alkalinity:  { values: _alkVals,         palette: "alkalinity" },
+  cyanuric_acid:     { values: _cyaVals,         palette: "optional" },
+  cya:               { values: _cyaVals,         palette: "optional" },
+  calcium_hardness:  { values: ["N/A", 0, 100, 150, 200, 250, 300, 400, 500],     palette: "optional" },
+  phosphate:         { values: ["N/A", 0, 125, 250, 500, 1000, 2500],             palette: "optional" },
+  phosphates:        { values: ["N/A", 0, 125, 250, 500, 1000, 2500],             palette: "optional" },
+  salt:              { values: ["N/A", 0, 1000, 2000, 2700, 3200, 3600, 4500],    palette: "optional" },
+  tds:               { values: ["N/A", 0, 500, 1000, 1500, 2000, 3000],           palette: "optional" },
+  water_temp:        { values: _tempVals,        palette: "optional" },
+  temperature:       { values: _tempVals,        palette: "optional" },
+  filter_psi:        { values: _psiVals,         palette: "optional" },
+  psi:               { values: _psiVals,         palette: "optional" },
 };
 
 const PALETTES = {
@@ -50,11 +78,64 @@ const PALETTES = {
 };
 
 const _resolveScale = (r) => {
-  const key = String(r.key || r.name || "").toLowerCase().replace(/[\s()]+/g, "_");
+  const key = canonicalReadingKey(r);
   return CHIP_SCALES[key];
 };
 
+// Phase 37 — canonical testid key. Backend often uses shorter keys like
+// `chlorine`, `alkalinity`, `cyanuric` while the tester expects the
+// canonical `free_chlorine`, `total_alkalinity`, `cyanuric_acid`. Map
+// via display name first, then fall back to a normalized version of
+// whichever key came in.
+const _NAME_TO_CANONICAL = {
+  "free chlorine": "free_chlorine",
+  "total chlorine": "total_chlorine",
+  "combined chlorine": "combined_chlorine",
+  "chlorine": "free_chlorine",
+  "ph": "ph",
+  "ph level": "ph",
+  "total alkalinity": "total_alkalinity",
+  "alkalinity": "total_alkalinity",
+  "calcium hardness": "calcium_hardness",
+  "cyanuric acid": "cyanuric_acid",
+  "cya": "cyanuric_acid",
+  "cyanuric": "cyanuric_acid",
+  "salt": "salt",
+  "total dissolved solids": "tds",
+  "tds": "tds",
+  "phosphates": "phosphates",
+  "phosphate": "phosphates",
+  "water temp": "water_temp",
+  "water temperature": "water_temp",
+  "temperature": "water_temp",
+  "filter psi": "filter_psi",
+  "psi": "filter_psi",
+};
+function canonicalReadingKey(r) {
+  const name = String(r?.name || "").toLowerCase().trim();
+  if (_NAME_TO_CANONICAL[name]) return _NAME_TO_CANONICAL[name];
+  const rawKey = String(r?.key || r?.name || "").toLowerCase().trim();
+  if (_NAME_TO_CANONICAL[rawKey]) return _NAME_TO_CANONICAL[rawKey];
+  return rawKey.replace(/[\s()]+/g, "_").replace(/[^a-z0-9_]/g, "");
+}
+
 const _phSweet = (v) => typeof v === "number" && v >= 7.2 && v <= 7.6;
+
+// Phase 37 — coerce a chip's array value into the numeric (or null)
+// value that gets persisted. "N/A" → null, "<6" → 5.9, ">500" → 501,
+// otherwise the number itself. Keeps the backend contract unchanged.
+const _chipToValue = (v) => {
+  if (v === "N/A") return null;
+  if (v === "<6") return PH_UNDER_SIX_VALUE;
+  if (v === ">500") return CYA_OVER_500_VALUE;
+  return v;
+};
+const _isChipSelected = (chipRaw, current) => {
+  if (chipRaw === "N/A") return current == null || current === "";
+  if (chipRaw === "<6") return typeof current === "number" && current < 6.0;
+  if (chipRaw === ">500") return typeof current === "number" && current > 500;
+  return current != null && current !== "" && Number(current) === Number(chipRaw);
+};
 
 const _fmtRel = (iso) => {
   if (!iso) return "—";
@@ -119,10 +200,19 @@ export default function PoolChecklistForm({
   const [recsError, setRecsError] = useState("");
 
   const updReading = (idx, val) => {
+    // Phase 37 — accept null (from "N/A"), numbers (from chips), or strings
+    // (from the pencil-input popover). Coerce cleanly so we never store NaN.
+    let nextVal;
+    if (val === null || val === undefined || val === "") {
+      nextVal = null;
+    } else if (typeof val === "number") {
+      nextVal = Number.isFinite(val) ? val : null;
+    } else {
+      const n = parseFloat(val);
+      nextVal = Number.isFinite(n) ? n : null;
+    }
     const next = readings.map((r, i) =>
-      i === idx
-        ? { ...r, value: val === "" ? null : parseFloat(val) }
-        : r
+      i === idx ? { ...r, value: nextVal } : r
     );
     onChange({ chemical_readings: next });
   };
@@ -193,13 +283,41 @@ export default function PoolChecklistForm({
 
   const addChemFromRec = (rec) => {
     if (locked) return;
-    // Try to match a catalog entry by chemical name — case-insensitive.
+    // Phase 37 — snap the raw LLM quantity to the closest dropdown preset
+    // for that chemical type. If no matching type is registered, fall back
+    // to the old append-a-raw-row behaviour so the tech never loses the rec.
+    const snapped = snapRecommendationToPreset(rec.chemical, rec.quantity);
+    if (snapped) {
+      const { type, option, snappedFrom } = snapped;
+      const existingIdx = chemicalsAdded.findIndex(
+        (c) => String(c?.chemical || c?.name || "").toLowerCase() === type.name.toLowerCase()
+      );
+      const entry = {
+        chemical: type.name,
+        name: type.name,
+        quantity: option.quantity,
+        amount: String(option.quantity),
+        unit: type.unit,
+        raw_label: option.label,
+        source: "recommendation",
+        reading_key: rec.reading_key,
+        snapped_from: snappedFrom,
+      };
+      const next = [...chemicalsAdded];
+      if (existingIdx >= 0) next[existingIdx] = { ...next[existingIdx], ...entry };
+      else next.push(entry);
+      onChange({ chemicals_added: next });
+      return;
+    }
+    // Fallback — legacy path.
     const next = [
       ...chemicalsAdded,
       {
         id: Math.random().toString(36).slice(2),
         name: rec.chemical,
+        chemical: rec.chemical,
         amount: String(rec.quantity ?? ""),
+        quantity: rec.quantity,
         unit: rec.unit || (chemicalUnits[0] || "oz"),
         source: "recommendation",
         reading_key: rec.reading_key,
@@ -227,7 +345,7 @@ export default function PoolChecklistForm({
   const openEdit = (r) => {
     if (locked) return;
     setEditDraft(r.value == null ? "" : String(r.value));
-    setEditingKey(r.key || r.name);
+    setEditingKey(canonicalReadingKey(r));
   };
   const commitEdit = (idx) => {
     updReading(idx, editDraft === "" ? null : editDraft);
@@ -276,10 +394,17 @@ export default function PoolChecklistForm({
         </div>
         <div className="space-y-4">
           {readings.map((r, i) => {
-            const key = r.key || r.name;
+            // Phase 37 — canonical snake_case key for testids and CHIP_SCALES
+            // lookup so the two platforms produce identical selectors.
+            const key = canonicalReadingKey(r);
             const scale = _resolveScale(r);
             const pal = scale ? PALETTES[scale.palette] : PALETTES.optional;
-            const prev = lastReadings[key];
+            // The `lastReadings` payload is keyed by whatever the backend
+            // returned — try the canonical key first, then fall back to
+            // the raw backend key / display name.
+            const prev = lastReadings[key]
+              || lastReadings[r.key]
+              || lastReadings[r.name];
             const isEditing = editingKey === key;
             const currentVal = r.value;
             return (
@@ -341,12 +466,10 @@ export default function PoolChecklistForm({
                 {scale ? (
                   <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: "thin" }}>
                     {scale.values.map((v) => {
-                      const isNA = v === "N/A";
-                      const chipVal = isNA ? null : v;
-                      const isSelected = (chipVal === null && (currentVal == null || currentVal === ""))
-                        || (chipVal !== null && currentVal != null && Number(currentVal) === Number(chipVal));
+                      const chipVal = _chipToValue(v);
+                      const isSelected = _isChipSelected(v, currentVal);
                       // pH chips get the green sweet-spot palette override.
-                      const useGreen = scale.palette === "ph" && _phSweet(chipVal);
+                      const useGreen = scale.palette === "ph" && _phSweet(typeof chipVal === "number" ? chipVal : null);
                       const bg = isSelected
                         ? (useGreen ? pal.inRangeSel : pal.sel)
                         : (useGreen ? pal.inRangeBg : pal.bg);
@@ -566,77 +689,16 @@ export default function PoolChecklistForm({
         ) : null}
       </div>
 
-      {/* Chemicals Added */}
+      {/* Chemicals Added — Phase 37 stacked dropdown rows */}
       <div>
         <div className="text-sm font-bold mb-2" style={{ color: colors.onSurface }}>
           Chemicals Added
         </div>
-        {chemicalsAdded.map((c, i) => (
-          <div key={c.id || i} className="grid grid-cols-12 gap-2 mb-2"
-               data-testid={`pool-chem-row-${i}`}>
-            <input
-              type="text"
-              disabled={locked}
-              value={c.name}
-              placeholder="Chemical"
-              onChange={(e) => updChem(i, { name: e.target.value })}
-              list={`pool-chem-catalog-${jobId}`}
-              className="col-span-6 px-2 py-1.5 rounded-md text-sm"
-              style={{ border: `1px solid ${colors.border}`, background: colors.surface }}
-              data-testid={`pool-chem-name-${i}`}
-            />
-            <input
-              type="number"
-              disabled={locked}
-              value={c.amount || ""}
-              placeholder="Qty"
-              onChange={(e) => updChem(i, { amount: e.target.value })}
-              className="col-span-2 px-2 py-1.5 rounded-md text-sm"
-              style={{ border: `1px solid ${colors.border}`, background: colors.surface }}
-              data-testid={`pool-chem-amount-${i}`}
-            />
-            <select
-              disabled={locked}
-              value={c.unit || ""}
-              onChange={(e) => updChem(i, { unit: e.target.value })}
-              className="col-span-3 px-2 py-1.5 rounded-md text-sm"
-              style={{ border: `1px solid ${colors.border}`, background: colors.surface }}
-              data-testid={`pool-chem-unit-${i}`}
-            >
-              {chemicalUnits.map((u) => (<option key={u} value={u}>{u}</option>))}
-            </select>
-            {!locked && (
-              <button
-                type="button"
-                onClick={() => rmChem(i)}
-                className="col-span-1 flex items-center justify-center rounded-md"
-                style={{ background: "transparent", border: 0, cursor: "pointer" }}
-                data-testid={`pool-chem-rm-${i}`}
-                aria-label="Remove row"
-              >
-                <Trash2 size={14} color="#DC2626" />
-              </button>
-            )}
-          </div>
-        ))}
-        {chemicalsCatalog.length > 0 && (
-          <datalist id={`pool-chem-catalog-${jobId}`}>
-            {chemicalsCatalog.map((c) => (
-              <option key={c.name} value={c.name} />
-            ))}
-          </datalist>
-        )}
-        {!locked && (
-          <button
-            type="button"
-            onClick={addChem}
-            className="inline-flex items-center gap-1 text-sm font-bold"
-            style={{ color: colors.brand, background: "transparent", border: 0, cursor: "pointer" }}
-            data-testid="pool-chem-add"
-          >
-            <Plus size={14} /> Add chemical
-          </button>
-        )}
+        <ChemicalDropdownStack
+          chemicalsAdded={chemicalsAdded}
+          locked={locked}
+          onChange={onChange}
+        />
       </div>
 
       {/* Checklist */}

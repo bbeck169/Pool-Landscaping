@@ -16,26 +16,60 @@ import { View, Text, Pressable, TextInput, ScrollView, StyleSheet } from "react-
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radius, font } from "@/src/theme";
 
-// ── Chip scales (verbatim from web) ─────────────────────────────────────
+// ── Chip scales (Phase 37 — parity with web PoolChecklistForm.jsx) ─────
+const _seqInc = (start: number, stop: number, step: number): number[] => {
+  const out: number[] = [];
+  const n = Math.round((stop - start) / step) + 1;
+  for (let i = 0; i < n; i += 1) out.push(Number((start + i * step).toFixed(2)));
+  return out;
+};
+const _chlorineVals: (number | string)[] = _seqInc(0, 20, 0.5);
+const _phVals: (number | string)[] = ["<6", ..._seqInc(6.0, 8.5, 0.1)];
+const _alkVals: (number | string)[] = _seqInc(20, 200, 10);
+const _tempVals: (number | string)[] = ["N/A", 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100];
+const _psiVals:  (number | string)[] = ["N/A", 0, 2.5, 5, 7.5, 10, 12.5, 15, 17.5, 20, 22.5, 25, 30];
+const _cyaVals: (number | string)[] = [
+  "N/A",
+  ...Array.from({ length: 49 }, (_, i) => 20 + i * 10),
+  ">500",
+];
+
+const PH_UNDER_SIX_VALUE = 5.9;
+const CYA_OVER_500_VALUE = 501;
+
 const CHIP_SCALES: Record<string, { values: (number | string)[]; palette: string }> = {
-  total_chlorine:    { values: [0, 0.5, 1, 2, 3, 5, 10],                          palette: "chlorine" },
-  free_chlorine:     { values: [0, 0.5, 1, 2, 3, 5, 10],                          palette: "chlorine" },
-  chlorine:          { values: [0, 0.5, 1, 2, 3, 5, 10],                          palette: "chlorine" },
-  combined_chlorine: { values: [0, 0.2, 0.5, 1, 2],                               palette: "chlorine" },
-  ph:                { values: [6.2, 6.6, 7.0, 7.2, 7.4, 7.6, 7.8, 8.0, 8.4],     palette: "ph" },
-  alkalinity:        { values: ["N/A", 0, 40, 60, 80, 100, 120, 140, 180, 240],   palette: "alkalinity" },
-  total_alkalinity:  { values: ["N/A", 0, 40, 60, 80, 100, 120, 140, 180, 240],   palette: "alkalinity" },
-  cyanuric_acid:     { values: ["N/A", 0, 20, 30, 40, 50, 60, 80, 100],           palette: "optional" },
-  cya:               { values: ["N/A", 0, 20, 30, 40, 50, 60, 80, 100],           palette: "optional" },
+  total_chlorine:    { values: _chlorineVals,   palette: "chlorine" },
+  free_chlorine:     { values: _chlorineVals,   palette: "chlorine" },
+  chlorine:          { values: _chlorineVals,   palette: "chlorine" },
+  combined_chlorine: { values: _chlorineVals,   palette: "chlorine" },
+  ph:                { values: _phVals,         palette: "ph" },
+  alkalinity:        { values: _alkVals,        palette: "alkalinity" },
+  total_alkalinity:  { values: _alkVals,        palette: "alkalinity" },
+  cyanuric_acid:     { values: _cyaVals,        palette: "optional" },
+  cya:               { values: _cyaVals,        palette: "optional" },
   calcium_hardness:  { values: ["N/A", 0, 100, 150, 200, 250, 300, 400, 500],     palette: "optional" },
   phosphate:         { values: ["N/A", 0, 125, 250, 500, 1000, 2500],             palette: "optional" },
   phosphates:        { values: ["N/A", 0, 125, 250, 500, 1000, 2500],             palette: "optional" },
   salt:              { values: ["N/A", 0, 1000, 2000, 2700, 3200, 3600, 4500],    palette: "optional" },
   tds:               { values: ["N/A", 0, 500, 1000, 1500, 2000, 3000],           palette: "optional" },
-  water_temp:        { values: ["N/A", 40, 50, 60, 65, 70, 75, 80, 85, 90],       palette: "optional" },
-  temperature:       { values: ["N/A", 40, 50, 60, 65, 70, 75, 80, 85, 90],       palette: "optional" },
-  filter_psi:        { values: ["N/A", 0, 5, 10, 15, 20, 25, 30],                 palette: "optional" },
-  psi:               { values: ["N/A", 0, 5, 10, 15, 20, 25, 30],                 palette: "optional" },
+  water_temp:        { values: _tempVals,       palette: "optional" },
+  temperature:       { values: _tempVals,       palette: "optional" },
+  filter_psi:        { values: _psiVals,        palette: "optional" },
+  psi:               { values: _psiVals,        palette: "optional" },
+};
+
+// "N/A" → null, "<6" → 5.9, ">500" → 501, else numeric.
+const chipToValue = (v: number | string): number | null => {
+  if (v === "N/A") return null;
+  if (v === "<6") return PH_UNDER_SIX_VALUE;
+  if (v === ">500") return CYA_OVER_500_VALUE;
+  return v as number;
+};
+const isChipSelected = (chipRaw: number | string, current: number | string | null): boolean => {
+  if (chipRaw === "N/A") return current == null || current === "";
+  if (chipRaw === "<6") return typeof current === "number" && current < 6.0;
+  if (chipRaw === ">500") return typeof current === "number" && current > 500;
+  return current != null && current !== "" && Number(current) === Number(chipRaw);
 };
 
 type Palette = { bg: string; sel: string; selFg: string; fg: string;
@@ -172,13 +206,10 @@ export default function ReadingChipRow({
           contentContainerStyle={styles.chipRow}
         >
           {scale.values.map((v) => {
-            const isNA = v === "N/A";
-            const chipVal = isNA ? null : (v as number);
-            const isSelected =
-              (chipVal === null && (value == null || value === "")) ||
-              (chipVal !== null && value != null && value !== "" && Number(value) === Number(chipVal));
+            const chipVal = chipToValue(v);
+            const isSelected = isChipSelected(v, value);
             const useGreen =
-              scale.palette === "ph" && isPhSweetSpot(chipVal as number | null);
+              scale.palette === "ph" && isPhSweetSpot(typeof chipVal === "number" ? chipVal : null);
             const bg = isSelected
               ? (useGreen ? palette.inRangeSel! : palette.sel)
               : (useGreen ? palette.inRangeBg! : palette.bg);

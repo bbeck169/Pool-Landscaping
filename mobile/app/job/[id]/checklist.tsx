@@ -38,6 +38,9 @@ import LandscapingChecklistForm from "@/src/components/checklist/LandscapingChec
 import GenericChecklistForm from "@/src/components/checklist/GenericChecklistForm";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
+// Phase 37 — minimum time the pill stays on "Saving…" so techs actually
+// see the transition after a chip tap on the mobile checklist.
+const MIN_SAVING_MS = 400;
 const PHOTO_CAP = 10;
 
 export default function JobChecklistScreen() {
@@ -57,6 +60,9 @@ export default function JobChecklistScreen() {
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
   const autosaveTimer = useRef<any>(null);
+  // Phase 37 — timestamp of when "Saving…" was first shown, used for the
+  // min-hold that keeps the pill visible long enough to be perceived.
+  const savingShownAtRef = useRef<number>(0);
 
   // ─── Load ───────────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -84,6 +90,7 @@ export default function JobChecklistScreen() {
     if (!report || report.submitted_at) return;
     if (!dirtyRef.current || savingRef.current) return;
     savingRef.current = true;
+    if (!savingShownAtRef.current) savingShownAtRef.current = Date.now();
     setSaveState("saving");
     try {
       const patched = await api.patch(`/jobs/${id}/service-report`, {
@@ -94,10 +101,16 @@ export default function JobChecklistScreen() {
       });
       if (patched && typeof patched === "object") setReport(patched);
       dirtyRef.current = false;
-      setSaveState("saved");
-      setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1200);
+      const elapsed = Date.now() - (savingShownAtRef.current || Date.now());
+      const holdMs = Math.max(0, MIN_SAVING_MS - elapsed);
+      setTimeout(() => {
+        setSaveState("saved");
+        savingShownAtRef.current = 0;
+        setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1200);
+      }, holdMs);
     } catch (e) {
       setSaveState("error");
+      savingShownAtRef.current = 0;
     } finally {
       savingRef.current = false;
     }
@@ -105,6 +118,11 @@ export default function JobChecklistScreen() {
 
   const scheduleAutosave = useCallback(() => {
     dirtyRef.current = true;
+    // Phase 37 — flip the pill to "saving" immediately on any edit.
+    if (!savingRef.current) {
+      savingShownAtRef.current = Date.now();
+      setSaveState("saving");
+    }
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     autosaveTimer.current = setTimeout(() => { flushSave(); }, AUTOSAVE_DEBOUNCE_MS);
   }, [flushSave]);
