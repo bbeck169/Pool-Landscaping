@@ -149,3 +149,42 @@ def test_unmatched_chemical_still_reserves(admin_h):
     finally:
         async def _c(): await db.inventory_reservations.delete_many({"job_id": jid})
         _run(_c())
+
+
+def test_consume_dedup_skip_item_writes(admin_h):
+    """Step 3b — internal helper with `skip_item_writes=True` flips
+    reservations → consumed but leaves inventory_items.current_qty
+    untouched. Prevents double-decrement with the existing
+    `decrement_from_service_report()` path used by submit_service_report."""
+    from routers.inventory import _consume_job_reservations_impl
+    tid = _tenant()
+    item = f"TestChem-{new_id()[:6]}"
+    iid = _seed_item(tid, item, "tabs", 100.0)
+    jid = new_id()
+    try:
+        r = requests.post(f"{API}/inventory/reserve", headers=admin_h, timeout=10,
+                          json={"chemical": item, "quantity": 4, "job_id": jid}).json()
+        assert r["ok"]
+        # Run the internal helper with skip_item_writes=True.
+        result = _run(_consume_job_reservations_impl(
+            tid, jid, skip_item_writes=True, actor="submit-flow"))
+        assert result["skip_item_writes"] is True
+        assert result["count"] == 1
+        # Reservation is consumed.
+        async def _fetch():
+            return await db.inventory_reservations.find_one(
+                {"id": r["reservation_id"]}, {"_id": 0})
+        res = _run(_fetch())
+        assert res["status"] == "consumed"
+        assert res.get("consumed_by") == "submit-flow"
+        # Item stock UNTOUCHED.
+        async def _q():
+            return (await db.inventory_items.find_one({"id": iid}, {"_id": 0}))["current_qty"]
+        assert _run(_q()) == 100.0
+        # No stock_movement written (per skip_item_writes contract).
+        async def _mv_count():
+            return await db.stock_movements.count_documents(
+                {"job_id": jid, "reason": "reservation-consumed"})
+        assert _run(_mv_count()) == 0
+    finally:
+        _cleanup(tid, iid, jid)

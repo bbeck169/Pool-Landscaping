@@ -627,38 +627,50 @@ async def release_reservation(reservation_id: str,
 async def consume_job_reservations(job_id: str,
                                        user: dict = Depends(require_admin),
                                        tenant: dict = Depends(get_current_tenant)):
-    """Called from service-report submit (server-side). Subtracts each
-    active reservation from the shared item pool and stamps a
-    stock_movement per line. Idempotent — already-consumed reservations
-    are skipped."""
+    """Public consume endpoint — subtracts item stock AND flips reservations."""
+    return await _consume_job_reservations_impl(
+        tenant["id"], job_id, skip_item_writes=False, actor="admin-endpoint")
+
+
+async def _consume_job_reservations_impl(tenant_id: str, job_id: str,
+                                            skip_item_writes: bool = False,
+                                            actor: str = "internal"):
+    """Internal helper — the submit-flow path passes
+    `skip_item_writes=True` because `decrement_from_service_report()`
+    already reduced `inventory_items.current_qty` for the matching
+    chemicals. Reservations still flip to `consumed` so the audit trail
+    is complete and the truck-manifest report stays accurate. `actor`
+    is stamped on each reservation so the source is traceable."""
     now = now_iso()
     rows = await db.inventory_reservations.find(
-        {"tenant_id": tenant["id"], "job_id": job_id,
+        {"tenant_id": tenant_id, "job_id": job_id,
          "status": "active"}, {"_id": 0}).to_list(200)
     consumed = []
     for r in rows:
         it = None
-        if r.get("matched_item_id"):
+        if (not skip_item_writes) and r.get("matched_item_id"):
             it = await db.inventory_items.find_one(
-                {"id": r["matched_item_id"], "tenant_id": tenant["id"]},
+                {"id": r["matched_item_id"], "tenant_id": tenant_id},
                 {"_id": 0})
-        if it:
+        if it and not skip_item_writes:
             new_qty = max(0.0, float(it.get("current_qty") or 0) - float(r["quantity"]))
             await db.inventory_items.update_one(
                 {"id": it["id"]},
                 {"$set": {"current_qty": new_qty, "updated_at": now}})
             await db.stock_movements.insert_one({
-                "id": new_id(), "tenant_id": tenant["id"],
+                "id": new_id(), "tenant_id": tenant_id,
                 "item_id": it["id"], "delta": -float(r["quantity"]),
                 "reason": "reservation-consumed", "job_id": job_id,
                 "reservation_id": r["id"], "at": now})
         await db.inventory_reservations.update_one(
             {"id": r["id"]},
             {"$set": {"status": "consumed", "consumed_at": now,
-                       "updated_at": now}})
+                       "consumed_by": actor, "updated_at": now}})
         consumed.append({"reservation_id": r["id"], "chemical": r["chemical"],
-                          "quantity": r["quantity"], "matched": bool(it)})
-    return {"ok": True, "consumed": consumed, "count": len(consumed)}
+                          "quantity": r["quantity"], "matched": bool(it),
+                          "stock_written": bool(it) and not skip_item_writes})
+    return {"ok": True, "consumed": consumed, "count": len(consumed),
+             "skip_item_writes": skip_item_writes}
 
 
 @router.post("/inventory/reservations/{job_id}/release")

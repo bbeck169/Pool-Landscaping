@@ -395,6 +395,19 @@ async def submit_service_report(jid: str,
     except Exception as e:
         logger.warning(f"inventory decrement failed: {e}")
 
+    # Phase 39 · Step 3b — Flip reservations for this job → consumed.
+    # `decrement_from_service_report()` above already reduced the shared
+    # `inventory_items.current_qty`, so we pass `skip_item_writes=True`
+    # to avoid double-counting; consume() just closes the reservation
+    # audit trail and stamps `consumed_by:"submit-flow"`.
+    try:
+        from routers.inventory import _consume_job_reservations_impl
+        await _consume_job_reservations_impl(
+            tenant["id"], job.get("id"),
+            skip_item_writes=True, actor="submit-flow")
+    except Exception as e:
+        logger.warning(f"reservation consume failed: {e}")
+
     # Phase 39 · Algae-risk auto-flag — if this and the previous service
     # report both show free_chlorine <= 0.5 ppm, write an algae_risk_flags
     # entry so the office sees the at-risk customer on the retention report.

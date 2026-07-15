@@ -21,9 +21,10 @@
  * introduce a new column. The extra `raw_label` and `source` fields
  * were already accepted (added_from_rec used them since Phase 34e).
  */
-import React, { useState, useMemo } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
+import { ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
 import { CHEM_TYPES } from "./chemicalTypes";
+import { api } from "@/api";
 
 const colors = {
   brand: "#0EA5E9",
@@ -58,9 +59,61 @@ export default function ChemicalDropdownStack({
   chemicalsAdded = [],
   locked = false,
   onChange,
+  jobId,   // Phase 39 Step 3b — needed for `/inventory/reserve`.
 }) {
   // Start all rows collapsed — techs typically only need 1-2 per visit.
   const [openSlug, setOpenSlug] = useState(null);
+  // Phase 39 Step 3b — per-slug shortage warning captured from the last
+  // `/inventory/reserve` response. Cleared when the row is set to "none".
+  const [warnings, setWarnings] = useState({});
+  const debounceTimers = useRef({});
+
+  // Fire a debounced reservation call for a single chemical type. Persists
+  // `reservation_id` back onto the corresponding chemicals_added row so
+  // subsequent edits update in place. Zero-quantity or removal → DELETE.
+  const reserve = (type, entry) => {
+    if (!jobId) return;
+    const timerKey = type.slug;
+    if (debounceTimers.current[timerKey]) clearTimeout(debounceTimers.current[timerKey]);
+    debounceTimers.current[timerKey] = setTimeout(async () => {
+      try {
+        if (!entry || !entry.quantity) {
+          // Nothing on the row → release existing reservation if any.
+          if (entry?.reservation_id) {
+            await api.delete(`/inventory/reserve/${entry.reservation_id}`);
+          }
+          setWarnings((w) => { const n = { ...w }; delete n[type.slug]; return n; });
+          return;
+        }
+        const resp = await api.post("/inventory/reserve", {
+          chemical: entry.chemical || type.name,
+          quantity: Number(entry.quantity) || 0,
+          unit: entry.unit || type.unit,
+          job_id: jobId,
+          reservation_id: entry.reservation_id,
+        });
+        if (resp?.reservation_id && resp.reservation_id !== entry.reservation_id) {
+          // Persist reservation_id back onto the row.
+          const next = chemicalsAdded.map((c) =>
+            String(c?.chemical || c?.name || "").toLowerCase() === type.name.toLowerCase()
+              ? { ...c, reservation_id: resp.reservation_id } : c
+          );
+          onChange({ chemicals_added: next });
+        }
+        if (resp?.warning) {
+          setWarnings((w) => ({
+            ...w,
+            [type.slug]: {
+              text: resp.warning,
+              suggested_restock: resp.suggested_restock,
+            },
+          }));
+        } else {
+          setWarnings((w) => { const n = { ...w }; delete n[type.slug]; return n; });
+        }
+      } catch (_) { /* stay quiet — reservation is advisory */ }
+    }, 500);
+  };
 
   const upsert = (type, option) => {
     // option = null → remove that chem type from the array.
@@ -68,6 +121,7 @@ export default function ChemicalDropdownStack({
     const existingIdx = chemicalsAdded.findIndex(
       (c) => String(c?.chemical || c?.name || "").toLowerCase() === type.name.toLowerCase()
     );
+    const existingRow = existingIdx >= 0 ? chemicalsAdded[existingIdx] : null;
     const next = [...chemicalsAdded];
     if (option === null) {
       if (existingIdx >= 0) next.splice(existingIdx, 1);
@@ -90,6 +144,12 @@ export default function ChemicalDropdownStack({
     // Phase 37 hotfix — auto-collapse the row after any selection so the
     // tech immediately sees the updated current-selection line.
     setOpenSlug(null);
+    // Phase 39 Step 3b — fire the reservation call. `option === null`
+    // means "No X Used" which triggers a release using the prior row's id.
+    const rowForReserve = option === null
+      ? { ...(existingRow || {}), quantity: 0 }
+      : (existingIdx >= 0 ? next[existingIdx] : next[next.length - 1]);
+    reserve(type, rowForReserve);
   };
 
   return (
@@ -141,6 +201,27 @@ export default function ChemicalDropdownStack({
                 ? <ChevronDown size={16} color={colors.muted} />
                 : <ChevronRight size={16} color={colors.muted} />}
             </button>
+
+            {warnings[type.slug] ? (
+              <div
+                className="px-3 pb-2 text-[11px] font-semibold flex items-center gap-1.5"
+                data-testid={`chemicals-row-${type.slug}-shortage-warning`}
+                style={{ background: "#FEF3C7", color: "#B45309",
+                          borderBottom: `1px solid #FCD34D` }}
+              >
+                <AlertTriangle size={11} />
+                <span className="flex-1">{warnings[type.slug].text}</span>
+                {warnings[type.slug].suggested_restock ? (
+                  <span
+                    className="px-1.5 py-0.5 rounded text-[10px] font-bold"
+                    style={{ background: "#B45309", color: "#FFFFFF" }}
+                    data-testid={`chemicals-row-${type.slug}-suggested-restock`}
+                  >
+                    restock ≥ {warnings[type.slug].suggested_restock}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
 
             {isOpen && (
               <div className="p-2 border-t" style={{ borderColor: colors.border }}>

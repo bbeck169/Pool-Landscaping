@@ -698,6 +698,7 @@ export default function PoolChecklistForm({
           chemicalsAdded={chemicalsAdded}
           locked={locked}
           onChange={onChange}
+          jobId={jobId}
         />
       </div>
 

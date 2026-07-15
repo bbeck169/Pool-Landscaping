@@ -5026,3 +5026,30 @@ Shipping in phased slices per brief. **Step 1 (Algae Risk) is live**. Steps 2 (S
 - Screenshots (postponed until UI is wired).
 
 **Not touched (per brief):** Phase 23 core inventory endpoints, existing `decrement_from_service_report()` path (kept working; the future consume-on-submit hook is opt-in via Step 3b so we don't double-decrement).
+
+#### Phase 39 · Step 3b — Reservation wiring + consume dedup (backend + web SHIPPED, mobile deferred)
+
+**Dedup choice** (per brief Part C)
+Added `_consume_job_reservations_impl(tenant_id, job_id, skip_item_writes:bool, actor:str)` helper. The public `POST /api/inventory/reservations/{job_id}/consume` endpoint calls it with `skip_item_writes=False`. The `submit_service_report` flow calls it with `skip_item_writes=True, actor="submit-flow"` — this flips each reservation → `consumed` and stamps `consumed_by:"submit-flow"` but SKIPS both the `inventory_items.current_qty` subtraction and the `stock_movements` insert, because the existing `decrement_from_service_report()` has already done both. One boolean, no math duplication, easy audit trail via `consumed_by`.
+
+**Backend** (`routers/service_reports.py`)
+- After `decrement_from_service_report()` runs, `submit_service_report` invokes `_consume_job_reservations_impl(..., skip_item_writes=True)` inside a `try/except` so a bad reservation state never breaks a submit.
+- Also cleaned up an inadvertent duplicate algae-risk hook that landed in step 1 — now only one hook.
+
+**Web** (`components/checklist/ChemicalDropdownStack.jsx`)
+- New `jobId` prop plumbed from `PoolChecklistForm.jsx`.
+- `reserve(type, entry)` — per-chemical debounced (500ms) call to `POST /api/inventory/reserve`. Persists `reservation_id` back onto the matching `chemicals_added` row. Zero-quantity or "No X Used" → `DELETE /api/inventory/reserve/{reservation_id}`.
+- `warnings` state stores `{ text, suggested_restock }` per slug. Renders a yellow banner between the row header and the option body with testids `chemicals-row-{slug}-shortage-warning` and `chemicals-row-{slug}-suggested-restock`.
+- Reservation calls are advisory — any error is swallowed silently so a Twilio-style outage never blocks a chemicals selection.
+
+**Tests** (`tests/test_phase39_inventory_reservation.py` +1 new = 5/5 pass)
+- `test_consume_dedup_skip_item_writes` — internal helper with `skip_item_writes=True` flips the reservation → `consumed`, stamps `consumed_by:"submit-flow"`, but `inventory_items.current_qty` remains untouched and NO `stock_movements` row is written. Confirms zero double-decrement.
+- Existing four Step 3 tests still pass.
+
+**Verification**
+- `pytest tests/test_phase39_*.py -q` → **14 passed** (4 algae + 5 recap + 5 reservation).
+- `bash /app/scripts/preflight.sh` → `preflight OK` (exit 0). 135 pre-existing advisory identifier warnings unchanged.
+- `esbuild transformSync` clean on `ChemicalDropdownStack.jsx` + `PoolChecklistForm.jsx`.
+- Playwright confirmed the checklist modal renders the stack with `Chlorine Tablets · 5 Tabs` + `Liquid Chlorine · 1/4 Gallon` intact. Shortage banner code path exercised via the API tests; a live shortage screenshot could not be captured because the demo job locked after Step 2's Close Job. A fresh pool job would need to be seeded to demo the yellow warning end-to-end.
+
+**Mobile deferred** — the mobile `PoolChecklistForm.tsx` still passes `chemicalsAdded` and `onChange` to its `ChemicalDropdownStack.tsx`. Mirroring the web `jobId` prop + debounced reserve + shortage banner needs its own small PR. Deferred to Step 3c so this pass ships clean.
