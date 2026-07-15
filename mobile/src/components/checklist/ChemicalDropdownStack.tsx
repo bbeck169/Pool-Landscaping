@@ -6,9 +6,10 @@
  * for the canonical behaviour spec; both platforms share the same
  * `CHEM_TYPES` config, backend contract, and testid conventions.
  */
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { api } from "@/src/api";
 import { colors, spacing, radius, font } from "@/src/theme";
 
 type ChemOption = { label: string; quantity: number };
@@ -111,19 +112,65 @@ export type ChemicalDropdownStackProps = {
   chemicalsAdded: ChemAdded[];
   locked?: boolean;
   onChange: (patch: { chemicals_added: ChemAdded[] }) => void;
+  /** Phase 39 Step 3c — needed to hit `/api/inventory/reserve`. */
+  jobId?: string;
 };
 
 export default function ChemicalDropdownStack({
   chemicalsAdded = [],
   locked = false,
   onChange,
+  jobId,
 }: ChemicalDropdownStackProps) {
   const [openSlug, setOpenSlug] = useState<string | null>(null);
+  // Phase 39 Step 3c — per-slug shortage warning + debounce timers.
+  const [warnings, setWarnings] = useState<Record<string, { text: string; suggested_restock?: number }>>({});
+  const debounceTimers = useRef<Record<string, any>>({});
+
+  const reserve = (type: ChemType, entry: any) => {
+    if (!jobId) return;
+    const key = type.slug;
+    if (debounceTimers.current[key]) clearTimeout(debounceTimers.current[key]);
+    debounceTimers.current[key] = setTimeout(async () => {
+      try {
+        if (!entry || !entry.quantity) {
+          if (entry?.reservation_id) {
+            await api.del(`/inventory/reserve/${entry.reservation_id}`);
+          }
+          setWarnings((w) => { const n = { ...w }; delete n[type.slug]; return n; });
+          return;
+        }
+        const resp: any = await api.post("/inventory/reserve", {
+          chemical: entry.chemical || type.name,
+          quantity: Number(entry.quantity) || 0,
+          unit: entry.unit || type.unit,
+          job_id: jobId,
+          reservation_id: entry.reservation_id,
+        });
+        if (resp?.reservation_id && resp.reservation_id !== entry.reservation_id) {
+          const next = chemicalsAdded.map((c: any) =>
+            String(c?.chemical || c?.name || "").toLowerCase() === type.name.toLowerCase()
+              ? { ...c, reservation_id: resp.reservation_id } : c
+          );
+          onChange({ chemicals_added: next });
+        }
+        if (resp?.warning) {
+          setWarnings((w) => ({
+            ...w,
+            [type.slug]: { text: resp.warning, suggested_restock: resp.suggested_restock },
+          }));
+        } else {
+          setWarnings((w) => { const n = { ...w }; delete n[type.slug]; return n; });
+        }
+      } catch (_) { /* advisory */ }
+    }, 500);
+  };
 
   const upsert = (type: ChemType, option: ChemOption | null) => {
     const existingIdx = chemicalsAdded.findIndex(
       (c) => String(c?.chemical || c?.name || "").toLowerCase() === type.name.toLowerCase()
     );
+    const existingRow = existingIdx >= 0 ? chemicalsAdded[existingIdx] : null;
     const next = [...chemicalsAdded];
     if (option === null) {
       if (existingIdx >= 0) next.splice(existingIdx, 1);
@@ -142,6 +189,11 @@ export default function ChemicalDropdownStack({
     onChange({ chemicals_added: next });
     // Phase 37 hotfix — auto-collapse the row after any selection.
     setOpenSlug(null);
+    // Phase 39 Step 3c — fire reservation call.
+    const rowForReserve = option === null
+      ? { ...(existingRow || {}), quantity: 0 }
+      : (existingIdx >= 0 ? next[existingIdx] : next[next.length - 1]);
+    reserve(type, rowForReserve);
   };
 
   return (
@@ -186,6 +238,28 @@ export default function ChemicalDropdownStack({
                 color={colors.muted}
               />
             </Pressable>
+
+            {warnings[type.slug] ? (
+              <View
+                style={styles.warningBanner}
+                testID={`chemicals-row-${type.slug}-shortage-warning`}
+              >
+                <Ionicons name="warning-outline" size={11} color="#B45309" />
+                <Text style={styles.warningText} numberOfLines={2}>
+                  {warnings[type.slug].text}
+                </Text>
+                {warnings[type.slug].suggested_restock ? (
+                  <View
+                    style={styles.restockBadge}
+                    testID={`chemicals-row-${type.slug}-suggested-restock`}
+                  >
+                    <Text style={styles.restockBadgeText}>
+                      restock ≥ {warnings[type.slug].suggested_restock}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
 
             {isOpen ? (
               <View style={styles.body}>
@@ -325,4 +399,19 @@ const styles = StyleSheet.create({
     color: colors.onSurface,
   },
   chipTextSelected: { color: "#1E3A8A" },
+  warningBanner: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    backgroundColor: "#FEF3C7", borderBottomWidth: 1, borderBottomColor: "#FCD34D",
+    paddingHorizontal: spacing.md, paddingVertical: 6,
+  },
+  warningText: {
+    flex: 1, fontFamily: font.semibold, fontSize: 11, color: "#B45309",
+  },
+  restockBadge: {
+    backgroundColor: "#B45309", paddingHorizontal: 6, paddingVertical: 2,
+    borderRadius: radius.sm,
+  },
+  restockBadgeText: {
+    fontFamily: font.bold, fontSize: 10, color: "#FFFFFF",
+  },
 });

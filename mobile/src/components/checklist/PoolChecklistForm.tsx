@@ -416,6 +416,7 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
         chemicalsAdded={chemicalsAdded as any}
         locked={locked}
         onChange={onChange as any}
+        jobId={jobId}
       />
 
       {/* Checklist */}

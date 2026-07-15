@@ -5053,3 +5053,24 @@ Added `_consume_job_reservations_impl(tenant_id, job_id, skip_item_writes:bool, 
 - Playwright confirmed the checklist modal renders the stack with `Chlorine Tablets · 5 Tabs` + `Liquid Chlorine · 1/4 Gallon` intact. Shortage banner code path exercised via the API tests; a live shortage screenshot could not be captured because the demo job locked after Step 2's Close Job. A fresh pool job would need to be seeded to demo the yellow warning end-to-end.
 
 **Mobile deferred** — the mobile `PoolChecklistForm.tsx` still passes `chemicalsAdded` and `onChange` to its `ChemicalDropdownStack.tsx`. Mirroring the web `jobId` prop + debounced reserve + shortage banner needs its own small PR. Deferred to Step 3c so this pass ships clean.
+
+#### Phase 39 · Step 3c — Mobile reservation wiring (SHIPPED)
+
+**Diff summary** (2 files)
+- `/app/mobile/src/components/checklist/PoolChecklistForm.tsx` — passes `jobId={jobId}` through to `<ChemicalDropdownStack>`.
+- `/app/mobile/src/components/checklist/ChemicalDropdownStack.tsx`:
+  - New `jobId?: string` prop on `ChemicalDropdownStackProps`.
+  - New `reserve(type, entry)` — per-chemical debounced 500 ms call to `POST /api/inventory/reserve` via the mobile `api` helper. Persists `reservation_id` back onto the matching `chemicals_added` row so subsequent edits update in place. Zero-quantity or "No X Used" → `api.del("/inventory/reserve/{reservation_id}")`.
+  - `useRef` timer map (`debounceTimers`) keyed by `type.slug` so each chemical debounces independently.
+  - New `warnings` state → `Record<slug, { text, suggested_restock }>`. Rendered as a compact yellow banner between the row header and the option body with `testID="chemicals-row-{slug}-shortage-warning"` and a `restock ≥ N` badge (`testID="chemicals-row-{slug}-suggested-restock"`).
+  - Reservation errors are swallowed silently — advisory only.
+
+**Consume-on-submit** — no mobile change required. `submit_service_report` (backend) already fires `_consume_job_reservations_impl(skip_item_writes=True)` from Step 3b, which sees the same `job_id` regardless of platform.
+
+**Verification**
+- `esbuild transformSync` clean on both touched files.
+- `tsc --noEmit -p /app/mobile` reports **zero new errors** on the two files (only pre-existing project-wide `fontSize.xs` drift in `PoolChecklistForm.tsx` remains).
+- `bash /app/scripts/preflight.sh` → `preflight OK` (exit 0). 135 pre-existing advisory identifier warnings unchanged.
+- Playwright confirms the Expo web build of the mobile app renders the schedule correctly. The demo Weekly Pool Service job is locked (submitted in Step 2's Close Job) so a live shortage-banner shot on mobile would require seeding a fresh open pool job — deferred to tester's sweep.
+
+**Not touched (per brief):** web, backend, existing endpoints. Mobile is a pure 1:1 mirror of the Step 3b web wiring.
