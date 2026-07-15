@@ -437,26 +437,3 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 });
-cal: spacing.xs + 2,
-    borderRadius: radius.md,
-    minWidth: 66,
-    justifyContent: "center",
-  },
-  assignBtnText: { fontFamily: font.bold, fontSize: fontSize.xs, color: "#fff" },
-  empty: {
-    alignItems: "center",
-    justifyContent: "center",
-    padding: spacing["3xl"],
-    gap: spacing.xs,
-  },
-  emptyText: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface, marginTop: spacing.xs },
-  emptySub: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, textAlign: "center" },
-  emptyLine: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
-  moreHint: {
-    marginTop: spacing.md,
-    fontFamily: font.regular,
-    fontSize: fontSize.xs,
-    color: colors.muted,
-    textAlign: "center",
-  },
-});
