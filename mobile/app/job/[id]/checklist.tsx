@@ -36,6 +36,7 @@ import PhotoUploader from "@/src/components/checklist/PhotoUploader";
 import PoolChecklistForm from "@/src/components/checklist/PoolChecklistForm";
 import LandscapingChecklistForm from "@/src/components/checklist/LandscapingChecklistForm";
 import GenericChecklistForm from "@/src/components/checklist/GenericChecklistForm";
+import VisitRecapModal from "@/src/components/checklist/VisitRecapModal";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
 // Phase 37 — minimum time the pill stays on "Saving…" so techs actually
@@ -56,6 +57,9 @@ export default function JobChecklistScreen() {
   const [loading, setLoading] = useState(true);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [submitting, setSubmitting] = useState(false);
+  // Phase 39 · Step 2 — Visit Recap modal state, mirrors web.
+  const [recapOpen, setRecapOpen] = useState(false);
+  const [recapCustomer, setRecapCustomer] = useState<any>(null);
 
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
@@ -188,13 +192,21 @@ export default function JobChecklistScreen() {
                 Alert.alert("Job closed", `Workstream event failed: ${e?.message || "unknown"}`);
               }
 
-              // 4) Navigate back.
-              const invId = submitted?.invoice_id
-                ? ` · Invoice #${String(submitted.invoice_id).slice(0, 8)}`
-                : "";
-              Alert.alert("Job closed", `Report submitted${invId}.`, [
-                { text: "OK", onPress: () => router.replace("/(app)/schedule/calendar") },
-              ]);
+              // 4) Navigate back — but first prompt the tech to send the
+              //    visit recap. The recap modal handles its own close.
+              try {
+                if (job?.customer_id) {
+                  const cust: any = await api.get(`/customers/${job.customer_id}`);
+                  setRecapCustomer({
+                    id: cust?.id, name: cust?.name,
+                    email: cust?.email, phone: cust?.phone,
+                    alert_phone: cust?.alert_phone,
+                  });
+                } else {
+                  setRecapCustomer({ name: job?.customer_name });
+                }
+              } catch { setRecapCustomer({ name: job?.customer_name }); }
+              setRecapOpen(true);
             } catch (e: any) {
               Alert.alert("Close failed", e?.message || "Try again.");
             } finally {
@@ -374,6 +386,20 @@ export default function JobChecklistScreen() {
           </Pressable>
         </View>
       )}
+      {/* Phase 39 · Step 2 — Visit Recap prompt (mobile). */}
+      <VisitRecapModal
+        visible={recapOpen && !!report?.id}
+        serviceReportId={report?.id || null}
+        customer={recapCustomer}
+        onClose={() => {
+          setRecapOpen(false);
+          const invId = report?.invoice_id
+            ? ` · Invoice #${String(report.invoice_id).slice(0, 8)}` : "";
+          Alert.alert("Job closed", `Report submitted${invId}.`, [
+            { text: "OK", onPress: () => router.replace("/(app)/schedule/calendar") },
+          ]);
+        }}
+      />
     </View>
   );
 }

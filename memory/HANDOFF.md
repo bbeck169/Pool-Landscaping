@@ -4957,3 +4957,37 @@ Shipping in phased slices per brief. **Step 1 (Algae Risk) is live**. Steps 2 (S
 **Not touched (deferred)**
 - Feature 2 (Send Visit Recap after Close Job) — backend + web + mobile follow-up.
 - Feature 3 (Truck Inventory Reservation) — needs careful integration with Phase 23 inventory router; deferred to avoid rushing multi-collection writes.
+
+#### Phase 39 · Step 2 — Send Visit Recap SHIPPED (+ toast hotfix on Step 1)
+
+##### Part A · Algae-risk toast hotfix
+- `CustomerRetentionReport.jsx` — replaced the eager `if (loading || rows.length === 0) return null;` with a two-branch check. When rows are empty but a toast is still pending, the panel returns a lightweight toast-only container using `data-testid="algae-risk-toast"`. Prevents the confirmation from vanishing after dismissing the last flag.
+
+##### Part B · Visit Recap after Close Job
+**Backend** `routers/service_reports.py`:
+- New endpoint `POST /api/service-reports/{sr_id}/send-recap` with `{channel: "sms"|"email"|"both", include_photos: bool}` body. RBAC: admin, super_admin, technician (techs need it in the field).
+- `_compose_recap()` renders both a plain-text and lightweight HTML body. Chemicals-added lines use the same preset labels the tech sees (e.g. `3 Tabs of Chlorine Tablets`, `1/4 Gallon of Liquid Chlorine`). Water readings get `[low|target|high]` indicators via a conservative `_TARGET_RANGES` map (ph 7.2–7.6, FC 1.0–3.0, alk 80–120, CYA 30–50, CH 200–400, salt 2700–3400). Photo attach count capped at 3. Auto-appends "Next visit: YYYY-MM-DD" when the customer has an upcoming scheduled/open job.
+- Honest mocking: `_send_recap_sms` returns `{sent:false, mocked:true, reason:"twilio not configured (TWILIO_ACCOUNT_SID/TOKEN/FROM_NUMBER)"}` when Twilio env vars are missing; `_send_recap_email` returns `{sent:false, mocked:true, reason:"resend not configured (RESEND_API_KEY missing)"}`. Per-channel errors surface as `reason: "twilio error: ..."` / `"resend error: ..."`.
+- Every attempt (real or mocked) writes a `visit_recaps_sent` row: `{tenant_id, service_report_id, job_id, customer_id, channel, include_photos, photo_count, sent_at, sent, mocked_channels, results, actor_user_id}`.
+
+**Frontend web** `components/checklist/VisitRecapModal.jsx`:
+- Auto-opens after `closeJob` succeeds in `ChecklistModal.jsx`. Default channel = Both when the customer has phone+email; falls back to whichever single channel is available; empty-state warning when neither.
+- Radios: `visit-recap-channel-sms/-email/-both`, toggle `visit-recap-include-photos`, buttons `visit-recap-send-btn`/`visit-recap-skip-btn`. Result banners: `visit-recap-success` (green when any channel sent), `visit-recap-mocked-reason` (yellow, per-channel reason verbatim). Auto-dismisses 2s after any real send; on Skip closes the whole checklist back to the schedule.
+
+**Frontend mobile** `components/checklist/VisitRecapModal.tsx` + `app/job/[id]/checklist.tsx`:
+- React Native `<Modal>` mirror of the web modal. Same testIDs, same behaviour. Wired into the close-job success path in `checklist.tsx` — the old `Alert.alert("Job closed", ...)` moved into the modal's `onClose` handler so techs are asked about the recap before the "Job closed" toast fires.
+
+**Tests** `backend/tests/test_phase39_visit_recap.py` (5/5 pass):
+- `test_happy_path_both_channels_mocked` — `{channel:"both", include_photos:True}` with a customer that has both email + phone returns per-channel `mocked:true, reason` populated, `sent:false`, `mocked_channels==["sms","email"]`. Log row written to `visit_recaps_sent` with correct `actor_user_id`.
+- `test_rbac_customer_denied` — customer role → 403.
+- `test_no_contact_info_returns_400` — customer with no phone AND no email → 400 with `"phone"` in the detail.
+- `test_photo_attach_cap_at_3` — 5 seeded photos → `photo_count == 3` in the response.
+- `test_log_written_on_mocked` — even a fully mocked send writes exactly one `visit_recaps_sent` row.
+
+**Verification**
+- `pytest tests/test_phase39_visit_recap.py tests/test_phase39_algae_risk.py -q` → **9 passed**.
+- `bash /app/scripts/preflight.sh` → `preflight OK` (exit 0). 135 pre-existing advisory identifier warnings unchanged.
+- `esbuild transformSync` clean on all 5 touched/new files (web + mobile).
+- Playwright live verification: closed a Weekly Pool Service (Jennifer Carson) checklist → `visit-recap-modal` opened with 7 testids present, default channel = Both, Include Photos on. Selecting SMS + Send yielded the honest mocked reason `"SMS not sent — twilio not configured (TWILIO_ACCOUNT_SID/TOKEN/FROM_NUMBER)"` via `visit-recap-mocked-reason`.
+
+**Not touched (per brief):** Step 3 (Truck Inventory Reservation) still deferred to a follow-up dispatch.

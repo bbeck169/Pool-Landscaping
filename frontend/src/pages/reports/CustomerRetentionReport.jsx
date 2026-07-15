@@ -100,7 +100,24 @@ function AlgaeRiskPanel() {
     }
   };
 
-  if (loading || rows.length === 0) return null;
+  // Phase 39 hotfix — keep the panel mounted while a toast is pending so
+  // the confirmation survives after the last flag is dismissed.
+  if ((loading || rows.length === 0) && !toast) return null;
+  if (rows.length === 0 && toast) {
+    return (
+      <div
+        className="rounded-md p-3 mb-4 text-xs font-semibold"
+        data-testid="algae-risk-toast"
+        style={{
+          background: toast.kind === "ok" ? "#D1FAE5" : "#FEE2E2",
+          color: toast.kind === "ok" ? "#065F46" : "#B91C1C",
+          border: "1px solid " + (toast.kind === "ok" ? "#10B981" : "#F87171"),
+        }}
+      >
+        {toast.text}
+      </div>
+    );
+  }
 
   return (
     <div

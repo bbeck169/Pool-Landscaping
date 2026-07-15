@@ -881,3 +881,274 @@ async def last_readings(
             if key not in out:
                 out[key] = {"value": r["value"], "at": submitted, "unit": r.get("unit")}
     return {"customer_id": customer_id, "readings": out}
+
+
+# ─── Phase 39 · Send Visit Recap ────────────────────────────────────────
+# Fired after a tech closes a job. Composes a short summary of the visit
+# (chemicals added, water readings, up to 3 photos) and sends it to the
+# customer via Twilio SMS and/or Resend email. If either channel isn't
+# configured we return an honest `mocked:true, reason` for that channel
+# instead of silently pretending to send. Every attempt (real or mocked)
+# is written to `visit_recaps_sent` for the audit trail.
+import os as _os
+
+# Preset labels for the chemicals-added rows. Mirrors the web/mobile
+# `CHEM_TYPES` config so tech-facing labels match what the customer sees.
+_CHEM_UNIT_LABELS = {
+    "tabs": "Tabs", "gal": "Gallon", "lbs": "lbs", "oz": "Ounces",
+    "bags": "bags",
+}
+
+
+def _chem_added_line(row: dict) -> str:
+    if row.get("raw_label"):
+        return f"{row['raw_label']} of {row.get('chemical') or row.get('name')}"
+    qty = row.get("quantity") or row.get("amount")
+    unit = row.get("unit") or ""
+    name = row.get("chemical") or row.get("name") or "Chemical"
+    if not qty:
+        return name
+    return f"{qty} {unit} of {name}".strip()
+
+
+# Water-target ranges — very deliberately conservative; only used to add
+# a [low|target|high] indicator to each reading in the recap. If the key
+# isn't in here we just show the value with no indicator.
+_TARGET_RANGES = {
+    "ph":               (7.2, 7.6),
+    "free_chlorine":    (1.0, 3.0),
+    "chlorine":         (1.0, 3.0),
+    "total_chlorine":   (1.0, 3.0),
+    "combined_chlorine":(0.0, 0.2),
+    "alkalinity":       (80, 120),
+    "total_alkalinity": (80, 120),
+    "cyanuric_acid":    (30, 50),
+    "cya":              (30, 50),
+    "calcium_hardness": (200, 400),
+    "salt":             (2700, 3400),
+}
+
+
+def _reading_indicator(key: str, value) -> str:
+    rng = _TARGET_RANGES.get(str(key or "").lower())
+    if not rng or value in (None, ""):
+        return ""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return ""
+    lo, hi = rng
+    if v < lo:  return "[low]"
+    if v > hi:  return "[high]"
+    return "[target]"
+
+
+def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
+                    include_photos: bool, next_visit: str | None,
+                    tenant: dict, photo_limit: int = 3):
+    """Return `{plain, html, photo_urls}` for the recap message."""
+    # Chemicals-added block.
+    chems = report.get("chemicals_added") or []
+    chem_lines = [f"• {_chem_added_line(c)}" for c in chems if
+                   (c.get("raw_label") or c.get("quantity") or c.get("amount"))]
+    # Water readings block.
+    readings = report.get("chemical_readings") or []
+    reading_lines = []
+    for r in readings:
+        v = r.get("value")
+        if v in (None, ""):
+            continue
+        key = r.get("key") or r.get("name")
+        ind = _reading_indicator(key, v)
+        unit = r.get("unit") or ""
+        reading_lines.append(f"  {r.get('name') or key}: {v}{(' ' + unit) if unit else ''} {ind}".rstrip())
+    # Photos.
+    photo_urls = []
+    if include_photos:
+        for p in (report.get("photos") or [])[:photo_limit]:
+            url = p.get("url") or p.get("public_url") or p.get("thumbnail_url")
+            if url:
+                photo_urls.append(url)
+
+    date_str = str(job.get("scheduled_at") or job.get("service_report_submitted_at") or "")[:10]
+    biz_name = tenant.get("name") or "Your pool service"
+
+    lines = [
+        f"Hi {customer.get('name') or 'there'},",
+        f"Your {date_str} visit with {biz_name} is complete.",
+    ]
+    if tech_name:
+        lines.append(f"Tech: {tech_name}")
+    if chem_lines:
+        lines.append("")
+        lines.append("Chemicals added:")
+        lines.extend(chem_lines)
+    if reading_lines:
+        lines.append("")
+        lines.append("Water readings:")
+        lines.extend(reading_lines)
+    if next_visit:
+        lines.append("")
+        lines.append(f"Next visit: {next_visit}")
+    if photo_urls:
+        lines.append("")
+        lines.append("Photos:")
+        for u in photo_urls:
+            lines.append(f"  {u}")
+    lines.append("")
+    lines.append("Reply to this message with any questions.")
+    plain = "\n".join(lines)
+
+    # HTML for email — very lightweight, no external assets.
+    html_parts = [f"<p>Hi {customer.get('name') or 'there'},</p>",
+                  f"<p>Your <b>{date_str}</b> visit with <b>{biz_name}</b> is complete.</p>"]
+    if tech_name:
+        html_parts.append(f"<p>Tech: <b>{tech_name}</b></p>")
+    if chem_lines:
+        html_parts.append("<p><b>Chemicals added:</b></p><ul>"
+                           + "".join(f"<li>{_chem_added_line(c)}</li>" for c in chems
+                                      if c.get('raw_label') or c.get('quantity') or c.get('amount'))
+                           + "</ul>")
+    if reading_lines:
+        html_parts.append("<p><b>Water readings:</b></p><ul>"
+                           + "".join(f"<li>{line.strip()}</li>" for line in reading_lines)
+                           + "</ul>")
+    if photo_urls:
+        html_parts.append("<p><b>Photos:</b></p>"
+                           + "".join(f'<img src="{u}" style="max-width:300px;margin-right:8px;">'
+                                      for u in photo_urls))
+    if next_visit:
+        html_parts.append(f"<p>Next visit: <b>{next_visit}</b></p>")
+    html_parts.append("<p>Reply to this message with any questions.</p>")
+    html = "".join(html_parts)
+
+    return {"plain": plain, "html": html, "photo_urls": photo_urls,
+             "subject": f"Your pool visit recap — {date_str}"}
+
+
+async def _send_recap_sms(customer: dict, plain: str) -> dict:
+    sid = _os.environ.get("TWILIO_ACCOUNT_SID")
+    tok = _os.environ.get("TWILIO_AUTH_TOKEN")
+    frm = _os.environ.get("TWILIO_FROM_NUMBER")
+    to  = customer.get("alert_phone") or customer.get("phone")
+    if not to:
+        return {"sent": False, "mocked": True,
+                 "reason": "customer has no phone on file"}
+    if not (sid and tok and frm):
+        return {"sent": False, "mocked": True,
+                 "reason": "twilio not configured (TWILIO_ACCOUNT_SID/TOKEN/FROM_NUMBER)"}
+    try:
+        from twilio.rest import Client
+        msg = Client(sid, tok).messages.create(to=to, from_=frm, body=plain[:1500])
+        return {"sent": True, "mocked": False, "twilio_sid": msg.sid}
+    except Exception as e:
+        return {"sent": False, "mocked": True, "reason": f"twilio error: {e}"}
+
+
+async def _send_recap_email(customer: dict, subject: str, html: str) -> dict:
+    from config import RESEND_API_KEY, EMAIL_FROM
+    to = customer.get("email")
+    if not to:
+        return {"sent": False, "mocked": True,
+                 "reason": "customer has no email on file"}
+    if not RESEND_API_KEY:
+        return {"sent": False, "mocked": True,
+                 "reason": "resend not configured (RESEND_API_KEY missing)"}
+    try:
+        import resend
+        resend.api_key = RESEND_API_KEY
+        r = resend.Emails.send({
+            "from": EMAIL_FROM or "onboarding@resend.dev",
+            "to": [to], "subject": subject, "html": html,
+        })
+        return {"sent": True, "mocked": False, "resend_id": (r or {}).get("id")}
+    except Exception as e:
+        return {"sent": False, "mocked": True, "reason": f"resend error: {e}"}
+
+
+class RecapReq(BaseModel):
+    channel: str = "both"
+    include_photos: bool = True
+
+
+@router.post("/service-reports/{sr_id}/send-recap")
+async def send_visit_recap(sr_id: str, body: RecapReq,
+                             user: dict = Depends(get_current_user),
+                             tenant: dict = Depends(get_current_tenant)):
+    if user.get("role") not in ("admin", "super_admin", "technician"):
+        raise HTTPException(403, "Not allowed")
+    channel = body.channel or "both"
+    if channel not in ("sms", "email", "both"):
+        raise HTTPException(400, "channel must be sms | email | both")
+
+    rep = await db.service_reports.find_one({"id": sr_id,
+                                               "tenant_id": tenant["id"]},
+                                              {"_id": 0})
+    if not rep:
+        raise HTTPException(404, "Service report not found")
+    job = await db.jobs.find_one({"id": rep.get("job_id"),
+                                    "tenant_id": tenant["id"]}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    cust = await db.customers.find_one({"id": job.get("customer_id"),
+                                          "tenant_id": tenant["id"]}, {"_id": 0}) or {}
+    if not (cust.get("phone") or cust.get("alert_phone") or cust.get("email")):
+        raise HTTPException(400, "Customer has neither phone nor email on file")
+
+    tech = None
+    if rep.get("tech_id"):
+        tech = await db.users.find_one({"id": rep["tech_id"]}, {"_id": 0}) \
+            or await db.users.find_one({"technician_id": rep["tech_id"]}, {"_id": 0})
+    tech_name = (tech or {}).get("name") or (tech or {}).get("email") or ""
+
+    # "Next visit" — cheap lookup of the next scheduled pool job for this customer.
+    next_visit = None
+    upcoming = await db.jobs.find(
+        {"tenant_id": tenant["id"], "customer_id": job.get("customer_id"),
+         "status": {"$in": ["scheduled", "open"]},
+         "scheduled_at": {"$gt": now_iso()}},
+        {"_id": 0, "scheduled_at": 1},
+    ).sort("scheduled_at", 1).to_list(1)
+    if upcoming:
+        next_visit = str(upcoming[0].get("scheduled_at"))[:10]
+
+    composed = _compose_recap(rep, job, cust, tech_name,
+                                bool(body.include_photos), next_visit, tenant)
+
+    results = {}
+    mocked_channels = []
+    if channel in ("sms", "both"):
+        results["sms"] = await _send_recap_sms(cust, composed["plain"])
+        if results["sms"].get("mocked"):
+            mocked_channels.append("sms")
+    if channel in ("email", "both"):
+        results["email"] = await _send_recap_email(cust, composed["subject"],
+                                                       composed["html"])
+        if results["email"].get("mocked"):
+            mocked_channels.append("email")
+
+    sent_any = any(r.get("sent") for r in results.values())
+    log_doc = {
+        "id": new_id(),
+        "tenant_id": tenant["id"],
+        "service_report_id": sr_id,
+        "job_id": job.get("id"),
+        "customer_id": job.get("customer_id"),
+        "channel": channel,
+        "include_photos": bool(body.include_photos),
+        "photo_count": len(composed.get("photo_urls") or []),
+        "sent_at": now_iso(),
+        "sent": sent_any,
+        "mocked_channels": mocked_channels,
+        "results": results,
+        "actor_user_id": user.get("id"),
+    }
+    await db.visit_recaps_sent.insert_one(log_doc)
+
+    return {
+        "sent": sent_any,
+        "channel": channel,
+        "results": results,
+        "mocked_channels": mocked_channels,
+        "photo_count": len(composed.get("photo_urls") or []),
+    }

@@ -12,6 +12,9 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
+// Phase 39 · Step 2 — Visit Recap prompt shown after Close Job succeeds.
+import VisitRecapModal from "./VisitRecapModal";
+
 // Phase 36 — mini relative-time formatter for the autosave "Saved 3s ago"
 // caption on the pill.
 const _fmtRelSaved = (d) => {
@@ -84,6 +87,11 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   // Phase 36 — track the last successful save so the autosave pill can
   // render a relative "Saved 3s ago" caption.
   const [lastSavedAt, setLastSavedAt] = useState(null);
+  // Phase 39 · Step 2 — Visit Recap modal state. Populated on close-job
+  // success so the tech can text/email the customer without leaving
+  // the checklist context.
+  const [recapOpen, setRecapOpen] = useState(false);
+  const [recapCustomer, setRecapCustomer] = useState(null);
 
   // Reset when the modal closes / re-opens for a different job.
   useEffect(() => {
@@ -210,9 +218,24 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
         setWsWarning(`Job closed, workstream event failed: ${e?.message || "unknown"}`);
       }
       if (onSubmitted) onSubmitted(submitted);
-      // Auto-close only if the workstream event succeeded — otherwise
-      // keep the modal open so the tech can see the warning banner.
-      if (!wsWarning) onClose?.();
+      // Phase 39 · Step 2 — before auto-closing, pop the Visit Recap prompt.
+      // We need contact info; fetch the customer inline (cheap, one round-trip).
+      try {
+        if (job?.customer_id) {
+          const cust = await api.get(`/customers/${job.customer_id}`);
+          setRecapCustomer({
+            id: cust?.id, name: cust?.name,
+            email: cust?.email, phone: cust?.phone,
+            alert_phone: cust?.alert_phone,
+          });
+        } else {
+          setRecapCustomer({ name: job?.customer_name });
+        }
+      } catch { setRecapCustomer({ name: job?.customer_name }); }
+      setRecapOpen(true);
+      // Do NOT auto-close the checklist modal yet — the recap modal is
+      // rendered on top and will close everything when the tech chooses
+      // Send or Skip. See `handleRecapClose` below.
     } catch (e) {
       // eslint-disable-next-line no-alert
       alert(`Close failed: ${e?.message || "Try again."}`);
@@ -495,5 +518,16 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
     );
   }
 
-  return backdrop;
+  return (
+    <>
+      {backdrop}
+      {recapOpen && report?.id ? (
+        <VisitRecapModal
+          serviceReportId={report.id}
+          customer={recapCustomer}
+          onClose={() => { setRecapOpen(false); onClose?.(); }}
+        />
+      ) : null}
+    </>
+  );
 }
