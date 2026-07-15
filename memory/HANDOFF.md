@@ -2495,3 +2495,58 @@ checklist screen is the only caller.
   event volume grows past ~10k/tenant.
 - Optional native drag reorder on checklist items.
 
+#### Phase 31 · Step 2a — Hotfix: Grid card body wasn't tappable (Feb 15 2026)
+
+**User report:** Tapping a job card on the mobile Schedule "closes/completes
+the job" instead of routing to `/job/{id}/checklist`.
+
+**Root cause (Grid only):** The Step 2a delivery retargeted the parent
+`onOpenJob` handler to push `/job/${id}/checklist` — which was correct — but
+the Grid `JobRow` (`mobile/app/(app)/schedule/calendar.tsx`) only wired
+`onOpen` to the **right-edge chevron `Pressable`**. The entire card body
+(service tag, customer, address, meta row, status pill) was a plain
+`<View>` with no `onPress`. Users hitting the visually-dominant card
+body instead landed on the leftmost `checkbox` `Pressable`, which
+called `toggleCheck` and added the job to `checkedIds`. Once
+`checked.size > 0`, the "Complete" bulk-action pill at the top of the
+grid becomes actionable — its `onPress={onBulkComplete}` fires
+`PUT /jobs/{id}` with `status: "completed"` on every selected job.
+So the user's "tap the card, job completes" perception was a
+two-step: (accidental checkbox tap) → (tap "Complete" pill) →
+`Alert.alert("Marked complete", …)`.
+
+**Calendar view was already correct** — its event card is a single
+`<Pressable onPress={() => onOpenJob(j.id)}>` (line 558) with no
+overlapping checkbox, so it routed to the checklist as intended.
+
+**Fix (one file, one function — Grid `JobRow`)**
+- Convert the row container from `<View style={gStyles.card}>` to
+  `<Pressable style={gStyles.card} onPress={rearrangeMode ? undefined : onOpen}>`.
+  This makes the entire visual card the primary tap target and
+  disables the row-level tap during `rearrangeMode` so the up/down
+  arrows remain the only interactive elements.
+- Keep the checkbox as a nested `<Pressable onPress={onCheck}>` with
+  `hitSlop={8}`. React Native's touch-responder system means the
+  innermost Pressable captures the touch, so checkbox taps do NOT
+  bubble up to the row-level `onOpen`.
+- Demote the right-edge chevron from `<Pressable onPress={onOpen} hitSlop={12}>`
+  to a plain `<View>` — the row-level Pressable now handles the tap
+  everywhere including under the chevron.
+
+**Files edited (1)**
+- `mobile/app/(app)/schedule/calendar.tsx` — `JobRow` (lines 459-509 pre-fix).
+
+**Not touched**
+- Backend, web frontend, other mobile screens, `job/[id]/checklist.tsx`
+  itself, the shared form components.
+
+**Verification**
+- `curl "http://localhost:3001/job/abc123/checklist"` → **200**.
+  (Also `/job/abc123` → 200 and `/schedule/calendar` → 200.)
+- Metro bundle: `curl entry.bundle?platform=web` → **HTTP 200, 11.27 MB**,
+  zero SyntaxError/UnableToResolve frames. All new `data-testid`s
+  (`grid-job-`, `grid-check-`, `grid-open-`, `calendar-event-`) and all
+  four form components (`PoolChecklistForm`, `LandscapingChecklistForm`,
+  `GenericChecklistForm`, `PhotoUploader`) still resolve in the bundle.
+- No backend regression run because no backend file was touched.
+

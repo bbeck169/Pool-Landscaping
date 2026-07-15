@@ -459,8 +459,23 @@ function GridView(props: any) {
 function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last }: any) {
   const pill = STATUS_PILL[(job.status || "scheduled").toLowerCase()] || STATUS_PILL.scheduled;
   const svc = SERVICE_COLOR(job.service_type);
+  // Phase 31 · Step 2a hotfix — the entire row body is now the primary
+  // tap target and routes to /job/{id}/checklist. Previously only the
+  // right-edge chevron was pressable, leaving 90% of the visible card
+  // dead; users hitting the leftmost checkbox by accident and then
+  // tapping the "Complete" bulk-action pill made it look like a card
+  // tap "completed" the job. Nested Pressables (checkbox + rearrange
+  // arrows) still capture their own touch zone via RN's responder
+  // system, so they do NOT bubble up to the row tap. During
+  // rearrangeMode the row-level tap is disabled so the up/down arrows
+  // remain the only interactive elements.
   return (
-    <View style={gStyles.card} testID={`grid-job-${job.id}`}>
+    <Pressable
+      style={gStyles.card}
+      onPress={rearrangeMode ? undefined : onOpen}
+      testID={`grid-job-${job.id}`}
+      hitSlop={4}
+    >
       {rearrangeMode ? (
         <View style={gStyles.reorderCol}>
           <Pressable onPress={() => onShift(job.id, -1)} disabled={first}
@@ -479,6 +494,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
         <Pressable
           onPress={onCheck}
           style={[gStyles.checkbox, checked && gStyles.checkboxOn]}
+          hitSlop={8}
           testID={`grid-check-${job.id}`}
         >
           {checked ? <Ionicons name="checkmark" size={14} color="#fff" /> : null}
@@ -502,10 +518,10 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
       <View style={[gStyles.statusPill, { backgroundColor: pill.bg }]}>
         <Text style={[gStyles.statusText, { color: pill.fg }]}>{pill.label}</Text>
       </View>
-      <Pressable onPress={onOpen} hitSlop={12} testID={`grid-open-${job.id}`}>
+      <View testID={`grid-open-${job.id}`}>
         <Ionicons name="chevron-forward" size={20} color={colors.muted} />
-      </Pressable>
-    </View>
+      </View>
+    </Pressable>
   );
 }
 
