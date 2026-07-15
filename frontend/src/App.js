@@ -11,7 +11,7 @@ import CustomersList from "@/pages/customers/CustomersList";
 import CustomerForm from "@/pages/customers/CustomerForm";
 import CustomerDetail from "@/pages/customers/CustomerDetail";
 import CustomerChemistry from "@/pages/customers/CustomerChemistry";
-import JobsList from "@/pages/jobs/JobsList";
+import CalendarSchedule from "@/pages/schedule/CalendarSchedule";
 import JobNew from "@/pages/jobs/JobNew";
 import JobDetail from "@/pages/jobs/JobDetail";
 import QuotesList from "@/pages/quotes/QuotesList";
@@ -147,7 +147,7 @@ function AdminOnly({ children }) {
 function RoleAwareIndex() {
   const { user, loading } = useAuth();
   if (loading) return null;
-  if (user?.role === "technician") return <Navigate to="/schedule/today" replace />;
+  if (user?.role === "technician") return <Navigate to="/schedule" replace />;
   if (user?.role === "customer") return <Navigate to="/portal/home" replace />;
   return <AdminDashboard />;
 }
@@ -183,7 +183,8 @@ export default function App() {
             <Route path="customers/:id/chemistry" element={<CustomerChemistry />} />
 
             {/* Jobs (Phase 2) */}
-            <Route path="jobs" element={<JobsList />} />
+            {/* Phase 30 · Jobs list retired — techs & admins land on the unified calendar. */}
+            <Route path="jobs" element={<Navigate to="/schedule" replace />} />
             <Route path="jobs/new" element={<JobNew />} />
             <Route path="jobs/:id" element={<JobDetail />} />
 
@@ -276,7 +277,9 @@ export default function App() {
             <Route path="workforce/mileage" element={<AdminOnly><WorkforceMileage /></AdminOnly>} />
 
             {/* Phase 16C — Tech Today Schedule */}
-            <Route path="schedule/today" element={<TodaySchedule />} />
+            <Route path="schedule/today" element={<Navigate to="/schedule" replace />} />
+            <Route path="schedule" element={<CalendarSchedule />} />
+            <Route path="schedule/legacy-timeline" element={<TodaySchedule />} />
             <Route path="tech/huddle" element={<TechHuddlePage />} />
             <Route path="tech/time-clock" element={<TechTimeClockPage />} />
             {/* Phase 29 — All My Tools hub (tech + admin). Non-role users are

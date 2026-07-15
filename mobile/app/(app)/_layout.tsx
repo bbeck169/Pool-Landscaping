@@ -49,7 +49,11 @@ export default function AppLayout() {
         name="today"
         options={{
           title: "Schedule",
-          href: isTech ? "/(app)/today" : null,
+          // Phase 30: tech Schedule tab now points at the unified calendar
+          // instead of the old day-list `today` screen. The file still
+          // exists on disk (used as a fallback route inside the calendar
+          // module) but is off the tab bar.
+          href: null,
           tabBarIcon: ({ color, size }) => <Ionicons name="today-outline" size={size} color={color} />,
         }}
       />
@@ -65,15 +69,19 @@ export default function AppLayout() {
         name="jobs"
         options={{
           title: "Jobs",
+          // Kept as a hidden fallback so the customer redirect and legacy
+          // deep-links resolve. Admin/tech land here for a beat then
+          // Redirect to /(app)/schedule/calendar (see jobs.tsx).
           href: null,
           tabBarIcon: ({ color, size }) => <Ionicons name="briefcase-outline" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
-        name="schedule"
+        name="schedule/calendar"
         options={{
           title: "Schedule",
-          href: isAdmin ? "/(app)/schedule" : null,
+          // Phase 30 · unified calendar for both admins AND techs.
+          href: (isAdmin || isTech) ? "/(app)/schedule/calendar" : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="calendar-outline" size={size} color={color} />,
         }}
       />

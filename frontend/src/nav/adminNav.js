@@ -25,7 +25,7 @@ export const ADMIN_NAV_V2 = [
   ]},
 
   { key: "work", label: "Work", icon: Briefcase, entries: [
-    { to: "/jobs",       label: "Jobs",       icon: Briefcase,   feature: "jobs" },
+    { to: "/schedule",   label: "Schedule",   icon: Briefcase,   feature: "jobs" },
     { to: "/schedule",   label: "Schedule",   icon: CalendarDays, feature: "jobs" },
     { to: "/dispatch",   label: "Dispatch",   icon: Truck,       feature: "jobs" },
     { to: "/routes",     label: "Routes",     icon: Route,       feature: "jobs" },
@@ -216,6 +216,6 @@ export const KEYBOARD_SHORTCUTS = [
 ];
 
 export const SHORTCUT_TARGETS = {
-  d: "/", j: "/jobs", c: "/customers", i: "/invoices",
+  d: "/", j: "/schedule", c: "/customers", i: "/invoices",
   q: "/quotes", r: "/reports", m: "/marketing", s: "/access-settings",
 };

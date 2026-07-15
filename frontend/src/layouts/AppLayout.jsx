@@ -40,7 +40,7 @@ import {
 
 const ADMIN_NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-  { to: "/jobs", label: "Jobs", icon: Briefcase },
+  { to: "/schedule", label: "Schedule", icon: Briefcase },
   { to: "/dispatch", label: "Dispatch", icon: CalendarDays },
   { to: "/dispatch/map", label: "Dispatch Map", icon: MoreHorizontal },
   { to: "/quotes", label: "Quotes", icon: FileText },
@@ -138,7 +138,7 @@ const ADMIN_NAV = [
 // Property Lookup, Onboarding, Calculators, Leaderboard, etc.) lives inside
 // the Tools hub — one place, searchable.
 const TECH_NAV = [
-  { to: "/schedule/today", label: "Schedule",   icon: CalendarDays, end: true },
+  { to: "/schedule", label: "Schedule",   icon: CalendarDays, end: true },
   { to: "/d2d",            label: "D2D",        icon: DoorOpen },
   { to: "/tech/time-clock",label: "Time Clock", icon: Clock },
   { to: "/tech/tools",     label: "Tools",      icon: LayoutGrid },

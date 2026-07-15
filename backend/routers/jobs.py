@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, Response
-from typing import List, Optional
+from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 
 from config import db, logger, EMERGENT_LLM_KEY
@@ -140,8 +140,18 @@ async def list_jobs(
     tenant: dict = Depends(get_current_tenant),
     status: Optional[str] = None,
     technician_id: Optional[str] = Query(None),
+    start: Optional[str] = Query(None, description="Phase 30: inclusive lower bound on scheduled_date (YYYY-MM-DD)"),
+    end: Optional[str] = Query(None, description="Phase 30: inclusive upper bound on scheduled_date (YYYY-MM-DD)"),
 ):
     q = scope_jobs_query(user, tenant, status, technician_id)
+    # Phase 30 · optional inclusive date-range filter so the new calendar
+    # can ask the backend for a bounded window instead of pulling all 1000
+    # jobs and filtering client-side. Both ends are optional.
+    if start or end:
+        rng: Dict[str, str] = {}
+        if start: rng["$gte"] = start
+        if end:   rng["$lte"] = end
+        q["scheduled_date"] = rng
     docs = await db.jobs.find(q, {"_id": 0}).sort("scheduled_date", 1).to_list(1000)
     if user.get("role") == "customer":
         for d in docs:

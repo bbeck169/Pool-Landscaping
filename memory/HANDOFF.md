@@ -2053,3 +2053,80 @@ No new accounts. Existing 4 demo users cover the 4 seeded roles. `marketer` / `s
 - Deep sweep of remaining ~30 pages (only the highest-signal 4 files gated here).
 - Mobile Expo permission enforcement — separate future phase.
 - `dispatcher` role — brief listed it but the DB doesn't have such a role; not adding a phantom.
+
+---
+
+### Phase 30 · Calendar Redesign (Feb 15 2026)
+
+Retired the admin/dispatcher Jobs list and the tech "Today" schedule. Both roles now land on a single unified **Calendar Schedule** with Day / Week / Month / Custom-range views on web AND mobile. Customer portal untouched — Phase 30 hard rule.
+
+#### Web (`/app/frontend/`)
+- **New** `pages/schedule/CalendarSchedule.jsx` — `react-big-calendar` + `date-fns` localizer. Day / Week / Month / Agenda views built-in, plus a Custom-range preset row (7d / 30d / 90d / This quarter) with from/to date inputs and a live "N jobs in range" pill. Filter toolbar ported from the old JobsList: text search, technician, service type, status.
+  - Empty-slot click → `/jobs/new?date=YYYY-MM-DD&time=HH:mm`.
+  - Event click → `/jobs/:id`.
+  - "New job" button gated by `<Gate perm="Jobs" action="write">` (Phase 29C).
+  - Color-coded by status (`scheduled/active/completed/pending/requested/reopened/cancelled/on_hold`) — legend shown below the calendar.
+- **Deleted** `pages/jobs/JobsList.jsx`. `JobNew` and `JobDetail` kept (calendar navigates into them).
+- **Router (`App.js`)** — `/jobs` now `<Navigate to="/schedule" replace />`, `/schedule/today` redirects to `/schedule`, `/schedule` renders `CalendarSchedule`. Legacy timeline preserved at `/schedule/legacy-timeline` for one-cycle rollback safety.
+- **Nav** — `adminNav.js` Jobs entry replaced with `{ to:"/schedule", label:"Schedule", feature:"jobs" }`; keyboard shortcut `j` now targets `/schedule`. `AppLayout.jsx` tech `TECH_NAV` Schedule entry retargeted to `/schedule`. `RoleAwareIndex` tech redirect now points at `/schedule`. Mobile-parity tile in `pages/tech/ToolsHub.jsx` retargeted.
+- Library added: `react-big-calendar@^1.20.0` via yarn.
+
+#### Mobile (`/app/mobile/`)
+- **New** `app/(app)/schedule/calendar.tsx` — `react-native-calendars` with 4 view modes: Month (grid + multi-dot markers per status), Week (7-day agenda list from focused date), Day (single-day list), Custom (7d/30d/90d preset chips + free-form range). Tap a marked day → jump to Day view. Tap event card → `/job/[id]`. Admin gets a "+" icon in the header that opens `/job/new?date=YYYY-MM-DD`.
+- **Deleted** `app/(app)/schedule.tsx` (old SectionList schedule).
+- **`app/(app)/jobs.tsx`** — kept for the customer flow, but now redirects admin/technician to `/(app)/schedule/calendar` at the top of the component. Customer branch untouched.
+- **`app/(app)/_layout.tsx`** — added `<Tabs.Screen name="schedule/calendar">` visible to admin AND tech. `today` and `jobs` screens set to `href: null` (still reachable via router.push for legacy links, hidden from the tab bar).
+- **`app/(app)/tools.tsx`** — both tech and admin Tools Hub tiles now point at `/(app)/schedule/calendar`.
+- Library added: `react-native-calendars@1.1314.0` via yarn.
+
+#### Backend
+- `routers/jobs.py` `GET /api/jobs` gained two optional query params: `start` and `end` (inclusive YYYY-MM-DD bounds on `scheduled_date`). Zero behaviour change when both are omitted — matches pre-Phase-30 responses. `Dict` added to the `typing` import. No schema change.
+
+#### Permissions (Phase 29C compliance)
+- Sidebar entry uses `feature: "jobs"` — same key the old Jobs list had, so gating and preview-mode behaviour is identical.
+- "New job" button on the calendar wrapped in `<Gate perm="Jobs" action="write">`; techs in preview mode see the calendar but not the create button.
+- Server-side RBAC on `/api/jobs` unchanged.
+
+#### Tests
+- **New** `backend/tests/test_phase30_schedule.py` — 2 tests: narrow-window range filter returns a strict subset with every `scheduled_date` inside the window; open-ended `start=2099` returns ≤ full-set and `end=1990` returns `[]`. Skipped gracefully if the tenant has no dated jobs.
+- Broader regression: `test_phase30_schedule` + `test_phase29c_rbac` + `test_phase29b_check_crypto` + `test_phase26_wave_a` + `test_phase28_warranties` = **37/37 passed** in 14 s.
+
+#### Live browser smoke (Playwright, admin@aquaterra.com)
+- `/schedule` renders `data-testid="calendar-schedule"` with title "Schedule", filter toolbar, preset row.
+- Month / Week / Day / Agenda RBC toolbar buttons all switch views cleanly.
+- `calendar-preset-7d` → "2 jobs in range" pill appears.
+- Legacy `/jobs` → 302 redirect to `/schedule` ✓
+- Legacy `/schedule/today` → 302 redirect to `/schedule` ✓
+- Customer portal (`customer@aquaterra.com`) untouched: `/portal/home` renders Home / Services / Book / Request / Invoices / Estimates / Payments / Photos / Documents / Messages / Chat Threads / Profile / Terms exactly as before.
+- Web webpack: **compiled with warnings** (pre-existing esbuild-loader deprecation only; no new errors).
+- Metro/Expo bundler log: **clean** — no new SyntaxErrors after the delete + add.
+- Known noise: 18 `"Encountered two children with the same key"` warnings from `react-big-calendar` when multiple events share a start slot. Not fatal, not blocking; standard library warning. Filed as a follow-up polish item.
+
+#### Files touched
+**New**
+- `frontend/src/pages/schedule/CalendarSchedule.jsx`
+- `mobile/app/(app)/schedule/calendar.tsx`
+- `backend/tests/test_phase30_schedule.py`
+
+**Edited**
+- `backend/routers/jobs.py` — `start`/`end` query params + `Dict` import.
+- `frontend/src/App.js` — replace `JobsList` import + route with calendar + legacy redirect; retarget tech default landing.
+- `frontend/src/nav/adminNav.js` — Jobs entry → Schedule entry; keyboard shortcut `j`.
+- `frontend/src/layouts/AppLayout.jsx` — TECH_NAV Schedule entry retargeted.
+- `frontend/src/pages/tech/ToolsHub.jsx` — Schedule tile retargeted.
+- `frontend/package.json` — `react-big-calendar` added.
+- `mobile/app/(app)/_layout.tsx` — new `schedule/calendar` tab; `today` + `jobs` hidden.
+- `mobile/app/(app)/jobs.tsx` — admin/tech redirect to calendar; customer flow byte-for-byte identical.
+- `mobile/app/(app)/tools.tsx` — Schedule tiles retargeted.
+- `mobile/package.json` — `react-native-calendars` added.
+- `memory/HANDOFF.md` — this section.
+
+**Deleted**
+- `frontend/src/pages/jobs/JobsList.jsx`
+- `mobile/app/(app)/schedule.tsx`
+
+#### Out of scope (deferred)
+- Drag-and-drop reschedule from calendar.
+- Recurring-job scheduling engine.
+- Job-detail drawer / modal (still uses the standalone `/jobs/:id` page).
+- Silencing the react-big-calendar "duplicate key" warnings — cosmetic, filed for follow-up.

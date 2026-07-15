@@ -36,7 +36,7 @@ const TECH_SECTIONS: Section[] = [
     key: "daily",
     title: "Daily Work",
     tiles: [
-      { key: "schedule", icon: "today-outline", label: "Schedule", desc: "Today's stops in order", route: "/(app)/today" },
+      { key: "schedule", icon: "today-outline", label: "Schedule", desc: "Day / Week / Month calendar", route: "/(app)/schedule/calendar" },
       { key: "d2d", icon: "footsteps-outline", label: "D2D Canvassing", desc: "Log knocks & book leads", route: "/(app)/d2d" },
       { key: "time-clock", icon: "time-outline", label: "Time Clock", desc: "Clock in / out, breaks, mileage", route: "/(app)/time-clock" },
       { key: "huddle", icon: "chatbubbles-outline", label: "Daily Huddle", desc: "Post yesterday / today / blockers", route: "/(app)/huddle" },
@@ -78,7 +78,7 @@ const ADMIN_SECTIONS: Section[] = [
     key: "adm-daily",
     title: "Daily Work",
     tiles: [
-      { key: "schedule", icon: "calendar-outline", label: "Schedule", desc: "Dispatch board", route: "/(app)/schedule" },
+      { key: "schedule", icon: "calendar-outline", label: "Schedule", desc: "Calendar view — Day/Week/Month/Custom", route: "/(app)/schedule/calendar" },
       { key: "customers", icon: "people-outline", label: "Customers", desc: "Full customer directory", route: "/(app)/customers" },
       { key: "quotes", icon: "document-text-outline", label: "Quotes & Invoices", desc: "Send, sign, collect", route: "/(app)/quotes" },
     ],

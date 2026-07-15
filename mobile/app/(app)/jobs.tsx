@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from "react";
 import { View, Text, StyleSheet, FlatList, RefreshControl, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useRouter, Redirect } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
@@ -27,6 +27,15 @@ export default function Jobs() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [usingCache, setUsingCache] = useState(false);
+
+  // Phase 30: admins & techs now live on the unified calendar; only customers
+  // still see the legacy per-status "My Services" list here. Keep the
+  // customer flow byte-for-byte identical to what shipped in Phase 3.
+  const isCustomer = user?.role === "customer";
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
+  if (!isCustomer) {
+    return <Redirect href="/(app)/schedule/calendar" />;
+  }
 
   const load = useCallback(async (f: string) => {
     const cacheKey = `${user?.role}_${user?.id}`;
@@ -59,8 +68,7 @@ export default function Jobs() {
     }, [filter, load, online])
   );
 
-  const isAdmin = user?.role === "admin";
-  const isCustomer = user?.role === "customer";
+  const isAdminOrig = false; // dead — customer branch only reaches here after Phase 30 redirect.
 
   return (
     <View style={styles.root}>

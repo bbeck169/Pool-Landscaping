@@ -21,7 +21,7 @@ const TECH_SECTIONS = [
     key: "daily",
     title: "Daily Work",
     tiles: [
-      { key: "schedule", icon: CalendarDays, label: "Schedule", desc: "Today's stops in order", to: "/schedule/today" },
+      { key: "schedule", icon: CalendarDays, label: "Schedule", desc: "Day / Week / Month calendar", to: "/schedule" },
       { key: "d2d", icon: DoorOpen, label: "D2D Canvassing", desc: "Log knocks & book leads", to: "/d2d" },
       { key: "time-clock", icon: Clock, label: "Time Clock", desc: "Clock in / out, breaks, mileage", to: "/tech/time-clock" },
       { key: "huddle", icon: MessageSquare, label: "Daily Huddle", desc: "Post yesterday / today / blockers", to: "/tech/huddle" },
