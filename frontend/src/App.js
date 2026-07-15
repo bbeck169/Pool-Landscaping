@@ -123,6 +123,7 @@ import { LanaChatPage as OsLana } from "@/pages/os/LanaAndPlans";
 import TodaySchedule from "@/pages/schedule/TodaySchedule";
 import { TechHuddlePage, TechTimeClockPage } from "@/pages/tech/TechPages";
 import ServiceReport from "@/pages/tech/ServiceReport";
+import ToolsHub from "@/pages/tech/ToolsHub";
 import { ComposerPage as SocialComposer, CalendarPage as SocialCalendar,
          LibraryPage as SocialLibrary, DraftsPage as SocialDrafts } from "@/pages/social/SocialSuite";
 import { ApprovalsPage as SocialApprovals, BulkUploadPage as SocialBulkUpload,
@@ -277,6 +278,9 @@ export default function App() {
             <Route path="schedule/today" element={<TodaySchedule />} />
             <Route path="tech/huddle" element={<TechHuddlePage />} />
             <Route path="tech/time-clock" element={<TechTimeClockPage />} />
+            {/* Phase 29 — All My Tools hub (tech + admin). Non-role users are
+                redirected inside the component. */}
+            <Route path="tech/tools" element={<ToolsHub />} />
             {/* Phase 18B follow-up — Service Report (auto-opens on clock-in) */}
             <Route path="jobs/:id/service-report" element={<ServiceReport />} />
 

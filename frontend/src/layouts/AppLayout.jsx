@@ -34,6 +34,7 @@ import {
   Wand2,
   Menu as MenuIcon,
   X as XIcon,
+  LayoutGrid,
 } from "lucide-react";
 
 const ADMIN_NAV = [
@@ -130,13 +131,16 @@ const ADMIN_NAV = [
   },
 ];
 
-// Tech nav — Phase 16C add-on: Schedule / D2D / Huddle / Time Clock / Profile.
-// No Jobs top-level entry, no revenue-adjacent pages.
+// Tech nav — Phase 29: "All My Tools" hub replaces the old flat Huddle/Equipment
+// slots. Techs get Schedule · D2D · Time Clock · Tools · Profile in both the
+// sidebar and the mobile bottom bar. Everything else (Huddle, Equipment,
+// Property Lookup, Onboarding, Calculators, Leaderboard, etc.) lives inside
+// the Tools hub — one place, searchable.
 const TECH_NAV = [
   { to: "/schedule/today", label: "Schedule",   icon: CalendarDays, end: true },
   { to: "/d2d",            label: "D2D",        icon: DoorOpen },
-  { to: "/tech/huddle",    label: "Huddle",     icon: MessageSquare },
   { to: "/tech/time-clock",label: "Time Clock", icon: Clock },
+  { to: "/tech/tools",     label: "Tools",      icon: LayoutGrid },
   { to: "/portal/profile", label: "Profile",    icon: UserCircle },
 ];
 

@@ -23,6 +23,8 @@ export default function More() {
   // Landscape AI, CAD Design Studio, Measure (Satellite), and Virtual Bid are admin-only
   // and intentionally omitted from the technician nav.
   const techLinks = [
+    { icon: "apps-outline", label: "All My Tools", onPress: () => router.push("/(app)/tools" as any) },
+    { icon: "flask-outline", label: "Pool Calculators", onPress: () => router.push("/(app)/calculators" as any) },
     { icon: "calculator-outline", label: "Field Estimator", onPress: () => router.push("/(app)/estimator" as any) },
     { icon: "magnet-outline", label: "New Lead", onPress: () => router.push("/leads/new") },
     { icon: "footsteps-outline", label: "Door-to-Door", onPress: () => router.push("/d2d") },
@@ -60,7 +62,7 @@ export default function More() {
     { icon: "receipt-outline", label: "Invoices (AR)", onPress: () => router.push("/invoices") },
     { icon: "calculator-outline", label: "Estimator", onPress: () => router.push("/estimator") },
     { icon: "id-card-outline", label: "Business Card", onPress: () => router.push("/card") },
-    { icon: "calculator-outline", label: "Calculators", onPress: () => router.push("/(app)/tools") },
+    { icon: "calculator-outline", label: "Calculators", onPress: () => router.push("/(app)/calculators" as any) },
     { icon: "navigate-outline", label: "Dispatch", onPress: () => router.push("/dispatch") },
     { icon: "swap-horizontal-outline", label: "Route Coverage", onPress: () => router.push("/coverage") },
     { icon: "time-outline", label: "Timesheets", onPress: () => router.push("/timesheets") },

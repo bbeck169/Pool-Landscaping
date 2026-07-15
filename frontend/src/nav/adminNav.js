@@ -11,7 +11,6 @@ import {
   Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon,
   Home as HomeIcon,
   Cloud,
-  Shield,
 } from "lucide-react";
 
 /**

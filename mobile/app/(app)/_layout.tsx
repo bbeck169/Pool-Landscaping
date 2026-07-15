@@ -78,27 +78,11 @@ export default function AppLayout() {
         }}
       />
       <Tabs.Screen
-        name="tools"
-        options={{
-          title: "Tools",
-          href: null,
-          tabBarIcon: ({ color, size }) => <Ionicons name="calculator-outline" size={size} color={color} />,
-        }}
-      />
-      <Tabs.Screen
         name="d2d"
         options={{
           title: "D2D",
           href: isTech ? "/(app)/d2d" : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="log-in-outline" size={size} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="huddle"
-        options={{
-          title: "Huddle",
-          href: isTech ? "/(app)/huddle" : null,
-          tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles-outline" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -109,11 +93,38 @@ export default function AppLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="time-outline" size={size} color={color} />,
         }}
       />
+      {/* "All My Tools" hub — the new home for every tech-accessible page.
+          Huddle and Equipment moved off the tab bar and now live inside the hub. */}
+      <Tabs.Screen
+        name="tools"
+        options={{
+          title: "Tools",
+          href: isTech ? "/(app)/tools" : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="apps-outline" size={size} color={color} />,
+        }}
+      />
+      {/* Standalone pool-chemistry calculators — reachable from the Tools hub. */}
+      <Tabs.Screen
+        name="calculators"
+        options={{
+          title: "Calculators",
+          href: null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="calculator-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="huddle"
+        options={{
+          title: "Huddle",
+          href: null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles-outline" size={size} color={color} />,
+        }}
+      />
       <Tabs.Screen
         name="assets"
         options={{
           title: "Equipment",
-          href: isTech ? "/(app)/assets" : null,
+          href: null,
           tabBarIcon: ({ color, size }) => <Ionicons name="construct-outline" size={size} color={color} />,
         }}
       />
