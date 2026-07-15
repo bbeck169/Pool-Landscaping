@@ -43,6 +43,8 @@ _CLEANUP = {
     "checks": {"payee_name_snapshot": {"$regex": "^TEST_"}},
     "expense_categories": {"transaction_id": {"$regex": "^TEST-"}},
     "cfo_llm_usage": {"tenant_id": {"$regex": "TEST_"}},
+    "cfo_qna_history": {"actor_user_id": {"$regex": "^TEST-"}},
+    "cfo_scenarios": {"actor_user_id": {"$regex": "^TEST-"}},
 }
 
 

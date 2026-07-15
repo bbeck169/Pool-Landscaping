@@ -3162,3 +3162,137 @@ can retry — only the success path auto-closes.
 **Not touched**
 - Backend endpoints or tests. Mobile. Any other UI section.
 
+#### Phase 33 · Step 1 — AI CFO NL Q&A + Scenario backend spine (Feb 15 2026)
+
+Backend-only pass. Two Wave-3 endpoints on top of the Phase 32 AI CFO
+spine — natural-language Q&A over the tenant's financials, and
+12-month P&L delta scenario planning. Both use the same Emergent LLM
+plumbing we shipped in Phase 32 (`LlmChat.with_params(max_tokens=…)`)
+and share the same `cfo_llm_usage` soft-quota (100/day/tenant with
+`?force=true` override). No new LLM libs. No new env vars. UI = Step 2.
+
+**New endpoints — all `/api/cfo/*`, `admin | super_admin` only**
+- `POST /api/cfo/qna`
+    Body: `{question, period?, start?, end?}`. Builds a compact
+    financial-context JSON (Revenue, Expenses by category, Gross,
+    Margin, Cash, AR/AP aging, top-5 customers, active jobs, warranty
+    ARR, `mocked_fields[]` list) — targeted ≤1500 tokens.
+    Returns `{history_id, answer, tokens_used, mocked, reason, usage,
+    context_snapshot}`. LLM system prompt tells Claude to answer only
+    from context, honestly qualify mocked fields, and stay under
+    ~180 words.
+- `GET  /api/cfo/qna/history?limit=20` — latest first, tenant-scoped.
+- `POST /api/cfo/scenario`
+    Body: `{prompt, structured?}`. `structured` is passed verbatim to
+    the LLM alongside the prompt so callers can pin numeric
+    assumptions. Returns
+    `{history_id, result:{assumptions, monthly_delta:[×12], annual,
+    confidence, caveats, mocked, reason}, tokens_used, usage}`. On
+    LLM failure or JSON-parse failure, `result` is zero-filled with
+    `mocked:true` + reason instead of a 5xx. If the LLM returns
+    <12 months, we pad with zeros so the UI can always render a
+    12-slot chart.
+- `GET  /api/cfo/scenario/history?limit=20` — same shape as Q&A.
+- `POST /api/cfo/scenario/{id}/save-as-favorite?favorite=true|false` —
+    optional pin toggle. 404 on unknown id.
+
+**New collections + indexes**
+- `cfo_qna_history` — `{id, tenant_id, actor_user_id, actor_role,
+  question, answer, context_snapshot, tokens_used, created_at, mocked,
+  reason}`. Index `(tenant_id, created_at DESC)`.
+- `cfo_scenarios` — `{id, tenant_id, actor_user_id, actor_role,
+  prompt, structured, result, tokens_used, created_at, favorite}`.
+  Index `(tenant_id, created_at DESC)`.
+
+Indexes installed via one-shot `pymongo.create_index` script.
+
+**Shared helpers (added to `routers/cfo.py`)**
+- `_top_customers_by_revenue(tenant_id, start, end, limit=5)` — reuses
+  the same paid-invoices window as `_revenue`.
+- `_build_financial_context(tenant_id, period, start, end)` — one
+  function called by both endpoints. Includes `mocked_fields[]` so the
+  LLM knows to hedge on `ap_aging`, `cash_on_hand` (when no
+  bank_accounts), and empty expense categories.
+- `_call_llm_text(system, prompt, max_tokens)` — thin wrapper around
+  the fixed LlmChat API pattern. Returns
+  `(text, error_reason, tokens_est)`; never raises.
+- Quota bookkeeping reuses `_bump_llm_usage` / `_read_llm_usage` from
+  Phase 32 — no double-counter.
+
+**Honest fallbacks (no fabricated numbers)**
+- Q&A LLM failure → response has `mocked:true`, `reason:"llm error: …"`,
+  empty `answer`. History row still written so admins can audit.
+- Scenario LLM failure OR JSON-parse failure → response is the
+  canonical empty-scenario shape (12 monthly zeros, `confidence:"low"`,
+  a single caveat, `mocked:true`, reason string). Persists to
+  cfo_scenarios with the empty result so history reflects reality.
+- Quota exceeded without `?force=true` → 200 with
+  `{error:"quota_exceeded", soft:true, usage, hint}`.
+
+**Tests — `backend/tests/test_phase33_cfo_qna.py`**
+`14 passed` in 3.2 s covering:
+1. `TestRbac` (4 tests) — tech + customer 403 on `/qna`, `/scenario`,
+   and both history endpoints; admin 200.
+2. `TestValidation` (3) — empty question / empty prompt / invalid
+   period → 422 explicitly.
+3. `TestQnaLlm.test_llm_error_returns_mocked` — monkeypatches
+   `_call_llm_text` to raise; endpoint returns 200 with
+   `mocked:true`, correct reason, and a history row persisted.
+4. `TestQnaLlm.test_qna_success_with_stubbed_llm` — stubs a plain-text
+   response, asserts `mocked:false`, tokens accumulate, and the
+   context_snapshot round-trips.
+5. `TestScenarioLlm.test_scenario_success_shape` — stubs valid JSON,
+   asserts 12-month padding, annual{} keys, favorite=false at write
+   time, then round-trips the `save-as-favorite` endpoint.
+6. `TestScenarioLlm.test_scenario_llm_error_returns_empty_shape` —
+   confirms the empty-scenario fallback.
+7. `TestQuota.test_qna_soft_block` — pinning `request_count=250` blocks
+   both `/qna` and `/scenario`; both 200 with
+   `error:"quota_exceeded"`.
+8. `TestHistory.test_qna_history_shape_and_isolation` — aquaterra
+   admin creates a row via the coroutine; the HTTP `GET history`
+   endpoint returns it to aquaterra AND filters it out for sunbelt
+   admin. Also asserts `created_at DESC` ordering.
+9. `test_save_favorite_404` — unknown scenario id → 404.
+
+Regression sanity: full CFO stack + workstream + schedule + rbac
+`test_phase33 + test_phase32 + test_phase31 + test_phase30 +
+test_phase29c` = **49/49 passed** in 17.9 s.
+
+**Conftest tweak** — two cleanup queries added:
+- `cfo_qna_history {actor_user_id: /^TEST-/}`
+- `cfo_scenarios {actor_user_id: /^TEST-/}`
+
+**Files added (1)**
+- `backend/tests/test_phase33_cfo_qna.py`
+
+**Files edited (2)**
+- `backend/routers/cfo.py` — appended Phase 33 section (helpers +
+  4 new endpoints + Pydantic bodies).
+- `backend/tests/conftest.py` — two new cleanup entries.
+- `memory/HANDOFF.md` — this section.
+
+**Not touched (per hard rules)**
+- No new LLM SDKs / env vars. No mods to existing endpoint contracts
+  (dashboard / forecast / anomalies / categorize / llm-usage). No web
+  or mobile frontend. No customer portal. No RBAC-matrix diffs.
+
+**Verification**
+- `sudo supervisorctl restart backend` → `openapi.json = 200`, and all
+  four new paths listed: `/api/cfo/qna`, `/api/cfo/qna/history`,
+  `/api/cfo/scenario`, `/api/cfo/scenario/history`,
+  `/api/cfo/scenario/{sid}/save-as-favorite`.
+- `pytest -x -q tests/test_phase33_cfo_qna.py` → **14/14 passed** in 3.2s.
+
+**Deferred to Phase 33 · Step 2 (UI, fresh window)**
+- Web chat panel on `/cfo` (question box, streamed answer render,
+  history drawer, `data-testid`s such as `cfo-qna-input`,
+  `cfo-qna-submit`, `cfo-qna-answer`, `cfo-qna-history`).
+- Scenario planner UX (structured sliders + free-text prompt, chart
+  of monthly deltas, save-as-favorite pin, `data-testid`s such as
+  `cfo-scenario-form`, `cfo-scenario-run`, `cfo-scenario-annual-net`).
+- Mobile parity (deferred further — brief noted admin flow stays on
+  desktop for these two features).
+
+**Board PDF export** — still skipped per user.
+

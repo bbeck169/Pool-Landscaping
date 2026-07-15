@@ -578,3 +578,328 @@ async def llm_usage(
     tenant: dict = Depends(get_current_tenant),
 ):
     return await _read_llm_usage(tenant["id"])
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 33 · Wave 3 — NL Q&A + Scenario Planning
+# ═══════════════════════════════════════════════════════════════════════
+
+_QNA_MAX_TOKENS = 1500
+_SCENARIO_MAX_TOKENS = 2000
+
+_QNA_SYSTEM = (
+    "You are the AI CFO for a US pool & landscaping company. Answer the "
+    "user's question using ONLY the provided financial context JSON. "
+    "If the question requires data not in context, say so honestly. "
+    "If any context fields carry `mocked:true`, qualify your answer "
+    "accordingly. Cite specific numbers. Keep answers concise (≤180 words)."
+)
+
+_SCENARIO_SYSTEM = (
+    "You are the AI CFO for a US pool & landscaping company. Project a "
+    "12-month P&L delta for the given scenario using the provided "
+    "financial context JSON. Reply with valid JSON only, no prose, matching "
+    "this schema exactly:\n"
+    "{\n"
+    '  "assumptions": [str],\n'
+    '  "monthly_delta": [{"month": int (1..12), "revenue_delta": number, '
+    '"expense_delta": number, "net_delta": number}],\n'
+    '  "annual": {"revenue_delta": number, "expense_delta": number, '
+    '"net_delta": number, "margin_delta_pct": number},\n'
+    '  "confidence": "low"|"medium"|"high",\n'
+    '  "caveats": [str],\n'
+    '  "mocked": bool,\n'
+    '  "reason": str\n'
+    "}\n"
+    "Cite which context fields drove the projection under `assumptions`. "
+    "If context is too sparse, set mocked=true and explain in reason."
+)
+
+
+async def _top_customers_by_revenue(tenant_id: str, s: datetime, e: datetime,
+                                     limit: int = 5) -> List[Dict[str, Any]]:
+    totals: Dict[str, Dict[str, Any]] = {}
+    async for q in db.quotes.find(
+        {"tenant_id": tenant_id, "doc_type": "invoice", "payment_status": "paid"},
+        {"_id": 0, "customer_id": 1, "customer_name": 1, "total": 1, "paid_at": 1, "created_at": 1},
+    ):
+        d = _parse_dt(q.get("paid_at")) or _parse_dt(q.get("created_at"))
+        if not d or not (s <= d <= e):
+            continue
+        cid = q.get("customer_id") or q.get("customer_name") or "unknown"
+        cur = totals.setdefault(cid, {
+            "customer_id": q.get("customer_id"),
+            "customer_name": q.get("customer_name") or "Unknown",
+            "total": 0.0,
+        })
+        cur["total"] += _to_float(q.get("total"))
+    ranked = sorted(totals.values(), key=lambda r: -r["total"])[:limit]
+    return [{**r, "total": round(r["total"], 2)} for r in ranked]
+
+
+async def _build_financial_context(
+    tenant_id: str, period: str = "ytd",
+    start: Optional[str] = None, end: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Compact JSON financial snapshot for LLM prompts. Targeted <1500 tokens."""
+    s, e = _period_bounds(period, start, end)
+    rev = await _revenue(tenant_id, s, e)
+    exp = await _expenses(tenant_id, s, e)
+    cash = await _cash_on_hand(tenant_id)
+    ar = await _ar_aging(tenant_id)
+    ap = _ap_aging_placeholder()
+    top_customers = await _top_customers_by_revenue(tenant_id, s, e)
+    active_jobs = await db.jobs.count_documents({
+        "tenant_id": tenant_id,
+        "status": {"$in": ["scheduled", "pending", "active"]},
+    })
+    active_warranties = await db.warranty_contracts.count_documents({
+        "tenant_id": tenant_id
+    })
+    # Warranty ARR = sum(price_paid) for active contracts (best-effort).
+    warranty_arr = 0.0
+    async for w in db.warranty_contracts.find(
+        {"tenant_id": tenant_id}, {"_id": 0, "price_paid": 1, "end_date": 1}
+    ):
+        end_dt = _parse_dt(w.get("end_date"))
+        if end_dt and end_dt >= _now_utc():
+            warranty_arr += _to_float(w.get("price_paid"))
+
+    gross = round(rev["total"] - exp["total"], 2)
+    margin = round((gross / rev["total"]) * 100, 2) if rev["total"] else 0.0
+
+    mocked_fields: List[str] = ["ap_aging"]
+    if cash.get("mocked"): mocked_fields.append("cash_on_hand")
+    # Track other mocked signals if present:
+    if not exp.get("by_category"):
+        mocked_fields.append("expense_by_category (empty — categorizer not run)")
+
+    return {
+        "period": {"key": period, "start": s.isoformat(), "end": e.isoformat()},
+        "revenue": {"total": rev["total"], "by_source": rev["by_source"]},
+        "expenses": {"total": exp["total"], "by_category": exp["by_category"][:5]},
+        "gross_profit": gross,
+        "profit_margin_pct": margin,
+        "cash_on_hand": cash,
+        "ar_aging": ar,
+        "ap_aging": ap,
+        "top_customers": top_customers,
+        "active_jobs_pipeline": active_jobs,
+        "active_warranty_contracts": active_warranties,
+        "warranty_arr_estimate": round(warranty_arr, 2),
+        "mocked_fields": mocked_fields,
+    }
+
+
+async def _call_llm_text(system_prompt: str, user_prompt: str,
+                          max_tokens: int) -> Tuple[Optional[str], Optional[str], int]:
+    """Returns (text, error_reason, tokens_used_estimate)."""
+    if not EMERGENT_LLM_KEY:
+        return None, "EMERGENT_LLM_KEY not configured", 0
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+    except Exception as e:
+        return None, f"llm import failed: {e}", 0
+    try:
+        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
+                         system_message=system_prompt)
+                .with_model(*_MODEL)
+                .with_params(max_tokens=max_tokens))
+        raw = await chat.send_message(UserMessage(text=user_prompt))
+        text = raw if isinstance(raw, str) else str(raw)
+        tokens = int(len(text) / 4)
+        return text.strip(), None, tokens
+    except Exception as e:
+        logger.warning(f"CFO LLM call failed: {e}")
+        return None, f"llm error: {e}", 0
+
+
+# ─── /qna ─────────────────────────────────────────────────────────────
+class QnaBody(BaseModel):
+    question: str
+    period: str = "ytd"
+    start: Optional[str] = None
+    end: Optional[str] = None
+
+
+@router.post("/qna")
+async def qna(
+    body: QnaBody,
+    force: bool = Query(False),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    if not body.question or not body.question.strip():
+        raise HTTPException(status_code=422, detail="question is required")
+    if body.period not in ("mtd", "qtd", "ytd", "custom"):
+        raise HTTPException(status_code=422, detail="invalid period")
+
+    tid = tenant["id"]
+    usage = await _read_llm_usage(tid)
+    if not force and usage["request_count"] >= _LLM_DAILY_SOFT_QUOTA:
+        logger.warning(f"CFO Q&A quota soft-hit tenant={tid}")
+        return {"error": "quota_exceeded", "soft": True, "usage": usage,
+                "hint": "Pass ?force=true to override."}
+
+    ctx = await _build_financial_context(tid, body.period, body.start, body.end)
+    prompt = (
+        f"Question: {body.question.strip()}\n\n"
+        f"Financial context (JSON):\n{json.dumps(ctx, default=str)}"
+    )
+    text, err, tokens = await _call_llm_text(_QNA_SYSTEM, prompt, _QNA_MAX_TOKENS)
+
+    mocked = bool(err) or not text
+    answer = text or ""
+    hid = new_id()
+    await db.cfo_qna_history.insert_one({
+        "id": hid, "tenant_id": tid,
+        "actor_user_id": user["id"], "actor_role": user.get("role"),
+        "question": body.question.strip(),
+        "answer": answer,
+        "context_snapshot": ctx,
+        "tokens_used": tokens,
+        "created_at": now_iso(),
+        "mocked": mocked,
+        "reason": err,
+    })
+    updated = await _bump_llm_usage(tid, tokens)
+    return {
+        "history_id": hid,
+        "answer": answer,
+        "tokens_used": tokens,
+        "mocked": mocked,
+        "reason": err,
+        "usage": {**usage, **updated},
+        "context_snapshot": ctx,
+    }
+
+
+@router.get("/qna/history")
+async def qna_history(
+    limit: int = Query(20, ge=1, le=200),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    cur = db.cfo_qna_history.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", -1).limit(limit)
+    return await cur.to_list(limit)
+
+
+# ─── /scenario ────────────────────────────────────────────────────────
+class ScenarioBody(BaseModel):
+    prompt: str
+    structured: Optional[Dict[str, Any]] = None
+
+
+def _empty_scenario(reason: str) -> Dict[str, Any]:
+    return {
+        "assumptions": [],
+        "monthly_delta": [
+            {"month": m, "revenue_delta": 0.0, "expense_delta": 0.0,
+              "net_delta": 0.0} for m in range(1, 13)
+        ],
+        "annual": {"revenue_delta": 0.0, "expense_delta": 0.0,
+                    "net_delta": 0.0, "margin_delta_pct": 0.0},
+        "confidence": "low",
+        "caveats": ["LLM output unavailable — projection zeroed."],
+        "mocked": True,
+        "reason": reason,
+    }
+
+
+@router.post("/scenario")
+async def scenario(
+    body: ScenarioBody,
+    force: bool = Query(False),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    if not body.prompt or not body.prompt.strip():
+        raise HTTPException(status_code=422, detail="prompt is required")
+
+    tid = tenant["id"]
+    usage = await _read_llm_usage(tid)
+    if not force and usage["request_count"] >= _LLM_DAILY_SOFT_QUOTA:
+        return {"error": "quota_exceeded", "soft": True, "usage": usage,
+                "hint": "Pass ?force=true to override."}
+
+    ctx = await _build_financial_context(tid, "ytd")
+    struct = body.structured or {}
+    prompt = (
+        f"Scenario prompt: {body.prompt.strip()}\n\n"
+        f"Structured params: {json.dumps(struct)}\n\n"
+        f"Financial context (JSON):\n{json.dumps(ctx, default=str)}"
+    )
+    text, err, tokens = await _call_llm_text(_SCENARIO_SYSTEM, prompt,
+                                                _SCENARIO_MAX_TOKENS)
+
+    result: Dict[str, Any]
+    if err or not text:
+        result = _empty_scenario(err or "empty LLM response")
+    else:
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", cleaned).strip()
+        try:
+            result = json.loads(cleaned)
+            # Fill missing months if the LLM was lazy.
+            months = result.get("monthly_delta") or []
+            if len(months) < 12:
+                have = {m.get("month"): m for m in months if isinstance(m, dict)}
+                result["monthly_delta"] = [
+                    have.get(i, {"month": i, "revenue_delta": 0.0,
+                                  "expense_delta": 0.0, "net_delta": 0.0})
+                    for i in range(1, 13)
+                ]
+            result.setdefault("mocked", False)
+            result.setdefault("reason", None)
+        except Exception as e:
+            result = _empty_scenario(f"llm json parse error: {e}")
+
+    hid = new_id()
+    await db.cfo_scenarios.insert_one({
+        "id": hid, "tenant_id": tid,
+        "actor_user_id": user["id"], "actor_role": user.get("role"),
+        "prompt": body.prompt.strip(),
+        "structured": struct,
+        "result": result,
+        "tokens_used": tokens,
+        "created_at": now_iso(),
+        "favorite": False,
+    })
+    updated = await _bump_llm_usage(tid, tokens)
+    return {
+        "history_id": hid,
+        "result": result,
+        "tokens_used": tokens,
+        "usage": {**usage, **updated},
+    }
+
+
+@router.get("/scenario/history")
+async def scenario_history(
+    limit: int = Query(20, ge=1, le=200),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    cur = db.cfo_scenarios.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("created_at", -1).limit(limit)
+    return await cur.to_list(limit)
+
+
+@router.post("/scenario/{sid}/save-as-favorite")
+async def save_scenario_favorite(
+    sid: str,
+    favorite: bool = Query(True),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    res = await db.cfo_scenarios.update_one(
+        {"id": sid, "tenant_id": tenant["id"]},
+        {"$set": {"favorite": bool(favorite)}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="scenario not found")
+    return {"id": sid, "favorite": bool(favorite)}
+
