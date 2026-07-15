@@ -45,6 +45,10 @@ _CLEANUP = {
     "cfo_llm_usage": {"tenant_id": {"$regex": "TEST_"}},
     "cfo_qna_history": {"actor_user_id": {"$regex": "^TEST-"}},
     "cfo_scenarios": {"actor_user_id": {"$regex": "^TEST-"}},
+    "customer_churn_scores": {"customer_id": {"$regex": "^TEST-|^TEST_"}},
+    "retention_campaign_targets": {"customer_ids": {"$elemMatch": {"$regex": "^TEST-|^TEST_"}}},
+    "marketing_campaigns": {"goal": {"$regex": "at-risk|retention.*TEST", "$options": "i"}},
+    "idempotency_keys": {"tenant_id": {"$regex": "TEST_|^TEST-"}},
     "users": {"email": {"$regex": "^TEST_dedup_|^TEST_solo_"}},
     "technicians": {"id": {"$regex": "^TEST-tech"}},
 }

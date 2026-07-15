@@ -35,6 +35,9 @@ python3 /app/scripts/check_jsx_imports.py
 echo "== JS undeclared-identifier scan (advisory) =="
 python3 /app/scripts/check_js_identifiers.py || true
 
+echo "== JS dead-import scan (advisory) =="
+python3 /app/scripts/check_dead_imports.py || true
+
 echo "== mobile syntax (best-effort, may skip on missing peer deps) =="
 if [ -d /app/mobile ]; then
   cd /app/mobile

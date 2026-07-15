@@ -5144,3 +5144,38 @@ Closes out Phase 40. Techs can now edit + submit checklists in zero-signal backy
 - Web parity for the write queue (office usage is lower value; open ticket for phase 40b if requested).
 - Photo garbage-collection: an entry that ends up flagged `idempotency_key_body_mismatch` is dropped but the optimistic tile stays in local state until the next `load()` — acceptable for now given the mismatch case is a client bug that should never happen in practice.
 - Multi-device conflict resolution note in the tech-facing FAQ (currently last-write-wins on the server via update_many-style behaviour).
+
+#### Phase 41 · Housekeeping Trio (RBC keys + retention flake + dead-import scanner)
+
+**Item I — RBC duplicate-key warnings on `/schedule`** → **already resolved, no code changes required.**
+- Playwright pass across `/schedule` (Grid landing), `?mode=calendar&view=month`, `?mode=calendar&view=agenda` with month navigation → **KEY_WARNS_COUNT = 0**.
+- The Phase 34a in-file dedup guard at `CalendarSchedule.jsx:220-233` (Set-based `seen.has(ev.id)` filter before handing events to RBC) is doing its job. The inherited "6 warnings" report was stale.
+- Bonus find: `?view=calendar` (wrong param — should be `?mode=calendar`) triggers an RBC crash "Cannot read properties of undefined (reading 'title')" because `view=calendar` isn't in `views={["month","agenda"]}`. Not reachable from any UI path (`setParam("view", v)` only ever writes `month`/`agenda`), so filed as a low-priority hardening ticket rather than fixed in this pass.
+
+**Item J — `test_phase34b_retention_bridge.py` order-independence**
+- Root cause was TWO-fold, not one:
+  1. Prior TEST- churn scores accumulating on the aquaterra tenant across interrupted sessions.
+  2. The real demo customer "Jennifer Carson" carries a live 75-risk churn score — the test's `assert target_count == 2` never accounted for the seed data.
+- Fixes (both in `test_phase34b_retention_bridge.py`):
+  - `seeded_scores` fixture now runs a pre-seed sweep of every `TEST-retention-*` / `TEST_retention` customer + churn score on the tenant, plus every retention campaign/target row descending from those customers. Test is now truly order-independent.
+  - `test_threshold_filter_and_write` — assertion changed from strict `target_count == 2` to `target_count >= 2` + `expected.issubset(hit)` + `excluded.isdisjoint(hit)`. Verifies the SEMANTIC contract (our high-risk seeds ARE targeted, our low-risk seed is NOT) without breaking when a real tenant seed customer legitimately qualifies.
+  - `test_max_customers_cap` — cap enforcement checked (`len(customer_ids) == 1`) without assuming the winner is specifically our 85-risk seed.
+- Also added to `conftest.py` `_CLEANUP`: `customer_churn_scores` (regex `^TEST-|^TEST_`), `retention_campaign_targets` (any target row referencing a TEST- customer), `marketing_campaigns` (goals with `at-risk` / retention markers), and `idempotency_keys` (tenant regex `TEST_|^TEST-`). Repeated sessions no longer accumulate this data.
+- Verification: `pytest tests/test_phase34*.py -q` → **56 passed** end-to-end.
+
+**Item K — dead-import advisory scanner**
+- New file `scripts/check_dead_imports.py` walks every `.jsx` / `.tsx` / `.js` / `.ts` under `/app/frontend/src`, `/app/mobile/src`, and `/app/mobile/app`. Parses top-level `import` statements (default, named, `as` renames, `* as ns`, side-effect-only) and flags any bound name whose word-boundary reference is absent from the rest of the file (with comments and string literals stripped first to reduce false positives).
+- Special cases:
+  - `import type { ... }` lines removed before parsing (TS type-only imports don't need runtime references).
+  - `React` and `h` are allow-listed via `ALWAYS_LIVE_NAMES` — many files still `import React from 'react'` habitually even under the automatic JSX transform.
+  - `SIDE_EFFECT_MODULES` allow-list currently just holds `react-native-gesture-handler`; extendable if we hit more.
+- **Adversarial self-test**: `python3 /app/scripts/check_dead_imports.py --self-test` exercises 6 cases (dead named, all-used, `* as`, string/comment-only reference, `as` rename, TS type-only) → **all 6 pass**.
+- **Full-project sweep baseline**: **382 dead imports** flagged (advisory only; exit 0). Biggest concentrations are legacy `useMemo` / `useCallback` unused hooks, RN-legacy `Platform` / `StyleSheet` orphans, and a run of unused `@expo/vector-icons` imports in `/app/mobile/app/`. Left as-is per brief (advisory scanner is not a mandate to fix).
+- Wired into `preflight.sh` between the identifier scan and the mobile syntax step, with a trailing `|| true` so an overzealous flag never blocks a `finish`. `bash /app/scripts/preflight.sh` → **`preflight OK` (exit 0)**.
+
+**Verification bundle**
+- `pytest tests/test_phase34*.py -q` → **56 passed**.
+- `pytest tests/test_phase40_*.py tests/test_phase39_*.py -q` → **24 passed** (no regressions).
+- `python3 /app/scripts/check_dead_imports.py --self-test` → **all 6 cases OK**.
+- `bash /app/scripts/preflight.sh` → **exit 0**, 135 pre-existing identifier warnings unchanged, 382 dead-import warnings (new baseline, advisory only).
+- Playwright screenshot at `/tmp/schedule_clean.png` — `/schedule?mode=calendar` renders clean; `KEY_WARNS = 0`, only benign WebSocket + JSX-transform advisory warnings.
