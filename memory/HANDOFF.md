@@ -4991,3 +4991,38 @@ Shipping in phased slices per brief. **Step 1 (Algae Risk) is live**. Steps 2 (S
 - Playwright live verification: closed a Weekly Pool Service (Jennifer Carson) checklist → `visit-recap-modal` opened with 7 testids present, default channel = Both, Include Photos on. Selecting SMS + Send yielded the honest mocked reason `"SMS not sent — twilio not configured (TWILIO_ACCOUNT_SID/TOKEN/FROM_NUMBER)"` via `visit-recap-mocked-reason`.
 
 **Not touched (per brief):** Step 3 (Truck Inventory Reservation) still deferred to a follow-up dispatch.
+
+#### Phase 39 · Step 3 — Truck Inventory Reservation (backend + tests SHIPPED, UI deferred to Step 3b)
+
+**Discovery** (read-only pass)
+- Phase 23's `routers/inventory.py` uses **one shared tenant pool**: `inventory_items` documents with `{tenant_id, name, category, unit, current_qty, reorder_point, ...}` and a `stock_movements` audit trail. There is NO per-tech / per-truck stock model — the existing `decrement_from_service_report()` already subtracts against the shared pool on submit.
+- Given the brief's honest-fallback rule, reservations sit against the shared pool. `tech_user_id` is still captured so a future truck-level rollout can pivot without a schema change. All shortage warnings are informational — reservations are NEVER blocked.
+
+**Backend** (`routers/inventory.py`, new endpoints)
+- New collection `inventory_reservations` — `{id, tenant_id, job_id, tech_user_id, chemical, quantity, unit, status: "active"|"consumed"|"released", matched_item_id, created_at, updated_at, consumed_at, released_at}`.
+- `POST /api/inventory/reserve` — with `reservation_id` updates the existing reservation (returns `delta`); without one, creates. Body zero-quantity auto-releases. RBAC admin/super_admin/technician.
+- `DELETE /api/inventory/reserve/{reservation_id}` — flips status → `released`, stamps `released_at`.
+- `POST /api/inventory/reservations/{job_id}/consume` — admin+super_admin only (called server-side). Subtracts each active reservation from the matched `inventory_items.current_qty`, logs a `stock_movements` row `{reason: "reservation-consumed", job_id, reservation_id, delta: -qty}`, flips reservation → `consumed`. Idempotent.
+- `POST /api/inventory/reservations/{job_id}/release` — bulk-release all active reservations for a job. RBAC admin/super_admin/technician.
+- `GET /api/inventory/truck/{tech_user_id}/reservations` — techs can only see their own; admins can see any.
+- Shortage helper `_shortage_warning()` computes `available = current_qty - other_active_reservations - requested`. When negative → `{warning: "Truck will be short {N} {unit} of {chemical}", suggested_restock: ceil(shortfall * 1.5)}`. Unmatched chemical names (no `inventory_items` row) → `unmatched:true, warning:null` so unknown chemicals still track without noise.
+- Item matching: exact case-insensitive first, then `startswith` fallback via `_match_item()`. Reuses existing `inventory_items` collection and `stock_movements` — no duplication.
+
+**Tests** `backend/tests/test_phase39_inventory_reservation.py` (4/4 pass):
+1. `test_reserve_and_update_and_release` — reserve 5 → delta +5 no warning → update to 7 → delta +2 → over-reserve 200 → `warning` fires + `suggested_restock ≥ 1` → release the over-reserve → consume the rest → `current_qty` drops from 100 → 93 (100 - 7 consumed) exactly.
+2. `test_release_job_reservations` — bulk-release for a job flips one reservation → stock UNTOUCHED (`current_qty` still 50).
+3. `test_rbac_customer_denied` — customer role → 403.
+4. `test_unmatched_chemical_still_reserves` — unknown chemical → reservation created, `unmatched:true, warning:null`. Techs never lose data even for off-catalog chemicals.
+
+**Verification**
+- `pytest tests/test_phase39_*.py -q` → **13 passed** (4 algae + 5 recap + 4 reservation).
+- `bash /app/scripts/preflight.sh` → `preflight OK` (exit 0). 135 pre-existing advisory identifier warnings unchanged.
+
+**Deferred to Step 3b** (per brief's context-tight fallback):
+- Web/mobile ChecklistModal wiring to auto-call `/inventory/reserve` on chemicals-added row change (debounce 500 ms).
+- Persist returned `reservation_id` on each chemicals-added row.
+- Render `chemicals-row-{slug}-shortage-warning` banner from the returned `warning` string.
+- Hook `submit_service_report` to call `/inventory/reservations/{job_id}/consume` server-side.
+- Screenshots (postponed until UI is wired).
+
+**Not touched (per brief):** Phase 23 core inventory endpoints, existing `decrement_from_service_report()` path (kept working; the future consume-on-submit hook is opt-in via Step 3b so we don't double-decrement).

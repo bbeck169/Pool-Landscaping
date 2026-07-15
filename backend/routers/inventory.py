@@ -475,3 +475,216 @@ async def decrement_from_service_report(
 async def _persist_decrement(*args, **kwargs):
     """Deprecated helper kept for backward compat; no longer used."""
     return None
+
+
+# ─── Phase 39 · Step 3 · Truck Inventory Reservation ─────────────────
+# Reservations live alongside items in `inventory_reservations`. Phase 23
+# has no per-tech truck stock — reservations sit against the shared tenant
+# `inventory_items.current_qty` and `tech_user_id` is captured so a future
+# per-truck rollout can pivot without a schema change. Shortage warnings
+# are informational: reservations are NEVER blocked so techs can still add
+# what a pool truly needs.
+class ReserveIn(BaseModel):
+    chemical: str
+    quantity: float
+    unit: Optional[str] = ""
+    job_id: str
+    tech_user_id: Optional[str] = None
+    reservation_id: Optional[str] = None
+
+
+async def _match_item(tenant_id: str, chemical: str):
+    """Find the inventory item that matches a chemical name (case-insensitive,
+    tries exact + startswith fallback)."""
+    name = (chemical or "").strip()
+    if not name:
+        return None
+    # Exact match first.
+    it = await db.inventory_items.find_one(
+        {"tenant_id": tenant_id,
+         "name": {"$regex": f"^{name}$", "$options": "i"}}, {"_id": 0})
+    if it:
+        return it
+    return await db.inventory_items.find_one(
+        {"tenant_id": tenant_id,
+         "name": {"$regex": f"^{name}", "$options": "i"}}, {"_id": 0})
+
+
+async def _sum_active_reservations(tenant_id: str, chemical: str,
+                                     exclude_id: str | None = None) -> float:
+    q: dict = {"tenant_id": tenant_id, "status": "active",
+                "chemical": {"$regex": f"^{chemical}$", "$options": "i"}}
+    if exclude_id:
+        q["id"] = {"$ne": exclude_id}
+    total = 0.0
+    async for r in db.inventory_reservations.find(q, {"_id": 0, "quantity": 1}):
+        total += float(r.get("quantity") or 0)
+    return total
+
+
+def _shortage_warning(chemical: str, unit: str, current_qty: float,
+                       other_active: float, requested: float):
+    available = current_qty - other_active - requested
+    if available >= 0:
+        return None
+    shortfall = abs(available)
+    return {
+        "warning": f"Truck will be short {round(shortfall, 2)} {unit} of {chemical}",
+        "suggested_restock": max(1, int(-(-shortfall * 1.5 // 1))),
+        "current_qty": round(current_qty, 2),
+        "already_reserved": round(other_active, 2),
+        "requested": round(requested, 2),
+    }
+
+
+@router.post("/inventory/reserve")
+async def reserve_inventory(body: ReserveIn,
+                              user: dict = Depends(get_current_user),
+                              tenant: dict = Depends(get_current_tenant)):
+    if user.get("role") not in ("admin", "super_admin", "technician"):
+        raise HTTPException(403, "Not permitted")
+    if body.quantity < 0:
+        raise HTTPException(400, "quantity must be ≥ 0")
+    now = now_iso()
+    tenant_id = tenant["id"]
+
+    item = await _match_item(tenant_id, body.chemical)
+    unit = body.unit or (item or {}).get("unit") or ""
+    current_qty = float((item or {}).get("current_qty") or 0)
+
+    if body.reservation_id:
+        existing = await db.inventory_reservations.find_one(
+            {"id": body.reservation_id, "tenant_id": tenant_id,
+             "status": "active"}, {"_id": 0})
+        if not existing:
+            raise HTTPException(404, "Reservation not found")
+        # Zero quantity → auto-release.
+        if body.quantity == 0:
+            await db.inventory_reservations.update_one(
+                {"id": existing["id"]},
+                {"$set": {"status": "released", "released_at": now,
+                           "updated_at": now, "quantity": 0}})
+            return {"ok": True, "reservation_id": existing["id"],
+                     "status": "released", "warning": None,
+                     "delta": -float(existing["quantity"])}
+        # Compute shortage using other active reservations.
+        others = await _sum_active_reservations(tenant_id, body.chemical,
+                                                  exclude_id=existing["id"])
+        warn = _shortage_warning(body.chemical, unit, current_qty,
+                                  others, body.quantity) if item else None
+        await db.inventory_reservations.update_one(
+            {"id": existing["id"]},
+            {"$set": {"quantity": body.quantity, "unit": unit,
+                       "updated_at": now,
+                       "tech_user_id": body.tech_user_id or existing.get("tech_user_id")}})
+        return {"ok": True, "reservation_id": existing["id"],
+                 "status": "active", "warning": (warn or {}).get("warning"),
+                 "suggested_restock": (warn or {}).get("suggested_restock"),
+                 "matched_item_id": (item or {}).get("id"),
+                 "delta": body.quantity - float(existing["quantity"])}
+
+    # New reservation.
+    others = await _sum_active_reservations(tenant_id, body.chemical)
+    warn = _shortage_warning(body.chemical, unit, current_qty, others,
+                              body.quantity) if item else None
+    rid = new_id()
+    doc = {
+        "id": rid, "tenant_id": tenant_id,
+        "job_id": body.job_id, "tech_user_id": body.tech_user_id,
+        "chemical": body.chemical, "quantity": float(body.quantity),
+        "unit": unit, "status": "active",
+        "matched_item_id": (item or {}).get("id"),
+        "created_at": now, "updated_at": now,
+        "consumed_at": None, "released_at": None,
+    }
+    await db.inventory_reservations.insert_one(doc)
+    return {"ok": True, "reservation_id": rid, "status": "active",
+             "warning": (warn or {}).get("warning"),
+             "suggested_restock": (warn or {}).get("suggested_restock"),
+             "matched_item_id": doc["matched_item_id"], "delta": body.quantity,
+             "unmatched": item is None}
+
+
+@router.delete("/inventory/reserve/{reservation_id}")
+async def release_reservation(reservation_id: str,
+                                 user: dict = Depends(get_current_user),
+                                 tenant: dict = Depends(get_current_tenant)):
+    if user.get("role") not in ("admin", "super_admin", "technician"):
+        raise HTTPException(403, "Not permitted")
+    r = await db.inventory_reservations.find_one(
+        {"id": reservation_id, "tenant_id": tenant["id"],
+         "status": "active"}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Reservation not found or already inactive")
+    now = now_iso()
+    await db.inventory_reservations.update_one(
+        {"id": reservation_id},
+        {"$set": {"status": "released", "released_at": now, "updated_at": now}})
+    return {"ok": True, "released_at": now}
+
+
+@router.post("/inventory/reservations/{job_id}/consume")
+async def consume_job_reservations(job_id: str,
+                                       user: dict = Depends(require_admin),
+                                       tenant: dict = Depends(get_current_tenant)):
+    """Called from service-report submit (server-side). Subtracts each
+    active reservation from the shared item pool and stamps a
+    stock_movement per line. Idempotent — already-consumed reservations
+    are skipped."""
+    now = now_iso()
+    rows = await db.inventory_reservations.find(
+        {"tenant_id": tenant["id"], "job_id": job_id,
+         "status": "active"}, {"_id": 0}).to_list(200)
+    consumed = []
+    for r in rows:
+        it = None
+        if r.get("matched_item_id"):
+            it = await db.inventory_items.find_one(
+                {"id": r["matched_item_id"], "tenant_id": tenant["id"]},
+                {"_id": 0})
+        if it:
+            new_qty = max(0.0, float(it.get("current_qty") or 0) - float(r["quantity"]))
+            await db.inventory_items.update_one(
+                {"id": it["id"]},
+                {"$set": {"current_qty": new_qty, "updated_at": now}})
+            await db.stock_movements.insert_one({
+                "id": new_id(), "tenant_id": tenant["id"],
+                "item_id": it["id"], "delta": -float(r["quantity"]),
+                "reason": "reservation-consumed", "job_id": job_id,
+                "reservation_id": r["id"], "at": now})
+        await db.inventory_reservations.update_one(
+            {"id": r["id"]},
+            {"$set": {"status": "consumed", "consumed_at": now,
+                       "updated_at": now}})
+        consumed.append({"reservation_id": r["id"], "chemical": r["chemical"],
+                          "quantity": r["quantity"], "matched": bool(it)})
+    return {"ok": True, "consumed": consumed, "count": len(consumed)}
+
+
+@router.post("/inventory/reservations/{job_id}/release")
+async def release_job_reservations(job_id: str,
+                                       user: dict = Depends(get_current_user),
+                                       tenant: dict = Depends(get_current_tenant)):
+    if user.get("role") not in ("admin", "super_admin", "technician"):
+        raise HTTPException(403, "Not permitted")
+    now = now_iso()
+    r = await db.inventory_reservations.update_many(
+        {"tenant_id": tenant["id"], "job_id": job_id, "status": "active"},
+        {"$set": {"status": "released", "released_at": now, "updated_at": now}})
+    return {"ok": True, "released": r.modified_count}
+
+
+@router.get("/inventory/truck/{tech_user_id}/reservations")
+async def list_truck_reservations(tech_user_id: str,
+                                       user: dict = Depends(get_current_user),
+                                       tenant: dict = Depends(get_current_tenant)):
+    """List active reservations for a tech. Admins can view any tech;
+    techs can only view their own."""
+    if user.get("role") == "technician" and user.get("id") != tech_user_id:
+        raise HTTPException(403, "Techs can only see their own reservations")
+    if user.get("role") not in ("admin", "super_admin", "technician"):
+        raise HTTPException(403, "Not permitted")
+    rows = await db.inventory_reservations.find(
+        {"tenant_id": tenant["id"], "tech_user_id": tech_user_id,
+         "status": "active"}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return {"items": rows, "count": len(rows)}
