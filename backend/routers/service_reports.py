@@ -834,3 +834,41 @@ async def recommend_chemicals(body: RecommendChemicalsBody,
         "source": source,
         "pool_gallons": gallons,
     }
+
+
+# ─── Phase 36 · Previously-tested-at helper ──────────────────────────────
+@router.get("/service-reports/last-readings")
+async def last_readings(
+    customer_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Return the most recent non-null value + submission date per
+    `chemical_readings` key for the given customer. Used by the pool
+    checklist chip UI to render the "Previously tested at: X" caption
+    under each reading."""
+    if not customer_id:
+        raise HTTPException(400, "customer_id required")
+    # All the customer's jobs.
+    jobs = await db.jobs.find(
+        {"customer_id": customer_id, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1},
+    ).to_list(2000)
+    jids = [j["id"] for j in jobs]
+    if not jids:
+        return {"customer_id": customer_id, "readings": {}}
+    # Reports for those jobs, submitted, most recent first.
+    reports = await db.service_reports.find(
+        {"job_id": {"$in": jids}, "submitted_at": {"$ne": None}},
+        {"_id": 0, "chemical_readings": 1, "submitted_at": 1},
+    ).sort("submitted_at", -1).to_list(200)
+    out: dict[str, dict] = {}
+    for rep in reports:
+        submitted = rep.get("submitted_at")
+        for r in rep.get("chemical_readings") or []:
+            key = r.get("key") or r.get("name")
+            if not key or r.get("value") in (None, ""):
+                continue
+            if key not in out:
+                out[key] = {"value": r["value"], "at": submitted, "unit": r.get("unit")}
+    return {"customer_id": customer_id, "readings": out}

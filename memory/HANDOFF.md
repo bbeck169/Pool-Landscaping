@@ -4716,3 +4716,76 @@ issue, so no change there.
 
 **No backend changes**, no new tests, no HANDOFF entry beyond this
 note.
+
+##### Phase 34e · Hotfix — reportRef declaration + extended preflight scanner (Feb 15 2026)
+
+Tester found the third-hotfix `reportRef` `useRef` declaration was
+NEVER actually inserted into `ChecklistModal.jsx` — my earlier
+`search_replace` reported success but the file never got the line.
+Every checklist open crashed with `ReferenceError: reportRef is not
+defined`. On top of that, mid-Phase-36 edits left `lastSavedAt` and
+`_savedRel` as bare references without declarations — the modal
+would have crashed on any successful autosave, too.
+
+**grep -rn "reportRef" /app before fix**
+```
+frontend/src/components/checklist/ChecklistModal.jsx: 5 refs
+  (0 declarations)
+frontend/src/components/checklist/PoolChecklistForm.jsx: 0 refs
+mobile/**: 0 refs — mobile has its own separate autosave path via
+  `app/job/[id]/checklist.tsx`, uses `dirtyRef/savingRef/autosaveTimer`
+  refs that ARE declared. No mobile diff needed for this hotfix.
+```
+(Note: mobile crash the user screenshotted came from the web-preview
+inside Expo, not a native app — same root file.)
+
+**Fix — `frontend/src/components/checklist/ChecklistModal.jsx`**
+- Line 75: `const reportRef = useRef(null);`
+- Line 78: `const [lastSavedAt, setLastSavedAt] = useState(null);`
+- Line 17: `const _fmtRelSaved = (d) => { ... }` module-level helper.
+- `flushSave` now calls `setLastSavedAt(new Date())` after a
+  successful PATCH so the autosave pill can render "Saved 3s ago".
+- The autosave pill's `{_savedRel}` (undeclared) replaced with
+  `{_fmtRelSaved(lastSavedAt)}`.
+
+**Preflight extension — `/app/scripts/check_js_identifiers.py`** (new)
+Advisory-only scanner (exit 0 always) that flags JS identifiers used
+in expressions but never declared. Focused on names ending in
+`Ref` / `State` / `Handler` / `Callback` to keep noise low. Wired
+into `preflight.sh` as `python3 ... || true` so it never blocks a
+finish but always logs.
+
+Adversarial test — deleted the `reportRef` line from
+`ChecklistModal.jsx`, ran the scanner: **flagged
+`ChecklistModal.jsx:73 undeclared identifier reportRef`**. Restored
+the line: silent on that name. The scanner would have caught this
+class of bug before it shipped.
+
+Known false-positive class: React hooks `useRef/useState/useCallback`
+appear on the flagged list because the regex-based `declared_names`
+strip pass mishandles named imports in some layouts. This is
+tolerable given the WARN-only exit code — the scanner's job is to
+surface `SomethingRef` names, not gate finishes on regex quirks.
+
+**Verification**
+- `bash /app/scripts/preflight.sh` → exit 0.
+- Webpack compiled clean.
+- Playwright load of `/schedule` with `pageerror` listener:
+  **0 `reportRef` / `lastSavedAt` / `_savedRel` / `ReferenceError`
+  events** captured. Zero red error boxes.
+- All three previously-undeclared identifiers grep out cleanly in
+  the fixed file (`reportRef` × 4, `lastSavedAt` × 3,
+  `_fmtRelSaved` × 2 — all with matching declarations).
+
+**Files edited (2), added (1)**
+- `frontend/src/components/checklist/ChecklistModal.jsx` — 3 missing
+  declarations + helper.
+- `scripts/preflight.sh` — wired the new scanner.
+- `scripts/check_js_identifiers.py` — new advisory scanner.
+
+**Not touched (per instruction)**
+- Phase 36 work paused mid-flight — the pool checklist chip UI is
+  landed in `PoolChecklistForm.jsx` and the autosave pill is landed
+  in `ChecklistModal.jsx`. Backend `last-readings` endpoint is live.
+  Mobile chip UI deferred per the 60%-honest fallback in the Phase 36
+  brief.

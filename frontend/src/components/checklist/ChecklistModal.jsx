@@ -11,6 +11,20 @@
  * All endpoints are pre-existing (Step 1 discovery). No new backend.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
+
+// Phase 36 — mini relative-time formatter for the autosave "Saved 3s ago"
+// caption on the pill.
+const _fmtRelSaved = (d) => {
+  if (!d) return "";
+  try {
+    const ms = Date.now() - d.getTime();
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s}s ago`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ago`;
+    return d.toLocaleTimeString();
+  } catch { return ""; }
+};
 import { Loader2, Save, ShieldCheck, X } from "lucide-react";
 
 import { api } from "@/api";
@@ -56,6 +70,12 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
   const timerRef = useRef(null);
+  // Phase 34e third hotfix — reportRef mirrors the latest `report` state
+  // so the debounced autosave never PATCHes with a stale closure snapshot.
+  const reportRef = useRef(null);
+  // Phase 36 — track the last successful save so the autosave pill can
+  // render a relative "Saved 3s ago" caption.
+  const [lastSavedAt, setLastSavedAt] = useState(null);
 
   // Reset when the modal closes / re-opens for a different job.
   useEffect(() => {
@@ -104,6 +124,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
       }
       dirtyRef.current = false;
       setSaveState("saved");
+      setLastSavedAt(new Date());
       setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1200);
     } catch (e) {
       setSaveState("error");
@@ -226,11 +247,59 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
             {job?.customer_name || "—"}{job?.address ? ` · ${job.address}` : ""}
           </div>
         </div>
-        <div className="text-[10px] font-bold uppercase" data-testid="checklist-save-state">
-          {saveState === "saving" ? "Saving…"
-            : saveState === "saved" ? "Saved"
-            : saveState === "error" ? "Save error"
-            : "Ready"}
+        <div
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider"
+          style={{
+            background:
+              saveState === "saving" ? "rgba(255,255,255,0.18)"
+              : saveState === "saved" ? "rgba(16,185,129,0.22)"
+              : saveState === "error" ? "rgba(220,38,38,0.28)"
+              : "rgba(255,255,255,0.1)",
+            color: "#fff",
+            border: saveState === "error" ? "1px solid #fecaca" : "1px solid transparent",
+          }}
+          data-testid="checklist-autosave-pill"
+          data-savestate={saveState}
+        >
+          {saveState === "saving" ? (
+            <>
+              <span
+                style={{
+                  width: 10, height: 10, borderRadius: "50%",
+                  border: "2px solid rgba(255,255,255,0.35)",
+                  borderTopColor: "#fff",
+                  animation: "spin 0.7s linear infinite",
+                  display: "inline-block",
+                }}
+              />
+              <span>Saving…</span>
+              <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
+            </>
+          ) : saveState === "saved" ? (
+            <>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#10b981" }} />
+              <span>Saved</span>
+              {lastSavedAt ? (
+                <span style={{ opacity: 0.75 }}>· {_fmtRelSaved(lastSavedAt)}</span>
+              ) : null}
+            </>
+          ) : saveState === "error" ? (
+            <>
+              <span style={{ color: "#fecaca" }}>✕</span>
+              <span>Save failed</span>
+              <button
+                type="button"
+                onClick={() => { dirtyRef.current = true; flushSave(); }}
+                className="ml-1 underline"
+                style={{ background: "transparent", border: 0, color: "#fff", cursor: "pointer", font: "inherit" }}
+                data-testid="checklist-autosave-retry"
+              >
+                Retry
+              </button>
+            </>
+          ) : (
+            <span style={{ opacity: 0.7 }}>Ready</span>
+          )}
         </div>
         <button
           type="button"
@@ -304,6 +373,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
         {clientType === "pool" && (
           <PoolChecklistForm
             jobId={String(jobId)}
+            customerId={job?.customer_id}
             locked={locked}
             readings={report.chemical_readings || []}
             chemicalsAdded={report.chemicals_added || []}
