@@ -4353,3 +4353,160 @@ Screenshot `/tmp/phase34g_retention_report.png` — logged in as
 - The current YoY test intentionally accepts BOTH branches
   (mocked or real) because seeding a 2-year-old customer would
   require direct DB writes we chose to avoid.
+
+#### Phase 34e · Pool Checklist AI Chemical Dosing (Feb 15 2026)
+
+Deterministic-first dosing engine — LLM is only allowed to rephrase
+the `reason` string, never touch quantities. Both platforms shipped
+in this pass.
+
+**Backend — `backend/services/pool_dosing.py`** (new module)
+- Pure-Python deterministic dose calculator. Every formula is per
+  **10,000 US gallons**, scaled linearly by `pool_gallons / 10000`:
+  - pH low → soda ash · 6 oz / 10k gal / +0.2 pH
+  - pH high → muriatic acid · 8 oz / 10k gal / −0.2 pH
+  - FC low → liquid chlorine (12.5%) · 10 oz / 10k gal / +2 ppm
+    (marked `urgency:"immediate"`)
+  - FC high → "Wait — do not add chlorine"
+  - TA low → sodium bicarbonate · 21 oz / 10k gal / +10 ppm
+  - TA high + pH high → muriatic acid · 25 oz / 10k gal / −10 ppm
+    (only when BOTH TA>120 AND pH>7.6 per brief)
+  - CYA low → stabiliser · 13 oz / 10k gal / +10 ppm
+  - CYA high → "Partial drain + refill"
+  - CH low → calcium chloride · 10 oz / 10k gal / +10 ppm
+  - CH high → "Partial drain + refill"
+  - Salt low (only when a salt reading is actually present) →
+    pool salt · 25 lb / 10k gal / +300 ppm
+- Reading-key aliases: `pH`/`ph`, `FC`/`Free Chlorine`/`chlorine`,
+  `TA`/`alkalinity`, `CH`/`hardness`, `CYA`/`stabilizer`, `salt`.
+- Recommendations sorted: `urgency:"immediate"` first, then insertion
+  order. Cap = 6 items.
+
+**Backend — `backend/routers/service_reports.py`** (append)
+- `POST /api/service-report/recommend-chemicals`
+  Body `{job_id?, readings, pool_gallons?, use_llm_phrasing=true}`.
+  RBAC: admin + super_admin + technician (techs need it in the
+  field). Customer role → 403.
+- pool_gallons resolution order:
+  1. body.pool_gallons (if > 0)
+  2. body.job_id → job.customer_id → customer.pool_gallons
+  3. neither → `{recommendations:[], mocked:true,
+     reason:"pool_gallons unknown — set on customer profile",
+     source:"deterministic-only", pool_gallons:null}`
+- `_llm_rephrase_reasons()` — batches ALL recs into one Claude
+  Sonnet 4.6 call via the shared `LlmChat().with_params(max_tokens=
+  800)` plumbing. System message strictly says: rewrite each reason
+  string in ≤25 words, DO NOT change quantities/chemicals/order.
+  Response is a JSON array of `{reason}` objects. On any failure
+  (import error, missing key, LLM error, mismatched length,
+  parse error) the endpoint falls back to the raw deterministic
+  reasons and reports `source: "deterministic-only"` with the LLM
+  error in `reason`.
+- Response shape:
+  `{recommendations: [...], mocked: false|true, reason: str|null,
+    tokens_used: int, source: "deterministic+llm"|"deterministic-only",
+    pool_gallons: int|null}`
+
+**Frontend — `frontend/src/components/checklist/PoolChecklistForm.jsx`**
+- `Recommended Chemicals` card inserted between the Readings section
+  and the Chemicals-Added section (testid
+  `pool-recommendations-card`).
+- 800 ms debounced auto-fetch on any reading change. Manual
+  `Refresh` button (testid `pool-recommendations-refresh`) disabled
+  when no readings entered or while a request is in flight.
+- Empty-readings hint, `mocked=true` warning banner (testid
+  `pool-gallons-missing-banner` + inner
+  `pool-recommendations-mocked-reason`), all-in-range success
+  banner (testid `pool-recommendations-empty`), otherwise
+  per-rec rows (testid `pool-recommendation-row`).
+- Each row shows `{quantity} {unit} {chemical}` bold + `{reason}`
+  subheading. Icon = ⚠ for `urgency:immediate`, 🧪 for routine.
+- One-tap `Add` button (testid `pool-recommendation-add-btn`)
+  appends a `{name, amount, unit, source:"recommendation",
+  reading_key}` row to the existing `chemicals_added` array via
+  `onChange({chemicals_added:[...]})`. Reuses the parent's chemical
+  form — no duplicate state.
+- When `source === "deterministic-only"` AND `reason` is populated
+  (i.e. LLM failed), a small italic "Plain-English phrasing
+  unavailable — showing raw reasons." footer surfaces the fallback
+  honestly.
+
+**Mobile — `mobile/src/components/checklist/PoolChecklistForm.tsx`**
+- Mirror of the web card with `Ionicons` glyphs (`warning` /
+  `flask-outline`) and the same testIDs.
+- Same 800 ms debounce, same one-tap Add button, same mocked banner.
+- Uses `api.post()` from `@/src/api`.
+
+**Tests — `backend/tests/test_phase34e_dosing.py`**
+`12 passed` in 6.4 s (unit tests for the engine + HTTP endpoint):
+1. `test_low_ph_recommends_soda_ash` — pH 7.0 · 10k gal → soda ash
+   present with quantity > 0.
+2. `test_quantity_scales_with_pool_gallons` — FC 0.5 · 20k gal = 2×
+   the 10k-gal quantity (±5% tolerance for float math).
+3. `test_all_in_range_returns_empty` — all readings at target →
+   `recommendations: []`, `mocked: false`.
+4. `test_pool_gallons_missing_both_places` — no gallons, no job →
+   `mocked: true`, reason contains "pool_gallons".
+5. `test_fallback_to_customer_pool_gallons` — seeds customer with
+   `pool_gallons=18000`, POST with only `job_id` → resolves 18000.
+6. `test_llm_off_returns_deterministic_only` —
+   `use_llm_phrasing:false` → `source:"deterministic-only"`,
+   `tokens_used:0`.
+7. `test_customer_role_forbidden` — customer token → 403.
+8. `test_technician_allowed` — tech token → 200.
+9-12: Engine unit tests — high pH → acid, salt-only-if-present,
+   reading-key aliases (FC/chlorine/Free Chlorine), 6-item cap
+   with immediate ordering.
+
+Full 34* regression:
+`pytest -x -q tests/test_phase34d_pool_gallons.py
+tests/test_phase34e_dosing.py tests/test_phase34f_customer_active.py
+tests/test_phase34g_retention_report.py` → **46/46 passed** in 34 s.
+
+**Live verification**
+Curl proof (admin token, 20k gal pool, FC=0.5, pH=7.0, TA=70):
+```
+source: deterministic+llm  mocked: False  gallons: 20000
+  15.0 oz of Liquid chlorine (12.5%)   [immediate]  <LLM-rephrased>
+  24.0 oz of Soda ash (sodium carbonate) [routine]  <LLM-rephrased>
+  126.0 oz of Sodium bicarbonate (baking soda) [routine]  <LLM-rephrased>
+```
+Quantities scale linearly (2× the 10k baseline), LLM prose is
+friendly, chemistry is deterministic. Webpack compiled clean.
+Analyze-water-photo button is still absent (confirmed via grep —
+0 JSX occurrences of `pool-analyze-water-btn`), as removed in
+Phase 34d-follow.
+
+**Files added (3)**
+- `backend/services/__init__.py`
+- `backend/services/pool_dosing.py`
+- `backend/tests/test_phase34e_dosing.py`
+
+**Files edited (3)**
+- `backend/routers/service_reports.py` — appended endpoint + helpers.
+- `frontend/src/components/checklist/PoolChecklistForm.jsx`
+- `mobile/src/components/checklist/PoolChecklistForm.tsx`
+- `memory/HANDOFF.md` — this section.
+
+**Not touched (per hard rules)**
+- Customer schema — reuses `pool_gallons` from Phase 34d.
+- No new integrations, no new libraries (`emergentintegrations`
+  already imported by `cfo.py` / `service_reports.py`).
+- No new nav entry — the card lives inline on the existing
+  pool checklist modal.
+- The AI water-photo endpoint `POST /service-report/analyze-water-
+  photo` untouched per brief.
+
+**Deferred / honest gaps**
+- Salt-pool detection: brief allowed skipping this since no
+  `pool_type` field exists on Customer. Salt recommendation only
+  fires when a salt reading value is present in `readings`.
+- LLM quota counter: reused-through / did not bump
+  `cfo_llm_usage` for this endpoint yet — brief said we may reuse
+  it, but doing so cleanly requires the endpoint to know the
+  tenant_id at the counter call site. Deferred to a `Phase 34e.b`
+  hardening pass; token count is still returned so accounting
+  isn't blocked.
+- Recommendation history persistence — brief marked out-of-scope.
+- Ad-hoc "override target range" per customer — brief marked
+  out-of-scope.

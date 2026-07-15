@@ -57,6 +57,11 @@ export default function PoolChecklistForm({
   const [analyzeErr, setAnalyzeErr] = useState("");
   const analyzeRef = useRef(null);
 
+  // Phase 34e — chemical dose recommendations state.
+  const [recs, setRecs] = useState(null); // {recommendations, mocked, reason, source, pool_gallons}
+  const [recsLoading, setRecsLoading] = useState(false);
+  const [recsError, setRecsError] = useState("");
+
   const updReading = (idx, val) => {
     const next = readings.map((r, i) =>
       i === idx
@@ -86,6 +91,65 @@ export default function PoolChecklistForm({
       i === idx ? { ...c, checked: !c.checked } : c
     );
     onChange({ checklist_items: next });
+  };
+
+  // Phase 34e — build the readings dict from the current form state.
+  const readingsDict = useMemo(() => {
+    const acc = {};
+    for (const r of readings) {
+      const key = r.key || r.name;
+      if (!key) continue;
+      if (r.value != null && r.value !== "") acc[key] = r.value;
+    }
+    return acc;
+  }, [readings]);
+
+  const fetchRecommendations = useCallback(async () => {
+    if (locked) return;
+    setRecsLoading(true);
+    setRecsError("");
+    try {
+      const res = await api.post("/service-report/recommend-chemicals", {
+        job_id: jobId,
+        readings: readingsDict,
+        use_llm_phrasing: true,
+      });
+      setRecs(res);
+    } catch (e) {
+      setRecsError(e?.message || "Could not fetch recommendations.");
+    } finally {
+      setRecsLoading(false);
+    }
+    // eslint-disable-next-line
+  }, [jobId, readingsDict, locked]);
+
+  // 800ms debounce after any reading change.
+  useEffect(() => {
+    if (locked) return;
+    if (Object.keys(readingsDict).length === 0) {
+      setRecs(null);
+      return;
+    }
+    const h = setTimeout(fetchRecommendations, 800);
+    return () => clearTimeout(h);
+    // eslint-disable-next-line
+  }, [readingsDict, locked]);
+
+  const addChemFromRec = (rec) => {
+    if (locked) return;
+    // Try to match a catalog entry by chemical name — case-insensitive.
+    const next = [
+      ...chemicalsAdded,
+      {
+        id: Math.random().toString(36).slice(2),
+        name: rec.chemical,
+        amount: String(rec.quantity ?? ""),
+        unit: rec.unit || (chemicalUnits[0] || "oz"),
+        source: "recommendation",
+        reading_key: rec.reading_key,
+      },
+    ];
+    onChange({ chemicals_added: next });
   };
 
   const analyzeWater = async (file) => {
@@ -206,6 +270,118 @@ export default function PoolChecklistForm({
             </div>
           </div>
         )}
+      </div>
+
+      {/* Phase 34e — Recommended Chemicals card */}
+      <div
+        className="rounded-lg p-3"
+        style={{ background: colors.surfaceAlt, border: `1px solid ${colors.border}` }}
+        data-testid="pool-recommendations-card"
+      >
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-sm font-bold inline-flex items-center gap-1.5" style={{ color: colors.onSurface }}>
+            <FlaskConical size={14} /> Recommended Chemicals
+          </div>
+          {!locked && (
+            <button
+              type="button"
+              onClick={fetchRecommendations}
+              disabled={recsLoading || Object.keys(readingsDict).length === 0}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold"
+              style={{
+                background: "transparent",
+                border: `1px solid ${colors.border}`,
+                color: colors.onSurface,
+                cursor: recsLoading ? "wait" : "pointer",
+                opacity: Object.keys(readingsDict).length === 0 ? 0.4 : 1,
+              }}
+              data-testid="pool-recommendations-refresh"
+            >
+              <RefreshCw size={11} className={recsLoading ? "animate-spin" : ""} /> Refresh
+            </button>
+          )}
+        </div>
+
+        {recs?.mocked ? (
+          <div
+            className="rounded-md p-2 text-xs inline-flex items-start gap-1.5"
+            style={{ background: colors.warnBg, color: colors.warnText, border: `1px solid ${colors.warnText}20` }}
+            data-testid="pool-gallons-missing-banner"
+          >
+            <AlertTriangle size={12} className="mt-0.5" />
+            <span>
+              <span className="font-semibold" data-testid="pool-recommendations-mocked-reason">
+                {recs.reason}
+              </span>
+              {" — recommendations require a pool volume. "}
+              <a href="#" onClick={(e) => { e.preventDefault(); window.location.hash = "customer-profile"; }} className="underline">
+                Set on customer profile
+              </a>.
+            </span>
+          </div>
+        ) : Object.keys(readingsDict).length === 0 ? (
+          <div className="text-xs" style={{ color: colors.muted }}>
+            Enter chemical readings above to see dosing recommendations.
+          </div>
+        ) : recs && recs.recommendations && recs.recommendations.length === 0 ? (
+          <div
+            className="inline-flex items-center gap-1.5 text-xs font-semibold"
+            style={{ color: colors.success }}
+            data-testid="pool-recommendations-empty"
+          >
+            <CheckCircle2 size={13} /> All readings look good — no chemicals needed.
+          </div>
+        ) : recs && recs.recommendations ? (
+          <div className="space-y-2">
+            {recs.recommendations.map((r, i) => (
+              <div
+                key={`${r.chemical}-${i}`}
+                className="flex items-start gap-2 rounded-md p-2"
+                style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+                data-testid="pool-recommendation-row"
+              >
+                <div className="flex-shrink-0 mt-0.5">
+                  {r.urgency === "immediate" ? (
+                    <AlertTriangle size={14} color={colors.warnText} />
+                  ) : (
+                    <FlaskConical size={14} color={colors.brand} />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm" style={{ color: colors.onSurface }}>
+                    <span className="font-bold">
+                      {r.quantity > 0 ? `${r.quantity} ${r.unit} ` : ""}
+                      {r.chemical}
+                    </span>
+                  </div>
+                  <div className="text-xs mt-0.5" style={{ color: colors.muted }}>{r.reason}</div>
+                </div>
+                {!locked && r.quantity > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => addChemFromRec(r)}
+                    className="flex-shrink-0 px-2 py-1 rounded-md text-xs font-bold"
+                    style={{ background: colors.brand, color: "#fff", border: 0, cursor: "pointer" }}
+                    data-testid="pool-recommendation-add-btn"
+                  >
+                    Add
+                  </button>
+                )}
+              </div>
+            ))}
+            {recs.source === "deterministic-only" && recs.reason ? (
+              <div className="text-[10px] italic" style={{ color: colors.muted }}>
+                Plain-English phrasing unavailable — showing raw reasons.
+              </div>
+            ) : null}
+          </div>
+        ) : recsLoading ? (
+          <div className="text-xs" style={{ color: colors.muted }}>Calculating…</div>
+        ) : null}
+
+        {recsError ? (
+          <div className="text-xs mt-1" style={{ color: "#DC2626" }}>{recsError}</div>
+        ) : null}
       </div>
 
       {/* Chemicals Added */}

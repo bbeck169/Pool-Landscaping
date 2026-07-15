@@ -16,7 +16,7 @@
  * silently filling would be dishonest. If the response contains
  * `mocked: true` or an error, the `reason` string is shown as-is.
  */
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   View, Text, TextInput, Pressable, StyleSheet, Alert, ActivityIndicator,
 } from "react-native";
@@ -101,6 +101,65 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
       i === idx ? { ...c, checked: !c.checked } : c
     );
     onChange({ checklist_items: next });
+  };
+
+  // Phase 34e — dose recommendations (mobile mirror of web).
+  type Rec = {
+    chemical: string; quantity: number; unit: string;
+    reason: string; urgency: string; reading_key: string;
+  };
+  const [recs, setRecs] = useState<null | {
+    recommendations: Rec[]; mocked: boolean; reason?: string | null;
+    source?: string; pool_gallons?: number | null;
+  }>(null);
+  const [recsLoading, setRecsLoading] = useState(false);
+
+  const readingsDict = useMemo(() => {
+    const acc: Record<string, any> = {};
+    for (const r of readings) {
+      const key = (r.key || r.name) as string;
+      if (!key) continue;
+      if (r.value != null && r.value !== "") acc[key] = r.value;
+    }
+    return acc;
+  }, [readings]);
+
+  const fetchRecommendations = useCallback(async () => {
+    if (locked) return;
+    setRecsLoading(true);
+    try {
+      const res: any = await api.post("/service-report/recommend-chemicals", {
+        job_id: jobId,
+        readings: readingsDict,
+        use_llm_phrasing: true,
+      });
+      setRecs(res);
+    } catch (e) {
+      // Silent — recommendations are advisory.
+    } finally {
+      setRecsLoading(false);
+    }
+  }, [jobId, readingsDict, locked]);
+
+  useEffect(() => {
+    if (locked) return;
+    if (Object.keys(readingsDict).length === 0) { setRecs(null); return; }
+    const h = setTimeout(fetchRecommendations, 800);
+    return () => clearTimeout(h);
+  }, [readingsDict, locked, fetchRecommendations]);
+
+  const addChemFromRec = (r: Rec) => {
+    if (locked) return;
+    const next: ChemAdded[] = [
+      ...chemicalsAdded,
+      {
+        id: Math.random().toString(36).slice(2),
+        name: r.chemical,
+        amount: String(r.quantity ?? ""),
+        unit: r.unit || (chemicalUnits[0] || "oz"),
+      },
+    ];
+    onChange({ chemicals_added: next });
   };
 
   const analyzeWater = async () => {
@@ -198,6 +257,80 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
         </View>
       )}
 
+      {/* Phase 34e — Recommended Chemicals card */}
+      <View style={styles.recCard} testID="pool-recommendations-card">
+        <View style={styles.recHeader}>
+          <Text style={styles.recTitle}>Recommended Chemicals</Text>
+          {!locked && (
+            <Pressable
+              onPress={fetchRecommendations}
+              disabled={recsLoading || Object.keys(readingsDict).length === 0}
+              style={styles.recRefreshBtn}
+              testID="pool-recommendations-refresh"
+            >
+              {recsLoading
+                ? <ActivityIndicator size="small" color={colors.brand} />
+                : <Ionicons name="refresh" size={13} color={colors.brand} />}
+              <Text style={styles.recRefreshText}>Refresh</Text>
+            </Pressable>
+          )}
+        </View>
+
+        {recs?.mocked ? (
+          <View style={styles.recBanner} testID="pool-gallons-missing-banner">
+            <Ionicons name="warning-outline" size={14} color="#92400E" />
+            <Text style={styles.recBannerText} testID="pool-recommendations-mocked-reason">
+              {recs.reason} — set pool volume on the customer profile.
+            </Text>
+          </View>
+        ) : Object.keys(readingsDict).length === 0 ? (
+          <Text style={styles.recHint}>
+            Enter chemical readings above to see dosing recommendations.
+          </Text>
+        ) : recs && recs.recommendations && recs.recommendations.length === 0 ? (
+          <View style={styles.recAllGood} testID="pool-recommendations-empty">
+            <Ionicons name="checkmark-circle" size={14} color="#059669" />
+            <Text style={styles.recAllGoodText}>
+              All readings look good — no chemicals needed.
+            </Text>
+          </View>
+        ) : recs && recs.recommendations ? (
+          <View>
+            {recs.recommendations.map((r, i) => (
+              <View
+                key={`${r.chemical}-${i}`}
+                style={styles.recRow}
+                testID="pool-recommendation-row"
+              >
+                <Ionicons
+                  name={r.urgency === "immediate" ? "warning" : "flask-outline"}
+                  size={14}
+                  color={r.urgency === "immediate" ? "#92400E" : colors.brand}
+                  style={{ marginTop: 2 }}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.recRowTitle}>
+                    {r.quantity > 0 ? `${r.quantity} ${r.unit} ` : ""}{r.chemical}
+                  </Text>
+                  <Text style={styles.recRowReason}>{r.reason}</Text>
+                </View>
+                {!locked && r.quantity > 0 && (
+                  <Pressable
+                    onPress={() => addChemFromRec(r)}
+                    style={styles.recAddBtn}
+                    testID="pool-recommendation-add-btn"
+                  >
+                    <Text style={styles.recAddBtnText}>Add</Text>
+                  </Pressable>
+                )}
+              </View>
+            ))}
+          </View>
+        ) : recsLoading ? (
+          <Text style={styles.recHint}>Calculating…</Text>
+        ) : null}
+      </View>
+
       {/* Chemicals Added */}
       <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>
         Chemicals Added
@@ -288,6 +421,44 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
 }
 
 const styles = StyleSheet.create({
+  recCard: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceSecondary,
+  },
+  recHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.sm },
+  recTitle: { fontFamily: font.bold, fontSize: fontSize.sm, color: colors.onSurface },
+  recRefreshBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: spacing.sm, paddingVertical: 4,
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
+    backgroundColor: colors.surface,
+  },
+  recRefreshText: { fontFamily: font.semibold, fontSize: 11, color: colors.brand },
+  recHint: { fontFamily: font.regular, fontSize: fontSize.xs, color: colors.muted },
+  recBanner: {
+    flexDirection: "row", alignItems: "flex-start", gap: 6,
+    backgroundColor: "#FEF3C7", borderColor: "#F59E0B", borderWidth: 1,
+    padding: spacing.sm, borderRadius: radius.sm,
+  },
+  recBannerText: { flex: 1, fontFamily: font.medium, fontSize: 11, color: "#92400E" },
+  recAllGood: { flexDirection: "row", alignItems: "center", gap: 6 },
+  recAllGoodText: { fontFamily: font.semibold, fontSize: 12, color: "#059669" },
+  recRow: {
+    flexDirection: "row", alignItems: "flex-start", gap: spacing.sm,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.sm, padding: spacing.sm, marginBottom: spacing.xs,
+  },
+  recRowTitle: { fontFamily: font.bold, fontSize: 13, color: colors.onSurface },
+  recRowReason: { fontFamily: font.regular, fontSize: 11, color: colors.muted, marginTop: 2 },
+  recAddBtn: {
+    paddingHorizontal: spacing.md, paddingVertical: 4,
+    backgroundColor: colors.brand, borderRadius: radius.sm,
+  },
+  recAddBtnText: { fontFamily: font.bold, fontSize: 11, color: "#fff" },
   sectionTitle: {
     fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface,
     marginBottom: spacing.sm,

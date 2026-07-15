@@ -713,3 +713,124 @@ async def analyze_water_photo(body: WaterPhotoIn,
     doc.pop("_id", None)
     return doc
 
+
+
+# ─── Phase 34e · Deterministic Chemical Dose Recommender ─────────────────
+from services.pool_dosing import compute as _pool_compute
+
+
+class RecommendChemicalsBody(BaseModel):
+    job_id: Optional[str] = None
+    readings: Dict[str, Any] = {}
+    pool_gallons: Optional[int] = None
+    use_llm_phrasing: bool = True
+
+
+_DOSING_LLM_SYSTEM = (
+    "You are a friendly pool-service assistant. Rewrite each 'reason' string "
+    "in one short natural-language sentence (max 25 words). Do NOT change "
+    "quantities, chemicals, or the order of items. Return a JSON array with "
+    "the SAME length as the input, where each element has a single key "
+    "'reason'. No extra keys, no wrapper object, no code fences."
+)
+
+
+async def _llm_rephrase_reasons(recs: list[dict]) -> tuple[list[dict], int, Optional[str]]:
+    """Best-effort — returns (new_recs, tokens_used, error_or_None).
+    On any failure returns the recs untouched."""
+    if not recs:
+        return recs, 0, None
+    try:
+        from config import EMERGENT_LLM_KEY
+    except Exception as e:
+        return recs, 0, f"llm import failed: {e}"
+    if not EMERGENT_LLM_KEY:
+        return recs, 0, "EMERGENT_LLM_KEY not configured"
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+    except Exception as e:
+        return recs, 0, f"llm import failed: {e}"
+    import json as _json2, re as _re2
+    payload = [
+        {"chemical": r["chemical"], "quantity": r["quantity"], "unit": r["unit"],
+         "reason": r["reason"]}
+        for r in recs
+    ]
+    prompt = "Rewrite each 'reason' below. Return the JSON array only.\n" + _json2.dumps(payload)
+    try:
+        chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
+                         system_message=_DOSING_LLM_SYSTEM)
+                .with_model("anthropic", "claude-sonnet-4-6")
+                .with_params(max_tokens=800))
+        raw = await chat.send_message(UserMessage(text=prompt))
+        text = raw if isinstance(raw, str) else str(raw)
+        text = text.strip()
+        if text.startswith("```"):
+            text = _re2.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
+        arr = _json2.loads(text)
+        if not isinstance(arr, list) or len(arr) != len(recs):
+            return recs, 0, "llm returned mismatched array"
+        out = []
+        for orig, r_new in zip(recs, arr):
+            r2 = dict(orig)
+            new_reason = (r_new or {}).get("reason")
+            if isinstance(new_reason, str) and new_reason.strip():
+                r2["reason"] = new_reason.strip()
+            out.append(r2)
+        return out, int(len(text) / 4), None
+    except Exception as ex:
+        logger.warning(f"Dosing LLM rephrase failed: {ex}")
+        return recs, 0, f"llm error: {ex}"
+
+
+@router.post("/service-report/recommend-chemicals")
+async def recommend_chemicals(body: RecommendChemicalsBody,
+                                user: dict = Depends(get_current_user),
+                                tenant: dict = Depends(get_current_tenant)):
+    role = user.get("role") or ""
+    if role not in {"admin", "super_admin", "technician"}:
+        raise HTTPException(403, "Techs and admins only")
+
+    # Resolve pool_gallons: request → job → customer.
+    gallons: Optional[int] = None
+    if body.pool_gallons and body.pool_gallons > 0:
+        gallons = int(body.pool_gallons)
+    elif body.job_id:
+        job = await db.jobs.find_one(
+            {"id": body.job_id, "tenant_id": tenant["id"]},
+            {"_id": 0, "customer_id": 1},
+        )
+        if job and job.get("customer_id"):
+            cust = await db.customers.find_one(
+                {"id": job["customer_id"], "tenant_id": tenant["id"]},
+                {"_id": 0, "pool_gallons": 1},
+            )
+            if cust and cust.get("pool_gallons"):
+                gallons = int(cust["pool_gallons"])
+
+    if not gallons:
+        return {
+            "recommendations": [],
+            "mocked": True,
+            "reason": "pool_gallons unknown — set on customer profile",
+            "tokens_used": 0,
+            "source": "deterministic-only",
+            "pool_gallons": None,
+        }
+
+    recs = _pool_compute(body.readings or {}, gallons)
+    source = "deterministic-only"
+    tokens = 0
+    llm_error: Optional[str] = None
+    if body.use_llm_phrasing and recs:
+        recs, tokens, llm_error = await _llm_rephrase_reasons(recs)
+        source = "deterministic+llm" if not llm_error else "deterministic-only"
+
+    return {
+        "recommendations": recs,
+        "mocked": False,
+        "reason": llm_error,  # informational only — data is still real
+        "tokens_used": tokens,
+        "source": source,
+        "pool_gallons": gallons,
+    }
