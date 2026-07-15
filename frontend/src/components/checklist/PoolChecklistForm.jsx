@@ -157,32 +157,8 @@ export default function PoolChecklistForm({
 
         {!locked && (
           <div className="mt-3">
-            <button
-              type="button"
-              onClick={() => analyzeRef.current?.click()}
-              disabled={analyzing}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-bold"
-              style={{
-                background: colors.brand,
-                color: "#fff",
-                border: 0,
-                cursor: analyzing ? "wait" : "pointer",
-              }}
-              data-testid="pool-analyze-water-btn"
-            >
-              {analyzing
-                ? <Loader2 size={14} className="animate-spin" />
-                : <Sparkles size={14} />}
-              {analyzing ? "Analyzing…" : "Analyze water photo"}
-            </button>
-            <input
-              ref={analyzeRef}
-              type="file"
-              accept="image/*"
-              style={{ display: "none" }}
-              onChange={(e) => analyzeWater(e.target.files?.[0])}
-              data-testid="pool-analyze-water-input"
-            />
+            {/* Phase 34d-follow-b — "Analyze water photo" button removed per
+                user request. Backend endpoint retained for other flows. */}
           </div>
         )}
 

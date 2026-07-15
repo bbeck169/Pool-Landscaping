@@ -175,8 +175,17 @@ async def list_jobs(
                     # so schedule/dispatch cards can render a badge without an
                     # extra roundtrip. Missing/legacy docs → False.
                     d["customer_is_vip"] = bool(c.get("is_vip"))
+                    # Phase 34d-follow-b — expose gate_code + notes under
+                    # `customer_*` aliases so newer schedule surfaces can rely
+                    # on a single, consistent naming convention. Legacy
+                    # `gate_code` / `account_notes` keys are retained above
+                    # for backward-compat with older consumers.
+                    d["customer_gate_code"] = c.get("gate_code") or None
+                    d["customer_notes"] = c.get("notes") or None
                 else:
                     d["customer_is_vip"] = False
+                    d["customer_gate_code"] = None
+                    d["customer_notes"] = None
     # Phase 16C add-on: strip revenue/pricing fields for technicians.
     if user.get("role") == "technician":
         for d in docs:

@@ -101,9 +101,12 @@ function jobToEvent(job) {
   if (Number.isNaN(start.getTime())) return null;
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
   const status = (job.status || "scheduled").toLowerCase();
+  // Phase 34d-follow — prepend a gold star to the title for VIP customers
+  // so the RBC event tile carries the same visual weight as grid cards.
+  const vipPrefix = job.customer_is_vip ? "★ " : "";
   return {
     id: job.id,
-    title: `${job.customer_name || "Job"}${job.service_type ? ` · ${job.service_type}` : ""}`,
+    title: `${vipPrefix}${job.customer_name || "Job"}${job.service_type ? ` · ${job.service_type}` : ""}`,
     start, end, allDay: true,
     resource: {
       job,
@@ -890,6 +893,7 @@ function GridPanel({
                           border: "1px solid #F59E0B",
                         }}
                         data-testid={`job-vip-badge-${j.id}`}
+                        data-vip="true"
                         title="VIP customer"
                       >
                         <Star size={9} fill="#F59E0B" color="#F59E0B" /> VIP
@@ -898,6 +902,22 @@ function GridPanel({
                   </div>
                   {j.address ? (
                     <div className="text-xs truncate" style={{ color: colors.muted }}>{j.address}</div>
+                  ) : null}
+                  {(j.customer_gate_code || j.gate_code) ? (
+                    <div className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold"
+                         style={{ background: "#FEF3C7", color: "#92400E", border: "1px solid #FDE68A",
+                                  fontFamily: "ui-monospace, SFMono-Regular, monospace" }}
+                         data-testid={`job-gate-code-${j.id}`}>
+                      🔑 Gate: {j.customer_gate_code || j.gate_code}
+                    </div>
+                  ) : null}
+                  {(j.customer_notes || j.account_notes) ? (
+                    <div className="text-[11px] mt-1 line-clamp-2" style={{ color: colors.onSurfaceSecondary }}
+                         data-testid={`job-notes-preview-${j.id}`}>
+                      <span className="font-semibold">Notes: </span>
+                      {String(j.customer_notes || j.account_notes).slice(0, 60)}
+                      {String(j.customer_notes || j.account_notes).length > 60 ? "…" : ""}
+                    </div>
                   ) : null}
                   <div className="flex items-center gap-2 mt-1 text-xs" style={{ color: colors.muted }}>
                     <FileText size={11} />

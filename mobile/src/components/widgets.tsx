@@ -147,13 +147,13 @@ export function JobCard({ job, testID, locked }: { job: any; testID?: string; lo
       {job.gate_code || job.account_notes ? (
         <View style={styles.infoBlock}>
           {job.gate_code ? (
-            <View style={styles.gateChip}>
+            <View style={styles.gateChip} testID={`job-gate-code-${job.id}`}>
               <Ionicons name="key" size={13} color="#92400E" />
               <Text style={styles.gateText}>Gate {job.gate_code}</Text>
             </View>
           ) : null}
           {job.account_notes ? (
-            <View style={styles.noteRow}>
+            <View style={styles.noteRow} testID={`job-notes-preview-${job.id}`}>
               <Ionicons name="document-text-outline" size={13} color={colors.muted} style={{ marginTop: 1 }} />
               <Text style={styles.noteText} numberOfLines={4}>{job.account_notes}</Text>
             </View>

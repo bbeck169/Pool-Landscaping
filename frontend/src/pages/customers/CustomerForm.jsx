@@ -153,7 +153,7 @@ export default function CustomerForm() {
             <TextInput label="NAME *" id="name" value={form.name} onChange={set("name")} testid="cf-name" />
             <TextInput label="PRIMARY EMAIL" id="email" type="email" value={form.email} onChange={set("email")} testid="cf-email" />
             <TextInput label="PRIMARY PHONE" id="phone" value={form.phone} onChange={set("phone")} testid="cf-phone" />
-            <TextInput label="GATE CODE" id="gate_code" value={form.gate_code} onChange={set("gate_code")} testid="cf-gate" />
+            <TextInput label="GATE CODE" id="gate_code" value={form.gate_code} onChange={set("gate_code")} testid="customer-gate-code-input" />
             <TextInput label="ALERT EMAIL (after-hours)" id="alert_email" type="email" value={form.alert_email} onChange={set("alert_email")} testid="cf-alert-email" />
             <TextInput label="ALERT PHONE / SMS (after-hours)" id="alert_phone" value={form.alert_phone} onChange={set("alert_phone")} testid="cf-alert-phone" />
           </div>
@@ -314,7 +314,7 @@ export default function CustomerForm() {
                 color: colors.onSurface,
                 border: `1px solid ${colors.border}`,
               }}
-              data-testid="cf-notes"
+              data-testid="customer-notes-input"
             />
           </div>
           <label className="flex items-center gap-2 text-sm">

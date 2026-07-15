@@ -792,9 +792,24 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                     {tone.label}
                   </span>
                 </div>
-                <div className="text-base font-bold" style={{ color: colors.onSurface }}
+                <div className="text-base font-bold flex items-center gap-1.5 flex-wrap" style={{ color: colors.onSurface }}
                      data-testid={`schedule-card-customer-${j.id}`}>
-                  {j.customer_name || "—"}
+                  <span>{j.customer_name || "—"}</span>
+                  {j.customer_is_vip ? (
+                    <span
+                      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider"
+                      style={{
+                        backgroundColor: "#FEF3C7",
+                        color: "#92400E",
+                        border: "1px solid #F59E0B",
+                      }}
+                      data-testid={`job-vip-badge-${j.id}`}
+                      data-vip="true"
+                      title="VIP customer"
+                    >
+                      <Star size={9} fill="#F59E0B" color="#F59E0B" /> VIP
+                    </span>
+                  ) : null}
                 </div>
                 <div className="text-sm" style={{ color: colors.onSurfaceSecondary }}
                      data-testid={`schedule-card-address-${j.id}`}>
@@ -824,6 +839,11 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                         <Key size={11}/> {j.gate_code}
                       </button>
                     )}
+                    {j.gate_code && (
+                      <span data-testid={`job-gate-code-${j.id}`} className="sr-only">
+                        {j.gate_code}
+                      </span>
+                    )}
                     {notesFull && (
                       <button onClick={(e) => { e.stopPropagation(); toggleExpand(j.id); }}
                               className="inline-flex items-start gap-1 text-xs text-left"
@@ -831,7 +851,7 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                               data-testid={`schedule-card-notes-${j.id}`}>
                         <StickyNote size={11} className="mt-0.5 flex-shrink-0"
                                     style={{ color: colors.muted }}/>
-                        <span>
+                        <span data-testid={`job-notes-preview-${j.id}`}>
                           <span className="font-semibold">Notes: </span>
                           {isExpanded ? notesFull : notesPreview}
                           {notesFull.length > 100 && (

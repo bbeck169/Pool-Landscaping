@@ -3852,3 +3852,130 @@ touching that file next — one-liner regex sweep.
 - Proper `PATCH /customers/{id}` endpoint for partial updates.
 - Phase 34e — AI chemical dosing recommendations, which now has
   `pool_gallons` to consume.
+
+#### Phase 34d-follow · VIP RBC prefix + gate/notes on Schedule + Pool checklist fix (Feb 15 2026)
+
+Bundled hotfix pass covering four small items — no new libs, no new
+schema fields (gate_code + notes already existed on `CustomerIn`),
+honest fallbacks throughout.
+
+**Item 1 — Web RBC calendar VIP `★ ` prefix (was missing on retest)**
+- `frontend/src/pages/schedule/CalendarSchedule.jsx :: jobToEvent()`
+  now prepends `★ ` to the event title when
+  `job.customer_is_vip === true`. Matches the mobile Calendar
+  convention exactly.
+- Live verify: `/schedule` Calendar view, July 2026 · 5 events with
+  `★ ` prefix (Jennifer Carson × 4 different services + inspection).
+
+**Item 2 — Testid convention normalisation**
+- Grid VIP badges now carry BOTH the suffixed
+  `data-testid="job-vip-badge-<jobId>"` and a stable
+  `data-vip="true"` attribute on the same `<span>`.
+- Existing suffixed testid unchanged — legacy tests still pass.
+- Applied on:
+  - `pages/schedule/TodaySchedule.jsx` (grid card, restored VIP pill
+    that was missing after the earlier edit merge)
+  - `pages/schedule/CalendarSchedule.jsx` (grid card)
+  Mobile grid VIP badge kept its suffixed testid — no `data-vip`
+  attribute since native testing selectors don't use it.
+
+**Item 3 — Customer gate_code + notes on Schedule cards**
+- `CustomerIn` already had `gate_code: Optional[str]` and
+  `notes: Optional[str]` — no schema change needed.
+- `backend/routers/jobs.py :: list_jobs` now exposes
+  `customer_gate_code` and `customer_notes` alongside the legacy
+  `gate_code` and `account_notes` keys (aliases; both stay for
+  backward-compat with existing consumers).
+- Legacy behaviour on `TodaySchedule.jsx` cards preserved (`Key`
+  chip → `schedule-card-gate-<jobId>` + copy-to-clipboard;
+  notes preview → `schedule-card-notes-<jobId>` with expand/collapse).
+  Additional stable testids added: `job-gate-code-<jobId>`
+  (screen-reader-only sibling on Today; visible chip on Calendar
+  grid) and `job-notes-preview-<jobId>` (on both).
+- New chips added on `CalendarSchedule.jsx` grid rows:
+  🔑 Gate chip (monospace, `#FEF3C7` bg) + a 60-char clamped
+  Notes preview line, matching the wireframe in the brief.
+- Customer edit form (`CustomerForm.jsx`, web): existing GATE CODE
+  and NOTES inputs re-tagged
+  `data-testid="customer-gate-code-input"` and
+  `data-testid="customer-notes-input"` (dropped the older `cf-gate` /
+  `cf-notes` testids; those weren't referenced elsewhere).
+- Customer edit form (`mobile/app/customer/new.tsx`): testID
+  `customer-gate-input` → `customer-gate-code-input`.
+  `customer-notes-input` already matched the brief.
+- Mobile schedule surfaces:
+  - `mobile/src/components/widgets.tsx :: JobCard` — added
+    `testID="job-gate-code-<jobId>"` on the Gate chip and
+    `testID="job-notes-preview-<jobId>"` on the notes row.
+  - `mobile/app/(app)/schedule/calendar.tsx` grid card — added
+    inline Gate chip + a 60-char clamped Notes preview line with
+    the same testids.
+- RBC calendar tooltips — kept as `title` prop only for now (RBC's
+  `tooltipAccessor` needs a custom EventComponent to render rich
+  tooltips reliably). Gate + notes still show on the Grid view; if
+  Calendar tooltips become a hard requirement, wire an event body
+  component in a follow-up.
+
+**Item 4 — Pool checklist regression**
+- Investigation: chemical readings section was NEVER removed. It
+  renders in both `frontend/.../PoolChecklistForm.jsx` and
+  `mobile/.../PoolChecklistForm.tsx`, driven by the backend
+  `readings_template` from `GET /api/jobs/{id}/service-report`.
+  User confusion likely came from the (very prominent) "Analyze
+  water photo" button dominating the section visually.
+- Remediation: removed the "Analyze water photo" button JSX from
+  both platforms per user request:
+  - `PoolChecklistForm.jsx` — deleted the button + hidden
+    `<input type="file">` block. `analyzeRef` / `analyzing` /
+    `analyzeErr` / `analysis` state and the `analyzeWater()` handler
+    kept intact as dead code (analysis card block still renders when
+    `analysis` is set, which will now never happen via this
+    component). Kept because ripping out the state would also strip
+    the AI-mocked banner UI that other flows may re-enable later.
+  - `PoolChecklistForm.tsx` (mobile) — same treatment: the
+    `Pressable` deleted, handler retained.
+- Backend endpoint `POST /service-report/analyze-water-photo` is
+  untouched per the brief.
+- Photos section (10 max) unchanged — it's a separate widget.
+
+**Files edited (10)**
+- `backend/routers/jobs.py`
+- `frontend/src/pages/schedule/TodaySchedule.jsx`
+- `frontend/src/pages/schedule/CalendarSchedule.jsx`
+- `frontend/src/pages/customers/CustomerForm.jsx`
+- `frontend/src/components/checklist/PoolChecklistForm.jsx`
+- `mobile/app/customer/new.tsx`
+- `mobile/app/(app)/schedule/calendar.tsx`
+- `mobile/src/components/widgets.tsx`
+- `mobile/src/components/checklist/PoolChecklistForm.tsx`
+- `memory/HANDOFF.md` — this section.
+
+**Files added** — none.
+
+**Verification**
+- `pytest -x -q tests/test_phase34d_pool_gallons.py` → **18/18 passed**
+  in 5.9 s (all pool_gallons + VIP tests still green after this
+  bundled edit).
+- Live curl on `/api/jobs` for a seeded VIP customer:
+  `vip: True gate: 1234# notes: Dog on premises, use back gate` —
+  all three fields join correctly.
+- Web calendar screenshot (`/tmp/schedule_calendar_star.png`):
+  5 events show `★ ` prefix on the VIP customer's tiles.
+- Web grid screenshot (`/tmp/schedule_calendar_vip.png`):
+  Customer row displays `⭐ VIP` pill + `🔑 Gate: 1234#` chip +
+  `Notes: Dog on premises, use back gate` preview line.
+- Webpack recompiled with 1 unrelated warning.
+
+**Not touched (per hard rules)**
+- Customer schema — 0 new fields (gate_code + notes existed).
+- Job schema — 0 changes (all new fields are read-time joins).
+- No new integrations or libs.
+- `service-report/analyze-water-photo` backend endpoint — retained.
+
+**Deferred / flagged**
+- RBC calendar rich tooltips (custom EventComponent).
+- Prune the dead `analyzeWater` / `analysis` state from both
+  PoolChecklistForm files if it's confirmed no upstream flow will
+  reintroduce the button.
+- Same stale-seed cleanup for `test_phase34b_retention_bridge.py`
+  is still pending — not touched this pass.

@@ -99,7 +99,7 @@ export default function CustomerForm() {
         <Field label="Email" value={form.email} onChangeText={set("email")} placeholder="name@email.com" keyboardType="email-address" testID="customer-email-input" />
         <Field label="Service Address" value={form.address} onChangeText={set("address")} placeholder="Street, City, State" testID="customer-address-input" />
         <Field label="Billing Address" value={form.billing_address} onChangeText={set("billing_address")} placeholder="If different from service address" testID="customer-billing-input" />
-        <Field label="Gate Code" value={form.gate_code} onChangeText={set("gate_code")} placeholder="e.g. #1234" testID="customer-gate-input" />
+        <Field label="Gate Code" value={form.gate_code} onChangeText={set("gate_code")} placeholder="e.g. #1234" testID="customer-gate-code-input" />
         <Field
           label="Pool Volume (gallons)"
           value={form.pool_gallons}

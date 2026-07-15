@@ -161,21 +161,8 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
         ))}
       </View>
 
-      {!locked && (
-        <Pressable
-          style={styles.analyzeBtn}
-          onPress={analyzeWater}
-          disabled={analyzing}
-          testID="pool-analyze-water-btn"
-        >
-          {analyzing
-            ? <ActivityIndicator size="small" color="#fff" />
-            : <Ionicons name="sparkles-outline" size={16} color="#fff" />}
-          <Text style={styles.analyzeBtnText}>
-            {analyzing ? "Analyzing…" : "Analyze water photo"}
-          </Text>
-        </Pressable>
-      )}
+      {/* Phase 34d-follow-b — "Analyze water photo" button removed per user
+          request. Backend endpoint retained for other flows. */}
 
       {analysis && (
         <View style={styles.analysisCard} testID="pool-analysis-card">

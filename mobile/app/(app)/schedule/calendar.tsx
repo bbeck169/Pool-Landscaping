@@ -512,6 +512,20 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             <Text style={gStyles.vipText}>VIP</Text>
           </View>
         ) : null}
+        {job.customer_gate_code || job.gate_code ? (
+          <View style={gStyles.gateChip} testID={`job-gate-code-${job.id}`}>
+            <Ionicons name="key" size={10} color="#92400E" />
+            <Text style={gStyles.gateText}>{job.customer_gate_code || job.gate_code}</Text>
+          </View>
+        ) : null}
+        {job.customer_notes || job.account_notes ? (
+          <Text style={gStyles.notePreview}
+                numberOfLines={2}
+                testID={`job-notes-preview-${job.id}`}>
+            Notes: {String(job.customer_notes || job.account_notes).slice(0, 60)}
+            {String(job.customer_notes || job.account_notes).length > 60 ? "…" : ""}
+          </Text>
+        ) : null}
         {job.address ? (
           <Text style={gStyles.addr} numberOfLines={1}>{job.address}</Text>
         ) : null}
@@ -644,6 +658,18 @@ const gStyles = StyleSheet.create({
   vipText: {
     fontFamily: font.bold, fontSize: 9, color: "#92400E",
     letterSpacing: 0.8, textTransform: "uppercase",
+  },
+  gateChip: {
+    flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 3,
+    backgroundColor: "#FEF3C7", borderColor: "#FDE68A", borderWidth: 1,
+    paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6, marginTop: 2,
+  },
+  gateText: {
+    fontFamily: font.bold, fontSize: 10, color: "#92400E",
+  },
+  notePreview: {
+    fontFamily: font.regular, fontSize: 10, color: colors.onSurfaceSecondary,
+    marginTop: 2,
   },
   dayHead: {
     flexDirection: "row", alignItems: "center", gap: spacing.xs,
