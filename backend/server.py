@@ -24,6 +24,7 @@ from routers import (
     checks,
     dispatch,
     churn, seo_content_refresh,
+    warranties,
 )
 
 app = FastAPI(
@@ -50,7 +51,8 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                seo_agentic, seo_phase17c,
                estimator, dunning, inventory,
                checks, dispatch,
-               churn, seo_content_refresh]:
+               churn, seo_content_refresh,
+               warranties]:
     api_router.include_router(module.router)
 
 
@@ -171,6 +173,11 @@ async def _background_seed():
         scheduler.add_job(churn.scheduled_churn_scan_all, "cron",
                             day_of_week="mon", hour=6, minute=0,
                             id="churn_scan", replace_existing=True)
+        # Phase 28.1 — daily warranty expiration reminders (08:00 UTC).
+        scheduler.add_job(
+            warranties.scheduled_warranty_expiration_scan_all,
+            "cron", hour=8, minute=0,
+            id="warranty_expiration_scan", replace_existing=True)
         scheduler.start()
     except Exception as e:
         logger.warning(f"scheduler registration skipped: {e}")

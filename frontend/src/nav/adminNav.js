@@ -11,6 +11,7 @@ import {
   Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon,
   Home as HomeIcon,
   Cloud,
+  Shield,
 } from "lucide-react";
 
 /**
@@ -62,6 +63,9 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/dispatch/weather",    label: "Weather Reschedule", icon: Cloud,       feature: "jobs" },
     { to: "/admin/customer-success/churn", label: "Churn Risk",     icon: TrendingUp,    feature: "customers" },
     { to: "/admin/seo/content-refresh", label: "Content Refresh",   icon: Sparkles,      feature: "seo" },
+    { to: "/admin/warranties/plans",    label: "Warranty Plans",    icon: Shield,        feature: "customers" },
+    { to: "/admin/warranties/contracts", label: "Warranty Contracts", icon: FileText,   feature: "customers" },
+    { to: "/admin/warranties/claims",   label: "Warranty Claims",    icon: BadgeCheck,   feature: "customers" },
   ]},
 
   { key: "ops", label: "Ops", icon: UsersRound, entries: [

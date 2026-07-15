@@ -57,6 +57,41 @@ export default function ServiceReport() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Phase 27.3 · Water photo analyzer state (Wave C UI hook).
+  const [showWaterAnalyzer, setShowWaterAnalyzer] = useState(false);
+  const [waterBusy, setWaterBusy] = useState(false);
+  const [waterResult, setWaterResult] = useState(null);
+  const [waterError, setWaterError] = useState("");
+  const runWaterAnalysis = useCallback(async () => {
+    setWaterBusy(true); setWaterError(""); setWaterResult(null);
+    try {
+      const photos = report?.photos || [];
+      const photo = photos[photos.length - 1];
+      if (!photo?.url) {
+        setWaterError("Add a water photo to the report first, then try again.");
+        return;
+      }
+      const readings = {};
+      (report?.chemical_readings || []).forEach((r) => {
+        if (r.value != null) readings[r.key || r.name] = r.value;
+      });
+      const body = { photo_url: photo.url,
+                       current_readings: readings,
+                       job_id: id };
+      const r = await api.post("/service-report/analyze-water-photo", body);
+      setWaterResult(r);
+    } catch (e) { setWaterError(e.message || "Analysis failed"); }
+    finally { setWaterBusy(false); }
+  }, [report, id]);
+  const addRecToChemicals = (rec) => {
+    const next = [...(report.chemicals_added || []),
+                    { name: rec.chemical, amount: rec.amount,
+                      unit: rec.unit,
+                      notes: `AI recommended · ${rec.urgency}` }];
+    setReport({ ...report, chemicals_added: next });
+    dirtyRef.current = true; setDirty(true);
+  };
+
   // Elapsed timer — hoisted so hooks order stays stable across renders.
   const elapsedText = useElapsed(report?.started_at);
 
@@ -292,6 +327,16 @@ export default function ServiceReport() {
       {isPool && (
         <Section title="Chemical Readings" icon={<FlaskConical size={16}/>}
                  testId="svc-report-readings">
+          <button
+            type="button"
+            onClick={() => setShowWaterAnalyzer(true)}
+            className="mb-3 px-3 py-2 text-xs font-bold rounded-xl inline-flex items-center gap-1"
+            style={{ backgroundColor: colors.brandTertiary,
+                     color: colors.brand,
+                     border: `1px solid ${colors.brand}30` }}
+            data-testid="svc-report-analyze-water-btn">
+            🔬 Analyze water photo (Claude Vision)
+          </button>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {(report.chemical_reading_fields || []).map((field) => {
               const key = field.key || field.name;
@@ -487,6 +532,97 @@ export default function ServiceReport() {
             <ShieldCheck size={14} className="inline mr-1"/>
             {submitting ? "Submitting…" : "Submit Report & Clock Out"}
           </button>
+        </div>
+      )}
+
+      {showWaterAnalyzer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+             style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+             data-testid="water-analyzer-modal">
+          <div className="rounded-2xl w-full max-w-lg p-5 max-h-[90vh] overflow-auto"
+               style={{ backgroundColor: colors.surface,
+                        border: `1px solid ${colors.border}` }}>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-bold"
+                  style={{ color: colors.onSurface }}>
+                🔬 Water photo analysis
+              </h2>
+              <button onClick={() => setShowWaterAnalyzer(false)}
+                      className="p-2" style={{ color: colors.muted }}>×</button>
+            </div>
+            {!waterResult && !waterBusy && !waterError ? (
+              <button onClick={runWaterAnalysis}
+                      className="w-full py-2 text-sm font-bold rounded-xl"
+                      style={{ backgroundColor: colors.brand, color: "#fff" }}
+                      data-testid="water-analyzer-run">
+                Analyze latest photo
+              </button>
+            ) : null}
+            {waterBusy ? (
+              <div className="text-center py-4 text-sm"
+                   style={{ color: colors.muted }}>Analyzing…</div>
+            ) : null}
+            {waterError ? (
+              <div className="rounded-xl p-3 text-sm"
+                   style={{ backgroundColor: "#FEE2E2", color: "#991B1B" }}
+                   data-testid="water-analyzer-error">{waterError}</div>
+            ) : null}
+            {waterResult ? (
+              <div data-testid="water-analyzer-result">
+                {waterResult.mocked ? (
+                  <div className="rounded-xl p-2 mb-2 text-xs"
+                       style={{ backgroundColor: "#FEF3C7",
+                                color: "#92400E" }}>
+                    MOCKED · {waterResult.reason || "unknown"}
+                  </div>
+                ) : null}
+                <div className="mb-2 text-sm"
+                     style={{ color: colors.onSurface }}>
+                  <b>Clarity:</b> {waterResult.clarity || "—"}
+                </div>
+                {waterResult.issues?.length ? (
+                  <div className="mb-3">
+                    <div className="text-xs font-bold mb-1"
+                         style={{ color: colors.muted }}>Issues</div>
+                    <ul className="text-sm list-disc pl-4"
+                        style={{ color: colors.onSurface }}>
+                      {waterResult.issues.map((i, idx) =>
+                        <li key={idx}>{i}</li>)}
+                    </ul>
+                  </div>
+                ) : null}
+                <div className="text-xs font-bold mb-1"
+                     style={{ color: colors.muted }}>Recommendations</div>
+                {(waterResult.recommendations || []).map((rec, i) => (
+                  <div key={i}
+                       className="rounded-lg p-2 mb-2 flex items-start gap-2"
+                       style={{ backgroundColor: colors.background,
+                                border: `1px solid ${colors.border}` }}
+                       data-testid={`water-rec-${i}`}>
+                    <div className="flex-1 text-sm"
+                         style={{ color: colors.onSurface }}>
+                      <b>{rec.chemical}</b> · {rec.amount} {rec.unit}
+                      <span className="text-xs ml-2"
+                            style={{ color: colors.muted }}>
+                        ({rec.urgency})
+                      </span>
+                      <div className="text-xs mt-1"
+                           style={{ color: colors.muted }}>
+                        {rec.reasoning}
+                      </div>
+                    </div>
+                    <button onClick={() => addRecToChemicals(rec)}
+                            className="px-2 py-1 text-xs font-bold rounded"
+                            style={{ backgroundColor: colors.brand,
+                                     color: "#fff" }}
+                            data-testid={`water-rec-add-${i}`}>
+                      + Add
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
       )}
     </div>

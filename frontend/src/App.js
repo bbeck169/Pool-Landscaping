@@ -48,6 +48,7 @@ import PropertyLookupPage from "@/pages/property-lookup/PropertyLookupPage";
 import DispatchBoard, { WeatherReschedule } from "@/pages/dispatch/DispatchPages";
 import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
 import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPages";
+import WarrantyPlans, { WarrantyContracts, WarrantyClaims, PortalWarranties } from "@/pages/warranties/WarrantyPages";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
@@ -454,6 +455,11 @@ export default function App() {
             {/* Phase 27 Wave B */}
             <Route path="admin/customer-success/churn" element={<AdminOnly><ChurnDashboard /></AdminOnly>} />
             <Route path="admin/seo/content-refresh" element={<AdminOnly><ContentRefresh /></AdminOnly>} />
+            {/* Phase 28.1 — Warranty Portal */}
+            <Route path="admin/warranties/plans" element={<AdminOnly><WarrantyPlans /></AdminOnly>} />
+            <Route path="admin/warranties/contracts" element={<AdminOnly><WarrantyContracts /></AdminOnly>} />
+            <Route path="admin/warranties/claims" element={<AdminOnly><WarrantyClaims /></AdminOnly>} />
+            <Route path="portal/warranties" element={<PortalWarranties />} />
           </Route>
 
           {/* Anything unmatched → home */}
