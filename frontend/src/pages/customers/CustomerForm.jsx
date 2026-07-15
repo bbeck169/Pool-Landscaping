@@ -38,14 +38,20 @@ export default function CustomerForm() {
     secondary_addresses: [],
     pool_gallons: "",
     is_vip: false,
+    is_active: true,
   });
   const [busy, setBusy] = useState(false);
   const [newTag, setNewTag] = useState("");
   const [newSecondary, setNewSecondary] = useState("");
+  // Phase 34f — original is_active snapshot + confirm dialog state.
+  const [origIsActive, setOrigIsActive] = useState(true);
+  const [confirm, setConfirm] = useState(null); // { future_job_count, recurring_template_count } | null
+  const [deactivationSummary, setDeactivationSummary] = useState(null);
 
   useEffect(() => {
     if (!isEdit) return;
-    api.get(`/customers/${id}`).then((c) =>
+    api.get(`/customers/${id}`).then((c) => {
+      setOrigIsActive(c.is_active !== false);
       setForm({
         name: c.name || "",
         email: c.email || "",
@@ -60,8 +66,10 @@ export default function CustomerForm() {
         tags: c.tags || [],
         secondary_addresses: c.secondary_addresses || [],
         pool_gallons: c.pool_gallons == null ? "" : String(c.pool_gallons),
-      })
-    );
+        is_vip: !!c.is_vip,
+        is_active: c.is_active !== false,
+      });
+    });
   }, [id, isEdit]);
 
   const set = (k) => (e) => {
@@ -110,6 +118,20 @@ export default function CustomerForm() {
       }
       poolGallonsPayload = n;
     }
+
+    // Phase 34f — intercept an active→inactive flip and require confirmation
+    // with a live preview of the cascade. Only applies on edit.
+    if (isEdit && origIsActive === true && form.is_active === false && !confirm) {
+      try {
+        const preview = await api.get(`/customers/${id}/deactivation-preview`);
+        setConfirm(preview);
+        return;
+      } catch (err) {
+        setToast({ tone: "error", message: err.message });
+        return;
+      }
+    }
+
     setBusy(true);
     try {
       const doc = {
@@ -117,10 +139,19 @@ export default function CustomerForm() {
         email: (form.email || "").trim().toLowerCase(),
         pool_gallons: poolGallonsPayload,
         is_vip: !!form.is_vip,
+        is_active: !!form.is_active,
       };
       const saved = isEdit
         ? await api.put(`/customers/${id}`, doc)
         : await api.post("/customers", doc);
+      // Phase 34f — surface the cascade counts if the backend cancelled jobs.
+      if (isEdit && origIsActive === true && form.is_active === false) {
+        setDeactivationSummary({
+          cancelled: saved.cancelled_job_count || 0,
+          recurring: saved.deactivated_recurring_count || 0,
+        });
+      }
+      setConfirm(null);
       setToast({ tone: "success", message: isEdit ? "Customer updated" : "Customer created" });
       navigate(`/customers/${saved.id || id}`);
     } catch (err) {
@@ -341,6 +372,26 @@ export default function CustomerForm() {
               </span>
             </span>
           </label>
+          {isEdit && (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={!!form.is_active}
+                onChange={set("is_active")}
+                data-testid="customer-active-toggle"
+                className="mt-0.5"
+              />
+              <span>
+                <span style={{ color: colors.onSurface, fontWeight: 600 }}>
+                  Active
+                </span>
+                <span className="block text-xs" style={{ color: colors.muted }}>
+                  When toggled off, all future scheduled jobs will be cancelled
+                  and recurring visits deactivated.
+                </span>
+              </span>
+            </label>
+          )}
         </div>
 
         <div className="flex gap-2 justify-end pb-8">
@@ -354,6 +405,76 @@ export default function CustomerForm() {
       </form>
 
       <Toast toast={toast} onClose={() => setToast(null)} />
+      {confirm ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(15, 23, 42, 0.55)" }}
+          data-testid="customer-deactivation-dialog"
+        >
+          <div
+            className="rounded-2xl p-6 max-w-md w-full shadow-2xl"
+            style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+          >
+            <h3 className="text-lg font-bold mb-2" style={{ color: colors.onSurface }}>
+              Mark customer inactive?
+            </h3>
+            <p className="text-sm mb-4" style={{ color: colors.onSurfaceSecondary }}>
+              This will cancel{" "}
+              <strong data-testid="customer-deactivation-future-count">
+                {confirm.future_job_count}
+              </strong>{" "}
+              future scheduled job{confirm.future_job_count === 1 ? "" : "s"} and deactivate{" "}
+              <strong data-testid="customer-deactivation-recurring-count">
+                {confirm.recurring_template_count}
+              </strong>{" "}
+              recurring template{confirm.recurring_template_count === 1 ? "" : "s"}. Past visits are untouched.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirm(null);
+                  setForm((f) => ({ ...f, is_active: true }));
+                }}
+                className="px-3 py-1.5 rounded-md text-sm font-semibold"
+                style={{
+                  background: "transparent",
+                  border: `1px solid ${colors.border}`,
+                  color: colors.onSurface,
+                }}
+                data-testid="customer-deactivation-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={(e) => submit(e)}
+                disabled={busy}
+                className="px-3 py-1.5 rounded-md text-sm font-bold"
+                style={{ background: "#B91C1C", color: "#fff", border: 0 }}
+                data-testid="customer-deactivation-confirm"
+              >
+                {busy ? "Cancelling…" : "Yes, deactivate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {deactivationSummary ? (
+        <div
+          className="fixed bottom-6 right-6 rounded-lg px-4 py-3 shadow-lg z-50"
+          style={{ background: "#FEF3C7", border: "1px solid #F59E0B", color: "#92400E" }}
+          data-testid="customer-deactivation-summary"
+        >
+          <div className="text-sm font-bold">Customer marked inactive.</div>
+          <div className="text-xs">
+            Cancelled {deactivationSummary.cancelled} job
+            {deactivationSummary.cancelled === 1 ? "" : "s"}, deactivated{" "}
+            {deactivationSummary.recurring} recurring template
+            {deactivationSummary.recurring === 1 ? "" : "s"}.
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

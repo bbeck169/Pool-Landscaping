@@ -45,6 +45,11 @@ class CustomerIn(BaseModel):
     # customer. Existing docs without the field read back as False on the
     # client (JSON `undefined` is falsy in both React and RN).
     is_vip: Optional[bool] = False
+    # Phase 34f — Active/inactive lifecycle. Defaults to True; when an admin
+    # flips this to False via PUT /api/customers/{id}, the router cascades a
+    # cancellation over all future scheduled jobs and deactivates recurring
+    # templates. Missing/legacy docs read back as True (assumed active).
+    is_active: Optional[bool] = True
 
     @field_validator("pool_gallons")
     @classmethod

@@ -131,6 +131,20 @@ export default function CustomerDetail() {
                   <Star size={12} fill="#F59E0B" color="#F59E0B" /> VIP
                 </span>
               ) : null}
+              {customer.is_active === false ? (
+                <span
+                  className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider"
+                  style={{
+                    backgroundColor: "#E5E7EB",
+                    color: "#4B5563",
+                    border: "1px solid #9CA3AF",
+                  }}
+                  data-testid="customer-inactive-badge"
+                  title="Inactive customer — future jobs cancelled"
+                >
+                  Inactive
+                </span>
+              ) : null}
             </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               {(customer.tags || []).map((t) => (

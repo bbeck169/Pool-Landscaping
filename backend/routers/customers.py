@@ -160,18 +160,117 @@ async def get_customer(cid: str,
     return doc
 
 
+@router.get("/customers/{cid}/deactivation-preview")
+async def deactivation_preview(cid: str,
+                                user: dict = Depends(require_admin),
+                                tenant: dict = Depends(get_current_tenant)):
+    """Phase 34f — dry-run for the Active/Inactive toggle confirm dialog.
+    Returns the counts that WOULD be affected if the caller flipped
+    `is_active` from true → false right now. Does not mutate anything."""
+    if not await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1}
+    ):
+        raise HTTPException(404, "Customer not found")
+    today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    future_q = {
+        "customer_id": cid,
+        "tenant_id": tenant["id"],
+        "scheduled_date": {"$gte": today_iso},
+        "status": {"$in": ["scheduled", "pending", "confirmed"]},
+    }
+    future_count = await db.jobs.count_documents(future_q)
+    recurring_count = await db.jobs.count_documents(
+        {**future_q, "auto_recurring": True}
+    )
+    return {
+        "future_job_count": future_count,
+        "recurring_template_count": recurring_count,
+    }
+
+
 @router.put("/customers/{cid}")
 async def update_customer(cid: str, body: CustomerIn,
                           user: dict = Depends(require_admin),
                           tenant: dict = Depends(get_current_tenant)):
-    res = await db.customers.update_one(
-        {"id": cid, "tenant_id": tenant["id"]}, {"$set": body.dict()}
-    )
-    if res.matched_count == 0:
-        raise HTTPException(404, "Customer not found")
-    return await db.customers.find_one(
+    existing = await db.customers.find_one(
         {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
     )
+    if not existing:
+        raise HTTPException(404, "Customer not found")
+
+    # Phase 34f — Active/inactive lifecycle detection. Missing field on the
+    # existing doc defaults to True (all legacy customers were implicitly
+    # active). New value defaults to True on the input model.
+    was_active = existing.get("is_active", True)
+    now_active = bool(body.is_active) if body.is_active is not None else True
+    deactivating = was_active is True and now_active is False
+
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"$set": body.dict()}
+    )
+
+    cancelled_job_count = 0
+    deactivated_recurring_count = 0
+    if deactivating:
+        today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        q = {
+            "customer_id": cid,
+            "tenant_id": tenant["id"],
+            "scheduled_date": {"$gte": today_iso},
+            "status": {"$in": ["scheduled", "pending", "confirmed"]},
+        }
+        # Count recurring instances BEFORE the update so we can report both
+        # totals honestly. `auto_recurring` is the flag Phase 20 attached to
+        # jobs created by `create_recurring_maintenance` — there is no
+        # separate recurring-templates collection in this codebase.
+        deactivated_recurring_count = await db.jobs.count_documents(
+            {**q, "auto_recurring": True}
+        )
+        upd = await db.jobs.update_many(
+            q,
+            {"$set": {
+                "status": "cancelled",
+                "cancellation_reason": "Customer marked inactive",
+                "cancelled_at": now_iso(),
+                "cancelled_by_user_id": user["id"],
+                "auto_recurring": False,
+            }},
+        )
+        cancelled_job_count = int(upd.modified_count or 0)
+
+        # Log the transition for the future retention report.
+        await db.customer_activation_events.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "from_status": "active",
+            "to_status": "inactive",
+            "changed_at": now_iso(),
+            "changed_by_user_id": user["id"],
+            "cancelled_job_count": cancelled_job_count,
+            "deactivated_recurring_count": deactivated_recurring_count,
+        })
+    elif was_active is False and now_active is True:
+        # Reactivation logged for symmetry, but nothing else cascades.
+        await db.customer_activation_events.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "from_status": "inactive",
+            "to_status": "active",
+            "changed_at": now_iso(),
+            "changed_by_user_id": user["id"],
+            "cancelled_job_count": 0,
+            "deactivated_recurring_count": 0,
+        })
+
+    doc = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if deactivating:
+        doc["cancelled_job_count"] = cancelled_job_count
+        doc["deactivated_recurring_count"] = deactivated_recurring_count
+    return doc
 
 
 @router.delete("/customers/{cid}")

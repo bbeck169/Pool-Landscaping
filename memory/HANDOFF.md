@@ -3979,3 +3979,161 @@ honest fallbacks throughout.
   reintroduce the button.
 - Same stale-seed cleanup for `test_phase34b_retention_bridge.py`
   is still pending — not touched this pass.
+
+#### Phase 34f · Customer Active toggle + auto-cancel future jobs (Feb 15 2026)
+
+Additive `is_active: Optional[bool] = True` on `CustomerIn` +
+a cascade hook in `PUT /api/customers/{id}` + a lightweight
+dry-run preview endpoint. Zero migration — legacy customer docs
+without the field read as active by default.
+
+**Backend — `backend/models.py`**
+- Added `is_active: Optional[bool] = True` next to `is_vip`. Missing
+  on the doc → treated as `True` everywhere (`existing.get(
+  "is_active", True)`).
+
+**Backend — `backend/routers/customers.py`**
+- New endpoint `GET /api/customers/{cid}/deactivation-preview` →
+  `{future_job_count, recurring_template_count}`. Admin-only.
+  Returns 404 for unknown customer. Never mutates.
+- `PUT /api/customers/{cid}` extended to detect the
+  `active → inactive` flip:
+  1. Cancels every job where
+     `customer_id == cid`, `scheduled_date >= today (UTC)`, and
+     `status IN ("scheduled", "pending", "confirmed")`.
+     Sets `status="cancelled"`, `cancellation_reason="Customer
+     marked inactive"`, `cancelled_at=<iso>`,
+     `cancelled_by_user_id=<admin id>`, `auto_recurring=False`.
+  2. Counts jobs with `auto_recurring: True` in the same query
+     as the `deactivated_recurring_count` metric — this codebase
+     has no separate recurring-templates collection (Phase 20
+     stamps `auto_recurring` on the job that was seeded by
+     `create_recurring_maintenance`).
+  3. Inserts a document into `customer_activation_events`:
+     `{id, tenant_id, customer_id, from_status, to_status,
+       changed_at, changed_by_user_id, cancelled_job_count,
+       deactivated_recurring_count}`.
+  4. Response echoes `cancelled_job_count` +
+     `deactivated_recurring_count` on the flip-off, so the
+     frontend can render the summary banner.
+- Reactivation (`inactive → active`) logs a matching
+  `customer_activation_events` row with zeros and does NOT
+  restore cancelled jobs — admin must manually rebook.
+- Compound index `(tenant_id, customer_id, changed_at)` on
+  `customer_activation_events` — DEFERRED (write volume is one
+  per manual toggle; add when the retention report starts
+  scanning by date range).
+
+**Backend — `backend/routers/maintenance.py`**
+- `create_recurring_maintenance()` now short-circuits with a
+  `return None` when `customer.is_active is False`. Prevents
+  cancelled recurring visits from being regenerated on the next
+  cadence tick.
+
+**Web — `frontend/src/pages/customers/CustomerForm.jsx`**
+- Added `is_active` to the form state (defaults to `true`) plus
+  an `origIsActive` snapshot captured on load.
+- New `<label>` block below the VIP toggle, only rendered on
+  edit: checkbox testid `customer-active-toggle` labelled
+  "Active" with the exact help text from the brief.
+- `submit()` intercepts `origIsActive === true && form.is_active
+  === false`: fetches the deactivation-preview, opens a red-CTA
+  confirm dialog (`customer-deactivation-dialog`,
+  `customer-deactivation-future-count`,
+  `customer-deactivation-recurring-count`,
+  `customer-deactivation-confirm`,
+  `customer-deactivation-cancel`), and only PUTs on confirm.
+- After a successful flip-off, a gold summary banner
+  (`customer-deactivation-summary`) renders bottom-right with
+  the cancelled/recurring counts.
+
+**Web — `frontend/src/pages/customers/CustomerDetail.jsx`**
+- New dim `Inactive` pill (`#E5E7EB` bg, `#4B5563` text) rendered
+  inline with the customer name when `customer.is_active ===
+  false`. Test-id `customer-inactive-badge`. Sits next to the
+  VIP pill without breaking flex wrap.
+
+**Mobile — `mobile/app/customer/new.tsx`**
+- Same `is_active` state + `origIsActive` snapshot + `Active`
+  `<Switch>` (testID `customer-active-toggle`) rendered only in
+  edit mode.
+- `save()` intercepts the active→inactive flip. Uses native
+  `Alert.alert()` with two-button dialog ("Cancel" and
+  "Yes, deactivate") — count values shown in the message body.
+  On confirm, PUT fires and a second `Alert.alert()` reports the
+  cascade result. On cancel, the switch pops back to on and no
+  network call fires.
+
+**Mobile — `mobile/app/customer/[id].tsx`**
+- New `Inactive` pill (testID `customer-inactive-badge`) below
+  the VIP pill in the customer header, rendered only when
+  `c.is_active === false`. Grey palette (`#E5E7EB` bg,
+  `#4B5563` text) to signal a soft-dim state.
+
+**Test IDs (final list)**
+- `customer-active-toggle` — edit form (web + mobile)
+- `customer-inactive-badge` — detail (web + mobile)
+- `customer-deactivation-dialog` — web confirm modal wrapper
+- `customer-deactivation-future-count` — count `<strong>` in modal
+- `customer-deactivation-recurring-count` — count `<strong>` in modal
+- `customer-deactivation-confirm` — red CTA in modal
+- `customer-deactivation-cancel` — outline button in modal
+- `customer-deactivation-summary` — post-save banner
+
+**Tests — `backend/tests/test_phase34f_customer_active.py`**
+`8 passed` in 22.1 s:
+1. `test_default_customer_is_active` — new customers default true.
+2. `test_deactivate_cancels_future_jobs` — 3 future jobs flip to
+   `cancelled` with the reason + audit fields.
+3. `test_past_completed_jobs_untouched` — cascade skips
+   `status=completed` jobs; only 1 of 3 jobs affected.
+4. `test_reactivate_does_not_restore_cancelled` — flip back to
+   true doesn't touch prior cancellations.
+5. `test_activation_events_logged` — verifies two events written
+   with the correct `from_status/to_status` pair.
+6. `test_deactivation_preview` — returns counts, no mutation.
+7. `test_preview_404_unknown_customer` — 404 on missing id.
+8. `test_non_admin_forbidden` — tech = 403 on both endpoints.
+
+Full 34* regression: `pytest -x -q tests/test_phase34d_pool_gallons.py
+tests/test_phase34f_customer_active.py` → **26 passed** in 12.3 s.
+
+**Live verification** — logged in as `admin@aquaterra.com`, edited
+`TEST-Inactive Demo v2` (3 scheduled future jobs), unchecked
+Active, clicked Save. Modal appeared with `future=3` and
+`recurring=0`; confirm PUT returned
+`is_active=False cancelled=3 recurring=0`; all three jobs now
+carry `status=cancelled` +
+`cancellation_reason="Customer marked inactive"`. Detail page
+renders the `Inactive` pill. Screenshot saved to
+`/tmp/deactivation_confirm.png`.
+
+**Files added (1)**
+- `backend/tests/test_phase34f_customer_active.py`
+
+**Files edited (6)**
+- `backend/models.py`
+- `backend/routers/customers.py`
+- `backend/routers/maintenance.py`
+- `frontend/src/pages/customers/CustomerForm.jsx`
+- `frontend/src/pages/customers/CustomerDetail.jsx`
+- `mobile/app/customer/new.tsx`
+- `mobile/app/customer/[id].tsx`
+- `memory/HANDOFF.md` — this section.
+
+**Not touched (per hard rules)**
+- No new integrations, no new libraries.
+- Job schema untouched — cascade uses existing
+  `cancellation_reason` / `cancelled_at` / `cancelled_by_user_id`
+  fields that Phase 22-ish already added.
+- `create_recurring_maintenance` unchanged apart from the one
+  `is_active` guard.
+- No wide RBAC changes.
+
+**Deferred / flagged**
+- `(tenant_id, customer_id, changed_at)` compound index on
+  `customer_activation_events`.
+- Optional list-view badge for inactive customers on
+  `/customers` — brief marked it "optional", skipped for now.
+- Phase 34g — Retention Report is now unblocked; consume the
+  new `customer_activation_events` collection.

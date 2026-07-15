@@ -15,20 +15,25 @@ export default function CustomerForm() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const router = useRouter();
   const editing = !!id;
-  const [form, setForm] = useState({ name: "", email: "", phone: "", address: "", billing_address: "", gate_code: "", notes: "", avatar: "", pool_gallons: "", is_vip: false });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", address: "", billing_address: "", gate_code: "", notes: "", avatar: "", pool_gallons: "", is_vip: false, is_active: true });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Phase 34f — track the pre-edit active status so we know when we're
+  // flipping active → inactive and need to confirm before dispatch.
+  const [origIsActive, setOrigIsActive] = useState(true);
 
   useEffect(() => {
     if (id) {
-      api.get(`/customers/${id}`).then((c) =>
+      api.get(`/customers/${id}`).then((c) => {
+        setOrigIsActive(c.is_active !== false);
         setForm({
           name: c.name || "", email: c.email || "", phone: c.phone || "", address: c.address || "",
           billing_address: c.billing_address || "", gate_code: c.gate_code || "", notes: c.notes || "", avatar: c.avatar || "",
           pool_gallons: c.pool_gallons == null ? "" : String(c.pool_gallons),
           is_vip: !!c.is_vip,
-        })
-      );
+          is_active: c.is_active !== false,
+        });
+      });
     }
   }, [id]);
 
@@ -59,16 +64,49 @@ export default function CustomerForm() {
     }
     setBusy(true);
     setError("");
-    try {
-      const payload = { ...form, pool_gallons: poolGallonsPayload, is_vip: !!form.is_vip };
-      if (editing) await api.put(`/customers/${id}`, payload);
-      else await api.post("/customers", payload);
-      router.back();
-    } catch (e: any) {
-      setError(e.message || "Failed to save");
-    } finally {
-      setBusy(false);
+
+    // Phase 34f — active → inactive requires confirmation with a live count
+    // preview. We ask via `Alert.alert()` — same UX as the delete flows.
+    const flippingOff = editing && origIsActive === true && form.is_active === false;
+    const runSave = async () => {
+      try {
+        const payload = { ...form, pool_gallons: poolGallonsPayload, is_vip: !!form.is_vip, is_active: !!form.is_active };
+        let saved: any;
+        if (editing) saved = await api.put(`/customers/${id}`, payload);
+        else saved = await api.post("/customers", payload);
+        if (flippingOff && saved) {
+          Alert.alert(
+            "Customer marked inactive",
+            `Cancelled ${saved.cancelled_job_count || 0} job(s), deactivated ${saved.deactivated_recurring_count || 0} recurring template(s).`
+          );
+        }
+        router.back();
+      } catch (e: any) {
+        setError(e.message || "Failed to save");
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    if (flippingOff) {
+      try {
+        const preview: any = await api.get(`/customers/${id}/deactivation-preview`);
+        Alert.alert(
+          "Mark customer inactive?",
+          `This will cancel ${preview.future_job_count || 0} future scheduled job(s) and deactivate ${preview.recurring_template_count || 0} recurring template(s). Continue?`,
+          [
+            { text: "Cancel", style: "cancel", onPress: () => { setBusy(false); setForm((f) => ({ ...f, is_active: true })); } },
+            { text: "Yes, deactivate", style: "destructive", onPress: runSave },
+          ]
+        );
+        return;
+      } catch (e: any) {
+        setError(e.message || "Preview failed");
+        setBusy(false);
+        return;
+      }
     }
+    await runSave();
   };
 
   return (
@@ -122,6 +160,24 @@ export default function CustomerForm() {
             thumbColor={form.is_vip ? "#FEF3C7" : "#f4f3f4"}
           />
         </View>
+        {editing ? (
+          <View style={styles.vipRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.vipLabel}>Active</Text>
+              <Text style={styles.vipHint}>
+                When toggled off, all future scheduled jobs will be cancelled
+                and recurring visits deactivated.
+              </Text>
+            </View>
+            <Switch
+              testID="customer-active-toggle"
+              value={!!form.is_active}
+              onValueChange={(v) => setForm((f) => ({ ...f, is_active: v }))}
+              trackColor={{ false: "#E5E7EB", true: colors.brand }}
+              thumbColor={form.is_active ? "#fff" : "#f4f3f4"}
+            />
+          </View>
+        ) : null}
         <Field label="Notes" value={form.notes} onChangeText={set("notes")} placeholder="Access instructions, pets, preferences…" multiline testID="customer-notes-input" />
         {error ? <Text style={styles.error} testID="customer-form-error">{error}</Text> : null}
         <View style={{ height: spacing.lg }} />

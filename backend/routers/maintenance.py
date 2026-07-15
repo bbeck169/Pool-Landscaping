@@ -47,6 +47,10 @@ async def create_recurring_maintenance(completed_job: dict) -> Optional[dict]:
     customer = await db.customers.find_one({"id": cid}, {"_id": 0})
     if not customer:
         return None
+    # Phase 34f — inactive customers stop auto-generating recurring visits.
+    # Admin must reactivate + manually rebook.
+    if customer.get("is_active", True) is False:
+        return None
     interval = _interval_for(customer, mtype)
     next_date = (datetime.now(timezone.utc) + timedelta(days=interval)).date().isoformat()
     cfg = MAINT_TYPES[mtype]

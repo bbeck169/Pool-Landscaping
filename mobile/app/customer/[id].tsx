@@ -140,6 +140,11 @@ export default function CustomerDetail() {
             <Text style={styles.vipBadgeText}>VIP</Text>
           </View>
         ) : null}
+        {c.is_active === false ? (
+          <View style={styles.inactiveBadge} testID="customer-inactive-badge">
+            <Text style={styles.inactiveBadgeText}>Inactive</Text>
+          </View>
+        ) : null}
         <View style={styles.card}>
           <ContactRow icon="call-outline" value={c.phone} onPress={() => c.phone && Linking.openURL(`tel:${c.phone}`)} />
           <ContactRow icon="mail-outline" value={c.email} onPress={() => c.email && Linking.openURL(`mailto:${c.email}`)} />
@@ -339,6 +344,16 @@ const styles = StyleSheet.create({
   },
   vipBadgeText: {
     fontFamily: font.bold, fontSize: fontSize.xs, color: "#92400E",
+    letterSpacing: 1, textTransform: "uppercase",
+  },
+  inactiveBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: "#E5E7EB", borderColor: "#9CA3AF", borderWidth: 1,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill,
+    marginBottom: spacing.md,
+  },
+  inactiveBadgeText: {
+    fontFamily: font.bold, fontSize: fontSize.xs, color: "#4B5563",
     letterSpacing: 1, textTransform: "uppercase",
   },
 });
