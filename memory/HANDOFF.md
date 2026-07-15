@@ -4853,3 +4853,27 @@ surface `SomethingRef` names, not gate finishes on regex quirks.
 ##### Hotfix: auto-collapse row after option pick
 - Both `ChemicalDropdownStack` components now call `setOpenSlug(null)` at the tail of `upsert()`, so tapping any preset (or the "No X Used" sentinel) closes the row immediately and reveals the updated `chemicals-row-{slug}-current` line.
 - Playwright verification: `option-3-tabs` visible before click = 1, after click = 0; `chemicals-row-chlorine-tablets-current` reads "3 Tabs". Preflight still exit 0. No backend / schema change.
+
+#### Phase 34c · Mobile AI CFO Q&A + Scenario parity
+
+**Files added:**
+- `/app/mobile/src/components/cfo/QnAPanel.tsx` — `POST /api/cfo/qna` + `GET /api/cfo/qna/history?limit=20`. TextInput `cfo-qna-input` (multiline 4 rows), submit button `cfo-qna-submit`, answer area `cfo-qna-answer` with dim + yellow banner (`cfo-qna-mocked-reason`) when `mocked:true`, quota soft response surfaces a "Force submit" (`cfo-qna-force-submit`), history drawer `cfo-qna-history-list` with `cfo-qna-history-item` per row. Passes `context_snapshot` back to the parent via optional `onContextSnapshot` prop.
+- `/app/mobile/src/components/cfo/ScenarioPanel.tsx` — `POST /api/cfo/scenario` + `GET /api/cfo/scenario/history?limit=20`. Structured inputs: `cfo-scenario-hire-techs`, `cfo-scenario-hourly-rate`, `cfo-scenario-price-change` (stepper `-5 / +5` because no slider lib on mobile) with `cfo-scenario-price-change-input` for direct entry, `cfo-scenario-churn` chips (or `cfo-scenario-churn-empty` when no top customers), `cfo-scenario-prompt` free-text. Result testids: `cfo-scenario-result`, `cfo-scenario-assumptions`, `cfo-scenario-monthly` (12-row 4-column grid Month · ΔRev · ΔExp · ΔNet — chose a grid over a chart since recharts is desktop-only in this repo), `cfo-scenario-annual-revenue|expense|net|margin`, `cfo-scenario-confidence` (green/amber/red), `cfo-scenario-caveats`, `cfo-scenario-favorite` toggling `POST /api/cfo/scenario/{id}/save-as-favorite?favorite=…`. History drawer pins favorites to the top with a star.
+
+**Files modified:**
+- `/app/mobile/app/(app)/cfo/index.tsx` — mounts both panels below the KPI cards and passes `topCustomers={dash?.top_customers || []}` and a shared `onUsageChange={load}` so the KPI dashboard (and any downstream usage widget) refreshes after every Q&A / Scenario submit.
+
+**End-to-end verification (Expo web build)**
+- Modal-free CFO page renders 30 `cfo-*` testids on load, all correct (`cfo-qna-panel`, `cfo-qna-input`, `cfo-qna-submit`, `cfo-scenario-panel`, `cfo-scenario-hire-techs`, `cfo-scenario-hourly-rate`, `cfo-scenario-price-change`, `cfo-scenario-price-change-input`, `cfo-scenario-churn-empty`, `cfo-scenario-prompt`, `cfo-scenario-submit`, …).
+- **Q&A round trip**: typed "What is our current profit margin?" → Claude answer visible in ~6 s (1003 chars incl. markdown table), `cfo-qna-answer` testid present, tokens counted.
+- **Scenario round trip**: set `hire_techs=1` → Claude result visible in ~24 s. Rendered 11-bullet assumption list, full 12-row monthly delta grid (M1..M12), annual tiles (`Annual Δ Net = -$34,980` shown in red), red **LOW** confidence badge, 8 caveats bullets. All required testids present.
+- Backend contract verified via curl: `POST /api/cfo/qna` returns `answer/tokens_used/mocked/history_id/context_snapshot`. `POST /api/cfo/scenario` returns `history_id/result{assumptions,monthly_delta[12],annual{revenue|expense|net|margin_delta_pct},confidence,caveats,mocked}`. History endpoints return bare arrays.
+
+**Verification**
+- `bash /app/scripts/preflight.sh` → `preflight OK` (exit 0).
+- `esbuild` transformSync on all 3 new/edited files → clean.
+- `tsc --noEmit -p /app/mobile` reports zero new errors on the three touched mobile files (only pre-existing project-wide `spacing.xs` / `role === "super_admin"` drift).
+
+**Not touched (per brief):** web, backend, LLM keys, streaming, board PDF, custom-range Q&A period.
+
+**Session wrap suggestion (mine, not yours):** with Phase 34c live, the entire mobile Expo build now mirrors the web CFO stack. If the tester wants to close the mobile CFO gap fully, the last remaining desktop-only pieces are Forecast, Anomalies, and Auto-Categorize — all listed in the footer note on the mobile page.

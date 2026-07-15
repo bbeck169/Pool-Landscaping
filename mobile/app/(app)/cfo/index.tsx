@@ -22,6 +22,8 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import QnAPanel from "@/src/components/cfo/QnAPanel";
+import ScenarioPanel from "@/src/components/cfo/ScenarioPanel";
 
 type Period = "mtd" | "qtd" | "ytd";
 
@@ -176,6 +178,13 @@ export default function CFOMobile() {
             <Text style={s.footNote}>
               Forecast · Anomalies · Auto-Categorize live on the desktop for now.
             </Text>
+
+            {/* Phase 34c — mobile Q&A + Scenario parity. */}
+            <QnAPanel period={period} onUsageChange={load} />
+            <ScenarioPanel
+              topCustomers={dash?.top_customers || []}
+              onUsageChange={load}
+            />
           </>
         ) : null}
       </ScrollView>
