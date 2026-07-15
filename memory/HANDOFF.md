@@ -2257,3 +2257,117 @@ The Schedule surface is now **date-only** on web AND mobile. Landscaping / pool 
 
 **Deferred (unchanged)**
 - The 13 `react-big-calendar` "duplicate key" console warnings still trigger when multiple events share a day. Cosmetic; scoped for a future silencing pass.
+
+#### Phase 31 · Step 1 — Backend spine + resolver (Feb 15 2026)
+
+Backend-only pass. Ships the endpoint contract, telemetry collection, and
+shared checklist-type resolver the (Step 2) tap-job → checklist UI will
+depend on. **No UI code in this pass — deliberately deferred to Step 2.**
+
+**Discovery findings (`/api/openapi.json`)** — for Step 2 authors:
+- Service report — **auto-provisioned** on tech clock-in; no explicit
+  `create`. The relevant surface is:
+  - `GET   /api/jobs/{jid}/service-report`        — bootstrap / reload
+  - `PATCH /api/jobs/{jid}/service-report`        — autosave
+  - `POST  /api/jobs/{jid}/service-report/submit` — **close** (lock + mark completed)
+- Photo upload: `POST /api/jobs/{jid}/photos` (per-job) — see `routers/jobs.py:938`.
+- Existing "activity" surface: `GET /api/activity` (`operations.py:46`) is a
+  **read-only synthesized feed** off jobs/quotes/leads. No collection, no
+  write path — NOT reusable for structured tap-job telemetry. That's why
+  we minted a new `/api/workstream/events` router below instead of
+  bolting onto `/api/activity`.
+- Landscaping checklist template — **seeded**. `service_reports.py` ships
+  `LANDSCAPE_CHECKLIST_DEFAULT` + a `_detect_template(job)` resolver that
+  returns `"pool" | "landscape" | "generic"` and drives the auto-provisioned
+  service report on clock-in. Client-facing helper (below) mirrors the
+  same keyword set but uses `"landscaping"` per the Phase 31 brief.
+
+**Shared resolver — `getChecklistType(job)`**
+Pure function; returns `"pool" | "landscaping" | "generic"`. Keyword set
+matches `service_reports._detect_template`:
+- `pool | chem`               → `"pool"`
+- `landscap | lawn | mow | garden | trim | blow` → `"landscaping"`
+- else                        → `"generic"`
+
+Three parallel implementations, kept in sync by hand (no shared JS
+package between web and Expo in this repo):
+- Web:     `frontend/src/lib/checklistType.js` (named + default export).
+- Mobile:  `mobile/src/utils/checklistType.ts` (typed).
+- Python:  `backend/routers/workstream.py :: get_checklist_type` — used
+           by `test_phase31_checklist.py::TestGetChecklistType`.
+
+**New router — `/app/backend/routers/workstream.py`**
+Tenant-scoped append-only stream for tap-job telemetry (e.g.
+`checklist.opened`, `checklist.item_toggled`, `report.submitted`,
+`photo.uploaded`). Mongo collection: `workstream_events`.
+
+Endpoints (all `/api`-prefixed via `server.py`):
+- `POST /api/workstream/events`
+  - RBAC: `admin | super_admin | technician` (customers/portal → 403).
+  - Body: `{ type: str (required, ≤120ch), payload?: object, related_ref?: object }`.
+  - Response echoes `{ id, tenant_id, type, actor_user_id, actor_role,
+    payload, related_ref, created_at }`.
+- `GET  /api/workstream/events?limit=&type=`
+  - RBAC: `admin | super_admin` (management surface only).
+  - Tenant-scoped: aquaterra admin cannot see sunbelt events and vice versa
+    (verified in `test_events_are_tenant_scoped`).
+
+Registered in `server.py` (both the module import and the `include_router`
+loop). No new collections, indexes, or scheduler jobs — `workstream_events`
+is created lazily on first insert. If write volume grows, add a
+compound index `(tenant_id, created_at)` in a later pass.
+
+**Tests — `/app/backend/tests/test_phase31_checklist.py`**
+`9 passed` in 2.6 s (four `Test*` groups covering the four contracts).
+1. `TestGetChecklistType` — pool / landscaping / generic + None + pool
+   wins over landscape when both keywords appear (mirrors backend order).
+2. `TestWorkstreamRbac` — customer 403, technician 200 on POST.
+3. `test_events_are_tenant_scoped` — aquaterra event never surfaces in
+   sunbelt admin's list (uses the `admin@sunbelt.com` fixture already
+   present in the Phase 15D isolation suite).
+4. `TestEventShape` — missing `type` → 422; valid event echoes required
+   fields (`id`, `tenant_id`, `actor_user_id`, `actor_role`, `created_at`,
+   `payload`, `related_ref`).
+
+Regression sanity: `test_phase31_checklist + test_phase30_schedule +
+test_phase29c_rbac + test_phase29b_check_crypto + test_phase15d_stage3_isolation`
+= **41/41 passed** in 10 s.
+
+**Conftest tweak** — `tests/conftest.py` gained a
+`workstream_events` cleanup query keyed on `payload.note = /^TEST_/` so
+future runs self-purge test-created telemetry (matches the existing
+`_TEST_PREFIX` pattern used by other suites).
+
+**Verification**
+- `sudo supervisorctl restart backend` → `openapi.json = 200`, and both
+  `POST /api/workstream/events` + `GET /api/workstream/events` show up in
+  `paths`.
+- `pytest -x -q tests/test_phase31_checklist.py` → **9 passed**.
+
+**Files added**
+- `backend/routers/workstream.py`
+- `backend/tests/test_phase31_checklist.py`
+- `frontend/src/lib/checklistType.js`
+- `mobile/src/utils/checklistType.ts`
+
+**Files edited**
+- `backend/server.py` — register `workstream` router (import + include loop).
+- `backend/tests/conftest.py` — add `workstream_events` cleanup entry.
+- `memory/HANDOFF.md` — this section.
+
+**Not touched (per hard rules)**
+- Web frontend components/pages, mobile screens/navigation, RBAC matrix,
+  service_reports.py, jobs.py, seed data. No UI code. No new external
+  integrations. No env vars.
+
+**Deferred to Phase 31 · Step 2**
+- Pool form component (chemical readings + chemicals-added + checklist).
+- Landscaping form component (grooming checklist).
+- Generic form component (plain checklist).
+- Web checklist modal wired to tap-job on `/schedule` (both Grid & Calendar).
+- Mobile checklist screen + tap-job wiring on `schedule/calendar.tsx`.
+- New `/workstream` web page (admin-only feed viewer over
+  `GET /api/workstream/events`).
+- Any `data-testid` attributes for Step 2 UI (out of scope this pass).
+- Compound index on `workstream_events (tenant_id, created_at)` — add
+  only if we start seeing >10k events/tenant.

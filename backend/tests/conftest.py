@@ -39,6 +39,7 @@ _CLEANUP = {
     "checkins": {"$or": [{"note": _TEST_PREFIX}, {"address": _TEST_PREFIX}]},
     "items": {"name": _TEST_PREFIX},
     "rank_grid": {"keyword": _TEST_PREFIX},
+    "workstream_events": {"payload.note": {"$regex": "^TEST_"}},
 }
 
 
