@@ -4789,3 +4789,27 @@ surface `SomethingRef` names, not gate finishes on regex quirks.
   in `ChecklistModal.jsx`. Backend `last-readings` endpoint is live.
   Mobile chip UI deferred per the 60%-honest fallback in the Phase 36
   brief.
+
+#### Phase 36b · Mobile Water Readings chip parity + autosave pill
+
+**Files touched:**
+- Added `/app/mobile/src/components/checklist/ReadingChipRow.tsx` — new component. Renders one chip row per chemical reading (chlorine=cyan, pH=red→green sweet-spot, alkalinity=green, all optional readings=orange). Pencil icon opens numeric TextInput (`onSubmitEditing`/`onBlur` commits, tapping the ✕ cancels). `N/A` chip clears the reading (sends `null`). Chip scales and palettes copied verbatim from `/app/frontend/src/components/checklist/PoolChecklistForm.jsx`.
+- `/app/mobile/src/components/checklist/PoolChecklistForm.tsx` — swapped the numeric-grid readings section for a stack of `<ReadingChipRow>` components; added a new `customerId` prop; added a `useEffect` that calls `GET /api/service-reports/last-readings?customer_id=…` once per customer and passes the per-key `{value,at}` into each row's `previous` prop. `updReading` now takes `number | null` directly (chip taps and the pencil popover both go through the same code path).
+- `/app/mobile/app/job/[id]/checklist.tsx` — now passes `customerId={job?.customer_id || null}` to `<PoolChecklistForm>`. Replaced the plain "Ready / Saving… / Saved" text with a rounded pill (`testID="checklist-autosave-pill"`), which switches colour per state (translucent white idle, brighter idle for `saving`, green for `saved`, red for `error`) and shows an Ionicons glyph next to the label. Legacy `checklist-save-state` testID retained inside the pill so any existing tests keep working.
+
+**Test IDs (mirror web verbatim):**
+- `pool-reading-{key}-slider` — card wrapper
+- `pool-reading-{key}-chip-{value}` — one per chip (values include `N/A`)
+- `pool-reading-{key}-edit` — pencil button
+- `pool-reading-{key}-input` — numeric input (both pencil-popover and non-chip fallback)
+- `pool-reading-{key}-previous` — "Previously tested at" line
+- `checklist-autosave-pill` — the new pill
+
+**Verification:**
+- `bash /app/scripts/preflight.sh` → `preflight OK` (exit 0). JSX/backend/mobile scans all pass; the pre-existing 135 advisory JS-identifier warnings are unchanged from prior phases.
+- `npx tsc --noEmit -p /app/mobile` produces zero new errors on the three touched files (only pre-existing project-wide `fontSize.xs` / role-comparison errors remain).
+- `esbuild transformSync` compiles all three files cleanly.
+
+**Not touched (per brief):** web files, backend, Recommendations card, Chemicals Added section, customer portal.
+
+**Blocking issues after change:** none.

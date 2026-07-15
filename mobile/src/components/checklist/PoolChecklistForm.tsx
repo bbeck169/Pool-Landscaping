@@ -25,9 +25,11 @@ import * as ImagePicker from "expo-image-picker";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import ReadingChipRow from "./ReadingChipRow";
 
 type Reading = {
   key?: string; name: string; unit?: string; value: number | string | null;
+  step?: number | string; min?: number; max?: number;
 };
 type ChemAdded = {
   id?: string; name: string; amount: string | number; unit: string;
@@ -40,6 +42,7 @@ type ChecklistItem = { id: string; label: string; checked: boolean; notes?: stri
 
 export type PoolChecklistFormProps = {
   jobId: string;
+  customerId?: string | null;
   locked: boolean;
   readings: Reading[];
   readingFields: any[];
@@ -58,7 +61,7 @@ export type PoolChecklistFormProps = {
 
 export default function PoolChecklistForm(props: PoolChecklistFormProps) {
   const {
-    jobId, locked, readings, chemicalsAdded, chemicalsCatalog, chemicalUnits,
+    jobId, customerId, locked, readings, chemicalsAdded, chemicalsCatalog, chemicalUnits,
     checklistItems, notes, onChange,
   } = props;
 
@@ -72,14 +75,23 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
     overall_assessment?: string | null;
   }>(null);
 
-  const updReading = (idx: number, val: string) => {
+  const updReading = (idx: number, val: number | null) => {
     const next = readings.map((r, i) =>
-      i === idx
-        ? { ...r, value: val === "" ? null : parseFloat(val) }
-        : r
+      i === idx ? { ...r, value: val } : r
     );
     onChange({ chemical_readings: next });
   };
+
+  // Phase 36b — previously-tested values per customer (parity with web).
+  const [lastReadings, setLastReadings] = useState<Record<string, { value: number | null; at?: string | null }>>({});
+  useEffect(() => {
+    if (!customerId) return;
+    let alive = true;
+    api.get(`/service-reports/last-readings?customer_id=${customerId}`)
+      .then((r: any) => { if (alive) setLastReadings(r?.readings || {}); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [customerId]);
 
   const addChem = () => {
     const next = [
@@ -198,26 +210,28 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
 
   return (
     <View testID="pool-checklist-form">
-      {/* Chemical Readings */}
+      {/* Chemical Readings — Phase 36b chip UI (parity with web) */}
       <Text style={styles.sectionTitle}>Chemical Readings</Text>
-      <View style={styles.grid}>
-        {readings.map((r, i) => (
-          <View key={r.key || r.name} style={styles.readingCell}>
-            <Text style={styles.readingLabel}>
-              {r.name}{r.unit ? ` (${r.unit})` : ""}
-            </Text>
-            <TextInput
-              keyboardType="decimal-pad"
-              editable={!locked}
-              value={r.value == null ? "" : String(r.value)}
-              onChangeText={(v) => updReading(i, v)}
-              style={styles.input}
-              placeholder="—"
-              placeholderTextColor={colors.muted}
-              testID={`pool-reading-${r.key || r.name}`}
+      <View>
+        {readings.map((r, i) => {
+          const key = (r.key || r.name) as string;
+          const prev = lastReadings[key];
+          return (
+            <ReadingChipRow
+              key={key}
+              readingKey={key}
+              label={r.name}
+              unit={r.unit}
+              value={r.value}
+              step={r.step}
+              min={r.min}
+              max={r.max}
+              locked={locked}
+              previous={prev || null}
+              onChange={(v) => updReading(i, v)}
             />
-          </View>
-        ))}
+          );
+        })}
       </View>
 
       {/* Phase 34d-follow-b — "Analyze water photo" button removed per user

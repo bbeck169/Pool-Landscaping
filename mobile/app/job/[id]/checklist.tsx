@@ -232,12 +232,32 @@ export default function JobChecklistScreen() {
           <Text style={styles.heroSub}>
             {job.customer_name || "—"} · {job.address || ""}
           </Text>
-          <Text style={styles.saveState} testID="checklist-save-state">
-            {saveState === "saving" ? "Saving…"
-             : saveState === "saved" ? "Saved"
-             : saveState === "error" ? "Save error — will retry"
-             : "Ready"}
-          </Text>
+          <View
+            testID="checklist-autosave-pill"
+            style={[
+              styles.autosavePill,
+              saveState === "saving" && styles.autosavePillSaving,
+              saveState === "saved" && styles.autosavePillSaved,
+              saveState === "error" && styles.autosavePillError,
+            ]}
+          >
+            <Ionicons
+              name={
+                saveState === "saving" ? "sync"
+                : saveState === "saved" ? "checkmark-circle"
+                : saveState === "error" ? "warning"
+                : "ellipse-outline"
+              }
+              size={11}
+              color="#FFFFFF"
+            />
+            <Text style={styles.autosavePillText} testID="checklist-save-state">
+              {saveState === "saving" ? "Saving…"
+               : saveState === "saved" ? "Saved"
+               : saveState === "error" ? "Save error — will retry"
+               : "Ready"}
+            </Text>
+          </View>
         </View>
 
         {/* Photos — always visible */}
@@ -257,6 +277,7 @@ export default function JobChecklistScreen() {
           {clientType === "pool" && (
             <PoolChecklistForm
               jobId={String(id)}
+              customerId={job?.customer_id || null}
               locked={locked}
               readings={report.chemical_readings || []}
               readingFields={report.chemical_reading_fields || []}
@@ -365,6 +386,25 @@ const styles = StyleSheet.create({
   saveState: {
     fontFamily: font.semibold, color: "#fff", opacity: 0.85,
     marginTop: 8, fontSize: fontSize.xs,
+  },
+  autosavePill: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: "rgba(255,255,255,0.20)",
+  },
+  autosavePillSaving: { backgroundColor: "rgba(255,255,255,0.30)" },
+  autosavePillSaved:  { backgroundColor: "rgba(22,163,74,0.90)" },
+  autosavePillError:  { backgroundColor: "rgba(220,38,38,0.90)" },
+  autosavePillText: {
+    fontFamily: font.bold,
+    fontSize: 11,
+    color: "#FFFFFF",
   },
   card: {
     backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
