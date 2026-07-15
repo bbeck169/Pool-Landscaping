@@ -2371,3 +2371,127 @@ future runs self-purge test-created telemetry (matches the existing
 - Any `data-testid` attributes for Step 2 UI (out of scope this pass).
 - Compound index on `workstream_events (tenant_id, created_at)` — add
   only if we start seeing >10k events/tenant.
+#### Phase 31 · Step 2a — Mobile checklist UI (Expo only) (Feb 15 2026)
+
+Mobile-only follow-up to Step 1. Tapping a job on the mobile Schedule
+(Grid or Calendar) now routes to `/job/{id}/checklist` — a template-typed
+form (pool / landscaping / generic) with autosave, photos, and a Close
+button that fires a `workstream.event` on submit.
+
+**Web (Step 2b) is deferred.** No web files touched. No backend files
+touched. No new endpoints — everything reuses the surface verified in
+Step 1 discovery.
+
+**Endpoints used (all pre-existing)**
+- `GET   /api/jobs/{id}`
+- `GET   /api/jobs/{id}/service-report`                    (bootstrap; auto-provisions)
+- `PATCH /api/jobs/{id}/service-report`                    (autosave, 800 ms debounce)
+- `POST  /api/jobs/{id}/service-report/submit`             (close)
+- `POST  /api/jobs/{id}/photos` + `DELETE …/photos/{pid}`  (PhotoUploader)
+- `POST  /api/service-report/analyze-water-photo`          (pool AI advisory)
+- `POST  /api/workstream/events`                           (Step-1 telemetry)
+
+**New route — `/app/mobile/app/job/[id]/checklist.tsx`**
+Loads job + service-report in parallel, resolves template via the
+shared `getChecklistType(job)` helper (`mobile/src/utils/checklistType.ts`),
+and mounts the matching form component. Autosave is a debounced 800 ms
+PATCH after any field change (silent unless it errors — save-state pill
+in the hero shows `Ready | Saving… | Saved | Save error — will retry`).
+
+Footer actions:
+- **Save draft** → explicit PATCH flush, then `Saved` alert.
+- **Close job** → confirm sheet → final PATCH → submit → workstream
+  event (`type: "job.completed"`, payload with `job_id`, `customer_name`,
+  `tech_name`, `service_type`, `chemicals_added_count`, `photos_count`,
+  `template`) → replace to `/(app)/schedule/calendar`. If the workstream
+  event fails, the close is NOT rolled back — a soft warning alert
+  surfaces the reason, per the brief.
+
+RBAC — checked client-side against `useAuth().user.role`: `admin`,
+`super_admin`, and `technician` see the checklist; anything else (e.g.
+customer) renders a padlock "Forbidden" state (customers are already
+redirected off the schedule tab in the outer layout, so this is a
+belt-and-suspenders guard).
+
+**New form components — `/app/mobile/src/components/checklist/`**
+- `PoolChecklistForm.tsx` — chemical readings (rendered from the
+  backend template's `chemical_reading_fields`, not hardcoded, so the
+  server's 10-reading default drives what shows up), chemicals-added
+  repeatable rows sourced from `chemicals_catalog`, grooming checklist,
+  notes textarea. Includes an "Analyze water photo" button that uploads
+  the image via `POST /api/jobs/{id}/photos` to obtain a URL, then calls
+  `POST /service-report/analyze-water-photo` and renders the returned
+  `overall_assessment` / `recommendations` / `issues`. Readings are
+  **not** auto-filled — the endpoint returns qualitative advice, not
+  numeric values, and silent auto-fill would be dishonest. `mocked:
+  true` payloads render the `reason` verbatim.
+- `LandscapingChecklistForm.tsx` — grooming checklist rendered from
+  `report.checklist_items` (backed by `LANDSCAPE_CHECKLIST_DEFAULT`).
+  Each item has an optional per-row notes field plus a job-level notes
+  textarea. Falls back to the brief's 8-item list only if the template
+  somehow ships empty.
+- `GenericChecklistForm.tsx` — "Work performed" + "Notes" textareas;
+  also renders any backend-supplied checklist items. Because the
+  service-report PATCH shape only accepts `notes` / `chemical_readings`
+  / `chemicals_added` / `checklist_items`, `work_performed` is folded
+  into `notes` with a `[Work Performed]` marker rather than inventing a
+  new field.
+- `PhotoUploader.tsx` — reusable component (`max`, defaults to 10).
+  Uses `expo-image-picker` (already in the project). Every add hits
+  `POST /api/jobs/{id}/photos`; delete hits the verified DELETE endpoint.
+  Base64 data-URL payloads, matching the existing
+  `service-report/[id].tsx` upload contract.
+
+**Tap-job wiring — `mobile/app/(app)/schedule/calendar.tsx`**
+Two one-line edits: both `onOpenJob` handlers (Grid + Calendar views)
+now push `/job/${id}/checklist` instead of `/job/${id}`. The read-only
+job detail page `/job/[id].tsx` is untouched and still reachable via
+deep-link.
+
+**Minor helper — `mobile/src/api.ts`**
+Added `api.patch(path, body)` — the existing client only exposed GET /
+POST / PUT / DELETE. No behavioural change to anything else; the new
+checklist screen is the only caller.
+
+**Files added (5)**
+- `mobile/app/job/[id]/checklist.tsx`
+- `mobile/src/components/checklist/PoolChecklistForm.tsx`
+- `mobile/src/components/checklist/LandscapingChecklistForm.tsx`
+- `mobile/src/components/checklist/GenericChecklistForm.tsx`
+- `mobile/src/components/checklist/PhotoUploader.tsx`
+
+**Files edited (2)**
+- `mobile/src/api.ts` — add `patch()` method.
+- `mobile/app/(app)/schedule/calendar.tsx` — retarget both `onOpenJob`
+  handlers to the new route.
+- `memory/HANDOFF.md` — this section.
+
+**Not touched (per hard rules)**
+- Web frontend, backend routers/schema, other mobile screens, customer
+  portal, RBAC matrix, seed data, `_layout.tsx` tab bar.
+
+**Verification**
+- `curl "http://localhost:3001/node_modules/expo-router/entry.bundle?platform=web"`
+  → HTTP 200, **11.2 MB**, zero `SyntaxError` / `UnableToResolve` frames.
+  All four new components + the shared resolver + the new route are
+  present in the bundle (`grep -c` = 12 / 10 / 10 / 12 / 4 respectively).
+- Backend regression: `test_phase31_checklist + test_phase30_schedule +
+  test_phase29c_rbac` = **22/22 passed** in 5.7 s (backend was not
+  touched — this is the smoke run per the brief).
+
+**Deferred to Phase 31 · Step 2b (web parity, still)**
+- Web checklist modal wired to the `/schedule` Grid + Calendar tap.
+- New `/workstream` web page (admin-only feed viewer over
+  `GET /api/workstream/events`).
+- `data-testid` attributes on any web-side Step 2b UI (mobile ones
+  above ship with `testID`s already).
+
+**Deferred to Phase 31 · Step 2c (nice-to-haves flagged)**
+- Chemical picker sheets on mobile (currently plain text inputs — the
+  existing service-report screen has picker sheets sourced from
+  `chemicals_catalog.amount_options`; the checklist screen intentionally
+  keeps its footprint small).
+- Compound Mongo index `workstream_events (tenant_id, created_at)` if
+  event volume grows past ~10k/tenant.
+- Optional native drag reorder on checklist items.
+

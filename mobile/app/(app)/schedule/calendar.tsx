@@ -311,7 +311,7 @@ export default function ScheduleCalendar() {
           moveDate={moveDate} setMoveDate={setMoveDate}
           onConfirmMove={bulkMove}
           busy={busy}
-          onOpenJob={(id) => router.push(`/job/${id}` as any)}
+          onOpenJob={(id) => router.push(`/job/${id}/checklist` as any)}
           onNewJob={() => router.push(`/job/new?date=${focusISO}` as any)}
           isAdmin={isAdmin}
         />
@@ -324,7 +324,7 @@ export default function ScheduleCalendar() {
           onToggleBH={() => setShowBH((v) => !v)}
           onPrev={() => setFocus((d) => addDays(d, -7))}
           onNext={() => setFocus((d) => addDays(d, 7))}
-          onOpenJob={(id) => router.push(`/job/${id}` as any)}
+          onOpenJob={(id) => router.push(`/job/${id}/checklist` as any)}
         />
       )}
     </View>
