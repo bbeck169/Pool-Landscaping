@@ -3563,3 +3563,129 @@ accounts.
   sidebar "Recent" strip in the shell layout, or the RBC toolbar's
   custom day-name headers. Cosmetic only — no functional impact.
 
+
+#### Phase 34b · Churn → Marketing bridge (Option A · minimum honest) (Feb 15 2026)
+
+Bridge shipped exactly to the Option A brief. Zero schema changes on
+`marketing_campaigns` — target customer ids live in a new side-table
+`retention_campaign_targets`.
+
+**Endpoint** — `POST /api/churn/create-retention-campaign`
+(new block at the tail of `backend/routers/churn.py`, lines 250-404).
+
+Body: `{ channel: email|sms|facebook|instagram (default "email"),
+min_risk_score: 0..100 (default 60), max_customers: >0 (default 100) }`.
+
+Flow:
+1. `customer_churn_scores` filtered `tenant_id + risk_score >= min`,
+   sorted DESC, capped at `max_customers`.
+2. Zero matches → early return
+   `{campaign_id:null, target_count:0, mocked:false,
+     reason:"no customers match threshold"}`. No campaign row is
+   created and no LLM call is made.
+3. Prompt hydrated per candidate — `{name, last_service_date,
+   risk_score, top_signals[:3]}` — via a compact JSON payload.
+4. LLM call reuses the Phase 32/33 fixed plumbing:
+   `LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
+   system_message=_RETENTION_LLM_SYSTEM)
+     .with_model("anthropic","claude-sonnet-4-6")
+     .with_params(max_tokens=1500)` — plain-text output, no JSON.
+   Tokens estimated `len(text)//4` (matches CFO convention).
+5. LLM error OR missing key → `mocked=true`, `reason="llm error: ..."`,
+   fallback goal string is populated and the campaign is STILL created
+   as a draft so an admin can edit before sending.
+6. Campaign creation via a **direct Python call** to
+   `routers.marketing_studio.create_campaign(...)` — never an HTTP
+   self-call. `CampaignIn(goal=text, audience="At-risk customers
+   (churn ≥ {threshold})", channels=[channel])`.
+7. Side-table row inserted into `retention_campaign_targets`:
+   `{id, tenant_id, campaign_id, customer_ids[], min_risk_score,
+     channel, actor_user_id, created_at}`. No index migration yet —
+   `(tenant_id, campaign_id)` compound index deferred to a follow-up
+   sweep (query volume is one-per-campaign so it is not on the hot
+   path yet — noted here for the next hardening pass).
+8. LLM counter bumped via existing `cfo._bump_llm_usage(tid, tokens)`
+   — only counter available today. A dedicated
+   `marketing_llm_usage` counter can swap in later without touching
+   the response contract.
+
+RBAC — `require_admin` (admin + super_admin only). Tech role → 403.
+
+Response — `{campaign_id, target_count, tokens_used, mocked, reason}`.
+
+**Frontend** — `frontend/src/pages/customer-success/ChurnPages.jsx`
+
+Button + modal wired to spec:
+- `churn-create-campaign-btn` — red pill, only rendered when the
+  current fetched churn list has ≥1 customer with `risk_score >= 60`.
+- Modal `churn-campaign-modal` — risk-score slider
+  (`churn-campaign-risk-slider`, 0–100, default 60), live-count
+  preview (`churn-campaign-count-preview`) via
+  `GET /api/churn/scores?min=<slider>`, channel selector
+  (`churn-campaign-channel`, default email), confirm + cancel
+  (`churn-campaign-confirm`, `churn-campaign-cancel`), error slot
+  (`churn-campaign-error`).
+- On success: success banner (`churn-campaign-success-banner`) with
+  mocked-reason chip (`churn-campaign-mocked-reason`) when applicable,
+  and an "Open editor" CTA (`churn-campaign-open-editor`) that
+  routes to `/marketing/campaigns/{campaign_id}` (the existing
+  Marketing Studio editor — untouched).
+
+**Tests** — `backend/tests/test_phase34b_retention_bridge.py`
+`6 passed` in 21.1 s (includes a live LLM call for the happy path):
+1. `test_threshold_filter_and_write` — seeds scores 85/65/40, POST
+   with `min=60, max=10` returns `target_count=2`, side-table
+   contains exactly the two `>=60` customer ids.
+2. `test_max_customers_cap` — `max=1` returns `target_count=1` and
+   the surviving customer id is the highest-risk (85).
+3. `test_zero_matches` — `min=99` returns
+   `{campaign_id:null, mocked:false, reason:"no customers match
+     threshold"}` with no side-table write and no LLM call.
+4. `test_llm_error_falls_back_but_still_creates` — patches
+   `emergentintegrations.llm.chat` to raise, then invokes the
+   coroutine directly (uvicorn worker doesn't see monkeypatch).
+   Asserts `mocked=true`, reason contains "llm error", a real
+   `campaign_id` is returned, and the campaign row's `goal`
+   contains "at-risk".
+5. `test_tech_forbidden` — tech token → 403.
+6. `test_tenant_isolation` — campaign created by aquaterra is NOT
+   visible in sunbelt's `/api/marketing/campaigns` list.
+
+**Files added (1)**
+- `backend/tests/test_phase34b_retention_bridge.py`
+
+**Files edited (2)**
+- `backend/routers/churn.py` — appended `RetentionCampaignBody`,
+  `create_retention_campaign` endpoint, and inline design notes.
+- `frontend/src/pages/customer-success/ChurnPages.jsx` — added
+  button visibility guard, modal, live preview fetch, confirm
+  POST, success banner, and `Open editor` navigation.
+- `memory/HANDOFF.md` — this section.
+
+**Not touched (per hard rules)**
+- `marketing_campaigns` schema — no `subject`, `body`,
+  `target_customer_ids` fields added. `CampaignIn` unchanged.
+- Mobile app — 0 diffs (retention bridge is a web-admin flow).
+- No new npm/pip dependencies.
+- Marketing Studio router — call surface untouched; we just import
+  `create_campaign` and `CampaignIn` and invoke as a Python call.
+- Churn cron / scoring pipeline — untouched.
+
+**Honest gaps flagged for a future pass**
+- `retention_campaign_targets` has no compound index yet (query
+  volume is low today; add `(tenant_id, campaign_id)` when it hits
+  the hot path).
+- The LLM counter is shared with CFO. Adding a
+  `marketing_llm_usage` counter is a one-line swap when needed.
+- `Open editor` navigation assumes the existing route
+  `/marketing/campaigns/{id}` — no new route was created.
+
+**Verification recap**
+- `pytest -x -q tests/test_phase34b_retention_bridge.py` →
+  **6/6 passed** in 21.1 s (includes 1 live LLM call).
+- Endpoint appears in the OpenAPI schema
+  (`/api/openapi.json` — `POST /api/churn/create-retention-campaign`).
+- Test IDs match the brief 1:1
+  (`churn-create-campaign-btn`, `churn-campaign-modal`, slider,
+   count-preview, channel, confirm, cancel, mocked-reason,
+   success-banner, open-editor).

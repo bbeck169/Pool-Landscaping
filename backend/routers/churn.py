@@ -246,3 +246,158 @@ async def scheduled_churn_scan_all():
                 await _analyze_and_store(t["id"], c["id"])
         except Exception as ex:
             logger.warning(f"Churn cron failed for {t['id']}: {ex}")
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 34b — Churn → Marketing Studio bridge (Option A · minimum honest)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Design notes (see also HANDOFF Phase 34b):
+#  * `customer_churn_scores.risk_score` is on the 0-100 scale (not 0-1).
+#  * No `analysis_id` primitive — we key on tenant + threshold.
+#  * We do NOT extend `CampaignIn` — target_customer_ids live in a new
+#    side-table `retention_campaign_targets`.
+#  * We call `create_campaign()` as a Python function, not via HTTP.
+#  * LLM usage bumps the shared `cfo_llm_usage` counter (only LLM counter
+#    we have — noted in HANDOFF that a dedicated marketing counter can
+#    replace this later).
+
+_RETENTION_LLM_SYSTEM = (
+    "You are the retention marketer for a US pool & landscaping company. "
+    "Write a single warm, professional retention pitch paragraph (≤200 words) "
+    "that a service manager could send to at-risk customers. Reference the "
+    "customers' last service dates and top churn signals from the provided "
+    "list. Do not use exclamation marks. Do not promise unrealistic discounts. "
+    "Return plain text only, no JSON, no markdown headings."
+)
+
+
+class RetentionCampaignBody(BaseModel):
+    channel: str = "email"
+    min_risk_score: int = 60
+    max_customers: int = 100
+
+
+@router.post("/churn/create-retention-campaign")
+async def create_retention_campaign(
+    body: RetentionCampaignBody,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    if body.channel not in ("email", "sms", "facebook", "instagram"):
+        raise HTTPException(422, "invalid channel")
+    if not (0 <= body.min_risk_score <= 100):
+        raise HTTPException(422, "min_risk_score must be 0..100")
+    if body.max_customers <= 0:
+        raise HTTPException(422, "max_customers must be > 0")
+
+    tid = tenant["id"]
+
+    # 1) Candidates — risk_score DESC, capped.
+    cur = db.customer_churn_scores.find(
+        {"tenant_id": tid, "risk_score": {"$gte": body.min_risk_score}},
+        {"_id": 0, "customer_id": 1, "risk_score": 1, "top_signals": 1,
+          "signals_snapshot": 1, "tier": 1},
+    ).sort("risk_score", -1).limit(body.max_customers)
+    candidates = await cur.to_list(body.max_customers)
+
+    # 2) Zero-match short-circuit.
+    if not candidates:
+        return {"campaign_id": None, "target_count": 0, "tokens_used": 0,
+                 "mocked": False, "reason": "no customers match threshold"}
+
+    # 3) LLM prompt — hydrate names + last service.
+    prompt_rows: List[Dict[str, Any]] = []
+    customer_ids: List[str] = []
+    for c in candidates:
+        cid = c["customer_id"]
+        customer_ids.append(cid)
+        cust = await db.customers.find_one(
+            {"id": cid, "tenant_id": tid},
+            {"_id": 0, "name": 1, "last_service_date": 1},
+        ) or {}
+        prompt_rows.append({
+            "name": cust.get("name") or "Customer",
+            "last_service_date": (
+                cust.get("last_service_date")
+                or (c.get("signals_snapshot") or {}).get("last_service_date")
+                or "unknown"
+            ),
+            "risk_score": c.get("risk_score"),
+            "top_signals": (c.get("top_signals") or [])[:3],
+        })
+
+    prompt = (
+        f"Draft a retention pitch for these {len(prompt_rows)} at-risk "
+        f"customers (channel: {body.channel}):\n"
+        + json.dumps(prompt_rows, ensure_ascii=False, default=str)
+    )
+
+    # 4) LLM call — reuse the Phase 32/33 fixed pattern.
+    text, err, tokens = None, None, 0
+    if EMERGENT_LLM_KEY:
+        try:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage
+            chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
+                             system_message=_RETENTION_LLM_SYSTEM)
+                    .with_model("anthropic", "claude-sonnet-4-6")
+                    .with_params(max_tokens=1500))
+            raw = await chat.send_message(UserMessage(text=prompt))
+            text = raw if isinstance(raw, str) else str(raw)
+            tokens = int(len(text) / 4)
+        except Exception as e:
+            logger.warning(f"Retention LLM failed: {e}")
+            err = f"llm error: {e}"
+    else:
+        err = "EMERGENT_LLM_KEY not configured"
+
+    # 5) Fallback template on error — draft still lands so admin can edit.
+    mocked = bool(err) or not text
+    if mocked:
+        text = (
+            f"Send a personalized retention offer to {len(prompt_rows)} "
+            f"at-risk customers whose churn risk is ≥ {body.min_risk_score}. "
+            f"Reference their last service date and offer a same-week "
+            f"re-engagement visit at a small courtesy discount. Sign off with "
+            f"a direct dispatcher phone number."
+        )
+
+    # 6) Create the campaign via the Marketing Studio router (Python call).
+    from routers.marketing_studio import create_campaign as _create_campaign
+    from routers.marketing_studio import CampaignIn as _CampaignIn
+    audience = f"At-risk customers (churn ≥ {body.min_risk_score})"
+    campaign = await _create_campaign(
+        body=_CampaignIn(goal=text.strip(), audience=audience,
+                          channels=[body.channel]),
+        admin=user, tenant=tenant,
+    )
+    campaign_id = campaign["id"]
+
+    # 7) Side-table — target_customer_ids never touch marketing_campaigns.
+    await db.retention_campaign_targets.insert_one({
+        "id": new_id(),
+        "tenant_id": tid,
+        "campaign_id": campaign_id,
+        "customer_ids": customer_ids,
+        "min_risk_score": body.min_risk_score,
+        "channel": body.channel,
+        "actor_user_id": user["id"],
+        "created_at": now_iso(),
+    })
+
+    # 8) Bump the shared LLM counter. If a marketing-specific counter is
+    #    added later, swap it in — the counter is opaque to the response.
+    if tokens > 0 or not mocked:
+        try:
+            from routers.cfo import _bump_llm_usage
+            await _bump_llm_usage(tid, tokens)
+        except Exception as ex:
+            logger.warning(f"cfo_llm_usage bump failed (non-fatal): {ex}")
+
+    return {
+        "campaign_id": campaign_id,
+        "target_count": len(customer_ids),
+        "tokens_used": tokens,
+        "mocked": mocked,
+        "reason": err,
+    }
+

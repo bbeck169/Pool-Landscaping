@@ -27,6 +27,13 @@ export default function ChurnDashboard() {
   const [running, setRunning] = useState(false);
   const [msg, setMsg] = useState("");
   const [detail, setDetail] = useState(null);
+  // Phase 34b — Churn → Marketing Studio retention bridge state.
+  const [campaignOpen, setCampaignOpen] = useState(false);
+  const [campaignThreshold, setCampaignThreshold] = useState(60);
+  const [campaignChannel, setCampaignChannel] = useState("email");
+  const [campaignBusy, setCampaignBusy] = useState(false);
+  const [campaignSuccess, setCampaignSuccess] = useState(null);
+  const [campaignErr, setCampaignErr] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -79,6 +86,16 @@ export default function ChurnDashboard() {
                 data-testid="churn-run-all">
           <Play size={12} /> {running ? "Scoring…" : "Rescore all"}
         </button>
+        {(data?.items || []).some((r) => (r.risk_score || 0) >= 60) ? (
+          <button
+            onClick={() => setCampaignOpen(true)}
+            className="px-3 py-2 text-sm font-bold rounded-xl flex items-center gap-1"
+            style={{ backgroundColor: "#DC2626", color: "#fff" }}
+            data-testid="churn-create-campaign-btn"
+          >
+            <Sparkles size={12} /> Create Retention Campaign
+          </button>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
@@ -209,6 +226,151 @@ export default function ChurnDashboard() {
                 {(detail.recommended_actions || []).map((s, i) =>
                   <li key={i}>{s}</li>)}
               </ul>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {campaignSuccess ? (
+        <div
+          className="rounded-xl p-3 mb-3 text-sm flex items-center gap-2"
+          style={{
+            background: campaignSuccess.mocked ? "#FEF3C7" : "#D1FAE5",
+            color:      campaignSuccess.mocked ? "#B45309" : "#065F46",
+            border: `1px solid ${campaignSuccess.mocked ? "#B45309" : "#059669"}`,
+          }}
+          data-testid="churn-campaign-success-banner"
+        >
+          <Sparkles size={14} />
+          <span style={{ flex: 1 }}>
+            Draft created for {campaignSuccess.target_count} at-risk customer(s).
+            {campaignSuccess.mocked ? (
+              <>
+                {" "}<b>Note:</b> LLM unavailable — used fallback template.
+                <span data-testid="churn-campaign-mocked-reason">
+                  {" "}({campaignSuccess.reason})
+                </span>
+              </>
+            ) : (
+              " Retention pitch pre-filled in Goal field. Personalize before sending."
+            )}
+          </span>
+          <button
+            onClick={() => nav(`/marketing/campaigns/${campaignSuccess.campaign_id}`)}
+            className="px-2 py-1 rounded-md text-xs font-bold"
+            style={{ background: "#DC2626", color: "#fff", border: 0, cursor: "pointer" }}
+            data-testid="churn-campaign-open-editor"
+          >
+            Open in Marketing Studio
+          </button>
+        </div>
+      ) : null}
+
+      {campaignOpen ? (
+        <div
+          onClick={() => !campaignBusy && setCampaignOpen(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 60,
+                    background: "rgba(15,23,42,0.55)",
+                    display: "flex", alignItems: "center", justifyContent: "center" }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: "#fff", borderRadius: 12,
+                      width: "min(480px, 96vw)", padding: 20,
+                      boxShadow: "0 20px 60px rgba(0,0,0,0.35)" }}
+            data-testid="churn-campaign-modal"
+          >
+            <div className="text-lg font-bold mb-2" style={{ color: colors.onSurface }}>
+              Create Retention Campaign
+            </div>
+            <div className="text-xs mb-4" style={{ color: colors.muted }}>
+              Claude drafts a warm retention pitch and lands a campaign in
+              Marketing Studio. You can edit before sending.
+            </div>
+
+            <label className="text-[10px] font-bold uppercase tracking-wider"
+                    style={{ color: colors.muted }}>
+              Minimum risk score: <b style={{ color: colors.onSurface }}>{campaignThreshold}</b>
+            </label>
+            <input
+              type="range" min={0} max={100} value={campaignThreshold}
+              onChange={(e) => setCampaignThreshold(Number(e.target.value))}
+              className="w-full my-2"
+              disabled={campaignBusy}
+              data-testid="churn-campaign-risk-slider"
+            />
+            <div className="text-xs mb-3" data-testid="churn-campaign-count-preview"
+                  style={{ color: colors.muted }}>
+              Matches: <b style={{ color: colors.onSurface }}>
+                {(data?.items || []).filter((r) => (r.risk_score || 0) >= campaignThreshold).length}
+              </b> customer(s)
+            </div>
+
+            <label className="text-[10px] font-bold uppercase tracking-wider"
+                    style={{ color: colors.muted }}>Channel</label>
+            <select
+              value={campaignChannel}
+              onChange={(e) => setCampaignChannel(e.target.value)}
+              disabled={campaignBusy}
+              className="w-full px-2 py-1.5 rounded-md text-sm mt-1 mb-3"
+              style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
+              data-testid="churn-campaign-channel"
+            >
+              <option value="email">Email</option>
+              <option value="sms">SMS</option>
+              <option value="facebook">Facebook</option>
+              <option value="instagram">Instagram</option>
+            </select>
+
+            {campaignErr ? (
+              <div className="text-xs px-2 py-2 rounded mb-3"
+                    style={{ background: "#FEE2E2", color: "#991B1B" }}
+                    data-testid="churn-campaign-error">{campaignErr}</div>
+            ) : null}
+
+            <div className="flex items-center gap-2 mt-2">
+              <div style={{ flex: 1 }} />
+              <button
+                onClick={() => setCampaignOpen(false)}
+                disabled={campaignBusy}
+                className="px-3 py-1.5 rounded-md text-sm font-semibold"
+                style={{ background: "#fff", border: `1px solid ${colors.border}`,
+                          cursor: "pointer" }}
+                data-testid="churn-campaign-cancel"
+              >Cancel</button>
+              <button
+                onClick={async () => {
+                  setCampaignBusy(true); setCampaignErr("");
+                  try {
+                    const r = await api.post("/churn/create-retention-campaign", {
+                      channel: campaignChannel,
+                      min_risk_score: campaignThreshold,
+                      max_customers: 100,
+                    });
+                    if (!r.campaign_id) {
+                      setCampaignErr(r.reason || "No customers matched threshold.");
+                      return;
+                    }
+                    setCampaignSuccess(r);
+                    setCampaignOpen(false);
+                    // Navigate — even on mocked=true the campaign was created.
+                    setTimeout(() => {
+                      nav(`/marketing/campaigns/${r.campaign_id}`);
+                    }, r.mocked ? 3500 : 800);
+                  } catch (e) {
+                    setCampaignErr(e?.message || "Failed to create campaign.");
+                  } finally { setCampaignBusy(false); }
+                }}
+                disabled={campaignBusy ||
+                  (data?.items || []).filter((r) => (r.risk_score || 0) >= campaignThreshold).length === 0}
+                className="px-3 py-1.5 rounded-md text-sm font-bold"
+                style={{ background: "#DC2626", color: "#fff", border: 0,
+                          cursor: campaignBusy ? "wait" : "pointer",
+                          opacity: campaignBusy ? 0.6 : 1 }}
+                data-testid="churn-campaign-confirm"
+              >
+                {campaignBusy ? "Drafting…" : "Create draft"}
+              </button>
             </div>
           </div>
         </div>
