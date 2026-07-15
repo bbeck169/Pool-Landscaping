@@ -427,3 +427,184 @@ async def export_invoices(user: dict = Depends(require_admin),
     if start or end:
         rows = [r for r in rows if _in_range(r.get("created_at"), start, end)]
     return {"filename": "invoices.csv", "content": _to_csv(rows, INVOICE_COLS), "count": len(rows)}
+
+
+# ─── Phase 34g · Customer Retention Report ───────────────────────────────────
+def _bucket_month(dt: datetime) -> tuple[str, str, str]:
+    """Return (label='YYYY-MM', start_iso='YYYY-MM-01', end_exclusive_iso)."""
+    from calendar import monthrange
+    y, m = dt.year, dt.month
+    _, last = monthrange(y, m)
+    ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+    return (f"{y:04d}-{m:02d}", f"{y:04d}-{m:02d}-01", f"{ny:04d}-{nm:02d}-01")
+
+
+def _bucket_week(dt: datetime) -> tuple[str, str, str]:
+    """ISO week bucket. Monday-start. Label 'YYYY-Www'."""
+    monday = dt - timedelta(days=dt.weekday())
+    monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = monday + timedelta(days=7)
+    year, week, _ = monday.isocalendar()
+    return (f"{year:04d}-W{week:02d}",
+            monday.strftime("%Y-%m-%d"),
+            end.strftime("%Y-%m-%d"))
+
+
+def _bucket_year(dt: datetime) -> tuple[str, str, str]:
+    y = dt.year
+    return (f"{y:04d}", f"{y:04d}-01-01", f"{y + 1:04d}-01-01")
+
+
+def _generate_buckets(period: str, start_dt: datetime, end_dt: datetime) -> list[dict]:
+    """Return chronologically-ordered buckets covering [start_dt, end_dt]."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    if period == "week":
+        cur = start_dt
+        step = timedelta(days=7)
+    elif period == "year":
+        cur = start_dt.replace(month=1, day=1)
+        step = None  # year uses replace
+    else:  # month (default)
+        cur = start_dt.replace(day=1)
+        step = None
+    guard = 0
+    while cur < end_dt and guard < 400:
+        guard += 1
+        if period == "week":
+            label, s, e = _bucket_week(cur)
+        elif period == "year":
+            label, s, e = _bucket_year(cur)
+        else:
+            label, s, e = _bucket_month(cur)
+        if label not in seen:
+            out.append({"label": label, "start": s, "end": e})
+            seen.add(label)
+        # advance
+        if period == "week":
+            cur = cur + step
+        elif period == "year":
+            cur = cur.replace(year=cur.year + 1)
+        else:  # month
+            cur = (cur.replace(day=28) + timedelta(days=5)).replace(day=1)
+    return out
+
+
+async def _count_gained(tenant_id: str, s: str, e: str) -> int:
+    """Customers created in [s, e). `created_at` is stored as ISO strings."""
+    n = await db.customers.count_documents({
+        "tenant_id": tenant_id,
+        "created_at": {"$gte": s, "$lt": e},
+    })
+    return int(n)
+
+
+async def _count_lost(tenant_id: str, s: str, e: str) -> int:
+    """Deactivation events (active→inactive) in [s, e)."""
+    n = await db.customer_activation_events.count_documents({
+        "tenant_id": tenant_id,
+        "to_status": "inactive",
+        "changed_at": {"$gte": s, "$lt": e},
+    })
+    return int(n)
+
+
+async def _totals_for_range(tenant_id: str, s: str, e: str) -> dict:
+    g = await _count_gained(tenant_id, s, e)
+    l = await _count_lost(tenant_id, s, e)
+    return {"gained": g, "lost": l, "net": g - l}
+
+
+def _pct_change(cur: int, prev: int) -> Optional[float]:
+    if prev == 0:
+        return None if cur == 0 else 100.0  # arbitrary — flagged as N/A in UI
+    return round(((cur - prev) / abs(prev)) * 100.0, 2)
+
+
+async def _has_history_before(tenant_id: str, before_iso: str) -> bool:
+    """Cheap probe: does this tenant have a customer created > 1 year before
+    the current window's start? If not, YoY is meaningless."""
+    n = await db.customers.count_documents({
+        "tenant_id": tenant_id,
+        "created_at": {"$lt": before_iso},
+    }, limit=1)
+    return n > 0
+
+
+@router.get("/reports/customer-retention")
+async def customer_retention_report(
+    user: dict = Depends(require_admin),
+    period: str = Query("month"),
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+):
+    if period not in ("week", "month", "year"):
+        raise HTTPException(400, "period must be week|month|year")
+    tenant_id = user["tenant_id"]
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Default windows.
+    if not end:
+        end_dt = today + timedelta(days=1)  # inclusive-of-today
+    else:
+        end_dt = datetime.fromisoformat(end + "T00:00:00").replace(tzinfo=timezone.utc)
+    if not start:
+        if period == "week":
+            start_dt = end_dt - timedelta(weeks=52)
+        elif period == "year":
+            start_dt = end_dt.replace(year=end_dt.year - 4, month=1, day=1)
+        else:  # month
+            start_dt = (end_dt - timedelta(days=365)).replace(day=1)
+    else:
+        start_dt = datetime.fromisoformat(start + "T00:00:00").replace(tzinfo=timezone.utc)
+
+    buckets_meta = _generate_buckets(period, start_dt, end_dt)
+    buckets: list[dict] = []
+    for b in buckets_meta:
+        t = await _totals_for_range(tenant_id, b["start"], b["end"])
+        buckets.append({**b, **t})
+
+    totals = {
+        "gained": sum(b["gained"] for b in buckets),
+        "lost":   sum(b["lost"]   for b in buckets),
+        "net":    sum(b["net"]    for b in buckets),
+    }
+
+    # YoY block — same window shifted back 1 year.
+    prev_start = start_dt.replace(year=start_dt.year - 1)
+    prev_end   = end_dt.replace(year=end_dt.year - 1)
+    has_history = await _has_history_before(tenant_id, prev_start.strftime("%Y-%m-%d"))
+    if not has_history:
+        yoy = {
+            "current_totals": totals,
+            "previous_totals": None,
+            "gained_pct_change": None,
+            "lost_pct_change": None,
+            "net_pct_change": None,
+            "mocked": True,
+            "reason": "insufficient history for YoY",
+        }
+    else:
+        prev_totals = await _totals_for_range(
+            tenant_id,
+            prev_start.strftime("%Y-%m-%d"),
+            prev_end.strftime("%Y-%m-%d"),
+        )
+        yoy = {
+            "current_totals": totals,
+            "previous_totals": prev_totals,
+            "gained_pct_change": _pct_change(totals["gained"], prev_totals["gained"]),
+            "lost_pct_change":   _pct_change(totals["lost"],   prev_totals["lost"]),
+            "net_pct_change":    _pct_change(totals["net"],    prev_totals["net"]),
+            "mocked": False,
+            "reason": None,
+        }
+
+    return {
+        "period": period,
+        "start": start_dt.strftime("%Y-%m-%d"),
+        "end":   end_dt.strftime("%Y-%m-%d"),
+        "buckets": buckets,
+        "totals": totals,
+        "yoy": yoy,
+    }

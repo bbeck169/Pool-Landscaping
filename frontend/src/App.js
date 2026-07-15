@@ -88,6 +88,7 @@ import OpsHub from "@/pages/ops/OpsHub";
 import ReportsHub from "@/pages/reports/ReportsHub";
 import BusinessSummary from "@/pages/reports/BusinessSummary";
 import Forecast from "@/pages/reports/Forecast";
+import CustomerRetentionReport from "@/pages/reports/CustomerRetentionReport";
 import IncomeByCategory from "@/pages/reports/IncomeByCategoryPage";
 import {
   RevenueByCity, RevenueByCrew, RevenueByCustomer, GrossSales, InvoicedItems,
@@ -328,6 +329,7 @@ export default function App() {
             <Route path="reports" element={<AdminOnly><ReportsHub /></AdminOnly>} />
             <Route path="reports/business-summary" element={<AdminOnly><BusinessSummary /></AdminOnly>} />
             <Route path="reports/forecast" element={<AdminOnly><Forecast /></AdminOnly>} />
+            <Route path="reports/customer-retention" element={<AdminOnly><CustomerRetentionReport /></AdminOnly>} />
             <Route path="reports/revenue-by-city" element={<AdminOnly><RevenueByCity /></AdminOnly>} />
             <Route path="reports/revenue-by-crew" element={<AdminOnly><RevenueByCrew /></AdminOnly>} />
             <Route path="reports/revenue-by-customer" element={<AdminOnly><RevenueByCustomer /></AdminOnly>} />

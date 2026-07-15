@@ -205,6 +205,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/analytics",                   label: "Analytics",         icon: TrendingUp, feature: "reports" },
     { to: "/reports/business-summary",    label: "Business Summary",  icon: PieChart,  feature: "reports" },
     { to: "/reports/forecast",            label: "Forecast",          icon: TrendingUp, feature: "reports" },
+    { to: "/reports/customer-retention",  label: "Customer Retention",icon: Users,      feature: "reports" },
     { to: "/reports/revenue-slices",      label: "Revenue Slices",    icon: PieChart,  feature: "reports" },
     { to: "/access-history",              label: "Access History",    icon: ScrollText, feature: "audit_logs" },
   ]},

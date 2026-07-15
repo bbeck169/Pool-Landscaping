@@ -4228,3 +4228,128 @@ becomes a `subsection` under one of the six.
   study asks for it.
 - `KEYBOARD_SHORTCUTS` and `SHORTCUT_TARGETS` maps kept
   verbatim — every shortcut target route still exists.
+
+#### Phase 34g · Customer Retention Report (Feb 15 2026)
+
+Consumes existing signals: `customers.created_at` for **gained**,
+`customer_activation_events` (Phase 34f writer) for **lost**. Zero
+new tracking events. Zero mobile diff (web-first admin report).
+
+**Backend — `backend/routers/reports.py`** (append block at tail)
+- `GET /api/reports/customer-retention?period=week|month|year&start=&end=`
+  gated by `require_admin` → admin + super_admin only.
+- Period-aware bucketing: `_bucket_week()` (ISO week, Monday-start,
+  label `YYYY-Www`), `_bucket_month()` (`YYYY-MM`), `_bucket_year()`
+  (`YYYY`). `_generate_buckets()` walks from start_dt → end_dt with
+  a 400-iteration guard to avoid runaway loops on bad inputs.
+- Counts via `db.customers.count_documents({tenant_id, created_at:
+  {$gte, $lt}})` for gained, and `db.customer_activation_events.
+  count_documents({tenant_id, to_status: "inactive", changed_at:
+  {$gte, $lt}})` for lost.
+- YoY block: same window shifted back 1 year. If the tenant has zero
+  customers with `created_at < prev_start`, `yoy.mocked=true,
+  reason="insufficient history for YoY"` and `previous_totals=null`.
+  Otherwise a live `_totals_for_range()` on the prior window with
+  `_pct_change()` deltas. Divide-by-zero → `null` (rendered as "—"
+  in the UI).
+- Default windows: week → 52 weeks back, month → 12 months back,
+  year → 5 calendar years back.
+- Tenant scoping: `user["tenant_id"]` used everywhere; no cross-tenant
+  read possible.
+
+**Web — `frontend/src/pages/reports/CustomerRetentionReport.jsx`** (new)
+Route `/reports/customer-retention` wrapped in `<AdminOnly>` in
+`App.js`. Layout:
+- Header + "← Reports Hub" back link + Refresh button.
+- Period pill row (`retention-period-week/-month/-year`, testids).
+- Date-range inputs + Apply (`retention-start-input`,
+  `retention-end-input`, `retention-apply-range`).
+- YoY-mocked banner (`retention-yoy-mocked-note`) — only rendered
+  when `yoy.mocked === true`.
+- 4 KPI tiles (`retention-kpi-gained/-lost/-net/-yoy`) with tone
+  colouring (green ≥ 0, red < 0) and YoY sub-text.
+- Grouped bar chart via `recharts.BarChart` — Gained (`#16A34A`) vs
+  Lost (`#DC2626`) per bucket. Testid `retention-bar-chart`.
+- Net-over-time line chart. Testid `retention-line-chart`.
+- Bucket table (`retention-table`, rows `retention-table-row`) with
+  a CSV export button (`retention-csv-export`) that generates a
+  client-side Blob from the same buckets — no extra backend hop.
+
+**Nav — `frontend/src/nav/adminNav.js`**
+- New entry under the Phase-35 `Reports` category:
+  `{ to: "/reports/customer-retention", label: "Customer Retention",
+     icon: Users, feature: "reports" }`.
+- Placed between `Forecast` and `Revenue Slices` to keep the natural
+  reading order (revenue → forecast → retention → slices).
+- `feature: "reports"` gate = same as every other Reports entry;
+  RBAC pipeline in `AdminSidebar.jsx` handles admin/super_admin
+  gating unchanged.
+
+**Route — `frontend/src/App.js`**
+- Added import + `Route path="reports/customer-retention"
+  element={<AdminOnly><CustomerRetentionReport /></AdminOnly>}`.
+
+**Tests — `backend/tests/test_phase34g_retention_report.py`**
+`8 passed` in 4.5 s:
+1. `test_endpoint_basic_shape` — response contract shape.
+2. `test_gained_and_lost_counts` — seeds 3 gained + 2 lost, verifies
+   the current-month bucket AND the totals-diff both reflect
+   +3/+2. Uses a before/after diff so the test is idempotent even
+   with pre-existing tenant data.
+3. `test_period_week` — 50-54 weekly buckets in the default window,
+   all labelled `YYYY-Www`.
+4. `test_period_year` — 4-6 yearly buckets in the default window.
+5. `test_yoy_mocked_when_no_history` — 1990 window forces
+   `yoy.mocked=True`, `reason` contains "insufficient history",
+   `previous_totals=None`.
+6. `test_yoy_shape_is_valid` — both branches of the YoY dict are
+   structurally valid (mocked→None+reason; not-mocked→dict).
+7. `test_invalid_period` — `?period=fortnight` → 400.
+8. `test_tech_forbidden` — tech token → 403.
+
+Full 34* regression: `pytest -x -q tests/test_phase34d_pool_gallons.py
+tests/test_phase34f_customer_active.py
+tests/test_phase34g_retention_report.py` → **34/34 passed** in ~15 s.
+
+**Live verification**
+Screenshot `/tmp/phase34g_retention_report.png` — logged in as
+`admin@aquaterra.com`, navigated to `/reports/customer-retention`:
+- 13 bucket rows in the table (12 months + current).
+- Gained=6, Lost=27, Net=-21 for the default month window (live
+  aquaterra data).
+- YoY banner rendered honestly because the tenant lacks 24+ months
+  of customer history.
+- 11/11 target testids resolved.
+- Bar chart + line chart both render with recharts tooltips.
+- CSV export button enabled, click generates
+  `customer-retention-month-<start>-<end>.csv`.
+- Sidebar `Recent` strip shows the new "Customer Retention" entry
+  after visit (proves nav wiring + RBAC gate resolved).
+
+**Files added (2)**
+- `frontend/src/pages/reports/CustomerRetentionReport.jsx`
+- `backend/tests/test_phase34g_retention_report.py`
+
+**Files edited (3)**
+- `backend/routers/reports.py` — appended retention endpoint + helpers.
+- `frontend/src/App.js` — import + route wired.
+- `frontend/src/nav/adminNav.js` — nav entry under Reports category.
+- `memory/HANDOFF.md` — this section.
+
+**Not touched (per hard rules)**
+- Mobile — out of scope for this phase.
+- Job/customer schemas — no new fields.
+- No new tracking events — reuses `customer_activation_events` from
+  Phase 34f + `customers.created_at`.
+- No new integrations, no new libraries (recharts already in place).
+
+**Honest gaps flagged**
+- Drill-down (click bucket → see customer list) — deferred per
+  brief's out-of-scope list.
+- Automatic email delivery of the report — deferred.
+- Divide-by-zero on `_pct_change` returns `null`, rendered as "—"
+  in the UI. If a stakeholder wants "+∞%" or "N/A" instead, it's
+  a one-liner change in the JSX.
+- The current YoY test intentionally accepts BOTH branches
+  (mocked or real) because seeding a 2-year-old customer would
+  require direct DB writes we chose to avoid.
