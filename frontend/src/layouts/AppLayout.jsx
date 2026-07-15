@@ -275,7 +275,9 @@ function AppLayout() {
   const { previewRole, setPreviewRole, isPreviewing, effectiveRole } = usePermissions();
   const nav = (() => {
     const r = effectiveRole || user.role;
-    return r === "admin" ? ADMIN_NAV : r === "technician" ? TECH_NAV : CUSTOMER_NAV;
+    if (r === "admin" || r === "super_admin") return ADMIN_NAV;
+    if (r === "technician") return TECH_NAV;
+    return CUSTOMER_NAV;
   })();
   const roleLabel = (effectiveRole || user.role).charAt(0).toUpperCase() + (effectiveRole || user.role).slice(1);
 
@@ -292,7 +294,7 @@ function AppLayout() {
     >
       {/* Impersonation banner (Phase 4 partial fold-in) */}
       {/* Phase 15B — first-login onboarding modal (admin only, sessionStorage-guarded) */}
-      {(effectiveRole || user.role) === "admin" ? <OnboardingLoginModal /> : null}
+      {(effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin" ? <OnboardingLoginModal /> : null}
       {impersonating ? (
         <div
           className="fixed top-0 left-0 right-0 z-50 px-4 py-2 flex items-center justify-between text-sm font-semibold"
@@ -362,7 +364,7 @@ function AppLayout() {
         </div>
 
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto" data-testid="admin-sidebar-scroll">
-          {(effectiveRole || user.role) === "admin" ? (
+          {((effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin") ? (
             <AdminSidebar />
           ) : nav.map((item, idx) => {
             if (item.group) {
@@ -440,7 +442,7 @@ function AppLayout() {
           }}
         >
           <div className="flex items-center gap-2">
-            {(effectiveRole || user.role) === "admin" && (
+            {((effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin") && (
               <button
                 onClick={() => setDrawerOpen(true)}
                 className="w-9 h-9 rounded-lg flex items-center justify-center"
@@ -488,7 +490,7 @@ function AppLayout() {
         </header>
 
         {/* Mobile slide-out drawer (admin only) */}
-        {(effectiveRole || user.role) === "admin" && drawerOpen && (
+        {((effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin") && drawerOpen && (
           <div
             className="fixed inset-0 z-50 md:hidden"
             data-testid="mobile-nav-drawer"

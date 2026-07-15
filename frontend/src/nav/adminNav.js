@@ -21,6 +21,7 @@ import {
 export const ADMIN_NAV_V2 = [
   { key: "overview", label: "Overview", icon: LayoutDashboard, entries: [
     { to: "/", label: "Dashboard", icon: LayoutDashboard, feature: "dashboard" },
+    { to: "/tech/card", label: "My Business Card", icon: IdCard, feature: "dashboard" },
   ]},
 
   { key: "work", label: "Work", icon: Briefcase, entries: [

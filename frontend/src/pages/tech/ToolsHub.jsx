@@ -16,7 +16,6 @@ import {
   ClipboardList, Trophy, IdCard,
   UserCircle, MapPin,
 } from "lucide-react";
-
 const TECH_SECTIONS = [
   {
     key: "daily",
@@ -45,6 +44,7 @@ const TECH_SECTIONS = [
     tiles: [
       { key: "onboarding", icon: ClipboardList, label: "My Onboarding", desc: "Checklist steps assigned to me", to: "/onboarding/mine" },
       { key: "d2d-leaderboard", icon: Trophy, label: "D2D Leaderboard", desc: "See where your knocks rank", to: "/d2d/leaderboard" },
+      { key: "business-card", icon: IdCard, label: "Business Card", desc: "Your NFC-ready digital card & .vcf", to: "/tech/card" },
     ],
   },
   {
@@ -61,6 +61,7 @@ const ADMIN_SECTIONS = [
     key: "adm-tools",
     title: "Tools",
     tiles: [
+      { key: "business-card", icon: IdCard, label: "My Business Card", desc: "NFC-ready digital card & .vcf", to: "/tech/card" },
       { key: "estimator", icon: Calculator, label: "Field Estimator", desc: "Build a quote on-site", to: "/estimator" },
       { key: "property-lookup", icon: HomeIcon, label: "Property Lookup", desc: "Owner + lot size search", to: "/property-lookup" },
       { key: "inventory", icon: Boxes, label: "Inventory", desc: "Stock & purchase orders", to: "/admin/inventory" },

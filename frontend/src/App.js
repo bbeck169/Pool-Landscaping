@@ -124,6 +124,7 @@ import TodaySchedule from "@/pages/schedule/TodaySchedule";
 import { TechHuddlePage, TechTimeClockPage } from "@/pages/tech/TechPages";
 import ServiceReport from "@/pages/tech/ServiceReport";
 import ToolsHub from "@/pages/tech/ToolsHub";
+import BusinessCard from "@/pages/tech/BusinessCard";
 import { ComposerPage as SocialComposer, CalendarPage as SocialCalendar,
          LibraryPage as SocialLibrary, DraftsPage as SocialDrafts } from "@/pages/social/SocialSuite";
 import { ApprovalsPage as SocialApprovals, BulkUploadPage as SocialBulkUpload,
@@ -281,6 +282,9 @@ export default function App() {
             {/* Phase 29 — All My Tools hub (tech + admin). Non-role users are
                 redirected inside the component. */}
             <Route path="tech/tools" element={<ToolsHub />} />
+            {/* NFC business card — role-agnostic personal view (uses /api/card).
+                The /card route below is the admin-only team card manager. */}
+            <Route path="tech/card" element={<BusinessCard />} />
             {/* Phase 18B follow-up — Service Report (auto-opens on clock-in) */}
             <Route path="jobs/:id/service-report" element={<ServiceReport />} />
 
