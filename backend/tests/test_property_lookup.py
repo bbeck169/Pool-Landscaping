@@ -140,3 +140,43 @@ def test_admin_allowed(admin_h):
                        params={"address": ADDRESS},
                        headers=admin_h, timeout=15)
     assert r.status_code == 200
+
+
+def test_save_note_accepts_address_normalized_alias(tech_h, dbc):
+    """`POST /property/save-note` must accept `address_normalized` as an
+    alias for `address` so mobile clients don't need to know the raw
+    address string."""
+    normalized = "  742 EVERGREEN Terrace, springfield, or 97477  "
+    r = requests.post(f"{API}/property/save-note", headers=tech_h, json={
+        "address_normalized": normalized,
+        "note": "alias-test note",
+        "tags": ["alias-test"],
+    }, timeout=10)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["id"]
+    # The saved doc's address_normalized should be the whitespace-collapsed
+    # lower-cased form regardless of which alias the client used.
+    assert body["address_normalized"] == \
+        "742 evergreen terrace, springfield, or 97477"
+    # And it should be listable when queried by that normalized address.
+    listed = requests.get(f"{API}/property/saved-notes",
+                              params={"address": normalized.strip()},
+                              headers=tech_h, timeout=10).json()
+    assert any(x["id"] == body["id"] for x in listed["items"])
+
+    # If both are provided, `address` wins.
+    r2 = requests.post(f"{API}/property/save-note", headers=tech_h, json={
+        "address": "111 Preferred Ave",
+        "address_normalized": "999 Ignored Rd",
+        "note": "both-fields test",
+    }, timeout=10)
+    assert r2.status_code == 200
+    assert r2.json()["address"] == "111 Preferred Ave"
+
+    # Empty body → 422
+    r3 = requests.post(f"{API}/property/save-note", headers=tech_h, json={
+        "note": "no address",
+    }, timeout=10)
+    assert r3.status_code == 422
+

@@ -201,3 +201,95 @@ def test_role_gating(tech_h, customer_h, dbc):
     r4 = requests.get(f"{API}/inventory/analytics",
                        headers=customer_h, timeout=15)
     assert r4.status_code == 403
+
+
+
+def test_real_service_report_submit_decrements_muriatic_acid(tech_h, dbc):
+    """True end-to-end: create a job assigned to Mike, hit the live
+    /service-report endpoints (GET → PATCH chemicals_added → POST /submit),
+    then confirm Muriatic Acid dropped by 5 oz and a stock_movements doc
+    was written with ref_type='service_report'."""
+    t = dbc.tenants.find_one({"slug": "aquaterra"})
+    tenant_id = t["id"]
+
+    # Seed a fresh Muriatic Acid baseline of 100.
+    dbc.inventory_items.update_one(
+        {"tenant_id": tenant_id, "name": "Muriatic Acid"},
+        {"$set": {"current_qty": 100.0}},
+    )
+
+    # Resolve Mike's tech + user ids. He can be represented as an
+    # entry in `users` and/or `technicians` — the service-report auth
+    # helper matches either.
+    mike_user = dbc.users.find_one({"email": "mike@aquaterra.com"}) or {}
+    mike_tech = dbc.technicians.find_one(
+        {"tenant_id": tenant_id,
+          "$or": [{"user_id": mike_user.get("id")},
+                    {"email": "mike@aquaterra.com"}]}) or {}
+    technician_id = (mike_tech.get("id") or mike_user.get("technician_id")
+                       or mike_user.get("id"))
+    assert technician_id, "Could not locate Mike's tech id"
+
+    # Insert a fresh billable job assigned to Mike.
+    import uuid
+    job_id = f"test-p23fix-job-{uuid.uuid4().hex[:8]}"
+    dbc.jobs.insert_one({
+        "id": job_id,
+        "tenant_id": tenant_id,
+        "customer_id": None,
+        "customer_name": "Phase 23 Fix Test",
+        "job_type": "maintenance",
+        "status": "scheduled",
+        "billable": False,  # avoid auto-invoice noise
+        "technician_id": technician_id,
+        "scheduled_start": "2026-02-14T10:00:00Z",
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    })
+
+    try:
+        # 1. GET the service report to bootstrap it.
+        r = requests.get(f"{API}/jobs/{job_id}/service-report",
+                          headers=tech_h, timeout=15)
+        assert r.status_code == 200, r.text
+
+        # 2. PATCH chemicals_added.
+        p = requests.patch(f"{API}/jobs/{job_id}/service-report",
+                            headers=tech_h, json={
+            "chemicals_added": [
+                {"name": "Muriatic Acid", "amount": 5, "unit": "oz"},
+                {"name": "MysteryChem-XYZ", "amount": 2, "unit": "gal"},
+            ],
+        }, timeout=15)
+        assert p.status_code == 200, p.text
+        assert len(p.json()["chemicals_added"]) == 2
+
+        # 3. POST /submit.
+        s = requests.post(f"{API}/jobs/{job_id}/service-report/submit",
+                           headers=tech_h, timeout=15)
+        assert s.status_code == 200, s.text
+
+        # 4. Inventory qty dropped by exactly 5.
+        item = dbc.inventory_items.find_one(
+            {"tenant_id": tenant_id, "name": "Muriatic Acid"})
+        assert abs(item["current_qty"] - 95.0) < 0.01, (
+            f"expected 95.0, got {item['current_qty']}")
+
+        # 5. stock_movements doc exists with correct shape.
+        report = dbc.service_reports.find_one(
+            {"tenant_id": tenant_id, "job_id": job_id})
+        assert report is not None
+        mv = dbc.stock_movements.find_one({
+            "tenant_id": tenant_id, "item_id": item["id"],
+            "ref_type": "service_report", "ref_id": report["id"],
+        })
+        assert mv is not None, "no stock_movements doc created"
+        assert mv["kind"] == "usage"
+        assert abs(mv["delta"] + 5.0) < 0.01, f"delta={mv['delta']}"
+
+        # 6. Misses persisted on the report.
+        assert "MysteryChem-XYZ" in (report.get("inventory_misses") or [])
+    finally:
+        dbc.jobs.delete_one({"id": job_id})
+        dbc.service_reports.delete_many({"job_id": job_id})
+        dbc.stock_movements.delete_many(
+            {"ref_id": {"$regex": "^" + job_id[:20]}})

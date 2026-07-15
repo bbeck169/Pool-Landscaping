@@ -492,7 +492,8 @@ async def property_history(user: dict = Depends(require_tech_or_admin),
 
 
 class NoteIn(BaseModel):
-    address: str
+    address: Optional[str] = None
+    address_normalized: Optional[str] = None
     note: str
     tags: List[str] = Field(default_factory=list)
 
@@ -501,13 +502,20 @@ class NoteIn(BaseModel):
 async def property_save_note(body: NoteIn,
                                 user: dict = Depends(require_tech_or_admin_write),
                                 tenant: dict = Depends(get_current_tenant)):
+    # Accept either `address` or `address_normalized`. If both are given
+    # `address` wins (spec: prefer the human-entered form when supplied).
+    raw = body.address or body.address_normalized or ""
+    raw = raw.strip()
+    if not raw:
+        raise HTTPException(422,
+            "Provide `address` or `address_normalized`")
     doc = {
         "id": new_id(),
         "tenant_id": tenant["id"],
         "user_id": user["id"],
         "user_name": user.get("name") or user.get("email"),
-        "address": body.address,
-        "address_normalized": _norm_address_key(body.address),
+        "address": raw,
+        "address_normalized": _norm_address_key(raw),
         "note": body.note,
         "tags": body.tags or [],
         "created_at": now_iso(),

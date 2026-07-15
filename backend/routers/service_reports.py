@@ -366,11 +366,19 @@ async def submit_service_report(jid: str,
         logger.warning(f"submit-driven clock-out failed: {e}")
 
     # Phase 23 · Inventory tracker — decrement stock from chemicals/parts.
+    # NB: chemicals_added / parts_used live on the SERVICE REPORT, not on
+    # the job. Re-fetch after our own $set so the latest PATCHed values are
+    # visible even if a client PATCHed and POST-submit'd back-to-back.
     inventory_result = None
     try:
         from routers.inventory import decrement_from_service_report
+        fresh_rep = await db.service_reports.find_one(
+            {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id},
+            {"_id": 0},
+        ) or rep
         inventory_result = await decrement_from_service_report(
-            tenant["id"], job, rep["id"], user["id"],
+            tenant["id"], fresh_rep, fresh_rep.get("id") or rep.get("id"),
+            user["id"],
         )
         if inventory_result and (inventory_result.get("misses")
                                   or inventory_result.get("decremented")):
