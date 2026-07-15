@@ -7,7 +7,13 @@ import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import { colors, brandGradientCss } from "@/theme";
 
 // Groups that render nested sub-subgroups (from entry.subsection) when present.
-const SUBGROUPED_GROUPS = new Set(["marketing"]);
+// Phase 35 — all five reorganised categories now use subsections for readability.
+const SUBGROUPED_GROUPS = new Set([
+  "finance",
+  "marketing",
+  "operations",
+  "customers",
+]);
 
 const LS_PINNED = "nav_pinned_v1";
 const LS_RECENT = "nav_recent_v1";

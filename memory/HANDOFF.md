@@ -4137,3 +4137,94 @@ renders the `Inactive` pill. Screenshot saved to
   `/customers` — brief marked it "optional", skipped for now.
 - Phase 34g — Retention Report is now unblocked; consume the
   new `customer_activation_events` collection.
+
+#### Phase 35 · Admin Nav 6-category reorg (Feb 15 2026)
+
+Pure nav / IA change. Zero backend edits, zero route changes,
+zero RBAC changes. The 12 legacy groups in `ADMIN_NAV_V2` are
+collapsed into six top-level categories, and each legacy grouping
+becomes a `subsection` under one of the six.
+
+**Six categories (in this order)**
+1. **Finance** — `DollarSign` — CFO, Invoicing, Checks & Payroll,
+   AR & Dunning, Warranties, Cost Analytics (Job Costing / Mileage).
+2. **AI Employees** — `Bot` — AI Employees Hub, Lana AI, Atlas SEO
+   Agent, Communications, Portal Inbox.
+3. **Marketing** — `Megaphone` — Studio, Sequences & Templates,
+   Reviews & Public, Referrals, Social, SEO Suite, Google Business.
+4. **Operations** — `Wrench` — Schedule & Dispatch, Workforce,
+   Field Service, Inventory, Business OS, AI Tools, Settings.
+5. **Customers** — `Users` — Directory, Sales, Success.
+6. **Reports** — `BarChart3` — Dashboard, Reports Hub, Analytics,
+   Business Summary, Forecast, Revenue Slices, Access History.
+
+**Files edited (3)**
+- `frontend/src/nav/adminNav.js` — full rewrite:
+  138 nav entries, 6 top-level groups, subsections used on every
+  category except AI Employees + Reports (kept flat because each
+  has ≤7 items). All existing test IDs implicit — the sidebar
+  renders them by route (`data-testid="nav-link-{to}"` — Phase 15
+  pattern preserved).
+- `frontend/src/layouts/AdminSidebar.jsx` — extended
+  `SUBGROUPED_GROUPS` set from `{"marketing"}` to
+  `{"finance", "marketing", "operations", "customers"}` so the
+  three new subgrouped categories get proper subsection headers.
+- `mobile/app/(app)/tools.tsx` — `ADMIN_SECTIONS` reorganised
+  into the six categories. Some categories (Marketing, Reports,
+  AI Employees) get a single deep-link tile that jumps into the
+  richer web-first surface — flagged as **honest placeholders**,
+  not fake data. The tech `TECH_SECTIONS` array is untouched
+  (brief: tech nav not in scope).
+
+**RBAC preserved verbatim**
+- `hard_rule: "admin_only"` on Landscape AI, CAD Studio,
+  Satellite Measure, Virtual Bid, Weather, AI CFO, D2D.
+- `hard_rule: "super_admin_only"` on `/tenants`.
+- Every `feature` gate unchanged (Phase 29C RBAC pipeline still
+  reads `entry.feature` in `AdminSidebar.jsx`).
+
+**Entries preserved (spot-check)**
+- 138 entries in `NAV_FLAT` after rewrite. No duplicate routes
+  (grep verified via a python `Counter`).
+- Legacy Phase-15 `Schedule × 2` duplicate in `work` group has
+  been dedup'd to a single `Schedule` entry — cleanup mentioned
+  in Phase 34a HANDOFF also carries here.
+- Every legacy label is either kept as-is or lightly rephrased
+  ("Schedule" from `/schedule`, "Social Composer" instead of
+  bare "Composer" because it now lives inside a "Social"
+  subsection of Marketing, etc.).
+
+**Verification**
+- Webpack: `Compiled successfully. webpack compiled successfully`.
+- Sidebar screenshot at `/tmp/phase35_sidebar.png` — the six group
+  labels render in-order in the left rail.
+- Finance expanded (`/tmp/phase35_finance_expanded.png`) — 29 links
+  become visible across 6 named subsections (CFO, Invoicing,
+  Checks & Payroll, AR & Dunning, Warranties, Cost Analytics).
+  Confirms `SUBGROUPED_GROUPS` wiring.
+- Backend regression: `pytest -x -q
+  tests/test_phase34f_customer_active.py
+  tests/test_phase34d_pool_gallons.py` → **26/26 passed** in ~12 s
+  (no backend files touched this phase, sanity re-run only).
+- Routes not touched: `App.js` and every router import unchanged.
+  New `NAV_FLAT` targets are all existing routes.
+
+**Not touched (per hard rules)**
+- Tech nav (`TECH_SECTIONS`) — no diff.
+- Customer portal nav — no diff.
+- `App.js` route definitions — no diff.
+- Backend routers — no diff.
+- RBAC matrix — no diff.
+
+**Deferred / honest gaps**
+- Mobile Tools Hub: Marketing / AI Employees / Reports each get
+  a single deep-link tile until the mobile UIs mature. Not
+  faking full parity — the tile labels clearly say "Studio",
+  "Q&A", "Hub" and route to the (web-optimised) landing page.
+- Alphabetisation vs frequency-of-use ordering: kept the
+  existing implicit convention (creation order within each
+  subsection), which mirrors the legacy Phase-15 nav ordering.
+  Can switch to alphabetical in a follow-up if the sidebar UX
+  study asks for it.
+- `KEYBOARD_SHORTCUTS` and `SHORTCUT_TARGETS` maps kept
+  verbatim — every shortcut target route still exists.

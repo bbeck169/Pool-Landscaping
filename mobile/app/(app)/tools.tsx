@@ -75,47 +75,60 @@ const TECH_SECTIONS: Section[] = [
 
 const ADMIN_SECTIONS: Section[] = [
   {
-    key: "adm-daily",
-    title: "Daily Work",
-    tiles: [
-      { key: "schedule", icon: "calendar-outline", label: "Schedule", desc: "Calendar view — Day/Week/Month/Custom", route: "/(app)/schedule/calendar" },
-      { key: "customers", icon: "people-outline", label: "Customers", desc: "Full customer directory", route: "/(app)/customers" },
-      { key: "quotes", icon: "document-text-outline", label: "Quotes & Invoices", desc: "Send, sign, collect", route: "/(app)/quotes" },
-    ],
-  },
-  {
-    key: "adm-tools",
-    title: "Tools",
-    tiles: [
-      { key: "business-card", icon: "id-card-outline", label: "My Business Card", desc: "NFC-ready digital card & .vcf", route: "/card" },
-      { key: "calculators", icon: "flask-outline", label: "Pool Calculators", desc: "Dosing · Volume · Salt · LSI", route: "/(app)/calculators" },
-      { key: "estimator", icon: "calculator-outline", label: "Field Estimator", desc: "Build a quote on-site", route: "/(app)/estimator" },
-      { key: "inventory", icon: "layers-outline", label: "Inventory", desc: "Stock & purchase orders", route: "/(app)/inventory" },
-      { key: "checks", icon: "document-text-outline", label: "Check Register", desc: "Write checks, batch payroll", route: "/(app)/checks/register" },
-      { key: "property-lookup", icon: "home-outline", label: "Property Lookup", desc: "Owner + lot size search", route: "/(app)/property-lookup" },
-      { key: "dunning", icon: "mail-open-outline", label: "Dunning Queue", desc: "Overdue invoices workflow", route: "/(app)/dunning/queue" },
-    ],
-  },
-  {
-    key: "adm-dispatch",
-    title: "Dispatch",
-    tiles: [
-      { key: "dispatch-board", icon: "git-network-outline", label: "Dispatch Board", desc: "Auto-route unassigned jobs", route: "/(app)/dispatch/board" },
-      { key: "dispatch-weather", icon: "cloud-outline", label: "Weather Reschedule", desc: "Move outdoor jobs when rain / wind spikes", route: "/(app)/dispatch/weather" },
-    ],
-  },
-  {
-    key: "adm-payroll",
-    title: "Payroll",
-    tiles: [
-      { key: "payroll-batch", icon: "cash-outline", label: "Batch Checks & Payroll CSV", desc: "Write many checks at once + CSV import", route: "/(app)/payroll/batch" },
-    ],
-  },
-  {
     key: "adm-finance",
     title: "Finance",
     tiles: [
-      { key: "cfo", icon: "trending-up-outline", label: "AI CFO", desc: "Revenue, expenses, cash, AR — this month", route: "/(app)/cfo" },
+      { key: "cfo",          icon: "trending-up-outline",   label: "AI CFO",              desc: "Revenue · expenses · cash · AR", route: "/(app)/cfo" },
+      { key: "checks",       icon: "document-text-outline", label: "Check Register",      desc: "Write checks, batch payroll",     route: "/(app)/checks/register" },
+      { key: "payroll-batch", icon: "cash-outline",         label: "Payroll Batch + CSV", desc: "Batch checks & payroll import",   route: "/(app)/payroll/batch" },
+      { key: "dunning",      icon: "mail-open-outline",     label: "Dunning Queue",       desc: "Overdue invoices workflow",       route: "/(app)/dunning/queue" },
+    ],
+  },
+  {
+    key: "adm-ai-employees",
+    title: "AI Employees",
+    tiles: [
+      { key: "ai-cfo-qna",   icon: "chatbubbles-outline",   label: "AI CFO Q&A",          desc: "Ask the CFO — natural language",  route: "/(app)/cfo" },
+    ],
+  },
+  {
+    key: "adm-marketing",
+    title: "Marketing",
+    tiles: [
+      // Placeholder — full marketing hub lives on web; deep-link so admins
+      // can jump straight to the studio landing from mobile.
+      { key: "marketing-studio", icon: "megaphone-outline", label: "Marketing Studio",    desc: "Campaigns, sequences, reviews",   route: "/(app)/marketing" as any },
+    ],
+  },
+  {
+    key: "adm-operations",
+    title: "Operations",
+    tiles: [
+      { key: "schedule",        icon: "calendar-outline",      label: "Schedule",           desc: "Day/Week/Month/Custom",           route: "/(app)/schedule/calendar" },
+      { key: "dispatch-board",  icon: "git-network-outline",   label: "Dispatch Board",     desc: "Auto-route unassigned jobs",      route: "/(app)/dispatch/board" },
+      { key: "dispatch-weather", icon: "cloud-outline",        label: "Weather Reschedule", desc: "Move outdoor jobs on bad weather", route: "/(app)/dispatch/weather" },
+      { key: "estimator",       icon: "calculator-outline",    label: "Field Estimator",    desc: "Build a quote on-site",           route: "/(app)/estimator" },
+      { key: "calculators",     icon: "flask-outline",         label: "Pool Calculators",   desc: "Dosing · Volume · Salt · LSI",    route: "/(app)/calculators" },
+      { key: "inventory",       icon: "layers-outline",        label: "Inventory",          desc: "Stock & purchase orders",         route: "/(app)/inventory" },
+    ],
+  },
+  {
+    key: "adm-customers",
+    title: "Customers",
+    tiles: [
+      { key: "customers",       icon: "people-outline",        label: "Customers",          desc: "Full customer directory",         route: "/(app)/customers" },
+      { key: "quotes",          icon: "document-text-outline", label: "Quotes & Invoices",  desc: "Send, sign, collect",             route: "/(app)/quotes" },
+      { key: "property-lookup", icon: "home-outline",          label: "Property Lookup",    desc: "Owner + lot size search",         route: "/(app)/property-lookup" },
+      { key: "business-card",   icon: "id-card-outline",       label: "My Business Card",   desc: "NFC-ready digital card & .vcf",   route: "/card" },
+    ],
+  },
+  {
+    key: "adm-reports",
+    title: "Reports",
+    tiles: [
+      // Reports UI is web-first; deep-link to the summary dashboard so admins
+      // aren't stranded on mobile.
+      { key: "reports-hub",     icon: "bar-chart-outline",     label: "Reports Hub",        desc: "Business summary & analytics",     route: "/(app)/reports" as any },
     ],
   },
 ];
