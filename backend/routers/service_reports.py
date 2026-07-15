@@ -395,6 +395,15 @@ async def submit_service_report(jid: str,
     except Exception as e:
         logger.warning(f"inventory decrement failed: {e}")
 
+    # Phase 39 · Algae-risk auto-flag — if this and the previous service
+    # report both show free_chlorine <= 0.5 ppm, write an algae_risk_flags
+    # entry so the office sees the at-risk customer on the retention report.
+    try:
+        from routers.reports import evaluate_algae_risk
+        await evaluate_algae_risk(tenant["id"], job.get("customer_id"))
+    except Exception as e:
+        logger.warning(f"algae-risk evaluation failed: {e}")
+
     # Phase 20A.2 — auto-generate an invoice when the tenant setting allows,
     # the job is billable, and it has a positive price. Reuses the referral-
     # credit application path so 50%-off credits still land correctly.

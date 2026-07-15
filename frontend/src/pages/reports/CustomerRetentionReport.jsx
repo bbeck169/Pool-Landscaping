@@ -6,6 +6,7 @@ import {
 } from "recharts";
 import {
   ArrowLeft, Users, UserMinus, TrendingUp, Info, Download, RefreshCw,
+  AlertTriangle, Zap, X as CloseX, Crown,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -57,6 +58,153 @@ const PERIODS = [
   { key: "year",  label: "Year"  },
 ];
 
+// Phase 39 · Algae-risk auto-flag panel. Data comes from
+// GET /api/reports/algae-risk. "Schedule Shock" and "Dismiss" each
+// resolve the flag; the row disappears optimistically so the office
+// gets instant feedback and reloads happen in the background.
+function AlgaeRiskPanel() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState({});   // per-customer action lock
+  const [toast, setToast] = useState(null);
+
+  const load = () => {
+    setLoading(true);
+    api.get("/reports/algae-risk")
+      .then((r) => setRows(r?.items || []))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, []);
+
+  const act = async (customerId, kind) => {
+    setBusy((b) => ({ ...b, [customerId]: kind }));
+    const optimistic = rows.filter((r) => r.customer_id !== customerId);
+    try {
+      const path = kind === "shock"
+        ? `/reports/algae-risk/${customerId}/schedule-shock`
+        : `/reports/algae-risk/${customerId}/resolve`;
+      const r = await api.post(path, {});
+      setRows(optimistic);
+      setToast({
+        kind: "ok",
+        text: kind === "shock"
+          ? `Shock Treatment job scheduled (id ${String(r?.job_id || "").slice(0,8)}…). Flag resolved.`
+          : `Flag dismissed for the selected customer.`,
+      });
+      setTimeout(() => setToast(null), 3200);
+    } catch (e) {
+      setToast({ kind: "err", text: e?.message || "Action failed." });
+    } finally {
+      setBusy((b) => { const n = { ...b }; delete n[customerId]; return n; });
+    }
+  };
+
+  if (loading || rows.length === 0) return null;
+
+  return (
+    <div
+      className="rounded-2xl p-5 mb-4"
+      data-testid="algae-risk-panel"
+      style={{
+        background: "#FEF3C7",
+        border: `1px solid #F59E0B`,
+      }}
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <AlertTriangle size={18} color="#B45309" />
+        <div className="text-lg font-bold" style={{ color: "#B45309" }}>
+          Algae Risk — {rows.length} customer{rows.length === 1 ? "" : "s"} flagged
+        </div>
+      </div>
+      <div className="text-xs mb-3" style={{ color: "#B45309" }}>
+        These customers' last two visits both showed free chlorine ≤ 0.5 ppm.
+        Schedule a shock treatment now to protect the pool (and the account).
+      </div>
+
+      <div className="space-y-2">
+        {rows.map((row) => {
+          const cust = row.customer || {};
+          const evi = row.evidence || [];
+          const isBusy = !!busy[row.customer_id];
+          return (
+            <div
+              key={row.id}
+              data-testid={`algae-risk-row-${row.customer_id}`}
+              className="flex flex-wrap items-center gap-3 p-3 rounded-lg"
+              style={{ background: "#FFFBEB", border: "1px solid #FCD34D" }}
+            >
+              <div className="flex-1 min-w-[200px]">
+                <div className="flex items-center gap-2">
+                  {cust.is_vip
+                    ? <Crown size={14} color="#B45309" />
+                    : <Users size={14} color="#B45309" />}
+                  <span className="text-sm font-bold" style={{ color: "#0F172A" }}>
+                    {cust.name || "(unknown customer)"}
+                  </span>
+                </div>
+                <div className="text-xs mt-1" style={{ color: "#6B7280" }}>
+                  {cust.address || "—"}
+                </div>
+                <div className="flex flex-wrap gap-3 mt-1 text-[11px]" style={{ color: "#B45309" }}>
+                  {evi.map((e, i) => (
+                    <span key={i}>
+                      Visit {i + 1}: <b>{e.free_chlorine} ppm</b>{" "}
+                      <span style={{ color: "#6B7280" }}>
+                        ({String(e.date || "").slice(0, 10)})
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => act(row.customer_id, "shock")}
+                data-testid={`algae-risk-schedule-shock-${row.customer_id}`}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-bold"
+                style={{
+                  background: "#059669", color: "#fff", border: 0,
+                  cursor: isBusy ? "wait" : "pointer",
+                  opacity: isBusy ? 0.6 : 1,
+                }}
+              >
+                <Zap size={13} /> Schedule Shock
+              </button>
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => act(row.customer_id, "dismiss")}
+                data-testid={`algae-risk-dismiss-${row.customer_id}`}
+                className="inline-flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-semibold"
+                style={{
+                  background: "transparent", color: "#6B7280",
+                  border: `1px solid #E2E8F0`,
+                  cursor: isBusy ? "wait" : "pointer",
+                }}
+              >
+                <CloseX size={12} /> Dismiss
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {toast ? (
+        <div
+          className="mt-3 px-3 py-2 rounded-md text-xs font-semibold"
+          style={{
+            background: toast.kind === "ok" ? "#D1FAE5" : "#FEE2E2",
+            color: toast.kind === "ok" ? "#065F46" : "#B91C1C",
+          }}
+          data-testid="algae-risk-toast"
+        >
+          {toast.text}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function CustomerRetentionReport() {
   const nav = useNavigate();
   const [period, setPeriod] = useState("month");
@@ -105,6 +253,12 @@ export default function CustomerRetentionReport() {
 
   return (
     <div className="max-w-7xl mx-auto p-6" data-testid="retention-report-page">
+      {/* Phase 39 · Algae-risk auto-flag panel — surfaces the small set of
+          customers whose last two chlorine readings both came in ≤ 0.5 ppm.
+          Sits above the retention analytics so the office sees the urgent
+          items first. */}
+      <AlgaeRiskPanel />
+
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

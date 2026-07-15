@@ -608,3 +608,183 @@ async def customer_retention_report(
         "totals": totals,
         "yoy": yoy,
     }
+
+
+# ─── Phase 39 · Algae-risk auto-flag ────────────────────────────────────────
+# When a customer's last two submitted service reports both show free
+# chlorine ≤ 0.5 ppm the pool is at meaningful algae-bloom risk. We record
+# the fact in `algae_risk_flags` so the office can prompt a shock visit
+# before things turn green (algae remediation costs the customer real money
+# and the biz loses trust). The threshold is deliberate: 0.5 ppm mirrors the
+# lower bound of the AI-dosing recommender.
+ALGAE_RISK_CHLORINE_PPM = 0.5
+
+
+def _chlorine_ppm(readings) -> float | None:
+    """Extract the free-chlorine value from a `chemical_readings` list.
+
+    Falls back to `chlorine` (single-column pools) if `free_chlorine`
+    isn't present. Returns None if nothing usable is stored.
+    """
+    if not readings:
+        return None
+    by_key = {}
+    for r in readings or []:
+        k = (r.get("key") or r.get("name") or "").lower().strip()
+        v = r.get("value")
+        if v in (None, ""):
+            continue
+        try:
+            by_key[k] = float(v)
+        except (TypeError, ValueError):
+            continue
+    for k in ("free_chlorine", "free chlorine", "chlorine"):
+        if k in by_key:
+            return by_key[k]
+    return None
+
+
+async def evaluate_algae_risk(tenant_id: str, customer_id: str | None):
+    """Called from service_reports.submit. Idempotent — one open flag per
+    customer at a time. Writes `{tenant_id, customer_id, flagged_at,
+    evidence, resolved:False}` when the last two submitted reports both
+    show free_chlorine ≤ 0.5 ppm."""
+    if not customer_id:
+        return None
+    # Any already-open flag? Keep it open, just refresh evidence.
+    jobs = await db.jobs.find(
+        {"customer_id": customer_id, "tenant_id": tenant_id},
+        {"_id": 0, "id": 1},
+    ).to_list(2000)
+    jids = [j["id"] for j in jobs]
+    if not jids:
+        return None
+    reports = await db.service_reports.find(
+        {"job_id": {"$in": jids}, "submitted_at": {"$ne": None},
+         "tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "job_id": 1, "chemical_readings": 1,
+         "submitted_at": 1},
+    ).sort("submitted_at", -1).to_list(2)
+    if len(reports) < 2:
+        return None
+    evidence = []
+    for rep in reports:
+        cl = _chlorine_ppm(rep.get("chemical_readings"))
+        if cl is None or cl > ALGAE_RISK_CHLORINE_PPM:
+            return None  # streak broken
+        evidence.append({
+            "report_id": rep.get("id"),
+            "free_chlorine": cl,
+            "date": rep.get("submitted_at"),
+        })
+    now = now_iso()
+    existing = await db.algae_risk_flags.find_one({
+        "tenant_id": tenant_id, "customer_id": customer_id,
+        "resolved": False,
+    })
+    if existing:
+        # Refresh evidence but keep the original `flagged_at` — the office
+        # wants to see "flagged 12d ago" as a persistent aging signal.
+        await db.algae_risk_flags.update_one(
+            {"id": existing["id"]},
+            {"$set": {"evidence": evidence, "updated_at": now}},
+        )
+        return existing["id"]
+    doc = {
+        "id": new_id(),
+        "tenant_id": tenant_id,
+        "customer_id": customer_id,
+        "flagged_at": now,
+        "updated_at": now,
+        "evidence": evidence,
+        "resolved": False,
+        "resolved_at": None,
+        "resolved_by": None,
+        "resolution_kind": None,
+    }
+    await db.algae_risk_flags.insert_one(doc)
+    return doc["id"]
+
+
+@router.get("/reports/algae-risk")
+async def list_algae_risk(user: dict = Depends(require_admin)):
+    """List all currently-flagged customers with their evidence + basic
+    customer info so the retention-report panel can render them."""
+    tenant_id = user["tenant_id"]
+    flags = await db.algae_risk_flags.find(
+        {"tenant_id": tenant_id, "resolved": False},
+        {"_id": 0},
+    ).sort("flagged_at", 1).to_list(200)
+    if not flags:
+        return {"items": [], "count": 0}
+    cust_ids = list({f["customer_id"] for f in flags})
+    customers = await db.customers.find(
+        {"id": {"$in": cust_ids}, "tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1,
+         "address": 1, "pool_gallons": 1, "is_vip": 1},
+    ).to_list(len(cust_ids))
+    cmap = {c["id"]: c for c in customers}
+    for f in flags:
+        f["customer"] = cmap.get(f["customer_id"])
+    return {"items": flags, "count": len(flags)}
+
+
+@router.post("/reports/algae-risk/{customer_id}/resolve")
+async def resolve_algae_risk(customer_id: str,
+                                user: dict = Depends(require_admin)):
+    """Manual dismiss — office decided the customer is fine (e.g. just
+    tested and confirmed chlorine is now normal)."""
+    tenant_id = user["tenant_id"]
+    now = now_iso()
+    r = await db.algae_risk_flags.update_one(
+        {"tenant_id": tenant_id, "customer_id": customer_id,
+         "resolved": False},
+        {"$set": {"resolved": True, "resolved_at": now,
+                   "resolved_by": user["id"], "resolution_kind": "dismissed"}},
+    )
+    if r.modified_count == 0:
+        raise HTTPException(404, "No open algae-risk flag for this customer")
+    return {"ok": True, "resolved_at": now}
+
+
+@router.post("/reports/algae-risk/{customer_id}/schedule-shock")
+async def schedule_shock_algae_risk(customer_id: str,
+                                        user: dict = Depends(require_admin)):
+    """Auto-schedules a Shock Treatment job for the customer, then resolves
+    the flag. Keeps the office one tap away from remediation."""
+    tenant_id = user["tenant_id"]
+    cust = await db.customers.find_one(
+        {"id": customer_id, "tenant_id": tenant_id}, {"_id": 0},
+    )
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+    # Simple new job — scheduling engine + tech assignment can be tweaked
+    # from the schedule page after creation. Keep the shape aligned with
+    # the existing jobs schema (id/name/customer_id/tenant_id/status/...).
+    now = now_iso()
+    job = {
+        "id": new_id(),
+        "tenant_id": tenant_id,
+        "customer_id": customer_id,
+        "customer_name": cust.get("name"),
+        "address": cust.get("address"),
+        "service_type": "Shock Treatment",
+        "template": "pool",
+        "status": "scheduled",
+        "billable": True,
+        "price": 65.0,   # baseline; office can edit
+        "notes": "Auto-created from algae-risk flag — free chlorine ≤ 0.5 ppm on last 2 visits.",
+        "scheduled_at": now,
+        "created_at": now, "updated_at": now,
+        "source": "algae_risk_auto",
+    }
+    await db.jobs.insert_one(job)
+    await db.algae_risk_flags.update_one(
+        {"tenant_id": tenant_id, "customer_id": customer_id,
+         "resolved": False},
+        {"$set": {"resolved": True, "resolved_at": now,
+                   "resolved_by": user["id"],
+                   "resolution_kind": "scheduled_shock",
+                   "scheduled_job_id": job["id"]}},
+    )
+    return {"ok": True, "job_id": job["id"], "resolved_at": now}

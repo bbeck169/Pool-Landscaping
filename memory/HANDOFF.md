@@ -4923,3 +4923,37 @@ surface `SomethingRef` names, not gate finishes on regex quirks.
 - Cross-row independence also verified: expanding Liquid Chlorine while Chlorine Tablets is closed still lists 10 gallon options and correctly reports `Liquid Chlorine · 1/2 Gallon` after pick.
 - `git status` on dropdown files shows no untracked/dirty edits since the Phase 37 hotfix. Preflight `exit 0`, 135 pre-existing advisory unresolved-identifier warnings unchanged.
 - **Conclusion**: no code regression. Most likely a stale user session or browser cache from before the Phase 37 auto-collapse landed. If the tester still sees it, ask for a hard-refresh (Cmd/Ctrl-Shift-R) and the browser console error trace so we can debug against real state.
+
+#### Phase 39 · Field & Ops Trio — Step 1 SHIPPED (Algae Risk auto-flag)
+
+Shipping in phased slices per brief. **Step 1 (Algae Risk) is live**. Steps 2 (Send Visit Recap) + 3 (Truck Inventory Reservation) deferred to a follow-up phase.
+
+**Backend**
+- `routers/reports.py` — new `evaluate_algae_risk(tenant_id, customer_id)` helper called from `service_reports.submit`. Threshold `ALGAE_RISK_CHLORINE_PPM = 0.5`. Idempotent — refreshes evidence on the existing open flag instead of duplicating.
+- `_chlorine_ppm(readings)` normalizer that pulls the first of `free_chlorine` / `free chlorine` / `chlorine` from a report's `chemical_readings` list.
+- Three new endpoints, all admin+super_admin:
+  - `GET  /api/reports/algae-risk` — returns `{items, count}` with customer + evidence embedded.
+  - `POST /api/reports/algae-risk/{customer_id}/resolve` — manual dismiss.
+  - `POST /api/reports/algae-risk/{customer_id}/schedule-shock` — auto-creates a Pool "Shock Treatment" job for the customer (`price: 65, source: algae_risk_auto`) and resolves the flag with `resolution_kind: "scheduled_shock"`.
+- Hook wired into `service_reports.submit_service_report` after the inventory-decrement pass, wrapped in a `try/except` so failures never break the submit.
+
+**Frontend** (`pages/reports/CustomerRetentionReport.jsx`)
+- New `AlgaeRiskPanel` component rendered above the retention KPIs. Yellow warning card, one row per flagged customer with VIP crown/user icon, address, both `free_chlorine` evidence readings + dates, green "Schedule Shock" button, gray "Dismiss" button.
+- Test IDs: `algae-risk-panel`, `algae-risk-row-{customer_id}`, `algae-risk-schedule-shock-{customer_id}`, `algae-risk-dismiss-{customer_id}`, `algae-risk-toast`.
+- Optimistic remove-on-click; toast confirms the action + shock job id (`Shock Treatment job scheduled (id 0f42a8b1…). Flag resolved.`).
+- Panel hides itself when there are zero open flags — no empty state clutter.
+
+**Tests** (`backend/tests/test_phase39_algae_risk.py`)
+1. `test_two_low_chlorine_reports_flag` — direct-DB seed → `evaluate_algae_risk` writes exactly one flag with 2 evidence entries.
+2. `test_mixed_no_flag` — one low, one normal → no flag.
+3. `test_rbac_customer_denied` — customer role → 403.
+4. `test_list_and_resolve_and_shock` — end-to-end via HTTP: GET lists the flag → dismiss (200 + double-dismiss 404) → re-seed → schedule-shock creates a Shock Treatment job and resolves with `resolution_kind: "scheduled_shock"`.
+- All 4 tests green (`pytest tests/test_phase39_algae_risk.py -q` → **4 passed**).
+
+**Verification**
+- `bash /app/scripts/preflight.sh` → `preflight OK` (exit 0). No new advisory warnings.
+- Playwright screenshot of `/reports/customer-retention` confirms the panel renders above the KPIs with the seeded Jennifer Carson flag; all 4 testids present.
+
+**Not touched (deferred)**
+- Feature 2 (Send Visit Recap after Close Job) — backend + web + mobile follow-up.
+- Feature 3 (Truck Inventory Reservation) — needs careful integration with Phase 23 inventory router; deferred to avoid rushing multi-collection writes.
