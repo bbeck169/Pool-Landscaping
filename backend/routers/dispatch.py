@@ -32,6 +32,9 @@ router = APIRouter()
 
 # ─── Constants ───────────────────────────────────────────────────────
 TIME_PRESSURE_WEIGHT = 500.0  # meters-equivalent per unit
+SKILL_MULT_EXACT = 1.0        # tech's preferences include job.service_type
+SKILL_MULT_NEUTRAL = 1.5      # tech has no stated preferences
+SKILL_MULT_OFF = 2.5          # tech has preferences but this job isn't one
 DEFAULT_RAIN_THRESHOLD = 60
 DEFAULT_WIND_THRESHOLD = 25
 OUTDOOR_TYPES = {"landscape", "landscaping", "hardscape", "d2d",
@@ -132,18 +135,34 @@ async def _rank_techs_for_job(
     # Active technicians in this tenant. `is_active` filter is best-effort.
     techs = await db.technicians.find(
         {"tenant_id": tenant_id, "is_active": {"$ne": False}},
-        {"_id": 0, "id": 1, "user_id": 1, "name": 1, "email": 1},
+        {"_id": 0, "id": 1, "user_id": 1, "name": 1, "email": 1,
+          "preferred_service_types": 1},
     ).to_list(500)
 
     # Also include technicians who exist only in `users` (legacy).
     if not techs:
         users = await db.users.find(
             {"tenant_id": tenant_id, "role": "technician"},
-            {"_id": 0, "id": 1, "name": 1, "email": 1},
+            {"_id": 0, "id": 1, "name": 1, "email": 1,
+              "preferred_service_types": 1},
         ).to_list(500)
         techs = [{"id": u["id"], "user_id": u["id"],
                     "name": u.get("name") or u.get("email"),
-                    "email": u.get("email")} for u in users]
+                    "email": u.get("email"),
+                    "preferred_service_types":
+                        u.get("preferred_service_types") or []}
+                  for u in users]
+    else:
+        # `technicians` docs may lack preferences → fall back to user row.
+        for te in techs:
+            if te.get("preferred_service_types"):
+                continue
+            uid = te.get("user_id") or te.get("id")
+            u = await db.users.find_one(
+                {"id": uid, "tenant_id": tenant_id},
+                {"_id": 0, "preferred_service_types": 1}) or {}
+            te["preferred_service_types"] = (
+                u.get("preferred_service_types") or [])
 
     # Today's existing jobs, grouped by tech.
     todays = await db.jobs.find(
@@ -163,6 +182,7 @@ async def _rank_techs_for_job(
     hours_left = max(1.0, (end_of_shift - now).total_seconds() / 3600)
 
     ranking: List[Dict[str, Any]] = []
+    job_service_type = (new_job.get("service_type") or "").strip().lower()
     for t in techs:
         # A tech may be represented in `jobs.technician_id` either by its
         # own tech-table id OR by the user_id — accept both.
@@ -178,12 +198,32 @@ async def _rank_techs_for_job(
             min_dist = 0.0
             deciding = "empty_route_priority"
         time_pressure = len(mine) / hours_left
-        cost = min_dist + time_pressure * TIME_PRESSURE_WEIGHT
+        raw_cost = min_dist + time_pressure * TIME_PRESSURE_WEIGHT
+
+        prefs = [str(p).strip().lower()
+                   for p in (t.get("preferred_service_types") or [])
+                   if p]
+        if not prefs:
+            skill_mult = SKILL_MULT_NEUTRAL
+            skill_match = "neutral"
+        elif job_service_type and job_service_type in prefs:
+            skill_mult = SKILL_MULT_EXACT
+            skill_match = "exact"
+        else:
+            skill_mult = SKILL_MULT_OFF
+            skill_match = "off_specialty"
+
+        cost = raw_cost * skill_mult
         ranking.append({
             "tech_id": t.get("id"),
             "user_id": t.get("user_id") or t.get("id"),
             "tech_name": t.get("name") or t.get("email"),
             "cost": round(cost, 1),
+            "raw_cost": round(raw_cost, 1),
+            "skill_multiplier": skill_mult,
+            "skill_match": skill_match,
+            "preferred_service_types":
+                t.get("preferred_service_types") or [],
             "min_distance_m": round(min_dist, 1),
             "existing_stops_today": len(mine),
             "hours_left": round(hours_left, 2),
@@ -560,3 +600,73 @@ async def maybe_auto_assign_on_create(tenant_id: str,
              "tech_id": winner["tech_id"],
              "tech_name": winner["tech_name"],
              "insertion_cost_meters": winner["cost"]}
+
+
+# ═══════════ Phase 26 polish · skill profile endpoints ═════════════════
+
+@router.get("/dispatch/technician-skills")
+async def list_technician_skills(user: dict = Depends(require_admin),
+                                       tenant: dict = Depends(get_current_tenant)):
+    """Every active technician's skill profile — for the settings panel."""
+    techs = await db.technicians.find(
+        {"tenant_id": tenant["id"], "is_active": {"$ne": False}},
+        {"_id": 0, "id": 1, "user_id": 1, "name": 1, "email": 1,
+          "preferred_service_types": 1},
+    ).to_list(500)
+    for te in techs:
+        uid = te.get("user_id") or te.get("id")
+        u = await db.users.find_one(
+            {"id": uid, "tenant_id": tenant["id"]},
+            {"_id": 0, "preferred_service_types": 1}) or {}
+        te["preferred_service_types"] = (
+            te.get("preferred_service_types")
+            or u.get("preferred_service_types")
+            or [])
+    # Include user-only technicians without a `technicians` row (legacy).
+    urows = await db.users.find(
+        {"tenant_id": tenant["id"], "role": "technician"},
+        {"_id": 0, "id": 1, "name": 1, "email": 1,
+          "preferred_service_types": 1},
+    ).to_list(500)
+    seen = ({te.get("id") for te in techs}
+              | {te.get("user_id") for te in techs})
+    for u in urows:
+        if u["id"] in seen: continue
+        techs.append({
+            "id": u["id"], "user_id": u["id"],
+            "name": u.get("name") or u.get("email"),
+            "email": u.get("email"),
+            "preferred_service_types":
+                u.get("preferred_service_types") or [],
+        })
+    return {"items": techs, "total": len(techs)}
+
+
+class SkillProfilePatch(BaseModel):
+    preferred_service_types: List[str] = []
+
+
+@router.patch("/users/{uid}/skill-profile")
+async def patch_skill_profile(uid: str, body: SkillProfilePatch,
+                                    user: dict = Depends(require_admin),
+                                    tenant: dict = Depends(get_current_tenant)):
+    prefs = [str(p).strip().lower() for p in body.preferred_service_types
+               if p and str(p).strip()]
+    n1 = await db.users.update_one(
+        {"id": uid, "tenant_id": tenant["id"]},
+        {"$set": {"preferred_service_types": prefs,
+                    "updated_at": now_iso()}},
+    )
+    await db.technicians.update_many(
+        {"tenant_id": tenant["id"],
+          "$or": [{"id": uid}, {"user_id": uid}]},
+        {"$set": {"preferred_service_types": prefs,
+                    "updated_at": now_iso()}},
+    )
+    if n1.matched_count == 0 and \
+            await db.technicians.count_documents(
+                {"tenant_id": tenant["id"],
+                  "$or": [{"id": uid}, {"user_id": uid}]}) == 0:
+        raise HTTPException(404, "User or technician not found")
+    return {"user_id": uid, "preferred_service_types": prefs}
+

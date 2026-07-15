@@ -541,14 +541,30 @@ async def _call_generate(scope: Dict[str, Any]) -> Dict[str, Any]:
         chat = (LlmChat(api_key=EMERGENT_LLM_KEY, session_id=new_id(),
                          system_message=_GENERATE_SYSTEM)
                 .with_model("anthropic", "claude-sonnet-4-6"))
+        # Fetch each photo URL and base64-encode — the current
+        # `emergentintegrations` SDK requires `ImageContent(image_base64=...)`.
+        # Individual URL failures (404, timeout) are logged but do not crash
+        # the whole generate call.
         file_contents = []
-        for p in photos[:6]:  # cap to 6 to stay within request size
-            url = p.get("url") or ""
-            if url.startswith("http"):
+        skipped_photos: List[Dict[str, Any]] = []
+        import base64 as _b64
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=15,
+                                            follow_redirects=True) as _c:
+            for p in photos[:6]:  # cap to 6 to stay within request size
+                url = p.get("url") or ""
+                if not url.startswith("http"):
+                    continue
                 try:
-                    file_contents.append(ImageContent(image_url=url))
-                except Exception:
-                    pass
+                    r = await _c.get(url)
+                    if r.status_code != 200:
+                        raise RuntimeError(f"http {r.status_code}")
+                    b64 = _b64.b64encode(r.content).decode("ascii")
+                    file_contents.append(ImageContent(image_base64=b64))
+                except Exception as _ex:
+                    logger.warning(
+                        f"Estimator photo fetch failed for {url}: {_ex}")
+                    skipped_photos.append({"url": url, "reason": str(_ex)})
         msg = UserMessage(text=prompt, file_contents=file_contents or None)
         raw = await chat.send_message(msg)
         text = raw if isinstance(raw, str) else str(raw)
@@ -561,7 +577,8 @@ async def _call_generate(scope: Dict[str, Any]) -> Dict[str, Any]:
             m = re.search(r"(\{.*\})", text, re.S)
             data = json.loads(m.group(1)) if m else {}
         return {"mocked": False, "line_items": data.get("line_items") or [],
-                 "upsells": data.get("upsells") or []}
+                 "upsells": data.get("upsells") or [],
+                 "skipped_photos": skipped_photos}
     except Exception as e:
         logger.warning(f"Estimator generate failed: {e}")
         return {"mocked": True, "reason": f"llm error: {e}",
