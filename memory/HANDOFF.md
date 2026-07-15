@@ -4510,3 +4510,38 @@ Phase 34d-follow.
 - Recommendation history persistence — brief marked out-of-scope.
 - Ad-hoc "override target range" per customer — brief marked
   out-of-scope.
+
+##### Phase 34e · Hotfix — missing `useMemo`/`useEffect`/`useCallback` imports (Feb 15 2026)
+
+Tester caught: `frontend/src/components/checklist/PoolChecklistForm.jsx`
+line 18 imported only `{ useRef, useState }` from React while the
+Phase-34e code path calls `useMemo`, `useEffect`, and `useCallback`.
+Result: `ReferenceError: useMemo is not defined` on every attempt to
+open a Pool checklist modal.
+
+Root cause: an earlier `mcp_search_replace` on this file was silently
+reverted before the Phase-34e commit finalised — the new hook usage
+went in, but the import-line rewrite did not. Static grep on the
+mobile file confirmed no equivalent bug there.
+
+**Fix — one-liner**
+```diff
+- import React, { useRef, useState } from "react";
++ import React, { useRef, useState, useEffect, useMemo, useCallback } from "react";
+```
+
+**Verification**
+- `grep -oE "use(State|Effect|Memo|Callback|Ref|...)"`
+  on both files → every hook in use is in the corresponding import
+  statement.
+- Webpack recompiled with only 1 unrelated warning.
+- Live `/schedule` page loaded end-to-end with a Playwright
+  `pageerror` listener attached — **0 `useMemo`/`ReferenceError`
+  errors** captured.
+
+**Files edited (1)**
+- `frontend/src/components/checklist/PoolChecklistForm.jsx` — import
+  line only.
+
+No backend changes; no new tests; folding under the existing
+Phase 34e HANDOFF section.
