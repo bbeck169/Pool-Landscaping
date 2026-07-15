@@ -590,3 +590,126 @@ async def reset_template_defaults(
         {"tenant_id": tenant["id"], "kind": kind}
     )
     return _default_template(kind)
+
+
+# ═══════════ Phase 27.3 · Photo-based Chemical Dosing ══════════════════
+
+import json as _json
+import re as _re
+
+
+class WaterPhotoIn(BaseModel):
+    photo_url: str
+    current_readings: Optional[Dict[str, Any]] = None
+    pool_gallons: Optional[float] = None
+    job_id: Optional[str] = None
+
+
+_WATER_SYSTEM = (
+    "You are a pool-chemistry analyst. Given a water photo and (optionally) "
+    "current readings, assess visual clarity, identify likely issues, and "
+    "recommend exact chemical doses. If current_readings + pool_gallons are "
+    "provided, compute PRECISE doses; otherwise provide typical ranges. "
+    "Return STRICT JSON only, no prose:\n"
+    "{\n"
+    '  "clarity": "crystal" | "clear" | "hazy" | "cloudy" | "green" | "black",\n'
+    '  "issues": [<str>, ...],\n'
+    '  "recommendations": [\n'
+    '    {"chemical": <str>, "amount": <float>, "unit": <str>, '
+    '"urgency": "now" | "next_visit" | "monitor", '
+    '"reasoning": <str>}\n'
+    '  ],\n'
+    '  "overall_assessment": <str>,\n'
+    '  "mocked": false\n'
+    "}"
+)
+
+
+@router.post("/service-report/analyze-water-photo")
+async def analyze_water_photo(body: WaterPhotoIn,
+                                     user: dict = Depends(get_current_user),
+                                     tenant: dict = Depends(get_current_tenant)):
+    role = user.get("role") or ""
+    if role not in {"admin", "super_admin", "technician"}:
+        raise HTTPException(403, "Techs and admins only")
+
+    from config import EMERGENT_LLM_KEY as _KEY
+    if not _KEY:
+        result = {"mocked": True,
+                    "reason": "EMERGENT_LLM_KEY not configured",
+                    "clarity": None, "issues": [],
+                    "recommendations": [],
+                    "overall_assessment": None}
+    else:
+        try:
+            from emergentintegrations.llm.chat import (
+                LlmChat, UserMessage, ImageContent,
+            )
+            # Current SDK requires base64. Fetch remote URL first.
+            import base64, httpx
+            try:
+                async with httpx.AsyncClient(timeout=15,
+                                                  follow_redirects=True) as c:
+                    r = await c.get(body.photo_url)
+                if r.status_code != 200:
+                    raise RuntimeError(f"photo fetch http {r.status_code}")
+                image_b64 = base64.b64encode(r.content).decode("ascii")
+            except Exception as ex:
+                raise RuntimeError(f"photo fetch failed: {ex}")
+            chat = (LlmChat(api_key=_KEY, session_id=new_id(),
+                             system_message=_WATER_SYSTEM)
+                    .with_model("anthropic", "claude-sonnet-4-6"))
+            ctx_lines = []
+            if body.current_readings:
+                ctx_lines.append(
+                    f"Current readings: {_json.dumps(body.current_readings)}")
+            if body.pool_gallons:
+                ctx_lines.append(f"Pool gallons: {body.pool_gallons}")
+            if not ctx_lines:
+                ctx_lines.append("No readings provided — provide ranges.")
+            msg = UserMessage(text="\n".join(ctx_lines),
+                                file_contents=[ImageContent(image_base64=image_b64)])
+            raw = await chat.send_message(msg)
+            text = raw if isinstance(raw, str) else str(raw)
+            text = text.strip()
+            if text.startswith("```"):
+                text = _re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "",
+                                  text).strip()
+            try: data = _json.loads(text)
+            except Exception:
+                m = _re.search(r"(\{.*\})", text, _re.S)
+                data = _json.loads(m.group(1)) if m else {}
+            result = {
+                "mocked": False,
+                "clarity": data.get("clarity"),
+                "issues": data.get("issues") or [],
+                "recommendations": data.get("recommendations") or [],
+                "overall_assessment": data.get("overall_assessment"),
+            }
+        except Exception as ex:
+            logger.warning(f"Water photo analysis failed: {ex}")
+            result = {"mocked": True, "reason": f"llm error: {ex}",
+                        "clarity": None, "issues": [],
+                        "recommendations": [],
+                        "overall_assessment": None}
+
+    doc = {
+        "id": new_id(),
+        "tenant_id": tenant["id"],
+        "job_id": body.job_id,
+        "technician_id": user.get("technician_id") or user["id"],
+        "photo_url": body.photo_url,
+        "current_readings": body.current_readings,
+        "pool_gallons": body.pool_gallons,
+        "clarity": result["clarity"],
+        "issues": result["issues"],
+        "recommendations": result["recommendations"],
+        "overall_assessment": result["overall_assessment"],
+        "mocked": result.get("mocked", False),
+        "reason": result.get("reason"),
+        "created_at": now_iso(),
+    }
+    await db.water_photo_analyses.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+

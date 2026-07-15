@@ -23,6 +23,7 @@ from routers import (
     estimator, dunning, inventory,
     checks,
     dispatch,
+    churn, seo_content_refresh,
 )
 
 app = FastAPI(
@@ -48,7 +49,8 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                employee_onboarding, assets, referral_tiers,
                seo_agentic, seo_phase17c,
                estimator, dunning, inventory,
-               checks, dispatch]:
+               checks, dispatch,
+               churn, seo_content_refresh]:
     api_router.include_router(module.router)
 
 
@@ -165,6 +167,10 @@ async def _background_seed():
         scheduler.add_job(dispatch.scheduled_weather_scan_all, "cron",
                             hour=5, minute=0, id="weather_scan",
                             replace_existing=True)
+        # Phase 27.1 — weekly churn rescore (Mondays 06:00 UTC).
+        scheduler.add_job(churn.scheduled_churn_scan_all, "cron",
+                            day_of_week="mon", hour=6, minute=0,
+                            id="churn_scan", replace_existing=True)
         scheduler.start()
     except Exception as e:
         logger.warning(f"scheduler registration skipped: {e}")

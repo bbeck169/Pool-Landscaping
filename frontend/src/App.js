@@ -47,6 +47,7 @@ import CheckRegister, { CheckNew, CheckDetail, CheckBanks, CheckPayees, CheckAna
 import PropertyLookupPage from "@/pages/property-lookup/PropertyLookupPage";
 import DispatchBoard, { WeatherReschedule } from "@/pages/dispatch/DispatchPages";
 import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
+import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPages";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
@@ -450,6 +451,9 @@ export default function App() {
             <Route path="admin/dispatch/weather" element={<AdminOnly><WeatherReschedule /></AdminOnly>} />
             <Route path="admin/checks/batch/new" element={<AdminOnly><CheckBatchNew /></AdminOnly>} />
             <Route path="admin/checks/payroll" element={<AdminOnly><CheckPayrollImport /></AdminOnly>} />
+            {/* Phase 27 Wave B */}
+            <Route path="admin/customer-success/churn" element={<AdminOnly><ChurnDashboard /></AdminOnly>} />
+            <Route path="admin/seo/content-refresh" element={<AdminOnly><ContentRefresh /></AdminOnly>} />
           </Route>
 
           {/* Anything unmatched → home */}

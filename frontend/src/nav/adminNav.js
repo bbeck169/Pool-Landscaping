@@ -60,6 +60,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/checks/payroll",      label: "Payroll Import",   icon: UsersRound,    feature: "invoices" },
     { to: "/admin/dispatch",            label: "Auto-Dispatch",    icon: Zap,           feature: "jobs" },
     { to: "/admin/dispatch/weather",    label: "Weather Reschedule", icon: Cloud,       feature: "jobs" },
+    { to: "/admin/customer-success/churn", label: "Churn Risk",     icon: TrendingUp,    feature: "customers" },
+    { to: "/admin/seo/content-refresh", label: "Content Refresh",   icon: Sparkles,      feature: "seo" },
   ]},
 
   { key: "ops", label: "Ops", icon: UsersRound, entries: [
