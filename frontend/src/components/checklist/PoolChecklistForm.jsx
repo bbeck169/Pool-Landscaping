@@ -202,7 +202,9 @@ export default function PoolChecklistForm({
               <input
                 type="number"
                 inputMode="decimal"
-                step="0.01"
+                step={r.step || "0.01"}
+                min={r.min != null ? r.min : 0}
+                max={r.max != null ? r.max : undefined}
                 disabled={locked}
                 value={r.value == null ? "" : r.value}
                 onChange={(e) => updReading(i, e.target.value)}

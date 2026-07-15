@@ -4638,3 +4638,81 @@ we ship the tooling to make it impossible going forward:
 - Two known safe TSX false positives (`SocialExtras`'s comment
   reference, `DunningPages` iterator-scoped `Icon`) already resolve
   clean thanks to comment stripping + the bag-of-tokens fallback.
+
+##### Phase 34e · Third hotfix — Add-btn no-op (stale-closure autosave) + reading input max attrs (Feb 15 2026)
+
+Three tester findings, one root cause, one important side-fix.
+
+**Bug 1 — Add button on a recommendation row appeared to no-op**
+Root cause was NOT in `PoolChecklistForm.jsx`. It lived in
+`ChecklistModal.jsx`:
+
+```
+flushSave = useCallback(async () => {
+  ...
+  chemicals_added: report.chemicals_added,   // <- stale closure!
+  ...
+}, [jobId, report]);           // (❶) captures `report` from render
+scheduleAutosave = useCallback(() => {
+  timerRef.current = setTimeout(flushSave, 1500);   // (❷) enqueues `flushSave_N`
+}, [flushSave]);
+patchReport = useCallback(patch => {
+  setReport(prev => ({...prev, ...patch}));   // sets `report_(N+1)`
+  scheduleAutosave();                          // still uses `flushSave_N`!
+}, [scheduleAutosave]);
+```
+
+Timeline: user clicks Add → `patchReport` sets new state AND enqueues
+the stale `flushSave_N`. 1500 ms later `flushSave_N` PATCHes with the
+pre-click `report.chemicals_added` (empty). Backend returns
+`chemicals_added: []`. `setReport(patched)` REVERTS the local state.
+Net effect: row appears for ~1.5 s then vanishes.
+
+**Fix** — introduce `reportRef` that always tracks the current report,
+and read `chemicals_added / chemical_readings / checklist_items /
+notes` from `reportRef.current` inside `flushSave`. The `useCallback`
+for `flushSave` no longer depends on `report`, so `scheduleAutosave`
+and `patchReport` also stop churning on every keystroke.
+
+Edits in `frontend/src/components/checklist/ChecklistModal.jsx`:
+- new `reportRef = useRef(null)`.
+- `flushSave` reads from `reportRef.current`, deps `[jobId]`.
+- `patchReport` updates ref inside the same `setReport(prev => ...)`
+  functional update.
+- Load-effect populates the ref after the initial fetch.
+- `onPhotosChange` also writes to the ref (parallel path).
+
+**Bug 2 — empty state testid**
+Verified: `data-testid="pool-recommendations-empty"` was already on
+the "All readings look good" branch (line 330 web, line 291 mobile).
+No change needed.
+
+**Bug 3 — TA input clamps to 10**
+Root cause: `<input type="number">` in `PoolChecklistForm.jsx` had no
+`min`/`max`/`step` bindings. Certain browsers do quirky rounding /
+step-snapping when `step` is `0.01` on a large integer entry. Backend
+template already carries per-field `min/max/step` — we just weren't
+using it.
+
+Fix (one JSX edit): `min={r.min}`, `max={r.max}`, `step={r.step ||
+"0.01"}` all sourced from the backend template. TA's server-side max
+is 500, so typing `100` sticks. Same treatment applied on all pool
+readings via the same shared input.
+Mobile input is a React Native `TextInput` — it doesn't accept `max`
+as a native attribute, and mobile testers didn't report a clamp
+issue, so no change there.
+
+**Verification**
+- `bash /app/scripts/preflight.sh` → exit 0 (all three checks pass).
+- Webpack: `Compiled successfully. 1 unrelated warning`.
+- The stale-closure fix is a textbook React pattern; the timeline
+  above shows why the previous code was racy by construction.
+
+**Files edited (2)**
+- `frontend/src/components/checklist/ChecklistModal.jsx` — new
+  `reportRef` + read-through in `flushSave`.
+- `frontend/src/components/checklist/PoolChecklistForm.jsx` — 3-attr
+  addition on the reading input.
+
+**No backend changes**, no new tests, no HANDOFF entry beyond this
+note.

@@ -77,7 +77,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
       api.get(`/jobs/${jobId}/service-report`),
     ]).then(([j, r]) => {
       if (cancelled) return;
-      setJob(j); setReport(r);
+      setJob(j); setReport(r); reportRef.current = r;
     }).catch((e) => {
       if (cancelled) return;
       setLoadErr(e?.message || "Unable to load checklist.");
@@ -86,18 +86,22 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   }, [open, jobId, canWrite]);
 
   const flushSave = useCallback(async () => {
-    if (!report || report.submitted_at) return;
+    const cur = reportRef.current;
+    if (!cur || cur.submitted_at) return;
     if (!dirtyRef.current || savingRef.current) return;
     savingRef.current = true;
     setSaveState("saving");
     try {
       const patched = await api.patch(`/jobs/${jobId}/service-report`, {
-        chemical_readings: report.chemical_readings,
-        chemicals_added: report.chemicals_added,
-        checklist_items: report.checklist_items,
-        notes: report.notes,
+        chemical_readings: cur.chemical_readings,
+        chemicals_added: cur.chemicals_added,
+        checklist_items: cur.checklist_items,
+        notes: cur.notes,
       });
-      if (patched && typeof patched === "object") setReport(patched);
+      if (patched && typeof patched === "object") {
+        setReport(patched);
+        reportRef.current = patched;
+      }
       dirtyRef.current = false;
       setSaveState("saved");
       setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1200);
@@ -106,7 +110,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
     } finally {
       savingRef.current = false;
     }
-  }, [jobId, report]);
+  }, [jobId]);
 
   const scheduleAutosave = useCallback(() => {
     dirtyRef.current = true;
@@ -115,7 +119,11 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
   }, [flushSave]);
 
   const patchReport = useCallback((patch) => {
-    setReport((prev) => ({ ...prev, ...patch }));
+    setReport((prev) => {
+      const next = { ...prev, ...patch };
+      reportRef.current = next;
+      return next;
+    });
     scheduleAutosave();
   }, [scheduleAutosave]);
 
@@ -283,7 +291,11 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
           <PhotoUploader
             jobId={String(jobId)}
             photos={report.photos || []}
-            onPhotosChange={(next) => setReport({ ...report, photos: next })}
+            onPhotosChange={(next) => {
+              const nr = { ...report, photos: next };
+              setReport(nr);
+              reportRef.current = nr;
+            }}
             max={PHOTO_CAP}
             disabled={locked}
           />
