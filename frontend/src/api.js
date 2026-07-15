@@ -2,6 +2,7 @@
 // Reads REACT_APP_BACKEND_URL (CRA convention) and attaches the JWT bearer token
 // from localStorage on every request.
 const BASE = process.env.REACT_APP_BACKEND_URL;
+export const api_base = () => `${BASE}/api`;
 export const TOKEN_KEY = "token";
 
 function authHeaders() {

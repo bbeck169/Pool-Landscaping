@@ -45,6 +45,8 @@ import DunningSettings, { DunningQueue, DunningAnalytics } from "@/pages/dunning
 import InventoryList, { InventoryDetail, InventoryPOs, InventoryAlerts, InventoryAnalytics } from "@/pages/inventory/InventoryPages";
 import CheckRegister, { CheckNew, CheckDetail, CheckBanks, CheckPayees, CheckAnalytics } from "@/pages/checks/ChecksPages";
 import PropertyLookupPage from "@/pages/property-lookup/PropertyLookupPage";
+import DispatchBoard, { WeatherReschedule } from "@/pages/dispatch/DispatchPages";
+import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
@@ -443,6 +445,11 @@ export default function App() {
             {/* Phase 25 — Property Lookup (tech + admin) */}
             <Route path="tech/property-lookup" element={<PropertyLookupPage />} />
             <Route path="property-lookup" element={<PropertyLookupPage />} />
+            {/* Phase 26 Wave A — Dispatch + Batch Checks */}
+            <Route path="admin/dispatch" element={<AdminOnly><DispatchBoard /></AdminOnly>} />
+            <Route path="admin/dispatch/weather" element={<AdminOnly><WeatherReschedule /></AdminOnly>} />
+            <Route path="admin/checks/batch/new" element={<AdminOnly><CheckBatchNew /></AdminOnly>} />
+            <Route path="admin/checks/payroll" element={<AdminOnly><CheckPayrollImport /></AdminOnly>} />
           </Route>
 
           {/* Anything unmatched → home */}

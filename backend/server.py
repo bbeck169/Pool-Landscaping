@@ -22,6 +22,7 @@ from routers import (
     seo_agentic, seo_phase17c,
     estimator, dunning, inventory,
     checks,
+    dispatch,
 )
 
 app = FastAPI(
@@ -47,7 +48,7 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                employee_onboarding, assets, referral_tiers,
                seo_agentic, seo_phase17c,
                estimator, dunning, inventory,
-               checks]:
+               checks, dispatch]:
     api_router.include_router(module.router)
 
 
@@ -159,6 +160,10 @@ async def _background_seed():
                             replace_existing=True)
         scheduler.add_job(dunning.run_dunning_scan, "interval",
                             minutes=60, id="dunning_scan",
+                            replace_existing=True)
+        # Phase 26.2 — daily weather scan across every tenant (05:00 UTC).
+        scheduler.add_job(dispatch.scheduled_weather_scan_all, "cron",
+                            hour=5, minute=0, id="weather_scan",
                             replace_existing=True)
         scheduler.start()
     except Exception as e:

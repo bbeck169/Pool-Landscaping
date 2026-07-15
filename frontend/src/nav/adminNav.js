@@ -10,6 +10,7 @@ import {
   Map as MapPinIcon, Gauge, Timer as StopwatchIcon,
   Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon,
   Home as HomeIcon,
+  Cloud,
 } from "lucide-react";
 
 /**
@@ -55,6 +56,10 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/checks/bank-accounts", label: "Bank Accounts",   icon: Building2,     feature: "invoices" },
     { to: "/admin/checks/payees",       label: "Payees",           icon: UsersRound,    feature: "invoices" },
     { to: "/admin/checks/analytics",    label: "Check Analytics",  icon: BarChart3,     feature: "reports" },
+    { to: "/admin/checks/batch/new",    label: "Batch Print",      icon: Layers,        feature: "invoices" },
+    { to: "/admin/checks/payroll",      label: "Payroll Import",   icon: UsersRound,    feature: "invoices" },
+    { to: "/admin/dispatch",            label: "Auto-Dispatch",    icon: Zap,           feature: "jobs" },
+    { to: "/admin/dispatch/weather",    label: "Weather Reschedule", icon: Cloud,       feature: "jobs" },
   ]},
 
   { key: "ops", label: "Ops", icon: UsersRound, entries: [

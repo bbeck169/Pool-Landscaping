@@ -863,3 +863,447 @@ async def analytics(bank_account_id: Optional[str] = None,
         "category_breakdown": category_breakdown,
         "monthly_series": monthly_series,
     }
+
+
+# ═══════════ Phase 26.3 · BATCH + PAYROLL CSV ══════════════════════════
+
+import csv as _csv
+from fastapi import UploadFile, File
+
+
+class BatchCheckLine(BaseModel):
+    payee_id: str
+    amount: float = Field(..., gt=0)
+    memo: Optional[str] = ""
+    date: str
+    category: Optional[str] = ""
+
+
+class BatchIn(BaseModel):
+    bank_account_id: str
+    checks: List[BatchCheckLine]
+    batch_id: Optional[str] = None  # idempotency key
+    preview_only: bool = False
+
+
+@router.post("/checks/batch")
+async def batch_create(body: BatchIn,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    if not body.checks:
+        raise HTTPException(422, "At least one check line required")
+    ba = await db.bank_accounts.find_one(
+        {"id": body.bank_account_id, "tenant_id": tenant["id"]}, {"_id": 0})
+    if not ba:
+        raise HTTPException(404, "Bank account not found")
+    # Idempotency: if batch_id was passed and already exists, return
+    # the prior result.
+    batch_id = body.batch_id or new_id()
+    if body.batch_id:
+        prior = await db.check_batches.find_one(
+            {"id": body.batch_id, "tenant_id": tenant["id"]}, {"_id": 0})
+        if prior:
+            return prior
+
+    # Validate all payees exist up-front (fail-atomic).
+    payee_ids = list({l.payee_id for l in body.checks})
+    found = await db.check_payees.find(
+        {"id": {"$in": payee_ids}, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "name": 1},
+    ).to_list(1000)
+    payees_by_id = {p["id"]: p for p in found}
+    missing = [pid for pid in payee_ids if pid not in payees_by_id]
+    if missing:
+        raise HTTPException(404,
+            f"Unknown payee_ids: {missing[:3]}{' …' if len(missing) > 3 else ''}")
+
+    if body.preview_only:
+        return {"batch_id": batch_id,
+                 "check_count": len(body.checks),
+                 "total_amount": round(sum(l.amount for l in body.checks), 2),
+                 "preview_only": True}
+
+    # Atomic check-number allocation for the whole batch.
+    n = len(body.checks)
+    updated = await db.bank_accounts.find_one_and_update(
+        {"id": body.bank_account_id, "tenant_id": tenant["id"]},
+        {"$inc": {"next_check_number": n},
+          "$set": {"updated_at": now_iso()}},
+        return_document=True,
+    )
+    if not updated:
+        raise HTTPException(404, "Bank account vanished mid-transaction")
+    first_number = int(updated["next_check_number"]) - n
+
+    try:
+        await db.checks.create_index(
+            [("tenant_id", 1), ("bank_account_id", 1), ("check_number", 1)],
+            unique=True,
+        )
+    except Exception:
+        pass
+
+    docs = []
+    check_ids = []
+    for i, line in enumerate(body.checks):
+        payee = payees_by_id[line.payee_id]
+        doc = {
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "bank_account_id": body.bank_account_id,
+            "check_number": first_number + i,
+            "payee_id": line.payee_id,
+            "payee_name_snapshot": payee.get("name"),
+            "amount": float(line.amount),
+            "amount_in_words": amount_to_words(line.amount),
+            "memo": line.memo or "",
+            "date": line.date,
+            "category": line.category or "",
+            "ref_type": "manual",
+            "ref_id": None,
+            "status": "draft",
+            "batch_id": batch_id,
+            "printed_at": None, "voided_at": None,
+            "void_reason": None, "cleared_at": None,
+            "cleared_amount": None, "pdf_url": None,
+            "created_by": user["id"],
+            "created_at": now_iso(), "updated_at": now_iso(),
+        }
+        docs.append(dict(doc))
+        check_ids.append(doc["id"])
+    await db.checks.insert_many(docs)
+
+    batch_doc = {
+        "id": batch_id,
+        "tenant_id": tenant["id"],
+        "bank_account_id": body.bank_account_id,
+        "check_ids": check_ids,
+        "check_count": n,
+        "total_amount": round(sum(l.amount for l in body.checks), 2),
+        "error_count": 0,
+        "created_by": user["id"],
+        "created_at": now_iso(),
+    }
+    await db.check_batches.insert_one(dict(batch_doc))
+    batch_doc.pop("_id", None)
+    return batch_doc
+
+
+def _render_batch_pdf_3up(checks_list: List[Dict[str, Any]],
+                             ba: Dict[str, Any],
+                             payees_by_id: Dict[str, Dict[str, Any]],
+                             tenant: Dict[str, Any]) -> bytes:
+    """3-up batch check layout: three business checks stacked on one 8.5×11
+    portrait page. No stubs (batch mode presumes an external accounting
+    export). Live_mode / MICR watermarks still enforced."""
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors as rlc
+    from reportlab.lib.units import inch
+    from reportlab.pdfgen import canvas
+    buf = io.BytesIO()
+    c_pdf = canvas.Canvas(buf, pagesize=letter, pageCompression=0)
+    W, H = letter
+    live = bool(ba.get("live_mode"))
+    account_number = _decrypt(ba.get("account_number_encrypted") or "")
+
+    def _draw_check(y_top: float, c: Dict[str, Any]):
+        payee = payees_by_id.get(c.get("payee_id")) or {}
+        h = 3.5 * inch
+        y_bot = y_top - h
+        c_pdf.setStrokeColor(rlc.HexColor("#94A3B8"))
+        c_pdf.rect(0.25 * inch, y_bot, W - 0.5 * inch, h)
+        # bank
+        c_pdf.setFont("Helvetica-Bold", 11)
+        c_pdf.setFillColor(rlc.HexColor("#0F172A"))
+        c_pdf.drawString(0.4 * inch, y_top - 0.3 * inch,
+                           (ba.get("bank_name") or "").upper())
+        c_pdf.setFont("Helvetica", 7)
+        c_pdf.setFillColor(rlc.HexColor("#475569"))
+        c_pdf.drawString(0.4 * inch, y_top - 0.43 * inch,
+                           f"ABA {ba.get('routing_number','')}")
+        # number
+        c_pdf.setFont("Helvetica-Bold", 16)
+        c_pdf.setFillColor(rlc.HexColor("#0F172A"))
+        c_pdf.drawRightString(W - 0.4 * inch, y_top - 0.3 * inch,
+                                  str(c.get("check_number")))
+        # date + amount
+        c_pdf.setFont("Helvetica", 8)
+        c_pdf.drawRightString(W - 0.4 * inch, y_top - 0.6 * inch, "DATE")
+        c_pdf.setFont("Helvetica", 10)
+        c_pdf.drawRightString(W - 0.4 * inch, y_top - 0.75 * inch,
+                                  c.get("date", ""))
+        # PAY TO THE ORDER OF
+        py = y_top - 1.1 * inch
+        c_pdf.setFont("Helvetica-Bold", 7)
+        c_pdf.drawString(0.4 * inch, py, "PAY TO THE ORDER OF")
+        c_pdf.setFont("Helvetica", 12)
+        c_pdf.drawString(1.7 * inch, py, payee.get("name")
+                            or c.get("payee_name_snapshot", ""))
+        box_x = W - 2.0 * inch
+        c_pdf.rect(box_x, py - 0.15 * inch, 1.6 * inch, 0.35 * inch)
+        c_pdf.setFont("Helvetica-Bold", 13)
+        c_pdf.drawRightString(box_x + 1.5 * inch, py - 0.05 * inch,
+                                  f"${float(c.get('amount') or 0):,.2f}")
+        # words
+        wy = py - 0.45 * inch
+        c_pdf.setFont("Helvetica", 10)
+        c_pdf.drawString(0.4 * inch, wy,
+                           c.get("amount_in_words") or "")
+        c_pdf.setFont("Helvetica-Bold", 7)
+        c_pdf.drawRightString(W - 0.4 * inch, wy, "DOLLARS")
+        # memo + sig
+        my = y_bot + 0.5 * inch
+        c_pdf.setFont("Helvetica-Bold", 7)
+        c_pdf.drawString(0.4 * inch, my + 0.1 * inch, "MEMO")
+        c_pdf.setFont("Helvetica", 9)
+        c_pdf.drawString(0.4 * inch, my - 0.02 * inch, c.get("memo") or "")
+        c_pdf.line(0.4 * inch, my - 0.08 * inch,
+                     W / 2 - 0.4 * inch, my - 0.08 * inch)
+        sig_x = W / 2 + 0.2 * inch
+        c_pdf.line(sig_x, my - 0.08 * inch,
+                     W - 0.4 * inch, my - 0.08 * inch)
+        c_pdf.setFont("Helvetica", 6)
+        c_pdf.setFillColor(rlc.HexColor("#64748B"))
+        c_pdf.drawCentredString((sig_x + W - 0.4 * inch) / 2,
+                                    my - 0.18 * inch,
+                                    "AUTHORIZED SIGNATURE")
+        # MICR
+        micr_y = y_bot + 0.2 * inch
+        c_pdf.setFont("Courier-Bold", 12)
+        c_pdf.setFillColor(rlc.HexColor("#0F172A"))
+        c_pdf.drawString(0.4 * inch, micr_y,
+            f"C{c.get('check_number','')}C  "
+            f"A{ba.get('routing_number','')}A  {account_number}C")
+        # Warnings
+        warn: List[str] = []
+        if not MICR_AVAILABLE:
+            warn.append("TEST_ONLY_NOT_MICR_ENCODED")
+        if not live:
+            warn.append("SAMPLE — NOT NEGOTIABLE")
+        if warn:
+            c_pdf.saveState()
+            c_pdf.setFillColorRGB(1.0, 0.05, 0.05, alpha=0.18)
+            c_pdf.setFont("Helvetica-Bold", 30)
+            c_pdf.translate(W / 2, (y_top + y_bot) / 2)
+            c_pdf.rotate(20)
+            c_pdf.drawCentredString(0, 0, " · ".join(warn))
+            c_pdf.restoreState()
+
+    # Group into pages of 3.
+    for i in range(0, len(checks_list), 3):
+        page_checks = checks_list[i:i + 3]
+        for idx, c in enumerate(page_checks):
+            y_top = H - 0.25 * inch - idx * 3.55 * inch
+            _draw_check(y_top, c)
+        c_pdf.showPage()
+    c_pdf.save()
+    return buf.getvalue()
+
+
+@router.post("/checks/batch/{bid}/print")
+async def batch_print(bid: str,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    batch = await db.check_batches.find_one(
+        {"id": bid, "tenant_id": tenant["id"]}, {"_id": 0})
+    if not batch:
+        raise HTTPException(404, "Batch not found")
+    ba = await db.bank_accounts.find_one(
+        {"id": batch["bank_account_id"], "tenant_id": tenant["id"]},
+        {"_id": 0}) or {}
+    checks_list = await db.checks.find(
+        {"id": {"$in": batch["check_ids"]},
+          "tenant_id": tenant["id"]}, {"_id": 0}).to_list(500)
+    # preserve batch order
+    order = {cid: i for i, cid in enumerate(batch["check_ids"])}
+    checks_list.sort(key=lambda c: order.get(c["id"], 999))
+    payee_ids = list({c["payee_id"] for c in checks_list})
+    payees = await db.check_payees.find(
+        {"id": {"$in": payee_ids}, "tenant_id": tenant["id"]},
+        {"_id": 0}).to_list(1000)
+    payees_by_id = {p["id"]: p for p in payees}
+    tenant_doc = await db.tenants.find_one(
+        {"id": tenant["id"]}, {"_id": 0}) or {}
+
+    layout = (tenant_doc.get("settings") or {}).get("checks", {}).get(
+        "batch_layout", "3up")
+    if layout == "1up":
+        # Single-check layout — reuse the existing detailed template.
+        parts: List[bytes] = []
+        for c in checks_list:
+            parts.append(_render_check_pdf(c, ba, payees_by_id.get(c["payee_id"]) or {},
+                                              tenant_doc))
+        # Merge via PyPDF2 if present, else fall back to first check only.
+        try:
+            from pypdf import PdfWriter, PdfReader
+        except Exception:
+            try:
+                from PyPDF2 import PdfWriter, PdfReader
+            except Exception:
+                # No merger available — return the 3-up rendering instead.
+                pdf = _render_batch_pdf_3up(checks_list, ba,
+                                                 payees_by_id, tenant_doc)
+                await _batch_mark_printed(bid, tenant["id"],
+                                              batch["check_ids"])
+                return StreamingResponse(
+                    io.BytesIO(pdf), media_type="application/pdf",
+                    headers={"Content-Disposition":
+                                f'inline; filename="batch-{bid[:8]}.pdf"',
+                             "X-Batch-Layout": "3up-fallback"},
+                )
+        writer = PdfWriter()
+        for p in parts:
+            r = PdfReader(io.BytesIO(p))
+            for page in r.pages: writer.add_page(page)
+        buf = io.BytesIO()
+        writer.write(buf)
+        pdf = buf.getvalue()
+    else:
+        pdf = _render_batch_pdf_3up(checks_list, ba,
+                                         payees_by_id, tenant_doc)
+
+    await _batch_mark_printed(bid, tenant["id"], batch["check_ids"])
+    warnings: List[str] = []
+    if not MICR_AVAILABLE: warnings.append("TEST_ONLY_NOT_MICR_ENCODED")
+    if not bool(ba.get("live_mode")): warnings.append("SAMPLE_MODE")
+    return StreamingResponse(
+        io.BytesIO(pdf), media_type="application/pdf",
+        headers={"Content-Disposition":
+                   f'inline; filename="batch-{bid[:8]}.pdf"',
+                 "X-Batch-Layout": layout,
+                 "X-Batch-Check-Count": str(len(checks_list)),
+                 "X-Check-Warnings": ",".join(warnings) if warnings else "none"},
+    )
+
+
+async def _batch_mark_printed(batch_id: str, tenant_id: str,
+                                    check_ids: List[str]):
+    now = now_iso()
+    file_url = f"/api/checks/batch/{batch_id}/print"
+    await db.checks.update_many(
+        {"id": {"$in": check_ids}, "tenant_id": tenant_id,
+          "status": "draft"},
+        {"$set": {"status": "printed", "printed_at": now,
+                    "pdf_url": file_url, "updated_at": now}},
+    )
+    await db.check_batches.update_one(
+        {"id": batch_id, "tenant_id": tenant_id},
+        {"$set": {"printed_at": now, "pdf_url": file_url}},
+    )
+
+
+# ─── Payroll CSV ─────────────────────────────────────────────────────
+
+@router.get("/checks/payroll/template.csv")
+async def payroll_template(user: dict = Depends(require_admin)):
+    csv_body = ("payee_name,amount,memo,date,category\n"
+                 "Jane Doe,1500.00,February payroll,2026-02-15,payroll\n"
+                 "John Smith,1200.50,February payroll + OT,2026-02-15,payroll\n")
+    return StreamingResponse(
+        io.BytesIO(csv_body.encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition":
+                   'attachment; filename="payroll-template.csv"'},
+    )
+
+
+@router.post("/checks/payroll/import-csv")
+async def payroll_import(bank_account_id: str = Query(...),
+                             execute: bool = Query(False),
+                             csv_file: UploadFile = File(...),
+                             user: dict = Depends(require_admin),
+                             tenant: dict = Depends(get_current_tenant)):
+    ba = await db.bank_accounts.find_one(
+        {"id": bank_account_id, "tenant_id": tenant["id"]}, {"_id": 0})
+    if not ba:
+        raise HTTPException(404, "Bank account not found")
+
+    raw = (await csv_file.read()).decode("utf-8-sig", errors="ignore")
+    reader = _csv.DictReader(io.StringIO(raw))
+    if not reader.fieldnames or "payee_name" not in reader.fieldnames \
+            or "amount" not in reader.fieldnames:
+        raise HTTPException(422,
+            "CSV must contain `payee_name` and `amount` columns")
+
+    # Resolve existing payees by case-insensitive name once.
+    existing = await db.check_payees.find(
+        {"tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "name": 1},
+    ).to_list(5000)
+    by_name = {(p.get("name") or "").strip().lower(): p for p in existing}
+
+    preview: List[Dict[str, Any]] = []
+    valid_rows: List[Dict[str, Any]] = []
+    default_date = (datetime.now(timezone.utc).date().isoformat())
+
+    for idx, row in enumerate(reader, start=2):  # header on row 1
+        entry: Dict[str, Any] = {"row": idx, "warnings": []}
+        name = (row.get("payee_name") or "").strip()
+        entry["payee_name"] = name
+        try: amt = float((row.get("amount") or "").replace(",", "").strip())
+        except Exception: amt = None
+        entry["amount"] = amt
+        entry["memo"] = (row.get("memo") or "").strip()
+        entry["date"] = ((row.get("date") or "").strip() or default_date)
+        entry["category"] = ((row.get("category") or "").strip() or "payroll")
+
+        if not name:
+            entry["warnings"].append("missing payee_name")
+        if amt is None or amt <= 0:
+            entry["warnings"].append("invalid or missing amount")
+
+        matched = by_name.get(name.lower()) if name else None
+        entry["matched_payee_id"] = matched["id"] if matched else None
+        entry["will_create_payee"] = (not matched) and bool(name)
+        if not entry["warnings"]:
+            valid_rows.append(entry)
+        preview.append(entry)
+
+    result = {
+        "preview": preview,
+        "can_execute": len(valid_rows) > 0
+                          and all(not r["warnings"] for r in preview),
+        "bank_account_id": bank_account_id,
+        "valid_count": len(valid_rows),
+        "warning_count": sum(1 for r in preview if r["warnings"]),
+    }
+    if not execute:
+        return result
+
+    if not result["can_execute"]:
+        raise HTTPException(422,
+            "CSV has warnings; resolve them or download the template. "
+            "Preview response includes row-level details.")
+
+    # Create missing payees first.
+    now = now_iso()
+    payee_id_by_row: Dict[int, str] = {}
+    for row in valid_rows:
+        pid = row["matched_payee_id"]
+        if not pid:
+            pid = new_id()
+            await db.check_payees.insert_one({
+                "id": pid, "tenant_id": tenant["id"],
+                "name": row["payee_name"],
+                "kind": "employee",
+                "address": "", "email": "", "phone": "",
+                "tax_id": "", "notes": "auto-created via payroll import",
+                "created_by": user["id"],
+                "created_at": now, "updated_at": now,
+            })
+            by_name[row["payee_name"].lower()] = {"id": pid,
+                                                       "name": row["payee_name"]}
+        payee_id_by_row[row["row"]] = pid
+
+    # Build the batch payload.
+    lines = [{"payee_id": payee_id_by_row[r["row"]],
+                "amount": r["amount"],
+                "memo": r["memo"],
+                "date": r["date"],
+                "category": r["category"]}
+              for r in valid_rows]
+    body = BatchIn(bank_account_id=bank_account_id, checks=lines)
+    batch = await batch_create(body=body, user=user, tenant=tenant)
+    result["batch"] = batch
+    result["executed"] = True
+    return result

@@ -194,6 +194,18 @@ async def create_job(body: JobIn,
     doc["technician_name"] = tech_name
     doc.update({"id": new_id(), "tenant_id": tenant["id"], "photos": [], "created_at": now_iso()})
     await db.jobs.insert_one(doc)
+    # Phase 26.1 — auto-assign on create if enabled.
+    try:
+        from routers.dispatch import maybe_auto_assign_on_create
+        assignment = await maybe_auto_assign_on_create(
+            tenant["id"], doc, user["id"])
+        if assignment:
+            doc["technician_id"] = assignment["tech_id"]
+            doc["technician_name"] = assignment["tech_name"]
+            doc["assigned_to"] = assignment["assigned_to"]
+            doc["auto_assigned"] = True
+    except Exception:
+        pass
     doc.pop("_id", None)
     return doc
 
