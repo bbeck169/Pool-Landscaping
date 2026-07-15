@@ -8,6 +8,8 @@ import {
   BadgeCheck, Shield, Bell as BellIcon, Settings, MapIcon, ScrollText,
   Grid3x3, Compass, Rss, Wand2, PencilRuler, Building2,
   Map as MapPinIcon, Gauge, Timer as StopwatchIcon,
+  Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon,
+  Home as HomeIcon,
 } from "lucide-react";
 
 /**
@@ -39,6 +41,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/dunning/analytics", label: "AR aging",        icon: DollarSign, feature: "invoicing" },
     { to: "/admin/dunning/settings",  label: "Dunning setup",   icon: Zap,       feature: "invoicing" },
     { to: "/d2d",        label: "D2D",        icon: DoorOpen,    feature: "d2d",    hard_rule: "admin_only" },
+    { to: "/tech/property-lookup", label: "Property Lookup", icon: HomeIcon, feature: "customers" },
   ]},
 
   { key: "billing", label: "Billing", icon: Receipt, entries: [
@@ -48,6 +51,10 @@ export const ADMIN_NAV_V2 = [
     { to: "/settings/late-fees", label: "Late Fees",     icon: DollarSign,feature: "invoices" },
     { to: "/settings/billing",   label: "Billing Rules", icon: Cog,       feature: "invoices" },
     { to: "/master-invoices",  label: "Master Invoices", icon: Layers,    feature: "invoices" },
+    { to: "/admin/checks",              label: "Check Writer",     icon: FileEdit,      feature: "invoices" },
+    { to: "/admin/checks/bank-accounts", label: "Bank Accounts",   icon: Building2,     feature: "invoices" },
+    { to: "/admin/checks/payees",       label: "Payees",           icon: UsersRound,    feature: "invoices" },
+    { to: "/admin/checks/analytics",    label: "Check Analytics",  icon: BarChart3,     feature: "reports" },
   ]},
 
   { key: "ops", label: "Ops", icon: UsersRound, entries: [
@@ -65,6 +72,10 @@ export const ADMIN_NAV_V2 = [
     { to: "/job-timers",   label: "Job Timers",  icon: TimerIcon,  feature: "jobs" },
     { to: "/avg-job-time", label: "Avg Job Time",icon: TrendingUp, feature: "jobs" },
     { to: "/checkins",     label: "Check-ins",   icon: MapPin,     feature: "jobs" },
+    { to: "/admin/inventory",           label: "Inventory",       icon: Boxes,      feature: "jobs" },
+    { to: "/admin/inventory/alerts",    label: "Stock Alerts",    icon: AlertTriangleIcon, feature: "jobs" },
+    { to: "/admin/inventory/purchase-orders", label: "Purchase Orders", icon: ShoppingCartIcon, feature: "jobs" },
+    { to: "/admin/inventory/analytics", label: "Inventory Analytics", icon: BarChart3, feature: "reports" },
   ]},
 
   { key: "workforce", label: "Workforce", icon: StopwatchIcon, entries: [

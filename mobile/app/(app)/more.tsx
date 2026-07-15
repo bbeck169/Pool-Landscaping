@@ -32,6 +32,7 @@ export default function More() {
     { icon: "location-outline", label: "Auto Clock-In", onPress: () => router.push("/(app)/settings/auto-clockin" as any) },
     { icon: "clipboard-outline", label: "My Onboarding", onPress: () => router.push("/(app)/onboarding/mine" as any) },
     { icon: "cube-outline", label: "My Equipment", onPress: () => router.push("/(app)/assets" as any) },
+    { icon: "layers-outline", label: "Inventory", onPress: () => router.push("/(app)/inventory" as any) },
   ];
 
   const seoLinks = [
@@ -48,6 +49,9 @@ export default function More() {
 
   const adminLinks = [
     { icon: "calculator-outline", label: "Field Estimator", onPress: () => router.push("/(app)/estimator" as any) },
+    { icon: "layers-outline", label: "Inventory", onPress: () => router.push("/(app)/inventory" as any) },
+    { icon: "document-text-outline", label: "Check Register", onPress: () => router.push("/(app)/checks/register" as any) },
+    { icon: "home-outline", label: "Property Lookup", onPress: () => router.push("/(app)/property-lookup" as any) },
     { icon: "mail-open-outline", label: "Dunning queue", onPress: () => router.push("/(app)/dunning/queue" as any) },
     { icon: "cube-outline", label: "LiDAR Settings", onPress: () => router.push("/(app)/settings/lidar" as any) },
     { icon: "magnet-outline", label: "New Lead", onPress: () => router.push("/leads/new") },

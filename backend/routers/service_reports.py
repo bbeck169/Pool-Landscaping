@@ -365,6 +365,28 @@ async def submit_service_report(jid: str,
     except Exception as e:
         logger.warning(f"submit-driven clock-out failed: {e}")
 
+    # Phase 23 · Inventory tracker — decrement stock from chemicals/parts.
+    inventory_result = None
+    try:
+        from routers.inventory import decrement_from_service_report
+        inventory_result = await decrement_from_service_report(
+            tenant["id"], job, rep["id"], user["id"],
+        )
+        if inventory_result and (inventory_result.get("misses")
+                                  or inventory_result.get("decremented")):
+            await db.service_reports.update_one(
+                {"tenant_id": tenant["id"], "job_id": jid,
+                  "tech_id": tech_id},
+                {"$set": {
+                    "inventory_decremented":
+                        inventory_result.get("decremented") or [],
+                    "inventory_misses":
+                        inventory_result.get("misses") or [],
+                }},
+            )
+    except Exception as e:
+        logger.warning(f"inventory decrement failed: {e}")
+
     # Phase 20A.2 — auto-generate an invoice when the tenant setting allows,
     # the job is billable, and it has a positive price. Reuses the referral-
     # credit application path so 50%-off credits still land correctly.

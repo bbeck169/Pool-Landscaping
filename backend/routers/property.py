@@ -1,9 +1,9 @@
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Query
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from pydantic import BaseModel, Field
 
-from config import db, OPENWEB_NINJA_API_KEY
+from config import db, OPENWEB_NINJA_API_KEY, logger
 from utils import now_iso, new_id, require_admin
 from routers.tenants import get_current_tenant
 
@@ -198,3 +198,333 @@ async def delete_saved(pid: str,
                        tenant: dict = Depends(get_current_tenant)):
     await db.saved_properties.delete_one({"id": pid, "tenant_id": tenant["id"]})
     return {"ok": True}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 25 · Tech Property Lookup — cached, rate-limited, honestly mocked
+# ═══════════════════════════════════════════════════════════════════════
+import re
+from datetime import datetime, timezone, timedelta
+from utils import get_current_user
+from config import GOOGLE_API_KEY
+
+
+async def require_tech_or_admin(user: dict = Depends(get_current_user)) -> dict:
+    if (user.get("role") or "") in {"admin", "super_admin",
+                                         "technician", "marketing"}:
+        return user
+    raise HTTPException(403, "Techs, admins, or marketing only")
+
+
+async def require_tech_or_admin_write(user: dict = Depends(get_current_user)) -> dict:
+    if (user.get("role") or "") in {"admin", "super_admin", "technician"}:
+        return user
+    raise HTTPException(403, "Techs or admins only")
+
+
+def _norm_address_key(addr: str) -> str:
+    return re.sub(r"\s+", " ", (addr or "").strip().lower())
+
+
+async def _ensure_indexes():
+    try:
+        await db.property_lookup_cache.create_index(
+            "cached_at", expireAfterSeconds=60 * 60 * 24)
+        await db.property_lookup_cache.create_index(
+            [("address_normalized", 1)])
+        await db.property_search_history.create_index(
+            "ts", expireAfterSeconds=60 * 60 * 24 * 30)
+        await db.property_search_history.create_index(
+            [("tenant_id", 1), ("user_id", 1), ("ts", -1)])
+        await db.property_notes.create_index(
+            [("tenant_id", 1), ("address_normalized", 1)])
+    except Exception:
+        pass
+
+
+def _extract_owner(data: dict) -> Optional[str]:
+    for key in ("ownerName", "owner_name", "owner", "assessorName"):
+        if data.get(key):
+            return data[key]
+    reso = data.get("resoFacts") or {}
+    for key in ("ownerName", "owner_name", "owner"):
+        if reso.get(key):
+            return reso[key]
+    return None
+
+
+def _extract_last_sale(data: dict) -> Dict[str, Any]:
+    reso = data.get("resoFacts") or {}
+    for src in (data, reso):
+        p = (src.get("lastSoldPrice") or src.get("priceHistory", [{}])[0].get("price")
+             if src.get("priceHistory") else src.get("lastSoldPrice"))
+        d = (src.get("dateSoldString") or src.get("lastSoldDate")
+             or (src.get("priceHistory", [{}])[0].get("date")
+                 if src.get("priceHistory") else None))
+        if p or d:
+            return {"last_sale_price": p, "last_sale_date": d}
+    return {"last_sale_price": None, "last_sale_date": None}
+
+
+def _extract_comps(data: dict) -> List[Dict[str, Any]]:
+    comps = (data.get("nearbyHomes") or data.get("comparables")
+             or data.get("comps") or [])
+    out: List[Dict[str, Any]] = []
+    for c in comps[:5]:
+        if not isinstance(c, dict): continue
+        out.append({
+            "address": c.get("streetAddress") or c.get("address"),
+            "price": c.get("price") or c.get("lastSoldPrice"),
+            "sold_date": c.get("lastSoldDate") or c.get("dateSoldString"),
+            "beds": c.get("bedrooms"), "baths": c.get("bathrooms"),
+            "sqft": c.get("livingArea") or c.get("livingAreaValue"),
+            "photo": (c.get("miniCardPhotos") or [{}])[0].get("url")
+                     if c.get("miniCardPhotos") else c.get("imgSrc"),
+        })
+    return out
+
+
+def _norm_lookup(data: dict) -> Dict[str, Any]:
+    """Rich normalization for Phase 25 tech surface — extends `_norm_detail`
+    with owner, last-sale, tax assessment, comps."""
+    base = _norm_detail(data)
+    reso = data.get("resoFacts") or {}
+    tax = (data.get("taxAssessedValue") or data.get("propertyTaxRate")
+           or reso.get("taxAssessedValue"))
+    base.update({
+        "owner_name": _extract_owner(data),
+        **_extract_last_sale(data),
+        "tax_assessment": tax,
+        "listing_status": data.get("homeStatus"),
+        "listing_price": data.get("price"),
+        "property_type": data.get("homeType") or reso.get("homeType"),
+        "neighborhood_comps": _extract_comps(data),
+    })
+    return base
+
+
+async def _rate_limited(tenant_id: str, user_id: str, limit: int = 30) -> bool:
+    since = datetime.now(timezone.utc) - timedelta(hours=1)
+    n = await db.property_search_history.count_documents({
+        "tenant_id": tenant_id, "user_id": user_id,
+        "ts": {"$gte": since.isoformat()},
+    })
+    return n >= limit
+
+
+async def _record_history(tenant_id: str, user_id: str, address: str):
+    await db.property_search_history.insert_one({
+        "id": new_id(), "tenant_id": tenant_id, "user_id": user_id,
+        "address": address, "ts": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+async def _cached_lookup(address: str) -> Optional[Dict[str, Any]]:
+    key = _norm_address_key(address)
+    row = await db.property_lookup_cache.find_one(
+        {"address_normalized": key}, {"_id": 0})
+    if not row: return None
+    return {
+        "response": row["response_json"],
+        "cached_at": row["cached_at"],
+        "cached": True,
+    }
+
+
+async def _cache_write(address: str, payload: Dict[str, Any]):
+    key = _norm_address_key(address)
+    await db.property_lookup_cache.update_one(
+        {"address_normalized": key},
+        {"$set": {"address_normalized": key,
+                    "response_json": payload,
+                    "cached_at": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+
+
+async def _fetch_zillow(address: str) -> Dict[str, Any]:
+    """Returns {ok, data, reason}. Never raises for expected provider
+    failures — callers convert failures to explicit mocked responses so
+    tech field usage keeps flowing (spec: no silent mocking, but degraded
+    modes must be transparent)."""
+    try:
+        async with httpx.AsyncClient(timeout=25) as c:
+            r = await c.get(
+                f"{OWN_BASE}/property-details-address",
+                params={"address": address},
+                headers={"x-api-key": OPENWEB_NINJA_API_KEY},
+            )
+        if r.status_code == 429:
+            return {"ok": False, "data": None,
+                     "reason": "provider_rate_limit"}
+        if r.status_code == 404:
+            return {"ok": False, "data": None, "reason": "not_found"}
+        if r.status_code >= 400:
+            return {"ok": False, "data": None,
+                     "reason": f"provider_status_{r.status_code}"}
+        payload = r.json() or {}
+        data = payload.get("data") or payload
+        if not isinstance(data, dict): return {"ok": False, "data": None,
+                                                 "reason": "invalid_payload"}
+        if not (data.get("zpid") or data.get("streetAddress")
+                or data.get("address")):
+            return {"ok": False, "data": None, "reason": "not_found"}
+        return {"ok": True, "data": data, "reason": None}
+    except Exception as ex:
+        logger.warning(f"Zillow fetch failed: {ex}")
+        return {"ok": False, "data": None,
+                 "reason": f"provider_unreachable: {ex}"}
+
+
+@router.get("/property/search")
+async def property_search(address: str = Query(..., min_length=5),
+                              user: dict = Depends(require_tech_or_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    """Tech-facing property lookup. Cached 24h, rate-limited 30/hour/tech,
+    honestly mocked if no API key configured."""
+    await _ensure_indexes()
+
+    # Rate limit — only enforced on non-cached hits below (after cache check
+    # we still record history for both cache + fresh, so limit counts real
+    # user activity).
+    if await _rate_limited(tenant["id"], user["id"]):
+        raise HTTPException(429,
+            "Rate limit: 30 property lookups per hour")
+
+    cached = await _cached_lookup(address)
+    if cached:
+        await _record_history(tenant["id"], user["id"], address)
+        return {
+            "property": cached["response"].get("property")
+                        or cached["response"],
+            "cached": True,
+            "cached_at": (cached["cached_at"].isoformat()
+                            if hasattr(cached["cached_at"], "isoformat")
+                            else str(cached["cached_at"])),
+            "mocked": bool(cached["response"].get("mocked")),
+            "reason": cached["response"].get("reason"),
+        }
+
+    if not OPENWEB_NINJA_API_KEY:
+        payload = {
+            "property": {
+                "address": address,
+                "mocked": True,
+                "zestimate": None,
+                "owner_name": None,
+                "neighborhood_comps": [],
+            },
+            "mocked": True,
+            "reason": "OPENWEB_NINJA_API_KEY not configured",
+        }
+        await _cache_write(address, payload)
+        await _record_history(tenant["id"], user["id"], address)
+        return {**payload, "cached": False}
+
+    raw = await _fetch_zillow(address)
+    if not raw["ok"]:
+        # Upstream failed. Return explicit mocked payload — never silent.
+        payload = {
+            "property": {
+                "address": address,
+                "mocked": True,
+                "zestimate": None,
+                "owner_name": None,
+                "neighborhood_comps": [],
+            },
+            "mocked": True,
+            "reason": raw["reason"] or "provider_unavailable",
+        }
+        await _cache_write(address, payload)
+        await _record_history(tenant["id"], user["id"], address)
+        return {**payload, "cached": False,
+                 "cached_at": datetime.now(timezone.utc).isoformat()}
+    normalized = _norm_lookup(raw["data"])
+    payload = {"property": normalized, "mocked": False}
+    await _cache_write(address, payload)
+    await _record_history(tenant["id"], user["id"], address)
+    return {**payload, "cached": False,
+             "cached_at": datetime.now(timezone.utc).isoformat()}
+
+
+@router.get("/property/search-by-coords")
+async def property_search_by_coords(
+    lat: float = Query(...), lng: float = Query(...),
+    user: dict = Depends(require_tech_or_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Reverse-geocode via Google, then dispatch to /property/search."""
+    if not GOOGLE_API_KEY:
+        raise HTTPException(424,
+            "Reverse geocoding unavailable — GOOGLE_API_KEY not configured")
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(
+                "https://maps.googleapis.com/maps/api/geocode/json",
+                params={"latlng": f"{lat},{lng}", "key": GOOGLE_API_KEY},
+            )
+        if r.status_code != 200:
+            raise HTTPException(424, "Reverse geocoding failed")
+        gj = r.json() or {}
+        results = gj.get("results") or []
+        address = (results[0].get("formatted_address")
+                    if results else None)
+        if not address:
+            raise HTTPException(404, "Could not reverse-geocode those coords")
+    except HTTPException:
+        raise
+    except Exception as ex:
+        logger.warning(f"Reverse geocode failed: {ex}")
+        raise HTTPException(424, "Reverse geocoding error")
+
+    return await property_search(address=address, user=user, tenant=tenant)
+
+
+@router.post("/property/history")
+@router.get("/property/history")
+async def property_history(user: dict = Depends(require_tech_or_admin),
+                                tenant: dict = Depends(get_current_tenant)):
+    rows = await db.property_search_history.find(
+        {"tenant_id": tenant["id"], "user_id": user["id"]},
+        {"_id": 0},
+    ).sort("ts", -1).limit(50).to_list(50)
+    return {"items": rows, "total": len(rows)}
+
+
+class NoteIn(BaseModel):
+    address: str
+    note: str
+    tags: List[str] = Field(default_factory=list)
+
+
+@router.post("/property/save-note")
+async def property_save_note(body: NoteIn,
+                                user: dict = Depends(require_tech_or_admin_write),
+                                tenant: dict = Depends(get_current_tenant)):
+    doc = {
+        "id": new_id(),
+        "tenant_id": tenant["id"],
+        "user_id": user["id"],
+        "user_name": user.get("name") or user.get("email"),
+        "address": body.address,
+        "address_normalized": _norm_address_key(body.address),
+        "note": body.note,
+        "tags": body.tags or [],
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.property_notes.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@router.get("/property/saved-notes")
+async def property_saved_notes(address: Optional[str] = Query(None),
+                                     user: dict = Depends(require_tech_or_admin),
+                                     tenant: dict = Depends(get_current_tenant)):
+    q: Dict[str, Any] = {"tenant_id": tenant["id"]}
+    if address:
+        q["address_normalized"] = _norm_address_key(address)
+    rows = await db.property_notes.find(q, {"_id": 0}).sort(
+        "created_at", -1).to_list(500)
+    return {"items": rows, "total": len(rows)}

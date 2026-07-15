@@ -42,6 +42,9 @@ import WebsiteStudio, { WebsiteStudioEditor } from "@/pages/seo/WebsiteStudio";
 import WhiteLabelReports, { WhiteLabelReportDetail } from "@/pages/seo/WhiteLabelReports";
 import EstimatorList, { EstimatorNew, EstimatorDetail, EstimatorRates } from "@/pages/estimator/EstimatorPages";
 import DunningSettings, { DunningQueue, DunningAnalytics } from "@/pages/dunning/DunningPages";
+import InventoryList, { InventoryDetail, InventoryPOs, InventoryAlerts, InventoryAnalytics } from "@/pages/inventory/InventoryPages";
+import CheckRegister, { CheckNew, CheckDetail, CheckBanks, CheckPayees, CheckAnalytics } from "@/pages/checks/ChecksPages";
+import PropertyLookupPage from "@/pages/property-lookup/PropertyLookupPage";
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
@@ -424,6 +427,22 @@ export default function App() {
             <Route path="admin/dunning/settings" element={<AdminOnly><DunningSettings /></AdminOnly>} />
             <Route path="admin/dunning/queue" element={<AdminOnly><DunningQueue /></AdminOnly>} />
             <Route path="admin/dunning/analytics" element={<AdminOnly><DunningAnalytics /></AdminOnly>} />
+            {/* Phase 23 — Inventory Tracker */}
+            <Route path="admin/inventory" element={<AdminOnly><InventoryList /></AdminOnly>} />
+            <Route path="admin/inventory/purchase-orders" element={<AdminOnly><InventoryPOs /></AdminOnly>} />
+            <Route path="admin/inventory/alerts" element={<AdminOnly><InventoryAlerts /></AdminOnly>} />
+            <Route path="admin/inventory/analytics" element={<AdminOnly><InventoryAnalytics /></AdminOnly>} />
+            <Route path="admin/inventory/:id" element={<AdminOnly><InventoryDetail /></AdminOnly>} />
+            {/* Phase 24 — Check Writer */}
+            <Route path="admin/checks" element={<AdminOnly><CheckRegister /></AdminOnly>} />
+            <Route path="admin/checks/new" element={<AdminOnly><CheckNew /></AdminOnly>} />
+            <Route path="admin/checks/bank-accounts" element={<AdminOnly><CheckBanks /></AdminOnly>} />
+            <Route path="admin/checks/payees" element={<AdminOnly><CheckPayees /></AdminOnly>} />
+            <Route path="admin/checks/analytics" element={<AdminOnly><CheckAnalytics /></AdminOnly>} />
+            <Route path="admin/checks/:id" element={<AdminOnly><CheckDetail /></AdminOnly>} />
+            {/* Phase 25 — Property Lookup (tech + admin) */}
+            <Route path="tech/property-lookup" element={<PropertyLookupPage />} />
+            <Route path="property-lookup" element={<PropertyLookupPage />} />
           </Route>
 
           {/* Anything unmatched → home */}
