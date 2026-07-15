@@ -24,12 +24,47 @@ import { format, parse, startOfWeek, getDay, addDays, startOfDay, endOfDay,
          startOfMonth, startOfQuarter, endOfMonth } from "date-fns";
 import { enUS } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
-import { Plus, Search, X as XIcon, Filter } from "lucide-react";
+import { Plus, Search, X as XIcon, Filter, ChevronLeft, ChevronRight,
+         CheckCircle2, Move as MoveIcon, ArrowUp, ArrowDown, FileText,
+         Save as SaveIcon } from "lucide-react";
 
 import { api } from "@/api";
 import { colors, font } from "@/theme";
 import { useAuth } from "@/auth";
-import { Gate } from "@/hooks/usePermissions";
+import { Gate, useCan } from "@/hooks/usePermissions";
+
+/** Phase 30W · service-type → card palette. Mirrors the mobile fix-pass. */
+const SERVICE_PALETTE = (raw) => {
+  const s = (raw || "").toLowerCase();
+  if (s.includes("weekly") && s.includes("landsc"))  return { bg: "#DCFCE7", fg: "#166534", tag: "#059669" };
+  if (s.includes("monthly") && s.includes("landsc")) return { bg: "#E0E7FF", fg: "#3730A3", tag: "#4F46E5" };
+  if (s.includes("irrig"))                            return { bg: "#DBEAFE", fg: "#1E3A8A", tag: "#2563EB" };
+  if (s.includes("rock"))                             return { bg: "#FEF3C7", fg: "#78350F", tag: "#B45309" };
+  if (s.includes("pool") || s.includes("chem"))       return { bg: "#CFFAFE", fg: "#155E75", tag: "#0891B2" };
+  if (s.includes("clean"))                            return { bg: "#FCE7F3", fg: "#831843", tag: "#BE185D" };
+  return { bg: "#F3F4F6", fg: "#111827", tag: "#6B7280" };
+};
+
+/** Phase 30W · status pill palette. `completed → "Closed" (green)`, etc. */
+const STATUS_PILL = {
+  completed:  { bg: "#DCFCE7", fg: "#166534", label: "Closed" },
+  active:     { bg: "#DBEAFE", fg: "#1E40AF", label: "In progress" },
+  scheduled:  { bg: "#FEF3C7", fg: "#92400E", label: "Open" },
+  pending:    { bg: "#FEF3C7", fg: "#92400E", label: "Pending" },
+  requested:  { bg: "#EDE9FE", fg: "#5B21B6", label: "Requested" },
+  reopened:   { bg: "#FEE2E2", fg: "#991B1B", label: "Reopened" },
+  cancelled:  { bg: "#F3F4F6", fg: "#4B5563", label: "Cancelled" },
+  on_hold:    { bg: "#FFEDD5", fg: "#9A3412", label: "On hold" },
+};
+
+const jobHours = (j) => {
+  const h = j.actual_hours ?? j.billable_hours ?? j.estimated_hours ?? 0;
+  return `${(Number(h) || 0).toFixed(2)} BH`;
+};
+const isRecurring = (j) =>
+  Boolean(j.is_recurring || j.recurring || (j.recurrence && j.recurrence !== "none"));
+
+const MODE_KEY = "aq-schedule-mode-v1";
 
 const locales = { "en-US": enUS };
 const localizer = dateFnsLocalizer({
@@ -83,11 +118,38 @@ export default function CalendarSchedule() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [params, setParams] = useSearchParams();
+  const canWriteJobs = useCan("Jobs", "write");
 
   const [rawJobs, setRawJobs] = useState([]);
   const [techs, setTechs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // Phase 30W · top-level view mode. Grid is the default; sessionStorage
+  // remembers the user's last pick (same key convention as mobile).
+  const [mode, setMode] = useState(() => {
+    if (params.get("mode") === "calendar" || params.get("mode") === "grid") return params.get("mode");
+    try {
+      const saved = sessionStorage.getItem(MODE_KEY);
+      if (saved === "calendar" || saved === "grid") return saved;
+    } catch {}
+    return "grid";
+  });
+  const setModePersist = (m) => {
+    setMode(m);
+    try { sessionStorage.setItem(MODE_KEY, m); } catch {}
+    setParam("mode", m);
+  };
+
+  // Phase 30W · grid-mode bookkeeping.
+  const [checked, setChecked] = useState(new Set());
+  const [busy, setBusy] = useState(false);
+  const [rearrangeMode, setRearrangeMode] = useState(false);
+  const [reorderList, setReorderList] = useState([]);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [moveDate, setMoveDate] = useState("");
+  const [toast, setToast] = useState(null);              // {text, kind:"info"|"err"}
+  const [reorderUnavailable, setReorderUnavailable] = useState(false);
 
   const [view, setView] = useState(params.get("view") || "week");   // day | week | month | agenda
   const [date, setDate] = useState(() => {
@@ -198,6 +260,84 @@ export default function CalendarSchedule() {
     },
   });
 
+  /* ─── Phase 30W · Grid-view derived state + actions ────────────── */
+  const focusISO = format(date, "yyyy-MM-dd");
+  const dayJobs = useMemo(() => {
+    const list = filteredJobs.filter((j) => (j.scheduled_date || "").slice(0, 10) === focusISO);
+    list.sort((a, b) =>
+      ((a.route_order ?? 999) - (b.route_order ?? 999))
+      || ((a.scheduled_time || "").localeCompare(b.scheduled_time || "")),
+    );
+    return list;
+  }, [filteredJobs, focusISO]);
+  useEffect(() => { setReorderList(dayJobs); }, [dayJobs]);
+  const gridList = rearrangeMode ? reorderList : dayJobs;
+
+  const toast_ = (text, kind = "info") => {
+    setToast({ text, kind });
+    setTimeout(() => setToast(null), 3200);
+  };
+  const toggleCheck = (id) => setChecked((cur) => {
+    const n = new Set(cur);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+  const bulkComplete = async () => {
+    if (!checked.size) return;
+    setBusy(true);
+    let ok = 0, fail = 0;
+    for (const id of checked) {
+      try { await api.put(`/jobs/${id}`, { status: "completed" }); ok++; }
+      catch { fail++; }
+    }
+    setBusy(false); setChecked(new Set());
+    toast_(`${ok} closed · ${fail} failed`, fail > ok ? "err" : "info");
+    await load();
+  };
+  const bulkMove = async () => {
+    if (!checked.size || !/^\d{4}-\d{2}-\d{2}$/.test(moveDate)) {
+      toast_("Pick a target date (YYYY-MM-DD).", "err"); return;
+    }
+    setBusy(true);
+    let ok = 0, fail = 0;
+    for (const id of checked) {
+      try { await api.put(`/jobs/${id}`, { scheduled_date: moveDate }); ok++; }
+      catch { fail++; }
+    }
+    setBusy(false); setChecked(new Set());
+    setMoveOpen(false); setMoveDate("");
+    toast_(`${ok} moved · ${fail} failed`, fail > ok ? "err" : "info");
+    await load();
+  };
+  const saveReorder = async () => {
+    setBusy(true);
+    try {
+      await api.post("/jobs/reorder", { job_ids: reorderList.map((j) => j.id) });
+      toast_(`Route saved for ${reorderList.length} jobs.`);
+      await load();
+    } catch (e) {
+      const m = String(e?.message || "");
+      if (/403|404|not.?found|forbidden|admin only/i.test(m)) {
+        setReorderUnavailable(true);
+        toast_("Rearrange endpoint not available for your role — order kept locally only.", "err");
+      } else {
+        toast_(m || "Reorder failed.", "err");
+      }
+    } finally {
+      setBusy(false);
+      setRearrangeMode(false);
+    }
+  };
+  const shift = (id, dir) => setReorderList((cur) => {
+    const i = cur.findIndex((j) => j.id === id);
+    if (i < 0) return cur;
+    const j = i + dir;
+    if (j < 0 || j >= cur.length) return cur;
+    const c = [...cur];
+    [c[i], c[j]] = [c[j], c[i]];
+    return c;
+  });
+
   return (
     <div
       className="p-4 md:p-6"
@@ -214,6 +354,37 @@ export default function CalendarSchedule() {
           </div>
         </div>
         <div className="flex-1" />
+        {/* Phase 30W · Calendar ↔ Grid segmented control (Grid is default). */}
+        <div
+          className="inline-flex rounded-xl overflow-hidden"
+          style={{ border: `1px solid ${colors.border}`, background: colors.surface }}
+          data-testid="schedule-mode-switch"
+        >
+          {[
+            { k: "calendar", label: "Calendar" },
+            { k: "grid",     label: "Grid" },
+          ].map((m) => {
+            const active = mode === m.k;
+            return (
+              <button
+                key={m.k}
+                onClick={() => setModePersist(m.k)}
+                data-testid={`schedule-mode-${m.k}`}
+                style={{
+                  padding: "6px 14px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  background: active ? colors.brand : "transparent",
+                  color: active ? "#fff" : colors.onSurface,
+                  border: 0,
+                  cursor: "pointer",
+                }}
+              >
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
         <Gate perm="Jobs" action="write">
           <button
             onClick={() => navigate("/jobs/new")}
@@ -375,6 +546,19 @@ export default function CalendarSchedule() {
         </div>
       ) : null}
 
+      {toast ? (
+        <div
+          className="rounded-xl px-3 py-2 mb-3 text-xs"
+          style={{ background: toast.kind === "err" ? "#FEE2E2" : "#DCFCE7",
+                   color: toast.kind === "err" ? "#991B1B" : "#166534",
+                   border: `1px solid ${toast.kind === "err" ? "#FCA5A5" : "#86EFAC"}` }}
+          data-testid="calendar-toast"
+        >
+          {toast.text}
+        </div>
+      ) : null}
+
+      {mode === "calendar" ? (
       <div
         style={{ background: colors.surface, border: `1px solid ${colors.border}`,
                  borderRadius: 12, padding: 8, minHeight: 640 }}
@@ -398,16 +582,296 @@ export default function CalendarSchedule() {
           popup
         />
       </div>
+      ) : (
+        <GridPanel
+          date={date}
+          setDate={setDate}
+          jobs={gridList}
+          loading={loading}
+          checked={checked}
+          onToggle={toggleCheck}
+          canWrite={canWriteJobs}
+          rearrangeMode={rearrangeMode}
+          setRearrangeMode={setRearrangeMode}
+          onSaveReorder={saveReorder}
+          onShift={shift}
+          onBulkComplete={bulkComplete}
+          onOpenMove={() => setMoveOpen(true)}
+          moveOpen={moveOpen}
+          setMoveOpen={setMoveOpen}
+          moveDate={moveDate}
+          setMoveDate={setMoveDate}
+          onConfirmMove={bulkMove}
+          busy={busy}
+          onOpenJob={(id) => navigate(`/jobs/${id}`)}
+          onNewJob={() => navigate(`/jobs/new?date=${focusISO}`)}
+          reorderUnavailable={reorderUnavailable}
+        />
+      )}
 
-      {/* Status legend */}
-      <div className="flex flex-wrap items-center gap-3 mt-3 text-xs" style={{ color: colors.muted }}>
-        {Object.entries(STATUS_COLORS).map(([k, v]) => (
-          <div key={k} className="flex items-center gap-1">
-            <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: v }} />
-            {k.replace(/_/g, " ")}
-          </div>
-        ))}
+      {/* Status legend — calendar mode only. */}
+      {mode === "calendar" ? (
+        <div className="flex flex-wrap items-center gap-3 mt-3 text-xs" style={{ color: colors.muted }}>
+          {Object.entries(STATUS_COLORS).map(([k, v]) => (
+            <div key={k} className="flex items-center gap-1">
+              <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: v }} />
+              {k.replace(/_/g, " ")}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* ═══ Phase 30W · Grid panel ═════════════════════════════════════════ */
+function GridPanel({
+  date, setDate, jobs, loading, checked, onToggle, canWrite,
+  rearrangeMode, setRearrangeMode, onSaveReorder, onShift,
+  onBulkComplete, onOpenMove, moveOpen, setMoveOpen, moveDate, setMoveDate,
+  onConfirmMove, busy, onOpenJob, onNewJob, reorderUnavailable,
+}) {
+  const focusISO = format(date, "yyyy-MM-dd");
+  const isToday = focusISO === format(new Date(), "yyyy-MM-dd");
+  const dayLabel = date.toLocaleDateString(undefined, {
+    weekday: "long", year: "numeric", month: "short", day: "numeric",
+  });
+
+  return (
+    <div
+      style={{ background: colors.surface, border: `1px solid ${colors.border}`,
+               borderRadius: 12, padding: 16, minHeight: 640 }}
+      data-testid="grid-view"
+    >
+      {/* Day-nav header */}
+      <div className="flex flex-wrap items-center gap-2 mb-4" data-testid="grid-day-head">
+        <button
+          onClick={() => setDate(addDays(date, -1))}
+          className="w-9 h-9 rounded-lg flex items-center justify-center"
+          style={{ background: colors.surfaceSecondary, border: `1px solid ${colors.border}`,
+                   color: colors.onSurface }}
+          data-testid="grid-prev-day"
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <button
+          onClick={() => setDate(new Date())}
+          className="h-9 px-3 rounded-full text-xs font-bold"
+          style={{
+            background: isToday ? colors.brand : colors.surfaceSecondary,
+            color: isToday ? "#fff" : colors.onSurface,
+            border: `1px solid ${isToday ? "transparent" : colors.border}`,
+          }}
+          data-testid="grid-today"
+        >
+          Today
+        </button>
+        <button
+          onClick={() => setDate(addDays(date, 1))}
+          className="w-9 h-9 rounded-lg flex items-center justify-center"
+          style={{ background: colors.surfaceSecondary, border: `1px solid ${colors.border}`,
+                   color: colors.onSurface }}
+          data-testid="grid-next-day"
+        >
+          <ChevronRight size={16} />
+        </button>
+        <div className="flex-1" />
+        <div className="text-sm font-semibold" style={{ color: colors.onSurface }} data-testid="grid-day-label">
+          {dayLabel}
+        </div>
       </div>
+
+      {/* Bulk-action pill row */}
+      {canWrite ? (
+        <div className="flex flex-wrap items-center gap-2 mb-4" data-testid="grid-bulk-pills">
+          <button
+            onClick={onBulkComplete}
+            disabled={busy || checked.size === 0}
+            className="flex items-center gap-1 px-3 h-8 rounded-full text-xs font-bold"
+            style={{ background: "#059669", color: "#fff",
+                     opacity: (busy || checked.size === 0) ? 0.4 : 1 }}
+            data-testid="grid-bulk-complete"
+          >
+            <CheckCircle2 size={12} /> Complete ({checked.size})
+          </button>
+          <button
+            onClick={onOpenMove}
+            disabled={busy || checked.size === 0}
+            className="flex items-center gap-1 px-3 h-8 rounded-full text-xs font-bold"
+            style={{ background: "#2563EB", color: "#fff",
+                     opacity: (busy || checked.size === 0) ? 0.4 : 1 }}
+            data-testid="grid-bulk-move"
+          >
+            <MoveIcon size={12} /> Move these events ({checked.size})
+          </button>
+          <button
+            onClick={rearrangeMode ? onSaveReorder : () => setRearrangeMode(true)}
+            disabled={busy || reorderUnavailable}
+            className="flex items-center gap-1 px-3 h-8 rounded-full text-xs font-bold"
+            style={{ background: rearrangeMode ? "#059669" : "#7C3AED", color: "#fff",
+                     opacity: reorderUnavailable ? 0.4 : 1 }}
+            data-testid="grid-bulk-rearrange"
+            title={reorderUnavailable ? "Reorder endpoint not available for your role." : ""}
+          >
+            {rearrangeMode ? <SaveIcon size={12} /> : <ArrowUp size={12} />}
+            {rearrangeMode ? "Save order" : "Rearrange"}
+          </button>
+          {reorderUnavailable ? (
+            <span className="text-xs" style={{ color: colors.muted }} data-testid="grid-reorder-unavailable">
+              Rearrange not available for this role.
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Inline move date picker */}
+      {moveOpen ? (
+        <div
+          className="rounded-xl p-3 mb-3 flex flex-wrap items-center gap-2"
+          style={{ background: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+          data-testid="grid-move-box"
+        >
+          <span className="text-xs font-semibold" style={{ color: colors.onSurface }}>
+            Move {checked.size} job{checked.size === 1 ? "" : "s"} to:
+          </span>
+          <input
+            type="date"
+            value={moveDate}
+            onChange={(e) => setMoveDate(e.target.value)}
+            className="rounded-lg px-2 py-1 text-xs"
+            style={{ background: colors.surface, border: `1px solid ${colors.border}`,
+                     color: colors.onSurface }}
+            data-testid="grid-move-input"
+          />
+          <button
+            onClick={onConfirmMove}
+            disabled={busy}
+            className="h-7 px-3 rounded-full text-xs font-bold"
+            style={{ background: colors.brand, color: "#fff", opacity: busy ? 0.5 : 1 }}
+            data-testid="grid-move-confirm"
+          >
+            Move
+          </button>
+          <button
+            onClick={() => { setMoveOpen(false); setMoveDate(""); }}
+            className="h-7 px-3 rounded-full text-xs font-semibold"
+            style={{ background: colors.surface, color: colors.onSurface,
+                     border: `1px solid ${colors.border}` }}
+            data-testid="grid-move-cancel"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : null}
+
+      {/* Rows */}
+      {loading ? (
+        <div className="py-10 text-center text-xs" style={{ color: colors.muted }} data-testid="grid-loading">
+          Loading…
+        </div>
+      ) : jobs.length === 0 ? (
+        <div
+          className="rounded-xl py-10 text-center"
+          style={{ background: colors.surfaceSecondary, border: `1px dashed ${colors.border}` }}
+          data-testid="grid-empty"
+        >
+          <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>
+            Nothing on {focusISO}
+          </div>
+          <div className="text-xs mt-1" style={{ color: colors.muted }}>
+            Change the filters, jump to a different day, or add a new job.
+          </div>
+          <Gate perm="Jobs" action="write">
+            <button
+              onClick={onNewJob}
+              className="mt-3 inline-flex items-center gap-1 px-3 h-8 rounded-lg text-xs font-bold"
+              style={{ background: colors.brand, color: "#fff" }}
+              data-testid="grid-new-job"
+            >
+              <Plus size={12} /> New job
+            </button>
+          </Gate>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {jobs.map((j, idx) => {
+            const pill = STATUS_PILL[(j.status || "scheduled").toLowerCase()] || STATUS_PILL.scheduled;
+            const svc = SERVICE_PALETTE(j.service_type);
+            const isChecked = checked.has(j.id);
+            return (
+              <div
+                key={j.id}
+                className="flex items-center gap-3 px-3 py-3 rounded-xl"
+                style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+                data-testid={`grid-job-${j.id}`}
+              >
+                {rearrangeMode ? (
+                  <div className="flex flex-col items-center gap-0.5 w-8">
+                    <button
+                      onClick={() => onShift(j.id, -1)} disabled={idx === 0}
+                      style={{ background: "transparent", border: 0, cursor: idx === 0 ? "default" : "pointer", opacity: idx === 0 ? 0.3 : 1 }}
+                      data-testid={`grid-reorder-up-${j.id}`}
+                    >
+                      <ArrowUp size={14} color={colors.brand} />
+                    </button>
+                    <span className="text-[10px] font-bold" style={{ color: colors.brand }}>{idx + 1}</span>
+                    <button
+                      onClick={() => onShift(j.id, 1)} disabled={idx === jobs.length - 1}
+                      style={{ background: "transparent", border: 0, cursor: idx === jobs.length - 1 ? "default" : "pointer",
+                               opacity: idx === jobs.length - 1 ? 0.3 : 1 }}
+                      data-testid={`grid-reorder-down-${j.id}`}
+                    >
+                      <ArrowDown size={14} color={colors.brand} />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => onToggle(j.id)}
+                    className="w-6 h-6 rounded-full flex items-center justify-center"
+                    style={{ background: isChecked ? colors.brand : "transparent",
+                             border: `1.5px solid ${isChecked ? colors.brand : colors.muted}` }}
+                    data-testid={`grid-check-${j.id}`}
+                    aria-label={isChecked ? "uncheck" : "check"}
+                  >
+                    {isChecked ? <CheckCircle2 size={13} color="#fff" /> : null}
+                  </button>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] font-bold uppercase tracking-wide"
+                       style={{ color: svc.tag }}>
+                    {isRecurring(j) ? "🔁 " : ""}{j.service_type || "General"}
+                  </div>
+                  <div className="text-sm font-bold" style={{ color: colors.onSurface }}>
+                    {j.customer_name || "Unknown"}
+                  </div>
+                  {j.address ? (
+                    <div className="text-xs truncate" style={{ color: colors.muted }}>{j.address}</div>
+                  ) : null}
+                  <div className="flex items-center gap-2 mt-1 text-xs" style={{ color: colors.muted }}>
+                    <FileText size={11} />
+                    <span>{jobHours(j)}</span>
+                    {j.scheduled_time ? <><span>·</span><span>{j.scheduled_time}</span></> : null}
+                  </div>
+                </div>
+                <div
+                  className="px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide"
+                  style={{ background: pill.bg, color: pill.fg }}
+                >
+                  {pill.label}
+                </div>
+                <button
+                  onClick={() => onOpenJob(j.id)}
+                  style={{ background: "transparent", border: 0, cursor: "pointer", color: colors.muted }}
+                  data-testid={`grid-open-${j.id}`}
+                  aria-label="Open job detail"
+                >
+                  <ChevronRight size={18} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

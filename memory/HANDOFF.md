@@ -2178,3 +2178,43 @@ Mobile-only follow-up to Phase 30. Web (`/app/frontend/src/pages/schedule/Calend
 **Deferred (still)**
 - True native drag handle for rearrange (would need `react-native-draggable-flatlist`; currently uses up/down chevrons — same outcome, one tap slower).
 - Silencing web-only `react-big-calendar` key warnings (web-only, out of this pass's scope).
+
+#### Phase 30W · Web schedule Grid/Calendar toggle (Feb 15 2026)
+
+Web-only mirror of the Phase 30 mobile fix pass. `/app/frontend/src/pages/schedule/CalendarSchedule.jsx` gained a top-level `[Calendar] [Grid]` segmented control. **Grid is the default** on fresh sessions; the choice persists in `sessionStorage["aq-schedule-mode-v1"]` and is also mirrored to the URL `?mode=…` so shareable links open in the right view.
+
+**Grid view (default)** — matches the mobile grid card-for-card, adjusted for desktop density:
+- Day-nav header: `<` prev-day, **Today** pill (highlighted when the focused date is today), `>` next-day, right-aligned "Wednesday, Jul 15, 2026" label.
+- Bulk-action pill row, all Jobs.write gated via the Phase 29C `<Gate perm="Jobs" action="write">`:
+  - **Complete (N)** → `PUT /api/jobs/{id} {status:"completed"}` per checked job, then toast + refresh. Disabled at count 0.
+  - **Move these events (N)** → inline `<input type="date">` picker; on confirm, `PUT /api/jobs/{id} {scheduled_date}` per checked row.
+  - **Rearrange** → toggles per-row up/down chevrons; **Save order** hits `POST /api/jobs/reorder {job_ids:[…]}`. If the server answers 403/404 (non-admin), the pill is disabled next click and a small "Rearrange not available for this role." hint renders next to it — no phantom endpoint invented.
+- Row layout: circular checkbox → service-type tag in the tag colour (Weekly Landscaping = green, Monthly Landscaping = indigo, Irrigation = blue, Rock = amber, Pool/Chem = cyan, Cleaning = pink, other = neutral — same palette as mobile) → customer (bold) → address → notepad icon + `X.XX BH` (falls back through `actual_hours → billable_hours → estimated_hours → 0`) → status pill (`completed → "Closed" (green)`, `active → "In progress" (blue)`, `scheduled/pending → "Open" (amber)`, etc.) → trailing `→` chevron to `/jobs/:id`. Recurring jobs get a `🔁 ` prefix on the service tag.
+- Empty state shows a "Nothing on {date}" card with a Jobs.write-gated **New job** button that opens `/jobs/new?date=YYYY-MM-DD`.
+
+**Calendar view (unchanged behaviour)** — same `react-big-calendar` Day / Week / Month / Agenda sub-tabs, custom-range preset row, and status legend as before. Only the wrapper is now conditional on `mode === "calendar"`.
+
+**Filter toolbar** stays visible in BOTH modes and drives a single `filteredJobs` memo — no duplicate state. Calendar mode consumes `events = filteredJobs.map(jobToEvent)`; Grid mode consumes `dayJobs = filteredJobs.filter(d = focused day)` sorted by `route_order` then `scheduled_time`.
+
+**Files modified (1)**
+- `frontend/src/pages/schedule/CalendarSchedule.jsx` — added mode state, sessionStorage persistence, service palette + status-pill helpers, new `<GridPanel>` component, wrapped RBC in a conditional, added toast + move-picker inline UI. Icon imports extended (`ChevronLeft`, `ChevronRight`, `CheckCircle2`, `Move`, `ArrowUp`, `ArrowDown`, `FileText`, `Save`).
+
+**Not touched (per hard rule)**
+- Mobile app, backend endpoints/schema, customer portal, other web pages.
+
+**Verification**
+- Backend regression: `test_phase30_schedule` + `test_phase29c_rbac` + `test_phase29b_check_crypto` = **17/17 passed** in 6 s.
+- Webpack: **compiled with warnings** (only the pre-existing esbuild-loader deprecation; no new errors).
+- Live browser (Playwright, admin@aquaterra.com):
+  - Fresh session → `/schedule` renders `[data-testid="grid-view"]`; `[data-testid="calendar-view"]` absent → Grid is the default ✓
+  - Toggle → **Calendar**: `.rbc-toolbar` present, `grid-view` gone ✓
+  - **Reload** while in Calendar → still Calendar → sessionStorage persistence works ✓
+  - Toggle back → **Grid**, reload → still Grid → persistence both directions ✓
+  - Day label reads `Wednesday, Jul 15, 2026`; bulk-action pill row with `Complete (0)` / `Move these events (0)` / `Rearrange` visible; 4 seeded jobs render as cards with correct service-tag colours (`Weekly Pool Service` = green, `Monthly Landscaping` = indigo, `Landscaping` amber, `General` neutral); `🔁` prefix present on the recurring GENERAL job.
+
+**Screenshots** (attached in the browser proof for this pass)
+- `/tmp/schedule_grid_web.png` — Grid mode with 4 seeded jobs.
+- `/tmp/schedule_calendar_web.png` — Calendar mode after toggle, RBC Week view rendering the same jobs.
+
+**Known noise (unchanged from Phase 30)**
+- 13 `react-big-calendar` "duplicate key" console warnings when multiple events share a slot. Pre-existing; cosmetic; scoped for a future silencing pass.
