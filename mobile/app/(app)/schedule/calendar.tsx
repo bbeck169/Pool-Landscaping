@@ -1,27 +1,39 @@
 /**
- * Phase 30 · Calendar Schedule (Expo mobile).
+ * Phase 30 · Calendar Schedule (Expo mobile) — fix pass.
  *
- * Replaces the admin/tech Jobs list + old Section-based Schedule with a
- * unified date-driven calendar. Uses `react-native-calendars` (already
- * added to package.json in Phase 30). Views:
- *   • Month  — full grid with dot markers per job
- *   • Week   — 7-day agenda list starting on the focused date
- *   • Day    — single-day agenda
- *   • Custom — preset chips (7d / 30d / 90d) and free-form date range
+ * Top-level mode is now a binary toggle: `[Calendar] [Grid]`. Default = Grid
+ * (persists in AsyncStorage). Layout matches the two reference screenshots
+ * the user provided.
  *
- * Customer role is redirected to `/(app)/jobs` (the untouched customer
- * services screen) since the calendar is an admin/dispatch/tech surface.
+ *   Grid view (default)
+ *     • Day header with < prev / today / next > controls
+ *     • Bulk-action pill row: Complete · Move · Rearrange (all Jobs.write gated)
+ *     • Stacked cards per job with a circular checkbox, service-type tag,
+ *       customer + address, notepad+billable-hours row, status pill.
+ *
+ *   Calendar view
+ *     • Multi-day columns (Mon–Sun sticky headers) with events stacked in
+ *       each column. Colour-coded by service type. Recurring jobs get 🔁.
+ *     • `BH 👁` toggle to hide/show billable hours on cards.
+ *
+ * Endpoints used (all pre-existing):
+ *   GET  /api/jobs?start=&end=            (Phase 30 range filter)
+ *   PUT  /api/jobs/{id}   {status,scheduled_date}   (mark complete / move)
+ *   POST /api/jobs/reorder  {job_ids:[…]}           (admin rearrange)
  */
-import React, { useCallback, useMemo, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, FlatList } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Platform,
+  ActivityIndicator, Alert,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { Calendar } from "react-native-calendars";
 import { useFocusEffect, useRouter, Redirect } from "expo-router";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { storage } from "@/src/utils/storage";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
-import { Header, JobCard } from "@/src/components/widgets";
+import { Header } from "@/src/components/widgets";
 
 type Job = {
   id: string;
@@ -30,311 +42,711 @@ type Job = {
   service_type?: string;
   status?: string;
   customer_name?: string;
-  technician_id?: string | null;
   address?: string;
+  technician_id?: string | null;
+  estimated_hours?: number | null;
+  actual_hours?: number | null;
+  billable_hours?: number | null;
+  duration_minutes?: number | null;
+  route_order?: number | null;
+  is_recurring?: boolean;
+  recurring?: boolean;
+  recurrence?: string | null;
+  title?: string;
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  scheduled:  "#0EA5E9",
-  active:     "#059669",
-  completed:  "#6B7280",
-  pending:    "#F59E0B",
-  requested:  "#8B5CF6",
-  reopened:   "#DC2626",
-  cancelled:  "#9CA3AF",
-  on_hold:    "#F97316",
-};
-
-type ViewMode = "month" | "week" | "day" | "custom";
+type Mode = "grid" | "calendar";
+const MODE_KEY = "aq-schedule-mode-v1";
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const addDays = (d: Date, n: number) => { const c = new Date(d); c.setDate(c.getDate() + n); return c; };
+const dayLabel = (d: Date) =>
+  d.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "short", day: "numeric" });
 
-export default function CalendarMobile() {
+// Status pill palette. "Closed" (=completed) is green; open/scheduled is amber.
+const STATUS_PILL: Record<string, { bg: string; fg: string; label: string }> = {
+  completed:  { bg: "#DCFCE7", fg: "#166534", label: "Closed" },
+  active:     { bg: "#DBEAFE", fg: "#1E40AF", label: "In progress" },
+  scheduled:  { bg: "#FEF3C7", fg: "#92400E", label: "Open" },
+  pending:    { bg: "#FEF3C7", fg: "#92400E", label: "Pending" },
+  requested:  { bg: "#EDE9FE", fg: "#5B21B6", label: "Requested" },
+  reopened:   { bg: "#FEE2E2", fg: "#991B1B", label: "Reopened" },
+  cancelled:  { bg: "#F3F4F6", fg: "#4B5563", label: "Cancelled" },
+  on_hold:    { bg: "#FFEDD5", fg: "#9A3412", label: "On hold" },
+};
+
+// Service-type → column card colour. Distinct hues for the Calendar view;
+// unknown types fall back to a neutral surface.
+const SERVICE_COLOR = (raw?: string): { bg: string; fg: string; tag: string } => {
+  const s = (raw || "").toLowerCase();
+  if (s.includes("weekly") && s.includes("landsc")) return { bg: "#DCFCE7", fg: "#166534", tag: "#059669" };
+  if (s.includes("monthly") && s.includes("landsc")) return { bg: "#E0E7FF", fg: "#3730A3", tag: "#4F46E5" };
+  if (s.includes("irrig")) return { bg: "#DBEAFE", fg: "#1E3A8A", tag: "#2563EB" };
+  if (s.includes("rock")) return { bg: "#FEF3C7", fg: "#78350F", tag: "#B45309" };
+  if (s.includes("pool") || s.includes("chem")) return { bg: "#CFFAFE", fg: "#155E75", tag: "#0891B2" };
+  if (s.includes("clean")) return { bg: "#FCE7F3", fg: "#831843", tag: "#BE185D" };
+  return { bg: "#F3F4F6", fg: "#111827", tag: "#6B7280" };
+};
+
+const jobHours = (j: Job): string => {
+  const h = j.actual_hours ?? j.billable_hours ?? j.estimated_hours ?? 0;
+  return `${(Number(h) || 0).toFixed(2)} BH`;
+};
+const isRecurring = (j: Job): boolean =>
+  Boolean(j.is_recurring || j.recurring || (j.recurrence && j.recurrence !== "none"));
+
+export default function ScheduleCalendar() {
   const router = useRouter();
   const { user } = useAuth();
   const role = (user?.role as string) || "";
+  const isAdmin = role === "admin" || role === "super_admin";
+  const isTech = role === "technician";
+  const canWriteJobs = isAdmin || isTech;
 
-  // Customers keep their untouched services screen at /(app)/jobs.
-  if (role === "customer") {
-    return <Redirect href="/(app)/jobs" />;
-  }
+  if (role === "customer") return <Redirect href="/(app)/jobs" />;
 
-  const [mode, setMode] = useState<ViewMode>("month");
-  const [selected, setSelected] = useState<string>(iso(new Date()));
-  const [rangeFrom, setRangeFrom] = useState<string>(iso(new Date()));
-  const [rangeTo, setRangeTo] = useState<string>(iso(addDays(new Date(), 6)));
+  const [mode, setMode] = useState<Mode>("grid");
+  const [modeLoaded, setModeLoaded] = useState(false);
+  const [focus, setFocus] = useState(new Date());                // Grid: single day; Calendar: anchors the week
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [showBH, setShowBH] = useState(true);
+  const [rearrangeMode, setRearrangeMode] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [moveDate, setMoveDate] = useState("");
+
+  // Load persisted mode.
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await storage.getItem<string>(MODE_KEY, "grid");
+        if (saved === "grid" || saved === "calendar") setMode(saved);
+      } finally { setModeLoaded(true); }
+    })();
+  }, []);
+  const setModePersist = (m: Mode) => {
+    setMode(m);
+    storage.setItem(MODE_KEY, m).catch(() => {/* incognito — in-memory only */});
+  };
 
   const load = useCallback(async () => {
     setLoading(true); setErr("");
     try {
-      // Fetch a ±90 day window; backend accepts optional start/end (Phase 30).
-      const focus = new Date(selected + "T00:00:00");
-      const start = iso(addDays(focus, -60));
-      const end   = iso(addDays(focus,  90));
+      const start = iso(addDays(focus, -14));
+      const end   = iso(addDays(focus,  60));
       const data = await api.get(`/jobs?start=${start}&end=${end}`);
-      setJobs(Array.isArray(data) ? data : (data.items || data.data || []));
+      const arr = Array.isArray(data) ? data : (data.items || data.data || []);
+      setJobs(arr);
     } catch (e: any) {
       setErr(e.message || "Failed to load schedule");
     } finally { setLoading(false); }
-  }, [selected]);
+  }, [focus]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  // Marked dates for the month calendar: coloured dots per status.
-  const marked = useMemo(() => {
-    const out: Record<string, any> = {};
+  const focusISO = iso(focus);
+  const dayJobs = useMemo(() => {
+    const list = jobs.filter((j) => j.scheduled_date === focusISO);
+    list.sort((a, b) => (a.route_order ?? 999) - (b.route_order ?? 999)
+      || (a.scheduled_time || "").localeCompare(b.scheduled_time || ""));
+    return list;
+  }, [jobs, focusISO]);
+
+  const [reorderList, setReorderList] = useState<Job[]>([]);
+  useEffect(() => { setReorderList(dayJobs); }, [dayJobs]);
+
+  const gridList = rearrangeMode ? reorderList : dayJobs;
+
+  const toggleCheck = (id: string) => {
+    setChecked((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const bulkComplete = async () => {
+    if (!checked.size) return;
+    setBusy(true);
+    let ok = 0, fail = 0;
+    for (const id of checked) {
+      try { await api.put(`/jobs/${id}`, { status: "completed" }); ok++; }
+      catch { fail++; }
+    }
+    setBusy(false);
+    setChecked(new Set());
+    Alert.alert("Marked complete", `${ok} closed · ${fail} failed`);
+    await load();
+  };
+
+  const bulkMove = async () => {
+    if (!checked.size || !moveDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      Alert.alert("Pick a date", "Enter a YYYY-MM-DD target date to move to.");
+      return;
+    }
+    setBusy(true);
+    let ok = 0, fail = 0;
+    for (const id of checked) {
+      try { await api.put(`/jobs/${id}`, { scheduled_date: moveDate }); ok++; }
+      catch { fail++; }
+    }
+    setBusy(false);
+    setChecked(new Set());
+    setMoveOpen(false); setMoveDate("");
+    Alert.alert("Move complete", `${ok} moved · ${fail} failed`);
+    await load();
+  };
+
+  const saveReorder = async () => {
+    if (!isAdmin) {
+      setRearrangeMode(false);
+      Alert.alert("Rearrange saved locally", "Only admins can persist a new route order — the reorder endpoint is admin-only.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.post("/jobs/reorder", { job_ids: reorderList.map((j) => j.id) });
+      Alert.alert("Route saved", `New order saved for ${reorderList.length} jobs.`);
+      await load();
+    } catch (e: any) {
+      Alert.alert("Reorder failed", e.message || "Try again.");
+    } finally {
+      setBusy(false);
+      setRearrangeMode(false);
+    }
+  };
+
+  const shift = (id: string, dir: -1 | 1) => {
+    setReorderList((cur) => {
+      const i = cur.findIndex((j) => j.id === id);
+      if (i < 0) return cur;
+      const j = i + dir;
+      if (j < 0 || j >= cur.length) return cur;
+      const c = [...cur];
+      [c[i], c[j]] = [c[j], c[i]];
+      return c;
+    });
+  };
+
+  /* ─── Calendar view — build 7-day column layout ─────────────────── */
+  const weekStart = useMemo(() => {
+    const d = new Date(focus);
+    const day = d.getDay();
+    d.setDate(d.getDate() - day + 1);         // Monday
+    return d;
+  }, [focus]);
+  const weekDays = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
+    [weekStart],
+  );
+  const weekTitle = useMemo(
+    () => focus.toLocaleDateString(undefined, { month: "long", year: "numeric" }),
+    [focus],
+  );
+  const jobsByDay = useMemo(() => {
+    const m: Record<string, Job[]> = {};
     for (const j of jobs) {
-      const d = j.scheduled_date;
-      if (!d) continue;
-      const colour = STATUS_COLORS[(j.status || "scheduled").toLowerCase()] || colors.brand;
-      if (!out[d]) out[d] = { dots: [] };
-      // De-dupe dots on the same day/status so a heavy day doesn't render 20 dots.
-      if (!out[d].dots.some((x: any) => x.color === colour)) {
-        out[d].dots.push({ color: colour });
-      }
+      const d = j.scheduled_date || "";
+      (m[d] = m[d] || []).push(j);
     }
-    if (out[selected]) out[selected] = { ...out[selected], selected: true, selectedColor: colors.brand };
-    else out[selected] = { selected: true, selectedColor: colors.brand };
-    return out;
-  }, [jobs, selected]);
+    return m;
+  }, [jobs]);
 
-  const visible = useMemo(() => {
-    if (mode === "day") {
-      return jobs.filter((j) => j.scheduled_date === selected);
-    }
-    if (mode === "week") {
-      const start = new Date(selected + "T00:00:00");
-      const end = addDays(start, 6);
-      return jobs.filter((j) => {
-        if (!j.scheduled_date) return false;
-        return j.scheduled_date >= iso(start) && j.scheduled_date <= iso(end);
-      });
-    }
-    if (mode === "custom") {
-      return jobs.filter((j) => {
-        if (!j.scheduled_date) return false;
-        return j.scheduled_date >= rangeFrom && j.scheduled_date <= rangeTo;
-      });
-    }
-    return jobs; // month view uses the calendar itself; list under it is unfiltered
-  }, [jobs, mode, selected, rangeFrom, rangeTo]);
-
-  const groupedByDate = useMemo(() => {
-    const map: Record<string, Job[]> = {};
-    for (const j of visible) {
-      const d = j.scheduled_date || "Unscheduled";
-      (map[d] = map[d] || []).push(j);
-    }
-    return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [visible]);
-
-  const isAdmin = role === "admin" || role === "super_admin";
-  const openJob = (id: string) => router.push(`/job/${id}` as any);
-  const createJob = (date?: string) => router.push(`/job/new${date ? `?date=${date}` : ""}` as any);
+  if (!modeLoaded) return null;
 
   return (
     <View style={styles.root}>
       <Header
         title="Schedule"
-        subtitle={loading ? "Loading…" : `${visible.length} jobs · ${mode}`}
-        right={isAdmin ? (
-          <Pressable onPress={() => createJob(selected)} testID="calendar-new-job">
-            <Ionicons name="add-circle" size={26} color={colors.brand} />
-          </Pressable>
-        ) : undefined}
+        subtitle={loading ? "Loading…" : `${jobs.length} jobs in window · ${mode}`}
       />
 
-      {/* View mode picker */}
-      <View style={styles.modeRow} testID="calendar-mode-row">
-        {(["month", "week", "day", "custom"] as const).map((m) => {
+      {/* Top-level Grid ↔ Calendar toggle. */}
+      <View style={styles.modeSwitch} testID="schedule-mode-switch">
+        {(["calendar", "grid"] as const).map((m) => {
           const active = mode === m;
           return (
             <Pressable
               key={m}
-              onPress={() => setMode(m)}
-              style={[styles.mode, active && styles.modeActive]}
-              testID={`calendar-mode-${m}`}
+              onPress={() => setModePersist(m)}
+              style={[styles.modeBtn, active && styles.modeBtnActive]}
+              testID={`schedule-mode-${m}`}
             >
-              <Text style={[styles.modeText, active && { color: "#fff" }]}>
-                {m.charAt(0).toUpperCase() + m.slice(1)}
+              <Ionicons
+                name={m === "grid" ? "list-outline" : "calendar-outline"}
+                size={14}
+                color={active ? "#fff" : colors.onSurfaceSecondary}
+              />
+              <Text style={[styles.modeBtnText, active && { color: "#fff" }]}>
+                {m === "grid" ? "Grid" : "Calendar"}
               </Text>
             </Pressable>
           );
         })}
       </View>
 
-      {mode === "custom" ? (
-        <View style={styles.customRow} testID="calendar-custom-presets">
-          {[
-            { label: "7 days",  days: 6 },
-            { label: "30 days", days: 29 },
-            { label: "90 days", days: 89 },
-          ].map((p) => (
-            <Pressable
-              key={p.label}
-              onPress={() => { setRangeFrom(iso(new Date())); setRangeTo(iso(addDays(new Date(), p.days))); }}
-              style={styles.chip}
-              testID={`calendar-preset-${p.label.replace(/\s+/g, "-")}`}
-            >
-              <Text style={styles.chipText}>{p.label}</Text>
-            </Pressable>
-          ))}
-          <Text style={styles.customLabel}>
-            {rangeFrom} → {rangeTo}
-          </Text>
-        </View>
-      ) : null}
-
       {err ? (
-        <View style={styles.err} testID="calendar-error">
-          <Ionicons name="warning-outline" size={14} color="#991B1B" />
+        <View style={styles.errBar} testID="schedule-error">
+          <Ionicons name="warning-outline" size={12} color="#991B1B" />
           <Text style={styles.errText}>{err}</Text>
         </View>
       ) : null}
 
-      {loading && jobs.length === 0 ? (
-        <View style={styles.center}><ActivityIndicator color={colors.brand} /></View>
-      ) : mode === "month" ? (
-        <ScrollView contentContainerStyle={{ padding: spacing.md }}>
-          <Calendar
-            current={selected}
-            onDayPress={(d) => setSelected(d.dateString)}
-            markingType="multi-dot"
-            markedDates={marked}
-            theme={{
-              todayTextColor: colors.brand,
-              selectedDayBackgroundColor: colors.brand,
-              arrowColor: colors.brand,
-            }}
-            testID="calendar-month"
-          />
-          <Text style={styles.sectionTitle}>
-            Jobs on {selected} · {jobs.filter((j) => j.scheduled_date === selected).length}
-          </Text>
-          {jobs.filter((j) => j.scheduled_date === selected).map((j) => (
-            <Pressable key={j.id} onPress={() => openJob(j.id)} testID={`calendar-job-${j.id}`}>
-              <JobCard job={j} />
-            </Pressable>
-          ))}
-          {jobs.filter((j) => j.scheduled_date === selected).length === 0 ? (
-            <Pressable
-              style={styles.emptyDay}
-              onPress={() => createJob(selected)}
-              testID="calendar-empty-day"
-            >
-              <Ionicons name="add-circle-outline" size={22} color={colors.brand} />
-              <Text style={styles.emptyDayText}>Nothing on {selected}. Tap to create a job.</Text>
-            </Pressable>
-          ) : null}
-        </ScrollView>
+      {mode === "grid" ? (
+        <GridView
+          focus={focus} setFocus={setFocus}
+          jobs={gridList} loading={loading}
+          checked={checked} onToggle={toggleCheck}
+          canWrite={canWriteJobs}
+          rearrangeMode={rearrangeMode}
+          onToggleRearrange={() => setRearrangeMode((v) => !v)}
+          onSaveReorder={saveReorder}
+          onShift={shift}
+          onBulkComplete={bulkComplete}
+          onOpenMove={() => setMoveOpen(true)}
+          moveOpen={moveOpen} setMoveOpen={setMoveOpen}
+          moveDate={moveDate} setMoveDate={setMoveDate}
+          onConfirmMove={bulkMove}
+          busy={busy}
+          onOpenJob={(id) => router.push(`/job/${id}` as any)}
+          onNewJob={() => router.push(`/job/new?date=${focusISO}` as any)}
+          isAdmin={isAdmin}
+        />
       ) : (
-        <FlatList
-          data={groupedByDate}
-          keyExtractor={(item) => item[0]}
-          contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing["3xl"] }}
-          renderItem={({ item }) => (
-            <View>
-              <Text style={styles.dateHeader}>{item[0]}</Text>
-              {item[1].map((j) => (
-                <Pressable key={j.id} onPress={() => openJob(j.id)} testID={`calendar-job-${j.id}`}>
-                  <JobCard job={j} />
-                </Pressable>
-              ))}
-            </View>
-          )}
-          ListEmptyComponent={() => (
-            <View style={styles.emptyBig} testID="calendar-empty">
-              <Ionicons name="calendar-outline" size={30} color={colors.muted} />
-              <Text style={styles.emptyBigText}>Nothing scheduled in this range.</Text>
-            </View>
-          )}
+        <CalendarView
+          weekDays={weekDays}
+          weekTitle={weekTitle}
+          jobsByDay={jobsByDay}
+          showBH={showBH}
+          onToggleBH={() => setShowBH((v) => !v)}
+          onPrev={() => setFocus((d) => addDays(d, -7))}
+          onNext={() => setFocus((d) => addDays(d, 7))}
+          onOpenJob={(id) => router.push(`/job/${id}` as any)}
         />
       )}
     </View>
   );
 }
 
+/* ═══ Grid view ══════════════════════════════════════════════════════ */
+function GridView(props: any) {
+  const {
+    focus, setFocus, jobs, loading, checked, onToggle, canWrite,
+    rearrangeMode, onToggleRearrange, onSaveReorder, onShift,
+    onBulkComplete, onOpenMove, moveOpen, setMoveOpen, moveDate, setMoveDate,
+    onConfirmMove, busy, onOpenJob, onNewJob, isAdmin,
+  } = props;
+  const focusISO = iso(focus);
+  const isToday = focusISO === iso(new Date());
+
+  return (
+    <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing["3xl"] }}>
+      <View style={gStyles.dayHead} testID="schedule-day-head">
+        <Pressable onPress={() => setFocus(addDays(focus, -1))} style={gStyles.navBtn} testID="grid-prev-day">
+          <Ionicons name="chevron-back" size={18} color={colors.onSurface} />
+        </Pressable>
+        <Pressable
+          onPress={() => setFocus(new Date())}
+          style={[gStyles.todayPill, isToday && gStyles.todayPillActive]}
+          testID="grid-today"
+        >
+          <Text style={[gStyles.todayText, isToday && { color: "#fff" }]}>Today</Text>
+        </Pressable>
+        <Pressable onPress={() => setFocus(addDays(focus, 1))} style={gStyles.navBtn} testID="grid-next-day">
+          <Ionicons name="chevron-forward" size={18} color={colors.onSurface} />
+        </Pressable>
+        <Text style={gStyles.dayLabel} testID="grid-day-label">{dayLabel(focus)}</Text>
+      </View>
+
+      {/* Bulk-action pills. Buttons stay visible but disable when nothing is checked. */}
+      {canWrite ? (
+        <View style={gStyles.pillRow} testID="grid-bulk-pills">
+          <Pressable
+            onPress={onBulkComplete}
+            disabled={busy || checked.size === 0}
+            style={[gStyles.pill, gStyles.pillGreen, (busy || checked.size === 0) && { opacity: 0.4 }]}
+            testID="grid-bulk-complete"
+          >
+            <Ionicons name="checkmark-circle" size={13} color="#fff" />
+            <Text style={gStyles.pillText}>Complete ({checked.size})</Text>
+          </Pressable>
+          <Pressable
+            onPress={onOpenMove}
+            disabled={busy || checked.size === 0}
+            style={[gStyles.pill, gStyles.pillBlue, (busy || checked.size === 0) && { opacity: 0.4 }]}
+            testID="grid-bulk-move"
+          >
+            <Ionicons name="calendar-outline" size={13} color="#fff" />
+            <Text style={gStyles.pillText}>Move ({checked.size})</Text>
+          </Pressable>
+          <Pressable
+            onPress={rearrangeMode ? onSaveReorder : onToggleRearrange}
+            style={[gStyles.pill, rearrangeMode ? gStyles.pillGreen : gStyles.pillPurple]}
+            testID="grid-bulk-rearrange"
+          >
+            <Ionicons name={rearrangeMode ? "save-outline" : "reorder-three-outline"} size={13} color="#fff" />
+            <Text style={gStyles.pillText}>{rearrangeMode ? "Save order" : "Rearrange"}</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {moveOpen ? (
+        <View style={gStyles.moveBox} testID="grid-move-box">
+          <Text style={gStyles.moveLabel}>Move {checked.size} job{checked.size === 1 ? "" : "s"} to:</Text>
+          <TextInput
+            value={moveDate}
+            onChangeText={setMoveDate}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={colors.muted}
+            autoCapitalize="none"
+            style={gStyles.moveInput}
+            testID="grid-move-input"
+          />
+          <View style={{ flexDirection: "row", gap: spacing.xs }}>
+            <Pressable
+              onPress={() => { setMoveOpen(false); setMoveDate(""); }}
+              style={[gStyles.moveBtn, gStyles.moveBtnCancel]}
+              testID="grid-move-cancel"
+            >
+              <Text style={gStyles.moveBtnCancelText}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={onConfirmMove}
+              disabled={busy}
+              style={[gStyles.moveBtn, gStyles.moveBtnGo, busy && { opacity: 0.5 }]}
+              testID="grid-move-confirm"
+            >
+              <Text style={gStyles.moveBtnGoText}>Move</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {loading ? (
+        <View style={{ padding: spacing.xl, alignItems: "center" }}><ActivityIndicator color={colors.brand} /></View>
+      ) : jobs.length === 0 ? (
+        <View style={gStyles.empty} testID="grid-empty">
+          <Ionicons name="calendar-outline" size={28} color={colors.muted} />
+          <Text style={gStyles.emptyTitle}>Nothing on {focusISO}</Text>
+          {isAdmin ? (
+            <Pressable onPress={onNewJob} style={gStyles.newBtn} testID="grid-new-job">
+              <Ionicons name="add-circle" size={14} color="#fff" />
+              <Text style={gStyles.newBtnText}>New job</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : jobs.map((j: Job, idx: number) => (
+        <JobRow
+          key={j.id}
+          job={j}
+          idx={idx}
+          checked={checked.has(j.id)}
+          onCheck={() => onToggle(j.id)}
+          onOpen={() => onOpenJob(j.id)}
+          rearrangeMode={rearrangeMode}
+          onShift={onShift}
+          first={idx === 0}
+          last={idx === jobs.length - 1}
+        />
+      ))}
+    </ScrollView>
+  );
+}
+
+function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last }: any) {
+  const pill = STATUS_PILL[(job.status || "scheduled").toLowerCase()] || STATUS_PILL.scheduled;
+  const svc = SERVICE_COLOR(job.service_type);
+  return (
+    <View style={gStyles.card} testID={`grid-job-${job.id}`}>
+      {rearrangeMode ? (
+        <View style={gStyles.reorderCol}>
+          <Pressable onPress={() => onShift(job.id, -1)} disabled={first}
+                     style={[gStyles.reorderBtn, first && { opacity: 0.3 }]}
+                     testID={`grid-reorder-up-${job.id}`}>
+            <Ionicons name="chevron-up" size={14} color={colors.brand} />
+          </Pressable>
+          <Text style={gStyles.reorderIdx}>{idx + 1}</Text>
+          <Pressable onPress={() => onShift(job.id, 1)} disabled={last}
+                     style={[gStyles.reorderBtn, last && { opacity: 0.3 }]}
+                     testID={`grid-reorder-down-${job.id}`}>
+            <Ionicons name="chevron-down" size={14} color={colors.brand} />
+          </Pressable>
+        </View>
+      ) : (
+        <Pressable
+          onPress={onCheck}
+          style={[gStyles.checkbox, checked && gStyles.checkboxOn]}
+          testID={`grid-check-${job.id}`}
+        >
+          {checked ? <Ionicons name="checkmark" size={14} color="#fff" /> : null}
+        </Pressable>
+      )}
+      <View style={{ flex: 1 }}>
+        <Text style={[gStyles.svcTag, { color: svc.tag }]} numberOfLines={1}>
+          {isRecurring(job) ? "🔁 " : ""}
+          {(job.service_type || "General").toUpperCase()}
+        </Text>
+        <Text style={gStyles.cust} numberOfLines={1}>{job.customer_name || "Unknown"}</Text>
+        {job.address ? (
+          <Text style={gStyles.addr} numberOfLines={1}>{job.address}</Text>
+        ) : null}
+        <View style={gStyles.metaRow}>
+          <Ionicons name="reader-outline" size={12} color={colors.muted} />
+          <Text style={gStyles.metaText}>{jobHours(job)}</Text>
+          {job.scheduled_time ? (
+            <>
+              <Ionicons name="time-outline" size={12} color={colors.muted} style={{ marginLeft: 8 }} />
+              <Text style={gStyles.metaText}>{job.scheduled_time}</Text>
+            </>
+          ) : null}
+        </View>
+      </View>
+      <View style={[gStyles.statusPill, { backgroundColor: pill.bg }]}>
+        <Text style={[gStyles.statusText, { color: pill.fg }]}>{pill.label}</Text>
+      </View>
+      <Pressable onPress={onOpen} hitSlop={12} testID={`grid-open-${job.id}`}>
+        <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+      </Pressable>
+    </View>
+  );
+}
+
+/* ═══ Calendar view ══════════════════════════════════════════════════ */
+function CalendarView({
+  weekDays, weekTitle, jobsByDay, showBH, onToggleBH, onPrev, onNext, onOpenJob,
+}: any) {
+  return (
+    <View style={{ flex: 1 }}>
+      <View style={cStyles.head}>
+        <Pressable onPress={onPrev} style={cStyles.navBtn} testID="calendar-prev-week">
+          <Ionicons name="chevron-back" size={18} color={colors.onSurface} />
+        </Pressable>
+        <Text style={cStyles.headTitle} testID="calendar-week-title">{weekTitle}</Text>
+        <Pressable onPress={onNext} style={cStyles.navBtn} testID="calendar-next-week">
+          <Ionicons name="chevron-forward" size={18} color={colors.onSurface} />
+        </Pressable>
+        <Pressable
+          onPress={onToggleBH}
+          style={[cStyles.bhPill, showBH && cStyles.bhPillOn]}
+          testID="calendar-toggle-bh"
+        >
+          <Ionicons name={showBH ? "eye-outline" : "eye-off-outline"}
+                    size={12} color={showBH ? "#fff" : colors.onSurfaceSecondary} />
+          <Text style={[cStyles.bhPillText, showBH && { color: "#fff" }]}>BH</Text>
+        </Pressable>
+      </View>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <View style={{ flexDirection: "row" }}>
+          {weekDays.map((d: Date) => {
+            const key = iso(d);
+            const dayJ: Job[] = (jobsByDay[key] || []).slice().sort(
+              (a: Job, b: Job) => (a.scheduled_time || "").localeCompare(b.scheduled_time || ""),
+            );
+            const isToday = key === iso(new Date());
+            return (
+              <View key={key} style={cStyles.col} testID={`calendar-col-${key}`}>
+                <View style={[cStyles.colHead, isToday && cStyles.colHeadToday]}>
+                  <Text style={[cStyles.colDow, isToday && { color: "#fff" }]}>
+                    {d.toLocaleDateString(undefined, { weekday: "short" }).toUpperCase()}
+                  </Text>
+                  <Text style={[cStyles.colDay, isToday && { color: "#fff" }]}>{d.getDate()}</Text>
+                </View>
+                <ScrollView contentContainerStyle={{ paddingBottom: spacing.md }}>
+                  {dayJ.length === 0 ? (
+                    <Text style={cStyles.colEmpty}>—</Text>
+                  ) : dayJ.map((j) => {
+                    const svc = SERVICE_COLOR(j.service_type);
+                    return (
+                      <Pressable
+                        key={j.id}
+                        onPress={() => onOpenJob(j.id)}
+                        style={[cStyles.eventCard, { backgroundColor: svc.bg, borderLeftColor: svc.tag }]}
+                        testID={`calendar-event-${j.id}`}
+                      >
+                        <Text style={[cStyles.eventTitle, { color: svc.fg }]} numberOfLines={2}>
+                          {isRecurring(j) ? "🔁 " : ""}
+                          {j.service_type || j.title || "Job"}
+                        </Text>
+                        <Text style={[cStyles.eventCust, { color: svc.fg }]} numberOfLines={1}>
+                          {j.customer_name || "—"}
+                        </Text>
+                        {showBH ? (
+                          <Text style={[cStyles.eventBH, { color: svc.fg }]}>{jobHours(j)}</Text>
+                        ) : null}
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            );
+          })}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+/* ═══ Styles ═════════════════════════════════════════════════════════ */
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
-  center: { padding: spacing.xl, alignItems: "center" },
-  modeRow: {
-    flexDirection: "row",
-    gap: spacing.xs,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-  },
-  mode: {
-    flex: 1,
-    height: 36,
-    borderRadius: radius.md,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  modeActive: { backgroundColor: colors.brand, borderColor: colors.brand },
-  modeText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.onSurfaceSecondary },
-  customRow: {
+  modeSwitch: {
     flexDirection: "row",
     gap: spacing.xs,
     padding: spacing.md,
-    alignItems: "center",
-    flexWrap: "wrap",
+    paddingBottom: spacing.xs,
   },
-  chip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.pill,
+  modeBtn: {
+    flex: 1, height: 38,
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: spacing.xs,
+    borderRadius: radius.md,
     backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderWidth: 1, borderColor: colors.border,
   },
-  chipText: { fontFamily: font.semibold, fontSize: fontSize.xs, color: colors.brand },
-  customLabel: { fontFamily: font.medium, fontSize: fontSize.xs, color: colors.muted, marginLeft: "auto" },
-  err: {
+  modeBtnActive: { backgroundColor: colors.brand, borderColor: colors.brand },
+  modeBtnText: { fontFamily: font.bold, fontSize: fontSize.sm, color: colors.onSurfaceSecondary },
+  errBar: {
     flexDirection: "row", alignItems: "center", gap: spacing.xs,
-    padding: spacing.sm, margin: spacing.md,
-    backgroundColor: "#FEE2E2", borderRadius: radius.md,
+    margin: spacing.md, marginTop: 0,
+    padding: spacing.sm, borderRadius: radius.md,
+    backgroundColor: "#FEE2E2",
   },
-  errText: { fontFamily: font.medium, fontSize: fontSize.sm, color: "#991B1B", flex: 1 },
-  sectionTitle: {
-    fontFamily: font.semibold,
-    fontSize: 11,
-    letterSpacing: 1,
-    color: colors.muted,
-    textTransform: "uppercase",
-    marginTop: spacing.md,
+  errText: { flex: 1, fontFamily: font.medium, fontSize: fontSize.sm, color: "#991B1B" },
+});
+
+const gStyles = StyleSheet.create({
+  dayHead: {
+    flexDirection: "row", alignItems: "center", gap: spacing.xs,
     marginBottom: spacing.sm,
   },
-  dateHeader: {
-    fontFamily: font.bold,
-    fontSize: fontSize.base,
-    color: colors.brand,
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
+  navBtn: {
+    width: 34, height: 34, borderRadius: radius.md,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    alignItems: "center", justifyContent: "center",
   },
-  emptyDay: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    padding: spacing.md,
-    marginTop: spacing.sm,
+  todayPill: {
+    paddingHorizontal: spacing.md, height: 34, borderRadius: radius.pill,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    alignItems: "center", justifyContent: "center",
+  },
+  todayPillActive: { backgroundColor: colors.brand, borderColor: colors.brand },
+  todayText: { fontFamily: font.bold, fontSize: fontSize.xs, color: colors.onSurface },
+  dayLabel: {
+    flex: 1, textAlign: "right",
+    fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.onSurface,
+  },
+  pillRow: {
+    flexDirection: "row", gap: spacing.xs, flexWrap: "wrap",
+    marginBottom: spacing.sm,
+  },
+  pill: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: spacing.md, height: 34,
+    borderRadius: radius.pill,
+  },
+  pillGreen:  { backgroundColor: "#059669" },
+  pillBlue:   { backgroundColor: "#2563EB" },
+  pillPurple: { backgroundColor: "#7C3AED" },
+  pillText: { fontFamily: font.bold, fontSize: fontSize.xs, color: "#fff" },
+  moveBox: {
+    padding: spacing.md, borderRadius: radius.md,
     backgroundColor: colors.surface,
+    borderWidth: 1, borderColor: colors.border,
+    gap: spacing.xs, marginBottom: spacing.sm,
+  },
+  moveLabel: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.onSurface },
+  moveInput: {
+    height: 42, borderRadius: radius.md,
+    borderWidth: 1.5, borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    fontFamily: font.regular, fontSize: fontSize.base,
+    color: colors.onSurface,
+    backgroundColor: colors.surfaceSecondary,
+    ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}),
+  },
+  moveBtn: { flex: 1, height: 38, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
+  moveBtnCancel: { backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  moveBtnCancelText: { fontFamily: font.bold, fontSize: fontSize.sm, color: colors.onSurface },
+  moveBtnGo: { backgroundColor: colors.brand },
+  moveBtnGoText: { fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff" },
+  card: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    padding: spacing.md, marginBottom: spacing.xs,
     borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderStyle: "dashed",
+    backgroundColor: colors.surface,
+    borderWidth: 1, borderColor: colors.border,
   },
-  emptyDayText: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted, flex: 1 },
-  emptyBig: {
-    padding: spacing.xl,
-    alignItems: "center",
-    gap: spacing.sm,
+  checkbox: {
+    width: 22, height: 22, borderRadius: 11,
+    borderWidth: 1.5, borderColor: colors.muted,
+    alignItems: "center", justifyContent: "center",
   },
-  emptyBigText: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted },
+  checkboxOn: { backgroundColor: colors.brand, borderColor: colors.brand },
+  reorderCol: { alignItems: "center", justifyContent: "center", gap: 2, width: 32 },
+  reorderBtn: { padding: 2, borderRadius: 4 },
+  reorderIdx: { fontFamily: font.bold, fontSize: 10, color: colors.brand },
+  svcTag: {
+    fontFamily: font.bold, fontSize: 10, letterSpacing: 0.5,
+  },
+  cust: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 2 },
+  addr: { fontFamily: font.regular, fontSize: fontSize.xs, color: colors.muted, marginTop: 1 },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 },
+  metaText: { fontFamily: font.medium, fontSize: fontSize.xs, color: colors.muted },
+  statusPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: radius.pill },
+  statusText: { fontFamily: font.bold, fontSize: 10, letterSpacing: 0.4 },
+  empty: {
+    alignItems: "center", justifyContent: "center",
+    padding: spacing["3xl"], gap: spacing.sm,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md, borderWidth: 1, borderStyle: "dashed", borderColor: colors.border,
+  },
+  emptyTitle: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
+  newBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: spacing.md, height: 36, borderRadius: radius.md,
+    backgroundColor: colors.brand,
+  },
+  newBtnText: { fontFamily: font.bold, fontSize: fontSize.sm, color: "#fff" },
+});
+
+const cStyles = StyleSheet.create({
+  head: {
+    flexDirection: "row", alignItems: "center", gap: spacing.xs,
+    paddingHorizontal: spacing.md, paddingBottom: spacing.xs,
+  },
+  navBtn: {
+    width: 32, height: 32, borderRadius: radius.md,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    alignItems: "center", justifyContent: "center",
+  },
+  headTitle: { flex: 1, textAlign: "center", fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
+  bhPill: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: spacing.md, height: 30, borderRadius: radius.pill,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+  },
+  bhPillOn: { backgroundColor: colors.brand, borderColor: colors.brand },
+  bhPillText: { fontFamily: font.bold, fontSize: 10, color: colors.onSurfaceSecondary, letterSpacing: 0.5 },
+  col: { width: 148, marginHorizontal: 4 },
+  colHead: {
+    paddingVertical: spacing.xs, borderRadius: radius.md,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    alignItems: "center", marginBottom: spacing.xs,
+  },
+  colHeadToday: { backgroundColor: colors.brand, borderColor: colors.brand },
+  colDow: { fontFamily: font.bold, fontSize: 10, color: colors.muted, letterSpacing: 0.8 },
+  colDay: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 2 },
+  colEmpty: { textAlign: "center", fontFamily: font.regular, fontSize: fontSize.xs, color: colors.muted, marginTop: spacing.sm },
+  eventCard: {
+    padding: spacing.sm, marginBottom: spacing.xs,
+    borderRadius: radius.md,
+    borderLeftWidth: 3,
+  },
+  eventTitle: { fontFamily: font.bold, fontSize: fontSize.xs, lineHeight: 14 },
+  eventCust: { fontFamily: font.regular, fontSize: 10, marginTop: 2 },
+  eventBH: { fontFamily: font.semibold, fontSize: 10, marginTop: 2, opacity: 0.85 },
 });

@@ -77,6 +77,14 @@ export default function AppLayout() {
         }}
       />
       <Tabs.Screen
+        name="schedule/index"
+        options={{
+          title: "Schedule",
+          href: null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="calendar-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="schedule/calendar"
         options={{
           title: "Schedule",

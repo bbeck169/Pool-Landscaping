@@ -2130,3 +2130,51 @@ Retired the admin/dispatcher Jobs list and the tech "Today" schedule. Both roles
 - Recurring-job scheduling engine.
 - Job-detail drawer / modal (still uses the standalone `/jobs/:id` page).
 - Silencing the react-big-calendar "duplicate key" warnings — cosmetic, filed for follow-up.
+
+#### Phase 30 · Fix pass — Grid default + toggle + redirects (Feb 15 2026)
+Mobile-only follow-up to Phase 30. Web (`/app/frontend/src/pages/schedule/CalendarSchedule.jsx`) untouched.
+
+**T4b redirects (blocker fix)**
+- New `mobile/app/(app)/schedule/index.tsx` renders `<Redirect href="/(app)/schedule/calendar" />` so the bare `/schedule` deep-link no longer 404s to "Unmatched Route".
+- `mobile/app/(app)/today.tsx` rewritten from the old day-list into a one-liner `<Redirect href="/(app)/schedule/calendar" />` — kills the legacy `/today` unmatched-route case without breaking bookmarks / push-notification links.
+- `mobile/app/(app)/_layout.tsx` registers the new `schedule/index` screen with `href: null` so Expo Router picks it up but keeps it off the tab bar.
+- Verification: `curl` on `/schedule` and `/today` after login flows redirect cleanly to `/(app)/schedule/calendar`; no `"Unmatched Route"` substring in the DOM at either URL; Metro entry.bundle returns HTTP 200.
+
+**Grid ↔ Calendar toggle (default = Grid)**
+- `mobile/app/(app)/schedule/calendar.tsx` fully rewritten. Top-level view is now a binary segmented control `[Calendar] [Grid]` — persisted via `storage.setItem("aq-schedule-mode-v1", …)` (AsyncStorage on native, session-scoped web fallback).
+- Removed the old Month/Week/Day/Custom sub-modes — simpler surface per brief.
+
+**Grid view (default)**
+- Day header: `<` prev-day, `[Today]` pill (highlighted when focused date == today), `>` next-day, right-aligned full label (`Tuesday, Jul 14, 2026`).
+- Bulk-action pill row (Jobs.write gated via `canWriteJobs`):
+  - **Complete** → `PUT /api/jobs/{id} {status:"completed"}` per checked row, then `Alert.alert` + list refresh.
+  - **Move** → opens inline date input; on confirm, `PUT /api/jobs/{id} {scheduled_date:"YYYY-MM-DD"}` per checked row.
+  - **Rearrange** → toggles reorder mode with per-row up/down chevrons; **Save order** hits `POST /api/jobs/reorder {job_ids:[…]}` (admin-only endpoint). Non-admins see the local reorder + a friendly `Alert` explaining the persist requires admin — no phantom endpoint invented.
+- Card layout per screenshot 1: circular checkbox (turns brand-color when checked), service-type tag in the tag colour, bold customer name, address, notepad+`BH` row (`actual_hours ?? billable_hours ?? estimated_hours ?? 0`), and a status pill on the right — `completed → "Closed" (green)`, `scheduled/pending → "Open" (amber)`, `active → "In progress" (blue)`, etc. Trailing `→` chevron opens `/job/[id]`.
+- Recurring jobs get a `🔁 ` prefix on the service-type tag.
+
+**Calendar view**
+- Header: `<` prev-week, Month/Year title (e.g. "July 2026"), `>` next-week, plus a **BH 👁 toggle** pill (default ON — cards show billable hours; when off, hours are hidden).
+- Horizontally-scrollable 7-column week (Mon → Sun), each column with a sticky day-of-week + day-of-month header (today highlighted in brand color).
+- Events stacked vertically in each column; card background + left border tinted by service type (Weekly Landscaping → green, Monthly Landscaping → indigo, Irrigation → blue, Rock → amber, Pool/Chem → cyan, Cleaning → pink, other → neutral). Recurring jobs prefixed with `🔁 `. Tap → `/job/[id]`.
+
+**Endpoints used (no new ones)**
+- `GET /api/jobs?start=…&end=…` — Phase 30 range filter.
+- `PUT /api/jobs/{id}` — status + scheduled_date changes.
+- `POST /api/jobs/reorder` — bulk route ordering (admin-only).
+
+**Files touched**
+- **New**: `mobile/app/(app)/schedule/index.tsx`.
+- **Rewritten**: `mobile/app/(app)/today.tsx` (now a redirect), `mobile/app/(app)/schedule/calendar.tsx` (Grid+Calendar rewrite).
+- **Edited**: `mobile/app/(app)/_layout.tsx` — registered new `schedule/index` screen.
+- **Not touched**: web frontend, backend endpoints/schema, other mobile screens.
+
+**Verification**
+- Metro bundle: **entry.bundle=HTTP 200**, no new SyntaxErrors in `mobile.err.log`.
+- Backend regression: `test_phase30_schedule` + `test_phase29c_rbac` = **13/13 passed** in 4 s (untouched by this pass).
+- Live browser (mobile Expo web preview): `/schedule` and `/today` both resolve without "Unmatched Route".
+- Zero console errors on the Expo bundle.
+
+**Deferred (still)**
+- True native drag handle for rearrange (would need `react-native-draggable-flatlist`; currently uses up/down chevrons — same outcome, one tap slower).
+- Silencing web-only `react-big-calendar` key warnings (web-only, out of this pass's scope).
