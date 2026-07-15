@@ -38,6 +38,8 @@ import LandscapingChecklistForm from "@/src/components/checklist/LandscapingChec
 import GenericChecklistForm from "@/src/components/checklist/GenericChecklistForm";
 import VisitRecapModal from "@/src/components/checklist/VisitRecapModal";
 import { cacheJobBootstrap, getCachedBootstrap } from "@/src/services/offlineCache";
+import * as writeQueue from "@/src/services/writeQueue";
+import { useOnline } from "@/src/offline";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
 // Phase 37 — minimum time the pill stays on "Saving…" so techs actually
@@ -72,6 +74,30 @@ export default function JobChecklistScreen() {
   // Phase 40 · Step 1 — track whether the current bootstrap came from
   // the offline cache so the tech sees an honest "Offline mode" banner.
   const [offlineMode, setOfflineMode] = useState(false);
+
+  // Phase 40 · Step 2 — live write-queue + connectivity state. Drives the
+  // expanded checklist-network-pill (Online / Syncing… / Offline+N / Sync
+  // error). `useOnline` subscribes to `@react-native-community/netinfo`.
+  const online = useOnline();
+  const [queueState, setQueueState] = useState<writeQueue.QueueState>({
+    count: 0, syncing: false, lastError: undefined,
+  });
+  const wasOnlineRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    const unsub = writeQueue.subscribe(setQueueState);
+    return () => { unsub(); };
+  }, []);
+
+  // Auto-flush on offline → online transition. Also flush once on mount
+  // in case entries from a previous session are still waiting.
+  useEffect(() => {
+    if (online && !wasOnlineRef.current) {
+      writeQueue.flush().catch(() => {});
+    }
+    wasOnlineRef.current = online;
+  }, [online]);
+  useEffect(() => { writeQueue.flush().catch(() => {}); }, []);
 
   // ─── Load ───────────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -110,13 +136,36 @@ export default function JobChecklistScreen() {
     savingRef.current = true;
     if (!savingShownAtRef.current) savingShownAtRef.current = Date.now();
     setSaveState("saving");
+    const patchBody = {
+      chemical_readings: report.chemical_readings,
+      chemicals_added: report.chemicals_added,
+      checklist_items: report.checklist_items,
+      notes: report.notes,
+    };
     try {
-      const patched = await api.patch(`/jobs/${id}/service-report`, {
-        chemical_readings: report.chemical_readings,
-        chemicals_added: report.chemicals_added,
-        checklist_items: report.checklist_items,
-        notes: report.notes,
-      });
+      // Phase 40 · Step 2 — offline? Enqueue instead of hitting the wire.
+      // The queue flushes with the same X-Idempotency-Key on reconnect so
+      // the server can't create a duplicate patch even if the tech
+      // triggers several autosaves while disconnected.
+      if (!online) {
+        await writeQueue.enqueue({
+          kind: "patch-service-report",
+          jobId: String(id),
+          body: patchBody,
+        });
+        dirtyRef.current = false;
+        // Optimistic — the local report state is already the source of
+        // truth for the checklist screen; the server will catch up.
+        const elapsed = Date.now() - (savingShownAtRef.current || Date.now());
+        const holdMs = Math.max(0, MIN_SAVING_MS - elapsed);
+        setTimeout(() => {
+          setSaveState("saved");
+          savingShownAtRef.current = 0;
+          setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1200);
+        }, holdMs);
+        return;
+      }
+      const patched = await api.patch(`/jobs/${id}/service-report`, patchBody);
       if (patched && typeof patched === "object") setReport(patched);
       dirtyRef.current = false;
       const elapsed = Date.now() - (savingShownAtRef.current || Date.now());
@@ -132,7 +181,7 @@ export default function JobChecklistScreen() {
     } finally {
       savingRef.current = false;
     }
-  }, [id, report]);
+  }, [id, report, online]);
 
   const scheduleAutosave = useCallback(() => {
     dirtyRef.current = true;
@@ -180,6 +229,22 @@ export default function JobChecklistScreen() {
               await flushSave();
 
               // 2) Submit / close.
+              if (!online) {
+                // Offline: queue the submit and inform the tech that the
+                // job will actually close server-side once we reconnect.
+                // The optimistic local UX still navigates back so the
+                // tech isn't stuck on a locked-looking screen.
+                await writeQueue.enqueue({
+                  kind: "submit-service-report",
+                  jobId: String(id),
+                });
+                Alert.alert(
+                  "Job queued",
+                  "You're offline — the job will close automatically when your device reconnects.",
+                  [{ text: "OK", onPress: () => router.replace("/(app)/schedule/calendar") }],
+                );
+                return;
+              }
               const submitted: any = await api.post(
                 `/jobs/${id}/service-report/submit`, {}
               );
@@ -303,27 +368,63 @@ export default function JobChecklistScreen() {
             </Text>
           </View>
 
-          {/* Phase 40 · Step 1 — network pill. Distinct from the autosave
-              pill: the autosave is per-field; this reflects the whole
-              screen's connection state. Only two states shipped in Step 1
-              (Online · Synced, Offline · cached). Step 2 will add
-              "Syncing…" and "N queued" once the write queue lands. */}
-          <View
-            style={[
-              styles.networkPill,
-              offlineMode ? styles.networkPillOffline : styles.networkPillOnline,
-            ]}
-            testID="checklist-network-pill"
-          >
-            <Ionicons
-              name={offlineMode ? "cloud-offline-outline" : "cloud-done-outline"}
-              size={11}
-              color="#FFFFFF"
-            />
-            <Text style={styles.networkPillText}>
-              {offlineMode ? "Offline · cached" : "Online · Synced"}
-            </Text>
-          </View>
+          {/* Phase 40 · Step 2 — expanded network pill. Priority order:
+                1. syncing (any queued entry being flushed right now)
+                2. sync error (server rejected an entry — tap to retry)
+                3. offline + queue count OR offline+cached bootstrap
+                4. online + synced (steady state). */}
+          {(() => {
+            const queued = queueState.count;
+            const isSyncing = queueState.syncing;
+            const isSyncError = !!queueState.lastError && !isSyncing && online;
+            let pillStyle: any = styles.networkPillOnline;
+            let label = "Online · Synced";
+            let icon: any = "cloud-done-outline";
+            let testState = "online";
+            let onPress: (() => void) | undefined;
+            if (isSyncing) {
+              pillStyle = styles.networkPillSyncing;
+              label = queued > 0 ? `Syncing… (${queued})` : "Syncing…";
+              icon = "sync";
+              testState = "syncing";
+            } else if (isSyncError) {
+              pillStyle = styles.networkPillError;
+              label = "Sync error — retry";
+              icon = "alert-circle-outline";
+              testState = "error";
+              onPress = () => { writeQueue.flush().catch(() => {}); };
+            } else if (!online) {
+              pillStyle = styles.networkPillOffline;
+              label = queued > 0
+                ? `Offline · ${queued} queued`
+                : (offlineMode ? "Offline · cached" : "Offline");
+              icon = "cloud-offline-outline";
+              testState = "offline";
+            } else if (queued > 0) {
+              // Online but queue not yet drained — likely just reconnected.
+              pillStyle = styles.networkPillSyncing;
+              label = `Syncing… (${queued})`;
+              icon = "sync";
+              testState = "syncing";
+            }
+            const PillTag: any = onPress ? Pressable : View;
+            return (
+              <PillTag
+                style={[styles.networkPill, pillStyle]}
+                testID="checklist-network-pill"
+                onPress={onPress}
+                accessibilityRole={onPress ? "button" : undefined}
+              >
+                <Ionicons name={icon} size={11} color="#FFFFFF" />
+                <Text
+                  style={styles.networkPillText}
+                  testID={`checklist-network-pill-state-${testState}`}
+                >
+                  {label}
+                </Text>
+              </PillTag>
+            );
+          })()}
         </View>
 
         {/* Photos — always visible */}
@@ -498,6 +599,8 @@ const styles = StyleSheet.create({
   },
   networkPillOnline: { backgroundColor: "rgba(22,163,74,0.90)" },
   networkPillOffline: { backgroundColor: "rgba(180,83,9,0.95)" },
+  networkPillSyncing: { backgroundColor: "rgba(37,99,235,0.95)" },
+  networkPillError: { backgroundColor: "rgba(220,38,38,0.95)" },
   networkPillText: {
     fontFamily: font.bold, fontSize: 11, color: "#FFFFFF",
   },

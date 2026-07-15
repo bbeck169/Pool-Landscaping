@@ -5108,3 +5108,39 @@ Shipped the highest-value slice per brief's "60% shippable" guidance: **backend 
 - Multi-device conflict resolution note in the FAQ (currently last-write-wins).
 
 **Not touched (per brief):** web (office-only usage means lower value; Step 2b if user requests), backend collections beyond `idempotency_keys`, encrypted local cache (future security phase).
+
+#### Phase 40 · Step 2 — Write queue + netinfo + pill states (SHIPPED)
+
+Closes out Phase 40. Techs can now edit + submit checklists in zero-signal backyards; mutations are queued locally with stable idempotency keys and flushed automatically on reconnect.
+
+**Backend** (`routers/jobs.py` + `tests/test_phase40_photo_idempotency.py`)
+- `POST /api/jobs/{jid}/photos` now supports `X-Idempotency-Key` via the shared `utils_idempotency.replay_or_reserve` / `store_response` helpers from Step 1. Fingerprint covers the full `{data, label}` body so a re-key with a different photo is loudly flagged as `idempotency_key_body_mismatch` rather than silently returning the earlier photo's response.
+- Added `Request` to the imports in `routers/jobs.py`.
+- 2 new tests: `test_same_key_same_photo_only_one_uploaded` and `test_same_key_different_body_flagged_as_mismatch`.
+
+**Mobile — new services**
+- `mobile/src/services/writeQueue.ts` — FIFO AsyncStorage queue at key `checklist-write-queue-v1`. Entry `{id: uuid, endpoint: QueueEndpoint, tries, lastError?, enqueuedAt}`. `enqueue()` / `flush()` / `subscribe(cb)` / `getState()`. On flush: 2xx → pop; `idempotency_key_body_mismatch` → drop with a warning; `ApiNetworkError` → keep + abort remainder (preserves ordering); other 4xx/5xx → rotate + record `lastError` and stop after one bad rotation. Supports four endpoint kinds: `patch-service-report`, `submit-service-report`, `upload-photo`, `reserve-inventory` — each sends the entry's `id` as its `X-Idempotency-Key`.
+- `mobile/src/api.ts` — new `ApiNetworkError` class (distinct from HTTP 4xx/5xx). All method wrappers now accept an optional `headers` argument so the write queue can attach `X-Idempotency-Key` on replay.
+
+**Mobile — wire-up**
+- `mobile/app/job/[id]/checklist.tsx`:
+  - Subscribes to `writeQueue` and to `useOnline()` (`@react-native-community/netinfo`).
+  - `flushSave()` — if offline, enqueue the PATCH instead of hitting the network and mark the pill "Saved" optimistically.
+  - `closeJob()` — if offline, enqueue the submit + inform the tech "Job will close when reconnected" and route them back to the calendar.
+  - Auto-flushes the queue on every offline→online transition and once on mount.
+  - `checklist-network-pill` — expanded to 4 states with `checklist-network-pill-state-{online|syncing|offline|error}` sub-testIDs:
+    - `Online · Synced` (green)
+    - `Syncing… (N)` (blue + spinner)
+    - `Offline · N queued` / `Offline · cached` / `Offline` (amber)
+    - `Sync error — retry` (red, tap-to-retry via `Pressable`)
+- `mobile/src/components/checklist/PhotoUploader.tsx` — offline path enqueues the base64 payload + shows an optimistic `pending-{ts}` tile in the grid. Server-side dedup guarantees exactly one photo appended per idempotency key.
+
+**Verification**
+- `pytest tests/test_phase40_*.py tests/test_phase39_inventory_reservation.py -q` → **10 passed** (3 patch/reserve idempotency + 2 photo idempotency + 5 inventory reservation).
+- `bash /app/scripts/preflight.sh` → `preflight OK` (exit 0). 135 pre-existing advisory identifier warnings unchanged (no new).
+- `yarn tsc --noEmit -p /app/mobile` reports **zero new errors** on all touched files (`writeQueue.ts` clean; `api.ts` clean; `checklist.tsx` + `PhotoUploader.tsx` still show only the pre-existing `fontSize.xs` + role-narrowing drift).
+
+**Deferred / follow-ups**
+- Web parity for the write queue (office usage is lower value; open ticket for phase 40b if requested).
+- Photo garbage-collection: an entry that ends up flagged `idempotency_key_body_mismatch` is dropped but the optimistic tile stays in local state until the next `load()` — acceptable for now given the mismatch case is a client bug that should never happen in practice.
+- Multi-device conflict resolution note in the tech-facing FAQ (currently last-write-wins on the server via update_many-style behaviour).

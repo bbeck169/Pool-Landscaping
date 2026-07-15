@@ -18,6 +18,17 @@ async function authHeaders() {
   return headers;
 }
 
+/**
+ * Custom error class used so callers (e.g. write-queue) can distinguish a
+ * "no network" failure from an HTTP-status failure. Anything thrown here
+ * with `kind === "network"` is safe to retry from the offline queue with
+ * the same X-Idempotency-Key. HTTP 4xx/5xx are NOT retried automatically.
+ */
+export class ApiNetworkError extends Error {
+  kind = "network" as const;
+  constructor(msg: string) { super(msg); this.name = "ApiNetworkError"; }
+}
+
 async function request(path: string, options: RequestInit = {}, timeoutMs = 30000) {
   const headers = await authHeaders();
   const controller = new AbortController();
@@ -31,8 +42,8 @@ async function request(path: string, options: RequestInit = {}, timeoutMs = 3000
     });
   } catch (e: any) {
     clearTimeout(timer);
-    if (e?.name === "AbortError") throw new Error("Request timed out — check your connection and try again.");
-    throw new Error("Network error — check your connection and try again.");
+    if (e?.name === "AbortError") throw new ApiNetworkError("Request timed out — check your connection and try again.");
+    throw new ApiNetworkError("Network error — check your connection and try again.");
   }
   clearTimeout(timer);
   const text = await res.text();
@@ -56,11 +67,26 @@ async function request(path: string, options: RequestInit = {}, timeoutMs = 3000
 }
 
 export const api = {
-  get: (p: string) => request(p),
-  post: (p: string, body?: any, timeoutMs?: number) =>
-    request(p, { method: "POST", body: body ? JSON.stringify(body) : undefined }, timeoutMs ?? 30000),
-  put: (p: string, body?: any) => request(p, { method: "PUT", body: body ? JSON.stringify(body) : undefined }),
-  patch: (p: string, body?: any) =>
-    request(p, { method: "PATCH", body: body ? JSON.stringify(body) : undefined }),
-  del: (p: string) => request(p, { method: "DELETE" }),
+  get: (p: string, headers?: Record<string, string>) =>
+    request(p, headers ? { headers } : {}),
+  post: (p: string, body?: any, timeoutMs?: number, headers?: Record<string, string>) =>
+    request(p, {
+      method: "POST",
+      body: body ? JSON.stringify(body) : undefined,
+      ...(headers ? { headers } : {}),
+    }, timeoutMs ?? 30000),
+  put: (p: string, body?: any, headers?: Record<string, string>) =>
+    request(p, {
+      method: "PUT",
+      body: body ? JSON.stringify(body) : undefined,
+      ...(headers ? { headers } : {}),
+    }),
+  patch: (p: string, body?: any, headers?: Record<string, string>) =>
+    request(p, {
+      method: "PATCH",
+      body: body ? JSON.stringify(body) : undefined,
+      ...(headers ? { headers } : {}),
+    }),
+  del: (p: string, headers?: Record<string, string>) =>
+    request(p, { method: "DELETE", ...(headers ? { headers } : {}) }),
 };

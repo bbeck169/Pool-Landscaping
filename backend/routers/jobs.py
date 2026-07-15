@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Query, Response
+from fastapi import APIRouter, HTTPException, Depends, Query, Response, Request
 from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 
@@ -952,8 +952,21 @@ async def read_all(user: dict = Depends(get_current_user),
 
 @router.post("/jobs/{jid}/photos")
 async def add_job_photo(jid: str, body: PhotoIn,
+                        request: Request,
                         user: dict = Depends(get_current_user),
                         tenant: dict = Depends(get_current_tenant)):
+    # Phase 40 · Idempotency — offline mobile queues retry photo uploads
+    # on reconnect with the same X-Idempotency-Key so a flaky signal
+    # can't create duplicate images against the same job. Fingerprint the
+    # full body (data + label) so a re-key on a different photo is
+    # correctly flagged as a body_mismatch.
+    from utils_idempotency import replay_or_reserve, store_response
+    idem_body = {"data": body.data, "label": body.label or "photo"}
+    idem_key, cached = await replay_or_reserve(
+        request, tenant["id"], "POST /jobs/{jid}/photos", idem_body,
+    )
+    if cached is not None:
+        return cached
     job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]})
     if not job:
         raise HTTPException(404, "Job not found")
@@ -975,7 +988,11 @@ async def add_job_photo(jid: str, body: PhotoIn,
         )
     photo = {"id": new_id(), "data": body.data, "label": body.label or "photo", "created_at": now_iso()}
     await db.jobs.update_one({"id": jid, "tenant_id": tenant["id"]}, {"$push": {"photos": photo}})
-    return await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    resp = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+    if idem_key:
+        await store_response(idem_key, "POST /jobs/{jid}/photos",
+                              tenant["id"], resp, idem_body)
+    return resp
 
 
 @router.delete("/jobs/{jid}/photos/{pid}")

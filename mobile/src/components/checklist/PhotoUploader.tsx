@@ -17,6 +17,8 @@ import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
+import * as writeQueue from "@/src/services/writeQueue";
+import { useOnline } from "@/src/offline";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
 export type ChecklistPhoto = {
@@ -38,6 +40,7 @@ export default function PhotoUploader({
   jobId, photos, onPhotosChange, max = 10, disabled = false,
 }: PhotoUploaderProps) {
   const [busy, setBusy] = useState(false);
+  const online = useOnline();
   const remaining = Math.max(0, max - photos.length);
 
   const pick = async (fromCamera: boolean) => {
@@ -52,11 +55,30 @@ export default function PhotoUploader({
     if (pick.canceled || !pick.assets?.length) return;
     const a: any = pick.assets[0];
     const dataUrl = `data:${a.mimeType || "image/jpeg"};base64,${a.base64}`;
+    const label = `checklist-${new Date().toISOString()}`;
     setBusy(true);
     try {
+      // Phase 40 · Step 2 — offline path: enqueue for later replay and
+      // optimistically show the photo in the grid so the tech can carry
+      // on. The queued POST carries an X-Idempotency-Key so a mid-flush
+      // retry can't duplicate the image.
+      if (!online) {
+        await writeQueue.enqueue({
+          kind: "upload-photo",
+          jobId,
+          body: { data: dataUrl, label },
+        });
+        const optimistic = {
+          id: `pending-${Date.now()}`,
+          data: dataUrl,
+          label,
+        };
+        onPhotosChange([...(photos || []), optimistic]);
+        return;
+      }
       const updated = await api.post(`/jobs/${jobId}/photos`, {
         data: dataUrl,
-        label: `checklist-${new Date().toISOString()}`,
+        label,
       });
       onPhotosChange(updated.photos || []);
     } catch (e: any) {
