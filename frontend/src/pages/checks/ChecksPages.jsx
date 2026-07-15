@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { Gate } from "@/hooks/usePermissions";
 
 /* ─── helpers ────────────────────────────────────────────────────────── */
 const STATUS_COLORS = {
@@ -911,14 +912,16 @@ export function CheckBanks() {
                         data-testid={`check-bank-live-btn-${b.id}`}>
                   {b.live_mode ? "Disable LIVE" : "Enable LIVE"}
                 </button>
-                <button onClick={() => del(b)}
+                <Gate perm="Settings" action="write">
+                  <button onClick={() => del(b)}
                         className="p-2 rounded-xl"
                         style={{ backgroundColor: colors.background,
                                  border: `1px solid #DC2626`,
                                  color: "#DC2626" }}
                         data-testid={`check-bank-delete-${b.id}`}>
-                  <Trash2 size={14} />
-                </button>
+                    <Trash2 size={14} />
+                  </button>
+                </Gate>
               </div>
             </div>
           ))}
@@ -1127,14 +1130,16 @@ export function CheckPayees() {
                     {p.phone || "—"}
                   </td>
                   <td className="p-2 text-right">
-                    <button onClick={() => del(p)}
+                    <Gate perm="Settings" action="write">
+                      <button onClick={() => del(p)}
                             className="p-1 rounded"
                             style={{ backgroundColor: colors.background,
                                      border: `1px solid #DC2626`,
                                      color: "#DC2626" }}
                             data-testid={`check-payee-del-${p.id}`}>
-                      <Trash2 size={12} />
-                    </button>
+                        <Trash2 size={12} />
+                      </button>
+                    </Gate>
                   </td>
                 </tr>
               ))}

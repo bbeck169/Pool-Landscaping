@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Star, ChevronRight, ChevronDown, Search as SearchIcon, HelpCircle } from "lucide-react";
 import { ADMIN_NAV_V2, NAV_FLAT, KEYBOARD_SHORTCUTS, SHORTCUT_TARGETS } from "@/nav/adminNav";
 import { usePermissions } from "@/hooks/usePermissions";
+import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import { colors, brandGradientCss } from "@/theme";
 
 // Groups that render nested sub-subgroups (from entry.subsection) when present.
@@ -116,7 +117,7 @@ export default function AdminSidebar() {
   return (
     <>
       {/* Command palette trigger (rendered by parent AppLayout top-bar too) */}
-      <div className="px-3 mb-3">
+      <div className="px-3 mb-2">
         <button
           onClick={() => setPaletteOpen(true)}
           className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm"
@@ -127,6 +128,11 @@ export default function AdminSidebar() {
           <span className="flex-1 text-left">Search or jump to…</span>
           <span className="text-xs font-mono px-1.5 py-0.5 rounded" style={{ backgroundColor: "#fff", border: `1px solid ${colors.border}` }}>⌘K</span>
         </button>
+      </div>
+
+      {/* Phase 29C · "Test as role" switcher — admin / super-admin only. */}
+      <div className="px-3 mb-3">
+        <RolePreviewSwitcher />
       </div>
 
       {/* Pinned */}

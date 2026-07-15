@@ -1952,3 +1952,104 @@ Response shape: `{scanned, migrated, skipped, failed, using_dedicated_key}`.
 **Deferred (P29B-follow-up)**
 - MICR E-13B TTF font — still blocked on the licensed asset. Current PDF renderer left completely untouched. When the font ships, the `/checks/checks/{cid}/print` path is where the glyphs need to be wired in.
 - Optional: a "rotate secret" job that generates a new key, migrates all tenants, and archives the previous key envelope. Not urgent — the current model already survives one rotation gracefully.
+
+---
+
+### Phase 29C · Permissions UI + Test-as-role preview (Feb 15 2026)
+
+Web-only. Extended the pre-existing Phase 14 permissions hook, added a compact preview picker, hardened `can()` against matrix shape drift, exposed a per-user RBAC endpoint, and gated the most sensitive destructive actions on 4 pages. Mobile Expo enforcement is queued for a later phase.
+
+#### A · Bucket table (what each role sees)
+Actual roles in the users collection: `super_admin`, `admin`, `technician`, `customer`. Matrix also carries stub roles `marketer` and `sales` (no seeded users but selectable in the previewer).
+
+| Bucket | Pages / features | Enforcement path |
+|---|---|---|
+| **Always-on** (super_admin, admin) | Dashboard, Tools Hub, Business Card, Profile | AdminSidebar bypass |
+| **Feature-gated** | Customers, Jobs, Quotes, Invoices, Payments, Dispatch, Weather, Warranties, Marketing, SEO, Reports, Inventory, Estimator | `can(feature,"read")` on nav entries |
+| **Admin/super-admin only (hard rule)** | Check Register + Bank Accounts + Payees, Payroll CSV Execute, Check-encryption Rotate, Permissions editor, Audit logs, Tenants, Team | `hard_rule:"admin_only"` on nav + backend `require_admin` |
+| **Tech-only nav** | Schedule, D2D, Time Clock, Tools Hub, Profile | Role-based `TECH_NAV` |
+| **Customer-only nav** | Portal Home, Book, Invoices (own), Estimates (own), Photos, Messages | Role-based `CUSTOMER_NAV` |
+| **Deny (silently hidden)** | Anything not granted for the role; deep-linked URLs render `<Forbidden />` when wrapped in `RequirePermission` | client-side + backend `403` |
+
+#### B · Client-side enforcement layer
+- **`/app/frontend/src/hooks/usePermissions.jsx`** rewritten. New:
+  - `useRole()` — returns effective role (real or previewed).
+  - `useCan(perm, action?)` — accepts `"Feature"` or `"Feature.action"`.
+  - `<Gate perm="…" action="…" [showForbidden] [reason] [fallback]>` — hide-or-forbid.
+  - `<Forbidden reason="…" [onHome]>` — bordered "access denied" block with a Return-home button (`data-testid="forbidden-block"`).
+  - `<RequirePermission perm="…">` — route wrapper.
+  - `AVAILABLE_ROLES` constant used by the picker.
+  - `previewRole` now persisted in `sessionStorage` (not localStorage) so a stale preview never survives a logout / new tab.
+  - `can()` is now **shape-tolerant** — accepts either `{feature:"write"}` (v1 server shape) or `{feature:["read","write"]}` (v2), and is case-insensitive on the feature key so `Customers` and `customers` both match.
+  - Super-admin bypass fixed: bypass only applies when NOT previewing — so "Test as customer" actually shows the customer restricted UI.
+- Legacy `<PermGate>` kept as an alias to avoid churn.
+
+#### C · Backend contract
+- New router: **`/app/backend/routers/rbac.py`** exposing `GET /api/rbac/me/permissions`. Tenant-scoped: reads a tenant-specific matrix if present, else the global seeded matrix, else the defaults baked into the router. Response shape: `{role, permissions:{feature:{read:bool,write:bool,...}}, is_admin, tenant_id}`. Admin/super-admin get `{__all__: {read:true, write:true}}` so the UI can short-circuit.
+- Existing `GET /api/permissions` (full matrix) and `PUT /api/permissions` (admin-only editor) untouched.
+- **No** matrix editor UI built this phase — noted in the backlog.
+
+#### D · "Test as Role" preview
+- **`/app/frontend/src/components/RolePreviewSwitcher.jsx`** — compact pill with an `<select>` listing the 6 previewable roles + an "Exit" pill. Only real admins/super-admins see it (`canPreview`).
+- Mounted in two places:
+  - **Admin sidebar** — top of the sidebar, right under the `⌘K` palette trigger.
+  - **Mobile top-bar** — next to the "Sign out" button.
+- Selecting a role sets `previewRole` (session-scoped). Yellow banner "🔍 Preview mode — permissions as <role>. Click to exit." already existed in `AppLayout.jsx`; the switcher now feeds it. Two exit affordances: the banner button and the pill's `Exit` button.
+- Backend calls STILL carry the real user's JWT — server RBAC unaffected. The switcher's tooltip and this HANDOFF section spell that out.
+
+#### E · Gated inline actions (spot-sweep across sensitive actions)
+Wrapped 7 destructive actions across 4 files with `<Gate>`:
+
+| File | Action | Perm |
+|---|---|---|
+| `pages/dispatch/DispatchPages.jsx` | Auto-assign all (`dispatch-assignall-btn`) | `Jobs.write` |
+| `pages/dispatch/DispatchPages.jsx` | Weather scan (`weather-scan-btn`) | `Jobs.write` |
+| `pages/customers/CustomersList.jsx` | Bulk delete (`bulk-delete`) | `Customers.write` |
+| `pages/checks/CheckBatchPages.jsx` | Create checks batch (`batch-save`) | `Settings.write` |
+| `pages/checks/CheckBatchPages.jsx` | Payroll CSV execute (`payroll-execute-btn`) | `Settings.write` |
+| `pages/checks/ChecksPages.jsx` | Delete bank account (`check-bank-delete-*`) | `Settings.write` |
+| `pages/checks/ChecksPages.jsx` | Delete payee (`check-payee-del-*`) | `Settings.write` |
+
+Jobs list, Invoices list, and Users management pages have no top-level destructive buttons (all destructive UI lives on detail sub-pages) — noted for the follow-up sweep.
+
+#### F · Tests
+- **`/app/backend/tests/test_phase29c_rbac.py`** — 11 tests, all green. Covers endpoint registration, per-role shape (super_admin, admin, tech, customer), no-auth denied, and server-side RBAC spot-checks (techs and customers get 403 on `/checks/bank-accounts POST`, `/checks/admin/re-encrypt POST`, and `/dispatch GET`).
+- Broader regression: `test_phase29c_rbac` + `test_phase29b_check_crypto` + `test_phase26_wave_a` + `test_phase28_warranties` + `test_checks` = **48/48 passed** in 48 s.
+
+#### G · Live browser smoke (Playwright)
+Logged in as `admin@aquaterra.com`, verified:
+- `role-preview-switcher` and `role-preview-select` render in the sidebar.
+- Switching to `technician` fires the yellow banner (`preview-banner`).
+- Sidebar switches to `TECH_NAV`: **Marketing** disappears, **Schedule** remains — the effective-role plumbing is honored downstream.
+- `GET /api/rbac/me/permissions` returns:
+  - `super_admin` → `is_admin:True perms:['__all__']`
+  - `admin` → `is_admin:True perms:['__all__']`
+  - `technician` → `is_admin:False perms:['Jobs','Customers']`
+  - `customer` → `is_admin:False perms:[]`
+- No new console errors, webpack "compiled with warnings" (pre-existing `esbuild-loader` chatter only).
+
+#### H · Test credentials
+No new accounts. Existing 4 demo users cover the 4 seeded roles. `marketer` / `sales` are matrix-only (no seeded user) — usable via the "Test as" preview.
+
+#### I · Files touched
+**New**
+- `backend/routers/rbac.py`
+- `backend/tests/test_phase29c_rbac.py`
+- `frontend/src/components/RolePreviewSwitcher.jsx`
+
+**Edited**
+- `backend/server.py` — register `rbac` router.
+- `frontend/src/hooks/usePermissions.jsx` — full rewrite (Phase 14 baseline preserved, new exports).
+- `frontend/src/layouts/AdminSidebar.jsx` — mount the switcher.
+- `frontend/src/layouts/AppLayout.jsx` — mount the switcher on mobile top-bar.
+- `frontend/src/pages/dispatch/DispatchPages.jsx` — 2 `<Gate>` wraps + import.
+- `frontend/src/pages/customers/CustomersList.jsx` — 1 `<Gate>` wrap + import.
+- `frontend/src/pages/checks/CheckBatchPages.jsx` — 2 `<Gate>` wraps + import.
+- `frontend/src/pages/checks/ChecksPages.jsx` — 2 `<Gate>` wraps + import.
+- `memory/HANDOFF.md` — this section.
+
+#### J · Out of scope / deferred
+- Matrix editor UI (backlog).
+- Deep sweep of remaining ~30 pages (only the highest-signal 4 files gated here).
+- Mobile Expo permission enforcement — separate future phase.
+- `dispatcher` role — brief listed it but the DB doesn't have such a role; not adding a phantom.

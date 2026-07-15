@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { api, api_base } from "@/api";
 import { colors } from "@/theme";
+import { Gate } from "@/hooks/usePermissions";
 
 /* ═════════ BATCH CREATE ═══════════════════════════════════════════════ */
 export default function CheckBatchNew() {
@@ -226,12 +227,14 @@ export default function CheckBatchNew() {
                     data-testid="batch-cancel">
               Cancel
             </button>
-            <button onClick={save} disabled={saving}
+            <Gate perm="Settings" action="write">
+              <button onClick={save} disabled={saving}
                     className="px-4 py-2 text-sm font-bold rounded-xl"
                     style={{ backgroundColor: colors.brand, color: "#fff" }}
                     data-testid="batch-save">
-              {saving ? "Saving…" : `Create ${lines.length} checks`}
-            </button>
+                {saving ? "Saving…" : `Create ${lines.length} checks`}
+              </button>
+            </Gate>
           </div>
         </div>
       )}
@@ -413,7 +416,8 @@ export function CheckPayrollImport() {
                      style={{ color: colors.onSurface }}>
                   Preview · {preview.valid_count} valid · {preview.warning_count} warnings
                 </div>
-                <button onClick={doExecute}
+                <Gate perm="Settings" action="write">
+                  <button onClick={doExecute}
                         disabled={!preview.can_execute || busy}
                         className="ml-auto px-3 py-2 text-sm font-bold rounded-xl flex items-center gap-1"
                         style={{ backgroundColor: preview.can_execute
@@ -422,8 +426,9 @@ export function CheckPayrollImport() {
                                          ? "#fff" : colors.muted,
                                  opacity: preview.can_execute ? 1 : 0.6 }}
                         data-testid="payroll-execute-btn">
-                  <CheckCircle2 size={14} /> Execute · create checks
-                </button>
+                    <CheckCircle2 size={14} /> Execute · create checks
+                  </button>
+                </Gate>
               </div>
               <table className="w-full text-sm">
                 <thead style={{ backgroundColor: "#F1F5F9" }}>

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { Gate } from "@/hooks/usePermissions";
 
 /* ═════════ DISPATCH BOARD ═════════════════════════════════════════════ */
 export default function DispatchBoard() {
@@ -139,14 +140,16 @@ export default function DispatchBoard() {
             style={{ color: colors.onSurface }}>
           <Users size={16} /> Unassigned jobs · {jobs.length}
         </h2>
-        <button onClick={assignAll}
+        <Gate perm="Jobs" action="write">
+          <button onClick={assignAll}
                 disabled={bulkBusy || jobs.length === 0}
                 className="ml-auto px-3 py-2 text-sm font-bold rounded-xl flex items-center gap-1"
                 style={{ backgroundColor: colors.brand, color: "#fff",
                          opacity: (bulkBusy || jobs.length === 0) ? 0.5 : 1 }}
                 data-testid="dispatch-assignall-btn">
-          <Play size={12} /> {bulkBusy ? "Assigning…" : "Auto-assign all"}
-        </button>
+            <Play size={12} /> {bulkBusy ? "Assigning…" : "Auto-assign all"}
+          </button>
+        </Gate>
       </div>
 
       {msg ? (
@@ -306,12 +309,14 @@ export function WeatherReschedule() {
             rain and high wind windows.
           </p>
         </div>
-        <button onClick={scan} disabled={scanning}
+        <Gate perm="Jobs" action="write">
+          <button onClick={scan} disabled={scanning}
                 className="px-3 py-2 text-sm font-bold rounded-xl flex items-center gap-1"
                 style={{ backgroundColor: colors.brand, color: "#fff" }}
                 data-testid="weather-scan-btn">
-          <RefreshCw size={14} /> {scanning ? "Scanning…" : "Run scan"}
-        </button>
+            <RefreshCw size={14} /> {scanning ? "Scanning…" : "Run scan"}
+          </button>
+        </Gate>
       </div>
 
       {settings ? (

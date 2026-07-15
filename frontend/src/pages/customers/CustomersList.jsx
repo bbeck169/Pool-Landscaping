@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { Gate } from "@/hooks/usePermissions";
 import {
   PageHeader,
   TagChip,
@@ -268,9 +269,11 @@ export default function CustomersList() {
           <Button variant="ghost" onClick={() => bulk("remove_waitlist")}>
             Remove from waitlist
           </Button>
-          <Button variant="danger" onClick={() => bulk("delete")} testid="bulk-delete">
-            <Trash2 size={14} /> Delete
-          </Button>
+          <Gate perm="Customers" action="write">
+            <Button variant="danger" onClick={() => bulk("delete")} testid="bulk-delete">
+              <Trash2 size={14} /> Delete
+            </Button>
+          </Gate>
         </div>
       ) : null}
 

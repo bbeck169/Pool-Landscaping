@@ -2,6 +2,7 @@ import React from "react";
 import { NavLink, Outlet, useNavigate, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/auth";
 import { usePermissions } from "@/hooks/usePermissions";
+import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import AdminSidebar from "@/layouts/AdminSidebar";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
 import { brandGradientCss, colors, font } from "@/theme";
@@ -487,6 +488,8 @@ function AppLayout() {
           >
             Sign out
           </button>
+          {/* Phase 29C · role preview picker (mobile top-bar; admin only). */}
+          <div className="ml-2"><RolePreviewSwitcher /></div>
         </header>
 
         {/* Mobile slide-out drawer (admin only) */}
