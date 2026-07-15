@@ -130,13 +130,53 @@ export default function DispatchBoardMobile() {
     if (jobs.length === 0) return;
     setBulkBusy(true); setMsg(null);
     let ok = 0, fail = 0;
+    let firstError = "";
+    // FastAPI returns either a plain-string `detail` (HTTPException) or a list
+    // of validation-error dicts (422 body). Either way, tease out a single
+    // human-readable line so the banner + Alert don't dump raw JSON at the user.
+    const errText = (e: any): string => {
+      const m = e?.message || "";
+      if (!m) return "unknown error";
+      // Try to unwrap detail if it looks like JSON-in-a-message.
+      try {
+        const parsed = JSON.parse(m);
+        const d = parsed?.detail ?? parsed;
+        if (typeof d === "string") return d;
+        if (Array.isArray(d) && d[0]) {
+          const first = d[0];
+          if (first?.msg) return first.msg;
+          return JSON.stringify(first).slice(0, 120);
+        }
+        return typeof d === "object" ? JSON.stringify(d).slice(0, 120) : String(d);
+      } catch { /* not JSON — fall through */ }
+      return m;
+    };
     for (const j of jobs) {
-      try { await api.post("/dispatch/auto-assign", { job_id: j.id }); ok++; }
-      catch { fail++; }
+      try {
+        await api.post("/dispatch/auto-assign", { job_id: j.id });
+        ok++;
+      } catch (e: any) {
+        fail++;
+        if (!firstError) firstError = errText(e);
+      }
     }
-    setMsg({ text: `Bulk: ${ok} assigned · ${fail} failed`, kind: ok >= fail ? "info" : "err" });
-    setBulkBusy(false);
+    // load() resets `msg` at its start (see the top of this component), so we
+    // MUST refresh the list first and set the banner AFTER, otherwise the
+    // toast is nuked before it ever paints. In addition, fire a native
+    // Alert.alert which survives any state churn — matches the Weather
+    // screen's "Scanned N · affected N" idiom.
     await load();
+    setBulkBusy(false);
+    const summary = fail && firstError
+      ? `Bulk: ${ok} assigned · ${fail} failed — first error: ${firstError}`
+      : `Bulk: ${ok} assigned · ${fail} failed`;
+    setMsg({ text: summary, kind: ok >= fail ? "info" : "err" });
+    Alert.alert(
+      fail > 0 && ok === 0 ? "Auto-assign failed" : "Auto-assign complete",
+      fail > 0 && firstError
+        ? `${ok} assigned · ${fail} failed\n\nFirst error: ${firstError}`
+        : `${ok} assigned · ${fail} failed`,
+    );
   };
 
   const toggleAuto = async () => {
