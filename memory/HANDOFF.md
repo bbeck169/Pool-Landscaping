@@ -5074,3 +5074,37 @@ Added `_consume_job_reservations_impl(tenant_id, job_id, skip_item_writes:bool, 
 - Playwright confirms the Expo web build of the mobile app renders the schedule correctly. The demo Weekly Pool Service job is locked (submitted in Step 2's Close Job) so a live shortage-banner shot on mobile would require seeding a fresh open pool job — deferred to tester's sweep.
 
 **Not touched (per brief):** web, backend, existing endpoints. Mobile is a pure 1:1 mirror of the Step 3b web wiring.
+
+#### Phase 40 · Offline Checklist Mode (Step 1 SHIPPED — idempotency + read cache)
+
+Shipped the highest-value slice per brief's "60% shippable" guidance: **backend idempotency + mobile bootstrap cache + offline banner**. Write queue + replay UI deferred to Step 2.
+
+**Backend** (`utils_idempotency.py` + 2 endpoints)
+- New `utils_idempotency.py` with `replay_or_reserve(request, tenant_id, endpoint, body)` and `store_response(...)`. Reads `X-Idempotency-Key` header. Caches `{tenant_id, key, endpoint, body_fingerprint, response, expires_at}` in `idempotency_keys` with 24h TTL. Body fingerprint mismatch on same key returns a loud `{"error": "idempotency_key_body_mismatch"}` payload so clients can't silently mis-reuse keys.
+- Wired into `PATCH /api/jobs/{jid}/service-report` (`routers/service_reports.py`) and `POST /api/inventory/reserve` (`routers/inventory.py`).
+- **Deferred**: `POST /api/jobs/{jid}/photos` idempotency wiring (file uploads need separate handling — will land with Step 2's write-queue photo flow).
+
+**Mobile** (`services/offlineCache.ts` + `app/job/[id]/checklist.tsx`)
+- New `services/offlineCache.ts`: `cacheJobBootstrap(jobId, response)`, `getCachedBootstrap(jobId)`, `clearJobCache(jobId)`. AsyncStorage-backed. 7-day TTL — beyond that we prefer honest "no cache" over stale readings.
+- `checklist.tsx` `load()` now caches every successful `GET /jobs/{id}` + `GET /jobs/{id}/service-report` pair. On network failure, falls back to the cached payload and flips `offlineMode=true`; if there's no cache either, the existing `Alert.alert("Unable to open checklist", ...)` still fires.
+- New `checklist-network-pill` testID next to the autosave pill. Two states in Step 1: `Online · Synced` (green) and `Offline · cached` (amber, cloud-offline icon). Step 2 will add `Syncing… / N queued / Sync error — retry` once the write queue lands.
+
+**Tests** (`tests/test_phase40_idempotency.py`, 3/3 pass)
+- `test_same_key_replay_returns_cached_response` — POST reserve twice with the same key + body → identical response and only ONE reservation row in the DB.
+- `test_different_keys_same_body_both_execute` — two different keys same body → two separate reservation rows (as intended; client explicitly chose to re-key).
+- `test_expired_key_treated_as_new` — force-expire the cached entry → next call creates a fresh reservation.
+
+**Verification**
+- `pytest tests/test_phase40_idempotency.py tests/test_phase39_inventory_reservation.py -q` → **8 passed** (3 idempotency + 5 reservation, no regressions).
+- `bash /app/scripts/preflight.sh` → `preflight OK` (exit 0). 135 pre-existing advisory identifier warnings unchanged.
+- `esbuild transformSync` clean on both new/edited mobile files.
+- `tsc --noEmit -p /app/mobile` reports **zero new errors** on `offlineCache.ts` and `checklist.tsx` (only pre-existing project-wide `fontSize.xs` + role-narrowing drift remains).
+
+**Deferred to Step 2** (per brief's context-tight fallback)
+- `services/writeQueue.ts` — enqueue mutations offline, flush on reconnect with the same `X-Idempotency-Key`.
+- `@react-native-community/netinfo` install + subscription — the online→offline→online transition detection.
+- Network pill states: `Syncing…`, `N queued`, `Sync error — retry` (with tap-to-retry).
+- Photo-upload idempotency + local file staging.
+- Multi-device conflict resolution note in the FAQ (currently last-write-wins).
+
+**Not touched (per brief):** web (office-only usage means lower value; Step 2b if user requests), backend collections beyond `idempotency_keys`, encrypted local cache (future security phase).

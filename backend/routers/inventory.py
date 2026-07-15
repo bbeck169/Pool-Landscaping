@@ -13,7 +13,7 @@ Endpoints:
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from config import db, logger
@@ -538,13 +538,19 @@ def _shortage_warning(chemical: str, unit: str, current_qty: float,
 
 
 @router.post("/inventory/reserve")
-async def reserve_inventory(body: ReserveIn,
+async def reserve_inventory(body: ReserveIn, request: Request,
                               user: dict = Depends(get_current_user),
                               tenant: dict = Depends(get_current_tenant)):
     if user.get("role") not in ("admin", "super_admin", "technician"):
         raise HTTPException(403, "Not permitted")
     if body.quantity < 0:
         raise HTTPException(400, "quantity must be ≥ 0")
+    # Phase 40 · Idempotency short-circuit.
+    from utils_idempotency import replay_or_reserve, store_response
+    idem_key, cached = await replay_or_reserve(
+        request, tenant["id"], "POST /inventory/reserve", body.dict())
+    if cached is not None:
+        return cached
     now = now_iso()
     tenant_id = tenant["id"]
 
@@ -577,11 +583,15 @@ async def reserve_inventory(body: ReserveIn,
             {"$set": {"quantity": body.quantity, "unit": unit,
                        "updated_at": now,
                        "tech_user_id": body.tech_user_id or existing.get("tech_user_id")}})
-        return {"ok": True, "reservation_id": existing["id"],
+        resp = {"ok": True, "reservation_id": existing["id"],
                  "status": "active", "warning": (warn or {}).get("warning"),
                  "suggested_restock": (warn or {}).get("suggested_restock"),
                  "matched_item_id": (item or {}).get("id"),
                  "delta": body.quantity - float(existing["quantity"])}
+        if idem_key:
+            await store_response(idem_key, "POST /inventory/reserve",
+                                  tenant["id"], resp, body.dict())
+        return resp
 
     # New reservation.
     others = await _sum_active_reservations(tenant_id, body.chemical)
@@ -598,11 +608,15 @@ async def reserve_inventory(body: ReserveIn,
         "consumed_at": None, "released_at": None,
     }
     await db.inventory_reservations.insert_one(doc)
-    return {"ok": True, "reservation_id": rid, "status": "active",
+    resp = {"ok": True, "reservation_id": rid, "status": "active",
              "warning": (warn or {}).get("warning"),
              "suggested_restock": (warn or {}).get("suggested_restock"),
              "matched_item_id": doc["matched_item_id"], "delta": body.quantity,
              "unmatched": item is None}
+    if idem_key:
+        await store_response(idem_key, "POST /inventory/reserve",
+                              tenant["id"], resp, body.dict())
+    return resp
 
 
 @router.delete("/inventory/reserve/{reservation_id}")

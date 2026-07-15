@@ -37,6 +37,7 @@ import PoolChecklistForm from "@/src/components/checklist/PoolChecklistForm";
 import LandscapingChecklistForm from "@/src/components/checklist/LandscapingChecklistForm";
 import GenericChecklistForm from "@/src/components/checklist/GenericChecklistForm";
 import VisitRecapModal from "@/src/components/checklist/VisitRecapModal";
+import { cacheJobBootstrap, getCachedBootstrap } from "@/src/services/offlineCache";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
 // Phase 37 — minimum time the pill stays on "Saving…" so techs actually
@@ -68,21 +69,34 @@ export default function JobChecklistScreen() {
   // min-hold that keeps the pill visible long enough to be perceived.
   const savingShownAtRef = useRef<number>(0);
 
+  // Phase 40 · Step 1 — track whether the current bootstrap came from
+  // the offline cache so the tech sees an honest "Offline mode" banner.
+  const [offlineMode, setOfflineMode] = useState(false);
+
   // ─── Load ───────────────────────────────────────────────────────────
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
     try {
-      // Kick off both requests; job is needed for the client-side resolver
-      // and for the workstream payload on close.
       const [jobResp, reportResp] = await Promise.all([
         api.get(`/jobs/${id}`),
         api.get(`/jobs/${id}/service-report`),
       ]);
       setJob(jobResp);
       setReport(reportResp);
+      setOfflineMode(false);
+      // Cache the bootstrap for later offline access.
+      await cacheJobBootstrap(String(id), { job: jobResp, report: reportResp });
     } catch (e: any) {
-      Alert.alert("Unable to open checklist", e?.message || "Try again.");
+      // Phase 40 · Try to fall back to cache before surfacing the error.
+      const cached = await getCachedBootstrap(String(id));
+      if (cached?.job && cached?.report) {
+        setJob(cached.job);
+        setReport(cached.report);
+        setOfflineMode(true);
+      } else {
+        Alert.alert("Unable to open checklist", e?.message || "Try again.");
+      }
     } finally {
       setLoading(false);
     }
@@ -288,6 +302,28 @@ export default function JobChecklistScreen() {
                : "Ready"}
             </Text>
           </View>
+
+          {/* Phase 40 · Step 1 — network pill. Distinct from the autosave
+              pill: the autosave is per-field; this reflects the whole
+              screen's connection state. Only two states shipped in Step 1
+              (Online · Synced, Offline · cached). Step 2 will add
+              "Syncing…" and "N queued" once the write queue lands. */}
+          <View
+            style={[
+              styles.networkPill,
+              offlineMode ? styles.networkPillOffline : styles.networkPillOnline,
+            ]}
+            testID="checklist-network-pill"
+          >
+            <Ionicons
+              name={offlineMode ? "cloud-offline-outline" : "cloud-done-outline"}
+              size={11}
+              color="#FFFFFF"
+            />
+            <Text style={styles.networkPillText}>
+              {offlineMode ? "Offline · cached" : "Online · Synced"}
+            </Text>
+          </View>
         </View>
 
         {/* Photos — always visible */}
@@ -449,6 +485,21 @@ const styles = StyleSheet.create({
     fontFamily: font.bold,
     fontSize: 11,
     color: "#FFFFFF",
+  },
+  networkPill: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+  },
+  networkPillOnline: { backgroundColor: "rgba(22,163,74,0.90)" },
+  networkPillOffline: { backgroundColor: "rgba(180,83,9,0.95)" },
+  networkPillText: {
+    fontFamily: font.bold, fontSize: 11, color: "#FFFFFF",
   },
   card: {
     backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,

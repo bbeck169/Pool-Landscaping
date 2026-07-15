@@ -13,7 +13,7 @@ Endpoints (all tenant-scoped):
 """
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from config import db, logger
@@ -299,8 +299,16 @@ class ServiceReportPatch(BaseModel):
 
 @router.patch("/jobs/{jid}/service-report")
 async def patch_service_report(jid: str, body: ServiceReportPatch,
+                               request: Request,
                                user: dict = Depends(get_current_user),
                                tenant: dict = Depends(get_current_tenant)):
+    # Phase 40 · Idempotency — offline mobile queues retry on reconnect.
+    from utils_idempotency import replay_or_reserve, store_response
+    key, cached = await replay_or_reserve(
+        request, tenant["id"], "PATCH /jobs/{jid}/service-report",
+        body.dict(exclude_unset=True))
+    if cached is not None:
+        return cached
     job = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
@@ -320,9 +328,14 @@ async def patch_service_report(jid: str, body: ServiceReportPatch,
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id},
         {"$set": upd},
     )
-    return await db.service_reports.find_one(
+    resp = await db.service_reports.find_one(
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id}, {"_id": 0}
     )
+    if key:
+        await store_response(key, "PATCH /jobs/{jid}/service-report",
+                              tenant["id"], resp,
+                              body.dict(exclude_unset=True))
+    return resp
 
 
 # ─── POST submit (lock + mark job status) ──────────────────────────────────
