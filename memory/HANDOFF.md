@@ -2550,3 +2550,154 @@ overlapping checkbox, so it routed to the checklist as intended.
   `GenericChecklistForm`, `PhotoUploader`) still resolve in the bundle.
 - No backend regression run because no backend file was touched.
 
+#### Phase 31 · Step 2b — Web parity for the checklist flow (Feb 15 2026)
+
+Web mirror of the mobile Step 2a UI. Tapping a job on `/schedule` (Grid
+row body or `react-big-calendar` event) now opens an in-place
+`ChecklistModal` instead of navigating away to `/jobs/:id`. Same three
+template branches, same autosave/close pipeline, same
+`POST /workstream/events` telemetry on close. Adds a `/workstream`
+admin page (feed viewer over the Step 1 GET endpoint).
+
+**No backend touched. No mobile touched. Same endpoints as Step 2a.**
+
+**Endpoints used (all pre-existing, verified in Step 1 discovery)**
+- `GET   /api/jobs/{id}` + `GET /api/jobs/{id}/service-report`
+- `PATCH /api/jobs/{id}/service-report`
+- `POST  /api/jobs/{id}/service-report/submit`
+- `POST  /api/jobs/{id}/photos` + `DELETE /api/jobs/{id}/photos/{pid}`
+- `POST  /api/service-report/analyze-water-photo`
+- `POST  /api/workstream/events`
+- `GET   /api/workstream/events?limit=100&type=`  ← Workstream page
+
+**New components — `/app/frontend/src/components/checklist/`**
+- `ChecklistModal.jsx` — overlay modal wired to Radix-style
+  click-through-backdrop-to-close semantics (native `<div>` + a
+  `stopPropagation` on the card, no new modal lib). Renders the three
+  forms + `PhotoUploader` in a scroll region. Debounced 800 ms
+  autosave PATCH with a save-state pill in the header
+  (`Ready | Saving… | Saved | Save error`). Close-job flow: browser
+  `window.confirm` → final PATCH → submit → workstream event with the
+  exact payload shape mobile uses. Workstream failure surfaces as a
+  yellow banner inside the modal (`checklist-workstream-warning`) and
+  the modal stays open so the tech sees the notice; job is NOT
+  rolled back, per the brief.
+- `PoolChecklistForm.jsx` — backend-driven readings/catalog/checklist
+  (matches mobile). "Analyze water photo" uses a hidden `<input type=file>`,
+  uploads via `POST /jobs/{id}/photos`, then calls
+  `POST /service-report/analyze-water-photo`. Renders
+  `overall_assessment` / `recommendations` / `issues` in a card and
+  surfaces `mocked: true` reasons verbatim. Readings are NEVER
+  auto-filled — the endpoint returns qualitative advice only.
+- `LandscapingChecklistForm.jsx` — checklist items from
+  `report.checklist_items` (backed by `LANDSCAPE_CHECKLIST_DEFAULT`)
+  plus optional per-row notes and a job-level notes textarea. Fallback
+  8-item list only if the template ships empty.
+- `GenericChecklistForm.jsx` — "Work performed" + "Notes" textareas +
+  backend-supplied checklist items. `work_performed` folds into
+  `notes` under a `[Work Performed]` marker so we don't invent a
+  new backend field (mirrors mobile).
+- `PhotoUploader.jsx` — reusable, `max=10` default, base64 upload via
+  `POST /jobs/{id}/photos`, delete via the verified DELETE endpoint.
+
+**New page — `/app/frontend/src/pages/workstream/WorkstreamPage.jsx`**
+- Reverse-chronological event list from
+  `GET /api/workstream/events?limit=100&type=` with a type filter
+  input (Enter to apply, exact match).
+- Payload summary line composes customer_name · service_type ·
+  template · tech_name · photos/chem counts.
+- Relative timestamps (`1m ago`, `2h ago`, `3d ago`, then locale date).
+- Empty state renders when the tenant has no events yet.
+- RBAC: `admin | super_admin` only; anything else renders the
+  shared `<Forbidden>` block from `hooks/usePermissions.jsx`.
+- Registered as `<Route path="workstream" element={<WorkstreamPage />} />`
+  in `App.js`. The nav entry at `adminNav.js:32` (`/workstream`,
+  `feature: "jobs"`, `Workflow` icon) already existed from an earlier
+  scaffold — reused as-is, no new nav entry needed.
+
+**Tap-job wiring — `frontend/src/pages/schedule/CalendarSchedule.jsx`**
+- Added `const [checklistJobId, setChecklistJobId] = useState(null)`.
+- `onSelectEvent` (react-big-calendar) → `setChecklistJobId(ev.id)`
+  instead of the previous `navigate(/jobs/${id})`.
+- `<GridPanel onOpenJob={id => setChecklistJobId(id)}>` — modal open,
+  no navigate.
+- Grid `JobRow`:
+  - Row body converted from `<div>` to a `role="button" onClick`
+    container that opens the modal (skipped during `rearrangeMode`).
+    `cursor: pointer` for the affordance.
+  - Checkbox `onClick` now does `e.stopPropagation()` before calling
+    `onToggle(j.id)` so tapping the checkbox does NOT bubble into the
+    row-open handler (root cause of the mobile Step 2a hotfix ported
+    proactively).
+  - Rearrange up/down arrows and the right-edge chevron also
+    `e.stopPropagation()` before their own handlers.
+- `<ChecklistModal>` rendered at the end of the page; its `onSubmitted`
+  refreshes `load()` so the freshly-closed job flips to `completed`
+  status in the grid/calendar without a manual reload.
+
+**App.js**
+- Added `import WorkstreamPage` + `<Route path="workstream" element={<WorkstreamPage />} />`
+  under the same layout as `/schedule`. In-page `<Forbidden>` handles
+  the RBAC (no `<AdminOnly>` route wrapper needed — matches how
+  `WorkstreamPage` self-guards).
+
+**Files added (6)**
+- `frontend/src/components/checklist/ChecklistModal.jsx`
+- `frontend/src/components/checklist/PoolChecklistForm.jsx`
+- `frontend/src/components/checklist/LandscapingChecklistForm.jsx`
+- `frontend/src/components/checklist/GenericChecklistForm.jsx`
+- `frontend/src/components/checklist/PhotoUploader.jsx`
+- `frontend/src/pages/workstream/WorkstreamPage.jsx`
+
+**Files edited (2)**
+- `frontend/src/pages/schedule/CalendarSchedule.jsx` — import
+  `ChecklistModal`, add `checklistJobId` state, retarget both open
+  handlers, add `stopPropagation` on nested buttons in Grid `JobRow`,
+  render `<ChecklistModal>` at page end.
+- `frontend/src/App.js` — import + route registration for
+  `WorkstreamPage`.
+- `memory/HANDOFF.md` — this section.
+
+**Not touched (per hard rules)**
+- Backend (routers, schema, seed) — zero diffs.
+- Mobile — zero diffs.
+- Customer portal, RBAC matrix, other web pages.
+
+**Verification**
+- Webpack: bundle 200, 13.77 MB, "Compiled successfully!" tail on
+  `/var/log/supervisor/frontend.out.log`. All new components + page
+  present in the compiled bundle (361 combined `grep -c` matches).
+- Backend regression: `pytest -x -q test_phase31_checklist.py` → 9/9
+  passed in 2.7 s. No backend files touched.
+- Browser E2E (Playwright screenshots captured — see reply):
+  1. `/schedule?mode=grid` — Grid row tap on
+     `grid-job-757b4d3f-4a28-456c-a229-67542b4de042` → modal opens,
+     `checklist-modal-pool` mounted, `checklist-save-draft` +
+     `checklist-close-job` present, `checklist-modal-template-label`
+     reads `"pool · backend:pool"`.
+  2. `/schedule?mode=calendar&view=month` — `.rbc-event` click →
+     modal opens for a different job with the same testIDs.
+  3. `/workstream` — page renders, 1 seeded `job.completed` item
+     visible in `workstream-list`, testID `workstream-item` on the row.
+- Test credentials (unchanged): `admin@aquaterra.com / password123`.
+
+**Test IDs shipped**
+- `checklist-modal`, `checklist-modal-close`, `checklist-modal-template-label`
+- `checklist-modal-pool` / `checklist-modal-landscape` / `checklist-modal-generic`
+- `checklist-save-draft`, `checklist-close-job`, `checklist-save-state`
+- `checklist-photo-uploader`, `checklist-photo-*`
+- `pool-reading-*`, `pool-chem-*`, `pool-check-*`, `pool-notes`,
+  `pool-analyze-water-btn`, `pool-analysis-card`
+- `landscape-check-*`, `landscape-note-*`, `landscape-notes`
+- `generic-work-performed`, `generic-check-*`, `generic-notes`
+- `workstream-list`, `workstream-item`, `workstream-title`,
+  `workstream-refresh`, `workstream-type-filter`, `workstream-empty`
+
+**Deferred to Phase 31 · Step 2c**
+- Native web `<AlertDialog>` for the Close-Job confirm (currently
+  `window.confirm` per brief guidance to not introduce a new modal lib).
+- Rich Workstream item drill-in / job deep-link on click.
+- Live-refresh (WebSocket or interval polling) on `/workstream`.
+- Compound Mongo index `workstream_events (tenant_id, created_at)` if
+  traffic warrants.
+

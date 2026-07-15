@@ -32,6 +32,7 @@ import { api } from "@/api";
 import { colors, font } from "@/theme";
 import { useAuth } from "@/auth";
 import { Gate, useCan } from "@/hooks/usePermissions";
+import ChecklistModal from "@/components/checklist/ChecklistModal";
 
 /** Phase 30W · service-type → card palette. Mirrors the mobile fix-pass. */
 const SERVICE_PALETTE = (raw) => {
@@ -148,6 +149,10 @@ export default function CalendarSchedule() {
   const [moveDate, setMoveDate] = useState("");
   const [toast, setToast] = useState(null);              // {text, kind:"info"|"err"}
   const [reorderUnavailable, setReorderUnavailable] = useState(false);
+  // Phase 31 · Step 2b — tap-job opens the checklist modal in place of
+  // navigating away to /jobs/:id. Preserves the /schedule URL so the
+  // grid/calendar toggle, filters, and range presets survive the close.
+  const [checklistJobId, setChecklistJobId] = useState(null);
 
   const [view, setView] = useState(params.get("view") || "month");   // Phase 30X · month default
   const [date, setDate] = useState(() => {
@@ -244,7 +249,9 @@ export default function CalendarSchedule() {
     navigate(`/jobs/new?date=${d}`);
   };
   const onSelectEvent = (ev) => {
-    navigate(`/jobs/${ev.id}`);
+    // Phase 31 · Step 2b — open the checklist modal in place of a hard
+    // navigate. Preserves the /schedule route state (mode/filter/range).
+    setChecklistJobId(ev.id);
   };
 
   const eventPropGetter = (ev) => ({
@@ -606,7 +613,7 @@ export default function CalendarSchedule() {
           setMoveDate={setMoveDate}
           onConfirmMove={bulkMove}
           busy={busy}
-          onOpenJob={(id) => navigate(`/jobs/${id}`)}
+          onOpenJob={(id) => setChecklistJobId(id)}
           onNewJob={() => navigate(`/jobs/new?date=${focusISO}`)}
           reorderUnavailable={reorderUnavailable}
         />
@@ -623,6 +630,14 @@ export default function CalendarSchedule() {
           ))}
         </div>
       ) : null}
+
+      {/* Phase 31 · Step 2b — checklist modal (Grid + Calendar tap target). */}
+      <ChecklistModal
+        jobId={checklistJobId}
+        open={!!checklistJobId}
+        onClose={() => setChecklistJobId(null)}
+        onSubmitted={() => { load(); }}
+      />
     </div>
   );
 }
@@ -804,14 +819,17 @@ function GridPanel({
             return (
               <div
                 key={j.id}
-                className="flex items-center gap-3 px-3 py-3 rounded-xl"
+                className="flex items-center gap-3 px-3 py-3 rounded-xl cursor-pointer"
                 style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
                 data-testid={`grid-job-${j.id}`}
+                onClick={() => { if (!rearrangeMode) onOpenJob(j.id); }}
+                role="button"
               >
                 {rearrangeMode ? (
                   <div className="flex flex-col items-center gap-0.5 w-8">
                     <button
-                      onClick={() => onShift(j.id, -1)} disabled={idx === 0}
+                      onClick={(e) => { e.stopPropagation(); onShift(j.id, -1); }}
+                      disabled={idx === 0}
                       style={{ background: "transparent", border: 0, cursor: idx === 0 ? "default" : "pointer", opacity: idx === 0 ? 0.3 : 1 }}
                       data-testid={`grid-reorder-up-${j.id}`}
                     >
@@ -819,7 +837,8 @@ function GridPanel({
                     </button>
                     <span className="text-[10px] font-bold" style={{ color: colors.brand }}>{idx + 1}</span>
                     <button
-                      onClick={() => onShift(j.id, 1)} disabled={idx === jobs.length - 1}
+                      onClick={(e) => { e.stopPropagation(); onShift(j.id, 1); }}
+                      disabled={idx === jobs.length - 1}
                       style={{ background: "transparent", border: 0, cursor: idx === jobs.length - 1 ? "default" : "pointer",
                                opacity: idx === jobs.length - 1 ? 0.3 : 1 }}
                       data-testid={`grid-reorder-down-${j.id}`}
@@ -829,7 +848,7 @@ function GridPanel({
                   </div>
                 ) : (
                   <button
-                    onClick={() => onToggle(j.id)}
+                    onClick={(e) => { e.stopPropagation(); onToggle(j.id); }}
                     className="w-6 h-6 rounded-full flex items-center justify-center"
                     style={{ background: isChecked ? colors.brand : "transparent",
                              border: `1.5px solid ${isChecked ? colors.brand : colors.muted}` }}
@@ -863,7 +882,7 @@ function GridPanel({
                   {pill.label}
                 </div>
                 <button
-                  onClick={() => onOpenJob(j.id)}
+                  onClick={(e) => { e.stopPropagation(); onOpenJob(j.id); }}
                   style={{ background: "transparent", border: 0, cursor: "pointer", color: colors.muted }}
                   data-testid={`grid-open-${j.id}`}
                   aria-label="Open job detail"

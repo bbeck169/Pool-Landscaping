@@ -12,6 +12,7 @@ import CustomerForm from "@/pages/customers/CustomerForm";
 import CustomerDetail from "@/pages/customers/CustomerDetail";
 import CustomerChemistry from "@/pages/customers/CustomerChemistry";
 import CalendarSchedule from "@/pages/schedule/CalendarSchedule";
+import WorkstreamPage from "@/pages/workstream/WorkstreamPage";
 import JobNew from "@/pages/jobs/JobNew";
 import JobDetail from "@/pages/jobs/JobDetail";
 import QuotesList from "@/pages/quotes/QuotesList";
@@ -280,6 +281,8 @@ export default function App() {
             <Route path="schedule/today" element={<Navigate to="/schedule" replace />} />
             <Route path="schedule" element={<CalendarSchedule />} />
             <Route path="schedule/legacy-timeline" element={<TodaySchedule />} />
+            {/* Phase 31 · Step 2b — Workstream (tap-job telemetry feed) */}
+            <Route path="workstream" element={<WorkstreamPage />} />
             <Route path="tech/huddle" element={<TechHuddlePage />} />
             <Route path="tech/time-clock" element={<TechTimeClockPage />} />
             {/* Phase 29 — All My Tools hub (tech + admin). Non-role users are
