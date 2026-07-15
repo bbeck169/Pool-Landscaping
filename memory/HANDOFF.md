@@ -2701,3 +2701,158 @@ admin page (feed viewer over the Step 1 GET endpoint).
 - Compound Mongo index `workstream_events (tenant_id, created_at)` if
   traffic warrants.
 
+#### Phase 32 · Step 1 — AI CFO backend spine (Feb 15 2026)
+
+Backend-only pass. Five read-only aggregation endpoints + a Claude-powered
+expense auto-categorizer, all `/api/cfo/*` prefixed, `admin | super_admin`
+scoped, tenant-isolated. No new LLM libraries — reuses the same
+`emergentintegrations.llm.chat.LlmChat` pattern the Phase 27.1 churn
+scorer ships. UI (web + mobile dashboards) is Step 2, next window.
+
+**Discovery findings — money/date fields used per source**
+| Source | Money field | Date key | Notes |
+|---|---|---|---|
+| Paid invoices | `quotes.total` where `doc_type=="invoice" AND payment_status=="paid"` | `paid_at` (fallback `created_at`) | The `invoices` collection does NOT exist as a standalone doc; the app models invoices as `quotes` with `doc_type="invoice"`. |
+| Warranty revenue | `warranty_contracts.price_paid` | `start_date` | |
+| Expenses | `checks.amount` where `voided_at IS NULL` | `date` | Category often null → LLM categorizer fills it. |
+| Cash on hand | Σ `bank_accounts.current_balance` | — | If tenant has zero accounts → `mocked:true`. |
+| AR aging | `master_invoices.balance` + `due_date` | Bucketed 0-30/31-60/61-90/90+ | Rows with no `due_date` land in 0_30. |
+| AP aging | — | — | `ap_bills` collection does NOT exist → returns `mocked:true, reason:"no ap_bills collection wired"`. |
+| Payroll | — | — | `time_entries` has no rate field, no `payroll_runs` collection → labor spend is derived from `checks` with `category=="labor"` once the LLM categorizer runs. |
+| COGS | — | — | `stock_movements` has `delta` but no cost-per-unit on `items` in this env → deliberately excluded from expenses. |
+
+**New router — `backend/routers/cfo.py` (registered in `server.py`)**
+1. `GET /api/cfo/dashboard?period=mtd|qtd|ytd|custom&start=&end=` —
+   Revenue, expenses, gross profit, margin %, cash, AR/AP aging,
+   revenue_by_source, expense_by_category. `ap_aging` and (for empty
+   tenants) `cash_on_hand` are the only fields flagged `mocked:true`
+   with a reason string. Never fabricates a number.
+2. `GET /api/cfo/forecast?horizon=30|60|90|…180` — Weekly buckets of
+   projected cash-in (future scheduled jobs × `price` + warranty
+   contract end-dates within horizon) vs cash-out (avg weekly check
+   outflow over last 90d). If tenant history is `<30d`, returns
+   `mocked:true, reason:"insufficient history (<30d; have Xd)"` with
+   zeroed buckets. `runway_days_if_negative` is populated only when
+   `net_projected < 0` AND `cash_on_hand` is not mocked.
+3. `GET /api/cfo/anomalies?window_days=90&z=2.0` — Groups `checks`
+   amounts by category (preferring `expense_categories.category` when
+   the LLM has run, falling back to `checks.category`, else "other"),
+   splits the window into weekly buckets, computes `mean` + `pstdev`
+   of the prior buckets, and flags the current bucket when it exceeds
+   `mean + z * stddev`. Flagged rows are also persisted to
+   `expense_anomalies` for auditing.
+4. `POST /api/cfo/categorize?dry_run=true|false&force=true|false` —
+   Reads up to `limit` (default 100) uncategorized `checks` per call,
+   batches them 25-at-a-time to Claude Sonnet 4.6 via the existing
+   `emergentintegrations` pattern with `max_tokens=4000`, and writes
+   `expense_categories` upserts keyed on
+   `(tenant_id, transaction_id)`. `dry_run=true` skips the writes but
+   still consumes quota. LLM failures surface as
+   `{mocked:true, reasons:["llm error: …"]}` — the endpoint always
+   returns 200.
+5. `GET /api/cfo/llm-usage` — Today's `{request_count, tokens_used,
+   quota: 100, date}` for the caller's tenant.
+
+**New collections (indexed)**
+- `expense_categories` — `{id, tenant_id, transaction_id, source,
+  category, confidence, categorized_at, method}` · unique index on
+  `(tenant_id, transaction_id)`, secondary index on `(tenant_id, source)`.
+- `expense_anomalies` — `{id, tenant_id, detected_at, category,
+  current_total, mean, stddev, z_score/z, threshold, source}` · index
+  on `(tenant_id, detected_at)`.
+- `cfo_llm_usage` — `{tenant_id, date, request_count, tokens_used}` ·
+  unique index on `(tenant_id, date)`. Soft quota = 100 requests/day
+  per tenant. `?force=true` overrides but is still logged via
+  `logger.warning`.
+
+Indexes were installed via a one-shot `pymongo.create_index` script
+under `/app/backend` (no runtime autocreation to keep the app boot fast).
+
+**LLM plumbing**
+- Uses `EMERGENT_LLM_KEY` from `config.py` (no new env vars).
+- Model: `anthropic / claude-sonnet-4-6` (same as Phase 27.1 churn).
+- `max_tokens = 4000` on every call, 25 tx/batch.
+- Fail-open pattern: `_llm_classify()` returns
+  `(None, "llm error: …", 0)` on any exception; `/categorize` collects
+  reasons across batches and returns them alongside real writes for
+  the batches that DID succeed.
+
+**Tests — `backend/tests/test_phase32_cfo.py`**
+`11 passed` in 7.2 s covering:
+1. `TestDashboard` — admin 200 with all keys, tech 403, customer 403,
+   tenant scoping via `cash_on_hand` divergence.
+2. `TestForecast.test_shape` — 30-day horizon → 5 weekly buckets with
+   the correct field set.
+3. `TestForecast.test_mocked_on_new_tenant` — sunbelt (zero history in
+   this fixture DB) returns `mocked:true` with the reason string.
+4. `TestAnomalies.test_shape_and_z` — higher `z` never flags MORE
+   anomalies than a lower `z`.
+5. `TestCategorize.test_dry_run_does_not_write` — after
+   `dry_run=true`, no row exists in `expense_categories` for the
+   seeded check.
+6. `TestCategorize.test_llm_error_path_returns_mocked` — monkeypatches
+   `_llm_classify` to raise and confirms the endpoint still returns
+   200 with `reasons` populated (no 5xx).
+7. `TestCategorize.test_quota_soft_block_and_force` — pinning
+   `cfo_llm_usage.request_count = 250`, the endpoint returns
+   `{error:"quota_exceeded", soft:true}` without `?force=true` and
+   succeeds when the query param is set.
+8. `test_llm_usage_shape` — GET returns `{request_count, tokens_used,
+   quota:100, date}`.
+
+Regression sanity: full suite
+`test_phase32 + test_phase31_checklist + test_phase30_schedule +
+test_phase29c_rbac + test_phase29b_check_crypto +
+test_phase15d_stage3_isolation` = **52/52 passed** in 18 s.
+
+**Conftest tweak** — `tests/conftest.py` gained three cleanup queries
+for test-created rows keyed on `TEST_ ` / `TEST-` prefixes:
+- `checks {payee_name_snapshot: /^TEST_/}`
+- `expense_categories {transaction_id: /^TEST-/}`
+- `cfo_llm_usage {tenant_id: /TEST_/}`
+
+**Live-preview smoke (real deployed URL)**
+- `/api/cfo/dashboard?period=ytd` (aquaterra admin):
+  `revenue.total=$2,948.40`, `expenses.total=$101.00`,
+  `cash_on_hand={value: 5000, mocked: false}`,
+  `ap_aging.mocked=true`, revenue split into `paid_invoices` and
+  `warranty_contracts`.
+- `/api/cfo/forecast?horizon=60`: 9 weekly buckets,
+  `net_projected=$1,685.26`, first bucket `{cash_in: 564, cash_out:
+  7.86, net: 556.14}`.
+- `/api/cfo/anomalies?window_days=90&z=2.0`: 1 item.
+- `/api/cfo/llm-usage`: `{request_count: 0, tokens_used: 0, quota: 100}`.
+
+**Files added (2)**
+- `backend/routers/cfo.py`
+- `backend/tests/test_phase32_cfo.py`
+
+**Files edited (2)**
+- `backend/server.py` — import `cfo` + include in the router loop.
+- `backend/tests/conftest.py` — three new cleanup entries.
+- `memory/HANDOFF.md` — this section.
+
+**Not touched (per hard rules)**
+- No new LLM SDKs. No new env vars. No schema migrations on existing
+  collections (`checks`, `quotes`, `warranty_contracts`, `master_invoices`,
+  `bank_accounts` — all read as-is). No web / mobile frontend. No
+  customer portal.
+
+**Deferred to Phase 32 · Step 2 (UI, fresh window)**
+- Web AI CFO dashboard (`/cfo` page): KPI cards, revenue/expense
+  time-series chart, AR/AP aging bars, forecast waterfall, anomaly
+  list, "Auto-categorize now" button hitting `POST /cfo/categorize`.
+- Mobile dashboard parity.
+- `data-testid`s for the UI (backend router intentionally ships without
+  UI-visible IDs since it's headless).
+
+**Deferred to Phase 32 · Wave 3 / Phase 33**
+- NL Q&A ("What was my labor spend last quarter?") + Scenario Planning.
+- Board-ready PDF export (skipped per user).
+- COGS wiring once `items.unit_cost` becomes available.
+- AP bills collection + AP aging real values.
+- Payroll runs → derive labor spend from `time_entries × wage_rate`
+  when payroll runs are added.
+- Compound index `expense_anomalies (tenant_id, category, detected_at)`
+  if flagged-anomaly volume grows past a few thousand per tenant.
+

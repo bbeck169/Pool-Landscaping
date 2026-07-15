@@ -27,6 +27,7 @@ from routers import (
     warranties,
     rbac,
     workstream,
+    cfo,
 )
 
 app = FastAPI(
@@ -56,7 +57,8 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                churn, seo_content_refresh,
                warranties,
                rbac,
-               workstream]:
+               workstream,
+               cfo]:
     api_router.include_router(module.router)
 
 

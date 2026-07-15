@@ -40,6 +40,9 @@ _CLEANUP = {
     "items": {"name": _TEST_PREFIX},
     "rank_grid": {"keyword": _TEST_PREFIX},
     "workstream_events": {"payload.note": {"$regex": "^TEST_"}},
+    "checks": {"payee_name_snapshot": {"$regex": "^TEST_"}},
+    "expense_categories": {"transaction_id": {"$regex": "^TEST-"}},
+    "cfo_llm_usage": {"tenant_id": {"$regex": "TEST_"}},
 }
 
 
