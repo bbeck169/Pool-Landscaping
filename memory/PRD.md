@@ -117,3 +117,25 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
 - Google API key is unrestricted — recommend restricting to app domains + specific APIs in Google Cloud Console.
 - Address autocomplete not yet wired into `/jobs/new` (jobs inherit customer coords), `/portal/request-service`, or quote/invoice billing addresses — deferrable to Phase 12 polish.
 - Route optimization still uses greedy TSP (AI upgrade planned).
+
+## Phase 46 — Phase 45 completion follow-up (2026-07-16)
+
+### Shipped
+- **46.1 Not-tested toggle + defaults**: Mobile `ReadingChipRow` gained an explicit "Not tested / —" pill (dims chip strip when null). Backend `ServiceReportPatch` accepts optional `not_tested_flags: Dict[str, bool]`; new reports bootstrap with `not_tested_flags: {}`. Defaults (Free Cl 3, Total Cl 3, pH 7.6, Alk 100, CYA 70) are auto-applied when toggling back on. Dosing (`services/pool_dosing._normalize`) and algae-risk (`reports._chlorine_ppm`) already skip null values.
+- **46.2 Workstream card**: Added `WorkstreamPillRow` (Water Test / Chemicals / Checklist / Private Note / Public Note / Repair / Shopping / Time / Location) — green when backing job data exists, gray otherwise. Added `job-card-view-details-{id}` primary CTA button below the pill row. Full photo-panel + thumb strip redesign deferred; existing card content preserved to avoid breaking other consumers.
+- **46.3 Time Clock UIs**: New landscaping-only screens at `/landscape/time-clock` (web) and `mobile/app/landscape-time-clock.tsx`. Wire `POST /api/timeclock/punch`, `GET /api/timeclock/mine-today`, `GET /api/timeclock/mine-summary` (renamed from `/today`+`/summary` to avoid collision with existing `ops.timeclock_today` admin overview). Web uses `navigator.geolocation`, mobile uses `expo-location`. Non-landscaping users see a friendly "landscaping crew only" card (backend still returns 403 `not_landscaping`).
+- **46.4 Pool Service Report**: New `/admin/reports/pool-service` web page — week picker, sortable table (Tech / Serviced / Skipped / Total), totals summary, and client-side CSV export. Reuses existing `GET /api/reports/pool-service?date_from&date_to` from `routers/jobs.py`. Added to admin Reports nav.
+- **46.5 Web chemicals parity**: New `ChemicalPickerModal.jsx` mirrors the mobile `ChemicalPickerSheet` (same shared CHEMICALS_CATALOG, same commit semantics). Wired into `PoolChecklistForm.jsx` via a dashed "Quick add chemical" button below the existing `ChemicalDropdownStack`.
+- **46.6 Playwright menu-404 audit**: `check_menu_404s.py` now walks nav links parsed from `adminNav.js` + `roleNav.js` via a real Chromium via Playwright, writes `/app/memory/menu_audit_report.json`. Auto-falls back to HTTP-only mode when `playwright` isn't installed. `pip install playwright && playwright install chromium` installed.
+- **Landscaping user seeded**: `landscaper@aquaterra.com` / `password123`, `department: "landscaping"`, tenant aquaterra. Seed is idempotent (runs every startup, only inserts if missing, corrects the department + tenant on existing rows). Credentials logged in `/app/memory/test_credentials.md`.
+- **api.js**: Now unwraps FastAPI dict-shape details (`{code, msg}`) so 403 responses surface real error messages to the UI (used by the landscaping guard).
+
+### Verified
+- `bash /app/scripts/preflight.sh` → exit 0.
+- Metro bundle 200 (`/node_modules/expo-router/entry.bundle?platform=web&…`).
+- Backend endpoints tested via curl: login as landscaper OK, `POST /api/timeclock/punch` in+out OK, `/mine-today` + `/mine-summary` return live shifts, admin `/reports/pool-service` returns 3 rows for the current week (Mike 4, Unknown 2, Sara 0/1).
+- Playwright smoke: admin login → `/admin/reports/pool-service` renders `pool-service-report` container with `6 serviced · 1 skipped` totals and 3 rows; admin visiting `/landscape/time-clock` shows `landscape-time-clock-blocked`.
+
+### Deferred / Follow-ups
+- **46.2 photo panel**: The large primary photo + horizontal thumb strip variant from the reference screenshot was not implemented — the existing job card structure retained with the pill row + VIEW DETAILS button added. Full photo layout can land in a follow-up phase.
+- **46.6 stale HTTP fallback rows**: When Playwright is available the walker succeeds; when only requests is available the report shows link inventory but not per-link 404 status (SPA HTML is always 200). Consider adding a preflight step that fails when any `spa-404` row appears.

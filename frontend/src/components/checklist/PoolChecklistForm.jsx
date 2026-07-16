@@ -19,6 +19,7 @@ import React, { useRef, useState, useEffect, useMemo, useCallback } from "react"
 import { AlertTriangle, CheckCircle2, FlaskConical, Plus, RefreshCw, Trash2, Pencil, X as CloseX } from "lucide-react";
 import { api } from "@/api";
 import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDropdownStack";
+import ChemicalPickerModal from "./ChemicalPickerModal";
 
 // Phase 37 — refined chip-scale defaults per reading key.
 // Chlorine: 0.5 ppm increments up to 20. pH: 0.1 increments 6.0..8.5 with
@@ -193,6 +194,9 @@ export default function PoolChecklistForm({
   const [analysis, setAnalysis] = useState(null);
   const [analyzeErr, setAnalyzeErr] = useState("");
   const analyzeRef = useRef(null);
+
+  // Phase 46.5 — Web parity for mobile Quick-add sheet.
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   // Phase 34e — chemical dose recommendations state.
   const [recs, setRecs] = useState(null); // {recommendations, mocked, reason, source, pool_gallons}
@@ -699,6 +703,29 @@ export default function PoolChecklistForm({
           locked={locked}
           onChange={onChange}
           jobId={jobId}
+        />
+        {/* Phase 46.5 — Web parity for mobile Quick-add sheet. */}
+        <button
+          type="button"
+          disabled={locked}
+          onClick={() => setPickerOpen(true)}
+          className="mt-3 inline-flex items-center gap-2 text-sm font-semibold px-3 py-2 rounded-md w-full justify-center"
+          style={{
+            border: `1px dashed ${colors.brand}`,
+            color: colors.brand,
+            background: colors.surface,
+            cursor: locked ? "not-allowed" : "pointer",
+          }}
+          data-testid="chem-picker-open"
+        >
+          <Plus size={14} /> Quick add chemical
+        </button>
+        <ChemicalPickerModal
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          chemicalsAdded={chemicalsAdded}
+          onChange={onChange}
+          locked={locked}
         />
       </div>
 

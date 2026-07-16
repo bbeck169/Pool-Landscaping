@@ -212,6 +212,9 @@ async def _bootstrap_report(tenant_id: str, job: dict, tech_id: str) -> dict:
             for f in tpl.get("chemical_reading_fields", [])
         ],
         "chemicals_added": [],
+        # Phase 46.1 — starts empty; PATCH populates with `{key: True}`
+        # when the tech explicitly toggles "Not tested" on a reading.
+        "not_tested_flags": {},
         "checklist_items": [
             {"id": new_id(),
              "label": (x if isinstance(x, str) else x.get("label", "")),
@@ -295,6 +298,11 @@ class ServiceReportPatch(BaseModel):
     chemicals_added: Optional[List[Dict[str, Any]]] = None
     checklist_items: Optional[List[Dict[str, Any]]] = None
     notes: Optional[str] = None
+    # Phase 46.1 — explicit "not tested" flags per reading key so the UI
+    # can distinguish 0 from "did not test this visit". Dosing + algae
+    # risk already skip null values (see services/pool_dosing._normalize
+    # and reports._chlorine_ppm), so this dict is purely for UI recall.
+    not_tested_flags: Optional[Dict[str, bool]] = None
 
 
 @router.patch("/jobs/{jid}/service-report")

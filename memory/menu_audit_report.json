@@ -1,0 +1,848 @@
+{
+  "mode": "playwright",
+  "roles": {
+    "super_admin": {
+      "login": "failed: Locator.fill: Timeout 30000ms exceeded.\nCall log:\n  - waiting for get_by_test_id(\"login-email-input\")\n",
+      "links": []
+    },
+    "admin": {
+      "login": "failed: Locator.fill: Timeout 30000ms exceeded.\nCall log:\n  - waiting for get_by_test_id(\"login-email-input\")\n",
+      "links": []
+    },
+    "technician": {
+      "login": "failed: Locator.fill: Timeout 30000ms exceeded.\nCall log:\n  - waiting for get_by_test_id(\"login-email-input\")\n",
+      "links": []
+    },
+    "customer": {
+      "login": "failed: Locator.fill: Timeout 30000ms exceeded.\nCall log:\n  - waiting for get_by_test_id(\"login-email-input\")\n",
+      "links": []
+    }
+  },
+  "links": [
+    {
+      "to": "/",
+      "label": "Dashboard",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/access-history",
+      "label": "Access History",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/access-settings",
+      "label": "Access Settings",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/appointments",
+      "label": "Appointments",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/assets",
+      "label": "Assets",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/checks",
+      "label": "Check Writer",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/checks/analytics",
+      "label": "Check Analytics",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/checks/bank-accounts",
+      "label": "Bank Accounts",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/checks/batch/new",
+      "label": "Batch Print",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/checks/payees",
+      "label": "Payees",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/checks/payroll",
+      "label": "Payroll Import",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/customer-success/churn",
+      "label": "Churn Analyzer",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/dispatch",
+      "label": "Auto-Dispatch",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/dispatch/weather",
+      "label": "Weather Reschedule",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/dunning/analytics",
+      "label": "AR Aging",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/dunning/queue",
+      "label": "Dunning Queue",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/dunning/settings",
+      "label": "Dunning Setup",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/estimator",
+      "label": "Field Estimator",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/inventory",
+      "label": "Inventory",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/inventory/alerts",
+      "label": "Stock Alerts",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/inventory/analytics",
+      "label": "Inventory Analytics",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/inventory/purchase-orders",
+      "label": "Purchase Orders",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/onboarding/queue",
+      "label": "Onboarding Queue",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/onboarding/templates",
+      "label": "Onboarding Templates",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/portal-inbox",
+      "label": "Portal Inbox",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/referrals/analytics",
+      "label": "Referral Analytics",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/referrals/settings",
+      "label": "Referral Tiers",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/reports/pool-service",
+      "label": "Pool Service Report",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/seo/atlas",
+      "label": "Atlas SEO Agent",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/seo/audits",
+      "label": "Site Auditor",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/seo/content-refresh",
+      "label": "Content Refresh",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/seo/content-scorer",
+      "label": "Content Scorer",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/seo/llm-visibility",
+      "label": "LLM Visibility",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/seo/rank-heatmap",
+      "label": "Rank Heatmap",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/seo/reports",
+      "label": "White-Label Reports",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/seo/studio",
+      "label": "Website Studio",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/seo/topical-map",
+      "label": "Topical Map",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/warranties/claims",
+      "label": "Warranty Claims",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/warranties/contracts",
+      "label": "Warranty Contracts",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/warranties/plans",
+      "label": "Warranty Plans",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/ai-employees",
+      "label": "AI Employees Hub",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/analytics",
+      "label": "Analytics",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/assets",
+      "label": "My Equipment",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/auto-billing",
+      "label": "Auto-billing",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/avg-job-time",
+      "label": "Avg Job Time",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/cad",
+      "label": "CAD Studio",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/calculators",
+      "label": "Pool Calculators",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/card",
+      "label": "Digital Card",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/cfo",
+      "label": "AI CFO",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/checkins",
+      "label": "Check-ins",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/communications",
+      "label": "Communications",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/coverage",
+      "label": "Coverage",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/crews",
+      "label": "Crews",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/csat",
+      "label": "CSAT / NPS",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/customers",
+      "label": "Customers",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/d2d",
+      "label": "D2D Canvassing",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/d2d/leaderboard",
+      "label": "D2D Leaderboard",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/dispatch",
+      "label": "Dispatch Board",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/dispatch/board",
+      "label": "Dispatch Board",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/equipment",
+      "label": "Equipment",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/estimator",
+      "label": "Estimator",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/forms",
+      "label": "Forms",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/gbp",
+      "label": "GBP Hub",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/gbp/business",
+      "label": "GBP Business",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/gbp/posts",
+      "label": "GBP Posts",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/gbp/reviews",
+      "label": "GBP Reviews",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/inbox",
+      "label": "Inbox",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/income-by-category",
+      "label": "Income by Category",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/inventory",
+      "label": "Inventory",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/invoices",
+      "label": "Invoices",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/job-timers",
+      "label": "Job Timers",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/landscape",
+      "label": "Landscape AI",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/landscape/time-clock",
+      "label": "Landscape Time Clock",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/leads",
+      "label": "Leads",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/leads/request",
+      "label": "Lead Requests",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/log-history",
+      "label": "Log History",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/maintenance",
+      "label": "Maintenance",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/marketing",
+      "label": "Studio",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/marketing/brand",
+      "label": "Brand Memory",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/marketing/calendar",
+      "label": "Marketing Calendar",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/marketing/campaigns",
+      "label": "Campaigns",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/marketing/performance",
+      "label": "Performance",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/marketing/posts",
+      "label": "Posts",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/marketing/queue",
+      "label": "Approval Queue",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/marketing/reviews",
+      "label": "Reviews",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/marketing/sequences",
+      "label": "Sequences",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/marketing/templates",
+      "label": "Templates",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/master-invoices",
+      "label": "Master Invoices",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/measure",
+      "label": "Satellite Measure",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/notifications",
+      "label": "Notifications",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/os/dashboard",
+      "label": "Four Pillars",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/os/huddle",
+      "label": "Huddles",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/os/lana",
+      "label": "Lana AI Assistant",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/os/leanboards",
+      "label": "LeanBoards",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/os/roles",
+      "label": "Roles",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/os/scorecards",
+      "label": "Scorecards",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/os/sops",
+      "label": "SOPs",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/os/sprints",
+      "label": "Sprints",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/payments",
+      "label": "Payments",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/pool-service",
+      "label": "Pool Service",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/portal/book",
+      "label": "Book Service",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/portal/chats",
+      "label": "Chats",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/portal/documents",
+      "label": "Documents",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/portal/estimates",
+      "label": "Estimates",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/portal/home",
+      "label": "Dashboard",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/portal/invoices",
+      "label": "Invoices",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/portal/messages",
+      "label": "Messages",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/portal/payment-method",
+      "label": "Payment Method",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/portal/payments",
+      "label": "Payments",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/portal/photos",
+      "label": "Photos",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/portal/profile",
+      "label": "Profile",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/portal/request-service",
+      "label": "Request Service",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/portal/services",
+      "label": "Service History",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/portal/terms",
+      "label": "Terms",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/portal/warranties",
+      "label": "Warranties",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/price-book",
+      "label": "Price Book",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/property-lookup",
+      "label": "Property Lookup",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/quotes",
+      "label": "Quotes",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/reports",
+      "label": "Reports Hub",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/reports/business-summary",
+      "label": "Business Summary",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/reports/customer-retention",
+      "label": "Customer Retention",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/reports/forecast",
+      "label": "Forecast",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/reports/revenue-slices",
+      "label": "Revenue Slices",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/routes",
+      "label": "Routes",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/schedule",
+      "label": "Schedule",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/seo",
+      "label": "SEO Hub",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/seo/articles",
+      "label": "Articles",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/seo/audit",
+      "label": "Audit",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/seo/keywords",
+      "label": "Keywords",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/seo/rank-grid",
+      "label": "Rank Grid",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/seo/wordpress",
+      "label": "WordPress",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/settings/auto-clockin",
+      "label": "Auto Clock-In",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/settings/billing",
+      "label": "Billing Rules",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/settings/integrations",
+      "label": "Integrations",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/settings/late-fees",
+      "label": "Late Fees",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/settings/legal",
+      "label": "Legal Docs",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/settings/maps",
+      "label": "Maps",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/settings/onboarding",
+      "label": "Onboarding",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/settings/payment-handles",
+      "label": "Payment Handles",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/settings/ringcentral",
+      "label": "RingCentral",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/settings/tenant",
+      "label": "Tenant Brand",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/settings/terms",
+      "label": "Terms",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/social/approvals",
+      "label": "Social Approvals",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/social/brand-kit",
+      "label": "Brand Kit",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/social/bulk-upload",
+      "label": "Bulk Upload",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/social/calendar",
+      "label": "Social Calendar",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/social/composer",
+      "label": "Social Composer",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/social/drafts",
+      "label": "Social Drafts",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/social/library",
+      "label": "Social Library",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/social/short-links",
+      "label": "Short Links",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/tasks",
+      "label": "Tasks",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/team",
+      "label": "Team",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/tech/card",
+      "label": "Business Card",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/tech/property-lookup",
+      "label": "Property Lookup",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/tenants",
+      "label": "Tenants (super)",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/time-clock",
+      "label": "Time Clock",
+      "source": "roleNav.js"
+    },
+    {
+      "to": "/timeclock/today",
+      "label": "Timeclock",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/timesheets",
+      "label": "Timesheets",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/virtual-bid",
+      "label": "Virtual Bid",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/weather",
+      "label": "Weather",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/workforce/crew-map",
+      "label": "Crew Map",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/workforce/job-costing",
+      "label": "Job Costing",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/workforce/mileage",
+      "label": "Mileage",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/workforce/timesheets",
+      "label": "Workyard Timesheets",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/workstream",
+      "label": "Workstream",
+      "source": "adminNav.js"
+    }
+  ]
+}

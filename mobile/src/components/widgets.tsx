@@ -160,7 +160,69 @@ export function JobCard({ job, testID, locked }: { job: any; testID?: string; lo
           ) : null}
         </View>
       ) : null}
+      {/* Phase 46.2 · Workstream card pills + View Details CTA */}
+      <WorkstreamPillRow job={job} />
+      <Pressable
+        onPress={() => (locked ? undefined : router.push(`/job/${job.id}`))}
+        disabled={locked}
+        style={styles.viewDetailsBtn}
+        testID={`job-card-view-details-${job.id}`}
+      >
+        <Ionicons name="arrow-forward-circle" size={16} color="#fff" />
+        <Text style={styles.viewDetailsText}>VIEW DETAILS</Text>
+      </Pressable>
     </Pressable>
+  );
+}
+
+// Phase 46.2 — Workstream pill row. Green when the backing data exists on
+// the job payload, gray otherwise. Pill states are computed from the
+// current job doc so no extra fetch is needed for the jobs list. Deep
+// service-report driven states (Water Test / Chemicals / Checklist) will
+// gain live signal once the jobs feed includes a summary badge.
+function WorkstreamPillRow({ job }: { job: any }) {
+  const has = {
+    "water-test":    !!(job?.chemical_readings_count || job?.has_water_readings),
+    "chemicals":     !!(job?.chemicals_added_count || job?.has_chemicals_added),
+    "checklist":     !!(job?.checklist_progress || job?.service_report_id),
+    "private-note":  !!(job?.account_notes || job?.tech_note),
+    "public-note":   !!(job?.customer_note),
+    "repair":        !!(job?.repair_request),
+    "shopping":      !!(job?.shopping_request),
+    "time":          !!(job?.scheduled_start || job?.scheduled_date),
+    "location":      !!(job?.address || job?.lat),
+  } as const;
+  const entries: { key: keyof typeof has; label: string; icon: any }[] = [
+    { key: "water-test",   label: "Water Test",   icon: "water-outline" },
+    { key: "chemicals",    label: "Chemicals",    icon: "flask-outline" },
+    { key: "checklist",    label: "Checklist",    icon: "checkmark-done-outline" },
+    { key: "private-note", label: "Private Note", icon: "lock-closed-outline" },
+    { key: "public-note",  label: "Public Note",  icon: "chatbox-outline" },
+    { key: "repair",       label: "Repair",       icon: "construct-outline" },
+    { key: "shopping",     label: "Shopping",     icon: "cart-outline" },
+    { key: "time",         label: "Time",         icon: "time-outline" },
+    { key: "location",     label: "Location",     icon: "location-outline" },
+  ];
+  return (
+    <View style={styles.pillWrap}>
+      {entries.map((e) => {
+        const on = has[e.key];
+        return (
+          <View
+            key={e.key}
+            style={[styles.pill, on ? styles.pillOn : styles.pillOff]}
+            testID={`job-card-pill-${e.key}-${job.id}`}
+          >
+            <Ionicons name={e.icon} size={11}
+              color={on ? "#166534" : colors.muted} />
+            <Text style={[styles.pillText,
+              on ? styles.pillTextOn : styles.pillTextOff]}>
+              {e.label}
+            </Text>
+          </View>
+        );
+      })}
+    </View>
   );
 }
 
@@ -307,6 +369,25 @@ const styles = StyleSheet.create({
   gateText: { fontFamily: font.bold, fontSize: fontSize.sm, color: "#92400E", letterSpacing: 0.5 },
   noteRow: { flexDirection: "row", gap: 6, alignItems: "flex-start" },
   noteText: { flex: 1, fontFamily: font.regular, fontSize: fontSize.sm, color: colors.onSurfaceSecondary, lineHeight: 18 },
+  pillWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: spacing.sm },
+  pill: { flexDirection: "row", alignItems: "center", gap: 4,
+          paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill,
+          borderWidth: 1 },
+  pillOn: { backgroundColor: "#DCFCE7", borderColor: "#86EFAC" },
+  pillOff: { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+  pillText: { fontFamily: font.semibold, fontSize: 10, letterSpacing: 0.3 },
+  pillTextOn: { color: "#166534" },
+  pillTextOff: { color: colors.muted },
+  viewDetailsBtn: {
+    marginTop: spacing.sm,
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 6, backgroundColor: colors.brand,
+    paddingVertical: 10, borderRadius: radius.md,
+  },
+  viewDetailsText: {
+    fontFamily: font.bold, fontSize: 13, color: "#fff",
+    letterSpacing: 0.7,
+  },
   filterRowWrap: { flexGrow: 0, maxHeight: 56, backgroundColor: colors.surface },
   filterRowContent: { gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, alignItems: "center" },
   chipFilter: {

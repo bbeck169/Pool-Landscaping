@@ -3,7 +3,7 @@ from starlette.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import client, db, logger
-from seed import seed, seed_extras, seed_tech_today_demo
+from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user
 from routers import (
     auth, customers, technicians, jobs, quotes, leads, team, items, payments,
     operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google as google_router, phase11,
@@ -29,7 +29,6 @@ from routers import (
     workstream,
     cfo,
     timeclock_landscaping,
-    pool_service_report,
 )
 
 app = FastAPI(
@@ -61,8 +60,7 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                rbac,
                workstream,
                cfo,
-               timeclock_landscaping,
-               pool_service_report]:
+               timeclock_landscaping]:
     api_router.include_router(module.router)
 
 
@@ -147,6 +145,7 @@ async def _background_seed():
     await step("lead_request_form", lead_requests._seed_lead_request_form())
     await step("tenant_backfill", tenants.run_tenant_backfill())
     await step("super_admin", tenants._seed_super_admin())
+    await step("landscaping_user", seed_landscaping_user())
     await step("business_os", business_os.seed_business_os())
     await step("tech_today_demo", seed_tech_today_demo())
 

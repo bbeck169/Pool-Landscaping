@@ -48,6 +48,9 @@ async function request(path, options = {}, timeoutMs = 30000) {
         .map((e) => (e?.msg || "").replace(/^Value error,\s*/i, ""))
         .filter(Boolean)
         .join(" ");
+    } else if (msg && typeof msg === "object") {
+      // FastAPI custom-shape details like `{code, msg}` (e.g. 403 not_landscaping).
+      msg = msg.msg || msg.message || msg.code || null;
     }
     if (typeof msg !== "string" || !msg) msg = `Request failed (${res.status})`;
     throw new Error(msg);

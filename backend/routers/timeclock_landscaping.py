@@ -2,8 +2,12 @@
 
 Endpoints:
     POST /api/timeclock/punch
-    GET  /api/timeclock/summary?start=&end=
-    GET  /api/timeclock/today
+    GET  /api/timeclock/mine-summary?start=&end=
+    GET  /api/timeclock/mine-today
+
+Note: the `/timeclock/today` route in `routers/ops.py` is a tenant-wide
+admin overview; these `mine-*` routes are the personal per-user endpoints
+used by the landscaping time-clock UI.
 
 Schema (`timeclock_punches`):
     {tenant_id, user_id, punch_type: "in"|"out", timestamp,
@@ -114,7 +118,7 @@ def _sum_shifts(punches: list) -> int:
     return total
 
 
-@router.get("/summary")
+@router.get("/mine-summary")
 async def summary(start: str = Query(...), end: str = Query(...),
                    user: dict = Depends(get_current_user)):
     _require_landscaping(user)
@@ -134,7 +138,7 @@ async def summary(start: str = Query(...), end: str = Query(...),
             "punches": [{k: v for k, v in p.items() if k != "_id"} for p in rows]}
 
 
-@router.get("/today")
+@router.get("/mine-today")
 async def today(user: dict = Depends(get_current_user)):
     _require_landscaping(user)
     today = date.today().isoformat()

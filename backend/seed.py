@@ -4,6 +4,51 @@ from config import db, logger
 from utils import now_iso, new_id, hash_password
 
 
+async def seed_landscaping_user():
+    """Phase 46 — Idempotent seed of a landscaping-department user so the
+    landscaping time clock (backend gated by `department == 'landscaping'`)
+    can be exercised end-to-end. Runs on every startup via server.py."""
+    from utils import hash_password  # local import — module-level already imports
+    email = "landscaper@aquaterra.com"
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    # Ensure the account exists and its department is set correctly.
+    tenant = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0})
+    tenant_id = tenant["id"] if tenant else None
+    if existing:
+        upd = {}
+        if (existing.get("department") or "").lower() != "landscaping":
+            upd["department"] = "landscaping"
+        if existing.get("role") not in ("technician", "landscaping_technician"):
+            upd["role"] = "technician"
+        if tenant_id and existing.get("tenant_id") != tenant_id:
+            upd["tenant_id"] = tenant_id
+        if not existing.get("active", True):
+            upd["active"] = True
+        if upd:
+            await db.users.update_one({"id": existing["id"]}, {"$set": upd})
+        return
+    tech_id = new_id()
+    await db.technicians.insert_one({
+        "id": tech_id, "name": "Luis Marquez", "email": email,
+        "phone": "480-555-0166", "specialty": "Landscaping",
+        "avatar": "", "active": True, "created_at": now_iso(),
+        **({"tenant_id": tenant_id} if tenant_id else {}),
+    })
+    await db.users.insert_one({
+        "id": new_id(),
+        "name": "Luis Marquez",
+        "email": email,
+        "password_hash": hash_password("password123"),
+        "role": "technician",
+        "department": "landscaping",
+        "avatar": "",
+        "technician_id": tech_id,
+        "active": True,
+        "created_at": now_iso(),
+        **({"tenant_id": tenant_id} if tenant_id else {}),
+    })
+
+
 async def seed():
     if await db.users.count_documents({}) > 0:
         return

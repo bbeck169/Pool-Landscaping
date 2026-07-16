@@ -86,6 +86,19 @@ const PALETTES: Record<string, Palette> = {
 const normalizeKey = (name: string) =>
   String(name || "").toLowerCase().replace(/[\s()]+/g, "_");
 
+// Phase 46.1 — Default values for a "just started this reading" state so
+// techs land on sensible presets when they toggle "Not tested" off.
+const DEFAULT_VALUES: Record<string, number> = {
+  free_chlorine: 3,
+  total_chlorine: 3,
+  chlorine: 3,
+  ph: 7.6,
+  total_alkalinity: 100,
+  alkalinity: 100,
+  cyanuric_acid: 70,
+  cya: 70,
+};
+
 const isPhSweetSpot = (v: number | null) =>
   typeof v === "number" && v >= 7.2 && v <= 7.6;
 
@@ -170,9 +183,35 @@ export default function ReadingChipRow({
             {label}{unit ? ` (${unit})` : ""}
           </Text>
         </View>
-        <Text style={[styles.currentVal, { color: palette.sel }]}>
-          {value == null || value === "" ? "—" : String(value)}
-        </Text>
+        <View style={styles.headerRight}>
+          <Pressable
+            onPress={() => {
+              if (locked) return;
+              if (value == null || value === "") {
+                onChange(DEFAULT_VALUES[key] ?? 0);
+              } else {
+                onChange(null);
+              }
+            }}
+            disabled={!!locked}
+            style={[
+              styles.notTestedBtn,
+              (value == null || value === "") && styles.notTestedBtnActive,
+            ]}
+            testID={`pool-reading-${key}-not-tested`}
+            accessibilityLabel={`Toggle not tested for ${label}`}
+          >
+            <Text style={[
+              styles.notTestedText,
+              (value == null || value === "") && styles.notTestedTextActive,
+            ]}>
+              {value == null || value === "" ? "Not tested" : "—"}
+            </Text>
+          </Pressable>
+          <Text style={[styles.currentVal, { color: palette.sel }]}>
+            {value == null || value === "" ? "—" : String(value)}
+          </Text>
+        </View>
       </View>
 
       {editing ? (
@@ -204,6 +243,7 @@ export default function ReadingChipRow({
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.chipRow}
+          style={value == null || value === "" ? { opacity: 0.4 } : undefined}
         >
           {scale.values.map((v) => {
             const chipVal = chipToValue(v);
@@ -299,6 +339,33 @@ const styles = StyleSheet.create({
   currentVal: {
     fontFamily: font.bold,
     fontSize: 13,
+  },
+  headerRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  notTestedBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  notTestedBtnActive: {
+    borderColor: colors.brand,
+    backgroundColor: colors.brandTertiary,
+  },
+  notTestedText: {
+    fontFamily: font.semibold,
+    fontSize: 10,
+    color: colors.muted,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  notTestedTextActive: {
+    color: colors.brand,
   },
   editRow: {
     flexDirection: "row",

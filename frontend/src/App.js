@@ -129,6 +129,8 @@ import { TechHuddlePage, TechTimeClockPage } from "@/pages/tech/TechPages";
 import ServiceReport from "@/pages/tech/ServiceReport";
 import ToolsHub from "@/pages/tech/ToolsHub";
 import BusinessCard from "@/pages/tech/BusinessCard";
+import LandscapingTimeClock from "@/pages/tech/LandscapingTimeClock";
+import PoolServiceReport from "@/pages/reports/PoolServiceReport";
 import { ComposerPage as SocialComposer, CalendarPage as SocialCalendar,
          LibraryPage as SocialLibrary, DraftsPage as SocialDrafts } from "@/pages/social/SocialSuite";
 import { ApprovalsPage as SocialApprovals, BulkUploadPage as SocialBulkUpload,
@@ -291,6 +293,10 @@ export default function App() {
             <Route path="cfo" element={<CFODashboard />} />
             <Route path="tech/huddle" element={<TechHuddlePage />} />
             <Route path="tech/time-clock" element={<TechTimeClockPage />} />
+            {/* Phase 46.3 — Landscaping-only time clock (backend RBAC enforced) */}
+            <Route path="landscape/time-clock" element={<LandscapingTimeClock />} />
+            {/* Phase 46.4 — Pool Service Report (admin/super_admin) */}
+            <Route path="admin/reports/pool-service" element={<AdminOnly><PoolServiceReport /></AdminOnly>} />
             {/* Phase 29 — All My Tools hub (tech + admin). Non-role users are
                 redirected inside the component. */}
             <Route path="tech/tools" element={<ToolsHub />} />

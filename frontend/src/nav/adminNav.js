@@ -207,6 +207,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/reports/forecast",            label: "Forecast",          icon: TrendingUp, feature: "reports" },
     { to: "/reports/customer-retention",  label: "Customer Retention",icon: Users,      feature: "reports" },
     { to: "/reports/revenue-slices",      label: "Revenue Slices",    icon: PieChart,  feature: "reports" },
+    { to: "/admin/reports/pool-service",   label: "Pool Service Report", icon: Waves,   feature: "reports" },
+    { to: "/landscape/time-clock",         label: "Landscape Time Clock", icon: Timer,  feature: "jobs" },
     { to: "/access-history",              label: "Access History",    icon: ScrollText, feature: "audit_logs" },
   ]},
 ];
