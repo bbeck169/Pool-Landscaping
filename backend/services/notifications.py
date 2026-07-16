@@ -42,6 +42,11 @@ KIND_LABELS: dict[str, str] = {
     "rc_call_inbound":   "RingCentral · Inbound Call",
     "rc_voicemail":      "RingCentral · Voicemail",
     "rc_fax":            "RingCentral · Fax",
+    # RingCentral unmatched (Phase 55.1 — inbound from unknown numbers)
+    "rc_sms_inbound_unmatched":  "RingCentral · Inbound SMS (unknown number)",
+    "rc_call_inbound_unmatched": "RingCentral · Inbound Call (unknown number)",
+    "rc_voicemail_unmatched":    "RingCentral · Voicemail (unknown number)",
+    "rc_fax_unmatched":          "RingCentral · Fax (unknown number)",
     # Jobs / dispatch
     "job_assigned":      "Job Assigned",
     "job_completed":     "Job Completed",
@@ -123,6 +128,7 @@ async def emit(
     priority: str = "normal",
     customer_id: Optional[str] = None,
     tenant_id: Optional[str] = None,
+    audience: str = "internal",
 ) -> list[str]:
     """Fan out a notification to a list of user IDs, honoring per-user prefs.
 
@@ -176,6 +182,7 @@ async def emit(
                 "body": body,
                 "href": href,
                 "priority": priority,
+                "audience": "portal" if audience == "portal" else "internal",
                 "source_ref": source_ref or {},
                 "read": False,
                 "created_at": now_iso(),

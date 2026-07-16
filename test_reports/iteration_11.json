@@ -1,0 +1,35 @@
+{
+  "summary": "Phase 55.1 backend fix pass — Stripe RBAC, Notification audience leak, Unmatched RC comms, RC webhook token, and CFO Stripe cash weekly. 19/21 passed, 1 skipped (customer checkout_status only reachable when customer's pre-charge session created a real Stripe session — depends on live-key branch), 1 FAILED and confirms a real backend bug: _handle_sms_event does NOT emit the rc_sms_inbound_unmatched notification (the call/fax/voicemail handlers all have the corresponding elif branch — SMS is the odd one out).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "internal: routers/ringcentral.py::_handle_sms_event",
+        "issue": "Missing unmatched-SMS branch. When from_number does not match any customer, no rc_sms_inbound_unmatched notification is emitted, so admins never see inbound SMS from unknown numbers. Handlers for call (line ~329), fax (line ~449), and voicemail (line ~500) all correctly emit their *_unmatched kinds via _notify_admins(await _default_tenant_id(), ...). SMS handler stops at 'if direction == inbound and match:' with no elif for the not-match case.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_phase55_1_fixes.py",
+    "/app/test_reports/pytest/phase55_1_results.xml"
+  ],
+  "action_items": [
+    "In /app/backend/routers/ringcentral.py::_handle_sms_event, after the matched-emit block add: `elif direction == 'inbound' and from_number: await _notify_admins(tenant_id=await _default_tenant_id(), kind='rc_sms_inbound_unmatched', title=f'New SMS from unknown number {from_number}', body=msg[:100], href='/admin/unmatched-communications', source_ref={'kind':'sms_message','id':doc['id']})`."
+  ],
+  "critical_code_review_comments": [
+    "routers/stripe_payments.py::checkout_status: falls back to bail-out only when row is missing AND role!=customer. That's OK, but if a row exists yet its customer_id is empty string, an unrelated customer could poll status of any tenant session. Guard also on `row.get('customer_id')` being non-empty before comparing.",
+    "routers/ringcentral.py::_default_tenant_id: aquaterra fallback hard-codes the demo slug — safe here but should log a warning when RC_DEFAULT_TENANT_SLUG is unset so operators know unknown-number bells are being routed to the demo tenant.",
+    "services/reports.py::stripe_cash_weekly: filters `updated_at` as string range — works only because ISO 8601 sorts lexicographically. Fine, but leaves a comment worth adding.",
+    "routers/notifications.py::_mine_filter: 'audience: {$in: [internal, null]}' — verify the seeded pre-Phase-55 rows actually have no `audience` field (i.e. missing, not explicit None). Mongo's $in matches null both for missing and explicit-null, so it's OK, but flag if seed changes."
+  ],
+  "updated_files": ["/app/backend/tests/test_phase55_1_fixes.py"],
+  "success_rate": {"backend": "19/21 passed (90.5%), 1 skipped, 1 failed (real bug — SMS unmatched emit)", "frontend": "n/a — skipped per request"},
+  "test_credentials": "admin@aquaterra.com / password123; mike@aquaterra.com / password123 (tech); customer@aquaterra.com / password123 (customer_id=e36bce2c-...); super@aquaterra.com / password123",
+  "seed_data_creation": "Fixture temporarily inserts/deletes notifications with fixed UUIDs for audience-leak tests (all cleaned up in the same test). Live-Stripe pre-charge sessions + PaymentIntents were created during RBAC tests — no confirmations. RINGCENTRAL_WEBHOOK_TOKEN read from /app/backend/.env inside the test — not echoed. Pre-existing phase55_1_demo seed rows in db.stripe_payments (4 rows, June 2026) reused as directed.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Test file is /app/backend/tests/test_phase55_1_fixes.py. After main agent adds the SMS unmatched emit branch, re-run just `pytest tests/test_phase55_1_fixes.py::TestUnmatchedRC -v`. The `test_checkout_status_rbac` skip fired because customer's checkout Session creation returned mocked (no live session_id) — this happens intermittently; re-run to catch on live Stripe.",
+  "rca of the issue": "Root cause: symmetry oversight in Phase 55.1 patch. The elif for _*_unmatched was added to _handle_telephony_event, _handle_fax_event, _handle_voicemail_event, but _handle_sms_event's matched-block ends with no fallthrough for the unmatched case. Fix is a single elif block mirroring lines 329-338 (call handler) — see action_items."
+}

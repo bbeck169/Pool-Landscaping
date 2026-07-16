@@ -1191,6 +1191,21 @@ async def price_increase_suggestions(
             f"avg price {avg_price}c"
         )
     user_prompt = "Least-profitable service types for " + month_key + ":\n" + "\n".join(lines)
+    # Phase 55.1 — enrich prompt with real Stripe cash collected last month
+    # so the LLM can frame price-increase talking points against measurable ROI.
+    try:
+        from services.reports import stripe_cash_weekly
+        weekly_cash = await stripe_cash_weekly(tenant["id"], month_key)
+    except Exception:
+        weekly_cash = []
+    if weekly_cash:
+        cash_lines = "\n".join(
+            f"- week of {w['week_starting']}: net ${w['net_cents']/100:,.2f} "
+            f"(gross ${w['cash_collected_cents']/100:,.2f}, refunds ${w['refunds_cents']/100:,.2f})"
+            for w in weekly_cash
+        )
+        user_prompt += ("\n\nStripe cash collected by week (last month):\n" + cash_lines +
+                        "\n\nReference this ROI when framing price-increase talking points.")
     text, err, tokens = await _call_llm_text(_PRICING_SYSTEM, user_prompt, 800)
     suggestions: List[Dict[str, Any]] = []
     parse_error = None
@@ -1219,6 +1234,22 @@ async def price_increase_suggestions(
             upsert=True,
         )
     return result
+
+
+    return result
+
+
+@router.get("/stripe-cash-weekly")
+async def stripe_cash_weekly_endpoint(
+    month: Optional[str] = None,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase 55.1 — Weekly net Stripe cash for a given ``YYYY-MM`` (default
+    last month). Used by the Pricing Insights page + CFO digest email.
+    Buckets by ISO week starting Monday. Amounts are integer cents."""
+    from services.reports import stripe_cash_weekly
+    return {"month": month, "weeks": await stripe_cash_weekly(tenant["id"], month)}
 
 
 # ─── /qna ─────────────────────────────────────────────────────────────

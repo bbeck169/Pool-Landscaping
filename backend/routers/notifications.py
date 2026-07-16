@@ -37,18 +37,24 @@ router = APIRouter()
 
 
 def _mine_filter(user: dict, tenant_id: str) -> dict:
-    """Filter that returns 'notifications visible to me' — user_id match OR,
-    for portal customers, customer_id match. Also honors the legacy
-    ``user_id == "*"`` broadcast row from older emitters."""
+    """Filter that returns 'notifications visible to me'.
+
+    * Portal customers see ONLY rows explicitly flagged
+      ``audience: "portal"`` and addressed to their user_id — never
+      the ``audience: "internal"`` rows that admin emitters fan out
+      even when tagged with the same customer_id (Phase 55 leak fix).
+    * Everyone else sees their own user_id rows plus legacy
+      broadcast rows (``user_id == "*"``). Legacy pre-audience rows
+      count as internal.
+    """
     q: dict = {"tenant_id": tenant_id}
-    if user.get("role") == "customer" and user.get("customer_id"):
-        q["$or"] = [
-            {"user_id": user["id"]},
-            {"user_id": "*"},
-            {"customer_id": user["customer_id"]},
-        ]
+    if user.get("role") == "customer":
+        q["user_id"] = user["id"]
+        q["audience"] = "portal"
     else:
         q["$or"] = [{"user_id": user["id"]}, {"user_id": "*"}]
+        # Admin-side: only surface internal-audience OR unset (legacy) rows.
+        q["audience"] = {"$in": ["internal", None]}
     return q
 
 

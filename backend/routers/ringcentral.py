@@ -63,7 +63,8 @@ async def _notify_admins(tenant_id: Optional[str], kind: str, title: str, body: 
                           href: Optional[str] = None, source_ref: Optional[dict] = None,
                           customer_id: Optional[str] = None) -> None:
     """Fan out an inbound-comm notification to every admin/super_admin in a
-    tenant. Silent no-op when tenant unknown (unmatched inbound)."""
+    tenant. Silent no-op when tenant unknown (unmatched inbound with no
+    default tenant configured)."""
     if not tenant_id:
         return
     try:
@@ -76,9 +77,22 @@ async def _notify_admins(tenant_id: Optional[str], kind: str, title: str, body: 
             return
         await notify_emit(user_ids, kind=kind, title=title, body=body,
                           href=href, source_ref=source_ref or {},
-                          customer_id=customer_id, tenant_id=tenant_id)
+                          customer_id=customer_id, tenant_id=tenant_id,
+                          audience="internal")
     except Exception as e:
         logger.warning(f"rc notif fan-out failed: {type(e).__name__}")
+
+
+async def _default_tenant_id() -> Optional[str]:
+    """Resolve the RC default tenant when a caller/message doesn't
+    match a specific customer. Used to route ``*_unmatched`` bells to
+    admins so unknown numbers don't silently vanish (Phase 55.1)."""
+    slug = os.getenv("RC_DEFAULT_TENANT_SLUG") or ""
+    if slug:
+        t = await db.tenants.find_one({"slug": slug}, {"_id": 0, "id": 1})
+        if t: return t.get("id")
+    t = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0, "id": 1})
+    return (t or {}).get("id")
 
 
 def _normalize_phone(p: Optional[str]) -> str:
@@ -195,7 +209,21 @@ async def ringcentral_webhook(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="invalid json body")
 
-    # TODO(phase 55) — verify HMAC against RINGCENTRAL_WEBHOOK_TOKEN.
+    # Phase 55.1 — verify the shared verification token. Every genuine
+    # RC delivery repeats the token we set at subscription-create time
+    # via the ``verificationToken`` field, echoed back on every event
+    # as the ``Verification-Token`` header (RC docs). Missing/mismatched
+    # header ⇒ 401.
+    expected = os.getenv("RINGCENTRAL_WEBHOOK_TOKEN") or os.getenv("RC_WEBHOOK_TOKEN") or ""
+    if expected:
+        got = (request.headers.get("Verification-Token")
+               or request.headers.get("verification-token")
+               or request.headers.get("X-Verification-Token")
+               or request.headers.get("x-rc-verification-token") or "")
+        if got != expected:
+            logger.warning("ringcentral webhook rejected: token mismatch")
+            raise HTTPException(status_code=401, detail="invalid verification token")
+
     event_type = str(payload.get("event") or payload.get("eventType") or "")
     event_id = str(payload.get("uuid") or payload.get("eventId") or payload.get("id") or "") or None
     subscription_id = str(payload.get("subscriptionId") or "") or None
@@ -296,6 +324,16 @@ async def _handle_telephony_event(body: Dict[str, Any]) -> None:
             body=f"{from_number} → {to_number} · {duration}s",
             href=f"/customers/{(match or {}).get('id')}" if match else None,
             customer_id=(match or {}).get("id"),
+            source_ref={"kind": "call_log", "id": doc["id"], "session_id": session_id},
+        )
+    elif not match and (direction or "").lower() != "outbound" and from_number:
+        # Phase 55.1 — surface unknown inbound calls to admins.
+        await _notify_admins(
+            tenant_id=await _default_tenant_id(),
+            kind="rc_call_inbound_unmatched",
+            title=f"New call from unknown number {from_number}",
+            body=f"{from_number} → {to_number} · {duration}s",
+            href="/admin/unmatched-communications",
             source_ref={"kind": "call_log", "id": doc["id"], "session_id": session_id},
         )
     if not match and from_number:
@@ -407,6 +445,15 @@ async def _handle_fax_event(body: Dict[str, Any]) -> None:
         )
     else:
         await db.unmatched_faxes.insert_one(doc)
+        if from_number:
+            await _notify_admins(
+                tenant_id=await _default_tenant_id(),
+                kind="rc_fax_unmatched",
+                title=f"New fax from unknown number {from_number}",
+                body=(f"From {from_number}" + (" · attachment attached" if attachment_url else ""))[:100],
+                href="/admin/unmatched-communications",
+                source_ref={"kind": "fax", "id": doc["id"]},
+            )
 
 
 async def _handle_voicemail_event(body: Dict[str, Any]) -> None:
@@ -448,6 +495,16 @@ async def _handle_voicemail_event(body: Dict[str, Any]) -> None:
             body=(transcription_text or f"{duration}s voicemail from {from_number}")[:500],
             href=f"/customers/{(match or {}).get('id')}",
             customer_id=(match or {}).get("id"),
+            source_ref={"kind": "voicemail", "id": doc["id"]},
+        )
+    elif from_number:
+        # Phase 55.1 — surface voicemails from unknown numbers to admins.
+        await _notify_admins(
+            tenant_id=await _default_tenant_id(),
+            kind="rc_voicemail_unmatched",
+            title=f"New voicemail from unknown number {from_number}",
+            body=(transcription_text or f"{duration}s voicemail from {from_number}")[:100],
+            href="/admin/unmatched-communications",
             source_ref={"kind": "voicemail", "id": doc["id"]},
         )
 

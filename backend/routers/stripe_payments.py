@@ -79,6 +79,25 @@ async def _load_invoice(inv_id: str, tenant_id: str) -> dict:
     return doc
 
 
+def _authorize_invoice_pay(user: dict, inv: dict) -> None:
+    """Enforce who can trigger a live Stripe payment against an invoice.
+
+    Rules:
+      • admin / super_admin — full access within the tenant.
+      • customer — only invoices where inv.customer_id == user.customer_id.
+      • all other roles (technician, landscape_tech, dispatcher, etc.) — 403.
+    """
+    role = (user or {}).get("role") or ""
+    if role in ("admin", "super_admin"):
+        return
+    if role == "customer":
+        my_cust = user.get("customer_id") or ""
+        if my_cust and inv.get("customer_id") == my_cust:
+            return
+        raise HTTPException(403, "You can only pay your own invoices")
+    raise HTTPException(403, "Not authorized to initiate payments")
+
+
 async def _outstanding_cents(inv: dict) -> int:
     total_cents = _dollars_to_cents(inv.get("total"))
     paid_cents = _dollars_to_cents(inv.get("amount_paid"))
@@ -101,6 +120,7 @@ async def create_checkout_session(
         return _unavailable()
 
     inv = await _load_invoice(body.invoice_id, tenant["id"])
+    _authorize_invoice_pay(user, inv)
     amt_cents = await _outstanding_cents(inv)
     if amt_cents <= 0:
         raise HTTPException(400, "Invoice is already fully paid")
@@ -186,13 +206,18 @@ async def checkout_status(
     even before the webhook lands."""
     if not is_configured():
         return _unavailable()
+    # Restrict polling to admin OR the customer who owns the ledger row.
+    row = await db.stripe_payments.find_one({"tenant_id": tenant["id"], "session_id": session_id}, {"_id": 0})
+    role = (user or {}).get("role") or ""
+    if role not in ("admin", "super_admin"):
+        if role != "customer" or not row or (row.get("customer_id") or "") != (user.get("customer_id") or ""):
+            raise HTTPException(403, "Not authorized")
     stripe = get_stripe()
     try:
         session = stripe.checkout.Session.retrieve(session_id)
     except Exception as e:
         logger.warning(f"stripe session retrieve failed: {type(e).__name__}")
         return {"mocked": True, "reason": "stripe_error"}
-    row = await db.stripe_payments.find_one({"tenant_id": tenant["id"], "session_id": session_id}, {"_id": 0})
     if row and row.get("status") not in ("paid", "refunded", "failed") and session.get("payment_status") == "paid":
         # Idempotent apply — webhook may or may not have landed yet.
         from routers.stripe_admin import _apply_paid_invoice
@@ -221,6 +246,7 @@ async def create_payment_intent(
     if not is_configured():
         return _unavailable()
     inv = await _load_invoice(body.invoice_id, tenant["id"])
+    _authorize_invoice_pay(user, inv)
     amt_cents = await _outstanding_cents(inv)
     if amt_cents <= 0:
         raise HTTPException(400, "Invoice is already fully paid")
@@ -478,6 +504,10 @@ async def list_subscriptions_for_customer(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
+    role = (user or {}).get("role") or ""
+    if role not in ("admin", "super_admin"):
+        if role != "customer" or (user.get("customer_id") or "") != customer_id:
+            raise HTTPException(403, "Not authorized to view these subscriptions")
     rows = await db.stripe_subscriptions.find(
         {"tenant_id": tenant["id"], "customer_id": customer_id}, {"_id": 0}
     ).sort("created_at", -1).to_list(50)

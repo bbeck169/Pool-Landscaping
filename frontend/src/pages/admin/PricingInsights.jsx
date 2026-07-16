@@ -23,6 +23,7 @@ export default function PricingInsights() {
   const [ranked, setRanked] = useState(null);
   const [suggestions, setSuggestions] = useState([]);
   const [history, setHistory] = useState([]);
+  const [weeklyCash, setWeeklyCash] = useState([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
@@ -31,12 +32,14 @@ export default function PricingInsights() {
   const load = async () => {
     setLoading(true); setError(null);
     try {
-      const [r, h] = await Promise.all([
+      const [r, h, s] = await Promise.all([
         api.get(`/reports/least-profitable-services?month=${month}&limit=3`),
         api.get("/reports/pricing-insights/email-history?limit=10").catch(() => ({ items: [] })),
+        api.get(`/cfo/stripe-cash-weekly?month=${month}`).catch(() => ({ weeks: [] })),
       ]);
       setRanked(r);
       setHistory(h?.items || []);
+      setWeeklyCash(s?.weeks || []);
     } catch (e) { setError(e?.message || "Load failed"); }
     finally { setLoading(false); }
   };
@@ -101,6 +104,53 @@ export default function PricingInsights() {
              style={{ background: colors.surface, border: `1px solid ${colors.border}`, color: colors.muted }}>Loading…</div>
       ) : (
         <>
+          {weeklyCash.length > 0 ? (() => {
+            const totalNet = weeklyCash.reduce((a, w) => a + (w.net_cents || 0), 0);
+            const maxNet = Math.max(1, ...weeklyCash.map((w) => Math.abs(w.net_cents || 0)));
+            return (
+              <div className="rounded-2xl overflow-hidden mb-6"
+                   style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+                   data-testid="pricing-insights-cash-card">
+                <div className="px-4 py-3 flex items-center justify-between"
+                     style={{ background: colors.surfaceSecondary, borderBottom: `1px solid ${colors.border}` }}>
+                  <div className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.muted }}>
+                    Cash collected via Stripe · {month}
+                  </div>
+                  <div className="text-sm font-bold" style={{ color: colors.onSurface }}
+                       data-testid="pricing-insights-cash-net-total">
+                    Net ${(totalNet / 100).toFixed(2)}
+                  </div>
+                </div>
+                <div className="p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+                  {weeklyCash.map((w) => (
+                    <div key={w.week_starting}
+                         className="rounded-xl p-3"
+                         style={{ background: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+                         data-testid={`cash-week-${w.week_starting}`}>
+                      <div className="text-[10px] uppercase font-bold tracking-wider" style={{ color: colors.muted }}>
+                        Week of {w.week_starting}
+                      </div>
+                      <div className="text-lg font-bold mt-0.5" style={{ color: colors.onSurface }}>
+                        ${(w.net_cents / 100).toFixed(2)}
+                      </div>
+                      <div className="text-[11px] mt-0.5" style={{ color: colors.muted }}>
+                        gross ${(w.cash_collected_cents / 100).toFixed(2)} · refunds ${(w.refunds_cents / 100).toFixed(2)}
+                      </div>
+                      <div className="mt-2 h-1.5 rounded-full overflow-hidden"
+                           style={{ background: "#E5E7EB" }}>
+                        <div style={{
+                          width: `${Math.max(2, Math.round(100 * Math.abs(w.net_cents || 0) / maxNet))}%`,
+                          background: (w.net_cents || 0) < 0 ? "#DC2626" : colors.brand,
+                          height: "100%",
+                        }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })() : null}
+
           <div className="rounded-2xl overflow-hidden mb-6"
                style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
                data-testid="pricing-insights-ranked-card">
