@@ -103,7 +103,7 @@ export const ADMIN_SECTIONS: ToolSection[] = [
       { key: "customers", icon: "people-outline", label: "Customers", desc: "Full customer directory", route: "/(app)/customers" },
       { key: "quotes", icon: "document-text-outline", label: "Quotes & Invoices", desc: "Send, sign, collect", route: "/(app)/quotes" },
       { key: "property-lookup", icon: "home-outline", label: "Property Lookup", desc: "Owner + lot size search", route: "/(app)/property-lookup" },
-      { key: "business-card", icon: "id-card-outline", label: "My Business Card", desc: "NFC-ready digital card & .vcf", route: "/card" },
+      { key: "business-card", icon: "id-card-outline", label: "Business Card", desc: "NFC-ready digital card & .vcf", route: "/card" },
     ],
   },
   {

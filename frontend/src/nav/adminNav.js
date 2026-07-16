@@ -195,7 +195,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/estimator",       label: "Field Estimator",  icon: Wrench,     feature: "estimator", subsection: "Sales" },
     { to: "/d2d",                   label: "D2D Canvassing",   icon: DoorOpen,   feature: "d2d", hard_rule: "admin_only", subsection: "Sales" },
     { to: "/admin/customer-success/churn", label: "Churn Analyzer", icon: TrendingUp, feature: "customers", subsection: "Success" },
-    { to: "/tech/card",             label: "My Business Card", icon: IdCard,     feature: "dashboard", subsection: "Success" },
+    { to: "/tech/card",             label: "Business Card", icon: IdCard,     feature: "dashboard", subsection: "Success" },
     { to: "/card",                  label: "Digital Card",     icon: IdCard,     feature: "card",      subsection: "Success" },
   ]},
 

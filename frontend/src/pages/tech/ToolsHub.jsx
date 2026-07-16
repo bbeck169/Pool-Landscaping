@@ -61,7 +61,7 @@ const ADMIN_SECTIONS = [
     key: "adm-tools",
     title: "Tools",
     tiles: [
-      { key: "business-card", icon: IdCard, label: "My Business Card", desc: "NFC-ready digital card & .vcf", to: "/tech/card" },
+      { key: "business-card", icon: IdCard, label: "Business Card", desc: "NFC-ready digital card & .vcf", to: "/tech/card" },
       { key: "estimator", icon: Calculator, label: "Field Estimator", desc: "Build a quote on-site", to: "/estimator" },
       { key: "property-lookup", icon: HomeIcon, label: "Property Lookup", desc: "Owner + lot size search", to: "/property-lookup" },
       { key: "inventory", icon: Boxes, label: "Inventory", desc: "Stock & purchase orders", to: "/admin/inventory" },

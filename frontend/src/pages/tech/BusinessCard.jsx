@@ -152,7 +152,7 @@ export default function BusinessCard() {
             <IdCard size={12} /> NFC-ready
           </div>
           <h1 className="text-3xl md:text-4xl font-bold" style={{ color: colors.onSurface }} data-testid="business-card-title">
-            My Business Card
+            Business Card
           </h1>
           <p className="text-sm mt-1" style={{ color: colors.muted }}>
             Tap-to-share contact — works with NFC phones and standard .vcf downloads.

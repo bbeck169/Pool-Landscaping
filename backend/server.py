@@ -28,6 +28,8 @@ from routers import (
     rbac,
     workstream,
     cfo,
+    timeclock_landscaping,
+    pool_service_report,
 )
 
 app = FastAPI(
@@ -58,7 +60,9 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                warranties,
                rbac,
                workstream,
-               cfo]:
+               cfo,
+               timeclock_landscaping,
+               pool_service_report]:
     api_router.include_router(module.router)
 
 

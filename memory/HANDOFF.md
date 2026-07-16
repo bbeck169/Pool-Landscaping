@@ -5433,3 +5433,60 @@ Five distinct defects surfaced by e1_tester; all addressed in this pass. Two pri
 - `grep -rn 'window\.(confirm|alert)' /app/frontend/src` excluding confirm-dialog fallback → **zero hits**.
 - Frontend `curl localhost:3000` → **HTTP 200** (compiles cleanly).
 - Playwright screenshot on `/admin/checks/bank-accounts` shows the new Radix Dialog rendering with Cancel + red Confirm button; backdrop click closes the dialog cleanly (`After backdrop click, dialog open: False`).
+
+#### Phase 45 · Time Clock + Pool Service Report + Chemicals catalog + Business Card rename
+
+Honest scope disclosure up-front: this pass shipped Tasks 1 (skeleton), 2, 3 (backend + gate), 4 (backend), 5 (config + mobile UI). Tasks 6 (readings defaults + not-tested) and 7 (workstream card redesign) are DEFERRED to a follow-up phase — remaining context budget was insufficient for the required UI depth on those. Nothing was shipped in a broken state.
+
+**Task 2 — Business Card rename** ✓
+- Renamed "My Business Card" → "Business Card" in:
+  `frontend/src/pages/tech/BusinessCard.jsx`, `frontend/src/pages/tech/ToolsHub.jsx`, `frontend/src/nav/adminNav.js`, `mobile/src/components/tools/sections.ts`. In-page "My card / Company card" toggle preserved per spec.
+
+**Task 3 — Time Clock (landscaping-only) with GPS** — backend + gate
+- New `backend/routers/timeclock_landscaping.py`:
+  - `POST /api/timeclock/punch` — accepts `{punch_type, lat, lng, accuracy_m, source, geo_denied}`. 403 when `user.department != "landscaping"`. 409 on double-in / stray-out. Persists to `timeclock_punches` collection.
+  - `GET /api/timeclock/summary?start=&end=` — returns per-day + total seconds worked.
+  - `GET /api/timeclock/today` — returns today's punches + running total + `clocked_in` flag.
+- Router registered in `backend/server.py` include list.
+- **DEFERRED**: mobile screen + web view for punching. Existing mobile screen (`app/(app)/time-clock.tsx`) still points at the legacy `attendance.py` router; wiring it to the new landscaping-gated endpoint is a follow-up.
+
+**Task 4 — Pool Service Report** — backend
+- New `backend/routers/pool_service_report.py`:
+  - `GET /api/reports/pool-service?week_start=YYYY-MM-DD` — admin/super_admin only.
+  - Monday-anchored week window (snaps `week_start` to its Monday).
+  - Returns `{week_start, week_end, rows: [{tech_id, tech_name, pools_serviced, skipped}]}`.
+  - `pools_serviced` counts jobs with `service_type == "pool"` and `status in {completed, closed}`; `skipped` counted separately per spec.
+- Router registered in `backend/server.py`.
+- Verified via curl: `curl /api/reports/pool-service` returns 403 without auth (route is live).
+- **DEFERRED**: web page under Reports section with table + week-picker + CSV export.
+
+**Task 5 — Chemicals catalog + mobile manual-entry** ✓
+- New `backend/config_chemicals.py` — 9 chemicals with `slug`, `name`, `unit`, `unit_kind`, `step_hint`. Chlorine Tabs (tabs int), Liquid Chlorine (gal dec), Muriatic Acid (gal dec), Soda Ash (lbs dec), Shock (lbs dec), Clarifier (oz dec), Phosphate Remover (oz dec), Salt (40lb bag int), Enzymes (oz dec).
+- Mirror `mobile/src/config/chemicalsCatalog.ts` + `normalizeChemQty()` helper (integer round vs. 2dp).
+- Rewrote `mobile/src/components/checklist/ChemicalPickerSheet.tsx`:
+  - Full-catalog rows with per-row: name, unit label, manual `<TextInput>` (correct keyboardType: `number-pad` for integer units, `decimal-pad` for decimals; input sanitized character-by-character), clear button.
+  - `commit(entry, rawText)` normalizes via `normalizeChemQty`, upserts on `slug` match, and REMOVES the row when qty cleared to 0 / empty. `onChange` fires before draft cleanup so autosave picks up the freshest state (Fix C ref pattern preserved).
+  - Invalid inputs get a red border via `rowInvalid` style; sheet close hardened via `closeSheet()` try/catch.
+  - Testids: `chem-row-{slug}`, `chem-input-{slug}`, `chem-clear-{slug}`, `chem-picker-sheet`, `chem-picker-sheet-backdrop`, `chem-picker-sheet-close`.
+- **DEFERRED**: mirror the web checklist to render the same chemicals list.
+
+**Task 1 — Menu 404 audit script** — skeleton
+- New `scripts/check_menu_404s.py` — logs in as each seed role, prints report. Honest note in the script itself: SPA HTML routes all return 200, so a REAL 404 audit needs Playwright walking every visible menu link after login. Backend API-side skeleton is in place.
+- **DEFERRED (honest disclosure)**: manual RBAC audit of every menu link across every role. This requires either Playwright walker or human clicking through — outside remaining budget for this pass.
+
+**Task 6 — Readings defaults + not-tested toggle** ⚠️ DEFERRED
+- The readings block currently seeds from server state. Adding client-side defaults (FC=3, TC=3, PH=7.6, ALK=100, CYA=70) + a "Not tested" toggle requires modifying both `ReadingChipRow.tsx` (add `defaultValue` + `notTested` props) and the parent `PoolChecklistForm.tsx` (seed logic + per-key `not_tested_flags` state) + backend `ServiceReportPatch` schema (accept `null` per reading + `not_tested_flags` map). Estimated 2 files touched, ~120 LOC. Left for follow-up.
+
+**Task 7 — Workstream card redesign** ⚠️ DEFERRED
+- The reference-screenshot card is a substantial UI build: 9-pill vertical column with real-data-driven green/gray state, hero photo + gradient placeholder fallback, VIEW DETAILS button, horizontal thumbnail strip, per-pill navigation targets. This is a full new card component + wiring into every workstream list route. Estimated 1-2 new files (`WorkstreamJobCard.tsx` + card-item wiring), ~400 LOC + screenshots. Left for a focused follow-up phase.
+
+**Verification**
+- `bash /app/scripts/preflight.sh` → **`preflight OK` (exit 0)**.
+- `curl "http://localhost:3001/node_modules/expo-router/entry.bundle?..."` → **HTTP 200**.
+- Backend restarted cleanly; `curl /api/reports/pool-service` returns 403 (endpoint live, auth-gated correctly).
+- Existing Phase 31 Step 2c reorder tests still pass (2/2 green).
+- `grep -rn 'window\.(confirm|alert)' /app/frontend/src` excluding fallback → zero hits.
+
+**Human-required tests**
+- Real device geolocation permission flow (Task 3 mobile UI once wired).
+- Landscaping-department seed data — user needs to mark test users with `department: "landscaping"` before the punch endpoint accepts them (currently unset for all seeds → all punch attempts will 403; add via `db.users.updateOne` when testing).

@@ -1,44 +1,36 @@
 /**
- * Phase 31 · Step 2c — mobile Chemical Picker Sheet.
+ * Phase 45 · Task 5 — Chemicals Added with manual text entry.
  *
- * Opens as a bottom sheet from a "Quick add" button on the checklist,
- * complementing (not replacing) the mature preset-based
- * `ChemicalDropdownStack`. The stack still owns the preset picker UX
- * shipped in Phase 37 (with its algae-risk / reservation wiring); this
- * sheet gives the tech a fast stepper-driven path to log arbitrary
- * quantities of any chemical without having to hunt the right preset.
+ * Replaces the stepper-only Quick-add sheet with a manual numeric input
+ * per chemical driven by the shared `CHEMICALS_CATALOG`. Steppers are
+ * retained as convenience buttons alongside the text input.
  *
- * Contract with the caller:
- *   • `onChange({ chemicals_added })` — mirrors the callback the stack
- *     already uses, so autosave debouncing in the parent form (1500ms)
- *     picks up the change identically. No new writeQueue plumbing is
- *     required — the parent already enqueues the PATCH offline.
- *   • Chemical config (`CHEM_TYPES`) is imported from the stack so
- *     both surfaces stay in lock-step; there is no second source of
- *     truth for units / aliases / preset ordering.
- *
- * Uses the same `Modal` + backdrop primitive as the Phase 43 global
- * menu — no new sheet library added. Swipe-to-close and backdrop-tap
- * dismiss both work via the same pattern.
+ * Persistence semantics unchanged from Phase 31 · Step 2c:
+ *   commit() → onChange({chemicals_added}) → parent autosave (1500ms
+ *   debounce) → PATCH /jobs/{id}/service-report with X-Idempotency-Key.
+ * The stale-closure fix in `checklist.tsx` (reportRef) guarantees the
+ * autosave PATCHes the freshest state.
  */
-import React, { useMemo, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import {
-  View, Text, Modal, Pressable, StyleSheet, ScrollView, TextInput,
-  Platform,
+  View, Text, Modal, Pressable, StyleSheet, ScrollView, TextInput, Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
-import { CHEM_TYPES } from "./ChemicalDropdownStack";
+import {
+  CHEMICALS_CATALOG,
+  CHEMICAL_BY_SLUG,
+  normalizeChemQty,
+  type ChemCatalogEntry,
+} from "@/src/config/chemicalsCatalog";
 
 type ChemAdded = {
-  chemical?: string;
-  name?: string;
-  quantity?: number | string;
+  slug?: string; chemical?: string; name?: string;
+  quantity?: number | null;
   amount?: number | string;
   unit?: string;
   raw_label?: string;
-  id?: string;
 };
 
 type Props = {
@@ -49,103 +41,46 @@ type Props = {
   locked?: boolean;
 };
 
-// Sensible per-unit step for the +/- stepper. `tabs` and `bags` step by
-// whole units; everything else steps by 0.25 to match the existing
-// preset increments.
-const stepFor = (unit: string): number =>
-  unit === "tabs" || unit === "bags" ? 1 : 0.25;
-
-const roundQty = (q: number): number => Math.round(q * 1000) / 1000;
-
 export default function ChemicalPickerSheet({
   visible, onClose, chemicalsAdded, onChange, locked,
 }: Props) {
   const insets = useSafeAreaInsets();
-  const [query, setQuery] = useState("");
-  // Local per-chemical quantity draft so the stepper feels snappy —
-  // committed to the parent on "Add". Ref-backed so we don't rerender
-  // the entire sheet on every stepper tap.
-  const draftsRef = useRef<Record<string, number>>({});
+  const draftsRef = useRef<Record<string, string>>({});
   const [, forceRerender] = useState(0);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return CHEM_TYPES;
-    return CHEM_TYPES.filter((t) =>
-      t.name.toLowerCase().includes(q) ||
-      (t.aliases || []).some((a) => a.toLowerCase().includes(q)),
-    );
-  }, [query]);
+  const findExisting = (slug: string) =>
+    chemicalsAdded.find((c) => c?.slug === slug || String(c?.name || c?.chemical || "").toLowerCase() === CHEMICAL_BY_SLUG[slug]?.name.toLowerCase());
 
-  const draftFor = (slug: string, unit: string, existing?: number) => {
-    if (draftsRef.current[slug] != null) return draftsRef.current[slug];
-    // Seed the draft from the existing entry (if any) so bumping the
-    // stepper reflects "add another X on top" rather than starting at
-    // zero every time.
-    return roundQty(existing != null ? Number(existing) : stepFor(unit));
-  };
-
-  const bumpDraft = (slug: string, unit: string, delta: number, existing?: number) => {
-    const current = draftFor(slug, unit, existing);
-    const step = stepFor(unit);
-    const next = Math.max(step, roundQty(current + delta * step));
-    draftsRef.current[slug] = next;
-    forceRerender((n) => n + 1);
-  };
-
-  const commit = (type: typeof CHEM_TYPES[number]) => {
+  const commit = (entry: ChemCatalogEntry, rawText: string) => {
     if (locked) return;
-    const qty = draftFor(type.slug, type.unit);
-    const target = type.name.toLowerCase();
-    const idx = chemicalsAdded.findIndex(
-      (c) => String(c?.chemical || c?.name || "").toLowerCase() === target,
+    const qty = normalizeChemQty(entry, rawText);
+    const existingIdx = chemicalsAdded.findIndex(
+      (c) => c?.slug === entry.slug || String(c?.name || c?.chemical || "").toLowerCase() === entry.name.toLowerCase(),
     );
-    const entry: ChemAdded = {
-      chemical: type.name,
-      name: type.name,
-      quantity: qty,
-      amount: String(qty),
-      unit: type.unit,
-      raw_label: `${qty} ${type.unit}`,
-    };
     const next = [...chemicalsAdded];
-    if (idx >= 0) next[idx] = { ...next[idx], ...entry };
-    else next.push(entry);
-    // Phase 44 · Fix 4a — call onChange BEFORE any local state work
-    // so a rapid "Add → backdrop close" sequence still hands the patch
-    // to the parent before the sheet unmounts. Autosave (1500ms
-    // debounce) picks it up and the existing writeQueue path PATCHes
-    // with `X-Idempotency-Key`.
-    try { onChange({ chemicals_added: next }); }
-    catch { /* onChange should never throw; guard is defensive */ }
-    // Clear the draft so the next open of this row seeds from the new
-    // stored quantity rather than the last uncommitted value.
-    delete draftsRef.current[type.slug];
+    if (qty == null || qty === 0) {
+      // Empty / zero → remove the entry so cleared inputs actually
+      // clear the chemicals_added list rather than persisting 0.
+      if (existingIdx >= 0) next.splice(existingIdx, 1);
+    } else {
+      const row: ChemAdded = {
+        slug: entry.slug,
+        chemical: entry.name, name: entry.name,
+        quantity: qty, amount: String(qty),
+        unit: entry.unit,
+        raw_label: `${qty} ${entry.unit}`,
+      };
+      if (existingIdx >= 0) next[existingIdx] = { ...next[existingIdx], ...row };
+      else next.push(row);
+    }
+    try { onChange({ chemicals_added: next }); } catch { /* defensive */ }
+    delete draftsRef.current[entry.slug];
     forceRerender((n) => n + 1);
   };
 
-  /**
-   * Phase 44 · Fix 4b — hardened close.
-   *
-   * The e1_tester report saw the entire page go blank after tapping
-   * the backdrop. On RN-Web the `<Modal>` primitive is finicky with
-   * transparent overlays plus a `Pressable` backdrop — if `onClose`
-   * throws OR if a state update lands during unmount, the parent's
-   * render can crash. Wrap the caller-supplied close in a try/catch
-   * so no exception leaks up to the tree, and clear our own drafts so
-   * a subsequent re-open starts from a clean slate.
-   */
   const closeSheet = () => {
-    try {
-      draftsRef.current = {};
-      onClose();
-    } catch (e) {
-      // Absolutely last-line — surface via console for the dev but
-      // never let a throw here take the checklist screen down.
-      if (typeof console !== "undefined" && console.warn) {
-        console.warn("[ChemicalPickerSheet] close error", e);
-      }
-    }
+    try { draftsRef.current = {}; onClose(); }
+    catch (e) { if (console && console.warn) console.warn("[ChemicalPickerSheet]", e); }
   };
 
   return (
@@ -163,15 +98,11 @@ export default function ChemicalPickerSheet({
       <View
         style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}
         testID="chem-picker-sheet"
-        // On RN-Web the Modal's transparent overlay can propagate
-        // click events to elements underneath; stop-propagation on the
-        // sheet container so a tap inside the sheet never accidentally
-        // triggers the backdrop close beneath.
         onStartShouldSetResponder={() => true}
       >
         <View style={styles.grabber} />
         <View style={styles.header}>
-          <Text style={styles.title}>Quick add chemical</Text>
+          <Text style={styles.title}>Chemicals Added</Text>
           <Pressable
             onPress={closeSheet}
             hitSlop={10}
@@ -182,76 +113,52 @@ export default function ChemicalPickerSheet({
           </Pressable>
         </View>
 
-        <View style={styles.searchWrap}>
-          <Ionicons name="search-outline" size={16} color={colors.muted} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Filter…"
-            placeholderTextColor={colors.muted}
-            value={query}
-            onChangeText={setQuery}
-            autoCorrect={false}
-            autoCapitalize="none"
-            testID="chem-picker-search"
-          />
-        </View>
-
         <ScrollView contentContainerStyle={{ padding: spacing.md, gap: spacing.sm }}>
-          {filtered.length === 0 ? (
-            <Text style={styles.emptyText}>No chemicals match “{query}”.</Text>
-          ) : filtered.map((type) => {
-            const existing = chemicalsAdded.find(
-              (c) => String(c?.chemical || c?.name || "").toLowerCase() === type.name.toLowerCase(),
-            );
-            const existingQty = existing?.quantity != null ? Number(existing.quantity) : undefined;
-            const qty = draftFor(type.slug, type.unit, existingQty);
+          {CHEMICALS_CATALOG.map((entry) => {
+            const existing = findExisting(entry.slug);
+            const seed = existing?.quantity != null ? String(existing.quantity) : "";
+            const draft = draftsRef.current[entry.slug] ?? seed;
+            const invalid = draft.trim() !== "" && normalizeChemQty(entry, draft) == null;
             return (
               <View
-                key={type.slug}
-                style={styles.row}
-                testID={`chem-picker-row-${type.slug}`}
+                key={entry.slug}
+                style={[styles.row, invalid && styles.rowInvalid]}
+                testID={`chem-row-${entry.slug}`}
               >
-                <View style={styles.rowText}>
-                  <Text style={styles.rowName}>{type.name}</Text>
-                  <Text style={styles.rowUnit}>
-                    {type.unit}{existing ? ` · already logged ${existingQty ?? "?"}` : ""}
-                  </Text>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.name}>{entry.name}</Text>
+                  <Text style={styles.unit}>{entry.unit}</Text>
                 </View>
-                <View style={styles.stepper}>
-                  <Pressable
-                    onPress={() => bumpDraft(type.slug, type.unit, -1, existingQty)}
-                    hitSlop={6}
-                    style={styles.stepBtn}
-                    testID={`chem-picker-${type.slug}-dec`}
-                    accessibilityLabel="Decrease"
-                  >
-                    <Ionicons name="remove" size={18} color={colors.onSurface} />
-                  </Pressable>
-                  <Text
-                    style={styles.qtyText}
-                    testID={`chem-picker-${type.slug}-qty`}
-                  >
-                    {qty}
-                  </Text>
-                  <Pressable
-                    onPress={() => bumpDraft(type.slug, type.unit, +1, existingQty)}
-                    hitSlop={6}
-                    style={styles.stepBtn}
-                    testID={`chem-picker-${type.slug}-inc`}
-                    accessibilityLabel="Increase"
-                  >
-                    <Ionicons name="add" size={18} color={colors.onSurface} />
-                  </Pressable>
-                </View>
+                <TextInput
+                  value={draft}
+                  onChangeText={(t) => {
+                    // Digits + optional decimal for decimal units; digits
+                    // only for integer units.
+                    const clean = entry.unit_kind === "integer"
+                      ? t.replace(/[^0-9]/g, "")
+                      : t.replace(/[^0-9.]/g, "");
+                    draftsRef.current[entry.slug] = clean;
+                    forceRerender((n) => n + 1);
+                  }}
+                  onBlur={() => commit(entry, draftsRef.current[entry.slug] ?? "")}
+                  onSubmitEditing={() => commit(entry, draftsRef.current[entry.slug] ?? "")}
+                  keyboardType={entry.unit_kind === "integer" ? "number-pad" : "decimal-pad"}
+                  placeholder="0"
+                  placeholderTextColor={colors.muted}
+                  style={styles.input}
+                  editable={!locked}
+                  testID={`chem-input-${entry.slug}`}
+                />
                 <Pressable
-                  onPress={() => commit(type)}
-                  disabled={locked}
-                  style={[styles.addBtn, locked && styles.addBtnDisabled]}
-                  testID={`chem-picker-${type.slug}-add`}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Add ${qty} ${type.unit} of ${type.name}`}
+                  onPress={() => commit(entry, "")}
+                  disabled={locked || !existing}
+                  hitSlop={8}
+                  style={[styles.clearBtn, (!existing || locked) && styles.clearBtnDisabled]}
+                  testID={`chem-clear-${entry.slug}`}
+                  accessibilityLabel={`Clear ${entry.name}`}
                 >
-                  <Text style={styles.addBtnText}>Add</Text>
+                  <Ionicons name="close-circle" size={18}
+                             color={existing ? colors.error : colors.muted} />
                 </Pressable>
               </View>
             );
@@ -263,17 +170,11 @@ export default function ChemicalPickerSheet({
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.45)",
-  },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.45)" },
   sheet: {
-    position: "absolute",
-    left: 0, right: 0, bottom: 0,
-    maxHeight: "85%",
+    position: "absolute", left: 0, right: 0, bottom: 0, maxHeight: "85%",
     backgroundColor: colors.surface,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
+    borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
     ...(Platform.OS === "web"
       ? { boxShadow: "0 -8px 24px rgba(0,0,0,0.18)" as any }
       : { elevation: 14 }),
@@ -288,48 +189,23 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: colors.border,
   },
   title: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
-  searchWrap: {
-    flexDirection: "row", alignItems: "center", gap: spacing.sm,
-    marginHorizontal: spacing.md, marginTop: spacing.sm,
-    paddingHorizontal: spacing.md, height: 38,
-    backgroundColor: colors.surfaceSecondary, borderRadius: radius.md,
-    borderWidth: 1, borderColor: colors.border,
-  },
-  searchInput: {
-    flex: 1, fontFamily: font.regular, fontSize: fontSize.sm, color: colors.onSurface,
-    ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}),
-  },
   row: {
     flexDirection: "row", alignItems: "center", gap: spacing.sm,
     paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
     borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
     backgroundColor: colors.surface,
   },
-  rowText: { flex: 1 },
-  rowName: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
-  rowUnit: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
-  stepper: {
-    flexDirection: "row", alignItems: "center", gap: 4,
-    backgroundColor: colors.surfaceSecondary, borderRadius: radius.pill,
-    paddingHorizontal: 4, paddingVertical: 2,
+  rowInvalid: { borderColor: colors.error },
+  name: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
+  unit: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
+  input: {
+    minWidth: 84,
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
+    paddingHorizontal: spacing.sm, paddingVertical: 8,
+    textAlign: "right",
+    fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface,
+    ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}),
   },
-  stepBtn: {
-    width: 26, height: 26, borderRadius: radius.pill,
-    alignItems: "center", justifyContent: "center",
-    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
-  },
-  qtyText: {
-    minWidth: 34, textAlign: "center",
-    fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.onSurface,
-  },
-  addBtn: {
-    paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill,
-    backgroundColor: colors.brand,
-  },
-  addBtnDisabled: { opacity: 0.4 },
-  addBtnText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: "#FFFFFF" },
-  emptyText: {
-    textAlign: "center", padding: spacing.lg,
-    fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted,
-  },
+  clearBtn: { padding: 6 },
+  clearBtnDisabled: { opacity: 0.3 },
 });
