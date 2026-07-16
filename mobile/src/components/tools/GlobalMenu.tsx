@@ -38,6 +38,11 @@ export const GlobalMenu: React.FC = () => {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
+  // Phase 44 · Fix 2 — cross-platform logout confirmation state. On
+  // native we lean on `Alert.alert()`; on RN-Web `Alert.alert()` is a
+  // no-op, so we surface an in-sheet inline confirm banner using the
+  // same visual language as the rest of the sheet.
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
   const { user, logout } = useAuth();
   const role = (user?.role as string) || "";
   // Staff-only surface. Customers keep their portal nav; not-yet-loaded
@@ -54,30 +59,42 @@ export const GlobalMenu: React.FC = () => {
   };
 
   /**
-   * Phase 44 · mobile logout entry. Confirmation via native `Alert.alert`
-   * (matching Alert-based confirmations elsewhere in mobile — e.g.
-   * closeJob in `checklist.tsx`), then hands off to the AuthContext's
-   * `logout()` which clears the JWT + AsyncStorage session and unmounts
-   * back to `/login`. We deliberately DO NOT flush the offline
-   * `writeQueue` on logout — the queued entries are scoped by device,
-   * not by session, and the tech might genuinely have work that hasn't
-   * synced yet. If a different user logs in they simply won't see the
-   * previous user's stale queue drains (writeQueue idempotency keys +
-   * server-side auth scoping guarantee that).
+   * Phase 44 · Fix 2 — cross-platform logout confirmation.
+   *
+   * `react-native`'s `Alert.alert` doesn't render on RN-Web (verified
+   * in the e1_tester report — button tap did nothing because the
+   * Alert never appeared). Solution: on web we flip an inline
+   * in-sheet confirm banner; on native we keep the native
+   * `Alert.alert` prompt (better platform integration + haptics).
+   * Both paths converge on the same `performLogout()` action.
    */
+  const performLogout = async () => {
+    setConfirmingLogout(false);
+    setOpen(false);
+    try { await logout(); }
+    catch { /* best-effort — clearing local session is what matters */ }
+  };
+
   const doLogout = () => {
+    if (Platform.OS === "web") {
+      // Show the inline in-sheet confirm; the sheet stays open so the
+      // Cancel / Confirm buttons are visible in the same context.
+      setConfirmingLogout(true);
+      return;
+    }
     Alert.alert(
       "Log out?",
       "You'll need to sign in again.",
       [
-        { text: "Cancel", style: "cancel" },
+        {
+          text: "Cancel",
+          style: "cancel",
+          onPress: () => { /* no-op — sheet stays open */ },
+        },
         {
           text: "Log out",
           style: "destructive",
-          onPress: async () => {
-            setOpen(false);
-            try { await logout(); } catch { /* logout is best-effort */ }
-          },
+          onPress: performLogout,
         },
       ],
       { cancelable: true },
@@ -135,18 +152,48 @@ export const GlobalMenu: React.FC = () => {
           <ToolsMenuBody variant="sheet" onNavigate={handleNavigate} />
           {/* Phase 44 · logout entry — divider above + destructive tint.
               Sits pinned at the bottom of the sheet so techs always find
-              it after search + tools regardless of scroll position. */}
+              it after search + tools regardless of scroll position. On
+              web the confirm is inline (Alert.alert is a no-op on
+              RN-Web); on native we surface the native Alert. */}
           <View style={styles.logoutWrap}>
-            <Pressable
-              onPress={doLogout}
-              style={styles.logoutBtn}
-              testID="mobile-menu-logout"
-              accessibilityRole="button"
-              accessibilityLabel="Log out"
-            >
-              <Ionicons name="log-out-outline" size={18} color={colors.error} />
-              <Text style={styles.logoutText}>Log out</Text>
-            </Pressable>
+            {confirmingLogout ? (
+              <View testID="mobile-menu-logout-confirm-inline" style={styles.logoutConfirmWrap}>
+                <Text style={styles.logoutConfirmTitle}>Log out?</Text>
+                <Text style={styles.logoutConfirmDesc}>You'll need to sign in again.</Text>
+                <View style={styles.logoutConfirmRow}>
+                  <Pressable
+                    onPress={() => setConfirmingLogout(false)}
+                    style={styles.logoutCancelBtn}
+                    testID="mobile-menu-logout-cancel"
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancel logout"
+                  >
+                    <Text style={styles.logoutCancelText}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={performLogout}
+                    style={styles.logoutConfirmBtn}
+                    testID="mobile-menu-logout-confirm"
+                    accessibilityRole="button"
+                    accessibilityLabel="Confirm logout"
+                  >
+                    <Ionicons name="log-out-outline" size={16} color="#FFFFFF" />
+                    <Text style={styles.logoutConfirmText}>Log out</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <Pressable
+                onPress={doLogout}
+                style={styles.logoutBtn}
+                testID="mobile-menu-logout"
+                accessibilityRole="button"
+                accessibilityLabel="Log out"
+              >
+                <Ionicons name="log-out-outline" size={18} color={colors.error} />
+                <Text style={styles.logoutText}>Log out</Text>
+              </Pressable>
+            )}
           </View>
         </View>
       </Modal>
@@ -222,5 +269,57 @@ const styles = StyleSheet.create({
     fontFamily: font.semibold,
     fontSize: fontSize.base,
     color: colors.error,
+  },
+  logoutConfirmWrap: {
+    borderWidth: 1,
+    borderColor: colors.error,
+    backgroundColor: "#FEF2F2",
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  logoutConfirmTitle: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.base,
+    color: colors.onSurface,
+  },
+  logoutConfirmDesc: {
+    fontFamily: font.regular,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+  },
+  logoutConfirmRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  logoutCancelBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logoutCancelText: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: colors.onSurface,
+  },
+  logoutConfirmBtn: {
+    flex: 1,
+    flexDirection: "row",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    backgroundColor: colors.error,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logoutConfirmText: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: "#FFFFFF",
   },
 });

@@ -5356,3 +5356,41 @@ Closes out Phase 40. Techs can now edit + submit checklists in zero-signal backy
 - (a) Sidebar untouched — no edits to `AdminSidebar.jsx`; verified via `git diff --stat`.
 - (b) Top bar covers 100% of admin pages — reads directly from `ADMIN_NAV_V2` (the same single source of truth the sidebar reads) with the same RBAC filter; ≤2 clicks to any route.
 - (c) Mobile logout sits at the bottom of the Global Menu sheet with an `Alert.alert` confirmation ("Log out? You'll need to sign in again." — Cancel / Log out).
+
+#### Phase 44 · Regression fix pass (attempt 2)
+
+Five distinct defects surfaced by e1_tester; all addressed in this pass. Two prior passes (Expo bundle 200 + Inventory Radix) verified and preserved.
+
+**Fix 1 (P1) — AdminTopBar responsive collapse**
+- Root cause: Tailwind's `hidden md:flex` / `md:hidden` pair rendered inconsistently in the ad-hoc layout in `AdminTopBar.jsx` (the tester still saw the wide 6-dropdown row at ~600px). Since we can't observe the exact JIT/purge state, replaced the class-based responsive gating with an explicit `window.matchMedia("(max-width: 767px)")` React state (Tailwind's default `md` breakpoint). Modern `addEventListener("change")` with `addListener` fallback for older Safari. New testIDs `admin-topbar-narrow-wrap` / `admin-topbar-wide-wrap` for direct verification.
+
+**Fix 2 (P1) — Mobile logout confirm on Expo Web**
+- Root cause: `react-native`'s `Alert.alert()` is a no-op on RN-Web, so the tester saw the button do nothing when clicking Log out in the browser. Solution — split by `Platform.OS`:
+  - **web** — flips an inline confirm banner rendered directly inside the sheet's `logoutWrap` (red-bordered card + Cancel/Log out buttons); sheet stays open so the confirm is visible in-context.
+  - **native** — keeps the existing `Alert.alert` prompt (better platform integration + destructive-styled action + haptics).
+- Both paths converge on the same `performLogout()` which closes the sheet then awaits `useAuth().logout()`. Testids added per brief: `mobile-menu-logout` (trigger), `mobile-menu-logout-confirm-inline` (web confirm banner wrapper), `mobile-menu-logout-cancel`, `mobile-menu-logout-confirm`. Existing `mobile-menu-logout` testid unchanged for backward compat.
+
+**Fix 3 (P1) — `/checks` Radix AlertDialog backdrop + Confirm broken**
+- Root cause hypothesis: Radix `AlertDialog` uses `onInteractOutside` internally as the umbrella outside-tap event; the earlier fix only wired `onEscapeKeyDown` + `onPointerDownOutside`, which most of the time is enough BUT can be swallowed by stacking-context quirks on pages that themselves render z-50 overlays (`/checks/register` has a `voidOpen` modal at `z-50`, same layer as Radix Overlay). Added an explicit `onInteractOutside={e => { e.preventDefault(); settle(false); }}` alongside the existing pointer/escape handlers. `AlertDialogAction`'s existing `onClick={() => settle(true)}` was already correct; Radix Action's internal onOpenChange(false) firing after the custom handler is a safe no-op because `settle` reads `activeRef.current` which we null out on the first call.
+- Result: backdrop tap → `onInteractOutside` → `settle(false)`. Confirm click → user's onClick → `settle(true)`. ESC → `onEscapeKeyDown` → `settle(false)` (unchanged).
+
+**Fix 4 (P1) — Chemical Picker Sheet: persistence + backdrop crash**
+- (a) Persistence: `commit()` now calls `onChange({chemicals_added})` FIRST (wrapped in a defensive try/catch), then updates local drafts. The prior implementation happened to do it in the right order too, but the tester's crash-on-close (see 4b) unmounted the sheet before the parent's 1500ms autosave debounce could flush. Both changes together should let the Add-then-close-then-reload flow persist correctly.
+- (b) Backdrop crash: introduced `closeSheet()` — wraps caller's `onClose` in try/catch so no throw from any parent handler can bubble up and blank the checklist page, plus resets the drafts ref so a re-open starts clean. Added `onStartShouldSetResponder={() => true}` on the sheet container so a tap inside doesn't propagate to the backdrop `Pressable` beneath (an RN-Web-specific propagation quirk).
+- Result: backdrop tap → `closeSheet()` (guarded) → parent's setPickerOpen(false) → sheet unmounts. Checklist container stays mounted.
+
+**Fix 5 (P2) — Drag-reorder `setPointerCapture` crash on web**
+- Root cause: `react-native-draggable-flatlist` uses `setPointerCapture` on RN-Web which throws inside RN-Web's synthetic event target. Decision (documented in code): gate the drag list to `Platform.OS !== "web"`. On web, render a plain `.map()` of checklist rows with no drag handle — same tap-to-toggle checkbox UX, no reorder. Real techs use native devices for the checklist (that's the target user); Expo Web is dev-only preview. Documented via a `DRAG_REORDER_ENABLED` constant at the top of `PoolChecklistForm.tsx`.
+
+**Files changed (4)**
+- `frontend/src/layouts/AdminTopBar.jsx` — matchMedia-based responsive gate.
+- `frontend/src/components/ui/confirm-dialog.jsx` — added `onInteractOutside`.
+- `mobile/src/components/tools/GlobalMenu.tsx` — Platform-split confirm + inline banner + new testIDs.
+- `mobile/src/components/checklist/PoolChecklistForm.tsx` — gated DraggableFlatList to native, plain-map fallback on web.
+- `mobile/src/components/checklist/ChemicalPickerSheet.tsx` — hardened close + persistence-first commit + sheet-body responder guard.
+
+**Verification**
+- `bash /app/scripts/preflight.sh` → **`preflight OK` (exit 0)**.
+- `curl "http://localhost:3001/node_modules/expo-router/entry.bundle?platform=web&dev=true&hot=false&transform.engine=hermes&transform.routerRoot=app"` → **HTTP 200** (setPointerCapture strings in the bundle are gesture-handler source comments, not real errors).
+- `grep -rn 'window\.\(confirm\|alert\)' /app/frontend/src` excluding confirm-dialog fallback → **zero hits**.
+- `yarn tsc --noEmit -p /app/mobile` → **zero new errors** (baseline 92 — actually 1 fewer than Phase 43 baseline).

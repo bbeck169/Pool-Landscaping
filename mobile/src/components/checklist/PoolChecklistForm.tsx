@@ -28,7 +28,15 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import ReadingChipRow from "./ReadingChipRow";
 import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDropdownStack";
 import ChemicalPickerSheet from "./ChemicalPickerSheet";
+// Phase 44 · Fix 5 — `react-native-draggable-flatlist` uses
+// `setPointerCapture` on web which throws inside the RN-Web synthetic
+// event target. Gate the drag list to native only; on web we render a
+// plain map() of rows with no drag handle (same rows/checkbox
+// semantics, just no reorder). Techs on real devices — the target
+// audience — keep the drag UX; Expo Web keeps the checklist
+// functional.
 import DraggableFlatList, { RenderItemParams, ScaleDecorator } from "react-native-draggable-flatlist";
+const DRAG_REORDER_ENABLED = Platform.OS !== "web";
 
 // Phase 37 — canonical testid key (parity with web PoolChecklistForm.jsx).
 const _NAME_TO_CANONICAL: Record<string, string> = {
@@ -466,53 +474,75 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
 
       {/* Checklist */}
       <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>Checklist</Text>
-      <DraggableFlatList
-        data={checklistItems}
-        keyExtractor={(c) => c.id}
-        onDragEnd={({ data }) => reorderChecklist(data as ChecklistItem[])}
-        scrollEnabled={false}
-        activationDistance={12}
-        containerStyle={{ marginBottom: 0 }}
-        testID="pool-checklist-draggable"
-        renderItem={({ item: c, drag, isActive, getIndex }: RenderItemParams<ChecklistItem>) => {
-          const i = getIndex() ?? 0;
-          return (
-            <ScaleDecorator>
-              <View
-                style={[
-                  styles.checkRow,
-                  c.checked && styles.checkRowOn,
-                  isActive && styles.checkRowDragging,
-                ]}
-                testID={`pool-check-${c.id}`}
-              >
-                <Pressable
-                  onLongPress={locked ? undefined : drag}
-                  disabled={locked}
-                  hitSlop={8}
-                  style={styles.dragHandle}
-                  testID={`pool-check-${c.id}-drag`}
-                  accessibilityLabel={`Reorder ${c.label}`}
+      {DRAG_REORDER_ENABLED ? (
+        <DraggableFlatList
+          data={checklistItems}
+          keyExtractor={(c) => c.id}
+          onDragEnd={({ data }) => reorderChecklist(data as ChecklistItem[])}
+          scrollEnabled={false}
+          activationDistance={12}
+          containerStyle={{ marginBottom: 0 }}
+          testID="pool-checklist-draggable"
+          renderItem={({ item: c, drag, isActive, getIndex }: RenderItemParams<ChecklistItem>) => {
+            const i = getIndex() ?? 0;
+            return (
+              <ScaleDecorator>
+                <View
+                  style={[
+                    styles.checkRow,
+                    c.checked && styles.checkRowOn,
+                    isActive && styles.checkRowDragging,
+                  ]}
+                  testID={`pool-check-${c.id}`}
                 >
-                  <Ionicons name="reorder-three-outline" size={20} color={colors.muted} />
-                </Pressable>
-                <Pressable
-                  style={styles.checkTapZone}
-                  onPress={() => !locked && toggleCheck(i)}
-                  disabled={locked}
-                >
-                  <Ionicons
-                    name={c.checked ? "checkbox" : "square-outline"}
-                    size={22}
-                    color={c.checked ? colors.success : colors.muted}
-                  />
-                  <Text style={styles.checkText}>{c.label}</Text>
-                </Pressable>
-              </View>
-            </ScaleDecorator>
-          );
-        }}
-      />
+                  <Pressable
+                    onLongPress={locked ? undefined : drag}
+                    disabled={locked}
+                    hitSlop={8}
+                    style={styles.dragHandle}
+                    testID={`pool-check-${c.id}-drag`}
+                    accessibilityLabel={`Reorder ${c.label}`}
+                  >
+                    <Ionicons name="reorder-three-outline" size={20} color={colors.muted} />
+                  </Pressable>
+                  <Pressable
+                    style={styles.checkTapZone}
+                    onPress={() => !locked && toggleCheck(i)}
+                    disabled={locked}
+                  >
+                    <Ionicons
+                      name={c.checked ? "checkbox" : "square-outline"}
+                      size={22}
+                      color={c.checked ? colors.success : colors.muted}
+                    />
+                    <Text style={styles.checkText}>{c.label}</Text>
+                  </Pressable>
+                </View>
+              </ScaleDecorator>
+            );
+          }}
+        />
+      ) : (
+        // Web fallback — plain rows, no drag handle. Preserves the
+        // Phase 40 tap-to-toggle UX without the setPointerCapture
+        // crash from `react-native-draggable-flatlist` on RN-Web.
+        checklistItems.map((c, i) => (
+          <Pressable
+            key={c.id}
+            style={[styles.checkRow, c.checked && styles.checkRowOn]}
+            onPress={() => !locked && toggleCheck(i)}
+            disabled={locked}
+            testID={`pool-check-${c.id}`}
+          >
+            <Ionicons
+              name={c.checked ? "checkbox" : "square-outline"}
+              size={22}
+              color={c.checked ? colors.success : colors.muted}
+            />
+            <Text style={styles.checkText}>{c.label}</Text>
+          </Pressable>
+        ))
+      )}
 
       {/* Notes */}
       <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>Notes</Text>

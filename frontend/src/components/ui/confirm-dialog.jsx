@@ -123,18 +123,28 @@ export function ConfirmProvider({ children }) {
         <AlertDialogContent
           className="max-w-md"
           data-testid="app-confirm-dialog"
-          // Radix AlertDialog INTENTIONALLY suppresses Escape and
+          // Radix AlertDialog intentionally suppresses Escape and
           // outside-pointer dismiss by default (versus plain Dialog),
           // because an AlertDialog is meant to interrupt for a
           // specific action. Our product decision (per the Phase 31
           // Step 2c regression report) is that Cancel-equivalent
           // dismiss shortcuts SHOULD work — so we explicitly restore
-          // both by resolving the pending promise with `false`.
+          // Escape, pointer-outside, AND `onInteractOutside`. The
+          // AlertDialog primitive uses `onInteractOutside` internally
+          // as the umbrella event for outside taps; hooking it too
+          // covers the case where a specific page has stacking
+          // contexts / z-index quirks that swallow the pointer event
+          // before it reaches Radix (verified on /checks in the
+          // e1_tester report where only ESC was firing).
           onEscapeKeyDown={(e) => {
             e.preventDefault();
             settle(false);
           }}
           onPointerDownOutside={(e) => {
+            e.preventDefault();
+            settle(false);
+          }}
+          onInteractOutside={(e) => {
             e.preventDefault();
             settle(false);
           }}

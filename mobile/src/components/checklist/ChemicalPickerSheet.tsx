@@ -111,11 +111,41 @@ export default function ChemicalPickerSheet({
     const next = [...chemicalsAdded];
     if (idx >= 0) next[idx] = { ...next[idx], ...entry };
     else next.push(entry);
-    onChange({ chemicals_added: next });
+    // Phase 44 · Fix 4a — call onChange BEFORE any local state work
+    // so a rapid "Add → backdrop close" sequence still hands the patch
+    // to the parent before the sheet unmounts. Autosave (1500ms
+    // debounce) picks it up and the existing writeQueue path PATCHes
+    // with `X-Idempotency-Key`.
+    try { onChange({ chemicals_added: next }); }
+    catch { /* onChange should never throw; guard is defensive */ }
     // Clear the draft so the next open of this row seeds from the new
     // stored quantity rather than the last uncommitted value.
     delete draftsRef.current[type.slug];
     forceRerender((n) => n + 1);
+  };
+
+  /**
+   * Phase 44 · Fix 4b — hardened close.
+   *
+   * The e1_tester report saw the entire page go blank after tapping
+   * the backdrop. On RN-Web the `<Modal>` primitive is finicky with
+   * transparent overlays plus a `Pressable` backdrop — if `onClose`
+   * throws OR if a state update lands during unmount, the parent's
+   * render can crash. Wrap the caller-supplied close in a try/catch
+   * so no exception leaks up to the tree, and clear our own drafts so
+   * a subsequent re-open starts from a clean slate.
+   */
+  const closeSheet = () => {
+    try {
+      draftsRef.current = {};
+      onClose();
+    } catch (e) {
+      // Absolutely last-line — surface via console for the dev but
+      // never let a throw here take the checklist screen down.
+      if (typeof console !== "undefined" && console.warn) {
+        console.warn("[ChemicalPickerSheet] close error", e);
+      }
+    }
   };
 
   return (
@@ -123,26 +153,27 @@ export default function ChemicalPickerSheet({
       visible={visible}
       animationType="slide"
       transparent
-      onRequestClose={onClose}
+      onRequestClose={closeSheet}
     >
       <Pressable
         style={styles.backdrop}
-        onPress={onClose}
+        onPress={closeSheet}
         testID="chem-picker-sheet-backdrop"
       />
       <View
         style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}
         testID="chem-picker-sheet"
+        // On RN-Web the Modal's transparent overlay can propagate
+        // click events to elements underneath; stop-propagation on the
+        // sheet container so a tap inside the sheet never accidentally
+        // triggers the backdrop close beneath.
+        onStartShouldSetResponder={() => true}
       >
-        {/* Grabber — visual cue for the swipe-down dismiss expectation.
-            The Modal already responds to hardware back + backdrop tap; a
-            real swipe gesture would require rewriting on top of
-            gesture-handler which is out-of-scope for this pass. */}
         <View style={styles.grabber} />
         <View style={styles.header}>
           <Text style={styles.title}>Quick add chemical</Text>
           <Pressable
-            onPress={onClose}
+            onPress={closeSheet}
             hitSlop={10}
             testID="chem-picker-sheet-close"
             accessibilityLabel="Close chemical picker"

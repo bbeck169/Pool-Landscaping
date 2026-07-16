@@ -178,6 +178,30 @@ function MobileMenu({ visible }) {
 
 export default function AdminTopBar() {
   const visible = useVisibleGroups();
+  // Phase 44 · Fix 1 — some Tailwind builds don't reliably purge/JIT the
+  // `hidden md:flex` / `md:hidden` combo in ad-hoc layouts (verified in
+  // the e1_tester report where <md viewport still rendered the wide row).
+  // Use an explicit `matchMedia` gate instead of relying on Tailwind
+  // responsive utilities. `768px` mirrors Tailwind's default `md`.
+  const [isNarrow, setIsNarrow] = React.useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
+  });
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(max-width: 767px)");
+    const on = (e) => setIsNarrow(e.matches);
+    // `addEventListener` is the modern API; `addListener` is the
+    // Safari-<14 fallback. Both are exposed by every browser we
+    // support today.
+    if (mq.addEventListener) mq.addEventListener("change", on);
+    else mq.addListener(on);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", on);
+      else mq.removeListener(on);
+    };
+  }, []);
+
   if (visible.length === 0) return null;
   return (
     <div
@@ -188,16 +212,23 @@ export default function AdminTopBar() {
       }}
       data-testid="admin-topbar"
     >
-      {/* ≥md — full row of category dropdowns */}
-      <div className="hidden md:flex items-center gap-1 px-4 h-11 overflow-x-auto">
-        {visible.map((g) => (
-          <CategoryDropdown key={g.key} group={g} />
-        ))}
-      </div>
-      {/* <md — single collapsed "Menu" dropdown */}
-      <div className="md:hidden px-4 h-11 flex items-center">
-        <MobileMenu visible={visible} />
-      </div>
+      {isNarrow ? (
+        <div
+          className="px-4 h-11 flex items-center"
+          data-testid="admin-topbar-narrow-wrap"
+        >
+          <MobileMenu visible={visible} />
+        </div>
+      ) : (
+        <div
+          className="flex items-center gap-1 px-4 h-11 overflow-x-auto"
+          data-testid="admin-topbar-wide-wrap"
+        >
+          {visible.map((g) => (
+            <CategoryDropdown key={g.key} group={g} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
