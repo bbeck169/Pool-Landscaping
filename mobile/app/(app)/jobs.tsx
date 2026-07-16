@@ -28,12 +28,14 @@ export default function Jobs() {
   const [refreshing, setRefreshing] = useState(false);
   const [usingCache, setUsingCache] = useState(false);
 
-  // Phase 30: admins & techs now live on the unified calendar; only customers
-  // still see the legacy per-status "My Services" list here. Keep the
-  // customer flow byte-for-byte identical to what shipped in Phase 3.
+  // Phase 30 → Phase 47 follow-up: admins still land on the unified calendar
+  // (they can reach the workstream list via nav), but TECHNICIANS and
+  // customers land on the JobCard workstream list here — that's the layout
+  // the workstream card (LEFT pills / RIGHT photo / VIEW DETAILS overlay)
+  // was designed for.
   const isCustomer = user?.role === "customer";
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
-  if (!isCustomer) {
+  if (isAdmin) {
     return <Redirect href="/(app)/schedule/calendar" />;
   }
 

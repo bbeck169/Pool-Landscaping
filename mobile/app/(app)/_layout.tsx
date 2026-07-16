@@ -69,11 +69,11 @@ export default function AppLayout() {
       <Tabs.Screen
         name="jobs"
         options={{
-          title: "Jobs",
-          // Kept as a hidden fallback so the customer redirect and legacy
-          // deep-links resolve. Admin/tech land here for a beat then
-          // Redirect to /(app)/schedule/calendar (see jobs.tsx).
-          href: null,
+          title: "Workstream",
+          // Phase 47 follow-up — surface the JobCard workstream list on the
+          // tech + customer tab bar. Admins keep the calendar-first flow via
+          // the schedule/calendar tab and are redirected server-side.
+          href: (isTech || isCustomer) ? "/(app)/jobs" : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="briefcase-outline" size={size} color={color} />,
         }}
       />
