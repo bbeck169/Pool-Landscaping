@@ -5,6 +5,7 @@ import { Platform, View } from "react-native";
 import { useAuth } from "@/src/auth";
 import { colors, font } from "@/src/theme";
 import { SyncBanner } from "@/src/components/SyncBanner";
+import { GlobalMenu } from "@/src/components/tools/GlobalMenu";
 
 export default function AppLayout() {
   const { user, loading } = useAuth();
@@ -204,6 +205,10 @@ export default function AppLayout() {
       />
     </Tabs>
       </View>
+      {/* Phase 43 · Global dropdown menu — trigger renders absolute-
+          positioned so no per-screen header changes are needed. Sheet
+          reuses the Phase 42 body via `<ToolsMenuBody variant="sheet" />`. */}
+      <GlobalMenu />
     </View>
   );
 }

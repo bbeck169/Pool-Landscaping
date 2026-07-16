@@ -14,10 +14,12 @@ type Props = {
   onQueryChange: (q: string) => void;
   placeholder?: string;
   debounceMs?: number;
+  testID?: string;
 };
 
 export const SearchBar: React.FC<Props> = ({
   onQueryChange, placeholder = "Search tools…", debounceMs = 200,
+  testID = "tools-search",
 }) => {
   const [text, setText] = useState("");
   const timer = useRef<any>(null);
@@ -38,7 +40,7 @@ export const SearchBar: React.FC<Props> = ({
     <View style={styles.wrap}>
       <Ionicons name="search-outline" size={18} color={colors.muted} />
       <TextInput
-        testID="tools-search"
+        testID={testID}
         style={styles.input}
         value={text}
         onChangeText={setText}

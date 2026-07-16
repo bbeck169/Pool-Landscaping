@@ -5215,3 +5215,38 @@ Closes out Phase 40. Techs can now edit + submit checklists in zero-signal backy
 
 **Testids exposed for QA:**
 `tools-search`, `tools-search-clear`, `tools-pin-{slug}`, `tools-pins-edit`, `tools-pins-empty`, `tools-pins-edit-close`, `tools-pins-toggle-{slug}`, `tools-recent-{slug}`, `tools-recents-empty`, `tools-chip-{slug}` (incl. `tools-chip-all`), `tools-card-{slug}`, `tools-section-{sectionKey}`, `tools-empty`, `tools-empty-clear`.
+
+#### Phase 43 · Mobile Global Dropdown Menu
+
+**Goal:** every `(app)` screen (admin, super_admin, technician) exposes a top-left hamburger that opens a slide-down sheet containing the exact same search + pinned + recents + chips + sections composition used by the Tools tab. Zero logic duplication.
+
+**Structural refactor — new shared body**
+- `mobile/src/components/tools/sections.ts` — extracted `TECH_SECTIONS` + `ADMIN_SECTIONS` from `tools.tsx` and added a `sectionsForRole()` helper. Frozen Phase 35 6-category admin IA and tech 4-section IA now live in one file so future re-shuffles can't drift between surfaces.
+- `mobile/src/components/tools/ToolsMenuBody.tsx` — houses ALL the composition logic (search, pins, recents, chips, filter, empty state, `openTile → markUsed → push`). Two variants:
+  - `variant="tab"` (default) — Phase 42 behavior verbatim; pins/recents empty-state placeholders rendered inline.
+  - `variant="sheet"` — Phase 43 sheet behavior; pins/recents rows are HIDDEN when empty (not their placeholders), search testID switches to `mobile-menu-search`. When `onNavigate` is provided, the body defers `router.push()` to the caller so the sheet can close first.
+- `mobile/app/(app)/tools.tsx` — reduced to a thin header + `<ToolsMenuBody variant="tab" />` shell.
+
+**New surface — global menu**
+- `mobile/src/components/tools/GlobalMenu.tsx` — trigger + sheet. Trigger (`mobile-menu-trigger`) is absolute-positioned `top: insets.top + spacing.sm; left: spacing.md` with `zIndex: 1000` and a soft white/blur background so it reads over any header color. Rendered once in `(app)/_layout.tsx`; NO existing screen's `<Header />` markup needed to change.
+- Sheet uses `Modal animationType="slide"`; backdrop is `Pressable` (`mobile-menu-backdrop`) at `rgba(0,0,0,0.45)`, sheet covers `top:0 → bottom:8%` so the exposed strip at the bottom is a valid backdrop target. Header inside the sheet has "Menu" title + close X (`mobile-menu-close`).
+- On tool tap: `markUsed(slug)` → `setOpen(false)` → `setTimeout(router.push, 60)` (60ms lets the slide-down animation start unwinding before the route unmounts the current screen, otherwise Android snaps abruptly).
+- Guard: `role !== admin|super_admin|technician` → the whole component renders `null`. Customer keeps `/portal/*` nav.
+
+**Reused verbatim**
+- `SearchBar` — added an optional `testID` prop (default `"tools-search"`, overridden to `"mobile-menu-search"` for the sheet variant). No behavior change.
+- `PinnedRow`, `RecentRow`, `CategoryChips`, `ToolCard` — untouched.
+- `useToolsPreferences` — unchanged. Pins and recents are shared between the Tools tab and the sheet because both hooks read the same per-user AsyncStorage keys.
+
+**Testids exposed for QA**
+`mobile-menu-trigger`, `mobile-menu-sheet`, `mobile-menu-close`, `mobile-menu-backdrop`, `mobile-menu-search` (sheet-only) plus every Phase 42 testid (`tools-search-clear`, `tools-pin-{slug}`, `tools-pins-edit`, `tools-pins-empty`, `tools-recent-{slug}`, `tools-recents-empty`, `tools-chip-{key}` incl. `tools-chip-all`, `tools-card-{slug}`, `tools-section-{key}`, `tools-empty`, `tools-empty-clear`).
+
+**Verification**
+- `yarn tsc --noEmit -p /app/mobile` → **zero new errors** on any of the 5 new/modified files (baseline of 93 pre-existing errors unchanged).
+- `python3 /app/scripts/check_dead_imports.py` → all Phase 43 files clean; project baseline still 382.
+- `bash /app/scripts/preflight.sh` → **`preflight OK` (exit 0)**.
+- Live screenshot deferred (same reasoning as Phase 42 — Expo Web isn't running under supervisor). All testids listed above are in place for the standard Expo QA sweep.
+
+**Deferred / follow-ups**
+- Nice-to-have: a swipe-down gesture to close the sheet (currently backdrop-tap / X / hardware-back / picking a tool). Not blocking.
+- Consider a keyboard shortcut on Expo Web (⌘K) that opens the menu — extremely cheap to add later if a QA sees value.
