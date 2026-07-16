@@ -134,6 +134,59 @@ def scope_jobs_query(user: dict, tenant: dict, status: Optional[str], technician
     return q
 
 
+_LANDSCAPE_KEYWORDS = ("landscap", "lawn", "mow", "garden", "trim", "blow", "cleanup")
+
+
+def _derive_checklist_kind(job: dict, tech_department: Optional[str]) -> str:
+    """Phase 57.d · read-time derivation of which checklist form to render.
+
+    Priority: explicit override → tech department → service_type keyword →
+    "pool" (safest default for this business)."""
+    override = (job.get("checklist_kind_override") or "").strip().lower()
+    if override in ("pool", "landscape", "landscaping"):
+        return "landscape" if override.startswith("landscap") else "pool"
+    dept = (tech_department or "").lower()
+    if dept == "landscaping":
+        return "landscape"
+    if dept == "pool":
+        return "pool"
+    hay = " ".join(str(job.get(k) or "") for k in ("service_type", "job_type", "title")).lower()
+    if any(k in hay for k in _LANDSCAPE_KEYWORDS):
+        return "landscape"
+    return "pool"
+
+
+async def _enrich_job_dept_and_kind(doc: dict, tenant_id: str) -> None:
+    """Mutates ``doc`` to add ``technician_department`` and ``checklist_kind``
+    at READ-TIME. Never persists — the stored job doc is untouched."""
+    tid = doc.get("technician_id")
+    dept = None
+    if tid:
+        u = await db.users.find_one({"technician_id": tid, "tenant_id": tenant_id},
+                                     {"_id": 0, "department": 1}) or {}
+        dept = u.get("department")
+    doc["technician_department"] = dept
+    doc["checklist_kind"] = _derive_checklist_kind(doc, dept)
+
+
+async def _enrich_jobs_dept_and_kind(docs: list, tenant_id: str) -> None:
+    """Batch variant — single ``users`` query for the whole page."""
+    tech_ids = list({d.get("technician_id") for d in docs if d.get("technician_id")})
+    dept_map = {}
+    if tech_ids:
+        users = await db.users.find(
+            {"technician_id": {"$in": tech_ids}, "tenant_id": tenant_id},
+            {"_id": 0, "technician_id": 1, "department": 1},
+        ).to_list(1000)
+        dept_map = {u["technician_id"]: u.get("department") for u in users if u.get("technician_id")}
+    for d in docs:
+        dept = dept_map.get(d.get("technician_id"))
+        d["technician_department"] = dept
+        d["checklist_kind"] = _derive_checklist_kind(d, dept)
+
+
+
+
 @router.get("/jobs")
 async def list_jobs(
     user: dict = Depends(get_current_user),
@@ -163,6 +216,10 @@ async def list_jobs(
     if recurring_template_id:
         q["recurring_template_id"] = recurring_template_id
     docs = await db.jobs.find(q, {"_id": 0}).sort("scheduled_date", 1).to_list(1000)
+    # Phase 57.d — enrich every returned job with the assigned tech's
+    # department + derived checklist_kind so schedule/dispatch cards +
+    # mobile clients see the right form without a per-job GET.
+    await _enrich_jobs_dept_and_kind(docs, tenant["id"])
     if user.get("role") == "customer":
         for d in docs:
             d.pop("internal_notes", None)
@@ -558,13 +615,9 @@ async def get_job(jid: str,
     if user.get("role") == "customer" and doc.get("customer_id") != user.get("customer_id"):
         raise HTTPException(403, "Not your job")
     doc = with_field_report(doc)
-    # Phase 57 · attach the assigned tech's department so the checklist
-    # picker on the frontend can render the right form.
-    tid = doc.get("technician_id")
-    if tid:
-        tech_user = await db.users.find_one({"technician_id": tid, "tenant_id": tenant["id"]},
-                                              {"_id": 0, "department": 1}) or {}
-        doc["technician_department"] = tech_user.get("department")
+    # Phase 57.d · read-time enrichment — tech department + derived
+    # checklist_kind. Never mutates the stored job doc.
+    await _enrich_job_dept_and_kind(doc, tenant["id"])
     if user.get("role") == "customer":
         doc.pop("internal_notes", None)
     # Phase 16C add-on: strip revenue/pricing fields from technician responses.

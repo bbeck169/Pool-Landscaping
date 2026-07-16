@@ -41,6 +41,22 @@ class UserPatch(BaseModel):
     department_set: bool = True  # mark that department was intentionally sent
 
 
+@router.get("/users/{user_id}")
+async def get_user(user_id: str,
+                    user: dict = Depends(get_current_user),
+                    tenant: dict = Depends(get_current_tenant)):
+    """Phase 57.d — single-user read. Admin/super_admin can read anyone
+    in the tenant; every other role can read only themselves."""
+    role = (user or {}).get("role") or ""
+    if role not in ("admin", "super_admin") and user_id != user.get("id"):
+        raise HTTPException(403, "Not authorized")
+    doc = await db.users.find_one({"id": user_id, "tenant_id": tenant["id"]},
+                                    {"_id": 0, "password_hash": 0}) or None
+    if not doc:
+        raise HTTPException(404, "User not found")
+    return doc
+
+
 @router.patch("/users/{user_id}")
 async def update_user(user_id: str, body: dict,
                        user: dict = Depends(require_admin),

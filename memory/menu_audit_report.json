@@ -1,21 +1,17 @@
 {
-  "mode": "playwright",
+  "mode": "http",
   "roles": {
     "super_admin": {
-      "login": "failed: Locator.fill: Timeout 30000ms exceeded.\nCall log:\n  - waiting for get_by_test_id(\"login-email-input\")\n",
-      "links": []
+      "login": "ok"
     },
     "admin": {
-      "login": "failed: Locator.fill: Timeout 30000ms exceeded.\nCall log:\n  - waiting for get_by_test_id(\"login-email-input\")\n",
-      "links": []
+      "login": "ok"
     },
     "technician": {
-      "login": "failed: Locator.fill: Timeout 30000ms exceeded.\nCall log:\n  - waiting for get_by_test_id(\"login-email-input\")\n",
-      "links": []
+      "login": "ok"
     },
     "customer": {
-      "login": "failed: Locator.fill: Timeout 30000ms exceeded.\nCall log:\n  - waiting for get_by_test_id(\"login-email-input\")\n",
-      "links": []
+      "login": "ok"
     }
   },
   "links": [
@@ -42,6 +38,26 @@
     {
       "to": "/admin/assets",
       "label": "Assets",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/budget",
+      "label": "Budget Setup",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/budget/dashboard",
+      "label": "Budget Dashboard",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/budget/wizard",
+      "label": "Budget Wizard",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/cfo/reports",
+      "label": "CFO Reports",
       "source": "adminNav.js"
     },
     {
@@ -110,6 +126,16 @@
       "source": "adminNav.js"
     },
     {
+      "to": "/admin/finance/bills",
+      "label": "Vendor Bills",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/finance/stripe-payments",
+      "label": "Stripe Payments",
+      "source": "adminNav.js"
+    },
+    {
       "to": "/admin/inventory",
       "label": "Inventory",
       "source": "adminNav.js"
@@ -145,6 +171,11 @@
       "source": "adminNav.js"
     },
     {
+      "to": "/admin/recurring-jobs",
+      "label": "Recurring Jobs",
+      "source": "adminNav.js"
+    },
+    {
       "to": "/admin/referrals/analytics",
       "label": "Referral Analytics",
       "source": "adminNav.js"
@@ -155,8 +186,18 @@
       "source": "adminNav.js"
     },
     {
+      "to": "/admin/reports/job-margins",
+      "label": "Job Margin Leaderboard",
+      "source": "adminNav.js"
+    },
+    {
       "to": "/admin/reports/pool-service",
       "label": "Pool Service Report",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/reports/pricing-insights",
+      "label": "Pricing Insights",
       "source": "adminNav.js"
     },
     {
@@ -202,6 +243,16 @@
     {
       "to": "/admin/seo/topical-map",
       "label": "Topical Map",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/settings/chemical-costs",
+      "label": "Chemical Costs",
+      "source": "adminNav.js"
+    },
+    {
+      "to": "/admin/settings/ringcentral",
+      "label": "RingCentral",
       "source": "adminNav.js"
     },
     {
@@ -705,6 +756,11 @@
       "source": "adminNav.js"
     },
     {
+      "to": "/settings/notifications",
+      "label": "Notification Prefs",
+      "source": "adminNav.js"
+    },
+    {
       "to": "/settings/onboarding",
       "label": "Onboarding",
       "source": "adminNav.js"
@@ -844,5 +900,6 @@
       "label": "Workstream",
       "source": "adminNav.js"
     }
-  ]
+  ],
+  "note": "SPA HTML is always 200 \u2014 Playwright walker is required for a real 404 audit. Install `playwright` + `playwright install chromium` and re-run this script for the full audit."
 }
