@@ -137,6 +137,7 @@ import RecurringJobs from "@/pages/admin/RecurringJobs";
 import CFOReports from "@/pages/admin/CFOReports";
 import VendorBills from "@/pages/admin/VendorBills";
 import PricingInsights from "@/pages/admin/PricingInsights";
+import RingCentralAdmin from "@/pages/admin/RingCentralAdmin";
 import BudgetSetup from "@/pages/budget/BudgetSetup";
 import BudgetDashboard from "@/pages/budget/BudgetDashboard";
 import BudgetWizard from "@/pages/budget/BudgetWizard";
@@ -326,6 +327,9 @@ export default function App() {
             <Route path="admin/cfo/reports" element={<AdminOnly><CFOReports /></AdminOnly>} />
             <Route path="admin/finance/bills" element={<AdminOnly><VendorBills /></AdminOnly>} />
             <Route path="admin/reports/pricing-insights" element={<AdminOnly><PricingInsights /></AdminOnly>} />
+            {/* Phase 54 — RingCentral admin (settings + test + event log) */}
+            <Route path="admin/settings/ringcentral" element={<AdminOnly><RingCentralAdmin /></AdminOnly>} />
+            <Route path="admin/ringcentral-test" element={<AdminOnly><RingCentralAdmin /></AdminOnly>} />
             {/* Phase 47 — Budgeting Suite */}
             <Route path="admin/budget" element={<AdminOnly><BudgetSetup /></AdminOnly>} />
             <Route path="admin/budget/dashboard" element={<AdminOnly><BudgetDashboard /></AdminOnly>} />

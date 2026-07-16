@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Briefcase, CalendarDays, Truck, Route, Workflow, DoorOpen,
   Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers,
-  UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart,
+  UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone,
   Timer as TimerIcon, BarChart3, TrendingUp, PieChart, MegaphoneIcon, Megaphone, Palette,
   MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Search,
   Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit,
@@ -214,6 +214,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/cfo/reports",            label: "CFO Reports",         icon: PieChart, feature: "reports" },
     { to: "/admin/finance/bills",          label: "Vendor Bills",        icon: Receipt, feature: "reports" },
     { to: "/admin/settings/chemical-costs",label: "Chemical Costs",      icon: Calculator, feature: "settings" },
+    { to: "/admin/settings/ringcentral",   label: "RingCentral",         icon: Phone, feature: "settings" },
     { to: "/admin/budget",                 label: "Budget Setup",        icon: Calculator, feature: "settings" },
     { to: "/admin/budget/dashboard",       label: "Budget Dashboard",    icon: TrendingUp, feature: "reports" },
     { to: "/admin/budget/wizard",          label: "Budget Wizard",       icon: Sparkles, feature: "settings" },

@@ -35,6 +35,7 @@ from routers import (
     stripe_admin,
     zillow_admin,
     ringcentral,
+    ringcentral_customer,
 )
 
 app = FastAPI(
@@ -72,7 +73,8 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                recurring_jobs,
                stripe_admin,
                zillow_admin,
-               ringcentral]:
+               ringcentral,
+               ringcentral_customer]:
     api_router.include_router(module.router)
 
 
@@ -215,6 +217,35 @@ async def _background_seed():
             run_recurring_job_generator,
             "cron", hour=2, minute=0,
             id="recurring_job_generator", replace_existing=True)
+        # Phase 54 — nightly RingCentral contact pull-sync (03:00 UTC).
+        async def _rc_nightly_pull():
+            try:
+                from services.ringcentral_client import is_outbound_enabled, get_rc_platform
+                if not await is_outbound_enabled(): return
+                platform = get_rc_platform()
+                resp = platform.get("/restapi/v1.0/account/~/extension/~/address-book/contact",
+                                     {"perPage": 500})
+                data = resp.json_dict() if hasattr(resp, "json_dict") else resp.json()
+                for r in (data or {}).get("records") or []:
+                    phone = r.get("businessPhone") or r.get("homePhone") or r.get("mobilePhone")
+                    if not phone: continue
+                    exists = await db.leads.find_one({"phone": phone, "source": "rc-contact-sync"})
+                    if exists: continue
+                    await db.leads.insert_one({
+                        "id": __import__("utils").new_id(),
+                        "source": "rc-contact-sync",
+                        "phone": phone,
+                        "name": f"{r.get('firstName','')} {r.get('lastName','')}".strip() or "Unknown",
+                        "email": r.get("email"),
+                        "created_at": __import__("utils").now_iso(),
+                        "status": "new",
+                    })
+            except Exception:
+                pass
+        scheduler.add_job(
+            _rc_nightly_pull,
+            "cron", hour=3, minute=0,
+            id="rc_contact_pull_sync", replace_existing=True)
         # Phase 52.A — monthly pricing insights digest (1st @ 09:00 UTC).
         from services.monthly_pricing_digest import run_monthly_pricing_digest
         scheduler.add_job(

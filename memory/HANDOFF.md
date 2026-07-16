@@ -5894,3 +5894,167 @@ GET  /api/reports/least-profitable-services?month=&limit=
 POST /api/cfo/price-increase-suggestions
 GET  /api/reports/pricing-insights/email-history?limit=
 ```
+
+---
+
+## Phase 54 · Full RingCentral Integration (Feb 2026)
+
+**Verified**: preflight OK · Expo bundle 200 · all endpoints
+smoke-tested · zero credential leaks in supervisor logs (0/0 hits
+across 4 sensitive values).
+
+### 54.1 Foundation
+- Env vars (values NEVER echoed): `RC_CLIENT_ID`, `RC_CLIENT_SECRET`,
+  `RC_JWT`, `RC_SERVER_URL`, `RC_FROM_NUMBER`, `RC_OUTBOUND_ENABLED`
+  (default `false`).
+- SDK: `ringcentral==0.9.2` + `observable==0.3.2` pinned in
+  `backend/requirements.txt`.
+- `backend/services/ringcentral_client.py` — lazy singleton
+  `get_rc_platform()` with JWT login + `reset_rc_platform()` on 401.
+  `is_outbound_enabled()` prefers the runtime `rc_settings` collection
+  over the env var so admins can flip live outbound from the UI
+  without restarting.
+- `POST /api/ringcentral/subscription/register` (admin) — creates a
+  RingCentral webhook subscription across telephony/SMS/Fax/VoiceMail
+  event filters, deactivates prior rows in
+  `ringcentral_subscriptions`. Returns `subscription_id` + expiration.
+  Never surfaces SDK exceptions in HTTP responses.
+- `GET /api/ringcentral/health` now includes six credential
+  booleans, `outbound_enabled`, `active_subscription_id`,
+  `active_subscription_expires`, and `webhook_url` (current pod).
+
+### 54.2 Inbound (no outbound risk)
+- `POST /webhook` dispatches by event type into per-family handlers:
+  - `_handle_telephony_event` — sanitized `call_logs` row + unknown
+    caller → `unmatched_calls` + inbound `leads`.
+    Full session detail fetched from RC when the envelope only
+    carries a `sessionId` (Phase 54 shape).
+  - `_handle_sms_event` — persists inbound SMS to `sms_messages`
+    with customer match; outbound delivery status callbacks update
+    existing rows by `rc_message_id`.
+  - `_handle_fax_event` — persists to `faxes` with attachment URL,
+    else `unmatched_faxes`.
+  - `_handle_voicemail_event` — persists caller_number, duration,
+    transcription_text, audio_url to `voicemails`.
+- Metadata-only `ringcentral_events` row per delivery (no payload
+  archival — the size in bytes is stored so admin can audit volume).
+- Customer-scoped read endpoints (new router `ringcentral_customer.py`):
+  - `GET /api/customers/{id}/call-logs`
+  - `GET /api/customers/{id}/voicemails`
+  - `GET /api/customers/{id}/faxes`
+  - `GET /api/customers/{id}/sms-threads`
+  - `GET /api/admin/unmatched-communications` (admin-only queue).
+
+### 54.3 Outbound (feature-flagged)
+- `POST /api/ringcentral/ringout` (admin+tech+super_admin) — RingOut
+  API. **Guarded**: returns `{mocked: true, reason:
+  "rc_outbound_disabled"}` when the flag is off. Persists
+  `direction: "outbound"` row to `call_logs` when live.
+- `POST /api/ringcentral/sms/send` (admin+tech+super_admin) —
+  same guard. When mocked, still persists a `sms_messages` row with
+  `delivery_status: "mocked"` so the thread UI shows the queued msg.
+- `POST /api/ringcentral/contacts/sync` (admin) — pushes customers
+  to RC address book; mocked when flag is off.
+- Nightly cron `rc_contact_pull_sync` at 03:00 UTC — mirrors the
+  push flow direction (pulls RC address book, dedups by phone,
+  inserts new `leads` with `source: "rc-contact-sync"`). No-ops
+  gracefully when outbound is disabled.
+
+### 54.4 Admin settings + toggle
+- `POST /api/ringcentral/settings/outbound` — writes `rc_settings`
+  collection. This is what the "Enable live outbound" button flips.
+- Runtime read wins over the env var so admins can toggle without
+  a pod restart.
+
+### 54.5 Admin test screen
+- `POST /api/ringcentral/simulate-inbound` (admin) — invokes the
+  internal event handlers with a fabricated payload. Never touches
+  RingCentral. Supports event types: `telephony.session`,
+  `instant-message-SMS`, `instant-message-Fax`,
+  `instant-message-VoiceMail`.
+- `GET /api/ringcentral/events?limit=` (admin) — recent metadata
+  rows (last 20 by default).
+- Combined web page at `/admin/settings/ringcentral` (aliased to
+  `/admin/ringcentral-test`):
+  - Green/red banner reflecting current outbound state.
+  - Credential-status card (6 rows).
+  - Actions column: register subscription, sync contacts, toggle
+    outbound (destructive confirm dialog when enabling).
+  - Admin test tools: SMS · RingOut · simulate inbound
+    (destructive `mustConfirm` on live SMS/RingOut).
+  - Live event feed auto-refreshing every 30s.
+
+### 54.6 Safety guardrails
+- Every outbound route:
+  1. Admin+tech role-gated (403 for customer).
+  2. `mustConfirm` modal in the UI with the destination number and
+     "live call/SMS from your RingCentral account" warning.
+  3. `is_outbound_enabled()` guard — mocked fallback when flag off.
+- Credentials never echoed in logs (grep-clean across 4 values).
+- No payloads archived — only metadata + size on
+  `ringcentral_events`.
+- Legacy `ai_ops.ringcentral_webhook` removed; call_logs / lead
+  creation preserved as a dispatched handler inside the new router.
+
+### Files touched
+- **New**: `backend/services/ringcentral_client.py`,
+  `backend/routers/ringcentral_customer.py`,
+  `frontend/src/pages/admin/RingCentralAdmin.jsx`.
+- **Overwritten**: `backend/routers/ringcentral.py` (v2 scaffold now
+  full Phase 54 router).
+- **Extended**: `backend/server.py` (register `ringcentral_customer`
+  router + nightly `rc_contact_pull_sync` cron), `backend/.env`,
+  `backend/requirements.txt` (ringcentral + observable pins),
+  `frontend/src/App.js`, `frontend/src/nav/adminNav.js`,
+  `backend/routers/ai_ops.py` (removed duplicate webhook).
+
+### Deferred
+- Phase 53 full Stripe surface: still awaiting rotated `sk_live_`.
+  Health + webhook scaffold live, but no `PaymentIntent.create` etc.
+- Phase 18B: blocked on user API keys.
+- Customer-inbox page (`/customers/{id}/inbox`): backend endpoints
+  live (`sms-threads`, `sms/send`); dedicated web page deferred
+  since techs already have the RingCentral admin page for testing.
+  Add when user requests customer-facing thread UI.
+
+### Live smoke snapshots
+- `GET /ringcentral/health` — 6 credential booleans + outbound_enabled=false + subscription null (register button will populate).
+- `POST /ringcentral/ringout` — `{mocked:true, reason:"rc_outbound_disabled"}`.
+- `POST /ringcentral/sms/send` — same, persists queued row.
+- `POST /ringcentral/contacts/sync` — same.
+- `POST /ringcentral/simulate-inbound {telephony.session}` — event stored, call_log created, unmatched_calls +1.
+- `GET /admin/unmatched-communications` — {calls:1, faxes:0, voicemails:0, total:1}.
+- customer role → HTTP 403 on `/ringout` (RBAC guard verified).
+
+### Next steps for the user (safety-controlled)
+1. Visit `/admin/settings/ringcentral` — verify all 6 credentials show
+   ✓ configured and the banner is green (Outbound DISABLED).
+2. Click "Register / Refresh webhook subscription" — subscription_id
+   populates, RC starts posting real events to this pod.
+3. In RingCentral, remove the OLD subscription pointing at
+   `pool-crm-app.preview.emergentagent.com` (if still active) — the
+   new registration replaces it.
+4. Use the test screen to trigger a "Simulate inbound" — verify the
+   event appears in the live feed and (if the from_number matches a
+   real customer) attaches to their call_logs.
+5. When ready: click "Enable live outbound" (confirms via Radix
+   modal). Send a real test SMS from the test screen. Verify
+   delivery on the target phone.
+
+### New OpenAPI endpoints (Phase 54)
+```
+GET  /api/ringcentral/health
+POST /api/ringcentral/webhook                         (public)
+POST /api/ringcentral/subscription/register           (admin)
+POST /api/ringcentral/ringout                         (admin+tech)
+POST /api/ringcentral/sms/send                        (admin+tech)
+POST /api/ringcentral/contacts/sync                   (admin)
+POST /api/ringcentral/settings/outbound               (admin)
+POST /api/ringcentral/simulate-inbound                (admin)
+GET  /api/ringcentral/events?limit=                   (admin)
+GET  /api/customers/{id}/call-logs
+GET  /api/customers/{id}/voicemails
+GET  /api/customers/{id}/faxes
+GET  /api/customers/{id}/sms-threads
+GET  /api/admin/unmatched-communications              (admin)
+```

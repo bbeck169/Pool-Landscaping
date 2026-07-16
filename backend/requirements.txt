@@ -135,3 +135,5 @@ websocket-client==1.9.0
 websockets==16.0
 yarl==1.24.2
 zipp==4.1.0
+ringcentral==0.9.2
+observable==0.3.2
