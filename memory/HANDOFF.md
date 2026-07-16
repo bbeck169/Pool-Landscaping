@@ -5490,3 +5490,141 @@ Honest scope disclosure up-front: this pass shipped Tasks 1 (skeleton), 2, 3 (ba
 **Human-required tests**
 - Real device geolocation permission flow (Task 3 mobile UI once wired).
 - Landscaping-department seed data — user needs to mark test users with `department: "landscaping"` before the punch endpoint accepts them (currently unset for all seeds → all punch attempts will 403; add via `db.users.updateOne` when testing).
+
+---
+
+## Phase 50 · Chemical costs · Margin leaderboard · Landscape attribution · Auto-Friday email (Feb 2026)
+
+Eight small/medium tasks shipped in one pass. 14/14 backend tests pass;
+preflight OK; Expo bundle HTTP 200.
+
+### 50.A — Chemical cost seeding + admin CRUD (P1)
+- New router `backend/routers/chemical_costs.py` — `chemical_costs` collection
+  (`{tenant_id, chemical_slug, name, unit_kind, cost_per_unit_cents,
+    updated_at, updated_by}`), unique index on `(tenant_id, chemical_slug)`.
+- Idempotent seed (9 defaults) runs in the background-seed pipeline;
+  also lazy-seeds on first `GET /api/admin/chemical-costs` per tenant.
+- Endpoints (admin+super_admin only):
+  - `GET  /api/admin/chemical-costs`
+  - `PUT  /api/admin/chemical-costs/{slug}`
+  - `POST /api/admin/chemical-costs/reseed`   (insert-only)
+- Web admin CRUD page `/admin/settings/chemical-costs` — editable name,
+  unit, and per-unit dollar amount + "Restore missing defaults" button.
+- `routers/budgets.py::job_costing()` now reads `cost_per_unit_cents`
+  (falls back to legacy `unit_cost_cents` for older schemas).
+
+### 50.B — Submit-time recheck confirmation (P2)
+- Web `ChecklistModal.jsx::closeJob` now calls
+  `_computeOutlierNames(report, job)`, pulls recent 4 readings via
+  `/api/service-reports/last-readings`, and opens a Radix `mustConfirm`
+  dialog when any current reading is >2× or <0.5× the recent median.
+  "Proceed anyway" continues the existing Close-job flow.
+- Mobile `job/[id]/checklist.tsx` mirrors the same helper and prompts
+  via `Alert.alert(...)` before the regular close-job confirm.
+
+### 50.C — 4-dot sparkline per reading row (P2)
+- New `ReadingSparkline` sub-component on both platforms. Silent when
+  fewer than 2 recent values or no median. Dots color-code green
+  (±20% of median), yellow (drifting), red (>2× / <0.5×). Rendered as
+  simple divs (web) / Views (mobile) — no new libs.
+- Fixed the pre-existing web bug: `ReadingInputRow` didn't accept
+  `recent` prop, and `isOutlier`/`median`/`draftNum` were unbound
+  identifiers in JSX. The web recheck hint now works.
+
+### 50.D — Job Margin Leaderboard (P1)
+- New `GET /api/reports/job-margin-leaderboard?days=60&limit=20`
+  (admin only). Iterates recently completed jobs, calls the existing
+  `job_costing` helper, computes revenue/cost/margin, and returns
+  `{items, count, window_days, total_evaluated}` sorted by margin_pct.
+- New admin page `/admin/reports/job-margins` with a sortable table
+  + colored margin % pill (>40% green, 20-40% yellow, <20% red).
+
+### 50.E — "Next Job" quick-jump chip on tech /jobs (P2)
+- Mobile `(app)/jobs.tsx` — renders a chip at the top of the list
+  (below Header, above FilterRow) showing the earliest scheduled-today
+  incomplete job for the tech. Tap → `router.push("/job/{id}")`
+  and marks the job "viewed" (see 50.F). Silent when no candidate.
+
+### 50.F — Unread-updates badge on JobCards (P2)
+- Mobile `(app)/jobs.tsx` — bulk-loads AsyncStorage keys
+  `jv_${userId}_${jobId}` to determine which cards have unseen updates.
+  Compares against the new `last_activity_at` field on the job payload.
+- `widgets.tsx::JobCard` now accepts `unread` + `onView` props; renders
+  a red dot in the top-right corner when the timestamp is newer than
+  the last viewed time.
+- Backend `list_jobs` now emits `last_activity_at` on each job
+  (max of `updated_at`, `last_activity_at`, service_report.updated_at).
+
+### 50.G — Auto-Friday Pool Service Report email (P2)
+- New service `backend/services/pool_service_email.py`:
+  - `run_weekly_pool_service_email()` iterates every tenant, calls
+    `compute_pool_service()` for the current week, composes an HTML
+    digest, and sends via Resend if `RESEND_API_KEY` is set.
+  - MOCKED behavior: when Resend is missing, logs to
+    `email_delivery_log` with `mocked: true,
+    reason: "resend_key_missing"`. All attempts (real or mocked) are
+    written to the log under `kind: "pool_service_report"`.
+- APScheduler cron `pool_service_weekly_email` — Friday 17:00 UTC.
+- New admin endpoint `GET /api/reports/pool-service/email-history?limit=10`
+  and a "Schedule / History" panel appended to `/admin/reports/pool-service`.
+
+### 50.H — Landscape punches → job attribution (P1)
+- `timeclock_punches` schema extended with optional `job_id`; a
+  clock-out inherits its `job_id` from the paired open "in" when the
+  client doesn't explicitly pass one.
+- `PunchIn.job_id` optional (Pydantic). `GET /api/timeclock/mine-today`
+  now emits `open_job_id` for the currently-open shift.
+- New endpoint `GET /api/timeclock/mine-jobs-today` — landscape
+  techs only; returns today's assigned jobs so the widget can render
+  a picker.
+- `job_costing()` in `routers/budgets.py` now walks `timeclock_punches`
+  where `job_id == this job` and adds those hours to `actual.labor_cents`.
+- Web `LandscapingClockWidget.jsx` + mobile `LandscapingClockWidget.tsx`
+  render a "Attach to" dropdown with today's jobs (defaults to
+  "General work"). The picked `job_id` is sent on clock-in.
+
+### Tests
+- New `backend/tests/test_phase50.py` — **14/14 pass** covering all
+  eight tasks.
+- Testing agent applied one minor fix: `service-reports/last-readings`
+  early-return branch (customer with no jobs) previously omitted
+  `recent_readings` — now returns both keys unconditionally.
+
+### Files touched
+- **New**: `backend/routers/chemical_costs.py`,
+  `backend/services/pool_service_email.py`,
+  `backend/tests/test_phase50.py`,
+  `frontend/src/pages/admin/ChemicalCosts.jsx`,
+  `frontend/src/pages/admin/JobMarginLeaderboard.jsx`.
+- **Extended**: `backend/server.py` (register + seed + Friday cron),
+  `backend/routers/jobs.py` (`last_activity_at`, `job-margin-leaderboard`,
+  `email-history`), `backend/routers/timeclock_landscaping.py`
+  (`job_id`, `mine-jobs-today`, `open_job_id`),
+  `backend/routers/budgets.py` (chemical_costs schema + landscape punches),
+  `backend/routers/service_reports.py` (empty-recent-readings fix),
+  `frontend/src/App.js`, `frontend/src/nav/adminNav.js`,
+  `frontend/src/components/checklist/ChecklistModal.jsx`,
+  `frontend/src/components/checklist/PoolChecklistForm.jsx`,
+  `frontend/src/components/LandscapingClockWidget.jsx`,
+  `frontend/src/pages/reports/PoolServiceReport.jsx`,
+  `mobile/app/(app)/jobs.tsx`,
+  `mobile/app/job/[id]/checklist.tsx`,
+  `mobile/src/components/widgets.tsx`,
+  `mobile/src/components/checklist/ReadingChipRow.tsx`,
+  `mobile/src/components/LandscapingClockWidget.tsx`.
+
+### Verified live on preview
+- `curl GET /api/admin/chemical-costs` → 9 items, correct schema.
+- `PUT /api/admin/chemical-costs/muriatic_acid {cost_per_unit_cents: 625}` →
+  echoes new price, `updated_by` populated.
+- `POST /api/admin/chemical-costs/reseed` → `{inserted: 0}` (idempotent).
+- `GET /api/reports/job-margin-leaderboard?days=60` → sorted items with
+  margin_pct pills.
+- Admin `/admin/settings/chemical-costs` and `/admin/reports/job-margins`
+  render cleanly (screenshots verified).
+- Landscape widget renders + picks up mine-jobs-today.
+- Preflight: `preflight OK`. Expo bundle: HTTP 200.
+
+### Deferred (non-blocking)
+- Phase 51 recurring-job engine + Phase 32 Wave 3 still queued.
+- Phase 18B OAuth blocked on user keys.
