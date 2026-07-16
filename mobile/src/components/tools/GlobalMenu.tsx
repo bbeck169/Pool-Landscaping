@@ -24,7 +24,7 @@
  */
 import React, { useState } from "react";
 import {
-  View, Modal, Pressable, StyleSheet, Text, Platform,
+  View, Modal, Pressable, StyleSheet, Text, Alert, Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -38,7 +38,7 @@ export const GlobalMenu: React.FC = () => {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const role = (user?.role as string) || "";
   // Staff-only surface. Customers keep their portal nav; not-yet-loaded
   // users don't need a menu either.
@@ -51,6 +51,37 @@ export const GlobalMenu: React.FC = () => {
     // before the router unmounts the current screen — otherwise the
     // sheet snaps out abruptly on Android.
     setTimeout(() => { router.push(t.route as any); }, 60);
+  };
+
+  /**
+   * Phase 44 · mobile logout entry. Confirmation via native `Alert.alert`
+   * (matching Alert-based confirmations elsewhere in mobile — e.g.
+   * closeJob in `checklist.tsx`), then hands off to the AuthContext's
+   * `logout()` which clears the JWT + AsyncStorage session and unmounts
+   * back to `/login`. We deliberately DO NOT flush the offline
+   * `writeQueue` on logout — the queued entries are scoped by device,
+   * not by session, and the tech might genuinely have work that hasn't
+   * synced yet. If a different user logs in they simply won't see the
+   * previous user's stale queue drains (writeQueue idempotency keys +
+   * server-side auth scoping guarantee that).
+   */
+  const doLogout = () => {
+    Alert.alert(
+      "Log out?",
+      "You'll need to sign in again.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Log out",
+          style: "destructive",
+          onPress: async () => {
+            setOpen(false);
+            try { await logout(); } catch { /* logout is best-effort */ }
+          },
+        },
+      ],
+      { cancelable: true },
+    );
   };
 
   return (
@@ -102,6 +133,21 @@ export const GlobalMenu: React.FC = () => {
             </Pressable>
           </View>
           <ToolsMenuBody variant="sheet" onNavigate={handleNavigate} />
+          {/* Phase 44 · logout entry — divider above + destructive tint.
+              Sits pinned at the bottom of the sheet so techs always find
+              it after search + tools regardless of scroll position. */}
+          <View style={styles.logoutWrap}>
+            <Pressable
+              onPress={doLogout}
+              style={styles.logoutBtn}
+              testID="mobile-menu-logout"
+              accessibilityRole="button"
+              accessibilityLabel="Log out"
+            >
+              <Ionicons name="log-out-outline" size={18} color={colors.error} />
+              <Text style={styles.logoutText}>Log out</Text>
+            </Pressable>
+          </View>
         </View>
       </Modal>
     </>
@@ -154,5 +200,27 @@ const styles = StyleSheet.create({
     fontFamily: font.semibold,
     fontSize: fontSize.lg,
     color: colors.onSurface,
+  },
+  logoutWrap: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    padding: spacing.md,
+    backgroundColor: colors.surface,
+  },
+  logoutBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    paddingVertical: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.error,
+    backgroundColor: "#FEF2F2",
+  },
+  logoutText: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.base,
+    color: colors.error,
   },
 });

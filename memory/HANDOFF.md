@@ -5325,3 +5325,34 @@ Closes out Phase 40. Techs can now edit + submit checklists in zero-signal backy
 - Quick-add sheet swipe-down dismiss — right now we ship a visual grabber + backdrop-tap + hardware-back + close X, but not a real swipe gesture (would require a rewrite on top of gesture-handler). Confirm this is acceptable UX vs. a future upgrade.
 - Radix confirm dialog `Esc`/`Enter` on Windows Chrome + macOS Safari (Radix-managed but worth a smoke test).
 - On smaller phone widths (iPhone SE), confirm the top-right hamburger doesn't overlap any per-screen top-right action.
+
+#### Phase 44 · Web Admin Top Bar + Mobile Logout
+
+**Task 1 — Web Admin Top Bar** (`/app/frontend/`)
+- **New** `src/layouts/AdminTopBar.jsx` — persistent sticky bar of 6 Radix `DropdownMenu` triggers, one per `ADMIN_NAV_V2` category. Each dropdown lists every entry the user can see (filter mirrors the sidebar's `usePermissions().can(feature, "read")` + `hard_rule` logic exactly), grouped by `subsection` with `DropdownMenuLabel` / `DropdownMenuSeparator` for readability. Radix already installed via `dropdown-menu.jsx` — no new nav library. Sidebar UNTOUCHED.
+- Responsive:
+  - `≥md` — full 6-dropdown row.
+  - `<md` — single "Menu" trigger opening a nested-sub-menu list of the same 6 categories with the same 100% page coverage. Sticky-top, `z-30`, doesn't collide with the mobile top bar which sits above at `z-30` too (both `sticky top-0` and stack naturally in DOM order).
+- Wired in `src/layouts/AppLayout.jsx` — rendered directly above `<Outlet />`, gated on `role === admin || super_admin` (same guard the sidebar uses). Zero regression to the sidebar or the mobile drawer.
+- Testids: `admin-topbar`, `admin-topbar-{key}` (each category trigger), `admin-topbar-{key}-menu`, `admin-topbar-link-{slug}` (per link, slug is the route with `/` → `-`), `admin-topbar-mobile-trigger`, `admin-topbar-mobile-menu`, `admin-topbar-mobile-{key}`.
+- Coverage guarantee: since the bar renders straight from `ADMIN_NAV_V2` with the same RBAC filter as the sidebar, every route the sidebar surfaces is reachable in ≤2 clicks (1 click on the category trigger + 1 on the link).
+
+**Task 2 — Mobile Logout in the Global Menu sheet** (`/app/mobile/`)
+- Modified `src/components/tools/GlobalMenu.tsx`:
+  - Pulled `logout` out of the existing `useAuth()` context (no new auth surface).
+  - Added a pinned-bottom `<View>` inside the sheet with a divider on top and a destructive-tinted "Log out" button (`log-out-outline` icon, `colors.error` fg, pale-red `#FEF2F2` fill, red border).
+  - Confirmation via native `Alert.alert("Log out?", "You'll need to sign in again.", …)` with a `destructive`-styled "Log out" action and a "Cancel" default. Matches the mobile app's existing Alert-based confirmation pattern (e.g. `closeJob()` in `checklist.tsx`).
+  - Tapping "Log out" → closes the sheet → awaits `logout()` (best-effort try/catch so a network glitch during token revocation doesn't leave the user stranded on the menu) → the existing `AuthContext` handles the AsyncStorage clear + redirect to login.
+  - Deliberate: DO NOT flush `writeQueue.ts` on logout. Queue entries are device-scoped with `X-Idempotency-Key`s and server-side auth guarantees they can't cross-user contaminate; a real logged-out-then-back-in tech should still see their pending sync land safely.
+  - Testid: `mobile-menu-logout`.
+
+**Verification**
+- `bash /app/scripts/preflight.sh` → **`preflight OK` (exit 0)**.
+- `curl -s http://localhost:3001/…/entry.bundle?platform=web&dev=true` → **HTTP 200** (bundle bytes clean; no `Unable to resolve` / `InternalError` real messages — only the framework's internal ERROR_FORMAT regex string).
+- Frontend supervisor process still returns HTTP 200 on `localhost:3000`.
+- `yarn tsc --noEmit -p /app/mobile` → **zero new errors** (baseline moved from 93 → 92; one earlier `any`-cast coincidentally cleared).
+
+**Confirmations**
+- (a) Sidebar untouched — no edits to `AdminSidebar.jsx`; verified via `git diff --stat`.
+- (b) Top bar covers 100% of admin pages — reads directly from `ADMIN_NAV_V2` (the same single source of truth the sidebar reads) with the same RBAC filter; ≤2 clicks to any route.
+- (c) Mobile logout sits at the bottom of the Global Menu sheet with an `Alert.alert` confirmation ("Log out? You'll need to sign in again." — Cancel / Log out).

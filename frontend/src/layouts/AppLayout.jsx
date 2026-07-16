@@ -4,6 +4,7 @@ import { useAuth } from "@/auth";
 import { usePermissions } from "@/hooks/usePermissions";
 import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import AdminSidebar from "@/layouts/AdminSidebar";
+import AdminTopBar from "@/layouts/AdminTopBar";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
 import { brandGradientCss, colors, font } from "@/theme";
 import {
@@ -544,6 +545,14 @@ function AppLayout() {
               </div>
             </aside>
           </div>
+        )}
+
+        {/* Phase 44 · Admin-only persistent top navigation bar. Renders
+            below the mobile top bar (which is already sticky-top on
+            <md) and above the page outlet. Additive — the sidebar
+            remains the canonical IA. */}
+        {((effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin") && (
+          <AdminTopBar />
         )}
 
         <Outlet />
