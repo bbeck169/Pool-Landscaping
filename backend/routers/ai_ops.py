@@ -350,59 +350,12 @@ async def list_call_logs(admin: dict = Depends(require_admin)):
     return await db.call_logs.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
 
 
-@router.post("/ringcentral/webhook")
-async def ringcentral_webhook(request: Request):
-    """Public — RingCentral posts here. Signature check skipped when unconfigured.
-
-    Accepts BOTH shapes:
-      • Legacy: {"from":{"phoneNumber":"..."},"to":{"phoneNumber":"..."},"duration":45,"recording":{"contentUri":"..."}}
-      • Nested: {"call":{"from":"+14805551212","to":"+16028874400","duration":45,"direction":"inbound","recording_url":"..."}}
-    """
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-
-    # Detect shape: nested `call.*` (new) vs top-level (legacy).
-    call = body.get("call") if isinstance(body.get("call"), dict) else None
-    if call:
-        src = call
-        from_raw = src.get("from")
-        to_raw = src.get("to")
-        from_number = from_raw if isinstance(from_raw, str) else (from_raw or {}).get("phoneNumber", "")
-        to_number = to_raw if isinstance(to_raw, str) else (to_raw or {}).get("phoneNumber", "")
-        duration = src.get("duration") or 0
-        recording_url = (
-            src.get("recording_url")
-            or ((src.get("recording") or {}).get("contentUri") if isinstance(src.get("recording"), dict) else None)
-        )
-        direction = src.get("direction")
-    else:
-        from_number = (body.get("from") or {}).get("phoneNumber") or body.get("from_number") or ""
-        to_number = (body.get("to") or {}).get("phoneNumber") or body.get("to_number") or ""
-        duration = body.get("duration") or 0
-        recording_url = (body.get("recording") or {}).get("contentUri") or body.get("recording_url")
-        direction = body.get("direction")
-
-    # Match customer by phone
-    match = None
-    if from_number:
-        match = await db.customers.find_one({"phones": from_number}, {"_id": 0}) or \
-                await db.customers.find_one({"phones": {"$regex": from_number[-7:]}}, {"_id": 0})
-    log = {
-        "id": new_id(), "from_number": from_number, "to_number": to_number,
-        "duration": duration, "recording_url": recording_url,
-        "direction": direction,
-        "customer_id": (match or {}).get("id"),
-        "customer_name": (match or {}).get("name"),
-        "created_at": now_iso(), "raw": body,
-    }
-    await db.call_logs.insert_one(log)
-    # Create a lead if unknown
-    if not match and from_number:
-        await db.leads.insert_one({
-            "id": new_id(), "source": "ringcentral-inbound",
-            "phone": from_number, "name": f"Unknown caller {from_number[-4:]}",
-            "created_at": now_iso(), "status": "new",
-        })
-    log.pop("_id", None); return {"ok": True, "log_id": log["id"]}
+# NOTE — RingCentral `/webhook` endpoint moved to
+# `backend/routers/ringcentral.py` in Phase 52. That router owns the
+# subscription-validation flow (`Validation-Token` echo) + metadata-only
+# `ringcentral_events` logging. Legacy call_logs / lead creation is
+# preserved there as a dispatched handler for `telephony.session`
+# events (see `ringcentral._maybe_create_call_log_and_lead`).
 
 
 # ─── Manual sequences tick trigger ─────────────────────────────────────────

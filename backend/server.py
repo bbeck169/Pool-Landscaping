@@ -34,6 +34,7 @@ from routers import (
     recurring_jobs,
     stripe_admin,
     zillow_admin,
+    ringcentral,
 )
 
 app = FastAPI(
@@ -70,7 +71,8 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                chemical_costs,
                recurring_jobs,
                stripe_admin,
-               zillow_admin]:
+               zillow_admin,
+               ringcentral]:
     api_router.include_router(module.router)
 
 
