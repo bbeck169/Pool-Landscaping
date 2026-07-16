@@ -47,6 +47,35 @@ const AUTOSAVE_DEBOUNCE_MS = 800;
 const MIN_SAVING_MS = 400;
 const PHOTO_CAP = 10;
 
+// Phase 50.B — Return the display names of any reading whose current
+// value is more than 2× or less than 0.5× the rolling median of the
+// last 4 submitted values for the same customer.
+async function _mobileComputeOutlierNames(report: any, job: any): Promise<string[]> {
+  const customerId = job?.customer_id || report?.job?.customer_id;
+  if (!customerId) return [];
+  const readings = report?.chemical_readings || [];
+  if (!readings.length) return [];
+  const res: any = await api.get(`/service-reports/last-readings?customer_id=${customerId}`);
+  const recentMap: Record<string, number[]> = res?.recent_readings || {};
+  const outliers: string[] = [];
+  for (const r of readings) {
+    const val = Number(r?.value);
+    if (!isFinite(val) || val <= 0) continue;
+    const key = String(r?.key || r?.name || "").toLowerCase();
+    const arr = (recentMap[key] || recentMap[r?.key] || recentMap[r?.name] || [])
+      .filter((x: number) => isFinite(x));
+    if (arr.length < 2) continue;
+    const sorted = [...arr].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    if (!median) continue;
+    if (val > 2 * median || val < 0.5 * median) {
+      outliers.push(r?.name || key);
+    }
+  }
+  return outliers;
+}
+
 export default function JobChecklistScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -232,6 +261,25 @@ export default function JobChecklistScreen() {
   // ─── Close job ───────────────────────────────────────────────────────
   const closeJob = async () => {
     if (!report || submitting) return;
+    // Phase 50.B — outlier "Recheck?" confirmation before the regular
+    // Close-job dialog. Fail-open on any error so we never trap the tech.
+    try {
+      const outliers = await _mobileComputeOutlierNames(report, job);
+      if (outliers.length > 0) {
+        const proceed = await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            "One of your readings looks off",
+            `${outliers.join(", ")} — proceed anyway?`,
+            [
+              { text: "Let me recheck", style: "cancel", onPress: () => resolve(false) },
+              { text: "Proceed anyway", style: "destructive", onPress: () => resolve(true) },
+            ],
+            { cancelable: true, onDismiss: () => resolve(false) }
+          );
+        });
+        if (!proceed) return;
+      }
+    } catch { /* non-blocking */ }
     Alert.alert(
       "Close job?",
       "Customer will see the final report.",

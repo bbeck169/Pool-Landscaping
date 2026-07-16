@@ -208,6 +208,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/reports/customer-retention",  label: "Customer Retention",icon: Users,      feature: "reports" },
     { to: "/reports/revenue-slices",      label: "Revenue Slices",    icon: PieChart,  feature: "reports" },
     { to: "/admin/reports/pool-service",   label: "Pool Service Report", icon: Waves,   feature: "reports" },
+    { to: "/admin/reports/job-margins",    label: "Job Margin Leaderboard", icon: TrendingUp, feature: "reports" },
+    { to: "/admin/settings/chemical-costs",label: "Chemical Costs",      icon: Calculator, feature: "settings" },
     { to: "/admin/budget",                 label: "Budget Setup",        icon: Calculator, feature: "settings" },
     { to: "/admin/budget/dashboard",       label: "Budget Dashboard",    icon: TrendingUp, feature: "reports" },
     { to: "/admin/budget/wizard",          label: "Budget Wizard",       icon: Sparkles, feature: "settings" },

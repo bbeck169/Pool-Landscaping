@@ -899,7 +899,7 @@ async def last_readings(
     ).to_list(2000)
     jids = [j["id"] for j in jobs]
     if not jids:
-        return {"customer_id": customer_id, "readings": {}}
+        return {"customer_id": customer_id, "readings": {}, "recent_readings": {}}
     # Reports for those jobs, submitted, most recent first.
     reports = await db.service_reports.find(
         {"job_id": {"$in": jids}, "submitted_at": {"$ne": None}},

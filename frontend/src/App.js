@@ -131,6 +131,8 @@ import ToolsHub from "@/pages/tech/ToolsHub";
 import BusinessCard from "@/pages/tech/BusinessCard";
 import LandscapingTimeClock from "@/pages/tech/LandscapingTimeClock";
 import PoolServiceReport from "@/pages/reports/PoolServiceReport";
+import JobMarginLeaderboard from "@/pages/admin/JobMarginLeaderboard";
+import ChemicalCosts from "@/pages/admin/ChemicalCosts";
 import BudgetSetup from "@/pages/budget/BudgetSetup";
 import BudgetDashboard from "@/pages/budget/BudgetDashboard";
 import BudgetWizard from "@/pages/budget/BudgetWizard";
@@ -310,6 +312,10 @@ export default function App() {
             <Route path="landscape/time-clock" element={<LandscapingTimeClock />} />
             {/* Phase 46.4 — Pool Service Report (admin/super_admin) */}
             <Route path="admin/reports/pool-service" element={<AdminOnly><PoolServiceReport /></AdminOnly>} />
+            {/* Phase 50.D — Job Margin Leaderboard (admin/super_admin) */}
+            <Route path="admin/reports/job-margins" element={<AdminOnly><JobMarginLeaderboard /></AdminOnly>} />
+            {/* Phase 50.A — Chemical Costs CRUD (admin/super_admin) */}
+            <Route path="admin/settings/chemical-costs" element={<AdminOnly><ChemicalCosts /></AdminOnly>} />
             {/* Phase 47 — Budgeting Suite */}
             <Route path="admin/budget" element={<AdminOnly><BudgetSetup /></AdminOnly>} />
             <Route path="admin/budget/dashboard" element={<AdminOnly><BudgetDashboard /></AdminOnly>} />

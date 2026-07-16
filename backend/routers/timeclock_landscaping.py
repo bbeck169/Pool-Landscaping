@@ -38,6 +38,10 @@ class PunchIn(BaseModel):
     accuracy_m: Optional[float] = None
     source: Literal["mobile", "web"] = "mobile"
     geo_denied: bool = False
+    # Phase 50.H — landscapers may attribute a shift to a specific job so
+    # `GET /api/jobs/{id}/costing` can bucket labor cost precisely.
+    # Optional; falls back to un-attributed "general work" when null.
+    job_id: Optional[str] = None
 
 
 def _require_landscaping(user: dict) -> None:
@@ -94,7 +98,15 @@ async def punch(body: PunchIn, user: dict = Depends(get_current_user)):
         "accuracy_m": body.accuracy_m,
         "source": body.source,
         "geo_denied": body.geo_denied,
+        # Phase 50.H — attach the job so the costing view can pull actual
+        # landscape labor into per-job margin. Optional (may be null).
+        "job_id": body.job_id,
     }
+    # If this is an "out" and the caller didn't specify a job, inherit
+    # from the matching open "in" so the paired shift lands on the same
+    # job — techs might forget to re-select on clock-out.
+    if body.punch_type == "out" and not body.job_id and open_in:
+        doc["job_id"] = open_in.get("job_id")
     await db.timeclock_punches.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -155,4 +167,26 @@ async def today(user: dict = Depends(get_current_user)):
         "punches": [{k: v for k, v in p.items() if k != "_id"} for p in rows],
         "seconds": _sum_shifts(rows),
         "clocked_in": open_in is not None,
+        "open_job_id": (open_in or {}).get("job_id") if open_in else None,
     }
+
+
+# ── Phase 50.H · Assigned jobs picker for the top-of-page widget ──────
+@router.get("/mine-jobs-today")
+async def my_jobs_today(user: dict = Depends(get_current_user)):
+    """List today's scheduled jobs for this landscape tech so the
+    clock-in widget can attach a job to the shift."""
+    _require_landscaping(user)
+    today = date.today().isoformat()
+    # Match either `technician_id == user.id` (rare) or the user's
+    # `technician_id` field (canonical after Phase 15D).
+    tech_link = user.get("technician_id") or user["id"]
+    cur = db.jobs.find(
+        {"tenant_id": user["tenant_id"],
+         "technician_id": {"$in": [tech_link, user["id"]]},
+         "scheduled_date": today},
+        {"_id": 0, "id": 1, "title": 1, "customer_name": 1,
+         "service_type": 1, "scheduled_start": 1, "status": 1},
+    ).sort("scheduled_start", 1)
+    items = await cur.to_list(50)
+    return {"items": items, "count": len(items)}

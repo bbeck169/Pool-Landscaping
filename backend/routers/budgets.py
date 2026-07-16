@@ -522,20 +522,58 @@ async def job_costing(jid: str,
     # Actual labor from time entries.
     entries = await _time_entries_for_job(tenant["id"], jid)
     total_minutes = sum(_minutes(e) for e in entries)
+    # Phase 50.H — include landscape punches attributed to this job.
+    landscape_seconds = 0
+    async for pin in db.timeclock_punches.find(
+        {"tenant_id": tenant["id"], "job_id": jid, "punch_type": "in"},
+        {"_id": 0, "user_id": 1, "timestamp": 1},
+    ):
+        # Find the paired "out" punch for this open-in (same user, later ts).
+        out = await db.timeclock_punches.find_one(
+            {"tenant_id": tenant["id"], "user_id": pin.get("user_id"),
+             "punch_type": "out", "job_id": jid,
+             "timestamp": {"$gt": pin.get("timestamp", "")}},
+            sort=[("timestamp", 1)],
+        )
+        if not out:
+            continue
+        try:
+            a = datetime.fromisoformat(str(pin["timestamp"]).replace("Z", "+00:00"))
+            b = datetime.fromisoformat(str(out["timestamp"]).replace("Z", "+00:00"))
+            landscape_seconds += max(0, int((b - a).total_seconds()))
+        except Exception:
+            continue
+    total_minutes += int(landscape_seconds // 60)
     labor_hourly_cents = int((est or {}).get("labor_hourly_cents") or 4000)  # $40/hr default
     actual_labor_cents = int(round(total_minutes / 60 * labor_hourly_cents))
     # Actual materials from service_report chemicals_added.
     rep = await db.service_reports.find_one(
         {"tenant_id": tenant["id"], "job_id": jid}, {"_id": 0, "chemicals_added": 1}
     )
-    chem_costs = {}
+    # Phase 50.A — chemical_costs join now uses `chemical_slug` +
+    # `cost_per_unit_cents`. Backwards-compat with the legacy shape
+    # (`slug`/`unit_cost_cents`) is retained via the `or` fallback.
+    chem_costs: Dict[str, int] = {}
     async for c in db.chemical_costs.find({"tenant_id": tenant["id"]}, {"_id": 0}):
-        chem_costs[str(c.get("slug") or c.get("name") or "").lower()] = int(c.get("unit_cost_cents") or 0)
+        price = int(c.get("cost_per_unit_cents") or c.get("unit_cost_cents") or 0)
+        slug = str(c.get("chemical_slug") or c.get("slug") or "").lower()
+        name = str(c.get("name") or "").lower()
+        if slug:
+            chem_costs[slug] = price
+        if name and name not in chem_costs:
+            chem_costs[name] = price
     actual_materials_cents = 0
     for row in ((rep or {}).get("chemicals_added") or []):
-        slug = str(row.get("slug") or row.get("chemical") or row.get("name") or "").lower()
+        # Match by slug first (dropdown-driven rows), then by chemical name.
+        raw_slug = str(row.get("slug") or row.get("chemical_slug") or "").lower()
+        raw_name = str(row.get("chemical") or row.get("name") or "").lower()
+        unit_cost = (chem_costs.get(raw_slug)
+                      if raw_slug and raw_slug in chem_costs else None)
+        if unit_cost is None and raw_name:
+            unit_cost = chem_costs.get(raw_name)
+        if unit_cost is None:
+            unit_cost = 500  # $5 legacy fallback for uncatalogued chems
         qty = float(row.get("quantity") or row.get("amount") or 0)
-        unit_cost = chem_costs.get(slug, 500)  # default $5 if uncatalogued
         actual_materials_cents += int(round(qty * unit_cost))
     # Actual equipment from inventory reservations (rough: qty * cost).
     actual_equipment_cents = 0

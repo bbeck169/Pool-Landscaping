@@ -155,9 +155,12 @@ export default function ReadingChipRow({
       style={[styles.card, notTested && styles.cardDim]}
     >
       <View style={styles.header}>
-        <Text style={styles.label}>
-          {label}{unit ? ` (${unit})` : ""}
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", flex: 1, gap: 8 }}>
+          <Text style={styles.label}>
+            {label}{unit ? ` (${unit})` : ""}
+          </Text>
+          <ReadingSparkline recent={recentArr} median={median} testKey={key} />
+        </View>
         <Pressable
           onPress={() => {
             if (locked) return;
@@ -225,6 +228,46 @@ export default function ReadingChipRow({
           ? `${previous.value}${unit ? ` ${unit}` : ""} · ${formatRelative(previous.at || null)}`
           : "—"}
       </Text>
+    </View>
+  );
+}
+
+// Phase 50.C — 4-dot inline sparkline of the recent readings.
+// Silent when we have fewer than 2 recent values. Uses View blocks
+// (no chart lib) so it renders on both native + web.
+function ReadingSparkline({
+  recent, median, testKey,
+}: {
+  recent: number[]; median: number | null; testKey: string;
+}) {
+  if (!Array.isArray(recent) || recent.length < 2 || !median) return null;
+  const values = recent.slice(-4);
+  const dots: React.ReactNode[] = [];
+  for (let i = 0; i < 4; i += 1) {
+    const val = values[i];
+    let tone: "green" | "yellow" | "red" | "empty" = "empty";
+    if (Number.isFinite(val)) {
+      const ratio = val / median;
+      if (ratio > 2 || ratio < 0.5) tone = "red";
+      else if (ratio > 1.2 || ratio < 0.8) tone = "yellow";
+      else tone = "green";
+    }
+    const bg =
+      tone === "green" ? "#22C55E" :
+      tone === "yellow" ? "#F59E0B" :
+      tone === "red" ? "#DC2626" : colors.border;
+    dots.push(
+      <View
+        key={i}
+        testID={`pool-reading-${testKey}-sparkline-dot-${i}`}
+        style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: bg, marginHorizontal: 1 }}
+      />
+    );
+  }
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center" }}
+          testID={`pool-reading-${testKey}-sparkline`}>
+      {dots}
     </View>
   );
 }

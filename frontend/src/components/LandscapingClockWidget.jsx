@@ -62,6 +62,9 @@ export default function LandscapingClockWidget() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [tick, setTick] = useState(0);
+  // Phase 50.H — landscape techs may attach a shift to a specific job.
+  const [assignedJobs, setAssignedJobs] = useState([]);
+  const [selectedJobId, setSelectedJobId] = useState("");
 
   useEffect(() => {
     if (!isLandscaper) return;
@@ -76,6 +79,11 @@ export default function LandscapingClockWidget() {
         const s = await api.get(`/timeclock/mine-summary?start=${start}&end=${end}`);
         if (alive) setWeek(s);
       } catch { /* silent */ }
+      // Phase 50.H — load today's assigned jobs for the dropdown.
+      try {
+        const j = await api.get("/timeclock/mine-jobs-today");
+        if (alive) setAssignedJobs(j?.items || []);
+      } catch { /* silent — widget still works with "General work" only */ }
     })();
     return () => { alive = false; };
   }, [isLandscaper]);
@@ -111,6 +119,8 @@ export default function LandscapingClockWidget() {
         punch_type,
         lat: geo.lat, lng: geo.lng, accuracy_m: geo.accuracy_m,
         source: "web", geo_denied: geo.geo_denied,
+        // Phase 50.H — attach the picked job (blank string ⇒ null).
+        job_id: punch_type === "in" ? (selectedJobId || null) : null,
       });
       const [t, w] = await Promise.all([
         api.get("/timeclock/mine-today"),
@@ -185,6 +195,30 @@ export default function LandscapingClockWidget() {
         {clocked ? <LogOut size={16} /> : <LogIn size={16} />}
         {clocked ? "Clock Out" : "Clock In"}
       </button>
+      {!clocked && assignedJobs.length > 0 ? (
+        <div className="w-full flex items-center gap-2 flex-wrap"
+             data-testid="landscape-clock-widget-job-picker">
+          <label className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: colors.muted }}>
+            Attach to
+          </label>
+          <select
+            value={selectedJobId}
+            onChange={(e) => setSelectedJobId(e.target.value)}
+            disabled={busy}
+            className="text-sm px-2 py-1.5 rounded-md flex-1 min-w-[220px]"
+            style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
+            data-testid="landscape-clock-widget-job-select"
+          >
+            <option value="">General work (no job)</option>
+            {assignedJobs.map((j) => (
+              <option key={j.id} value={j.id}>
+                {j.customer_name || j.title || "Unnamed job"}
+                {j.scheduled_start ? ` @ ${String(j.scheduled_start).slice(11, 16)}` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
       {error ? (
         <div
           className="w-full text-xs px-2 py-1.5 rounded-md inline-flex items-center gap-1"

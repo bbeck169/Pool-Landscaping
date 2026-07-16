@@ -44,6 +44,8 @@ export default function PoolServiceReport() {
   const [error, setError] = useState(null);
   const [sortKey, setSortKey] = useState("pools_serviced");
   const [sortDir, setSortDir] = useState("desc");
+  // Phase 50.G — email delivery history (Auto-Friday cron log).
+  const [history, setHistory] = useState([]);
 
   const load = async (ws) => {
     setLoading(true);
@@ -77,6 +79,18 @@ export default function PoolServiceReport() {
 
   useEffect(() => {
     load(week);
+  }, [week]);
+
+  // Phase 50.G — load Auto-Friday email history (last 10 attempts).
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await api.get("/reports/pool-service/email-history?limit=10");
+        if (alive) setHistory(res?.items || []);
+      } catch { /* silent — history panel just stays empty */ }
+    })();
+    return () => { alive = false; };
   }, [week]);
 
   const rows = useMemo(() => {
@@ -279,6 +293,68 @@ export default function PoolServiceReport() {
           </div>
         </div>
       )}
+
+      {/* Phase 50.G — Auto-Friday email history */}
+      <div
+        className="rounded-2xl mt-6 overflow-hidden"
+        style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+        data-testid="pool-service-email-history"
+      >
+        <div
+          className="px-4 py-3 text-xs font-semibold flex justify-between items-center"
+          style={{ background: colors.surfaceSecondary, color: colors.muted, borderBottom: `1px solid ${colors.border}` }}
+        >
+          <span>Auto-Friday email deliveries (last 10)</span>
+          <span style={{ fontStyle: "italic" }}>Cron: Friday 17:00 UTC</span>
+        </div>
+        {history.length === 0 ? (
+          <div className="px-4 py-6 text-center text-sm" style={{ color: colors.muted }}
+               data-testid="pool-service-email-history-empty">
+            No deliveries yet — the first cron run will appear here.
+          </div>
+        ) : (
+          <table className="w-full text-sm" data-testid="pool-service-email-history-table">
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${colors.border}` }}>
+                <th className="text-left px-4 py-2 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Sent at</th>
+                <th className="text-left px-4 py-2 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Week</th>
+                <th className="text-left px-4 py-2 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Recipients</th>
+                <th className="text-left px-4 py-2 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((h) => (
+                <tr key={h.id} data-testid={`pool-service-email-history-row-${h.id}`}
+                    style={{ borderBottom: `1px solid ${colors.border}` }}>
+                  <td className="px-4 py-2" style={{ color: colors.onSurface }}>
+                    {h.sent_at ? new Date(h.sent_at).toLocaleString() : "—"}
+                  </td>
+                  <td className="px-4 py-2 text-xs" style={{ color: colors.muted }}>
+                    {h.week_start} → {h.week_end}
+                  </td>
+                  <td className="px-4 py-2 text-xs" style={{ color: colors.muted }}>
+                    {(h.recipients || []).length} · {(h.total_completed || 0)} serviced
+                  </td>
+                  <td className="px-4 py-2">
+                    {h.mocked ? (
+                      <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                            style={{ background: "#FEF3C7", color: "#92400E" }}
+                            title={h.reason || "mocked"}>
+                        MOCKED · {h.reason || "no reason"}
+                      </span>
+                    ) : (
+                      <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                            style={{ background: "#DCFCE7", color: "#166534" }}>
+                        Sent
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }

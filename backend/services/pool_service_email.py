@@ -1,0 +1,159 @@
+"""Phase 50.G · Auto-Friday Pool Service Report email.
+
+Runs every Friday 17:00 UTC via APScheduler cron. For every tenant that
+has at least one admin/super_admin user, we:
+
+1. Compute this week's Pool Service Report (same math as
+   `GET /api/reports/pool-service`).
+2. Compose a lightweight HTML digest.
+3. Send via Resend if RESEND_API_KEY is set; otherwise log to
+   `email_delivery_log` with `mocked:true, reason:"resend_key_missing"`.
+4. Record every attempt (real or mocked) in `email_delivery_log`
+   under `kind: "pool_service_report"` so the admin history panel can
+   surface the last 10 runs.
+
+This module is import-safe: the scheduler wire-up in server.py just
+calls `run_weekly_pool_service_email()`. The Friday cadence, timezone,
+and retry policy are configured at scheduler-registration time — we
+just want to hit the "email each admin" iteration correctly.
+"""
+from __future__ import annotations
+
+import os
+from typing import Any, Dict, List
+
+from config import db, logger, RESEND_API_KEY, EMAIL_FROM, APP_PUBLIC_URL
+from utils import now_iso, new_id
+
+
+def _compose_html(tenant_name: str, report: Dict[str, Any]) -> str:
+    rows_html = ""
+    for r in (report.get("rows") or []):
+        rows_html += (
+            f"<tr>"
+            f"<td style='padding:6px 12px;border-bottom:1px solid #E2E8F0'>{r.get('technician_name', '—')}</td>"
+            f"<td style='padding:6px 12px;border-bottom:1px solid #E2E8F0;text-align:right;font-weight:600'>{r.get('completed', 0)}</td>"
+            f"<td style='padding:6px 12px;border-bottom:1px solid #E2E8F0;text-align:right;color:#B45309'>{r.get('skipped', 0)}</td>"
+            f"</tr>"
+        )
+    if not rows_html:
+        rows_html = (
+            "<tr><td colspan='3' style='padding:16px;text-align:center;color:#64748B;'>"
+            "No pool jobs completed this week.</td></tr>"
+        )
+    return f"""
+    <div style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif;color:#0F172A;">
+      <div style="background:#0EA5E9;padding:20px;border-radius:10px 10px 0 0;color:#fff;">
+        <h1 style="margin:0;font-size:20px;">{tenant_name} · Weekly Pool Service Report</h1>
+        <div style="font-size:12px;opacity:0.9;margin-top:4px;">
+          Week {report.get('week_start')} → {report.get('week_end')}
+        </div>
+      </div>
+      <div style="border:1px solid #E2E8F0;border-top:none;border-radius:0 0 10px 10px;padding:16px;background:#fff;">
+        <div style="margin-bottom:12px;font-size:13px;color:#334155;">
+          Total pools serviced this week:
+          <b>{report.get('total_completed', 0)}</b>
+          &nbsp;·&nbsp;
+          Skipped: <b style="color:#B45309;">{report.get('total_skipped', 0)}</b>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="background:#F1F5F9;">
+              <th style="padding:8px 12px;text-align:left;font-size:11px;text-transform:uppercase;color:#64748B;">Technician</th>
+              <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;color:#64748B;">Completed</th>
+              <th style="padding:8px 12px;text-align:right;font-size:11px;text-transform:uppercase;color:#64748B;">Skipped</th>
+            </tr>
+          </thead>
+          <tbody>{rows_html}</tbody>
+        </table>
+        <div style="margin-top:16px;font-size:12px;color:#64748B;">
+          <a href="{APP_PUBLIC_URL or ''}/admin/reports/pool-service" style="color:#0EA5E9;text-decoration:underline;">
+            View full report in the app →
+          </a>
+        </div>
+      </div>
+    </div>
+    """
+
+
+async def _get_tenant_admin_emails(tenant_id: str) -> List[str]:
+    users = await db.users.find(
+        {"tenant_id": tenant_id, "role": {"$in": ["admin", "super_admin"]}},
+        {"_id": 0, "email": 1},
+    ).to_list(200)
+    seen: set[str] = set()
+    out: List[str] = []
+    for u in users:
+        e = (u.get("email") or "").strip()
+        if e and e not in seen:
+            seen.add(e)
+            out.append(e)
+    return out
+
+
+async def _send_via_resend(subject: str, html: str, to_emails: List[str]) -> Dict[str, Any]:
+    if not RESEND_API_KEY:
+        return {"sent": False, "mocked": True, "reason": "resend_key_missing"}
+    if not to_emails:
+        return {"sent": False, "mocked": True, "reason": "no_recipients"}
+    try:
+        import resend
+        resend.api_key = RESEND_API_KEY
+        resp = resend.Emails.send({
+            "from": EMAIL_FROM or "onboarding@resend.dev",
+            "to": to_emails,
+            "subject": subject,
+            "html": html,
+        })
+        return {"sent": True, "mocked": False, "resend_id": (resp or {}).get("id")}
+    except Exception as e:
+        logger.warning(f"pool-service email send failed: {e}")
+        return {"sent": False, "mocked": True, "reason": f"resend_error: {e}"}
+
+
+async def _log_delivery(tenant_id: str, report: Dict[str, Any],
+                         recipients: List[str], result: Dict[str, Any]) -> None:
+    doc = {
+        "id": new_id(),
+        "tenant_id": tenant_id,
+        "kind": "pool_service_report",
+        "week_start": report.get("week_start"),
+        "week_end": report.get("week_end"),
+        "recipients": recipients,
+        "total_completed": int(report.get("total_completed") or 0),
+        "total_skipped": int(report.get("total_skipped") or 0),
+        "sent": bool(result.get("sent")),
+        "mocked": bool(result.get("mocked")),
+        "reason": result.get("reason"),
+        "resend_id": result.get("resend_id"),
+        "sent_at": now_iso(),
+    }
+    try:
+        await db.email_delivery_log.insert_one(doc)
+    except Exception as e:
+        logger.warning(f"email_delivery_log insert failed: {e}")
+
+
+async def run_weekly_pool_service_email() -> Dict[str, Any]:
+    """Iterate every tenant, compute the weekly pool-service report,
+    email admins (or MOCK) and log."""
+    # Lazy import to avoid circular jobs.py → this module.
+    from routers.jobs import compute_pool_service
+    results: List[Dict[str, Any]] = []
+    tenants = await db.tenants.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+    for t in tenants:
+        tid = t["id"]
+        tenant_name = t.get("name") or "Your business"
+        try:
+            report = await compute_pool_service(tid)
+        except Exception as e:
+            logger.warning(f"pool-service compute skipped for tenant {tid}: {e}")
+            continue
+        recipients = await _get_tenant_admin_emails(tid)
+        html = _compose_html(tenant_name, report)
+        subject = f"{tenant_name} · Pool Service Report · {report.get('week_start')} → {report.get('week_end')}"
+        result = await _send_via_resend(subject, html, recipients)
+        await _log_delivery(tid, report, recipients, result)
+        results.append({"tenant_id": tid, "tenant_name": tenant_name, **result,
+                          "recipients": len(recipients)})
+    return {"tenants_processed": len(results), "results": results}

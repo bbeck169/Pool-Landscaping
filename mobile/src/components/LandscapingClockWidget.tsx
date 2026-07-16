@@ -50,6 +50,10 @@ export default function LandscapingClockWidget() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  // Phase 50.H — landscape techs may attach a shift to a specific job.
+  const [assignedJobs, setAssignedJobs] = useState<any[]>([]);
+  const [selectedJobId, setSelectedJobId] = useState<string>("");
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
     if (!isLandscaper) return;
@@ -60,6 +64,10 @@ export default function LandscapingClockWidget() {
         const { start, end } = weekBounds();
         const s = await api.get(`/timeclock/mine-summary?start=${start}&end=${end}`);
         if (alive) setWeek(s);
+      } catch {}
+      try {
+        const j: any = await api.get("/timeclock/mine-jobs-today");
+        if (alive) setAssignedJobs(j?.items || []);
       } catch {}
     })();
     return () => { alive = false; };
@@ -96,6 +104,8 @@ export default function LandscapingClockWidget() {
         punch_type,
         lat: geo.lat, lng: geo.lng, accuracy_m: geo.accuracy_m,
         source: "mobile", geo_denied: geo.geo_denied,
+        // Phase 50.H — attach the picked job on clock-in. Blank ⇒ null.
+        job_id: punch_type === "in" ? (selectedJobId || null) : null,
       });
       const t = await api.get("/timeclock/mine-today"); setToday(t);
       const { start, end } = weekBounds();
@@ -148,6 +158,45 @@ export default function LandscapingClockWidget() {
         <Ionicons name={clocked ? "log-out-outline" : "log-in-outline"} size={18} color="#fff" />
         <Text style={styles.btnText}>{clocked ? "Clock Out" : "Clock In"}</Text>
       </Pressable>
+      {!clocked && assignedJobs.length > 0 ? (
+        <Pressable
+          onPress={() => setPickerOpen((v) => !v)}
+          style={styles.jobPickBtn}
+          testID="landscape-clock-widget-job-picker"
+        >
+          <Ionicons name="briefcase-outline" size={14} color={colors.onSurface} />
+          <Text style={styles.jobPickText} numberOfLines={1}>
+            {selectedJobId
+              ? `Attached: ${assignedJobs.find((j) => j.id === selectedJobId)?.customer_name || "job"}`
+              : "General work (no job)"}
+          </Text>
+          <Ionicons name={pickerOpen ? "chevron-up" : "chevron-down"} size={14} color={colors.muted} />
+        </Pressable>
+      ) : null}
+      {pickerOpen && !clocked ? (
+        <View style={styles.jobList} testID="landscape-clock-widget-job-list">
+          <Pressable
+            onPress={() => { setSelectedJobId(""); setPickerOpen(false); }}
+            style={[styles.jobItem, selectedJobId === "" && styles.jobItemActive]}
+            testID="landscape-clock-widget-job-item-none"
+          >
+            <Text style={styles.jobItemText}>General work (no job)</Text>
+          </Pressable>
+          {assignedJobs.map((j) => (
+            <Pressable
+              key={j.id}
+              onPress={() => { setSelectedJobId(j.id); setPickerOpen(false); }}
+              style={[styles.jobItem, selectedJobId === j.id && styles.jobItemActive]}
+              testID={`landscape-clock-widget-job-item-${j.id}`}
+            >
+              <Text style={styles.jobItemText} numberOfLines={1}>
+                {j.customer_name || j.title || "Unnamed job"}
+                {j.scheduled_start ? ` @ ${String(j.scheduled_start).slice(11, 16)}` : ""}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
       {error ? (
         <View style={styles.warn} testID="landscape-clock-widget-warning">
           <Ionicons name="warning-outline" size={13} color="#854D0E" />
@@ -181,6 +230,33 @@ const styles = StyleSheet.create({
   btnIn: { backgroundColor: colors.brand },
   btnOut: { backgroundColor: "#DC2626" },
   btnText: { fontFamily: font.bold, fontSize: 14, color: "#fff", letterSpacing: 0.5 },
+  jobPickBtn: {
+    marginTop: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  jobPickText: { flex: 1, fontFamily: font.semibold, fontSize: 12, color: colors.onSurface },
+  jobList: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface,
+    overflow: "hidden",
+  },
+  jobItem: {
+    paddingHorizontal: 10, paddingVertical: 8,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  jobItemActive: { backgroundColor: colors.brandTertiary },
+  jobItemText: { fontFamily: font.semibold, fontSize: 12, color: colors.onSurface },
   warn: {
     marginTop: spacing.sm, flexDirection: "row", alignItems: "center", gap: 6,
     backgroundColor: "#FEF9C3", borderColor: "#FDE68A", borderWidth: 1,

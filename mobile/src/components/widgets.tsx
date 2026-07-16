@@ -88,17 +88,32 @@ export function IconButton({ icon, onPress, testID }: { icon: any; onPress: () =
   );
 }
 
-export function JobCard({ job, testID, locked }: { job: any; testID?: string; locked?: boolean }) {
+export function JobCard({ job, testID, locked, unread, onView }: { job: any; testID?: string; locked?: boolean; unread?: boolean; onView?: () => void }) {
   const router = useRouter();
   const { user } = useAuth();
   const hidePrice = user?.role === "technician";
   return (
     <Pressable
       testID={testID}
-      onPress={() => (locked ? undefined : router.push(`/job/${job.id}`))}
+      onPress={() => {
+        if (locked) return;
+        if (onView) onView();
+        router.push(`/job/${job.id}`);
+      }}
       disabled={locked}
       style={({ pressed }) => [styles.jobCard, pressed && !locked && { opacity: 0.9 }, locked && styles.jobCardLocked]}
     >
+      {unread ? (
+        <View
+          testID={`job-card-unread-${job.id}`}
+          style={{
+            position: "absolute", top: 8, right: 8, zIndex: 5,
+            minWidth: 10, height: 10, borderRadius: 5,
+            backgroundColor: "#DC2626",
+            borderWidth: 2, borderColor: "#fff",
+          }}
+        />
+      ) : null}
       {locked ? (
         <View style={styles.lockBadge}>
           <Ionicons name="lock-closed" size={12} color={colors.muted} />

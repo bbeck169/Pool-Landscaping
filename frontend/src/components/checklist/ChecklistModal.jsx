@@ -29,6 +29,35 @@ const _fmtRelSaved = (d) => {
     return d.toLocaleTimeString();
   } catch { return ""; }
 };
+
+// Phase 50.B — compute display names of readings whose current value is
+// more than 2× or less than 0.5× the rolling median of the last 4
+// submitted values for the customer. Returns [] when nothing looks off.
+async function _computeOutlierNames(report, job) {
+  const customerId = job?.customer_id || report?.job?.customer_id;
+  if (!customerId) return [];
+  const readings = report?.chemical_readings || [];
+  if (!readings.length) return [];
+  const res = await api.get(`/service-reports/last-readings?customer_id=${customerId}`);
+  const recentMap = res?.recent_readings || {};
+  const outliers = [];
+  for (const r of readings) {
+    const val = Number(r?.value);
+    if (!Number.isFinite(val) || val <= 0) continue;
+    const key = String(r?.key || r?.name || "").toLowerCase();
+    const arr = (recentMap[key] || recentMap[r?.key] || recentMap[r?.name] || [])
+      .filter((x) => Number.isFinite(x));
+    if (arr.length < 2) continue;
+    const sorted = [...arr].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    if (!median) continue;
+    if (val > 2 * median || val < 0.5 * median) {
+      outliers.push(r?.name || key);
+    }
+  }
+  return outliers;
+}
 import { Loader2, Save, ShieldCheck, X } from "lucide-react";
 
 import { api } from "@/api";
@@ -189,6 +218,24 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
 
   const closeJob = async () => {
     if (!report || submitting) return;
+    // Phase 50.B — if any reading is an outlier vs recent median,
+    // show a Radix confirm before the regular Close-job confirm.
+    try {
+      const outlierNames = await _computeOutlierNames(report, job);
+      if (outlierNames.length > 0) {
+        const proceed = await mustConfirm({
+          title: "One of your readings looks off — proceed anyway?",
+          description: `The following look out-of-range vs recent visits: ${outlierNames.join(", ")}. Double-check before closing?`,
+          confirmText: "Proceed anyway",
+          cancelText: "Let me recheck",
+          tone: "default",
+        });
+        if (!proceed) return;
+      }
+    } catch (e) {
+      // Non-blocking — a network hiccup fetching recent readings must
+      // never prevent the tech from closing a job.
+    }
     // Phase 31 · Step 2c — Radix-driven confirm (was window.confirm).
     const ok = await mustConfirm({
       title: "Close job?",

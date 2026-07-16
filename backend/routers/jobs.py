@@ -203,7 +203,7 @@ async def list_jobs(
             reports = await db.service_reports.find(
                 {"tenant_id": tenant["id"], "job_id": {"$in": jids}},
                 {"_id": 0, "job_id": 1, "chemical_readings": 1, "chemicals_added": 1,
-                 "checklist_items": 1, "notes": 1},
+                 "checklist_items": 1, "notes": 1, "updated_at": 1},
             ).to_list(len(jids) * 2)
             by_job: dict = {}
             for r in reports:
@@ -223,6 +223,20 @@ async def list_jobs(
                 d["has_public_note"] = bool(d.get("customer_note"))
                 d["has_repair_request"] = bool(d.get("repair_request"))
                 d["has_shopping_request"] = bool(d.get("shopping_request"))
+                # Phase 50.F — expose the newest activity timestamp on the
+                # job so the mobile JobCard can render a red-dot badge when
+                # updates land after the tech's last-viewed timestamp
+                # (stored client-side in AsyncStorage).
+                candidates = [
+                    d.get("updated_at"),
+                    d.get("last_activity_at"),
+                    (rep or {}).get("updated_at"),
+                ]
+                # Include the tech's most recent note if it's a datetime
+                # string (rare but possible on legacy schemas).
+                candidates = [c for c in candidates if isinstance(c, str) and c]
+                if candidates:
+                    d["last_activity_at"] = max(candidates)
     except Exception as _e:
         # Never let this augmentation break the jobs list — pills just render gray.
         for d in docs:
@@ -910,6 +924,81 @@ async def pool_service_report(date_from: Optional[str] = Query(None),
     Meant to be pulled every Friday. Defaults to the current service week (Mon-Sun).
     """
     return await compute_pool_service(tenant["id"], date_from, date_to)
+
+
+# ─── Phase 50.G · Auto-Friday email delivery history ─────────────────
+@router.get("/reports/pool-service/email-history")
+async def pool_service_email_history(
+    limit: int = Query(10, ge=1, le=50),
+    admin: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Return the most recent Pool Service Report auto-email attempts
+    (success + MOCKED) for this tenant."""
+    rows = await db.email_delivery_log.find(
+        {"tenant_id": tenant["id"], "kind": "pool_service_report"},
+        {"_id": 0},
+    ).sort("sent_at", -1).to_list(limit)
+    return {"items": rows, "count": len(rows)}
+
+
+# ─── Phase 50.D · Job Margin Leaderboard ─────────────────────────────
+@router.get("/reports/job-margin-leaderboard")
+async def job_margin_leaderboard(
+    days: int = Query(60, ge=7, le=365),
+    limit: int = Query(20, ge=1, le=100),
+    admin: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Rank closed jobs in the last `days` by margin percentage.
+
+    Uses the same live costing logic as `GET /api/jobs/{id}/costing`
+    so numbers stay consistent with the per-job drilldown page. Only
+    jobs marked `completed` in the window are considered."""
+    from routers.budgets import job_costing  # avoid circular at import time
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    jobs_cur = db.jobs.find(
+        {"tenant_id": tenant["id"], "status": "completed",
+         "$or": [
+             {"service_report_submitted_at": {"$gte": cutoff}},
+             {"updated_at": {"$gte": cutoff}},
+             {"scheduled_date": {"$gte": cutoff[:10]}},
+         ]},
+        {"_id": 0},
+    )
+    jobs_list = await jobs_cur.to_list(1000)
+    rows: List[dict] = []
+    for j in jobs_list:
+        try:
+            costing = await job_costing(j["id"], admin, tenant)
+        except HTTPException:
+            continue
+        except Exception as e:
+            logger.warning(f"margin_leaderboard costing skip: {e}")
+            continue
+        revenue = int((costing.get("baseline") or {}).get("revenue_cents") or 0)
+        cost = int(((costing.get("actual") or {}).get("labor_cents") or 0)
+                   + ((costing.get("actual") or {}).get("materials_cents") or 0)
+                   + ((costing.get("actual") or {}).get("equipment_cents") or 0))
+        margin = revenue - cost
+        pct = round(margin / revenue * 100, 2) if revenue > 0 else 0.0
+        rows.append({
+            "job_id": j["id"],
+            "customer": j.get("customer_name") or "—",
+            "service_type": j.get("service_type") or j.get("job_type") or "",
+            "title": j.get("title") or "",
+            "revenue_cents": revenue,
+            "cost_cents": cost,
+            "margin_cents": margin,
+            "margin_pct": pct,
+            "service_date": (j.get("service_report_submitted_at")
+                             or j.get("scheduled_date")
+                             or (j.get("updated_at") or "")[:10]),
+        })
+    # Sort by margin_pct desc, then clip to `limit`.
+    rows.sort(key=lambda r: r["margin_pct"], reverse=True)
+    return {"items": rows[:limit], "count": len(rows[:limit]),
+            "window_days": days, "total_evaluated": len(rows)}
 
 
 async def compute_pool_service(tenant_id: str,

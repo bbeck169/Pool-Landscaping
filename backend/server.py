@@ -30,6 +30,7 @@ from routers import (
     cfo,
     timeclock_landscaping,
     budgets,
+    chemical_costs,
 )
 
 app = FastAPI(
@@ -62,7 +63,8 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                workstream,
                cfo,
                timeclock_landscaping,
-               budgets]:
+               budgets,
+               chemical_costs]:
     api_router.include_router(module.router)
 
 
@@ -150,6 +152,7 @@ async def _background_seed():
     await step("landscaping_user", seed_landscaping_user())
     await step("business_os", business_os.seed_business_os())
     await step("tech_today_demo", seed_tech_today_demo())
+    await step("chemical_costs", chemical_costs.seed_chemical_costs())
 
     # Scheduler registration (needs the DB but not auth).
     try:
@@ -189,6 +192,12 @@ async def _background_seed():
             warranties.scheduled_warranty_expiration_scan_all,
             "cron", hour=8, minute=0,
             id="warranty_expiration_scan", replace_existing=True)
+        # Phase 50.G — Auto-Friday Pool Service Report email (17:00 UTC).
+        from services.pool_service_email import run_weekly_pool_service_email
+        scheduler.add_job(
+            run_weekly_pool_service_email,
+            "cron", day_of_week="fri", hour=17, minute=0,
+            id="pool_service_weekly_email", replace_existing=True)
         scheduler.start()
     except Exception as e:
         logger.warning(f"scheduler registration skipped: {e}")

@@ -61,8 +61,9 @@ function _validateReading(rule, raw) {
   return { value: rule && rule.decimals === 0 ? Math.round(n) : n, invalid: false };
 }
 
-/** Phase 48 — Manual-entry reading row. Phase 49.1 — default-tested keys. */
-function ReadingInputRow({ testKey, reading, previous, locked, onChange }) {
+/** Phase 48 — Manual-entry reading row. Phase 49.1 — default-tested keys.
+ *  Phase 50.C — inline 4-dot sparkline of `recent[]`. */
+function ReadingInputRow({ testKey, reading, previous, recent, locked, onChange }) {
   const rule = _READING_RULES[testKey];
   const unit = reading.unit || (rule ? rule.unit : "");
   const hasValue = reading.value != null && reading.value !== "";
@@ -82,6 +83,20 @@ function ReadingInputRow({ testKey, reading, previous, locked, onChange }) {
     if (invalid) return;
     onChange(value);
   };
+
+  // Phase 49.6 — recent median + outlier flag (was defined but ref'd in JSX
+  // without being computed on web — Phase 50 fixes both problems).
+  const recentArr = Array.isArray(recent) ? recent.filter((x) => Number.isFinite(x)) : [];
+  const median = React.useMemo(() => {
+    if (recentArr.length === 0) return null;
+    const sorted = [...recentArr].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }, [recentArr]);
+  const draftNum = Number(draft);
+  const isOutlier = median != null && median > 0 && Number.isFinite(draftNum) && draftNum > 0
+    && (draftNum > 2 * median || draftNum < 0.5 * median);
+
   return (
     <div
       data-testid={`pool-reading-${testKey}-slider`}
@@ -89,8 +104,9 @@ function ReadingInputRow({ testKey, reading, previous, locked, onChange }) {
       style={{ borderColor: colors.border, background: colors.surface, opacity: notTested ? 0.7 : 1 }}
     >
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: colors.onSurface }}>
-          {reading.name}{reading.unit ? ` (${reading.unit})` : ""}
+        <span className="text-[11px] font-bold uppercase tracking-wider inline-flex items-center gap-2" style={{ color: colors.onSurface }}>
+          <span>{reading.name}{reading.unit ? ` (${reading.unit})` : ""}</span>
+          <ReadingSparkline recent={recentArr} median={median} testKey={testKey} />
         </span>
         <button
           type="button"
@@ -170,6 +186,51 @@ function ReadingInputRow({ testKey, reading, previous, locked, onChange }) {
           : "—"}
       </div>
     </div>
+  );
+}
+
+// Phase 50.C — 4-dot inline sparkline of the most recent readings.
+// Silent when we have fewer than 2 recent values. Green when the latest
+// sample is within ±20% of the median, yellow when drifting, red on
+// > 2× or < 0.5× outliers. Uses simple divs (no SVG chart lib).
+function ReadingSparkline({ recent, median, testKey }) {
+  const arr = Array.isArray(recent) ? recent.filter((x) => Number.isFinite(x)) : [];
+  if (arr.length < 2 || !median) return null;
+  const values = arr.slice(-4);
+  const dots = [];
+  for (let i = 0; i < 4; i += 1) {
+    const val = values[i];
+    let tone = "empty";
+    if (Number.isFinite(val)) {
+      const ratio = val / median;
+      if (ratio > 2 || ratio < 0.5) tone = "red";
+      else if (ratio > 1.2 || ratio < 0.8) tone = "yellow";
+      else tone = "green";
+    }
+    const bg = tone === "green" ? "#22C55E"
+      : tone === "yellow" ? "#F59E0B"
+      : tone === "red" ? "#DC2626"
+      : "#E2E8F0";
+    dots.push(
+      <span
+        key={i}
+        style={{
+          width: 6, height: 6, borderRadius: 3, display: "inline-block",
+          background: bg,
+        }}
+        data-testid={`pool-reading-${testKey}-sparkline-dot-${i}`}
+        data-tone={tone}
+      />
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center gap-1 align-middle"
+      data-testid={`pool-reading-${testKey}-sparkline`}
+      title={`Recent: ${values.join(", ")} · median ${median}`}
+    >
+      {dots}
+    </span>
   );
 }
 
