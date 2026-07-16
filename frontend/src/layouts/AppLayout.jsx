@@ -5,6 +5,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import AdminSidebar from "@/layouts/AdminSidebar";
 import AdminTopBar from "@/layouts/AdminTopBar";
+import UniversalMenu from "@/layouts/UniversalMenu";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
 import { brandGradientCss, colors, font } from "@/theme";
 import {
@@ -554,6 +555,11 @@ function AppLayout() {
         {((effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin") && (
           <AdminTopBar />
         )}
+
+        {/* Phase 44 · universal top-right menu — visible for every
+            authenticated role. Fixed-positioned so it doesn't nudge
+            layout on any page. */}
+        <UniversalMenu />
 
         <Outlet />
 

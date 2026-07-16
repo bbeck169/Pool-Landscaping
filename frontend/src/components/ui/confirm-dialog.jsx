@@ -1,37 +1,21 @@
 /**
  * Phase 31 · Step 2c — Reusable imperative confirm dialog.
  *
- * Replaces the raw `window.confirm` / `window.alert` calls scattered
- * across destructive admin/tech flows with a Radix AlertDialog-driven
- * confirmation, so we get consistent styling, focus management, and
- * `Esc` / `Enter` keyboard support without changing any business logic.
- *
- * Usage:
- *   const confirm = useConfirm();
- *   const ok = await confirm({
- *     title: "Delete this payee?",
- *     description: `"${name}" — this cannot be undone.`,
- *     confirmText: "Delete",
- *     tone: "danger",
- *   });
- *   if (!ok) return;
- *
- * Also exposes `useAlert()` for the `window.alert()` cases we're
- * migrating in the same pass (single OK button, no cancel).
+ * Phase 44 · Fix B (attempt 3) — switched from Radix `AlertDialog`
+ * primitives to plain Radix `Dialog` primitives. `AlertDialog` is
+ * intentionally hostile to outside-click / escape dismiss because it's
+ * meant to "interrupt for a specific action"; various override
+ * combinations still saw the `/checks` page swallow backdrop + Confirm
+ * taps (e1_tester reports across attempts 1 and 2). `Dialog` fires
+ * `onOpenChange(false)` reliably on both backdrop and Escape, which we
+ * route through the same `settle(false)` path. Confirm remains a plain
+ * button that calls `settle(true)`.
  */
 import React, {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from "react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { cn } from "@/lib/utils";
 
 const ConfirmContext = createContext(null);
 
@@ -116,75 +100,80 @@ export function ConfirmProvider({ children }) {
   return (
     <ConfirmContext.Provider value={value}>
       {children}
-      <AlertDialog
+      <DialogPrimitive.Root
         open={!!state}
         onOpenChange={(o) => { if (!o) settle(false); }}
       >
-        <AlertDialogContent
-          className="max-w-md"
-          data-testid="app-confirm-dialog"
-          // Radix AlertDialog intentionally suppresses Escape and
-          // outside-pointer dismiss by default (versus plain Dialog),
-          // because an AlertDialog is meant to interrupt for a
-          // specific action. Our product decision (per the Phase 31
-          // Step 2c regression report) is that Cancel-equivalent
-          // dismiss shortcuts SHOULD work — so we explicitly restore
-          // Escape, pointer-outside, AND `onInteractOutside`. The
-          // AlertDialog primitive uses `onInteractOutside` internally
-          // as the umbrella event for outside taps; hooking it too
-          // covers the case where a specific page has stacking
-          // contexts / z-index quirks that swallow the pointer event
-          // before it reaches Radix (verified on /checks in the
-          // e1_tester report where only ESC was firing).
-          onEscapeKeyDown={(e) => {
-            e.preventDefault();
-            settle(false);
-          }}
-          onPointerDownOutside={(e) => {
-            e.preventDefault();
-            settle(false);
-          }}
-          onInteractOutside={(e) => {
-            e.preventDefault();
-            settle(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              settle(true);
-            }
-          }}
-        >
-          <AlertDialogHeader>
-            <AlertDialogTitle data-testid="app-confirm-title">
-              {opts?.title}
-            </AlertDialogTitle>
-            {opts?.description ? (
-              <AlertDialogDescription data-testid="app-confirm-description">
-                {opts.description}
-              </AlertDialogDescription>
-            ) : null}
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            {opts?.cancelable ? (
-              <AlertDialogCancel
-                data-testid="app-confirm-cancel"
-                onClick={() => settle(false)}
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay
+            className="fixed inset-0 z-50 bg-black/60 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+            data-testid="app-confirm-backdrop"
+          />
+          <DialogPrimitive.Content
+            className={cn(
+              "fixed left-[50%] top-[50%] z-50 grid w-full max-w-md translate-x-[-50%] translate-y-[-50%]",
+              "gap-4 border bg-background p-6 shadow-lg rounded-lg",
+              "data-[state=open]:animate-in data-[state=closed]:animate-out",
+              "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+            )}
+            data-testid="app-confirm-dialog"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                settle(true);
+              }
+            }}
+          >
+            <div className="flex flex-col gap-2">
+              <DialogPrimitive.Title
+                className="text-lg font-semibold"
+                data-testid="app-confirm-title"
               >
-                {opts?.cancelText || "Cancel"}
-              </AlertDialogCancel>
-            ) : null}
-            <AlertDialogAction
-              data-testid="app-confirm-ok"
-              className={isDanger ? "bg-red-600 hover:bg-red-700" : ""}
-              onClick={() => settle(true)}
-              autoFocus
-            >
-              {opts?.confirmText || (opts?.cancelable ? "Confirm" : "OK")}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+                {opts?.title}
+              </DialogPrimitive.Title>
+              {opts?.description ? (
+                <DialogPrimitive.Description
+                  className="text-sm text-muted-foreground"
+                  data-testid="app-confirm-description"
+                >
+                  {opts.description}
+                </DialogPrimitive.Description>
+              ) : (
+                // Radix logs a warning if Description is missing; keep
+                // an sr-only placeholder to silence it without adding
+                // visual noise.
+                <DialogPrimitive.Description className="sr-only">
+                  {opts?.title}
+                </DialogPrimitive.Description>
+              )}
+            </div>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              {opts?.cancelable ? (
+                <button
+                  type="button"
+                  data-testid="app-confirm-cancel"
+                  onClick={() => settle(false)}
+                  className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-accent hover:text-accent-foreground"
+                >
+                  {opts?.cancelText || "Cancel"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                data-testid="app-confirm-ok"
+                onClick={() => settle(true)}
+                autoFocus
+                className={cn(
+                  "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-semibold text-white",
+                  isDanger ? "bg-red-600 hover:bg-red-700" : "bg-primary hover:bg-primary/90",
+                )}
+              >
+                {opts?.confirmText || (opts?.cancelable ? "Confirm" : "OK")}
+              </button>
+            </div>
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
     </ConfirmContext.Provider>
   );
 }

@@ -178,29 +178,43 @@ function MobileMenu({ visible }) {
 
 export default function AdminTopBar() {
   const visible = useVisibleGroups();
-  // Phase 44 · Fix 1 — some Tailwind builds don't reliably purge/JIT the
-  // `hidden md:flex` / `md:hidden` combo in ad-hoc layouts (verified in
-  // the e1_tester report where <md viewport still rendered the wide row).
-  // Use an explicit `matchMedia` gate instead of relying on Tailwind
-  // responsive utilities. `768px` mirrors Tailwind's default `md`.
-  const [isNarrow, setIsNarrow] = React.useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
-  });
+  // Phase 44 · Fix A (attempt 3) — bulletproof responsive gate.
+  //
+  // Previous attempts using Tailwind `hidden md:flex` / `md:hidden` and
+  // then `matchMedia` alone both failed to flip at ~600px in the tester
+  // report. Belt-and-braces this by:
+  //   1. Reading `window.innerWidth` directly on every render.
+  //   2. Subscribing to BOTH `resize` events (always available) and
+  //      matchMedia change (for browsers that suppress `resize` events
+  //      while in DevTools responsive mode).
+  //   3. Exposing the computed width as a `data-vw` attribute so a QA
+  //      driver can inspect the actual gate state without guessing.
+  const [vw, setVw] = React.useState(() =>
+    typeof window !== "undefined" ? window.innerWidth : 1024);
   React.useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return;
-    const mq = window.matchMedia("(max-width: 767px)");
-    const on = (e) => setIsNarrow(e.matches);
-    // `addEventListener` is the modern API; `addListener` is the
-    // Safari-<14 fallback. Both are exposed by every browser we
-    // support today.
-    if (mq.addEventListener) mq.addEventListener("change", on);
-    else mq.addListener(on);
+    if (typeof window === "undefined") return;
+    const on = () => setVw(window.innerWidth);
+    // Immediate read on mount in case SSR seeded with the fallback 1024.
+    on();
+    window.addEventListener("resize", on);
+    // Also subscribe to a matchMedia listener because DevTools' device
+    // toolbar sometimes doesn't fire real `resize` events on iframe
+    // hosts.
+    let mq;
+    if (window.matchMedia) {
+      mq = window.matchMedia("(max-width: 767.98px)");
+      if (mq.addEventListener) mq.addEventListener("change", on);
+      else mq.addListener(on);
+    }
     return () => {
-      if (mq.removeEventListener) mq.removeEventListener("change", on);
-      else mq.removeListener(on);
+      window.removeEventListener("resize", on);
+      if (mq) {
+        if (mq.removeEventListener) mq.removeEventListener("change", on);
+        else mq.removeListener(on);
+      }
     };
   }, []);
+  const isNarrow = vw < 768;
 
   if (visible.length === 0) return null;
   return (
@@ -211,6 +225,8 @@ export default function AdminTopBar() {
         borderColor: colors.border,
       }}
       data-testid="admin-topbar"
+      data-vw={vw}
+      data-narrow={isNarrow ? "1" : "0"}
     >
       {isNarrow ? (
         <div

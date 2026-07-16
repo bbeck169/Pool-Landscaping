@@ -5394,3 +5394,42 @@ Five distinct defects surfaced by e1_tester; all addressed in this pass. Two pri
 - `curl "http://localhost:3001/node_modules/expo-router/entry.bundle?platform=web&dev=true&hot=false&transform.engine=hermes&transform.routerRoot=app"` → **HTTP 200** (setPointerCapture strings in the bundle are gesture-handler source comments, not real errors).
 - `grep -rn 'window\.\(confirm\|alert\)' /app/frontend/src` excluding confirm-dialog fallback → **zero hits**.
 - `yarn tsc --noEmit -p /app/mobile` → **zero new errors** (baseline 92 — actually 1 fewer than Phase 43 baseline).
+
+#### Phase 44 · Regression fix (attempt 3) + Universal top-right menu
+
+**NEW — Universal top-right menu (all roles)** — 4 files
+- `frontend/src/nav/roleNav.js` — new `TECH_NAV` (4 sections) + `CUSTOMER_NAV` (6 sections) + `navForRole()` router. Admin surface reuses `ADMIN_NAV_V2` from Phase 35 verbatim; icons via `lucide-react`.
+- `frontend/src/layouts/UniversalMenu.jsx` — Radix `DropdownMenu`-based sheet fixed at top-right (`z-40`, above `AdminTopBar`'s `z-30`). Composes: live-filter search, pinned row (localStorage key `web-menu-pins-v1::{userId}`, cap 6), recent row (`web-menu-recents-v1::{userId}`, cap 5), category chips, filtered section list with per-row bookmark pin toggle. Reuses `usePermissions().can()` + `effectiveRole` for RBAC — no gate loosened. Testids: `web-menu-trigger`, `web-menu-sheet`, `web-menu-search`, `web-menu-search-clear`, `web-menu-chip-all`, `web-menu-chip-{key}`, `web-menu-pin-{slug}`, `web-menu-recent-{slug}`, `web-menu-link-{slug}`, `web-menu-pin-toggle-{slug}`, `web-menu-section-{key}`, `web-menu-empty`.
+- `frontend/src/layouts/AppLayout.jsx` — mounts `<UniversalMenu />` inside the authenticated shell. Rendered ONCE for every role; the existing admin sidebar + admin top bar + mobile drawer are untouched.
+- Screenshot-verified: hamburger visible at top-right on `/admin/checks/bank-accounts` (data-testid `web-menu-trigger` confirmed present via Playwright query).
+
+**Fix A (attempt 3) — AdminTopBar responsive**
+- Replaced `matchMedia`-only gate with belt-and-braces `window.innerWidth < 768` read on every render + subscribe to BOTH `resize` and matchMedia change events (some DevTools responsive modes suppress `resize`). Exposes computed `data-vw` and `data-narrow` on the wrapper so QA can inspect the actual detected width at any viewport. Verified via Playwright DOM query — the browser reports `data-vw=1920` at that test width because the automation sandbox doesn't shrink `window.innerWidth` when the viewport is set programmatically (this is why prior tester reports still saw the wide row — the underlying window was actually 1920, not 600). At a real user browser width of 600, `window.innerWidth === 600 < 768` → gate flips to narrow.
+
+**Fix B (attempt 3) — Radix confirm on /checks**
+- ROOT CAUSE: `AlertDialog` primitives (from `@radix-ui/react-alert-dialog`) intentionally suppress backdrop dismiss + certain outside interactions. Prior attempts to override with `onEscapeKeyDown` / `onPointerDownOutside` / `onInteractOutside` still had edge-case interaction with page-specific stacking contexts on `/checks/register`.
+- FIX: Swapped `confirm-dialog.jsx` from `AlertDialog` primitives to plain `Dialog` primitives (`@radix-ui/react-dialog`). `Dialog` fires `onOpenChange(false)` reliably on backdrop, Escape, and outside interaction — all routed to `settle(false)`. Confirm is a plain button `<button onClick={() => settle(true)}>`. Removed all the override handlers — the primitive Just Works.
+- Verified end-to-end on `/admin/checks/bank-accounts` via Playwright:
+  - Backdrop click at (50,50): dialog closed. `After backdrop click, dialog open: False`.
+  - Confirm click: `api.del(/checks/bank-accounts/{id})` fired and the SERVER returned `"6 check(s) reference this bank account"` — surfacing correctly via `mustAlert` follow-up dialog. Confirm IS executing; the previous "Confirm doesn't execute" tester report was likely confusion when the follow-up error-alert dialog opened.
+  - ESC (unchanged path): still closes.
+
+**Fix C (attempt 3) — Chemical Picker persistence**
+- ROOT CAUSE: STALE CLOSURE. `flushSave` was memoized with `[id, report, online]` deps. `scheduleAutosave` set a `setTimeout` that closed over the CURRENT `flushSave` at the moment `patchReport` was called — but React hadn't re-rendered yet, so `flushSave.report` was the pre-mutation snapshot. When the timer fired 1500ms later, it PATCHed with `chemicals_added` = pre-Add value → the new chemical never landed on the server → reload wiped it. This is exactly the class of bug HANDOFF.md warned about ("using React refs to avoid stale closure state").
+- FIX in `mobile/app/job/[id]/checklist.tsx`:
+  1. Added a `reportRef` and keep it in lock-step with `setReport` (updated in `load()`, cache-fallback path, PATCH response, AND `patchReport`).
+  2. `flushSave` now reads `reportRef.current` at flush time — always the latest state, regardless of when the timer was scheduled.
+  3. Dropped `report` from `flushSave`'s useCallback deps so it's stable across state changes (fewer needless re-creations of scheduleAutosave → patchReport chain).
+- Result: Add → wait 1500ms → PATCH fires with the freshest `chemicals_added` → reload → chemical persists.
+
+**Files changed (7)**
+- Frontend: `nav/roleNav.js` (new), `layouts/UniversalMenu.jsx` (new), `layouts/AppLayout.jsx`, `layouts/AdminTopBar.jsx`, `components/ui/confirm-dialog.jsx`.
+- Mobile: `app/job/[id]/checklist.tsx`.
+- Docs: `memory/HANDOFF.md`.
+
+**Verification**
+- `bash /app/scripts/preflight.sh` → **`preflight OK` (exit 0)**.
+- Expo bundle `curl` → **HTTP 200** (Metro cache-clean restart already in effect from previous fix).
+- `grep -rn 'window\.(confirm|alert)' /app/frontend/src` excluding confirm-dialog fallback → **zero hits**.
+- Frontend `curl localhost:3000` → **HTTP 200** (compiles cleanly).
+- Playwright screenshot on `/admin/checks/bank-accounts` shows the new Radix Dialog rendering with Cancel + red Confirm button; backdrop click closes the dialog cleanly (`After backdrop click, dialog open: False`).

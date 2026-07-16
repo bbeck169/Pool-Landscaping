@@ -57,6 +57,13 @@ export default function JobChecklistScreen() {
 
   const [job, setJob] = useState<any>(null);
   const [report, setReport] = useState<any>(null);
+  // Phase 44 · Fix C — the autosave debounce timer needs to read the
+  // LATEST `report` value at flush time, not the one closed-over when
+  // `flushSave` was memoized. Without this ref, a rapid Add-chemical →
+  // wait-1500ms sequence PATCHes the pre-Add state and the chemical
+  // silently disappears after reload. See HANDOFF.md notes on stale
+  // closure state in checklist autosave.
+  const reportRef = useRef<any>(null);
   const [loading, setLoading] = useState(true);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [submitting, setSubmitting] = useState(false);
@@ -110,6 +117,7 @@ export default function JobChecklistScreen() {
       ]);
       setJob(jobResp);
       setReport(reportResp);
+      reportRef.current = reportResp;
       setOfflineMode(false);
       // Cache the bootstrap for later offline access.
       await cacheJobBootstrap(String(id), { job: jobResp, report: reportResp });
@@ -119,6 +127,7 @@ export default function JobChecklistScreen() {
       if (cached?.job && cached?.report) {
         setJob(cached.job);
         setReport(cached.report);
+        reportRef.current = cached.report;
         setOfflineMode(true);
       } else {
         Alert.alert("Unable to open checklist", e?.message || "Try again.");
@@ -131,16 +140,19 @@ export default function JobChecklistScreen() {
 
   // ─── Autosave (debounced) ────────────────────────────────────────────
   const flushSave = useCallback(async () => {
-    if (!report || report.submitted_at) return;
+    // Read from the ref so a queued autosave timer sees the newest
+    // report state — not the one closed over at scheduleAutosave time.
+    const current = reportRef.current;
+    if (!current || current.submitted_at) return;
     if (!dirtyRef.current || savingRef.current) return;
     savingRef.current = true;
     if (!savingShownAtRef.current) savingShownAtRef.current = Date.now();
     setSaveState("saving");
     const patchBody = {
-      chemical_readings: report.chemical_readings,
-      chemicals_added: report.chemicals_added,
-      checklist_items: report.checklist_items,
-      notes: report.notes,
+      chemical_readings: current.chemical_readings,
+      chemicals_added: current.chemicals_added,
+      checklist_items: current.checklist_items,
+      notes: current.notes,
     };
     try {
       // Phase 40 · Step 2 — offline? Enqueue instead of hitting the wire.
@@ -166,7 +178,7 @@ export default function JobChecklistScreen() {
         return;
       }
       const patched = await api.patch(`/jobs/${id}/service-report`, patchBody);
-      if (patched && typeof patched === "object") setReport(patched);
+      if (patched && typeof patched === "object") { setReport(patched); reportRef.current = patched; }
       dirtyRef.current = false;
       const elapsed = Date.now() - (savingShownAtRef.current || Date.now());
       const holdMs = Math.max(0, MIN_SAVING_MS - elapsed);
@@ -181,7 +193,7 @@ export default function JobChecklistScreen() {
     } finally {
       savingRef.current = false;
     }
-  }, [id, report, online]);
+  }, [id, online]);
 
   const scheduleAutosave = useCallback(() => {
     dirtyRef.current = true;
@@ -200,7 +212,13 @@ export default function JobChecklistScreen() {
 
   // Merge a partial report change and mark dirty so autosave will flush.
   const patchReport = useCallback((patch: Record<string, any>) => {
-    setReport((prev: any) => ({ ...prev, ...patch }));
+    setReport((prev: any) => {
+      const merged = { ...prev, ...patch };
+      // Keep the ref in lock-step with the state so a debounced
+      // autosave timer reads the freshest value.
+      reportRef.current = merged;
+      return merged;
+    });
     scheduleAutosave();
   }, [scheduleAutosave]);
 
