@@ -5250,3 +5250,23 @@ Closes out Phase 40. Techs can now edit + submit checklists in zero-signal backy
 **Deferred / follow-ups**
 - Nice-to-have: a swipe-down gesture to close the sheet (currently backdrop-tap / X / hardware-back / picking a tool). Not blocking.
 - Consider a keyboard shortcut on Expo Web (⌘K) that opens the menu — extremely cheap to add later if a QA sees value.
+
+#### Phase 43.1 · Inline pin affordance on tool rows (closeout of Phase 43 gap)
+
+**Gap:** the Pinned row in the sheet rendered correctly but there was no in-UI way to populate it from a row — users had to open the pins-edit modal. Fixed by adding an inline pin toggle on every row-variant `ToolCard`.
+
+**Files touched (2):**
+- `mobile/src/components/tools/ToolCard.tsx` — added optional `pinned?: boolean` and `onTogglePin?: () => void` props. When both are supplied on the `row` variant, the default chevron is replaced by a `Pressable` pin toggle (`bookmark-outline` when unpinned, filled `bookmark` when pinned, brand-color when active). The pin `Pressable` calls `e.stopPropagation?.()` so tapping the icon doesn't fire the row's `onPress` and open the tool. New testID `tools-pin-toggle-{slug}` + `accessibilityState.selected` + descriptive `accessibilityLabel`.
+- `mobile/src/components/tools/ToolsMenuBody.tsx` — for each row-variant card in the section list, wires `pinned={pins.includes(t.key)}` and `onTogglePin={() => togglePin(t.key)}` from the existing `useToolsPreferences` hook.
+
+**Persistence & regression posture:**
+- Reuses the same AsyncStorage-backed `useToolsPreferences` hook shipped in Phase 42 (`tools-pins-v1::{userId}`). No new storage layer.
+- Pins are shared between the Tools tab and the sheet since both surfaces render the same `<ToolsMenuBody />`; toggling in one instantly reflects in the other.
+- The 6-pin cap in `togglePin` is unchanged; a 7th tap silently no-ops (documented Phase 42 behavior; the pins-edit modal's `sheetCap` label surfaces the limit visually).
+- Recents, search, and category chips are untouched.
+
+**Verification**
+- `yarn tsc --noEmit -p /app/mobile` → **zero new errors** (baseline 93 unchanged).
+- `python3 /app/scripts/check_js_identifiers.py` on `ToolCard.tsx` / `ToolsMenuBody.tsx` → clean.
+- `python3 /app/scripts/check_jsx_imports.py` on `ToolCard.tsx` / `ToolsMenuBody.tsx` → clean.
+- `bash /app/scripts/preflight.sh` → **`preflight OK` (exit 0)**.

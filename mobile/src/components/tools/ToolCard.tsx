@@ -25,10 +25,17 @@ type Props = {
   variant?: "row" | "compact";
   testIDPrefix?: string;
   rightSlot?: React.ReactNode;
+  // Phase 43.1 — inline pin affordance. When both props are supplied on
+  // the row variant, a pin toggle replaces the default chevron. Pin
+  // state comes from `useToolsPreferences` in the parent; this
+  // component stays stateless.
+  pinned?: boolean;
+  onTogglePin?: () => void;
 };
 
 export const ToolCard: React.FC<Props> = ({
   tile, onPress, variant = "row", testIDPrefix = "tools-card", rightSlot,
+  pinned, onTogglePin,
 }) => {
   if (variant === "compact") {
     return (
@@ -64,7 +71,30 @@ export const ToolCard: React.FC<Props> = ({
         <Text style={styles.rowDesc} numberOfLines={2}>{tile.desc}</Text>
       </View>
       {rightSlot ?? (
-        <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+        onTogglePin ? (
+          <Pressable
+            onPress={(e) => {
+              // Stop the parent Pressable from firing the row's onPress
+              // when the pin toggle is the actual tap target.
+              e.stopPropagation?.();
+              onTogglePin();
+            }}
+            hitSlop={10}
+            testID={`tools-pin-toggle-${tile.key}`}
+            accessibilityRole="button"
+            accessibilityLabel={pinned ? `Unpin ${tile.label}` : `Pin ${tile.label}`}
+            accessibilityState={{ selected: !!pinned }}
+            style={styles.pinBtn}
+          >
+            <Ionicons
+              name={pinned ? "bookmark" : "bookmark-outline"}
+              size={20}
+              color={pinned ? colors.brand : colors.muted}
+            />
+          </Pressable>
+        ) : (
+          <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+        )
       )}
     </Pressable>
   );
@@ -94,6 +124,13 @@ const styles = StyleSheet.create({
   },
   rowLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
   rowDesc: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 3 },
+  pinBtn: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.pill,
+  },
   compactCard: {
     width: 108,
     minHeight: 96,

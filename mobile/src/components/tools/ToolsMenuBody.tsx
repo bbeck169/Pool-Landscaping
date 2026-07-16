@@ -147,6 +147,8 @@ export const ToolsMenuBody: React.FC<Props> = ({ variant = "tab", onNavigate }) 
                     tile={t}
                     onPress={() => openTile(t)}
                     testIDPrefix="tools-card"
+                    pinned={pins.includes(t.key)}
+                    onTogglePin={() => togglePin(t.key)}
                   />
                 ))}
               </View>
