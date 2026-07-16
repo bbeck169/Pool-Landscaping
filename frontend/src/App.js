@@ -136,6 +136,7 @@ import ChemicalCosts from "@/pages/admin/ChemicalCosts";
 import RecurringJobs from "@/pages/admin/RecurringJobs";
 import CFOReports from "@/pages/admin/CFOReports";
 import VendorBills from "@/pages/admin/VendorBills";
+import PricingInsights from "@/pages/admin/PricingInsights";
 import BudgetSetup from "@/pages/budget/BudgetSetup";
 import BudgetDashboard from "@/pages/budget/BudgetDashboard";
 import BudgetWizard from "@/pages/budget/BudgetWizard";
@@ -324,6 +325,7 @@ export default function App() {
             {/* Phase 51.K — CFO Reports (admin/super_admin) */}
             <Route path="admin/cfo/reports" element={<AdminOnly><CFOReports /></AdminOnly>} />
             <Route path="admin/finance/bills" element={<AdminOnly><VendorBills /></AdminOnly>} />
+            <Route path="admin/reports/pricing-insights" element={<AdminOnly><PricingInsights /></AdminOnly>} />
             {/* Phase 47 — Budgeting Suite */}
             <Route path="admin/budget" element={<AdminOnly><BudgetSetup /></AdminOnly>} />
             <Route path="admin/budget/dashboard" element={<AdminOnly><BudgetDashboard /></AdminOnly>} />

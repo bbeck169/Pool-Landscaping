@@ -83,7 +83,7 @@ export default function RecurringJobs() {
 
   const softDelete = async (row) => {
     setBusy(row.id);
-    try { await api.delete(`/recurring-jobs/${row.id}`); await load(); }
+    try { await api.del(`/recurring-jobs/${row.id}`); await load(); }
     finally { setBusy(null); }
   };
 

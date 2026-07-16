@@ -142,6 +142,8 @@ async def list_jobs(
     technician_id: Optional[str] = Query(None),
     start: Optional[str] = Query(None, description="Phase 30: inclusive lower bound on scheduled_date (YYYY-MM-DD)"),
     end: Optional[str] = Query(None, description="Phase 30: inclusive upper bound on scheduled_date (YYYY-MM-DD)"),
+    scheduled_date: Optional[str] = Query(None, description="Phase 51.0/52: exact date (YYYY-MM-DD) — matches bare date or ISO datetime prefix"),
+    recurring_template_id: Optional[str] = Query(None, description="Phase 51.I: filter by recurring template origin"),
 ):
     q = scope_jobs_query(user, tenant, status, technician_id)
     # Phase 30 · optional inclusive date-range filter so the new calendar
@@ -152,6 +154,14 @@ async def list_jobs(
         if start: rng["$gte"] = start
         if end:   rng["$lte"] = end
         q["scheduled_date"] = rng
+    # Phase 51.0 fix — exact scheduled_date match. Some jobs store the
+    # value as bare `YYYY-MM-DD`, others as full ISO datetime — regex
+    # covers both. Overrides the range filter above when explicitly set.
+    if scheduled_date:
+        q["scheduled_date"] = {"$regex": f"^{scheduled_date}"}
+    # Phase 51.I fix — recurring-template origin filter.
+    if recurring_template_id:
+        q["recurring_template_id"] = recurring_template_id
     docs = await db.jobs.find(q, {"_id": 0}).sort("scheduled_date", 1).to_list(1000)
     if user.get("role") == "customer":
         for d in docs:
@@ -942,6 +952,20 @@ async def pool_service_email_history(
     return {"items": rows, "count": len(rows)}
 
 
+# ─── Phase 52.A · Monthly pricing digest email history ──────────────
+@router.get("/reports/pricing-insights/email-history")
+async def pricing_insights_email_history(
+    limit: int = Query(10, ge=1, le=50),
+    admin: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    rows = await db.email_delivery_log.find(
+        {"tenant_id": tenant["id"], "kind": "monthly_pricing_digest"},
+        {"_id": 0},
+    ).sort("sent_at", -1).to_list(limit)
+    return {"items": rows, "count": len(rows)}
+
+
 # ─── Phase 50.D · Job Margin Leaderboard ─────────────────────────────
 @router.get("/reports/job-margin-leaderboard")
 async def job_margin_leaderboard(
@@ -999,6 +1023,88 @@ async def job_margin_leaderboard(
     rows.sort(key=lambda r: r["margin_pct"], reverse=True)
     return {"items": rows[:limit], "count": len(rows[:limit]),
             "window_days": days, "total_evaluated": len(rows)}
+
+
+# ─── Phase 52.A · Monthly Least-Profitable Service Type Digest ──────
+@router.get("/reports/least-profitable-services")
+async def least_profitable_services(
+    month: Optional[str] = Query(None, description="YYYY-MM; defaults to previous month"),
+    limit: int = Query(3, ge=1, le=10),
+    admin: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Aggregate closed jobs in the given month by service_type and rank
+    ascending by margin_pct so the operator can spot the least-profitable
+    service lines. Cost math uses the same per-job costing helper as the
+    Job Margin Leaderboard."""
+    from routers.budgets import job_costing
+    # Default to previous month.
+    now = datetime.now(timezone.utc)
+    if month:
+        try:
+            y, m = month.split("-")
+            y, m = int(y), int(m)
+        except Exception:
+            raise HTTPException(422, "month must be YYYY-MM")
+    else:
+        y = now.year if now.month > 1 else now.year - 1
+        m = now.month - 1 if now.month > 1 else 12
+    period_start = datetime(y, m, 1, tzinfo=timezone.utc)
+    period_end = (datetime(y, m + 1, 1, tzinfo=timezone.utc)
+                    if m < 12 else datetime(y + 1, 1, 1, tzinfo=timezone.utc))
+    start_iso = period_start.isoformat()
+    end_iso = period_end.isoformat()
+
+    # Fetch completed jobs in that window.
+    jobs_cur = db.jobs.find(
+        {"tenant_id": tenant["id"], "status": "completed",
+         "$or": [
+             {"service_report_submitted_at": {"$gte": start_iso, "$lt": end_iso}},
+             {"updated_at": {"$gte": start_iso, "$lt": end_iso}},
+         ]},
+        {"_id": 0},
+    )
+    jobs_list = await jobs_cur.to_list(2000)
+
+    agg: Dict[str, Dict[str, Any]] = {}
+    for j in jobs_list:
+        try:
+            costing = await job_costing(j["id"], admin, tenant)
+        except Exception:
+            continue
+        stype = (j.get("service_type") or j.get("title") or "Unknown").strip() or "Unknown"
+        revenue = int((costing.get("baseline") or {}).get("revenue_cents") or 0)
+        cost = int(((costing.get("actual") or {}).get("labor_cents") or 0)
+                   + ((costing.get("actual") or {}).get("materials_cents") or 0)
+                   + ((costing.get("actual") or {}).get("equipment_cents") or 0))
+        hours = float((costing.get("actual") or {}).get("labor_hours") or 0)
+        row = agg.setdefault(stype, {
+            "service_type": stype, "job_count": 0,
+            "revenue_cents": 0, "cost_cents": 0,
+            "total_hours": 0.0,
+        })
+        row["job_count"] += 1
+        row["revenue_cents"] += revenue
+        row["cost_cents"] += cost
+        row["total_hours"] += hours
+
+    services: List[Dict[str, Any]] = []
+    for row in agg.values():
+        margin = row["revenue_cents"] - row["cost_cents"]
+        pct = round(margin / row["revenue_cents"] * 100, 2) if row["revenue_cents"] > 0 else 0.0
+        avg_hours = round(row["total_hours"] / row["job_count"], 2) if row["job_count"] else 0.0
+        services.append({
+            "service_type": row["service_type"],
+            "job_count": row["job_count"],
+            "revenue_cents": row["revenue_cents"],
+            "cost_cents": row["cost_cents"],
+            "margin_cents": margin,
+            "margin_pct": pct,
+            "avg_hours_per_job": avg_hours,
+        })
+    services.sort(key=lambda r: r["margin_pct"])
+    return {"month": f"{y:04d}-{m:02d}", "services": services[:limit],
+             "total_evaluated": len(services)}
 
 
 async def compute_pool_service(tenant_id: str,

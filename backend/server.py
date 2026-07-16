@@ -3,7 +3,7 @@ from starlette.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import client, db, logger
-from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user, seed_prior_readings, seed_phase51k_finance
+from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user, seed_prior_readings, seed_phase51k_finance, seed_mike_today_job
 from routers import (
     auth, customers, technicians, jobs, quotes, leads, team, items, payments,
     operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google as google_router, phase11,
@@ -32,6 +32,8 @@ from routers import (
     budgets,
     chemical_costs,
     recurring_jobs,
+    stripe_admin,
+    zillow_admin,
 )
 
 app = FastAPI(
@@ -66,7 +68,9 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                timeclock_landscaping,
                budgets,
                chemical_costs,
-               recurring_jobs]:
+               recurring_jobs,
+               stripe_admin,
+               zillow_admin]:
     api_router.include_router(module.router)
 
 
@@ -156,6 +160,7 @@ async def _background_seed():
     await step("tech_today_demo", seed_tech_today_demo())
     await step("prior_readings", seed_prior_readings())
     await step("phase51k_finance", seed_phase51k_finance())
+    await step("mike_today_job", seed_mike_today_job())
     await step("chemical_costs", chemical_costs.seed_chemical_costs())
 
     # Scheduler registration (needs the DB but not auth).
@@ -208,6 +213,12 @@ async def _background_seed():
             run_recurring_job_generator,
             "cron", hour=2, minute=0,
             id="recurring_job_generator", replace_existing=True)
+        # Phase 52.A — monthly pricing insights digest (1st @ 09:00 UTC).
+        from services.monthly_pricing_digest import run_monthly_pricing_digest
+        scheduler.add_job(
+            run_monthly_pricing_digest,
+            "cron", day=1, hour=9, minute=0,
+            id="monthly_pricing_digest", replace_existing=True)
         scheduler.start()
     except Exception as e:
         logger.warning(f"scheduler registration skipped: {e}")

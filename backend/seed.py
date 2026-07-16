@@ -544,3 +544,68 @@ async def seed_phase51k_finance():
         {"id": tid}, {"$set": {"phase51k_bills_seeded": True}}
     )
 
+
+# ─── Phase 52.0 · Ensure mike has ONE today-dated job (idempotent) ────
+async def seed_mike_today_job():
+    """Guarantee that mike@aquaterra.com has at least one incomplete
+    `scheduled_date == today` job so the 50.E "Next Job" chip has data
+    to render. If mike already has any incomplete job today, no-op.
+    Otherwise, bumps the earliest scheduled future job to today (or
+    creates a synthetic one when he has none).
+
+    Phase 52 fix — matches by the user's linked `technician_id` field
+    (canonical after Phase 15D). `scope_jobs_query` filters GET /jobs
+    for techs on that field, not on `user.id`, so we must bump / seed
+    against it or the Next Job chip will still find zero rows."""
+    from datetime import datetime, timezone
+    tenant = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0})
+    if not tenant:
+        return
+    tid = tenant["id"]
+    mike = await db.users.find_one({"email": "mike@aquaterra.com"})
+    if not mike:
+        return
+    tech_link = mike.get("technician_id") or mike["id"]
+    today = datetime.now(timezone.utc).date().isoformat()
+    existing = await db.jobs.find_one({
+        "tenant_id": tid,
+        "technician_id": tech_link,
+        "scheduled_date": {"$regex": f"^{today}"},
+        "status": {"$nin": ["completed", "cancelled", "canceled"]},
+    }, {"_id": 0, "id": 1})
+    if existing:
+        return  # idempotent no-op
+    # Try to bump an existing future scheduled job.
+    future = await db.jobs.find_one({
+        "tenant_id": tid,
+        "technician_id": tech_link,
+        "status": {"$in": ["scheduled", "pending", "in_progress"]},
+    }, sort=[("scheduled_date", 1)])
+    if future:
+        await db.jobs.update_one(
+            {"id": future["id"]},
+            {"$set": {
+                "scheduled_date": f"{today}T09:00:00+00:00",
+                "scheduled_start": f"{today}T09:00:00+00:00",
+                "updated_at": now_iso(),
+                "phase52_today_bumped": True,
+            }},
+        )
+        return
+    # Fallback — create a minimal synthetic job.
+    cust = await db.customers.find_one({"tenant_id": tid}, {"_id": 0, "id": 1, "name": 1, "address": 1})
+    if not cust:
+        return
+    await db.jobs.insert_one({
+        "id": new_id(), "tenant_id": tid,
+        "title": "Weekly Pool Service",
+        "service_type": "Weekly Pool Service",
+        "customer_id": cust["id"], "customer_name": cust["name"],
+        "address": cust.get("address", ""),
+        "technician_id": tech_link,
+        "technician_name": mike.get("name") or "Mike Rivera",
+        "scheduled_date": f"{today}T09:00:00+00:00",
+        "scheduled_start": f"{today}T09:00:00+00:00",
+        "status": "scheduled", "price": 130, "created_at": now_iso(),
+    })
+

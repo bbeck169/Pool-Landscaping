@@ -65,7 +65,7 @@ export default function VendorBills() {
       tone: "destructive",
     });
     if (!proceed) return;
-    try { await api.delete(`/cfo/bills/${row.id}`); await load(); }
+    try { await api.del(`/cfo/bills/${row.id}`); await load(); }
     catch (e) { setError(e?.message || "Delete failed"); }
   };
 

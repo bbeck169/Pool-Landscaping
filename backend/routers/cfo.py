@@ -475,16 +475,31 @@ async def payroll_endpoint(
             y, m = int(y), int(m)
         except Exception:
             raise HTTPException(422, "period must be YYYY-MM")
-        s = datetime(y, m, 1, tzinfo=timezone.utc)
-        e = (datetime(y + (m // 12), (m % 12) + 1, 1, tzinfo=timezone.utc)
-             if m < 12 else datetime(y + 1, 1, 1, tzinfo=timezone.utc))
     else:
-        s = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
-        e = now
-    result = await compute_payroll(tenant["id"], s, e)
-    result["period"] = {"start": s.isoformat(), "end": e.isoformat()}
-    result["mocked"] = False
-    return result
+        y, m = now.year, now.month
+    # Requested period bounds.
+    month_start = datetime(y, m, 1, tzinfo=timezone.utc)
+    if m < 12:
+        month_end = datetime(y, m + 1, 1, tzinfo=timezone.utc)
+    else:
+        month_end = datetime(y + 1, 1, 1, tzinfo=timezone.utc)
+    # YTD bounds — Jan 1 of same year through end of requested month.
+    ytd_start = datetime(y, 1, 1, tzinfo=timezone.utc)
+    ytd_end = month_end
+    month_result = await compute_payroll(tenant["id"], month_start, month_end)
+    ytd_result = await compute_payroll(tenant["id"], ytd_start, ytd_end)
+    return {
+        "period": {"year": y, "month": m,
+                   "start": month_start.isoformat(), "end": month_end.isoformat()},
+        # Phase 52 Fix 2 — expose the tester-spec'd field names.
+        "this_month_cents": month_result["total_cents"],
+        "ytd_cents": ytd_result["total_cents"],
+        # Kept for backwards-compat with any callers that read `total_cents`.
+        "total_cents": month_result["total_cents"],
+        "employee_count": month_result["employee_count"],
+        "employees": month_result["employees"],
+        "mocked": False,
+    }
 
 
 # ─── /cfo/bills (Vendor bill CRUD for AP aging) ──────────────────────
@@ -573,17 +588,10 @@ async def dashboard(
     expenses = await _expenses(tid, s, e)
     cash = await _cash_on_hand(tid)
     ar = await _ar_aging(tid)
-    # Phase 51.K — real AP aging replaces the placeholder.
+    # Phase 51.K — real AP aging. Phase 52 Fix 4 — the legacy MOCKED
+    # `ap_aging` key was removed from `_build_financial_context`;
+    # `ap_aging_detailed` is now the single source of truth.
     ap_real = await compute_ap_aging(tid)
-    ap = {
-        "0_30": round(ap_real["1_30_cents"] / 100.0, 2),
-        "31_60": round(ap_real["31_60_cents"] / 100.0, 2),
-        "61_90": round(ap_real["61_90_cents"] / 100.0, 2),
-        "90_plus": round(ap_real["over_90_cents"] / 100.0, 2),
-        "current": round(ap_real["current_cents"] / 100.0, 2),
-        "total_open": round(ap_real["total_open_cents"] / 100.0, 2),
-        "mocked": False,
-    }
     gross = round(revenue["total"] - expenses["total"], 2)
     margin = round((gross / revenue["total"]) * 100, 2) if revenue["total"] else 0.0
     return {
@@ -594,7 +602,14 @@ async def dashboard(
         "profit_margin_pct": margin,
         "cash_on_hand": cash,
         "ar_aging": ar,
-        "ap_aging": ap,
+        "ap_aging_detailed": {
+            "current_cents": ap_real["current_cents"],
+            "1_30_cents": ap_real["1_30_cents"],
+            "31_60_cents": ap_real["31_60_cents"],
+            "61_90_cents": ap_real["61_90_cents"],
+            "over_90_cents": ap_real["over_90_cents"],
+            "total_open_cents": ap_real["total_open_cents"],
+        },
         "revenue_by_source": revenue["by_source"],
         "expense_by_category": expenses["by_category"],
     }
@@ -1000,7 +1015,8 @@ async def _build_financial_context(
     exp = await _expenses(tenant_id, s, e)
     cash = await _cash_on_hand(tenant_id)
     ar = await _ar_aging(tenant_id)
-    ap = _ap_aging_placeholder()
+    # Phase 52 Fix 4 — legacy `ap` placeholder removed; only
+    # `ap_aging_detailed` (real values) is exported below.
     top_customers = await _top_customers_by_revenue(tenant_id, s, e)
     # Phase 51.K — extend context with COGS + AP aging + Payroll so
     # the AI CFO can honestly answer "spend on chemicals YTD?" etc.
@@ -1051,7 +1067,8 @@ async def _build_financial_context(
         "profit_margin_pct": margin,
         "cash_on_hand": cash,
         "ar_aging": ar,
-        "ap_aging": ap,
+        # Phase 52 Fix 4 — legacy `ap_aging` (MOCKED) removed. Use
+        # `ap_aging_detailed` below as the sole AP source.
         "top_customers": top_customers,
         "active_jobs_pipeline": active_jobs,
         "active_warranty_contracts": active_warranties,
@@ -1102,6 +1119,106 @@ async def _call_llm_text(system_prompt: str, user_prompt: str,
     except Exception as e:
         logger.warning(f"CFO LLM call failed: {e}")
         return None, f"llm error: {e}", 0
+
+
+# ─── Phase 52.A · Price-increase suggestions (LLM-generated) ─────────
+_PRICING_SYSTEM = (
+    "You are a CFO assistant for a field-service business (pool + landscaping). "
+    "You will be given the 3 least-profitable service types for the previous "
+    "month with revenue, cost, margin %, and average labor hours. For EACH "
+    "service type, propose a targeted price increase. Reply STRICTLY in this "
+    "JSON shape and nothing else:\n"
+    '{"suggestions":[{"service_type":"...","current_avg_price_cents":int,'
+    '"recommended_price_cents":int,"rationale":"...","expected_margin_lift_pct":number,'
+    '"customer_talking_points":["...","..."]}]}\n'
+    "Talking points must be 2 to 3 short sentences the office can use in a "
+    "customer email. Numbers only in cents (integer). No trailing commentary."
+)
+
+
+class PricingSuggestionsBody(BaseModel):
+    month: Optional[str] = None
+
+
+@router.post("/price-increase-suggestions")
+async def price_increase_suggestions(
+    body: PricingSuggestionsBody,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Pulls the previous month's 3 least-profitable service types and
+    asks the AI CFO for per-service price-increase suggestions.
+    Response is cached in `pricing_suggestions_cache` for 24h per
+    (tenant_id, month) to avoid repeat LLM calls."""
+    # Compute the target month string exactly like the digest cron.
+    now = _now_utc()
+    if body.month:
+        try:
+            y, m = body.month.split("-")
+            y, m = int(y), int(m)
+        except Exception:
+            raise HTTPException(422, "month must be YYYY-MM")
+    else:
+        y = now.year if now.month > 1 else now.year - 1
+        m = now.month - 1 if now.month > 1 else 12
+    month_key = f"{y:04d}-{m:02d}"
+    # 24h cache.
+    cached = await db.pricing_suggestions_cache.find_one(
+        {"tenant_id": tenant["id"], "month": month_key}, {"_id": 0}
+    )
+    if cached:
+        cached_at = _parse_dt(cached.get("cached_at"))
+        if cached_at and (now - cached_at).total_seconds() < 86400:
+            return {**cached.get("payload", {}), "cached": True}
+    # Pull the 3 worst service types for the month.
+    from routers.jobs import least_profitable_services
+    ranked = await least_profitable_services(month=month_key, limit=3,
+                                                admin=user, tenant=tenant)
+    services = ranked.get("services") or []
+    if not services:
+        return {"month": month_key, "suggestions": [],
+                 "reason": "no completed jobs with cost data in month",
+                 "cached": False}
+
+    # Compose a compact prompt.
+    lines = []
+    for s in services:
+        avg_price = int(round(s["revenue_cents"] / max(1, s["job_count"])))
+        lines.append(
+            f"- {s['service_type']}: {s['job_count']} jobs · "
+            f"revenue {s['revenue_cents']}c · cost {s['cost_cents']}c · "
+            f"margin {s['margin_pct']:.1f}% · avg {s['avg_hours_per_job']}h/job · "
+            f"avg price {avg_price}c"
+        )
+    user_prompt = "Least-profitable service types for " + month_key + ":\n" + "\n".join(lines)
+    text, err, tokens = await _call_llm_text(_PRICING_SYSTEM, user_prompt, 800)
+    suggestions: List[Dict[str, Any]] = []
+    parse_error = None
+    if text:
+        try:
+            import json as _json, re as _re
+            match = _re.search(r"\{.*\}", text, flags=_re.DOTALL)
+            payload = _json.loads(match.group(0)) if match else _json.loads(text)
+            suggestions = payload.get("suggestions", [])
+        except Exception as pe:
+            parse_error = str(pe)
+    result = {
+        "month": month_key,
+        "suggestions": suggestions,
+        "raw_error": err or parse_error,
+        "cached": False,
+    }
+    # Persist cache (only when we actually got usable suggestions).
+    if suggestions:
+        await db.pricing_suggestions_cache.update_one(
+            {"tenant_id": tenant["id"], "month": month_key},
+            {"$set": {"tenant_id": tenant["id"], "month": month_key,
+                        "payload": {"month": month_key, "suggestions": suggestions},
+                        "cached_at": now.isoformat(),
+                        "tokens": tokens}},
+            upsert=True,
+        )
+    return result
 
 
 # ─── /qna ─────────────────────────────────────────────────────────────
