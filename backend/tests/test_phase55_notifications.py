@@ -62,11 +62,20 @@ def test_kinds_catalog(admin_token):
     assert r.status_code == 200
     data = r.json()
     kinds = data.get("kinds") or []
-    assert len(kinds) == 18, f"expected 18 kinds, got {len(kinds)}"
+    # Phase 55.1 added 4 *_unmatched kinds → 22 total. Assert a floor
+    # and required-subset instead of an exact count so future kind
+    # additions don't break this test.
+    assert len(kinds) >= 22, f"expected ≥22 kinds, got {len(kinds)}"
     keys = {k["key"] for k in kinds}
-    assert "rc_sms_inbound" in keys
+    required_subset = {
+        "rc_sms_inbound", "rc_call_inbound", "rc_voicemail", "rc_fax",
+        "rc_sms_inbound_unmatched", "rc_call_inbound_unmatched",
+        "rc_voicemail_unmatched", "rc_fax_unmatched",
+        "invoice_paid", "system_alert",
+    }
+    missing = required_subset - keys
+    assert not missing, f"kinds catalog missing required entries: {sorted(missing)}"
     defaults = data.get("defaults") or {}
-    # defaults is a dict keyed by kind; each entry has bell/email/sms
     assert "rc_sms_inbound" in defaults
     assert defaults["rc_sms_inbound"] == {"bell": True, "email": False, "sms": False}
 

@@ -279,6 +279,13 @@ async def startup():
         logger.error(f"MongoDB ping FAILED at startup: {e}")
     await seed()  # idempotent, ~ms after first run; creates demo admin.
     SEEDS_STARTED_AT = datetime.now(_tz.utc).isoformat()
+    # Deployment audit (Phase 58.a) — ensure the deploy-blocker indexes
+    # documented in db_indexes.py exist. Idempotent.
+    try:
+        from db_indexes import ensure_deployment_indexes
+        await ensure_deployment_indexes()
+    except Exception as e:
+        logger.warning(f"ensure_deployment_indexes crashed: {e}")
 
     async def _defer():
         try:
