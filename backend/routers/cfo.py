@@ -673,6 +673,13 @@ async def _build_financial_context(
     if not exp.get("by_category"):
         mocked_fields.append("expense_by_category (empty — categorizer not run)")
 
+    # Phase 47.6 — Budget + actuals context for questions like "on track?"
+    try:
+        from routers.budgets import build_budget_context
+        budget_ctx = await build_budget_context(tenant_id)
+    except Exception as _e:
+        budget_ctx = {"has_budget": False, "note": f"budget context skipped: {_e}"}
+
     return {
         "period": {"key": period, "start": s.isoformat(), "end": e.isoformat()},
         "revenue": {"total": rev["total"], "by_source": rev["by_source"]},
@@ -686,6 +693,7 @@ async def _build_financial_context(
         "active_jobs_pipeline": active_jobs,
         "active_warranty_contracts": active_warranties,
         "warranty_arr_estimate": round(warranty_arr, 2),
+        "budget": budget_ctx,
         "mocked_fields": mocked_fields,
     }
 

@@ -131,6 +131,9 @@ import ToolsHub from "@/pages/tech/ToolsHub";
 import BusinessCard from "@/pages/tech/BusinessCard";
 import LandscapingTimeClock from "@/pages/tech/LandscapingTimeClock";
 import PoolServiceReport from "@/pages/reports/PoolServiceReport";
+import BudgetSetup from "@/pages/budget/BudgetSetup";
+import BudgetDashboard from "@/pages/budget/BudgetDashboard";
+import BudgetWizard from "@/pages/budget/BudgetWizard";
 import { ComposerPage as SocialComposer, CalendarPage as SocialCalendar,
          LibraryPage as SocialLibrary, DraftsPage as SocialDrafts } from "@/pages/social/SocialSuite";
 import { ApprovalsPage as SocialApprovals, BulkUploadPage as SocialBulkUpload,
@@ -297,6 +300,10 @@ export default function App() {
             <Route path="landscape/time-clock" element={<LandscapingTimeClock />} />
             {/* Phase 46.4 — Pool Service Report (admin/super_admin) */}
             <Route path="admin/reports/pool-service" element={<AdminOnly><PoolServiceReport /></AdminOnly>} />
+            {/* Phase 47 — Budgeting Suite */}
+            <Route path="admin/budget" element={<AdminOnly><BudgetSetup /></AdminOnly>} />
+            <Route path="admin/budget/dashboard" element={<AdminOnly><BudgetDashboard /></AdminOnly>} />
+            <Route path="admin/budget/wizard" element={<AdminOnly><BudgetWizard /></AdminOnly>} />
             {/* Phase 29 — All My Tools hub (tech + admin). Non-role users are
                 redirected inside the component. */}
             <Route path="tech/tools" element={<ToolsHub />} />

@@ -139,3 +139,59 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
 ### Deferred / Follow-ups
 - **46.2 photo panel**: The large primary photo + horizontal thumb strip variant from the reference screenshot was not implemented — the existing job card structure retained with the pill row + VIEW DETAILS button added. Full photo layout can land in a follow-up phase.
 - **46.6 stale HTTP fallback rows**: When Playwright is available the walker succeeds; when only requests is available the report shows link inventory but not per-link 404 status (SPA HTML is always 200). Consider adding a preflight step that fails when any `spa-404` row appears.
+
+## Phase 47 — Budgeting Suite + 46.2 closeout (2026-07-16)
+
+### 46.2 closeout — Workstream card LEFT/RIGHT layout
+- `mobile/src/components/widgets.tsx` — split into `WorkstreamPillColumn` (LEFT ~40%: 9 vertical pills with `job-card-pill-{name}-{id}` testIDs) + `WorkstreamPhoto` (RIGHT ~60%: primary photo at 200px height with full-width blue "VIEW DETAILS" overlay, `job-card-photo-{id}` + `job-card-view-details-{id}`) + `WorkstreamThumbStrip` (up to 6 additional thumbs below, `job-card-thumb-{i}-{id}`). Placeholder gradient when no primary photo. Old horizontal `pillWrap` + `WorkstreamPillRow` component removed.
+- `backend/routers/jobs.py` — `list_jobs` now augments every job with `has_water_readings`, `has_chemicals_added`, `has_checklist`, `has_private_note`, `has_public_note`, `has_repair_request`, `has_shopping_request` derived from the latest per-job service report. Wraps in try/except so failures degrade gracefully (pills render gray). Mobile pill column prefers these authoritative flags with legacy field fallbacks.
+
+### 47.1 — Budget Setup + backend
+- NEW `backend/routers/budgets.py` — `GET/PUT /budgets/{year}`, `POST /budgets/{year}/copy-from/{prev}?scale`, `GET /budgets/current/markup`, `GET /budgets/current/dashboard`, `GET /budgets/{year}/dashboard`, `GET /budgets/health-summary`. Monthly targets normalized to 12 months, integer-cent storage, `computed.*` recalculated on every write. Literal-path routes declared BEFORE `/budgets/{year}` (comment in file explains the FastAPI ordering trap).
+- NEW `frontend/src/pages/budget/BudgetSetup.jsx` — 12-row × 8-column editable table (revenue + 6 expense buckets + target profit %), sidebar summary with computed billable hourly + markup %, copy-from-prior-year with scale factor, labor burden input.
+- Nav entries added (Budget Setup / Dashboard / Wizard) in `nav/adminNav.js` under Reports.
+
+### 47.2 — Estimator integration
+- `backend/routers/estimator.py::create_estimate` — stamps every NEW draft estimate with `budget_markup_pct`, `budget_markup_source` (`budget`/`default`), `budget_markup_applied_at`. Also sets `markup_pct` to the budget value so the estimator math immediately reflects the target. Falls back to 40% default when no budget doc exists (via `budgets.get_current_markup`).
+- `backend/routers/budgets._recalc_open_estimates` — on budget save cascades the new markup onto ALL `draft`/`sent` estimates across BOTH `estimator_estimates` and `estimates` collections. Accepted/closed estimates immutable.
+
+### 47.3 — Job Costing view
+- NEW `GET /jobs/{id}/costing` — labels baseline (from attached estimate or `job.price`) vs actuals (labor from `time_entries`, materials from service-report `chemicals_added` × `chemical_costs`, equipment from `inventory_reservations`) and returns per-bucket `progress.*_pct` + estimated + actual net profit.
+- NEW `frontend/src/pages/budget/JobCostingPanel.jsx` — coloured progress bars (green < 80%, yellow 80–100%, red > 100%), profit tiles at the bottom. Embedded inside `JobDetail.jsx` above Photos, admin/super_admin only.
+
+### 47.4 — Revenue Target dashboard
+- NEW `frontend/src/pages/budget/BudgetDashboard.jsx` — 4 stat cards (This Month / YTD / YTD Net Margin / Pace) + monthly Actual-vs-Target bar chart using recharts. Renders `no_budget_for_year` banner when the budget is missing with an inline link to Setup. Consumes `/budgets/{year}/dashboard`.
+
+### 47.5 — Know Your Numbers wizard
+- NEW `frontend/src/pages/budget/BudgetWizard.jsx` — 4-step wizard (Net Profit → Op-Ex → Preview → Apply). Live math preview client-side, authoritative math on `POST /budgets/{year}/wizard/apply` which stores `wizard_inputs.computed.*` for audit.
+- Backend `apply_wizard` — supports either dollar or percent input, optional seasonal weighting (summer bump). Applies an even-split across 12 months with per-category apportionment.
+
+### 47.6 — AI CFO tie-in
+- `backend/routers/budgets.build_budget_context` — compact blob (`annual_target/actual, ytd_target/actual, pace, ytd_net_profit_pct, current_month, computed.markup_pct/billable_hourly/break_even, expense_targets_ytd`) merged into every CFO Q&A context via `_build_financial_context`.
+- `frontend/src/components/cfo/QnAPanel.jsx` — 3 suggested-prompt chips (`cfo-qna-chip-on`, `-which`, `-what`): "On track for annual revenue?" · "Which category is over budget this month?" · "What markup should I use?".
+- LLM path unchanged — reuses the Emergent LLM key via `_call_llm_text`.
+
+### Mobile — Budget Health card
+- NEW `mobile/src/components/BudgetHealthCard.tsx` — read-only admin widget. Consumes `/budgets/health-summary`, shows this-month + YTD actual vs target and a coloured pace pill (green/yellow/red). Silent when the role is not admin/super_admin. Mounted at the top of `mobile/app/(app)/index.tsx`.
+
+### Small UI tweak (user request during Phase 47)
+- `frontend/src/layouts/AppLayout.jsx` — Universal top-right hamburger (`web-menu-trigger`) now hidden when `role === "admin"` (they already have the admin sidebar + AdminTopBar). Still rendered for super_admin, technician, customer.
+
+### Verified
+- `bash /app/scripts/preflight.sh` → exit 0.
+- Metro bundle `/node_modules/expo-router/entry.bundle?...` → HTTP 200.
+- Budget flow (curl):
+  - `PUT /budgets/2026` writes with `computed.markup_pct: 100.0` (huge revenue vs cost test data).
+  - `POST /budgets/2026/wizard/apply` (opex=$400k, margin=15%, seasonal=true) writes and echoes `computed`.
+  - `GET /budgets/current/dashboard`, `/budgets/current/markup`, `/budgets/health-summary` all return expected shapes.
+  - `POST /estimator/estimates` returns `budget_markup_pct: 15.0`, `budget_markup_source: "budget"`.
+  - After a subsequent `PUT /budgets/2026`, all draft estimates carry the new `budget_markup_pct: 100.0` (cascade OK).
+  - `POST /cfo/qna` returns `context_snapshot.budget.pace: "behind"` (context wired).
+- Playwright smoke:
+  - `admin@aquaterra.com` → `/admin/budget`, `/admin/budget/dashboard`, `/admin/budget/wizard`, `/jobs/{id}` all render their testIDs + no `not-found-page` marker.
+  - `admin@aquaterra.com`: NO `web-menu-trigger` in DOM.
+  - `mike@aquaterra.com` (tech), `customer@aquaterra.com`: `web-menu-trigger` IS in DOM.
+- Screenshot captured of `/admin/budget/dashboard` showing 4 stat cards + monthly bar chart with January's actual bar.
+
+### NOT built (per user)
+- Auto-email Friday Pool Service Report — deferred per user request. HANDOFF note reflected.

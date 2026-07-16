@@ -557,9 +557,11 @@ function AppLayout() {
         )}
 
         {/* Phase 44 · universal top-right menu — visible for every
-            authenticated role. Fixed-positioned so it doesn't nudge
-            layout on any page. */}
-        <UniversalMenu />
+            authenticated role EXCEPT admin (admins already have the
+            admin sidebar + AdminTopBar so a third hamburger is
+            redundant). Fixed-positioned so it doesn't nudge layout on
+            any page. */}
+        {(effectiveRole || user.role) !== "admin" && <UniversalMenu />}
 
         <Outlet />
 

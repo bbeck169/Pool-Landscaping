@@ -139,6 +139,27 @@ export default function QnAPanel({ period, customStart, customEnd, onUsageChange
         data-testid="cfo-qna-input"
         disabled={busy}
       />
+      {/* Phase 47.6 — budget-aware suggested prompts */}
+      <div className="flex flex-wrap gap-2 mb-2" data-testid="cfo-qna-chips">
+        {[
+          "On track for annual revenue?",
+          "Which category is over budget this month?",
+          "What markup should I use?",
+        ].map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setQuestion(s)}
+            disabled={busy}
+            className="text-xs font-semibold px-2 py-1 rounded-full"
+            style={{ border: `1px solid ${c.border}`, background: c.surface, color: c.onSurface,
+                     cursor: busy ? "wait" : "pointer" }}
+            data-testid={`cfo-qna-chip-${s.split(" ")[0].toLowerCase()}`}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
       <div className="flex items-center gap-2">
         <div className="text-xs" style={{ color: c.muted }}>
           Context period: <b>{period.toUpperCase()}</b>

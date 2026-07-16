@@ -160,64 +160,62 @@ export function JobCard({ job, testID, locked }: { job: any; testID?: string; lo
           ) : null}
         </View>
       ) : null}
-      {/* Phase 46.2 · Workstream card pills + View Details CTA */}
-      <WorkstreamPillRow job={job} />
-      <Pressable
-        onPress={() => (locked ? undefined : router.push(`/job/${job.id}`))}
-        disabled={locked}
-        style={styles.viewDetailsBtn}
-        testID={`job-card-view-details-${job.id}`}
-      >
-        <Ionicons name="arrow-forward-circle" size={16} color="#fff" />
-        <Text style={styles.viewDetailsText}>VIEW DETAILS</Text>
-      </Pressable>
+      {/* Phase 46.2 closeout · Workstream layout — LEFT pills column + RIGHT primary photo */}
+      <View style={styles.workstreamRow}>
+        <View style={styles.workstreamPillCol}>
+          <WorkstreamPillColumn job={job} />
+        </View>
+        <View style={styles.workstreamPhotoCol}>
+          <WorkstreamPhoto job={job}
+            onOpen={() => (locked ? undefined : router.push(`/job/${job.id}`))} />
+        </View>
+      </View>
+      {/* Horizontal thumbnail strip (up to 6 extras). */}
+      <WorkstreamThumbStrip job={job} />
     </Pressable>
   );
 }
 
-// Phase 46.2 — Workstream pill row. Green when the backing data exists on
-// the job payload, gray otherwise. Pill states are computed from the
-// current job doc so no extra fetch is needed for the jobs list. Deep
-// service-report driven states (Water Test / Chemicals / Checklist) will
-// gain live signal once the jobs feed includes a summary badge.
-function WorkstreamPillRow({ job }: { job: any }) {
+// ── Workstream sub-parts ──────────────────────────────────────────────
+function WorkstreamPillColumn({ job }: { job: any }) {
   const has = {
-    "water-test":    !!(job?.chemical_readings_count || job?.has_water_readings),
-    "chemicals":     !!(job?.chemicals_added_count || job?.has_chemicals_added),
-    "checklist":     !!(job?.checklist_progress || job?.service_report_id),
-    "private-note":  !!(job?.account_notes || job?.tech_note),
-    "public-note":   !!(job?.customer_note),
-    "repair":        !!(job?.repair_request),
-    "shopping":      !!(job?.shopping_request),
-    "time":          !!(job?.scheduled_start || job?.scheduled_date),
-    "location":      !!(job?.address || job?.lat),
+    water:    !!(job?.has_water_readings ?? job?.chemical_readings_count),
+    chem:     !!(job?.has_chemicals_added ?? job?.chemicals_added_count),
+    check:    !!(job?.has_checklist ?? job?.service_report_id),
+    private_note: !!(job?.has_private_note ?? (job?.account_notes || job?.tech_note)),
+    public_note:  !!(job?.has_public_note ?? job?.customer_note),
+    repair:   !!(job?.has_repair_request ?? job?.repair_request),
+    shopping: !!(job?.has_shopping_request ?? job?.shopping_request),
+    time:     !!(job?.scheduled_start || job?.scheduled_date),
+    location: !!(job?.address || job?.lat),
   } as const;
-  const entries: { key: keyof typeof has; label: string; icon: any }[] = [
-    { key: "water-test",   label: "Water Test",   icon: "water-outline" },
-    { key: "chemicals",    label: "Chemicals",    icon: "flask-outline" },
-    { key: "checklist",    label: "Checklist",    icon: "checkmark-done-outline" },
-    { key: "private-note", label: "Private Note", icon: "lock-closed-outline" },
-    { key: "public-note",  label: "Public Note",  icon: "chatbox-outline" },
-    { key: "repair",       label: "Repair",       icon: "construct-outline" },
-    { key: "shopping",     label: "Shopping",     icon: "cart-outline" },
-    { key: "time",         label: "Time",         icon: "time-outline" },
-    { key: "location",     label: "Location",     icon: "location-outline" },
+  const rows: { key: keyof typeof has; label: string; icon: any; testKey: string }[] = [
+    { key: "water",         label: "Water Test",   icon: "water-outline",         testKey: "water-test" },
+    { key: "chem",          label: "Chemicals",    icon: "flask-outline",         testKey: "chemicals" },
+    { key: "check",         label: "Checklist",    icon: "checkmark-done-outline", testKey: "checklist" },
+    { key: "private_note",  label: "Private Note", icon: "lock-closed-outline",   testKey: "private-note" },
+    { key: "public_note",   label: "Public Note",  icon: "chatbox-outline",       testKey: "public-note" },
+    { key: "repair",        label: "Repair",       icon: "construct-outline",     testKey: "repair" },
+    { key: "shopping",      label: "Shopping",     icon: "cart-outline",          testKey: "shopping" },
+    { key: "time",          label: "Time",         icon: "time-outline",          testKey: "time" },
+    { key: "location",      label: "Location",     icon: "location-outline",      testKey: "location" },
   ];
   return (
-    <View style={styles.pillWrap}>
-      {entries.map((e) => {
-        const on = has[e.key];
+    <View>
+      {rows.map((r) => {
+        const on = has[r.key];
         return (
           <View
-            key={e.key}
-            style={[styles.pill, on ? styles.pillOn : styles.pillOff]}
-            testID={`job-card-pill-${e.key}-${job.id}`}
+            key={r.key}
+            style={[styles.pillV, on ? styles.pillOn : styles.pillOff]}
+            testID={`job-card-pill-${r.testKey}-${job.id}`}
           >
-            <Ionicons name={e.icon} size={11}
+            <Ionicons name={r.icon} size={11}
               color={on ? "#166534" : colors.muted} />
             <Text style={[styles.pillText,
-              on ? styles.pillTextOn : styles.pillTextOff]}>
-              {e.label}
+              on ? styles.pillTextOn : styles.pillTextOff]}
+              numberOfLines={1}>
+              {r.label}
             </Text>
           </View>
         );
@@ -225,6 +223,68 @@ function WorkstreamPillRow({ job }: { job: any }) {
     </View>
   );
 }
+
+function _photoUri(p: any): string | null {
+  if (!p) return null;
+  if (typeof p === "string") return p;
+  return p?.url || p?.public_url || p?.thumbnail_url || p?.data || null;
+}
+
+function WorkstreamPhoto({ job, onOpen }: { job: any; onOpen: () => void }) {
+  const photos = Array.isArray(job?.photos) ? job.photos : [];
+  const primary = _photoUri(photos[0]);
+  return (
+    <View style={styles.photoBox} testID={`job-card-photo-${job.id}`}>
+      {primary ? (
+        <Image source={{ uri: primary }} style={styles.photoImg} />
+      ) : (
+        <View style={[styles.photoImg, styles.photoPlaceholder]}>
+          <Ionicons name="image-outline" size={26} color="#93C5FD" />
+          <Text style={styles.photoPlaceholderText}>No primary photo</Text>
+        </View>
+      )}
+      <Pressable
+        style={styles.viewDetailsOverlay}
+        onPress={onOpen}
+        testID={`job-card-view-details-${job.id}`}
+      >
+        <Text style={styles.viewDetailsText}>VIEW DETAILS</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function WorkstreamThumbStrip({ job }: { job: any }) {
+  const router = useRouter();
+  const photos: any[] = Array.isArray(job?.photos) ? job.photos.slice(1, 7) : [];
+  if (photos.length === 0) return null;
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.thumbStrip}
+    >
+      {photos.map((p, i) => {
+        const uri = _photoUri(p);
+        if (!uri) return null;
+        return (
+          <Pressable
+            key={i}
+            style={styles.thumb}
+            onPress={() => router.push(`/job/${job.id}`)}
+            testID={`job-card-thumb-${i}-${job.id}`}
+          >
+            <Image source={{ uri }} style={styles.thumbImg} />
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+// Phase 46.2 — Legacy WorkstreamPillRow removed (superseded by
+// WorkstreamPillColumn in the new left/right layout). ImageStrip and
+// pill column now handle the whole row.
 
 export function FilterRow({
   options,
@@ -373,11 +433,32 @@ const styles = StyleSheet.create({
   pill: { flexDirection: "row", alignItems: "center", gap: 4,
           paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill,
           borderWidth: 1 },
+  pillV: { flexDirection: "row", alignItems: "center", gap: 6,
+           paddingHorizontal: 8, paddingVertical: 5, borderRadius: radius.pill,
+           borderWidth: 1, marginBottom: 5 },
   pillOn: { backgroundColor: "#DCFCE7", borderColor: "#86EFAC" },
   pillOff: { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
   pillText: { fontFamily: font.semibold, fontSize: 10, letterSpacing: 0.3 },
   pillTextOn: { color: "#166534" },
   pillTextOff: { color: colors.muted },
+  workstreamRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
+  workstreamPillCol: { width: "40%" },
+  workstreamPhotoCol: { flex: 1 },
+  photoBox: {
+    borderRadius: radius.md, overflow: "hidden", position: "relative",
+    minHeight: 200, backgroundColor: colors.surfaceSecondary,
+  },
+  photoImg: { width: "100%", height: 200 },
+  photoPlaceholder: {
+    alignItems: "center", justifyContent: "center", gap: 6,
+    backgroundColor: "#EFF6FF",
+  },
+  photoPlaceholderText: { fontFamily: font.semibold, fontSize: 11, color: "#3B82F6" },
+  viewDetailsOverlay: {
+    position: "absolute", left: 0, right: 0, bottom: 0,
+    backgroundColor: colors.brand, paddingVertical: 10,
+    alignItems: "center", justifyContent: "center",
+  },
   viewDetailsBtn: {
     marginTop: spacing.sm,
     flexDirection: "row", alignItems: "center", justifyContent: "center",
@@ -388,6 +469,10 @@ const styles = StyleSheet.create({
     fontFamily: font.bold, fontSize: 13, color: "#fff",
     letterSpacing: 0.7,
   },
+  thumbStrip: { flexDirection: "row", gap: 6, paddingTop: spacing.sm, paddingBottom: 2 },
+  thumb: { width: 70, height: 70, borderRadius: radius.sm, overflow: "hidden",
+           borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+  thumbImg: { width: "100%", height: "100%" },
   filterRowWrap: { flexGrow: 0, maxHeight: 56, backgroundColor: colors.surface },
   filterRowContent: { gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, alignItems: "center" },
   chipFilter: {

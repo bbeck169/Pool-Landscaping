@@ -193,6 +193,42 @@ async def list_jobs(
                       "revenue", "invoice_total", "quote_total", "margin",
                       "labor_cost", "materials_cost", "gross_margin"):
                 d.pop(k, None)
+
+    # Phase 46.2 closeout — augment each job with pill-state booleans so the
+    # mobile Workstream card can render green/gray without extra roundtrips.
+    # Reads the latest service report per job (best-effort).
+    try:
+        jids = [d.get("id") for d in docs if d.get("id")]
+        if jids:
+            reports = await db.service_reports.find(
+                {"tenant_id": tenant["id"], "job_id": {"$in": jids}},
+                {"_id": 0, "job_id": 1, "chemical_readings": 1, "chemicals_added": 1,
+                 "checklist_items": 1, "notes": 1},
+            ).to_list(len(jids) * 2)
+            by_job: dict = {}
+            for r in reports:
+                # Keep the last write per job.
+                by_job[r.get("job_id")] = r
+            for d in docs:
+                rep = by_job.get(d.get("id"))
+                readings = (rep or {}).get("chemical_readings") or []
+                chems = (rep or {}).get("chemicals_added") or []
+                checks = (rep or {}).get("checklist_items") or []
+                d["has_water_readings"] = any(
+                    (r.get("value") not in (None, "")) for r in readings
+                )
+                d["has_chemicals_added"] = len(chems) > 0
+                d["has_checklist"] = any(bool(c.get("checked")) for c in checks)
+                d["has_private_note"] = bool(d.get("account_notes") or (rep or {}).get("notes"))
+                d["has_public_note"] = bool(d.get("customer_note"))
+                d["has_repair_request"] = bool(d.get("repair_request"))
+                d["has_shopping_request"] = bool(d.get("shopping_request"))
+    except Exception as _e:
+        # Never let this augmentation break the jobs list — pills just render gray.
+        for d in docs:
+            d.setdefault("has_water_readings", False)
+            d.setdefault("has_chemicals_added", False)
+            d.setdefault("has_checklist", False)
     return docs
 
 

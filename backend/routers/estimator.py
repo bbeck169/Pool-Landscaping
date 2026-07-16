@@ -374,6 +374,20 @@ async def create_estimate(body: EstimateIn,
         "converted_at": None,
         "sent_at": None,
     }
+    # Phase 47.2 — Apply the current year's budget markup on creation and
+    # audit the source. Draft/sent estimates get re-flagged whenever the
+    # budget is saved (see routers/budgets._recalc_open_estimates).
+    try:
+        from routers.budgets import get_current_markup
+        markup_pct, from_budget = await get_current_markup(tenant["id"])
+        doc["budget_markup_pct"] = markup_pct
+        doc["budget_markup_source"] = "budget" if from_budget else "default"
+        doc["budget_markup_applied_at"] = now_iso()
+        # Also set the estimator's own markup_pct so calc math immediately
+        # reflects the budget-driven number until the user overrides.
+        doc["markup_pct"] = markup_pct
+    except Exception as _e:
+        logger.warning(f"budget markup apply skipped: {_e}")
     await db.estimator_estimates.insert_one(dict(doc))
     doc.pop("_id", None)
     return {"estimate_id": doc["id"], "estimate": doc}

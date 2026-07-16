@@ -10,6 +10,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, money, IMAGES } from "@/src/theme";
 import { Loading, StatusChip, Sheet, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import BudgetHealthCard from "@/src/components/BudgetHealthCard";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -55,6 +56,7 @@ export default function Dashboard() {
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
       >
+        <BudgetHealthCard />
         <View style={styles.hero}>
           <Image source={{ uri: IMAGES.dashboardHero }} style={StyleSheet.absoluteFill} contentFit="cover" />
           <LinearGradient colors={["rgba(0,60,95,0.55)", "rgba(26,43,60,0.92)"]} style={StyleSheet.absoluteFill} />

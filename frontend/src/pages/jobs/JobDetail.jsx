@@ -31,6 +31,7 @@ import {
 } from "@/components/ui-kit";
 import { useAuth } from "@/auth";
 import { useAttendance } from "@/hooks/useAttendance";
+import JobCostingPanel from "@/pages/budget/JobCostingPanel";
 
 export default function JobDetail() {
   const { id } = useParams();
@@ -362,6 +363,9 @@ export default function JobDetail() {
       </div>
 
       {/* Photos */}
+      {(user?.role === "admin" || user?.role === "super_admin") ? (
+        <JobCostingPanel jobId={job.id} />
+      ) : null}
       {(job.photos || []).length ? (
         <div
           className="rounded-2xl p-6 mb-4"
