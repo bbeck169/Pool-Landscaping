@@ -6,6 +6,7 @@ from config import client, db, logger
 from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user, seed_prior_readings, seed_phase51k_finance, seed_mike_today_job
 from routers import (
     notifications as notifications_router,
+    stripe_payments as stripe_payments_router,
     auth, customers, technicians, jobs, quotes, leads, team, items, payments,
     operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google as google_router, phase11,
     realtime, csat, signatures,
@@ -48,6 +49,7 @@ app = FastAPI(
 api_router = APIRouter(prefix="/api")
 
 for module in [notifications_router,
+               stripe_payments_router,
                auth, customers, technicians, jobs, quotes, leads, team, items, payments,
                operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google_router, phase11,
                realtime, csat, signatures,

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
+import { PayNowButton, PayInAppForm, StripeCheckoutReturn } from "@/components/stripe/StripePayments";
 import {
   PageHeader,
   Button,
@@ -170,6 +171,8 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
         <ArrowLeft size={14} /> All {isInvoice ? "invoices" : "quotes"}
       </button>
 
+      <StripeCheckoutReturn onPaid={() => load()} />
+
       <div
         className="rounded-2xl p-6 mb-4"
         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
@@ -261,6 +264,9 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
               <Button variant="ghost" onClick={() => setPayOpen(true)} testid="id-record-payment">
                 <DollarSign size={14} /> Record payment
               </Button>
+              {balance > 0 ? (
+                <PayNowButton invoice={doc} onError={(m) => window.alert(m)} />
+              ) : null}
             </>
           )}
           <Button variant="danger" onClick={() => setConfirmDelete(true)} testid="qd-cancel">

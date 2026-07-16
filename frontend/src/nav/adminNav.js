@@ -214,6 +214,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/reports/pricing-insights",label: "Pricing Insights",    icon: LineChart, feature: "reports" },
     { to: "/admin/cfo/reports",            label: "CFO Reports",         icon: PieChart, feature: "reports" },
     { to: "/admin/finance/bills",          label: "Vendor Bills",        icon: Receipt, feature: "reports" },
+    { to: "/admin/finance/stripe-payments", label: "Stripe Payments",    icon: DollarSign, feature: "reports" },
     { to: "/admin/settings/chemical-costs",label: "Chemical Costs",      icon: Calculator, feature: "settings" },
     { to: "/admin/settings/ringcentral",   label: "RingCentral",         icon: Phone, feature: "settings" },
     { to: "/admin/budget",                 label: "Budget Setup",        icon: Calculator, feature: "settings" },

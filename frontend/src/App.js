@@ -74,6 +74,7 @@ import {
 } from "@/pages/aiops/AiOpsPages";
 import NotificationsPage from "@/pages/notifications/NotificationsPage";
 import NotificationPrefs from "@/pages/settings/NotificationPrefs";
+import StripeReconciliation from "@/pages/finance/StripeReconciliation";
 import {
   D2dDashboard, D2dMap, D2dKnocks, D2dOpenLeads, D2dSoldLeads, D2dReport, D2dLeaderboard,
 } from "@/pages/d2d/D2dPages";
@@ -279,6 +280,7 @@ export default function App() {
             <Route path="tasks" element={<AdminOnly><TasksPage /></AdminOnly>} />
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="settings/notifications" element={<NotificationPrefs />} />
+            <Route path="admin/finance/stripe-payments" element={<AdminOnly><StripeReconciliation /></AdminOnly>} />
 
             {/* Phase 15A — CSAT admin */}
             <Route path="csat" element={<AdminOnly><CsatDashboard /></AdminOnly>} />

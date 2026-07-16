@@ -125,10 +125,12 @@ async def _match_customer_by_phone(tenant_id: Optional[str], phone: str) -> Opti
     if tenant_id: q["tenant_id"] = tenant_id
     # Try exact string match first (fast path for phones stored
     # already in E.164 or the same shape as the incoming value).
+    # Seeded customer docs may hold their phone number on EITHER the
+    # scalar `phone` field OR the array `phones` field; check both.
     for candidate in (phone, normalized):
         if not candidate:
             continue
-        q_exact = dict(q, **{"phones": candidate})
+        q_exact = dict(q, **{"$or": [{"phones": candidate}, {"phone": candidate}]})
         match = await db.customers.find_one(q_exact, {"_id": 0})
         if match:
             return match
@@ -138,7 +140,8 @@ async def _match_customer_by_phone(tenant_id: Optional[str], phone: str) -> Opti
         pattern = "".join(f"{d}\\D*" for d in tail10)
         # Anchor at end so `4805550102` doesn't spuriously hit
         # something like `1480555010200000000`.
-        q_regex = dict(q, **{"phones": {"$regex": pattern + "$"}})
+        rgx = {"$regex": pattern + "$"}
+        q_regex = dict(q, **{"$or": [{"phones": rgx}, {"phone": rgx}]})
         match = await db.customers.find_one(q_regex, {"_id": 0})
         if match:
             return match
