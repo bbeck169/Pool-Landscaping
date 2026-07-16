@@ -40,14 +40,12 @@ export default function JobDetail() {
   const [pendingPhotos, setPendingPhotos] = useState<any[]>([]);
   const online = useOnline();
 
-  // Belt-and-suspenders: technicians must be clocked in to view job details.
-  // The schedule already locks the row, but a tech typing/deep-linking to /job/<id>
-  // hits this guard instead of the field-report screen.
-  React.useEffect(() => {
-    if (user?.role === "technician" && !attendance.loading && !attendance.clockedIn) {
-      router.replace("/(app)/schedule");
-    }
-  }, [user?.role, attendance.loading, attendance.clockedIn, router]);
+  // Phase 47 follow-up — removed the "tech must be clocked in" redirect
+  // that used to send technicians to `/(app)/schedule` here. Techs now
+  // land on the workstream list at `/(app)/jobs` and tap VIEW DETAILS to
+  // reach this screen; forcing a redirect broke that flow. Any per-action
+  // clock-in enforcement should happen at the mutating action layer, not
+  // at read time.
 
   const load = useCallback(async () => {
     try {
