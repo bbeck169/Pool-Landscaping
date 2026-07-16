@@ -47,7 +47,7 @@ async def stripe_publishable_key():
         if pk.startswith("pk_live_"): m = "live"
         elif pk.startswith("pk_test_"): m = "test"
         else: m = "unknown"
-    return {"key": pk, "mode": m}
+    return {"publishable_key": pk, "key": pk, "mode": m}
 
 
 # ─── /webhook · scaffold (empty handlers) ─────────────────────────────

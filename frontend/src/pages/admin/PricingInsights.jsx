@@ -128,13 +128,14 @@ export default function PricingInsights() {
                   <th className="text-right px-3 py-2 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Jobs</th>
                   <th className="text-right px-3 py-2 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Revenue</th>
                   <th className="text-right px-3 py-2 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Cost</th>
+                  <th className="text-right px-3 py-2 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Margin ($)</th>
                   <th className="text-right px-3 py-2 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Margin %</th>
                   <th className="text-right px-3 py-2 uppercase text-[11px] font-semibold" style={{ color: colors.muted }}>Avg hrs</th>
                 </tr>
               </thead>
               <tbody>
                 {services.length === 0 ? (
-                  <tr><td colSpan={6} className="px-4 py-8 text-center text-sm"
+                  <tr><td colSpan={7} className="px-4 py-8 text-center text-sm"
                          style={{ color: colors.muted }}
                          data-testid="pricing-insights-empty">
                     No completed jobs with cost data in {month}.
@@ -146,11 +147,16 @@ export default function PricingInsights() {
                     <td className="px-3 py-2 text-right" style={{ color: colors.muted }}>{s.job_count}</td>
                     <td className="px-3 py-2 text-right" style={{ color: colors.onSurface }}>{fmtMoney(s.revenue_cents)}</td>
                     <td className="px-3 py-2 text-right" style={{ color: colors.onSurface }}>{fmtMoney(s.cost_cents)}</td>
+                    <td className="px-3 py-2 text-right font-semibold"
+                        style={{ color: (s.margin_cents ?? 0) < 0 ? "#B91C1C" : colors.onSurface }}
+                        data-testid={`pricing-insights-margin-dollars-${s.service_type.replace(/\s+/g,'-')}`}>
+                      {fmtMoney(s.margin_cents)}
+                    </td>
                     <td className="px-3 py-2 text-right">
                       <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase"
                             style={{ background: s.margin_pct >= 40 ? "#DCFCE7" : s.margin_pct >= 20 ? "#FEF3C7" : "#FEE2E2",
                                        color: s.margin_pct >= 40 ? "#166534" : s.margin_pct >= 20 ? "#92400E" : "#991B1B" }}>
-                        {s.margin_pct.toFixed(1)}%
+                        {Number(s.margin_pct || 0).toFixed(1)}%
                       </span>
                     </td>
                     <td className="px-3 py-2 text-right" style={{ color: colors.muted }}>{s.avg_hours_per_job}h</td>
