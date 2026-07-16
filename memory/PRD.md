@@ -312,3 +312,49 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
 1. **Phase 56** — Customer CSV Import 12-column update (Customer Since / Email / Service address Street / City / State / Postal Code / Phone / Mobile / First Name / Last Name / Tags / Notes). Tolerant date parsing, E.164 phone normalization (reuse Phase 54 helper), soft dedup on (tenant_id, email, mobile), backward-compat with old headers.
 2. **Phase 57** — Tech Department Assignment + Department-Gated Experience. PATCH `/api/users/{id}` for department. Split TECH_NAV into TECH_POOL + TECH_LANDSCAPE. New LandscapeChecklistForm (web + mobile). Route guards for `/pool-checklist/*` vs `/landscape-checklist/*`. Landscape clock widget on Profile.
 3. **Phase 58** — Global rebrand AquaTerra → Pool & Landscaping. New logo assets (icon + full). Web + mobile header swap. Login page. manifest.json + index.html. Email + PDF templates. Preserve tenant slug "aquaterra" and test-fixture emails.
+
+## Phase 55.1 · Fix Pass + CFO Feature (2026-07-16, LANDED)
+
+### FIX 1 — Stripe RBAC (P0 live-payment abuse vector, tester-reported)
+- `routers/stripe_payments.py::_authorize_invoice_pay(user, inv)` — new gate applied to `POST /checkout/session`, `POST /payment-intent`, `GET /checkout/status/{session_id}`. Admin/super_admin → full; customer → own invoices only (`inv.customer_id == user.customer_id`); tech/dispatcher/etc → 403.
+- `/checkout/status/{session_id}` additionally requires BOTH sides of `customer_id` non-empty before matching to prevent unrelated callers polling arbitrary sessions.
+- `GET /stripe/subscriptions?customer_id=X` gated: admin sees any; customer only their own.
+- Refunds + subscriptions create + products CRUD already admin-only via `require_admin`.
+
+### FIX 2 — Notification portal leak (P0)
+- `db.notifications` now carries `audience: "internal" | "portal"` (default `"internal"`).
+- `_mine_filter` for `role: customer` → `user_id == me AND audience == "portal"`.
+- Non-customer branch → `audience: {$in: ["internal", null]}` (legacy rows count as internal).
+- All admin-facing emitters (`_notify_admins`, `_apply_paid_invoice`) explicitly pass `audience="internal"`.
+- Customer-facing notifications will need explicit `audience="portal"` and portal-safe copy — no auto-forwarding of admin fan-outs to the portal bell.
+
+### FIX 3 — Unmatched inbound comms fan-out
+- 4 new kinds added to `KIND_LABELS`: `rc_sms_inbound_unmatched`, `rc_call_inbound_unmatched`, `rc_voicemail_unmatched`, `rc_fax_unmatched` (22 total kinds).
+- `ringcentral.py::_default_tenant_id()` — resolves `RC_DEFAULT_TENANT_SLUG` or falls back to `aquaterra` slug + logs a warning when unset.
+- All 4 RC handlers (`_handle_sms_event`, `_handle_telephony_event`, `_handle_voicemail_event`, `_handle_fax_event`) now emit the `*_unmatched` variant when customer match fails, routed to the default tenant's admins, with `href=/admin/unmatched-communications` and body truncated to 100 chars.
+
+### FIX 4 — RC webhook token verification
+- `POST /api/ringcentral/webhook` now verifies `Verification-Token` (or `X-Verification-Token` / `x-rc-verification-token`) header against `RINGCENTRAL_WEBHOOK_TOKEN` env. Mismatch/missing ⇒ 401.
+- `Validation-Token` echo path preserved BEFORE the token check for RC subscription-registration handshake.
+
+### FEATURE — Stripe cash weekly aggregation into CFO digest
+- NEW `services/reports.py::stripe_cash_weekly(tenant_id, month)` — buckets `db.stripe_payments` by ISO Monday-start week, filters `status in [paid, refunded]` on `updated_at` within month range, returns `[{week_starting, cash_collected_cents, refunds_cents, net_cents}]`.
+- NEW `GET /api/cfo/stripe-cash-weekly?month=YYYY-MM` admin endpoint.
+- `POST /api/cfo/price-increase-suggestions` LLM prompt enriched with "Stripe cash collected by week" block so the AI CFO frames price-increase talking points against measurable ROI.
+- `PricingInsights.jsx` now renders a "Cash Collected via Stripe" card at the top with 4 week-tiles, net-total, and per-week colored bars.
+
+### Testing
+- iteration_11 — 20/20 pass, 1 live-Stripe skip. Zero critical defects remaining.
+
+### Curl RBAC matrix
+| # | Actor | Endpoint | Target | Expect | Actual |
+|---|-------|----------|--------|--------|--------|
+| 1 | admin | POST /stripe/checkout/session | any | 200 | 200 ✅ |
+| 2 | tech | POST /stripe/checkout/session | any | 403 | 403 ✅ |
+| 3 | tech | POST /stripe/payment-intent | any | 403 | 403 ✅ |
+| 4a | customer | POST /stripe/checkout/session | own invoice | 200 | 200 ✅ |
+| 4b | customer | POST /stripe/checkout/session | other customer's | 403 | 403 ✅ |
+| 5 | tech | POST /stripe/refunds | any | 403 | 403 ✅ |
+| 6 | anon | POST /ringcentral/webhook | no token | 401 | 401 ✅ |
+| 7 | anon | POST /ringcentral/webhook | wrong token | 401 | 401 ✅ |
+| 8 | customer | GET /notifications | leak check | 0 internal | 0 ✅ |

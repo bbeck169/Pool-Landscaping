@@ -210,7 +210,11 @@ async def checkout_status(
     row = await db.stripe_payments.find_one({"tenant_id": tenant["id"], "session_id": session_id}, {"_id": 0})
     role = (user or {}).get("role") or ""
     if role not in ("admin", "super_admin"):
-        if role != "customer" or not row or (row.get("customer_id") or "") != (user.get("customer_id") or ""):
+        my_cust = user.get("customer_id") or ""
+        row_cust = (row or {}).get("customer_id") or ""
+        # Require BOTH sides non-empty to allow the match — an empty
+        # customer_id on the row must never authorize an unrelated caller.
+        if role != "customer" or not row or not my_cust or my_cust != row_cust:
             raise HTTPException(403, "Not authorized")
     stripe = get_stripe()
     try:

@@ -91,6 +91,8 @@ async def _default_tenant_id() -> Optional[str]:
     if slug:
         t = await db.tenants.find_one({"slug": slug}, {"_id": 0, "id": 1})
         if t: return t.get("id")
+    else:
+        logger.warning("RC_DEFAULT_TENANT_SLUG unset — routing unmatched inbound bells to the 'aquaterra' demo tenant fallback")
     t = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0, "id": 1})
     return (t or {}).get("id")
 
@@ -407,6 +409,16 @@ async def _handle_sms_event(body: Dict[str, Any]) -> None:
             body=msg,
             href=f"/customers/{(match or {}).get('id')}",
             customer_id=(match or {}).get("id"),
+            source_ref={"kind": "sms_message", "id": doc["id"]},
+        )
+    elif direction == "inbound" and from_number:
+        # Phase 55.1 — surface SMS from unknown numbers to admins.
+        await _notify_admins(
+            tenant_id=await _default_tenant_id(),
+            kind="rc_sms_inbound_unmatched",
+            title=f"New SMS from unknown number {from_number}",
+            body=(msg or "")[:100],
+            href="/admin/unmatched-communications",
             source_ref={"kind": "sms_message", "id": doc["id"]},
         )
 
