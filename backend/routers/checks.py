@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -948,10 +948,180 @@ def _render_check_pdf(c: Dict[str, Any], ba: Dict[str, Any],
     return buf.getvalue()
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Phase 58.b — print-token mint + verifier
+#
+# Frontend prints via ``window.open(<pdf-url>?token=...)`` which cannot
+# forward the ``Authorization: Bearer`` header. We mint a scoped 5-min
+# JWT that piggybacks the query string. Signed with the same JWT_SECRET
+# but carries an explicit ``kind`` field so the token can only unlock
+# the resource type it was minted for.
+# ═══════════════════════════════════════════════════════════════════
+import jwt as _jwt  # noqa
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+from config import JWT_SECRET as _JWT_SECRET, JWT_ALGO as _JWT_ALGO
+
+_PRINT_TOKEN_TTL_SECONDS = 300  # 5 minutes
+
+
+def _mint_print_token(*, kind: str, resource_id: str, user: dict, tenant_id: str) -> tuple[str, str]:
+    """Mint a scoped print-token. Returns ``(token, iso_expires_at)``.
+    Never logs the token body — only the first 8 chars of the ``jti``."""
+    now = _dt.now(_tz.utc)
+    exp = now + _td(seconds=_PRINT_TOKEN_TTL_SECONDS)
+    jti = new_id()
+    payload = {
+        "kind": kind,
+        "resource_id": resource_id,
+        "user_id": user["id"],
+        "tenant_id": tenant_id,
+        "role": user.get("role"),
+        "iat": int(now.timestamp()),
+        "exp": int(exp.timestamp()),
+        "jti": jti,
+    }
+    token = _jwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGO)
+    logger.info(f"print-token minted kind={kind} jti={jti[:8]}… user={user.get('email')}")
+    return token, exp.isoformat()
+
+
+async def _resolve_pdf_auth(request: Request, token: Optional[str], *,
+                              expected_kind: str, resource_id: str) -> tuple[dict, dict]:
+    """Accept either a valid Bearer JWT OR a ``?token=`` print-token.
+    Returns ``(user, tenant)`` on success — resolves tenant from the
+    Bearer user's ``tenant_id`` OR the query token's ``tenant_id``
+    without invoking ``Depends(get_current_tenant)`` (which would
+    require the Bearer header and fail the whole request before this
+    ever runs).
+    """
+    # Fast path — Bearer header still works so existing curl clients +
+    # authenticated fetch() calls keep functioning unchanged.
+    auth_hdr = request.headers.get("authorization") or ""
+    if auth_hdr.lower().startswith("bearer "):
+        try:
+            from utils import get_current_user  # lazy — avoids circular
+            from fastapi.security import HTTPAuthorizationCredentials
+            creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_hdr.split(" ", 1)[1])
+            u = await get_current_user(creds)
+            if (u or {}).get("role") not in ("admin", "super_admin"):
+                raise HTTPException(403, "admin only")
+            t = await db.tenants.find_one({"id": u.get("tenant_id"), "active": True}, {"_id": 0})
+            if not t:
+                raise HTTPException(404, "tenant not found")
+            return u, t
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # fall through to query token path
+    # Query-token path.
+    if not token:
+        raise HTTPException(401, "Not authenticated")
+    try:
+        payload = _jwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGO])
+    except _jwt.ExpiredSignatureError:
+        raise HTTPException(401, "print token expired")
+    except Exception:
+        raise HTTPException(401, "invalid print token")
+    if payload.get("kind") != expected_kind:
+        raise HTTPException(403, "token not valid for this resource kind")
+    if payload.get("resource_id") != resource_id:
+        raise HTTPException(403, "token not valid for this resource id")
+    if payload.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "token role not admin")
+    tenant_id = payload.get("tenant_id")
+    t = await db.tenants.find_one({"id": tenant_id, "active": True}, {"_id": 0})
+    if not t:
+        raise HTTPException(404, "tenant not found")
+    u = await db.users.find_one(
+        {"id": payload.get("user_id"), "tenant_id": tenant_id},
+        {"_id": 0, "password_hash": 0}) or None
+    if not u:
+        raise HTTPException(401, "user not found")
+    return u, t
+
+
+async def _emit_print_notification(tenant_id: str, user: dict, c: dict,
+                                     batch_id: Optional[str]) -> None:
+    """Phase 55 fan-out — one row per successful PDF stream."""
+    try:
+        from services.notifications import emit as notify_emit, KIND_LABELS
+        # Use the closest catalog kind — "system_alert" is the generic
+        # admin bucket (see services/notifications.KIND_LABELS).
+        kind = "system_alert" if "system_alert" in KIND_LABELS else "system"
+        admins = await db.users.find(
+            {"tenant_id": tenant_id, "role": {"$in": ["admin", "super_admin"]}},
+            {"_id": 0, "id": 1},
+        ).to_list(200)
+        aids = [a["id"] for a in admins if a.get("id")]
+        if not aids:
+            return
+        who = user.get("name") or user.get("email") or "an admin"
+        if batch_id:
+            title = f"Check batch printed by {who}"
+            body = f"Batch {batch_id[:8]}… ({len(c) if isinstance(c, list) else 1} checks)"
+            source = {"kind": "check_batch", "id": batch_id}
+        else:
+            title = f"Check #{c.get('check_number','?')} printed by {who}"
+            body = f"${(c.get('amount') or 0):,.2f} to {c.get('payee_name') or 'payee'}"
+            source = {"kind": "check", "id": c.get("id")}
+        await notify_emit(
+            aids, kind=kind, title=title, body=body,
+            href="/admin/checks/register",
+            tenant_id=tenant_id, audience="internal",
+            source_ref=source,
+        )
+    except Exception as e:
+        logger.warning(f"check print notification emit failed: {type(e).__name__}")
+
+
+@router.post("/checks/{cid}/print-token")
+async def issue_check_print_token(cid: str,
+                                     user: dict = Depends(require_admin),
+                                     tenant: dict = Depends(get_current_tenant)):
+    """Mint a 5-min scoped JWT that unlocks ONLY this check's PDF."""
+    # Confirm the check exists + belongs to the tenant before minting.
+    await _fetch_check(cid, tenant["id"])
+    token, exp = _mint_print_token(kind="check_pdf", resource_id=cid,
+                                      user=user, tenant_id=tenant["id"])
+    return {"token": token, "expires_at": exp,
+            "pdf_url": f"/api/checks/{cid}/pdf"}
+
+
+@router.post("/checks/batch/{bid}/print-token")
+async def issue_batch_print_token(bid: str,
+                                     user: dict = Depends(require_admin),
+                                     tenant: dict = Depends(get_current_tenant)):
+    batch = await db.check_batches.find_one(
+        {"id": bid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1})
+    if not batch:
+        raise HTTPException(404, "Batch not found")
+    token, exp = _mint_print_token(kind="check_batch_pdf", resource_id=bid,
+                                      user=user, tenant_id=tenant["id"])
+    return {"token": token, "expires_at": exp,
+            "pdf_url": f"/api/checks/batch/{bid}/print"}
+
+
+
+
 @router.get("/checks/{cid}/pdf")
 async def check_pdf(cid: str,
-                      user: dict = Depends(require_admin),
-                      tenant: dict = Depends(get_current_tenant)):
+                      request: Request,
+                      token: Optional[str] = Query(None)):
+    """Renders + streams a printable check PDF.
+
+    Auth accepts EITHER:
+      * ``Authorization: Bearer <jwt>`` for role-checked callers, OR
+      * ``?token=<print-token>`` — a short-lived scoped JWT minted by
+        ``POST /checks/{cid}/print-token`` so ``window.open`` on the
+        frontend can stream the PDF (browsers can't forward Bearer on
+        a new tab).
+
+    The print-token payload must carry ``kind="check_pdf"`` and
+    ``resource_id`` matching the path — otherwise 403. TTL is 5 min.
+    """
+    user, tenant = await _resolve_pdf_auth(request, token,
+                                             expected_kind="check_pdf",
+                                             resource_id=cid)
     c = await _fetch_check(cid, tenant["id"])
     ba = await db.bank_accounts.find_one(
         {"id": c["bank_account_id"], "tenant_id": tenant["id"]},
@@ -966,6 +1136,9 @@ async def check_pdf(cid: str,
         warnings.append("TEST_ONLY_NOT_MICR_ENCODED")
     if not bool(ba.get("live_mode")):
         warnings.append("SAMPLE_MODE")
+    # Phase 55 fan-out — one notification per successful stream, NOT
+    # per token mint. Non-fatal if it fails.
+    await _emit_print_notification(tenant["id"], user, c, batch_id=None)
     return StreamingResponse(
         io.BytesIO(pdf), media_type="application/pdf",
         headers={
@@ -1270,9 +1443,13 @@ def _render_batch_pdf_3up(checks_list: List[Dict[str, Any]],
 
 
 @router.post("/checks/batch/{bid}/print")
+@router.get("/checks/batch/{bid}/print")
 async def batch_print(bid: str,
-                          user: dict = Depends(require_admin),
-                          tenant: dict = Depends(get_current_tenant)):
+                          request: Request,
+                          token: Optional[str] = Query(None)):
+    user, tenant = await _resolve_pdf_auth(request, token,
+                                             expected_kind="check_batch_pdf",
+                                             resource_id=bid)
     batch = await db.check_batches.find_one(
         {"id": bid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not batch:

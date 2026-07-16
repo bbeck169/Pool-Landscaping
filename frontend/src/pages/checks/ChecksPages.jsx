@@ -569,8 +569,11 @@ export function CheckDetail() {
     setBusy(true); setMsg("");
     try {
       await api.post(`/checks/checks/${id}/print`);
-      window.open(`${window.location.origin}/api/checks/${id}/pdf`,
-                   "_blank");
+      // Phase 58.b — mint a scoped 5-min print token so window.open
+      // (which can't forward the Bearer header) can stream the PDF.
+      const tok = await api.post(`/checks/${id}/print-token`);
+      const url = `${window.location.origin}/api/checks/${id}/pdf?token=${encodeURIComponent(tok.token)}`;
+      window.open(url, "_blank");
       await load();
     } catch (e) { setMsg(e.message); }
     finally { setBusy(false); }

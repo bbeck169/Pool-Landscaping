@@ -66,9 +66,12 @@ export default function CheckBatchNew() {
   };
 
   const printBatch = async () => {
-    window.open(
-      `${window.location.origin}/api/checks/batch/${created.id}/print`,
-      "_blank");
+    try {
+      const tok = await api.post(`/checks/batch/${created.id}/print-token`);
+      window.open(
+        `${window.location.origin}/api/checks/batch/${created.id}/print?token=${encodeURIComponent(tok.token)}`,
+        "_blank");
+    } catch (e) { setErr(e?.message || "Print failed"); }
   };
 
   return (
@@ -343,9 +346,13 @@ export function CheckPayrollImport() {
             {result.batch.check_count} checks · ${result.batch.total_amount.toFixed(2)}
           </div>
           <div className="mt-4 flex gap-2 justify-center">
-            <button onClick={() =>
-                        window.open(`${api_base()}/checks/batch/${result.batch.id}/print`,
-                                     "_blank")}
+            <button onClick={async () => {
+                        try {
+                          const tok = await api.post(`/checks/batch/${result.batch.id}/print-token`);
+                          window.open(`${api_base()}/checks/batch/${result.batch.id}/print?token=${encodeURIComponent(tok.token)}`,
+                                       "_blank");
+                        } catch (e) { /* silent — button surfaces its own error */ }
+                    }}
                     className="px-4 py-2 text-sm font-bold rounded-xl flex items-center gap-1"
                     style={{ backgroundColor: colors.brand, color: "#fff" }}
                     data-testid="payroll-print">
