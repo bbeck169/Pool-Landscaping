@@ -22,6 +22,9 @@ export const CHEMICALS_CATALOG = [
   { slug: "salt",              name: "Salt",              unit: "40lb bag", unit_kind: "integer" },
   { slug: "enzymes",           name: "Enzymes",           unit: "oz",       unit_kind: "decimal" },
 ];
+// Alias — the inline stack imports under this name to disambiguate from
+// a future mobile shared-config port.
+export const CHEMICALS_CATALOG_WEB = CHEMICALS_CATALOG;
 
 export function normalizeChemQty(entry, raw) {
   if (raw === "" || raw == null) return null;

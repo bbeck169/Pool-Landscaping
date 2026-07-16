@@ -195,3 +195,18 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
 
 ### NOT built (per user)
 - Auto-email Friday Pool Service Report — deferred per user request. HANDOFF note reflected.
+
+## Phase 48 — Manual-entry chemicals everywhere (2026-07-16)
+
+### Files changed
+- `mobile/src/components/checklist/ReadingChipRow.tsx` — REWRITTEN. Chip scale removed. Single `TextInput` (`decimal-pad`) per reading + not-tested pill + unit label. Per-key validation (pH 0-14 2dp; chlorine 0-10 2dp; alkalinity 0-500 1dp; CYA 0-300 1dp; salt 0-6000 int). Red border on invalid; blocks save-through until user fixes. Preserves Phase 46.1 defaults as placeholders.
+- `frontend/src/components/checklist/PoolChecklistForm.jsx` — REWRITTEN Chemical Readings section into an inline `ReadingInputRow` component (same validation/units/defaults as mobile). Removed the "Quick add chemical" button + ChemicalPickerModal invocation (redundant now that the stack is inline manual entry). CHIP_SCALES/PALETTES/_chipToValue/_isChipSelected/_phSweet are now dead but left in place to keep the diff small (call sites removed).
+- `frontend/src/components/checklist/ChemicalDropdownStack.jsx` — REWRITTEN into a plain text-input stack driven by CHEMICALS_CATALOG. `snapRecommendationToPreset` retained as no-op for `add_from_recommendation` callers.
+- `mobile/src/components/checklist/ChemicalDropdownStack.tsx` — REWRITTEN into a plain `TextInput` stack driven by CHEMICALS_CATALOG. Same commit/clear semantics as web. `CHEM_TYPES` and `snapRecommendationToPreset` kept as compat exports.
+- `frontend/src/components/checklist/ChemicalPickerModal.jsx` — added `CHEMICALS_CATALOG_WEB` alias export so the new inline stack can import the shared list without a mobile→web loop.
+
+### Verified
+- `bash /app/scripts/preflight.sh` → exit 0. Metro bundle 200. Web bundle 200.
+- Playwright mobile Expo Web (mike, `/job/{id}/checklist`): 10 reading text inputs, 10 not-tested toggles, 9 chemical row inputs, **0 legacy chip testids** in DOM. Screenshot shows PH row with invalid value "75" triggering red border + "Value out of range (0-14, 2dp)" error.
+- Playwright web (admin, calendar → event → ChecklistModal): renders PH 7.6 (unit `pH`), Free Cl 3 (`ppm`), Combined Cl empty (`ppm`), Total Alkalinity 100 (`ppm`), Calcium Hardness visible. Each row has NOT TESTED toggle. Screenshot captured.
+- Grep for `<Slider` / `<Slider ` / `CHIP_SCALES` reference in checklist components: only remaining occurrence is a dead const in `PoolChecklistForm.jsx` (kept to minimize diff) and a comment in mobile — no rendered chips.

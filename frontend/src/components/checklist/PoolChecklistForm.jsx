@@ -21,6 +21,126 @@ import { api } from "@/api";
 import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDropdownStack";
 import ChemicalPickerModal from "./ChemicalPickerModal";
 
+// Phase 48 — per-key validation rules for the manual-entry reading rows.
+// Keys are normalized snake_case; aliases share the same rule.
+const _READING_RULES = {
+  free_chlorine:    { min: 0, max: 10,   decimals: 2, unit: "ppm" },
+  total_chlorine:   { min: 0, max: 10,   decimals: 2, unit: "ppm" },
+  chlorine:         { min: 0, max: 10,   decimals: 2, unit: "ppm" },
+  ph:               { min: 0, max: 14,   decimals: 2, unit: "pH" },
+  total_alkalinity: { min: 0, max: 500,  decimals: 1, unit: "ppm" },
+  alkalinity:       { min: 0, max: 500,  decimals: 1, unit: "ppm" },
+  cyanuric_acid:    { min: 0, max: 300,  decimals: 1, unit: "ppm" },
+  cya:              { min: 0, max: 300,  decimals: 1, unit: "ppm" },
+  salt:             { min: 0, max: 6000, decimals: 0, unit: "ppm" },
+};
+const _READING_DEFAULTS = {
+  free_chlorine: 3, total_chlorine: 3, chlorine: 3,
+  ph: 7.6, total_alkalinity: 100, alkalinity: 100,
+  cyanuric_acid: 70, cya: 70,
+};
+
+function _validateReading(rule, raw) {
+  if (raw === "" || raw == null) return { value: null, invalid: false };
+  if (!/^\d*\.?\d*$/.test(raw)) return { value: null, invalid: true };
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return { value: null, invalid: true };
+  if (rule) {
+    if (n < rule.min || n > rule.max) return { value: null, invalid: true };
+    const dot = raw.indexOf(".");
+    if (dot >= 0 && raw.length - dot - 1 > rule.decimals) return { value: null, invalid: true };
+  }
+  return { value: rule && rule.decimals === 0 ? Math.round(n) : n, invalid: false };
+}
+
+/** Phase 48 — Manual-entry reading row. Not-tested toggle preserved. */
+function ReadingInputRow({ testKey, reading, notTested, previous, locked, onChange }) {
+  const rule = _READING_RULES[testKey];
+  const unit = reading.unit || (rule ? rule.unit : "");
+  const [draft, setDraft] = useState(notTested ? "" : String(reading.value));
+  React.useEffect(() => {
+    setDraft(notTested ? "" : String(reading.value));
+  }, [reading.value, notTested]);
+  const { value, invalid } = _validateReading(rule, draft);
+  const commit = () => {
+    if (locked) return;
+    if (draft === "") { onChange(null); return; }
+    if (invalid) return;
+    onChange(value);
+  };
+  return (
+    <div
+      data-testid={`pool-reading-${testKey}-slider`}
+      className="border rounded-lg p-3"
+      style={{ borderColor: colors.border, background: colors.surface, opacity: notTested ? 0.7 : 1 }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: colors.onSurface }}>
+          {reading.name}{reading.unit ? ` (${reading.unit})` : ""}
+        </span>
+        <button
+          type="button"
+          disabled={locked}
+          onClick={() => {
+            if (notTested) onChange(_READING_DEFAULTS[testKey] ?? 0);
+            else onChange(null);
+          }}
+          data-testid={`pool-reading-${testKey}-not-tested`}
+          className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md"
+          style={{
+            border: `1px solid ${notTested ? colors.brand : colors.border}`,
+            background: notTested ? colors.brandTertiary : colors.surface,
+            color: notTested ? colors.brand : colors.muted,
+            cursor: locked ? "not-allowed" : "pointer",
+          }}
+        >
+          {notTested ? "Not tested" : "—"}
+        </button>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          inputMode="decimal"
+          step={rule && rule.decimals === 0 ? "1" : (rule && rule.decimals === 1 ? "0.1" : "0.01")}
+          min="0"
+          disabled={locked || notTested}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } }}
+          placeholder={String(_READING_DEFAULTS[testKey] ?? "")}
+          data-testid={`pool-reading-${testKey}-input`}
+          className="flex-1 px-2 py-1.5 rounded-md text-sm font-semibold"
+          style={{
+            border: `${invalid ? 2 : 1}px solid ${invalid ? "#DC2626" : colors.border}`,
+            background: (locked || notTested) ? colors.surfaceSecondary : colors.surface,
+            color: (locked || notTested) ? colors.muted : colors.onSurface,
+          }}
+        />
+        {unit ? (
+          <span className="text-xs font-semibold min-w-[40px]"
+                style={{ color: colors.muted }}
+                data-testid={`pool-reading-${testKey}-unit`}>
+            {unit}
+          </span>
+        ) : null}
+      </div>
+      {invalid ? (
+        <div className="text-[11px] font-semibold mt-1" style={{ color: "#B91C1C" }}
+             data-testid={`pool-reading-${testKey}-error`}>
+          Value out of range{rule ? ` (${rule.min}–${rule.max}, ${rule.decimals}dp)` : ""}.
+        </div>
+      ) : null}
+      <div className="text-[10px] mt-2" style={{ color: colors.muted }}
+           data-testid={`pool-reading-${testKey}-previous`}>
+        Previously tested at: {previous
+          ? `${previous.value}${reading.unit ? ` ${reading.unit}` : ""} · ${_fmtRel(previous.at)}`
+          : "—"}
+      </div>
+    </div>
+  );
+}
+
 // Phase 37 — refined chip-scale defaults per reading key.
 // Chlorine: 0.5 ppm increments up to 20. pH: 0.1 increments 6.0..8.5 with
 // a "<6" sentinel chip. Alkalinity: 10 ppm increments 20..200. Temp:
@@ -391,139 +511,28 @@ export default function PoolChecklistForm({
 
   return (
     <div data-testid="checklist-modal-pool" className="space-y-4">
-      {/* Chemical Readings — Phase 36 chip UI */}
+      {/* Chemical Readings — Phase 48 manual text entry */}
       <div>
         <div className="text-sm font-bold mb-3" style={{ color: colors.onSurface }}>
           Chemical Readings
         </div>
-        <div className="space-y-4">
+        <div className="space-y-3">
           {readings.map((r, i) => {
-            // Phase 37 — canonical snake_case key for testids and CHIP_SCALES
-            // lookup so the two platforms produce identical selectors.
             const key = canonicalReadingKey(r);
-            const scale = _resolveScale(r);
-            const pal = scale ? PALETTES[scale.palette] : PALETTES.optional;
-            // The `lastReadings` payload is keyed by whatever the backend
-            // returned — try the canonical key first, then fall back to
-            // the raw backend key / display name.
             const prev = lastReadings[key]
               || lastReadings[r.key]
               || lastReadings[r.name];
-            const isEditing = editingKey === key;
-            const currentVal = r.value;
+            const notTested = r.value == null || r.value === "";
             return (
-              <div
+              <ReadingInputRow
                 key={key}
-                data-testid={`pool-reading-${key}-slider`}
-                className="border rounded-lg p-3"
-                style={{ borderColor: colors.border, background: colors.surface }}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openEdit(r)}
-                      disabled={locked}
-                      className="p-1 rounded-md"
-                      style={{ background: "transparent", border: 0, cursor: locked ? "default" : "pointer" }}
-                      data-testid={`pool-reading-${key}-edit`}
-                      aria-label={`Edit ${r.name}`}
-                    >
-                      <Pencil size={13} style={{ color: colors.muted }} />
-                    </button>
-                    <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: colors.onSurface }}>
-                      {r.name}{r.unit ? ` (${r.unit})` : ""}
-                    </span>
-                  </div>
-                  <div className="text-sm font-bold" style={{ color: pal.sel }}>
-                    {currentVal == null || currentVal === "" ? "—" : String(currentVal)}
-                  </div>
-                </div>
-
-                {isEditing ? (
-                  <div className="flex items-center gap-2 mb-2">
-                    <input
-                      type="number"
-                      step={r.step || "0.01"}
-                      min={r.min != null ? r.min : 0}
-                      max={r.max != null ? r.max : undefined}
-                      autoFocus
-                      value={editDraft}
-                      onChange={(e) => setEditDraft(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") commitEdit(i); if (e.key === "Escape") setEditingKey(null); }}
-                      className="flex-1 px-2 py-1 rounded-md text-sm"
-                      style={{ border: `1px solid ${colors.border}` }}
-                      data-testid={`pool-reading-${key}-input`}
-                    />
-                    <button type="button" onClick={() => commitEdit(i)}
-                            className="px-2 py-1 rounded-md text-xs font-bold"
-                            style={{ background: colors.brand, color: "#fff", border: 0, cursor: "pointer" }}>
-                      Set
-                    </button>
-                    <button type="button" onClick={() => setEditingKey(null)}
-                            className="p-1 rounded-md" style={{ background: "transparent", border: 0, cursor: "pointer" }}>
-                      <CloseX size={14} style={{ color: colors.muted }} />
-                    </button>
-                  </div>
-                ) : null}
-
-                {scale ? (
-                  <div className="flex gap-1.5 overflow-x-auto pb-1" style={{ scrollbarWidth: "thin" }}>
-                    {scale.values.map((v) => {
-                      const chipVal = _chipToValue(v);
-                      const isSelected = _isChipSelected(v, currentVal);
-                      // pH chips get the green sweet-spot palette override.
-                      const useGreen = scale.palette === "ph" && _phSweet(typeof chipVal === "number" ? chipVal : null);
-                      const bg = isSelected
-                        ? (useGreen ? pal.inRangeSel : pal.sel)
-                        : (useGreen ? pal.inRangeBg : pal.bg);
-                      const fg = isSelected
-                        ? pal.selFg
-                        : (useGreen ? pal.inRangeFg : pal.fg);
-                      return (
-                        <button
-                          type="button"
-                          key={String(v)}
-                          disabled={locked}
-                          onClick={() => updReading(i, chipVal)}
-                          data-testid={`pool-reading-${key}-chip-${String(v)}`}
-                          className="px-2.5 py-1.5 rounded-md text-xs font-bold whitespace-nowrap"
-                          style={{
-                            background: bg, color: fg,
-                            border: isSelected ? `2px solid ${useGreen ? pal.inRangeSel : pal.sel}` : `1px solid ${bg}`,
-                            cursor: locked ? "default" : "pointer",
-                            minWidth: 44,
-                          }}
-                        >
-                          {String(v)}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step={r.step || "0.01"}
-                    min={r.min != null ? r.min : 0}
-                    max={r.max != null ? r.max : undefined}
-                    disabled={locked}
-                    value={r.value == null ? "" : r.value}
-                    onChange={(e) => updReading(i, e.target.value)}
-                    placeholder="—"
-                    className="w-full px-2 py-1.5 rounded-md text-sm"
-                    style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
-                    data-testid={`pool-reading-${key}-input`}
-                  />
-                )}
-
-                <div className="text-[10px] mt-1" style={{ color: colors.muted }}
-                     data-testid={`pool-reading-${key}-previous`}>
-                  Previously tested at: {prev
-                    ? `${prev.value}${r.unit ? ` ${r.unit}` : ""} · ${_fmtRel(prev.at)}`
-                    : "—"}
-                </div>
-              </div>
+                testKey={key}
+                reading={r}
+                notTested={notTested}
+                previous={prev}
+                locked={locked}
+                onChange={(val) => updReading(i, val)}
+              />
             );
           })}
         </div>
@@ -693,7 +702,7 @@ export default function PoolChecklistForm({
         ) : null}
       </div>
 
-      {/* Chemicals Added — Phase 37 stacked dropdown rows */}
+      {/* Chemicals Added — Phase 48 inline manual text entry per catalog */}
       <div>
         <div className="text-sm font-bold mb-2" style={{ color: colors.onSurface }}>
           Chemicals Added
@@ -703,29 +712,6 @@ export default function PoolChecklistForm({
           locked={locked}
           onChange={onChange}
           jobId={jobId}
-        />
-        {/* Phase 46.5 — Web parity for mobile Quick-add sheet. */}
-        <button
-          type="button"
-          disabled={locked}
-          onClick={() => setPickerOpen(true)}
-          className="mt-3 inline-flex items-center gap-2 text-sm font-semibold px-3 py-2 rounded-md w-full justify-center"
-          style={{
-            border: `1px dashed ${colors.brand}`,
-            color: colors.brand,
-            background: colors.surface,
-            cursor: locked ? "not-allowed" : "pointer",
-          }}
-          data-testid="chem-picker-open"
-        >
-          <Plus size={14} /> Quick add chemical
-        </button>
-        <ChemicalPickerModal
-          open={pickerOpen}
-          onClose={() => setPickerOpen(false)}
-          chemicalsAdded={chemicalsAdded}
-          onChange={onChange}
-          locked={locked}
         />
       </div>
 
