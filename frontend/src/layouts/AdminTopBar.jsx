@@ -20,7 +20,7 @@
  */
 import React, { useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { ChevronDown, MenuIcon } from "lucide-react";
+import { ChevronDown, MenuIcon, Users, FileText, ClipboardList, CalendarDays, ListChecks, Phone } from "lucide-react";
 import { ADMIN_NAV_V2 } from "@/nav/adminNav";
 import { usePermissions } from "@/hooks/usePermissions";
 import {
@@ -176,6 +176,56 @@ function MobileMenu({ visible }) {
   );
 }
 
+/** Phase 55 · Quick-Access row — pinned shortcut chips at the very
+ *  top of the top bar. RBAC-gated per entry using the same
+ *  `effectiveRole` semantics as the category dropdowns. Renders as
+ *  filled pills so they're visually distinct from the outlined
+ *  category dropdowns. If a role has zero visible items, the entire
+ *  strip is suppressed (no empty container). */
+function QuickAccessRow() {
+  const { effectiveRole } = usePermissions();
+  const items = [
+    { to: "/customers",                     label: "Customers",   icon: Users,        roles: ["admin", "super_admin"] },
+    { to: "/invoices",                       label: "Invoices",    icon: FileText,     roles: ["admin", "super_admin"] },
+    { to: "/quotes",                         label: "Estimates",   icon: ClipboardList, roles: ["admin", "super_admin"] },
+    { to: "/schedule/calendar",              label: "Schedule",    icon: CalendarDays, roles: ["admin", "super_admin", "technician"] },
+    { to: "/jobs",                            label: "Workstream",  icon: ListChecks,   roles: ["admin", "super_admin", "technician", "customer"] },
+    { to: "/admin/settings/ringcentral",      label: "RingCentral", icon: Phone,        roles: ["admin", "super_admin"] },
+  ];
+  const visible = items.filter((it) => it.roles.includes(effectiveRole));
+  if (visible.length === 0) return null;
+  return (
+    <div
+      className="w-full border-b flex items-center gap-2 px-4 py-2 overflow-x-auto"
+      style={{ backgroundColor: colors.surfaceSecondary, borderColor: colors.border }}
+      data-testid="admin-topbar-quick-access"
+    >
+      <span
+        className="text-[10px] font-bold uppercase tracking-wider mr-1 shrink-0"
+        style={{ color: colors.muted }}
+      >
+        Quick Access
+      </span>
+      {visible.map((it) => {
+        const Icon = it.icon;
+        return (
+          <Link
+            key={it.to}
+            to={it.to}
+            className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full whitespace-nowrap"
+            style={{ background: colors.brand, color: "#fff" }}
+            data-testid={`quick-access-${it.label.toLowerCase()}`}
+          >
+            <Icon size={13} />
+            {it.label}
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+
 export default function AdminTopBar() {
   const visible = useVisibleGroups();
   // Phase 44 · Fix A (attempt 3) — bulletproof responsive gate.
@@ -228,6 +278,10 @@ export default function AdminTopBar() {
       data-vw={vw}
       data-narrow={isNarrow ? "1" : "0"}
     >
+      {/* Phase 55 — pinned Quick Access strip. Rendered above the
+          6-category dropdowns / mobile menu so it stays reachable
+          in one tap without changing existing behavior. */}
+      <QuickAccessRow />
       {isNarrow ? (
         <div
           className="px-4 h-11 flex items-center"

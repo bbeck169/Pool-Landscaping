@@ -149,7 +149,7 @@ export const GlobalMenu: React.FC = () => {
               <Ionicons name="close" size={24} color={colors.onSurface} />
             </Pressable>
           </View>
-          <ToolsMenuBody variant="sheet" onNavigate={handleNavigate} />
+          <ToolsMenuBody variant="sheet" onNavigate={handleNavigate} quickAccessRole={role} />
           {/* Phase 44 · logout entry — divider above + destructive tint.
               Sits pinned at the bottom of the sheet so techs always find
               it after search + tools regardless of scroll position. On

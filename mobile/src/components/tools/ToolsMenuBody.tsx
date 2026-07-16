@@ -36,9 +36,10 @@ import { useToolsPreferences } from "@/src/hooks/useToolsPreferences";
 type Props = {
   variant?: "tab" | "sheet";
   onNavigate?: (tile: ToolCardTile) => void;
+  quickAccessRole?: string;
 };
 
-export const ToolsMenuBody: React.FC<Props> = ({ variant = "tab", onNavigate }) => {
+export const ToolsMenuBody: React.FC<Props> = ({ variant = "tab", onNavigate, quickAccessRole }) => {
   const router = useRouter();
   const { user } = useAuth();
   const role = (user?.role as string) || "";
@@ -105,6 +106,17 @@ export const ToolsMenuBody: React.FC<Props> = ({ variant = "tab", onNavigate }) 
         contentContainerStyle={{ paddingBottom: spacing["3xl"] }}
         keyboardShouldPersistTaps="handled"
       >
+        {/* Phase 55 · Quick Access — pinned shortcut chips at the top
+            of the sheet. RBAC-gated per entry using the same role
+            semantics as the web top bar. Suppressed entirely when a
+            role has zero visible items so no empty container renders. */}
+        {quickAccessRole ? (
+          <QuickAccessChips role={quickAccessRole}
+                             onNavigate={(route) => {
+                               if (onNavigate) onNavigate({ key: `qa-${route}`, route, label: "", desc: "", icon: "flash-outline" } as any);
+                               else router.push(route as any);
+                             }} />
+        ) : null}
         {showPins ? (
           <PinnedRow
             allTiles={allTiles}
@@ -197,4 +209,65 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     color: colors.brand,
   },
+});
+
+// Phase 55 · Quick Access horizontally-scrolling chip row.
+// Renders at the top of the sheet, before Pinned / Recents / chips.
+// RBAC-gated per item — hides the whole strip when a role has zero
+// visible entries so no empty container renders.
+const QUICK_ACCESS_ITEMS: {
+  route: string; label: string; icon: React.ComponentProps<typeof Ionicons>["name"];
+  roles: string[];
+}[] = [
+  { route: "/(app)/customers",         label: "Customers",   icon: "people-outline",       roles: ["admin", "super_admin"] },
+  { route: "/(app)/invoices",           label: "Invoices",    icon: "receipt-outline",       roles: ["admin", "super_admin"] },
+  { route: "/(app)/estimates",          label: "Estimates",   icon: "document-text-outline", roles: ["admin", "super_admin"] },
+  { route: "/(app)/schedule/calendar",  label: "Schedule",    icon: "calendar-outline",      roles: ["admin", "super_admin", "technician"] },
+  { route: "/(app)/jobs",               label: "Workstream",  icon: "list-outline",          roles: ["admin", "super_admin", "technician", "customer"] },
+];
+
+function QuickAccessChips({ role, onNavigate }: { role: string; onNavigate: (r: string) => void }) {
+  const visible = QUICK_ACCESS_ITEMS.filter((it) => it.roles.includes(role));
+  if (visible.length === 0) return null;
+  return (
+    <View style={qaStyles.wrap} testID="mobile-menu-quick-access">
+      <Text style={qaStyles.label}>Quick Access</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={qaStyles.row}>
+        {visible.map((it) => (
+          <Pressable
+            key={it.route}
+            onPress={() => onNavigate(it.route)}
+            style={qaStyles.chip}
+            testID={`quick-access-${it.label.toLowerCase()}`}
+          >
+            <Ionicons name={it.icon} size={14} color="#fff" />
+            <Text style={qaStyles.chipText}>{it.label}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+const qaStyles = StyleSheet.create({
+  wrap: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.surfaceSecondary,
+  },
+  label: {
+    fontFamily: font.semibold, fontSize: 10, letterSpacing: 1.2,
+    textTransform: "uppercase", color: colors.muted, marginBottom: spacing.sm,
+  },
+  row: { gap: spacing.sm, flexDirection: "row" },
+  chip: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    backgroundColor: colors.brand,
+    paddingHorizontal: spacing.md, paddingVertical: 8,
+    borderRadius: radius.pill, marginRight: spacing.sm,
+  },
+  chipText: { fontFamily: font.bold, fontSize: 12, color: "#fff" },
 });
