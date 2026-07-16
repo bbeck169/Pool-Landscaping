@@ -46,7 +46,7 @@ async def _get_branding() -> dict:
     if csz or zipc:
         address_lines.append(f"{csz} {zipc or ''}".strip())
     return {
-        "business_name": brand.get("business_name") or tp.get("business_name") or "AquaTerra",
+        "business_name": brand.get("business_name") or tp.get("business_name") or "Pool & Landscaping",
         "logo_url": brand.get("logo_url"),
         "address_lines": [l for l in address_lines if l],
         "phone": brand.get("phone") or tp.get("phone") or "",

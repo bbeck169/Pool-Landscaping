@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/auth";
 import { usePermissions } from "@/hooks/usePermissions";
-import { navForRole } from "@/nav/roleNav";
+import { navForRole, navForRoleAndDept } from "@/nav/roleNav";
 import { colors } from "@/theme";
 import NotificationBell from "@/components/NotificationBell";
 
@@ -87,7 +87,7 @@ export default function UniversalMenu() {
 
   // Sections are pulled by role at render time so a role change (e.g.,
   // stop-impersonation) reflects immediately without a remount.
-  const sections = useMemo(() => navForRole(role), [role]);
+  const sections = useMemo(() => navForRoleAndDept(role, user?.department), [role, user?.department]);
   const flat = useFlatEntries(sections, can, effectiveRole);
 
   const [open, setOpen] = useState(false);

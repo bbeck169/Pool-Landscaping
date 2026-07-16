@@ -48,7 +48,7 @@ async def _ensure_default_tenant() -> dict:
         return existing
     doc = {
         "id": new_id(),
-        "name": "AquaTerra",
+        "name": "Pool & Landscaping",
         "slug": DEFAULT_TENANT_SLUG,
         "brand_primary": "#0284C7",
         "brand_secondary": "#16A34A",

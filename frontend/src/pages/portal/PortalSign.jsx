@@ -70,7 +70,7 @@ export default function PortalSignPage() {
     <div className="min-h-screen p-4 md:p-8" style={{ backgroundColor: colors.surfaceSecondary }}
          data-testid="portal-sign-page">
       <div className="max-w-3xl mx-auto">
-        <div className="mb-4 text-xs uppercase tracking-wide" style={{ color: colors.muted }}>AquaTerra</div>
+        <div className="mb-4 text-xs uppercase tracking-wide" style={{ color: colors.muted }}>Pool & Landscaping</div>
 
         {alreadySigned ? (
           <Card className="p-8 text-center mb-4" testId="sign-success">

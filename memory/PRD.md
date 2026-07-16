@@ -358,3 +358,48 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
 | 6 | anon | POST /ringcentral/webhook | no token | 401 | 401 ✅ |
 | 7 | anon | POST /ringcentral/webhook | wrong token | 401 | 401 ✅ |
 | 8 | customer | GET /notifications | leak check | 0 internal | 0 ✅ |
+
+## Phase 56 · Customer CSV Import 12-column rewrite (2026-07-16, LANDED)
+- NEW `backend/services/customer_import.py` — 12-column spec (Customer Since, Email, Service address Street, City, State, Postal Code, Phone, Mobile, First Name, Last Name, Tags, Notes). Case-insensitive header match. Tolerant date parser (`Jul 01 2026` / `Jun 23` / `6/23/2026` / `2026-06-23` — year defaults to current). E.164 phone normalization reuses Phase 54 `_normalize_phone_e164`. 2-letter state validated + auto-uppercased. Postal code kept as text (leading zeros preserved). Tags parsed as comma-separated. Legacy CSV shape (Name/Address/Phone) still accepted with `deprecation_warnings`.
+- REWRITTEN `POST /api/import/customers` — returns `{total_rows, imported_count, created_count, updated_count, skipped_count, errors:[{row,reason}], deprecation_warnings}`. Soft dedup on (tenant_id, email, mobile) → UPDATE not create.
+- NEW `GET /api/import/customers/template` — canonical CSV with 1 sample row (admin only).
+- Web UI (`CustomersList.jsx::ImportModal`): 12-column expected-columns table with per-column notes, template download button, post-import result panel with stats cards + per-row error list + deprecation banner.
+- Verified against user's real 3-row sample: 3/3 rows imported cleanly, dates + phones + tags all correct.
+
+## Phase 55.2 · CFO JSON parser hardening (folded into Phase 56)
+- NEW `services/cfo._parse_pricing_suggestions(text)` — attempts (1) direct `json.loads`, (2) strip ```json``` fence, (3) regex-extract first `{...}` or `[...]` block, (4) return `[]` + error message.
+- Endpoint response gains `raw_output_preview: <first 500 chars>` when parse fails so the UI can surface a graceful error banner.
+- NO auto-retry (avoids burning tokens per spec).
+
+## Phase 57 · Tech Department Assignment + Gated Experience (2026-07-16, LANDED)
+### 57.1 · Admin dept assignment
+- NEW `PATCH /api/users/{user_id}` (admin-only) — accepts `{department: "pool" | "landscaping" | null}`. Rejects unknown values with 400; rejects setting department on non-technician users. Emits Phase-55 notifications to the target user + all admins. Writes an audit-log row in `db.audit_log` with actor + changes.
+- `GET /api/team` now tenant-scoped.
+- Web UI (`OpsHub::TeamRoster`): 4 filter chips (All / Pool / Landscape / Unassigned) + colored dept badge + inline `<select>` dropdown per tech row with live PATCH.
+
+### 57.2 · Department-gated nav
+- NEW `TECH_POOL_NAV` and `TECH_LANDSCAPE_NAV` in `frontend/src/nav/roleNav.js`. Landscape variant hides Pool Calculators. Pool variant is the safe default for unassigned techs.
+- NEW `navForRoleAndDept(role, department)` exported alongside legacy `navForRole`. `UniversalMenu` reads current user's department and dispatches.
+- Curl matrix: PATCH admin→200, invalid dept→400, forbidden field→400, tech PATCH→403 (all pass).
+
+### 57.3 · Landscape Checklist
+- Existing `LandscapingChecklistForm.jsx` (Phase 31) preserved — checklist template already wired via `ChecklistModal::clientType`.
+- `lib/checklistType.js::getChecklistType(job)` now consults:
+  1. `job.checklist_kind` explicit override.
+  2. `job.technician_department` (attached by Phase 57 job-detail enrichment).
+  3. Keyword sniff on service_type / job_type / title (added `cleanup` keyword).
+  4. Default: `pool` (safest for this business).
+- `GET /api/jobs/{id}` now enriches `technician_department` from the assigned tech's user doc.
+
+## Phase 58 · Rebrand AquaTerra → Pool & Landscaping (2026-07-16, LANDED)
+- Assets: `/app/frontend/public/logo-icon.png` (1024×1024, transparent, 915 KB) + `/app/frontend/public/logo-full.png` (1024×1024, opaque, 615 KB) mirrored into `/app/mobile/assets/`. Both verified PNG-signature valid.
+- Header: `AppLayout.jsx` sidebar + mobile menu now render the icon via `<img src="/logo-icon.png">`. `data-testid="app-logo-icon"` + `app-brand-short`.
+- Login: `Login.jsx` hero renders `logo-full.png` at 280px max-width, replacing the `~` glyph placeholder.
+- Browser title already correct ("Pool & Landscaping of Vistancia"). Added `<meta name="description">` + `<link rel="icon">` + `<link rel="apple-touch-icon">` to `index.html`.
+- Global text replace across `/app/frontend/src` + `/app/mobile/src` + `/app/mobile/app` + `/app/backend/routers` + `/app/backend/seed.py`: 25 files touched. Collapsed `Pool & Landscaping of Vistancia — AquaTerra` → `Pool & Landscaping of Vistancia`. Replaced remaining plain `AquaTerra` → `Pool & Landscaping`.
+- Preserved (per rules): tenant slug `"aquaterra"`, seed emails `*@aquaterra.com`, env-var names, statement descriptor "POOL LANDSCPE VISTANCA", auth strings, and `/tests/*` fixtures (SEO tests intentionally verify the OLD brand string).
+- Grep confirmation: `grep -rn AquaTerra` returns 0 hits in `/app/frontend/src`, `/app/mobile/src`, `/app/mobile/app`, and `/app/backend/routers/` (excluding `/tests/`, `HANDOFF.md`, `PRD.md`, `test_credentials.md`, and Metro's compiled cache blobs — the latter regenerate automatically on next Expo build).
+- Screenshots captured: `login_new.png`, `header_new.png`, `team_dept.png`.
+
+## Guardrails honored across 55.2 / 56 / 57 / 58
+- `/app` only. Preflight exit 0. `RC_OUTBOUND_ENABLED` untouched. Stripe descriptor unchanged. Tenant slug `"aquaterra"` unchanged. Seed emails unchanged. Phase 55/53/55.1 audience filter + Stripe RBAC gate preserved. English only.

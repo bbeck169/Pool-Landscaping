@@ -990,7 +990,7 @@ async def send_estimate(eid: str, body: SendIn,
             "to": to,
             "subject": (body.subject
                           or f"Estimate · {e.get('title','')} "
-                          f"({t.get('name') or 'AquaTerra'})"),
+                          f"({t.get('name') or 'Pool & Landscaping'})"),
             "html": (body.body
                        or f"<p>Please find your estimate attached.</p>"
                        f"<p>Total: <b>${e.get('total',0):.2f}</b></p>"),

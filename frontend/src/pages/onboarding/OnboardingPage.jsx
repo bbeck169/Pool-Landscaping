@@ -158,7 +158,7 @@ export default function OnboardingPage() {
 function StepWelcome({ data, setData }) {
   return (
     <div data-testid="step-welcome">
-      <Input label="BUSINESS NAME" value={data?.business_name || "AquaTerra"} onChange={(v) => setData("business_name", v)} testId="in-business-name" />
+      <Input label="BUSINESS NAME" value={data?.business_name || "Pool & Landscaping"} onChange={(v) => setData("business_name", v)} testId="in-business-name" />
       <div className="grid grid-cols-2 gap-3">
         <Input label="SERVICE RADIUS (MILES)" type="number" value={data?.service_radius || 25}
                onChange={(v) => setData("service_radius", parseInt(v || "0", 10))} testId="in-service-radius" />
@@ -387,7 +387,7 @@ export function OnboardingLoginModal() {
       <div className="rounded-2xl max-w-md w-full p-6"
            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
         <div className="text-4xl mb-3">👋</div>
-        <h2 className="text-xl font-bold mb-2" style={{ color: colors.onSurface }}>Welcome to AquaTerra</h2>
+        <h2 className="text-xl font-bold mb-2" style={{ color: colors.onSurface }}>Welcome to Pool & Landscaping</h2>
         <p className="text-sm mb-6" style={{ color: colors.muted }}>
           Let's get you set up in 3 minutes.
         </p>

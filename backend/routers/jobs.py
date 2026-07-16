@@ -383,7 +383,7 @@ async def _build_work_order_pdf(job: dict, tenant: dict) -> bytes:
     story = []
     story.append(Paragraph("<b>Work Order</b>", styles["Title"]))
     story.append(Paragraph(
-        "Pool &amp; Landscaping of Vistancia — AquaTerra", styles["Normal"]
+        "Pool &amp; Landscaping of Vistancia", styles["Normal"]
     ))
     story.append(Spacer(1, 12))
     rows = [
@@ -558,6 +558,13 @@ async def get_job(jid: str,
     if user.get("role") == "customer" and doc.get("customer_id") != user.get("customer_id"):
         raise HTTPException(403, "Not your job")
     doc = with_field_report(doc)
+    # Phase 57 · attach the assigned tech's department so the checklist
+    # picker on the frontend can render the right form.
+    tid = doc.get("technician_id")
+    if tid:
+        tech_user = await db.users.find_one({"technician_id": tid, "tenant_id": tenant["id"]},
+                                              {"_id": 0, "department": 1}) or {}
+        doc["technician_department"] = tech_user.get("department")
     if user.get("role") == "customer":
         doc.pop("internal_notes", None)
     # Phase 16C add-on: strip revenue/pricing fields from technician responses.

@@ -29,7 +29,7 @@ export default function NotFound({ code = 404, title, subtitle }) {
           </button>
         </div>
         <div className="mt-6 text-xs" style={{ color: colors.onSurfaceSecondary }}>
-          AquaTerra Pool &amp; Landscaping
+          Pool &amp; Landscaping of Vistancia
         </div>
       </div>
     </div>

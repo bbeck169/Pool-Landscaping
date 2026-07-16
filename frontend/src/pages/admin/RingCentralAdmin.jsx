@@ -209,7 +209,7 @@ export default function RingCentralAdmin() {
                    className="w-full px-2 py-1.5 rounded text-sm mb-1"
                    style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
                    data-testid="rc-test-sms-phone" />
-            <textarea placeholder="Hi from AquaTerra…" value={smsMsg} onChange={(e) => setSmsMsg(e.target.value)}
+            <textarea placeholder="Hi from Pool & Landscaping…" value={smsMsg} onChange={(e) => setSmsMsg(e.target.value)}
                        className="w-full px-2 py-1.5 rounded text-sm mb-2 h-16"
                        style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface }}
                        data-testid="rc-test-sms-msg" />

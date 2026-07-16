@@ -348,21 +348,23 @@ function AppLayout() {
           className="px-5 py-5 flex items-center gap-3"
           style={{ borderBottom: `1px solid ${colors.border}` }}
         >
-          <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold shadow-sm"
-            style={{ background: brandGradientCss }}
-          >
-            <FolderClock size={20} />
-          </div>
+          <img
+            src="/logo-icon.png"
+            alt="Pool & Landscaping"
+            className="w-10 h-10 rounded-xl shadow-sm object-contain"
+            style={{ background: "#0EA5E9" }}
+            data-testid="app-logo-icon"
+          />
           <div className="min-w-0">
             <div
               className="font-semibold text-sm truncate"
               style={{ color: colors.onSurface }}
+              data-testid="app-brand-short"
             >
-              AquaTerra
+              Pool & Landscaping
             </div>
             <div className="text-xs truncate" style={{ color: colors.muted }}>
-              Pool &amp; Landscaping · Vistancia
+              of Vistancia
             </div>
           </div>
         </div>
@@ -461,18 +463,19 @@ function AppLayout() {
                 <MenuIcon size={18} />
               </button>
             )}
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-white"
-              style={{ background: brandGradientCss }}
-            >
-              <FolderClock size={16} />
-            </div>
+            <img
+              src="/logo-icon.png"
+              alt="Pool & Landscaping"
+              className="w-8 h-8 rounded-lg object-contain"
+              style={{ background: "#0EA5E9" }}
+              data-testid="app-logo-icon-mobile"
+            />
             <div>
               <div
                 className="text-sm font-semibold leading-none"
                 style={{ color: colors.onSurface }}
               >
-                AquaTerra
+                Pool & Landscaping
               </div>
               <div className="text-[10px] uppercase tracking-wide" style={{ color: colors.muted }}>
                 {roleLabel}
@@ -526,7 +529,7 @@ function AppLayout() {
                     <FolderClock size={16} />
                   </div>
                   <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>
-                    AquaTerra
+                    Pool & Landscaping
                   </div>
                 </div>
                 <button

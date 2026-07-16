@@ -686,7 +686,7 @@ async def sms_send(body: SmsSendBody,
 @router.post("/contacts/sync")
 async def contacts_sync(user: dict = Depends(require_admin),
                           tenant: dict = Depends(get_current_tenant)):
-    """Push AquaTerra customers → RC personal address book. Idempotent
+    """Push Pool & Landscaping customers → RC personal address book. Idempotent
     by phone-number match (RC allows dup names, we dedup ourselves)."""
     if not await is_outbound_enabled():
         return {"mocked": True, "reason": "rc_outbound_disabled"}

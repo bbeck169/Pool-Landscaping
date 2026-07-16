@@ -219,7 +219,7 @@ export function PublicCsat() {
          style={{ background: brandGradientCss }} data-testid="public-csat-form">
       <Card className="p-6 md:p-8 max-w-lg w-full">
         <div className="text-center mb-6">
-          <div className="text-xs uppercase tracking-wide mb-1" style={{ color: colors.muted }}>AquaTerra</div>
+          <div className="text-xs uppercase tracking-wide mb-1" style={{ color: colors.muted }}>Pool & Landscaping</div>
           <div className="text-2xl font-bold" style={{ color: colors.onSurface }}>How did we do?</div>
           <div className="text-sm mt-1" style={{ color: colors.muted }}>
             {meta.customer_name ? `Hi ${meta.customer_name}, ` : ""}rate your recent service.

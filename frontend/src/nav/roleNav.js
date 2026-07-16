@@ -66,6 +66,26 @@ export const TECH_NAV = [
   },
 ];
 
+// Phase 57 — Department-gated tech navs. `TECH_NAV` above stays as the
+// legacy default (used when department is unset). The pool + landscape
+// variants filter On-the-Job entries to remove tools the other team
+// doesn't need. `navForRoleAndDept(role, dept)` returns the right one.
+const _stripEntries = (nav, remove) => nav.map((section) => ({
+  ...section,
+  entries: section.entries.filter((e) => !remove.includes(e.to)),
+}));
+
+// Pool techs — keep chem calculators, pool checklist, hide landscape stuff.
+export const TECH_POOL_NAV = _stripEntries(TECH_NAV, [
+  // (landscape-only entries would be listed here — currently none in TECH_NAV)
+]).concat();
+
+// Landscape techs — hide the pool calculators; the landscape checklist +
+// clock widget mount on the home/profile pages, not the top nav.
+export const TECH_LANDSCAPE_NAV = _stripEntries(TECH_NAV, [
+  "/calculators",  // pool-only chemistry calcs
+]);
+
 export const CUSTOMER_NAV = [
   {
     key: "cust-home",
@@ -138,4 +158,28 @@ export function navForRole(role) {
   if (role === "technician") return TECH_NAV;
   if (role === "customer") return CUSTOMER_NAV;
   return [];
+}
+
+
+/**
+ * Phase 57 · department-aware variant used everywhere `department`
+ * is available on the current user. Falls back to `navForRole` for
+ * roles that don't have a department concept.
+ *
+ * Pool techs → TECH_POOL_NAV (default).
+ * Landscape techs → TECH_LANDSCAPE_NAV (hides pool-only chem calcs).
+ * Unassigned techs → the same TECH_POOL_NAV with the pool tools intact
+ *   (the department banner on the home page nudges the admin to
+ *   assign them). Pool = safe default.
+ */
+export function navForRoleAndDept(role, department) {
+  if (role === "technician") {
+    const dept = (department || "").toLowerCase();
+    if (dept === "landscaping") return TECH_LANDSCAPE_NAV;
+    // Both "pool" and unassigned fall back to the pool nav — pool is the
+    // safe default so admins see the full tool surface until they
+    // deliberately switch a tech's department.
+    return TECH_POOL_NAV;
+  }
+  return navForRole(role);
 }

@@ -76,7 +76,7 @@ export async function startBackgroundAutoClockin(): Promise<{
       distanceInterval: 25,
       showsBackgroundLocationIndicator: true,
       foregroundService: Platform.OS === "android" ? {
-        notificationTitle: "AquaTerra is tracking arrival",
+        notificationTitle: "Pool & Landscaping is tracking arrival",
         notificationBody: "Auto clock-in enabled",
         notificationColor: "#0EA5E9",
       } : undefined,

@@ -1,9 +1,13 @@
 import csv
 import io
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 
 from config import db
+from routers.tenants import get_current_tenant
+from services.customer_import import (
+    build_customer_doc, read_csv, render_template_csv, _canon_row,
+)
 from utils import now_iso, new_id, require_admin
 
 router = APIRouter()
@@ -55,32 +59,141 @@ async def export_items(user: dict = Depends(require_admin)):
 
 
 # ----------------------- Import -----------------------
+@router.get("/import/customers/template", response_class=Response)
+async def customers_template(user: dict = Depends(require_admin)):
+    """Phase 56 — canonical 12-column starter template with one sample row."""
+    csv_bytes = render_template_csv().encode("utf-8")
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="customers-template.csv"'},
+    )
+
+
 @router.post("/import/customers")
-async def import_customers(body: CsvIn, user: dict = Depends(require_admin)):
-    rows = _read_rows(body.csv)
+async def import_customers(body: CsvIn, user: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
+    """Phase 56 — 12-column CSV importer with soft dedup on
+    (tenant_id, email, mobile).
+
+    Legacy CSVs (with ``Name``/``Address``/``Phone`` headers) are
+    still accepted via the fallback code path — the response then
+    carries a ``deprecation_warnings`` list so admins are nudged to
+    migrate.
+    """
+    # Import from Phase 54 phone normalizer per the phase brief.
+    from routers.ringcentral import _normalize_phone_e164
+
+    rows = read_csv(body.csv)
+    tenant_id = tenant["id"]
     created = updated = skipped = 0
-    errors = []
-    for i, r in enumerate(rows, start=2):  # row 1 = header
-        name = (r.get("name") or "").strip()
-        if not name:
-            skipped += 1
-            errors.append(f"Row {i}: missing name")
+    errors: list[dict] = []
+    deprecation_warnings: list[str] = []
+    legacy_seen = False
+
+    for idx, raw in enumerate(rows, start=2):
+        canon, is_legacy = _canon_row(raw)
+        if is_legacy:
+            legacy_seen = True
+        # Legacy path: if it looks like the old shape (has "name" or
+        # "address" AND is missing all the required new fields), fall
+        # back to the old importer for THIS row.
+        if is_legacy and not all(canon.get(f) for f in ("first name", "last name", "service address street", "city", "state", "postal code")):
+            legacy_doc, err = _build_legacy_doc(raw, tenant_id, _normalize_phone_e164)
+            if err:
+                skipped += 1
+                errors.append({"row": idx, "reason": err})
+                continue
+            action = await _upsert_customer(tenant_id, legacy_doc)
+            if action == "created": created += 1
+            else: updated += 1
             continue
-        doc = {c: (r.get(c) or "") for c in CUSTOMER_COLS}
-        email = (doc.get("email") or "").strip().lower()
-        match = None
-        if email:
-            match = await db.customers.find_one({"email": {"$regex": f"^{email}$", "$options": "i"}})
-        if not match:
-            match = await db.customers.find_one({"name": {"$regex": f"^{name}$", "$options": "i"}})
-        if match:
-            await db.customers.update_one({"id": match["id"]}, {"$set": doc})
-            updated += 1
-        else:
-            doc.update({"id": new_id(), "created_at": now_iso()})
-            await db.customers.insert_one(doc)
-            created += 1
-    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors[:20]}
+
+        doc, err = build_customer_doc(canon, tenant_id, _normalize_phone_e164)
+        if err:
+            skipped += 1
+            errors.append({"row": idx, "reason": err})
+            continue
+        action = await _upsert_customer(tenant_id, doc)
+        if action == "created": created += 1
+        else: updated += 1
+
+    if legacy_seen:
+        deprecation_warnings.append(
+            "Legacy header names detected (e.g. 'Name', 'Address', 'Phone'). "
+            "Download the new 12-column template at /api/import/customers/template — "
+            "the old shape will be dropped in a future release."
+        )
+
+    total = len(rows)
+    return {
+        "total_rows": total,
+        "imported_count": created + updated,
+        "created_count": created,
+        "updated_count": updated,
+        "skipped_count": skipped,
+        "errors": errors[:50],
+        "deprecation_warnings": deprecation_warnings,
+    }
+
+
+async def _upsert_customer(tenant_id: str, doc: dict) -> str:
+    """Soft dedup on (tenant_id, email, mobile). If a match exists,
+    UPDATE (returns "updated"); otherwise INSERT (returns "created")."""
+    email = (doc.get("email") or "").lower().strip()
+    mobile = ""
+    for p in (doc.get("phones") or []):
+        if p.get("type") == "mobile":
+            mobile = p.get("number") or ""
+            break
+    match = None
+    if email:
+        match = await db.customers.find_one({"tenant_id": tenant_id, "email": email})
+    if not match and mobile:
+        match = await db.customers.find_one({"tenant_id": tenant_id, "phones.number": mobile})
+    if not match and email and mobile:
+        # last-resort: match on either email OR mobile alone (already
+        # covered above); no OR-match on name to avoid false positives.
+        pass
+    if match:
+        await db.customers.update_one(
+            {"id": match["id"], "tenant_id": tenant_id},
+            {"$set": {**doc, "updated_at": now_iso()}},
+        )
+        return "updated"
+    doc.update({"id": new_id(), "created_at": now_iso()})
+    await db.customers.insert_one(doc)
+    return "created"
+
+
+def _build_legacy_doc(raw: dict, tenant_id: str, normalize_phone):
+    """Pre-Phase-56 importer, kept for CSVs uploaded from older tooling.
+
+    Returns ``(doc, error)`` matching the same contract as
+    ``build_customer_doc``. Best-effort — the goal is not to reject a
+    row that would have worked yesterday. Missing name is still fatal.
+    """
+    r = { (k or "").strip().lower().replace(" ", "_"): (v.strip() if isinstance(v, str) else v)
+          for k, v in (raw or {}).items() if k is not None }
+    name = (r.get("name") or "").strip()
+    if not name:
+        return None, "missing name (legacy shape)"
+    first, _, last = name.partition(" ")
+    phone_num = normalize_phone(r.get("phone"))
+    phones = [{"type": "home", "number": phone_num}] if phone_num else []
+    return {
+        "tenant_id": tenant_id,
+        "name": name,
+        "first_name": first,
+        "last_name": last,
+        "email": (r.get("email") or "").strip().lower(),
+        "phones": phones,
+        "phone": phone_num or "",
+        "address": r.get("address") or "",
+        "billing_address": r.get("billing_address") or "",
+        "gate_code": r.get("gate_code") or "",
+        "notes": r.get("notes") or "",
+    }, None
 
 
 @router.post("/import/items")

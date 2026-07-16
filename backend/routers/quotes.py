@@ -404,7 +404,7 @@ async def quote_or_invoice_pdf(qid: str,
     styles = getSampleStyleSheet()
     story = []
     story.append(Paragraph(f"<b>{label}</b>", styles["Title"]))
-    story.append(Paragraph("Pool &amp; Landscaping of Vistancia — AquaTerra", styles["Normal"]))
+    story.append(Paragraph("Pool &amp; Landscaping of Vistancia", styles["Normal"]))
     story.append(Spacer(1, 12))
 
     header_rows = [

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar,
@@ -473,18 +473,107 @@ function Crews() {
 
 /* ═══════════ Team ═══════════ */
 function TeamRoster() {
-  const [rows] = useList("/team");
+  const [rows, refresh] = useList("/team");
+  const [filter, setFilter] = useState("all");
+  const [savingId, setSavingId] = useState(null);
+  const [toast, setToast] = useState(null);
+
+  const filtered = useMemo(() => {
+    if (!rows) return null;
+    return rows.filter((r) => {
+      if (filter === "all") return true;
+      const role = (r.role || "").toLowerCase();
+      const dept = (r.department || "").toLowerCase();
+      if (filter === "pool") return role === "technician" && dept === "pool";
+      if (filter === "landscape") return role === "technician" && dept === "landscaping";
+      if (filter === "unassigned") return role === "technician" && !dept;
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, filter]);
+
+  const setDept = async (u, dept) => {
+    setSavingId(u.id);
+    try {
+      await api.patch(`/users/${u.id}`, { department: dept });
+      setToast({ tone: "success", message: `${u.name || u.email} → ${dept ? dept.charAt(0).toUpperCase() + dept.slice(1) : "Unassigned"}` });
+      refresh();
+    } catch (e) {
+      setToast({ tone: "error", message: e?.message || "Failed to update" });
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const chips = [
+    { key: "all", label: "All techs" },
+    { key: "pool", label: "Pool" },
+    { key: "landscape", label: "Landscape" },
+    { key: "unassigned", label: "Unassigned" },
+  ];
+
   return (
     <Card testid="team-page">
-      {rows === null ? <Skeleton style={{ height: 160 }} /> :
-       (rows.length === 0 ? <EmptyState title="No team members" /> :
-        <ul className="space-y-2">{rows.map((r) => (
-          <li key={r.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ backgroundColor: colors.surfaceSecondary }}>
+      <div className="flex items-center gap-2 mb-4 flex-wrap" data-testid="team-filter-row">
+        {chips.map((c) => (
+          <button
+            key={c.key}
+            onClick={() => setFilter(c.key)}
+            className="text-xs font-semibold px-2.5 py-1 rounded-full border"
+            style={{
+              borderColor: filter === c.key ? colors.brand : colors.border,
+              backgroundColor: filter === c.key ? colors.brand : "transparent",
+              color: filter === c.key ? "#fff" : colors.onSurface,
+            }}
+            data-testid={`team-filter-${c.key}`}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+      {filtered === null ? <Skeleton style={{ height: 160 }} /> :
+       (filtered.length === 0 ? <EmptyState title="No team members" /> :
+        <ul className="space-y-2">{filtered.map((r) => (
+          <li key={r.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ backgroundColor: colors.surfaceSecondary }} data-testid={`team-row-${r.id}`}>
             <div className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold" style={{ background: brandGradientCss }}>{(r.name || "?")[0]}</div>
-            <div className="flex-1"><div className="font-semibold">{r.name}</div><div className="text-xs" style={{ color: colors.muted }}>{r.email || ""}</div></div>
+            <div className="flex-1 min-w-0"><div className="font-semibold truncate">{r.name}</div><div className="text-xs" style={{ color: colors.muted }}>{r.email || ""}</div></div>
             <Chip label={r.role || "member"} tone="brand" />
+            {(r.role || "").toLowerCase() === "technician" ? (
+              (() => {
+                const dept = (r.department || "").toLowerCase();
+                const tone = dept === "pool" ? "brand" : dept === "landscaping" ? "success" : "neutral";
+                const label = dept === "pool" ? "Pool" : dept === "landscaping" ? "Landscape" : "Unassigned";
+                return (
+                  <div className="flex items-center gap-1">
+                    <span
+                      className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded"
+                      style={{
+                        backgroundColor: tone === "brand" ? "#DBEAFE" : tone === "success" ? "#DCFCE7" : "#F3F4F6",
+                        color: tone === "brand" ? "#1E3A8A" : tone === "success" ? "#166534" : colors.muted,
+                      }}
+                      data-testid={`team-dept-badge-${r.id}`}
+                    >
+                      {label}
+                    </span>
+                    <select
+                      value={dept || ""}
+                      onChange={(e) => setDept(r, e.target.value || null)}
+                      disabled={savingId === r.id}
+                      className="text-xs rounded px-1 py-0.5 border"
+                      style={{ borderColor: colors.border, backgroundColor: "#fff", color: colors.onSurface, opacity: savingId === r.id ? 0.6 : 1 }}
+                      data-testid={`team-dept-select-${r.id}`}
+                    >
+                      <option value="">Unassigned</option>
+                      <option value="pool">Pool</option>
+                      <option value="landscaping">Landscape</option>
+                    </select>
+                  </div>
+                );
+              })()
+            ) : null}
           </li>
         ))}</ul>)}
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </Card>
   );
 }

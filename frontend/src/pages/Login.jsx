@@ -82,13 +82,12 @@ export default function Login() {
         />
         <div className="relative z-10 flex flex-col justify-between p-12 text-white">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center text-xl font-bold">
-              ~
-            </div>
-            <div className="font-semibold text-lg leading-tight">
-              Pool &amp; Landscaping
-              <div className="text-sm opacity-80 font-normal">of Vistancia</div>
-            </div>
+            <img
+              src="/logo-full.png"
+              alt="Pool & Landscaping of Vistancia"
+              className="max-w-[280px] w-full"
+              data-testid="login-logo-full"
+            />
           </div>
           <div>
             <h1 className="text-4xl lg:text-5xl font-bold leading-tight mb-4">

@@ -45,7 +45,7 @@ async def _send_survey_email(customer: dict, url: str) -> bool:
             "subject": "How did we do?",
             "html": (
                 f"<p>Hi {customer.get('name','')},</p>"
-                f"<p>Thanks for choosing AquaTerra. A quick 30-second survey helps us serve you better.</p>"
+                f"<p>Thanks for choosing Pool & Landscaping. A quick 30-second survey helps us serve you better.</p>"
                 f"<p><a href='{url}' style='background:#0284C7;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;'>Rate your service</a></p>"
             ),
         })

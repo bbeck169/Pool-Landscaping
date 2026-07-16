@@ -28,7 +28,7 @@ from routers.tenants import get_current_tenant
 router = APIRouter()
 
 
-DEFAULT_TZ = "America/Phoenix"  # AquaTerra HQ, no DST → consistent
+DEFAULT_TZ = "America/Phoenix"  # Pool & Landscaping HQ, no DST → consistent
 
 
 def _today_bounds_utc(tz_name: str, date_str: Optional[str] = None) -> tuple:

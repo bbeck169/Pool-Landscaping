@@ -650,7 +650,7 @@ CAMPAIGN_TEMPLATES = [
 ]
 
 EMAIL_TEMPLATES = [
-    {"slug": "welcome-email", "name": "Welcome Email", "subject": "Welcome to AquaTerra",
+    {"slug": "welcome-email", "name": "Welcome Email", "subject": "Welcome to Pool & Landscaping",
      "body": "Hi {{name}}, welcome to Pool & Landscaping of Vistancia!"},
     {"slug": "review-request-email", "name": "Review Request", "subject": "How did we do?",
      "body": "Hi {{name}}, we hope you loved your recent service. Would you leave us a review?"},
@@ -664,11 +664,11 @@ EMAIL_TEMPLATES = [
 
 SMS_TEMPLATES = [
     {"slug": "review-request-sms", "name": "Review Request SMS",
-     "body": "Hi {{name}}, thanks for choosing AquaTerra! Mind leaving us a quick review? {{link}}"},
+     "body": "Hi {{name}}, thanks for choosing Pool & Landscaping! Mind leaving us a quick review? {{link}}"},
     {"slug": "invoice-past-due-sms", "name": "Invoice Past Due SMS",
      "body": "Hi {{name}}, invoice #{{invoice_id}} is past due. Pay here: {{link}}"},
     {"slug": "appt-confirmation-sms", "name": "Appointment Confirmation SMS",
-     "body": "Reminder: your AquaTerra visit is scheduled for {{date}} at {{time}}."},
+     "body": "Reminder: your Pool & Landscaping visit is scheduled for {{date}} at {{time}}."},
 ]
 
 
@@ -727,7 +727,7 @@ async def portal_widget_js():
   var host = document.currentScript && document.currentScript.getAttribute('data-host') || 'https://poolscape-audit.preview.emergentagent.com';
   var box = document.createElement('div');
   box.style.cssText = 'font-family:system-ui;background:#fff;border:1px solid #E4E4E7;border-radius:16px;padding:16px;max-width:320px;box-shadow:0 2px 8px rgba(0,0,0,0.05)';
-  box.innerHTML = '<h3 style="margin:0 0 8px;color:#0284C7">AquaTerra Customer Portal</h3>'
+  box.innerHTML = '<h3 style="margin:0 0 8px;color:#0284C7">Pool & Landscaping Customer Portal</h3>'
     + '<p style="margin:0 0 12px;font-size:14px;color:#71717A">Sign in to view invoices, estimates, and service history.</p>'
     + '<a href="'+host+'/login" style="display:inline-block;background:#0284C7;color:#fff;padding:8px 14px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">Sign in</a>';
   var target = document.getElementById('aquaterra-portal') || document.body;
@@ -743,7 +743,7 @@ async def ai_widget_js():
 (function(){
   var box = document.createElement('div');
   box.style.cssText='position:fixed;bottom:20px;right:20px;font-family:system-ui;background:linear-gradient(135deg,#0284C7,#16A34A);color:#fff;padding:14px 18px;border-radius:999px;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,0.15);font-weight:700;z-index:9999';
-  box.innerText='Chat with AquaTerra';
+  box.innerText='Chat with Pool & Landscaping';
   box.onclick=function(){alert('AI chat coming soon.');};
   document.body.appendChild(box);
 })();

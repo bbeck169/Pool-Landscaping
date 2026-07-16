@@ -295,7 +295,7 @@ async def _run_audit(audit_id: str, tenant_id: str, url: str,
         sem = asyncio.Semaphore(5)
 
         async with httpx.AsyncClient(
-            headers={"User-Agent": "AquaTerra-SEO/1.0"},
+            headers={"User-Agent": "Pool & Landscaping-SEO/1.0"},
             timeout=20.0,
         ) as client:
             while queue and len(results) < max_pages:

@@ -11,7 +11,7 @@ export default function LlmVisibility() {
   const [queries, setQueries] = useState([]);
   const [dash, setDash] = useState(null);
   const [showNew, setShowNew] = useState(false);
-  const [form, setForm] = useState({ query_text: "", expected_brand: "AquaTerra",
+  const [form, setForm] = useState({ query_text: "", expected_brand: "Pool & Landscaping",
                                        category: "general" });
   const [scanning, setScanning] = useState(false);
 
@@ -206,7 +206,7 @@ export default function LlmVisibility() {
                    data-testid="llm-vis-new-query" />
             <input value={form.expected_brand}
                    onChange={(e) => setForm({ ...form, expected_brand: e.target.value })}
-                   placeholder="Expected brand (e.g., AquaTerra Pools)"
+                   placeholder="Expected brand (e.g., Pool & Landscaping)"
                    className="w-full p-2.5 text-sm rounded-lg mb-4"
                    style={{ backgroundColor: colors.background,
                             border: `1px solid ${colors.border}`,

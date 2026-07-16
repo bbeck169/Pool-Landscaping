@@ -13,22 +13,35 @@
  */
 
 const POOL_KEYWORDS = ["pool", "chem"];
-const LANDSCAPING_KEYWORDS = ["landscap", "lawn", "mow", "garden", "trim", "blow"];
+const LANDSCAPING_KEYWORDS = ["landscap", "lawn", "mow", "garden", "trim", "blow", "cleanup"];
 
 /**
- * @param {object|null|undefined} job — job document; only `service_type`,
- *   `job_type`, and `title` are consulted.
+ * @param {object|null|undefined} job — job document; consults
+ *   `checklist_kind` first (explicit override), then the assigned tech's
+ *   `technician_department` (Phase 57), then keyword-derives from
+ *   `service_type` / `job_type` / `title`. Default is "pool" per the
+ *   Phase 57 fallback safety net (see HANDOFF).
  * @returns {"pool"|"landscaping"|"generic"}
  */
 export function getChecklistType(job) {
   if (!job) return "generic";
+  // Phase 57 · explicit override wins.
+  const kind = (job.checklist_kind || "").toLowerCase();
+  if (kind === "pool") return "pool";
+  if (kind === "landscape" || kind === "landscaping") return "landscaping";
+  // Phase 57 · assigned tech's department overrides keywords.
+  const dept = (job.technician_department || "").toLowerCase();
+  if (dept === "landscaping") return "landscaping";
+  if (dept === "pool") return "pool";
+  // Fallback: keyword sniff on service_type / job_type / title.
   const hay = [job.service_type, job.job_type, job.title]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
   if (POOL_KEYWORDS.some((k) => hay.includes(k))) return "pool";
   if (LANDSCAPING_KEYWORDS.some((k) => hay.includes(k))) return "landscaping";
-  return "generic";
+  // No signal at all — default to pool (safest for this business).
+  return "pool";
 }
 
 export default getChecklistType;

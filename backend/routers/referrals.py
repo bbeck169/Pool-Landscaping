@@ -220,7 +220,7 @@ async def send_invite(
                         from routers.marketing import send_email_via_resend  # type: ignore
                         await send_email_via_resend(
                             to=r.email, subject="You've been referred — 50% off first month",
-                            html=f"<p>{user.get('name','A friend')} thinks you'll love AquaTerra. "
+                            html=f"<p>{user.get('name','A friend')} thinks you'll love Pool & Landscaping. "
                                  f"Use their referral link and they'll earn 50% off a month of service:"
                                  f"</p><p><a href=\"{_link_for(code_doc['code'])}\">"
                                  f"{_link_for(code_doc['code'])}</a></p>",

@@ -1140,6 +1140,52 @@ class PricingSuggestionsBody(BaseModel):
     month: Optional[str] = None
 
 
+def _parse_pricing_suggestions(text: str) -> tuple[list[dict], Optional[str]]:
+    """Phase 55.1 follow-up — robust JSON parser for the LLM output.
+
+    Emergent LLM sometimes wraps the payload in ```json fences``` or
+    truncates mid-array. We attempt in order:
+      1. Direct ``json.loads(text)``.
+      2. Strip a leading/trailing ```json ...``` fence and retry.
+      3. Regex-extract the first ``{...}`` (or ``[...]``) block and retry.
+      4. Give up — return ``([], error_message)``.
+
+    We DO NOT retry the LLM call (avoid burning tokens per the spec).
+    """
+    import json as _json, re as _re
+    if not text:
+        return [], "empty LLM output"
+
+    def _extract(payload):
+        if isinstance(payload, dict):
+            return payload.get("suggestions") or []
+        if isinstance(payload, list):
+            return payload
+        return []
+
+    # (1) direct.
+    try:
+        return _extract(_json.loads(text)), None
+    except Exception:
+        pass
+    # (2) fenced.
+    fence = _re.search(r"```(?:json)?\s*(.+?)```", text, flags=_re.DOTALL | _re.IGNORECASE)
+    if fence:
+        try:
+            return _extract(_json.loads(fence.group(1).strip())), None
+        except Exception:
+            pass
+    # (3) first {...} or [...] block.
+    for pattern in (r"\{[\s\S]*\}", r"\[[\s\S]*\]"):
+        m = _re.search(pattern, text)
+        if m:
+            try:
+                return _extract(_json.loads(m.group(0))), None
+            except Exception:
+                continue
+    return [], "JSON parse failure"
+
+
 @router.post("/price-increase-suggestions")
 async def price_increase_suggestions(
     body: PricingSuggestionsBody,
@@ -1209,18 +1255,16 @@ async def price_increase_suggestions(
     text, err, tokens = await _call_llm_text(_PRICING_SYSTEM, user_prompt, 800)
     suggestions: List[Dict[str, Any]] = []
     parse_error = None
+    raw_preview: Optional[str] = None
     if text:
-        try:
-            import json as _json, re as _re
-            match = _re.search(r"\{.*\}", text, flags=_re.DOTALL)
-            payload = _json.loads(match.group(0)) if match else _json.loads(text)
-            suggestions = payload.get("suggestions", [])
-        except Exception as pe:
-            parse_error = str(pe)
+        suggestions, parse_error = _parse_pricing_suggestions(text)
+        if parse_error:
+            raw_preview = text[:500]
     result = {
         "month": month_key,
         "suggestions": suggestions,
         "raw_error": err or parse_error,
+        "raw_output_preview": raw_preview,
         "cached": False,
     }
     # Persist cache (only when we actually got usable suggestions).

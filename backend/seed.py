@@ -260,7 +260,7 @@ async def seed_extras():
         await db.campaigns.insert_many(camps)
     if await db.reviews.count_documents({}) == 0:
         revs = [
-            {"id": new_id(), "customer_name": "Jennifer Carson", "rating": 5, "text": "Mike is fantastic — pool has never looked better!", "source": "Google", "response": "Thank you Jennifer! — Team AquaTerra", "created_at": now_iso()},
+            {"id": new_id(), "customer_name": "Jennifer Carson", "rating": 5, "text": "Mike is fantastic — pool has never looked better!", "source": "Google", "response": "Thank you Jennifer! — Team Pool & Landscaping", "created_at": now_iso()},
             {"id": new_id(), "customer_name": "Robert Blake", "rating": 4, "text": "Reliable weekly service. Occasionally runs late.", "source": "Yelp", "response": None, "created_at": now_iso()},
             {"id": new_id(), "customer_name": "Maria Gomez", "rating": 5, "text": "Great landscaping work on our back yard.", "source": "Facebook", "response": None, "created_at": now_iso()},
         ]

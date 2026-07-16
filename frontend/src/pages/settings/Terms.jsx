@@ -60,7 +60,7 @@ export default function TermsSettings() {
   };
 
   const reset = async () => {
-    if (!(await mustConfirm({ title: "Reset to defaults?", description: "Reset both defaults to the built-in AquaTerra text?", tone: "danger" }))) return;
+    if (!(await mustConfirm({ title: "Reset to defaults?", description: "Reset both defaults to the built-in Pool & Landscaping text?", tone: "danger" }))) return;
     setResetting(true);
     try {
       const r = await api.post("/settings/terms/reset", {});

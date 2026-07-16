@@ -386,17 +386,25 @@ export default function CustomersList() {
 
 function ImportModal({ open, onClose, onDone, setToast }) {
   const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
   const fileRef = useRef();
 
   const upload = async () => {
     const file = fileRef.current?.files?.[0];
     if (!file) return;
     setBusy(true);
+    setResult(null);
     try {
       const text = await file.text();
       const res = await api.post("/import/customers", { csv: text });
-      setToast({ tone: "success", message: `Imported ${res.created ?? res.count ?? 0} customers` });
-      onDone();
+      setResult(res);
+      const imported = Number(res?.imported_count ?? 0);
+      const skipped = Number(res?.skipped_count ?? 0);
+      setToast({
+        tone: skipped > 0 ? "warning" : "success",
+        message: `${imported} imported${skipped ? ` · ${skipped} skipped` : ""}`,
+      });
+      if (skipped === 0) onDone();
     } catch (e) {
       setToast({ tone: "error", message: e.message });
     } finally {
@@ -404,8 +412,36 @@ function ImportModal({ open, onClose, onDone, setToast }) {
     }
   };
 
-  const template =
-    "name,email,phone,address,notes\nJohn Smith,john@example.com,555-0100,123 Main St, Peoria AZ,VIP customer\n";
+  const downloadTemplate = async () => {
+    try {
+      const url = `${process.env.REACT_APP_BACKEND_URL || ""}/api/import/customers/template`;
+      const tok = localStorage.getItem("token") || "";
+      const resp = await fetch(url, { headers: tok ? { Authorization: `Bearer ${tok}` } : {} });
+      const text = await resp.text();
+      const blob = new Blob([text], { type: "text/csv" });
+      const dl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = dl;
+      a.download = "customers-template.csv";
+      a.click();
+      URL.revokeObjectURL(dl);
+    } catch { /* silent */ }
+  };
+
+  const HEADERS = [
+    ["Customer Since", "Optional. Tolerant parser: 'Jul 01 2026', 'Jun 23', '6/23/2026', '2026-06-23'. Year defaults to current."],
+    ["Email", "Optional. Basic email validation."],
+    ["Service address Street", "Required."],
+    ["City", "Required."],
+    ["State", "Required. 2-letter code (auto-uppercased)."],
+    ["Postal Code", "Required. Kept as text — leading zeros preserved."],
+    ["Phone", "Optional. Landline. Normalized to E.164 (+1XXXXXXXXXX)."],
+    ["Mobile", "Optional. Normalized to E.164. If both Phone & Mobile present, both stored."],
+    ["First Name", "Required."],
+    ["Last Name", "Required."],
+    ["Tags", "Optional. Comma-separated: 'VIP, Weekly'."],
+    ["Notes", "Optional. Free-form."],
+  ];
 
   return (
     <Modal
@@ -415,33 +451,88 @@ function ImportModal({ open, onClose, onDone, setToast }) {
       testid="customer-import-modal"
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" onClick={onClose}>{result ? "Close" : "Cancel"}</Button>
           <Button onClick={upload} testid="customer-import-upload">
             {busy ? "Uploading…" : "Upload CSV"}
           </Button>
         </>
       }
     >
-      <p className="text-sm mb-3" style={{ color: colors.onSurfaceSecondary }}>
-        CSV columns: <code className="text-xs">name, email, phone, address, notes</code>.
-        Extra columns are ignored.
-      </p>
-      <button
-        onClick={() => {
-          const blob = new Blob([template], { type: "text/csv" });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = "customers-template.csv";
-          a.click();
-          URL.revokeObjectURL(url);
-        }}
-        className="text-xs font-semibold mb-3"
-        style={{ color: colors.brand }}
-      >
-        Download template CSV
-      </button>
-      <input ref={fileRef} type="file" accept=".csv,text/csv" data-testid="customer-import-file" />
+      {!result ? (
+        <>
+          <p className="text-sm mb-2" style={{ color: colors.onSurfaceSecondary }}>
+            Expected columns (case-insensitive; leading/trailing whitespace tolerated):
+          </p>
+          <div className="rounded-lg mb-3 overflow-hidden border" style={{ borderColor: colors.border }}>
+            <table className="w-full text-xs">
+              <thead style={{ backgroundColor: colors.surfaceSecondary }}>
+                <tr>
+                  <th className="text-left px-3 py-1.5 font-bold" style={{ color: colors.onSurface }}>#</th>
+                  <th className="text-left px-3 py-1.5 font-bold" style={{ color: colors.onSurface }}>Header</th>
+                  <th className="text-left px-3 py-1.5 font-bold" style={{ color: colors.onSurface }}>Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {HEADERS.map(([h, n], i) => (
+                  <tr key={h} style={{ borderTop: `1px solid ${colors.border}` }}>
+                    <td className="px-3 py-1.5 text-right" style={{ color: colors.muted, width: 28 }}>{i + 1}</td>
+                    <td className="px-3 py-1.5 font-mono font-semibold" style={{ color: colors.onSurface }}>{h}</td>
+                    <td className="px-3 py-1.5" style={{ color: colors.onSurfaceSecondary }}>{n}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <button onClick={downloadTemplate}
+                  className="text-xs font-semibold mb-3 inline-flex items-center gap-1"
+                  style={{ color: colors.brand }}
+                  data-testid="customer-import-template">
+            Download template CSV
+          </button>
+          <input ref={fileRef} type="file" accept=".csv,text/csv" data-testid="customer-import-file" className="block" />
+        </>
+      ) : (
+        <div data-testid="customer-import-result">
+          <div className="grid grid-cols-4 gap-2 mb-3">
+            {[
+              ["Total", result.total_rows, colors.onSurface],
+              ["Created", result.created_count, "#166534"],
+              ["Updated", result.updated_count, "#3730A3"],
+              ["Skipped", result.skipped_count, result.skipped_count ? "#991B1B" : colors.muted],
+            ].map(([label, val, color]) => (
+              <div key={label} className="rounded-lg p-3 text-center"
+                   style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}>
+                <div className="text-[10px] uppercase font-bold tracking-wider" style={{ color: colors.muted }}>{label}</div>
+                <div className="text-xl font-bold mt-0.5" style={{ color }}>{val ?? 0}</div>
+              </div>
+            ))}
+          </div>
+          {result.deprecation_warnings?.length ? (
+            <div className="rounded-lg p-3 mb-3 text-xs"
+                 style={{ backgroundColor: "#FEF3C7", color: "#92400E", border: "1px solid #FCD34D" }}
+                 data-testid="customer-import-deprecation">
+              {result.deprecation_warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}
+            </div>
+          ) : null}
+          {result.errors?.length ? (
+            <div className="rounded-lg overflow-hidden border" style={{ borderColor: colors.border }}>
+              <div className="px-3 py-2 text-xs font-bold uppercase tracking-wider"
+                   style={{ backgroundColor: colors.surfaceSecondary, color: colors.muted }}>
+                Row errors ({result.errors.length})
+              </div>
+              <div className="max-h-48 overflow-y-auto">
+                {result.errors.map((e, i) => (
+                  <div key={i} className="px-3 py-1.5 text-xs" style={{ borderTop: `1px solid ${colors.border}` }}
+                       data-testid={`customer-import-error-${i}`}>
+                    <span className="font-mono font-bold" style={{ color: "#991B1B" }}>Row {e.row}</span>
+                    <span className="ml-2" style={{ color: colors.onSurface }}>{e.reason}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
     </Modal>
   );
 }

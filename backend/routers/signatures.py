@@ -247,7 +247,7 @@ def _build_signed_pdf(doc: dict, sig: dict) -> bytes:
     # Watermark line at top
     when = (sig.get("signed_at") or "")[:19]
     story.append(Paragraph(f"<font color='#22C55E'><b>SIGNED — {when}</b></font>", styles["Title"]))
-    story.append(Paragraph("Pool &amp; Landscaping of Vistancia — AquaTerra", styles["Normal"]))
+    story.append(Paragraph("Pool &amp; Landscaping of Vistancia", styles["Normal"]))
     story.append(Spacer(1, 12))
 
     header_rows = [
