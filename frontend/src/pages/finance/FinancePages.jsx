@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Download, Search, RefreshCw, Play, Plus, Trash2,
@@ -755,7 +756,7 @@ export function IncomeCategoriesCrud() {
   };
 
   const remove = async (name) => {
-    if (!window.confirm(`Remove "${name}"? Existing line items keep the label.`)) return;
+    if (!(await mustConfirm({ title: `Remove "${name}"?`, description: "Existing line items keep the label.", tone: "danger" }))) return;
     setBusy(true);
     try {
       await api.del(`/income-categories/${encodeURIComponent(name)}`);

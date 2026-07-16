@@ -18,7 +18,7 @@
  */
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
-  View, Text, TextInput, Pressable, StyleSheet, Alert, ActivityIndicator,
+  View, Text, TextInput, Pressable, StyleSheet, Alert, ActivityIndicator, Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -27,6 +27,8 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import ReadingChipRow from "./ReadingChipRow";
 import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDropdownStack";
+import ChemicalPickerSheet from "./ChemicalPickerSheet";
+import DraggableFlatList, { RenderItemParams, ScaleDecorator } from "react-native-draggable-flatlist";
 
 // Phase 37 — canonical testid key (parity with web PoolChecklistForm.jsx).
 const _NAME_TO_CANONICAL: Record<string, string> = {
@@ -148,6 +150,26 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
     );
     onChange({ checklist_items: next });
   };
+
+  // Phase 31 · Step 2c — drag-reorder. The DraggableFlatList calls
+  // `onDragEnd({ data })` with the full re-ordered array; we hand it
+  // straight to `onChange` so the parent's autosave (1500ms debounce)
+  // picks it up, PATCHes the service report with `X-Idempotency-Key`,
+  // and — when offline — queues the same mutation via the existing
+  // `writeQueue.ts`. No new queue plumbing needed.
+  const reorderChecklist = useCallback(
+    (data: ChecklistItem[]) => {
+      // Skip no-op reorders so we don't spam the autosave.
+      const same = data.length === checklistItems.length
+        && data.every((d, i) => d.id === checklistItems[i]?.id);
+      if (same) return;
+      onChange({ checklist_items: data });
+    },
+    [checklistItems, onChange],
+  );
+
+  // Phase 31 · Step 2c — quick-add sheet visibility.
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   // Phase 34e — dose recommendations (mobile mirror of web).
   type Rec = {
@@ -419,23 +441,78 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
         jobId={jobId}
       />
 
+      {/* Phase 31 · Step 2c — quick-add sheet trigger. Complements the
+          preset-based dropdown above with a stepper-driven flow for the
+          "I just poured X of Y" case where the tech knows the exact
+          quantity and doesn't want to hunt for a preset. */}
+      <Pressable
+        onPress={() => !locked && setPickerOpen(true)}
+        style={styles.quickAddBtn}
+        disabled={locked}
+        testID="chem-picker-open"
+        accessibilityRole="button"
+        accessibilityLabel="Open quick-add chemical picker"
+      >
+        <Ionicons name="add-circle-outline" size={18} color={colors.brand} />
+        <Text style={styles.quickAddText}>Quick add chemical</Text>
+      </Pressable>
+      <ChemicalPickerSheet
+        visible={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        chemicalsAdded={chemicalsAdded}
+        onChange={onChange as any}
+        locked={locked}
+      />
+
       {/* Checklist */}
       <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>Checklist</Text>
-      {checklistItems.map((c, i) => (
-        <Pressable
-          key={c.id}
-          style={[styles.checkRow, c.checked && styles.checkRowOn]}
-          onPress={() => !locked && toggleCheck(i)}
-          testID={`pool-check-${c.id}`}
-        >
-          <Ionicons
-            name={c.checked ? "checkbox" : "square-outline"}
-            size={22}
-            color={c.checked ? colors.success : colors.muted}
-          />
-          <Text style={styles.checkText}>{c.label}</Text>
-        </Pressable>
-      ))}
+      <DraggableFlatList
+        data={checklistItems}
+        keyExtractor={(c) => c.id}
+        onDragEnd={({ data }) => reorderChecklist(data as ChecklistItem[])}
+        scrollEnabled={false}
+        activationDistance={12}
+        containerStyle={{ marginBottom: 0 }}
+        testID="pool-checklist-draggable"
+        renderItem={({ item: c, drag, isActive, getIndex }: RenderItemParams<ChecklistItem>) => {
+          const i = getIndex() ?? 0;
+          return (
+            <ScaleDecorator>
+              <View
+                style={[
+                  styles.checkRow,
+                  c.checked && styles.checkRowOn,
+                  isActive && styles.checkRowDragging,
+                ]}
+                testID={`pool-check-${c.id}`}
+              >
+                <Pressable
+                  onLongPress={locked ? undefined : drag}
+                  disabled={locked}
+                  hitSlop={8}
+                  style={styles.dragHandle}
+                  testID={`pool-check-${c.id}-drag`}
+                  accessibilityLabel={`Reorder ${c.label}`}
+                >
+                  <Ionicons name="reorder-three-outline" size={20} color={colors.muted} />
+                </Pressable>
+                <Pressable
+                  style={styles.checkTapZone}
+                  onPress={() => !locked && toggleCheck(i)}
+                  disabled={locked}
+                >
+                  <Ionicons
+                    name={c.checked ? "checkbox" : "square-outline"}
+                    size={22}
+                    color={c.checked ? colors.success : colors.muted}
+                  />
+                  <Text style={styles.checkText}>{c.label}</Text>
+                </Pressable>
+              </View>
+            </ScaleDecorator>
+          );
+        }}
+      />
 
       {/* Notes */}
       <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>Notes</Text>
@@ -565,10 +642,38 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: spacing.sm,
     padding: spacing.md, borderRadius: radius.md, borderWidth: 1,
     borderColor: colors.border, marginBottom: spacing.xs,
+    backgroundColor: colors.surface,
   },
   checkRowOn: { borderColor: colors.success, backgroundColor: "#F0FDF4" },
+  checkRowDragging: {
+    borderColor: colors.brand,
+    // Subtle lift + shadow while a row is being dragged so the tech can
+    // see which item is under their finger. Shadow tokens borrow from
+    // the sheet elevation used elsewhere in the app.
+    ...(Platform.OS === "web"
+      ? { boxShadow: "0 8px 24px rgba(0,0,0,0.18)" as any }
+      : { elevation: 8 }),
+  },
   checkText: {
     flex: 1, fontFamily: font.semibold, fontSize: fontSize.base,
     color: colors.onSurface,
+  },
+  checkTapZone: {
+    flex: 1, flexDirection: "row", alignItems: "center", gap: spacing.sm,
+  },
+  dragHandle: {
+    width: 28, height: 28, alignItems: "center", justifyContent: "center",
+  },
+  quickAddBtn: {
+    marginTop: spacing.md,
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: spacing.sm,
+    borderWidth: 1, borderColor: colors.brand, borderRadius: radius.md,
+    borderStyle: "dashed",
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
+    backgroundColor: colors.surface,
+  },
+  quickAddText: {
+    fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand,
   },
 });

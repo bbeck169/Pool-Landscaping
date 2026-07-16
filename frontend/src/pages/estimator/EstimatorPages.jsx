@@ -3,6 +3,7 @@
  * List + new + detail + rate catalog editor, all in one file (4 exports).
  */
 import React, { useEffect, useState, useCallback } from "react";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Sparkles, Plus, Trash2, FileText, Send, Download, ArrowLeft,
@@ -650,7 +651,7 @@ export function EstimatorRates() {
   };
 
   const reset = async () => {
-    if (!window.confirm("Reset to starter catalog? Custom edits will be lost.")) return;
+    if (!(await mustConfirm({ title: "Reset to starter catalog?", description: "Custom edits will be lost.", tone: "danger" }))) return;
     setSaving(true);
     try {
       const r = await api.post("/estimator/rate-catalog/reset-defaults");

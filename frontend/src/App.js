@@ -1,6 +1,7 @@
 import React from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/auth";
+import { ConfirmProvider } from "@/components/ui/confirm-dialog";
 import AppLayout from "@/layouts/AppLayout";
 import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
@@ -160,6 +161,7 @@ export default function App() {
     <AuthProvider>
       <PermissionsBridge>
       <RealtimeProvider>
+      <ConfirmProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -485,6 +487,7 @@ export default function App() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
+      </ConfirmProvider>
       </RealtimeProvider>
       </PermissionsBridge>
     </AuthProvider>

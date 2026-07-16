@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
@@ -79,7 +80,7 @@ export default function LeadRequestPage() {
   };
 
   const revoke = async (did) => {
-    if (!window.confirm("Revoke this link? The prospect will no longer be able to submit.")) return;
+    if (!(await mustConfirm({ title: "Revoke this link?", description: "The prospect will no longer be able to submit.", tone: "danger" }))) return;
     await api.post(`/lead-requests/${did}/revoke`, {});
     showToast("Link revoked");
     load();

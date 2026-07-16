@@ -5,6 +5,7 @@
  * All admin-only via App.js AdminOnly wrapper.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { mustConfirm, mustAlert } from "@/components/ui/confirm-dialog";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, Plus, Printer, Ban, CheckCircle2, RotateCcw, FileText,
@@ -801,22 +802,25 @@ export function CheckBanks() {
 
   const toggleLive = async (b) => {
     if (!b.live_mode) {
-      if (!window.confirm(
-        `Enable LIVE mode for ${b.nickname}?\n\n` +
-        `This removes the SAMPLE watermark from printed checks. Only enable ` +
-        `if you have Reg-CC-compliant MICR-encoded blank stock loaded.\n\n` +
-        `Continue?`)) return;
+      if (!(await mustConfirm({
+        title: `Enable LIVE mode for ${b.nickname}?`,
+        description:
+          "This removes the SAMPLE watermark from printed checks. Only enable " +
+          "if you have Reg-CC-compliant MICR-encoded blank stock loaded. Continue?",
+        confirmText: "Enable LIVE",
+        tone: "danger",
+      }))) return;
     }
     await api.patch(`/checks/bank-accounts/${b.id}`,
                      { live_mode: !b.live_mode });
     await load();
   };
   const del = async (b) => {
-    if (!window.confirm(`Delete bank account "${b.nickname}"?`)) return;
+    if (!(await mustConfirm({ title: `Delete bank account "${b.nickname}"?`, tone: "danger" }))) return;
     try {
       await api.delete(`/checks/bank-accounts/${b.id}`);
       await load();
-    } catch (e) { window.alert(e.message || "Failed"); }
+    } catch (e) { await mustAlert({ title: e.message || "Failed" }); }
   };
 
   return (
@@ -1042,11 +1046,11 @@ export function CheckPayees() {
   useEffect(() => { load(); }, [load]);
 
   const del = async (p) => {
-    if (!window.confirm(`Delete payee "${p.name}"?`)) return;
+    if (!(await mustConfirm({ title: `Delete payee "${p.name}"?`, tone: "danger" }))) return;
     try {
       await api.delete(`/checks/payees/${p.id}`);
       await load();
-    } catch (e) { window.alert(e.message || "Failed"); }
+    } catch (e) { await mustAlert({ title: e.message || "Failed" }); }
   };
 
   return (

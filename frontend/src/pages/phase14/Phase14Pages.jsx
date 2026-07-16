@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { Link2, Share2 } from "lucide-react";
 import { api } from "@/api";
@@ -414,7 +415,7 @@ export function FormEditor() {
     finally { setSaving(false); }
   };
   const del = async () => {
-    if (!window.confirm("Delete this form?")) return;
+    if (!(await mustConfirm({ title: "Delete this form?", tone: "danger" }))) return;
     await api.delete(`/forms/${id}`);
     window.location.href = "/forms";
   };

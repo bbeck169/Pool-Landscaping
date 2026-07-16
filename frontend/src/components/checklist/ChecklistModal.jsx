@@ -11,6 +11,7 @@
  * All endpoints are pre-existing (Step 1 discovery). No new backend.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 
 // Phase 39 · Step 2 — Visit Recap prompt shown after Close Job succeeds.
 import VisitRecapModal from "./VisitRecapModal";
@@ -188,8 +189,13 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
 
   const closeJob = async () => {
     if (!report || submitting) return;
-    // eslint-disable-next-line no-alert
-    const ok = window.confirm("Close job? Customer will see final report.");
+    // Phase 31 · Step 2c — Radix-driven confirm (was window.confirm).
+    const ok = await mustConfirm({
+      title: "Close job?",
+      description: "Customer will see final report.",
+      confirmText: "Close job",
+      tone: "danger",
+    });
     if (!ok) return;
     setSubmitting(true); setWsWarning("");
     try {

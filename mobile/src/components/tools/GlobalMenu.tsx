@@ -59,7 +59,12 @@ export const GlobalMenu: React.FC = () => {
         onPress={() => setOpen(true)}
         style={[
           styles.trigger,
-          { top: insets.top + spacing.sm, left: spacing.md },
+          // Phase 43 → 43.2 · trigger moved from top-LEFT to top-RIGHT
+          // per UX request. Sheet still slides from the top; only this
+          // affordance's position changed. All Phase 43/43.1 sheet
+          // behavior (search, pinned, recents, chips, pin toggle) is
+          // preserved untouched.
+          { top: insets.top + spacing.sm, right: spacing.md },
         ]}
         hitSlop={10}
         testID="mobile-menu-trigger"

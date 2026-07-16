@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Save, RotateCcw } from "lucide-react";
 import { api } from "@/api";
@@ -59,7 +60,7 @@ export default function TermsSettings() {
   };
 
   const reset = async () => {
-    if (!window.confirm("Reset both defaults to the built-in AquaTerra text?")) return;
+    if (!(await mustConfirm({ title: "Reset to defaults?", description: "Reset both defaults to the built-in AquaTerra text?", tone: "danger" }))) return;
     setResetting(true);
     try {
       const r = await api.post("/settings/terms/reset", {});

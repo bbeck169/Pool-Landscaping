@@ -5,6 +5,7 @@
  * All admin-only via App.js AdminOnly wrapper.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, Plus, Package, AlertTriangle, ShoppingCart, TrendingUp,
@@ -422,7 +423,7 @@ export function InventoryDetail() {
     } finally { setAdjusting(false); }
   };
   const del = async () => {
-    if (!window.confirm(`Delete "${item.name}"? This cannot be undone.`)) return;
+    if (!(await mustConfirm({ title: `Delete "${item.name}"?`, description: "This cannot be undone.", tone: "danger" }))) return;
     await api.delete(`/inventory/items/${id}`);
     nav("/admin/inventory");
   };

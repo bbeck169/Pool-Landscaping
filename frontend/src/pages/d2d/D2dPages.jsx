@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -380,7 +381,7 @@ export function D2dKnocks() {
     && (!dispo || k.disposition === dispo)
   );
   const del = async (k) => {
-    if (!window.confirm("Delete this knock?")) return;
+    if (!(await mustConfirm({ title: "Delete this knock?", tone: "danger" }))) return;
     try { await api.delete(`/d2d/knocks/${k.id}`); setToast("Deleted"); load(); }
     catch (e) { setToast(e.message); }
   };

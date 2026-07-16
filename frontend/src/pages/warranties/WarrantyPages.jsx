@@ -1,5 +1,6 @@
 /** Phase 28.1 · Warranty Portal admin pages (compact). */
 import React, { useCallback, useEffect, useState } from "react";
+import { mustAlert } from "@/components/ui/confirm-dialog";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Shield, FileText, AlertCircle, Plus } from "lucide-react";
 import { api } from "@/api";
@@ -306,7 +307,7 @@ export function PortalWarranties() {
     await api.post(`/portal/warranties/${cid}/file-claim`,
                      { description: desc, issue_type: "general" });
     await load();
-    window.alert("Claim filed. We'll get back to you shortly.");
+    await mustAlert({ title: "Claim filed", description: "We'll get back to you shortly." });
   };
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-6"

@@ -3,6 +3,7 @@
  * Analytics). All admin-only; nav gate is enforced in App.js AdminOnly.
  */
 import React, { useEffect, useState } from "react";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Save, RotateCcw, Send, Pause, Play, AlertTriangle,
@@ -38,7 +39,7 @@ export default function DunningSettings() {
   };
 
   const reset = async () => {
-    if (!window.confirm("Reset all cadence + escalation to defaults?")) return;
+    if (!(await mustConfirm({ title: "Reset cadence?", description: "Reset all cadence + escalation to defaults?", tone: "danger" }))) return;
     const r = await api.post("/dunning/settings/reset-defaults");
     setS(r);
     setMsg("Reset."); setTimeout(() => setMsg(""), 2000);

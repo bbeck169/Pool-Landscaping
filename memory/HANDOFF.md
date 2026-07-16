@@ -5270,3 +5270,58 @@ Closes out Phase 40. Techs can now edit + submit checklists in zero-signal backy
 - `python3 /app/scripts/check_js_identifiers.py` on `ToolCard.tsx` / `ToolsMenuBody.tsx` → clean.
 - `python3 /app/scripts/check_jsx_imports.py` on `ToolCard.tsx` / `ToolsMenuBody.tsx` → clean.
 - `bash /app/scripts/preflight.sh` → **`preflight OK` (exit 0)**.
+
+#### Phase 31 · Step 2c — Chemical Picker Sheet + Radix confirm migration + native drag reorder + hamburger position tweak
+
+**Delivered in this pass:**
+
+**1) Mobile Chemical Picker Sheet** — new file `mobile/src/components/checklist/ChemicalPickerSheet.tsx`
+- Bottom sheet using the same `Modal` + backdrop primitive as the Phase 43 global menu (no new sheet library added).
+- Renders every chemical from the shared `CHEM_TYPES` config with a stepper (`−`/`+`, step size = 1 for `tabs`/`bags`, 0.25 otherwise), a live "already logged" hint, and a per-row "Add" button that appends/updates the `chemicals_added` entry through the same `onChange` callback the mature `ChemicalDropdownStack` uses. Ref-backed drafts keep the stepper snappy without full re-renders.
+- Unilateral decision: shipped as an **additional** quick-add surface (triggered from a new dashed-outline "Quick add chemical" button in `PoolChecklistForm.tsx`) rather than replacing the mature preset-based dropdown wholesale. Reason: the dropdown carries Phase 37 preset UX + Phase 39 algae-flag + Phase 39 Step 3c reservation wiring; a wholesale swap would risk broad regression. The sheet gives techs the arbitrary-quantity path the brief asked for while the dropdown stays as the preset-picker fallback. `writeQueue` semantics untouched — the parent's 1500ms autosave picks up the change identically for both surfaces.
+- Testids: `chem-picker-open`, `chem-picker-sheet`, `chem-picker-sheet-backdrop`, `chem-picker-sheet-close`, `chem-picker-search`, `chem-picker-row-{slug}`, `chem-picker-{slug}-dec`, `chem-picker-{slug}-inc`, `chem-picker-{slug}-qty`, `chem-picker-{slug}-add`.
+
+**2) Radix AlertDialog migration** — web
+- New `frontend/src/components/ui/confirm-dialog.jsx`: `<ConfirmProvider>` context + `useConfirm()` / `useAlert()` hooks + `mustConfirm()` / `mustAlert()` module-level escape hatches (`_globalRequest` registration is unmounted-safe). Both promise-based; Radix `AlertDialog` under the hood so `Esc`/`Enter` are handled natively. Danger tone flips the confirm button to `bg-red-600`. Multi-line `window.confirm(...)` texts are split into `title` (short) + `description` (body).
+- `<ConfirmProvider>` mounted inside `App.js` between `<RealtimeProvider>` and `<BrowserRouter>` so every route can use it.
+- Migrated **all 15 legacy call sites**:
+  `pages/phase14/Phase14Pages.jsx`, `pages/settings/Terms.jsx`, `pages/leads/LeadRequestPage.jsx`, `pages/finance/FinancePages.jsx`, `pages/warranties/WarrantyPages.jsx`, `pages/checks/ChecksPages.jsx` (4 sites — 2 confirms + 2 alerts), `pages/inventory/InventoryPages.jsx`, `pages/dunning/DunningPages.jsx`, `pages/estimator/EstimatorPages.jsx`, `pages/d2d/D2dPages.jsx`, `components/checklist/ChecklistModal.jsx`.
+- Verified: `grep -rn 'window\.(confirm|alert)' /app/frontend/src` returns only the confirm-dialog module's own fallback path + doc comments — zero real call sites remain in destructive admin/tech flows.
+- Testids exposed for QA: `app-confirm-dialog`, `app-confirm-title`, `app-confirm-description`, `app-confirm-ok`, `app-confirm-cancel`.
+
+**3) Native drag reorder — checklist line items** — `PoolChecklistForm.tsx`
+- Installed `react-native-draggable-flatlist@4.0.3` (reuses existing `react-native-gesture-handler` + `react-native-reanimated`; `GestureHandlerRootView` is already mounted in `mobile/app/_layout.tsx`).
+- Replaced the plain `.map()` of `checklist_items` with `<DraggableFlatList>` using `ScaleDecorator` for the drag lift animation. Each row now has:
+  - A dedicated `reorder-three-outline` handle on the LEFT with `onLongPress={drag}` (testID `pool-check-{id}-drag`).
+  - The original checkbox + label as a sibling `Pressable` so tap-to-toggle continues to work.
+  - `scrollEnabled={false}` and `activationDistance={12}` so nesting inside the outer `ScrollView` in `checklist.tsx` behaves — the FlatList doesn't scroll, the parent does. Known finicky area; flagged as human-required test below.
+- New `checkRowDragging` style (brand-border + subtle shadow / elevation) so the tech can see which row is under their finger.
+- Reorder emits `onChange({ checklist_items: data })` — the parent's existing 1500ms autosave picks it up, PATCHes with `X-Idempotency-Key`, and (when offline) the same PATCH flows through `writeQueue.ts`. No new queue plumbing needed.
+- Backend test — new `backend/tests/test_phase31_step2c_reorder.py` with 2 cases:
+  - Reorder round-trips (submitted order === persisted order) AND identical replay with same key returns cached response.
+  - Two different keys with different orders both persist, last-writer wins.
+  - Full suite `pytest tests/test_phase31_step2c_reorder.py tests/test_phase40_*.py tests/test_phase39_inventory_reservation.py -q` → **12 passed**.
+
+**4) Bundled UX tweak — hamburger from top-LEFT to top-RIGHT**
+- `mobile/src/components/tools/GlobalMenu.tsx`: single-line swap of `left: spacing.md` → `right: spacing.md` on the trigger's absolute-position style. Sheet still slides from the top; all Phase 43/43.1 behavior (search, pinned, recents, chips, pin toggle) untouched. testID `mobile-menu-trigger` unchanged. No screen-header edits — the trigger overlay is layout-agnostic.
+- No collision on the right: the trigger is `z-index: 1000` and sits `top: insets.top + spacing.sm`. No screen currently renders any interactive control in the top-right corner of the outer chrome (per grep of `top: insets.top` in `/app/mobile/app/**`); Tab bar sits at the bottom and per-screen Headers use full-width titles with icons anchored bottom-right of the header card, not top-right of the viewport.
+
+**Verification**
+- `bash /app/scripts/preflight.sh` → **`preflight OK` (exit 0)**.
+- `python3 /app/scripts/check_js_identifiers.py` — no new warnings on any of the modified files.
+- `python3 /app/scripts/check_jsx_imports.py` — no new warnings on any of the modified files.
+- Backend: `pytest tests/test_phase31_step2c_reorder.py tests/test_phase40_*.py tests/test_phase39_inventory_reservation.py -q` → **12 passed**.
+- Mobile: `yarn tsc --noEmit -p /app/mobile` → **zero new errors** (baseline 93 unchanged; the 5 remaining `fontSize.xs` warnings on `PoolChecklistForm.tsx:552,580,606,622,638` are pre-existing).
+- Dead-import scanner: baseline moved 382 → 383 (advisory only — a pre-existing `useEffect` reference in `ChemicalDropdownStack.tsx:9` that got picked up because I opened the file; not introduced by my code).
+
+**Unilateral decisions worth calling out to the reviewer**
+1. Kept `ChemicalDropdownStack` alive alongside the new sheet rather than deleting it — see rationale under item (1) above.
+2. Chose a `long-press-on-handle` drag activation over a whole-row drag so a normal tap-to-toggle stays unambiguous. Alternative would have been Apple-style "Edit mode" toggle to enter reorder — heavier lift, not asked for.
+3. `scrollEnabled={false}` on the DraggableFlatList to defuse the nested-scroll runtime warning; acceptable because checklists are typically <10 rows.
+
+**Human-required tests (device-only or gesture-heavy)**
+- Haptic feedback on drag activation on real iOS + Android device (Expo Web has no haptics API surface).
+- Long-scroll checklists (>15 items) — verify the outer `ScrollView` inside `checklist.tsx` doesn't fight the DraggableFlatList for gesture ownership on smaller screens.
+- Quick-add sheet swipe-down dismiss — right now we ship a visual grabber + backdrop-tap + hardware-back + close X, but not a real swipe gesture (would require a rewrite on top of gesture-handler). Confirm this is acceptable UX vs. a future upgrade.
+- Radix confirm dialog `Esc`/`Enter` on Windows Chrome + macOS Safari (Radix-managed but worth a smoke test).
+- On smaller phone widths (iPhone SE), confirm the top-right hamburger doesn't overlap any per-screen top-right action.
