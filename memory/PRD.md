@@ -403,3 +403,41 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
 
 ## Guardrails honored across 55.2 / 56 / 57 / 58
 - `/app` only. Preflight exit 0. `RC_OUTBOUND_ENABLED` untouched. Stripe descriptor unchanged. Tenant slug `"aquaterra"` unchanged. Seed emails unchanged. Phase 55/53/55.1 audience filter + Stripe RBAC gate preserved. English only.
+
+═══════════════════════════════════════════════════════════════════
+## Version 58.0 · Shipped snapshot (2026-07-16)
+═══════════════════════════════════════════════════════════════════
+
+The Pool & Landscaping of Vistancia CRM ships as a multi-tenant field-service
+platform with three surfaces — a React (CRA) admin web SPA at
+`https://poolscape-audit.preview.emergentagent.com`, an Expo Universal mobile
+app (iOS + Android + Web) sharing the same FastAPI backend, and a public
+customer portal. The admin experience is organized around a **6-category
+information architecture** (`ADMIN_NAV_V2`: Finance · AI Employees · Marketing ·
+Operations · Customers · Reports) exposed both as top-bar chips (wide viewports)
+and a single unified hamburger sheet (narrow viewports + mobile) — no legacy
+mobile-tab bar. The primary work surface is the **Workstream card layout**
+where every job renders as an inline actionable card with quick-access buttons
+(Complete · Move · Rearrange · Reassign) and a per-role visibility mask.
+Technicians see a role-tabbed sidebar whose "On the Job" section is
+department-gated: `navForRoleAndDept(role, department)` returns `TECH_POOL_NAV`
+(includes chemical calculators + pool checklist) for `department: pool` and
+`TECH_LANDSCAPE_NAV` (hides pool tools, exposes landscape clock + mowing/edging
+checklist) for `department: landscaping`; the checklist form itself is
+auto-selected server-side via `_derive_checklist_kind()` on every
+`GET /api/jobs/{id}` read using an explicit override → tech department →
+service_type keyword → pool default priority. Payments are handled through a
+full Stripe stack (Hosted Checkout, Elements PaymentIntent, refunds,
+subscriptions, reconciliation ledger with per-row fees/refunds/net), all
+gated to admin OR the invoice's own customer via `_authorize_invoice_pay`.
+Notifications flow through a unified `services/notifications.emit()` bell that
+honors per-user Bell/Email/SMS preferences and enforces a strict
+`audience: internal | portal` filter so admin fan-outs never leak to the
+customer portal. RingCentral drives all telephony (SMS/call/voicemail/fax
+with matched + unmatched fan-out) with `RC_OUTBOUND_ENABLED=false` locking
+outbound to a mocked queue until the operator explicitly flips it. Backend
+startup runs an idempotent `ensure_deployment_indexes()` migration that pins
+the three deploy-critical indexes (`stripe_events.event_id` unique,
+`notifications.(tenant_id, user_id, created_at desc)`, `budgets.(tenant_id, year)`
+unique). Deploy verdict is 🟢 READY with two user-side vendor-dashboard
+registrations pending (Stripe webhook subscription + RC subscription click).

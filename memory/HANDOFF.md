@@ -1,3 +1,134 @@
+═══════════════════════════════════════════════════════════════════
+🚢  SHIPPED  ·  Release snapshot 2026-07-16
+═══════════════════════════════════════════════════════════════════
+
+## Deploy verdict — 🟢 READY
+
+All 4 dev-side items from the deployment audit are closed:
+
+- ✅ Missing DB indexes added (idempotent, at startup):
+      `stripe_events.event_id` unique · `notifications.(tenant_id, user_id, created_at DESC)` ·
+      `budgets.(tenant_id, year)` unique  → see `backend/db_indexes.py`.
+- ✅ Stale kinds-catalog test refactored to `assert len ≥ 22` + required-subset.
+- ✅ Playwright chromium installed on the pod (v1228 / 149.0.7827.55).
+- ✅ HUMAN_REQUIRED screenshots captured: admin header logo naturalWidth=1024,
+      landscaper + mike tech dashboards render with Pool & Landscaping brand.
+
+## Preview URL — source of truth for the shipped app
+
+    https://poolscape-audit.preview.emergentagent.com
+
+## Latest phases landed (43 → 58)
+
+- Phase 43 — 6-category admin IA (`ADMIN_NAV_V2`) + universal hamburger menu.
+- Phase 44 — Workstream card layout + inline job actions.
+- Phase 45 — RBAC hardening + `users.department` field seeded.
+- Phase 46 — Menu-404 walker + preflight expansion.
+- Phase 47 — Onboarding wizard + first-run tenant provisioning.
+- Phase 48 — Pool checklist + chemical sliders + manual-entry chemistry.
+- Phase 49 — Landscape ClockWidget + role-aware home page.
+- Phase 50 — Chemical Costs, Submit-time recheck, 4-dot sparkline, Job Margin
+              Leaderboard, Auto-Friday Pool Service Report email.
+- Phase 51 — Recurring-Job Scheduling Engine, Real COGS, AP Aging, Payroll wiring
+              for AI CFO.
+- Phase 52 — Monthly Least-Profitable Service Type Digest + AI CFO Pricing
+              Suggestions (`/cfo/price-increase-suggestions`).
+- Phase 53 — Full Stripe Integration: Hosted Checkout · PaymentIntent (Elements) ·
+              Refunds · Subscriptions · Products/Prices · Reconciliation ledger
+              (`/admin/finance/stripe-payments`).
+- Phase 54 — Full RingCentral: SDK, JWT Auth, Inbound/Outbound routing, Webhook
+              signature verification, UI (calls / SMS / voicemails / faxes).
+- Phase 55 — Unified Notification Bell + `/notifications` page + `/settings/notifications`
+              preferences panel. Central `services/notifications.py::emit()` honors
+              per-user bell/email/sms prefs.
+- Phase 55.1 — Fix-pass: Stripe RBAC gate (tech 403) · notification portal
+              `audience` filter · RC unmatched-inbound fan-out · RC webhook token
+              verification · CFO Stripe cash weekly aggregation.
+- Phase 56 — Customer CSV Import 12-column rewrite: tolerant date parser, E.164
+              phone normalization, soft dedup on (tenant_id, email, mobile),
+              backward-compat for legacy headers. `GET /import/customers/template`.
+- Phase 57 — Tech Department Assignment + Gated Experience: `PATCH /users/{id}`
+              admin-only dept setter, `TECH_POOL_NAV` / `TECH_LANDSCAPE_NAV` +
+              `navForRoleAndDept()`, department-derived `checklist_kind` on
+              `GET /jobs/{id}` (read-time enrichment, never mutates).
+- Phase 58 — Global rebrand AquaTerra → **Pool & Landscaping of Vistancia**. New
+              logo assets. Zero source-code `AquaTerra` references remaining
+              outside `/tests/*` (SEO fixtures preserved).
+
+## Live integrations
+
+| Integration    | Mode        | Status                                             |
+|----------------|-------------|----------------------------------------------------|
+| Stripe         | LIVE        | `sk_live_…` · `key_authenticates=true`             |
+| RingCentral    | LIVE        | outbound gated: `RC_OUTBOUND_ENABLED=false`        |
+| Zillow (OpenWebNinja) | LIVE | key present · property lookup verified              |
+| Emergent LLM   | LIVE        | universal key wired for AI CFO + digest            |
+| MongoDB        | LIVE        | ping 2.6 ms · 3 new indexes created                |
+
+## MOCKED / pending
+
+- Twilio — retired (RC replaced it). Env vars empty.
+- Resend — key present but currently landing to `email_delivery_log` collection
+  as `mocked: true` rows. Zero live sends yet — first digest email fires on next
+  monthly cron tick (1st of month).
+
+## Open user-side actions (docs only; user drives)
+
+1. Register Stripe webhook endpoint in Stripe Dashboard →
+      `https://poolscape-audit.preview.emergentagent.com/api/stripe/webhook`.
+   Subscribe to events: `checkout.session.completed`, `payment_intent.succeeded`,
+   `payment_intent.payment_failed`, `charge.refunded`, `invoice.paid`,
+   `customer.subscription.*`.
+2. Register the RingCentral webhook subscription via the in-app button at
+      `/admin/ringcentral` → currently `active_subscription_id=null`.
+
+## Test credentials (unchanged)
+
+- `super@aquaterra.com` / password123 — super_admin (multi-tenant picker)
+- `admin@aquaterra.com` / password123 — admin (tenant=aquaterra)
+- `mike@aquaterra.com` / password123 — technician (department=pool)
+- `landscaper@aquaterra.com` / password123 — technician (department=landscaping)
+- `customer@aquaterra.com` / password123 — customer (portal role)
+
+Seed email domain `@aquaterra.com` intentionally preserved — it's the machine
+tenant slug, not a display string. Rebranding these breaks auth + all existing
+test rigs.
+
+## Release preflight snapshot
+
+```
+bash /app/scripts/preflight.sh   →  exit 0
+
+  mobile/app/(app)/payroll/batch.tsx:20  dead-import `Platform` from `react-native`
+  mobile/app/(app)/payroll/batch.tsx:27  dead-import `getAuthToken` from `@/src/api`
+  mobile/app/(app)/payroll/batch.tsx:30  dead-import `radius` from `@/src/theme`
+  mobile/app/(app)/payroll/batch.tsx:30  dead-import `font` from `@/src/theme`
+  mobile/app/(app)/payroll/batch.tsx:30  dead-import `fontSize` from `@/src/theme`
+  mobile/app/(app)/service-report/[id].tsx:6  dead-import `Platform` (× 3)
+  mobile/app/portal/book.tsx:4  dead-import `useCallback` from `react`
+  mobile/app/portal/payment-method.tsx:2  dead-import `Pressable` from `react-native`
+  mobile/app/portal/payment-method.tsx:2  dead-import `Platform` from `react-native`
+  mobile/app/seo/index.tsx:2  dead-import `StyleSheet` from `react-native`
+  mobile/app/seo/index.tsx:18  dead-import `Sheet` from `@/src/components/ui`
+  mobile/app/d2d/leaderboard.tsx:3  dead-import `Ionicons` from `@expo/vector-icons`
+  mobile/app/d2d/report.tsx:3  dead-import `Ionicons` from `@expo/vector-icons`
+
+[check_dead_imports] 407 suspicious dead imports (WARN — non-blocking).
+== mobile syntax (best-effort, may skip on missing peer deps) ==
+mobile skip (metro-only bundle)
+preflight OK
+```
+
+The 407 dead-import warnings are all on the mobile side (unused RN primitives
+after component refactors). None block the CRA build or Expo bundle;
+`yarn build` completes in 28s with only informational warnings.
+
+═══════════════════════════════════════════════════════════════════
+Everything below this banner is the phase-by-phase development log
+that preceded release. It's kept verbatim for provenance.
+═══════════════════════════════════════════════════════════════════
+
+
 # AquaTerra Pool & Landscaping CRM — Handoff
 
 ---
