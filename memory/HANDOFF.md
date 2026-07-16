@@ -5628,3 +5628,127 @@ preflight OK; Expo bundle HTTP 200.
 ### Deferred (non-blocking)
 - Phase 51 recurring-job engine + Phase 32 Wave 3 still queued.
 - Phase 18B OAuth blocked on user keys.
+
+---
+
+## Phase 51 · Seed closeout · Recurring jobs engine · Real CFO wiring (Feb 2026)
+
+**Verified**: preflight OK, Expo bundle 200, **15/15 backend tests pass**
+(`test_phase51.py`), plus Phase 50 suite still green.
+
+### 51.0 — Seed closeout
+- `seed_prior_readings()` inserts 2 additional prior service reports for
+  Jennifer Carson and Robert Blake (Diane Lloyd doesn't exist in the
+  seed set — used the actual customer names). Guarded per-customer by a
+  `phase51_prior_readings_seeded` flag so it's idempotent.
+- Fixed `scheduled_date` today-match: mobile `(app)/jobs.tsx` now uses
+  `String(j.scheduled_date || "").startsWith(today)`; backend
+  `mine-jobs-today` now uses `{$regex: f"^{today}"}` so both bare
+  `YYYY-MM-DD` and full ISO datetime storage work.
+
+### 51.I — Recurring-Job Scheduling Engine (P1)
+- New collection `recurring_job_templates` (schema in the router
+  docstring). Unique index `(recurring_template_id, scheduled_date)` on
+  `jobs` guarantees idempotent regeneration.
+- Endpoints (admin+super_admin):
+  - `POST /api/recurring-jobs`
+  - `GET  /api/recurring-jobs?active=true` (each row emits `upcoming[3]`)
+  - `GET  /api/recurring-jobs/{id}` (emits `upcoming[6]`)
+  - `PATCH /api/recurring-jobs/{id}` (pause/resume, edit)
+  - `DELETE /api/recurring-jobs/{id}` (soft-delete)
+  - `POST /api/recurring-jobs/{id}/generate?through=YYYY-MM-DD` (manual)
+- Frequency computation (`_next_occurrences`) supports weekly, biweekly,
+  monthly, and custom (every-N-days). Sundays are skipped unless
+  `allow_sunday: true`. Respects `start_date` and `end_date`.
+- Auto-assignment: when `assigned_tech_id` is null, the job is created
+  with `technician_id=null` and picked up by the existing route
+  auto-dispatch flow later.
+- APScheduler cron `recurring_job_generator` runs nightly at 02:00 UTC,
+  rolling 2-week horizon per active template across every tenant.
+- Web admin page `/admin/recurring-jobs`: table + create/edit modal
+  (with frequency-conditional fields) + row actions
+  (Gen 14d, Edit, Pause/Resume, Delete). Nav entry added.
+
+### 51.K — Real COGS / AP Aging / Payroll (P1)
+- New endpoints on the CFO router:
+  - `GET /api/cfo/cogs?year=&month=` — materials (chemicals_added
+    priced from `chemical_costs`), labor (time_entries × user
+    hourly_rate + landscape punches paired), equipment (inventory
+    reservations). All cents.
+  - `GET /api/cfo/ap-aging` — real aging buckets from `vendor_bills`
+    where status ∈ {open, partial}. Returns `{current_cents,
+    1_30_cents, 31_60_cents, 61_90_cents, over_90_cents,
+    total_open_cents, bill_ids}`.
+  - `GET /api/cfo/payroll?period=YYYY-MM` — per-employee minutes +
+    cost, split across techs and landscapers.
+  - Full CRUD on `/api/cfo/bills` (create/list/patch/delete) —
+    admin-only.
+- `_build_financial_context()` now bundles `cogs`, `ap_aging_detailed`,
+  and `payroll` sections onto the CFO Q&A context so questions like
+  "What's my AP aging?" or "Chemicals YTD?" answer honestly.
+  `mocked_fields` no longer contains `"ap_aging"`.
+- `seed_phase51k_finance()` idempotently:
+  1) Sets `hourly_rate_cents` on users lacking one (tech: $25/hr,
+     landscape: $30/hr, others: 0).
+  2) Seeds 8 sample `vendor_bills` spread across every aging bucket
+     (Current → 90+ days overdue), including one `partial` bill.
+- Web admin pages:
+  - `/admin/cfo/reports` — three cards: COGS breakdown, AP Aging
+    buckets, Payroll per-employee.
+  - `/admin/finance/bills` — vendor bill CRUD with Radix
+    `mustConfirm` on delete.
+- CFO Q&A chip additions: "What's my AP aging?", "How much did I
+  spend on chemicals this month?", "What's my payroll running at?".
+
+### Live smoke test snapshots
+- `POST /recurring-jobs` + generate → 26 dates inserted from a
+  Feb 2026 start_date through today+14; second call: `inserted=0`,
+  `skipped=0` (idempotent).
+- `GET /cfo/ap-aging` → `total_open_cents=312500` with buckets
+  populated across all 5 aging levels.
+- `GET /cfo/payroll?period=2026-02` → Luis Marquez 5.6h × $30/hr =
+  $167.00 total.
+- `GET /cfo/cogs?year=2026&month=2` → materials $295.87 from real
+  service reports.
+
+### Files touched
+- **New**: `backend/routers/recurring_jobs.py`,
+  `frontend/src/pages/admin/RecurringJobs.jsx`,
+  `frontend/src/pages/admin/CFOReports.jsx`,
+  `frontend/src/pages/admin/VendorBills.jsx`,
+  `backend/tests/test_phase51.py` (testing agent).
+- **Extended**: `backend/routers/cfo.py` (compute_cogs, compute_ap_aging,
+  compute_payroll, /bills CRUD, extended _build_financial_context),
+  `backend/routers/timeclock_landscaping.py` (regex today match),
+  `backend/seed.py` (seed_prior_readings + seed_phase51k_finance),
+  `backend/server.py` (register routers + nightly cron + new seed steps),
+  `frontend/src/App.js`, `frontend/src/nav/adminNav.js`,
+  `frontend/src/components/cfo/QnAPanel.jsx` (3 more chips),
+  `mobile/app/(app)/jobs.tsx` (today filter fix).
+
+### Preserved unchanged
+Phases 43-50 (admin hamburger gate, autosave, landscape widgets,
+tab-bar removal, tech route gating, chemical text-entry, defaults,
+outlier hints, sparkline, submit-time recheck, next-job chip, unread
+badge, auto-Friday email cron, landscape job attribution, chemical
+costs CRUD, margin leaderboard).
+
+### Not touched
+Phase 18B (blocked on user API keys).
+
+### New OpenAPI endpoints (Phase 51)
+```
+POST   /api/recurring-jobs
+GET    /api/recurring-jobs
+GET    /api/recurring-jobs/{id}
+PATCH  /api/recurring-jobs/{id}
+DELETE /api/recurring-jobs/{id}
+POST   /api/recurring-jobs/{id}/generate?through=YYYY-MM-DD
+GET    /api/cfo/cogs?year=&month=
+GET    /api/cfo/ap-aging
+GET    /api/cfo/payroll?period=YYYY-MM
+POST   /api/cfo/bills
+GET    /api/cfo/bills
+PATCH  /api/cfo/bills/{id}
+DELETE /api/cfo/bills/{id}
+```
