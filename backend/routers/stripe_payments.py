@@ -110,7 +110,9 @@ async def create_checkout_session(
     cancel_url = f"{origin}/invoices/{inv['id']}?stripe=cancel"
 
     stripe = get_stripe()
-    idem_key = f"co:{tenant['id']}:{inv['id']}:{inv.get('total', 0)}:{inv.get('amount_paid', 0)}"
+    total_cents_key = _dollars_to_cents(inv.get("total"))
+    paid_cents_key = _dollars_to_cents(inv.get("amount_paid"))
+    idem_key = f"co:{tenant['id']}:{inv['id']}:{total_cents_key}:{paid_cents_key}"
     try:
         session = stripe.checkout.Session.create(
             mode="payment",
@@ -235,7 +237,7 @@ async def create_payment_intent(
                 "customer_id": inv.get("customer_id") or "",
                 "kind": "invoice_pay_now",
             },
-            idempotency_key=f"pi:{tenant['id']}:{inv['id']}:{inv.get('amount_paid', 0)}",
+            idempotency_key=f"pi:{tenant['id']}:{inv['id']}:{_dollars_to_cents(inv.get('amount_paid'))}",
         )
     except Exception as e:
         logger.warning(f"stripe payment_intent create failed: {type(e).__name__}")

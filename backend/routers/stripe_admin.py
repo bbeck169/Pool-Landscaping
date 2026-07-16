@@ -172,7 +172,8 @@ async def _handle_checkout_completed(event):
     payload = {}
     if pi_id:
         try:
-            payload = get_stripe().PaymentIntent.retrieve(pi_id).to_dict() if hasattr(get_stripe().PaymentIntent.retrieve(pi_id), "to_dict") else dict(get_stripe().PaymentIntent.retrieve(pi_id))
+            pi_obj = get_stripe().PaymentIntent.retrieve(pi_id)
+            payload = pi_obj.to_dict() if hasattr(pi_obj, "to_dict") else dict(pi_obj)
         except Exception:
             payload = {"latest_charge": None}
     await _apply_paid_invoice(row, payload)

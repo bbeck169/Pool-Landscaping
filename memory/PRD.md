@@ -251,3 +251,64 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
 - Playwright — landscaper on Expo Web: widget at top of `/schedule/calendar` ("Off the clock · 0h 01m · This week · Full view · Clock In"). No bottom tab bar.
 - Playwright — mike hitting `/customers`, `/quotes`, `/invoices` → all redirect to `/schedule` (NoTech guard).
 - Grep `<Slider\| Slider ` in checklist components → zero rendered occurrences.
+
+## Phase 55 — Unified Notification Bell + Preferences (2026-07-16, LANDED)
+
+### Backend
+- NEW `backend/services/notifications.py` — central `emit(user_ids, kind, title, body, ...)` helper. Honors per-user preferences (bell/email/sms). Email routes through Resend when `RESEND_API_KEY` set, otherwise mocks to `email_delivery_log`. SMS routes through RingCentral when `RC_OUTBOUND_ENABLED=true`, otherwise queues a mocked `sms_messages` row. Realtime WS/SSE + Expo push fan-out best-effort. Body truncated to 500 chars.
+- NEW `backend/routers/notifications.py` — dedicated router. Endpoints: `GET /notifications`, `GET /notifications/unread-count`, `GET /notifications/kinds`, `POST /notifications/{id}/read`, `POST /notifications/mark-all-read` (+ legacy `/read-all` alias), `DELETE /notifications/{id}`, `GET /settings/notifications`, `PUT /settings/notifications`. Registered FIRST in `server.py::include_router` so it wins over legacy `/notifications` duplicates in `jobs.py` + `ai_ops.py`.
+- 18 KIND_LABELS: rc_sms_inbound/rc_call_inbound/rc_voicemail/rc_fax, job_assigned/completed/cancelled, dispatch_alert, autosave_conflict, invoice_paid/overdue, payment_received/refunded, tech_message/tech_note/customer_message, lead_new, system_alert.
+- Emitters wired: `ringcentral.py::_notify_admins` fans out to admins on inbound SMS/call/voicemail/fax (Phase 54 side). `stripe_admin.py::_apply_paid_invoice` fans out to admins on invoice_paid.
+- Preference merge: `default_prefs()` returns `bell:true, email:false, sms:false` for every kind; user overrides layered on top.
+- Pre-existing bug fixed: `ringcentral.py::_match_customer_by_phone` now matches both scalar `phone` and array `phones` fields on customer docs.
+
+### Web frontend
+- NEW `frontend/src/components/NotificationBell.jsx` — Radix DropdownMenu bell. Two variants: `inline` (AdminTopBar right side) + `floating` (fixed top-right for non-admin, next to hamburger). Polls `/notifications/unread-count` every 30s + reacts to realtime `notification` events. Dropdown shows latest 10 rows + "Mark all read" + "See all →".
+- NEW `frontend/src/pages/notifications/NotificationsPage.jsx` — full history page with Today/Yesterday/Earlier buckets, filter chips per kind, unread-only toggle, per-row Mark-read + Delete + Open (deep-link) actions, realtime status pill.
+- NEW `frontend/src/pages/settings/NotificationPrefs.jsx` — kind × channel toggle grid, all-on / all-off per channel, undo/save controls, channel hints.
+- `AdminTopBar.jsx` + `UniversalMenu.jsx` — bell mounted for admin + non-admin roles.
+- `adminNav.js` — added Notifications + Notification Prefs entries.
+- `App.js` — routes `/notifications` and `/settings/notifications` (any authenticated role).
+
+### Testing
+- iteration_9.json — 9/9 backend tests pass, 100%. Zero critical issues.
+
+## Phase 53 — Full Stripe Integration (2026-07-16, LANDED)
+
+### Backend
+- NEW `backend/routers/stripe_payments.py` — money endpoints under `/api/stripe/`:
+  - `POST /checkout/session` — Hosted Checkout for invoice pay-now. Deterministic idempotency key on (tenant, invoice, total_cents, paid_cents). Statement descriptor "POOL LANDSCPE VISTANCA". Line-item name from invoice title/customer.
+  - `GET /checkout/status/{session_id}` — polling fallback that idempotently applies payment if webhook lags.
+  - `POST /payment-intent` — Stripe Elements in-app card form. `automatic_payment_methods=enabled`.
+  - `POST /refunds` — admin-only. Guards: exists, status=paid, amount ≤ remaining. Syncs invoice `amount_paid` down.
+  - `GET /payments` — reconciliation ledger feed with rollup {paid_cents, refunded_cents, net_cents, count}.
+  - `GET/POST /products` — thin Stripe Products/Prices wrapper for admin CRUD.
+  - `POST /subscriptions` — auto-creates Stripe Customer from our CRM customer if needed. Persists to `db.stripe_subscriptions`.
+- EXTENDED `backend/routers/stripe_admin.py::stripe_webhook` — real handlers replacing scaffolds:
+  - Idempotency guard via `db.stripe_events` keyed on `event.id`.
+  - `checkout.session.completed`, `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.refunded`, `invoice.paid` (+`invoice.payment_succeeded` alias), `customer.subscription.{created,updated,deleted}` all wired.
+  - `_apply_paid_invoice(row, payload)` — idempotent ledger + invoice sync + admin notification (Phase 55).
+  - `invoice.paid` on a subscription auto-generates a recurring `db.jobs` row from the customer's recurring_job_template when one exists.
+- Ledger schema `db.stripe_payments`: id, tenant_id, customer_id, invoice_id, kind (checkout|payment_intent|subscription), session_id, payment_intent, charge_id, amount_cents, currency, status (initiated|processing|paid|failed|refunded), customer_email, receipt_url, refunded_cents, fee_cents, net_cents, created_at, updated_at, metadata.
+- Money-moving contract: when `STRIPE_SECRET_KEY` missing/invalid, endpoints return `{"mocked":true,"reason":"stripe_not_configured"}` 200 OK — frontend renders disabled state without an error banner. Amounts are ALWAYS server-side lookup — never trust a frontend-supplied amount.
+
+### Web frontend
+- NEW `frontend/src/lib/stripe.js` — memoized `getStripePromise()` that lazy-loads Stripe.js using key from `/api/stripe/publishable-key`. Never bakes the key into the build.
+- NEW `frontend/src/components/stripe/StripePayments.jsx` — `<PayNowButton>` (Hosted Checkout redirect), `<PayInAppForm>` (Elements PaymentElement wrapped in `<Elements>` provider), `<RefundButton>` (admin-only refund modal with amount input), `<StripeCheckoutReturn>` (post-redirect status poller — hits `/stripe/checkout/status/{session_id}` up to 5× at 2s intervals).
+- NEW `frontend/src/pages/finance/StripeReconciliation.jsx` — `/admin/finance/stripe-payments`. 4 rollup cards + status filter chips + row table with receipt link + inline refund. Admin-only.
+- `QuoteInvoiceDetail.jsx` — Pay with Stripe button added next to Record payment; `<StripeCheckoutReturn>` mounted at top.
+- `adminNav.js` — added Stripe Payments entry under Reports.
+- Installed `@stripe/react-stripe-js@4.1.0` + `@stripe/stripe-js@9.10.0` via yarn.
+
+### Live-Stripe verification
+- Real `cs_...` Checkout Session created (150.00 USD test invoice) — Hosted URL returned.
+- Real `pi_...` PaymentIntent created — client_secret returned.
+- Ledger correctly records kind=checkout + kind=payment_intent rows at status=initiated.
+
+### Testing
+- iteration_10.json — 17/17 backend tests pass, 100%. Zero critical defects. Two functional code-review notes applied: redundant PI.retrieve() call in webhook handler collapsed to single call; float-based idempotency key changed to integer cents.
+
+## Backlog (in queue, in order)
+1. **Phase 56** — Customer CSV Import 12-column update (Customer Since / Email / Service address Street / City / State / Postal Code / Phone / Mobile / First Name / Last Name / Tags / Notes). Tolerant date parsing, E.164 phone normalization (reuse Phase 54 helper), soft dedup on (tenant_id, email, mobile), backward-compat with old headers.
+2. **Phase 57** — Tech Department Assignment + Department-Gated Experience. PATCH `/api/users/{id}` for department. Split TECH_NAV into TECH_POOL + TECH_LANDSCAPE. New LandscapeChecklistForm (web + mobile). Route guards for `/pool-checklist/*` vs `/landscape-checklist/*`. Landscape clock widget on Profile.
+3. **Phase 58** — Global rebrand AquaTerra → Pool & Landscaping. New logo assets (icon + full). Web + mobile header swap. Login page. manifest.json + index.html. Email + PDF templates. Preserve tenant slug "aquaterra" and test-fixture emails.
