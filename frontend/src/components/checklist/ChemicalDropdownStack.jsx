@@ -80,7 +80,7 @@ export default function ChemicalDropdownStack({
         if (!entry || !entry.quantity) {
           // Nothing on the row → release existing reservation if any.
           if (entry?.reservation_id) {
-            await api.delete(`/inventory/reserve/${entry.reservation_id}`);
+            await api.del(`/inventory/reserve/${entry.reservation_id}`);
           }
           setWarnings((w) => { const n = { ...w }; delete n[type.slug]; return n; });
           return;

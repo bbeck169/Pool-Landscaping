@@ -818,7 +818,7 @@ export function CheckBanks() {
   const del = async (b) => {
     if (!(await mustConfirm({ title: `Delete bank account "${b.nickname}"?`, tone: "danger" }))) return;
     try {
-      await api.delete(`/checks/bank-accounts/${b.id}`);
+      await api.del(`/checks/bank-accounts/${b.id}`);
       await load();
     } catch (e) { await mustAlert({ title: e.message || "Failed" }); }
   };
@@ -1048,7 +1048,7 @@ export function CheckPayees() {
   const del = async (p) => {
     if (!(await mustConfirm({ title: `Delete payee "${p.name}"?`, tone: "danger" }))) return;
     try {
-      await api.delete(`/checks/payees/${p.id}`);
+      await api.del(`/checks/payees/${p.id}`);
       await load();
     } catch (e) { await mustAlert({ title: e.message || "Failed" }); }
   };

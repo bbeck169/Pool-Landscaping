@@ -416,7 +416,7 @@ export function FormEditor() {
   };
   const del = async () => {
     if (!(await mustConfirm({ title: "Delete this form?", tone: "danger" }))) return;
-    await api.delete(`/forms/${id}`);
+    await api.del(`/forms/${id}`);
     window.location.href = "/forms";
   };
 

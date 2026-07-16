@@ -26,7 +26,7 @@ export function OnboardingTemplates() {
     setShowNew(false); setName(""); setSteps([{ title: "", kind: "task" }]);
     load();
   };
-  const remove = async (id) => { await api.delete(`/onboarding/templates/${id}`); load(); };
+  const remove = async (id) => { await api.del(`/onboarding/templates/${id}`); load(); };
 
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-6" data-testid="admin-onboarding-templates">

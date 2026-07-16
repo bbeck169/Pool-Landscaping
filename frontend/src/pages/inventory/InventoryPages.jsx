@@ -424,7 +424,7 @@ export function InventoryDetail() {
   };
   const del = async () => {
     if (!(await mustConfirm({ title: `Delete "${item.name}"?`, description: "This cannot be undone.", tone: "danger" }))) return;
-    await api.delete(`/inventory/items/${id}`);
+      await api.del(`/inventory/items/${id}`);
     nav("/admin/inventory");
   };
 

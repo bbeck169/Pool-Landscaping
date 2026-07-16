@@ -382,7 +382,7 @@ export function D2dKnocks() {
   );
   const del = async (k) => {
     if (!(await mustConfirm({ title: "Delete this knock?", tone: "danger" }))) return;
-    try { await api.delete(`/d2d/knocks/${k.id}`); setToast("Deleted"); load(); }
+    try { await api.del(`/d2d/knocks/${k.id}`); setToast("Deleted"); load(); }
     catch (e) { setToast(e.message); }
   };
   const convert = async (k) => {
