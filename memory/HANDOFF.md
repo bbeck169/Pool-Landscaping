@@ -5752,3 +5752,145 @@ GET    /api/cfo/bills
 PATCH  /api/cfo/bills/{id}
 DELETE /api/cfo/bills/{id}
 ```
+
+---
+
+## Phase 52 · Sensitive env handoffs · Phase 51 fixes · Phase 52.A pricing digest
+
+**Verified**: preflight OK · Expo bundle 200 · **14/14 backend tests pass**
+(`iteration_8.json`). Prior Phases 50/51 tests still green.
+
+### Sensitive env-key handoffs (all four)
+
+The following env vars now live in the appropriate .env files.
+**Values are NEVER echoed anywhere** in source, logs, comments, or docs
+— referenced by name only. `.gitignore` covers `backend/.env`,
+`frontend/.env`, and `mobile/.env` (verified with `git check-ignore`).
+
+- `backend/.env`
+  - `STRIPE_SECRET_KEY`             (sk_live · loaded by `services/stripe_client.py`)
+  - `STRIPE_PUBLISHABLE_KEY`        (pk_live · server-side mirror for health parity)
+  - `STRIPE_WEBHOOK_SECRET`         (whsec · used by webhook scaffold below)
+  - `OPENWEB_NINJA_ZILLOW_API_KEY`  (Zillow · `config.py` prefers this new name,
+    falls back to legacy `OPENWEB_NINJA_API_KEY`)
+- `frontend/.env`
+  - `REACT_APP_STRIPE_PUBLISHABLE_KEY`
+- `mobile/.env`
+  - `EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY`
+
+Endpoints:
+- `GET /api/stripe/health` (admin) →
+  `{configured, secret_key_configured, publishable_key_configured,
+    webhook_secret_configured, mode: "live|test|none"}`. Never echoes values.
+- `GET /api/stripe/publishable-key` (public — safe by design) →
+  `{key: "pk_live_..." | null, mode}`.
+- `POST /api/stripe/webhook` (public) — reads raw body, verifies
+  signature with `stripe.Webhook.construct_event`, rejects invalid
+  signatures with `400 {"detail": "invalid signature"}` (no secret
+  leak in the error). Empty handler registry keyed by `event.type` —
+  Phase 53 will wire real handlers.
+- `GET /api/zillow/health` (admin) → `{configured: bool}`.
+- `backend/tests/test_zillow_live.py` — real API smoke marked
+  `pytest.mark.live`, skipped in the default sweep. Also skips
+  automatically when the env key is unset.
+- `pytest.ini` registers the `live` marker.
+
+### Phase 51 fixes (all 5 P1/P2 defects from previous run)
+- **Fix 1** — Renamed `api.delete(...)` → `api.del(...)` in
+  `RecurringJobs.jsx` + `VendorBills.jsx`. Grep confirms zero
+  remaining `api.delete(` callsites.
+- **Fix 2** — `GET /api/cfo/payroll` now returns `this_month_cents`
+  AND `ytd_cents` in addition to `total_cents` (kept for back-compat).
+- **Fix 3** — `GET /api/jobs` now accepts `scheduled_date` and
+  `recurring_template_id` query params. `scheduled_date` uses regex
+  `^{YYYY-MM-DD}` so both bare-date and ISO-datetime storage match.
+  New idempotent `seed_mike_today_job()` bumps mike's earliest
+  scheduled job to today (matching against his user's
+  `technician_id`, not `user.id` — that was the root cause).
+- **Fix 4** — Legacy MOCKED `ap_aging` key removed from
+  `_build_financial_context` and `/api/cfo/dashboard`.
+  `ap_aging_detailed` is now the sole source of truth.
+  `mocked_fields` no longer contains `"ap_aging"`.
+- **Fix 5** — `GET /api/jobs?recurring_template_id={id}` now filters
+  correctly.
+
+### Phase 52.A · Monthly Least-Profitable Digest + AI Price-Increase Suggestions
+- New endpoint `GET /api/reports/least-profitable-services?month=YYYY-MM&limit=3`
+  (admin) — aggregates completed jobs in the month by service_type,
+  computes revenue/cost/margin via the shared `job_costing` helper,
+  returns rows ordered ascending by margin_pct with `job_count`,
+  `avg_hours_per_job`, and money in cents.
+- New endpoint `POST /api/cfo/price-increase-suggestions` (admin) —
+  pulls the 3 worst service types, calls the Emergent LLM CFO agent
+  with a strict-JSON system prompt, parses `suggestions[]` with
+  `{service_type, current_avg_price_cents, recommended_price_cents,
+    rationale, expected_margin_lift_pct, customer_talking_points[]}`.
+  Cached 24h per (tenant_id, month) in `pricing_suggestions_cache`.
+- New endpoint `GET /api/reports/pricing-insights/email-history?limit=10`
+  (admin) — reads `email_delivery_log` where `kind = "monthly_pricing_digest"`.
+- New APScheduler cron `monthly_pricing_digest` on the 1st @ 09:00 UTC.
+  Iterates every tenant, computes previous month's ranked list, calls
+  the LLM, emails admins via Resend if `RESEND_API_KEY` is set,
+  otherwise **MOCKS** to `email_delivery_log` with `mocked: true,
+  reason: "resend_key_missing"`. Same pattern as Phase 50.G.
+- New web page `/admin/reports/pricing-insights` — month picker,
+  ranked-services table, "Generate suggestions" button, per-service
+  suggestion cards (current → recommended price + rationale +
+  talking points), and history panel of prior digests.
+- Nav entry added under Reports.
+- Live verified: LLM returned "Weekly Pool Service: $120 → $138
+  (+15% margin lift)" with full rationale + 3 talking points.
+
+### Files touched (Phase 52)
+- **New**: `backend/routers/stripe_admin.py`, `backend/routers/zillow_admin.py`,
+  `backend/services/stripe_client.py`, `backend/services/monthly_pricing_digest.py`,
+  `backend/tests/test_zillow_live.py`, `backend/tests/test_phase52.py`
+  (testing agent), `backend/pytest.ini`,
+  `frontend/src/pages/admin/PricingInsights.jsx`.
+- **Extended**: `backend/config.py` (dual env-var support for Zillow),
+  `backend/routers/cfo.py` (payroll schema, legacy ap_aging removal,
+  price-increase-suggestions endpoint + LLM cache),
+  `backend/routers/jobs.py` (scheduled_date + recurring_template_id
+  filters, least-profitable-services endpoint, pricing digest history
+  endpoint), `backend/seed.py` (seed_mike_today_job with correct
+  technician_id linkage), `backend/server.py` (register new routers +
+  new cron + new seed step), `.gitignore` (env coverage),
+  `frontend/src/App.js`, `frontend/src/nav/adminNav.js`,
+  `frontend/src/pages/admin/RecurringJobs.jsx` +
+  `frontend/src/pages/admin/VendorBills.jsx` (api.delete → api.del),
+  `backend/.env` + `frontend/.env` + `mobile/.env` (env values,
+  values not echoed here).
+
+### Not touched
+- **Phase 53 · Full Stripe build**: Awaiting rotated `sk_live_` +
+  webhook signing secret confirmation. Health + webhook scaffold live,
+  but no `stripe.PaymentIntent.create` / `stripe.Customer.create`
+  callsites yet.
+- **Phase 18B**: still blocked on user API keys.
+
+### Live smoke snapshots
+- `GET /api/stripe/health` (admin) →
+  `{"configured":true,"secret_key_configured":true,
+    "publishable_key_configured":true,"webhook_secret_configured":true,
+    "mode":"live"}`
+- `GET /api/stripe/publishable-key` (unauth) — pk_live returned, no
+  secret leaked.
+- `POST /api/stripe/webhook` with bogus signature → HTTP 400
+  `{"detail":"invalid signature"}` (no secret in message).
+- `GET /api/zillow/health` → `{"configured":true}`.
+- `POST /api/cfo/price-increase-suggestions {"month":"2026-06"}` →
+  1 suggestion, +15% margin lift, 3 talking points; second call
+  within 24h returns `cached: true`.
+- `GET /api/jobs?scheduled_date=<today>` (mike) → 1 job returned;
+  idempotent on second call.
+
+### New OpenAPI endpoints (Phase 52)
+```
+GET  /api/stripe/health
+GET  /api/stripe/publishable-key
+POST /api/stripe/webhook
+GET  /api/zillow/health
+GET  /api/reports/least-profitable-services?month=&limit=
+POST /api/cfo/price-increase-suggestions
+GET  /api/reports/pricing-insights/email-history?limit=
+```
