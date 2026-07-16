@@ -64,20 +64,61 @@ def _normalize_phone(p: Optional[str]) -> str:
     return "".join(ch for ch in str(p) if ch.isdigit())
 
 
+def _normalize_phone_e164(value: Optional[str]) -> Optional[str]:
+    """Phase 54.1 fix — coerce any US phone shape into `+1XXXXXXXXXX`.
+
+    Handles: `4805550102`, `480-555-0102`, `(480) 555-0102`,
+    `+14805550102`, `1-480-555-0102`. Returns None for values that
+    aren't a valid US 10-digit number. Non-US E.164 (already starts
+    with `+` and isn't 11 digits of `1XXXXXXXXXX`) is preserved."""
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if len(digits) == 10:
+        return f"+1{digits}"
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+{digits}"
+    if raw.startswith("+") and len(digits) >= 8:
+        # Foreign or already-normalized E.164 — return the sanitized form.
+        return f"+{digits}"
+    return None
+
+
 async def _match_customer_by_phone(tenant_id: Optional[str], phone: str) -> Optional[dict]:
     if not phone:
         return None
-    tail = _normalize_phone(phone)[-7:] if phone else ""
+    # Phase 54.1 — compare on the normalized form so a webhook's
+    # `+14805550102` matches a seeded `480-555-0102`. Because the
+    # stored phones may contain arbitrary non-digit separators (dashes,
+    # spaces, parens), we build a permissive regex from the last 10
+    # digits: `4\D*8\D*0\D*...` so `480-555-0102` matches
+    # `+14805550102` extracted digits.
+    normalized = _normalize_phone_e164(phone)
+    digits = _normalize_phone(phone)
     q: Dict[str, Any] = {}
     if tenant_id: q["tenant_id"] = tenant_id
-    # Try exact then last-7 fuzzy match.
-    q_exact = dict(q, **{"phones": phone})
-    match = await db.customers.find_one(q_exact, {"_id": 0})
-    if match:
-        return match
-    if tail:
-        q_fuzzy = dict(q, **{"phones": {"$regex": tail}})
-        return await db.customers.find_one(q_fuzzy, {"_id": 0})
+    # Try exact string match first (fast path for phones stored
+    # already in E.164 or the same shape as the incoming value).
+    for candidate in (phone, normalized):
+        if not candidate:
+            continue
+        q_exact = dict(q, **{"phones": candidate})
+        match = await db.customers.find_one(q_exact, {"_id": 0})
+        if match:
+            return match
+    # Fall back to a digit-agnostic regex over the last 10 digits.
+    tail10 = digits[-10:] if len(digits) >= 10 else digits
+    if len(tail10) >= 7:
+        pattern = "".join(f"{d}\\D*" for d in tail10)
+        # Anchor at end so `4805550102` doesn't spuriously hit
+        # something like `1480555010200000000`.
+        q_regex = dict(q, **{"phones": {"$regex": pattern + "$"}})
+        match = await db.customers.find_one(q_regex, {"_id": 0})
+        if match:
+            return match
     return None
 
 
@@ -412,10 +453,13 @@ async def ringout(body: RingOutBody,
                     tenant: dict = Depends(get_current_tenant)):
     if user.get("role") not in ("admin", "super_admin", "technician"):
         raise HTTPException(403, "not allowed")
+    # Phase 54.1 — normalize destination to E.164 before send + storage.
+    dest = _normalize_phone_e164(body.phone_number) or body.phone_number
     if not await is_outbound_enabled():
         return {"mocked": True, "reason": "rc_outbound_disabled",
-                 "phone_number": body.phone_number}
-    from_num = body.from_number or os.getenv("RC_FROM_NUMBER") or ""
+                 "phone_number": dest}
+    from_num = _normalize_phone_e164(body.from_number or os.getenv("RC_FROM_NUMBER") or "") \
+                 or (body.from_number or os.getenv("RC_FROM_NUMBER") or "")
     if not from_num:
         raise HTTPException(400, "RC_FROM_NUMBER unset and no from_number provided")
     try:
@@ -423,7 +467,7 @@ async def ringout(body: RingOutBody,
         resp = platform.post(
             "/restapi/v1.0/account/~/extension/~/ring-out",
             {"from": {"phoneNumber": from_num},
-             "to":   {"phoneNumber": body.phone_number},
+             "to":   {"phoneNumber": dest},
              "playPrompt": False},
         )
         rc = resp.json_dict() if hasattr(resp, "json_dict") else resp.json()
@@ -435,7 +479,7 @@ async def ringout(body: RingOutBody,
         "tenant_id": tenant["id"],
         "customer_id": body.customer_id,
         "from_number": from_num,
-        "to_number": body.phone_number,
+        "to_number": dest,
         "direction": "outbound",
         "initiated_by_user_id": user["id"],
         "rc_ringout_id": rc.get("id"),
@@ -461,24 +505,26 @@ async def sms_send(body: SmsSendBody,
         raise HTTPException(403, "not allowed")
     if not body.message.strip():
         raise HTTPException(422, "empty message")
+    # Phase 54.1 — normalize destination to E.164 before send + storage.
+    dest = _normalize_phone_e164(body.phone_number) or body.phone_number
     if not await is_outbound_enabled():
         # Still persist the intent so the UI thread shows the queued row.
         await db.sms_messages.insert_one({
             "id": new_id(), "tenant_id": tenant["id"],
             "customer_id": body.customer_id, "direction": "outbound",
             "from_number": os.getenv("RC_FROM_NUMBER") or "",
-            "to_number": body.phone_number, "body": body.message,
+            "to_number": dest, "body": body.message,
             "delivery_status": "mocked",
             "initiated_by_user_id": user["id"], "sent_at": now_iso(),
         })
         return {"mocked": True, "reason": "rc_outbound_disabled"}
-    from_num = os.getenv("RC_FROM_NUMBER") or ""
+    from_num = _normalize_phone_e164(os.getenv("RC_FROM_NUMBER") or "") or (os.getenv("RC_FROM_NUMBER") or "")
     try:
         platform = get_rc_platform()
         resp = platform.post(
             "/restapi/v1.0/account/~/extension/~/sms",
             {"from": {"phoneNumber": from_num},
-             "to":   [{"phoneNumber": body.phone_number}],
+             "to":   [{"phoneNumber": dest}],
              "text": body.message},
         )
         rc = resp.json_dict() if hasattr(resp, "json_dict") else resp.json()
@@ -489,7 +535,7 @@ async def sms_send(body: SmsSendBody,
         "id": new_id(), "tenant_id": tenant["id"],
         "customer_id": body.customer_id, "direction": "outbound",
         "from_number": from_num,
-        "to_number": body.phone_number, "body": body.message,
+        "to_number": dest, "body": body.message,
         "rc_message_id": rc.get("id"),
         "delivery_status": rc.get("messageStatus") or "sent",
         "initiated_by_user_id": user["id"], "sent_at": now_iso(),

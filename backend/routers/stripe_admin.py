@@ -26,16 +26,40 @@ from services.stripe_client import is_configured, mode, get_stripe
 router = APIRouter(prefix="/stripe", tags=["stripe"])
 
 
-# ─── /health · admin-only, env-inspection only ────────────────────────
+# ─── /health · admin-only, env-inspection + live auth probe ─────────
 @router.get("/health")
 async def stripe_health(user: dict = Depends(require_admin)):
-    return {
+    resp: dict = {
         "configured": is_configured(),
         "secret_key_configured": bool(os.getenv("STRIPE_SECRET_KEY")),
         "publishable_key_configured": bool(os.getenv("STRIPE_PUBLISHABLE_KEY")),
         "webhook_secret_configured": bool(os.getenv("STRIPE_WEBHOOK_SECRET")),
         "mode": mode(),
     }
+    # Phase 54 closeout — lightweight live probe against Stripe.
+    # Never echoes the secret key value; masks the account id to first
+    # 4 + last 4 chars only.
+    if not resp["secret_key_configured"]:
+        resp["key_authenticates"] = False
+        resp["error_type"] = "missing_key"
+        return resp
+    try:
+        stripe = get_stripe()
+        acct = stripe.Account.retrieve()
+        aid = getattr(acct, "id", None) or (acct.get("id") if hasattr(acct, "get") else None) or ""
+        masked = f"{aid[:4]}…{aid[-4:]}" if aid and len(aid) >= 10 else (aid or None)
+        resp["key_authenticates"] = True
+        resp["account_id"] = masked
+    except Exception as e:
+        cls = type(e).__name__
+        if "AuthenticationError" in cls or "PermissionError" in cls:
+            resp["error_type"] = "authentication"
+        elif "APIConnectionError" in cls or "ConnectionError" in cls or "Timeout" in cls:
+            resp["error_type"] = "network"
+        else:
+            resp["error_type"] = "other"
+        resp["key_authenticates"] = False
+    return resp
 
 
 # ─── /publishable-key · unauth OK (public by design) ─────────────────
