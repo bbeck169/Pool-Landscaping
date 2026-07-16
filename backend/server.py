@@ -3,7 +3,7 @@ from starlette.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import client, db, logger
-from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user
+from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user, seed_prior_readings, seed_phase51k_finance
 from routers import (
     auth, customers, technicians, jobs, quotes, leads, team, items, payments,
     operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google as google_router, phase11,
@@ -31,6 +31,7 @@ from routers import (
     timeclock_landscaping,
     budgets,
     chemical_costs,
+    recurring_jobs,
 )
 
 app = FastAPI(
@@ -64,7 +65,8 @@ for module in [auth, customers, technicians, jobs, quotes, leads, team, items, p
                cfo,
                timeclock_landscaping,
                budgets,
-               chemical_costs]:
+               chemical_costs,
+               recurring_jobs]:
     api_router.include_router(module.router)
 
 
@@ -152,6 +154,8 @@ async def _background_seed():
     await step("landscaping_user", seed_landscaping_user())
     await step("business_os", business_os.seed_business_os())
     await step("tech_today_demo", seed_tech_today_demo())
+    await step("prior_readings", seed_prior_readings())
+    await step("phase51k_finance", seed_phase51k_finance())
     await step("chemical_costs", chemical_costs.seed_chemical_costs())
 
     # Scheduler registration (needs the DB but not auth).
@@ -198,6 +202,12 @@ async def _background_seed():
             run_weekly_pool_service_email,
             "cron", day_of_week="fri", hour=17, minute=0,
             id="pool_service_weekly_email", replace_existing=True)
+        # Phase 51.I — nightly recurring-job generator (02:00 UTC).
+        from routers.recurring_jobs import run_recurring_job_generator
+        scheduler.add_job(
+            run_recurring_job_generator,
+            "cron", hour=2, minute=0,
+            id="recurring_job_generator", replace_existing=True)
         scheduler.start()
     except Exception as e:
         logger.warning(f"scheduler registration skipped: {e}")

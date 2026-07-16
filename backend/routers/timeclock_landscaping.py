@@ -181,10 +181,12 @@ async def my_jobs_today(user: dict = Depends(get_current_user)):
     # Match either `technician_id == user.id` (rare) or the user's
     # `technician_id` field (canonical after Phase 15D).
     tech_link = user.get("technician_id") or user["id"]
+    # scheduled_date is stored either as a bare "YYYY-MM-DD" or a full
+    # ISO datetime string. Match both via a `startswith` regex.
     cur = db.jobs.find(
         {"tenant_id": user["tenant_id"],
          "technician_id": {"$in": [tech_link, user["id"]]},
-         "scheduled_date": today},
+         "scheduled_date": {"$regex": f"^{today}"}},
         {"_id": 0, "id": 1, "title": 1, "customer_name": 1,
          "service_type": 1, "scheduled_start": 1, "status": 1},
     ).sort("scheduled_start", 1)

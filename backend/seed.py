@@ -407,3 +407,140 @@ async def seed_tech_today_demo():
             "created_at": now_iso(),
         })
 
+
+# ─── Phase 51.0 · Prior readings seed for outlier median coverage ─────
+async def seed_prior_readings():
+    """Insert 2 additional prior service reports per Jennifer Carson &
+    Robert Blake so `/api/service-reports/last-readings` returns
+    `recent_readings` arrays of length ≥ 2 — the median check in the
+    Phase 50.B submit-time recheck confirmation requires that.
+
+    Idempotent: guarded by a marker on the customer document."""
+    from datetime import datetime, timezone, timedelta
+    tenant = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0})
+    if not tenant:
+        return
+    tid = tenant["id"]
+    mike = await db.users.find_one({"email": "mike@aquaterra.com"})
+    if not mike:
+        return
+
+    seed_config = [
+        {"customer_name": "Jennifer Carson", "days_ago": [7, 14],
+         "readings": [
+            {"ph": 7.5, "free_chlorine": 3.0, "combined_chlorine": 0.1,
+             "total_alkalinity": 100, "cyanuric_acid": 40},
+            {"ph": 7.4, "free_chlorine": 3.1, "combined_chlorine": 0.15,
+             "total_alkalinity": 105, "cyanuric_acid": 42},
+         ]},
+        {"customer_name": "Robert Blake", "days_ago": [10, 21],
+         "readings": [
+            {"ph": 7.6, "free_chlorine": 2.8, "combined_chlorine": 0.2,
+             "total_alkalinity": 95, "cyanuric_acid": 45},
+            {"ph": 7.5, "free_chlorine": 2.9, "combined_chlorine": 0.1,
+             "total_alkalinity": 100, "cyanuric_acid": 50},
+         ]},
+    ]
+    for cfg in seed_config:
+        cust = await db.customers.find_one({"tenant_id": tid, "name": cfg["customer_name"]})
+        if not cust:
+            continue
+        if cust.get("phase51_prior_readings_seeded"):
+            continue
+        for i, days in enumerate(cfg["days_ago"]):
+            past = datetime.now(timezone.utc) - timedelta(days=days)
+            past_iso = past.date().isoformat()
+            # Create a completed job for that date (idempotency guard is
+            # the customer flag above — we only run this once per customer).
+            job_id = new_id()
+            await db.jobs.insert_one({
+                "id": job_id, "tenant_id": tid, "title": "Weekly Pool Service (prior)",
+                "service_type": "Weekly Pool Service",
+                "customer_id": cust["id"], "customer_name": cust["name"],
+                "address": cust.get("address", ""),
+                "technician_id": mike["id"], "technician_name": mike.get("name") or "Mike Rivera",
+                "scheduled_date": past_iso, "status": "completed",
+                "created_at": now_iso(), "price": 120,
+                "service_report_submitted_at": past.isoformat(),
+            })
+            # Build the reading list in the shape stored by service_reports.
+            readings = cfg["readings"][i]
+            reading_rows = [
+                {"key": k, "name": k.replace("_", " ").title(),
+                  "value": v, "unit": "ppm" if k != "ph" else ""}
+                for k, v in readings.items()
+            ]
+            await db.service_reports.insert_one({
+                "id": new_id(), "tenant_id": tid, "job_id": job_id,
+                "tech_id": mike["id"], "template": "pool",
+                "chemical_readings": reading_rows,
+                "chemicals_added": [], "checklist_items": [],
+                "not_tested_flags": {}, "notes": "",
+                "photos": [], "started_at": past.isoformat(),
+                "submitted_at": past.isoformat(),
+                "created_at": past.isoformat(), "updated_at": past.isoformat(),
+            })
+        await db.customers.update_one(
+            {"id": cust["id"]},
+            {"$set": {"phase51_prior_readings_seeded": True}},
+        )
+
+
+# ─── Phase 51.K · Vendor bills + user hourly rates seed ──────────────
+async def seed_phase51k_finance():
+    """Backfill users.hourly_rate_cents (tech: 2500, landscape: 3000)
+    idempotently, and seed 8 sample vendor_bills across aging buckets.
+    Guarded by tenant-level markers so the second run inserts 0 rows."""
+    from datetime import datetime, timezone, timedelta
+    tenant = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0})
+    if not tenant:
+        return
+    tid = tenant["id"]
+    # 1) Backfill hourly_rate_cents on users lacking one.
+    async for u in db.users.find(
+        {"hourly_rate_cents": None, "tenant_id": tid},
+        {"_id": 0, "id": 1, "role": 1, "department": 1},
+    ):
+        dept = (u.get("department") or "").lower()
+        role = u.get("role")
+        if dept == "landscaping":
+            rate = 3000
+        elif role == "technician":
+            rate = 2500
+        else:
+            rate = 0
+        await db.users.update_one({"id": u["id"]}, {"$set": {"hourly_rate_cents": rate}})
+    # 2) Seed 8 sample vendor bills — spread across aging buckets.
+    marker = await db.tenants.find_one({"id": tid}, {"_id": 0, "phase51k_bills_seeded": 1})
+    if (marker or {}).get("phase51k_bills_seeded"):
+        return
+    today = datetime.now(timezone.utc).date()
+    samples = [
+        {"vendor_name": "Poolmart Wholesale",  "due_offset_days":  10, "amount_cents":  45000, "status": "open"},
+        {"vendor_name": "AZ Chem Supply",       "due_offset_days":   5, "amount_cents":  28000, "status": "open"},
+        {"vendor_name": "Home Depot",            "due_offset_days":  -3, "amount_cents":  15000, "status": "open"},
+        {"vendor_name": "Fleet Fuel Co.",        "due_offset_days": -12, "amount_cents":  32000, "status": "open"},
+        {"vendor_name": "State Insurance",       "due_offset_days": -35, "amount_cents": 125000, "status": "open"},
+        {"vendor_name": "Marketing Agency",      "due_offset_days": -55, "amount_cents":  60000, "status": "partial", "paid_amount_cents": 20000},
+        {"vendor_name": "Legacy Uniforms Co.",   "due_offset_days": -75, "amount_cents":  18000, "status": "open"},
+        {"vendor_name": "Old Vendor (write-off?)","due_offset_days": -120,"amount_cents":  9500,  "status": "open"},
+    ]
+    for s in samples:
+        due = today + timedelta(days=s["due_offset_days"])
+        bill_date = due - timedelta(days=30)
+        await db.vendor_bills.insert_one({
+            "id": new_id(),
+            "tenant_id": tid,
+            "vendor_name": s["vendor_name"],
+            "bill_date": bill_date.isoformat(),
+            "due_date": due.isoformat(),
+            "amount_cents": s["amount_cents"],
+            "paid_amount_cents": s.get("paid_amount_cents", 0),
+            "status": s["status"],
+            "notes": "Seeded sample bill",
+            "created_at": now_iso(),
+        })
+    await db.tenants.update_one(
+        {"id": tid}, {"$set": {"phase51k_bills_seeded": True}}
+    )
+

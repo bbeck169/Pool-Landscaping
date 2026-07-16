@@ -145,6 +145,9 @@ export default function QnAPanel({ period, customStart, customEnd, onUsageChange
           "On track for annual revenue?",
           "Which category is over budget this month?",
           "What markup should I use?",
+          "What's my AP aging?",
+          "How much did I spend on chemicals this month?",
+          "What's my payroll running at?",
         ].map((s) => (
           <button
             key={s}

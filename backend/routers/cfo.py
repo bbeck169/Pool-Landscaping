@@ -39,7 +39,7 @@ from statistics import mean, pstdev
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import get_current_user, new_id, now_iso, require_admin
@@ -214,6 +214,350 @@ def _ap_aging_placeholder() -> Dict[str, Any]:
     return {"0_30": 0.0, "31_60": 0.0, "61_90": 0.0, "90_plus": 0.0,
             "mocked": True, "reason": "no ap_bills collection wired"}
 
+
+# ═══════════ Phase 51.K · Real COGS / AP Aging / Payroll ═══════════════
+
+async def compute_cogs(tenant_id: str, s: datetime, e: datetime) -> Dict[str, Any]:
+    """Real COGS by category over [s, e]. All values in cents."""
+    materials_cents = 0
+    labor_cents = 0
+    equipment_cents = 0
+    # Materials — chemicals_added rows across service_reports submitted in window.
+    # Cost lookup by (chemical_slug|name) → cost_per_unit_cents.
+    chem_costs: Dict[str, int] = {}
+    async for c in db.chemical_costs.find({"tenant_id": tenant_id}, {"_id": 0}):
+        cents = int(c.get("cost_per_unit_cents") or c.get("unit_cost_cents") or 0)
+        slug = str(c.get("chemical_slug") or c.get("slug") or "").lower()
+        name = str(c.get("name") or "").lower()
+        if slug:
+            chem_costs[slug] = cents
+        if name and name not in chem_costs:
+            chem_costs[name] = cents
+    async for rep in db.service_reports.find(
+        {"tenant_id": tenant_id, "submitted_at": {"$ne": None}},
+        {"_id": 0, "submitted_at": 1, "chemicals_added": 1},
+    ):
+        d = _parse_dt(rep.get("submitted_at"))
+        if not d or not (s <= d <= e):
+            continue
+        for row in (rep.get("chemicals_added") or []):
+            slug = str(row.get("chemical_slug") or row.get("slug") or "").lower()
+            name = str(row.get("chemical") or row.get("name") or "").lower()
+            cost = chem_costs.get(slug) if slug in chem_costs else chem_costs.get(name)
+            if cost is None:
+                cost = 500  # $5 legacy fallback for uncatalogued items
+            qty = _to_float(row.get("quantity") or row.get("amount") or 0)
+            materials_cents += int(round(qty * cost))
+    # Labor — time_entries with a job_id, at each user's hourly_rate_cents.
+    async for t in db.time_entries.find(
+        {"tenant_id": tenant_id, "job_id": {"$ne": None},
+         "clock_out_at": {"$ne": None}},
+        {"_id": 0, "user_id": 1, "clock_in_at": 1, "clock_out_at": 1,
+         "duration_minutes": 1},
+    ):
+        d = _parse_dt(t.get("clock_out_at")) or _parse_dt(t.get("clock_in_at"))
+        if not d or not (s <= d <= e):
+            continue
+        mins = 0
+        if t.get("duration_minutes"):
+            try: mins = int(t["duration_minutes"])
+            except Exception: mins = 0
+        else:
+            ci, co = _parse_dt(t.get("clock_in_at")), _parse_dt(t.get("clock_out_at"))
+            if ci and co:
+                mins = max(0, int((co - ci).total_seconds() // 60))
+        u = await db.users.find_one({"id": t.get("user_id")},
+                                      {"_id": 0, "hourly_rate_cents": 1})
+        rate = int((u or {}).get("hourly_rate_cents") or 2500)  # $25/hr default
+        labor_cents += int(round(mins / 60 * rate))
+    # Landscape punches (Phase 50.H) attributed to jobs.
+    landscape_pairs: List[tuple] = []
+    open_ins: Dict[str, Dict[str, Any]] = {}
+    async for p in db.timeclock_punches.find(
+        {"tenant_id": tenant_id, "job_id": {"$ne": None}},
+        {"_id": 0, "user_id": 1, "punch_type": 1, "timestamp": 1, "job_id": 1},
+    ).sort("timestamp", 1):
+        u = p.get("user_id")
+        if p.get("punch_type") == "in":
+            open_ins[u] = p
+        elif p.get("punch_type") == "out" and open_ins.get(u):
+            landscape_pairs.append((open_ins.pop(u), p))
+    for pi, po in landscape_pairs:
+        d = _parse_dt(po.get("timestamp"))
+        if not d or not (s <= d <= e):
+            continue
+        ci = _parse_dt(pi.get("timestamp"))
+        co = _parse_dt(po.get("timestamp"))
+        if not ci or not co: continue
+        mins = max(0, int((co - ci).total_seconds() // 60))
+        u = await db.users.find_one({"id": pi.get("user_id")},
+                                      {"_id": 0, "hourly_rate_cents": 1})
+        rate = int((u or {}).get("hourly_rate_cents") or 3000)  # $30/hr landscape default
+        labor_cents += int(round(mins / 60 * rate))
+    # Equipment — inventory_reservations consumed in window.
+    async for r in db.inventory_reservations.find(
+        {"tenant_id": tenant_id},
+        {"_id": 0, "qty": 1, "cost_cents": 1, "used_at": 1, "consumed_at": 1, "created_at": 1},
+    ):
+        when = _parse_dt(r.get("used_at") or r.get("consumed_at") or r.get("created_at"))
+        if not when or not (s <= when <= e):
+            continue
+        equipment_cents += int(r.get("qty") or 0) * int(r.get("cost_cents") or 0)
+    total = materials_cents + labor_cents + equipment_cents
+    return {
+        "materials_cents": materials_cents,
+        "labor_cents": labor_cents,
+        "equipment_cents": equipment_cents,
+        "total_cents": total,
+    }
+
+
+async def compute_ap_aging(tenant_id: str) -> Dict[str, Any]:
+    """Aging buckets from `vendor_bills` collection (Phase 51.K)."""
+    today = _now_utc().date()
+    buckets = {"current_cents": 0, "1_30_cents": 0, "31_60_cents": 0,
+               "61_90_cents": 0, "over_90_cents": 0}
+    bill_ids: Dict[str, List[str]] = {k: [] for k in buckets}
+    total_open = 0
+    async for b in db.vendor_bills.find(
+        {"tenant_id": tenant_id, "status": {"$in": ["open", "partial"]}},
+        {"_id": 0, "id": 1, "due_date": 1, "amount_cents": 1,
+         "paid_amount_cents": 1, "status": 1},
+    ):
+        outstanding = int(b.get("amount_cents") or 0) - int(b.get("paid_amount_cents") or 0)
+        if outstanding <= 0:
+            continue
+        total_open += outstanding
+        due = _parse_dt(b.get("due_date"))
+        if not due:
+            buckets["current_cents"] += outstanding
+            bill_ids["current_cents"].append(b["id"])
+            continue
+        due_d = due.date()
+        if due_d >= today:
+            buckets["current_cents"] += outstanding
+            bill_ids["current_cents"].append(b["id"])
+        else:
+            days = (today - due_d).days
+            if days <= 30:
+                buckets["1_30_cents"] += outstanding
+                bill_ids["1_30_cents"].append(b["id"])
+            elif days <= 60:
+                buckets["31_60_cents"] += outstanding
+                bill_ids["31_60_cents"].append(b["id"])
+            elif days <= 90:
+                buckets["61_90_cents"] += outstanding
+                bill_ids["61_90_cents"].append(b["id"])
+            else:
+                buckets["over_90_cents"] += outstanding
+                bill_ids["over_90_cents"].append(b["id"])
+    return {**buckets, "total_open_cents": total_open, "bill_ids": bill_ids}
+
+
+async def compute_payroll(tenant_id: str, s: datetime, e: datetime) -> Dict[str, Any]:
+    """Per-employee payroll totals in [s, e]."""
+    per_employee: Dict[str, Dict[str, Any]] = {}
+    total_cents = 0
+    # Tech hours from time_entries.
+    async for t in db.time_entries.find(
+        {"tenant_id": tenant_id, "clock_out_at": {"$ne": None}},
+        {"_id": 0, "user_id": 1, "clock_in_at": 1, "clock_out_at": 1,
+         "duration_minutes": 1},
+    ):
+        d = _parse_dt(t.get("clock_out_at")) or _parse_dt(t.get("clock_in_at"))
+        if not d or not (s <= d <= e):
+            continue
+        mins = 0
+        if t.get("duration_minutes"):
+            try: mins = int(t["duration_minutes"])
+            except Exception: mins = 0
+        else:
+            ci, co = _parse_dt(t.get("clock_in_at")), _parse_dt(t.get("clock_out_at"))
+            if ci and co:
+                mins = max(0, int((co - ci).total_seconds() // 60))
+        u = await db.users.find_one({"id": t.get("user_id")},
+                                      {"_id": 0, "id": 1, "name": 1, "email": 1, "hourly_rate_cents": 1})
+        if not u: continue
+        rate = int(u.get("hourly_rate_cents") or 2500)
+        cost = int(round(mins / 60 * rate))
+        row = per_employee.setdefault(u["id"], {
+            "user_id": u["id"], "name": u.get("name") or u.get("email"),
+            "hourly_rate_cents": rate, "minutes": 0, "cost_cents": 0,
+        })
+        row["minutes"] += mins
+        row["cost_cents"] += cost
+        total_cents += cost
+    # Landscape punches.
+    open_ins: Dict[str, Dict[str, Any]] = {}
+    async for p in db.timeclock_punches.find(
+        {"tenant_id": tenant_id},
+        {"_id": 0, "user_id": 1, "punch_type": 1, "timestamp": 1},
+    ).sort("timestamp", 1):
+        u = p.get("user_id")
+        if p.get("punch_type") == "in":
+            open_ins[u] = p
+        elif p.get("punch_type") == "out" and open_ins.get(u):
+            pi = open_ins.pop(u)
+            po = p
+            d = _parse_dt(po.get("timestamp"))
+            if not d or not (s <= d <= e):
+                continue
+            ci, co = _parse_dt(pi.get("timestamp")), _parse_dt(po.get("timestamp"))
+            if not ci or not co: continue
+            mins = max(0, int((co - ci).total_seconds() // 60))
+            uu = await db.users.find_one({"id": u},
+                                          {"_id": 0, "id": 1, "name": 1, "email": 1, "hourly_rate_cents": 1})
+            if not uu: continue
+            rate = int(uu.get("hourly_rate_cents") or 3000)
+            cost = int(round(mins / 60 * rate))
+            row = per_employee.setdefault(uu["id"], {
+                "user_id": uu["id"], "name": uu.get("name") or uu.get("email"),
+                "hourly_rate_cents": rate, "minutes": 0, "cost_cents": 0,
+            })
+            row["minutes"] += mins
+            row["cost_cents"] += cost
+            total_cents += cost
+    return {
+        "total_cents": total_cents,
+        "employee_count": len(per_employee),
+        "employees": list(per_employee.values()),
+    }
+
+
+# ─── /cfo/cogs ────────────────────────────────────────────────────────
+@router.get("/cogs")
+async def cogs_endpoint(
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None, ge=1, le=12),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    now = _now_utc()
+    y = year or now.year
+    if month:
+        s = datetime(y, month, 1, tzinfo=timezone.utc)
+        e = (datetime(y + (month // 12), (month % 12) + 1, 1, tzinfo=timezone.utc)
+             if month < 12 else datetime(y + 1, 1, 1, tzinfo=timezone.utc))
+    else:
+        s = datetime(y, 1, 1, tzinfo=timezone.utc)
+        e = datetime(y + 1, 1, 1, tzinfo=timezone.utc)
+    breakdown = await compute_cogs(tenant["id"], s, e)
+    return {
+        "period": {"year": y, "month": month,
+                   "start": s.isoformat(), "end": e.isoformat()},
+        **breakdown,
+        "mocked": False,
+    }
+
+
+# ─── /cfo/ap-aging ────────────────────────────────────────────────────
+@router.get("/ap-aging")
+async def ap_aging_endpoint(
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    result = await compute_ap_aging(tenant["id"])
+    result["mocked"] = False
+    return result
+
+
+# ─── /cfo/payroll ─────────────────────────────────────────────────────
+@router.get("/payroll")
+async def payroll_endpoint(
+    period: Optional[str] = Query(None, description="YYYY-MM"),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    now = _now_utc()
+    if period:
+        try:
+            y, m = period.split("-")
+            y, m = int(y), int(m)
+        except Exception:
+            raise HTTPException(422, "period must be YYYY-MM")
+        s = datetime(y, m, 1, tzinfo=timezone.utc)
+        e = (datetime(y + (m // 12), (m % 12) + 1, 1, tzinfo=timezone.utc)
+             if m < 12 else datetime(y + 1, 1, 1, tzinfo=timezone.utc))
+    else:
+        s = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+        e = now
+    result = await compute_payroll(tenant["id"], s, e)
+    result["period"] = {"start": s.isoformat(), "end": e.isoformat()}
+    result["mocked"] = False
+    return result
+
+
+# ─── /cfo/bills (Vendor bill CRUD for AP aging) ──────────────────────
+class VendorBillIn(BaseModel):
+    vendor_name: str
+    bill_date: str
+    due_date: str
+    amount_cents: int = Field(ge=0)
+    status: str = "open"
+    paid_amount_cents: int = 0
+    notes: str = ""
+
+
+@router.post("/bills")
+async def create_bill(body: VendorBillIn,
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    if body.status not in ("open", "paid", "partial"):
+        raise HTTPException(422, "status must be open|paid|partial")
+    doc = body.dict()
+    doc.update({
+        "id": new_id(),
+        "tenant_id": tenant["id"],
+        "created_at": now_iso(),
+        "created_by": user["id"],
+    })
+    await db.vendor_bills.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.get("/bills")
+async def list_bills(status: Optional[str] = Query(None),
+                       user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    q: Dict[str, Any] = {"tenant_id": tenant["id"]}
+    if status:
+        q["status"] = status
+    rows = await db.vendor_bills.find(q, {"_id": 0}).sort("due_date", 1).to_list(500)
+    return {"items": rows, "count": len(rows)}
+
+
+@router.patch("/bills/{bill_id}")
+async def patch_bill(bill_id: str, body: Dict[str, Any],
+                      user: dict = Depends(require_admin),
+                      tenant: dict = Depends(get_current_tenant)):
+    allowed = {"vendor_name", "bill_date", "due_date", "amount_cents",
+               "status", "paid_amount_cents", "notes"}
+    upd = {k: v for k, v in (body or {}).items() if k in allowed}
+    if "status" in upd and upd["status"] not in ("open", "paid", "partial"):
+        raise HTTPException(422, "status must be open|paid|partial")
+    upd["updated_at"] = now_iso()
+    res = await db.vendor_bills.update_one(
+        {"id": bill_id, "tenant_id": tenant["id"]}, {"$set": upd},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(404, "bill not found")
+    return await db.vendor_bills.find_one(
+        {"id": bill_id, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+
+
+@router.delete("/bills/{bill_id}")
+async def delete_bill(bill_id: str,
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    res = await db.vendor_bills.delete_one(
+        {"id": bill_id, "tenant_id": tenant["id"]}
+    )
+    if res.deleted_count == 0:
+        raise HTTPException(404, "bill not found")
+    return {"deleted": True, "id": bill_id}
+
 # ─── /dashboard ───────────────────────────────────────────────────────
 @router.get("/dashboard")
 async def dashboard(
@@ -229,7 +573,17 @@ async def dashboard(
     expenses = await _expenses(tid, s, e)
     cash = await _cash_on_hand(tid)
     ar = await _ar_aging(tid)
-    ap = _ap_aging_placeholder()
+    # Phase 51.K — real AP aging replaces the placeholder.
+    ap_real = await compute_ap_aging(tid)
+    ap = {
+        "0_30": round(ap_real["1_30_cents"] / 100.0, 2),
+        "31_60": round(ap_real["31_60_cents"] / 100.0, 2),
+        "61_90": round(ap_real["61_90_cents"] / 100.0, 2),
+        "90_plus": round(ap_real["over_90_cents"] / 100.0, 2),
+        "current": round(ap_real["current_cents"] / 100.0, 2),
+        "total_open": round(ap_real["total_open_cents"] / 100.0, 2),
+        "mocked": False,
+    }
     gross = round(revenue["total"] - expenses["total"], 2)
     margin = round((gross / revenue["total"]) * 100, 2) if revenue["total"] else 0.0
     return {
@@ -648,6 +1002,15 @@ async def _build_financial_context(
     ar = await _ar_aging(tenant_id)
     ap = _ap_aging_placeholder()
     top_customers = await _top_customers_by_revenue(tenant_id, s, e)
+    # Phase 51.K — extend context with COGS + AP aging + Payroll so
+    # the AI CFO can honestly answer "spend on chemicals YTD?" etc.
+    cogs = await compute_cogs(tenant_id, s, e)
+    ap_real = await compute_ap_aging(tenant_id)
+    # Payroll for the current month (as spec'd — MTD, not YTD).
+    now = _now_utc()
+    month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+    payroll_mtd = await compute_payroll(tenant_id, month_start, now)
+    payroll_ytd = await compute_payroll(tenant_id, datetime(now.year, 1, 1, tzinfo=timezone.utc), now)
     active_jobs = await db.jobs.count_documents({
         "tenant_id": tenant_id,
         "status": {"$in": ["scheduled", "pending", "active"]},
@@ -667,7 +1030,7 @@ async def _build_financial_context(
     gross = round(rev["total"] - exp["total"], 2)
     margin = round((gross / rev["total"]) * 100, 2) if rev["total"] else 0.0
 
-    mocked_fields: List[str] = ["ap_aging"]
+    mocked_fields: List[str] = []  # Phase 51.K — ap_aging is now real
     if cash.get("mocked"): mocked_fields.append("cash_on_hand")
     # Track other mocked signals if present:
     if not exp.get("by_category"):
@@ -694,6 +1057,26 @@ async def _build_financial_context(
         "active_warranty_contracts": active_warranties,
         "warranty_arr_estimate": round(warranty_arr, 2),
         "budget": budget_ctx,
+        # Phase 51.K — real COGS + AP aging + Payroll for CFO Q&A.
+        "cogs": {
+            "labor_ytd_cents": cogs["labor_cents"],
+            "materials_ytd_cents": cogs["materials_cents"],
+            "equipment_ytd_cents": cogs["equipment_cents"],
+            "total_ytd_cents": cogs["total_cents"],
+        },
+        "ap_aging_detailed": {
+            "current_cents": ap_real["current_cents"],
+            "1_30_cents": ap_real["1_30_cents"],
+            "31_60_cents": ap_real["31_60_cents"],
+            "61_90_cents": ap_real["61_90_cents"],
+            "over_90_cents": ap_real["over_90_cents"],
+            "total_open_cents": ap_real["total_open_cents"],
+        },
+        "payroll": {
+            "this_month_cents": payroll_mtd["total_cents"],
+            "ytd_cents": payroll_ytd["total_cents"],
+            "employee_count": payroll_ytd["employee_count"],
+        },
         "mocked_fields": mocked_fields,
     }
 

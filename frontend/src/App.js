@@ -133,6 +133,9 @@ import LandscapingTimeClock from "@/pages/tech/LandscapingTimeClock";
 import PoolServiceReport from "@/pages/reports/PoolServiceReport";
 import JobMarginLeaderboard from "@/pages/admin/JobMarginLeaderboard";
 import ChemicalCosts from "@/pages/admin/ChemicalCosts";
+import RecurringJobs from "@/pages/admin/RecurringJobs";
+import CFOReports from "@/pages/admin/CFOReports";
+import VendorBills from "@/pages/admin/VendorBills";
 import BudgetSetup from "@/pages/budget/BudgetSetup";
 import BudgetDashboard from "@/pages/budget/BudgetDashboard";
 import BudgetWizard from "@/pages/budget/BudgetWizard";
@@ -316,6 +319,11 @@ export default function App() {
             <Route path="admin/reports/job-margins" element={<AdminOnly><JobMarginLeaderboard /></AdminOnly>} />
             {/* Phase 50.A — Chemical Costs CRUD (admin/super_admin) */}
             <Route path="admin/settings/chemical-costs" element={<AdminOnly><ChemicalCosts /></AdminOnly>} />
+            {/* Phase 51.I — Recurring Jobs (admin/super_admin) */}
+            <Route path="admin/recurring-jobs" element={<AdminOnly><RecurringJobs /></AdminOnly>} />
+            {/* Phase 51.K — CFO Reports (admin/super_admin) */}
+            <Route path="admin/cfo/reports" element={<AdminOnly><CFOReports /></AdminOnly>} />
+            <Route path="admin/finance/bills" element={<AdminOnly><VendorBills /></AdminOnly>} />
             {/* Phase 47 — Budgeting Suite */}
             <Route path="admin/budget" element={<AdminOnly><BudgetSetup /></AdminOnly>} />
             <Route path="admin/budget/dashboard" element={<AdminOnly><BudgetDashboard /></AdminOnly>} />

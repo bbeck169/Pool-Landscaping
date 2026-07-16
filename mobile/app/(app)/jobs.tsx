@@ -93,10 +93,10 @@ export default function Jobs() {
     if (!isTech) return null;
     const today = new Date().toISOString().slice(0, 10);
     const candidates = jobs.filter((j) =>
-      j.scheduled_date === today &&
+      String(j.scheduled_date || "").startsWith(today) &&
       !["completed", "cancelled", "canceled", "no_show", "skipped"].includes(String(j.status || "").toLowerCase()),
     );
-    candidates.sort((a, b) => String(a.scheduled_start || "z").localeCompare(String(b.scheduled_start || "z")));
+    candidates.sort((a, b) => String(a.scheduled_start || a.scheduled_date || "z").localeCompare(String(b.scheduled_start || b.scheduled_date || "z")));
     return candidates[0] || null;
   }, [jobs, isTech]);
 
