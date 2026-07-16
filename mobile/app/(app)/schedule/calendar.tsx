@@ -34,6 +34,7 @@ import { useAuth } from "@/src/auth";
 import { storage } from "@/src/utils/storage";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
 
 type Job = {
   id: string;
@@ -263,6 +264,9 @@ export default function ScheduleCalendar() {
         title="Schedule"
         subtitle={loading ? "Loading…" : `${jobs.length} jobs in window · ${mode}`}
       />
+      <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.md }}>
+        <LandscapingClockWidget />
+      </View>
 
       {/* Top-level Grid ↔ Calendar toggle. */}
       <View style={styles.modeSwitch} testID="schedule-mode-switch">

@@ -210,3 +210,44 @@ Field-service CRM covering admin, technician (Expo mobile), and customer-portal 
 - Playwright mobile Expo Web (mike, `/job/{id}/checklist`): 10 reading text inputs, 10 not-tested toggles, 9 chemical row inputs, **0 legacy chip testids** in DOM. Screenshot shows PH row with invalid value "75" triggering red border + "Value out of range (0-14, 2dp)" error.
 - Playwright web (admin, calendar → event → ChecklistModal): renders PH 7.6 (unit `pH`), Free Cl 3 (`ppm`), Combined Cl empty (`ppm`), Total Alkalinity 100 (`ppm`), Calcium Hardness visible. Each row has NOT TESTED toggle. Screenshot captured.
 - Grep for `<Slider` / `<Slider ` / `CHIP_SCALES` reference in checklist components: only remaining occurrence is a dead const in `PoolChecklistForm.jsx` (kept to minimize diff) and a comment in mobile — no rendered chips.
+
+## Phase 49 — Manual-entry parity + landscape widget + tech nav gates (2026-07-16)
+
+### 49.0 — mobile checklist remnant fix
+- `mobile/app/job/[id].tsx` — replaced the legacy `<FieldReport>` picker (which mounted the old `ChemicalReadings` modal picker) for `canManage && !isCustomer` with an **OPEN SERVICE REPORT** primary CTA that routes to `/job/[id]/checklist` (the sole surface running the new manual-entry `PoolChecklistForm`). Customer read-only path still renders `FieldReport` (report summary, no picker).
+- `mobile/src/components/checklist/PoolChecklistForm.tsx` — added `mergedReadings` that merges the backend `chemical_reading_fields` template with saved `chemical_readings` so all default rows always render, even when the persisted report only carries a subset (e.g. legacy jobs with just PH). `updReading` now writes against `mergedReadings`. Both loops (fields → rows) now iterate `mergedReadings`.
+- `frontend/src/components/checklist/PoolChecklistForm.jsx` — added the same `readingFields` prop + `mergedReadings` memo + iteration.
+- `frontend/src/components/checklist/ChecklistModal.jsx` — passes `readingFields={report.chemical_reading_fields || []}` into `PoolChecklistForm`.
+
+### 49.1 — default readings ship in "tested" state
+- `mobile/src/components/checklist/ReadingChipRow.tsx` — introduced `DEFAULT_TESTED_KEYS` set (Free Cl · Total Cl · PH · Alkalinity · CYA + aliases). Row's `notTested` is now a `manualNotTested` boolean (local state, initial `= !hasValue && !DEFAULT_TESTED_KEYS.has(key)`). Toggle-OFF clears value and lets placeholder show default; Toggle-ON sets `manualNotTested=true` and nulls the value.
+- `frontend/src/components/checklist/PoolChecklistForm.jsx::ReadingInputRow` — same logic mirrored for web.
+
+### 49.2 — mobile bottom tab bar hidden
+- `mobile/app/(app)/_layout.tsx` — `tabBarStyle: { display: "none" }`. Navigation is via the top-right hamburger.
+- `mobile/src/components/tools/sections.ts` — added **Workstream** + **Landscape Time Clock** tiles to `TECH_SECTIONS.daily` so the hamburger covers what the tab bar used to expose.
+
+### 49.3 — landscape clock in/out widget at top of home
+- NEW `frontend/src/components/LandscapingClockWidget.jsx` — self-hides for non-landscape users. Big brand/red toggle button, running timer, this-week total, "Full view" link. Mounted at top of `AppLayout.jsx` before `<Outlet />` (visible on every page for landscape users, invisible otherwise).
+- NEW `mobile/src/components/LandscapingClockWidget.tsx` — mirror of web. Mounted at top of `mobile/app/(app)/index.tsx` (Dashboard) and `mobile/app/(app)/schedule/calendar.tsx` (landscape tech's actual landing route).
+- `backend/utils.py::auth_response` — now emits `department` in the login payload so both widgets can auto-hide client-side without a `/auth/me` roundtrip.
+
+### 49.4 + 49.5 — tech nav no longer sees Customers / Quotes / Invoices
+- `frontend/src/nav/roleNav.js::TECH_NAV` — Records section trimmed to D2D Leaderboard + Business Card. Customers + Quotes & Invoices entries removed.
+- `frontend/src/App.js` — introduced `NoTech` wrapper that redirects `role === "technician"` to `/`. Wrapped `/customers/*`, `/quotes/*`, `/invoices/*` (incl. Master Invoices) routes. Playwright verified all three routes redirect `mike@aquaterra.com` to `/schedule`.
+- Mobile: `TECH_SECTIONS` in `sections.ts` already excludes these entries; no changes needed. Only `ADMIN_SECTIONS` carries them.
+
+### 49.6 — Unusual reading "Recheck?" auto-flag
+- `backend/routers/service_reports.py::last_readings` — response now includes `recent_readings: { key: [v1,v2,v3,v4] }` (up to last 4 numeric values per key across the last completed reports).
+- `mobile/src/components/checklist/PoolChecklistForm.tsx` + `frontend/src/components/checklist/PoolChecklistForm.jsx` — bootstrap consumes `recent_readings` and forwards to the row.
+- `mobile/src/components/checklist/ReadingChipRow.tsx` + `frontend/.../PoolChecklistForm::ReadingInputRow` — compute rolling median of the recent 4 values; when a typed draft is `> 2 × median` OR `< 0.5 × median`, show a yellow "⚠ Recheck? Recent median X · you typed Y" hint (testid `pool-reading-{key}-recheck`). Autosave NOT blocked; hint is warning-only.
+
+### Verified
+- `bash /app/scripts/preflight.sh` → exit 0. Metro bundle 200. Web bundle 200.
+- `POST /auth/login` for landscaper returns `department: "landscaping"`; for mike returns `null`.
+- `GET /service-reports/last-readings?customer_id=…` returns `readings + recent_readings` (ph: [7.4], chlorine: […], alkalinity: […]).
+- Playwright — mobile (mike): 10 reading inputs rendered on `/job/{id}/checklist`, "—" for 5 default-tested keys, "Not tested" for the rest. Screenshot shows PH `7.6` with previous 7.4/9h, Free Cl `3` with previous 0.5 ppm/9h, Combined Cl blank + NOT TESTED, Total Alkalinity next.
+- Playwright — landscaper on web: `landscape-clock-widget` visible on `/schedule`. Non-landscape mike: widget absent.
+- Playwright — landscaper on Expo Web: widget at top of `/schedule/calendar` ("Off the clock · 0h 01m · This week · Full view · Clock In"). No bottom tab bar.
+- Playwright — mike hitting `/customers`, `/quotes`, `/invoices` → all redirect to `/schedule` (NoTech guard).
+- Grep `<Slider\| Slider ` in checklist components → zero rendered occurrences.

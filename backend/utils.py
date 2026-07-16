@@ -195,6 +195,10 @@ def auth_response(user: dict, impersonator_id: str = None, impersonator_name: st
             "name": user.get("name", ""), "avatar": user.get("avatar", ""),
             "technician_id": user.get("technician_id"),
             "customer_id": user.get("customer_id"),
+            # Phase 49.3 — expose `department` so the web + mobile
+            # LandscapingClockWidget can self-hide for non-landscaping users
+            # without an extra /auth/me roundtrip.
+            "department": user.get("department"),
         },
     }
     if impersonator_id:

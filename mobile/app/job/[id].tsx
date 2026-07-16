@@ -14,7 +14,27 @@ import { useOnline, queuePhoto, pendingForJob, flushPendingPhotos, getCachedJobs
 import { colors, spacing, money, IMAGES } from "@/src/theme";
 import { Loading, StatusChip, PrimaryButton, Sheet } from "@/src/components/ui";
 import { styles } from "@/src/components/job/styles";
+import { colors as themeColors, spacing as themeSpacing, radius as themeRadius, font as themeFont } from "@/src/theme";
 import FieldReport from "@/src/components/job/FieldReport";
+
+// Phase 49.0 — inline styles for the "Open Service Report" CTA. Kept
+// local so we don't touch the shared `styles` module.
+const openReportBtn = {
+  flexDirection: "row" as const,
+  alignItems: "center" as const,
+  justifyContent: "center" as const,
+  gap: 8,
+  backgroundColor: themeColors.brand,
+  paddingVertical: 14,
+  borderRadius: themeRadius.md,
+  marginVertical: themeSpacing.md,
+};
+const openReportBtnText = {
+  fontFamily: themeFont.bold,
+  fontSize: 14,
+  color: "#fff",
+  letterSpacing: 0.7,
+};
 import MaintenanceLog from "@/src/components/job/MaintenanceLog";
 import ServiceIssues from "@/src/components/job/ServiceIssues";
 import PhotoCarousel from "@/src/components/job/PhotoCarousel";
@@ -256,7 +276,19 @@ export default function JobDetail() {
           ) : null}
 
           {canManage && !isCustomer ? (
-            <FieldReport job={job} online={online} onSaved={setJob} readOnly={false} />
+            // Phase 49.0 — legacy FieldReport picker retired for editors.
+            // The dedicated `/job/{id}/checklist` route hosts the new
+            // PoolChecklistForm (manual text-entry chemicals + readings).
+            // Keeping FieldReport in read-only mode for customers because
+            // it purely renders the completed-report summary, not a picker.
+            <Pressable
+              onPress={() => router.push(`/job/${id}/checklist`)}
+              style={openReportBtn}
+              testID="open-service-report-btn"
+            >
+              <Ionicons name="clipboard-outline" size={18} color="#fff" />
+              <Text style={openReportBtnText}>OPEN SERVICE REPORT</Text>
+            </Pressable>
           ) : isCustomer ? (
             <FieldReport job={job} online={online} onSaved={setJob} readOnly={true} />
           ) : null}

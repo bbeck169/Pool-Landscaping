@@ -49,8 +49,9 @@ export const TECH_NAV = [
     label: "Records",
     icon: FileText,
     entries: [
-      { to: "/customers", label: "Customers", icon: Users },
-      { to: "/quotes", label: "Quotes & Invoices", icon: FileText },
+      // Phase 49.4 + 49.5 — Customers, Quotes & Invoices removed from
+      // tech nav. Techs shouldn't be reading customer billing docs.
+      // Routes remain gated at the App.js level for defense-in-depth.
       { to: "/d2d/leaderboard", label: "D2D Leaderboard", icon: Trophy },
       { to: "/card", label: "Business Card", icon: IdCard },
     ],

@@ -29,6 +29,18 @@ const DEFAULT_VALUES: Record<string, number> = {
   cyanuric_acid: 70,  cya: 70,
 };
 
+// Phase 49.1 — readings that ship in "tested" state by default. A blank
+// value for these keys shows the input enabled with the default as
+// placeholder text (not a "Not tested" state). The user must explicitly
+// toggle "Not tested" to skip a reading; then the pill is visible and
+// the input dims.
+const DEFAULT_TESTED_KEYS = new Set<string>([
+  "free_chlorine", "total_chlorine", "chlorine",
+  "ph",
+  "total_alkalinity", "alkalinity",
+  "cyanuric_acid", "cya",
+]);
+
 // Phase 48 — per-key numeric bounds + decimal precision. Keys are
 // normalized (snake_case) so the aliases (`chlorine`, `alkalinity`) all
 // share the same rule.
@@ -81,29 +93,53 @@ type Props = {
   value: number | string | null;
   locked?: boolean;
   previous?: { value: number | null; at?: string | null } | null;
+  recent?: number[];
   onChange: (val: number | null) => void;
 };
 
 export default function ReadingChipRow({
-  readingKey, label, unit, value, locked, previous, onChange,
+  readingKey, label, unit, value, locked, previous, recent, onChange,
 }: Props) {
   const key = normalizeKey(readingKey || label);
   const rule = RULES[key];
-  const notTested = value == null || value === "";
+  const hasValue = value != null && value !== "";
+  // Phase 49.1 — for the 5 default-tested readings, a blank value is NOT
+  // "not tested"; it just means the tech hasn't typed yet. Only explicit
+  // toggle sets notTested = true. For other readings (Salt, Calcium
+  // Hardness, etc.) fall back to the old "blank == not tested" behavior.
+  const [manualNotTested, setManualNotTested] = React.useState<boolean>(
+    !hasValue && !DEFAULT_TESTED_KEYS.has(key),
+  );
+  const notTested = manualNotTested;
 
   // Local draft so users can type partial values ("7.") without triggering
   // invalidation until they commit.
-  const [draft, setDraft] = useState<string>(notTested ? "" : String(value));
+  const [draft, setDraft] = useState<string>(hasValue ? String(value) : "");
 
-  // If the parent value changes (autosave hydrate, wipe, etc.) reset draft.
+  // If the parent value changes (autosave hydrate, wipe, etc.) reset draft
+  // AND clear the manual-not-tested flag when a real value arrives.
   React.useEffect(() => {
-    setDraft(notTested ? "" : String(value));
-  }, [value, notTested]);
+    setDraft(hasValue ? String(value) : "");
+    if (hasValue) setManualNotTested(false);
+  }, [value, hasValue]);
 
   const { value: numericDraft, invalid } = useMemo(
     () => validate(rule, draft),
     [rule, draft],
   );
+
+  // Phase 49.6 — median of recent 4 values (from bootstrap); flag draft
+  // as outlier when > 2× or < 0.5× the median (typo protection).
+  const recentArr = Array.isArray(recent) ? recent.filter((x) => Number.isFinite(x)) : [];
+  const median = useMemo(() => {
+    if (recentArr.length === 0) return null;
+    const sorted = [...recentArr].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }, [recentArr]);
+  const draftNum = Number(draft);
+  const isOutlier = median != null && median > 0 && Number.isFinite(draftNum) && draftNum > 0
+    && (draftNum > 2 * median || draftNum < 0.5 * median);
 
   const commit = () => {
     if (locked) return;
@@ -124,8 +160,17 @@ export default function ReadingChipRow({
         <Pressable
           onPress={() => {
             if (locked) return;
-            if (notTested) onChange(DEFAULT_VALUES[key] ?? 0);
-            else onChange(null);
+            if (notTested) {
+              // Toggle OFF: exit not-tested state, keep field empty so
+              // the placeholder shows the default; user types to fill.
+              setManualNotTested(false);
+              onChange(null);
+            } else {
+              // Toggle ON: mark not-tested, clear value.
+              setManualNotTested(true);
+              setDraft("");
+              onChange(null);
+            }
           }}
           disabled={!!locked}
           style={[styles.notTestedBtn, notTested && styles.notTestedBtnActive]}
@@ -165,6 +210,10 @@ export default function ReadingChipRow({
       {invalid ? (
         <Text style={styles.errText} testID={`pool-reading-${key}-error`}>
           Value out of range{rule ? ` (${rule.min}–${rule.max}, ${rule.decimals}dp)` : ""}.
+        </Text>
+      ) : isOutlier ? (
+        <Text style={styles.recheckText} testID={`pool-reading-${key}-recheck`}>
+          ⚠ Recheck? Recent median {median} · you typed {draftNum}
         </Text>
       ) : null}
 
@@ -213,6 +262,13 @@ const styles = StyleSheet.create({
   errText: {
     fontFamily: font.semibold, fontSize: 11,
     color: "#B91C1C", marginTop: 4,
+  },
+  recheckText: {
+    fontFamily: font.semibold, fontSize: 11,
+    color: "#854D0E", marginTop: 4,
+    backgroundColor: "#FEF9C3", borderColor: "#FDE68A", borderWidth: 1,
+    borderRadius: 4, paddingHorizontal: 6, paddingVertical: 3,
+    alignSelf: "flex-start",
   },
   prev: { fontFamily: font.regular, fontSize: 10, color: colors.muted, marginTop: 6 },
 });

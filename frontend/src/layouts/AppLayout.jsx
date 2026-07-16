@@ -6,6 +6,7 @@ import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import AdminSidebar from "@/layouts/AdminSidebar";
 import AdminTopBar from "@/layouts/AdminTopBar";
 import UniversalMenu from "@/layouts/UniversalMenu";
+import LandscapingClockWidget from "@/components/LandscapingClockWidget";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
 import { brandGradientCss, colors, font } from "@/theme";
 import {
@@ -562,6 +563,13 @@ function AppLayout() {
             redundant). Fixed-positioned so it doesn't nudge layout on
             any page. */}
         {(effectiveRole || user.role) !== "admin" && <UniversalMenu />}
+
+        {/* Phase 49.3 · Landscape Time Clock widget — auto-hides for
+            non-landscaping users. Mounted here so it appears at the top
+            of every landing / content page. */}
+        <div className="px-4 md:px-8 pt-4">
+          <LandscapingClockWidget />
+        </div>
 
         <Outlet />
 

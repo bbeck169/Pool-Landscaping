@@ -150,6 +150,16 @@ function AdminOnly({ children }) {
   return children;
 }
 
+// Phase 49.4 + 49.5 — Block technicians from customer + billing routes.
+// Admins/super/customer still allowed (customer for their portal, admin
+// for management). Tech → back to /.
+function NoTech({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (user?.role === "technician") return <Navigate to="/" replace />;
+  return children;
+}
+
 /** Root "/" gate: admin/super sees the AdminDashboard, techs get their
  *  schedule (Dashboard is removed for tech role in Phase 16C add-on),
  *  customers get sent to their portal home. */
@@ -186,11 +196,11 @@ export default function App() {
             <Route index element={<RoleAwareIndex />} />
 
             {/* Customers (Phase 2) */}
-            <Route path="customers" element={<CustomersList />} />
-            <Route path="customers/new" element={<CustomerForm />} />
-            <Route path="customers/:id" element={<CustomerDetail />} />
-            <Route path="customers/:id/edit" element={<CustomerForm />} />
-            <Route path="customers/:id/chemistry" element={<CustomerChemistry />} />
+            <Route path="customers" element={<NoTech><CustomersList /></NoTech>} />
+            <Route path="customers/new" element={<NoTech><CustomerForm /></NoTech>} />
+            <Route path="customers/:id" element={<NoTech><CustomerDetail /></NoTech>} />
+            <Route path="customers/:id/edit" element={<NoTech><CustomerForm /></NoTech>} />
+            <Route path="customers/:id/chemistry" element={<NoTech><CustomerChemistry /></NoTech>} />
 
             {/* Jobs (Phase 2) */}
             {/* Phase 30 · Jobs list retired — techs & admins land on the unified calendar. */}
@@ -199,16 +209,16 @@ export default function App() {
             <Route path="jobs/:id" element={<JobDetail />} />
 
             {/* Quotes / Invoices / Master / Estimator / Settings (Phase 3) */}
-            <Route path="quotes" element={<QuotesList />} />
-            <Route path="quotes/new" element={<QuoteInvoiceNew docType="quote" />} />
-            <Route path="quotes/:id" element={<QuoteInvoiceDetail docType="quote" />} />
+            <Route path="quotes" element={<NoTech><QuotesList /></NoTech>} />
+            <Route path="quotes/new" element={<NoTech><QuoteInvoiceNew docType="quote" /></NoTech>} />
+            <Route path="quotes/:id" element={<NoTech><QuoteInvoiceDetail docType="quote" /></NoTech>} />
 
-            <Route path="invoices" element={<InvoicesList />} />
-            <Route path="invoices/new" element={<QuoteInvoiceNew docType="invoice" />} />
-            <Route path="invoices/master" element={<MasterInvoicesList />} />
-            <Route path="invoices/master/new" element={<MasterInvoiceNew />} />
-            <Route path="invoices/master/:id" element={<MasterInvoiceDetail />} />
-            <Route path="invoices/:id" element={<QuoteInvoiceDetail docType="invoice" />} />
+            <Route path="invoices" element={<NoTech><InvoicesList /></NoTech>} />
+            <Route path="invoices/new" element={<NoTech><QuoteInvoiceNew docType="invoice" /></NoTech>} />
+            <Route path="invoices/master" element={<NoTech><MasterInvoicesList /></NoTech>} />
+            <Route path="invoices/master/new" element={<NoTech><MasterInvoiceNew /></NoTech>} />
+            <Route path="invoices/master/:id" element={<NoTech><MasterInvoiceDetail /></NoTech>} />
+            <Route path="invoices/:id" element={<NoTech><QuoteInvoiceDetail docType="invoice" /></NoTech>} />
 
             <Route path="estimator" element={<EstimatesList />} />
             <Route path="estimator/settings" element={<EstimatorSettings />} />

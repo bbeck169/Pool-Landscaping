@@ -11,6 +11,7 @@ import { colors, spacing, radius, font, fontSize, money, IMAGES } from "@/src/th
 import { Loading, StatusChip, Sheet, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import BudgetHealthCard from "@/src/components/BudgetHealthCard";
+import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -56,6 +57,7 @@ export default function Dashboard() {
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
       >
+        <LandscapingClockWidget />
         <BudgetHealthCard />
         <View style={styles.hero}>
           <Image source={{ uri: IMAGES.dashboardHero }} style={StyleSheet.absoluteFill} contentFit="cover" />

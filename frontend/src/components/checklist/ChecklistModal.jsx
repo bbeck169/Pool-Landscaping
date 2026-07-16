@@ -430,6 +430,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
             customerId={job?.customer_id}
             locked={locked}
             readings={report.chemical_readings || []}
+            readingFields={report.chemical_reading_fields || []}
             chemicalsAdded={report.chemicals_added || []}
             chemicalsCatalog={report.chemicals_catalog || []}
             chemicalUnits={report.chemical_units || ["gal", "lbs", "oz", "tabs"]}

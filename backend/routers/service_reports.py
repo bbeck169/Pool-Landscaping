@@ -906,6 +906,7 @@ async def last_readings(
         {"_id": 0, "chemical_readings": 1, "submitted_at": 1},
     ).sort("submitted_at", -1).to_list(200)
     out: dict[str, dict] = {}
+    recent: dict[str, list] = {}
     for rep in reports:
         submitted = rep.get("submitted_at")
         for r in rep.get("chemical_readings") or []:
@@ -914,7 +915,16 @@ async def last_readings(
                 continue
             if key not in out:
                 out[key] = {"value": r["value"], "at": submitted, "unit": r.get("unit")}
-    return {"customer_id": customer_id, "readings": out}
+            # Phase 49.6 — capture up to the last 4 values per key so the
+            # client can compute a rolling median for the outlier "Recheck?"
+            # hint. Reports are already sorted most-recent-first.
+            arr = recent.setdefault(key, [])
+            if len(arr) < 4:
+                try:
+                    arr.append(float(r["value"]))
+                except (TypeError, ValueError):
+                    pass
+    return {"customer_id": customer_id, "readings": out, "recent_readings": recent}
 
 
 # ─── Phase 39 · Send Visit Recap ────────────────────────────────────────

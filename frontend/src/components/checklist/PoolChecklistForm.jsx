@@ -39,6 +39,14 @@ const _READING_DEFAULTS = {
   ph: 7.6, total_alkalinity: 100, alkalinity: 100,
   cyanuric_acid: 70, cya: 70,
 };
+// Phase 49.1 — keys whose "blank" state means "not typed yet" (not
+// "not tested"). Users must explicitly toggle Not-tested for these rows.
+const _DEFAULT_TESTED_KEYS = new Set([
+  "free_chlorine", "total_chlorine", "chlorine",
+  "ph",
+  "total_alkalinity", "alkalinity",
+  "cyanuric_acid", "cya",
+]);
 
 function _validateReading(rule, raw) {
   if (raw === "" || raw == null) return { value: null, invalid: false };
@@ -53,14 +61,20 @@ function _validateReading(rule, raw) {
   return { value: rule && rule.decimals === 0 ? Math.round(n) : n, invalid: false };
 }
 
-/** Phase 48 — Manual-entry reading row. Not-tested toggle preserved. */
-function ReadingInputRow({ testKey, reading, notTested, previous, locked, onChange }) {
+/** Phase 48 — Manual-entry reading row. Phase 49.1 — default-tested keys. */
+function ReadingInputRow({ testKey, reading, previous, locked, onChange }) {
   const rule = _READING_RULES[testKey];
   const unit = reading.unit || (rule ? rule.unit : "");
-  const [draft, setDraft] = useState(notTested ? "" : String(reading.value));
+  const hasValue = reading.value != null && reading.value !== "";
+  const [manualNotTested, setManualNotTested] = React.useState(
+    !hasValue && !_DEFAULT_TESTED_KEYS.has(testKey),
+  );
+  const notTested = manualNotTested;
+  const [draft, setDraft] = useState(hasValue ? String(reading.value) : "");
   React.useEffect(() => {
-    setDraft(notTested ? "" : String(reading.value));
-  }, [reading.value, notTested]);
+    setDraft(hasValue ? String(reading.value) : "");
+    if (hasValue) setManualNotTested(false);
+  }, [reading.value, hasValue]);
   const { value, invalid } = _validateReading(rule, draft);
   const commit = () => {
     if (locked) return;
@@ -82,8 +96,17 @@ function ReadingInputRow({ testKey, reading, notTested, previous, locked, onChan
           type="button"
           disabled={locked}
           onClick={() => {
-            if (notTested) onChange(_READING_DEFAULTS[testKey] ?? 0);
-            else onChange(null);
+            if (notTested) {
+              // Toggle OFF: return to tested state with empty input +
+              // placeholder default.
+              setManualNotTested(false);
+              onChange(null);
+            } else {
+              // Toggle ON: mark not-tested + clear value.
+              setManualNotTested(true);
+              setDraft("");
+              onChange(null);
+            }
           }}
           data-testid={`pool-reading-${testKey}-not-tested`}
           className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md"
@@ -129,6 +152,14 @@ function ReadingInputRow({ testKey, reading, notTested, previous, locked, onChan
         <div className="text-[11px] font-semibold mt-1" style={{ color: "#B91C1C" }}
              data-testid={`pool-reading-${testKey}-error`}>
           Value out of range{rule ? ` (${rule.min}–${rule.max}, ${rule.decimals}dp)` : ""}.
+        </div>
+      ) : isOutlier ? (
+        <div
+          className="text-[11px] font-semibold mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded"
+          style={{ background: "#FEF9C3", border: "1px solid #FDE68A", color: "#854D0E" }}
+          data-testid={`pool-reading-${testKey}-recheck`}
+        >
+          ⚠ Recheck? Recent median {median} · you typed {draftNum}
         </div>
       ) : null}
       <div className="text-[10px] mt-2" style={{ color: colors.muted }}
@@ -303,6 +334,7 @@ export default function PoolChecklistForm({
   customerId,
   locked,
   readings = [],
+  readingFields = [],
   chemicalsAdded = [],
   chemicalsCatalog = [],
   chemicalUnits = ["gal", "lbs", "oz", "tabs"],
@@ -323,6 +355,34 @@ export default function PoolChecklistForm({
   const [recsLoading, setRecsLoading] = useState(false);
   const [recsError, setRecsError] = useState("");
 
+  // Phase 49.0 — Merge backend `chemical_reading_fields` (canonical field
+  // list) with saved values so all default rows always render.
+  const mergedReadings = React.useMemo(() => {
+    if (!readingFields || readingFields.length === 0) return readings;
+    const byKey = {};
+    for (const r of readings || []) {
+      const k = String(r.key || r.name || "").toLowerCase();
+      if (k) byKey[k] = r;
+    }
+    const out = [];
+    for (const f of readingFields) {
+      const k = String(f.key || f.name || "").toLowerCase();
+      const found = byKey[k];
+      out.push({
+        key: f.key || k,
+        name: f.name || f.label || k,
+        unit: f.unit,
+        step: f.step,
+        min: f.min,
+        max: f.max,
+        ...(found || { value: null }),
+      });
+      if (found) delete byKey[k];
+    }
+    for (const remaining of Object.values(byKey)) out.push(remaining);
+    return out;
+  }, [readingFields, readings]);
+
   const updReading = (idx, val) => {
     // Phase 37 — accept null (from "N/A"), numbers (from chips), or strings
     // (from the pencil-input popover). Coerce cleanly so we never store NaN.
@@ -335,7 +395,7 @@ export default function PoolChecklistForm({
       const n = parseFloat(val);
       nextVal = Number.isFinite(n) ? n : null;
     }
-    const next = readings.map((r, i) =>
+    const next = mergedReadings.map((r, i) =>
       i === idx ? { ...r, value: nextVal } : r
     );
     onChange({ chemical_readings: next });
@@ -453,11 +513,17 @@ export default function PoolChecklistForm({
   // Phase 36 — previously-tested values per reading key (loaded once per
   // customer and refreshed if customerId changes).
   const [lastReadings, setLastReadings] = useState({});
+  // Phase 49.6 — recent 4 values per key for the "Recheck?" outlier hint.
+  const [recentReadings, setRecentReadings] = useState({});
   useEffect(() => {
     if (!customerId) return;
     let alive = true;
     api.get(`/service-reports/last-readings?customer_id=${customerId}`)
-      .then((r) => { if (alive) setLastReadings(r?.readings || {}); })
+      .then((r) => {
+        if (!alive) return;
+        setLastReadings(r?.readings || {});
+        setRecentReadings(r?.recent_readings || {});
+      })
       .catch(() => {});
     return () => { alive = false; };
   }, [customerId]);
@@ -517,19 +583,22 @@ export default function PoolChecklistForm({
           Chemical Readings
         </div>
         <div className="space-y-3">
-          {readings.map((r, i) => {
+          {mergedReadings.map((r, i) => {
             const key = canonicalReadingKey(r);
             const prev = lastReadings[key]
               || lastReadings[r.key]
               || lastReadings[r.name];
-            const notTested = r.value == null || r.value === "";
+            const recentRaw = recentReadings[key]
+              || recentReadings[r.key]
+              || recentReadings[r.name]
+              || [];
             return (
               <ReadingInputRow
                 key={key}
                 testKey={key}
                 reading={r}
-                notTested={notTested}
                 previous={prev}
+                recent={recentRaw}
                 locked={locked}
                 onChange={(val) => updReading(i, val)}
               />

@@ -108,6 +108,39 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
     jobId, customerId, locked, readings, chemicalsAdded, chemicalsCatalog, chemicalUnits,
     checklistItems, notes, onChange,
   } = props;
+  const readingFields = (props as any).readingFields || [];
+
+  // Phase 49.0 — Merge the backend template's `chemical_reading_fields`
+  // (canonical field list) with any saved `chemical_readings` values so
+  // ALL default rows (Free Cl, Total Cl, PH, Alkalinity, CYA, etc.) are
+  // always rendered, even when the persisted report only carries a
+  // subset (e.g. legacy jobs that only wrote PH).
+  const mergedReadings = React.useMemo<Reading[]>(() => {
+    if (!readingFields || readingFields.length === 0) return readings;
+    const byKey: Record<string, Reading> = {};
+    for (const r of readings || []) {
+      const k = String((r as any).key || (r as any).name || "").toLowerCase();
+      if (k) byKey[k] = r;
+    }
+    const out: Reading[] = [];
+    for (const f of readingFields) {
+      const k = String((f as any).key || (f as any).name || "").toLowerCase();
+      const found = byKey[k];
+      out.push({
+        key: (f as any).key || k,
+        name: (f as any).name || (f as any).label || k,
+        unit: (f as any).unit,
+        step: (f as any).step,
+        min: (f as any).min,
+        max: (f as any).max,
+        ...(found || { value: null }),
+      } as Reading);
+      if (found) delete byKey[k];
+    }
+    // Append any saved reading not present in the template (defensive).
+    for (const remaining of Object.values(byKey)) out.push(remaining);
+    return out;
+  }, [readingFields, readings]);
 
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<null | {
@@ -120,7 +153,10 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
   }>(null);
 
   const updReading = (idx: number, val: number | null) => {
-    const next = readings.map((r, i) =>
+    // Phase 49.0 — update against `mergedReadings` (source of truth for the
+    // rendered rows) so techs can persist values even for keys that were
+    // absent from the saved report array.
+    const next = mergedReadings.map((r, i) =>
       i === idx ? { ...r, value: val } : r
     );
     onChange({ chemical_readings: next });
@@ -128,11 +164,17 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
 
   // Phase 36b — previously-tested values per customer (parity with web).
   const [lastReadings, setLastReadings] = useState<Record<string, { value: number | null; at?: string | null }>>({});
+  // Phase 49.6 — recent 4 values per reading key for the outlier hint.
+  const [recentReadings, setRecentReadings] = useState<Record<string, number[]>>({});
   useEffect(() => {
     if (!customerId) return;
     let alive = true;
     api.get(`/service-reports/last-readings?customer_id=${customerId}`)
-      .then((r: any) => { if (alive) setLastReadings(r?.readings || {}); })
+      .then((r: any) => {
+        if (!alive) return;
+        setLastReadings(r?.readings || {});
+        setRecentReadings(r?.recent_readings || {});
+      })
       .catch(() => {});
     return () => { alive = false; };
   }, [customerId]);
@@ -303,12 +345,16 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
       {/* Chemical Readings — Phase 36b chip UI (parity with web) */}
       <Text style={styles.sectionTitle}>Chemical Readings</Text>
       <View>
-        {readings.map((r, i) => {
+        {mergedReadings.map((r, i) => {
           // Phase 37 — canonical snake_case key for testid parity with web.
           const key = canonicalReadingKey(r);
           const prev = lastReadings[key]
             || lastReadings[(r.key as string) || ""]
             || lastReadings[r.name];
+          const recent = recentReadings[key]
+            || recentReadings[(r.key as string) || ""]
+            || recentReadings[r.name]
+            || [];
           return (
             <ReadingChipRow
               key={key}
@@ -321,6 +367,7 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
               max={r.max}
               locked={locked}
               previous={prev || null}
+              recent={recent}
               onChange={(v) => updReading(i, v)}
             />
           );

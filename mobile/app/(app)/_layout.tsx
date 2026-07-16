@@ -28,13 +28,10 @@ export default function AppLayout() {
         headerShown: false,
         tabBarActiveTintColor: colors.brand,
         tabBarInactiveTintColor: colors.muted,
-        tabBarStyle: {
-          backgroundColor: colors.surface,
-          borderTopColor: colors.border,
-          height: Platform.OS === "ios" ? 88 : 64,
-          paddingTop: 6,
-          paddingBottom: Platform.OS === "ios" ? 28 : 8,
-        },
+        // Phase 49.2 — bottom tab bar hidden. Navigation is via the
+        // top-right hamburger (Global Dropdown Menu) which covers all
+        // routes that used to live on the tab bar.
+        tabBarStyle: { display: "none" },
         tabBarLabelStyle: { fontFamily: font.medium, fontSize: 11 },
       }}
     >
