@@ -23,7 +23,7 @@ const normalizeKey = (name: string) =>
 
 // Phase 46.1 defaults, shown as placeholder text when the field is empty.
 const DEFAULT_VALUES: Record<string, number> = {
-  free_chlorine: 3,   total_chlorine: 3,  chlorine: 3,
+  free_chlorine: 3,   total_chlorine: 3,  combined_chlorine: 0.5, chlorine: 3, tcl: 3,
   ph: 7.6,
   total_alkalinity: 100, alkalinity: 100,
   cyanuric_acid: 70,  cya: 70,
@@ -33,9 +33,10 @@ const DEFAULT_VALUES: Record<string, number> = {
 // value for these keys shows the input enabled with the default as
 // placeholder text (not a "Not tested" state). The user must explicitly
 // toggle "Not tested" to skip a reading; then the pill is visible and
-// the input dims.
+// the input dims. Includes Combined Chlorine + TCL aliases per Phase 49
+// Fix 1 (Combined/Total Chlorine were also spec'd for default-tested).
 const DEFAULT_TESTED_KEYS = new Set<string>([
-  "free_chlorine", "total_chlorine", "chlorine",
+  "free_chlorine", "total_chlorine", "combined_chlorine", "chlorine", "tcl",
   "ph",
   "total_alkalinity", "alkalinity",
   "cyanuric_acid", "cya",
@@ -211,7 +212,8 @@ export default function ReadingChipRow({
         <Text style={styles.errText} testID={`pool-reading-${key}-error`}>
           Value out of range{rule ? ` (${rule.min}–${rule.max}, ${rule.decimals}dp)` : ""}.
         </Text>
-      ) : isOutlier ? (
+      ) : null}
+      {isOutlier ? (
         <Text style={styles.recheckText} testID={`pool-reading-${key}-recheck`}>
           ⚠ Recheck? Recent median {median} · you typed {draftNum}
         </Text>

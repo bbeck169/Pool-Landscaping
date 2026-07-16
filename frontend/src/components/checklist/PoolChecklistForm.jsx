@@ -35,14 +35,14 @@ const _READING_RULES = {
   salt:             { min: 0, max: 6000, decimals: 0, unit: "ppm" },
 };
 const _READING_DEFAULTS = {
-  free_chlorine: 3, total_chlorine: 3, chlorine: 3,
+  free_chlorine: 3, total_chlorine: 3, combined_chlorine: 0.5, chlorine: 3, tcl: 3,
   ph: 7.6, total_alkalinity: 100, alkalinity: 100,
   cyanuric_acid: 70, cya: 70,
 };
 // Phase 49.1 — keys whose "blank" state means "not typed yet" (not
 // "not tested"). Users must explicitly toggle Not-tested for these rows.
 const _DEFAULT_TESTED_KEYS = new Set([
-  "free_chlorine", "total_chlorine", "chlorine",
+  "free_chlorine", "total_chlorine", "combined_chlorine", "chlorine", "tcl",
   "ph",
   "total_alkalinity", "alkalinity",
   "cyanuric_acid", "cya",
@@ -153,7 +153,8 @@ function ReadingInputRow({ testKey, reading, previous, locked, onChange }) {
              data-testid={`pool-reading-${testKey}-error`}>
           Value out of range{rule ? ` (${rule.min}–${rule.max}, ${rule.decimals}dp)` : ""}.
         </div>
-      ) : isOutlier ? (
+      ) : null}
+      {isOutlier ? (
         <div
           className="text-[11px] font-semibold mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded"
           style={{ background: "#FEF9C3", border: "1px solid #FDE68A", color: "#854D0E" }}
