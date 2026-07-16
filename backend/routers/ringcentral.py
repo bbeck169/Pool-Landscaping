@@ -30,6 +30,7 @@ from routers.tenants import get_current_tenant
 from services.ringcentral_client import (
     get_rc_platform, reset_rc_platform, is_outbound_enabled, rc_health_env,
 )
+from services.notifications import emit as notify_emit
 
 router = APIRouter(prefix="/ringcentral", tags=["ringcentral"])
 
@@ -56,6 +57,28 @@ async def _ensure_indexes() -> None:
 def _webhook_url() -> str:
     base = (APP_PUBLIC_URL or "").rstrip("/")
     return f"{base}/api/ringcentral/webhook" if base else "/api/ringcentral/webhook"
+
+
+async def _notify_admins(tenant_id: Optional[str], kind: str, title: str, body: str,
+                          href: Optional[str] = None, source_ref: Optional[dict] = None,
+                          customer_id: Optional[str] = None) -> None:
+    """Fan out an inbound-comm notification to every admin/super_admin in a
+    tenant. Silent no-op when tenant unknown (unmatched inbound)."""
+    if not tenant_id:
+        return
+    try:
+        admins = await db.users.find(
+            {"tenant_id": tenant_id, "role": {"$in": ["admin", "super_admin"]}},
+            {"_id": 0, "id": 1},
+        ).to_list(200)
+        user_ids = [a["id"] for a in admins if a.get("id")]
+        if not user_ids:
+            return
+        await notify_emit(user_ids, kind=kind, title=title, body=body,
+                          href=href, source_ref=source_ref or {},
+                          customer_id=customer_id, tenant_id=tenant_id)
+    except Exception as e:
+        logger.warning(f"rc notif fan-out failed: {type(e).__name__}")
 
 
 def _normalize_phone(p: Optional[str]) -> str:
@@ -261,6 +284,17 @@ async def _handle_telephony_event(body: Dict[str, Any]) -> None:
         "created_at": now_iso(),
     }
     await db.call_logs.insert_one(doc)
+    # Phase 55 — notify tenant admins on inbound call.
+    if match and (direction or "").lower() != "outbound":
+        await _notify_admins(
+            tenant_id=(match or {}).get("tenant_id"),
+            kind="rc_call_inbound",
+            title=f"Inbound call · {(match or {}).get('name') or from_number}",
+            body=f"{from_number} → {to_number} · {duration}s",
+            href=f"/customers/{(match or {}).get('id')}" if match else None,
+            customer_id=(match or {}).get("id"),
+            source_ref={"kind": "call_log", "id": doc["id"], "session_id": session_id},
+        )
     if not match and from_number:
         await db.unmatched_calls.insert_one({
             "id": new_id(), "phone": from_number,
@@ -323,6 +357,17 @@ async def _handle_sms_event(body: Dict[str, Any]) -> None:
         "sent_at": now_iso(),
     }
     await db.sms_messages.insert_one(doc)
+    # Phase 55 — notify admins on inbound SMS only.
+    if direction == "inbound" and match:
+        await _notify_admins(
+            tenant_id=(match or {}).get("tenant_id"),
+            kind="rc_sms_inbound",
+            title=f"SMS · {(match or {}).get('name') or from_number}",
+            body=msg,
+            href=f"/customers/{(match or {}).get('id')}",
+            customer_id=(match or {}).get("id"),
+            source_ref={"kind": "sms_message", "id": doc["id"]},
+        )
 
 
 async def _handle_fax_event(body: Dict[str, Any]) -> None:
@@ -348,6 +393,15 @@ async def _handle_fax_event(body: Dict[str, Any]) -> None:
     }
     if match:
         await db.faxes.insert_one(doc)
+        await _notify_admins(
+            tenant_id=(match or {}).get("tenant_id"),
+            kind="rc_fax",
+            title=f"Fax · {(match or {}).get('name') or from_number}",
+            body=f"From {from_number}" + (" · attachment attached" if attachment_url else ""),
+            href=f"/customers/{(match or {}).get('id')}",
+            customer_id=(match or {}).get("id"),
+            source_ref={"kind": "fax", "id": doc["id"]},
+        )
     else:
         await db.unmatched_faxes.insert_one(doc)
 
@@ -381,6 +435,18 @@ async def _handle_voicemail_event(body: Dict[str, Any]) -> None:
         "received_at": now_iso(),
     }
     await db.voicemails.insert_one(doc)
+    # Phase 55 — notify admins on new voicemail (matched only; unmatched
+    # voicemails still land in db.voicemails without customer scope).
+    if match:
+        await _notify_admins(
+            tenant_id=(match or {}).get("tenant_id"),
+            kind="rc_voicemail",
+            title=f"Voicemail · {(match or {}).get('name') or from_number}",
+            body=(transcription_text or f"{duration}s voicemail from {from_number}")[:500],
+            href=f"/customers/{(match or {}).get('id')}",
+            customer_id=(match or {}).get("id"),
+            source_ref={"kind": "voicemail", "id": doc["id"]},
+        )
 
 
 # ═══════════════════════ /subscription/register ═════════════════════

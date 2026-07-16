@@ -86,6 +86,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/marketing/sequences",   label: "Sequences",        icon: Workflow,     feature: "marketing", subsection: "Sequences & Templates" },
     { to: "/marketing/templates",   label: "Templates",        icon: FileText,     feature: "marketing", subsection: "Sequences & Templates" },
     { to: "/notifications",         label: "Notifications",    icon: BellIcon,     feature: "marketing", subsection: "Sequences & Templates" },
+    { to: "/settings/notifications", label: "Notification Prefs", icon: BellIcon,    feature: "marketing", subsection: "Sequences & Templates" },
     { to: "/tasks",                 label: "Tasks",            icon: CheckSquare,  feature: "marketing", subsection: "Sequences & Templates" },
     // Reviews & public
     { to: "/marketing/reviews",     label: "Reviews",          icon: StarIcon,     feature: "marketing", subsection: "Reviews & Public" },

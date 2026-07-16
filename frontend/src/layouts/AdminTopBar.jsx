@@ -23,6 +23,7 @@ import { Link, useLocation } from "react-router-dom";
 import { ChevronDown, MenuIcon, Users, FileText, ClipboardList, CalendarDays, ListChecks, Phone } from "lucide-react";
 import { ADMIN_NAV_V2 } from "@/nav/adminNav";
 import { usePermissions } from "@/hooks/usePermissions";
+import NotificationBell from "@/components/NotificationBell";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -284,10 +285,11 @@ export default function AdminTopBar() {
       <QuickAccessRow />
       {isNarrow ? (
         <div
-          className="px-4 h-11 flex items-center"
+          className="px-4 h-11 flex items-center justify-between"
           data-testid="admin-topbar-narrow-wrap"
         >
           <MobileMenu visible={visible} />
+          <NotificationBell variant="inline" />
         </div>
       ) : (
         <div
@@ -297,6 +299,9 @@ export default function AdminTopBar() {
           {visible.map((g) => (
             <CategoryDropdown key={g.key} group={g} />
           ))}
+          <div className="ml-auto shrink-0">
+            <NotificationBell variant="inline" />
+          </div>
         </div>
       )}
     </div>

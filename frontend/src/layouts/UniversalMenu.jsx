@@ -35,6 +35,7 @@ import { useAuth } from "@/auth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { navForRole } from "@/nav/roleNav";
 import { colors } from "@/theme";
+import NotificationBell from "@/components/NotificationBell";
 
 const MAX_PINS = 6;
 const MAX_RECENTS = 5;
@@ -161,7 +162,9 @@ export default function UniversalMenu() {
   if (flat.length === 0) return null;
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <>
+      <NotificationBell variant="floating" />
+      <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger
         className="fixed top-3 right-3 z-40 inline-flex items-center justify-center w-10 h-10 rounded-lg border shadow-sm bg-white hover:bg-gray-50 focus:outline-none"
         style={{ borderColor: colors.border }}
@@ -356,5 +359,6 @@ export default function UniversalMenu() {
         </div>
       </DropdownMenuContent>
     </DropdownMenu>
+    </>
   );
 }

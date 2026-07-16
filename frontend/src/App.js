@@ -69,9 +69,11 @@ import {
   WordPressSettings, GbpHub,
 } from "@/pages/seo/SeoPages";
 import {
-  AiEmployeesList, AiEmployeeDetail, TasksPage, NotificationsPage,
+  AiEmployeesList, AiEmployeeDetail, TasksPage,
   AccessSettings, AccessHistory, RingCentralSettings, CallLogsPage,
 } from "@/pages/aiops/AiOpsPages";
+import NotificationsPage from "@/pages/notifications/NotificationsPage";
+import NotificationPrefs from "@/pages/settings/NotificationPrefs";
 import {
   D2dDashboard, D2dMap, D2dKnocks, D2dOpenLeads, D2dSoldLeads, D2dReport, D2dLeaderboard,
 } from "@/pages/d2d/D2dPages";
@@ -275,7 +277,8 @@ export default function App() {
             <Route path="ai-employees/:id" element={<AdminOnly><AiEmployeeDetail /></AdminOnly>} />
             <Route path="ai-chat/:id" element={<AdminOnly><AiEmployeeDetail /></AdminOnly>} />
             <Route path="tasks" element={<AdminOnly><TasksPage /></AdminOnly>} />
-            <Route path="notifications" element={<AdminOnly><NotificationsPage /></AdminOnly>} />
+            <Route path="notifications" element={<NotificationsPage />} />
+            <Route path="settings/notifications" element={<NotificationPrefs />} />
 
             {/* Phase 15A — CSAT admin */}
             <Route path="csat" element={<AdminOnly><CsatDashboard /></AdminOnly>} />
