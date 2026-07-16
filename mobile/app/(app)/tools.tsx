@@ -1,35 +1,34 @@
 /**
- * "All My Tools" hub — technician navigation directory.
+ * Phase 42 · Tools Hub redesign.
  *
- * Surfaces every page a tech can reach as searchable, grouped tiles. Replaces
- * the old hidden-away-in-More approach and gives back tab-bar slots for the
- * pages techs actually open ten times a day (Schedule / D2D / Time Clock /
- * Tools / Profile).
+ * Layout top→bottom:
+ *   Header · SearchBar · PinnedRow · RecentRow · CategoryChips · Sections
  *
- * Admins land here too so they can jump directly to the pool-chemistry
- * calculators without going through More.
+ * The 6-category admin IA (Phase 35) and 4-section tech IA are preserved
+ * intact — this pass only adds surface-level personalization (pins,
+ * recents, chip filter, search) plus a bigger-tap-target card style.
+ * No tools move between categories; no RBAC gates are loosened.
+ *
+ * `useToolsPreferences` scopes pins/recents by user.id so a shared
+ * device doesn't leak favorites across accounts. All persistence
+ * happens AsyncStorage-side; if it fails we fall back gracefully to the
+ * plain hub.
  */
 import React, { useMemo, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { Header } from "@/src/components/widgets";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { SearchBar } from "@/src/components/tools/SearchBar";
+import { PinnedRow } from "@/src/components/tools/PinnedRow";
+import { RecentRow } from "@/src/components/tools/RecentRow";
+import { CategoryChips } from "@/src/components/tools/CategoryChips";
+import { ToolCard, type ToolCardTile } from "@/src/components/tools/ToolCard";
+import { useToolsPreferences } from "@/src/hooks/useToolsPreferences";
 
-type Tile = {
-  key: string;
-  icon: any;
-  label: string;
-  desc: string;
-  route: string;
-};
-
-type Section = {
-  key: string;
-  title: string;
-  tiles: Tile[];
-};
+type Section = { key: string; title: string; tiles: ToolCardTile[] };
 
 const TECH_SECTIONS: Section[] = [
   {
@@ -78,141 +77,180 @@ const ADMIN_SECTIONS: Section[] = [
     key: "adm-finance",
     title: "Finance",
     tiles: [
-      { key: "cfo",          icon: "trending-up-outline",   label: "AI CFO",              desc: "Revenue · expenses · cash · AR", route: "/(app)/cfo" },
-      { key: "checks",       icon: "document-text-outline", label: "Check Register",      desc: "Write checks, batch payroll",     route: "/(app)/checks/register" },
-      { key: "payroll-batch", icon: "cash-outline",         label: "Payroll Batch + CSV", desc: "Batch checks & payroll import",   route: "/(app)/payroll/batch" },
-      { key: "dunning",      icon: "mail-open-outline",     label: "Dunning Queue",       desc: "Overdue invoices workflow",       route: "/(app)/dunning/queue" },
+      { key: "cfo", icon: "trending-up-outline", label: "AI CFO", desc: "Revenue · expenses · cash · AR", route: "/(app)/cfo" },
+      { key: "checks", icon: "document-text-outline", label: "Check Register", desc: "Write checks, batch payroll", route: "/(app)/checks/register" },
+      { key: "payroll-batch", icon: "cash-outline", label: "Payroll Batch + CSV", desc: "Batch checks & payroll import", route: "/(app)/payroll/batch" },
+      { key: "dunning", icon: "mail-open-outline", label: "Dunning Queue", desc: "Overdue invoices workflow", route: "/(app)/dunning/queue" },
     ],
   },
   {
     key: "adm-ai-employees",
     title: "AI Employees",
     tiles: [
-      { key: "ai-cfo-qna",   icon: "chatbubbles-outline",   label: "AI CFO Q&A",          desc: "Ask the CFO — natural language",  route: "/(app)/cfo" },
+      { key: "ai-cfo-qna", icon: "chatbubbles-outline", label: "AI CFO Q&A", desc: "Ask the CFO — natural language", route: "/(app)/cfo" },
     ],
   },
   {
     key: "adm-marketing",
     title: "Marketing",
     tiles: [
-      // Placeholder — full marketing hub lives on web; deep-link so admins
-      // can jump straight to the studio landing from mobile.
-      { key: "marketing-studio", icon: "megaphone-outline", label: "Marketing Studio",    desc: "Campaigns, sequences, reviews",   route: "/(app)/marketing" as any },
+      { key: "marketing-studio", icon: "megaphone-outline", label: "Marketing Studio", desc: "Campaigns, sequences, reviews", route: "/(app)/marketing" as any },
     ],
   },
   {
     key: "adm-operations",
     title: "Operations",
     tiles: [
-      { key: "schedule",        icon: "calendar-outline",      label: "Schedule",           desc: "Day/Week/Month/Custom",           route: "/(app)/schedule/calendar" },
-      { key: "dispatch-board",  icon: "git-network-outline",   label: "Dispatch Board",     desc: "Auto-route unassigned jobs",      route: "/(app)/dispatch/board" },
-      { key: "dispatch-weather", icon: "cloud-outline",        label: "Weather Reschedule", desc: "Move outdoor jobs on bad weather", route: "/(app)/dispatch/weather" },
-      { key: "estimator",       icon: "calculator-outline",    label: "Field Estimator",    desc: "Build a quote on-site",           route: "/(app)/estimator" },
-      { key: "calculators",     icon: "flask-outline",         label: "Pool Calculators",   desc: "Dosing · Volume · Salt · LSI",    route: "/(app)/calculators" },
-      { key: "inventory",       icon: "layers-outline",        label: "Inventory",          desc: "Stock & purchase orders",         route: "/(app)/inventory" },
+      { key: "schedule", icon: "calendar-outline", label: "Schedule", desc: "Day/Week/Month/Custom", route: "/(app)/schedule/calendar" },
+      { key: "dispatch-board", icon: "git-network-outline", label: "Dispatch Board", desc: "Auto-route unassigned jobs", route: "/(app)/dispatch/board" },
+      { key: "dispatch-weather", icon: "cloud-outline", label: "Weather Reschedule", desc: "Move outdoor jobs on bad weather", route: "/(app)/dispatch/weather" },
+      { key: "estimator", icon: "calculator-outline", label: "Field Estimator", desc: "Build a quote on-site", route: "/(app)/estimator" },
+      { key: "calculators", icon: "flask-outline", label: "Pool Calculators", desc: "Dosing · Volume · Salt · LSI", route: "/(app)/calculators" },
+      { key: "inventory", icon: "layers-outline", label: "Inventory", desc: "Stock & purchase orders", route: "/(app)/inventory" },
     ],
   },
   {
     key: "adm-customers",
     title: "Customers",
     tiles: [
-      { key: "customers",       icon: "people-outline",        label: "Customers",          desc: "Full customer directory",         route: "/(app)/customers" },
-      { key: "quotes",          icon: "document-text-outline", label: "Quotes & Invoices",  desc: "Send, sign, collect",             route: "/(app)/quotes" },
-      { key: "property-lookup", icon: "home-outline",          label: "Property Lookup",    desc: "Owner + lot size search",         route: "/(app)/property-lookup" },
-      { key: "business-card",   icon: "id-card-outline",       label: "My Business Card",   desc: "NFC-ready digital card & .vcf",   route: "/card" },
+      { key: "customers", icon: "people-outline", label: "Customers", desc: "Full customer directory", route: "/(app)/customers" },
+      { key: "quotes", icon: "document-text-outline", label: "Quotes & Invoices", desc: "Send, sign, collect", route: "/(app)/quotes" },
+      { key: "property-lookup", icon: "home-outline", label: "Property Lookup", desc: "Owner + lot size search", route: "/(app)/property-lookup" },
+      { key: "business-card", icon: "id-card-outline", label: "My Business Card", desc: "NFC-ready digital card & .vcf", route: "/card" },
     ],
   },
   {
     key: "adm-reports",
     title: "Reports",
     tiles: [
-      // Reports UI is web-first; deep-link to the summary dashboard so admins
-      // aren't stranded on mobile.
-      { key: "reports-hub",     icon: "bar-chart-outline",     label: "Reports Hub",        desc: "Business summary & analytics",     route: "/(app)/reports" as any },
+      { key: "reports-hub", icon: "bar-chart-outline", label: "Reports Hub", desc: "Business summary & analytics", route: "/(app)/reports" as any },
     ],
   },
 ];
-
-function Tile({ tile, onPress }: { tile: Tile; onPress: () => void }) {
-  return (
-    <Pressable
-      style={styles.tile}
-      onPress={onPress}
-      testID={`tools-tile-${tile.key}`}
-      android_ripple={{ color: colors.border }}
-    >
-      <View style={styles.tileIcon}>
-        <Ionicons name={tile.icon} size={22} color={colors.brand} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.tileLabel}>{tile.label}</Text>
-        <Text style={styles.tileDesc} numberOfLines={2}>{tile.desc}</Text>
-      </View>
-      <Ionicons name="chevron-forward" size={18} color={colors.muted} />
-    </Pressable>
-  );
-}
 
 export default function ToolsHub() {
   const router = useRouter();
   const { user } = useAuth();
   const role = (user?.role as string) || "";
   const isAdmin = role === "admin" || role === "super_admin";
-  const [query, setQuery] = useState("");
-
   const sections = isAdmin ? ADMIN_SECTIONS : TECH_SECTIONS;
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return sections;
-    return sections
-      .map((s) => ({ ...s, tiles: s.tiles.filter((t) => t.label.toLowerCase().includes(q) || t.desc.toLowerCase().includes(q)) }))
-      .filter((s) => s.tiles.length > 0);
-  }, [query, sections]);
+  const [query, setQuery] = useState("");
+  const [chip, setChip] = useState<string>("all");
+  const { pins, recents, togglePin, markUsed, MAX_PINS } =
+    useToolsPreferences(user?.id);
 
-  const totalTiles = useMemo(() => sections.reduce((a, s) => a + s.tiles.length, 0), [sections]);
+  // Flat universe (post-RBAC — role branch already picked one).
+  const allTiles: ToolCardTile[] = useMemo(() => {
+    const seen = new Set<string>();
+    const flat: ToolCardTile[] = [];
+    for (const s of sections) {
+      for (const t of s.tiles) {
+        if (seen.has(t.key)) continue;
+        seen.add(t.key);
+        flat.push(t);
+      }
+    }
+    return flat;
+  }, [sections]);
+
+  const chipData = useMemo(
+    () => sections.map((s) => ({ key: s.key, label: s.title })),
+    [sections],
+  );
+
+  // Section list narrowed by (chip AND search).
+  const filteredSections = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return sections
+      .filter((s) => chip === "all" || s.key === chip)
+      .map((s) => ({
+        ...s,
+        tiles: q
+          ? s.tiles.filter(
+              (t) =>
+                t.label.toLowerCase().includes(q) ||
+                t.desc.toLowerCase().includes(q),
+            )
+          : s.tiles,
+      }))
+      .filter((s) => s.tiles.length > 0);
+  }, [sections, chip, query]);
+
+  const totalTiles = allTiles.length;
+  const openTile = (t: ToolCardTile) => {
+    markUsed(t.key);
+    router.push(t.route as any);
+  };
+
+  const anyResults = filteredSections.length > 0;
 
   return (
     <View style={styles.root}>
-      <Header title="All My Tools" subtitle={isAdmin ? "Everything you can do — one screen" : `${totalTiles} tools available to you`} />
-      <View style={styles.searchWrap}>
-        <Ionicons name="search-outline" size={18} color={colors.muted} />
-        <TextInput
-          testID="tools-search"
-          style={styles.searchInput}
-          value={query}
-          onChangeText={setQuery}
-          placeholder="Search tools…"
-          placeholderTextColor={colors.muted}
-          autoCorrect={false}
-          autoCapitalize="none"
-        />
-        {query.length > 0 ? (
-          <Pressable onPress={() => setQuery("")} testID="tools-search-clear" hitSlop={12}>
-            <Ionicons name="close-circle" size={18} color={colors.muted} />
-          </Pressable>
-        ) : null}
-      </View>
+      <Header
+        title="Tools"
+        subtitle={
+          isAdmin
+            ? "Everything you can do — one screen"
+            : `${totalTiles} tools available to you`
+        }
+      />
+      <SearchBar onQueryChange={setQuery} />
 
       <ScrollView
-        contentContainerStyle={{ padding: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing["3xl"] }}
+        contentContainerStyle={{ paddingBottom: spacing["3xl"] }}
         keyboardShouldPersistTaps="handled"
       >
-        {filtered.length === 0 ? (
-          <View style={styles.empty} testID="tools-empty">
-            <Ionicons name="search-outline" size={28} color={colors.muted} />
-            <Text style={styles.emptyText}>No tools match “{query}”.</Text>
-          </View>
-        ) : (
-          filtered.map((s) => (
-            <View key={s.key} style={styles.section} testID={`tools-section-${s.key}`}>
-              <Text style={styles.sectionTitle}>{s.title}</Text>
-              {s.tiles.map((t) => (
-                <Tile key={t.key} tile={t} onPress={() => router.push(t.route as any)} />
-              ))}
+        {/* Personalization rows — hidden when the search bar is active so
+            they don't compete with the filtered results the tech asked for. */}
+        {!query ? (
+          <>
+            <PinnedRow
+              allTiles={allTiles}
+              pins={pins}
+              onOpen={openTile}
+              onTogglePin={togglePin}
+              maxPins={MAX_PINS}
+            />
+            <RecentRow allTiles={allTiles} recents={recents} onOpen={openTile} />
+          </>
+        ) : null}
+
+        <CategoryChips chips={chipData} selected={chip} onSelect={setChip} />
+
+        <View style={styles.sectionsWrap}>
+          {!anyResults ? (
+            <View style={styles.empty} testID="tools-empty">
+              <Ionicons name="search-outline" size={28} color={colors.muted} />
+              <Text style={styles.emptyText}>
+                No tools match{query ? ` “${query}”` : " the current filter"}.
+              </Text>
+              {(query || chip !== "all") ? (
+                <Pressable
+                  style={styles.emptyBtn}
+                  onPress={() => { setQuery(""); setChip("all"); }}
+                  testID="tools-empty-clear"
+                >
+                  <Text style={styles.emptyBtnText}>Clear filters</Text>
+                </Pressable>
+              ) : null}
             </View>
-          ))
-        )}
+          ) : (
+            filteredSections.map((s) => (
+              <View key={s.key} style={styles.section} testID={`tools-section-${s.key}`}>
+                <Text style={styles.sectionTitle}>{s.title}</Text>
+                {s.tiles.map((t) => (
+                  <ToolCard
+                    key={t.key}
+                    tile={t}
+                    onPress={() => openTile(t)}
+                    testIDPrefix="tools-card"
+                  />
+                ))}
+              </View>
+            ))
+          )}
+        </View>
       </ScrollView>
     </View>
   );
@@ -220,25 +258,9 @@ export default function ToolsHub() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
-  searchWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.md,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    height: 44,
-  },
-  searchInput: {
-    flex: 1,
-    fontFamily: font.regular,
-    fontSize: fontSize.base,
-    color: colors.onSurface,
-    ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}),
+  sectionsWrap: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
   },
   section: { marginTop: spacing.xl },
   sectionTitle: {
@@ -250,32 +272,28 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     paddingLeft: spacing.xs,
   },
-  tile: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: spacing.sm,
-  },
-  tileIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.md,
-    backgroundColor: colors.brandTertiary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  tileLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
-  tileDesc: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
   empty: {
     alignItems: "center",
     justifyContent: "center",
     padding: spacing["3xl"],
-    gap: spacing.sm,
+    gap: spacing.md,
   },
-  emptyText: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted, textAlign: "center" },
+  emptyText: {
+    fontFamily: font.medium,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+    textAlign: "center",
+  },
+  emptyBtn: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.brand,
+  },
+  emptyBtnText: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: colors.brand,
+  },
 });

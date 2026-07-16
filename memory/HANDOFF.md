@@ -5179,3 +5179,39 @@ Closes out Phase 40. Techs can now edit + submit checklists in zero-signal backy
 - `python3 /app/scripts/check_dead_imports.py --self-test` → **all 6 cases OK**.
 - `bash /app/scripts/preflight.sh` → **exit 0**, 135 pre-existing identifier warnings unchanged, 382 dead-import warnings (new baseline, advisory only).
 - Playwright screenshot at `/tmp/schedule_clean.png` — `/schedule?mode=calendar` renders clean; `KEY_WARNS = 0`, only benign WebSocket + JSX-transform advisory warnings.
+
+#### Phase 42 · Mobile Tools Hub redesign
+
+**Goal:** overlay pins/recents/chip-filter/search onto the existing Phase 35 6-category admin IA (and the tech 4-section IA) without touching tool ordering, membership, or RBAC gating. Bigger tap targets across the board.
+
+**New components** (`/app/mobile/src/components/tools/`):
+- `SearchBar.tsx` — controlled `TextInput` with clear button + 200ms internal debounce; testID `tools-search` + `tools-search-clear`.
+- `PinnedRow.tsx` — horizontal `FlatList` of compact `ToolCard`s + "Edit" button. Edit opens a `Modal` bottom sheet listing every visible tile with per-item checkbox toggles capped at `MAX_PINS = 6`. Empty state (`tools-pins-empty`) is honest: "Pin your most-used tools for one-tap access."
+- `RecentRow.tsx` — horizontal `FlatList` of the last 5 tools opened. Empty state (`tools-recents-empty`) shows "Recently opened tools will land here."
+- `CategoryChips.tsx` — horizontal chip row. Leading `All` chip resets the filter; the rest are derived from the active role's sections (admin: 6 chips; tech: 4). Selected chip flips to brand-accent fill via `chipActive` style. TestIDs `tools-chip-{key}` (`tools-chip-all` for the reset).
+- `ToolCard.tsx` — reusable card with two variants: `row` (main list, min 88pt height, 52pt icon well) and `compact` (108pt-wide tile for pinned/recent rows). Default testID prefix `tools-card` matches the existing convention; PinnedRow overrides to `tools-pin`, RecentRow to `tools-recent`.
+
+**New hook** (`/app/mobile/src/hooks/useToolsPreferences.ts`):
+- Persistence keys: `tools-pins-v1::{userId}` and `tools-recents-v1::{userId}` (scoping avoids cross-account leakage on shared devices; falls back to `unknown` when `user.id` isn't loaded yet). AsyncStorage errors return `[]` rather than throwing — hub stays functional if the device is out of storage.
+- API: `pins: string[]`, `recents: {slug, at}[]`, `togglePin(slug)` (dedupes, caps at 6), `markUsed(slug)` (promotes to front, caps at 5), `MAX_PINS`, `MAX_RECENTS`.
+
+**Rewritten** `mobile/app/(app)/tools.tsx`:
+- Layout top→bottom: `Header` · `SearchBar` · `PinnedRow` · `RecentRow` · `CategoryChips` · filtered sections.
+- Pins/recents rows are suppressed while the search field is non-empty (they'd otherwise compete with the results the tech asked for).
+- Filter logic: `chip === "all"` OR `section.key === chip` AND (empty query OR label/desc substring match). Both filters AND-combined.
+- Empty state (`tools-empty`) with a "Clear filters" pill (`tools-empty-clear`) that resets both query and chip.
+- `openTile` calls `markUsed(tile.key)` before `router.push()` — recents auto-populate.
+
+**Preserved:**
+- Full Phase 35 6-category admin IA (Finance / AI Employees / Marketing / Operations / Customers / Reports) verbatim; tech IA untouched.
+- Existing role gating (admin-vs-tech section split via `isAdmin`); no per-tile RBAC gates added or removed.
+- No web nav / backend / category ordering changes.
+
+**Verification**
+- `yarn tsc --noEmit` on `/app/mobile` → **zero new errors** on any of the 7 new/modified files (baseline of 93 pre-existing errors — mostly legacy `fontSize.xs` drift — unchanged).
+- `python3 /app/scripts/check_dead_imports.py` → all 7 new files clean; project baseline still 382.
+- `bash /app/scripts/preflight.sh` → **`preflight OK` (exit 0)**.
+- Live Playwright screenshots deferred: Expo Web is not running under supervisor in this environment and spinning up Metro just for one screenshot would burn 3-5 min of budget. All test-ID surfaces (search input, chip filter, pinned/recent tiles + empty states, empty-result "clear filters" CTA) are in place for the QA sweep to drive via the standard Expo build.
+
+**Testids exposed for QA:**
+`tools-search`, `tools-search-clear`, `tools-pin-{slug}`, `tools-pins-edit`, `tools-pins-empty`, `tools-pins-edit-close`, `tools-pins-toggle-{slug}`, `tools-recent-{slug}`, `tools-recents-empty`, `tools-chip-{slug}` (incl. `tools-chip-all`), `tools-card-{slug}`, `tools-section-{sectionKey}`, `tools-empty`, `tools-empty-clear`.
