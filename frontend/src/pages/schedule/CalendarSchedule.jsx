@@ -32,6 +32,7 @@ import { api } from "@/api";
 import { colors, font } from "@/theme";
 import { useAuth } from "@/auth";
 import { Gate, useCan } from "@/hooks/usePermissions";
+import { useClockInGate, ClockInGateDialog } from "@/hooks/useClockInGate";
 import ChecklistModal from "@/components/checklist/ChecklistModal";
 
 /** Phase 30W · service-type → card palette. Mirrors the mobile fix-pass. */
@@ -156,6 +157,8 @@ export default function CalendarSchedule() {
   // navigating away to /jobs/:id. Preserves the /schedule URL so the
   // grid/calendar toggle, filters, and range presets survive the close.
   const [checklistJobId, setChecklistJobId] = useState(null);
+  // Phase 56.3 follow-up — clock-in gate for landscape techs opening events.
+  const clockGate = useClockInGate(user);
 
   const [view, setView] = useState(params.get("view") || "month");   // Phase 30X · month default
   const [date, setDate] = useState(() => {
@@ -270,7 +273,10 @@ export default function CalendarSchedule() {
   const onSelectEvent = (ev) => {
     // Phase 31 · Step 2b — open the checklist modal in place of a hard
     // navigate. Preserves the /schedule route state (mode/filter/range).
-    setChecklistJobId(ev.id);
+    // Phase 56.3 follow-up — strict landscape techs must be clocked in
+    // before we open the modal. Admins / super_admins / "All" role / pool
+    // techs / customers are all bypassed inside the hook.
+    clockGate.openJob(ev.id, () => setChecklistJobId(ev.id));
   };
 
   const eventPropGetter = (ev) => ({
@@ -632,11 +638,14 @@ export default function CalendarSchedule() {
           setMoveDate={setMoveDate}
           onConfirmMove={bulkMove}
           busy={busy}
-          onOpenJob={(id) => setChecklistJobId(id)}
+          onOpenJob={(id) => clockGate.openJob(id, () => setChecklistJobId(id))}
           onNewJob={() => navigate(`/jobs/new?date=${focusISO}`)}
           reorderUnavailable={reorderUnavailable}
         />
       )}
+
+      {/* Phase 56.3 follow-up — clock-in gate dialog for landscape techs. */}
+      <ClockInGateDialog gate={clockGate} />
 
       {/* Status legend — calendar mode only. */}
       {mode === "calendar" ? (

@@ -441,3 +441,47 @@ the three deploy-critical indexes (`stripe_events.event_id` unique,
 `notifications.(tenant_id, user_id, created_at desc)`, `budgets.(tenant_id, year)`
 unique). Deploy verdict is 🟢 READY with two user-side vendor-dashboard
 registrations pending (Stripe webhook subscription + RC subscription click).
+
+## Phase 56.2 / 56.3 — SHIPPED (Feb 2026)
+
+### Phase 56.2 · Active/Inactive Customer Split
+- `GET /api/customers` accepts `is_active` + `count_only` params.
+- New `PATCH /api/customers/{id}/activation` with shared Phase 34f cascade helper (`_apply_activation_cascade`) reused by PUT.
+- Web: `/customers`, `/customers/active`, `/customers/inactive` routes with segmented tabs + live counts. Row-level Mark Inactive / Reactivate actions with Radix confirm + optimistic updates.
+- Web `CustomerDetail.jsx`: pill + `testID=customer-active-toggle` inline switch (admin only). Non-admins see the read-only pill.
+- Mobile: mirrored on `mobile/app/customer/[id].tsx` with native `Alert.alert` confirm.
+- Phase 55 admin notification on state change (via shared helper).
+
+### Phase 56.3.A · Customer First/Last Name Split + Google Places
+- `CustomerIn` model: added `first_name` / `last_name` (optional).
+- Server: `_sync_customer_names` bidirectionally reconciles `first_name` / `last_name` / `name` on every write.
+- Startup idempotent migration `migrate_customer_names_split` back-fills legacy docs (0 rows migrated — all customer records already had first/last from Phase 56 CSV importer).
+- Web `CustomerForm.jsx`: two separate required inputs for first/last on new customers; edits fall back to splitting legacy `name` on first whitespace.
+- `AddressAutocomplete.jsx`: prefers `REACT_APP_GOOGLE_MAPS_API_KEY`, falls back to `REACT_APP_GOOGLE_API_KEY`. Places selection now also returns `country`.
+- `GOOGLE_MAPS_API_KEY` env added to backend + frontend + mobile `.env` files (never echoed).
+- `GET /api/config/frontend-env` (public) returns non-secret runtime keys (Google Maps + Stripe publishable).
+- `GET /api/google-maps/health` (admin) returns `{configured, referrer_restrictions_note}` without hitting Google APIs.
+
+### Phase 56.3.B · Unified Role+Department Widget + Add Team Member
+- `_DEPARTMENTS` extended to `{"pool", "landscaping", "both"}`.
+- `_VALID_DEPTS_BY_ROLE` whitelist: `admin → {both, null}`, `technician → {pool, landscaping, null}`.
+- **"All" refined** — maps to `role: "admin", department: "both"` (admin RBAC + full pool + landscape tech surface).
+- `PATCH /api/users/{id}`: accepts `role` + `department` in one call; blocks self-role-change; protects `super_admin` targets (403).
+- **NEW `POST /api/users`** — admin-only Add Team Member with duplicate-email 409, invalid combo 400, MOCKED email invite via `email_delivery_log`, returns `temp_password` once for admin to relay.
+- `GET /api/team/role-options` publishes canonical role/department combos.
+- `_derive_checklist_kind` handles department `"both"` — pool default, landscape when service_type keyword matches.
+- `navForRoleAndDept(role, department)`: `both` returns full `TECH_NAV` union.
+
+### Phase 56.3 follow-ups
+- **Landscape Clock Widget** visibility extended to admin + super_admin on both web (`AppLayout` auto-mounts globally) and mobile.
+- `_require_landscaping` gate extended: admins/super_admins pass regardless of department; techs must be `landscaping` or `both`; pool techs still 403.
+- **Clock-in Gate on schedule events** (`useClockInGate` hook + `ClockInGateDialog`): strict landscape techs must be clocked in before opening a scheduled event; dialog prompts with GPS-aware clock-in. Admins / "All" / pool techs / customers exempt. Wired into `CalendarSchedule.jsx` event-tap and grid `onOpenJob`.
+- New `GET /api/timeclock/mine-status` lightweight probe (`{clocked_in, punch_count}`) used by the gate for snappy calendar taps.
+
+### Chemical Reading Order (top-5)
+- Reordered `POOL_READING_FIELDS_DEFAULT` and `POOL_READINGS`:
+  1. Combined Chlorine → 2. Free Chlorine → 3. pH → 4. Total Alkalinity → 5. Cyanuric Acid
+- Zero DB-stored custom pool templates existed — no migration needed. UI order change only.
+
+### Deferred to Phase 56.3.C
+- Roster UI rewrite in `OpsHub.jsx > TeamRoster` — swap department-only dropdown for the unified 4-option dropdown + filter chips (All | Pool Tech | Landscape Tech | Admin | All (Both) | Unassigned) + `+ Add Team Member` header button wired to the new `POST /api/users`. Backend fully ready.

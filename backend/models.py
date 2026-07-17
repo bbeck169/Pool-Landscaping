@@ -23,6 +23,12 @@ class LoginRequest(BaseModel):
 
 class CustomerIn(BaseModel):
     name: str
+    # Phase 56.3.A — split first/last names. Both are optional at the API
+    # boundary so legacy clients that only send `name` keep working; the
+    # router auto-splits `name` on the first space when first/last are
+    # absent, and re-composes `name` when first+last are provided.
+    first_name: Optional[str] = ""
+    last_name: Optional[str] = ""
     email: Optional[str] = ""
     phone: Optional[str] = ""
     address: Optional[str] = ""

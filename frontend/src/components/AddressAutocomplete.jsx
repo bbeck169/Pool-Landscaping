@@ -6,7 +6,10 @@ import { colors } from "@/theme";
  * Falls back to a plain text input when GOOGLE_API_KEY is missing.
  * Emits an { address, street, city, state, zip, lat, lng, place_id, formatted } object on selection.
  */
-const KEY = process.env.REACT_APP_GOOGLE_API_KEY || "";
+const KEY =
+  process.env.REACT_APP_GOOGLE_MAPS_API_KEY ||
+  process.env.REACT_APP_GOOGLE_API_KEY ||
+  "";
 let googleLoader = null;
 
 function loadGoogleMaps() {
@@ -69,6 +72,9 @@ export default function AddressAutocomplete({
         city: grab("locality") || grab("sublocality") || "",
         state: grab("administrative_area_level_1", true),
         zip: grab("postal_code"),
+        // Phase 56.3.A — also return country code so callers who want to
+        // display the flag or gate international customers can react.
+        country: grab("country", true),
         lat: place.geometry.location?.lat?.(),
         lng: place.geometry.location?.lng?.(),
         place_id: place.place_id,
@@ -106,7 +112,7 @@ export default function AddressAutocomplete({
       {error && <div className="text-xs mt-1" style={{ color: colors.warning }}>{error}</div>}
       {!KEY && (
         <div className="text-xs mt-1" style={{ color: colors.onSurfaceSecondary }}>
-          Autocomplete disabled — configure REACT_APP_GOOGLE_API_KEY to enable.
+          Autocomplete disabled — configure REACT_APP_GOOGLE_MAPS_API_KEY to enable.
         </div>
       )}
     </div>

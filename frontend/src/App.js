@@ -205,8 +205,10 @@ export default function App() {
             {/* Root — techs are redirected to their schedule (Dashboard removed for tech role). */}
             <Route index element={<RoleAwareIndex />} />
 
-            {/* Customers (Phase 2) */}
+            {/* Customers (Phase 2 / Phase 56.2 cohorts) */}
             <Route path="customers" element={<NoTech><CustomersList /></NoTech>} />
+            <Route path="customers/active" element={<NoTech><CustomersList /></NoTech>} />
+            <Route path="customers/inactive" element={<NoTech><CustomersList /></NoTech>} />
             <Route path="customers/new" element={<NoTech><CustomerForm /></NoTech>} />
             <Route path="customers/:id" element={<NoTech><CustomerDetail /></NoTech>} />
             <Route path="customers/:id/edit" element={<NoTech><CustomerForm /></NoTech>} />

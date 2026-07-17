@@ -56,7 +56,16 @@ async function readGeo() {
 
 export default function LandscapingClockWidget() {
   const { user } = useAuth();
-  const isLandscaper = (user?.department || "").toLowerCase() === "landscaping";
+  // Phase 56.3 follow-up — widget visibility rules:
+  //   • Landscape tech (department "landscaping" or "both") — always visible.
+  //   • Admin / super_admin — visible regardless of department (so they
+  //     can supervise / clock in on-site if they're pitching in). Backend
+  //     `_require_landscaping` mirrors this gate.
+  //   • Everyone else (pool tech, customer, unassigned tech) — hidden.
+  const role = (user?.role || "").toLowerCase();
+  const isAdminLike = role === "admin" || role === "super_admin";
+  const hasLandscapeDept = ["landscaping", "both"].includes((user?.department || "").toLowerCase());
+  const isLandscaper = isAdminLike || hasLandscapeDept;
   const [today, setToday] = useState(null);
   const [week, setWeek] = useState(null);
   const [busy, setBusy] = useState(false);

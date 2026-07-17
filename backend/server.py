@@ -38,6 +38,7 @@ from routers import (
     zillow_admin,
     ringcentral,
     ringcentral_customer,
+    config as config_router,
 )
 
 app = FastAPI(
@@ -78,7 +79,8 @@ for module in [notifications_router,
                stripe_admin,
                zillow_admin,
                ringcentral,
-               ringcentral_customer]:
+               ringcentral_customer,
+               config_router]:
     api_router.include_router(module.router)
 
 
@@ -286,6 +288,15 @@ async def startup():
         await ensure_deployment_indexes()
     except Exception as e:
         logger.warning(f"ensure_deployment_indexes crashed: {e}")
+
+    # Phase 56.3.A — idempotent one-shot: back-fill first_name / last_name
+    # on any legacy customer doc that only has the combined `name` field.
+    try:
+        from routers.customers import migrate_customer_names_split
+        migrated_n = await migrate_customer_names_split()
+        logger.info(f"[phase56.3.A] customer name-split migration: {migrated_n} row(s)")
+    except Exception as e:
+        logger.warning(f"customer name-split migration crashed: {e}")
 
     async def _defer():
         try:

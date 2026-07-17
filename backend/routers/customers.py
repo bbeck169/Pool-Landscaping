@@ -11,6 +11,67 @@ from models import *
 router = APIRouter()
 
 
+def _sync_customer_names(doc: dict) -> dict:
+    """Phase 56.3.A — Bidirectional first/last/name sync.
+
+    Callers may send:
+      • `first_name` + `last_name`  → we recompose `name` from them.
+      • `name` only (legacy)        → we split on the first whitespace and
+                                       populate first/last.
+      • all three                   → first/last win; `name` is rebuilt.
+    Ensures the stored document always has a coherent triple so display
+    code can prefer `{first_name} {last_name}` with `name` as fallback.
+    Idempotent — safe to call on every write.
+    """
+    first = (doc.get("first_name") or "").strip()
+    last = (doc.get("last_name") or "").strip()
+    name = (doc.get("name") or "").strip()
+    if first or last:
+        doc["first_name"] = first
+        doc["last_name"] = last
+        composed = " ".join(p for p in (first, last) if p)
+        doc["name"] = composed or name
+    elif name:
+        parts = name.split(None, 1)
+        doc["first_name"] = parts[0] if parts else ""
+        doc["last_name"] = parts[1] if len(parts) > 1 else ""
+        doc["name"] = name
+    return doc
+
+
+async def migrate_customer_names_split(tenant_filter: Optional[dict] = None) -> int:
+    """Phase 56.3.A — one-shot idempotent backfill. Populates
+    `first_name` / `last_name` on any customer doc that has `name` but
+    no first/last yet. Splits on the first whitespace. Safe to run on
+    every startup (skipped for docs already migrated). Returns the
+    number of docs actually mutated."""
+    q = tenant_filter or {}
+    q = {
+        **q,
+        "$or": [
+            {"first_name": {"$exists": False}},
+            {"first_name": ""},
+            {"first_name": None},
+        ],
+        "name": {"$exists": True, "$ne": ""},
+    }
+    n = 0
+    async for doc in db.customers.find(q, {"_id": 0, "id": 1, "name": 1, "tenant_id": 1}):
+        parts = str(doc.get("name") or "").split(None, 1)
+        first = parts[0] if parts else ""
+        last = parts[1] if len(parts) > 1 else ""
+        if not first and not last:
+            continue
+        await db.customers.update_one(
+            {"id": doc["id"], "tenant_id": doc.get("tenant_id")},
+            {"$set": {"first_name": first, "last_name": last}},
+        )
+        n += 1
+    if n:
+        logger.info(f"[phase56.3.A] customer name-split migration touched {n} doc(s)")
+    return n
+
+
 # ----------------------- Customers -----------------------
 @router.get("/me")
 async def get_my_profile(user: dict = Depends(get_current_user),
@@ -57,6 +118,8 @@ async def list_customers(
     tag: Optional[str] = None,
     waitlisted: Optional[bool] = None,
     unscheduled: Optional[bool] = None,
+    is_active: Optional[bool] = None,
+    count_only: bool = False,
 ):
     # RBAC: only staff (admin/technician/super_admin) may list customer records. Customers use /me.
     if user.get("role") not in ("admin", "technician", "super_admin"):
@@ -69,6 +132,15 @@ async def list_customers(
         q["tags"] = tag
     if waitlisted is not None:
         q["waitlisted"] = bool(waitlisted)
+    # Phase 56.2 — active/inactive cohort filter. Rows created before the
+    # `is_active` field existed default to active per Phase 34f semantics,
+    # so a `True` filter must match {is_active: True} OR field-absent.
+    if is_active is True:
+        q["$and"] = q.get("$and", []) + [{"$or": [{"is_active": True}, {"is_active": {"$exists": False}}]}]
+    elif is_active is False:
+        q["is_active"] = False
+    if count_only:
+        return {"count": await db.customers.count_documents(q)}
     docs = await db.customers.find(q, {"_id": 0}).sort("name", 1).to_list(2000)
     # If unscheduled=true, filter out customers who have any non-completed/cancelled job.
     if unscheduled:
@@ -112,6 +184,7 @@ async def create_customer(body: CustomerIn,
                           user: dict = Depends(require_admin),
                           tenant: dict = Depends(get_current_tenant)):
     doc = body.dict()
+    _sync_customer_names(doc)
     doc.update({"id": new_id(), "tenant_id": tenant["id"], "created_at": now_iso()})
     await db.customers.insert_one(doc)
     doc.pop("_id", None)
@@ -188,41 +261,38 @@ async def deactivation_preview(cid: str,
     }
 
 
-@router.put("/customers/{cid}")
-async def update_customer(cid: str, body: CustomerIn,
-                          user: dict = Depends(require_admin),
-                          tenant: dict = Depends(get_current_tenant)):
-    existing = await db.customers.find_one(
-        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
-    )
-    if not existing:
-        raise HTTPException(404, "Customer not found")
+async def _apply_activation_cascade(cid: str, tenant_id: str, user: dict,
+                                     was_active: bool, now_active: bool,
+                                     doc_name: Optional[str]):
+    """Phase 34f/56.2 — Shared cascade + audit + notification helper.
 
-    # Phase 34f — Active/inactive lifecycle detection. Missing field on the
-    # existing doc defaults to True (all legacy customers were implicitly
-    # active). New value defaults to True on the input model.
-    was_active = existing.get("is_active", True)
-    now_active = bool(body.is_active) if body.is_active is not None else True
-    deactivating = was_active is True and now_active is False
+    Called from both `PUT /customers/{cid}` (bulk edit) and
+    `PATCH /customers/{cid}/activation` (list-row / detail-header toggle).
+    Kept in one place so we can never drift: any change to the cascade
+    ripples through both surfaces.
 
-    await db.customers.update_one(
-        {"id": cid, "tenant_id": tenant["id"]}, {"$set": body.dict()}
-    )
+    Assumes the caller has ALREADY persisted the new `is_active` value on
+    the customer document — this helper only handles the side-effects
+    (cancel future jobs, log event, notify admins).
 
+    Returns (cancelled_job_count, deactivated_recurring_count).
+    """
     cancelled_job_count = 0
     deactivated_recurring_count = 0
+    deactivating = was_active is True and now_active is False
+    reactivating = was_active is False and now_active is True
+
     if deactivating:
         today_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         q = {
             "customer_id": cid,
-            "tenant_id": tenant["id"],
+            "tenant_id": tenant_id,
             "scheduled_date": {"$gte": today_iso},
             "status": {"$in": ["scheduled", "pending", "confirmed"]},
         }
         # Count recurring instances BEFORE the update so we can report both
         # totals honestly. `auto_recurring` is the flag Phase 20 attached to
-        # jobs created by `create_recurring_maintenance` — there is no
-        # separate recurring-templates collection in this codebase.
+        # jobs created by `create_recurring_maintenance`.
         deactivated_recurring_count = await db.jobs.count_documents(
             {**q, "auto_recurring": True}
         )
@@ -238,36 +308,118 @@ async def update_customer(cid: str, body: CustomerIn,
         )
         cancelled_job_count = int(upd.modified_count or 0)
 
-        # Log the transition for the future retention report.
+    if deactivating or reactivating:
         await db.customer_activation_events.insert_one({
             "id": new_id(),
-            "tenant_id": tenant["id"],
+            "tenant_id": tenant_id,
             "customer_id": cid,
-            "from_status": "active",
-            "to_status": "inactive",
+            "from_status": "active" if deactivating else "inactive",
+            "to_status": "inactive" if deactivating else "active",
             "changed_at": now_iso(),
             "changed_by_user_id": user["id"],
             "cancelled_job_count": cancelled_job_count,
             "deactivated_recurring_count": deactivated_recurring_count,
         })
-    elif was_active is False and now_active is True:
-        # Reactivation logged for symmetry, but nothing else cascades.
-        await db.customer_activation_events.insert_one({
-            "id": new_id(),
-            "tenant_id": tenant["id"],
-            "customer_id": cid,
-            "from_status": "inactive",
-            "to_status": "active",
-            "changed_at": now_iso(),
-            "changed_by_user_id": user["id"],
-            "cancelled_job_count": 0,
-            "deactivated_recurring_count": 0,
-        })
+        try:
+            from services.notifications import emit as notify_emit, KIND_LABELS
+            admins = await db.users.find(
+                {"tenant_id": tenant_id, "role": {"$in": ["admin", "super_admin"]},
+                 "id": {"$ne": user.get("id")}},
+                {"_id": 0, "id": 1},
+            ).to_list(200)
+            aids = [a["id"] for a in admins if a.get("id")]
+            if aids:
+                kind = "system_alert" if "system_alert" in KIND_LABELS else "system"
+                verb = "inactive" if deactivating else "active"
+                who = user.get("name") or user.get("email") or "Admin"
+                body_txt = (
+                    f"{who} marked {doc_name or 'customer'} inactive. "
+                    f"{cancelled_job_count} upcoming job(s) auto-cancelled."
+                    if deactivating
+                    else f"{who} reactivated {doc_name or 'customer'}."
+                )
+                await notify_emit(
+                    aids, kind=kind,
+                    title=f"Customer {doc_name or ''} marked {verb}",
+                    body=body_txt,
+                    href=f"/customers/{cid}",
+                    tenant_id=tenant_id, audience="internal",
+                    source_ref={"kind": "customer_activation", "id": cid},
+                    customer_id=cid,
+                )
+        except Exception:
+            pass
+    return cancelled_job_count, deactivated_recurring_count
+
+
+@router.put("/customers/{cid}")
+async def update_customer(cid: str, body: CustomerIn,
+                          user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    existing = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not existing:
+        raise HTTPException(404, "Customer not found")
+
+    # Phase 34f — Active/inactive lifecycle detection. Missing field on the
+    # existing doc defaults to True (all legacy customers were implicitly
+    # active). New value defaults to True on the input model.
+    was_active = existing.get("is_active", True)
+    now_active = bool(body.is_active) if body.is_active is not None else True
+
+    payload = body.dict()
+    _sync_customer_names(payload)
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"$set": payload}
+    )
+
+    cancelled_job_count, deactivated_recurring_count = await _apply_activation_cascade(
+        cid, tenant["id"], user, was_active, now_active, existing.get("name")
+    )
 
     doc = await db.customers.find_one(
         {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
     )
-    if deactivating:
+    if was_active is True and now_active is False:
+        doc["cancelled_job_count"] = cancelled_job_count
+        doc["deactivated_recurring_count"] = deactivated_recurring_count
+    return doc
+
+
+@router.patch("/customers/{cid}/activation")
+async def patch_customer_activation(cid: str, body: dict,
+                                     user: dict = Depends(require_admin),
+                                     tenant: dict = Depends(get_current_tenant)):
+    """Phase 56.2 — lightweight activation toggle for the list-row and
+    detail-header switches. Only mutates `is_active`; all other fields
+    are preserved verbatim (unlike PUT /customers/{cid} which expects a
+    full CustomerIn body). Reuses the Phase 34f cascade helper so
+    behavior is identical to a full-body update that flips the flag."""
+    if "is_active" not in body:
+        raise HTTPException(400, "is_active is required")
+    existing = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not existing:
+        raise HTTPException(404, "Customer not found")
+
+    was_active = existing.get("is_active", True)
+    now_active = bool(body.get("is_active"))
+
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"$set": {"is_active": now_active}},
+    )
+
+    cancelled_job_count, deactivated_recurring_count = await _apply_activation_cascade(
+        cid, tenant["id"], user, was_active, now_active, existing.get("name")
+    )
+
+    doc = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if was_active is True and now_active is False:
         doc["cancelled_job_count"] = cancelled_job_count
         doc["deactivated_recurring_count"] = deactivated_recurring_count
     return doc

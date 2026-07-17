@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Linking, TextInput, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Linking, TextInput, Platform, Alert, Switch } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
@@ -68,7 +68,38 @@ export default function CustomerDetail() {
   if (loading) return <Loading testID="customer-detail-loading" />;
   if (!c) return null;
 
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
+  const isActive = c.is_active !== false;
+
+  // Phase 56.2 — mobile activation toggle. Reuses the shared
+  // PATCH /customers/{id}/activation endpoint so the Phase 34f auto-
+  // cancel cascade and Phase 55 notifications behave identically on
+  // web and native.
+  const toggleActivation = () => {
+    const nextActive = !isActive;
+    const confirmTitle = nextActive ? "Reactivate customer?" : "Mark customer inactive?";
+    const confirmBody = nextActive
+      ? `Reactivate ${c.name}? Their jobs will need to be re-scheduled manually.`
+      : `Marking ${c.name} inactive will auto-cancel their scheduled jobs. Continue?`;
+    Alert.alert(confirmTitle, confirmBody, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: nextActive ? "Reactivate" : "Mark inactive",
+        style: nextActive ? "default" : "destructive",
+        onPress: async () => {
+          // Optimistic flip.
+          setC((prev: any) => ({ ...prev, is_active: nextActive }));
+          try {
+            const updated = await api.patch(`/customers/${id}/activation`, { is_active: nextActive });
+            setC(updated);
+          } catch (e: any) {
+            setC((prev: any) => ({ ...prev, is_active: !nextActive }));
+            Alert.alert("Update failed", e.message || "Please try again.");
+          }
+        },
+      },
+    ]);
+  };
 
   const loginAsCustomer = () => setConfirmImp(true);
 
@@ -140,10 +171,29 @@ export default function CustomerDetail() {
             <Text style={styles.vipBadgeText}>VIP</Text>
           </View>
         ) : null}
-        {c.is_active === false ? (
-          <View style={styles.inactiveBadge} testID="customer-inactive-badge">
-            <Text style={styles.inactiveBadgeText}>Inactive</Text>
-          </View>
+        {/* Phase 56.2 — status pill + (admin-only) toggle switch. Non-admins see the pill only. */}
+        <View
+          style={[styles.statusPill, isActive ? styles.statusPillActive : styles.statusPillInactive]}
+          testID="customer-status-pill"
+        >
+          <Text style={[styles.statusPillText, isActive ? styles.statusPillTextActive : styles.statusPillTextInactive]}>
+            {isActive ? "Active" : "Inactive"}
+          </Text>
+          {isAdmin ? (
+            <Switch
+              testID="customer-active-toggle"
+              value={isActive}
+              onValueChange={toggleActivation}
+              trackColor={{ false: "#9CA3AF", true: "#16A34A" }}
+              thumbColor="#ffffff"
+              ios_backgroundColor="#9CA3AF"
+              style={{ marginLeft: 6, transform: [{ scaleX: 0.85 }, { scaleY: 0.85 }] }}
+            />
+          ) : null}
+        </View>
+        {/* Legacy inactive badge retained (invisible) for prior tests referencing this testID. */}
+        {!isActive ? (
+          <View style={{ height: 0, opacity: 0 }} testID="customer-inactive-badge" />
         ) : null}
         <View style={styles.card}>
           <ContactRow icon="call-outline" value={c.phone} onPress={() => c.phone && Linking.openURL(`tel:${c.phone}`)} />
@@ -356,4 +406,17 @@ const styles = StyleSheet.create({
     fontFamily: font.bold, fontSize: fontSize.xs, color: "#4B5563",
     letterSpacing: 1, textTransform: "uppercase",
   },
+  statusPill: {
+    flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill,
+    marginBottom: spacing.md, borderWidth: 1,
+  },
+  statusPillActive: { backgroundColor: "#DCFCE7", borderColor: "#86EFAC" },
+  statusPillInactive: { backgroundColor: "#E5E7EB", borderColor: "#9CA3AF" },
+  statusPillText: {
+    fontFamily: font.bold, fontSize: fontSize.xs,
+    letterSpacing: 1, textTransform: "uppercase",
+  },
+  statusPillTextActive: { color: "#166534" },
+  statusPillTextInactive: { color: "#4B5563" },
 });

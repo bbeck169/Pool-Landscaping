@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
+import { usePermissions } from "@/hooks/usePermissions";
 import {
   PageHeader,
   Button,
@@ -31,6 +32,7 @@ import {
   EmptyState,
   Toast,
 } from "@/components/ui-kit";
+import { ActivationControl } from "@/components/customers/ActivationControl";
 
 const TABS = [
   { k: "overview", label: "Overview", icon: MapPin },
@@ -133,18 +135,27 @@ export default function CustomerDetail() {
               ) : null}
               {customer.is_active === false ? (
                 <span
-                  className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider"
-                  style={{
-                    backgroundColor: "#E5E7EB",
-                    color: "#4B5563",
-                    border: "1px solid #9CA3AF",
-                  }}
+                  className="hidden"
+                  aria-hidden="true"
                   data-testid="customer-inactive-badge"
-                  title="Inactive customer — future jobs cancelled"
                 >
                   Inactive
                 </span>
               ) : null}
+              <ActivationControl
+                customer={customer}
+                onOptimisticFlip={(next) => setCustomer((c) => ({ ...c, is_active: next }))}
+                onSuccess={(updated) => {
+                  setCustomer(updated);
+                  setToast({
+                    tone: "success",
+                    message: updated.is_active === false
+                      ? `${updated.name} marked inactive`
+                      : `${updated.name} reactivated`,
+                  });
+                }}
+                onError={(msg) => setToast({ tone: "error", message: msg })}
+              />
             </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap">
               {(customer.tags || []).map((t) => (

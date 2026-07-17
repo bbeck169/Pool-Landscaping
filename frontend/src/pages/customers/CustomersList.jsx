@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import {
   Plus,
   Search,
@@ -11,10 +11,12 @@ import {
   Tag,
   Trash2,
   BellRing,
+  UserCheck,
+  UserX,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
-import { Gate } from "@/hooks/usePermissions";
+import { Gate, usePermissions } from "@/hooks/usePermissions";
 import {
   PageHeader,
   TagChip,
@@ -40,6 +42,27 @@ function useDebounced(value, delay = 250) {
 
 export default function CustomersList() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const cohortParam = location.pathname.endsWith("/inactive")
+    ? "inactive"
+    : location.pathname.endsWith("/active")
+    ? "active"
+    : null;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { role, effectiveRole } = usePermissions();
+  const isAdmin =
+    role === "admin" || role === "super_admin" ||
+    effectiveRole === "admin" || effectiveRole === "super_admin";
+
+  // Phase 56.2 — active | inactive tabs. `all` retained as a legacy escape
+  // hatch (used to be the default) — accessible via `?tab=all` for admins
+  // who need to see everything in one list.
+  const initialTab = cohortParam === "inactive" ? "inactive"
+                    : cohortParam === "active" ? "active"
+                    : (searchParams.get("tab") || "active");
+  const [tab, setTab] = useState(initialTab);
+  const [counts, setCounts] = useState({ active: null, inactive: null });
+
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState("");
   const [tag, setTag] = useState("");
@@ -48,7 +71,27 @@ export default function CustomersList() {
   const [bulkTag, setBulkTag] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [toast, setToast] = useState(null);
+  const [activationConfirm, setActivationConfirm] = useState(null); // {customer, nextActive}
+  const [activationBusy, setActivationBusy] = useState(false);
   const searchDeb = useDebounced(q);
+
+  // Non-admin users cannot land on the inactive cohort — redirect to active.
+  useEffect(() => {
+    if (!isAdmin && tab === "inactive") setTab("active");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
+
+  // Sync tab → URL so route + query stay honest across refresh / share.
+  useEffect(() => {
+    if (cohortParam && cohortParam !== tab && (tab === "active" || tab === "inactive")) {
+      navigate(`/customers/${tab}`, { replace: true });
+    } else if (!cohortParam) {
+      const next = new URLSearchParams(searchParams);
+      if (tab === "active") next.delete("tab"); else next.set("tab", tab);
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   const load = async () => {
     setRows(null);
@@ -57,6 +100,8 @@ export default function CustomersList() {
     if (tag) params.set("tag", tag);
     if (scope === "waitlist") params.set("waitlisted", "true");
     if (scope === "unscheduled") params.set("unscheduled", "true");
+    if (tab === "active") params.set("is_active", "true");
+    else if (tab === "inactive") params.set("is_active", "false");
     try {
       const data = await api.get(`/customers${params.toString() ? "?" + params : ""}`);
       setRows(data || []);
@@ -67,10 +112,24 @@ export default function CustomersList() {
     }
   };
 
+  const loadCounts = async () => {
+    try {
+      const [a, i] = await Promise.all([
+        api.get("/customers?is_active=true&count_only=true"),
+        api.get("/customers?is_active=false&count_only=true"),
+      ]);
+      setCounts({ active: a?.count ?? 0, inactive: i?.count ?? 0 });
+    } catch { /* silent — counts are advisory */ }
+  };
+
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDeb, tag, scope]);
+  }, [searchDeb, tag, scope, tab]);
+
+  useEffect(() => {
+    loadCounts();
+  }, []);
 
   const cities = useMemo(() => {
     const s = new Set();
@@ -133,6 +192,47 @@ export default function CustomersList() {
 
   const nextScheduled = (c) => c.next_scheduled_at || "—";
 
+  // Phase 56.2 — inline activation toggle from list rows. Confirms via
+  // modal, calls shared PATCH endpoint, optimistically updates the list.
+  const openActivationConfirm = (customer, nextActive) => {
+    setActivationConfirm({ customer, nextActive });
+  };
+  const commitActivation = async () => {
+    if (!activationConfirm) return;
+    const { customer, nextActive } = activationConfirm;
+    setActivationBusy(true);
+    // Optimistic — flip in-place, update counts.
+    setRows((prev) => (prev || []).map((r) =>
+      r.id === customer.id ? { ...r, is_active: nextActive } : r
+    ));
+    try {
+      await api.patch(`/customers/${customer.id}/activation`, { is_active: nextActive });
+      setToast({
+        tone: "success",
+        message: nextActive
+          ? `${customer.name} reactivated`
+          : `${customer.name} marked inactive`,
+      });
+      setActivationConfirm(null);
+      // Row leaves the current cohort — reload the visible list and counts.
+      await Promise.all([load(), loadCounts()]);
+    } catch (e) {
+      // Revert.
+      setRows((prev) => (prev || []).map((r) =>
+        r.id === customer.id ? { ...r, is_active: !nextActive } : r
+      ));
+      setToast({ tone: "error", message: e.message });
+    } finally {
+      setActivationBusy(false);
+    }
+  };
+
+  const TAB_DEFS = [
+    { k: "active", label: "Active", count: counts.active, testid: "tab-active" },
+    { k: "inactive", label: "Inactive", count: counts.inactive, testid: "tab-inactive", adminOnly: true },
+    { k: "all", label: "All", count: null, testid: "tab-all", adminOnly: true },
+  ];
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="customers-page">
       <PageHeader
@@ -152,6 +252,40 @@ export default function CustomersList() {
           </>
         }
       />
+
+      {/* Phase 56.2 — Active / Inactive segmented tabs. Counts are live. */}
+      <div
+        className="rounded-2xl mb-3 flex items-center gap-1 p-1"
+        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+        data-testid="customers-cohort-tabs"
+      >
+        {TAB_DEFS.filter((t) => !t.adminOnly || isAdmin).map((t) => (
+          <button
+            key={t.k}
+            onClick={() => setTab(t.k)}
+            className="flex-1 flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-wider px-4 py-2 rounded-xl transition"
+            style={{
+              backgroundColor: tab === t.k ? colors.brandTertiary : "transparent",
+              color: tab === t.k ? colors.onBrandTertiary : colors.muted,
+            }}
+            data-testid={t.testid}
+          >
+            <span>{t.label}</span>
+            {t.count !== null && t.count !== undefined ? (
+              <span
+                className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                style={{
+                  backgroundColor: tab === t.k ? "rgba(255,255,255,0.35)" : colors.surfaceSecondary,
+                  color: tab === t.k ? colors.onBrandTertiary : colors.onSurfaceSecondary,
+                }}
+                data-testid={`${t.testid}-count`}
+              >
+                {t.count}
+              </span>
+            ) : null}
+          </button>
+        ))}
+      </div>
 
       {/* Filter row */}
       <div
@@ -349,6 +483,19 @@ export default function CustomersList() {
                         <TagChip tag={t} key={t} testid={`row-${c.id}-tag-${t}`} />
                       ))}
                       {c.waitlisted ? <Chip label="Waitlist" tone="warning" /> : null}
+                      {c.is_active === false ? (
+                        <span
+                          className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider"
+                          style={{
+                            backgroundColor: "#E5E7EB",
+                            color: "#4B5563",
+                            border: "1px solid #9CA3AF",
+                          }}
+                          data-testid={`row-${c.id}-inactive-pill`}
+                        >
+                          Inactive
+                        </span>
+                      ) : null}
                     </div>
                   </td>
                   <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>
@@ -364,12 +511,46 @@ export default function CustomersList() {
                     {nextScheduled(c)}
                   </td>
                   <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      onClick={() => navigate(`/customers/${c.id}`)}
-                      className="opacity-60 hover:opacity-100"
-                    >
-                      <MoreVertical size={16} />
-                    </button>
+                    <div className="flex items-center gap-1 justify-end">
+                      {isAdmin ? (
+                        c.is_active === false ? (
+                          <button
+                            onClick={() => openActivationConfirm(c, true)}
+                            className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded transition"
+                            style={{
+                              color: "#166534",
+                              backgroundColor: "#DCFCE7",
+                              border: "1px solid #86EFAC",
+                            }}
+                            data-testid={`row-${c.id}-reactivate`}
+                            title="Reactivate customer"
+                          >
+                            <UserCheck size={12} /> Reactivate
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => openActivationConfirm(c, false)}
+                            className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded transition"
+                            style={{
+                              color: "#991B1B",
+                              backgroundColor: "#FEF2F2",
+                              border: "1px solid #FCA5A5",
+                            }}
+                            data-testid={`row-${c.id}-deactivate`}
+                            title="Mark customer inactive"
+                          >
+                            <UserX size={12} /> Mark inactive
+                          </button>
+                        )
+                      ) : null}
+                      <button
+                        onClick={() => navigate(`/customers/${c.id}`)}
+                        className="opacity-60 hover:opacity-100 ml-1"
+                        aria-label="Open customer"
+                      >
+                        <MoreVertical size={16} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -378,7 +559,44 @@ export default function CustomersList() {
         )}
       </div>
 
-      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load(); }} setToast={setToast} />
+      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); load(); loadCounts(); }} setToast={setToast} />
+
+      <Modal
+        open={!!activationConfirm}
+        onClose={() => (activationBusy ? null : setActivationConfirm(null))}
+        title={activationConfirm?.nextActive ? "Reactivate customer?" : "Mark customer inactive?"}
+        testid="customers-activation-confirm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setActivationConfirm(null)} disabled={activationBusy}>
+              Cancel
+            </Button>
+            <Button
+              variant={activationConfirm?.nextActive ? "primary" : "danger"}
+              onClick={commitActivation}
+              disabled={activationBusy}
+              testid="customers-activation-confirm-submit"
+            >
+              {activationBusy
+                ? "Working…"
+                : activationConfirm?.nextActive
+                ? "Reactivate"
+                : "Mark inactive"}
+            </Button>
+          </>
+        }
+      >
+        {activationConfirm ? (
+          <p className="text-sm" style={{ color: colors.onSurfaceSecondary }}>
+            {activationConfirm.nextActive ? (
+              <>Reactivate <strong>{activationConfirm.customer.name}</strong>? Their jobs will need to be re-scheduled manually.</>
+            ) : (
+              <>Marking <strong>{activationConfirm.customer.name}</strong> inactive will auto-cancel their scheduled jobs. Continue?</>
+            )}
+          </p>
+        ) : null}
+      </Modal>
+
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );

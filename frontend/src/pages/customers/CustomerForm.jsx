@@ -25,6 +25,11 @@ export default function CustomerForm() {
   const [toast, setToast] = useState(null);
   const [form, setForm] = useState({
     name: "",
+    // Phase 56.3.A — split first/last names. Required for new customers;
+    // recomposed into `name` on save. On edit we prefer stored first/last;
+    // fall back to splitting the legacy `name` on the first whitespace.
+    first_name: "",
+    last_name: "",
     email: "",
     phone: "",
     address: "",
@@ -52,8 +57,16 @@ export default function CustomerForm() {
     if (!isEdit) return;
     api.get(`/customers/${id}`).then((c) => {
       setOrigIsActive(c.is_active !== false);
+      // Phase 56.3.A — prefer stored first/last; fall back to splitting
+      // the legacy `name` field on the first whitespace so admins can
+      // still edit records created before the split shipped.
+      const legacyParts = String(c.name || "").split(/\s+/);
+      const fallbackFirst = legacyParts[0] || "";
+      const fallbackLast = legacyParts.slice(1).join(" ") || "";
       setForm({
         name: c.name || "",
+        first_name: c.first_name || fallbackFirst,
+        last_name: c.last_name || fallbackLast,
         email: c.email || "",
         phone: c.phone || "",
         address: c.address || "",
@@ -101,7 +114,17 @@ export default function CustomerForm() {
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!form.name.trim()) {
+    // Phase 56.3.A — first + last are required for new customers.
+    // Existing customers may still be saved with legacy `name` only, but
+    // we always try to keep the triple coherent.
+    const first = (form.first_name || "").trim();
+    const last = (form.last_name || "").trim();
+    if (!isEdit && (!first || !last)) {
+      setToast({ tone: "error", message: "First name and last name are required" });
+      return;
+    }
+    const composedName = [first, last].filter(Boolean).join(" ") || form.name.trim();
+    if (!composedName) {
       setToast({ tone: "error", message: "Name is required" });
       return;
     }
@@ -136,6 +159,9 @@ export default function CustomerForm() {
     try {
       const doc = {
         ...form,
+        first_name: first,
+        last_name: last,
+        name: composedName,
         email: (form.email || "").trim().toLowerCase(),
         pool_gallons: poolGallonsPayload,
         is_vip: !!form.is_vip,
@@ -181,7 +207,8 @@ export default function CustomerForm() {
           style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
         >
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <TextInput label="NAME *" id="name" value={form.name} onChange={set("name")} testid="cf-name" />
+            <TextInput label="FIRST NAME *" id="first_name" value={form.first_name} onChange={set("first_name")} testid="cf-first-name" />
+            <TextInput label="LAST NAME *" id="last_name" value={form.last_name} onChange={set("last_name")} testid="cf-last-name" />
             <TextInput label="PRIMARY EMAIL" id="email" type="email" value={form.email} onChange={set("email")} testid="cf-email" />
             <TextInput label="PRIMARY PHONE" id="phone" value={form.phone} onChange={set("phone")} testid="cf-phone" />
             <TextInput label="GATE CODE" id="gate_code" value={form.gate_code} onChange={set("gate_code")} testid="customer-gate-code-input" />

@@ -45,12 +45,15 @@ LANDSCAPING_CHECKLIST = [
     "Final walkthrough with client",
 ]
 POOL_READINGS = [
-    {"key": "ph", "label": "pH", "unit": "", "ideal": "7.4–7.6", "min": 7.4, "max": 7.6},
-    {"key": "chlorine", "label": "Free Chlorine", "unit": "ppm", "ideal": "1–3", "min": 1, "max": 3},
+    # Phase 56.3 follow-up — first-five order mirrors POOL_READING_FIELDS_DEFAULT
+    # in service_reports.py so legacy Field Report + Pool Checklist share
+    # the same top-of-form sequence.
     {"key": "combined_chlorine", "label": "Combined Chlorine", "unit": "ppm", "ideal": "0–0.2", "min": 0, "max": 0.2},
+    {"key": "chlorine", "label": "Free Chlorine", "unit": "ppm", "ideal": "1–3", "min": 1, "max": 3},
+    {"key": "ph", "label": "pH", "unit": "", "ideal": "7.4–7.6", "min": 7.4, "max": 7.6},
     {"key": "alkalinity", "label": "Total Alkalinity", "unit": "ppm", "ideal": "80–120", "min": 80, "max": 120},
-    {"key": "calcium_hardness", "label": "Calcium Hardness", "unit": "ppm", "ideal": "200–400", "min": 200, "max": 400},
     {"key": "cyanuric", "label": "Cyanuric Acid", "unit": "ppm", "ideal": "30–50", "min": 30, "max": 50},
+    {"key": "calcium_hardness", "label": "Calcium Hardness", "unit": "ppm", "ideal": "200–400", "min": 200, "max": 400},
     {"key": "salt", "label": "Salt", "unit": "ppm", "ideal": "2700–3400", "min": 2700, "max": 3400},
     {"key": "tds", "label": "Total Dissolved Solids", "unit": "ppm", "ideal": "250–1500", "min": 250, "max": 1500},
     {"key": "phosphates", "label": "Phosphates", "unit": "ppb", "ideal": "0–100", "min": 0, "max": 100},
@@ -138,10 +141,19 @@ _LANDSCAPE_KEYWORDS = ("landscap", "lawn", "mow", "garden", "trim", "blow", "cle
 
 
 def _derive_checklist_kind(job: dict, tech_department: Optional[str]) -> str:
-    """Phase 57.d · read-time derivation of which checklist form to render.
+    """Phase 57.d / 56.3.B · read-time derivation of which checklist form
+    to render.
 
     Priority: explicit override → tech department → service_type keyword →
-    "pool" (safest default for this business)."""
+    ``"pool"`` (safest default for this business).
+
+    Department semantics (Phase 56.3.B):
+      • ``pool``        → pool checklist
+      • ``landscaping`` → landscape checklist
+      • ``both``        → the tech can service either; we look at the
+        service_type keywords first, and fall back to pool (safe default)
+        when nothing landscape-specific is detected.
+    """
     override = (job.get("checklist_kind_override") or "").strip().lower()
     if override in ("pool", "landscape", "landscaping"):
         return "landscape" if override.startswith("landscap") else "pool"
@@ -149,6 +161,11 @@ def _derive_checklist_kind(job: dict, tech_department: Optional[str]) -> str:
     if dept == "landscaping":
         return "landscape"
     if dept == "pool":
+        return "pool"
+    if dept == "both":
+        hay_both = " ".join(str(job.get(k) or "") for k in ("service_type", "job_type", "title")).lower()
+        if any(k in hay_both for k in _LANDSCAPE_KEYWORDS):
+            return "landscape"
         return "pool"
     hay = " ".join(str(job.get(k) or "") for k in ("service_type", "job_type", "title")).lower()
     if any(k in hay for k in _LANDSCAPE_KEYWORDS):

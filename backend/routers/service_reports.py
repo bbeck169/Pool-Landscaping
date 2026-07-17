@@ -35,18 +35,25 @@ POOL_CHECKLIST_DEFAULT = [
 ]
 POOL_READING_FIELDS_DEFAULT = [
     # key=machine, name=user label, ideal=text hint, min/max=picker range, step=picker step
-    {"key": "ph",                "name": "pH",                "unit": "",     "type": "select",
-     "ideal": "7.4–7.6",  "min": 6,    "max": 8.5,  "step": 0.1},
-    {"key": "chlorine",          "name": "Free Chlorine",     "unit": "ppm",  "type": "select",
-     "ideal": "1–3",      "min": 0,    "max": 20,   "step": 0.1},
+    #
+    # Phase 56.3 follow-up — first-five reorder per operations request:
+    #   1. Combined/Total Chlorine  2. Free Chlorine  3. pH
+    #   4. Total Alkalinity  5. Cyanuric Acid
+    # The remaining rows (calcium_hardness, salt, tds, phosphates,
+    # water_temp) keep their existing order after the top five. This is
+    # a UI order change only — no data migration required.
     {"key": "combined_chlorine", "name": "Combined Chlorine", "unit": "ppm",  "type": "select",
      "ideal": "0–0.2",    "min": 0,    "max": 20,   "step": 0.1},
+    {"key": "chlorine",          "name": "Free Chlorine",     "unit": "ppm",  "type": "select",
+     "ideal": "1–3",      "min": 0,    "max": 20,   "step": 0.1},
+    {"key": "ph",                "name": "pH",                "unit": "",     "type": "select",
+     "ideal": "7.4–7.6",  "min": 6,    "max": 8.5,  "step": 0.1},
     {"key": "alkalinity",        "name": "Total Alkalinity",  "unit": "ppm",  "type": "select",
      "ideal": "80–120",   "min": 0,    "max": 500,  "step": 20},
-    {"key": "calcium_hardness",  "name": "Calcium Hardness",  "unit": "ppm",  "type": "select",
-     "ideal": "200–400",  "min": 0,    "max": 1000, "step": 50},
     {"key": "cyanuric",          "name": "Cyanuric Acid",     "unit": "ppm",  "type": "select",
      "ideal": "30–50",    "min": 0,    "max": 600,  "step": 10},
+    {"key": "calcium_hardness",  "name": "Calcium Hardness",  "unit": "ppm",  "type": "select",
+     "ideal": "200–400",  "min": 0,    "max": 1000, "step": 50},
     {"key": "salt",              "name": "Salt",              "unit": "ppm",  "type": "select",
      "ideal": "2700–3400","min": 0,    "max": 5000, "step": 100},
     {"key": "tds",               "name": "Total Dissolved Solids", "unit": "ppm", "type": "select",

@@ -176,6 +176,13 @@ export function navForRoleAndDept(role, department) {
   if (role === "technician") {
     const dept = (department || "").toLowerCase();
     if (dept === "landscaping") return TECH_LANDSCAPE_NAV;
+    // Phase 56.3.B — "both" = union of pool + landscape entries. Since
+    // TECH_POOL_NAV is derived from TECH_NAV with no removals AND
+    // TECH_LANDSCAPE_NAV strips only `/calculators`, the union is
+    // effectively the un-stripped TECH_NAV. Using TECH_NAV directly
+    // guarantees any future entry added to either variant surfaces
+    // automatically for `both` techs.
+    if (dept === "both") return TECH_NAV;
     // Both "pool" and unassigned fall back to the pool nav — pool is the
     // safe default so admins see the full tool surface until they
     // deliberately switch a tech's department.

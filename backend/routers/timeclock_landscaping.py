@@ -45,14 +45,25 @@ class PunchIn(BaseModel):
 
 
 def _require_landscaping(user: dict) -> None:
-    """Gate: only landscaping techs (per user `department` field)."""
+    """Phase 45.3 / 56.3.B follow-up — gate for the Landscape Time Clock.
+
+    Allowed callers:
+      • admin / super_admin  (any department, including "both")
+      • technicians with department = "landscaping" or "both"
+
+    Pool techs, customers, and unassigned techs → 403.
+    """
+    role = (user.get("role") or "").lower()
     dept = (user.get("department") or "").lower()
-    if dept != "landscaping":
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "not_landscaping",
-                    "msg": "Time Clock is available for landscaping techs only."},
-        )
+    if role in ("admin", "super_admin"):
+        return
+    if dept in ("landscaping", "both"):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={"code": "not_landscaping",
+                "msg": "Time Clock is available for landscape-authorized users only."},
+    )
 
 
 def _day_key(dt: datetime) -> str:
@@ -169,6 +180,32 @@ async def today(user: dict = Depends(get_current_user)):
         "clocked_in": open_in is not None,
         "open_job_id": (open_in or {}).get("job_id") if open_in else None,
     }
+
+
+@router.get("/mine-status")
+async def mine_status(user: dict = Depends(get_current_user)):
+    """Phase 56.3 follow-up — lightweight clock-in status probe used by
+    the job-open gate on the schedule / workstream. Unlike `/mine-today`
+    this returns only the boolean, so calendar taps stay snappy.
+
+    Restricted to landscape-authorized users (admins get through
+    `_require_landscaping`); everyone else 403s so the UI can skip the
+    gate entirely for roles it doesn't apply to."""
+    _require_landscaping(user)
+    today = date.today().isoformat()
+    rows = await db.timeclock_punches.find({
+        "tenant_id": user["tenant_id"], "user_id": user["id"],
+        "timestamp": {"$gte": f"{today}T00:00:00+00:00",
+                       "$lte": f"{today}T23:59:59+00:00"},
+        "punch_type": {"$in": ["in", "out"]},
+    }, {"_id": 0, "punch_type": 1, "timestamp": 1}).sort("timestamp", 1).to_list(50)
+    open_in = False
+    for p in rows:
+        if p["punch_type"] == "in":
+            open_in = True
+        elif p["punch_type"] == "out":
+            open_in = False
+    return {"clocked_in": open_in, "punch_count": len(rows)}
 
 
 # ── Phase 50.H · Assigned jobs picker for the top-of-page widget ──────
