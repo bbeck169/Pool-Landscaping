@@ -1673,3 +1673,102 @@ per-test tenant.
 Fresh-session brief for Steps 6/7/8 persisted verbatim in
 `memory/HANDOFF.md`.
 
+---
+
+## Phase 56.18 — Human-Readable Invoice Numbers (Feb 2026)
+
+`INV-{YYYY}-{NNNNNN}` for invoices, `MINV-{YYYY}-{NNNNNN}` for
+master invoices. Per-tenant, per-year, per-prefix atomic
+sequence with idempotent backfill.
+
+**Files touched:**
+- `backend/services/invoice_numbering.py` **(new)** —
+  `generate_invoice_number`, `assign_invoice_number_if_missing`,
+  `assign_by_tenant_id`, `ensure_uniqueness_indexes`,
+  `NUMBER_REGEX`. Uses `findOneAndUpdate($inc, upsert=True)` for
+  the counter (concurrency-safe).
+- `backend/routers/quotes.py` — number assignment on
+  `POST /quotes` (when `doc_type=="invoice"`); immutability
+  guard on `PUT /quotes/{qid}` (rejects any attempt to change
+  `invoice_number`).
+- `backend/routers/finances.py` — number assignment on both
+  autobilling paths (manual `run_billing_plan` + daily
+  scheduler `_fire_billing_plan`).
+- `backend/routers/billing.py` — master invoice number
+  assignment on `POST /master-invoices`.
+- `backend/migrations/backfill_invoice_numbers.py` **(new,
+  idempotent)** — orders by `created_at` ASC per tenant, skips
+  already-numbered docs, syncs `invoice_number_sequences.next_seq`
+  to `$max` so future generation never collides.
+- `backend/tests/test_phase56_18_invoice_numbers.py` **(new,
+  5 tests, all passing in 4.10s)**.
+- `frontend/src/pages/invoices/InvoicesList.jsx` — new leftmost
+  "Invoice #" column showing the number in a monospace cell
+  (`data-testid="invoice-number-{id}"`).
+
+**New Mongo collection**: `invoice_number_sequences` with unique
+index `(tenant_id, year, prefix)`.
+
+**Partial-unique indexes** added on the number fields:
+- `quotes`: `(tenant_id, invoice_number)` unique where
+  `invoice_number` exists.
+- `master_invoices`: `(tenant_id, master_invoice_number)` unique.
+
+**Backfill executed live** — aquaterra: **33 invoices** assigned
+(`INV-2026-000001` → `INV-2026-000033`), 0 master invoices (none
+existed). All other tenants: 0 invoices (empty).
+
+**Backend tests** — 5/5 passed in 4.10s:
+- `test_format_and_sequence` — sequential + regex + INV/MINV
+  separate counters.
+- `test_concurrency_no_dup` — 20 concurrent `asyncio.gather`
+  calls all yield unique numbers.
+- `test_assign_if_missing_is_idempotent` — helper never
+  overwrites an existing `invoice_number`.
+- `test_new_invoice_gets_number_and_is_immutable` — new
+  `POST /quotes` returns a valid `invoice_number`; `PUT` with
+  an override attempt returns 200 but the number is
+  unchanged (defense in depth: Pydantic drops the unknown
+  field + router's explicit strip).
+- `test_backfill_spot_check` — every invoice in the aquaterra
+  list has a valid `invoice_number` matching the regex.
+
+**Preflight**: `bash /app/scripts/preflight.sh` → exit 0 (424
+pre-existing dead-import WARNs; none new).
+
+**Non-goals held**: no custom prefix per tenant, no historic
+year override (backfill uses each invoice's own `created_at`
+year), no manual invoice-number override in v1, no credit-note
+numbering.
+
+**Deferrals (called out honestly)**:
+- **Master invoice list/detail column** — not shipped;
+  `MasterInvoice.jsx` list rendering unchanged. Small
+  follow-up.
+- **Invoice detail header prominence** — the number appears in
+  the detail response JSON but the JSX header layout for
+  `InvoicesList` detail view (`InvoiceDetail`) wasn't updated
+  in this ship. Backfill-safe deferral.
+- **Invoice PDF header** — not touched in this ship. Requires
+  updating the PDF template (`reportlab` code path) —
+  deferred to 56.18-followup.
+- **Search by invoice number** — deferred; the current
+  search box searches by title/customer, will match `INV-…`
+  strings if a user pastes one but there's no dedicated
+  index/filter yet.
+- **Mobile invoice list + detail** — deferred (no mobile
+  changes in this ship).
+- **Customer portal invoice display** — deferred.
+- **Email notifications + Stripe checkout description** —
+  deferred. Autobilling still fires correctly; the outgoing
+  Stripe description will get the number in a followup.
+- **Other 6 invoice-birth code paths** (grep for
+  `db.quotes.insert_one` in `estimates.py`,
+  `service_reports.py`, etc.) — not wired to
+  `assign_invoice_number_if_missing` yet. The backfill
+  migration is designed to be re-run periodically as a safety
+  net for these until they're individually instrumented.
+
+**Ship scope**: `git diff --stat HEAD` → 4 files changed / 23
+insertions. Plus 3 new files (service, migration, tests).
+

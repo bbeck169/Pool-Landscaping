@@ -74,6 +74,12 @@ async def create_quote(body: QuoteIn,
         "terms": terms,
         "created_at": now_iso(),
     }
+    # Phase 56.18 — assign human-readable invoice number on birth for
+    # docs typed as invoice (quotes don't get one; see routers/
+    # billing.py for master invoices).
+    if body.doc_type == "invoice":
+        from services.invoice_numbering import assign_invoice_number_if_missing
+        await assign_invoice_number_if_missing(doc, tenant)
     await db.quotes.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -90,6 +96,12 @@ async def update_quote(qid: str, body: QuoteUpdate,
     if not existing:
         raise HTTPException(404, "Not found")
     upd = {k: v for k, v in body.dict().items() if v is not None}
+    # Phase 56.18 — invoice_number is IMMUTABLE once assigned. Reject
+    # any attempt to overwrite (defensive; `QuoteUpdate` shouldn't
+    # accept it, but guard anyway in case an admin sends raw JSON).
+    if "invoice_number" in upd and upd["invoice_number"] != existing.get("invoice_number"):
+        raise HTTPException(400, "invoice_number is immutable once assigned")
+    upd.pop("invoice_number", None)
     if "line_items" in upd:
         upd["line_items"] = [li if isinstance(li, dict) else li.dict() for li in upd["line_items"]]
     if "line_items" in upd or "tax_rate" in upd:

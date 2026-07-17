@@ -166,6 +166,7 @@ export default function InvoicesList() {
           <table className="w-full text-sm" data-testid="invoices-table">
             <thead>
               <tr style={{ backgroundColor: colors.surfaceSecondary }}>
+                <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Invoice #</th>
                 <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Invoice</th>
                 <th className="text-left px-3 py-2 font-semibold hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>Customer</th>
                 <th className="text-left px-3 py-2 font-semibold hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }}>Due</th>
@@ -182,6 +183,7 @@ export default function InvoicesList() {
                   style={{ borderTop: `1px solid ${colors.divider}` }}
                   data-testid={`invoice-row-${r.id}`}
                 >
+                  <td className="px-3 py-3 font-mono text-xs" style={{ color: colors.onSurface }} data-testid={`invoice-number-${r.id}`}>{r.invoice_number || "—"}</td>
                   <td className="px-3 py-3 font-semibold" style={{ color: colors.onSurface }}>{r.title}</td>
                   <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>{r.customer_name}</td>
                   <td className="px-3 py-3 hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }}>{r.due_date || "—"}</td>

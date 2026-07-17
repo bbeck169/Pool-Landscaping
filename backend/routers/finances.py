@@ -316,6 +316,9 @@ async def run_billing_plan(pid: str,
         "status": "sent", "payment_status": "unpaid", "notes": "Auto-generated from billing plan",
         "billing_plan_id": pid, "created_at": now_iso(),
     }
+    # Phase 56.18 — number assignment on autobilling-generated invoices.
+    from services.invoice_numbering import assign_invoice_number_if_missing
+    await assign_invoice_number_if_missing(invoice, tenant)
     await db.quotes.insert_one(invoice)
     new_next = advance_date(plan.get("next_run") or now_iso(), plan.get("frequency", "monthly"))
     await db.billing_plans.update_one(
@@ -822,6 +825,9 @@ async def _fire_billing_plan(plan: dict, tenant: dict, current_month: str,
         "notes": f"Auto-generated from billing plan ({reason}).",
         "billing_plan_id": plan["id"], "created_at": now_iso(),
     }
+    # Phase 56.18 — number assignment on autobilling-generated invoices.
+    from services.invoice_numbering import assign_invoice_number_if_missing
+    await assign_invoice_number_if_missing(invoice, tenant)
     await db.quotes.insert_one(invoice)
     await db.billing_plans.update_one(
         {"id": plan["id"], "tenant_id": tenant["id"]},

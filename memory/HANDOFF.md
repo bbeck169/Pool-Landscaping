@@ -224,3 +224,18 @@ first.
 - 56.13d supplemental pool modules
 - 56.14 landscape training
 - 56.15 handbook + onboarding
+
+---
+
+## Phase 56.18 — Invoice Numbers (landed same session, separately)
+
+Human-readable `INV-YYYY-NNNNNN` invoice numbers. Backend service
++ backfill + partial-unique indexes + 5/5 tests green + list
+UI column. **33 aquaterra invoices backfilled**.
+
+Deferrals (explicit): master invoice list column, invoice detail
+header, PDF header, search-by-number, mobile UI, customer portal
+touch, email/Stripe description, and 6 additional
+invoice-birth code paths (backfill covers them until wired).
+
+See `PRD.md` for full 56.18 entry.

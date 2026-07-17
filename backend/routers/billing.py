@@ -222,6 +222,9 @@ async def create_master_invoice(body: MasterInvoiceIn,
         "payment_status": "unpaid" if balance > 0 else "paid",
         "created_at": now_iso(),
     }
+    # Phase 56.18 — master invoice number (MINV-YYYY-NNNNNN).
+    from services.invoice_numbering import assign_invoice_number_if_missing
+    await assign_invoice_number_if_missing(doc, tenant, master=True)
     await db.master_invoices.insert_one(doc)
     doc.pop("_id", None)
     return doc
