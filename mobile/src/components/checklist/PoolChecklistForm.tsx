@@ -95,11 +95,19 @@ export type PoolChecklistFormProps = {
   chemicalUnits: string[];
   checklistItems: ChecklistItem[];
   notes: string;
+  // Phase 56.7 mobile parity — internal notes textarea (private, admin
+  // + tech only) exposed on wizard step 6. Optional so legacy callers
+  // that haven't been updated to the wizard shell keep working.
+  internalNotes?: string;
+  // Phase 56.7 — when set (1..6), only render the section matching
+  // that step. `null` (default) ⇒ render everything (legacy scroll).
+  wizardStep?: number | null;
   onChange: (patch: Partial<{
     chemical_readings: Reading[];
     chemicals_added: ChemAdded[];
     checklist_items: ChecklistItem[];
     notes: string;
+    internal_notes: string;
   }>) => void;
 };
 
@@ -108,6 +116,12 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
     jobId, customerId, locked, readings, chemicalsAdded, chemicalsCatalog, chemicalUnits,
     checklistItems, notes, onChange,
   } = props;
+  const internalNotes = props.internalNotes || "";
+  const wizardStep = props.wizardStep ?? null;
+  // Helper: `inStep(n)` returns true when we're either in wizard mode
+  // on step `n` or when wizard mode is off. Keeps section guards to a
+  // single readable check downstream.
+  const inStep = (n: number) => wizardStep === null || wizardStep === n;
   const readingFields = (props as any).readingFields || [];
 
   // Phase 49.0 — Merge the backend template's `chemical_reading_fields`
@@ -342,7 +356,8 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
 
   return (
     <View testID="pool-checklist-form">
-      {/* Chemical Readings — Phase 36b chip UI (parity with web) */}
+      {/* Chemical Readings — Wizard step 1 */}
+      {inStep(1) ? (<>
       <Text style={styles.sectionTitle}>Chemical Readings</Text>
       <View>
         {mergedReadings.map((r, i) => {

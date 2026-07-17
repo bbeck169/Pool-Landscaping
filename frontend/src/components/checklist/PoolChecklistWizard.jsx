@@ -72,17 +72,26 @@ export default function PoolChecklistWizard({
   const goNext = useCallback(() => goTo(step + 1), [step, goTo]);
   const goBack = useCallback(() => goTo(step - 1), [step, goTo]);
 
-  // Step-level validation. Non-blocking on autosave; only the Next
-  // button disables. Readings pass when either a value is present OR
-  // the tech explicitly toggled Not-Tested. Checklist passes when
-  // every item is answered (checked OR unchecked-explicit-review).
-  const stepValid = useMemo(() => {
-    if (step === 1) {
-      const r = report?.chemical_readings || [];
-      return r.every((x) => x?.value !== undefined && x?.value !== null && x?.value !== "" || x?.not_tested === true);
-    }
-    return true;   // steps 2-6 have no strict blocking validation
-  }, [step, report]);
+  // Phase 56.6 bugfix — step gating rules (RELAXED from the initial
+  // ship). Autosave means data isn't lost even when incomplete, so the
+  // Next button never blocks; it only surfaces a helper hint when the
+  // tech hasn't answered anything yet. Hard validation is enforced only
+  // when they hit "Close Job" on step 6. Reason: the original strict
+  // gate silently disabled Next on step 1 because default readings
+  // arrive with `value: null` — techs saw no hint about why.
+  const readingsAllAnswered = useMemo(() => {
+    const rows = report?.chemical_readings || [];
+    if (!rows.length) return true;
+    return rows.every(
+      (x) => (x?.value !== undefined && x?.value !== null && x?.value !== "") ||
+             x?.not_tested === true,
+    );
+  }, [report]);
+  const readingsHint = step === 1 && !readingsAllAnswered
+    ? "Tip: enter values or toggle Not Tested for each row before closing the job."
+    : "";
+  const stepValid = true;   // Next is never hard-blocked in the wizard.
+  const closeJobValid = readingsAllAnswered;
 
   const allPhotos = report?.photos || [];
   const generalPhotos = allPhotos.filter((p) => (p?.tag || "general") !== "internal_issue");
@@ -210,10 +219,17 @@ export default function PoolChecklistWizard({
 
       {/* Nav footer */}
       <div
-        className="flex items-center justify-between px-4 py-3 sticky bottom-0"
+        className="flex flex-col gap-1 px-4 py-3 sticky bottom-0"
         style={{ background: c.surfaceAlt, borderTop: `1px solid ${c.border}` }}
         data-testid="wizard-nav-footer"
       >
+        {readingsHint ? (
+          <div className="text-[11px] text-center" style={{ color: c.muted }}
+               data-testid="wizard-readings-hint">
+            {readingsHint}
+          </div>
+        ) : null}
+        <div className="flex items-center justify-between">
         <button
           type="button"
           onClick={goBack}
@@ -249,19 +265,35 @@ export default function PoolChecklistWizard({
         ) : (
           <button
             type="button"
-            onClick={onCloseJob}
+            onClick={() => {
+              if (!closeJobValid) {
+                window.alert(
+                  "Some chemical readings are still blank. Please enter values or " +
+                  "toggle Not Tested on each row before closing the job."
+                );
+                goTo(1);
+                return;
+              }
+              onCloseJob?.();
+            }}
             disabled={locked || submitting}
             className="inline-flex items-center gap-1 text-sm font-bold px-4 py-1.5 rounded-md"
             style={{
-              background: c.success, color: "#fff", border: 0,
+              background: closeJobValid ? c.success : c.disabledBg,
+              color: closeJobValid ? "#fff" : c.disabledFg,
+              border: 0,
               cursor: (locked || submitting) ? "wait" : "pointer",
               opacity: (locked || submitting) ? 0.6 : 1,
             }}
             data-testid="wizard-close-job"
+            title={closeJobValid
+              ? "Submit the service report and mark the job complete."
+              : "Missing chemical readings — click to jump back and fix."}
           >
             {submitting ? "Submitting…" : "Close Job"}
           </button>
         )}
+        </div>
       </div>
     </div>
   );
