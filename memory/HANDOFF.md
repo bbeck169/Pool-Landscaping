@@ -73,12 +73,25 @@ widget endpoint. No refactor of existing code.
 - `frontend/src/pages/tech/ToolsHub.jsx` line 35 (tile becomes
   accessible; no banner change needed).
 
-### Mobile canvassing surface (Step 0 continuation → Step 7)
+### Mobile canvassing surface — CONFIRMED PRESENT (Step 0.5 done in prior session)
 
-**NOT YET SURVEYED.** First action in the fresh session: grep
-`/app/mobile` for D2D canvassing / sold-leads / property-lookup
-UI to determine whether Step 7 is a real deliverable or a
-"web-only" note in HANDOFF.
+Step 7 is a **real deliverable**, not a no-op. Surfaces to touch:
+
+- `mobile/app/(app)/d2d.tsx` — D2D screen tab
+- `mobile/app/(app)/property-lookup.tsx` — Property Lookup screen
+- `mobile/app/virtual-bid.tsx` — Virtual Bid (same Zillow lookup)
+- `mobile/app/d2d/index.tsx`
+- `mobile/app/d2d/leaderboard.tsx`
+- `mobile/app/d2d/report.tsx`
+- `mobile/src/components/d2d/*` — MapCanvas variants + dispo
+  helpers (chip likely wires at screen-header level, not here)
+- `mobile/src/components/tools/sections.ts` — nav registry;
+  verify whether tile visibility needs updating
+
+Chip + rate-limited banner must ship on `d2d.tsx`,
+`property-lookup.tsx`, and `virtual-bid.tsx` at minimum.
+D2D sub-screens should share the same usage state via a
+component-local subscription to the widget endpoint.
 
 ### Configuration
 
@@ -101,8 +114,8 @@ UI to determine whether Step 7 is a real deliverable or a
 
 ### Fresh-session opening actions (in strict order)
 
-1. Step 0 continuation — grep `/app/mobile` for canvassing UI;
-   confirm Step 7 scope (real vs. web-only).
+1. ~~Step 0 continuation — grep `/app/mobile` for canvassing UI;
+   confirm Step 7 scope~~ **DONE** (see above — Step 7 is real).
 2. Step 1 — `backend/services/zillow_rate_limit.py` +
    `zillow_usage` collection w/ TTL indexes.
 3. Step 2 — Tenant monthly budget guard w/ 90 % header + 100 %
