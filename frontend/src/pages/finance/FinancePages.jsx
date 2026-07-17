@@ -256,7 +256,7 @@ export function AutoBilling() {
   const [toast, setToast] = useState("");
   const [showNew, setShowNew] = useState(false);
   const [customers, setCustomers] = useState([]);
-  const [newPlan, setNewPlan] = useState({ customer_id: "", service: "Monthly Pool Service", frequency: "monthly", amount: 150, next_run: "" });
+  const [newPlan, setNewPlan] = useState({ customer_id: "", service: "Monthly Pool Service", frequency: "monthly", amount: 150, next_run: "", run_schedule: "first_of_month" });
 
   const load = () => {
     setLoading(true);
@@ -310,11 +310,33 @@ export function AutoBilling() {
     try {
       await api.post("/billing-plans", newPlan);
       setShowNew(false);
-      setNewPlan({ customer_id: "", service: "Monthly Pool Service", frequency: "monthly", amount: 150, next_run: "" });
+      setNewPlan({ customer_id: "", service: "Monthly Pool Service", frequency: "monthly", amount: 150, next_run: "", run_schedule: "first_of_month" });
       setToast("Plan created");
       load();
     } catch (e) { setToast(e.message); }
   };
+
+  // Phase 56.17 — client-side preview of the next fire anchor for the
+  // currently-selected schedule in the New Plan modal. Mirrors the
+  // server-side `anchor_date_for_month` helper so admins see the same
+  // date the backend will fire on.
+  const nextFirePreview = useMemo(() => {
+    const s = newPlan.run_schedule || "first_of_month";
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = today.getMonth(); // 0-indexed
+    const anchor = (yy, mm) => {
+      if (s === "first_of_month") return new Date(yy, mm, 1);
+      const first = new Date(yy, mm, 1);
+      const offset = (5 - first.getDay() + 7) % 7; // JS getDay: Sun=0…Fri=5
+      const firstFriday = 1 + offset;
+      const n = { first_friday: 0, second_friday: 1, third_friday: 2, fourth_friday: 3 }[s] ?? 0;
+      return new Date(yy, mm, firstFriday + n * 7);
+    };
+    let d = anchor(y, m);
+    if (d < today) d = anchor(m === 11 ? y + 1 : y, m === 11 ? 0 : m + 1);
+    return d.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  }, [newPlan.run_schedule]);
 
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto" data-testid="auto-billing-page">
@@ -488,6 +510,30 @@ export function AutoBilling() {
                    className="w-full px-3 py-2 rounded-lg text-sm"
                    style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}`, color: colors.onSurface }}
                    data-testid="new-plan-next-run" />
+
+            {/* Phase 56.17 — monthly anchor picker + next-fire preview. */}
+            <div>
+              <div className="text-[10px] font-bold uppercase tracking-wider mb-1"
+                   style={{ color: colors.muted, letterSpacing: 0.4 }}>
+                Run schedule
+              </div>
+              <select value={newPlan.run_schedule || "first_of_month"}
+                      onChange={(e) => setNewPlan({ ...newPlan, run_schedule: e.target.value })}
+                      className="w-full px-3 py-2 rounded-lg text-sm"
+                      style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+                      data-testid="new-plan-run-schedule">
+                <option value="first_friday"    data-testid="billing-plan-run-schedule-first_friday">1st Friday of the month</option>
+                <option value="second_friday"   data-testid="billing-plan-run-schedule-second_friday">2nd Friday of the month</option>
+                <option value="third_friday"    data-testid="billing-plan-run-schedule-third_friday">3rd Friday of the month</option>
+                <option value="fourth_friday"   data-testid="billing-plan-run-schedule-fourth_friday">4th Friday of the month</option>
+                <option value="first_of_month"  data-testid="billing-plan-run-schedule-first_of_month">1st of the month</option>
+              </select>
+              <div className="text-xs mt-1.5"
+                   style={{ color: colors.muted }}
+                   data-testid="billing-plan-next-fire-preview">
+                Next billing run: <span style={{ color: colors.onSurface, fontWeight: 600 }}>{nextFirePreview}</span>
+              </div>
+            </div>
             <div className="flex justify-end gap-2">
               <button onClick={() => setShowNew(false)}
                       className="px-4 py-2 rounded-lg text-sm font-semibold"

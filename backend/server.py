@@ -186,6 +186,12 @@ async def _background_seed():
                             id="seo_drip", replace_existing=True)
         scheduler.add_job(finances.run_monthly_chem_billing, "interval",
                             hours=24, id="chem_billing", replace_existing=True)
+        # Phase 56.17 — daily autobilling schedule dispatcher.
+        # Runs every day at 06:00 UTC; each plan's anchor date is
+        # computed in the tenant's own timezone inside the job.
+        scheduler.add_job(finances.run_daily_autobilling, "cron",
+                            hour=6, minute=0, id="autobilling_daily",
+                            replace_existing=True)
         scheduler.add_job(coverage.revert_expired_coverage, "interval",
                             hours=12, id="coverage_revert",
                             replace_existing=True)

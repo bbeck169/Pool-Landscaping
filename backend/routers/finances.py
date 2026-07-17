@@ -711,3 +711,288 @@ async def reset_terms_settings(admin: dict = Depends(require_admin)):
     )
     return await get_terms_defaults()
 
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 56.17 — Autobilling schedule options + daily auto-run
+# ═══════════════════════════════════════════════════════════════════
+#
+# Billing plans grew a `run_schedule` enum (`first_friday`,
+# `second_friday`, `third_friday`, `first_of_month`) so admins can
+# pick when a monthly cycle fires. The APScheduler used to run this
+# every 24 h; it now runs DAILY, computes each plan's anchor date in
+# the tenant's timezone, and fires exactly-once per plan per calendar
+# month (idempotency: `last_run_month == current YYYY-MM` → skip).
+# A grace window of 7 days catches up plans missed due to downtime.
+
+_VALID_SCHEDULES = ("first_friday", "second_friday", "third_friday", "fourth_friday", "first_of_month")
+
+
+def _default_schedule(plan: dict) -> str:
+    """Legacy plans have no `run_schedule` field; default to the old
+    behavior (fire on the 1st) so nothing changes for them until an
+    admin explicitly picks a new anchor."""
+    v = (plan or {}).get("run_schedule")
+    if v in _VALID_SCHEDULES:
+        return v
+    return "first_of_month"
+
+
+def _tenant_tz(tenant: dict):
+    """Return a `zoneinfo.ZoneInfo` for the tenant, defaulting to
+    America/Phoenix (Vistancia, AZ — no-DST). Falls back to UTC if
+    the stored value can't be parsed (never let scheduling crash on
+    a bad string)."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    name = (tenant or {}).get("timezone") or "America/Phoenix"
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        logger.warning(f"tenant timezone '{name}' not found; falling back to UTC")
+        return ZoneInfo("UTC")
+
+
+def anchor_date_for_month(schedule: str, year: int, month: int):
+    """Return the `date` this schedule anchors on for (year, month).
+    `first_friday` = first Friday, `second_friday` = second Friday,
+    etc. `first_of_month` = day 1. Never raises for the 4 valid
+    inputs; raises ValueError for anything else."""
+    from datetime import date as _date
+    if schedule not in _VALID_SCHEDULES:
+        raise ValueError(f"unknown schedule: {schedule}")
+    if schedule == "first_of_month":
+        return _date(year, month, 1)
+    # Find the first Friday of the month (weekday()==4 for Fri).
+    first = _date(year, month, 1)
+    offset_to_friday = (4 - first.weekday()) % 7  # 0..6
+    first_friday = _date(year, month, 1 + offset_to_friday)
+    if schedule == "first_friday":
+        return first_friday
+    if schedule == "second_friday":
+        return _date(year, month, first_friday.day + 7)
+    if schedule == "third_friday":
+        return _date(year, month, first_friday.day + 14)
+    if schedule == "fourth_friday":
+        # Fourth Friday of the month — always exists because months
+        # have at least 28 days AND `first_friday.day` is in 1..7,
+        # so first_friday.day + 21 is in 22..28.
+        return _date(year, month, first_friday.day + 21)
+    raise ValueError(f"unhandled schedule: {schedule}")
+
+
+def next_fire_preview(schedule: str, today) -> str:
+    """ISO date string for the next fire from `today` for `schedule`.
+    If today ≤ this month's anchor, use this month's; else next
+    month's."""
+    from datetime import date as _date
+    y, m = today.year, today.month
+    this_month = anchor_date_for_month(schedule, y, m)
+    if today <= this_month:
+        return this_month.isoformat()
+    # Roll to next month.
+    if m == 12:
+        return anchor_date_for_month(schedule, y + 1, 1).isoformat()
+    return anchor_date_for_month(schedule, y, m + 1).isoformat()
+
+
+async def _log_autobilling_run(**row):
+    row.setdefault("id", new_id())
+    row.setdefault("ts", now_iso())
+    await db.autobilling_runs.insert_one(row)
+
+
+async def _fire_billing_plan(plan: dict, tenant: dict, current_month: str,
+                             anchor: str, reason: str = "scheduled") -> dict:
+    """Do the same invoice-creation work `run_billing_plan` does, but
+    write to `autobilling_runs` too. Idempotent when combined with the
+    `last_run_month` guard at the caller."""
+    amount = float(plan.get("amount") or 0.0)
+    tax = round(amount * 0.08, 2)
+    invoice = {
+        "id": new_id(), "tenant_id": tenant["id"],
+        "customer_id": plan["customer_id"],
+        "customer_name": plan.get("customer_name") or "",
+        "title": plan.get("service", "Recurring Service"), "doc_type": "invoice",
+        "line_items": [{"description": plan.get("service", "Recurring Service"),
+                        "quantity": 1, "unit_price": amount}],
+        "tax_rate": 8.0, "subtotal": amount, "tax": tax,
+        "total": round(amount + tax, 2), "amount_paid": 0.0,
+        "due_date": (datetime.now(timezone.utc) + timedelta(days=14)).date().isoformat(),
+        "status": "sent", "payment_status": "unpaid",
+        "notes": f"Auto-generated from billing plan ({reason}).",
+        "billing_plan_id": plan["id"], "created_at": now_iso(),
+    }
+    await db.quotes.insert_one(invoice)
+    await db.billing_plans.update_one(
+        {"id": plan["id"], "tenant_id": tenant["id"]},
+        {"$set": {"last_run": now_iso(), "last_run_month": current_month}},
+    )
+    await _log_autobilling_run(
+        tenant_id=tenant["id"], plan_id=plan["id"],
+        plan_name=plan.get("service") or plan.get("customer_name") or plan["id"],
+        run_schedule=_default_schedule(plan),
+        anchor_date=anchor, current_month=current_month,
+        status="fired", message=f"Invoice {invoice['id']} created ({reason}).",
+        invoice_id=invoice["id"],
+    )
+    try:
+        await notify_customer(plan["customer_id"], "New invoice",
+                              f"An invoice for {plan.get('service', 'your service')} was issued.")
+    except Exception as e:
+        logger.warning(f"notify_customer skipped on plan {plan['id']}: {e}")
+    return {"ok": True, "invoice_id": invoice["id"]}
+
+
+async def run_daily_autobilling() -> dict:
+    """DAILY APScheduler tick. Iterates active billing plans across
+    every tenant, computes today's anchor for each in tenant TZ,
+    fires if today >= anchor AND we're still inside the 7-day grace
+    window AND `last_run_month != YYYY-MM`. Returns a summary dict."""
+    from datetime import date as _date
+    summary = {"fired": [], "skipped": 0, "late_missed": 0, "errors": 0}
+    tenants = await db.tenants.find({}, {"_id": 0}).to_list(500)
+    for tenant in tenants:
+        try:
+            tz = _tenant_tz(tenant)
+            today = datetime.now(tz).date()
+            ym = today.strftime("%Y-%m")
+            plans = await db.billing_plans.find(
+                {"tenant_id": tenant["id"], "active": {"$ne": False}}, {"_id": 0},
+            ).to_list(2000)
+            for plan in plans:
+                sched = _default_schedule(plan)
+                anchor = anchor_date_for_month(sched, today.year, today.month)
+                delta = (today - anchor).days  # negative until anchor
+                if delta < 0:
+                    summary["skipped"] += 1
+                    continue
+                if plan.get("last_run_month") == ym:
+                    summary["skipped"] += 1
+                    continue
+                if delta > 7:
+                    # More than 7 days past the anchor — don't
+                    # backfire; log the miss and let the admin
+                    # manually run.
+                    await _log_autobilling_run(
+                        tenant_id=tenant["id"], plan_id=plan["id"],
+                        plan_name=plan.get("service") or plan.get("customer_name"),
+                        run_schedule=sched,
+                        anchor_date=anchor.isoformat(), current_month=ym,
+                        status="late_missed",
+                        message=f"{delta} days past anchor — outside 7-day grace window; manual run required.",
+                    )
+                    summary["late_missed"] += 1
+                    continue
+                try:
+                    await _fire_billing_plan(
+                        plan, tenant, ym, anchor.isoformat(),
+                        reason="scheduled_catchup" if delta > 0 else "scheduled",
+                    )
+                    summary["fired"].append(plan["id"])
+                except Exception as e:
+                    summary["errors"] += 1
+                    await _log_autobilling_run(
+                        tenant_id=tenant["id"], plan_id=plan["id"],
+                        plan_name=plan.get("service"),
+                        run_schedule=sched,
+                        anchor_date=anchor.isoformat(), current_month=ym,
+                        status="error", message=f"Fire failed: {e}",
+                    )
+                    logger.warning(f"autobilling fire error plan={plan['id']}: {e}")
+        except Exception as e:
+            logger.warning(f"autobilling tenant loop error tenant={tenant.get('id')}: {e}")
+    logger.info(f"[phase56.17] autobilling daily tick summary={summary}")
+    return summary
+
+
+# ─── Endpoints ─────────────────────────────────────────────────────────
+
+@router.get("/billing-plans/{pid}/next-fire")
+async def get_next_fire(pid: str,
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    """Preview when a plan will next fire, in tenant timezone.
+    Returns `{ next_fire_date, run_schedule, last_run_month, in_grace_window }`."""
+    plan = await db.billing_plans.find_one(
+        {"id": pid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not plan:
+        raise HTTPException(404, "Plan not found")
+    tz = _tenant_tz(tenant)
+    today = datetime.now(tz).date()
+    sched = _default_schedule(plan)
+    return {
+        "next_fire_date": next_fire_preview(sched, today),
+        "run_schedule": sched,
+        "last_run_month": plan.get("last_run_month"),
+        "timezone": (tenant or {}).get("timezone") or "America/Phoenix",
+    }
+
+
+@router.post("/billing-plans/{pid}/run-now")
+async def run_now(pid: str,
+                  user: dict = Depends(require_admin),
+                  tenant: dict = Depends(get_current_tenant)):
+    """Manual admin action — fires the billing cycle immediately and
+    marks `last_run_month = current YYYY-MM` so the daily scheduler
+    won't double-fire in the same month."""
+    plan = await db.billing_plans.find_one(
+        {"id": pid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not plan:
+        raise HTTPException(404, "Plan not found")
+    tz = _tenant_tz(tenant)
+    today = datetime.now(tz).date()
+    ym = today.strftime("%Y-%m")
+    if plan.get("last_run_month") == ym:
+        raise HTTPException(409, "Plan already ran this calendar month; skip or wait for next month.")
+    sched = _default_schedule(plan)
+    anchor = anchor_date_for_month(sched, today.year, today.month).isoformat()
+    res = await _fire_billing_plan(plan, tenant, ym, anchor, reason="manual_run_now")
+    return {"ok": True, "invoice_id": res["invoice_id"], "last_run_month": ym}
+
+
+@router.get("/autobilling-runs")
+async def list_autobilling_runs(
+    plan_id: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    since: Optional[str] = Query(None, description="ISO date lower bound."),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Admin audit log of every autobilling fire attempt in this
+    tenant. Filter by plan_id / status / since (ISO date)."""
+    q: dict = {"tenant_id": tenant["id"]}
+    if plan_id:
+        q["plan_id"] = plan_id
+    if status:
+        q["status"] = status
+    if since:
+        q["ts"] = {"$gte": since}
+    rows = await db.autobilling_runs.find(q, {"_id": 0}).sort("ts", -1).to_list(2000)
+    return rows
+
+
+@router.patch("/tenant/settings")
+async def patch_tenant_settings(
+    body: TenantSettingsUpdate,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Admin-editable tenant settings (Phase 56.17 — timezone only,
+    for now)."""
+    upd = {}
+    if body.timezone is not None:
+        # Validate IANA name — fail fast on typos.
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            ZoneInfo(body.timezone)
+        except ZoneInfoNotFoundError:
+            raise HTTPException(400, f"unknown IANA timezone: {body.timezone}")
+        upd["timezone"] = body.timezone
+    if not upd:
+        return {"ok": True, "unchanged": True}
+    await db.tenants.update_one({"id": tenant["id"]}, {"$set": upd})
+    doc = await db.tenants.find_one({"id": tenant["id"]}, {"_id": 0})
+    return doc
+

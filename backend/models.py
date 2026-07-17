@@ -249,6 +249,20 @@ class BillingPlanIn(BaseModel):
     amount: float = 0.0
     next_run: Optional[str] = None
     active: Optional[bool] = True
+    # Phase 56.17 — monthly anchor picker. Existing plans without the
+    # field default to "first_of_month" at read time to preserve prior
+    # behavior (no bulk migration required).
+    run_schedule: Optional[str] = "first_of_month"
+
+    @field_validator("run_schedule")
+    @classmethod
+    def _check_schedule(cls, v):
+        v = (v or "first_of_month").strip().lower()
+        if v not in ("first_friday", "second_friday", "third_friday", "fourth_friday", "first_of_month"):
+            raise ValueError(
+                "run_schedule must be one of: first_friday | second_friday | third_friday | fourth_friday | first_of_month"
+            )
+        return v
 
 
 class BillingPlanUpdate(BaseModel):
@@ -257,6 +271,26 @@ class BillingPlanUpdate(BaseModel):
     amount: Optional[float] = None
     next_run: Optional[str] = None
     active: Optional[bool] = None
+    run_schedule: Optional[str] = None
+
+    @field_validator("run_schedule")
+    @classmethod
+    def _check_schedule(cls, v):
+        if v is None:
+            return v
+        v = v.strip().lower()
+        if v not in ("first_friday", "second_friday", "third_friday", "fourth_friday", "first_of_month"):
+            raise ValueError(
+                "run_schedule must be one of: first_friday | second_friday | third_friday | fourth_friday | first_of_month"
+            )
+        return v
+
+
+class TenantSettingsUpdate(BaseModel):
+    # Phase 56.17 — admin-editable tenant timezone. IANA name.
+    # Defaults to America/Phoenix (Vistancia, AZ — no-DST) elsewhere in
+    # the codebase; this update endpoint is the only way to change it.
+    timezone: Optional[str] = None
 
 
 class RepairIn(BaseModel):

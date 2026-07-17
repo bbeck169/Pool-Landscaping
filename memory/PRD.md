@@ -1436,3 +1436,81 @@ immutability, tenant custom CRUD with RBAC on every path.
 The active **training + service-report + equipment** triangle is
 now feature-complete for the pool tech workflow.
 
+---
+
+## Phase 56.17 + P0 nav fix — Autobilling Schedule Options + Auto-Run + Master Invoices 404 fix (Feb 2026)
+
+Two things landed:
+
+**P0 fix — Master Invoices 404**: `frontend/src/nav/adminNav.js`
+had a stale link to `/master-invoices` while the routes were
+mounted at `/invoices/master*`. One-line nav update — fully
+resolved. Not caused by any recent phase (predates the session).
+
+**Phase 56.17**: Autobilling gets a monthly-anchor picker with
+5 options (`first_friday`, `second_friday`, `third_friday`,
+`fourth_friday`, `first_of_month`) and a **daily** APScheduler
+tick (replacing the old every-24h chem-billing job's role for
+custom-anchor plans). Each plan fires exactly once per calendar
+month via a `last_run_month` idempotency guard, with a 7-day
+grace window for pod-downtime catch-up (>7-day misses log
+`late_missed` and require manual run). All fire attempts
+(scheduled, catch-up, manual, error, skip) write to a new
+`autobilling_runs` collection.
+
+**Backend**:
+- `run_schedule` enum on `BillingPlanIn` / `BillingPlanUpdate`.
+- `anchor_date_for_month` + `next_fire_preview` (pure functions).
+- `run_daily_autobilling` (new cron job at 06:00 UTC; anchor
+  computed in tenant's own timezone via `America/Phoenix`
+  default).
+- `POST /billing-plans/{id}/run-now` — admin manual fire w/
+  409 idempotency guard.
+- `GET /billing-plans/{id}/next-fire` — preview endpoint.
+- `GET /autobilling-runs` — audit log (admin-only, filters
+  by plan_id / status / since).
+- `PATCH /tenant/settings { timezone }` — IANA validation.
+
+**Web**: New Plan modal in `FinancePages.jsx` gains the
+Run Schedule dropdown + live next-fire preview.
+
+**Backend tests**: `test_phase56_17_autobilling.py` — 6 tests,
+all passing. Covers anchor math (Feb 4-Friday case, July
+5-Friday case where 4th anchor must be Jul 24 not Jul 31,
+Oct-Wed-start, May-Fri-start), timezone helper,
+`fifth_friday` rejection (422), run-now RBAC + idempotency,
+7-day grace window (fire vs. late_missed), `/autobilling-runs`
+RBAC, tenant timezone PATCH.
+
+**Non-goals held**: no per-customer overrides, no weekly/bi-
+weekly options, no 5th-Friday option (rare), no cross-month
+batching, no upcoming-run email/SMS.
+
+**Deferred**: dedicated `/admin/autobilling-runs` frontend
+audit page (endpoint is live; UI page is a small
+Phase 56.17-followup).
+
+**Files touched**:
+- `backend/models.py`
+- `backend/routers/finances.py` (+260 LOC 56.17 block)
+- `backend/server.py` (new daily cron job wire-in)
+- `backend/tests/test_phase56_17_autobilling.py` (new)
+- `frontend/src/pages/finance/FinancePages.jsx`
+- `frontend/src/nav/adminNav.js` (P0 fix)
+
+**Preflight**: `bash /app/scripts/preflight.sh` → exit 0.
+
+**Live curl proof**: `fourth_friday` on a plan created today
+previews Next billing run = `2026-07-24` (July's 4th Friday);
+run-now on it fires with `last_run_month="2026-07"`; second
+run-now returns HTTP 409; tech token on `/autobilling-runs`
+returns HTTP 403.
+
+**Priority order after this ship:**
+1-13: ✅ (all previous phases + 56.17 + P0 fix).
+14. **Paused**: 56.9b Zillow, T1-T6 calculators, 56.13d,
+    56.14, 56.15.
+15. **User decision needed**: end-of-visit auto-email,
+    "Nudge non-starters" widget action, RingCentral test
+    scope, Phase 56.17-followup autobilling audit UI page.
+

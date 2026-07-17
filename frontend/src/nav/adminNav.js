@@ -40,7 +40,7 @@ export const ADMIN_NAV_V2 = [
     // Invoicing
     { to: "/invoices",                  label: "Invoices",           icon: Receipt,    feature: "invoices",  subsection: "Invoicing" },
     { to: "/payments",                  label: "Payments",           icon: CreditCard, feature: "payments",  subsection: "Invoicing" },
-    { to: "/master-invoices",           label: "Master Invoices",    icon: Layers,     feature: "invoices",  subsection: "Invoicing" },
+    { to: "/invoices/master",           label: "Master Invoices",    icon: Layers,     feature: "invoices",  subsection: "Invoicing" },
     { to: "/auto-billing",              label: "Auto-billing",       icon: Repeat,     feature: "invoices",  subsection: "Invoicing" },
     { to: "/settings/late-fees",        label: "Late Fees",          icon: DollarSign, feature: "invoices",  subsection: "Invoicing" },
     { to: "/settings/billing",          label: "Billing Rules",      icon: Cog,        feature: "invoices",  subsection: "Invoicing" },
