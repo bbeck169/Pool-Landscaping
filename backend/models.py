@@ -591,3 +591,88 @@ class MaintLogIn(BaseModel):
     cell_condition: Optional[str] = None
     notes: Optional[str] = None
     photos: Optional[List[dict]] = None  # [{label, data(base64)}]
+
+
+# ─── Phase 56.13a — Training subsystem models ──────────────────────────────
+# Multi-tenant training modules for internal upskilling. System modules
+# (is_system=True, no tenant_id) are seeded via backend.seed.training_cpo
+# and are visible to every tenant read-only. Custom modules
+# (is_system=False, tenant_id set) are per-tenant and admin-editable.
+#
+# IP-safety: training content shipped in system modules is 100% original,
+# authored in-house. External standards (ANSI/APSP-11, CDC MAHC, VGB Act,
+# etc.) are cited by name and external link only — never republished.
+
+class TrainingLesson(BaseModel):
+    id: str
+    title: str
+    body_md: str
+    order: int = 0
+    word_count: Optional[int] = 0
+
+
+class TrainingQuizChoice(BaseModel):
+    id: str
+    text: str
+
+
+class TrainingQuizQuestion(BaseModel):
+    id: str
+    prompt: str
+    choices: List[TrainingQuizChoice]
+    correct_choice_ids: List[str]  # invariant: len == 1 (seed test enforces)
+    explanation: Optional[str] = ""
+    chapter_ref: Optional[str] = None
+
+
+class TrainingQuiz(BaseModel):
+    passing_score: float = 0.75
+    questions: List[TrainingQuizQuestion] = []
+
+
+class TrainingModuleIn(BaseModel):
+    """Payload for admin-created custom modules. System modules cannot be
+    created / edited / deleted through the API — only via the seed script."""
+    code: str
+    title: str
+    department: Optional[str] = "pool"     # pool | landscaping | both
+    description: Optional[str] = ""
+    lessons: Optional[List[TrainingLesson]] = []
+    quiz: Optional[TrainingQuiz] = None
+    badge_label: Optional[str] = ""
+    disclaimer: Optional[str] = ""
+
+    @field_validator("department")
+    @classmethod
+    def _check_dept(cls, v):
+        v = (v or "pool").strip().lower()
+        if v not in ("pool", "landscaping", "both"):
+            raise ValueError("department must be one of: pool, landscaping, both")
+        return v
+
+    @field_validator("code")
+    @classmethod
+    def _check_code(cls, v):
+        v = (v or "").strip().lower()
+        if not re.match(r"^[a-z0-9][a-z0-9_\-]{1,60}$", v):
+            raise ValueError("code must be lowercase, 2-61 chars, [a-z0-9_-]")
+        return v
+
+
+class TrainingModuleUpdate(BaseModel):
+    title: Optional[str] = None
+    department: Optional[str] = None
+    description: Optional[str] = None
+    lessons: Optional[List[TrainingLesson]] = None
+    quiz: Optional[TrainingQuiz] = None
+    badge_label: Optional[str] = None
+    disclaimer: Optional[str] = None
+
+
+class TrainingProgressIn(BaseModel):
+    lesson_id: str
+
+
+class TrainingQuizSubmit(BaseModel):
+    # question_id -> chosen choice_id
+    answers: dict

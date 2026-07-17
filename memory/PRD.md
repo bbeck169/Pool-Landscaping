@@ -697,3 +697,95 @@ new dosing formulas, high-pH ordering guard).
 - `/app/backend/tests/test_phase56_5_dosing.py`
 - `/app/memory/test_credentials.md`
 - `/app/memory/PRD.md`
+
+
+## Phase 56.13a — Training subsystem + CPO chapter drafts (Feb 2026)
+
+Multi-tenant training platform for internal upskilling. This phase ships
+the subsystem + CPO prep content drafts only — no DB seed yet.
+
+**Backend subsystem:**
+- New collections: `training_modules`, `training_progress`,
+  `training_quiz_attempts`.
+- New Pydantic models in `backend/models.py`: `TrainingLesson`,
+  `TrainingQuizChoice`, `TrainingQuizQuestion`, `TrainingQuiz`,
+  `TrainingModuleIn`, `TrainingModuleUpdate`, `TrainingProgressIn`,
+  `TrainingQuizSubmit`.
+- New router `backend/routers/training.py` (8 endpoints):
+  `GET/POST /api/training/modules`,
+  `GET/PATCH/DELETE /api/training/modules/{code}`,
+  `POST /api/training/modules/{code}/progress`,
+  `POST /api/training/modules/{code}/quiz`,
+  `GET /api/training/modules/{code}/attempts`.
+- Two module classes: **system modules** (`is_system=True`, no
+  `tenant_id`, seeded by trusted scripts only, cross-tenant read-only)
+  and **custom modules** (`is_system=False`, tenant-scoped,
+  admin-editable via API).
+- Custom module with same `code` as a system module overrides the system
+  version at the tenant scope.
+- RBAC: customer → 403 everywhere; techs see modules matching their
+  `department` (`pool` or `landscaping`, plus modules tagged `both`);
+  admins see all; only admins may create/patch/delete custom modules.
+- System modules are immutable via API — PATCH and DELETE return 409.
+
+**CPO prep content (drafts):**
+- 9 chapters authored in-house at 706-918 words each:
+  01_water_chemistry_fundamentals, 02_sanitization_and_oxidation,
+  03_filtration, 04_circulation_and_hydraulics,
+  05_disinfection_and_rwi_prevention, 06_chemical_feed_and_automation,
+  07_facility_safety, 08_regulations_and_code, 09_math_and_calculations.
+- 50 original multiple-choice questions in `quiz.json` (5-6 per chapter,
+  4 choices, exactly 1 correct, one-sentence explanation).
+- Badge label = **"CPO Prep — Completed"** (never "CPO Certified" —
+  enforced by test).
+- Persistent disclaimer on the module doc: *"This is prep material only.
+  Official CPO certification requires enrollment with an authorized
+  provider (PHTA / NSPF)."*
+
+**IP-safety commitments (locked):**
+- 100% original authorship, in-house engineering team.
+- No verbatim content from PHTA, NSPF, or any commercial CPO course.
+- External standards (ANSI/APSP-11, ANSI/APSP-16, ANSI/APSP-7,
+  CDC MAHC, VGB Act, ISPSC, ADA, OSHA HCS, NEC 680, NFPA 704, IAPMO,
+  NSF/ANSI 50) cited by name and canonical URL only.
+
+**Seed script (dry-run, DB unchanged this session):**
+- `backend/training_seed/training_cpo.py` reads the 9 `.md` chapters +
+  `quiz.json`, assembles the module doc, and defaults to `dry_run=True`.
+- Committing requires `python -m training_seed.training_cpo --commit`
+  which was NOT invoked in this session.
+- After user reviews the drafts, a follow-up **Phase 56.13a-commit**
+  ship will run the commit.
+
+**Tests (27 total, all passing):**
+- `tests/test_training.py` (16 tests): RBAC across all 5 role
+  permutations, department filter, tenant isolation, progress upsert,
+  quiz scoring math, attempts list scoping, system-module immutability.
+- `tests/test_training_cpo_seed.py` (11 tests): quiz-answer invariant,
+  ≥50 questions, badge-label guard, disclaimer verbatim, chapter word
+  bounds, chapter sha256 spot-check logging, dry-run reports
+  `committed=False`.
+
+**Updated priority order:**
+1. ✅ Phase 56.13a (shipped this phase).
+2. Phase 56.13a-commit — after user approves chapter drafts.
+3. Phase 56.10 — Visible algae field + AI remediation dosing.
+4. Phase 56.11 — Customer Equipment Photo Library (11 equipment types,
+   ≤4 photos each, admin-only delete, tenant isolation).
+5. PAUSED: 56.9b Zillow, T1-T6 calculators, 56.13b/c training UI,
+   56.13d supplemental pool modules, 56.14 landscaper training,
+   56.15 handbook.
+
+**Files touched:**
+- `backend/models.py` (Training* Pydantic models appended)
+- `backend/routers/training.py` (new, 8 endpoints)
+- `backend/server.py` (router registration)
+- `backend/tests/conftest.py` (cleanup rules extended)
+- `backend/tests/test_training.py` (new)
+- `backend/tests/test_training_cpo_seed.py` (new)
+- `backend/training_seed/__init__.py` (new)
+- `backend/training_seed/training_cpo.py` (new)
+- `backend/training_seed/training_cpo_chapters/01..09_*.md` (9 new)
+- `backend/training_seed/training_cpo_chapters/quiz.json` (new)
+- `memory/HANDOFF.md`
+- `memory/PRD.md`

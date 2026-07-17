@@ -49,8 +49,11 @@ _CLEANUP = {
     "retention_campaign_targets": {"customer_ids": {"$elemMatch": {"$regex": "^TEST-|^TEST_"}}},
     "marketing_campaigns": {"goal": {"$regex": "at-risk|retention.*TEST", "$options": "i"}},
     "idempotency_keys": {"tenant_id": {"$regex": "TEST_|^TEST-"}},
-    "users": {"email": {"$regex": "^TEST_dedup_|^TEST_solo_"}},
+    "users": {"email": {"$regex": "^TEST_dedup_|^TEST_solo_|^test-pool-tech@"}},
     "technicians": {"id": {"$regex": "^TEST-tech"}},
+    "training_modules": {"code": {"$regex": "^test_", "$options": "i"}},
+    "training_progress": {"module_code": {"$regex": "^test_", "$options": "i"}},
+    "training_quiz_attempts": {"module_code": {"$regex": "^test_", "$options": "i"}},
 }
 
 
