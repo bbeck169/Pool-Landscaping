@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 
-MODULE_CODE = "cpo_prep"
+MODULE_CODE = "cpo-prep"
 MODULE_TITLE = "Certified Pool Operator (CPO) — Prep Course"
 MODULE_DEPARTMENT = "pool"
 MODULE_DESCRIPTION = (

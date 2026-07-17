@@ -1,11 +1,8 @@
 """Phase 56.13a — Training subsystem (backend).
+Phase 56.13a-commit — adds Certificate of Completion (PDF).
 
 Multi-tenant training modules for internal upskilling (CPO prep,
-supplemental pool topics, landscaper training, etc.). Ships with the
-subsystem substrate ONLY — no CPO content is seeded from this router.
-The CPO content lives in `/app/backend/seed/training_cpo_chapters/` and
-is committed to the DB via `python -m backend.seed.training_cpo --commit`
-after user review.
+supplemental pool topics, landscaper training, etc.).
 
 Two module classes:
 - SYSTEM MODULES (`is_system=True`, no `tenant_id`): globally-visible,
@@ -14,29 +11,25 @@ Two module classes:
   tenant-scoped.
 
 RBAC:
-- customer               → 403 on every endpoint (no learner UI for customers).
-- technician             → read+take modules matching their department
-                           ("pool" tech sees pool + both; "landscaping"
-                           tech sees landscaping + both).
-- admin / super_admin    → read all + write custom + view all attempts.
+- customer               → 403 on every endpoint.
+- technician             → read+take modules matching their department.
+                           quiz answers redacted (no correct_choice_ids).
+- admin / super_admin    → read all + write custom + view all attempts +
+                           see full quiz answer key + admin cert audit.
 
-Endpoints (8):
-  GET    /api/training/modules
-  GET    /api/training/modules/{code}
-  POST   /api/training/modules              — admin only, custom modules
-  PATCH  /api/training/modules/{code}       — admin only, custom modules
-  DELETE /api/training/modules/{code}       — admin only, custom modules
-  POST   /api/training/modules/{code}/progress
-  POST   /api/training/modules/{code}/quiz
-  GET    /api/training/modules/{code}/attempts
-
-Collections:
-  - training_modules        {code (unique per tenant), is_system, tenant_id?, ...}
-  - training_progress       {tenant_id, user_id, module_code, lessons_completed[]}
-  - training_quiz_attempts  {tenant_id, user_id, module_code, score, passed, ...}
+Certificates (Phase 56.13a-commit):
+- Auto-awarded on first passing quiz attempt (score >= passing_score).
+- Retakes with higher score upgrade the existing cert (no duplicates).
+- PDF rendered on-demand (no S3 dependency); disclaimer prominent.
+- IMPORTANT: The PDF prominently states "CPO Prep — Not Official
+  Certification" and includes a bordered disclaimer block.
 """
+from io import BytesIO
+from datetime import datetime, timezone
 from typing import List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from config import db, logger
 from models import (
@@ -122,6 +115,22 @@ def _module_visible_to(mod: dict, u: dict) -> bool:
         return True
     depts = _visible_departments(u) or []
     return (mod.get("department") or "pool").lower() in depts
+
+
+def _redact_quiz_for_learner(mod: dict, user: dict) -> dict:
+    """Strip `correct_choice_ids` + `explanation` from every quiz question
+    so techs cannot cheat by reading the answer key from the API. Admins
+    and super_admins see the full quiz."""
+    if _is_admin(user):
+        return mod
+    quiz = mod.get("quiz") or {}
+    questions = quiz.get("questions") or []
+    redacted = []
+    for q in questions:
+        redacted.append({k: v for k, v in q.items()
+                         if k not in ("correct_choice_ids", "explanation")})
+    mod = {**mod, "quiz": {**quiz, "questions": redacted}}
+    return mod
 
 
 def _score_quiz(module: dict, submitted: dict) -> dict:
@@ -240,7 +249,7 @@ async def get_module(
         "lessons_completed": [], "started_at": None, "updated_at": None,
     }
     mod["last_attempt"] = last_attempt
-    return mod
+    return _redact_quiz_for_learner(mod, user)
 
 
 @router.post("/training/modules")
@@ -430,6 +439,15 @@ async def submit_quiz(
     }
     await db.training_quiz_attempts.insert_one(attempt)
     attempt.pop("_id", None)
+
+    # Phase 56.13a-commit — auto-award certificate on pass.
+    cert_id = None
+    if result["passed"]:
+        cert = await _award_or_upgrade_certificate(
+            tenant=tenant, user=user, module=mod, score=result["score"]
+        )
+        cert_id = cert.get("certificate_id")
+    attempt["certificate_id"] = cert_id
     return attempt
 
 
@@ -456,3 +474,236 @@ async def list_attempts(
     rows = await db.training_quiz_attempts.find(q, {"_id": 0})\
         .sort("submitted_at", -1).to_list(500)
     return rows
+
+
+# ─── Phase 56.13a-commit — Certificate helpers ─────────────────────────────
+_DISCLAIMER_PDF = (
+    "IMPORTANT: This is an internal training completion certificate only. "
+    "It does NOT constitute official Certified Pool Operator (CPO) "
+    "certification. Official CPO certification requires enrollment and "
+    "testing through an authorized provider such as PHTA or NSPF. Do not "
+    "use this certificate to represent yourself as a certified pool "
+    "operator to customers, employers, or regulatory bodies."
+)
+_SUBTITLE_PDF = "CPO Prep — Not Official Certification"
+
+
+async def _next_cert_sequence(tenant_id: str, module_code: str) -> int:
+    """Monotonic per-tenant + per-module cert sequence. Idempotent via
+    count+1 rule; racy under high concurrency but a single tenant awarding
+    certs one at a time on quiz pass will not hit that."""
+    n = await db.training_certificates.count_documents({
+        "tenant_id": tenant_id, "module_code": module_code,
+    })
+    return n + 1
+
+
+def _build_certificate_id(module_code: str, awarded_at_iso: str, seq: int) -> str:
+    """`CPO-PREP-2026-000042` — uppercased module code, year, 6-digit seq."""
+    year = awarded_at_iso[:4] if len(awarded_at_iso) >= 4 else datetime.now(timezone.utc).strftime("%Y")
+    slug = module_code.upper().replace("_", "-")
+    return f"{slug}-{year}-{seq:06d}"
+
+
+async def _award_or_upgrade_certificate(*, tenant: dict, user: dict, module: dict, score: float) -> dict:
+    """Idempotent: one cert per (tenant, user, module). Upgrade `quiz_score`
+    on higher retake. Returns the current cert doc (existing or new)."""
+    existing = await db.training_certificates.find_one(
+        {"tenant_id": tenant["id"], "user_id": user["id"], "module_code": module["code"]},
+        {"_id": 0},
+    )
+    now = now_iso()
+    if existing:
+        if score > float(existing.get("quiz_score") or 0):
+            await db.training_certificates.update_one(
+                {"tenant_id": tenant["id"], "user_id": user["id"], "module_code": module["code"]},
+                {"$set": {"quiz_score": score, "updated_at": now}},
+            )
+            existing["quiz_score"] = score
+            existing["updated_at"] = now
+        return existing
+
+    seq = await _next_cert_sequence(tenant["id"], module["code"])
+    cert_id = _build_certificate_id(module["code"], now, seq)
+    doc = {
+        "id": new_id(),
+        "certificate_id": cert_id,
+        "tenant_id": tenant["id"],
+        "user_id": user["id"],
+        "module_code": module["code"],
+        "module_title": module.get("title") or module["code"],
+        "user_name_snapshot": user.get("name") or user.get("email") or user["id"],
+        "tenant_name_snapshot": tenant.get("name") or tenant.get("slug") or "Company",
+        "quiz_score": float(score),
+        "awarded_at": now,
+        "updated_at": now,
+    }
+    await db.training_certificates.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+def _render_certificate_pdf(cert: dict) -> bytes:
+    """Landscape letter PDF using reportlab. Prominent 'Not Official
+    Certification' subtitle + bordered disclaimer block."""
+    from reportlab.lib.pagesizes import letter, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+    from reportlab.pdfgen import canvas
+
+    buf = BytesIO()
+    page_w, page_h = landscape(letter)
+    c = canvas.Canvas(buf, pagesize=landscape(letter))
+
+    # Border
+    c.setStrokeColor(colors.HexColor("#0284C7"))
+    c.setLineWidth(3)
+    c.rect(0.4 * inch, 0.4 * inch, page_w - 0.8 * inch, page_h - 0.8 * inch)
+
+    # Tenant name (header)
+    tenant_name = cert.get("tenant_name_snapshot") or "Company"
+    c.setFillColor(colors.HexColor("#0F172A"))
+    c.setFont("Helvetica-Bold", 14)
+    c.drawCentredString(page_w / 2, page_h - 1.0 * inch, tenant_name)
+
+    # Title
+    c.setFont("Helvetica-Bold", 32)
+    c.drawCentredString(page_w / 2, page_h - 1.8 * inch, "Certificate of Completion")
+
+    # PROMINENT SUBTITLE — required by spec
+    c.setFillColor(colors.HexColor("#B91C1C"))
+    c.setFont("Helvetica-Bold", 18)
+    c.drawCentredString(page_w / 2, page_h - 2.3 * inch, _SUBTITLE_PDF)
+
+    # Body
+    c.setFillColor(colors.HexColor("#0F172A"))
+    c.setFont("Helvetica", 14)
+    awarded_at = cert.get("awarded_at") or ""
+    awarded_display = awarded_at.split("T")[0] if "T" in awarded_at else awarded_at
+    score_pct = int(round(float(cert.get("quiz_score") or 0) * 100))
+    user_name = cert.get("user_name_snapshot") or ""
+    module_title = cert.get("module_title") or cert.get("module_code") or ""
+
+    body_y = page_h - 3.1 * inch
+    c.drawCentredString(page_w / 2, body_y, "This certifies that")
+    c.setFont("Helvetica-Bold", 22)
+    c.drawCentredString(page_w / 2, body_y - 0.5 * inch, user_name)
+    c.setFont("Helvetica", 14)
+    c.drawCentredString(page_w / 2, body_y - 1.0 * inch,
+                        f"completed the {module_title} training module")
+    c.drawCentredString(page_w / 2, body_y - 1.35 * inch,
+                        f"on {awarded_display} with a score of {score_pct}%.")
+
+    # Disclaimer block — bordered, prominent
+    disc_y = 1.2 * inch
+    disc_h = 1.4 * inch
+    disc_x = 0.9 * inch
+    disc_w = page_w - 1.8 * inch
+    c.setStrokeColor(colors.HexColor("#B91C1C"))
+    c.setLineWidth(2)
+    c.rect(disc_x, disc_y, disc_w, disc_h)
+    c.setFillColor(colors.HexColor("#7F1D1D"))
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(disc_x + 0.15 * inch, disc_y + disc_h - 0.25 * inch, "IMPORTANT DISCLAIMER")
+    c.setFont("Helvetica", 9)
+    c.setFillColor(colors.HexColor("#0F172A"))
+    # Simple wrap: chunk the disclaimer at ~100 chars.
+    text = c.beginText(disc_x + 0.15 * inch, disc_y + disc_h - 0.5 * inch)
+    text.setLeading(12)
+    words = _DISCLAIMER_PDF.split()
+    line, lines = "", []
+    for w in words:
+        if len(line) + len(w) + 1 > 120:
+            lines.append(line)
+            line = w
+        else:
+            line = (line + " " + w).strip()
+    if line:
+        lines.append(line)
+    for l in lines:
+        text.textLine(l)
+    c.drawText(text)
+
+    # Footer
+    c.setFillColor(colors.HexColor("#334155"))
+    c.setFont("Helvetica", 8)
+    c.drawString(0.7 * inch, 0.6 * inch,
+                 f"Certificate ID: {cert.get('certificate_id','')}")
+    c.drawRightString(page_w - 0.7 * inch, 0.6 * inch,
+                      f"Generated by Pool & Landscaping — {awarded_display}")
+
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+# ─── Phase 56.13a-commit — Certificate endpoints ───────────────────────────
+@router.get("/training/certificates")
+async def list_my_certificates(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Current user's certificates in this tenant."""
+    _forbid_customer(user)
+    rows = await db.training_certificates.find(
+        {"tenant_id": tenant["id"], "user_id": user["id"]}, {"_id": 0},
+    ).sort("awarded_at", -1).to_list(200)
+    return rows
+
+
+@router.get("/training/certificates/admin")
+async def list_all_certificates_admin(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Admin audit view — all certificates in this tenant."""
+    if not _is_admin(user):
+        raise HTTPException(403, "Admin access required")
+    rows = await db.training_certificates.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0},
+    ).sort("awarded_at", -1).to_list(1000)
+    return rows
+
+
+@router.get("/training/certificates/{certificate_id}")
+async def get_certificate(
+    certificate_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    _forbid_customer(user)
+    cert = await db.training_certificates.find_one(
+        {"tenant_id": tenant["id"], "certificate_id": certificate_id}, {"_id": 0},
+    )
+    if not cert:
+        raise HTTPException(404, "Certificate not found")
+    if not _is_admin(user) and cert.get("user_id") != user["id"]:
+        raise HTTPException(403, "Not your certificate")
+    return cert
+
+
+@router.get("/training/certificates/{certificate_id}/pdf")
+async def download_certificate_pdf(
+    certificate_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    _forbid_customer(user)
+    cert = await db.training_certificates.find_one(
+        {"tenant_id": tenant["id"], "certificate_id": certificate_id}, {"_id": 0},
+    )
+    if not cert:
+        raise HTTPException(404, "Certificate not found")
+    if not _is_admin(user) and cert.get("user_id") != user["id"]:
+        raise HTTPException(403, "Not your certificate")
+    pdf_bytes = _render_certificate_pdf(cert)
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'inline; filename="{cert.get("certificate_id","certificate")}.pdf"'
+            ),
+        },
+    )
+

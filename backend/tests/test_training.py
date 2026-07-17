@@ -354,6 +354,174 @@ class TestQuizScoring:
             requests.delete(f"{BASE}/api/training/modules/{code}", headers=h_admin, timeout=15)
 
 
+# ─── Phase 56.13a-commit — Certificate tests ───────────────────────────────
+class TestCertificates:
+
+    def _post_pass(self, code, h):
+        return requests.post(f"{BASE}/api/training/modules/{code}/quiz",
+                             headers=h,
+                             json={"answers": {"q1": "a", "q2": "b", "q3": "a", "q4": "b"}},
+                             timeout=15)
+
+    def _post_fail(self, code, h):
+        return requests.post(f"{BASE}/api/training/modules/{code}/quiz",
+                             headers=h,
+                             json={"answers": {"q1": "b", "q2": "a", "q3": "b", "q4": "a"}},
+                             timeout=15)
+
+    def test_cert_auto_awarded_on_pass(self, h_admin, h_tech_pool):
+        code = "test_cert_pass"
+        try:
+            requests.post(f"{BASE}/api/training/modules", headers=h_admin,
+                          json=_mk_module(code, department="pool"), timeout=15)
+            r = self._post_pass(code, h_tech_pool)
+            assert r.status_code == 200
+            d = r.json()
+            assert d["passed"] is True and d["certificate_id"], d
+            # Verify it appears on the tech's own cert list.
+            lst = requests.get(f"{BASE}/api/training/certificates",
+                               headers=h_tech_pool, timeout=15).json()
+            assert any(c["certificate_id"] == d["certificate_id"] for c in lst)
+        finally:
+            requests.delete(f"{BASE}/api/training/modules/{code}", headers=h_admin, timeout=15)
+
+    def test_cert_NOT_awarded_on_fail(self, h_admin, h_tech_pool):
+        code = "test_cert_fail"
+        try:
+            requests.post(f"{BASE}/api/training/modules", headers=h_admin,
+                          json=_mk_module(code, department="pool"), timeout=15)
+            r = self._post_fail(code, h_tech_pool)
+            assert r.status_code == 200
+            d = r.json()
+            assert d["passed"] is False and d["certificate_id"] is None, d
+        finally:
+            requests.delete(f"{BASE}/api/training/modules/{code}", headers=h_admin, timeout=15)
+
+    def test_duplicate_pass_does_not_create_duplicate_cert(self, h_admin, h_tech_pool):
+        code = "test_cert_dedupe"
+        try:
+            requests.post(f"{BASE}/api/training/modules", headers=h_admin,
+                          json=_mk_module(code, department="pool"), timeout=15)
+            r1 = self._post_pass(code, h_tech_pool).json()
+            r2 = self._post_pass(code, h_tech_pool).json()
+            assert r1["certificate_id"] == r2["certificate_id"], \
+                "second pass must reuse the same cert id"
+            lst = requests.get(f"{BASE}/api/training/certificates",
+                               headers=h_tech_pool, timeout=15).json()
+            same = [c for c in lst if c["module_code"] == code]
+            assert len(same) == 1, "must never duplicate a cert row"
+        finally:
+            requests.delete(f"{BASE}/api/training/modules/{code}", headers=h_admin, timeout=15)
+
+    def test_pdf_endpoint_returns_pdf_with_disclaimer(self, h_admin, h_tech_pool):
+        code = "test_cert_pdf"
+        try:
+            requests.post(f"{BASE}/api/training/modules", headers=h_admin,
+                          json=_mk_module(code, department="pool"), timeout=15)
+            r = self._post_pass(code, h_tech_pool)
+            cert_id = r.json()["certificate_id"]
+            pdf = requests.get(f"{BASE}/api/training/certificates/{cert_id}/pdf",
+                               headers=h_tech_pool, timeout=15)
+            assert pdf.status_code == 200
+            assert pdf.headers.get("content-type", "").startswith("application/pdf")
+            assert len(pdf.content) > 1000, "PDF suspiciously small"
+
+            # Byte-level assertions on the PDF text: the disclaimer + subtitle
+            # must be embedded verbatim. reportlab writes the drawn strings
+            # into the PDF as ASCII text objects; extract with pypdf.
+            try:
+                from pypdf import PdfReader
+            except Exception:
+                import pytest as _pt
+                _pt.skip("pypdf not installed; skipping byte-match assertion")
+            reader = PdfReader(BytesIO_local := __import__("io").BytesIO(pdf.content))
+            page_text = "".join((p.extract_text() or "") for p in reader.pages)
+            # Normalize whitespace to collapse the reportlab word-wrap so
+            # byte-match still catches the disclaimer.
+            import re as _re
+            flat = _re.sub(r"\s+", " ", page_text)
+            assert "CPO Prep — Not Official Certification" in flat, \
+                f"subtitle missing from PDF: {flat[:400]}"
+            assert "does NOT constitute official Certified Pool Operator (CPO) certification" in flat, \
+                "disclaimer body missing from PDF"
+            assert "authorized provider such as PHTA or NSPF" in flat, \
+                "PHTA/NSPF citation missing from disclaimer"
+            # Guard: PDF must NEVER contain "CPO Certified".
+            assert "CPO Certified" not in flat, \
+                "PDF contains forbidden phrase 'CPO Certified'"
+        finally:
+            requests.delete(f"{BASE}/api/training/modules/{code}", headers=h_admin, timeout=15)
+
+    def test_user_cannot_read_another_users_cert(self, h_admin, h_tech_pool, h_tech_land):
+        code = "test_cert_privacy_both"
+        try:
+            # Use "both" dept so land tech can also see the module and thus
+            # earn a cert. Then verify pool tech cannot fetch land tech's cert.
+            requests.post(f"{BASE}/api/training/modules", headers=h_admin,
+                          json=_mk_module(code, department="both"), timeout=15)
+            land_pass = self._post_pass(code, h_tech_land).json()
+            other_cert_id = land_pass["certificate_id"]
+            assert other_cert_id
+            r = requests.get(f"{BASE}/api/training/certificates/{other_cert_id}",
+                             headers=h_tech_pool, timeout=15)
+            assert r.status_code == 403
+            # Admin CAN see it.
+            r = requests.get(f"{BASE}/api/training/certificates/{other_cert_id}",
+                             headers=h_admin, timeout=15)
+            assert r.status_code == 200
+        finally:
+            requests.delete(f"{BASE}/api/training/modules/{code}", headers=h_admin, timeout=15)
+
+    def test_admin_audit_endpoint_lists_all_certs(self, h_admin, h_tech_pool):
+        code = "test_cert_audit"
+        try:
+            requests.post(f"{BASE}/api/training/modules", headers=h_admin,
+                          json=_mk_module(code, department="pool"), timeout=15)
+            self._post_pass(code, h_tech_pool)
+            r = requests.get(f"{BASE}/api/training/certificates/admin",
+                             headers=h_admin, timeout=15)
+            assert r.status_code == 200
+            assert any(c["module_code"] == code for c in r.json())
+            # Tech role blocked from admin audit endpoint.
+            r = requests.get(f"{BASE}/api/training/certificates/admin",
+                             headers=h_tech_pool, timeout=15)
+            assert r.status_code == 403
+        finally:
+            requests.delete(f"{BASE}/api/training/modules/{code}", headers=h_admin, timeout=15)
+
+
+class TestAnswerKeyRedaction:
+    """Techs must not see `correct_choice_ids` — the answer key — from
+    `GET /api/training/modules/{code}`. Admins do see it."""
+
+    def test_tech_gets_redacted_quiz(self, h_admin, h_tech_pool):
+        code = "test_redact"
+        try:
+            requests.post(f"{BASE}/api/training/modules", headers=h_admin,
+                          json=_mk_module(code, department="pool"), timeout=15)
+            mod = requests.get(f"{BASE}/api/training/modules/{code}",
+                               headers=h_tech_pool, timeout=15).json()
+            for q in mod["quiz"]["questions"]:
+                assert "correct_choice_ids" not in q, \
+                    "leaked answer key to technician: " + str(q)
+                assert "explanation" not in q, \
+                    "leaked explanation to technician: " + str(q)
+        finally:
+            requests.delete(f"{BASE}/api/training/modules/{code}", headers=h_admin, timeout=15)
+
+    def test_admin_sees_full_quiz(self, h_admin):
+        code = "test_redact_admin"
+        try:
+            requests.post(f"{BASE}/api/training/modules", headers=h_admin,
+                          json=_mk_module(code, department="pool"), timeout=15)
+            mod = requests.get(f"{BASE}/api/training/modules/{code}",
+                               headers=h_admin, timeout=15).json()
+            for q in mod["quiz"]["questions"]:
+                assert "correct_choice_ids" in q
+        finally:
+            requests.delete(f"{BASE}/api/training/modules/{code}", headers=h_admin, timeout=15)
+
+
 # ─── System module immutability ────────────────────────────────────────────
 class TestSystemModuleImmutability:
     """These tests are guardrails against a future CPO seed accidentally being

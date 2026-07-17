@@ -676,3 +676,26 @@ class TrainingProgressIn(BaseModel):
 class TrainingQuizSubmit(BaseModel):
     # question_id -> chosen choice_id
     answers: dict
+
+
+# ─── Phase 56.13a-commit — Certificate models ──────────────────────────────
+# One certificate per (tenant_id, user_id, module_code). Auto-awarded on
+# first passing quiz attempt (score >= passing_score). On subsequent passes
+# with a higher score, the existing cert's `quiz_score` is upgraded and the
+# PDF is regenerated on-demand (no duplicate rows).
+#
+# Certificate ID format: {MODULE_UPPER}-{YEAR}-{SEQ:06d} where SEQ is a
+# monotonic per-tenant counter. Example: CPO-PREP-2026-000042.
+
+class TrainingCertificate(BaseModel):
+    id: str                          # UUID
+    certificate_id: str              # human-readable, e.g. CPO-PREP-2026-000042
+    tenant_id: str
+    user_id: str
+    module_code: str
+    module_title: str
+    user_name_snapshot: str
+    tenant_name_snapshot: str
+    quiz_score: float                # 0.0 – 1.0 (persist as fraction; render as %)
+    awarded_at: str
+    updated_at: Optional[str] = None

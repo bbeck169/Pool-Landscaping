@@ -51,9 +51,10 @@ _CLEANUP = {
     "idempotency_keys": {"tenant_id": {"$regex": "TEST_|^TEST-"}},
     "users": {"email": {"$regex": "^TEST_dedup_|^TEST_solo_|^test-pool-tech@"}},
     "technicians": {"id": {"$regex": "^TEST-tech"}},
-    "training_modules": {"code": {"$regex": "^test_", "$options": "i"}},
-    "training_progress": {"module_code": {"$regex": "^test_", "$options": "i"}},
-    "training_quiz_attempts": {"module_code": {"$regex": "^test_", "$options": "i"}},
+    "training_modules": {"$or": [{"code": {"$regex": "^test_", "$options": "i"}}, {"code": "test_system_immutable"}]},
+    "training_progress": {"module_code": {"$regex": "^test_|^cpo-prep$", "$options": "i"}},
+    "training_quiz_attempts": {"module_code": {"$regex": "^test_|^cpo-prep$", "$options": "i"}},
+    "training_certificates": {"module_code": {"$regex": "^test_|^cpo-prep$", "$options": "i"}},
 }
 
 

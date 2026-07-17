@@ -1,123 +1,112 @@
 # HANDOFF — most recent shipped phase
 
-## Phase 56.13a · CPO Prep Training subsystem + chapter drafts (Feb 2026)
+## Phase 56.13a-commit · CPO Prep seed + Certificate of Completion (Feb 2026)
 
-**What shipped:**
-1. **Training backend subsystem** — `training_modules`, `training_progress`,
-   `training_quiz_attempts` MongoDB collections; three Pydantic model
-   families (`TrainingModuleIn/Update`, `TrainingProgressIn`, `TrainingQuizSubmit`);
-   `/app/backend/routers/training.py` with 8 endpoints; registered on
-   `api_router` in `server.py`.
-2. **RBAC + tenant isolation**:
-   - `customer` role → 403 on every endpoint.
-   - `technician` w/ `department: pool` → sees `pool` + `both`.
-   - `technician` w/ `department: landscaping` → sees `landscaping` + `both`.
-   - `admin` / `super_admin` → sees all + can CRUD custom modules.
-   - System modules (`is_system=True`, no `tenant_id`) are cross-tenant
-     read-only. Custom modules are strictly tenant-scoped (verified by
-     cross-tenant leak test using sunbelt admin).
-3. **CPO prep chapter drafts (9 files)** — all authored in-house, 100%
-   original, external standards cited by name + link only. Word counts:
-   ```
-   01_water_chemistry_fundamentals.md      734
-   02_sanitization_and_oxidation.md        706
-   03_filtration.md                        778
-   04_circulation_and_hydraulics.md        810
-   05_disinfection_and_rwi_prevention.md   731
-   06_chemical_feed_and_automation.md      825
-   07_facility_safety.md                   854
-   08_regulations_and_code.md              856
-   09_math_and_calculations.md             918
-   ```
-   All within the 400-1200 word guard band.
-4. **CPO quiz drafts (`quiz.json`)** — 50 original multiple-choice
-   questions across the 9 chapters. Every question has exactly 4 choices
-   and exactly 1 correct answer. Passing score = 0.75.
-5. **Seed script** — `/app/backend/training_seed/training_cpo.py`.
-   Default is `dry_run=True`; the module ships a `--commit` CLI flag
-   which was NOT invoked in this session. The DB is unchanged
-   (`training_modules` count = 0, `is_system` count = 0).
-6. **Backend subsystem tests** — 16 tests in `tests/test_training.py`
-   covering:
-   - RBAC matrix on `GET /api/training/modules` across all 5 roles.
-   - Department filtering (pool tech blocked from landscaping module;
-     `both`-department modules visible to all techs).
-   - Admin-only writes (tech gets 403; admin can CRUD).
-   - Tenant isolation (sunbelt admin cannot see aquaterra custom module).
-   - Progress tracking (upsert, idempotent `$addToSet`, invalid lesson id).
-   - Quiz scoring (perfect pass, partial fail below threshold).
-   - Attempts list scoping (tech sees only own; admin can filter).
-   - System-module immutability (PATCH + DELETE both return 409).
-7. **Seed integrity tests** — 11 tests in `tests/test_training_cpo_seed.py`:
-   - Every quiz question has exactly 1 `correct_choice_ids`.
-   - ≥ 50 questions, passing score = 0.75.
-   - Badge label = "CPO Prep — Completed" (never "CPO Certified").
-   - Disclaimer string present verbatim on the module doc.
-   - All 9 chapters within 400-1200 word bounds.
-   - Chapter sha256 map logged for spot-check (no duplicate shas).
-   - Dry-run reports `committed=False`, `is_system=True`.
+**Part 1 — Seed committed**
+- `python -m training_seed.training_cpo --commit` executed successfully.
+- `db.training_modules.count_documents({"code": "cpo-prep"}) == 1`.
+- Module properties: `is_system=true`, `department="pool"`, 9 lessons, 50
+  questions, badge = "CPO Prep — Completed", disclaimer verbatim.
+- Note: seed uses `code="cpo-prep"` (dash) per user spec — updated from
+  the earlier draft's `cpo_prep`.
 
-**IP-safety commitments (locked):**
-- No verbatim text from PHTA, NSPF, or any commercial CPO course.
-- External standards (ANSI/APSP-11, ANSI/APSP-16, ANSI/APSP-7,
-  CDC MAHC, VGB Act, ISPSC, ADA, OSHA, NEC 680, NFPA 704, NSF/ANSI 50,
-  IAPMO) cited by name and canonical link only.
-- Badge label enforced by test to never say "CPO Certified".
-- Persistent disclaimer on the module doc: *"This is prep material only.
-  Official CPO certification requires enrollment with an authorized
-  provider (PHTA / NSPF)."*
+**Part 2 — Certificate of Completion (PDF)**
+- New Pydantic model: `TrainingCertificate` in `backend/models.py`.
+- New collection: `training_certificates`.
+- Auto-award rule: on `POST /api/training/modules/{code}/quiz` with
+  `passed=true`, insert a cert if none exists for
+  `(tenant_id, user_id, module_code)`. Retakes with a higher score
+  upgrade the existing cert's `quiz_score` — no duplicate rows.
+- `certificate_id` format: `CPO-PREP-2026-000001` (module-uppercased,
+  year, 6-digit monotonic per-tenant-per-module sequence).
+- 4 new endpoints in `backend/routers/training.py`:
+  - `GET /api/training/certificates` — current user's certs
+  - `GET /api/training/certificates/admin` — admin-only, tenant audit
+  - `GET /api/training/certificates/{certificate_id}` — get one
+    (owner or admin only)
+  - `GET /api/training/certificates/{certificate_id}/pdf` — inline PDF
+- PDF renderer: reportlab landscape letter. Layout:
+  - Header: tenant name (snapshot)
+  - Title: "Certificate of Completion"
+  - **Prominent subtitle**: "CPO Prep — Not Official Certification"
+    (red, bold, 18pt — cannot be missed)
+  - Body: "This certifies that {user_name} completed the {module_title}
+    training module on {awarded_at} with a score of {score}%."
+  - **Bordered disclaimer block** (red border, red heading): the full
+    disclaimer including "does NOT constitute official Certified Pool
+    Operator (CPO) certification" and PHTA/NSPF citation.
+  - Footer: certificate_id + "Generated by Pool & Landscaping" + date
 
-**Verification:**
-- 16/16 backend subsystem tests passing (`test_training.py`).
-- 11/11 seed integrity tests passing (`test_training_cpo_seed.py`).
-- `python -m training_seed.training_cpo` (dry-run) prints the payload
-  summary with `committed=false`.
-- `GET /api/training/modules` returns `[]` for admin (no seed committed).
-- `GET /api/training/modules` returns HTTP 403 for customer role.
-- `db.training_modules.count_documents({}) == 0` (verified).
-- `bash /app/scripts/preflight.sh` → exit 0.
+**Answer-key redaction (extra security tightening)**
+- `GET /api/training/modules/{code}` strips `correct_choice_ids` and
+  `explanation` from every quiz question when the caller is not admin
+  or super_admin. Techs can still answer the quiz — they just cannot
+  read the answer key from the API. Admins see the full quiz.
+- Verified by two dedicated tests
+  (`TestAnswerKeyRedaction::test_tech_gets_redacted_quiz` +
+  `test_admin_sees_full_quiz`).
 
-**What is deferred:**
-- **Phase 56.13a-commit** — the small mechanical ship that runs
-  `python -m training_seed.training_cpo --commit` after user reviews
-  and approves the 9 chapter `.md` files + `quiz.json`.
-- **Phase 56.10** — Visible algae field + AI remediation dosing.
-- **Phase 56.11** — Customer Equipment Photo Library (11 equipment
-  types, ≤4 photos each, admin-only delete, tenant isolation).
-- **Phase 56.13b / 56.13c** — Web + mobile Training UI (including
-  top-level "Tests" nav).
+**Tests — 24 subsystem + 11 seed integrity = 35 total, all passing**
+- 8 new certificate/redaction tests:
+  - `test_cert_auto_awarded_on_pass` — pass returns non-null cert_id.
+  - `test_cert_NOT_awarded_on_fail` — fail returns cert_id=None.
+  - `test_duplicate_pass_does_not_create_duplicate_cert` — retake reuses id.
+  - `test_pdf_endpoint_returns_pdf_with_disclaimer` — byte-match asserts:
+    * `"CPO Prep — Not Official Certification"` present verbatim.
+    * `"does NOT constitute official Certified Pool Operator (CPO) certification"` present.
+    * `"authorized provider such as PHTA or NSPF"` present.
+    * `"CPO Certified"` absent (forbidden phrase guard).
+  - `test_user_cannot_read_another_users_cert` — 403 across users.
+  - `test_admin_audit_endpoint_lists_all_certs` — admin list works;
+    tech role blocked.
+  - `test_tech_gets_redacted_quiz` — answer key stripped.
+  - `test_admin_sees_full_quiz` — answer key visible to admin.
 
-**Updated priority order (confirmed with user):**
-1. ✅ Phase 56.13a — Training backend + subsystem + CPO chapter drafts
-   (DONE — this ship).
-2. **Next: Phase 56.13a-commit** — after user reviews `.md` chapters
-   + quiz, run `python -m training_seed.training_cpo --commit`.
-3. Then: Phase 56.10 — Visible algae field + AI remediation dosing.
-4. Then: Phase 56.11 — Customer Equipment Photo Library.
-5. **PAUSED**: 56.9b Zillow, T1–T6 calculators, 56.13b/c UI, 56.13d
-   supplemental pool modules, 56.14 landscaper training, 56.15 handbook.
+**Verification (sample curl)**
+```
+1) Admin GET /api/training/modules → shows cpo-prep (is_system=true,
+   9 lessons, 50 questions, disclaimer present).
+2) Tech GET /api/training/modules/cpo-prep → quiz question keys are
+   ['chapter', 'choices', 'id', 'prompt'] (no correct_choice_ids,
+   no explanation).
+3) Admin GET /api/training/modules/cpo-prep → quiz question keys
+   include 'correct_choice_ids' + 'explanation'.
+4) Tech POST /quiz with wrong answers → score=0.0, passed=False,
+   certificate_id=None.
+5) Tech POST /quiz with all correct → score=1.0, passed=True,
+   certificate_id="CPO-PREP-2026-000001".
+6) Tech GET /api/training/certificates → 1 cert row.
+7) Tech GET /certificates/{id}/pdf → 2342-byte %PDF-1.4 with
+   Content-Type: application/pdf.
+```
 
-**Deviation from spec (noted for record):**
-- User's spec named the seed package `backend/seed/`. That path
-  collides with the existing `/app/backend/seed.py` (611-line startup
-  seeder consumed by `server.py`). The seed script and chapter folder
-  were placed at `/app/backend/training_seed/` instead. Invocation
-  becomes `python -m training_seed.training_cpo --commit` (from
-  `/app/backend`) or `python -m backend.training_seed.training_cpo`
-  (from `/app`). All spec requirements (dry-run default, `--commit`
-  flag, no DB write this session) are honored.
+**Deferrals (called out per user's spec)**
+- No cert **revocation UI** in v1 (admin can delete a cert row via
+  direct DB access; a proper admin-panel revoke ships with the
+  Training web UI in Phase 56.13b).
+- No cert **expiration** — internal prep certs do not expire.
+- No **email delivery** of the PDF — the tech downloads from the app.
 
-**Files touched:**
-- `backend/models.py` — added Training* Pydantic models.
-- `backend/routers/training.py` — 8-endpoint router (new).
-- `backend/server.py` — registered `training_router`.
-- `backend/tests/conftest.py` — added `training_*` cleanup queries
-  + `test-pool-tech@aquaterra.com` cleanup.
-- `backend/tests/test_training.py` — 16 subsystem tests (new).
-- `backend/tests/test_training_cpo_seed.py` — 11 integrity tests (new).
-- `backend/training_seed/__init__.py` — package marker (new).
-- `backend/training_seed/training_cpo.py` — seed script, dry-run default (new).
-- `backend/training_seed/training_cpo_chapters/01…09_*.md` — 9 chapter
-  drafts (new).
-- `backend/training_seed/training_cpo_chapters/quiz.json` — 50-question
-  quiz (new).
+**Preflight**
+`bash /app/scripts/preflight.sh` → **exit 0**.
+
+**Files touched (this ship)**
+- `backend/models.py` — added `TrainingCertificate` model.
+- `backend/routers/training.py` — answer-key redaction, cert auto-award
+  on quiz pass, `_render_certificate_pdf`, 4 new cert endpoints.
+- `backend/training_seed/training_cpo.py` — `MODULE_CODE = "cpo-prep"`.
+- `backend/tests/conftest.py` — `training_certificates` cleanup rule,
+  cpo-prep progress/attempts/certs cleanup (module row preserved).
+- `backend/tests/test_training.py` — 8 new tests (certs + redaction).
+- `memory/HANDOFF.md`, `memory/PRD.md`.
+
+**Updated priority order (unchanged from 56.13a spec)**
+1. ✅ Phase 56.13a — Training subsystem + CPO drafts.
+2. ✅ Phase 56.13a-commit — CPO seed + Certificate of Completion (THIS SHIP).
+3. **NEXT: Phase 56.10** — Visible algae field + AI remediation dosing
+   (backend `pool_dosing.py` + web wizard step 1 + mobile pool wizard).
+4. Phase 56.11 — Customer Equipment Photo Library (11 types, ≤4 photos
+   each, admin-only delete, strict tenant isolation).
+5. **PAUSED**: 56.9b Zillow, T1-T6 calculators, 56.13b/c Training UI,
+   56.13d supplemental pool modules, 56.14 landscaper training,
+   56.15 handbook.
