@@ -239,9 +239,14 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   // Phase 34e — dose recommendations (mobile mirror of web).
+  // Phase 56.10 — extended with `category` (`routine` / `ordering_note`
+  // / `algae_remediation`) and `guidance_note` (multi-sentence tips
+  // for algae rows: brush, filter run, backwash).
   type Rec = {
     chemical: string; quantity: number; unit: string;
     reason: string; urgency: string; reading_key: string;
+    category?: "routine" | "ordering_note" | "algae_remediation";
+    guidance_note?: string | null;
   };
   const [recs, setRecs] = useState<null | {
     recommendations: Rec[]; mocked: boolean; reason?: string | null;
@@ -361,8 +366,8 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
 
   return (
     <View testID="pool-checklist-form">
-      {/* Chemical Readings — Wizard step 1 */}
-      {inStep(1) ? (<>
+      {/* Chemical Readings — Wizard step 1 (mobile renders as a
+          single scroll; the caller does not wire `wizardStep`). */}
       <Text style={styles.sectionTitle}>Chemical Readings</Text>
       <View>
         {mergedReadings.map((r, i) => {
@@ -431,6 +436,61 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
         </View>
       )}
 
+      {/* Phase 56.10-mobile — Visible algae toggle group.
+          Mirrors the web `pool-visible-algae-card` behavior. Sits
+          directly below chemical readings so the observation is
+          captured in the same wizard "step" (readings). Persisted to
+          `service_report.observations.visible_algae` via the existing
+          `patchReport` autosave — no new endpoint. */}
+      <View style={styles.algaeCard} testID="mobile-visible-algae-card">
+        <Text style={styles.algaeTitle}>Visible algae on walls</Text>
+        <View style={styles.algaeToggleRow}>
+          {(["none", "light", "heavy"] as const).map((opt) => {
+            const current = (props.observations?.visible_algae || "none").toLowerCase();
+            const active = current === opt;
+            const palette = {
+              none:  { bg: "#FFFFFF", fg: colors.onSurface, border: colors.border },
+              light: { bg: "#FEF3C7", fg: "#92400E",       border: "#FCD34D" },
+              heavy: { bg: "#FEE2E2", fg: "#991B1B",       border: "#FCA5A5" },
+            }[opt];
+            return (
+              <Pressable
+                key={opt}
+                disabled={locked}
+                onPress={() => onChange({
+                  observations: {
+                    ...(props.observations || {}),
+                    visible_algae: opt,
+                  },
+                })}
+                style={[
+                  styles.algaeToggleBtn,
+                  {
+                    backgroundColor: active ? palette.bg : "transparent",
+                    borderColor: active ? palette.border : colors.border,
+                    opacity: locked ? 0.6 : 1,
+                  },
+                ]}
+                testID={`mobile-visible-algae-toggle-${opt}`}
+              >
+                <Text
+                  style={[
+                    styles.algaeToggleText,
+                    { color: active ? palette.fg : colors.muted },
+                  ]}
+                >
+                  {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Text style={styles.algaeHint}>
+          Triggers an algae remediation dosing plan below when set to
+          Light or Heavy.
+        </Text>
+      </View>
+
       {/* Phase 34e — Recommended Chemicals card */}
       <View style={styles.recCard} testID="pool-recommendations-card">
         <View style={styles.recHeader}>
@@ -470,7 +530,29 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
           </View>
         ) : recs && recs.recommendations ? (
           <View>
-            {recs.recommendations.map((r, i) => (
+            {/* Phase 56.10-mobile · ordering-note callout — high-pH
+                guard rendered as a yellow banner at the TOP of the
+                step-2 recommendations list, BEFORE routine + algae
+                rows. Mirrors the web ordering-note behavior. */}
+            {recs.recommendations
+              .filter((r) => r.category === "ordering_note")
+              .map((r, i) => (
+                <View
+                  key={`ord-${i}`}
+                  style={styles.orderingNoteCard}
+                  testID="mobile-algae-ordering-note"
+                >
+                  <Ionicons name="warning" size={14} color="#B45309" />
+                  <Text style={styles.orderingNoteText}>{r.reason}</Text>
+                </View>
+              ))}
+
+            {/* Routine rows (unchanged pre-56.10 behavior). Any row
+                without a category is treated as routine to preserve
+                back-compat with older payload shapes. */}
+            {recs.recommendations
+              .filter((r) => !r.category || r.category === "routine")
+              .map((r, i) => (
               <View
                 key={`${r.chemical}-${i}`}
                 style={styles.recRow}
@@ -499,6 +581,68 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
                 )}
               </View>
             ))}
+
+            {/* Phase 56.10-mobile · Algae Protocol sub-section —
+                renders when the payload contains any
+                `category: "algae_remediation"` entry. Red-tinted card
+                with a warning icon; each row exposes multi-sentence
+                guidance (brush, filter run, backwash) as bullet
+                points. Matches web `pool-algae-protocol-card`. */}
+            {recs.recommendations.some((r) => r.category === "algae_remediation") && (
+              <View style={styles.algaeProtocolCard} testID="mobile-algae-protocol-card">
+                <View style={styles.algaeProtocolHeader}>
+                  <Ionicons name="warning" size={14} color="#991B1B" />
+                  <Text style={styles.algaeProtocolTitle}>Algae Protocol</Text>
+                </View>
+                {recs.recommendations
+                  .filter((r) => r.category === "algae_remediation")
+                  .map((r, i) => (
+                    <View
+                      key={`algae-${r.chemical}-${i}`}
+                      style={styles.algaeProtocolRow}
+                      testID="mobile-algae-remediation-row"
+                    >
+                      <Ionicons
+                        name="warning"
+                        size={14}
+                        color="#B91C1C"
+                        style={{ marginTop: 2 }}
+                      />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.algaeProtocolChem}>
+                          {r.quantity > 0 ? `${r.quantity} ${r.unit} ` : ""}
+                          {r.chemical}
+                        </Text>
+                        <Text style={styles.algaeProtocolReason}>{r.reason}</Text>
+                        {r.guidance_note
+                          ? r.guidance_note
+                              .split(/(?<=\.)\s+/)
+                              .filter(Boolean)
+                              .map((line, j) => (
+                                <View
+                                  key={j}
+                                  style={styles.algaeGuidanceRow}
+                                  testID="mobile-algae-guidance-bullet"
+                                >
+                                  <Text style={styles.algaeGuidanceBullet}>•</Text>
+                                  <Text style={styles.algaeGuidanceText}>{line}</Text>
+                                </View>
+                              ))
+                          : null}
+                      </View>
+                      {!locked && r.quantity > 0 && (
+                        <Pressable
+                          onPress={() => addChemFromRec(r)}
+                          style={styles.algaeAddBtn}
+                          testID="mobile-algae-remediation-add-btn"
+                        >
+                          <Text style={styles.algaeAddBtnText}>Add</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  ))}
+              </View>
+            )}
           </View>
         ) : recsLoading ? (
           <Text style={styles.recHint}>Calculating…</Text>
@@ -629,6 +773,133 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
 }
 
 const styles = StyleSheet.create({
+  // Phase 56.10-mobile — Visible algae toggle card + Algae Protocol
+  // sub-section rendered in Recommended Chemicals. Colors mirror the
+  // web PoolChecklistForm palette (yellow-tinted for light / red for
+  // heavy) so parity is preserved at a glance.
+  algaeCard: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceSecondary,
+  },
+  algaeTitle: {
+    fontFamily: font.bold,
+    fontSize: fontSize.sm,
+    color: colors.onSurface,
+    marginBottom: spacing.sm,
+  },
+  algaeToggleRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  algaeToggleBtn: {
+    borderWidth: 1.5,
+    borderRadius: 999,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+  },
+  algaeToggleText: {
+    fontFamily: font.bold,
+    fontSize: 11,
+  },
+  algaeHint: {
+    marginTop: spacing.sm,
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: colors.muted,
+  },
+  orderingNoteCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    padding: spacing.sm,
+    borderWidth: 1.5,
+    borderColor: "#F59E0B",
+    borderRadius: radius.sm,
+    backgroundColor: "#FEF3C7",
+    marginBottom: spacing.sm,
+  },
+  orderingNoteText: {
+    flex: 1,
+    fontFamily: font.bold,
+    fontSize: 11,
+    color: "#92400E",
+    lineHeight: 15,
+  },
+  algaeProtocolCard: {
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+    borderWidth: 1.5,
+    borderColor: "#FCA5A5",
+    borderRadius: radius.sm,
+    backgroundColor: "#FEF2F2",
+  },
+  algaeProtocolHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: spacing.sm,
+  },
+  algaeProtocolTitle: {
+    fontFamily: font.bold,
+    fontSize: 13,
+    color: "#991B1B",
+  },
+  algaeProtocolRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  algaeProtocolChem: {
+    fontFamily: font.bold,
+    fontSize: 13,
+    color: "#0F172A",
+  },
+  algaeProtocolReason: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  algaeGuidanceRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 4,
+    marginTop: 2,
+  },
+  algaeGuidanceBullet: {
+    fontFamily: font.bold,
+    fontSize: 11,
+    color: "#7F1D1D",
+    lineHeight: 15,
+  },
+  algaeGuidanceText: {
+    flex: 1,
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: "#7F1D1D",
+    lineHeight: 15,
+  },
+  algaeAddBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 4,
+    backgroundColor: "#B91C1C",
+    borderRadius: radius.sm,
+  },
+  algaeAddBtnText: {
+    fontFamily: font.bold,
+    fontSize: 11,
+    color: "#FFFFFF",
+  },
   recCard: {
     marginTop: spacing.md,
     padding: spacing.md,

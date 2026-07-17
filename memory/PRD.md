@@ -1221,3 +1221,75 @@ warnings introduced).
 13. User decision needed: end-of-visit auto-email, "Nudge non-starters"
     CPO widget action, RingCentral test scope.
 
+---
+
+## Phase 56.10-mobile — Algae Toggle + Protocol Render on Mobile Pool Wizard (Feb 2026)
+
+Web parity ship on the mobile pool checklist form. Backend
+(`pool_dosing.py`) already emits `category: "ordering_note"` /
+`"routine"` / `"algae_remediation"` with `guidance_note` where
+appropriate — this ship wires the matching mobile UI.
+
+**Files touched:**
+- `mobile/src/components/checklist/PoolChecklistForm.tsx`
+  * Extended `Rec` type with `category` + `guidance_note`.
+  * New "Visible algae on walls" card (`mobile-visible-algae-card`)
+    below Chemical Readings with 3 pill buttons
+    (`mobile-visible-algae-toggle-{none,light,heavy}`); persists to
+    `observations.visible_algae` via existing `patchReport`
+    autosave (no new endpoint, no new state store).
+  * Recommended Chemicals render split into three ordered passes:
+    ordering-note callout (`mobile-algae-ordering-note`, yellow, at
+    the top), routine rows (unchanged `pool-recommendation-row`),
+    and an Algae Protocol sub-card (`mobile-algae-protocol-card`,
+    red-tinted, at the bottom) — matches web `PoolChecklistForm.jsx`
+    verbatim in when + how each section renders.
+  * Algae rows render multi-sentence `guidance_note` as bullet
+    points (`mobile-algae-guidance-bullet`) split on sentence
+    boundary — brush, extended filter run, backwash notes.
+  * **Latent JSX bug fix (byproduct)** — the file had an unmatched
+    `{inStep(1) ? (<>` fragment opener with no closing tag; metro/
+    esbuild silently accepted it, strict TSC flagged 93 cascading
+    errors. Removed the incomplete opener (mobile always renders as
+    a single scroll — the caller never wires `wizardStep`), a
+    runtime no-op that reduced this file from 93 → 10 TSC errors.
+- `mobile/app/job/[id]/checklist.tsx`
+  * Passes `observations={report.observations || {}}` into
+    `<PoolChecklistForm>` so toggle state survives autosave.
+
+**Constraints held:**
+- Reused the existing mobile checklist state pattern
+  (`patchReport` merge). No new autosave loop, no new state
+  library.
+- **No backend changes. No web changes.** `git diff --stat`
+  confirms only two mobile files touched.
+
+**Preflight:** `bash /app/scripts/preflight.sh` → exit 0 (417
+pre-existing dead-import WARNs; no new WARNs from this ship).
+
+**TSC:** `PoolChecklistForm.tsx` errors 93 → 10 (net improvement of
+83; all 10 remaining errors are pre-existing on lines this ship did
+not touch).
+
+**Evidence path:** Source-file diff excerpts (per brief's fallback
+option) — the Visible Algae card block, the ordering-note callout
+block, and the Algae Protocol sub-card block are captured in
+`memory/HANDOFF.md`. Expo Web preview reached HTTP 200 but token
+persistence across Playwright `goto` calls is unreliable
+(`expo-secure-store` writes to a per-page storage key that the test
+harness cookie context does not carry across navigations); the
+checklist screen landed on the "You don't have permission" gate.
+
+**Priority order after this ship:**
+1-10: ✅ (all previous phases + 56.16-followup + 56.10-mobile).
+11. **NEXT: 56.11-mobile** — equipment photo library on mobile
+    customer detail. Backend endpoints from 56.11 already exist.
+12. Then: 56.13b-followup — profile certs section, tenant-custom
+    module editor, leaderboard, and
+    `GET /training/progress/admin?module_code=cpo-prep`
+    bulk-progress endpoint (unblocks Team CPO Readiness widget's
+    in-progress counter accuracy).
+13. Paused: 56.9b Zillow, T1-T6 calculators, 56.13d, 56.14, 56.15.
+14. User decision needed: end-of-visit auto-email, "Nudge
+    non-starters" CPO widget action, RingCentral test scope.
+

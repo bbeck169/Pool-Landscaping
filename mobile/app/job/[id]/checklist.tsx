@@ -519,6 +519,7 @@ export default function JobChecklistScreen() {
               chemicalUnits={report.chemical_units || ["gal", "lbs", "oz", "tabs"]}
               checklistItems={report.checklist_items || []}
               notes={report.notes || ""}
+              observations={report.observations || {}}
               onChange={patchReport}
             />
           )}

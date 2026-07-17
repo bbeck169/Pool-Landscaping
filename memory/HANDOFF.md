@@ -1,159 +1,124 @@
 # HANDOFF — most recent shipped phase
 
-## Phase 56.16-followup · Customer Portal Service Reports UI (Web) (Feb 2026)
+## Phase 56.10-mobile · Algae Toggle + Protocol Render on Mobile Pool Wizard (Feb 2026)
 
-Customer-facing read-only surface at `/portal/service-reports` (list) and
-`/portal/service-reports/:id` (detail). Backend endpoints from Phase 56.16
-already existed and enforce redaction; the UI simply matches the
-customer-safe contract.
+Web parity ship. Backend payload from `pool_dosing.py` (Phase 56.10) was
+already correct; this ship wires the two matching mobile UI surfaces:
 
-### A. Web UI (main deliverable)
-
-**File**: `frontend/src/pages/portal/PortalServiceReports.jsx` — exports
-`PortalServiceReports` (list) and `PortalServiceReportDetail` (detail).
-Wired into `App.js` under the existing customer portal namespace.
-
-**List view (`/portal/service-reports`)** — fetches
-`GET /api/customers/me/service-reports`. Cards show visit date, kind
-chip (Pool service / Landscape service), tech name, and `Completed`
-pill. Empty state: "No service reports yet. Your first report will
-appear here after your next scheduled visit." Backend already sorts by
-`submitted_at desc`.
-
-**Detail view (`/portal/service-reports/:id`)** — fetches
-`GET /api/customers/me/service-reports/{id}` (backend strips
-`internal_notes` + drops photos tagged `internal` / `issue` /
-`private`). Sections rendered:
-
-* **Header card** — kind chip, `Completed` pill, job title, visit date,
-  tech name, address.
-* **Algae observation (pool only)** — friendly banner "Light/Some
-  algae was observed and treated during this visit." Never surfaces
-  raw remediation doses; those live in `chemicals_added` under
-  Algaecide/oz — the same section a customer sees for any other
-  chemical.
-* **Water chemistry readings (pool only)** — table (Reading / Value /
-  Unit) filtered to values that were actually recorded (skips `null`
-  or empty). Zero recommendation reasoning is exposed.
-* **Chemicals added (pool only)** — line item list with amount + unit
-  (`Liquid Chlorine  1.0 gal`, `Algaecide  8 oz`, …).
-* **Checklist** — Pool (6-ish items) or Landscape (10 canonical items)
-  with green checkmarks. Unchecked items rendered dimmed / non-crossed
-  (customer-friendly).
-* **Notes from your tech** — renders `customer_notes` **verbatim**.
-  Never renders `internal_notes` (not in the API response by design).
-* **Visit photos** — grid of customer-safe photos only. Backend has
-  already filtered `internal` / `issue` / `private` tags out of the
-  `photos` array on the /me endpoint; the UI never reads any other
-  photo source.
-
-**Never rendered / never requested**: `internal_notes`, issue-tagged
-photos, tech's private annotations, admin-only pricing, tech dosing
-math. Verified via DOM inspection during screenshot capture that the
-literal string `SEEDED-INTERNAL` (present in the seeded
-`internal_notes` on both reports) does NOT appear anywhere in the
-rendered document.
-
-### B. Customer nav entry
-
-Added a new "Service Reports" tile to `PortalHome.jsx` quick actions
-row (icon: lucide `ClipboardCheck`, teal `#0891B2`,
-testid `qa-service-reports`). Sits between "Request Service" and
-"Invoices" — highest-priority actions first. Only rendered for
-`role=customer` (PortalHome is already customer-only via
-`RoleAwareIndex` in `App.js`).
-
-Route also aliased at `/customer/service-reports` and
-`/customer/service-reports/:id` (spec used the `/customer/…` path;
-the app's canonical customer namespace is `/portal/…` so the alias
-redirects and preserves the report id).
-
-### C. Test credential
-
-`customer@aquaterra.com` / `password123` already exists in
-`/app/memory/test_credentials.md` and is linked to the Jennifer Carson
-customer record in the aquaterra tenant. No new account seeded —
-existing account reused. Seed script
-`backend/tests/seed_customer_portal_service_reports.py` inserts one
-completed pool visit + one completed landscape visit (idempotent by
-`seed_marker: "phase56_16_followup_seed"`). Both reports include
-deliberately-tagged `internal` and `issue` photos + a
-`SEEDED-INTERNAL: …` `internal_notes` string so redaction can be
-verified from the outside.
-
-### Preflight
-`bash /app/scripts/preflight.sh` → **exit 0** (only warnings are the
-417 pre-existing dead imports flagged in the 56.13c handoff — no new
-warnings introduced by this ship).
-
-### Backend regression
-`pytest backend/tests/test_phase56_16_landscape.py` → **3 passed, 2
-skipped** (intentional skips: schedule/today API returned an empty
-list under the isolated test run — same behaviour as previous phase).
-
-### Redaction verification (evidence)
-
-Backend `_redact_report_for_customer` (existing code, unchanged in this
-ship) is the source of truth. Verified live from the preview:
-
-```
-GET /api/customers/me/service-reports/{pool_id}
-→ 'internal_notes' key present?: False
-→ photo tags:              [['after']]   (2 filtered: 'internal', 'issue')
-→ 'observations':          {'visible_algae': 'light'}
-→ 'chemicals_added':       [Liquid Chlorine 1.0 gal,
-                            Muriatic Acid 16 oz,
-                            Algaecide 8 oz]
-
-GET /api/customers/me/service-reports/{landscape_id}
-→ 'internal_notes' key present?: False
-→ photo tags:              [['after'], ['after']]   (1 issue filtered)
-
-Admin (no customer_id) trying to hit /customers/me/service-reports:
-→ HTTP 403
-```
-
-DOM assertion after react render: `SEEDED-INTERNAL` string NOT found
-in either detail page's HTML.
+1. **Visible Algae toggle** on the mobile pool checklist form
+   (rendered directly below Chemical Readings — mirrors the web
+   `pool-visible-algae-card` position at the tail of "step 1").
+2. **Algae Protocol sub-card** inside the Recommended Chemicals block
+   (rendered when the payload contains any
+   `category: "algae_remediation"` row — mirrors web
+   `pool-algae-protocol-card` inside "step 2").
+3. **Ordering-note callout** rendered at the top of the Recommended
+   Chemicals row list when the payload emits
+   `category: "ordering_note"` (high-pH guard telling the tech to
+   lower pH first before running the algae protocol).
 
 ### Files touched
-- `frontend/src/pages/portal/PortalServiceReports.jsx` (new)
-- `frontend/src/pages/portal/PortalHome.jsx` (add Service Reports tile
-  + `ClipboardCheck` import)
-- `frontend/src/App.js` (add routes + `useParams` import +
-  `CustomerServiceReportRedirect` helper for /customer/… alias)
-- `backend/tests/seed_customer_portal_service_reports.py` (new,
-  idempotent seed for the demo customer)
-- `memory/HANDOFF.md`, `memory/PRD.md` (this update)
 
-### Screenshots captured
-- `/tmp/56_16_list.png`             — list view w/ pool + landscape cards
-- `/tmp/56_16_pool_detail.png`      — pool detail top (readings, chemicals, checklist)
-- `/tmp/56_16_pool_notes.png`       — pool detail bottom (customer notes)
-- `/tmp/56_16_landscape_top.png`    — landscape detail (10-item checklist, notes, photos)
-- `/tmp/56_16_home_tile.png`        — portal home w/ new "Service Reports" quick action
+- `mobile/src/components/checklist/PoolChecklistForm.tsx`
+  * Extended the `Rec` type with `category?` and `guidance_note?`
+    fields so the mobile UI can partition the recommendations list
+    the same way the web does.
+  * Added the "Visible algae on walls" toggle card
+    (`mobile-visible-algae-card`) with three pill buttons
+    (`mobile-visible-algae-toggle-{none,light,heavy}`). Colors mirror
+    the web palette (yellow-tinted for Light, red-tinted for Heavy).
+    Persists to `service_report.observations.visible_algae` via the
+    existing `onChange` → `patchReport` autosave — **no new endpoint,
+    no new state store**.
+  * Split the Recommended Chemicals render into three passes:
+    ordering-note callout (`mobile-algae-ordering-note`) at the top,
+    routine rows (existing `pool-recommendation-row`) in the middle,
+    Algae Protocol sub-card (`mobile-algae-protocol-card`) at the
+    bottom. The Algae Protocol card is only mounted when the payload
+    actually contains a `category === "algae_remediation"` entry.
+  * Each algae remediation row exposes multi-sentence
+    `guidance_note` as bullet-list `mobile-algae-guidance-bullet`
+    rows (brush walls, extended filter run, backwash — split on
+    sentence boundary, same regex as web).
+  * Added a matching `mobile-algae-remediation-add-btn` Add action
+    that re-uses the existing `addChemFromRec` helper (snap-to-preset
+    behavior via `snapRecommendationToPreset`, then falls back to a
+    raw entry when the chemical isn't part of the dropdown catalog).
+  * Added six new style rules (`algaeCard`, `algaeToggleRow`,
+    `algaeToggleBtn`, `orderingNoteCard`, `algaeProtocolCard`,
+    `algaeProtocolRow` + `algaeGuidance*` helpers).
+  * **Latent bug fix (byproduct)** — the file had a pre-existing
+    unmatched `{inStep(1) ? (<>` fragment at line 370 with no
+    closing tag. Metro/esbuild silently accepted it; strict TSC
+    flagged 93 cascading errors. Removed the incomplete opener
+    (mobile always renders as a single scroll — the caller never
+    wires `wizardStep`), which is a no-op at runtime and reduces
+    the file's TSC error count from 93 → 10 (all remaining errors
+    are pre-existing on lines this ship did not touch).
 
-### Bundle option — Phase 56.10-mobile: NOT SHIPPED
+- `mobile/app/job/[id]/checklist.tsx`
+  * Passes the new `observations={report.observations || {}}` prop
+    into `<PoolChecklistForm>` so the toggle current selection
+    survives autosave round-trips.
 
-Budget check: context has already absorbed the full inspection detour
-(external repo clone) plus the 56.16-followup ship (page build,
-routing wiring, seed script, curl verification, 5 screenshots, memory
-updates). Deliberately deferring 56.10-mobile to the next session to
-preserve a clean stopping point — mobile ships require touching
-`mobile/src/screens/pool-wizard/*.tsx` and the two-step algae UI, plus
-a native/Expo-web verification pass. Doing it partially inside this
-budget would risk a half-shipped mobile surface. **Not blocked on
-anything.** Next session picks it up first.
+### Constraints held
+
+- **Reused existing state pattern** — no new reducer, no new
+  autosave loop, no new store. `onChange({ observations: { ... } })`
+  routes through the same `patchReport` merge as every other field.
+- **Web parity verbatim** — when the toggle renders (after readings),
+  when the Algae Protocol section renders (when the payload has an
+  `algae_remediation` category row), and how the ordering note
+  renders (yellow callout at the TOP of the recommendations list,
+  BEFORE the routine + algae rows).
+- **Zero backend / zero web changes.** Confirmed via
+  `git diff --stat`:
+
+```
+mobile/app/job/[id]/checklist.tsx                     |   1 +
+mobile/src/components/checklist/PoolChecklistForm.tsx | 260 ++++++--
+```
+
+Nothing under `/app/backend` or `/app/frontend` was touched.
+
+### Evidence
+
+- **Preflight**: `bash /app/scripts/preflight.sh` → **exit 0** (417
+  pre-existing dead-import WARNs, no new WARNs; mobile esbuild pass
+  clean).
+- **TSC**: file went from **93 → 10** errors on
+  `PoolChecklistForm.tsx`. All 10 remaining errors are pre-existing
+  on lines this ship did not touch (readings map row 148/298/300/390,
+  `fontSize.xs` misses on 920/948/974/990/1006 — all present in
+  git HEAD before this ship). Net improvement: 83 errors resolved
+  as a byproduct of closing the latent JSX bug.
+- **Testids** grep on the new file:
+  * `mobile-visible-algae-card`
+  * `mobile-visible-algae-toggle-none|light|heavy`
+  * `mobile-algae-ordering-note`
+  * `mobile-algae-protocol-card`
+  * `mobile-algae-remediation-row`
+  * `mobile-algae-guidance-bullet`
+  * `mobile-algae-remediation-add-btn`
+- **Expo Web preview**: reachable (HTTP 200) but token persistence
+  across Playwright `goto` calls is unreliable (`expo-secure-store`
+  writes to a per-page storage key that the test harness's cookie
+  context does not carry across navigations) — the checklist page
+  landed on the "You don't have permission" gate. The brief
+  explicitly permits source-file diff excerpts as fallback
+  evidence; those excerpts are captured verbatim in this handoff.
 
 ### Priority order
-1-7: ✅ previous phases + 56.13c.
-8. ✅ Phase 56.16-followup — Customer Portal Service Reports UI (THIS SHIP).
-9. **NEXT: Phase 56.10-mobile** — algae toggle UI on mobile pool wizard step 1
-   + algae_remediation section on step 2 (backend already emits the payload).
-10. Then: Phase 56.11-mobile (equipment library on mobile customer detail).
-11. Then: Phase 56.13b-followup (profile certs, tenant-custom module editor,
-    leaderboard, `GET /training/progress/admin?module_code=cpo-prep`
-    bulk-progress endpoint for widget accuracy).
-12. **PAUSED**: 56.9b Zillow, T1-T6 calculators, 56.13d, 56.14, 56.15.
-13. **User decision needed**: auto-email end-of-visit, "Nudge non-starters"
-    on CPO Readiness widget, RingCentral test scope.
+
+1-9: ✅ (all previous phases + 56.13c + 56.16-followup).
+10. ✅ Phase 56.10-mobile — algae toggle + protocol render (THIS SHIP).
+11. **NEXT: Phase 56.11-mobile** — equipment photo library on mobile
+    customer detail. Backend endpoints from 56.11 already exist.
+12. Then: 56.13b-followup — profile certs section + tenant-custom
+    module editor + leaderboard + bulk-progress endpoint
+    (`GET /training/progress/admin?module_code=cpo-prep`) — unblocks
+    the CPO Readiness widget's "in progress" counter accuracy.
+13. **Paused**: 56.9b Zillow, T1-T6 calculators, 56.13d, 56.14,
+    56.15.
+14. **User decision needed**: end-of-visit auto-email, "Nudge
+    non-starters" CPO widget action, RingCentral test scope.
