@@ -20,7 +20,7 @@
  */
 import React, { useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { ChevronDown, MenuIcon, Users, FileText, ClipboardList, CalendarDays, ListChecks, Phone } from "lucide-react";
+import { ChevronDown, MenuIcon, Users, FileText, ClipboardList, CalendarDays, ListChecks, Phone, GraduationCap } from "lucide-react";
 import { ADMIN_NAV_V2 } from "@/nav/adminNav";
 import { usePermissions } from "@/hooks/usePermissions";
 import NotificationBell from "@/components/NotificationBell";
@@ -190,6 +190,7 @@ function QuickAccessRow() {
     { to: "/invoices",                       label: "Invoices",    icon: FileText,     roles: ["admin", "super_admin"] },
     { to: "/quotes",                         label: "Estimates",   icon: ClipboardList, roles: ["admin", "super_admin"] },
     { to: "/schedule/calendar",              label: "Schedule",    icon: CalendarDays, roles: ["admin", "super_admin", "technician"] },
+    { to: "/tests",                            label: "Tests",       icon: GraduationCap, roles: ["admin", "super_admin", "technician"] },
     { to: "/jobs",                            label: "Workstream",  icon: ListChecks,   roles: ["admin", "super_admin", "technician", "customer"] },
     { to: "/admin/settings/ringcentral",      label: "RingCentral", icon: Phone,        roles: ["admin", "super_admin"] },
   ];

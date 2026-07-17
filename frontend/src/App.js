@@ -142,6 +142,10 @@ import CFOReports from "@/pages/admin/CFOReports";
 import VendorBills from "@/pages/admin/VendorBills";
 import PricingInsights from "@/pages/admin/PricingInsights";
 import RingCentralAdmin from "@/pages/admin/RingCentralAdmin";
+import TrainingList from "@/pages/training/TrainingList";
+import TrainingModuleDetail from "@/pages/training/TrainingModuleDetail";
+import TrainingQuiz from "@/pages/training/TrainingQuiz";
+import AdminTraining from "@/pages/training/AdminTraining";
 import BudgetSetup from "@/pages/budget/BudgetSetup";
 import BudgetDashboard from "@/pages/budget/BudgetDashboard";
 import BudgetWizard from "@/pages/budget/BudgetWizard";
@@ -342,6 +346,12 @@ export default function App() {
             {/* Phase 54 — RingCentral admin (settings + test + event log) */}
             <Route path="admin/settings/ringcentral" element={<AdminOnly><RingCentralAdmin /></AdminOnly>} />
             <Route path="admin/ringcentral-test" element={<AdminOnly><RingCentralAdmin /></AdminOnly>} />
+            {/* Phase 56.13b — Training web UI */}
+            <Route path="tests" element={<TrainingList />} />
+            <Route path="training" element={<Navigate to="/tests" replace />} />
+            <Route path="tests/:code" element={<TrainingModuleDetail />} />
+            <Route path="tests/:code/quiz" element={<TrainingQuiz />} />
+            <Route path="admin/training" element={<AdminOnly><AdminTraining /></AdminOnly>} />
             {/* Phase 47 — Budgeting Suite */}
             <Route path="admin/budget" element={<AdminOnly><BudgetSetup /></AdminOnly>} />
             <Route path="admin/budget/dashboard" element={<AdminOnly><BudgetDashboard /></AdminOnly>} />

@@ -16,7 +16,7 @@ import {
   LayoutDashboard, CalendarDays, Users, FileText, Camera, MessageSquare,
   Home, Wallet, Shield, User, ClipboardList, Wrench, MapPin, Truck,
   Package, Boxes, Trophy, IdCard,
-  Briefcase, Coins, TrendingUp, ScrollText, BarChart3,
+  Briefcase, Coins, TrendingUp, ScrollText, BarChart3, GraduationCap,
 } from "lucide-react";
 import { ADMIN_NAV_V2 } from "./adminNav";
 
@@ -54,6 +54,7 @@ export const TECH_NAV = [
       // Routes remain gated at the App.js level for defense-in-depth.
       { to: "/d2d/leaderboard", label: "D2D Leaderboard", icon: Trophy },
       { to: "/card", label: "Business Card", icon: IdCard },
+      { to: "/tests", label: "Training / Tests", icon: GraduationCap },
     ],
   },
   {

@@ -989,3 +989,60 @@ warranty, algae before/after, and equipment-condition audits.
 6. Deferred UI follow-ups: 56.11-mobile, 56.11-followup (wizard
    algae-photo prompt), 56.10-mobile.
 
+
+## Phase 56.13b — Training Web UI + "Tests" Nav (Feb 2026)
+
+The web surface for the CPO training subsystem that landed in 56.13a-commit.
+
+**Nav:**
+- "Tests" chip in AdminTopBar QuickAccessRow (admin, super_admin,
+  technician; hidden for customer) using `GraduationCap` icon.
+- "Training / Tests" entry in TECH_NAV.records for all techs.
+- Routes: `/tests`, `/tests/:code`, `/tests/:code/quiz`,
+  `/admin/training`. `/training` aliases to `/tests`.
+
+**Pages:**
+- `TrainingList.jsx` — department-grouped card grid with progress
+  rings + Start/Resume/Review CTA. Empty-state, admin "Manage
+  modules" link, system-module badges.
+- `TrainingModuleDetail.jsx` — split-panel lesson list + markdown
+  body via `react-markdown`. Mark-complete, Prev/Next, and a Take
+  Quiz banner that appears once all lessons are marked complete.
+  Yellow disclaimer callout renders the module's disclaimer string.
+- `TrainingQuiz.jsx` — one-question-at-a-time runner with 4 pill
+  choices, Prev/Next, and a final Submit gated on all-answered.
+  Results screen: pass/fail banner, cert block with PDF download
+  button (linking to `/api/training/certificates/{id}/pdf`),
+  per-question review with the tech's own answer marked.
+- `AdminTraining.jsx` — read-only table of every module. System
+  modules render with a lock badge. V1 has NO tenant-custom
+  editor — deferred to a follow-up.
+
+**Certifications surface on user profile — DEFERRED to
+56.13b-followup**. `GET /api/training/certificates` is live from
+56.13a-commit and surfaced via the results screen; a dedicated
+section on the team-member detail page lands with the mobile UI.
+
+**Non-goals (v1, locked):** no drag-reorder, no rich-text editor,
+no forum, no email cert delivery, no confetti animation, no
+leaderboard.
+
+**Files touched:**
+- `frontend/src/pages/training/{TrainingList,TrainingModuleDetail,
+  TrainingQuiz,AdminTraining}.jsx` (all new)
+- `frontend/src/App.js` (imports + 4 routes)
+- `frontend/src/layouts/AdminTopBar.jsx` (Tests chip)
+- `frontend/src/nav/roleNav.js` (Training entry)
+- `memory/HANDOFF.md`, `memory/PRD.md`
+
+**Priority order:**
+1. ✅ Phase 56.13a (subsystem + drafts).
+2. ✅ Phase 56.13a-commit (CPO seed + PDF cert).
+3. ✅ Phase 56.10 (visible algae).
+4. ✅ Phase 56.11 (equipment photo library).
+5. ✅ Phase 56.13b (training web UI) — THIS SHIP.
+6. **NEXT: Phase 56.13c** — Training Mobile UI.
+7. Then: 56.10-mobile, 56.11-mobile.
+8. Then: 56.13b-followup — profile certs section + custom-module editor + leaderboard.
+9. Paused: 56.9b Zillow, T1-T6, 56.13d, 56.14, 56.15.
+

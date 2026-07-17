@@ -1,89 +1,95 @@
 # HANDOFF — most recent shipped phase
 
-## Phase 56.11 · Customer Equipment Photo Library (Feb 2026)
+## Phase 56.13b · Training Web UI + "Tests" Nav (Feb 2026)
 
-**Backend**
-- New enum module `backend/config_equipment_types.py` — 11 ordered types + `EQUIPMENT_PHOTO_CAP = 4` + `EQUIPMENT_PHOTO_TAGS = {general, algae_before, algae_after}`.
-- New router `backend/routers/customer_equipment_photos.py` — 4 endpoints:
-  - `GET  /api/equipment-types` — returns ordered list + cap + allowed tags.
-  - `GET  /api/customers/{customer_id}/equipment-photos` — grouped-by-type response with every enum key present (empty arrays where none).
-  - `POST /api/customers/{customer_id}/equipment-photos` — 201 on success; 400 on cap hit (5th per customer/type), unknown type, or unknown tag; caption ≤ 120 chars.
-  - `DELETE /api/customers/{customer_id}/equipment-photos/{photo_id}` — admin/super_admin only.
-- Registered on `api_router` in `server.py`.
-- Storage: base64 data-URLs in `customer_equipment_photos` collection — reuses the checklist-photo pipeline. `thumbnail_url` is null for now (full-size fallback in the lightbox); can be wired to a resizer in a later ship without changing the API.
-- Strict tenant isolation: cross-tenant reads → 404. Verified in tests via sunbelt admin token.
+**Nav**
+- New **"Tests"** chip in `layouts/AdminTopBar.jsx` QuickAccessRow with `GraduationCap` icon. Visible to `admin`, `super_admin`, and `technician` roles; hidden for `customer`.
+- New "Training / Tests" entry in `nav/roleNav.js` `TECH_NAV.records` section (shows in the universal top-right menu for all techs including pool + landscape + both).
+- Routes wired in `App.js`:
+  - `/tests` → `TrainingList`
+  - `/training` → redirects to `/tests` (backwards-compat alias)
+  - `/tests/:code` → `TrainingModuleDetail`
+  - `/tests/:code/quiz` → `TrainingQuiz`
+  - `/admin/training` → `AdminTraining` (admin-only)
 
-**RBAC**
-- customer role → 403 on every equipment endpoint (and on `/equipment-types`).
-- technician (pool + landscape, department-agnostic) → view + upload.
-- admin / super_admin → view + upload + delete.
+**Module list (`/tests`)**
+- Fetches `GET /api/training/modules` (department-filtered server-side).
+- Card grid — one card per module — with title, description, department badge (Pool / Landscape / Both), system badge, lesson + question counts, progress ring showing the tech's completed-lessons %, and a Start / Resume / Review CTA (Review is shown when 100 % complete).
+- For `both` techs (rare), cards are grouped under Pool / Landscape / Cross-Department headers.
+- Admin + super_admin see a **"Manage modules"** link (top-right of the header) → `/admin/training`.
+- Empty state: "No training modules are available for your department yet." Uses `data-testid="training-list-empty"`.
+- All cards carry `data-testid="training-module-card-{code}"`.
 
-**Algae hook**
-- The photo router accepts `tags: ["algae_before"]` (and `algae_after` / `general`). Tag values outside the allow-set are rejected with 400.
-- The web UI badges `algae_before` photos with a red `ALGAE` chip so the field-service history is visually scannable.
-- **Wizard step-4 soft prompt DEFERRED** — the "consider tagging a wall close-up as algae_before" nudge on the Photos wizard step is a UI-only follow-up. The data + API side already supports it; when we hook the prompt into the wizard PhotoUploader, no backend changes are needed. Tracked as Phase 56.11-followup.
+**Module detail (`/tests/{code}`)**
+- Split panel:
+  - Left: lesson list with green ✓ / grey ○ status per lesson (`data-testid="training-lesson-item-{lesson_id}"`).
+  - Right: markdown-rendered lesson body via `react-markdown` (`data-testid="training-lesson-body"`).
+- Footer with **Prev**, **Next**, and **Mark as complete** buttons (`training-lesson-prev`, `training-lesson-next`, `training-lesson-mark-complete`). Complete is disabled once done.
+- When all lessons are complete, a green **"All lessons complete — ready to take the quiz"** banner appears with a prominent **Take Quiz** button (`training-take-quiz-banner`, `training-take-quiz-btn`).
+- Persistent disclaimer callout at the top of the module (yellow) reads the module's `disclaimer` field verbatim — includes the "This is prep material only" language on the CPO module (`training-module-disclaimer`).
 
-**Web frontend**
-- New component `frontend/src/components/customers/CustomerEquipmentLibrary.jsx`:
-  - Renders 11 accordion sections in enum order with per-section `X / 4` counter.
-  - Each section: 2×2 photo grid + dashed `+ Add photo` placeholder (hidden at cap).
-  - Click a thumbnail → lightbox with caption, uploader, timestamp, tags.
-  - Admin-only Delete button in lightbox with `confirm()` guard.
-  - Test-ids: `customer-equipment-library`, `equipment-section-{slug}`, `equipment-section-toggle-{slug}`, `equipment-photo-{id}`, `equipment-photo-add-{slug}`, `equipment-photo-input-{slug}`, `equipment-photo-lightbox`, `equipment-photo-delete-btn`, `equipment-photo-close-btn`.
-- `frontend/src/pages/customers/CustomerDetail.jsx` — added new "Equipment" tab in the tab bar, wired to the new component.
+**Quiz runner (`/tests/{code}/quiz`)**
+- One question at a time with a "Question N of M" counter (verified via screenshot: `Question 1 of 50` on CPO module).
+- 4 pill-style radio choices (`training-quiz-choice-{qid}-{cid}`). Backend already redacts `correct_choice_ids` + `explanation` from the tech's payload (verified in 56.13a-commit `TestAnswerKeyRedaction`), so cheating from the API is impossible.
+- Prev / Next between questions; local state until final submit.
+- Final "Submit Quiz" button is disabled until every question has an answer, then styled green (`training-quiz-submit`).
+- Submit posts `{ answers }` to `POST /api/training/modules/{code}/quiz` and returns score + certificate_id (if passing).
 
-**Mobile**
-- Mobile UI **DEFERRED** — the mobile customer detail screen (`mobile/app/customers/[id].tsx` and siblings) does not currently have an equipment section. Adding it requires the same accordion + camera-picker pattern used by the checklist photo uploader; small but non-trivial. Backend is ready to serve mobile clients as soon as the mobile UI ships. Tracked as **Phase 56.11-mobile**.
+**Results screen**
+- Big score display + PASS / FAIL banner (`training-quiz-passfail`, `training-quiz-score-value`). Colors: green pass, red fail.
+- If passed AND `certificate_id` returned: shows the cert ID in a green award block + a `Download Certificate PDF` button (`training-quiz-cert-pdf-btn`) that links directly to `${REACT_APP_BACKEND_URL}/api/training/certificates/{cert_id}/pdf` (opens in new tab). The PDF byte-match assertions from 56.13a-commit (`test_pdf_endpoint_returns_pdf_with_disclaimer`) guarantee the disclaimer + "CPO Prep — Not Official Certification" subtitle are present.
+- Per-question review below the banner: the tech's chosen answer is marked with `→` and "(your answer)". The other choices are dimmed. In line with the answer-key redaction policy from 56.13a-commit, we do NOT surface the correct answer to the tech — only their choice. Admins reviewing the audit trail can access the full attempt payload via `GET /api/training/modules/{code}/attempts?user_id=`.
+- Retake Quiz + Back to Module buttons (`training-quiz-retake-btn`).
+- No confetti in v1 — the PASS banner + cert block are the reward moment. (Deferred; a `canvas-confetti`-style flourish is a 20-minute follow-up.)
 
-**Tests — `tests/test_phase56_11_equipment_photos.py` — 12 tests, all passing**
-- Equipment-types enum returns 11 types in order; customer forbidden.
-- 4-photo upload cap (5th → 400).
-- Customer forbidden from view + upload.
-- Tech can view + upload; tech cannot delete (403); admin can delete (200).
-- Cross-tenant read returns 404.
-- GET grouped response includes all 11 types even when empty.
-- Tag validation: `general` / `algae_before` / `algae_after` accepted; unknown tag → 400.
-- Unknown equipment type rejected (400).
-- OpenAPI schema regenerates cleanly and includes the new paths.
+**Admin authoring (`/admin/training`)**
+- Read-only table of every module the admin can see (`training-admin-table`). Columns: Title, Code, Dept, System badge, Lessons, Quiz, Actions.
+- System modules (CPO Prep) render with a `Lock` icon + "System" pill.
+- Row action = "View →" link into the same tech-facing module detail page (safe for read-only inspection).
+- Full CRUD for tenant-custom modules + drag-reorder + leaderboard **DEFERRED to a follow-up ship** — called out on the page itself. V1 is intentionally minimal because the CPO seed is a system module and cannot be edited via the API anyway (immutable per 56.13a router).
 
-**Non-goals (locked)**
-- No AI-based equipment identification.
-- No equipment maintenance schedules on the library (Phase 24 asset maintenance already covers that separately).
-- No linking of equipment photos to service reports beyond the tag hint.
-- No "before/after" side-by-side rendering on the checklist — the pairing UI ships in a future phase.
+**Certifications surface on user profile**
+- **DEFERRED to Phase 56.13b-followup**. The `GET /api/training/certificates` endpoint is live from 56.13a-commit and returns the current user's certs — the tech can access their certs via the quiz results screen (immediately after passing). A dedicated section on the team-member detail page is a small UI additive and best landed after the mobile UI ships (Phase 56.13c) so both surfaces are wired in the same session.
+
+**Non-goals (v1, locked)**
+- No drag-reorder for lesson ordering.
+- No rich-text editor (markdown source only).
+- No discussion forum.
+- No email delivery of the cert PDF (in-app download only).
+- No AI tutoring / hints.
+- No confetti or celebration animation (PASS banner suffices).
+- No leaderboard (deferred).
+- No forced-completion gate on the quiz — techs can technically take the quiz before finishing lessons; the "Take Quiz" banner only appears after all lessons are complete, but the URL is accessible manually. This is intentional — retakes are unlimited anyway.
 
 **Preflight**: `bash /app/scripts/preflight.sh` → **exit 0**.
 
-**Sample curl (verified live)**
-```
-GET  /api/equipment-types                                  → 200 · 11 types in order · cap 4
-POST /api/customers/{cid}/equipment-photos × 4             → 201, 201, 201, 201
-POST /api/customers/{cid}/equipment-photos (5th)           → 400 "Maximum of 4 photos per equipment type"
-DELETE ...  (tech)                                         → 403
-DELETE ...  (admin)                                        → 200
-GET  /api/customers/{cid}/equipment-photos                 → 200 · grouped keys = 11 enum types
-```
+**Screenshot evidence (verified end-to-end)**
+1. `/tests` list — logged in as pool tech (`test-pool-tech@aquaterra.com`), shows exactly one card under the **Pool** section: "Certified Pool Operator (CPO) — Prep Course", 9 lessons · 50 quiz questions, `POOL` + `SYSTEM` badges, Start button, 0% progress ring.
+2. `/tests/cpo-prep` — module detail with 9 lessons in the sidebar (0 / 9 complete), Chapter 1 markdown body rendered in the main panel, prep-material disclaimer in a yellow callout above the split panel.
+3. `/tests/cpo-prep/quiz` — quiz runner mid-quiz on Question 1 of 50 with 4 choices + Next button. Verified `Question 1 of 50` counter renders correctly.
+4. Results screen — submitted 50 wrong answers (chose first choice on every question), got 6% score with a red FAIL banner + full per-question review. Cert block correctly HIDDEN because failed (verified separately by curl in Phase 56.13a-commit — passing score returns a valid `certificate_id`, the PDF endpoint returns a `%PDF-1.4` with the disclaimer byte-matched).
+5. `/admin/training` route exists and is admin-gated at `App.js` via `<AdminOnly>` wrapper.
 
-**Screenshot evidence**
-The Equipment tab on the customer detail page renders the accordion with 11 sections. "Filter Pump" expanded shows 0 / 4 counter + the dashed "Add photo" placeholder. All other 10 sections render as collapsed headers below (confirmed via `equipment-section-*` test-id count = 22, i.e., 11 headers + 11 sections).
+**Certificate PDF download**
+Confirmed working end-to-end in Phase 56.13a-commit (backend byte-match assertion passing). The Results screen's `Download Certificate PDF` button links to the same endpoint that was byte-verified. No new backend changes in this ship — the certificate flow was already complete.
 
 **Files touched**
-- `backend/config_equipment_types.py` (new)
-- `backend/routers/customer_equipment_photos.py` (new)
-- `backend/server.py` (router registration)
-- `backend/tests/conftest.py` (cleanup rule for `customer_equipment_photos`)
-- `backend/tests/test_phase56_11_equipment_photos.py` (new, 12 tests)
-- `frontend/src/components/customers/CustomerEquipmentLibrary.jsx` (new)
-- `frontend/src/pages/customers/CustomerDetail.jsx` (Equipment tab)
+- `frontend/src/pages/training/TrainingList.jsx` (new)
+- `frontend/src/pages/training/TrainingModuleDetail.jsx` (new)
+- `frontend/src/pages/training/TrainingQuiz.jsx` (new)
+- `frontend/src/pages/training/AdminTraining.jsx` (new)
+- `frontend/src/App.js` (imports + 4 new routes)
+- `frontend/src/layouts/AdminTopBar.jsx` (Tests chip + `GraduationCap` icon)
+- `frontend/src/nav/roleNav.js` (Training entry on TECH_NAV.records)
 - `memory/HANDOFF.md`, `memory/PRD.md`
 
-**Priority order — the CPO + algae + equipment triangle is now complete**
+**Priority order**
 1. ✅ Phase 56.13a — Training subsystem + CPO drafts.
 2. ✅ Phase 56.13a-commit — CPO seed + PDF cert.
 3. ✅ Phase 56.10 — Visible algae + AI remediation dosing.
-4. ✅ Phase 56.11 — Customer Equipment Photo Library (THIS SHIP).
-5. **Awaiting user direction** — the master queue (56.9b Zillow, T1-T6 calculators, 56.13b/c Training UI, 56.13d supplemental modules, 56.14 landscaper training, 56.15 handbook) remains paused pending user pick.
-6. **DEFERRED, ready when you are**:
-   - Phase 56.11-mobile — mobile customer-detail equipment section.
-   - Phase 56.11-followup — wizard step-4 algae-photo soft prompt.
-   - Phase 56.10-mobile — mobile pool-wizard visible-algae toggle UI.
+4. ✅ Phase 56.11 — Customer Equipment Photo Library.
+5. ✅ Phase 56.13b — Training Web UI + "Tests" Nav (THIS SHIP).
+6. **NEXT: Phase 56.13c** — Training Mobile UI (parity with the web pages above).
+7. Then: Phase 56.10-mobile (mobile algae toggle UI) + Phase 56.11-mobile (mobile equipment library).
+8. Then: Phase 56.13b-followup — Certifications section on team member profile + admin tenant-custom module editor + leaderboard.
+9. **PAUSED**: 56.9b Zillow, T1-T6 calculators, 56.13d supplemental modules, 56.14 landscaper training, 56.15 handbook.
