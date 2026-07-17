@@ -1516,36 +1516,112 @@ returns HTTP 403.
 
 ---
 
-## Phase 56.17-followup · Autobilling Runs Audit UI Page (Feb 2026)
+## Session close — Phase 56.9b Step 0 report + defer to fresh session
 
-Small web-only ship. New admin page at `/admin/autobilling-runs`
-consumes the `GET /api/autobilling-runs` endpoint that shipped
-in 56.17.
+### Session recap (in ship order)
 
-**Files touched (3):**
-- `frontend/src/pages/finance/AutobillingRuns.jsx` (**new**) —
-  sortable table w/ colored status pills (fired=green,
-  manual=blue, skipped=grey, error=red, late_missed=orange),
-  plan + status + since filters, client-side CSV export
-  (matches the training leaderboard pattern).
-- `frontend/src/App.js` — route registered under `AdminOnly`.
-- `frontend/src/nav/adminNav.js` — "Autobilling runs" nav entry
-  slotted under Invoicing.
+1. Phase 56.16-followup — Customer portal service reports UI.
+2. Phase 56.10-mobile — Algae toggle + protocol on mobile pool wizard.
+3. Phase 56.11-mobile — Equipment photo library on mobile customer detail.
+4. Phase 56.13b-followup — Bulk-progress endpoint + profile certs +
+   tenant module editor + leaderboard.
+5. Phase 56.17 + P0 Master Invoices 404 fix — Autobilling schedule
+   anchors (5 options inc. `fourth_friday`) + daily auto-run +
+   `/master-invoices` → `/invoices/master` nav fix.
+6. Phase 56.17-followup — Autobilling runs audit UI page at
+   `/admin/autobilling-runs`.
+7. Phase 56.9b Step 0 (exploration only, no code touched) —
+   **deferred to fresh session**.
 
-**Testids**: `autobilling-runs-page`, `autobilling-runs-table`,
-`autobilling-runs-filter-plan`, `autobilling-runs-filter-status`,
-`autobilling-runs-filter-since`, `autobilling-runs-csv-export`,
-`autobilling-runs-status-{status}`, `autobilling-runs-row-{id}`.
+Preflight: **exit 0** at every ship boundary in this session.
 
-**Verified live** at
-`https://poolscape-audit.preview.emergentagent.com/admin/autobilling-runs`
-— 4 audit rows rendering: 2 `late_missed` (from the missed
-first_of_month anchor for pre-existing plans) + 2 `fired`
-(the 56.17 manual run-now cases from that ship's curl
-verification).
+### Fresh-session brief — Phase 56.9b guardrail-first Zillow ship
 
-**Preflight**: `bash /app/scripts/preflight.sh` → **exit 0**.
+Executed Step 0 in this session; deferred Steps 1–10 to a fresh
+session to preserve guardrail integrity. Nothing in `/app` was
+mutated for 56.9b — Step 0 was a read-only survey. The next
+session opens against a clean slate with this as its brief.
 
-**Priority order after this ship:** 56.17-followup ✅ landed;
-still paused: 56.9b Zillow, T1-T6, 56.13d, 56.14, 56.15.
+**RBAC endpoints to swap in Step 8 (LAST)** — 6 total, currently
+`Depends(require_admin)`:
+- `backend/routers/property.py`: `/property/lookup`,
+  `/property/save`, `/property/saved`, `/property/saved/{pid}`
+- `backend/routers/d2d.py`: `/d2d/sold-leads`
+- **Stays admin-only** (aggregate reporting, not a lookup):
+  `backend/routers/d2d.py::/d2d/report`
+
+**Already tech-accessible (no change needed)** — 5 endpoints on
+`property.py`: `/search`, `/search-by-coords`, `/history`,
+`/save-note`, `/saved-notes` (mix of
+`require_tech_or_admin` / `require_tech_or_admin_write`).
+
+**Clean-slate collections** — neither `zillow_cache` nor
+`zillow_usage` exists in Mongo today. Both must be created in
+Steps 1 (usage) and 3 (cache) with TTL indexes.
+
+**Widget endpoint home** — `backend/routers/zillow_admin.py` is a
+523-byte stub with only `/health`. It's the target file for the
+Step 4 admin usage widget endpoint. No refactor needed.
+
+**Web frontend surfaces to touch on Step 6** — 4 pages, exactly as
+briefed:
+- `pages/property-lookup/PropertyLookupPage.jsx` line 164 (banner
+  + chip).
+- `pages/d2d/D2dPages.jsx` lines 175, 248, 515 (3 spots).
+- `pages/aitools/AiToolsPages.jsx` line 572 (virtual-bid — same
+  Zillow lookup, add chip).
+- `pages/tech/ToolsHub.jsx` line 35 (tile becomes accessible; no
+  banner change).
+
+**Mobile canvassing surface** — NOT YET SURVEYED. First action in
+the fresh session is Step 0 continuation: grep `/app/mobile` for
+D2D canvassing / sold-leads / property-lookup UI to determine
+whether Step 7 (mobile parity) is a real deliverable or a "web
+only" note in HANDOFF.
+
+**Configuration** — `OPENWEB_NINJA_API_KEY` env in
+`backend/config.py`; base URL
+`https://api.openwebninja.com/realtime-zillow-data`.
+
+**Rate-limit caps (from brief, restated)**:
+- Techs: 20 / day + 200 / month.
+- Admins: uncapped.
+- Super_admin: uncapped + can `?override_budget=true` past a
+  100 %-consumed tenant budget (writes a
+  `zillow_budget_override` audit event).
+- Tenant monthly budget default: 1000 / month.
+- ≥ 90 % → 200 + `X-Zillow-Budget-Warning: 1` header + JSON
+  banner field. ≥ 100 % → 429
+  `{error: "tenant_budget_exhausted", ...}` except for the
+  super_admin override.
+- Cache hits do NOT decrement rate-limit counters. Cache key =
+  `sha256(normalized_address)`, 30-day TTL.
+
+**Fresh-session opening actions (in order)**:
+1. Step 0 continuation — grep `/app/mobile` for canvassing UI;
+   confirm whether Step 7 is real or a web-only note.
+2. Step 1 — `backend/services/zillow_rate_limit.py` + `zillow_usage`
+   collection w/ TTL indexes.
+3. Steps 2 → 7 per the original brief.
+4. Step 8 — RBAC swap LAST, only after Steps 1–5 tests are green.
+5. Steps 9–10 — HANDOFF/PRD entry + `preflight.sh` exit 0.
+
+### Parallel user decisions (do NOT touch until user greenlights)
+
+- End-of-visit auto-email.
+- "Nudge non-starters" CPO widget action.
+- RingCentral test scope.
+
+The user is handling these in a separate track. Not blocking
+56.9b.
+
+### T-phases (T1–T6)
+
+Explicitly on hold until the user reviews 56.9b evidence AND
+provides the design-system audit reply. Do NOT auto-start them.
+
+---
+
+Session closed. `/app` is the source of truth. Fresh session
+opens directly on Phase 56.9b guardrail-first work.
 
