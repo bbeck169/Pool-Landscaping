@@ -620,3 +620,37 @@ Rapid-boost scenario (fc=1.5): `Liquid chlorine (12.5%) qty=0.27 unit=gal target
 - Mobile wizard (`mobile/src/components/checklist/PoolChecklistWizard.tsx`) with swipe navigation. Backend contract identical — mobile can mount the same shape.
 - Optional target-line on the free-chlorine sparkline reading Phase 56.5 `target_ppm`.
 - Full Phase 49.6 recheck-confirm surface on Close Job (wizard button already calls `closeJob` — confirmation flow may need a fresh call-site pass).
+
+## Phase 56.5b · Soda Ash / Sodium Bicarbonate → lbs display — SHIPPED
+
+Small dosing unit fix bundled ahead of Phase 56.7 mobile ship (2-file
+backend change; frontend renders the payload verbatim so web + mobile
+parity is automatic — same pattern used for the muriatic acid + liquid
+chlorine gallons conversion).
+
+**Changes** (`backend/services/pool_dosing.py`):
+- Soda ash: was `qty × oz`, now `round(oz / 16, 1) × lbs`. Reason string
+  mentions the lbs value (e.g. "1.5 lbs raises pH gently…").
+- Sodium bicarbonate (baking soda): same treatment — was `qty × oz`, now
+  `round(oz / 16, 1) × lbs`.
+- Chemistry math unchanged (still per 10k-gallon `scale`, same delta
+  formulas). Only presentation + `reason` string touched.
+
+**Verified**:
+- 19/19 Phase 56.5 dosing unit tests still passing (loose bounds).
+- Live payload sample (pH 7.0, TA 60, 20k gal): Soda ash → 1.5 lbs,
+  Sodium bicarbonate → 10.5 lbs.
+- Muriatic Acid + Liquid Chlorine remain in gallons (unchanged).
+- Chlorine Tabs remain integer count (unchanged).
+- Preflight → exit 0.
+
+**Chemicals Added catalog** (`backend/routers/service_reports.py`
+`POOL_CHEMICALS_CATALOG_DEFAULT`) already lists Shock (Cal-Hypo) +
+Soda Ash with `default_unit: "lbs"` — no change needed. The manual
+entry dropdown was correct all along; only the AI recommendation
+formatter had the mismatch.
+
+**Note on "Shock"**: the deterministic recommender does not currently
+emit a Shock recommendation (algae risk / very-high-cyanuric handling
+is TODO). When it lands, it will use `unit: "lbs"` per the catalog
+default. No display code change required in advance.

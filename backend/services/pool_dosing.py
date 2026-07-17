@@ -261,11 +261,15 @@ def compute(
         ph = r["ph"]
         lo, hi, tgt = _TARGETS["ph"]
         if ph < lo:
+            # Soda ash (Phase 56.5b unit fix) — 6 oz per 10k gal ≈ +0.2 pH.
+            # Displayed as lbs (1 lb = 16 oz) to match how techs stock and
+            # scoop the product. Underlying chemistry unchanged.
             delta = tgt - ph
-            oz = round(6.0 * (delta / 0.2) * scale, 1)
+            oz = 6.0 * (delta / 0.2) * scale
+            lbs = round(oz / 16.0, 1)
             out.append(_rec(
-                "Soda ash (sodium carbonate)", oz, "oz",
-                f"pH is {ph} — below {lo}. Raises pH gently without bumping alkalinity much.",
+                "Soda ash (sodium carbonate)", lbs, "lbs",
+                f"pH is {ph} — below {lo}. {lbs} lbs raises pH gently without bumping alkalinity much.",
                 "routine", "ph", ph, _TARGETS["ph"],
             ))
         elif ph > hi:
@@ -284,11 +288,14 @@ def compute(
         ta = r["total_alkalinity"]
         lo, hi, tgt = _TARGETS["total_alkalinity"]
         if ta < lo:
+            # Sodium bicarbonate (Phase 56.5b unit fix) — 21 oz per 10k gal
+            # ≈ +10 ppm. Displayed as lbs to match tech stocking.
             delta = tgt - ta
-            oz = round(21.0 * (delta / 10.0) * scale, 1)
+            oz = 21.0 * (delta / 10.0) * scale
+            lbs = round(oz / 16.0, 1)
             out.append(_rec(
-                "Sodium bicarbonate (baking soda)", oz, "oz",
-                f"Total alkalinity is {ta} ppm — below {lo}. Buffers pH swings.",
+                "Sodium bicarbonate (baking soda)", lbs, "lbs",
+                f"Total alkalinity is {ta} ppm — below {lo}. {lbs} lbs buffers pH swings.",
                 "routine", "total_alkalinity", ta, _TARGETS["total_alkalinity"],
             ))
         elif ta > hi and r.get("ph", 7.4) > _TARGETS["ph"][1]:
