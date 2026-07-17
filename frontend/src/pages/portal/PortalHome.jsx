@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Plus,
   Shield,
+  ClipboardCheck,
 } from "lucide-react";
 import { api } from "@/api";
 import { brandGradientCss, colors, money } from "@/theme";
@@ -143,6 +144,7 @@ export default function PortalHome() {
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <ActionTile icon={Plus} label="Request Service" tone={colors.brand} onClick={() => navigate("/portal/request-service")} testid="qa-request" />
+          <ActionTile icon={ClipboardCheck} label="Service Reports" tone="#0891B2" onClick={() => navigate("/portal/service-reports")} testid="qa-service-reports" />
           <ActionTile icon={Receipt} label="Invoices" tone="#A16207" onClick={() => navigate("/portal/invoices")} testid="qa-invoices" />
           <ActionTile icon={FileText} label="Estimates" tone="#4338CA" onClick={() => navigate("/portal/estimates")} testid="qa-estimates" />
           <ActionTile icon={Wrench} label="Payment Method" tone={colors.success} onClick={() => navigate("/portal/payment-method")} testid="qa-pm" />

@@ -1,5 +1,5 @@
 import React from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/auth";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
 import AppLayout from "@/layouts/AppLayout";
@@ -110,6 +110,9 @@ import {
   PortalDocuments, PortalMessages, PortalProfile,
   PortalRequestService, PortalPaymentComplete,
 } from "@/pages/portal/PortalPages";
+import {
+  PortalServiceReports, PortalServiceReportDetail,
+} from "@/pages/portal/PortalServiceReports";
 import PortalSignPage from "@/pages/portal/PortalSign";
 import { CsatDashboard, CsatDetail, PublicCsat } from "@/pages/csat/CsatPages";
 import { RealtimeProvider } from "@/realtime/NotificationSocket";
@@ -155,6 +158,14 @@ import { ApprovalsPage as SocialApprovals, BulkUploadPage as SocialBulkUpload,
          ShortLinksPage as SocialShortLinks, BrandKitPage as SocialBrandKit }
   from "@/pages/social/SocialExtras";
 import ServiceTemplatesEditor from "@/pages/admin/ServiceTemplatesEditor";
+
+function CustomerServiceReportRedirect() {
+  // Preserve the report id when redirecting from the /customer alias to
+  // the primary /portal path. Kept alongside AdminOnly/NoTech so route
+  // wiring stays self-contained.
+  const { id } = useParams();
+  return <Navigate to={`/portal/service-reports/${id}`} replace />;
+}
 
 function AdminOnly({ children }) {
   const { user, loading } = useAuth();
@@ -476,6 +487,13 @@ export default function App() {
             <Route path="portal/home" element={<PortalHome />} />
             <Route path="portal/services" element={<PortalServices />} />
             <Route path="portal/services/:id" element={<PortalServiceDetail />} />
+            <Route path="portal/service-reports" element={<PortalServiceReports />} />
+            <Route path="portal/service-reports/:id" element={<PortalServiceReportDetail />} />
+            {/* Phase 56.16-followup — alias for the /customer/... spec.
+                Primary path stays under /portal/* to match the rest of the
+                customer portal namespace. */}
+            <Route path="customer/service-reports" element={<Navigate to="/portal/service-reports" replace />} />
+            <Route path="customer/service-reports/:id" element={<CustomerServiceReportRedirect />} />
             <Route path="portal/invoices" element={<PortalInvoices />} />
             <Route path="portal/invoices/:id" element={<PortalInvoiceDetail />} />
             <Route path="portal/estimates" element={<PortalEstimates />} />

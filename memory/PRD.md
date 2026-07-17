@@ -1146,3 +1146,78 @@ Three deliverables:
     leaderboard + bulk-progress endpoint).
 11. Paused: 56.9b Zillow, T1-T6, 56.13d, 56.14, 56.15.
 
+---
+
+## Phase 56.16-followup — Customer Portal Service Reports UI (Web) (Feb 2026)
+
+Customer-facing read-only surface at `/portal/service-reports` (list) +
+`/portal/service-reports/:id` (detail). Backend endpoints already
+existed from Phase 56.16. This ship is web-only; mobile deferred.
+
+**Files touched:**
+- `frontend/src/pages/portal/PortalServiceReports.jsx` (new — list +
+  detail components).
+- `frontend/src/pages/portal/PortalHome.jsx` (new "Service Reports"
+  quick-action tile, lucide `ClipboardCheck`, testid
+  `qa-service-reports`).
+- `frontend/src/App.js` (routes: `/portal/service-reports` and
+  `/portal/service-reports/:id`; `/customer/service-reports` alias
+  redirects to preserve the spec path).
+- `backend/tests/seed_customer_portal_service_reports.py` (new,
+  idempotent — seeds 1 completed pool + 1 completed landscape
+  service_report for `customer@aquaterra.com`, includes deliberately
+  tagged `internal` + `issue` photos and a `SEEDED-INTERNAL:`
+  `internal_notes` string so redaction is externally verifiable).
+
+**Sections rendered (detail view):**
+- Header (kind chip, Completed pill, visit date, tech, address).
+- Algae observation banner (pool only, customer-friendly language —
+  never leaks raw remediation doses).
+- Water chemistry readings table (pool only, values only, no
+  reasoning).
+- Chemicals added list (pool only, `name  amount unit`).
+- Checklist (pool ~6 items or landscape 10 canonical items) with
+  checkmarks.
+- Notes from your tech (verbatim `customer_notes`; NEVER
+  `internal_notes`).
+- Visit photos grid (backend has already stripped internal/issue tags
+  before serving to /me).
+
+**Redaction verified live** (`customer@aquaterra.com` on preview):
+- `internal_notes` absent from both detail payloads.
+- Pool photos: 3 seeded (after/internal/issue) → 1 rendered (after
+  only).
+- Landscape photos: 3 seeded (after/after/issue) → 2 rendered (both
+  afters).
+- Admin (no `customer_id`) hitting `/customers/me/service-reports` →
+  HTTP 403.
+- DOM assertion after react render: `SEEDED-INTERNAL` string not in
+  either page's HTML.
+
+**Nav / RBAC:** "Service Reports" tile appears on the customer portal
+home (customer-only surface — non-customers are redirected off
+`/portal/home` in `App.js`).
+
+**Test credential:** `customer@aquaterra.com` / `password123` (already
+in `memory/test_credentials.md` — no new account seeded).
+
+**Preflight:** `bash /app/scripts/preflight.sh` → exit 0 (only the 417
+pre-existing dead-import warnings inherited from 56.13c — no new
+warnings introduced).
+
+**Regression:** `pytest backend/tests/test_phase56_16_landscape.py` →
+3 passed, 2 skipped (same skips as previous ship).
+
+**Priority order after this ship:**
+1-8: ✅ (all previous phases + 56.13c + 56.16-followup).
+9. **NEXT: 56.10-mobile** — algae toggle on mobile pool wizard step 1
+   + algae_remediation section on step 2. Deferred here to keep the
+   web ship self-contained.
+10. Then: 56.11-mobile (equipment library on mobile customer detail).
+11. Then: 56.13b-followup (profile certs section + tenant-custom
+    module editor + leaderboard + bulk-progress endpoint to unblock
+    the CPO widget's in-progress counter).
+12. Paused: 56.9b Zillow, T1-T6 calculators, 56.13d, 56.14, 56.15.
+13. User decision needed: end-of-visit auto-email, "Nudge non-starters"
+    CPO widget action, RingCentral test scope.
+
