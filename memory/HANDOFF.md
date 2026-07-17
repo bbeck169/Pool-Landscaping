@@ -1,140 +1,212 @@
-# HANDOFF — session close
+# HANDOFF — Phase 56.9b Option A landed (backend guardrail infrastructure)
 
-**Fresh session opens on Phase 56.9b Steps 1–10.** First action:
-mobile canvassing survey (Step 0 continuation), then Step 1
-rate-limit service.
+Backend-only ship. Steps 1–5 + 9 + 10 completed. Steps 6, 7, 8
+explicitly held for the next session per the Option A boundary
+agreed with the user. **Zero user-facing exposure** in this ship
+— all 5 RBAC-gated Zillow endpoints still require admin as they
+did before; the guardrail infrastructure is instrumented,
+tested, and ready to activate when Step 8 flips in the next
+session.
 
-## Session recap (7 shipped items, in order)
+## What landed this session
 
-1. Phase 56.16-followup — Customer portal service reports UI.
-2. Phase 56.10-mobile — Algae toggle + protocol on mobile pool
-   wizard.
-3. Phase 56.11-mobile — Equipment photo library on mobile
-   customer detail.
-4. Phase 56.13b-followup — Bulk-progress endpoint + profile
-   certs + tenant module editor + leaderboard.
-5. Phase 56.17 + P0 Master Invoices 404 fix — Autobilling
-   schedule anchors (5 options inc. `fourth_friday`) + daily
-   auto-run + `/master-invoices` → `/invoices/master` nav fix.
-6. Phase 56.17-followup — Autobilling runs audit UI page at
-   `/admin/autobilling-runs`.
-7. Phase 56.9b Step 0 (exploration only) — **deferred**.
+### Step 1 · Rate-limit service + `zillow_usage` collection ✓
+- New file `backend/services/zillow_rate_limit.py` (~230 LOC).
+- Pure library — no endpoint mutation.
+- Caps enforced by role at check time:
+  - `technician` → 20/day + 200/month per user.
+  - `admin` / `super_admin` → uncapped per-user (still subject
+    to tenant budget guard below).
+- `log_call(user, tenant, endpoint, address, cost_units=1)` writes
+  `{tenant_id, user_id, endpoint, address_hash, ts, cost_units}`
+  to `zillow_usage`. `address_hash = sha256(normalize_address(...))`.
+- `ensure_indexes()` (idempotent, called from every service call
+  path) creates:
+  - `zillow_usage`: `ts` + composite `(tenant_id, user_id, ts desc)`
+  - `zillow_cache`: composite `(address_hash, cached_at)` +
+    a 30-day TTL index on the datetime field `cached_at_dt`
+  - `zillow_audit`: `ts`
 
-Preflight: **exit 0** at every ship boundary. `/app` is source of
-truth.
+### Step 2 · Tenant budget guard ✓
+- Default 1000/month/tenant. Tenants may override via a
+  `zillow_monthly_budget` field on the tenant doc (documented
+  but not yet UI-editable).
+- Return shape (`check_caps` result):
+  - `allowed`, `reason` (`tech_daily_cap`, `tech_monthly_cap`,
+    `tenant_budget_exhausted`, or `None`)
+  - `usage` (per-user + tenant), `tenant_budget`, `tenant_used`,
+    `tenant_pct`
+  - `budget_warning: bool` — set to `True` at ≥ 90 %
+  - `reset_at` — ISO of next midnight UTC (daily cap) or first
+    of next month (monthly cap)
+- `response_headers(caps)` returns the map of guardrail response
+  headers callers (Step 6/7) will attach:
+  - `X-Zillow-Budget-Warning: 1` when `budget_warning` is true
+  - `X-Zillow-Tech-Today` / `-Tech-Month` / `-Tenant-Used` /
+    `-Tenant-Budget`
+- Super_admin `?override_budget=true` handled by
+  `apply_override_or_fail(...)` — the only path that unlocks a
+  saturated tenant budget. Writes a `zillow_budget_override`
+  audit event to `zillow_audit` with `tenant_used_at_override`,
+  `tenant_budget_at_override`, `endpoint`, `address_hash`.
+  Never overrides per-user tech caps.
 
-## Fresh-session brief — Phase 56.9b (guardrail-first Zillow)
+### Step 3 · `zillow_cache` collection + 30-day TTL + counter safety ✓
+- `read_cache(address)` → cached dict or `None`. Belt-and-suspenders
+  TTL check inside the function in case the Mongo TTL index is
+  late.
+- `write_cache(address, data)` — upserts keyed by
+  `address_hash`. Stores both an ISO string (`cached_at`) for
+  human readability and a datetime (`cached_at_dt`) for the TTL.
+- Cache hits DO NOT call `log_call(...)`. Counters unchanged.
+  Verified by test `test_cache_hit_does_not_decrement_counters`.
 
-**Do NOT compress the 10 guardrail steps under budget pressure.**
-Step 0 was executed as a read-only survey in the closing session;
-no code was mutated. Full findings below.
+### Step 4 · Admin widget endpoint ✓
+- `backend/routers/zillow_admin.py` grew a new admin-only
+  `GET /api/zillow/usage/this-month` endpoint. Purely read-only
+  aggregate — never touches the paid API.
+- Response includes: `month`, `total_lookups`, `top_users` (top
+  5 by count, enriched with `name`/`email`), `tenant_budget`,
+  `tenant_used`, `tenant_pct`, `budget_warning`, `cache_hits`,
+  `cache_hit_rate`, `generated_at`.
+- Cache-hit rate is conservative: it's computed from
+  `zillow_audit` rows tagged `event: "zillow_cache_hit"`. That
+  audit row is emitted only by the endpoint-layer wire-in
+  (Step 6/7), so until Step 6/7 land, the rate stays 0. Widget
+  never over-reports.
 
-### RBAC endpoints to swap on Step 8 (LAST — after Steps 1–5 green)
+### Step 5 · Backend tests — 7 passed / 0 failed (10.30s) ✓
+`backend/tests/test_zillow_rbac.py` (7 cases; each named
+individually below matches the ship-report evidence):
 
-Currently `Depends(require_admin)` — must become
-`Depends(require_zillow_access)`:
+| # | Test | Status |
+|---|---|---|
+| 1 | `test_tech_within_daily_cap_allowed` | PASS |
+| 2 | `test_tech_hits_daily_cap_denied_with_reset` | PASS |
+| 3 | `test_tenant_budget_reaches_100pct_denied_for_admin` | PASS |
+| 4 | `test_tenant_budget_warns_at_90pct` | PASS |
+| 5 | `test_super_admin_override_writes_audit_event` | PASS |
+| 6 | `test_cache_hit_does_not_decrement_counters` | PASS |
+| 7 | `test_widget_endpoint_admin_ok_tech_403` | PASS |
 
-- `backend/routers/property.py`:
-  - `/property/lookup`
-  - `/property/save`
-  - `/property/saved`
-  - `/property/saved/{pid}`
-- `backend/routers/d2d.py`:
-  - `/d2d/sold-leads`
+Each test seeds an **isolated per-test tenant** (`56.9b-test-<uuid>`)
+so real tenant traffic on the preview is never touched.
 
-**Stays admin-only** (aggregate reporting, not a lookup):
-`backend/routers/d2d.py::/d2d/report`.
+### Step 9 · HANDOFF + PRD entries ✓ (this file + PRD.md)
 
-**Already tech-accessible** (no change needed) — 5 endpoints on
-`property.py`: `/search`, `/search-by-coords`, `/history`,
-`/save-note`, `/saved-notes`.
+### Step 10 · Preflight ✓ (exit 0)
 
-### Clean-slate Mongo collections (Steps 1 + 3)
+## Files touched
 
-- `zillow_usage` — does NOT exist. TTL indexes on
-  `{ts: 1}` (day/month rollups) and per-user counts.
-- `zillow_cache` — does NOT exist. Key = `address_hash =
-  sha256(normalized_address)`, 30-day TTL on `cached_at`.
+- `backend/services/zillow_rate_limit.py` (**new**, ~230 LOC).
+- `backend/routers/zillow_admin.py` (widget endpoint appended).
+- `backend/tests/test_zillow_rbac.py` (**new**, 7 tests).
+- `memory/HANDOFF.md`, `memory/PRD.md`.
 
-### Widget endpoint home (Step 4)
+**Zero endpoint RBAC changes.** `property.py` / `d2d.py` /
+`utils.py` were NOT edited. The 5 endpoints listed for Step 8
+still require admin. This is by design — the Option A
+guarantee.
 
-`backend/routers/zillow_admin.py` is a 523-byte stub with only
-`/health`. Extend it for the "Zillow Usage This Month" admin
-widget endpoint. No refactor of existing code.
+## Fresh-session brief — Phase 56.9b Steps 6/7/8 (clean 3-step)
 
-### Web frontend surfaces (Step 6)
+Next session picks up here. Do NOT redo Steps 1–5.
 
+### Step 6 · Web frontend
+
+Wire the usage-counter chip + rate-limited banner into the 4
+pages. Chip shape: `"Zillow: X/20 today, Y/200 month"` — yellow
+at 80 %, red at 100 %.
+
+Pages:
 - `frontend/src/pages/property-lookup/PropertyLookupPage.jsx`
-  line 164 (banner + usage chip).
-- `frontend/src/pages/d2d/D2dPages.jsx` lines 175, 248, 515
-  (3 spots).
+  line 164 — remove hardcoded "Admin access required" banner
+  (only rendered when Step 8 activates); mount chip +
+  rate-limited banner.
+- `frontend/src/pages/d2d/D2dPages.jsx` lines 175, 248, 515 —
+  same three-way pattern.
 - `frontend/src/pages/aitools/AiToolsPages.jsx` line 572
-  (virtual-bid — same Zillow lookup, add chip).
-- `frontend/src/pages/tech/ToolsHub.jsx` line 35 (tile becomes
-  accessible; no banner change needed).
+  (virtual-bid) — same.
 
-### Mobile canvassing surface — CONFIRMED PRESENT (Step 0.5 done in prior session)
+**Recommended new backend endpoint** to support the chip UI:
+`GET /api/zillow/me/usage` — returns `caps` shape from
+`check_caps(user, tenant)` for the current user. Keeps the chip
+math server-side.
 
-Step 7 is a **real deliverable**, not a no-op. Surfaces to touch:
+### Step 7 · Mobile parity
 
-- `mobile/app/(app)/d2d.tsx` — D2D screen tab
-- `mobile/app/(app)/property-lookup.tsx` — Property Lookup screen
-- `mobile/app/virtual-bid.tsx` — Virtual Bid (same Zillow lookup)
-- `mobile/app/d2d/index.tsx`
-- `mobile/app/d2d/leaderboard.tsx`
-- `mobile/app/d2d/report.tsx`
-- `mobile/src/components/d2d/*` — MapCanvas variants + dispo
-  helpers (chip likely wires at screen-header level, not here)
-- `mobile/src/components/tools/sections.ts` — nav registry;
-  verify whether tile visibility needs updating
+3 primary screens + 3 sub-screens (surveyed in prior session,
+persisted below). Use the same shared usage-state pattern the
+web adopts in Step 6.
 
-Chip + rate-limited banner must ship on `d2d.tsx`,
-`property-lookup.tsx`, and `virtual-bid.tsx` at minimum.
-D2D sub-screens should share the same usage state via a
-component-local subscription to the widget endpoint.
+- `mobile/app/(app)/d2d.tsx`
+- `mobile/app/(app)/property-lookup.tsx`
+- `mobile/app/virtual-bid.tsx`
+- `mobile/app/d2d/{index,leaderboard,report}.tsx`
+- `mobile/src/components/d2d/*` — chip mounts at screen-header
+  level, not here
+- `mobile/src/components/tools/sections.ts` — verify tile
+  visibility (may need `role`-gate loosening)
 
-### Configuration
+### Step 8 · RBAC swap LAST
 
-- `OPENWEB_NINJA_API_KEY` env in `backend/config.py`.
-- Base URL: `https://api.openwebninja.com/realtime-zillow-data`.
+**Only after Steps 6 + 7 land.** Add to `backend/utils.py`:
 
-### Rate-limit caps (from brief, restated)
+```python
+def require_zillow_access(user: dict = Depends(get_current_user)) -> dict:
+    role = (user or {}).get("role")
+    if role in ("super_admin", "admin", "technician"):
+        return user
+    raise HTTPException(403, "Zillow access requires admin or technician role")
+```
 
-- Techs: **20 / day + 200 / month**.
-- Admins: uncapped.
-- Super_admin: uncapped; may pass `?override_budget=true`
-  past a 100 %-consumed tenant budget (writes a
-  `zillow_budget_override` audit event).
-- Tenant monthly budget default: **1000 / month**.
-- ≥ 90 % → 200 + `X-Zillow-Budget-Warning: 1` header +
-  JSON banner field.
-- ≥ 100 % → **HTTP 429** `{error: "tenant_budget_exhausted", ...}`
-  except for the super_admin override.
-- Cache hits do NOT decrement rate-limit counters.
+Then swap `Depends(require_admin)` → `Depends(require_zillow_access)`
+on these 5 endpoints (per Step 0 findings):
 
-### Fresh-session opening actions (in strict order)
+- `backend/routers/property.py::/property/lookup`
+- `backend/routers/property.py::/property/save`
+- `backend/routers/property.py::/property/saved`
+- `backend/routers/property.py::/property/saved/{pid}`
+- `backend/routers/d2d.py::/d2d/sold-leads`
 
-1. ~~Step 0 continuation — grep `/app/mobile` for canvassing UI;
-   confirm Step 7 scope~~ **DONE** (see above — Step 7 is real).
-2. Step 1 — `backend/services/zillow_rate_limit.py` +
-   `zillow_usage` collection w/ TTL indexes.
-3. Step 2 — Tenant monthly budget guard w/ 90 % header + 100 %
-   429 + super_admin override + audit event.
-4. Step 3 — `zillow_cache` collection + address-hash key +
-   30-day TTL. Cache hits DO NOT decrement counters.
-5. Step 4 — `zillow_admin.py` widget endpoint.
-6. Step 5 — `backend/tests/test_zillow_rbac.py` — tech access,
-   tech 429 at daily cap, tenant budget at 1000, cache-hit no
-   decrement, super_admin override + audit event.
-7. Step 6 — Web frontend chips + banners on the 4 pages above.
-8. Step 7 — Mobile parity or explicit "web-only" HANDOFF note.
-9. **Step 8 — RBAC SWAP LAST**, only after Steps 1–5 tests are
-   green. Add `require_zillow_access` to `backend/utils.py`
-   (allow super_admin + admin + technician of either
-   department; block customer + anonymous). Swap on the 5
-   endpoints listed above.
-10. Step 9 — HANDOFF.md + PRD.md 56.9b entry (incl. deferrals).
-11. Step 10 — `bash /app/scripts/preflight.sh` → exit 0.
+**`/d2d/report` STAYS admin-only.**
+
+At Step 8, wire the guardrail service into each endpoint:
+```
+caps = await check_caps(user, tenant)
+caps = await apply_override_or_fail(caps, user, tenant, endpoint,
+                                    address, override_budget)
+if not caps["allowed"]:
+    if caps["reason"] == "tenant_budget_exhausted":
+        raise HTTPException(429, detail={
+            "error": "tenant_budget_exhausted",
+            "tenant_used": caps["tenant_used"],
+            "tenant_budget": caps["tenant_budget"],
+        })
+    raise HTTPException(429, detail={"error": caps["reason"],
+                                     "reset_at": caps["reset_at"]})
+# cache
+cached = await read_cache(address)
+if cached:
+    # emit `zillow_cache_hit` audit row so widget cache-hit rate ticks
+    await db.zillow_audit.insert_one({...event: "zillow_cache_hit"...})
+    return JSONResponse(cached, headers=response_headers(caps))
+# paid call
+data = await hit_zillow(address)
+await write_cache(address, data)
+await log_call(user, tenant, endpoint, address)
+caps_after = await check_caps(user, tenant)  # refresh headers
+return JSONResponse(data, headers=response_headers(caps_after))
+```
+
+## Deferrals (explicit, unchanged from prior sessions)
+
+- Step 6 (web) — next session
+- Step 7 (mobile) — next session
+- Step 8 (RBAC swap) — next session, gated on 6 + 7 landing
+- Per-tenant configurable cap UI — deferred to a 56.9b-followup.
+  Backend already reads `tenant.zillow_monthly_budget` if set;
+  no admin UI to edit it yet.
 
 ## Parallel user decisions (do NOT touch until greenlit)
 
@@ -142,17 +214,13 @@ component-local subscription to the widget endpoint.
 - "Nudge non-starters" CPO Readiness widget action.
 - RingCentral test scope.
 
-Being handled by the user in a separate track. Not blocking 56.9b.
-
 ## T-phases (T1–T6)
 
-**Explicitly on hold** until the user reviews 56.9b evidence AND
-delivers the design-system audit reply. Do NOT auto-start them.
+**On hold** — user reviews 56.9b evidence + design-system audit
+first.
 
-## Paused (unchanged, informational)
+## Paused (informational)
 
-- 56.9b (this brief — resumes next session)
-- T1–T6 calculators
 - 56.13d supplemental pool modules
 - 56.14 landscape training
 - 56.15 handbook + onboarding

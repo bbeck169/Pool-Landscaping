@@ -1625,3 +1625,51 @@ provides the design-system audit reply. Do NOT auto-start them.
 Session closed. `/app` is the source of truth. Fresh session
 opens directly on Phase 56.9b guardrail-first work.
 
+---
+
+## Phase 56.9b Option A — Backend Guardrail Infrastructure (Feb 2026)
+
+Steps 1–5 + 9 + 10 landed. Steps 6, 7, 8 explicitly held for
+the next session per the Option A boundary. **Zero user-facing
+exposure** — the 5 Zillow endpoints stay `require_admin` until
+Step 8 flips in a follow-up session.
+
+**Files touched:**
+- `backend/services/zillow_rate_limit.py` **(new)** — pure
+  library exposing `check_caps`, `log_call`, `read_cache`,
+  `write_cache`, `apply_override_or_fail`, `response_headers`,
+  `ensure_indexes`, `address_hash`.
+- `backend/routers/zillow_admin.py` — new admin-only
+  `GET /api/zillow/usage/this-month` widget endpoint. Read-only
+  aggregate; never touches the paid API.
+- `backend/tests/test_zillow_rbac.py` **(new)** — 7 tests.
+
+**Collections created** (idempotent + TTL indexes):
+- `zillow_usage` — one row per counted call.
+- `zillow_cache` — SHA-256 `address_hash` key, 30-day TTL.
+- `zillow_audit` — `zillow_budget_override` events (and a
+  future `zillow_cache_hit` event once Step 6/7 wire in).
+
+**Caps enforced by role**:
+- Tech: 20/day + 200/month per user.
+- Admin: uncapped per-user, still subject to tenant budget.
+- Super_admin: uncapped + `?override_budget=true` bypasses
+  100 % tenant budget with an audit event.
+- Default tenant budget: 1000/month; overridable via
+  `tenant.zillow_monthly_budget`.
+
+**Test results** — `pytest tests/test_zillow_rbac.py -v` →
+**7 passed / 0 failed** in 10.30s. Each test seeds an isolated
+per-test tenant.
+
+**Preflight**: `bash /app/scripts/preflight.sh` → exit 0.
+
+**Explicit deferrals (Option A boundary)**:
+- Step 6 (web frontend chip + banner) — next session.
+- Step 7 (mobile parity — 3 primary + 3 sub-screens) — next.
+- Step 8 (RBAC swap on 5 endpoints, `require_zillow_access`
+  helper in utils.py) — LAST, next session, gated on 6 + 7.
+
+Fresh-session brief for Steps 6/7/8 persisted verbatim in
+`memory/HANDOFF.md`.
+
