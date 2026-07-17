@@ -24,3 +24,16 @@ CHLORINE_RAPID_BOOST_GAP_PPM = 2.0
 # tabs indefinitely"). If tabs were used in any of the last N reports,
 # we rotate to liquid on the next recommendation.
 CHLORINE_TAB_ROTATION_LOOKBACK_VISITS = 3
+
+# Phase 56.10 — Visible-algae remediation.
+# Cal-hypo (calcium hypochlorite) trade strength; used both to size the
+# shock dose and to expose the ratio in the tech-facing reason string.
+CAL_HYPO_AVAILABLE_CHLORINE_PCT = 73
+# ppm free-chlorine boost targeted by each algae severity level.
+ALGAE_LIGHT_SHOCK_PPM = 10
+ALGAE_HEAVY_SHOCK_PPM = 30
+# Polyquat 60 (non-metallic algaecide) label rate — 4 fl-oz per 10,000 gal.
+POLYQUAT_OZ_PER_10K_GAL = 4.0
+# If pH is above this threshold when shocking, prepend the "acid first"
+# ordering guard. Matches the top of the healthy pH range.
+ALGAE_HIGH_PH_THRESHOLD = 7.6

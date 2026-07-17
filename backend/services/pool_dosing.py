@@ -29,6 +29,11 @@ from config_chlorine_targets import (
     CHLORINE_TAB_GALLONS_PER_TAB_PER_WEEK,
     CHLORINE_RAPID_BOOST_GAP_PPM,
     CHLORINE_TAB_ROTATION_LOOKBACK_VISITS,
+    CAL_HYPO_AVAILABLE_CHLORINE_PCT,
+    ALGAE_LIGHT_SHOCK_PPM,
+    ALGAE_HEAVY_SHOCK_PPM,
+    POLYQUAT_OZ_PER_10K_GAL,
+    ALGAE_HIGH_PH_THRESHOLD,
 )
 
 # Target ranges: (min, max, ideal). Free chlorine is resolved per-season.
@@ -178,6 +183,7 @@ def compute(
     customer: Optional[dict] = None,
     service_date=None,
     recent_service_reports: Optional[list] = None,
+    visible_algae: str = "none",
 ) -> list[dict]:
     """Return an ordered list of chemical dose recommendations.
 
@@ -189,6 +195,16 @@ def compute(
       5. Calcium Hardness (equipment protection)
       6. Salt (only when salt reading is present)
     Capped at 6 items.
+
+    Phase 56.10 — algae remediation:
+      * When `visible_algae` is "light" or "heavy", additional entries
+        with `category="algae_remediation"` are appended AFTER the
+        routine dose list. Heavy adds a Polyquat 60 algaecide entry
+        alongside a triple-strength cal-hypo shock.
+      * When pH exceeds `ALGAE_HIGH_PH_THRESHOLD`, an ordering-guidance
+        entry with `category="ordering_note"` is PREPENDED so the tech
+        lowers pH before shocking. Algae entries themselves are NOT
+        subject to the 6-item cap.
     """
     if not pool_gallons or pool_gallons <= 0:
         return []
@@ -355,4 +371,137 @@ def compute(
             ))
 
     out.sort(key=lambda x: 0 if x["urgency"] == "immediate" else 1)
-    return out[:6]
+    routine = out[:6]
+
+    # Phase 56.10 — algae remediation is appended AFTER the routine cap so
+    # a "shock the pool" recommendation never gets bumped by a low-priority
+    # calcium entry. Ordering-note (high-pH guard) is prepended.
+    algae_state = (visible_algae or "none").strip().lower()
+    if algae_state in ("light", "heavy"):
+        algae_entries = _algae_remediation_entries(algae_state, pool_gallons, r)
+        return algae_entries + routine
+    return routine
+
+
+# ─── Phase 56.10 — visible algae remediation ───────────────────────────────
+def _cal_hypo_lbs(pool_gallons: int, ppm_boost: float) -> float:
+    """User spec formula:
+        lbs = pool_gallons × ppm / 120000 × (73 / available_chlorine_%)
+    A cal-hypo product tagged at the configured trade strength (73 %) is
+    the reference. When `CAL_HYPO_AVAILABLE_CHLORINE_PCT` is bumped for a
+    higher-strength product, the dose drops linearly."""
+    ratio = 73.0 / float(CAL_HYPO_AVAILABLE_CHLORINE_PCT)
+    return pool_gallons * ppm_boost / 120_000.0 * ratio
+
+
+def _algae_remediation_entries(state: str, pool_gallons: int, readings: dict) -> list[dict]:
+    """Assemble the 1–2 algae dose entries plus optional high-pH guard.
+
+    Every entry carries `category="algae_remediation"` (or `ordering_note`
+    for the high-pH guard) so the wizard step-2 UI can render them in a
+    distinct sub-section with a warning icon."""
+    ordering: list[dict] = []
+    ph = readings.get("ph")
+    if ph is not None and ph > ALGAE_HIGH_PH_THRESHOLD:
+        ordering.append({
+            "chemical": "Ordering guidance",
+            "quantity": 0,
+            "unit": "",
+            "reason": (
+                "Lower pH to 7.2 with muriatic acid FIRST, then shock. "
+                "Shocking at high pH reduces effectiveness."
+            ),
+            "urgency": "immediate",
+            "reading_key": "ph",
+            "current_value": ph,
+            "target_range": [7.2, 7.6],
+            "target_value": 7.4,
+            "category": "ordering_note",
+        })
+
+    entries: list[dict] = []
+    if state == "light":
+        ppm = ALGAE_LIGHT_SHOCK_PPM
+        lbs = round(_cal_hypo_lbs(pool_gallons, ppm), 2)
+        entries.append({
+            "chemical": "Calcium hypochlorite shock (73%)",
+            "quantity": lbs,
+            "unit": "lbs",
+            "reason": (
+                f"Light algae observed. Cal-hypo shock at ~{ppm} ppm FC boost "
+                f"({lbs} lbs) knocks down surface algae fast."
+            ),
+            "urgency": "immediate",
+            "reading_key": "visible_algae",
+            "current_value": 1,     # 1 = light, 2 = heavy (numeric for reports)
+            "target_range": [0, 0],
+            "target_value": 0,
+            "category": "algae_remediation",
+            "preferred_form": "cal_hypo",
+            "preferred_form_reason": (
+                "Rapid FC boost required for algae remediation. Cal-hypo "
+                f"delivers ~{CAL_HYPO_AVAILABLE_CHLORINE_PCT}% available "
+                "chlorine per lb."
+            ),
+            "guidance_note": "Brush walls thoroughly and run filter 24h continuous.",
+            "severity": "light",
+        })
+
+    elif state == "heavy":
+        ppm = ALGAE_HEAVY_SHOCK_PPM
+        lbs = round(_cal_hypo_lbs(pool_gallons, ppm), 2)
+        entries.append({
+            "chemical": "Calcium hypochlorite triple shock (73%)",
+            "quantity": lbs,
+            "unit": "lbs",
+            "reason": (
+                f"Heavy algae observed. Triple-shock cal-hypo at ~{ppm} ppm "
+                f"FC boost ({lbs} lbs) required to reach breakpoint over the bloom."
+            ),
+            "urgency": "immediate",
+            "reading_key": "visible_algae",
+            "current_value": 2,
+            "target_range": [0, 0],
+            "target_value": 0,
+            "category": "algae_remediation",
+            "preferred_form": "cal_hypo",
+            "preferred_form_reason": (
+                "Rapid FC boost required for algae remediation. Cal-hypo "
+                f"delivers ~{CAL_HYPO_AVAILABLE_CHLORINE_PCT}% available "
+                "chlorine per lb."
+            ),
+            "guidance_note": (
+                "Brush walls thoroughly. Run filter 24h continuous. "
+                "Backwash / clean filter after 24h. Recheck FC before "
+                "allowing swimmers."
+            ),
+            "severity": "heavy",
+        })
+        polyquat_oz = round(POLYQUAT_OZ_PER_10K_GAL * (pool_gallons / 10_000.0), 1)
+        entries.append({
+            "chemical": "Polyquat 60 algaecide",
+            "quantity": polyquat_oz,
+            "unit": "oz",
+            "reason": (
+                f"Heavy algae bloom — add {polyquat_oz} oz Polyquat 60 "
+                "alongside the shock for a redundant kill vector."
+            ),
+            "urgency": "immediate",
+            "reading_key": "visible_algae",
+            "current_value": 2,
+            "target_range": [0, 0],
+            "target_value": 0,
+            "category": "algae_remediation",
+            "preferred_form": "polyquat_60",
+            "preferred_form_reason": (
+                "Non-metallic algaecide safe for salt cells and vinyl "
+                "liners. Chlorine alone is insufficient for heavy algae blooms."
+            ),
+            "guidance_note": (
+                "Add slowly around the perimeter with the pump running. "
+                "Do not mix with concentrated chlorine in the same bucket."
+            ),
+            "severity": "heavy",
+        })
+
+    return ordering + entries

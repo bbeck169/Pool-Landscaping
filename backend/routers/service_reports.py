@@ -318,6 +318,10 @@ class ServiceReportPatch(BaseModel):
     wizard_step: Optional[int] = None
     internal_notes: Optional[str] = None
     photos: Optional[List[Dict[str, Any]]] = None
+    # Phase 56.10 — visible-algae observation (and any future observation
+    # dict fields). Persisted verbatim; the AI dosing recommender reads
+    # `observations.visible_algae` to emit algae_remediation entries.
+    observations: Optional[Dict[str, Any]] = None
 
 
 @router.patch("/jobs/{jid}/service-report")
@@ -782,6 +786,9 @@ class RecommendChemicalsBody(BaseModel):
     readings: Dict[str, Any] = {}
     pool_gallons: Optional[int] = None
     use_llm_phrasing: bool = True
+    # Phase 56.10 — "none" | "light" | "heavy". Drives the algae
+    # remediation branch of the dosing engine.
+    visible_algae: Optional[str] = "none"
 
 
 _DOSING_LLM_SYSTEM = (
@@ -893,6 +900,7 @@ async def recommend_chemicals(body: RecommendChemicalsBody,
         customer=customer_doc,
         service_date=service_date_for_dosing,
         recent_service_reports=recent_reports,
+        visible_algae=(body.visible_algae or "none"),
     )
     source = "deterministic-only"
     tokens = 0

@@ -99,6 +99,8 @@ export type PoolChecklistFormProps = {
   // + tech only) exposed on wizard step 6. Optional so legacy callers
   // that haven't been updated to the wizard shell keep working.
   internalNotes?: string;
+  // Phase 56.10 — visible-algae observation from the report doc.
+  observations?: { visible_algae?: "none" | "light" | "heavy" };
   // Phase 56.7 — when set (1..6), only render the section matching
   // that step. `null` (default) ⇒ render everything (legacy scroll).
   wizardStep?: number | null;
@@ -108,6 +110,7 @@ export type PoolChecklistFormProps = {
     checklist_items: ChecklistItem[];
     notes: string;
     internal_notes: string;
+    observations: any;
   }>) => void;
 };
 
@@ -264,6 +267,8 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
         job_id: jobId,
         readings: readingsDict,
         use_llm_phrasing: true,
+        // Phase 56.10 — algae remediation branch trigger.
+        visible_algae: props.observations?.visible_algae || "none",
       });
       setRecs(res);
     } catch (e) {
@@ -271,7 +276,7 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
     } finally {
       setRecsLoading(false);
     }
-  }, [jobId, readingsDict, locked]);
+  }, [jobId, readingsDict, locked, props.observations?.visible_algae]);
 
   useEffect(() => {
     if (locked) return;

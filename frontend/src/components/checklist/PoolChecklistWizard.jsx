@@ -192,6 +192,7 @@ export default function PoolChecklistWizard({
             checklistItems={report?.checklist_items || []}
             notes={report?.notes || ""}
             internalNotes={report?.internal_notes || ""}
+            observations={report?.observations || {}}
             onChange={onChange}
             wizardStep={step}
           />

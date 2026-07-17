@@ -403,6 +403,7 @@ export default function PoolChecklistForm({
   checklistItems = [],
   notes = "",
   internalNotes = "",
+  observations = {},
   onChange,
   // Phase 56.6 — when set (1..6), only render the section matching that
   // step. Unset ⇒ render everything (legacy single-scroll mode).
@@ -509,6 +510,8 @@ export default function PoolChecklistForm({
         job_id: jobId,
         readings: readingsDict,
         use_llm_phrasing: true,
+        // Phase 56.10 — algae-remediation branch trigger.
+        visible_algae: (observations?.visible_algae || "none"),
       });
       setRecs(res);
     } catch (e) {
@@ -517,7 +520,7 @@ export default function PoolChecklistForm({
       setRecsLoading(false);
     }
     // eslint-disable-next-line
-  }, [jobId, readingsDict, locked]);
+  }, [jobId, readingsDict, locked, observations?.visible_algae]);
 
   // 800ms debounce after any reading change.
   useEffect(() => {
@@ -729,6 +732,49 @@ export default function PoolChecklistForm({
             </div>
           </div>
         )}
+
+        {/* Phase 56.10 — Visible algae toggle group */}
+        <div className="mt-4 rounded-md p-3"
+             style={{ background: colors.surfaceAlt, border: `1px solid ${colors.border}` }}
+             data-testid="pool-visible-algae-card">
+          <div className="text-sm font-bold mb-2" style={{ color: colors.onSurface }}>
+            Visible algae on walls
+          </div>
+          <div className="flex items-center gap-2" data-testid="pool-visible-algae-toggles">
+            {[
+              { value: "none",  label: "None",  bg: "#fff",     fg: colors.onSurface, border: colors.border },
+              { value: "light", label: "Light", bg: "#FEF3C7", fg: "#92400E",         border: "#FCD34D" },
+              { value: "heavy", label: "Heavy", bg: "#FEE2E2", fg: "#991B1B",         border: "#FCA5A5" },
+            ].map((opt) => {
+              const current = (observations?.visible_algae || "none").toLowerCase();
+              const active = current === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  disabled={locked}
+                  onClick={() => onChange({
+                    observations: { ...(observations || {}), visible_algae: opt.value },
+                  })}
+                  className="text-xs font-bold px-3 py-1.5 rounded-full transition"
+                  style={{
+                    background: active ? opt.bg : "transparent",
+                    color: active ? opt.fg : colors.muted,
+                    border: `1.5px solid ${active ? opt.border : colors.border}`,
+                    cursor: locked ? "not-allowed" : "pointer",
+                    opacity: locked ? 0.6 : 1,
+                  }}
+                  data-testid={`pool-visible-algae-${opt.value}`}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="text-[11px] mt-2" style={{ color: colors.muted }}>
+            Triggers an algae remediation dosing plan in Step 2 when set to Light or Heavy.
+          </div>
+        </div>
       </div>
       ) : null}
 
@@ -795,7 +841,22 @@ export default function PoolChecklistForm({
           </div>
         ) : recs && recs.recommendations ? (
           <div className="space-y-2">
-            {recs.recommendations.map((r, i) => (
+            {/* Phase 56.10 — high-pH ordering guard rendered as a top callout */}
+            {(recs.recommendations || []).filter((r) => r.category === "ordering_note").map((r, i) => (
+              <div
+                key={`ord-${i}`}
+                className="rounded-md p-2 flex items-start gap-2"
+                style={{ background: "#FEF3C7", border: "1.5px solid #F59E0B" }}
+                data-testid="pool-recommendation-ordering-note"
+              >
+                <AlertTriangle size={14} color="#B45309" className="flex-shrink-0 mt-0.5" />
+                <div className="text-xs font-semibold" style={{ color: "#92400E" }}>
+                  {r.reason}
+                </div>
+              </div>
+            ))}
+
+            {(recs.recommendations || []).filter((r) => !r.category || r.category === "routine").map((r, i) => (
               <div
                 key={`${r.chemical}-${i}`}
                 className="flex items-start gap-2 rounded-md p-2"
@@ -831,6 +892,64 @@ export default function PoolChecklistForm({
                 )}
               </div>
             ))}
+
+            {/* Phase 56.10 — Algae Protocol sub-section (light or heavy) */}
+            {(recs.recommendations || []).some((r) => r.category === "algae_remediation") && (
+              <div className="mt-3 rounded-md p-2"
+                   style={{ background: "#FEF2F2", border: "1.5px solid #FCA5A5" }}
+                   data-testid="pool-algae-protocol-card">
+                <div className="text-sm font-bold flex items-center gap-1.5 mb-2"
+                     style={{ color: "#991B1B" }}>
+                  <AlertTriangle size={14} /> Algae Protocol
+                </div>
+                <div className="space-y-2">
+                  {(recs.recommendations || []).filter((r) => r.category === "algae_remediation").map((r, i) => (
+                    <div
+                      key={`algae-${r.chemical}-${i}`}
+                      className="rounded-md p-2 flex items-start gap-2"
+                      style={{ background: "#fff", border: "1px solid #FECACA" }}
+                      data-testid="pool-recommendation-algae-row"
+                    >
+                      <div className="flex-shrink-0 mt-0.5">
+                        <AlertTriangle size={14} color="#B91C1C" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm" style={{ color: "#0F172A" }}>
+                          <span className="font-bold">
+                            {r.quantity > 0 ? `${r.quantity} ${r.unit} ` : ""}
+                            {r.chemical}
+                          </span>
+                        </div>
+                        <div className="text-xs mt-0.5" style={{ color: colors.muted }}>{r.reason}</div>
+                        {r.guidance_note ? (
+                          <ul className="mt-1 space-y-0.5 text-[11px]"
+                              style={{ color: "#7F1D1D" }}
+                              data-testid="pool-algae-guidance">
+                            {r.guidance_note.split(/(?<=\.)\s+/).filter(Boolean).map((line, j) => (
+                              <li key={j} className="flex items-start gap-1">
+                                <span>•</span><span>{line}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                      {!locked && r.quantity > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => addChemFromRec(r)}
+                          className="flex-shrink-0 px-2 py-1 rounded-md text-xs font-bold"
+                          style={{ background: "#B91C1C", color: "#fff", border: 0, cursor: "pointer" }}
+                          data-testid="pool-recommendation-algae-add-btn"
+                        >
+                          Add
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {recs.source === "deterministic-only" && recs.reason ? (
               <div className="text-[10px] italic" style={{ color: colors.muted }}>
                 Plain-English phrasing unavailable — showing raw reasons.

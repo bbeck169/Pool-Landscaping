@@ -843,3 +843,69 @@ the subsystem + CPO prep content drafts only — no DB seed yet.
 3. **NEXT: Phase 56.10** — Visible algae field + AI remediation dosing.
 4. Phase 56.11 — Customer Equipment Photo Library.
 5. PAUSED: 56.9b Zillow, T1-T6 calculators, 56.13b/c UI, 56.13d supplemental modules, 56.14 landscaper training, 56.15 handbook.
+
+## Phase 56.10 — Visible algae field + AI remediation dosing (Feb 2026)
+
+Extends the AI pool-dosing recommender with an algae-remediation branch
+driven by a new tech-facing toggle on the Pool Checklist wizard.
+
+**Backend:**
+- `services/pool_dosing.compute()` accepts `visible_algae: "none" | "light" | "heavy"`.
+- New constants in `config_chlorine_targets.py`:
+  `CAL_HYPO_AVAILABLE_CHLORINE_PCT=73`, `ALGAE_LIGHT_SHOCK_PPM=10`,
+  `ALGAE_HEAVY_SHOCK_PPM=30`, `POLYQUAT_OZ_PER_10K_GAL=4.0`,
+  `ALGAE_HIGH_PH_THRESHOLD=7.6`.
+- `light` state emits 1 cal-hypo entry (10 ppm boost, unit=lbs,
+  category="algae_remediation", severity="light", guidance to brush +
+  run filter 24h).
+- `heavy` state emits 2 entries: triple-shock cal-hypo (30 ppm, lbs) +
+  Polyquat 60 (4 oz per 10k gal, unit=oz), with extended guidance
+  (backwash after 24h + recheck FC).
+- High-pH guard: when pH > 7.6 AND algae is set, prepend a
+  category="ordering_note" entry telling the tech to lower pH first.
+- Algae entries are appended AFTER the 6-item routine cap — they
+  always ship even when the routine list is full.
+- `RecommendChemicalsBody.visible_algae` + `ServiceReportPatch.observations`
+  are the API-boundary shapes.
+
+**Web:**
+- `PoolChecklistWizard.jsx` passes `observations` through to
+  `PoolChecklistForm.jsx`.
+- Form step 1 renders a pill-style toggle group (None / Light / Heavy)
+  under the readings analysis card. Persists via
+  `onChange({ observations: { visible_algae: value } })`.
+- Form step 2 renders three distinct sub-sections when the payload
+  includes categorized entries:
+  - Top warning callout for `ordering_note` entries (yellow).
+  - Standard recommendation list for routine entries.
+  - Red-tinted **Algae Protocol** card for `algae_remediation` entries,
+    with per-entry guidance-note bullets and Add buttons.
+
+**Mobile:**
+- Backend plumbing wired (`observations` prop + `visible_algae` in
+  fetch body). UI toggle group DEFERRED to the mobile pool-wizard
+  port. Current mobile form has all sections in a single block, so
+  adding the toggle without the wizard boundary would clutter the
+  screen; will follow the web pattern when the mobile wizard lands.
+
+**Tests:**
+- `tests/test_phase56_10_algae.py` — 13 tests, all passing.
+- Existing 20 Phase 56.5 dosing tests still pass.
+
+**Files touched:**
+- `backend/config_chlorine_targets.py`, `backend/services/pool_dosing.py`,
+  `backend/routers/service_reports.py`,
+  `backend/tests/test_phase56_10_algae.py`,
+  `frontend/src/components/checklist/PoolChecklistForm.jsx`,
+  `frontend/src/components/checklist/PoolChecklistWizard.jsx`,
+  `mobile/src/components/checklist/PoolChecklistForm.tsx`,
+  `memory/HANDOFF.md`, `memory/PRD.md`.
+
+**Priority order:**
+1. ✅ Phase 56.13a (subsystem + drafts).
+2. ✅ Phase 56.13a-commit (CPO seed + PDF cert).
+3. ✅ Phase 56.10 (this ship).
+4. **NEXT: Phase 56.11** — Customer Equipment Photo Library.
+5. **PAUSED**: 56.9b Zillow, T1-T6, 56.13b/c, 56.13d, 56.14, 56.15.
+6. **DEFERRED**: mobile pool-wizard algae toggle UI (waiting on wizard port).
+
