@@ -310,6 +310,14 @@ class ServiceReportPatch(BaseModel):
     # risk already skip null values (see services/pool_dosing._normalize
     # and reports._chlorine_ppm), so this dict is purely for UI recall.
     not_tested_flags: Optional[Dict[str, bool]] = None
+    # Phase 56.6 — Pool Job Wizard fields. `wizard_step` is the tech's
+    # persistent cursor (1..6) so Save-&-Exit resumes at the right step.
+    # `internal_notes` is a private textarea rendered only on step 6.
+    # `photos` are already an array on the doc — including it here lets
+    # the wizard step-4 photo pool round-trip through the same PATCH.
+    wizard_step: Optional[int] = None
+    internal_notes: Optional[str] = None
+    photos: Optional[List[Dict[str, Any]]] = None
 
 
 @router.patch("/jobs/{jid}/service-report")

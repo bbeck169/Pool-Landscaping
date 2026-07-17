@@ -64,6 +64,7 @@ import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { getChecklistType } from "@/lib/checklistType";
 import PoolChecklistForm from "@/components/checklist/PoolChecklistForm";
+import PoolChecklistWizard from "@/components/checklist/PoolChecklistWizard";
 import LandscapingChecklistForm from "@/components/checklist/LandscapingChecklistForm";
 import GenericChecklistForm from "@/components/checklist/GenericChecklistForm";
 import PhotoUploader from "@/components/checklist/PhotoUploader";
@@ -166,6 +167,12 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
         chemicals_added: cur.chemicals_added,
         checklist_items: cur.checklist_items,
         notes: cur.notes,
+        // Phase 56.6 — persist wizard cursor + internal notes + photos
+        // through the autosave loop; otherwise the response replaces the
+        // in-memory report and wipes these fields on every save.
+        internal_notes: cur.internal_notes || "",
+        photos: cur.photos || [],
+        wizard_step: cur.wizard_step ?? 1,
       });
       if (patched && typeof patched === "object") {
         setReport(patched);
@@ -444,40 +451,61 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
     const clientType = getChecklistType(job);
     const locked = !!report.submitted_at;
 
+    // Phase 56.6 — pool jobs default to the 6-step wizard. Tack on
+    // `?legacy=true` to any route hosting the modal to fall back to the
+    // old single-scroll form. Landscape / generic clients keep the
+    // original form (wizard is pool-only per brief).
+    const useWizard = clientType === "pool" &&
+      !(typeof window !== "undefined" &&
+        window.location.search.includes("legacy=true"));
+
     return (
-      <div style={{ overflow: "auto", padding: 20 }}>
+      <div style={{ overflow: "auto", padding: useWizard ? 0 : 20 }}>
         {wsWarning ? (
           <div className="text-xs px-3 py-2 rounded mb-3"
-               style={{ color: c.warnFg, background: c.warnBg }}
+               style={{ color: c.warnFg, background: c.warnBg, margin: useWizard ? 12 : 0 }}
                data-testid="checklist-workstream-warning">
             {wsWarning}
           </div>
         ) : null}
 
-        <div className="mb-4 rounded-lg p-3"
-             style={{ border: `1px solid ${c.border}`, background: c.surfaceAlt }}
-             data-testid="checklist-photos-card">
-          <div className="text-sm font-bold mb-2" style={{ color: c.onSurface }}>Photos</div>
-          <PhotoUploader
-            jobId={String(jobId)}
-            photos={report.photos || []}
-            onPhotosChange={(next) => {
-              const nr = { ...report, photos: next };
-              setReport(nr);
-              reportRef.current = nr;
-            }}
-            max={PHOTO_CAP}
-            disabled={locked}
-          />
-        </div>
-
-        {clientType === "pool" && (
-          <PoolChecklistForm
+        {useWizard ? (
+          <PoolChecklistWizard
             jobId={String(jobId)}
             customerId={job?.customer_id}
             locked={locked}
-            readings={report.chemical_readings || []}
-            readingFields={report.chemical_reading_fields || []}
+            report={report}
+            onChange={patchReport}
+            onSaveExit={onClose}
+            onCloseJob={closeJob}
+            submitting={submitting}
+          />
+        ) : (
+          <>
+            <div className="mb-4 rounded-lg p-3"
+                 style={{ border: `1px solid ${c.border}`, background: c.surfaceAlt }}
+                 data-testid="checklist-photos-card">
+              <div className="text-sm font-bold mb-2" style={{ color: c.onSurface }}>Photos</div>
+              <PhotoUploader
+                jobId={String(jobId)}
+                photos={report.photos || []}
+                onPhotosChange={(next) => {
+                  const nr = { ...report, photos: next };
+                  setReport(nr);
+                  reportRef.current = nr;
+                }}
+                max={PHOTO_CAP}
+                disabled={locked}
+              />
+            </div>
+
+            {clientType === "pool" && (
+              <PoolChecklistForm
+                jobId={String(jobId)}
+                customerId={job?.customer_id}
+                locked={locked}
+                readings={report.chemical_readings || []}
+                readingFields={report.chemical_reading_fields || []}
             chemicalsAdded={report.chemicals_added || []}
             chemicalsCatalog={report.chemicals_catalog || []}
             chemicalUnits={report.chemical_units || ["gal", "lbs", "oz", "tabs"]}
@@ -521,6 +549,8 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
             }}
           />
         )}
+          </>
+        )}
       </div>
     );
   }
@@ -534,6 +564,14 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
         </div>
       );
     }
+    // Phase 56.6 — the wizard renders its own Back / Next / Close Job
+    // footer per step; suppress the legacy modal footer to avoid two
+    // Close-Job buttons stacked on top of each other.
+    const clientType = job ? getChecklistType(job) : "";
+    const useWizard = clientType === "pool" &&
+      !(typeof window !== "undefined" &&
+        window.location.search.includes("legacy=true"));
+    if (useWizard) return null;
     return (
       <div className="px-5 py-3 flex items-center gap-2"
            style={{ borderTop: `1px solid ${c.border}`, background: c.surfaceAlt }}>

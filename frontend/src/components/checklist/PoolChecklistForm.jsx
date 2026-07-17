@@ -402,7 +402,11 @@ export default function PoolChecklistForm({
   chemicalUnits = ["gal", "lbs", "oz", "tabs"],
   checklistItems = [],
   notes = "",
+  internalNotes = "",
   onChange,
+  // Phase 56.6 — when set (1..6), only render the section matching that
+  // step. Unset ⇒ render everything (legacy single-scroll mode).
+  wizardStep = null,
 }) {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState(null);
@@ -637,10 +641,16 @@ export default function PoolChecklistForm({
     }
   };
 
+  // Phase 56.6 — helper: when a wizardStep is active, only render the
+  // section matching that step. Returns `null` to hide a section. When
+  // `wizardStep` is `null`, everything shows (legacy scroll mode).
+  const inStep = (n) => wizardStep === null || wizardStep === n;
+
   return (
     <div data-testid="checklist-modal-pool" className="space-y-4">
-      {/* Chemical Readings — Phase 48 manual text entry */}
-      <div>
+      {/* Chemical Readings — Phase 48 manual text entry — Wizard step 1 */}
+      {inStep(1) ? (
+      <div data-wizard-section="readings">
         <div className="text-sm font-bold mb-3" style={{ color: colors.onSurface }}>
           Chemical Readings
         </div>
@@ -720,12 +730,15 @@ export default function PoolChecklistForm({
           </div>
         )}
       </div>
+      ) : null}
 
-      {/* Phase 34e — Recommended Chemicals card */}
+      {/* Phase 34e — Recommended Chemicals card — Wizard step 2 (part A) */}
+      {inStep(2) ? (
       <div
         className="rounded-lg p-3"
         style={{ background: colors.surfaceAlt, border: `1px solid ${colors.border}` }}
         data-testid="pool-recommendations-card"
+        data-wizard-section="recommendations"
       >
         <div className="flex items-center justify-between mb-2">
           <div className="text-sm font-bold inline-flex items-center gap-1.5" style={{ color: colors.onSurface }}>
@@ -832,9 +845,11 @@ export default function PoolChecklistForm({
           <div className="text-xs mt-1" style={{ color: "#DC2626" }}>{recsError}</div>
         ) : null}
       </div>
+      ) : null}
 
-      {/* Chemicals Added — Phase 48 inline manual text entry per catalog */}
-      <div>
+      {/* Chemicals Added — Phase 48 inline manual text entry per catalog — Wizard step 2 (part B) */}
+      {inStep(2) ? (
+      <div data-wizard-section="chemicals-added">
         <div className="text-sm font-bold mb-2" style={{ color: colors.onSurface }}>
           Chemicals Added
         </div>
@@ -845,10 +860,11 @@ export default function PoolChecklistForm({
           jobId={jobId}
         />
       </div>
+      ) : null}
 
-      {/* Checklist */}
-      {checklistItems.length > 0 && (
-        <div>
+      {/* Checklist — Wizard step 3 */}
+      {inStep(3) && checklistItems.length > 0 && (
+        <div data-wizard-section="checklist">
           <div className="text-sm font-bold mb-2" style={{ color: colors.onSurface }}>
             Checklist
           </div>
@@ -874,11 +890,17 @@ export default function PoolChecklistForm({
         </div>
       )}
 
-      {/* Notes */}
-      <div>
-        <div className="text-sm font-bold mb-2" style={{ color: colors.onSurface }}>Notes</div>
+      {/* Notes — Wizard step 5 (customer-facing notes) */}
+      {inStep(5) ? (
+      <div data-wizard-section="customer-notes">
+        <div className="text-sm font-bold mb-2" style={{ color: colors.onSurface }}>
+          Customer Notes
+        </div>
+        <div className="text-xs mb-1" style={{ color: colors.muted }}>
+          Visible on the customer portal and the emailed report.
+        </div>
         <textarea
-          rows={3}
+          rows={4}
           disabled={locked}
           value={notes || ""}
           onChange={(e) => onChange({ notes: e.target.value })}
@@ -893,6 +915,34 @@ export default function PoolChecklistForm({
           data-testid="pool-notes"
         />
       </div>
+      ) : null}
+
+      {/* Internal Notes — Wizard step 6 (private) */}
+      {inStep(6) ? (
+      <div data-wizard-section="internal-notes">
+        <div className="text-sm font-bold mb-2" style={{ color: colors.onSurface }}>
+          Internal Notes
+        </div>
+        <div className="text-xs mb-1" style={{ color: colors.muted }}>
+          Private — visible to admins + techs only, never to the customer.
+        </div>
+        <textarea
+          rows={4}
+          disabled={locked}
+          value={internalNotes || ""}
+          onChange={(e) => onChange({ internal_notes: e.target.value })}
+          placeholder="Equipment issues, follow-up leads, tricky access details…"
+          className="w-full px-2 py-1.5 rounded-md text-sm"
+          style={{
+            border: `1px solid ${colors.border}`,
+            background: locked ? colors.surfaceAlt : colors.surface,
+            color: colors.onSurface,
+            resize: "vertical",
+          }}
+          data-testid="pool-internal-notes"
+        />
+      </div>
+      ) : null}
     </div>
   );
 }

@@ -589,3 +589,34 @@ Rapid-boost scenario (fc=1.5): `Liquid chlorine (12.5%) qty=0.27 unit=gal target
 
 ## Business Card tech tweak — SHIPPED
 - `frontend/src/pages/tech/BusinessCard.jsx` and `mobile/app/card.tsx`: technicians (any department) see Company card only. Toggle hidden. `showingPersonal` computation gates the personal card render defense-in-depth. Admins/super_admins/customers unchanged.
+
+## Phase 56.6 · Pool Job Wizard Flow — SHIPPED
+
+**Web (`frontend/src/components/checklist/`):**
+- New `PoolChecklistWizard.jsx` — 6-step wizard shell with progress bar, clickable step dots (green ✓ when completed, blue when active), Back / Next buttons, and a "Save & exit" header button.
+- Sections mapped:
+  1. Readings (existing block, reordered)
+  2. Recommended Chemicals + Chemicals Added
+  3. Checklist
+  4. Photos (customer-facing pool)
+  5. Customer Notes (public — portal + email)
+  6. Internal Notes (private) + tagged internal-issue photo pool
+- Extended `PoolChecklistForm.jsx` with a `wizardStep` prop that gates section rendering (null ⇒ legacy single-scroll mode). Added `internalNotes` prop + Step-5 / Step-6 sections.
+- `ChecklistModal.jsx` mounts the wizard by default for `pool` client type; `?legacy=true` query param bypasses the wizard for A/B fallback. Legacy footer suppressed when wizard active. Autosave now includes `wizard_step`, `internal_notes`, and `photos` so Save-&-Exit resumes at the correct step.
+
+**Backend (`backend/routers/service_reports.py`):**
+- `ServiceReportPatch` extended with `wizard_step: int?`, `internal_notes: str?`, `photos: [dict]?`. Uses `body.dict(exclude_unset=True)` so partial patches remain idempotent (Phase 40 offline queue safe).
+
+**Photo tagging:** photo objects gain a `tag: "general" | "internal_issue"` field; the wizard splits/merges based on this so the customer-facing photo pool and the private "photos for issue" pool live in the same array without divergence risk.
+
+**Guardrails preserved:**
+- Only `pool` client type uses the wizard — landscape / generic unchanged.
+- Autosave, Phase 44 Fix C refs, Phase 49.6 recheck hint, Phase 50.C sparkline, Phase 46.1 not-tested flags, offline queue idempotency — all still intact.
+- Preflight → exit 0.
+
+**Verification** — Playwright screenshots at `/app/test_reports/56_6_wizard_step{1..6}.png` show every step rendering distinct content (readings, chemicals, checklist, photos, customer notes, internal notes) with a functioning progress bar and step navigation. Step dots correctly reflect active/completed state.
+
+**Deferred to Phase 56.6.B:**
+- Mobile wizard (`mobile/src/components/checklist/PoolChecklistWizard.tsx`) with swipe navigation. Backend contract identical — mobile can mount the same shape.
+- Optional target-line on the free-chlorine sparkline reading Phase 56.5 `target_ppm`.
+- Full Phase 49.6 recheck-confirm surface on Close Job (wizard button already calls `closeJob` — confirmation flow may need a fresh call-site pass).
