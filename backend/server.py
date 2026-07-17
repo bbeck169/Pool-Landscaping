@@ -39,6 +39,7 @@ from routers import (
     ringcentral,
     ringcentral_customer,
     config as config_router,
+    job_requests as job_requests_router,
 )
 
 app = FastAPI(
@@ -80,7 +81,8 @@ for module in [notifications_router,
                zillow_admin,
                ringcentral,
                ringcentral_customer,
-               config_router]:
+               config_router,
+               job_requests_router]:
     api_router.include_router(module.router)
 
 

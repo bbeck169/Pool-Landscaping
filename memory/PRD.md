@@ -525,3 +525,67 @@ POST /api/jobs :
 ### Deferred (tracked)
 - Mobile Add-Team-Member sheet mirroring web modal.
 - `role_badge` cross-training UX on user profile card (payroll / dispatch) — not requested yet.
+
+## Phase 56.4 · Tech "Request a Job" workflow — SHIPPED
+
+**Backend** (`backend/routers/job_requests.py`, registered in `server.py`):
+- `POST /api/job-requests` — technicians + admins may file. Status locked to `pending`; reviewer fields locked to null.
+- `GET /api/job-requests?status=&mine=` — techs scoped to own; admins see all.
+- `GET /api/job-requests/{id}` — owner or admin only (403 otherwise).
+- `PATCH /api/job-requests/{id}` — admin only. Accepts `status` (approved / rejected — not `converted`), `rejection_reason`, `notes`. Sets `reviewed_at` + `reviewed_by_user_id`.
+- `POST /api/job-requests/{id}/convert` — admin only. Creates a real job via the shared insert-shape used by `POST /api/jobs`, sets `status: "converted"`, records `converted_job_id`.
+- Phase-55 notifications: new request → all admins; approve/reject → requesting tech; convert → requesting tech.
+
+**Web** (`frontend/src/pages/job_requests/JobRequestsPages.jsx`, routes registered in `App.js`):
+- `/request-job` — form modal-style page (customer selector optional + hint fields, service type, when, priority, notes).
+- `/admin/job-requests` — filter chips (Pending / Approved / Rejected / Converted / All) + table with Approve / Convert (opens `ConvertModal`) / Reject (opens `RejectModal`) actions.
+
+**Curl matrix (verified):**
+```
+POST tech creates                      → 200
+GET  tech list scoped to self          → 1 row, no others
+GET  tech view of other tech's request → 403
+GET  admin list sees all               → 2 rows
+PATCH tech attempts                    → 403
+POST  tech convert attempts            → 403
+PATCH admin approve                    → 200 (status=approved, reviewer set)
+POST  admin convert                    → 200 (job_id returned, status=converted)
+```
+
+## Phase 56.5 · Seasonal chlorine targets + tab-preferred dosing — SHIPPED
+
+**Config** (`backend/config_chlorine_targets.py`):
+- `CHLORINE_HIGH_SEASON_MONTHS = {3..9}`
+- `CHLORINE_HIGH_SEASON_TARGET_PPM = 5.0`
+- Low-season range 1.0–3.0
+- `CHLORINE_TAB_GALLONS_PER_TAB_PER_WEEK = 10_000`
+- `CHLORINE_RAPID_BOOST_GAP_PPM = 2.0`
+- `CHLORINE_TAB_ROTATION_LOOKBACK_VISITS = 3`
+
+**Dosing engine** (`backend/services/pool_dosing.py`) — season-aware target, tabs/liquid decision:
+- Rules (first-match wins): `chemical_preferences.no_tabs` → liquid; high-season rapid boost (gap > 2 ppm) → liquid; tabs in last 3 visits → liquid (rotation); otherwise → tabs.
+- Tabs shipped in `unit: "tabs"` (integer count from `pool_gallons / 10_000` with +1/+2 bump for larger gaps).
+- **Liquid chlorine now shipped in `unit: "gal"` (2dp)** — previously oz.
+- **Muriatic acid (pH + TA lowering) now shipped in `unit: "gal"` (2dp)** — previously oz.
+- Every recommendation carries `target_ppm`, `season` (`high` / `low`), `preferred_form` (`tabs` / `liquid`), `preferred_form_reason` string.
+
+**Router wiring** (`backend/routers/service_reports.py::recommend_chemicals`):
+- Fetches customer doc (`chemical_preferences`), scheduled_date, last 3 submitted reports, and passes them to `compute()`.
+
+**Unit tests** (`backend/tests/test_phase56_5_dosing.py`): 19 tests, all passing:
+- Month → season mapping (March–Sep high / Oct–Feb low).
+- High season tabs by default; rapid-boost gap → liquid.
+- `no_tabs` customer flag → forced liquid.
+- Recent tab visits → rotate to liquid.
+- Low season prefers tabs with 1–3 ppm range.
+- Muriatic acid + Liquid chlorine both ship in `gal` (2dp).
+
+**Sample live payload (July 2026 tenant, 20k gal, fc=4.0, ph=8.0):**
+```
+Chlorine tabs (3" trichlor)  qty=2   unit=tabs  season=high  form=tabs
+Muriatic acid                qty=0.37 unit=gal
+```
+Rapid-boost scenario (fc=1.5): `Liquid chlorine (12.5%) qty=0.27 unit=gal target_ppm=5.0 form=liquid`.
+
+## Business Card tech tweak — SHIPPED
+- `frontend/src/pages/tech/BusinessCard.jsx` and `mobile/app/card.tsx`: technicians (any department) see Company card only. Toggle hidden. `showingPersonal` computation gates the personal card render defense-in-depth. Admins/super_admins/customers unchanged.

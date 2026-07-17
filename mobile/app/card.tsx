@@ -10,6 +10,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
+import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, brandGradient } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
@@ -27,6 +28,10 @@ const FALLBACK_COMPANY = {
 };
 
 export default function BusinessCard() {
+  const { user } = useAuth();
+  // Phase 56.3.C follow-up — technicians see Company card only. No
+  // toggle, no "My card" surface, regardless of department.
+  const isTech = String((user as any)?.role || "").toLowerCase() === "technician";
   const [company, setCompany] = useState<any>(FALLBACK_COMPANY);
   const [personal, setPersonal] = useState<any>(null);
   const [canEditCompany, setCanEditCompany] = useState(false);
@@ -44,13 +49,16 @@ export default function BusinessCard() {
       setPersonal(d.personal || null);
       setCanEditCompany(!!d.can_edit_company);
       setCanEditPersonal(!!d.can_edit_personal);
-      if (d.personal) setMode("personal"); // techs default to their own card (door-to-door)
+      // Techs are locked to the company card. Others: if personal
+      // present, default to that (door-to-door reps), else company.
+      if (isTech) setMode("company");
+      else if (d.personal) setMode("personal");
     } catch {}
-  }, []);
+  }, [isTech]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const showingPersonal = mode === "personal" && personal;
+  const showingPersonal = !isTech && mode === "personal" && personal;
   const title = showingPersonal ? personal.name : company.name;
   const subtitle = showingPersonal ? personal.title : company.region;
   const phone = showingPersonal ? personal.phone : company.phone;
@@ -145,7 +153,7 @@ export default function BusinessCard() {
         right={<Pressable onPress={shareCard} hitSlop={8} testID="card-share"><Ionicons name="share-outline" size={24} color={colors.brand} /></Pressable>}
       />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}>
-        {personal ? (
+        {personal && !isTech ? (
           <View style={styles.toggle}>
             {(["personal", "company"] as const).map((m) => (
               <Pressable key={m} onPress={() => setMode(m)} style={[styles.toggleBtn, mode === m && styles.toggleBtnActive]} testID={`card-mode-${m}`}>

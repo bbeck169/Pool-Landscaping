@@ -77,23 +77,31 @@ export default function BusinessCard() {
   const [mode, setMode] = useState("personal"); // "personal" | "company"
   const [copied, setCopied] = useState("");
 
+  // Phase 56.3.C follow-up — technicians see the Company card only. No
+  // toggle, no "My card" surface, regardless of department (pool / land /
+  // both). All other roles retain the toggle behavior. Admins seeded
+  // without a `personal` payload still fall back to company automatically.
+  const isTech = (user?.role || "").toLowerCase() === "technician";
+
   const load = useCallback(async () => {
     setState((s) => ({ ...s, loading: true, err: null }));
     try {
       const d = await api.get("/card");
       setState({ loading: false, data: d, err: null });
-      // Techs default to their personal card (door-to-door); everyone else the company.
-      setMode(d.personal ? "personal" : "company");
+      // Techs are locked to the company card. Others default to personal
+      // when available (door-to-door reps), otherwise company.
+      if (isTech) setMode("company");
+      else setMode(d.personal ? "personal" : "company");
     } catch (e) {
       setState({ loading: false, data: null, err: e.message || "Failed to load card" });
     }
-  }, []);
+  }, [isTech]);
 
   useEffect(() => { load(); }, [load]);
 
   const company = state.data?.company || FALLBACK_COMPANY;
   const personal = state.data?.personal;
-  const showingPersonal = mode === "personal" && personal;
+  const showingPersonal = !isTech && mode === "personal" && personal;
 
   const view = useMemo(() => showingPersonal
     ? {
@@ -160,7 +168,7 @@ export default function BusinessCard() {
         </div>
       </div>
 
-      {personal ? (
+      {personal && !isTech ? (
         <div className="flex gap-2 mb-4" data-testid="card-mode-toggle">
           {[
             { k: "personal", label: "My card" },

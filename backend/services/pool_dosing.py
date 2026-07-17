@@ -1,4 +1,4 @@
-"""Phase 34e — Pool chemistry dosing engine (deterministic).
+"""Phase 34e / 56.5 — Pool chemistry dosing engine (deterministic).
 
 All formulas are per **10,000 US gallons** and are scaled linearly with
 `pool_gallons`. Ranges follow standard APSP / Taylor guidance.
@@ -6,15 +6,35 @@ All formulas are per **10,000 US gallons** and are scaled linearly with
 Chemistry decisions live here — the LLM is only allowed to re-phrase
 the `reason` string, never touch the quantity. That prevents the
 "chatty over-dose" failure mode.
+
+Phase 56.5 additions:
+  • Seasonal free-chlorine target (5.0 ppm high season / 1–3 ppm low).
+  • Chlorine Tabs preferred over Liquid Chlorine unless a rapid-boost
+    condition trips, the customer opted out of tabs, or tabs were used
+    in the last 3 visits.
+  • Muriatic Acid and Liquid Chlorine now expressed in gallons (2dp).
+  • Every recommendation carries `target_ppm`, `season`, `preferred_form`,
+    `preferred_form_reason` for the AI CFO / report renderer.
 """
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Optional
 
-# Target ranges: (min, max, ideal).
+from config_chlorine_targets import (
+    CHLORINE_HIGH_SEASON_MONTHS,
+    CHLORINE_HIGH_SEASON_TARGET_PPM,
+    CHLORINE_LOW_SEASON_TARGET_MIN_PPM,
+    CHLORINE_LOW_SEASON_TARGET_MAX_PPM,
+    CHLORINE_TAB_GALLONS_PER_TAB_PER_WEEK,
+    CHLORINE_RAPID_BOOST_GAP_PPM,
+    CHLORINE_TAB_ROTATION_LOOKBACK_VISITS,
+)
+
+# Target ranges: (min, max, ideal). Free chlorine is resolved per-season.
 _TARGETS = {
     "ph":                 (7.2,   7.6,   7.4),
-    "free_chlorine":      (1.0,   3.0,   2.0),
+    "free_chlorine":      (1.0,   3.0,   2.0),   # low-season fallback
     "total_alkalinity":   (80,    120,   100),
     "calcium_hardness":   (200,   400,   250),
     "cyanuric_acid":      (30,    50,    40),
@@ -39,9 +59,11 @@ _ALIASES = {
     "salt": "salt",
 }
 
+# fluid-ounces → US gallons.
+_OZ_PER_GAL = 128.0
+
 
 def _normalize(readings: dict) -> dict:
-    """Lowercase, alias-map, coerce numerics, drop blanks."""
     out: dict[str, float] = {}
     for k, v in (readings or {}).items():
         if v is None or v == "":
@@ -56,10 +78,83 @@ def _normalize(readings: dict) -> dict:
     return out
 
 
+def _coerce_service_date(service_date) -> date:
+    if service_date is None:
+        return date.today()
+    if isinstance(service_date, date) and not isinstance(service_date, datetime):
+        return service_date
+    if isinstance(service_date, datetime):
+        return service_date.date()
+    try:
+        return datetime.fromisoformat(str(service_date)[:10]).date()
+    except Exception:
+        return date.today()
+
+
+def resolve_chlorine_target(service_date=None) -> tuple[float, tuple[float, float, float], str]:
+    """Return `(target_ppm, (min, max, ideal), season)` for the given date.
+
+    High season (Mar–Sep) targets a single 5.0 ppm bull's-eye; low season
+    (Oct–Feb) targets the 1–3 ppm range with 2.0 as the mid-point ideal.
+    """
+    d = _coerce_service_date(service_date)
+    if d.month in CHLORINE_HIGH_SEASON_MONTHS:
+        tgt = CHLORINE_HIGH_SEASON_TARGET_PPM
+        # High-season "range" is tighter — use a symmetric ±0.5 band around
+        # the bull's-eye so out-of-range detection still works.
+        return tgt, (tgt - 0.5, tgt + 0.5, tgt), "high"
+    lo, hi = CHLORINE_LOW_SEASON_TARGET_MIN_PPM, CHLORINE_LOW_SEASON_TARGET_MAX_PPM
+    ideal = round((lo + hi) / 2.0, 2)
+    return ideal, (lo, hi, ideal), "low"
+
+
+def _decide_chlorine_form(
+    fc: float,
+    target_ppm: float,
+    season: str,
+    customer: Optional[dict],
+    recent_service_reports: Optional[list],
+) -> tuple[str, str]:
+    """Return `(preferred_form, reason)` for a chlorine add.
+
+    Rules (first-match wins):
+      1. Customer opted out of tabs (`chemical_preferences.no_tabs`) → liquid.
+      2. High-season rapid-boost (fc gap > threshold) → liquid.
+      3. Tabs used in last N visits → rotate to liquid.
+      4. Otherwise → tabs.
+    """
+    prefs = ((customer or {}).get("chemical_preferences") or {})
+    if prefs.get("no_tabs") is True:
+        return "liquid", "Customer opted out of chlorine tabs."
+
+    gap = max(0.0, target_ppm - fc)
+    if season == "high" and gap > CHLORINE_RAPID_BOOST_GAP_PPM:
+        return "liquid", (
+            f"Free chlorine is {gap:.1f} ppm below the {target_ppm:.1f} target — "
+            "liquid dissolves faster than tabs."
+        )
+
+    if recent_service_reports:
+        recent = recent_service_reports[:CHLORINE_TAB_ROTATION_LOOKBACK_VISITS]
+        for rpt in recent:
+            for entry in (rpt.get("chemicals_added") or []):
+                name = str(entry.get("chemical") or entry.get("name") or "").lower()
+                if "tab" in name and "chlorine" in name:
+                    return "liquid", (
+                        f"Chlorine tabs used in last {CHLORINE_TAB_ROTATION_LOOKBACK_VISITS} "
+                        "visits — rotating to liquid to avoid stacking."
+                    )
+    return "tabs", "Tabs deliver a steady low-dose feed between visits."
+
+
 def _rec(chemical: str, qty: float, unit: str, reason: str,
          urgency: str, key: str, current: float,
-         target: tuple[float, float, float]) -> dict:
-    return {
+         target: tuple[float, float, float],
+         *, target_ppm: Optional[float] = None,
+         season: Optional[str] = None,
+         preferred_form: Optional[str] = None,
+         preferred_form_reason: Optional[str] = None) -> dict:
+    rec: dict = {
         "chemical": chemical,
         "quantity": round(qty, 2),
         "unit": unit,
@@ -70,9 +165,25 @@ def _rec(chemical: str, qty: float, unit: str, reason: str,
         "target_range": [target[0], target[1]],
         "target_value": target[2],
     }
+    if target_ppm is not None:
+        rec["target_ppm"] = target_ppm
+    if season is not None:
+        rec["season"] = season
+    if preferred_form is not None:
+        rec["preferred_form"] = preferred_form
+    if preferred_form_reason is not None:
+        rec["preferred_form_reason"] = preferred_form_reason
+    return rec
 
 
-def compute(readings: dict, pool_gallons: Optional[int]) -> list[dict]:
+def compute(
+    readings: dict,
+    pool_gallons: Optional[int],
+    *,
+    customer: Optional[dict] = None,
+    service_date=None,
+    recent_service_reports: Optional[list] = None,
+) -> list[dict]:
     """Return an ordered list of chemical dose recommendations.
 
     Ordering priority (urgency, then health impact):
@@ -90,33 +201,66 @@ def compute(readings: dict, pool_gallons: Optional[int]) -> list[dict]:
     r = _normalize(readings)
     out: list[dict] = []
 
-    # 1. Free chlorine — sanitiser
+    # Season-aware chlorine target (Phase 56.5).
+    fc_target_ppm, fc_target_tuple, season = resolve_chlorine_target(service_date)
+    fc_lo, fc_hi, _ = fc_target_tuple
+
+    # 1. Free chlorine — sanitiser.
     if "free_chlorine" in r:
         fc = r["free_chlorine"]
-        lo, hi, tgt = _TARGETS["free_chlorine"]
-        if fc < lo:
-            # Liquid chlorine 12.5% — 10 oz per 10k gal ≈ +2 ppm.
-            delta = tgt - fc
-            oz = round(10.0 * (delta / 2.0) * scale, 1)
+        if fc < fc_lo:
+            preferred_form, form_reason = _decide_chlorine_form(
+                fc, fc_target_ppm, season, customer, recent_service_reports,
+            )
+            delta = fc_target_ppm - fc
+            if preferred_form == "tabs":
+                # Weekly tab count scales with gallons per manufacturer rating.
+                # Higher gap ⇒ +1 tab bump (max 2 extra) so we don't overshoot.
+                base_tabs = pool_gallons / float(CHLORINE_TAB_GALLONS_PER_TAB_PER_WEEK)
+                bump = 1 if delta > 1.0 else 0
+                bump += 1 if delta > 2.0 else 0
+                qty = max(1, round(base_tabs) + bump)
+                unit = "tabs"
+                chemical = "Chlorine tabs (3\" trichlor)"
+                reason = (
+                    f"Free chlorine is {fc:.1f} ppm — below the seasonal "
+                    f"target of {fc_target_ppm:.1f} ppm ({season} season). "
+                    f"Load {qty} tab(s) in the feeder / floater."
+                )
+            else:
+                # Liquid chlorine 12.5% — 10 fl-oz per 10k gal ≈ +2 ppm.
+                # Phase 56.5 unit tweak — surface as gallons (2dp).
+                oz = 10.0 * (delta / 2.0) * scale
+                qty = round(oz / _OZ_PER_GAL, 2)
+                unit = "gal"
+                chemical = "Liquid chlorine (12.5%)"
+                reason = (
+                    f"Free chlorine is {fc:.1f} ppm — below the seasonal "
+                    f"target of {fc_target_ppm:.1f} ppm ({season} season). "
+                    f"{form_reason}"
+                )
             out.append(_rec(
-                "Liquid chlorine (12.5%)", oz, "oz",
-                f"Free chlorine is {fc} ppm — below the {lo}–{hi} sanitising range.",
-                "immediate", "free_chlorine", fc, _TARGETS["free_chlorine"],
+                chemical, qty, unit, reason, "immediate",
+                "free_chlorine", fc, (fc_lo, fc_hi, fc_target_ppm),
+                target_ppm=fc_target_ppm, season=season,
+                preferred_form=preferred_form,
+                preferred_form_reason=form_reason,
             ))
-        elif fc > hi:
-            # Overshoot — recommend letting it drift down. No chemical add.
+        elif fc > fc_hi:
             out.append(_rec(
                 "Wait — do not add chlorine", 0, "",
-                f"Free chlorine is {fc} ppm — above {hi} ppm. Let it drift down before adding more.",
-                "routine", "free_chlorine", fc, _TARGETS["free_chlorine"],
+                f"Free chlorine is {fc:.1f} ppm — above the seasonal "
+                f"ceiling ({fc_hi:.1f} ppm). Let it drift down.",
+                "routine", "free_chlorine", fc,
+                (fc_lo, fc_hi, fc_target_ppm),
+                target_ppm=fc_target_ppm, season=season,
             ))
 
-    # 2. pH
+    # 2. pH.
     if "ph" in r:
         ph = r["ph"]
         lo, hi, tgt = _TARGETS["ph"]
         if ph < lo:
-            # Soda ash: 6 oz per 10k gal ≈ +0.2 pH.
             delta = tgt - ph
             oz = round(6.0 * (delta / 0.2) * scale, 1)
             out.append(_rec(
@@ -125,21 +269,21 @@ def compute(readings: dict, pool_gallons: Optional[int]) -> list[dict]:
                 "routine", "ph", ph, _TARGETS["ph"],
             ))
         elif ph > hi:
-            # Muriatic acid: 8 oz per 10k gal ≈ -0.2 pH.
+            # Muriatic acid — express in gallons per Phase 56.5 unit fix.
             delta = ph - tgt
-            oz = round(8.0 * (delta / 0.2) * scale, 1)
+            oz = 8.0 * (delta / 0.2) * scale
+            gal = round(oz / _OZ_PER_GAL, 2)
             out.append(_rec(
-                "Muriatic acid", oz, "oz",
+                "Muriatic acid", gal, "gal",
                 f"pH is {ph} — above {hi}. Also nudges total alkalinity down.",
                 "routine", "ph", ph, _TARGETS["ph"],
             ))
 
-    # 3. Total Alkalinity
+    # 3. Total Alkalinity.
     if "total_alkalinity" in r:
         ta = r["total_alkalinity"]
         lo, hi, tgt = _TARGETS["total_alkalinity"]
         if ta < lo:
-            # Sodium bicarbonate: 21 oz (~1.5 lb) per 10k gal ≈ +10 ppm.
             delta = tgt - ta
             oz = round(21.0 * (delta / 10.0) * scale, 1)
             out.append(_rec(
@@ -148,16 +292,16 @@ def compute(readings: dict, pool_gallons: Optional[int]) -> list[dict]:
                 "routine", "total_alkalinity", ta, _TARGETS["total_alkalinity"],
             ))
         elif ta > hi and r.get("ph", 7.4) > _TARGETS["ph"][1]:
-            # Only recommend acid when BOTH TA and pH are high (per brief).
             delta = ta - tgt
-            oz = round(25.0 * (delta / 10.0) * scale, 1)
+            oz = 25.0 * (delta / 10.0) * scale
+            gal = round(oz / _OZ_PER_GAL, 2)
             out.append(_rec(
-                "Muriatic acid (to lower TA)", oz, "oz",
+                "Muriatic acid (to lower TA)", gal, "gal",
                 f"Total alkalinity is {ta} ppm AND pH is high — acid lowers both.",
                 "routine", "total_alkalinity", ta, _TARGETS["total_alkalinity"],
             ))
 
-    # 4. Cyanuric Acid (stabiliser)
+    # 4. Cyanuric Acid (stabiliser).
     if "cyanuric_acid" in r:
         cya = r["cyanuric_acid"]
         lo, hi, tgt = _TARGETS["cyanuric_acid"]
@@ -176,7 +320,7 @@ def compute(readings: dict, pool_gallons: Optional[int]) -> list[dict]:
                 "routine", "cyanuric_acid", cya, _TARGETS["cyanuric_acid"],
             ))
 
-    # 5. Calcium Hardness
+    # 5. Calcium Hardness.
     if "calcium_hardness" in r:
         ch = r["calcium_hardness"]
         lo, hi, tgt = _TARGETS["calcium_hardness"]
@@ -195,13 +339,12 @@ def compute(readings: dict, pool_gallons: Optional[int]) -> list[dict]:
                 "routine", "calcium_hardness", ch, _TARGETS["calcium_hardness"],
             ))
 
-    # 6. Salt (only recommended when a salt reading is actually present).
+    # 6. Salt.
     if "salt" in r:
         s = r["salt"]
         lo, hi, tgt = _TARGETS["salt"]
         if s < lo:
             delta = tgt - s
-            # 25 lb per 10k gal ≈ +300 ppm.
             lb = round(25.0 * (delta / 300.0) * scale, 1)
             out.append(_rec(
                 "Pool salt (NaCl)", lb, "lbs",
@@ -209,6 +352,5 @@ def compute(readings: dict, pool_gallons: Optional[int]) -> list[dict]:
                 "routine", "salt", s, _TARGETS["salt"],
             ))
 
-    # Priority ordering: immediate items first, then keep original order.
     out.sort(key=lambda x: 0 if x["urgency"] == "immediate" else 1)
     return out[:6]

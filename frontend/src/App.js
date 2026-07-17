@@ -12,6 +12,7 @@ import CustomersList from "@/pages/customers/CustomersList";
 import CustomerForm from "@/pages/customers/CustomerForm";
 import CustomerDetail from "@/pages/customers/CustomerDetail";
 import CustomerChemistry from "@/pages/customers/CustomerChemistry";
+import { RequestJobPage, AdminJobRequestsPage } from "@/pages/job_requests/JobRequestsPages";
 import CalendarSchedule from "@/pages/schedule/CalendarSchedule";
 import WorkstreamPage from "@/pages/workstream/WorkstreamPage";
 import CFODashboard from "@/pages/cfo/CFODashboard";
@@ -213,6 +214,10 @@ export default function App() {
             <Route path="customers/:id" element={<NoTech><CustomerDetail /></NoTech>} />
             <Route path="customers/:id/edit" element={<NoTech><CustomerForm /></NoTech>} />
             <Route path="customers/:id/chemistry" element={<NoTech><CustomerChemistry /></NoTech>} />
+
+            {/* Phase 56.4 · Tech Job Request workflow */}
+            <Route path="request-job" element={<RequestJobPage />} />
+            <Route path="admin/job-requests" element={<AdminJobRequestsPage />} />
 
             {/* Jobs (Phase 2) */}
             {/* Phase 30 · Jobs list retired — techs & admins land on the unified calendar. */}

@@ -841,22 +841,34 @@ async def recommend_chemicals(body: RecommendChemicalsBody,
     if role not in {"admin", "super_admin", "technician"}:
         raise HTTPException(403, "Techs and admins only")
 
-    # Resolve pool_gallons: request → job → customer.
+    # Resolve pool_gallons + customer doc + recent reports for Phase 56.5
+    # seasonal dosing rules. All lookups scoped by tenant.
     gallons: Optional[int] = None
+    customer_doc: Optional[dict] = None
+    recent_reports: list = []
     if body.pool_gallons and body.pool_gallons > 0:
         gallons = int(body.pool_gallons)
-    elif body.job_id:
+    if body.job_id:
         job = await db.jobs.find_one(
             {"id": body.job_id, "tenant_id": tenant["id"]},
-            {"_id": 0, "customer_id": 1},
+            {"_id": 0, "customer_id": 1, "scheduled_date": 1},
         )
         if job and job.get("customer_id"):
-            cust = await db.customers.find_one(
+            customer_doc = await db.customers.find_one(
                 {"id": job["customer_id"], "tenant_id": tenant["id"]},
-                {"_id": 0, "pool_gallons": 1},
+                {"_id": 0, "pool_gallons": 1, "chemical_preferences": 1},
             )
-            if cust and cust.get("pool_gallons"):
-                gallons = int(cust["pool_gallons"])
+            if not gallons and customer_doc and customer_doc.get("pool_gallons"):
+                gallons = int(customer_doc["pool_gallons"])
+            # Last 3 submitted reports for tab-rotation guard.
+            recent_reports = await db.service_reports.find(
+                {"tenant_id": tenant["id"], "customer_id": job["customer_id"],
+                 "submitted_at": {"$ne": None}},
+                {"_id": 0, "chemicals_added": 1, "submitted_at": 1},
+            ).sort("submitted_at", -1).limit(3).to_list(3)
+        service_date_for_dosing = (job or {}).get("scheduled_date")
+    else:
+        service_date_for_dosing = None
 
     if not gallons:
         return {
@@ -868,7 +880,12 @@ async def recommend_chemicals(body: RecommendChemicalsBody,
             "pool_gallons": None,
         }
 
-    recs = _pool_compute(body.readings or {}, gallons)
+    recs = _pool_compute(
+        body.readings or {}, gallons,
+        customer=customer_doc,
+        service_date=service_date_for_dosing,
+        recent_service_reports=recent_reports,
+    )
     source = "deterministic-only"
     tokens = 0
     llm_error: Optional[str] = None
