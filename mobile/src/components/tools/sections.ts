@@ -47,6 +47,7 @@ export const TECH_SECTIONS: ToolSection[] = [
     title: "My Records",
     tiles: [
       { key: "onboarding", icon: "clipboard-outline", label: "My Onboarding", desc: "Checklist steps assigned to me", route: "/(app)/onboarding/mine" },
+      { key: "tests", icon: "school-outline", label: "Tests", desc: "Training modules & CPO prep", route: "/(app)/tests" },
       { key: "d2d-leaderboard", icon: "trophy-outline", label: "D2D Leaderboard", desc: "See where your knocks rank", route: "/d2d/leaderboard" },
       { key: "card", icon: "id-card-outline", label: "Business Card", desc: "Share your digital card", route: "/card" },
     ],

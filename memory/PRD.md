@@ -1094,3 +1094,55 @@ skipped due to empty schedule/today — behavior verified via curl).
    56.13b-followup.
 9. Paused: 56.9b Zillow, T1-T6 calculators, 56.13d, 56.14, 56.15.
 
+
+## Phase 56.13c — Training Mobile UI + Team CPO Readiness widget (Feb 2026)
+
+Three deliverables:
+
+**A. Training Mobile UI (main lift)**
+- New Expo Router screens under `mobile/app/(app)/tests/`:
+  - `index.tsx` — module list (FlatList of cards, department badges,
+    thin progress bar, Start / Resume / Review CTAs).
+  - `[code].tsx` — module detail (chip carousel of lessons, in-file
+    lightweight markdown renderer for H1/H2/paragraphs/bullets/italic,
+    Prev/Mark done/Next footer, floating Take Quiz banner).
+  - `[code]/quiz.tsx` — quiz runner + results (pill choices,
+    Prev/Next/Submit gated on all-answered, pass/fail banner,
+    per-question review, cert PDF via `Linking.openURL`).
+- GlobalMenu tile "Tests" added to `TECH_SECTIONS.records` (via
+  `sections.ts`).
+- No new deps: custom markdown renderer avoids
+  `react-native-markdown-display`.
+- Progress + certs persist to the same `/api/training/*` endpoints,
+  so start-on-web-finish-on-mobile just works.
+
+**B. Team CPO Readiness widget**
+- New component `frontend/src/components/admin/TeamCpoReadinessWidget.jsx`
+  mounted on the admin Dashboard.
+- Two-line collapsed summary + expandable per-tech table.
+- Fetches `/api/training/certificates/admin` + `/api/team`, computes
+  Certified vs Not Started per tech.
+- V1 approximation footnoted: "In progress" bucket shows 0 pending a
+  bulk-progress endpoint (deferred to 56.13b-followup).
+
+**C. Legacy Field Report widget cleanup**
+- No action required — after inspection, the widget is already
+  data-driven from `fr.checklist` on the job doc. Stale labels are
+  the persisted snapshot on old jobs, per spec.
+
+**Files touched:**
+- `frontend/src/components/admin/TeamCpoReadinessWidget.jsx` (new)
+- `frontend/src/pages/admin/Dashboard.jsx`
+- `mobile/src/components/tools/sections.ts`
+- `mobile/app/(app)/tests/{index,[code],[code]/quiz}.tsx` (all new)
+- `memory/HANDOFF.md`, `memory/PRD.md`
+
+**Priority order:**
+1-6: ✅ (56.13a, 56.13a-commit, 56.10, 56.11, 56.13b, 56.16).
+7. ✅ Phase 56.13c — Training Mobile UI + Team CPO Readiness (this ship).
+8. **NEXT: Phase 56.16-followup** — customer portal service-reports UI.
+9. Then: 56.10-mobile, 56.11-mobile.
+10. Then: 56.13b-followup (profile certs + custom-module editor +
+    leaderboard + bulk-progress endpoint).
+11. Paused: 56.9b Zillow, T1-T6, 56.13d, 56.14, 56.15.
+
