@@ -461,7 +461,7 @@ function ImportModal({ open, onClose, onDone, setToast }) {
       {!result ? (
         <>
           <p className="text-sm mb-2" style={{ color: colors.onSurfaceSecondary }}>
-            Expected columns (case-insensitive; leading/trailing whitespace tolerated):
+            Expected columns (case-insensitive; leading/trailing whitespace tolerated; comma OR semicolon delimiter auto-detected):
           </p>
           <div className="rounded-lg mb-3 overflow-hidden border" style={{ borderColor: colors.border }}>
             <table className="w-full text-xs">

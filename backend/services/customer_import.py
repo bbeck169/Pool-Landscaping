@@ -1,35 +1,11 @@
-"""Phase 56 · Customer CSV importer & template.
-
-12-column spec (case-insensitive, tolerates leading/trailing whitespace
-in headers). Order below is authoritative for the template download but
-importer accepts any column order.
-
-| # | Header                    | Type    |
-|---|---------------------------|---------|
-| 1 | Customer Since            | date    |
-| 2 | Email                     | email   |
-| 3 | Service address Street    | text*   |
-| 4 | City                      | text*   |
-| 5 | State                     | text*   |
-| 6 | Postal Code               | text*   |
-| 7 | Phone                     | phone   |
-| 8 | Mobile                    | phone   |
-| 9 | First Name                | text*   |
-| 10| Last Name                 | text*   |
-| 11| Tags                      | csv-list|
-| 12| Notes                     | text    |
-
-`*` = required. Rejecting a row still returns an itemized error message
-in the response so admins can fix and re-upload.
-
-Back-compat: if the CSV uses the OLD single-address / single-phone /
-name column headers (e.g., ``Name``, ``Address``, ``Phone``), the
-importer falls back to the legacy mapper for that upload and returns
-``deprecation_warnings`` so the frontend can nudge the admin to
-migrate.
+"""Phase 56 · Customer CSV importer & template. Phase 56.1 · real-world hardening.
+See CAUSES 1-10 in HANDOFF (semicolon delimiter, comma-in-date, phone noise,
+HTML in notes, tags-with-commas, etc.).
 """
 from __future__ import annotations
 
+import csv
+import html as _html
 import io
 import re
 from datetime import date, datetime
@@ -83,13 +59,14 @@ _MONTHS_FULL: dict[str, int] = {
 
 
 def parse_customer_since(raw: Optional[str]) -> Optional[str]:
-    """Accepts "Jul 01 2026", "Jun 23", "6/23/2026", "2026-06-23",
-    "23 Jun 2026", "July 1, 2026". Returns ISO ``YYYY-MM-DD`` or None
-    on failure. Year defaults to the current calendar year when
-    omitted."""
+    """Accepts "Jul 01 2026", "Jul 01, 2026" (Phase 56.1 · comma variant),
+    "Jun 23", "6/23/2026", "2026-06-23", "23 Jun 2026", "July 1, 2026".
+    Returns ISO ``YYYY-MM-DD`` or None on failure. Year defaults to
+    the current calendar year when omitted."""
     if raw is None:
         return None
-    s = str(raw).strip()
+    s = str(raw).strip().replace(",", " ")  # Phase 56.1 — kill embedded commas
+    s = re.sub(r"\s+", " ", s)
     if not s:
         return None
     this_year = datetime.utcnow().year
@@ -110,12 +87,12 @@ def parse_customer_since(raw: Optional[str]) -> Optional[str]:
         try: return date(y, mo, dy).isoformat()
         except ValueError: return None
 
-    # "Jul 01 2026" / "Jul 01" / "July 1, 2026" / "23 Jun 2026".
-    tokens = [t for t in re.split(r"[,\s]+", s) if t]
+    # Month-name variants — tokens now guaranteed comma-free above.
+    tokens = [t for t in s.split(" ") if t]
     mo = dy = yr = None
     for t in tokens:
-        tl = t.lower().rstrip(",.")
-        if tl in _MONTHS:      mo = _MONTHS[tl]
+        tl = t.lower().rstrip(".")
+        if tl in _MONTHS:        mo = _MONTHS[tl]
         elif tl in _MONTHS_FULL: mo = _MONTHS_FULL[tl]
         elif t.isdigit():
             n = int(t)
@@ -149,6 +126,39 @@ def _parse_tags(v: str) -> list[str]:
     if not v: return []
     parts = [p.strip() for p in v.split(",")]
     return [p for p in parts if p]
+
+
+# ─── Phase 56.1 · phone-noise stripper ────────────────────────────────
+_PHONE_NOISE = re.compile(
+    r"\b(?:land\s*line|cell(?:\s*phone)?|home(?:\s*phone)?|mobile|work|"
+    r"office|fax|primary|secondary|main|day|evening|night)\b",
+    re.IGNORECASE,
+)
+
+
+def _strip_phone_noise(raw: Optional[str]) -> str:
+    """Remove trailing/inline words like 'Land Line', 'Cell', etc. from a
+    phone string BEFORE handing to the E.164 normalizer. Leaves digits +
+    punctuation. Empty input → ``""``."""
+    if not raw: return ""
+    s = _PHONE_NOISE.sub(" ", str(raw))
+    return re.sub(r"\s+", " ", s).strip()
+
+
+# ─── Phase 56.1 · HTML notes cleaner ──────────────────────────────────
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _clean_notes(raw: Optional[str]) -> str:
+    """Decode HTML entities → strip tags → collapse whitespace → cap
+    at 2000 chars. Handles Excel/RTF exports that leak `<p>`, `&nbsp;`,
+    `&apos;`, etc. into the Notes column."""
+    if not raw: return ""
+    s = _html.unescape(str(raw))
+    s = _TAG_RE.sub(" ", s)
+    s = re.sub(r"[\r\n\t]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:2000]
 
 
 # ─── Row normalization ────────────────────────────────────────────────
@@ -197,18 +207,20 @@ def build_customer_doc(canon: dict[str, str], tenant_id: str,
     if email and not _valid_email(email):
         return None, f"invalid email: {email!r}"
 
-    phone_home = normalize_phone(canon.get("phone")) if canon.get("phone") else None
-    phone_mobile = normalize_phone(canon.get("mobile")) if canon.get("mobile") else None
-    if canon.get("phone") and not phone_home:
-        return None, f"invalid phone: {canon.get('phone')!r}"
-    if canon.get("mobile") and not phone_mobile:
-        return None, f"invalid mobile: {canon.get('mobile')!r}"
+    phone_home_raw = _strip_phone_noise(canon.get("phone"))
+    phone_mobile_raw = _strip_phone_noise(canon.get("mobile"))
+    phone_home = normalize_phone(phone_home_raw) if phone_home_raw else None
+    phone_mobile = normalize_phone(phone_mobile_raw) if phone_mobile_raw else None
 
     phones: list[dict] = []
-    if phone_home:
-        phones.append({"type": "home", "number": phone_home})
-    if phone_mobile:
-        phones.append({"type": "mobile", "number": phone_mobile})
+    if phone_home_raw:
+        phones.append({"type": "home", "number": phone_home or phone_home_raw,
+                        "raw": phone_home_raw if not phone_home else None,
+                        "e164": phone_home})
+    if phone_mobile_raw:
+        phones.append({"type": "mobile", "number": phone_mobile or phone_mobile_raw,
+                        "raw": phone_mobile_raw if not phone_mobile else None,
+                        "e164": phone_mobile})
 
     first = canon["first name"].strip()
     last = canon["last name"].strip()
@@ -233,18 +245,46 @@ def build_customer_doc(canon: dict[str, str], tenant_id: str,
         },
         "customer_since": since,
         "tags": _parse_tags(canon.get("tags") or ""),
-        "notes": (canon.get("notes") or "").strip(),
+        "notes": _clean_notes(canon.get("notes") or ""),
     }
     return doc, None
 
 
-# ─── CSV reader (tolerant) ────────────────────────────────────────────
+# ─── CSV reader (tolerant · Phase 56.1 semicolon-aware) ───────────────
+def _detect_delimiter(sample: str) -> str:
+    """Prefer whichever of ``,`` / ``;`` / ``\\t`` shows up more often on
+    the first non-empty line, outside of quoted regions. Falls back to
+    csv.Sniffer if the naive count is a tie."""
+    first = ""
+    for line in sample.splitlines():
+        if line.strip():
+            first = line
+            break
+    if not first: return ","
+    unquoted = re.sub(r'"[^"]*"', "", first)
+    counts = {c: unquoted.count(c) for c in (",", ";", "\t")}
+    best, best_n = max(counts.items(), key=lambda x: x[1])
+    if best_n > 0:
+        return best
+    try:
+        return csv.Sniffer().sniff(sample[:2048], delimiters=",;\t").delimiter
+    except Exception:
+        return ","
+
+
 def read_csv(text: str) -> list[dict[str, str]]:
-    import csv
     if not text: return []
     text = text.lstrip("\ufeff")
-    reader = csv.DictReader(io.StringIO(text))
-    return [row for row in reader if any((v or "").strip() for v in row.values())]
+    delim = _detect_delimiter(text[:4096])
+    reader = csv.DictReader(io.StringIO(text), delimiter=delim)
+    rows: list[dict[str, str]] = []
+    for raw in reader:
+        # Drop the sentinel empty-string key that DictReader inserts when
+        # the row has more fields than the header (trailing ";" columns).
+        cleaned = {k: v for k, v in raw.items() if k not in (None, "")}
+        if any((v or "").strip() for v in cleaned.values() if isinstance(v, str)):
+            rows.append(cleaned)
+    return rows
 
 
 # ─── Template ─────────────────────────────────────────────────────────
