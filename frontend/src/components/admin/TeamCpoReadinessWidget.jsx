@@ -1,13 +1,12 @@
 /**
- * Phase 56.13c · Team CPO Readiness widget.
+ * Phase 56.13b-followup — Team CPO Readiness widget with ACCURATE
+ * in-progress counter powered by the new bulk-progress endpoint
+ * (`GET /api/training/progress/admin?module_code=cpo-prep`).
  *
- * Two-line card summarizing how many pool-department techs (department
- * in ["pool", "both"], role="technician") in the tenant have earned the
- * CPO Prep completion cert vs are in-progress vs haven't started.
- *
- * - Certified: cert row exists for module_code=cpo-prep.
- * - In progress: has training_progress rows for cpo-prep but no cert.
- * - Not started: neither.
+ * Certified   → user has a passing cert for cpo-prep.
+ * In progress → has a `training_progress` doc with
+ *                lessons_completed.length > 0 AND no passing cert.
+ * Not started → neither.
  */
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
@@ -22,39 +21,46 @@ export default function TeamCpoReadinessWidget() {
   useEffect(() => {
     (async () => {
       try {
-        // Fetch: cert rows for cpo-prep + user list (techs in pool/both).
-        const [certs, users] = await Promise.all([
+        const [certs, users, progress] = await Promise.all([
           api.get("/training/certificates/admin"),
           api.get("/team"),
+          // Phase 56.13b-followup — bulk-progress endpoint. Small
+          // response (one row per user × module), tenant-scoped.
+          api.get("/training/progress/admin?module_code=cpo-prep"),
         ]);
+
         const cpoCerts = (Array.isArray(certs) ? certs : []).filter(
           (c) => c.module_code === "cpo-prep"
         );
+        const certByUserId = new Map(cpoCerts.map((c) => [c.user_id, c]));
+
+        const progressByUserId = new Map(
+          (Array.isArray(progress) ? progress : []).map((p) => [p.user_id, p])
+        );
+
         const techs = (Array.isArray(users) ? users : []).filter((u) => {
           const role = (u.role || "").toLowerCase();
           const dept = (u.department || "").toLowerCase();
           return role === "technician" && (dept === "pool" || dept === "both" || dept === "");
         });
-        // Progress rows are per-user; use presence of ANY cpo-prep
-        // attempt/progress as proxy — but we don't have a bulk
-        // progress endpoint, so mark "in progress" by looking for
-        // attempts via the attempts endpoint per user is too heavy.
-        // Approximation: any tech NOT in cpoCerts is "not started"
-        // unless they've attempted the quiz (we can't cheaply detect
-        // that without a new endpoint). V1: mark them "not started".
-        // A follow-up ship can add `GET /training/progress/admin` to
-        // improve accuracy.
-        const certByUserId = new Map(cpoCerts.map((c) => [c.user_id, c]));
+
         const rows = techs.map((t) => {
           const cert = certByUserId.get(t.id);
+          const p = progressByUserId.get(t.id);
+          let status;
+          if (cert) status = "Certified";
+          else if (p && (p.lessons_completed || []).length > 0) status = "In progress";
+          else status = "Not started";
           return {
             id: t.id,
             name: t.name || t.email,
-            status: cert ? "Certified" : "Not started",
+            status,
             score: cert ? Math.round((cert.quiz_score || 0) * 100) : null,
             awarded_at: cert?.awarded_at || null,
+            lessons_completed: (p?.lessons_completed || []).length,
           };
         });
+
         setState({ loading: false, error: "", rows });
       } catch (e) {
         setState({ loading: false, error: e?.message || "Failed to load", rows: [] });
@@ -63,8 +69,8 @@ export default function TeamCpoReadinessWidget() {
   }, []);
 
   const certified = state.rows.filter((r) => r.status === "Certified").length;
+  const inProg = state.rows.filter((r) => r.status === "In progress").length;
   const total = state.rows.length;
-  const inProg = 0;                                    // v1 approximation (see comment above)
   const notStarted = total - certified - inProg;
 
   return (
@@ -119,8 +125,19 @@ export default function TeamCpoReadinessWidget() {
                 <tr key={r.id} data-testid={`cpo-readiness-row-${r.id}`}>
                   <td className="px-3 py-2 font-bold" style={{ color: colors.onSurface }}>{r.name}</td>
                   <td className="px-3 py-2"
-                      style={{ color: r.status === "Certified" ? "#059669" : colors.muted }}>
+                      style={{
+                        color: r.status === "Certified"
+                          ? "#059669"
+                          : r.status === "In progress"
+                          ? "#B45309"
+                          : colors.muted,
+                      }}>
                     {r.status}
+                    {r.status === "In progress" ? (
+                      <span className="ml-1 text-[10px]" style={{ color: colors.muted }}>
+                        ({r.lessons_completed} lessons)
+                      </span>
+                    ) : null}
                   </td>
                   <td className="px-3 py-2 text-right" style={{ color: colors.muted }}>
                     {r.score != null ? `${r.score}%` : "—"}
@@ -134,7 +151,7 @@ export default function TeamCpoReadinessWidget() {
           </table>
           <div className="text-[10px] px-3 py-2 italic"
                style={{ color: colors.muted, background: colors.surfaceAlt }}>
-            v1 approximation: "In progress" counter requires a bulk-progress endpoint (deferred to 56.13b-followup).
+            In-progress counter accurate as of last widget load.
             <Link to="/admin/training" className="ml-2" style={{ color: colors.brand, textDecoration: "underline" }}>
               Manage training →
             </Link>

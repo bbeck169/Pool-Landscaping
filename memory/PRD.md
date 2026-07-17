@@ -1359,3 +1359,80 @@ authoritative path per the brief's fallback.
 14. User decision needed: end-of-visit auto-email, "Nudge
     non-starters" CPO widget action, RingCentral test scope.
 
+---
+
+## Phase 56.13b-followup — Training Profile Certs + Tenant Module Editor + Leaderboard + Bulk-Progress Endpoint (Feb 2026)
+
+Four deliverables bundled: (A) `GET /training/progress/admin` +
+widget accuracy fix, (B) profile certs panel, (C) full tenant
+module editor, (D) leaderboard w/ CSV export. Closes the
+"in-progress counter approximation" footnote from 56.13c.
+
+**Backend (new endpoints — admin-only, tenant-scoped):**
+- `GET /api/training/progress/admin?module_code=` — returns one
+  row per training_progress doc with `has_started` derived from
+  `lessons_completed`.
+- `GET /api/training/leaderboard?days=90` — per-user rollup over
+  the rolling window (modules_completed, quizzes_passed,
+  attempts, certificates_earned, avg_score).
+- Existing 56.13a CRUD (`POST/PATCH/DELETE /training/modules`)
+  unchanged — system modules stay immutable (409 on write).
+
+**Web:**
+- Team CPO Readiness widget now consumes the bulk-progress
+  endpoint → accurate three-state breakdown.
+- `TechnicianProfile` gains a **Certifications** tab wired to
+  new `TrainingCertsPanel.jsx` (PDF download via
+  JWT-authenticated blob fetch).
+- `AdminTraining.jsx` rewritten (109 → 812 lines):
+  segmented Modules / Leaderboard tabs, slide-over editor for
+  tenant-custom modules (Basics + Lessons + Quiz — up/down
+  reorder, no drag-drop, no rich text, no AI-authoring),
+  sortable leaderboard table with CSV export.
+
+**Mobile:** unchanged this ship. Mobile profile screen doesn't
+exist yet; explicitly deferred. Not blocking pool tech workflow.
+
+**Files touched:**
+- `backend/routers/training.py` (+143 lines)
+- `backend/tests/test_phase56_13b_followup.py` (**new**)
+- `frontend/src/components/admin/TeamCpoReadinessWidget.jsx`
+- `frontend/src/pages/training/AdminTraining.jsx` (rewrite)
+- `frontend/src/pages/training/TrainingCertsPanel.jsx` (**new**)
+- `frontend/src/pages/phase14/Phase14Pages.jsx`
+
+**Preflight:** `bash /app/scripts/preflight.sh` → exit 0 (418
+pre-existing dead-import WARNs, no new WARNs).
+
+**Backend tests:** `pytest test_phase56_13b_followup.py` → 4/4
+passed in 27.97s. Covers new endpoints, system-module
+immutability, tenant custom CRUD with RBAC on every path.
+
+**Live curl verification (all 8 assertions):**
+- `GET /training/progress/admin` → 200 as admin, 403 as tech.
+- `GET /training/leaderboard` → 200 as admin (9 rows), 403 as tech.
+- `PATCH/DELETE /training/modules/cpo-prep` → **HTTP 409** as
+  admin (system module immutability).
+- `POST /training/modules` as admin → 200 (tenant custom
+  module created).
+- `POST/PATCH/DELETE /training/modules` as tech → all 403.
+
+**Screenshots captured:**
+- Team CPO Readiness widget expanded with accurate summary.
+- Admin training Modules table with SYSTEM badge on cpo-prep.
+- Slide-over editor pre-filled with a new tenant module.
+- Leaderboard table with sortable columns and CSV export.
+- Technician profile Certifications tab with a downloadable cert.
+
+**Priority order after this ship:**
+1-12: ✅ (all previous phases + 56.16-followup + 56.10-mobile +
+      56.11-mobile + 56.13b-followup).
+13. **Paused**: 56.9b Zillow, T1-T6 calculators, 56.13d
+    (supplemental pool modules), 56.14 (landscape training),
+    56.15 (handbook).
+14. **User decision needed**: end-of-visit auto-email, "Nudge
+    non-starters" widget action, RingCentral test scope.
+
+The active **training + service-report + equipment** triangle is
+now feature-complete for the pool tech workflow.
+

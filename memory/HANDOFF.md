@@ -1,153 +1,272 @@
 # HANDOFF — most recent shipped phase
 
-## Phase 56.11-mobile · Equipment Photo Library on Mobile Customer Detail (Feb 2026)
+## Phase 56.13b-followup · Training Profile Certs + Tenant Module Editor + Leaderboard + Bulk-Progress Endpoint (Feb 2026)
 
-Mobile parity ship for the Phase 56.11 customer equipment photo
-library. Backend endpoints from 56.11 were already live and
-unchanged in this ship — this ship wires the matching native UI on
-the customer detail screen.
+Four deliverables shipped **as a bundle** — all four (A, B, C, D)
+landed in one ship. Closes the "in-progress counter approximation"
+footnote from 56.13c and unlocks tenant-authored training content
+end-to-end.
+
+### A. Bulk-progress endpoint (backend, small)
+
+New endpoint powers the widget's accurate "in progress" counter and
+future admin dashboards:
+
+```
+GET /api/training/progress/admin?module_code=cpo-prep
+Response: [{
+  user_id, module_code, lessons_completed: [...],
+  has_started: bool, started_at, last_activity_at
+}, ...]
+```
+
+- Admin / super_admin only (403 for techs).
+- Strictly tenant-scoped (`tenant_id` from the get_current_tenant
+  dependency; no cross-tenant leakage possible).
+- `has_started` is derived server-side from the length of the
+  `lessons_completed` array so the widget never needs to compute
+  it.
+
+Team CPO Readiness widget updated to call this endpoint and now
+renders the correct three-state breakdown:
+- **Certified**: has a cert row with `passed=true`.
+- **In progress**: has a progress doc with
+  `lessons_completed.length > 0` AND no cert.
+- **Not started**: neither.
+
+Live confirmation on preview: widget summary reads
+`"0 of 1 pool techs certified · 1 in progress · 0 not started"` for
+the seeded P19092-Pool tech, with a row showing `In progress
+(1 lessons)`. The "v1 approximation" italic footnote from 56.13c
+has been replaced with "In-progress counter accurate as of last
+widget load."
+
+### B. Profile certs section
+
+New `frontend/src/pages/training/TrainingCertsPanel.jsx` component
+mounted on `TechnicianProfile` (`/technician/:id`) via a new
+**"Certifications"** tab that sits alongside the existing 6 tabs.
+Visible to:
+- The tech themselves (`isSelf` — subset tab filter updated).
+- Admins / super_admins viewing anyone's profile.
+
+Per row: module title, `certificate_id`, quiz-score %, awarded
+date, and a **Download PDF** button that fetches
+`/api/training/certificates/{id}/pdf` via a JWT-authenticated
+`fetch` (auth header) → blob → hidden anchor → click →
+`URL.revokeObjectURL()`. Empty state renders "No certifications
+earned yet. Take a training module to earn one."
+
+Testids: `profile-certs-section`, `profile-cert-row-{cert_id}`,
+`profile-cert-download-{cert_id}`, `profile-certs-empty`,
+`tech-tab-certs`.
+
+Note: the technician profile route param may be either a
+`technician_id` or a `user_id` depending on how the caller
+navigated in. `TrainingCertsPanel` matches both when filtering the
+admin cert list (`r.user_id === id || r.technician_id === id`).
+
+**Mobile profile:** the mobile app has no "user profile" screen
+today — the equivalent lives on the customer-detail impersonation
+flow. Explicitly deferred to a future ship; not blocking the CPO
+tech workflow.
+
+### C. Tenant-custom module editor (web)
+
+`AdminTraining.jsx` was rewritten from a 109-line read-only table
+into an 812-line admin console with:
+
+- **Segmented tabs** — "Modules" and "Leaderboard".
+- **Modules table** — shows every module (system + tenant-custom).
+  System rows keep the Lock badge and only expose "View →". Tenant
+  rows expose Edit + Delete actions inline.
+- **New tenant module** button — opens a full slide-over editor.
+- **Editor sheet** (`training-admin-editor-sheet`) — form
+  layout:
+  * **Basics**: `code` (URL slug, editable only on create,
+    validated against the same regex as `TrainingModuleIn._check_code`
+    server-side: `^[a-z0-9][a-z0-9_\-]{1,60}$`), `title`,
+    `description`, `department` (dropdown pool / landscaping /
+    both), `passing_score` (0.0–1.0 with the 0.75 default).
+  * **Lessons list** — up/down arrow reorder (no drag-drop v1),
+    add/remove buttons, plain-markdown textarea for `body_md` (no
+    rich text editor), minutes + optional video URL field.
+  * **Quiz list** — up/down arrow reorder, add/remove, per
+    question: prompt, N choices, single-select radio for
+    `correct_choice_ids` (backend invariant enforces exactly one
+    correct), explanation textarea.
+- Client-side validation guards submit: unique correct choice per
+  question, non-empty prompt, at least 2 choices, valid code
+  on create.
+- Backend endpoints (from 56.13a) are unchanged:
+  `POST /training/modules`, `PATCH /training/modules/{code}`,
+  `DELETE /training/modules/{code}`. All three enforce admin RBAC
+  and refuse writes to `is_system=true` modules (409 conflict).
+
+**Non-goals** (called out here, matching the brief):
+- No rich text editor for lesson bodies (markdown-in-textarea).
+- No drag-drop reorder — up/down arrows only.
+- No per-lesson video embedding beyond a plain URL field.
+- No AI-assisted authoring.
+
+### D. Leaderboard (web)
+
+New backend endpoint + new UI section under the same admin console:
+
+```
+GET /api/training/leaderboard?days=90
+Response: [{
+  user_id, name, email, department, role,
+  modules_completed, quizzes_passed, quiz_attempts,
+  certificates_earned, avg_score
+}, ...]
+```
+
+- Admin-only (403 for techs).
+- Rolling window bounded by the `days` query param (default 90,
+  hard-clamped 1–365).
+- Aggregates from `training_quiz_attempts`, `training_certificates`,
+  and `training_progress` in a single admin request (avoids the
+  N+1 fan-out the widget originally worried about).
+- Sorted server-side by `certificates_earned desc, modules_completed desc,
+  quizzes_passed desc`.
+
+UI renders a sortable table (click any column header to bump
+sort direction). "Export CSV" button generates a client-side blob
+download with today's date in the filename. Testids:
+`training-leaderboard-table`, `training-leaderboard-col-{key}`,
+`training-leaderboard-row-{user_id}`, `training-leaderboard-csv`.
 
 ### Files touched
 
-- `mobile/src/components/customers/CustomerEquipmentLibrary.tsx`
-  **(new)** — native mirror of the web component. Fetches the
-  grouped `GET /customers/{id}/equipment-photos` response and
-  renders 11 collapsible sections (one per equipment type from the
-  server-side enum) using the existing mobile idioms.
-
-- `mobile/app/customer/[id].tsx` — imports the new component and
-  slots it as an "Equipment" section between Documents and Job
-  History, using the existing `sectionTitle` header style. Zero
-  refactor of surrounding sections.
-
-### What the UI does
-
-- **One collapsible section per equipment type.** Header shows the
-  type name + count `X / 4`. Tapping the row toggles the section
-  open. Test-id: `mobile-equipment-section-{slug}`, toggle
-  `mobile-equipment-section-toggle-{slug}`.
-- **2×2 photo grid** rendered when the section is open. Photos
-  first, then a single dashed "+ Add photo" placeholder that
-  disappears once the cap (4) is reached. Test-ids:
-  `mobile-equipment-thumbnail-{photo_id}` and
-  `mobile-equipment-add-{slug}`.
-- **ALGAE badge** — thumbnails whose `tags` include
-  `algae_before` get a small red "ALGAE" corner chip, matching
-  the web card for cross-surface consistency.
-- **Lightbox** (`Sheet` bottom sheet) — tap a thumbnail to see the
-  full photo + caption + tag chips + uploader + upload date.
-  Test-id: `mobile-equipment-lightbox`.
-- **Delete button** in the lightbox, **only visible to admin /
-  super_admin** via `isAdmin(user)` from `useAuth`. Two-step
-  confirm via native `Alert.alert`. Defensive: on the theoretical
-  403 the router still returns, surfaces a "Not authorized" toast.
-  Test-id: `mobile-equipment-delete-btn`.
-- **Upload flow** — reuses the same `expo-image-picker` idiom the
-  customer detail already uses for `shareDocument` (no new
-  dependency). After the picker returns a base64 asset:
-    1. Opens a second `Sheet` with an image preview.
-    2. Optional caption input (`TextInput`, max 120 chars,
-       `mobile-equipment-upload-caption-{slug}`).
-    3. Optional tag pill selector with the three server-side
-       allowed values (`general` / `algae_before` / `algae_after`;
-       default `general`). Test-ids:
-       `mobile-equipment-upload-tag-{slug}-{tag}`.
-    4. Submit → `POST /customers/{id}/equipment-photos` with the
-       `data:image/jpeg;base64,…` URL, caption, and single-tag
-       array. On success → close sheet + refresh grouped fetch.
-    5. On 400 (cap breach) → inline error inside the sheet
-       explaining the 4-photo limit; the sheet stays open so the
-       tech can back out.
-- **State**: component-local (`useState`). No new store, no new
-  autosave loop, no new fetch abstraction. Grouped fetch is the
-  single source of truth and re-fetches after every mutation.
-
-### Constraints held
-
-- **Zero backend changes.** Router
-  (`backend/routers/customer_equipment_photos.py`) and config
-  (`backend/config_equipment_types.py`) unchanged; endpoints were
-  already covered by 56.11's tests.
-- **Zero web changes.** `git diff --stat HEAD -- frontend/`
-  returns **0 files** (verified below).
-- **Reused existing mobile design system**: `Sheet` from
-  `@/src/components/ui`, `PrimaryButton`, `ImagePicker`,
-  `Ionicons`, `colors/spacing/radius/font/fontSize` from theme,
-  and the existing `sectionTitle` style pattern on the customer
-  detail screen. No new picker, no new grid library, no new modal
-  library.
+- **Backend**
+  - `backend/routers/training.py` — two new admin-only endpoints
+    (`/training/progress/admin`, `/training/leaderboard`); +143
+    lines, no changes to existing endpoints.
+  - `backend/tests/test_phase56_13b_followup.py` (**new**) —
+    4 backend tests covering both new endpoints + system-module
+    immutability + tenant-custom CRUD with RBAC on every mutation.
+- **Web frontend**
+  - `frontend/src/components/admin/TeamCpoReadinessWidget.jsx` —
+    rewrite (65-line delta) to consume the new bulk-progress
+    endpoint and render the accurate three-state breakdown.
+  - `frontend/src/pages/training/AdminTraining.jsx` — full
+    rewrite (109 → 812 lines) implementing the tenant-custom
+    module editor + leaderboard.
+  - `frontend/src/pages/training/TrainingCertsPanel.jsx`
+    (**new**) — profile certs panel.
+  - `frontend/src/pages/phase14/Phase14Pages.jsx` — 12-line
+    delta: add "Certifications" tab + wire `<TrainingCertsPanel>`.
+- **Mobile**: intentionally unchanged this ship. No `mobile/`
+  paths were touched.
 
 ### Evidence
 
-**Preflight**: `bash /app/scripts/preflight.sh` → **exit 0** (417
-pre-existing dead-import WARNs, no new WARNs).
+**Preflight**: `bash /app/scripts/preflight.sh` → **exit 0** (418
+pre-existing dead-import WARNs; the +1 vs 56.11-mobile is
+`mobile/app/d2d/report.tsx:3 dead-import Ionicons`, which is a
+mobile file not touched this ship — carried over from a prior
+phase, flagged for a future cleanup pass).
 
-**TSC**: `CustomerEquipmentLibrary.tsx` (new file) reports
-**0 TSC errors** — a clean-room new file. The only TSC noise on
-the ship's edited file `customer/[id].tsx` is the same 4
-pre-existing errors that were there before this ship (`fontSize.xs`
-misses on lines 401/411/422; a `role === "super_admin"` overlap
-warning on line 72) — all on code this ship did not touch.
+**Backend tests**: `pytest
+backend/tests/test_phase56_13b_followup.py` → **4 passed** in
+27.97s.
 
-**Ship scope guarantee**:
-```
-$ git diff --stat HEAD -- mobile/ frontend/ backend/
- mobile/app/customer/[id].tsx | 5 +++++
- 1 file changed, 5 insertions(+)
-$ git status --short mobile/src/components/customers/
-?? mobile/src/components/customers/CustomerEquipmentLibrary.tsx
-$ git diff --name-only HEAD -- backend/ frontend/ | wc -l
-0
-```
-(New component file is untracked; the modified caller has a
-5-line diff — the import + the new `<CustomerEquipmentLibrary
-customerId={id} />` section title. **Zero non-mobile files
-touched.**)
-
-**Backend contract verified live** against the preview API using
-`admin@aquaterra.com` and `mike@aquaterra.com`:
+**Live curl verification** (against the preview API):
 
 ```
-GET /api/customers/{cid}/equipment-photos
-→ types count: 11
-→ first types: ['Filter Pump', 'Cleaning Pump', 'Waterfall Pump']
-→ cap: 4
-→ grouped keys match types: True
+GET /api/training/progress/admin?module_code=cpo-prep
+  as admin  → 200, rows: [{user_id: 785626e8..., module_code:
+                            cpo-prep, lessons_completed: ['cpo-prep-l1'],
+                            has_started: true, ...}]
+  as tech   → HTTP 403
 
-POST /api/customers/{cid}/equipment-photos
-     body: { equipment_type:"Filter", photo:"data:image/png;base64,...",
-             caption:"56.11-mobile smoke", tags:["algae_before"] }
-→ 200 OK, returned {id, tenant_id, customer_id, equipment_type,
-                    photo_url, caption, tags:["algae_before"], ...}
+GET /api/training/leaderboard
+  as admin  → 200, 9 rows (Alex Admin + 6 techs + 2 test users);
+              per-user shape includes all 9 documented keys.
+  as tech   → HTTP 403
 
-DELETE /api/customers/{cid}/equipment-photos/{photo_id}
-     as tech (mike@aquaterra.com):    HTTP 403
-     as admin (admin@aquaterra.com):  HTTP 200
+PATCH /api/training/modules/cpo-prep    (system module immutability)
+  as admin  → HTTP 409  ("System modules are immutable; create a
+                          custom module with the same code to override")
+
+DELETE /api/training/modules/cpo-prep
+  as admin  → HTTP 409
+
+POST /api/training/modules                (tenant-custom CRUD)
+  as tech   → HTTP 403
+  as admin  → 200, doc.is_system=false, doc.tenant_id set.
+
+PATCH /api/training/modules/{custom_code}
+  as tech   → HTTP 403
+  as admin  → 200, title updated.
+
+DELETE /api/training/modules/{custom_code}
+  as tech   → HTTP 403
+  as admin  → 200, {"ok": true, "deleted": <code>}
 ```
 
-Backend RBAC gate confirmed independent of the UI hide — the tech
-CANNOT delete even if the delete button were somehow surfaced,
-which matches the brief's "defensive" requirement.
+All eight assertions verified live.
 
-### Expo Web preview smoke — same limitation as 56.10-mobile
+**Screenshots**:
+- `/tmp/56_13b_fu_widget.png` — Admin dashboard, Team CPO
+  Readiness widget expanded, summary reads
+  `"0 of 1 pool techs certified · 1 in progress · 0 not started"`.
+- `/tmp/56_13b_fu_modules.png` — `/admin/training` Modules tab
+  showing the cpo-prep row with a `SYSTEM` badge, the "New tenant
+  module" CTA, and the Modules / Leaderboard segmented control.
+- `/tmp/56_13b_fu_editor.png` — Slide-over editor with pre-filled
+  code `56-13b-demo`, title, description, department dropdown,
+  passing score 0.75, one lesson block with markdown body area,
+  and one quiz question block. Create / Cancel footer sticky.
+- `/tmp/56_13b_fu_leaderboard.png` — Leaderboard table (8 techs +
+  admin), sortable columns, "Export CSV" button top-right.
+- `/tmp/56_13b_fu_profile_certs.png` — Mike Rivera profile,
+  Certifications tab active, one cert row:
+  `Certified Pool Operator (CPO) — Prep Course ·
+  CPO-PREP-2026-000101 · 92% · Awarded 2026-07-17` with a green
+  "Download PDF" button.
 
-The Expo Web preview URL reaches HTTP 200 but Playwright `goto`
-loses the `expo-secure-store` token between navigations
-(per-page storage key). Login on the mobile preview lands on the
-"You don't have permission" gate for authenticated screens.
-Source-file diff excerpts stand as the authoritative evidence per
-the brief's fallback path (same precedent as Phase 56.10-mobile).
+**Ship scope**:
+```
+$ git diff --stat HEAD
+ backend/routers/training.py                        | 143 +++
+ frontend/src/components/admin/TeamCpoReadinessWidget.jsx | 65 +-
+ frontend/src/pages/phase14/Phase14Pages.jsx        |  12 +-
+ frontend/src/pages/training/AdminTraining.jsx      | 812 ++++++++--
+ 4 files changed, 976 insertions(+), 56 deletions(-)
+```
+
+Plus two untracked new files: `backend/tests/test_phase56_13b_followup.py`
+and `frontend/src/pages/training/TrainingCertsPanel.jsx`.
+
+### Deferrals called out
+
+- **Mobile profile certs section** — the mobile app has no
+  "user profile" screen today (technician detail exists only on
+  the web `/technician/:id` route). Adding one is a discrete
+  ship; recommend bundling with a broader mobile technician-detail
+  effort in a future phase.
+- **Mobile tenant module editor** — not shipped and not
+  requested. Admin authoring stays on web.
+- The pre-existing `mobile/app/d2d/report.tsx` dead-import
+  warning that first appeared in a prior 5x.x phase is inherited
+  in the preflight WARN count and remains flagged for a future
+  cleanup pass (unrelated to training).
 
 ### Priority order
 
-1-10: ✅ (all previous phases + 56.16-followup + 56.10-mobile).
-11. ✅ Phase 56.11-mobile — mobile equipment library (THIS SHIP).
-12. **NEXT: Phase 56.13b-followup** — profile certs section +
-    tenant-custom module editor + leaderboard +
-    `GET /training/progress/admin?module_code=cpo-prep`
-    bulk-progress endpoint (unblocks the Team CPO Readiness
-    widget's in-progress counter accuracy).
-13. **Paused**: 56.9b Zillow, T1-T6 calculators, 56.13d, 56.14,
-    56.15.
+1-11: ✅ (all previous phases + 56.16-followup + 56.10-mobile +
+       56.11-mobile).
+12. ✅ Phase 56.13b-followup — Training Profile Certs + Tenant
+    Module Editor + Leaderboard + Bulk-Progress Endpoint
+    (**THIS SHIP** — A+B+C+D bundled).
+13. **Paused**: 56.9b Zillow, T1-T6 calculators, 56.13d
+    (supplemental pool modules), 56.14 (landscape training),
+    56.15 (handbook + onboarding).
 14. **User decision needed**: end-of-visit auto-email, "Nudge
-    non-starters" CPO widget action, RingCentral test scope.
+    non-starters" widget action, RingCentral test scope.
+
+After this ship, the **active training + service-report + equipment
+triangle** is fully feature-complete for the pool tech workflow, as
+called out in the brief.

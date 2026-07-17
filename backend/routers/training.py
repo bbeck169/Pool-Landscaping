@@ -665,6 +665,149 @@ async def list_all_certificates_admin(
     return rows
 
 
+# ─── Phase 56.13b-followup — bulk progress + leaderboard ───────────────────
+@router.get("/training/progress/admin")
+async def list_progress_admin(
+    module_code: Optional[str] = Query(None, description="Filter to a single module code."),
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Admin-only bulk read of every training_progress doc in this tenant.
+
+    Powers the Team CPO Readiness widget's "in progress" counter — the
+    per-user attempts endpoint is too heavy for a dashboard widget.
+    Strictly tenant-scoped (no cross-tenant leakage).
+
+    Response shape (per row):
+        {
+            user_id, module_code, lessons_completed: [...],
+            has_started: bool, started_at, last_activity_at,
+        }
+    """
+    if not _is_admin(user):
+        raise HTTPException(403, "Admin access required")
+
+    q: dict = {"tenant_id": tenant["id"]}
+    if module_code:
+        q["module_code"] = module_code
+
+    rows = await db.training_progress.find(q, {"_id": 0}).to_list(5000)
+    out = []
+    for r in rows:
+        lessons = list(r.get("lessons_completed") or [])
+        out.append({
+            "user_id": r.get("user_id"),
+            "module_code": r.get("module_code"),
+            "lessons_completed": lessons,
+            "has_started": len(lessons) > 0,
+            "started_at": r.get("started_at"),
+            "last_activity_at": r.get("updated_at") or r.get("started_at"),
+        })
+    return out
+
+
+@router.get("/training/leaderboard")
+async def training_leaderboard(
+    days: int = Query(90, ge=1, le=365, description="Rolling window in days."),
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Admin-only per-tech rollup over the last `days` days.
+
+    Response: list of `{user_id, name, email, department, role,
+    modules_completed, quizzes_passed, quiz_attempts,
+    certificates_earned, avg_score}`. `avg_score` averages
+    `training_quiz_attempts.score` across attempts inside the window.
+    """
+    if not _is_admin(user):
+        raise HTTPException(403, "Admin access required")
+
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    users = await db.users.find(
+        {"tenant_id": tenant["id"], "role": {"$in": ["technician", "admin", "super_admin"]}},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "department": 1, "role": 1},
+    ).to_list(2000)
+
+    attempts = await db.training_quiz_attempts.find(
+        {"tenant_id": tenant["id"], "submitted_at": {"$gte": cutoff}},
+        {"_id": 0, "user_id": 1, "score": 1, "passed": 1, "module_code": 1},
+    ).to_list(20000)
+
+    progress = await db.training_progress.find(
+        {"tenant_id": tenant["id"]},
+        {"_id": 0, "user_id": 1, "module_code": 1, "lessons_completed": 1},
+    ).to_list(20000)
+
+    certs = await db.training_certificates.find(
+        {"tenant_id": tenant["id"], "awarded_at": {"$gte": cutoff}},
+        {"_id": 0, "user_id": 1, "module_code": 1},
+    ).to_list(20000)
+
+    modules = await db.training_modules.find(
+        _module_query(tenant["id"]),
+        {"_id": 0, "code": 1, "lessons": 1},
+    ).to_list(500)
+    lesson_counts = {m["code"]: len(m.get("lessons") or []) for m in modules}
+
+    # Per-user aggregates.
+    per_user: dict = {}
+    for a in attempts:
+        uid = a.get("user_id")
+        if not uid:
+            continue
+        row = per_user.setdefault(uid, {"scores": [], "passed_modules": set(), "attempts": 0, "certs": 0, "completed_modules": set()})
+        row["attempts"] += 1
+        if isinstance(a.get("score"), (int, float)):
+            row["scores"].append(float(a["score"]))
+        if a.get("passed"):
+            row["passed_modules"].add(a.get("module_code"))
+
+    for c in certs:
+        uid = c.get("user_id")
+        if not uid:
+            continue
+        row = per_user.setdefault(uid, {"scores": [], "passed_modules": set(), "attempts": 0, "certs": 0, "completed_modules": set()})
+        row["certs"] += 1
+
+    for p in progress:
+        uid = p.get("user_id")
+        code = p.get("module_code")
+        if not uid or not code:
+            continue
+        completed = len(p.get("lessons_completed") or [])
+        total = lesson_counts.get(code, 0)
+        if total and completed >= total:
+            row = per_user.setdefault(uid, {"scores": [], "passed_modules": set(), "attempts": 0, "certs": 0, "completed_modules": set()})
+            row["completed_modules"].add(code)
+
+    out = []
+    for u in users:
+        uid = u["id"]
+        agg = per_user.get(uid, {"scores": [], "passed_modules": set(), "attempts": 0, "certs": 0, "completed_modules": set()})
+        scores = agg["scores"]
+        out.append({
+            "user_id": uid,
+            "name": u.get("name") or u.get("email") or "—",
+            "email": u.get("email"),
+            "department": (u.get("department") or "").lower() or None,
+            "role": (u.get("role") or "").lower() or None,
+            "modules_completed": len(agg["completed_modules"]),
+            "quizzes_passed": len(agg["passed_modules"]),
+            "quiz_attempts": agg["attempts"],
+            "certificates_earned": agg["certs"],
+            "avg_score": round(sum(scores) / len(scores), 4) if scores else None,
+        })
+    # Sort by certificates desc, then modules_completed desc, then quizzes_passed desc.
+    out.sort(key=lambda r: (
+        -(r["certificates_earned"] or 0),
+        -(r["modules_completed"] or 0),
+        -(r["quizzes_passed"] or 0),
+    ))
+    return out
+
+
 @router.get("/training/certificates/{certificate_id}")
 async def get_certificate(
     certificate_id: str,

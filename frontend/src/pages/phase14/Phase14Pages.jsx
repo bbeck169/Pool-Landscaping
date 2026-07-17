@@ -5,6 +5,7 @@ import { Link2, Share2 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { useAuth } from "@/auth";
+import TrainingCertsPanel from "@/pages/training/TrainingCertsPanel";
 
 /* Phase 14 pages — Communication thread deep view · Technician profile · Form builder. */
 
@@ -171,6 +172,7 @@ const TECH_TABS = [
   { k: "d2d", label: "D2D" },
   { k: "attendance", label: "Attendance" },
   { k: "performance", label: "Performance" },
+  { k: "certs", label: "Certifications" },
 ];
 
 export function TechnicianProfile() {
@@ -203,7 +205,7 @@ export function TechnicianProfile() {
 
   // Tech-role users see a subset (overview + timesheets + attendance only).
   const visibleTabs = isSelf && !isAdmin
-    ? TECH_TABS.filter((t) => ["overview", "timesheets", "attendance"].includes(t.k))
+    ? TECH_TABS.filter((t) => ["overview", "timesheets", "attendance", "certs"].includes(t.k))
     : TECH_TABS;
 
   return (
@@ -310,6 +312,14 @@ export function TechnicianProfile() {
             </div>
           )}
         </Card>
+      )}
+
+      {tab === "certs" && (
+        <TrainingCertsPanel
+          userId={id}
+          isOwnProfile={isSelf}
+          isAdminViewer={isAdmin}
+        />
       )}
     </div>
   );
