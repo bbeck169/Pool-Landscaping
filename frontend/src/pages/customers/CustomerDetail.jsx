@@ -33,12 +33,14 @@ import {
   Toast,
 } from "@/components/ui-kit";
 import { ActivationControl } from "@/components/customers/ActivationControl";
+import CustomerEquipmentLibrary from "@/components/customers/CustomerEquipmentLibrary";
 
 const TABS = [
   { k: "overview", label: "Overview", icon: MapPin },
   { k: "jobs", label: "Jobs", icon: Briefcase },
   { k: "quotes", label: "Quotes", icon: FileText },
   { k: "invoices", label: "Invoices", icon: FileText },
+  { k: "equipment", label: "Equipment", icon: Beaker },
   { k: "notes", label: "Notes", icon: StickyNote },
   { k: "portal", label: "Portal Access", icon: KeyRound },
 ];
@@ -318,6 +320,15 @@ export default function CustomerDetail() {
           ) : null}
           {tab === "invoices" ? (
             <EmptyState title="Invoices come in Phase 3" hint="Master invoice + combine ship there." />
+          ) : null}
+
+          {tab === "equipment" ? (
+            <CustomerEquipmentLibrary
+              customerId={id}
+              currentUser={(() => {
+                try { return JSON.parse(localStorage.getItem("user") || "null"); } catch { return null; }
+              })()}
+            />
           ) : null}
 
           {tab === "notes" ? (

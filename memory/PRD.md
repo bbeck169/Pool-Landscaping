@@ -909,3 +909,83 @@ driven by a new tech-facing toggle on the Pool Checklist wizard.
 5. **PAUSED**: 56.9b Zillow, T1-T6, 56.13b/c, 56.13d, 56.14, 56.15.
 6. **DEFERRED**: mobile pool-wizard algae toggle UI (waiting on wizard port).
 
+
+## Phase 56.11 — Customer Equipment Photo Library (Feb 2026)
+
+Field-service techs photograph 11 fixed equipment types per customer,
+up to 4 photos each, so the next visit has a visual baseline for
+warranty, algae before/after, and equipment-condition audits.
+
+**Backend:**
+- New enum module `backend/config_equipment_types.py` with 11 types
+  (Filter Pump, Cleaning Pump, Waterfall Pump, Filter, Heater, Salt
+  Cell, Cleaning System, Automation, Heater Plumbing, Check Valves,
+  Jandy Valves), a 4-photo cap, and 3 allowed tags (`general`,
+  `algae_before`, `algae_after`).
+- New router `backend/routers/customer_equipment_photos.py` — 4 endpoints:
+  `GET /api/equipment-types`,
+  `GET /api/customers/{cid}/equipment-photos` (grouped),
+  `POST /api/customers/{cid}/equipment-photos` (cap-enforced, tag-validated),
+  `DELETE /api/customers/{cid}/equipment-photos/{pid}` (admin only).
+- Collection `customer_equipment_photos`. Strict tenant isolation.
+- Reuses the base64 data-URL upload pattern from the checklist
+  PhotoUploader — no new storage backend required.
+
+**RBAC:**
+- customer role → 403 everywhere.
+- technician (pool + landscape, department-agnostic) → view + upload.
+- admin / super_admin → view + upload + delete.
+
+**Algae hook:**
+- Photo tags accept `algae_before` and `algae_after`. Web lightbox
+  badges `algae_before` photos with a red `ALGAE` chip so the visit
+  history is visually scannable. The wizard step-4 "consider tagging
+  a wall close-up" soft prompt is a UI-only follow-up (data + API
+  already support it).
+
+**Web UI:**
+- New component `CustomerEquipmentLibrary.jsx` — 11 accordion
+  sections + 2×2 photo grid + dashed "+ Add photo" placeholder
+  (hidden at cap) + lightbox with admin-only delete button.
+- New "Equipment" tab on the customer detail page.
+
+**Mobile UI:**
+- DEFERRED — mobile customer detail screen does not have an equipment
+  section yet. Backend is ready to serve mobile clients when the
+  mobile UI ships.
+
+**Tests — 12 total, all passing:**
+- Enum returns 11 types in order.
+- 4-photo cap enforcement (5th → 400).
+- Customer forbidden from view + upload.
+- Tech can view + upload; tech delete → 403; admin delete → 200.
+- Cross-tenant read → 404.
+- Grouped response includes all 11 types even when empty.
+- Tag allow-list; unknown tag → 400.
+- Unknown equipment type → 400.
+- OpenAPI schema includes the new paths.
+
+**Non-goals (locked):**
+- No AI-based equipment identification.
+- No maintenance schedules on the library (covered elsewhere).
+- No "before/after" side-by-side rendering on the checklist (future).
+
+**Files touched:**
+- `backend/config_equipment_types.py`,
+  `backend/routers/customer_equipment_photos.py`,
+  `backend/server.py`, `backend/tests/conftest.py`,
+  `backend/tests/test_phase56_11_equipment_photos.py`,
+  `frontend/src/components/customers/CustomerEquipmentLibrary.jsx`,
+  `frontend/src/pages/customers/CustomerDetail.jsx`,
+  `memory/HANDOFF.md`, `memory/PRD.md`.
+
+**Priority order:**
+1. ✅ Phase 56.13a (subsystem + drafts).
+2. ✅ Phase 56.13a-commit (CPO seed + PDF cert).
+3. ✅ Phase 56.10 (visible algae + AI remediation).
+4. ✅ Phase 56.11 (customer equipment photo library) — THIS SHIP.
+5. Awaiting user direction on the queue (56.9b, T1-T6, 56.13b/c,
+   56.13d, 56.14, 56.15 all paused).
+6. Deferred UI follow-ups: 56.11-mobile, 56.11-followup (wizard
+   algae-photo prompt), 56.10-mobile.
+

@@ -55,6 +55,7 @@ _CLEANUP = {
     "training_progress": {"module_code": {"$regex": "^test_|^cpo-prep$", "$options": "i"}},
     "training_quiz_attempts": {"module_code": {"$regex": "^test_|^cpo-prep$", "$options": "i"}},
     "training_certificates": {"module_code": {"$regex": "^test_|^cpo-prep$", "$options": "i"}},
+    "customer_equipment_photos": {"caption": {"$regex": "^TEST_", "$options": "i"}},
 }
 
 

@@ -1,78 +1,89 @@
 # HANDOFF — most recent shipped phase
 
-## Phase 56.10 · Visible algae field + AI remediation dosing (Feb 2026)
+## Phase 56.11 · Customer Equipment Photo Library (Feb 2026)
 
-**Backend (`services/pool_dosing.py` + `config_chlorine_targets.py` + `routers/service_reports.py`)**
-- New constants: `CAL_HYPO_AVAILABLE_CHLORINE_PCT=73`, `ALGAE_LIGHT_SHOCK_PPM=10`, `ALGAE_HEAVY_SHOCK_PPM=30`, `POLYQUAT_OZ_PER_10K_GAL=4.0`, `ALGAE_HIGH_PH_THRESHOLD=7.6`.
-- `compute(...)` accepts a new `visible_algae: str = "none"` kwarg with states `none | light | heavy`.
-- **Light** → 1 cal-hypo shock entry at 10 ppm boost, unit=`lbs`, `category="algae_remediation"`, `severity="light"`, `guidance_note="Brush walls thoroughly and run filter 24h continuous."`.
-- **Heavy** → 2 entries: triple-shock cal-hypo at 30 ppm boost + Polyquat 60 at 4 oz per 10k gal (unit=`oz`). Both `category="algae_remediation"`. Extended guidance including "Backwash / clean filter after 24h. Recheck FC before allowing swimmers."
-- **High-pH ordering guard** — when pH > 7.6 AND algae is light/heavy, a `category="ordering_note"` entry is prepended: *"Lower pH to 7.2 with muriatic acid FIRST, then shock. Shocking at high pH reduces effectiveness."*
-- **Algae entries are exempt from the 6-item cap** — they always ship even when the routine list is full.
-- `RecommendChemicalsBody` gains `visible_algae: Optional[str] = "none"`; `ServiceReportPatch` gains `observations: Optional[Dict[str, Any]] = None` (persists `observations.visible_algae` on the report doc).
+**Backend**
+- New enum module `backend/config_equipment_types.py` — 11 ordered types + `EQUIPMENT_PHOTO_CAP = 4` + `EQUIPMENT_PHOTO_TAGS = {general, algae_before, algae_after}`.
+- New router `backend/routers/customer_equipment_photos.py` — 4 endpoints:
+  - `GET  /api/equipment-types` — returns ordered list + cap + allowed tags.
+  - `GET  /api/customers/{customer_id}/equipment-photos` — grouped-by-type response with every enum key present (empty arrays where none).
+  - `POST /api/customers/{customer_id}/equipment-photos` — 201 on success; 400 on cap hit (5th per customer/type), unknown type, or unknown tag; caption ≤ 120 chars.
+  - `DELETE /api/customers/{customer_id}/equipment-photos/{photo_id}` — admin/super_admin only.
+- Registered on `api_router` in `server.py`.
+- Storage: base64 data-URLs in `customer_equipment_photos` collection — reuses the checklist-photo pipeline. `thumbnail_url` is null for now (full-size fallback in the lightbox); can be wired to a resizer in a later ship without changing the API.
+- Strict tenant isolation: cross-tenant reads → 404. Verified in tests via sunbelt admin token.
 
-**Preferred-form reasons** (per spec)
-- Cal-hypo: *"Rapid FC boost required for algae remediation. Cal-hypo delivers ~73% available chlorine per lb."*
-- Polyquat: *"Non-metallic algaecide safe for salt cells and vinyl liners. Chlorine alone is insufficient for heavy algae blooms."*
+**RBAC**
+- customer role → 403 on every equipment endpoint (and on `/equipment-types`).
+- technician (pool + landscape, department-agnostic) → view + upload.
+- admin / super_admin → view + upload + delete.
 
-**Web frontend (`components/checklist/PoolChecklistForm.jsx` + `PoolChecklistWizard.jsx`)**
-- **Step 1** — new pill-style toggle group (None / Light / Heavy) rendered below the readings analysis card, with test-ids `pool-visible-algae-card`, `pool-visible-algae-toggles`, `pool-visible-algae-{state}`. Persists via `observations.visible_algae` through the existing PATCH pipeline.
-- **Step 2** — refactored recommendation renderer:
-  - Ordering-note entry (`category="ordering_note"`) renders as a top warning callout (`pool-recommendation-ordering-note`).
-  - Routine entries render as before.
-  - Algae-remediation entries render in a distinct red-tinted **"Algae Protocol"** sub-section (`pool-algae-protocol-card`) with warning icon, per-entry guidance-note bullets (`pool-algae-guidance`), and an Add button (`pool-recommendation-algae-add-btn`).
-- Wizard shell passes `observations={report?.observations || {}}` to the form.
+**Algae hook**
+- The photo router accepts `tags: ["algae_before"]` (and `algae_after` / `general`). Tag values outside the allow-set are rejected with 400.
+- The web UI badges `algae_before` photos with a red `ALGAE` chip so the field-service history is visually scannable.
+- **Wizard step-4 soft prompt DEFERRED** — the "consider tagging a wall close-up as algae_before" nudge on the Photos wizard step is a UI-only follow-up. The data + API side already supports it; when we hook the prompt into the wizard PhotoUploader, no backend changes are needed. Tracked as Phase 56.11-followup.
 
-**Mobile (`mobile/src/components/checklist/PoolChecklistForm.tsx`)**
-- Backend plumbing wired: `PoolChecklistFormProps.observations` accepted; `fetchRecommendations` now sends `visible_algae: props.observations?.visible_algae || "none"` to the recommender.
-- **Mobile UI toggle group NOT shipped this phase** — the mobile pool wizard shell (56.7 revised port) is still pending, and the current mobile form has all sections in a single step-1 block. Adding the toggle without the wizard boundary would clutter the screen. **Deferred to the next mobile pool-wizard ship (58.x).** When the mobile wizard lands, follow the web pattern: toggle group at bottom of readings, algae protocol callout in step-2 recommendations.
+**Web frontend**
+- New component `frontend/src/components/customers/CustomerEquipmentLibrary.jsx`:
+  - Renders 11 accordion sections in enum order with per-section `X / 4` counter.
+  - Each section: 2×2 photo grid + dashed `+ Add photo` placeholder (hidden at cap).
+  - Click a thumbnail → lightbox with caption, uploader, timestamp, tags.
+  - Admin-only Delete button in lightbox with `confirm()` guard.
+  - Test-ids: `customer-equipment-library`, `equipment-section-{slug}`, `equipment-section-toggle-{slug}`, `equipment-photo-{id}`, `equipment-photo-add-{slug}`, `equipment-photo-input-{slug}`, `equipment-photo-lightbox`, `equipment-photo-delete-btn`, `equipment-photo-close-btn`.
+- `frontend/src/pages/customers/CustomerDetail.jsx` — added new "Equipment" tab in the tab bar, wired to the new component.
 
-**Tests**
-- New `tests/test_phase56_10_algae.py` — **13 tests, all passing**:
-  - `TestVisibleAlgaeStates` (3): none/light/heavy states.
-  - `TestHighPhOrderingGuard` (4): high-pH prepend on light + heavy; normal pH no note; high pH without algae no note.
-  - `TestDoseScaling` (3): linear with gallons, magnitude ~1.67 lbs at 20k gal / 10 ppm / 73% cal-hypo, inverse scaling with `CAL_HYPO_AVAILABLE_CHLORINE_PCT` via monkeypatch.
-  - `TestAlgaeExemptFromSixCap` (1): algae entries ship even when routine list is full.
-  - `TestNoRegressionOnBaseline` (2): default kwarg matches "none"; existing recommendations unchanged.
-- Existing Phase 56.5 dosing tests — **20/20 still passing**.
-- Existing Phase 34e stale tests — 3 pre-existing failures NOT caused by this ship (they pre-date the seasonal chlorine targets + tabs-default from Phase 56.5). Marked for future cleanup, not blocking.
+**Mobile**
+- Mobile UI **DEFERRED** — the mobile customer detail screen (`mobile/app/customers/[id].tsx` and siblings) does not currently have an equipment section. Adding it requires the same accordion + camera-picker pattern used by the checklist photo uploader; small but non-trivial. Backend is ready to serve mobile clients as soon as the mobile UI ships. Tracked as **Phase 56.11-mobile**.
 
-**Sample recommender payloads** (verified via curl against live API)
-```
-visible_algae="none" ph=7.4 → 0 algae_remediation entries, 0 ordering_note entries.
+**Tests — `tests/test_phase56_11_equipment_photos.py` — 12 tests, all passing**
+- Equipment-types enum returns 11 types in order; customer forbidden.
+- 4-photo upload cap (5th → 400).
+- Customer forbidden from view + upload.
+- Tech can view + upload; tech cannot delete (403); admin can delete (200).
+- Cross-tenant read returns 404.
+- GET grouped response includes all 11 types even when empty.
+- Tag validation: `general` / `algae_before` / `algae_after` accepted; unknown tag → 400.
+- Unknown equipment type rejected (400).
+- OpenAPI schema regenerates cleanly and includes the new paths.
 
-visible_algae="light" ph=7.4 pool_gallons=20000 →
-  Calcium hypochlorite shock (73%) | 1.67 lbs | algae_remediation
-  guidance_note: "Brush walls thoroughly and run filter 24h continuous."
-
-visible_algae="heavy" ph=8.0 pool_gallons=20000 →
-  Ordering guidance | 0 | ordering_note
-    "Lower pH to 7.2 with muriatic acid FIRST, then shock…"
-  Calcium hypochlorite triple shock (73%) | 5.0 lbs | algae_remediation
-    guidance_note: "Brush walls thoroughly. Run filter 24h continuous. Backwash / clean filter after 24h. Recheck FC…"
-  Polyquat 60 algaecide | 8.0 oz | algae_remediation
-    guidance_note: "Add slowly around the perimeter…"
-```
-
-**Screenshot / DOM evidence**
-Programmatic click flow to open the wizard modal from the schedule row was blocked by intermediate route-guard selectors in the Playwright script (not by the toggle UI itself). The wizard modal, toggle group, and Algae Protocol card are wired into the JSX with stable `data-testid` attributes and match the payload rendering path already tested at `pool-recommendation-row` (Phase 56.6). The backend curl evidence above confirms the wire-level payload the UI renders from is correct across all three states + the high-pH guard.
+**Non-goals (locked)**
+- No AI-based equipment identification.
+- No equipment maintenance schedules on the library (Phase 24 asset maintenance already covers that separately).
+- No linking of equipment photos to service reports beyond the tag hint.
+- No "before/after" side-by-side rendering on the checklist — the pairing UI ships in a future phase.
 
 **Preflight**: `bash /app/scripts/preflight.sh` → **exit 0**.
 
-**Files touched**
-- `backend/config_chlorine_targets.py` — 5 new constants.
-- `backend/services/pool_dosing.py` — `compute()` kwarg + `_algae_remediation_entries` helper.
-- `backend/routers/service_reports.py` — `RecommendChemicalsBody.visible_algae` + `ServiceReportPatch.observations` + pass-through.
-- `backend/tests/test_phase56_10_algae.py` — new, 13 tests.
-- `frontend/src/components/checklist/PoolChecklistForm.jsx` — observations prop, toggle group, step-2 renderer refactor.
-- `frontend/src/components/checklist/PoolChecklistWizard.jsx` — passes observations to form.
-- `mobile/src/components/checklist/PoolChecklistForm.tsx` — observations prop + fetch payload plumbing (UI toggle deferred).
-- `memory/HANDOFF.md`, `memory/PRD.md`.
+**Sample curl (verified live)**
+```
+GET  /api/equipment-types                                  → 200 · 11 types in order · cap 4
+POST /api/customers/{cid}/equipment-photos × 4             → 201, 201, 201, 201
+POST /api/customers/{cid}/equipment-photos (5th)           → 400 "Maximum of 4 photos per equipment type"
+DELETE ...  (tech)                                         → 403
+DELETE ...  (admin)                                        → 200
+GET  /api/customers/{cid}/equipment-photos                 → 200 · grouped keys = 11 enum types
+```
 
-**Updated priority order**
-1. ✅ Phase 56.13a (subsystem + drafts).
-2. ✅ Phase 56.13a-commit (CPO seed + PDF cert).
-3. ✅ Phase 56.10 · Visible algae + AI remediation dosing (THIS SHIP).
-4. **NEXT: Phase 56.11** — Customer Equipment Photo Library (11 types, ≤4 photos each, admin-only delete, strict tenant isolation).
-5. **PAUSED**: 56.9b Zillow, T1-T6 calculators, 56.13b/c Training UI, 56.13d supplemental pool modules, 56.14 landscaper training, 56.15 handbook.
-6. **DEFERRED**: mobile pool-wizard toggle UI for algae (waiting on the mobile wizard port).
+**Screenshot evidence**
+The Equipment tab on the customer detail page renders the accordion with 11 sections. "Filter Pump" expanded shows 0 / 4 counter + the dashed "Add photo" placeholder. All other 10 sections render as collapsed headers below (confirmed via `equipment-section-*` test-id count = 22, i.e., 11 headers + 11 sections).
+
+**Files touched**
+- `backend/config_equipment_types.py` (new)
+- `backend/routers/customer_equipment_photos.py` (new)
+- `backend/server.py` (router registration)
+- `backend/tests/conftest.py` (cleanup rule for `customer_equipment_photos`)
+- `backend/tests/test_phase56_11_equipment_photos.py` (new, 12 tests)
+- `frontend/src/components/customers/CustomerEquipmentLibrary.jsx` (new)
+- `frontend/src/pages/customers/CustomerDetail.jsx` (Equipment tab)
+- `memory/HANDOFF.md`, `memory/PRD.md`
+
+**Priority order — the CPO + algae + equipment triangle is now complete**
+1. ✅ Phase 56.13a — Training subsystem + CPO drafts.
+2. ✅ Phase 56.13a-commit — CPO seed + PDF cert.
+3. ✅ Phase 56.10 — Visible algae + AI remediation dosing.
+4. ✅ Phase 56.11 — Customer Equipment Photo Library (THIS SHIP).
+5. **Awaiting user direction** — the master queue (56.9b Zillow, T1-T6 calculators, 56.13b/c Training UI, 56.13d supplemental modules, 56.14 landscaper training, 56.15 handbook) remains paused pending user pick.
+6. **DEFERRED, ready when you are**:
+   - Phase 56.11-mobile — mobile customer-detail equipment section.
+   - Phase 56.11-followup — wizard step-4 algae-photo soft prompt.
+   - Phase 56.10-mobile — mobile pool-wizard visible-algae toggle UI.

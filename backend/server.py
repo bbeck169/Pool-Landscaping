@@ -41,6 +41,7 @@ from routers import (
     config as config_router,
     job_requests as job_requests_router,
     training as training_router,
+    customer_equipment_photos as customer_equipment_photos_router,
 )
 
 app = FastAPI(
@@ -84,7 +85,8 @@ for module in [notifications_router,
                ringcentral_customer,
                config_router,
                job_requests_router,
-               training_router]:
+               training_router,
+               customer_equipment_photos_router]:
     api_router.include_router(module.router)
 
 
