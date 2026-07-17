@@ -654,3 +654,46 @@ formatter had the mismatch.
 emit a Shock recommendation (algae risk / very-high-cyanuric handling
 is TODO). When it lands, it will use `unit: "lbs"` per the catalog
 default. No display code change required in advance.
+
+## Phase 56.9 · Chlorine tabs default + Luis Marquez rename — SHIPPED
+
+**Item 1 — Chlorine Tabs as always-default form** (`backend/services/pool_dosing.py`):
+- `_decide_chlorine_form` simplified: tabs always win unless the customer
+  profile explicitly signals override.
+- Two overrides retained: `chemical_preferences.no_tabs: True` (opt-out),
+  `chemical_preferences.prefer_liquid_chlorine: True` (per-customer opt-in).
+- Removed: rapid-boost auto-demote-to-liquid guard, and tab-rotation
+  guard. Both replaced by explicit operator overrides so the recommender
+  stays predictable ("what did I ask for = what I get").
+- New `preferred_form_reason` copy: "Tabs recommended for steady residual
+  — override to liquid if shocking or during algae bloom."
+- Tests updated in `tests/test_phase56_5_dosing.py`: three replaced tests
+  now assert tabs-default at rapid-boost gap, no rotation-to-liquid after
+  recent tab visits, plus one net-new test for the `prefer_liquid_chlorine`
+  operator override. 20/20 tests passing.
+
+**Item 4 — Luis Marquez rename**: DB drift-fix applied to
+`landscaper@aquaterra.com` (`name: "Luis Marquez"`, first/last also set).
+Seed already had the correct name — no re-seed action needed to preserve.
+`test_credentials.md` updated with the display name + Phase 56.9 note.
+
+**Item 3 (Zillow investigation — no code change)**: `/api/property/*`,
+`/api/d2d/*`, and `/api/zillow/*` all use `require_admin` in
+`backend/routers/{property,d2d,zillow_admin}.py`. The frontend banner
+"Zillow data unavailable — {reason}" (see `frontend/src/pages/d2d/D2dPages.jsx`
+lines 175/248/515 and `PropertyLookupPage.jsx` line 164) surfaces the
+backend's 403 "Admin access required" detail for non-admin callers.
+Working as designed: Zillow enrichment is a rate-limited paid external
+API (OpenWeb Ninja) and admin-gating protects the budget from field-tech
+exploration. Not shipping a change — waiting on explicit user go-ahead
+per the instruction.
+
+**Item 2 (Visible algae field + AI algae remediation) — promoted to
+Phase 56.10** for its own tested ship (new UI toggle on both surfaces,
+new dosing formulas, high-pH ordering guard).
+
+**Files touched**:
+- `/app/backend/services/pool_dosing.py`
+- `/app/backend/tests/test_phase56_5_dosing.py`
+- `/app/memory/test_credentials.md`
+- `/app/memory/PRD.md`

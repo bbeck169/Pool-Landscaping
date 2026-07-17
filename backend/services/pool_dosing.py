@@ -117,34 +117,29 @@ def _decide_chlorine_form(
 ) -> tuple[str, str]:
     """Return `(preferred_form, reason)` for a chlorine add.
 
-    Rules (first-match wins):
-      1. Customer opted out of tabs (`chemical_preferences.no_tabs`) → liquid.
-      2. High-season rapid-boost (fc gap > threshold) → liquid.
-      3. Tabs used in last N visits → rotate to liquid.
-      4. Otherwise → tabs.
+    **Phase 56.9 update — Chlorine Tabs are the ALWAYS-default form.**
+
+    Liquid is only recommended when the customer / operator explicitly
+    signals one of these overrides:
+      • Customer opted out of tabs (`chemical_preferences.no_tabs: True`).
+      • Customer / operator explicitly requested liquid this visit
+        (`chemical_preferences.prefer_liquid_chlorine: True`).
+    Otherwise → tabs.  Ops instructions for "shock now" or "algae bloom"
+    are handled by the Phase 56.10 algae-remediation module (in flight)
+    — that path emits a distinct calcium-hypochlorite entry alongside
+    the routine tabs recommendation, never by demoting the default.
     """
     prefs = ((customer or {}).get("chemical_preferences") or {})
     if prefs.get("no_tabs") is True:
         return "liquid", "Customer opted out of chlorine tabs."
-
-    gap = max(0.0, target_ppm - fc)
-    if season == "high" and gap > CHLORINE_RAPID_BOOST_GAP_PPM:
-        return "liquid", (
-            f"Free chlorine is {gap:.1f} ppm below the {target_ppm:.1f} target — "
-            "liquid dissolves faster than tabs."
-        )
-
-    if recent_service_reports:
-        recent = recent_service_reports[:CHLORINE_TAB_ROTATION_LOOKBACK_VISITS]
-        for rpt in recent:
-            for entry in (rpt.get("chemicals_added") or []):
-                name = str(entry.get("chemical") or entry.get("name") or "").lower()
-                if "tab" in name and "chlorine" in name:
-                    return "liquid", (
-                        f"Chlorine tabs used in last {CHLORINE_TAB_ROTATION_LOOKBACK_VISITS} "
-                        "visits — rotating to liquid to avoid stacking."
-                    )
-    return "tabs", "Tabs deliver a steady low-dose feed between visits."
+    if prefs.get("prefer_liquid_chlorine") is True:
+        return "liquid", "Operator override on this customer profile — liquid chlorine selected."
+    # Tabs are the default. Reason string retained here matches the copy
+    # the frontend surfaces as a tooltip next to the recommended dose.
+    return "tabs", (
+        "Tabs recommended for steady residual — override to liquid if shocking "
+        "or during algae bloom."
+    )
 
 
 def _rec(chemical: str, qty: float, unit: str, reason: str,
