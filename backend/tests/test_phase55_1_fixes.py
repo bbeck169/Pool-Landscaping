@@ -248,7 +248,7 @@ class TestUnmatchedRC:
                              headers=_h(admin_tok), timeout=30).json()
         assert len(after) == len(before) + 1
         newest = after[0]
-        assert newest["href"] == "/admin/unmatched-communications"
+        assert newest["href"] == "/notifications?kind=rc_sms_inbound_unmatched"
         assert newest["kind"] == "rc_sms_inbound_unmatched"
 
     def test_known_number_only_fires_matched(self, admin_tok):

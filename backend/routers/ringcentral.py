@@ -173,7 +173,28 @@ async def ringcentral_health(user: dict = Depends(require_admin)):
         {"active": True}, {"_id": 0, "subscription_id": 1, "expires_at": 1},
         sort=[("created_at", -1)],
     )
-    return {
+    # Phase 56.19 · RC-diagnostic — actually validate auth against RC,
+    # not just env-var presence. Health returns 503 with the specific
+    # error class + first 200 chars of RC's body when auth fails.
+    # NEVER echoes the JWT or client secret.
+    rc_auth_ok = None
+    rc_auth_error = None
+    if outbound:
+        try:
+            platform = get_rc_platform()
+            # Cheap authenticated read — extension info. Confirms JWT
+            # login succeeded (SDK caches the token internally).
+            resp = platform.get("/restapi/v1.0/account/~/extension/~")
+            _ = resp.json_dict() if hasattr(resp, "json_dict") else resp.json()
+            rc_auth_ok = True
+        except Exception as e:
+            diag = _capture_rc_error(e)
+            rc_auth_ok = False
+            rc_auth_error = {
+                "error_class": diag["error_class"],
+                "error_snippet": diag["error_snippet"],
+            }
+    payload = {
         "configured": bool(os.getenv("RINGCENTRAL_WEBHOOK_TOKEN")),
         "webhook_token_configured": bool(os.getenv("RINGCENTRAL_WEBHOOK_TOKEN")),
         "webhook_url": _webhook_url(),
@@ -181,7 +202,39 @@ async def ringcentral_health(user: dict = Depends(require_admin)):
         "outbound_enabled": outbound,
         "active_subscription_id": (sub or {}).get("subscription_id"),
         "active_subscription_expires": (sub or {}).get("expires_at"),
+        "rc_auth_ok": rc_auth_ok,
+        "rc_auth_error": rc_auth_error,
     }
+    if outbound and rc_auth_ok is False:
+        # Return 503 so monitoring flags a real outage — not a "green"
+        # env-var-only success like the pre-56.19 behavior.
+        raise HTTPException(status_code=503, detail=payload)
+    return payload
+
+
+def _capture_rc_error(exc: Exception) -> dict:
+    """Safely extract RC ApiException body for logs + client responses.
+
+    Never echoes headers/credentials. Returns:
+        {error_class: str, error_snippet: str}  (snippet ≤ 200 chars)
+    """
+    cls = type(exc).__name__
+    snippet = ""
+    # RC Python SDK: `exc.response` is the underlying HTTP response.
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        try:
+            # `.text()` on some SDK versions returns str; on others a bytes-returning callable.
+            text = resp.text() if callable(getattr(resp, "text", None)) else str(getattr(resp, "text", ""))
+            if isinstance(text, (bytes, bytearray)):
+                text = text.decode("utf-8", errors="replace")
+            snippet = text[:200]
+        except Exception:
+            pass
+    if not snippet:
+        # Fall back to the exception message (still safe — no auth material).
+        snippet = str(exc)[:200]
+    return {"error_class": cls, "error_snippet": snippet}
 
 
 # ═══════════════════════════ /webhook ═════════════════════════════════
@@ -335,7 +388,10 @@ async def _handle_telephony_event(body: Dict[str, Any]) -> None:
             kind="rc_call_inbound_unmatched",
             title=f"New call from unknown number {from_number}",
             body=f"{from_number} → {to_number} · {duration}s",
-            href="/admin/unmatched-communications",
+            # Phase 56.19 · RC-diagnostic — link to the real notifications
+            # inbox filtered on this kind (was the ghost route
+            # /admin/unmatched-communications).
+            href="/notifications?kind=rc_call_inbound_unmatched",
             source_ref={"kind": "call_log", "id": doc["id"], "session_id": session_id},
         )
     if not match and from_number:
@@ -374,7 +430,10 @@ async def _fetch_telephony_session_detail(session_id: Optional[str]) -> Optional
                                 if p.get("recordings") else None),
         }
     except Exception as e:
-        logger.warning(f"rc session detail fetch failed: {type(e).__name__}")
+        # Phase 56.19 · RC-diagnostic — capture RC error body safely so
+        # webhook drops surface with a real reason (was: class name only).
+        diag = _capture_rc_error(e)
+        logger.warning(f"rc session detail fetch failed: {diag['error_class']} :: {diag['error_snippet']}")
         return None
 
 
@@ -418,7 +477,9 @@ async def _handle_sms_event(body: Dict[str, Any]) -> None:
             kind="rc_sms_inbound_unmatched",
             title=f"New SMS from unknown number {from_number}",
             body=(msg or "")[:100],
-            href="/admin/unmatched-communications",
+            # Phase 56.19 · RC-diagnostic — link to the notifications inbox
+            # filtered on this kind.
+            href="/notifications?kind=rc_sms_inbound_unmatched",
             source_ref={"kind": "sms_message", "id": doc["id"]},
         )
 
@@ -463,7 +524,9 @@ async def _handle_fax_event(body: Dict[str, Any]) -> None:
                 kind="rc_fax_unmatched",
                 title=f"New fax from unknown number {from_number}",
                 body=(f"From {from_number}" + (" · attachment attached" if attachment_url else ""))[:100],
-                href="/admin/unmatched-communications",
+                # Phase 56.19 · RC-diagnostic — link to the notifications
+                # inbox filtered on this kind.
+                href="/notifications?kind=rc_fax_unmatched",
                 source_ref={"kind": "fax", "id": doc["id"]},
             )
 
@@ -516,7 +579,9 @@ async def _handle_voicemail_event(body: Dict[str, Any]) -> None:
             kind="rc_voicemail_unmatched",
             title=f"New voicemail from unknown number {from_number}",
             body=(transcription_text or f"{duration}s voicemail from {from_number}")[:100],
-            href="/admin/unmatched-communications",
+            # Phase 56.19 · RC-diagnostic — link to the notifications inbox
+            # filtered on this kind.
+            href="/notifications?kind=rc_voicemail_unmatched",
             source_ref={"kind": "voicemail", "id": doc["id"]},
         )
 
@@ -555,9 +620,14 @@ async def register_subscription(
         resp = platform.post("/restapi/v1.0/subscription", payload)
         sub = resp.json_dict() if hasattr(resp, "json_dict") else resp.json()
     except Exception as e:
-        # Never surface the exception detail — may contain auth material.
-        logger.warning(f"rc subscription register failed: {type(e).__name__}")
-        raise HTTPException(502, "ringcentral subscription request failed")
+        # Phase 56.19 · RC-diagnostic — capture RC error body safely.
+        diag = _capture_rc_error(e)
+        logger.warning(f"rc subscription register failed: {diag['error_class']} :: {diag['error_snippet']}")
+        raise HTTPException(502, detail={
+            "error": "ringcentral_subscription_failed",
+            "error_class": diag["error_class"],
+            "error_snippet": diag["error_snippet"],
+        })
     # Deactivate any prior active row(s).
     await db.ringcentral_subscriptions.update_many(
         {"active": True}, {"$set": {"active": False}},
@@ -667,8 +737,15 @@ async def sms_send(body: SmsSendBody,
         )
         rc = resp.json_dict() if hasattr(resp, "json_dict") else resp.json()
     except Exception as e:
-        logger.warning(f"rc sms send failed: {type(e).__name__}")
-        raise HTTPException(502, "ringcentral sms send failed")
+        # Phase 56.19 · RC-diagnostic — capture the actual RC error body
+        # (never echo credentials, only class + first 200 chars of body).
+        diag = _capture_rc_error(e)
+        logger.warning(f"rc sms send failed: {diag['error_class']} :: {diag['error_snippet']}")
+        raise HTTPException(502, detail={
+            "error": "ringcentral_sms_send_failed",
+            "error_class": diag["error_class"],
+            "error_snippet": diag["error_snippet"],
+        })
     await db.sms_messages.insert_one({
         "id": new_id(), "tenant_id": tenant["id"],
         "customer_id": body.customer_id, "direction": "outbound",

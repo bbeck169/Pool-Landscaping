@@ -239,3 +239,116 @@ touch, email/Stripe description, and 6 additional
 invoice-birth code paths (backfill covers them until wired).
 
 See `PRD.md` for full 56.18 entry.
+
+---
+
+## Phase 56.19 — Master Invoices 404 + RingCentral diagnostics (P0 hotfix)
+
+### Item 1 · `/master-invoices` legacy URL 404
+Root cause: bookmarked pre-refactor path had no matching Route
+after the rename to `/invoices/master`. React Router bounced
+to the not-found catch-all instead of the new page.
+
+Fix (`frontend/src/App.js`):
+- Added `MasterInvoicesRedirect` helper (mirrors
+  `CustomerServiceReportRedirect` — grabs `:id` via
+  `useParams` and returns `<Navigate to=/invoices/master/:id />`).
+- Three permanent aliases under `<AppLayout>`:
+  - `master-invoices` → `/invoices/master`
+  - `master-invoices/new` → `/invoices/master/new`
+  - `master-invoices/:id` → preserves `id` → `/invoices/master/:id`
+
+Verified via Playwright end-to-end (admin@aquaterra login →
+navigate to each legacy path → URL bounces to canonical +
+`MasterInvoicesList` renders "No master invoices yet" empty
+state). `curl -I` returns 200 on both `.preview` and `.host`
+(SPA HTML shell — routing evaluated client-side).
+
+Grep confirms no remaining hardcoded `/master-invoices` links
+in `frontend/src` or `mobile` beyond the 3 alias routes + code
+comments.
+
+### Item 2 · RingCentral diagnostics
+No live SMS testing (per user directive — pipeline is
+confirmed broken until the user rotates the RC OAuth client
+credentials). Ship is purely diagnostic instrumentation so the
+next credential-rotation attempt surfaces the actual failure
+reason.
+
+`backend/routers/ringcentral.py`:
+
+- New helper `_capture_rc_error(exc)` — safely reads
+  `exc.response.text()` (bytes-safe, ≤ 200 chars) and returns
+  `{error_class, error_snippet}`. Never touches headers or the
+  JWT/secret material.
+- `POST /api/ringcentral/sms/send` — on `except`, captures diag
+  + logs `WARNING pool_crm rc sms send failed: <class> :: <snippet>`
+  and raises 502 with `{error, error_class, error_snippet}` in
+  the JSON body.
+- `POST /api/ringcentral/subscription/register` — same pattern,
+  logs + 502 body with class + snippet.
+- `_fetch_telephony_session_detail` — was swallowing exceptions
+  with only the class name; now includes the RC body snippet in
+  the WARNING log (still returns None, still non-fatal to the
+  webhook).
+- `GET /api/ringcentral/health` — now actually validates JWT
+  auth against RC by calling
+  `platform.get('/restapi/v1.0/account/~/extension/~')`. When
+  outbound is enabled and auth fails, health returns **503** with
+  `rc_auth_ok=false` and `rc_auth_error={error_class,
+  error_snippet}` embedded. When outbound is disabled the auth
+  check is skipped (nothing to validate).
+
+**Curl-verified diagnostic capture** (`.preview` `/api/ringcentral/health`):
+```
+HTTP=503
+rc_auth_ok=false
+error_class="ApiException"
+error_snippet="HTTP 401 { \"error\" : \"invalid_client\", \"error_description\" : \"Invalid client application: [eZWHonfT7FQcdQKiw0Xcvw]\", \"errors\" : [ { \"errorCode\" : \"OAU-153\", \"message\" : \"Invalid client a"
+```
+That "OAU-153 / invalid_client" is the actual answer the user
+needs to rotate/fix their RC credentials.
+
+### Item 3 · Notification href ghost route
+Root cause: four unmatched-communication kinds
+(`rc_call_inbound_unmatched`, `rc_sms_inbound_unmatched`,
+`rc_fax_unmatched`, `rc_voicemail_unmatched`) all shipped an
+`href` of `/admin/unmatched-communications`, which was never a
+registered frontend route. Bells clicked → 404.
+
+Fix (`backend/routers/ringcentral.py`):
+- Each unmatched `_notify_admins(...)` call now uses
+  `/notifications?kind=<the_specific_kind>`.
+- Also added `frontend/src/App.js` alias
+  `admin/unmatched-communications` →
+  `Navigate to /notifications?kind=rc_sms_inbound_unmatched` so
+  any pre-56.19 notification rows already in Mongo still land
+  somewhere real.
+- Updated `test_phase55_1_fixes.py::TestUnmatchedRC::test_unknown_sms_emits_unmatched`
+  assertion to match the new href.
+
+**Verified** via `POST /api/ringcentral/simulate-inbound` (unknown
+number) → `GET /api/notifications?kind=rc_sms_inbound_unmatched&limit=1`
+returns `href: "/notifications?kind=rc_sms_inbound_unmatched"`.
+
+### Tests + preflight
+- `pytest tests/test_phase55_1_fixes.py::TestUnmatchedRC -q` → 3 passed
+- `bash scripts/preflight.sh` → exits 0 (`preflight OK`)
+  - Dead-import WARN unchanged at 424 (pre-existing tech debt,
+    tracked separately for a future cleanup pass).
+
+### Files touched
+- `frontend/src/App.js` — `MasterInvoicesRedirect` component,
+  3 master-invoice aliases, 1 unmatched-communications alias
+- `backend/routers/ringcentral.py` — `_capture_rc_error`,
+  auth-validating `/health`, diag in `sms_send`,
+  `subscription/register`, `_fetch_telephony_session_detail`,
+  4 unmatched-kind href updates
+- `backend/tests/test_phase55_1_fixes.py` — href assertion update
+
+### Not shipped (deferred, previously scoped)
+- Phase 56.9b Steps 6/7/8 (Zillow web + mobile UI + RBAC swap)
+- Phase 56.18 followup (master invoice column, detail header,
+  PDF, search, mobile, email/Stripe hooks)
+- Dead-import cleanup (424 static WARN)
+

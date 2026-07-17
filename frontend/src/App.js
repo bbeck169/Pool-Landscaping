@@ -168,6 +168,14 @@ function CustomerServiceReportRedirect() {
   return <Navigate to={`/portal/service-reports/${id}`} replace />;
 }
 
+// Phase 56.19 · P0 — Preserve :id when bouncing bookmarked
+// /master-invoices/:id links to the current /invoices/master/:id
+// canonical path. Mirrors CustomerServiceReportRedirect above.
+function MasterInvoicesRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/invoices/master/${id}`} replace />;
+}
+
 function AdminOnly({ children }) {
   const { user, loading } = useAuth();
   if (loading) return null;
@@ -419,6 +427,17 @@ export default function App() {
             <Route path="payments" element={<AdminOnly><PaymentsLedger /></AdminOnly>} />
             <Route path="auto-billing" element={<AdminOnly><AutoBilling /></AdminOnly>} />
             <Route path="admin/autobilling-runs" element={<AdminOnly><AutobillingRuns /></AdminOnly>} />
+            {/* Phase 56.19 · P0 · permanent aliases for the legacy
+                /master-invoices URLs — some users bookmarked the
+                pre-refactor path. Preserves back-compat. */}
+            <Route path="master-invoices" element={<Navigate to="/invoices/master" replace />} />
+            <Route path="master-invoices/new" element={<Navigate to="/invoices/master/new" replace />} />
+            <Route path="master-invoices/:id" element={<MasterInvoicesRedirect />} />
+            {/* Phase 56.19 · RC-diagnostic href fix — the RC unmatched-
+                SMS notification pointed at this path but no frontend
+                page existed. Redirect to the notifications inbox filtered
+                on the same kind so the click lands somewhere real. */}
+            <Route path="admin/unmatched-communications" element={<AdminOnly><Navigate to="/notifications?kind=rc_sms_inbound_unmatched" replace /></AdminOnly>} />
             <Route path="impexp" element={<AdminOnly><ImpExp /></AdminOnly>} />
 
             {/* Ops hub (Phase 5) — all 16 sub-pages route into one tabbed shell */}
