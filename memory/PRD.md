@@ -1282,12 +1282,78 @@ checklist screen landed on the "You don't have permission" gate.
 
 **Priority order after this ship:**
 1-10: ✅ (all previous phases + 56.16-followup + 56.10-mobile).
-11. **NEXT: 56.11-mobile** — equipment photo library on mobile
-    customer detail. Backend endpoints from 56.11 already exist.
+11. **NEXT: 56.11-mobile** — equipment library on mobile customer detail.
 12. Then: 56.13b-followup — profile certs section, tenant-custom
     module editor, leaderboard, and
     `GET /training/progress/admin?module_code=cpo-prep`
     bulk-progress endpoint (unblocks Team CPO Readiness widget's
+    in-progress counter accuracy).
+13. Paused: 56.9b Zillow, T1-T6 calculators, 56.13d, 56.14, 56.15.
+14. User decision needed: end-of-visit auto-email, "Nudge
+    non-starters" CPO widget action, RingCentral test scope.
+
+---
+
+## Phase 56.11-mobile — Equipment Photo Library on Mobile Customer Detail (Feb 2026)
+
+Mobile parity ship for Phase 56.11 (backend + web already live).
+Native mirror of `frontend/src/components/customers/CustomerEquipmentLibrary.jsx`
+on the mobile customer detail screen.
+
+**Files touched (mobile-only):**
+- `mobile/src/components/customers/CustomerEquipmentLibrary.tsx`
+  **(new)** — 11 collapsible sections (from server enum), 2×2
+  photo grid per section, dashed "+ Add photo" placeholder that
+  disappears at the 4-photo cap, `algae_before` badge on
+  thumbnails for cross-surface parity, lightbox via `Sheet`, and
+  a full upload flow that reuses the existing `expo-image-picker`
+  idiom the customer detail screen already uses for documents.
+  Optional caption (max 120 chars) + 3-way tag pill selector
+  (`general` / `algae_before` / `algae_after`, default
+  `general`). No new picker, no new grid lib, no new modal lib.
+  Component-local state; the grouped fetch is the single source
+  of truth and re-fetches after every mutation.
+- `mobile/app/customer/[id].tsx` — 5-line diff: import the new
+  component + render an "Equipment" section between Documents and
+  Job History, using the existing `sectionTitle` style.
+
+**RBAC:**
+- Delete button in the lightbox is hidden unless
+  `useAuth().user.role ∈ {admin, super_admin}`. Two-step
+  confirmation via native `Alert.alert`. Defensive: on the
+  theoretical 403 the router still returns, surfaces a "Not
+  authorized" toast.
+- Backend RBAC verified live against the preview API:
+  `DELETE /customers/{cid}/equipment-photos/{pid}` as
+  `mike@aquaterra.com` (tech) → **HTTP 403**; as
+  `admin@aquaterra.com` → **HTTP 200**.
+
+**Preflight:** `bash /app/scripts/preflight.sh` → exit 0 (417
+pre-existing dead-import WARNs; no new WARNs).
+
+**TSC:** new file reports **0 errors**; caller file
+(`customer/[id].tsx`) shows only 4 pre-existing errors on lines
+this ship did not touch (`fontSize.xs` misses at 401/411/422;
+`role === "super_admin"` overlap warning at line 72).
+
+**Ship scope guarantee:** `git diff --stat HEAD -- backend/
+frontend/` returns **0 files**. Only two mobile paths touched
+(one new file, one 5-line edit).
+
+**Evidence path:** Source-file diff excerpts and backend curl
+verification captured in `memory/HANDOFF.md`. Expo Web preview
+reachable but Playwright login persistence across `goto`
+navigations is unreliable (`expo-secure-store` per-page key) —
+same precedent as Phase 56.10-mobile; source-diff evidence is the
+authoritative path per the brief's fallback.
+
+**Priority order after this ship:**
+1-11: ✅ (all previous phases + 56.16-followup + 56.10-mobile +
+      56.11-mobile).
+12. **NEXT: 56.13b-followup** — profile certs section,
+    tenant-custom module editor, leaderboard, and
+    `GET /training/progress/admin?module_code=cpo-prep`
+    bulk-progress endpoint (unblocks the CPO Readiness widget's
     in-progress counter accuracy).
 13. Paused: 56.9b Zillow, T1-T6 calculators, 56.13d, 56.14, 56.15.
 14. User decision needed: end-of-visit auto-email, "Nudge

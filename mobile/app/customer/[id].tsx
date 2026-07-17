@@ -9,6 +9,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, JobCard } from "@/src/components/widgets";
+import CustomerEquipmentLibrary from "@/src/components/customers/CustomerEquipmentLibrary";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -289,6 +290,10 @@ export default function CustomerDetail() {
             )}
           </>
         ) : null}
+
+        {/* Phase 56.11-mobile — Equipment photo library section. */}
+        <Text style={styles.sectionTitle}>Equipment</Text>
+        <CustomerEquipmentLibrary customerId={id as string} />
 
         <Text style={styles.sectionTitle}>Job History ({c.jobs?.length || 0})</Text>
         {c.jobs?.length ? (
