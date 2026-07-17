@@ -1,9 +1,13 @@
 /**
- * Phase 31 · Step 2b — LandscapingChecklistForm (web).
+ * Phase 31 (initial) · Phase 56.16 (rewrite) — LandscapingChecklistForm (web).
  *
- * Web mirror of the mobile LandscapingChecklistForm. Checklist items
- * come from the backend template (LANDSCAPE_CHECKLIST_DEFAULT) via the
- * bootstrap GET. Fallback list is used only if the template ships empty.
+ * Phase 56.16 changes:
+ * - Per-item optional note field REMOVED (was cluttering the mobile
+ *   workflow). Pool checklist per-item notes remain unchanged.
+ * - Notes split into TWO distinct fields:
+ *     • Job Notes (Internal — admin/tech only)  → `internal_notes`
+ *     • Customer Notes (visible to customer)    → `customer_notes`
+ * - Fallback labels updated to the canonical 10-item ordered list.
  */
 import React from "react";
 
@@ -18,43 +22,49 @@ const colors = {
   onSurface: "#0F172A",
 };
 
+// Kept in sync with backend/config_landscape_checklist.py — used only
+// when the API template ships empty (which should never happen with a
+// live server, but is nice for offline dev).
 const FALLBACK_LABELS = [
-  "Mow all turf areas",
-  "Edge sidewalks and driveways",
-  "Blow all hard surfaces",
-  "Trim shrubs/hedges as needed",
-  "Pull/spray visible weeds",
-  "Fertilize where scheduled",
-  "Empty and haul debris",
-  "Notes for customer",
+  "Sprayed or Pulled Weeds",
+  "Checked Irrigation",
+  "Trimmed Bushes",
+  "Mowed Grass",
+  "Edged Grass",
+  "Blow Property",
+  "Raked Rocks",
+  "Locked Gate",
+  "Trimmed Trees",
+  "Irrigation Repair",
 ];
 
 export default function LandscapingChecklistForm({
-  locked, checklistItems = [], notes = "", onChange,
+  locked,
+  checklistItems = [],
+  notes = "",              // legacy — kept in the API for backwards compat
+  internalNotes = "",
+  customerNotes = "",
+  onChange,
 }) {
   const items = checklistItems.length
     ? checklistItems
     : FALLBACK_LABELS.map((label, i) => ({
-        id: `fallback-${i}`, label, checked: false, notes: "",
+        id: `fallback-${i}`, label, checked: false,
       }));
 
   const toggleCheck = (idx) => {
     const next = items.map((c, i) => (i === idx ? { ...c, checked: !c.checked } : c));
     onChange({ checklist_items: next });
   };
-  const updNote = (idx, v) => {
-    const next = items.map((c, i) => (i === idx ? { ...c, notes: v } : c));
-    onChange({ checklist_items: next });
-  };
 
   return (
-    <div data-testid="checklist-modal-landscape" className="space-y-4">
+    <div data-testid="checklist-modal-landscape" className="space-y-5">
       <div>
         <div className="text-sm font-bold mb-2" style={{ color: colors.onSurface }}>
           Grooming Checklist
         </div>
         {items.map((c, i) => (
-          <div key={c.id} className="mb-3">
+          <div key={c.id} className="mb-2">
             <label
               className="flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer"
               style={{
@@ -73,39 +83,50 @@ export default function LandscapingChecklistForm({
                 {c.label}
               </span>
             </label>
-            <input
-              type="text"
-              disabled={locked}
-              value={c.notes || ""}
-              placeholder="Notes (optional)"
-              onChange={(e) => updNote(i, e.target.value)}
-              className="w-full mt-1 px-2 py-1.5 rounded-md text-xs"
-              style={{
-                border: `1px solid ${colors.border}`,
-                background: locked ? colors.surfaceAlt : colors.surface,
-                color: colors.onSurface,
-              }}
-              data-testid={`landscape-note-${c.id}`}
-            />
+            {/* Phase 56.16 — per-item note textarea REMOVED. */}
           </div>
         ))}
       </div>
-      <div>
-        <div className="text-sm font-bold mb-2" style={{ color: colors.onSurface }}>Job Notes</div>
+
+      <div data-testid="landscape-internal-notes-section">
+        <div className="text-sm font-bold" style={{ color: colors.onSurface }}>
+          Job Notes <span className="font-normal" style={{ color: colors.muted }}>(Internal — not visible to customer)</span>
+        </div>
         <textarea
           rows={3}
           disabled={locked}
-          value={notes || ""}
-          onChange={(e) => onChange({ notes: e.target.value })}
-          placeholder="Anything the customer or dispatcher should know…"
-          className="w-full px-2 py-1.5 rounded-md text-sm"
+          value={internalNotes || notes || ""}
+          onChange={(e) => onChange({ internal_notes: e.target.value })}
+          placeholder="Private notes for admins + dispatchers…"
+          className="w-full mt-1 px-2 py-1.5 rounded-md text-sm"
           style={{
             border: `1px solid ${colors.border}`,
             background: locked ? colors.surfaceAlt : colors.surface,
             color: colors.onSurface,
             resize: "vertical",
           }}
-          data-testid="landscape-notes"
+          data-testid="landscape-internal-notes"
+        />
+      </div>
+
+      <div data-testid="landscape-customer-notes-section">
+        <div className="text-sm font-bold" style={{ color: colors.onSurface }}>
+          Customer Notes <span className="font-normal" style={{ color: colors.muted }}>(visible to customer)</span>
+        </div>
+        <textarea
+          rows={3}
+          disabled={locked}
+          value={customerNotes || ""}
+          onChange={(e) => onChange({ customer_notes: e.target.value })}
+          placeholder="Anything the customer should see on their service report…"
+          className="w-full mt-1 px-2 py-1.5 rounded-md text-sm"
+          style={{
+            border: `1px solid ${colors.border}`,
+            background: locked ? colors.surfaceAlt : colors.surface,
+            color: colors.onSurface,
+            resize: "vertical",
+          }}
+          data-testid="landscape-customer-notes"
         />
       </div>
     </div>

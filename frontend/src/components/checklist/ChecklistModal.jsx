@@ -171,6 +171,10 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
         // through the autosave loop; otherwise the response replaces the
         // in-memory report and wipes these fields on every save.
         internal_notes: cur.internal_notes || "",
+        // Phase 56.16 — customer_notes is a distinct customer-facing
+        // textarea on the landscape form; pool wizard step 5 will
+        // pick it up later.
+        customer_notes: cur.customer_notes || "",
         photos: cur.photos || [],
         wizard_step: cur.wizard_step ?? 1,
       });
@@ -519,6 +523,8 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
             locked={locked}
             checklistItems={report.checklist_items || []}
             notes={report.notes || ""}
+            internalNotes={report.internal_notes || ""}
+            customerNotes={report.customer_notes || ""}
             onChange={patchReport}
           />
         )}

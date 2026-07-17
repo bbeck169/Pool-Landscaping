@@ -1,10 +1,12 @@
 /**
- * Phase 31 · Step 2a — LandscapingChecklistForm (mobile).
+ * Phase 31 · Phase 56.16 rewrite — LandscapingChecklistForm (mobile).
  *
- * Renders the grooming checklist for landscaping jobs. Items are
- * backend-driven via `report.checklist_items` (backed by
- * LANDSCAPE_CHECKLIST_DEFAULT in service_reports.py) with a hardcoded
- * fallback for the (unlikely) empty-template case.
+ * Phase 56.16 changes:
+ * - Per-item optional note removed (was cluttering the mobile UX).
+ * - Notes split into TWO fields:
+ *     • Job Notes (Internal — admin/tech only)  → `internal_notes`
+ *     • Customer Notes (visible to customer)    → `customer_notes`
+ * - Fallback labels aligned to the canonical 10-item ordered list.
  */
 import React from "react";
 import { View, Text, Pressable, TextInput, StyleSheet } from "react-native";
@@ -17,26 +19,34 @@ type ChecklistItem = { id: string; label: string; checked: boolean; notes?: stri
 export type LandscapingChecklistFormProps = {
   locked: boolean;
   checklistItems: ChecklistItem[];
-  notes: string;
-  onChange: (patch: Partial<{ checklist_items: ChecklistItem[]; notes: string }>) => void;
+  notes: string;               // legacy — kept for backwards compat
+  internalNotes?: string;
+  customerNotes?: string;
+  onChange: (patch: Partial<{
+    checklist_items: ChecklistItem[];
+    notes: string;
+    internal_notes: string;
+    customer_notes: string;
+  }>) => void;
 };
 
-// Fallback used only if the bootstrap GET somehow returns zero items.
 const FALLBACK_LABELS = [
-  "Mow all turf areas",
-  "Edge sidewalks and driveways",
-  "Blow all hard surfaces",
-  "Trim shrubs/hedges as needed",
-  "Pull/spray visible weeds",
-  "Fertilize where scheduled",
-  "Empty and haul debris",
-  "Notes for customer",
+  "Sprayed or Pulled Weeds",
+  "Checked Irrigation",
+  "Trimmed Bushes",
+  "Mowed Grass",
+  "Edged Grass",
+  "Blow Property",
+  "Raked Rocks",
+  "Locked Gate",
+  "Trimmed Trees",
+  "Irrigation Repair",
 ];
 
 export default function LandscapingChecklistForm(
   props: LandscapingChecklistFormProps
 ) {
-  const { locked, checklistItems, notes, onChange } = props;
+  const { locked, checklistItems, notes, internalNotes, customerNotes, onChange } = props;
 
   const items: ChecklistItem[] = checklistItems.length
     ? checklistItems
@@ -46,11 +56,6 @@ export default function LandscapingChecklistForm(
 
   const toggleCheck = (idx: number) => {
     const next = items.map((c, i) => (i === idx ? { ...c, checked: !c.checked } : c));
-    onChange({ checklist_items: next });
-  };
-
-  const updNote = (idx: number, v: string) => {
-    const next = items.map((c, i) => (i === idx ? { ...c, notes: v } : c));
     onChange({ checklist_items: next });
   };
 
@@ -71,28 +76,37 @@ export default function LandscapingChecklistForm(
             />
             <Text style={styles.checkText}>{c.label}</Text>
           </Pressable>
-          <TextInput
-            editable={!locked}
-            value={c.notes || ""}
-            placeholder="Notes (optional)"
-            placeholderTextColor={colors.muted}
-            onChangeText={(v) => updNote(i, v)}
-            style={styles.noteInput}
-            testID={`landscaping-note-${c.id}`}
-          />
         </View>
       ))}
-      <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>Job Notes</Text>
+
+      <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>
+        Job Notes <Text style={styles.subtle}>(Internal — not visible to customer)</Text>
+      </Text>
       <TextInput
         multiline
-        numberOfLines={4}
+        numberOfLines={3}
         editable={!locked}
         style={styles.textarea}
-        value={notes || ""}
-        placeholder="Anything the customer or dispatcher should know…"
+        value={internalNotes || notes || ""}
+        placeholder="Private notes for admins + dispatchers…"
         placeholderTextColor={colors.muted}
-        onChangeText={(v) => onChange({ notes: v })}
-        testID="landscaping-notes"
+        onChangeText={(v) => onChange({ internal_notes: v })}
+        testID="landscaping-internal-notes"
+      />
+
+      <Text style={[styles.sectionTitle, { marginTop: spacing.lg }]}>
+        Customer Notes <Text style={styles.subtle}>(visible to customer)</Text>
+      </Text>
+      <TextInput
+        multiline
+        numberOfLines={3}
+        editable={!locked}
+        style={styles.textarea}
+        value={customerNotes || ""}
+        placeholder="Anything the customer should see on their service report…"
+        placeholderTextColor={colors.muted}
+        onChangeText={(v) => onChange({ customer_notes: v })}
+        testID="landscaping-customer-notes"
       />
     </View>
   );
@@ -102,6 +116,9 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface,
     marginBottom: spacing.sm,
+  },
+  subtle: {
+    fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted,
   },
   itemBlock: { marginBottom: spacing.md },
   checkRow: {
@@ -114,16 +131,9 @@ const styles = StyleSheet.create({
     flex: 1, fontFamily: font.semibold, fontSize: fontSize.base,
     color: colors.onSurface,
   },
-  noteInput: {
-    marginTop: 6,
-    borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
-    paddingHorizontal: spacing.sm, paddingVertical: 8,
-    fontFamily: font.regular, fontSize: fontSize.sm, color: colors.onSurface,
-    backgroundColor: colors.surface,
-  },
   textarea: {
     borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
-    padding: spacing.md, minHeight: 100, textAlignVertical: "top",
+    padding: spacing.md, minHeight: 90, textAlignVertical: "top",
     fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface,
     backgroundColor: colors.surface,
   },

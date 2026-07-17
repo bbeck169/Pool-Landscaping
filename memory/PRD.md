@@ -1046,3 +1046,51 @@ leaderboard.
 8. Then: 56.13b-followup — profile certs section + custom-module editor + leaderboard.
 9. Paused: 56.9b Zillow, T1-T6, 56.13d, 56.14, 56.15.
 
+
+## Phase 56.16 — Landscape Checklist Rewrite (URGENT — Feb 2026)
+
+Field-tech blocker: the landscape checklist was cluttered with per-item
+notes and a single ambiguous "Notes" field, and the seed template had
+the wrong items.
+
+**Fixed:**
+- Canonical 10-item checklist (Sprayed or Pulled Weeds → Irrigation
+  Repair), stored in `backend/config_landscape_checklist.py`.
+- Per-item note textarea removed from the landscape form (web +
+  mobile). Pool checklist per-item notes UNCHANGED.
+- Notes split: "Job Notes (Internal — not visible to customer)"
+  persists to `internal_notes`; "Customer Notes (visible to
+  customer)" persists to `customer_notes` (new field on
+  `ServiceReportPatch`).
+- New customer-portal read endpoints:
+  `GET /api/customers/me/service-reports` +
+  `GET /api/customers/me/service-reports/{id}` — both redact
+  `internal_notes` and internal/issue photos. Non-customer role → 403.
+
+**Deferred:**
+- Customer-facing portal UI page (backend contract is shipped;
+  React page = Phase 56.16-followup).
+- Legacy `JobDetail.jsx` "Field Report" widget still has a stale
+  hardcoded 8-item list — recommend sunset.
+
+**Tests:** 5 tests in `test_phase56_16_landscape.py` (3 passed, 2
+skipped due to empty schedule/today — behavior verified via curl).
+
+**Files touched:**
+- `backend/config_landscape_checklist.py` (new)
+- `backend/routers/service_reports.py`
+- `backend/tests/test_phase56_16_landscape.py` (new)
+- `frontend/src/components/checklist/LandscapingChecklistForm.jsx`
+- `frontend/src/components/checklist/ChecklistModal.jsx`
+- `mobile/src/components/checklist/LandscapingChecklistForm.tsx`
+- `memory/HANDOFF.md`, `memory/PRD.md`
+
+**Priority order:**
+1-5: ✅ (56.13a, 56.13a-commit, 56.10, 56.11, 56.13b).
+6. ✅ Phase 56.16 — Landscape Checklist Rewrite (URGENT — this ship).
+7. **NEXT: Phase 56.13c** — Training Mobile UI + Team CPO Readiness
+   (deferred from this session due to token budget).
+8. Then: Phase 56.16-followup (portal UI), 56.10-mobile, 56.11-mobile,
+   56.13b-followup.
+9. Paused: 56.9b Zillow, T1-T6 calculators, 56.13d, 56.14, 56.15.
+

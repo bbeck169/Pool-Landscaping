@@ -119,14 +119,17 @@ POOL_CHEMICALS_CATALOG_DEFAULT = [
      "amount_options": CHEM_STEP_OPTIONS},
 ]
 LANDSCAPE_CHECKLIST_DEFAULT = [
-    "Mow all turf areas",
-    "Edge sidewalks and driveways",
-    "Trim shrubs/hedges as needed",
-    "Blow all hard surfaces",
-    "Pull/spray visible weeds",
-    "Check irrigation heads",
-    "Empty and haul debris",
-    "Report any damage or issues",
+    # Phase 56.16 — canonical 10-item list (see config_landscape_checklist).
+    "Sprayed or Pulled Weeds",
+    "Checked Irrigation",
+    "Trimmed Bushes",
+    "Mowed Grass",
+    "Edged Grass",
+    "Blow Property",
+    "Raked Rocks",
+    "Locked Gate",
+    "Trimmed Trees",
+    "Irrigation Repair",
 ]
 GENERIC_CHECKLIST_DEFAULT = [
     "Confirm scope with customer",
@@ -317,6 +320,10 @@ class ServiceReportPatch(BaseModel):
     # the wizard step-4 photo pool round-trip through the same PATCH.
     wizard_step: Optional[int] = None
     internal_notes: Optional[str] = None
+    # Phase 56.16 — customer-facing notes rendered on the customer
+    # portal service-report view. Distinct from `internal_notes` (which
+    # is admin/tech-only). Empty string is fine — clears the field.
+    customer_notes: Optional[str] = None
     photos: Optional[List[Dict[str, Any]]] = None
     # Phase 56.10 — visible-algae observation (and any future observation
     # dict fields). Persisted verbatim; the AI dosing recommender reads
@@ -1236,3 +1243,102 @@ async def send_visit_recap(sr_id: str, body: RecapReq,
         "mocked_channels": mocked_channels,
         "photo_count": len(composed.get("photo_urls") or []),
     }
+
+
+# ─── Phase 56.16 — Customer portal: service reports (read-only) ────────────
+def _redact_report_for_customer(sr: dict) -> dict:
+    """Strip fields a customer must NEVER see.
+
+    - `internal_notes` is admin/tech-only.
+    - Photos tagged `internal` / `issue` (any flavor of the moderator
+      tag) are dropped from the returned array.
+    - `chemicals_added` remains visible so customers can see what went
+      into their pool. Readings + checklist items are already
+      customer-safe.
+    """
+    if not sr:
+        return sr
+    sr = dict(sr)
+    sr.pop("internal_notes", None)
+    # Drop private/issue photos.
+    photos = sr.get("photos") or []
+    sr["photos"] = [
+        p for p in photos
+        if not any(str(t).lower() in ("internal", "issue", "private")
+                   for t in ((p.get("tags") or []) if isinstance(p, dict) else []))
+    ]
+    return sr
+
+
+@router.get("/customers/me/service-reports")
+async def list_my_service_reports(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    if user.get("role") != "customer" or not user.get("customer_id"):
+        raise HTTPException(403, "Customer portal only")
+
+    # Find all jobs for this customer's id, then all completed reports.
+    job_ids = [j["id"] async for j in db.jobs.find(
+        {"tenant_id": tenant["id"], "customer_id": user["customer_id"]},
+        {"_id": 0, "id": 1},
+    )]
+    if not job_ids:
+        return []
+    rows = await db.service_reports.find(
+        {"tenant_id": tenant["id"], "job_id": {"$in": job_ids},
+         "status": {"$in": ["submitted", "completed", "final"]}},
+        {"_id": 0},
+    ).sort("submitted_at", -1).to_list(200)
+
+    out = []
+    for sr in rows:
+        job = await db.jobs.find_one({"id": sr.get("job_id")}, {"_id": 0}) or {}
+        out.append({
+            "id": sr.get("id"),
+            "job_id": sr.get("job_id"),
+            "job_title": job.get("title"),
+            "service_type": job.get("service_type") or job.get("job_type"),
+            "scheduled_start": job.get("scheduled_start"),
+            "submitted_at": sr.get("submitted_at"),
+            "tech_name": sr.get("tech_name"),
+            "customer_notes": sr.get("customer_notes") or "",
+        })
+    return out
+
+
+@router.get("/customers/me/service-reports/{report_id}")
+async def get_my_service_report(
+    report_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    if user.get("role") != "customer" or not user.get("customer_id"):
+        raise HTTPException(403, "Customer portal only")
+
+    sr = await db.service_reports.find_one(
+        {"tenant_id": tenant["id"], "id": report_id}, {"_id": 0},
+    )
+    if not sr:
+        raise HTTPException(404, "Service report not found")
+
+    # Confirm the report's job belongs to this customer.
+    job = await db.jobs.find_one(
+        {"tenant_id": tenant["id"], "id": sr.get("job_id"),
+         "customer_id": user["customer_id"]}, {"_id": 0},
+    )
+    if not job:
+        # A stranger customer cannot read another customer's report even
+        # if they know the id.
+        raise HTTPException(403, "Not your service report")
+
+    sr = _redact_report_for_customer(sr)
+    sr["job"] = {
+        "id": job.get("id"),
+        "title": job.get("title"),
+        "service_type": job.get("service_type") or job.get("job_type"),
+        "address": job.get("address"),
+        "scheduled_start": job.get("scheduled_start"),
+    }
+    return sr
+
