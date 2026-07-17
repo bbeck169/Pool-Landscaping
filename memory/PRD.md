@@ -1510,7 +1510,42 @@ returns HTTP 403.
 1-13: ✅ (all previous phases + 56.17 + P0 fix).
 14. **Paused**: 56.9b Zillow, T1-T6 calculators, 56.13d,
     56.14, 56.15.
-15. **User decision needed**: end-of-visit auto-email,
-    "Nudge non-starters" widget action, RingCentral test
-    scope, Phase 56.17-followup autobilling audit UI page.
+15. **User decision needed**: end-of-visit auto-email, "Nudge
+    non-starters" widget action, RingCentral test scope,
+    Phase 56.17-followup autobilling audit UI page.
+
+---
+
+## Phase 56.17-followup · Autobilling Runs Audit UI Page (Feb 2026)
+
+Small web-only ship. New admin page at `/admin/autobilling-runs`
+consumes the `GET /api/autobilling-runs` endpoint that shipped
+in 56.17.
+
+**Files touched (3):**
+- `frontend/src/pages/finance/AutobillingRuns.jsx` (**new**) —
+  sortable table w/ colored status pills (fired=green,
+  manual=blue, skipped=grey, error=red, late_missed=orange),
+  plan + status + since filters, client-side CSV export
+  (matches the training leaderboard pattern).
+- `frontend/src/App.js` — route registered under `AdminOnly`.
+- `frontend/src/nav/adminNav.js` — "Autobilling runs" nav entry
+  slotted under Invoicing.
+
+**Testids**: `autobilling-runs-page`, `autobilling-runs-table`,
+`autobilling-runs-filter-plan`, `autobilling-runs-filter-status`,
+`autobilling-runs-filter-since`, `autobilling-runs-csv-export`,
+`autobilling-runs-status-{status}`, `autobilling-runs-row-{id}`.
+
+**Verified live** at
+`https://poolscape-audit.preview.emergentagent.com/admin/autobilling-runs`
+— 4 audit rows rendering: 2 `late_missed` (from the missed
+first_of_month anchor for pre-existing plans) + 2 `fired`
+(the 56.17 manual run-now cases from that ship's curl
+verification).
+
+**Preflight**: `bash /app/scripts/preflight.sh` → **exit 0**.
+
+**Priority order after this ship:** 56.17-followup ✅ landed;
+still paused: 56.9b Zillow, T1-T6, 56.13d, 56.14, 56.15.
 

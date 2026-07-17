@@ -101,6 +101,7 @@ import {
 import {
   PaymentsLedger, AutoBilling, ImpExp, IncomeCategoriesCrud,
 } from "@/pages/finance/FinancePages";
+import AutobillingRuns from "@/pages/finance/AutobillingRuns";
 import PortalHome from "@/pages/portal/PortalHome";
 import {
   PortalServices, PortalServiceDetail,
@@ -417,6 +418,7 @@ export default function App() {
             <Route path="income-categories" element={<AdminOnly><IncomeCategoriesCrud /></AdminOnly>} />
             <Route path="payments" element={<AdminOnly><PaymentsLedger /></AdminOnly>} />
             <Route path="auto-billing" element={<AdminOnly><AutoBilling /></AdminOnly>} />
+            <Route path="admin/autobilling-runs" element={<AdminOnly><AutobillingRuns /></AdminOnly>} />
             <Route path="impexp" element={<AdminOnly><ImpExp /></AdminOnly>} />
 
             {/* Ops hub (Phase 5) — all 16 sub-pages route into one tabbed shell */}
