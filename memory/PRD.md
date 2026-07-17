@@ -485,3 +485,43 @@ registrations pending (Stripe webhook subscription + RC subscription click).
 
 ### Deferred to Phase 56.3.C
 - Roster UI rewrite in `OpsHub.jsx > TeamRoster` — swap department-only dropdown for the unified 4-option dropdown + filter chips (All | Pool Tech | Landscape Tech | Admin | All (Both) | Unassigned) + `+ Add Team Member` header button wired to the new `POST /api/users`. Backend fully ready.
+
+## Phase 56.3.C — Team Roster UI Rewrite + Tech Job-Create RBAC (SHIPPED)
+
+### Team Roster rewrite (`OpsHub.jsx > TeamRoster`)
+- Unified 4-option Role dropdown per row: Pool Tech (blue), Landscape Tech (green), Admin (purple), All (gold).
+- Filter chips: All roles | Pool Tech | Landscape Tech | Admin | All (Both) | Unassigned.
+- Colored `data-testid=team-role-badge-{id}` badges next to each user, always visible.
+- Self-demotion protection: caller's own row shows the badge only, no dropdown, with a "(you)" tag.
+- `+ Add Team Member` header button (`data-testid=team-add-btn`) — admin/super_admin only.
+- New `AddTeamMemberModal` with First/Last (required), Email (validated), Phone (optional), Role dropdown (4 options), Send invite email checkbox (default checked; MOCKED to `email_delivery_log`).
+- On success shows temp password in a one-shot modal (`data-testid=team-add-temp-password`) for admin to copy.
+
+### Tech job-create RBAC (P0 gate)
+- Backend: `POST /api/jobs` already used `require_admin` — techs and customers already blocked (403). Confirmed with curl matrix.
+- Web: `CalendarSchedule.jsx` introduces `canCreateJobs` flag from `user.role`; hides `calendar-new-job`, `grid-new-job`, and swallows `onSelectSlot` empty-slot navigation for techs. Confirmed via Playwright — Mike Rivera (pool tech) sees 0 create buttons on `/schedule`; admin sees 1.
+- Web: `CustomerDetail.jsx` already protected via `<NoTech>` route guard (App.js).
+- Mobile: `mobile/app/(app)/schedule/calendar.tsx` already gates on `isAdmin` — no changes needed.
+- Recurring-jobs create endpoint (`POST /api/recurring-jobs`) also uses `require_admin` — techs blocked.
+
+### Curl matrix (verified)
+```
+POST /api/jobs :
+  admin        → 200
+  super_admin  → 200
+  pool tech    → 403
+  landscape    → 403
+```
+
+### Files touched
+- `frontend/src/pages/ops/OpsHub.jsx` (TeamRoster rewrite + AddTeamMemberModal + ROLE_OPTIONS)
+- `frontend/src/pages/schedule/CalendarSchedule.jsx` (`canCreateJobs` gate + empty-slot swallow + button hide)
+
+### Screenshots
+- `/app/test_reports/56_3_C_team_roster.png` — roster with 4-option dropdowns + badges + Add button
+- `/app/test_reports/56_3_C_add_team_modal.png` — Add Team Member modal open
+- `/app/test_reports/56_3_C_tech_schedule_no_new.png` — Mike Rivera's schedule showing NO "New job" button
+
+### Deferred (tracked)
+- Mobile Add-Team-Member sheet mirroring web modal.
+- `role_badge` cross-training UX on user profile card (payroll / dispatch) — not requested yet.

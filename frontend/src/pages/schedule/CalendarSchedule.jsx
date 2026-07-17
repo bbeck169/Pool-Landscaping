@@ -157,6 +157,12 @@ export default function CalendarSchedule() {
   // navigating away to /jobs/:id. Preserves the /schedule URL so the
   // grid/calendar toggle, filters, and range presets survive the close.
   const [checklistJobId, setChecklistJobId] = useState(null);
+  // Phase 56.3.C RBAC — technicians must not create jobs, regardless of
+  // their department (pool / landscape / both). Admins + super_admins are
+  // unaffected. Backend already enforces this via `require_admin` on
+  // POST /api/jobs; the flag below hides the corresponding UI affordances
+  // so techs never see a broken create surface.
+  const canCreateJobs = ["admin", "super_admin"].includes((user?.role || "").toLowerCase());
   // Phase 56.3 follow-up — clock-in gate for landscape techs opening events.
   const clockGate = useClockInGate(user);
 
@@ -267,6 +273,11 @@ export default function CalendarSchedule() {
 
   const onSelectSlot = (slot) => {
     // Phase 30X · date-only. Ignore any time bit the calendar hands us.
+    // Phase 56.3.C — swallow slot-to-create clicks for technicians. They
+    // must not be able to create jobs; the button-level gates hide the
+    // "New job" affordances but the calendar grid also invokes this on
+    // empty-slot click, so we short-circuit here as defense in depth.
+    if (!canCreateJobs) return;
     const d = format(slot.start, "yyyy-MM-dd");
     navigate(`/jobs/new?date=${d}`);
   };
@@ -415,14 +426,16 @@ export default function CalendarSchedule() {
           })}
         </div>
         <Gate perm="Jobs" action="write">
-          <button
-            onClick={() => navigate("/jobs/new")}
-            className="flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-bold"
-            style={{ background: colors.brand, color: "#fff" }}
-            data-testid="calendar-new-job"
-          >
-            <Plus size={14} /> New job
-          </button>
+          {canCreateJobs ? (
+            <button
+              onClick={() => navigate("/jobs/new")}
+              className="flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-bold"
+              style={{ background: colors.brand, color: "#fff" }}
+              data-testid="calendar-new-job"
+            >
+              <Plus size={14} /> New job
+            </button>
+          ) : null}
         </Gate>
       </div>
 
@@ -639,7 +652,7 @@ export default function CalendarSchedule() {
           onConfirmMove={bulkMove}
           busy={busy}
           onOpenJob={(id) => clockGate.openJob(id, () => setChecklistJobId(id))}
-          onNewJob={() => navigate(`/jobs/new?date=${focusISO}`)}
+          onNewJob={canCreateJobs ? (() => navigate(`/jobs/new?date=${focusISO}`)) : undefined}
           reorderUnavailable={reorderUnavailable}
         />
       )}
@@ -828,14 +841,16 @@ function GridPanel({
             Change the filters, jump to a different day, or add a new job.
           </div>
           <Gate perm="Jobs" action="write">
-            <button
-              onClick={onNewJob}
-              className="mt-3 inline-flex items-center gap-1 px-3 h-8 rounded-lg text-xs font-bold"
-              style={{ background: colors.brand, color: "#fff" }}
-              data-testid="grid-new-job"
-            >
-              <Plus size={12} /> New job
-            </button>
+            {onNewJob ? (
+              <button
+                onClick={onNewJob}
+                className="mt-3 inline-flex items-center gap-1 px-3 h-8 rounded-lg text-xs font-bold"
+                style={{ background: colors.brand, color: "#fff" }}
+                data-testid="grid-new-job"
+              >
+                <Plus size={12} /> New job
+              </button>
+            ) : null}
           </Gate>
         </div>
       ) : (

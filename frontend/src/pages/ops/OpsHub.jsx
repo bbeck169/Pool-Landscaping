@@ -472,31 +472,63 @@ function Crews() {
 }
 
 /* ═══════════ Team ═══════════ */
+// Phase 56.3.B / 56.3.C — canonical 4-option Role picker.
+// Mirrors backend `_ROLE_DEPT_COMBOS` in `routers/team.py`. Any drift must
+// be a synchronous change in both places.
+const ROLE_OPTIONS = [
+  { value: "pool_tech",       label: "Pool Tech",       role: "technician", department: "pool",
+    badgeBg: "#DBEAFE", badgeFg: "#1E3A8A", filterColor: "#1E3A8A" },
+  { value: "landscape_tech",  label: "Landscape Tech",  role: "technician", department: "landscaping",
+    badgeBg: "#DCFCE7", badgeFg: "#166534", filterColor: "#166534" },
+  { value: "admin",           label: "Admin",           role: "admin",      department: null,
+    badgeBg: "#F3E8FF", badgeFg: "#6B21A8", filterColor: "#6B21A8" },
+  { value: "all",             label: "All",             role: "admin",      department: "both",
+    badgeBg: "#FEF3C7", badgeFg: "#92400E", filterColor: "#92400E" },
+];
+
+function _roleKey(user) {
+  const role = (user?.role || "").toLowerCase();
+  const dept = (user?.department || "").toLowerCase();
+  if (role === "super_admin") return "super_admin";
+  if (role === "admin" && dept === "both") return "all";
+  if (role === "admin") return "admin";
+  if (role === "technician" && dept === "pool") return "pool_tech";
+  if (role === "technician" && dept === "landscaping") return "landscape_tech";
+  return "unassigned";
+}
+
+
 function TeamRoster() {
+  const { user: me } = useAuth();
   const [rows, refresh] = useList("/team");
   const [filter, setFilter] = useState("all");
   const [savingId, setSavingId] = useState(null);
   const [toast, setToast] = useState(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [tempPasswordShown, setTempPasswordShown] = useState(null); // { email, password }
+
+  const isAdmin =
+    (me?.role || "").toLowerCase() === "admin" ||
+    (me?.role || "").toLowerCase() === "super_admin";
 
   const filtered = useMemo(() => {
     if (!rows) return null;
     return rows.filter((r) => {
+      const k = _roleKey(r);
       if (filter === "all") return true;
-      const role = (r.role || "").toLowerCase();
-      const dept = (r.department || "").toLowerCase();
-      if (filter === "pool") return role === "technician" && dept === "pool";
-      if (filter === "landscape") return role === "technician" && dept === "landscaping";
-      if (filter === "unassigned") return role === "technician" && !dept;
-      return true;
+      if (filter === "unassigned") return k === "unassigned";
+      return k === filter;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, filter]);
 
-  const setDept = async (u, dept) => {
+  const applyRole = async (u, optValue) => {
+    const opt = ROLE_OPTIONS.find((o) => o.value === optValue);
+    if (!opt) return;
     setSavingId(u.id);
     try {
-      await api.patch(`/users/${u.id}`, { department: dept });
-      setToast({ tone: "success", message: `${u.name || u.email} → ${dept ? dept.charAt(0).toUpperCase() + dept.slice(1) : "Unassigned"}` });
+      await api.patch(`/users/${u.id}`, { role: opt.role, department: opt.department });
+      setToast({ tone: "success", message: `${u.name || u.email} → ${opt.label}` });
       refresh();
     } catch (e) {
       setToast({ tone: "error", message: e?.message || "Failed to update" });
@@ -505,78 +537,332 @@ function TeamRoster() {
     }
   };
 
-  const chips = [
-    { key: "all", label: "All techs" },
-    { key: "pool", label: "Pool" },
-    { key: "landscape", label: "Landscape" },
-    { key: "unassigned", label: "Unassigned" },
+  const CHIPS = [
+    { key: "all",            label: "All roles" },
+    { key: "pool_tech",      label: "Pool Tech" },
+    { key: "landscape_tech", label: "Landscape Tech" },
+    { key: "admin",          label: "Admin" },
+    { key: "all",            label: "All (Both)", altKey: "all_admin_both" }, // note: intentional duplicate label — filter still "all"
+    { key: "unassigned",     label: "Unassigned" },
+  ];
+  // Deduplicate: the "All (Both)" chip filters by `all_admin_both` (custom
+  // key). We fix that below to filter to `admin+both` only.
+  const CHIPS_FIXED = [
+    { key: "all",            label: "All roles" },
+    { key: "pool_tech",      label: "Pool Tech" },
+    { key: "landscape_tech", label: "Landscape Tech" },
+    { key: "admin",          label: "Admin" },
+    { key: "all",            label: "All (Both)" }, // handled via roleKey === "all"
+    { key: "unassigned",     label: "Unassigned" },
   ];
 
   return (
     <Card testid="team-page">
-      <div className="flex items-center gap-2 mb-4 flex-wrap" data-testid="team-filter-row">
-        {chips.map((c) => (
-          <button
-            key={c.key}
-            onClick={() => setFilter(c.key)}
-            className="text-xs font-semibold px-2.5 py-1 rounded-full border"
-            style={{
-              borderColor: filter === c.key ? colors.brand : colors.border,
-              backgroundColor: filter === c.key ? colors.brand : "transparent",
-              color: filter === c.key ? "#fff" : colors.onSurface,
-            }}
-            data-testid={`team-filter-${c.key}`}
-          >
-            {c.label}
-          </button>
-        ))}
+      {/* Header row — filter chips (left) + Add Team Member (right). */}
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap" data-testid="team-filter-row">
+          {[
+            { key: "all",            label: "All roles" },
+            { key: "pool_tech",      label: "Pool Tech" },
+            { key: "landscape_tech", label: "Landscape Tech" },
+            { key: "admin",          label: "Admin" },
+            { key: "all_both",       label: "All (Both)" },
+            { key: "unassigned",     label: "Unassigned" },
+          ].map((c) => {
+            // "All roles" (`all`) shows everything. "All (Both)" is a distinct
+            // chip that filters to admin+both only — we internally use key
+            // `all_both` and remap to the roleKey `all`.
+            const active = filter === c.key || (c.key === "all_both" && filter === "all_both");
+            return (
+              <button
+                key={`${c.key}-${c.label}`}
+                onClick={() => setFilter(c.key)}
+                className="text-xs font-semibold px-2.5 py-1 rounded-full border transition"
+                style={{
+                  borderColor: active ? colors.brand : colors.border,
+                  backgroundColor: active ? colors.brand : "transparent",
+                  color: active ? "#fff" : colors.onSurface,
+                }}
+                data-testid={`team-filter-${c.key}`}
+              >
+                {c.label}
+              </button>
+            );
+          })}
+        </div>
+        {isAdmin ? (
+          <Button onClick={() => setAddOpen(true)} testid="team-add-btn">
+            <Plus size={14} /> Add Team Member
+          </Button>
+        ) : null}
       </div>
-      {filtered === null ? <Skeleton style={{ height: 160 }} /> :
-       (filtered.length === 0 ? <EmptyState title="No team members" /> :
-        <ul className="space-y-2">{filtered.map((r) => (
-          <li key={r.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ backgroundColor: colors.surfaceSecondary }} data-testid={`team-row-${r.id}`}>
-            <div className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold" style={{ background: brandGradientCss }}>{(r.name || "?")[0]}</div>
-            <div className="flex-1 min-w-0"><div className="font-semibold truncate">{r.name}</div><div className="text-xs" style={{ color: colors.muted }}>{r.email || ""}</div></div>
-            <Chip label={r.role || "member"} tone="brand" />
-            {(r.role || "").toLowerCase() === "technician" ? (
-              (() => {
-                const dept = (r.department || "").toLowerCase();
-                const tone = dept === "pool" ? "brand" : dept === "landscaping" ? "success" : "neutral";
-                const label = dept === "pool" ? "Pool" : dept === "landscaping" ? "Landscape" : "Unassigned";
-                return (
-                  <div className="flex items-center gap-1">
+
+      {filtered === null ? (
+        <Skeleton style={{ height: 160 }} />
+      ) : filtered.length === 0 ? (
+        <EmptyState title="No team members" />
+      ) : (
+        <ul className="space-y-2">
+          {filtered
+            .filter((r) => {
+              if (filter === "all_both") return _roleKey(r) === "all";
+              return true;
+            })
+            .map((r) => {
+              const key = _roleKey(r);
+              const opt = ROLE_OPTIONS.find((o) => o.value === key);
+              // super_admin — read-only chip, no dropdown.
+              const isSuper = key === "super_admin";
+              // Self-demotion protection — hide the dropdown on the caller's row.
+              const isSelf = r.id === me?.id;
+              return (
+                <li
+                  key={r.id}
+                  className="flex items-center gap-3 p-3 rounded-xl"
+                  style={{ backgroundColor: colors.surfaceSecondary }}
+                  data-testid={`team-row-${r.id}`}
+                >
+                  <div
+                    className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold"
+                    style={{ background: brandGradientCss }}
+                  >
+                    {(r.name || "?")[0]}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold truncate">
+                      {r.name || r.email || "—"}
+                      {isSelf ? <span className="text-xs ml-1" style={{ color: colors.muted }}>(you)</span> : null}
+                    </div>
+                    <div className="text-xs" style={{ color: colors.muted }}>{r.email || ""}</div>
+                  </div>
+
+                  {/* Colored role badge (always visible). */}
+                  {opt ? (
                     <span
                       className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded"
-                      style={{
-                        backgroundColor: tone === "brand" ? "#DBEAFE" : tone === "success" ? "#DCFCE7" : "#F3F4F6",
-                        color: tone === "brand" ? "#1E3A8A" : tone === "success" ? "#166534" : colors.muted,
-                      }}
-                      data-testid={`team-dept-badge-${r.id}`}
+                      style={{ backgroundColor: opt.badgeBg, color: opt.badgeFg }}
+                      data-testid={`team-role-badge-${r.id}`}
                     >
-                      {label}
+                      {opt.label}
                     </span>
+                  ) : isSuper ? (
+                    <span
+                      className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded"
+                      style={{ backgroundColor: "#FEE2E2", color: "#991B1B" }}
+                      data-testid={`team-role-badge-${r.id}`}
+                    >
+                      Super Admin
+                    </span>
+                  ) : (
+                    <span
+                      className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded"
+                      style={{ backgroundColor: "#F3F4F6", color: colors.muted }}
+                      data-testid={`team-role-badge-${r.id}`}
+                    >
+                      Unassigned
+                    </span>
+                  )}
+
+                  {/* Role dropdown — hidden for super_admin and self. */}
+                  {isAdmin && !isSuper && !isSelf ? (
                     <select
-                      value={dept || ""}
-                      onChange={(e) => setDept(r, e.target.value || null)}
+                      value={opt?.value || ""}
+                      onChange={(e) => applyRole(r, e.target.value)}
                       disabled={savingId === r.id}
                       className="text-xs rounded px-1 py-0.5 border"
-                      style={{ borderColor: colors.border, backgroundColor: "#fff", color: colors.onSurface, opacity: savingId === r.id ? 0.6 : 1 }}
-                      data-testid={`team-dept-select-${r.id}`}
+                      style={{
+                        borderColor: colors.border,
+                        backgroundColor: "#fff",
+                        color: colors.onSurface,
+                        opacity: savingId === r.id ? 0.6 : 1,
+                      }}
+                      data-testid={`team-role-select-${r.id}`}
                     >
-                      <option value="">Unassigned</option>
-                      <option value="pool">Pool</option>
-                      <option value="landscaping">Landscape</option>
+                      <option value="">— Choose role —</option>
+                      {ROLE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
                     </select>
-                  </div>
-                );
-              })()
-            ) : null}
-          </li>
-        ))}</ul>)}
+                  ) : null}
+                </li>
+              );
+            })}
+        </ul>
+      )}
+
+      <AddTeamMemberModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onCreated={(res) => {
+          setAddOpen(false);
+          refresh();
+          if (res?.temp_password) {
+            setTempPasswordShown({ email: res.email, password: res.temp_password });
+          } else {
+            setToast({ tone: "success", message: `Team member ${res?.email || "added"}` });
+          }
+        }}
+        onError={(msg) => setToast({ tone: "error", message: msg })}
+      />
+
+      <Modal
+        open={!!tempPasswordShown}
+        onClose={() => setTempPasswordShown(null)}
+        title="Team member created"
+        testid="team-add-temp-password"
+        footer={
+          <Button onClick={() => setTempPasswordShown(null)} testid="team-add-temp-close">
+            Done
+          </Button>
+        }
+      >
+        {tempPasswordShown ? (
+          <div className="space-y-2 text-sm" style={{ color: colors.onSurface }}>
+            <p style={{ color: colors.onSurfaceSecondary }}>
+              Copy these credentials and share them with the new team member.
+              This temp password is shown once and cannot be retrieved later.
+            </p>
+            <div
+              className="rounded-lg p-3 font-mono text-sm"
+              style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+            >
+              <div><strong>Email:</strong> {tempPasswordShown.email}</div>
+              <div><strong>Temp password:</strong> <code data-testid="team-add-temp-value">{tempPasswordShown.password}</code></div>
+            </div>
+            <p className="text-xs" style={{ color: colors.muted }}>
+              Invite email delivery is MOCKED — a real email will be sent once the email integration is fully wired.
+            </p>
+          </div>
+        ) : null}
+      </Modal>
+
       <Toast toast={toast} onClose={() => setToast(null)} />
     </Card>
   );
 }
+
+
+function AddTeamMemberModal({ open, onClose, onCreated, onError }) {
+  const [form, setForm] = useState({
+    first_name: "", last_name: "", email: "", phone: "",
+    role_option: "pool_tech", send_invite_email: true,
+  });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setForm({
+        first_name: "", last_name: "", email: "", phone: "",
+        role_option: "pool_tech", send_invite_email: true,
+      });
+    }
+  }, [open]);
+
+  const set = (k) => (e) => {
+    const v = e?.target?.type === "checkbox" ? e.target.checked : e?.target?.value;
+    setForm((f) => ({ ...f, [k]: v }));
+  };
+
+  const submit = async () => {
+    const first = form.first_name.trim();
+    const last = form.last_name.trim();
+    const email = form.email.trim().toLowerCase();
+    if (!first || !last) {
+      onError?.("First and last name are required");
+      return;
+    }
+    if (!email || !email.includes("@")) {
+      onError?.("A valid email is required");
+      return;
+    }
+    const opt = ROLE_OPTIONS.find((o) => o.value === form.role_option);
+    if (!opt) {
+      onError?.("Pick a role");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api.post("/users", {
+        first_name: first,
+        last_name: last,
+        email,
+        phone: form.phone.trim() || null,
+        role: opt.role,
+        department: opt.department,
+        send_invite_email: !!form.send_invite_email,
+      });
+      onCreated?.(res);
+    } catch (e) {
+      onError?.(e?.message || "Failed to add team member");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={() => (busy ? null : onClose())}
+      title="Add Team Member"
+      testid="team-add-modal"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button onClick={submit} disabled={busy} testid="team-add-submit">
+            {busy ? "Adding…" : "Add Team Member"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <TextInput label="FIRST NAME *" value={form.first_name} onChange={set("first_name")} testid="team-add-first" />
+          <TextInput label="LAST NAME *" value={form.last_name} onChange={set("last_name")} testid="team-add-last" />
+        </div>
+        <TextInput label="EMAIL *" type="email" value={form.email} onChange={set("email")} testid="team-add-email" />
+        <TextInput label="PHONE (optional)" value={form.phone} onChange={set("phone")} testid="team-add-phone" />
+        <div>
+          <label
+            className="text-xs font-semibold tracking-wide mb-1 block"
+            style={{ color: colors.onSurfaceSecondary }}
+          >
+            ROLE *
+          </label>
+          <select
+            value={form.role_option}
+            onChange={set("role_option")}
+            className="w-full px-3 py-2.5 rounded-lg text-sm"
+            style={{
+              backgroundColor: colors.surface,
+              color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+            }}
+            data-testid="team-add-role"
+          >
+            {ROLE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          <div className="text-xs mt-1" style={{ color: colors.muted }}>
+            Pool Tech / Landscape Tech: field-only. Admin: office-only. All: admin + full tech surface.
+          </div>
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={form.send_invite_email}
+            onChange={set("send_invite_email")}
+            data-testid="team-add-invite-checkbox"
+          />
+          <span style={{ color: colors.onSurface }}>
+            Send invite email (currently MOCKED — logs to delivery table)
+          </span>
+        </label>
+      </div>
+    </Modal>
+  );
+}
+
 
 /* ═══════════ Timesheets ═══════════ */
 function Timesheets() {
