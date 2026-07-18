@@ -1200,3 +1200,166 @@ import WARN stayed at 429 (no new false positives).
 - No versioning of saved templates (upsert overwrites).
 - No mobile parity (admin-only feature).
 
+
+---
+
+## Phase T6 — Service Price Checker + Canonical Template Seeds (Feb 2026)
+
+**Last T-phase item.** All T1-T6 now complete. Ship includes T6
+main deliverable + bundled canonical templates seed script per
+the T4 follow-on suggestion.
+
+### T6 · Service Price Checker
+
+**New seed module:** `backend/services/service_price_market.py`
+(~110 LOC). Builds all 51 rows (50 states + DC) programmatically
+from a `_STATE_PROFILES` list (state_code, name, region,
+cost-of-living index) crossed with regional `_BASE` median rates.
+`low = median × 0.75`, `high = median × 1.30`. Values are
+estimates informed by regional cost-of-living and publicly-
+available industry survey data; response includes an
+"Estimates…" disclaimer.
+
+**Endpoints** (all `_require_admin` — super_admin + admin only):
+- `POST   /api/calculators/service-price-check` — main lookup with
+  optional tenant-median comparison + `market_position`
+  (below_market / at_market / above_market, 15% band) +
+  `gap_recommendation` string.
+- `GET    /api/calculators/service-price-market` — index of 51
+  states + service type enum + label map (used by the frontend
+  to populate dropdowns).
+- `GET    /api/calculators/service-price-market/{state_code}` —
+  full detail row for one state, all 8 service rates.
+
+**Business-size mapping**: `small → low band`, `medium → median`,
+`large → high`. Emitted as `business_size_suggestion` in response.
+
+**Market position gap logic**: If `target_freq ∈ (weekly,
+biweekly, monthly)`, iterate active billing_plans in the tenant,
+compute median amount, then compare to market median. 15% band
+around market = at_market. Below → gap_recommendation reads
+"consider modest price adjustments on new customers." Above →
+"pricing power is strong but watch churn."
+
+**Frontend:** `frontend/src/pages/admin/ServicePriceChecker.jsx`
+(~200 LOC). Standalone page at `/admin/tools/price-check`
+(`<AdminOnly>` gated). 3-input form + main result card
+(Low/Median/High stat tiles + gap-recommendation box color-coded
+by position + estimates disclaimer + Copy summary) + all-services
+reference table for the selected state.
+
+### Bundled: Canonical Template Seeds
+
+**New seed script:** `backend/migrations/seed_canonical_templates.py`
+(~110 LOC). Idempotent by `(is_system=True, code)`. Seeds 4
+system-owned templates into `document_templates`:
+- `weekly_pool_service` — 8 readings + 10-item pool checklist
+- `weekly_landscape` — no readings + verbatim 10-item landscape
+  checklist (Phase 56.16 canonical order)
+- `new_customer_onboarding` — combined form, 6 readings + 10-item
+  onboarding checklist (measure volume, log equipment, gate code,
+  before-photos, etc.)
+- `winterization` — pool close, 4 readings + 8-item shutdown checklist
+
+Seeds get `is_system: True, tenant_id: "system"`. Executed
+in-session — 4 templates confirmed in Mongo.
+
+### T4.1 System-Templates UI Deferral
+
+The T4.1 saved-templates list UI update (`SYSTEM` badge +
+clone-to-edit affordance) is **deferred to the polish ship** —
+same principle as T4.3 deferral. Data lands (seed complete),
+UX polish batched with T4.3 + T3-followup + T3.2 recommend-flow.
+
+### Live curl evidence
+
+**T6.1** — AZ weekly pool service (admin, `business_size=medium`):
+```
+{
+  "state_code":"AZ", "state_name":"Arizona", "region":"southwest",
+  "service_type":"weekly_pool_service",
+  "market_rate": {"low":107, "median":143, "high":186},
+  "business_size_suggestion":"median",
+  "cost_of_living_index":1.02,
+  "your_median_price":120.0,
+  "market_position":"below_market",
+  "gap_recommendation":"Your median $120.0 is 16.1% below the AZ market median $143 — consider modest price adjustments on new customers.",
+  "notes":"Estimates based on 2025 regional industry surveys..."
+}
+```
+
+**T6.2** — CA vs MS cost-of-living sanity:
+- CA (west, COL 1.42): weekly_pool_service median **$234**
+- MS (south, COL 0.84): weekly_pool_service median **$109**
+- Ratio: 2.15× — confirms cost-of-living scaling is working
+  correctly (test asserts CA > MS × 1.5).
+
+### Tests
+
+`backend/tests/test_phase_t6_service_price_checker.py` — **12
+passed in 0.81s**.
+
+- TestSeedData (1): all 51 states present, all 8 service types
+  populated for every state, low < median < high per row.
+- TestPriceCheck (8): AZ known-answer band, CA > MS × 1.5,
+  business_size_suggestion map, unknown state 400, unknown
+  service_type 400, market_position populated when tenant has
+  matching plans, tech 403, customer 403.
+- TestMarketIndexEndpoint (2): index returns 51 states + service_types
+  enum, state detail returns market_rates + labels.
+- TestCanonicalTemplates (1): 4 system templates present with
+  the expected 4 codes.
+
+### Screenshot
+
+Admin (Alex Admin) on `/admin/tools/price-check`:
+- State: Arizona (AZ) · Service type: Weekly pool service · Business size: — any —
+- Result card: `Arizona · Weekly pool service · Region: southwest` header, three stat tiles **Low $107 · Median $143 (brand color) · High $186**
+- Gap card: `YOUR TENANT'S MEDIAN: $120 (BELOW MARKET)` · "Your median $120.0 is 16.1% below the AZ market median $143 — consider modest price adjustments on new customers." (red-border box)
+- Notes: "Estimates based on 2025 regional industry surveys and cost-of-living adjustments; verify against local competition."
+- **All Arizona service rates** reference table below with brand-colored medians for all 8 services.
+
+### Files touched
+
+- `backend/services/service_price_market.py` (**new**, ~110 LOC — moved from `config/` after discovering `config.py` is a module not a package)
+- `backend/routers/pool_calculators.py` (~130 LOC appended below T5)
+- `backend/migrations/seed_canonical_templates.py` (**new**, ~110 LOC)
+- `backend/migrations/__init__.py` (**new**, empty — makes migrations a package)
+- `backend/tests/test_phase_t6_service_price_checker.py` (**new**, 12 tests)
+- `frontend/src/pages/admin/ServicePriceChecker.jsx` (**new**, ~200 LOC)
+- `frontend/src/App.js` (import + `<AdminOnly>` route)
+- `frontend/src/pages/tech/ToolsHub.jsx` (1 admin tile + `Magnet` icon already imported)
+
+### Preflight
+`bash scripts/preflight.sh` → **exit 0** (`preflight OK`). Dead-
+import WARN stayed at 429 (no new false positives).
+
+### T-phase milestone
+
+All T-phases (T1 · T2 · T3 · T4.1 · T4.2 · T5 · T6) complete.
+Total surface delivered across this multi-ship arc:
+- 5 pool math calculators (T1+T2)
+- 3 business pricing tools (T3)
+- 2 business analysis tools (T5)
+- 2 document generators (T4)
+- 1 service price checker (T6)
+- Auto end-of-visit customer email + calculator attach (56.20)
+- Master invoices 404 hotfix + RingCentral diagnostics (56.19)
+- Zillow-for-techs full guardrail rollout (56.9b)
+- 4 canonical system templates seeded
+
+### Deferrals — ready for the polish ship
+
+1. **T4.3 Route Valuation PDF** (~20 min) — reuses `_get_reportlab`
+   + T5.1 endpoint math.
+2. **T4.1 system-templates UI** (~15 min) — SYSTEM badge on saved-
+   templates list + clone-to-edit affordance (data already in db).
+3. **T3-followup pricing_defaults editor UI** (~30 min) — one form
+   covering the 15 constants across all 3 defaults dicts.
+4. **T3.2 "Recommend price increase" one-click** (~45 min) — pipe
+   low_margin customer into T3.3 + draft rate-change email via
+   the 56.20 auto-email pipeline.
+
+Total polish batch: ~110 min. Sensible next ship after user
+review.
+

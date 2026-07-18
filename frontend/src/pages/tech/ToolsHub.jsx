@@ -70,6 +70,7 @@ const ADMIN_SECTIONS = [
       { key: "pricing-tools", icon: DollarSign, label: "Pricing Tools", desc: "In-cost · Portfolio margins · Price recommender", to: "/admin/tools/pricing" },
       { key: "analysis-tools", icon: TrendingUp, label: "Business Analysis", desc: "Route valuation · Pay model comparator", to: "/admin/tools/analysis" },
       { key: "document-generators", icon: ClipboardList, label: "Document Generators", desc: "Printable checklist templates · Quick service reports", to: "/admin/tools/documents" },
+      { key: "price-checker", icon: Magnet, label: "Service Price Checker", desc: "51-state market-rate lookup", to: "/admin/tools/price-check" },
       { key: "checks", icon: Wrench, label: "Check Register", desc: "Write checks, batch payroll", to: "/admin/checks" },
       { key: "dispatch", icon: CalendarDays, label: "Dispatch", desc: "Assign & auto-route jobs", to: "/admin/dispatch" },
     ],

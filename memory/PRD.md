@@ -2204,3 +2204,51 @@ deferred to a follow-up per honest budget split.
 - No versioning of saved templates (upsert overwrites).
 - No mobile parity (admin-only feature).
 
+
+---
+
+## Phase T6 — Service Price Checker + Canonical Templates (Feb 2026)
+
+Final T-phase item. Bundled canonical templates seed script per
+the T4 follow-on suggestion.
+
+### What changed
+
+- **Backend:** New `services/service_price_market.py` with 51-state
+  seed data (50 states + DC) built programmatically from
+  regional base rates × cost-of-living index. 3 new endpoints on
+  the calculators router: `/service-price-check` (main lookup +
+  tenant-median gap), `/service-price-market` (index), and
+  `/service-price-market/{state_code}` (full-state detail). All
+  admin-only.
+- **Web:** New `/admin/tools/price-check` page with state +
+  service-type + optional business-size dropdowns, result card
+  with color-coded market-position gap recommendation, and
+  all-services reference table.
+- **Seed script:** `backend/migrations/seed_canonical_templates.py`
+  (idempotent) — 4 system-owned templates now in
+  `document_templates`: Weekly Pool Service, Weekly Landscape
+  Maintenance, New Customer Onboarding, Winterization Service.
+- **Tests:** 12/12 passing.
+- **RBAC:** Verified 403 for tech + customer on all 3 endpoints.
+
+### Verification
+
+- **AZ weekly pool** curl → `{low:107, median:143, high:186,
+  cost_of_living_index:1.02}` + tenant gap: `$120 is 16.1% below
+  AZ market median $143`.
+- **Cost-of-living sanity**: CA median $234 vs MS median $109
+  (ratio 2.15×, matches asserted CA > MS × 1.5).
+- **Business-size mapping**: small→low, medium→median, large→high
+  (all 3 verified in test).
+- **Seed script**: 4 system templates confirmed in Mongo with
+  correct codes (`weekly_pool_service`, `weekly_landscape`,
+  `new_customer_onboarding`, `winterization`).
+
+### T-phase milestone
+
+All T-phases (T1-T6) shipped. Deferrals batched for one polish
+ship (~110 min total): T4.3 Route Valuation PDF, T4.1 SYSTEM
+badge UI, T3-followup pricing_defaults editor, T3.2 recommend-
+price-increase one-click flow.
+

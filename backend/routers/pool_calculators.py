@@ -863,3 +863,126 @@ async def pay_model_compare(
         "breakeven_hint": breakeven_hint,
     }
 
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase T6 — Service Price Checker (admin + super_admin only)
+# ══════════════════════════════════════════════════════════════════════
+from services.service_price_market import (
+    SERVICE_PRICE_MARKET, BY_STATE, SERVICE_TYPES, SERVICE_TYPE_LABELS,
+)
+
+
+class ServicePriceCheckIn(BaseModel):
+    state_code: str
+    service_type: str
+    business_size: Optional[str] = None  # small | medium | large
+
+
+@router.post("/service-price-check")
+async def service_price_check(
+    body: ServicePriceCheckIn,
+    user: dict = Depends(_require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    code = (body.state_code or "").upper().strip()
+    row = BY_STATE.get(code)
+    if not row:
+        raise HTTPException(400, f"Unknown state code: {body.state_code}")
+    if body.service_type not in SERVICE_TYPES:
+        raise HTTPException(400, f"Unknown service_type: {body.service_type}. "
+                                    f"Expected one of {list(SERVICE_TYPES)}")
+    band = row["market_rates"][body.service_type]
+    size = (body.business_size or "").lower() or None
+    suggestion_key = None
+    if size == "small":
+        suggestion_key = "low"
+    elif size == "medium":
+        suggestion_key = "median"
+    elif size == "large":
+        suggestion_key = "high"
+
+    # Optional tenant-median comparison (only for pool weekly/biweekly/monthly
+    # or landscape weekly/monthly which map onto billing_plans.frequency).
+    market_pos = None
+    gap_rec = None
+    your_median = None
+    freq_map = {
+        "weekly_pool_service": "weekly",
+        "biweekly_pool_service": "biweekly",
+        "monthly_pool_service": "monthly",
+        "weekly_landscape_maintenance": "weekly",
+        "monthly_landscape_maintenance": "monthly",
+    }
+    if body.service_type in freq_map:
+        target_freq = freq_map[body.service_type]
+        peer_amounts: list[float] = []
+        async for plan in db.billing_plans.find(
+            {"tenant_id": tenant["id"], "active": True}, {"_id": 0}
+        ):
+            pf = (plan.get("frequency") or "").lower().replace("-", "")
+            if pf == target_freq:
+                amt = float(plan.get("amount") or 0)
+                if amt > 0:
+                    peer_amounts.append(amt)
+        if peer_amounts:
+            your_median = round(median(peer_amounts), 2)
+            median_market = band["median"]
+            # 15% band around the market median = "at market".
+            lo = median_market * 0.85
+            hi = median_market * 1.15
+            if your_median < lo:
+                market_pos = "below_market"
+                pct = round((median_market - your_median) / median_market * 100, 1)
+                gap_rec = (f"Your median ${your_median} is {pct}% below the {code} market median "
+                            f"${median_market} — consider modest price adjustments on new customers.")
+            elif your_median > hi:
+                market_pos = "above_market"
+                pct = round((your_median - median_market) / median_market * 100, 1)
+                gap_rec = (f"Your median ${your_median} is {pct}% above the {code} market median "
+                            f"${median_market} — pricing power is strong but watch churn.")
+            else:
+                market_pos = "at_market"
+                gap_rec = (f"Your median ${your_median} is within 15% of the {code} market median "
+                            f"${median_market}.")
+
+    return {
+        "state_code": code,
+        "state_name": row["state_name"],
+        "region": row["region"],
+        "service_type": body.service_type,
+        "service_label": SERVICE_TYPE_LABELS.get(body.service_type, body.service_type),
+        "market_rate": band,
+        "business_size_suggestion": suggestion_key,
+        "cost_of_living_index": row["cost_of_living_index"],
+        "your_median_price": your_median,
+        "market_position": market_pos,
+        "gap_recommendation": gap_rec,
+        "notes": ("Estimates based on 2025 regional industry surveys and "
+                    "cost-of-living adjustments; verify against local competition."),
+    }
+
+
+@router.get("/service-price-market/{state_code}")
+async def service_price_market_row(
+    state_code: str,
+    user: dict = Depends(_require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    row = BY_STATE.get((state_code or "").upper().strip())
+    if not row:
+        raise HTTPException(400, "Unknown state code")
+    return {**row, "service_type_labels": SERVICE_TYPE_LABELS}
+
+
+@router.get("/service-price-market")
+async def service_price_market_index(
+    user: dict = Depends(_require_admin),
+):
+    return {
+        "states": [{"state_code": r["state_code"], "state_name": r["state_name"], "region": r["region"]}
+                    for r in SERVICE_PRICE_MARKET],
+        "service_types": list(SERVICE_TYPES),
+        "service_type_labels": SERVICE_TYPE_LABELS,
+    }
+
