@@ -1,0 +1,16 @@
+{
+  "module_code": "landscape-irrigation-timers",
+  "title": "Irrigation Timers / Controllers — Module 2",
+  "questions": [
+    {"q": "The controller's job is to send 24 VAC to the correct zone terminal for…", "choices": ["A random time", "The correct duration on the correct day", "The whole day", "The correct pressure"], "answer": 1},
+    {"q": "Residential controllers run zones…", "choices": ["All in parallel", "One at a time in sequence", "Only the largest first", "Randomly"], "answer": 1},
+    {"q": "Cycle-and-soak reduces runoff by…", "choices": ["Running full-blast one time", "Splitting a long runtime into shorter cycles with soak time between", "Watering only in rain", "Skipping the schedule"], "answer": 1},
+    {"q": "ETo (Evapotranspiration Reference) approximates…", "choices": ["Wind speed", "Water lost by a reference crop per day, driven by weather", "Pump pressure", "Sensor voltage"], "answer": 1},
+    {"q": "Smart controllers save 20–40% of water vs. fixed schedules because they…", "choices": ["Are more expensive", "Adjust each zone's runtime to daily ETo", "Skip fewer days", "Run more zones"], "answer": 1},
+    {"q": "A rain sensor stuck 'wet' will cause…", "choices": ["Zones to run longer", "All zones to stop until sensor dries", "The controller to overheat", "The pump to seize"], "answer": 1},
+    {"q": "Inline flow sensor 'high flow' alert vs baseline typically indicates…", "choices": ["A broken lateral or head", "The pump getting stronger", "Air in the line", "Sensor calibration only"], "answer": 0},
+    {"q": "Smart controller shows 'offline' repeatedly. First diagnostic step?", "choices": ["Replace the controller", "Verify Wi-Fi signal at the equipment location, then router reboot", "Reset factory defaults", "Rewire zone commons"], "answer": 1},
+    {"q": "Which fault appears as 'all zones fail simultaneously'?", "choices": ["Zone short", "Cut common wire", "Bad rain sensor stuck wet", "Both B and C"], "answer": 3},
+    {"q": "For exact keypad steps on a specific controller model, you should…", "choices": ["Memorize them", "Consult the OEM manual", "Use a competitor's manual", "Guess"], "answer": 1}
+  ]
+}

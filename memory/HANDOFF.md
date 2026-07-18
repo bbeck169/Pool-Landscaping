@@ -2425,3 +2425,132 @@ WARN unchanged at 429.
 Awaiting go-signal before committing D + E seed and before starting
 Phase 56.14a1 (Landscape modules 1-3 drafts).
 
+
+
+---
+
+## Ship 1 · 56.13d2-commit SHIPPED (Feb 2026)
+
+Ran `python training_seed/seed_pool_supplemental.py --commit` a second
+time. Script is idempotent (upsert by code) so A/B/C rows were
+re-written in place; D + E freshly inserted.
+
+**Verification:**
+- `db.training_modules.count_documents({department:"pool", is_system:true})` = **6** (cpo-prep + 5 supplemental). Matches the assertion in the user brief.
+- Pool tech (`mike@aquaterra.com`) `GET /api/training/modules` returns **all 6** codes: `cpo-prep`, `pool-filter-cleaning`, `pool-jandy-orings`, `pool-pump-priming`, `pool-shaft-seal`, `pool-vsp-programming`.
+- Preflight exit 0. Dead-import baseline unchanged at 429.
+
+No new files this ship — mechanical seed run only.
+
+---
+
+## Ship 2 · 56.14a1 · Landscape Training Modules 1-3 drafts SHIPPED (Feb 2026)
+
+**Content-drafts ship. DB seed BLOCKED pending user review.**
+
+### Deliverables
+
+Three module directories under
+`backend/training_seed/training_landscape_chapters/`:
+
+- **Module 1 · Irrigation Repairs**
+  (`module_1_irrigation_repairs/`) — 7 chapters · **1,913 words** ·
+  10 quiz Qs.
+  System overview, diagnostic sequence, head replacement (spray/rotor/drip),
+  lateral line repair (PVC + poly), valve rebuild + solenoid swap, wire
+  tracing + multi-strand faults, backflow preventer + code compliance.
+
+- **Module 2 · Irrigation Timers/Controllers**
+  (`module_2_irrigation_timers/`) — 7 chapters · **1,893 words** ·
+  10 quiz Qs.
+  Controller anatomy, programs/start-times/run-times, ETo + smart
+  controllers, sensor integration (rain/freeze/soil/flow), flow
+  monitoring + leak alerts, Wi-Fi / cloud gotchas, diagnostics +
+  escalation.
+
+- **Module 3 · Small Engine Repair & Maintenance**
+  (`module_3_small_engine/`) — 7 chapters · **2,160 words** ·
+  10 quiz Qs.
+  Small-engine landscape (2-stroke vs 4-stroke), three-condition
+  rule (compression → spark → fuel), carb cleaning + rebuild,
+  ignition + spark plugs + starting systems, oil/air/fuel
+  maintenance, 2-stroke specifics, field diagnostics + escalation.
+
+**Combined totals:** 21 lessons · **5,966 words** · 30 quiz Qs.
+
+### IP-safety guard (Module 2 — controller menus)
+
+Same architecture as pool Module E:
+
+- **Word-boundary regex blacklist** in `seed_landscape.py`:
+  `\bpush prg\b`, `\bpress prg\b`, `\bstation [1-9]\b`,
+  `\bprogram [abc]\b`, `\brotary switch\b`.
+- **Positive redirect assertion**: every Module-2 chapter must contain
+  "OEM manual" — enforced by
+  `TestIPSafety.test_module_2_redirects_to_oem_manual`.
+- Universal blacklist covers verbatim OEM copyright / republish markers
+  for Hunter, Rain Bird, Toro, Honda, Briggs.
+- **Brand names are legitimate prose** (Rachio, B-hyve, Hydrawise,
+  Stihl, Echo etc. appear in context). Only OEM menu-label / keypress
+  fingerprints are blacklisted.
+
+### First-pass false-positive fixes
+
+- **`\bprogram [abc]\b`** caught Chapter 2's "Programs (A, B, C, …)"
+  usage — legitimately looked like an OEM menu label. Rewrote as
+  "Distinct programs exist so different zones can run on different
+  schedules. Example: turf zones on one program…"
+- **`\bhydrawise\b`** initially in blacklist caught Chapter 3's
+  "Hunter Hydrawise, Rain Bird ESP-Me3 with LNK, Rachio, B-hyve"
+  brand list. But Hydrawise is a product/brand name, not menu content
+  — symmetric with Rachio + B-hyve which weren't blacklisted. Removed
+  from both seed script + test blacklist.
+
+Both fixes preserve armed IP-safety scrutiny — the remaining regexes
+(`push prg`, `station [1-9]`, `program [abc]`, `rotary switch`,
+`press prg`) genuinely only appear when reproducing an OEM keypad
+procedure.
+
+### Files touched / new
+
+- 21 chapter `.md` files across 3 module dirs.
+- 3 `quiz.json` files.
+- `backend/training_seed/seed_landscape.py` — **NEW** ~200 LOC. Dry-run
+  by default; `--commit` locked. Same schema as pool script.
+- `backend/tests/test_phase_56_14a1_landscape_seed.py` — **NEW** 10 tests.
+
+### Tests
+
+`backend/tests/test_phase_56_14a1_landscape_seed.py` — **10/10 passed
+in 0.11s**:
+
+- TestSeedShape (3): dirs exist, 7 chapters each, quiz.json present.
+- TestIPSafety (4): disclaimer, universal blacklist, Module-2
+  regex blacklist, Module-2 OEM-manual redirect.
+- TestSeedScriptDryRun (2): dry-run RC0 with `Modules ready: 3 /
+  Lessons: 21`; no "Committing to Mongo" leak on bare invocation.
+- TestQuizAnswers (1): every answer_index selects a valid non-empty choice.
+
+**Combined pool + landscape suite:** 20/20 tests pass in 0.20s.
+
+### Preflight
+
+`bash scripts/preflight.sh` → **exit 0** (`preflight OK`). Dead-import
+WARN unchanged at 429.
+
+### Explicitly STOPPED per user directive
+
+- No `--commit` for landscape modules. DB seed blocked pending user
+  review.
+- Not proceeding to 56.14a2 (Modules 4-7) until user greenlights this
+  batch.
+
+### Ready-for-review checklist
+
+1. Skim 2-3 chapters/module for accuracy and voice.
+2. Confirm Module 2 teaches controller concepts (ETo, cycle-and-soak,
+   sensor integration) without leaking OEM menu specifics.
+3. Confirm draft length (270-310 wpc average) is acceptable, or
+   request expansion.
+4. Approve → 56.14a1-commit ships `--commit` alongside 56.14a2 drafts.
+

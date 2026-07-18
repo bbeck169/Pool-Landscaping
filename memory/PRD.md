@@ -2395,3 +2395,26 @@ unchanged at 429.
 **Next:** user review → 56.13d2-commit → 56.14a1 (Landscape 1-3
 drafts).
 
+
+
+## Ship 1 · 56.13d2-commit + Ship 2 · 56.14a1 drafts (Feb 2026)
+
+**Ship 1 · 56.13d2-commit** — All 5 supplemental pool modules now
+live in `db.training_modules`. Pool tech sees 6 total (cpo-prep +
+supplemental A-E). Landscape tech correctly hidden.
+
+**Ship 2 · 56.14a1 drafts** — 3 landscape modules drafted; **seed
+BLOCKED** pending review:
+- Module 1 · Irrigation Repairs — 7 chapters · 1,913 words · 10 quiz Qs.
+- Module 2 · Irrigation Timers/Controllers — 7 chapters · 1,893 words · 10 quiz Qs.
+- Module 3 · Small Engine Repair — 7 chapters · 2,160 words · 10 quiz Qs.
+
+Module 2 carries an armed IP-safety guard (blacklist of controller
+menu fingerprints + positive "OEM manual" redirect). Live-fire proven
+via first-pass false-positive catches → rewrites preserve armed guard.
+
+**Tests:** 20/20 passed in 0.20s (pool + landscape combined).
+Preflight exit 0. Dead-imports at 429.
+
+**Next:** user review of landscape drafts → 56.14a2 (Modules 4-7 drafts).
+

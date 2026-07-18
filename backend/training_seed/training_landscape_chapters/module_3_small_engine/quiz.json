@@ -1,0 +1,16 @@
+{
+  "module_code": "landscape-small-engine",
+  "title": "Small Engine Repair & Maintenance — Module 3",
+  "questions": [
+    {"q": "Diagnose a non-starting engine in what order?", "choices": ["Fuel → spark → compression", "Compression → spark → fuel", "Random", "Spark → compression → fuel"], "answer": 1},
+    {"q": "A 4-stroke with 45 psi compression will…", "choices": ["Run fine", "Never start reliably", "Need only a plug", "Need only fresh fuel"], "answer": 1},
+    {"q": "The single most common small-engine repair is…", "choices": ["Blade replacement", "Carburetor cleaning / rebuild (ethanol varnish)", "Piston replacement", "Muffler swap"], "answer": 1},
+    {"q": "Never ream a carb jet with wire because…", "choices": ["Wire breaks in the jet", "It enlarges the jet and changes the metering", "It scratches the paint", "It's slow"], "answer": 1},
+    {"q": "A healthy spark plug insulator color after use is…", "choices": ["Black wet", "Black dry", "Tan / light gray", "White ash"], "answer": 2},
+    {"q": "Running a small engine without an air filter…", "choices": ["Improves airflow", "Is fine for short jobs", "Scores the cylinder within hours and destroys the engine", "Boosts power"], "answer": 2},
+    {"q": "The standard modern 2-stroke oil ratio is…", "choices": ["25:1", "32:1", "50:1", "100:1"], "answer": 2},
+    {"q": "Running a 2-stroke on straight gas (no oil mix) results in…", "choices": ["Slightly more power", "A seized piston", "Nothing bad", "Better fuel economy"], "answer": 1},
+    {"q": "Field-repair time budget per broken tool is roughly…", "choices": ["5 minutes", "20 minutes", "1 hour", "Unlimited"], "answer": 1},
+    {"q": "3 major repairs on the same tool in 12 months means…", "choices": ["Keep repairing", "Retire the tool — replacement math wins", "Warranty claim only", "Nothing"], "answer": 1}
+  ]
+}

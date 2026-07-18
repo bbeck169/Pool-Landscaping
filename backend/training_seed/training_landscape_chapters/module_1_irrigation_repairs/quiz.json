@@ -1,0 +1,16 @@
+{
+  "module_code": "landscape-irrigation-repairs",
+  "title": "Irrigation Repairs — Module 1",
+  "questions": [
+    {"q": "The five layers of an irrigation system are…", "choices": ["POC / mainline / valves / laterals / heads", "Timer / pump / hose / spray / drain", "Sensor / valve / motor / pipe / grass", "Water / power / dirt / grass / sky"], "answer": 0},
+    {"q": "Two zones fail simultaneously. Most likely cause?", "choices": ["Broken heads on both", "Shared common wire or master valve", "Same broken lateral", "Dirt in both diaphragms"], "answer": 1},
+    {"q": "Never use pipe tape on plastic pop-up head threads because…", "choices": ["It's expensive", "The threads are self-sealing and tape traps grit", "It voids warranty", "It's slower"], "answer": 1},
+    {"q": "The #1 cause of PVC repair callbacks is…", "choices": ["Wrong cement brand", "Bonding wet PVC (skipping full dry)", "Wrong size coupling", "Not deburring"], "answer": 1},
+    {"q": "A healthy irrigation solenoid should read approximately…", "choices": ["5–10 ohms", "20–60 ohms", "200–500 ohms", "Infinite (open circuit)"], "answer": 1},
+    {"q": "Should you lubricate a valve diaphragm?", "choices": ["Yes, silicone", "Yes, petroleum", "Yes, water only", "No, it seals dry against the seat"], "answer": 3},
+    {"q": "Outdoor wire splices should ALWAYS use…", "choices": ["Wire nuts", "Electrical tape", "A waterproof splice kit (gel-fill or heat-shrink solder)", "Bare copper twist"], "answer": 2},
+    {"q": "A PVB backflow preventer must be installed…", "choices": ["Below the mainline", "At least 12″ above the highest downstream head", "Only indoors", "In the shade only"], "answer": 1},
+    {"q": "A failed backflow preventer must be…", "choices": ["Bypassed temporarily", "Replaced/repaired before the system is used again", "Ignored if not leaking", "Painted"], "answer": 1},
+    {"q": "First diagnostic step when a whole zone won't water at all?", "choices": ["Dig up the lateral", "Manually activate the zone at the controller", "Replace the heads", "Call the customer"], "answer": 1}
+  ]
+}
