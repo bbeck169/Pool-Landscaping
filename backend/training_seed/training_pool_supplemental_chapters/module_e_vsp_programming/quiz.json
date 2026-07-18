@@ -1,0 +1,16 @@
+{
+  "module_code": "pool-vsp-programming",
+  "title": "Variable-Speed Pump Programming — Module E",
+  "questions": [
+    {"q": "According to the affinity laws, halving a pump's RPM cuts power draw by approximately…", "choices": ["1/2", "1/4", "1/8", "1/16"], "answer": 2},
+    {"q": "How does flow scale with pump speed?", "choices": ["Linearly", "Squared", "Cubed", "Logarithmically"], "answer": 0},
+    {"q": "How does head pressure scale with pump speed?", "choices": ["Linearly", "Squared", "Cubed", "Logarithmically"], "answer": 1},
+    {"q": "The correct programming philosophy is to target a…", "choices": ["Fixed RPM", "Fixed pressure number", "Flow (GPM) for each duty", "Time-of-day only"], "answer": 2},
+    {"q": "A 20,000-gal pool with an 8-hour turnover target needs average flow of about…", "choices": ["21 GPM", "42 GPM", "80 GPM", "120 GPM"], "answer": 1},
+    {"q": "When a pool has an automation controller, the VSP should be…", "choices": ["Programmed only on-pump, controller ignored", "Slaved to the controller with the on-pump schedule disabled", "Run manually", "Bypassed entirely"], "answer": 1},
+    {"q": "A running VSP shows filter pressure well above design range. Correct first hypothesis?", "choices": ["Broken motor", "Downstream restriction (dirty filter, closed valve, scale)", "Programmed RPM is wrong", "Nothing — pressure doesn't matter"], "answer": 1},
+    {"q": "A salt-water pool's overnight-low RPM must be…", "choices": ["As low as possible with no floor", "Above the salt cell's minimum flow floor", "Full-speed always", "Off overnight"], "answer": 1},
+    {"q": "A pump returns to a default RPM after every power flick. What is the likely misconfiguration?", "choices": ["Bad impeller", "Control source set to internal / local instead of external", "Too much salt", "Old firmware only"], "answer": 1},
+    {"q": "You see repeated overcurrent / drive faults on a VSP. Best action?", "choices": ["Keep resetting the breaker", "Isolate the pump and consult the OEM", "Bypass the drive", "Ignore — the pool works"], "answer": 1}
+  ]
+}

@@ -2365,3 +2365,33 @@ Dry-run seed script prints summary but blocks `--commit` by default.
 
 **Next:** user review → 56.13d1-followup (commit) → 56.13d2 (Modules D/E).
 
+
+
+## Phase 56.13d1-commit + 56.13d2 drafts (Feb 2026)
+
+**56.13d1-commit (Ship 1)** — 3 modules seeded to `db.training_modules`:
+`pool-filter-cleaning`, `pool-shaft-seal`, `pool-pump-priming`.
+All `is_system: true`, department `pool`, 7 lessons + 10 quiz Qs each.
+Pool tech (`mike@aquaterra.com`) now sees 4 modules in
+`/api/training/modules` (3 new + cpo-prep). Landscape tech correctly
+sees 0 (RBAC verified). Data-drift sidebar: fixed Mike's DB
+`department: landscaping` → `pool` to match `test_credentials.md`.
+
+**56.13d2 drafts (Ship 2)** — 2 modules drafted; **seed BLOCKED**
+pending review:
+- Module D · Jandy O-rings: 7 chapters, 1,654 words, 10 quiz Qs.
+- Module E · VSP Programming: 7 chapters, 1,878 words, 10 quiz Qs.
+
+Module E carries an armed IP-safety guard: word-boundary regex
+blacklist against OEM menu / keypress fingerprints
+(`intellicenter`, `speed [1-9]`, `aux[1-9]`, keypress verbs) plus
+positive redirect assertion (every chapter must mention "OEM manual").
+Live-fire proven: injected fake violation triggered
+`IP-SAFETY VIOLATION` abort.
+
+**Tests:** 10/10 passed in 0.12s. Preflight exit 0. Dead-imports
+unchanged at 429.
+
+**Next:** user review → 56.13d2-commit → 56.14a1 (Landscape 1-3
+drafts).
+

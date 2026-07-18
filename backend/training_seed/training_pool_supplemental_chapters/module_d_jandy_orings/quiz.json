@@ -1,0 +1,16 @@
+{
+  "module_code": "pool-jandy-orings",
+  "title": "Jandy O-rings — Module D",
+  "questions": [
+    {"q": "The molded Jandy model number on the valve body is used to…", "choices": ["Set the diverter angle", "Order the correct rebuild kit", "Reset the pump timer", "Look up the customer"], "answer": 1},
+    {"q": "Weeping down the outside of the valve stem indicates…", "choices": ["Bonnet O-ring failure", "Shaft O-ring failure", "Diverter seal failure", "Check-valve flap failure"], "answer": 1},
+    {"q": "Cross-flow between two ports indicates a…", "choices": ["Cracked bonnet", "Failed diverter face seal", "Loose handle", "Bad JVA"], "answer": 1},
+    {"q": "Which tool must NOT be used to lift O-rings from a groove?", "choices": ["Plastic pick", "Wooden dowel", "Fingers", "Metal pick"], "answer": 3},
+    {"q": "Correct lube for Jandy valve O-rings is…", "choices": ["Petroleum jelly", "Motor oil", "Teflon-safe silicone", "Wax"], "answer": 2},
+    {"q": "Bonnet screws should be tightened in what pattern?", "choices": ["Around the circle in order", "Star pattern (opposite sides)", "Only two hand-tight", "Torque randomly"], "answer": 1},
+    {"q": "Over-torquing bonnet screws risks…", "choices": ["Wear on threads", "Cracking the plastic bonnet", "Loosening the diverter seal", "Nothing — snug them hard"], "answer": 1},
+    {"q": "A check valve losing overnight prime with an intact flap most likely has…", "choices": ["Wrong flap orientation", "Bypassing body-to-lid O-ring", "Bad pump", "Bad chemistry"], "answer": 1},
+    {"q": "Recommended NeverLube diverter O-ring rebuild interval in desert climates is…", "choices": ["Every 6 months", "Every year", "Every 3–5 years", "Only on failure"], "answer": 2},
+    {"q": "The Jandy Valve Actuator (JVA) part most likely to age faster than the valve itself is the…", "choices": ["Drive coupling", "Weather boot at the base", "Motor housing", "Handle"], "answer": 1}
+  ]
+}

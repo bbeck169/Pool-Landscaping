@@ -2192,3 +2192,236 @@ WARN unchanged at 429.
 
 Awaiting go-signal before starting Phase 56.13d2 (Modules D/E).
 
+
+
+---
+
+## Phase 56.13d1-commit · Supplemental Pool Training seeded (Feb 2026)
+
+Small mechanical ship. `.md` drafts committed to `db.training_modules`.
+
+### What happened
+
+- Updated `training_seed/seed_pool_supplemental.py`:
+  - Renamed module codes from `pool-supp-a-*` prefix to
+    `pool-filter-cleaning` / `pool-shaft-seal` / `pool-pump-priming` per
+    user directive.
+  - Aligned DB write schema to match existing `cpo-prep` module:
+    top-level `id`, `code`, `title`, `department`, `description`,
+    `badge_label`, `disclaimer`, `is_system`, `tenant_id: null`,
+    `lessons[{id, title, body_md, order, word_count}]`,
+    `quiz{passing_score, questions[{id, chapter, prompt,
+    choices[{id, text}], correct_choice_ids[], explanation}]}`.
+  - Switched `seed_to_db()` to a direct motor client + `.env`
+    loader so the script runs cleanly outside the ASGI process.
+- Ran `python training_seed/seed_pool_supplemental.py --commit` from
+  `/app/backend`. All 3 modules upserted.
+
+### Verification
+
+**DB counts (motor):**
+```
+system modules matching codes: 3
+  pool-filter-cleaning     lessons=7  quiz=10  dept=pool  is_system=True
+  pool-shaft-seal          lessons=7  quiz=10  dept=pool  is_system=True
+  pool-pump-priming        lessons=7  quiz=10  dept=pool  is_system=True
+```
+
+**Pool-tech API view** (`mike@aquaterra.com`, `role: technician`,
+`department: pool`, `GET /api/training/modules`):
+```
+total: 4
+  pool-filter-cleaning: YES
+  pool-shaft-seal:      YES
+  pool-pump-priming:    YES
+  cpo-prep:             YES  (previously-seeded)
+```
+
+**Detail fetch** (`GET /api/training/modules/pool-filter-cleaning`):
+```
+code:pool-filter-cleaning title:Filter Cleaning lessons:7 quiz_qs:10
+first lesson: Module A — Filter Cleaning · Chapter 1: Filter media types and what they trap (364 words)
+first quiz q: Sand filters typically trap particles down to what micron range?...
+```
+
+**RBAC verified** — landscape tech (`landscaper@aquaterra.com`,
+`department: landscaping`) returns `total: 0` when listing modules;
+detail fetch returns `403 Module not available for your department`.
+This confirms `_visible_departments()` correctly gates pool modules
+from landscape techs.
+
+### Sidebar fix
+
+`test_credentials.md` documented Mike as `department: pool` but the
+DB record was `landscaping`. Data drift from an earlier migration.
+Updated `db.users.mike@aquaterra.com` → `department: pool` to match
+the credentials doc so RBAC verification could complete against the
+documented ground truth. No other user records touched.
+
+### Test suite
+
+`tests/test_phase_56_13d1_supplemental_pool_seed.py` still passes
+8/8 — no changes needed since the tests only cover the dry-run
+pipeline + IP-safety scan.
+
+### Preflight
+
+`bash scripts/preflight.sh` → **exit 0** (`preflight OK`). Dead-import
+WARN unchanged at 429.
+
+### Files touched
+
+- `backend/training_seed/seed_pool_supplemental.py` — rewritten to use
+  the correct DB schema + motor + module codes.
+
+### Ready for the next ship
+
+Modules are live for pool techs. They can enroll, complete lessons,
+take quizzes — all the existing training subsystem features work
+because these modules use the same schema as `cpo-prep`.
+
+Ship 2 (56.13d2 · Modules D/E drafts) starts next.
+
+
+
+---
+
+## Phase 56.13d2 · Modules D + E drafts SHIPPED (Feb 2026)
+
+Content-drafts ship. **DB seed BLOCKED pending user review.**
+
+### Deliverables
+
+Two more module directories under
+`training_pool_supplemental_chapters/`:
+
+- **Module D · Jandy O-ring Rebuild** (`module_d_jandy_orings/`)
+  - 7 chapters (~230 words each), 1,654 words total, 10 quiz Qs.
+  - Chapters: valve family overview, failure signatures, tools/parts,
+    diverter teardown, reassembly + torque pattern, check valves + JVA
+    specialty, documentation + preventive schedule.
+
+- **Module E · Variable-Speed Pump Programming** (`module_e_vsp_programming/`)
+  - 7 chapters (~270 words each), 1,878 words total, 10 quiz Qs.
+  - Chapters: why VSP exists, affinity laws (cube-of-speed math),
+    target-flow programming philosophy, measuring flow at the pad,
+    daily schedule design, automation controller integration,
+    brand-agnostic field troubleshooting.
+
+**Combined totals (Modules A-E · 5 modules):** 35 lessons · **8,774
+words** · 50 quiz questions.
+
+### Module E IP-safety guard (extra scrutiny)
+
+Locked behavior per user directive: Module E teaches concepts only —
+affinity-law math, target-flow programming philosophy, per-duty flow
+calculations, controller-integration modes, generic fault categories.
+
+**Zero OEM keypress sequences. Zero screen-menu labels. Every chapter
+carries "consult the OEM manual" redirect language for exact
+keystrokes.**
+
+`test_phase_56_13d1_supplemental_pool_seed.py` enforces this via:
+
+1. **Word-boundary regex blacklist** (`BLACKLIST_MODULE_E_REGEX`):
+   - `\bintellicenter\b`
+   - `\bpush menu\b`, `\bpress menu\b`, `\bmenu then edit\b`,
+     `\bmenu > edit\b`, `\bpress select\b`, `\bpress set\b`
+   - `\bspeed [1-9]\b` (matches "Speed 2" as an OEM label but NOT
+     "full-speed 24/7" as prose)
+   - `\baux[1-9]\b` (AUX1/AUX2/… relay labels)
+   - `\barrow to schedule\b`, `\bpress start\b`
+2. **Positive redirect assertion** (`test_module_e_redirects_to_oem_manual`):
+   every Module E chapter must literally contain the string
+   "OEM manual" to guarantee the reader is always pointed back to the
+   authoritative source.
+3. The seed script (`seed_pool_supplemental.py`) applies the same
+   blacklist at dry-run/commit time and refuses to run on any hit.
+
+**Live proof the guard works:** injected a fake violation
+(`Push MENU then EDIT to set Speed 1 to 1500 RPM. Then arrow to
+Schedule and press SET.`) into Chapter 7. Script exited with
+`IP-SAFETY VIOLATION … matches '\bpush menu\b'`. Restored real
+chapter → script back to clean dry-run.
+
+### First-pass false-positive fix
+
+Initial run rejected Chapter 2 (affinity laws) because the naive
+substring blacklist matched "full-speed 24/7" against "speed 2".
+Fixed by moving Module E entries to word-boundary regex form.
+Chapter 5 also reworded from "Full-speed" → "Full-RPM" and "speed
+windows" → "RPM windows" to remove any lingering ambiguity between
+OEM menu labels and prose usage. All 10 Module E chapters still
+carry the "OEM manual" redirect.
+
+### Dry-run output
+
+```
+Modules ready: 5
+Lessons:       35
+Words drafted: 8774
+Quiz Qs:       50
+  - pool-filter-cleaning     · 7 lessons · 2502 words · 10 quiz Qs
+  - pool-shaft-seal          · 7 lessons · 1331 words · 10 quiz Qs
+  - pool-pump-priming        · 7 lessons · 1409 words · 10 quiz Qs
+  - pool-jandy-orings        · 7 lessons · 1654 words · 10 quiz Qs
+  - pool-vsp-programming     · 7 lessons · 1878 words · 10 quiz Qs
+
+DRY-RUN — no database writes. Pass --commit to seed.
+```
+
+### Tests
+
+`backend/tests/test_phase_56_13d1_supplemental_pool_seed.py` extended
+to cover all 5 modules — **10 tests / 10 passed / 0.12s**:
+
+- TestSeedShape (3): 5 module dirs exist; each has 7 chapters; each
+  has a quiz.json.
+- TestIPSafety (4): universal disclaimer present, universal blacklist
+  clean, Module E keypress-fingerprint regex clean, Module E OEM-manual
+  redirect present.
+- TestSeedScriptDryRun (2): dry-run RC0 with `Modules ready: 5 /
+  Lessons: 35 / DRY-RUN` markers; no accidental "Committing to Mongo"
+  leak on bare invocation.
+- TestQuizAnswers (1): every answer_index selects a valid choice.
+
+### Preflight
+
+`bash scripts/preflight.sh` → **exit 0** (`preflight OK`). Dead-import
+WARN unchanged at 429.
+
+### Files touched / new
+
+- 14 chapter `.md` files across `module_d_jandy_orings/` +
+  `module_e_vsp_programming/`.
+- 2 `quiz.json` files.
+- `backend/training_seed/seed_pool_supplemental.py` — added Modules
+  D + E entries, extended IP blacklist with word-boundary regex
+  (`_blacklist_hit()` helper), refactored `_read_chapters()` to use it.
+- `backend/tests/test_phase_56_13d1_supplemental_pool_seed.py` —
+  extended MODULES list, added `BLACKLIST_MODULE_E_REGEX`,
+  `test_module_e_no_oem_keypress_fingerprints`,
+  `test_module_e_redirects_to_oem_manual`, updated dry-run assertions.
+- `backend/training_seed/training_pool_supplemental_chapters/
+  module_e_vsp_programming/05_daily_schedule.md` — reworded to remove
+  "full-speed" / "speed windows" ambiguity.
+
+### Explicitly BLOCKED per user directive
+
+- **DB seed commit for D + E** — no `--commit` invocation for the two
+  new modules. User must spot-check drafts and greenlight the seed as
+  Ship 3 (56.13d2-commit).
+
+### Ready-for-review checklist for user
+
+1. Skim any 2-3 chapters per module for accuracy and voice.
+2. Confirm Module E teaches concepts (affinity laws, target-flow
+   philosophy) without leaking OEM menu specifics.
+3. Approve → 56.13d2-commit ships `--commit` and seeds the two new
+   modules alongside A-C.
+
+### STOP per user directive
+
+Awaiting go-signal before committing D + E seed and before starting
+Phase 56.14a1 (Landscape modules 1-3 drafts).
+

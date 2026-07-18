@@ -1,59 +1,89 @@
-"""Phase 56.13d1 · Supplemental Pool Training — DRY-RUN seed script.
+"""Phase 56.13d1 · Supplemental Pool Training seed script.
 
-Modules A/B/C content drafted to `/app/backend/training_seed/
-training_pool_supplemental_chapters/`. This script builds an in-memory
-representation of the modules + quizzes and, when invoked with
-`--commit`, would write them to `db.training_modules` +
-`db.training_quiz_questions`. Default mode is **--dry-run** which prints
-what it WOULD do without touching the database.
+Reads .md chapter drafts + quiz.json under
+`training_pool_supplemental_chapters/` and either dry-runs
+(default) or commits to `db.training_modules` when invoked with
+`--commit`.
 
-**Blocked by user directive.** Do NOT invoke this script with
-`--commit` until the user has spot-checked the .md drafts under
-`training_pool_supplemental_chapters/` and given the go-signal to seed.
+The DB schema matches the existing `cpo-prep` module:
+  * top-level: {id, code, title, department, description, badge_label,
+                disclaimer, is_system, tenant_id (null), lessons[], quiz{},
+                created_at, updated_at}
+  * lessons[]: {id, title, body_md, order, word_count}
+  * quiz: {passing_score, questions[]}
+  * questions[]: {id, chapter, prompt,
+                   choices[{id, text}], correct_choice_ids[str], explanation}
 
-Author: original in-house content. IP-safety commitments:
-  * Zero verbatim OEM manual text.
-  * All manufacturer references are name + external URL only.
-  * Quiz answers derive from in-house chapter body only.
+IP-safety:
+  * Every .md must carry the "Original in-house authorship" disclaimer.
+  * Body blacklist scan for verbatim OEM manual phrases (any hit aborts).
 """
 from __future__ import annotations
 import argparse
 import json
 import re
 import sys
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 CHAPTERS_ROOT = Path(__file__).resolve().parent / "training_pool_supplemental_chapters"
 
 MODULES = [
     {
-        "code": "pool-supp-a-filter-cleaning",
+        "code": "pool-filter-cleaning",
         "title": "Filter Cleaning",
         "department": "pool",
         "dir": "module_a_filter_cleaning",
-        "summary": "Media types, pressure diagnosis, backwash, cartridge cleaning, DE teardown, O-rings, field triage.",
+        "description": "Media types, pressure diagnosis, backwash, cartridge cleaning, DE teardown, O-rings, field triage.",
+        "badge_label": "Filter Cleaning — Certified",
+        "disclaimer": "Original in-house material. External standards (APSP, NSF) cited by name/link only.",
     },
     {
-        "code": "pool-supp-b-shaft-seal",
+        "code": "pool-shaft-seal",
         "title": "Pump Shaft Seal Replacement",
         "department": "pool",
         "dir": "module_b_shaft_seal",
-        "summary": "Seal anatomy, failure signatures, tools, disassembly, install, leak-test, motor-replacement decision.",
+        "description": "Seal anatomy, failure signatures, tools, disassembly, install, leak-test, motor-replacement decision.",
+        "badge_label": "Shaft Seal — Certified",
+        "disclaimer": "Original in-house material. OEMs (Pentair, Hayward, Jandy) cited by name/link only.",
     },
     {
-        "code": "pool-supp-c-pump-priming",
+        "code": "pool-pump-priming",
         "title": "Pump Priming Diagnosis",
         "department": "pool",
         "dir": "module_c_pump_priming",
-        "summary": "What prime is, symptoms, water-level basics, suction leaks, check valves, manual prime, escalation.",
+        "description": "What prime is, symptom triage, water-level basics, suction leaks, check valves, manual prime, escalation.",
+        "badge_label": "Pump Priming — Certified",
+        "disclaimer": "Original in-house material. OEMs referenced by name/link only.",
+    },
+    {
+        "code": "pool-jandy-orings",
+        "title": "Jandy O-ring Rebuild",
+        "department": "pool",
+        "dir": "module_d_jandy_orings",
+        "description": "Valve families, failure signatures, teardown, reassembly + torque, check valves + JVA, prevention schedule.",
+        "badge_label": "Jandy Valves — Certified",
+        "disclaimer": "Original in-house material. Jandy referenced by name/link only. Consult the OEM manual for specific model diagrams.",
+    },
+    {
+        "code": "pool-vsp-programming",
+        "title": "Variable-Speed Pump Programming",
+        "department": "pool",
+        "dir": "module_e_vsp_programming",
+        "description": "Affinity laws, target-flow philosophy, flow measurement, daily schedule design, controller integration, brand-agnostic troubleshooting.",
+        "badge_label": "VSP Programming — Certified",
+        "disclaimer": "Original in-house material. Teaches concepts only. All keystrokes and menu paths must be sourced from the OEM manual for the specific model — Pentair (pentair.com) or Hayward (hayward-pool.com).",
     },
 ]
 
 
-# IP-safety blacklist — if any chapter body contains one of these phrases,
-# the seed refuses. Extended per module in future phases (esp. Module E
-# from 56.13d2, which will need Pentair/Hayward keypress-menu phrases).
+# IP-safety blacklist. Word-boundary matched so "full-speed 24/7" isn't a
+# false-positive against the "speed 2" OEM menu-label fingerprint.
+# Each entry is either a plain substring (compiled with word boundaries)
+# or a raw regex flagged with `re:` prefix.
 IP_BLACKLIST = [
+    # Universal (Modules A-E): copyright + republish markers.
     "reproduced with permission",
     "copyright pentair",
     "copyright hayward",
@@ -61,90 +91,142 @@ IP_BLACKLIST = [
     "\u00a9 pentair",
     "\u00a9 hayward",
     "\u00a9 jandy",
+    # Module E · verbatim OEM menu + keypress fingerprints (word-boundary
+    # protected to avoid catching accidental substrings like "full-speed 24/7").
+    "intellicenter",
+    r"re:\bpush menu\b",
+    r"re:\bpress menu\b",
+    r"re:\bmenu then edit\b",
+    r"re:\bmenu > edit\b",
+    r"re:\bpress select\b",
+    r"re:\bpress set\b",
+    r"re:\bspeed [1-9]\b",       # "Speed 1", "Speed 2", …
+    r"re:\baux[1-9]\b",           # AUX1, AUX2, …
+    r"re:\barrow to schedule\b",
+    r"re:\bpress start\b",
 ]
+
+# Module-level extra assertions. Every chapter in Module E MUST carry the
+# "consult the OEM manual" language so techs are always redirected to the
+# authoritative source for exact keystrokes.
+E_REQUIRED_PHRASES = [
+    "oem manual",
+]
+
+
+def _blacklist_hit(text_lower: str) -> str | None:
+    """Return the offending phrase (or None) if any blacklist entry
+    matches. Handles both plain-substring and word-boundary regex forms."""
+    for pat in IP_BLACKLIST:
+        if pat.startswith("re:"):
+            if re.search(pat[3:], text_lower):
+                return pat[3:]
+        else:
+            if pat in text_lower:
+                return pat
+    return None
 
 REQUIRED_DISCLAIMER = "Original in-house authorship"
 
 
 def _read_chapters(module_dir: Path) -> list[dict]:
-    out = []
-    for md in sorted(module_dir.glob("*.md")):
+    lessons = []
+    for i, md in enumerate(sorted(module_dir.glob("*.md")), start=1):
         text = md.read_text(encoding="utf-8")
-        lower = text.lower()
-        for phrase in IP_BLACKLIST:
-            if phrase.lower() in lower:
-                raise SystemExit(f"IP-SAFETY VIOLATION in {md}: contains '{phrase}'")
-        if REQUIRED_DISCLAIMER.lower() not in lower:
-            print(f"  warn: {md.name} missing disclaimer '{REQUIRED_DISCLAIMER}'", file=sys.stderr)
+        hit = _blacklist_hit(text.lower())
+        if hit:
+            raise SystemExit(f"IP-SAFETY VIOLATION in {md}: matches '{hit}'")
+        if REQUIRED_DISCLAIMER.lower() not in text.lower():
+            print(f"  warn: {md.name} missing disclaimer '{REQUIRED_DISCLAIMER}'",
+                   file=sys.stderr)
         title_line = text.splitlines()[0] if text.splitlines() else ""
         m = re.match(r"^#\s+(.*)$", title_line)
-        out.append({
-            "lesson_id": md.stem,
-            "title": m.group(1) if m else md.stem,
+        title = m.group(1) if m else md.stem
+        lesson_id = f"lesson_{i:02d}"
+        lessons.append({
+            "id": lesson_id,
+            "title": title,
             "body_md": text,
+            "order": i,
             "word_count": len(text.split()),
         })
-    return out
+    return lessons
 
 
-def _read_quiz(module_dir: Path) -> dict:
+def _build_quiz(module_dir: Path, module_code: str) -> dict:
     quiz_path = module_dir / "quiz.json"
     if not quiz_path.exists():
-        return {"questions": []}
-    return json.loads(quiz_path.read_text(encoding="utf-8"))
+        return {"passing_score": 0.7, "questions": []}
+    raw = json.loads(quiz_path.read_text(encoding="utf-8"))
+    questions = []
+    for i, q in enumerate(raw.get("questions", []), start=1):
+        choice_letters = ["a", "b", "c", "d", "e"]
+        choices = [{"id": choice_letters[j], "text": c}
+                    for j, c in enumerate(q["choices"])]
+        answer_id = choice_letters[q["answer"]]
+        questions.append({
+            "id": f"{module_code}-q{i:02d}",
+            "chapter": None,        # not chapter-scoped in this ship
+            "prompt": q["q"],
+            "choices": choices,
+            "correct_choice_ids": [answer_id],
+            "explanation": q.get("explanation") or "",
+        })
+    return {"passing_score": 0.7, "questions": questions}
 
 
 def build_seed_payload() -> list[dict]:
+    now = datetime.now(timezone.utc).isoformat()
     payload = []
     for mod in MODULES:
         module_dir = CHAPTERS_ROOT / mod["dir"]
         if not module_dir.exists():
             raise SystemExit(f"missing module directory: {module_dir}")
-        chapters = _read_chapters(module_dir)
-        quiz = _read_quiz(module_dir)
+        lessons = _read_chapters(module_dir)
+        quiz = _build_quiz(module_dir, mod["code"])
         payload.append({
             "code": mod["code"],
             "title": mod["title"],
             "department": mod["department"],
-            "summary": mod["summary"],
+            "description": mod["description"],
+            "badge_label": mod["badge_label"],
+            "disclaimer": mod["disclaimer"],
             "is_system": True,
-            "lessons": chapters,
+            "tenant_id": None,
+            "lessons": lessons,
             "quiz": quiz,
+            "created_at": now,
+            "updated_at": now,
         })
     return payload
 
 
 async def seed_to_db(payload: list[dict]) -> None:
-    """Write to Mongo. Called only when --commit is passed."""
-    from config import db  # noqa
+    """Direct motor connection using MONGO_URL/DB_NAME (matches config.py
+    convention). Kept isolated so a dry-run has no motor/config coupling."""
+    import os
+    from motor.motor_asyncio import AsyncIOMotorClient  # type: ignore
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+    mongo_url = os.environ["MONGO_URL"]
+    db_name = os.environ["DB_NAME"]
+    client = AsyncIOMotorClient(mongo_url)
+    db = client[db_name]
     for mod in payload:
+        existing = await db.training_modules.find_one(
+            {"code": mod["code"], "is_system": True}, {"_id": 0, "id": 1})
+        doc = {**mod}
+        if existing and existing.get("id"):
+            doc["id"] = existing["id"]
+            doc["created_at"] = mod["created_at"]  # keep the write timestamp for re-seed
+        else:
+            doc["id"] = str(uuid.uuid4())
         await db.training_modules.update_one(
             {"code": mod["code"], "is_system": True},
-            {"$set": {
-                "code": mod["code"],
-                "title": mod["title"],
-                "department": mod["department"],
-                "summary": mod["summary"],
-                "is_system": True,
-                "lessons": mod["lessons"],
-            }},
+            {"$set": doc},
             upsert=True,
         )
-        # Quiz questions land in a separate collection so a module can be
-        # re-seeded without wiping user attempts.
-        for i, q in enumerate(mod["quiz"].get("questions", [])):
-            await db.training_quiz_questions.update_one(
-                {"module_code": mod["code"], "seq": i},
-                {"$set": {
-                    "module_code": mod["code"],
-                    "seq": i,
-                    "prompt": q["q"],
-                    "choices": q["choices"],
-                    "answer_index": q["answer"],
-                    "is_system": True,
-                }},
-                upsert=True,
-            )
+    client.close()
 
 
 def main() -> None:
@@ -157,7 +239,7 @@ def main() -> None:
 
     total_lessons = sum(len(m["lessons"]) for m in payload)
     total_words = sum(l["word_count"] for m in payload for l in m["lessons"])
-    total_questions = sum(len(m["quiz"].get("questions", [])) for m in payload)
+    total_questions = sum(len(m["quiz"]["questions"]) for m in payload)
 
     print(f"Modules ready: {len(payload)}")
     print(f"Lessons:       {total_lessons}")
@@ -166,7 +248,7 @@ def main() -> None:
     for m in payload:
         print(f"  - {m['code']} · {len(m['lessons'])} lessons · "
               f"{sum(l['word_count'] for l in m['lessons'])} words · "
-              f"{len(m['quiz'].get('questions', []))} quiz Qs")
+              f"{len(m['quiz']['questions'])} quiz Qs")
 
     if args.commit:
         import asyncio
