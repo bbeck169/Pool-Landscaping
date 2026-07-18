@@ -2,6 +2,8 @@
 from __future__ import annotations
 import os, requests, pytest, uuid, base64
 
+from tests.conftest import demo_pw
+
 BACKEND = os.environ.get("REACT_APP_BACKEND_URL") or "https://poolscape-audit.preview.emergentagent.com"
 API = f"{BACKEND}/api"
 T = 20
@@ -17,13 +19,13 @@ def _h(tok): return {"Authorization": f"Bearer {tok}", "Content-Type": "applicat
 
 
 @pytest.fixture(scope="module")
-def admin_tok(): return _login("admin@aquaterra.com", "password123")
+def admin_tok(): return _login("admin@aquaterra.com", demo_pw("admin@aquaterra.com"))
 
 @pytest.fixture(scope="module")
-def super_tok(): return _login("super@aquaterra.com", "password123")
+def super_tok(): return _login("super@aquaterra.com", demo_pw("super@aquaterra.com"))
 
 @pytest.fixture(scope="module")
-def tech_tok():  return _login("mike@aquaterra.com",  "password123")
+def tech_tok():  return _login("mike@aquaterra.com",  demo_pw("mike@aquaterra.com"))
 
 
 class TestSEC002_PortalReset:

@@ -2,7 +2,7 @@
 Iteration 42 tests:
 - Account lockout (5 failed logins -> 429) on a THROWAWAY signed-up user
 - Password policy on /auth/signup (weak vs strong)
-- Demo login still works (admin@aquaterra.com/password123)
+- Demo login still works (admin@aquaterra.com — password sourced via demo_pw)
 - RBAC on /api/customers (admin/technician 200, customer 403)
 - Auth audit logging (login/signup/lockout events)
 - Lead status badges data present on /api/d2d/open-leads (new/contacted/quoted)
@@ -13,12 +13,25 @@ import uuid
 import pytest
 import requests
 
+from tests.conftest import demo_pw
+
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "http://localhost:8001").rstrip("/")
 API = f"{BASE_URL}/api"
 
-ADMIN = {"email": "admin@aquaterra.com", "password": "password123"}
-TECH = {"email": "mike@aquaterra.com", "password": "password123"}
-CUST = {"email": "customer@aquaterra.com", "password": "password123"}
+ADMIN_EMAIL = "admin@aquaterra.com"
+TECH_EMAIL = "mike@aquaterra.com"
+CUST_EMAIL = "customer@aquaterra.com"
+
+# Lazy accessors — the rotation script rewrites /app/memory/test_credentials.md
+# during other tests, so we must read the current plaintext at call time
+# rather than caching it at module import.
+def _admin(): return {"email": ADMIN_EMAIL, "password": demo_pw(ADMIN_EMAIL)}
+def _tech():  return {"email": TECH_EMAIL,  "password": demo_pw(TECH_EMAIL)}
+def _cust():  return {"email": CUST_EMAIL,  "password": demo_pw(CUST_EMAIL)}
+
+ADMIN = _admin()
+TECH = _tech()
+CUST = _cust()
 
 
 @pytest.fixture(scope="module")
@@ -75,35 +88,35 @@ class TestPasswordPolicy:
 # ---------------- Demo login unaffected by policy ----------------
 class TestDemoLogin:
     def test_admin_demo_login_works(self, s):
-        r = s.post(f"{API}/auth/login", json=ADMIN, timeout=15)
+        r = s.post(f"{API}/auth/login", json=_admin(), timeout=15)
         assert r.status_code == 200
         assert r.json().get("access_token")
 
     def test_technician_demo_login_works(self, s):
-        r = s.post(f"{API}/auth/login", json=TECH, timeout=15)
+        r = s.post(f"{API}/auth/login", json=_tech(), timeout=15)
         assert r.status_code == 200
 
     def test_customer_demo_login_works(self, s):
-        r = s.post(f"{API}/auth/login", json=CUST, timeout=15)
+        r = s.post(f"{API}/auth/login", json=_cust(), timeout=15)
         assert r.status_code == 200
 
 
 # ---------------- RBAC on /api/customers ----------------
 class TestCustomersRBAC:
     def test_admin_can_list_customers(self, s):
-        tok = _login(s, ADMIN)
+        tok = _login(s, _admin())
         r = s.get(f"{API}/customers", headers=_auth(tok), timeout=15)
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
     def test_technician_can_list_customers(self, s):
-        tok = _login(s, TECH)
+        tok = _login(s, _tech())
         r = s.get(f"{API}/customers", headers=_auth(tok), timeout=15)
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
     def test_customer_forbidden_from_customers_list(self, s):
-        tok = _login(s, CUST)
+        tok = _login(s, _cust())
         r = s.get(f"{API}/customers", headers=_auth(tok), timeout=15)
         assert r.status_code == 403, f"expected 403 got {r.status_code}: {r.text}"
 
@@ -172,7 +185,7 @@ class TestAuditLogging:
 # ---------------- D2D open leads with status badges ----------------
 class TestOpenLeadsStatusBadges:
     def test_open_leads_expose_status_field(self, s):
-        tok = _login(s, TECH)
+        tok = _login(s, _tech())
         r = s.get(f"{API}/d2d/open-leads", headers=_auth(tok), timeout=15)
         assert r.status_code == 200
         data = r.json()

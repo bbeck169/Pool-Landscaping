@@ -5,13 +5,46 @@ subjects, etc.) and sign up throwaway accounts on ``@example.com``. This session
 -scoped, autouse fixture removes those artifacts directly from MongoDB once the
 whole test run finishes, so repeated runs don't accumulate seed data in the app's
 list screens (jobs, leads, customers, etc.).
+
+SEC-001 followup — ``demo_pw(email)`` sources the currently-active demo-user
+password from ``/app/memory/test_credentials.md`` (rewritten by
+``scripts/rotate_demo_passwords.py``). Falls back to ``"password123"`` when the
+file has no entry for that account, so pre-rotation environments still work.
 """
 import os
+import re
 from pathlib import Path
 
 import pytest
 from dotenv import dotenv_values
 from pymongo import MongoClient
+
+_CREDS_PATH = Path("/app/memory/test_credentials.md")
+
+
+def demo_pw(email: str) -> str:
+    """Return the currently-active plaintext password for a demo user.
+
+    Reads ``/app/memory/test_credentials.md`` (rewritten by SEC-001 rotation)
+    and returns the plaintext for the requested email. Falls back to
+    ``"password123"`` when the entry is missing or contains the
+    ``_(user row not present; skipped)_`` marker.
+    """
+    if not _CREDS_PATH.is_file():
+        return "password123"
+    text = _CREDS_PATH.read_text(encoding="utf-8")
+    # Match the exact line:  - **role** · `email` · `password`
+    pattern = re.compile(
+        r"^\s*-\s+\*\*[^*]+\*\*\s+·\s+`" + re.escape(email) + r"`\s+·\s+`([^`]+)`\s*$",
+        re.MULTILINE,
+    )
+    m = pattern.search(text)
+    if not m:
+        return "password123"
+    pw = m.group(1)
+    if "user row not present" in pw or pw.strip() == "":
+        return "password123"
+    return pw
 
 # Load Mongo connection from the backend .env (tests run against the same DB the API uses)
 _BACKEND_ENV = Path(__file__).resolve().parents[1] / ".env"

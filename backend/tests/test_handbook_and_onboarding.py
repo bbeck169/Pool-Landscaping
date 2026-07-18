@@ -2,6 +2,8 @@
 from __future__ import annotations
 import os, requests, pytest, uuid
 
+from tests.conftest import demo_pw
+
 BACKEND = os.environ.get("REACT_APP_BACKEND_URL") or "https://poolscape-audit.preview.emergentagent.com"
 API = f"{BACKEND}/api"
 TIMEOUT = 20
@@ -19,10 +21,10 @@ def _h(tok: str) -> dict:
 
 
 @pytest.fixture(scope="module")
-def admin_tok() -> str: return _login("admin@aquaterra.com", "password123")
+def admin_tok() -> str: return _login("admin@aquaterra.com", demo_pw("admin@aquaterra.com"))
 
 @pytest.fixture(scope="module")
-def tech_tok() -> str:  return _login("mike@aquaterra.com",  "password123")
+def tech_tok() -> str:  return _login("mike@aquaterra.com",  demo_pw("mike@aquaterra.com"))
 
 
 class TestHandbookSeed:
