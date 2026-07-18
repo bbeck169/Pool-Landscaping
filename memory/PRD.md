@@ -2149,3 +2149,58 @@ router with 2 new endpoints; new tabbed page at
 - Historical valuation snapshot audit.
 - Mobile parity (admin-only feature).
 
+
+---
+
+## Phase T4 — Document Generators (Feb 2026)
+
+Two admin-only PDF generators shipped as one tabbed page at
+`/admin/tools/documents`. T4.3 (Route Valuation PDF bonus)
+deferred to a follow-up per honest budget split.
+
+### What changed
+
+- **Backend:** New `routers/document_generators.py` uses the
+  same `reportlab.platypus` pipeline as existing invoice /
+  work-order / check / certificate PDFs. 6 endpoints (save,
+  list, delete, PDF stream, quick service report PDF, canonical
+  lists helper). All gated by `_require_admin` — super_admin +
+  admin only; tech + customer get 403.
+- **Persistence:** New `document_templates` collection stores
+  checklist template configs (tenant-scoped, delete verifies
+  tenant ownership). Quick service report is one-shot — no
+  persistence.
+- **Web:** New `pages/admin/DocumentGenerators.jsx` (~420 LOC)
+  with 2 tabs. Checklist Template tab has left-side form + right-
+  side live preview + saved-templates list with open/delete
+  actions. Quick Service Report tab is form-only with direct
+  `POST → Blob download` handler.
+- **Tests:** 12/12 passing. Includes PDF `%PDF-` magic byte
+  assertion + pypdf text-extraction confirming key strings
+  (template name, tenant name, customer name, tech name, readings)
+  land in the byte stream.
+
+### Verification
+
+- **T4.1** checklist template PDF: 3,300 bytes, `application/pdf`,
+  extracted text confirms tenant header + 5 selected readings +
+  full 10-item checklist + property/date/tech blank lines.
+- **T4.2** quick service report PDF: 2,726 bytes, extracted text
+  confirms every input field returned verbatim (customer, address,
+  tech, all readings, chemicals added, checked items, customer
+  notes, signature lines).
+- RBAC (curl + pytest): admin 200, tech 403, customer 403 on all
+  6 endpoints.
+
+### Deferrals
+
+- **T4.3 Route Valuation PDF** — small (~20 min) follow-up.
+  Reuses `_get_reportlab` helper + T5.1 endpoint math to render
+  a 1-page valuation report with executive-summary card,
+  multiple breakdown, assumptions, and broker disclaimer.
+- No rich-text editor for template builder.
+- No drag-reorder for checklist items.
+- No email delivery of generated PDFs.
+- No versioning of saved templates (upsert overwrites).
+- No mobile parity (admin-only feature).
+

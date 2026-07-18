@@ -69,6 +69,7 @@ const ADMIN_SECTIONS = [
       { key: "inventory", icon: Boxes, label: "Inventory", desc: "Stock & purchase orders", to: "/admin/inventory" },
       { key: "pricing-tools", icon: DollarSign, label: "Pricing Tools", desc: "In-cost · Portfolio margins · Price recommender", to: "/admin/tools/pricing" },
       { key: "analysis-tools", icon: TrendingUp, label: "Business Analysis", desc: "Route valuation · Pay model comparator", to: "/admin/tools/analysis" },
+      { key: "document-generators", icon: ClipboardList, label: "Document Generators", desc: "Printable checklist templates · Quick service reports", to: "/admin/tools/documents" },
       { key: "checks", icon: Wrench, label: "Check Register", desc: "Write checks, batch payroll", to: "/admin/checks" },
       { key: "dispatch", icon: CalendarDays, label: "Dispatch", desc: "Assign & auto-route jobs", to: "/admin/dispatch" },
     ],

@@ -1048,3 +1048,155 @@ passed, 0.78s**.
   require a persistent audit collection) — deferred.
 - Mobile parity — admin-only feature; no mobile version planned.
 
+
+---
+
+## Phase T4 — Document Generators (Feb 2026, T4.3 deferred)
+
+**Honest scope split at budget-check time**: T4.1 + T4.2 shipped
+together; T4.3 (Route Valuation PDF — bonus from T5) deferred to
+a small follow-up (~20 min) to preserve safe budget margin. Both
+primary spec goals delivered end-to-end.
+
+### Backend
+
+**New router:** `backend/routers/document_generators.py` (~370 LOC).
+Uses the established `reportlab.platypus` pipeline (same
+`SimpleDocTemplate + Table + TableStyle + Paragraph` idiom as
+`routers/jobs.py::_build_work_order_pdf`, `routers/checks.py`,
+`routers/training.py::_render_certificate_pdf`). No new PDF
+dependency added.
+
+Endpoints (all `_require_admin` — super_admin + admin only):
+- `POST   /api/documents/checklist-template/save` — upsert
+  template to new `document_templates` collection (tenant-scoped,
+  never leaks across tenants).
+- `GET    /api/documents/checklist-templates` — list, newest-first.
+- `GET    /api/documents/checklist-template/{id}/pdf` — stream PDF.
+- `DELETE /api/documents/checklist-templates/{id}` — 404 if not
+  owned by caller's tenant.
+- `POST   /api/documents/quick-service-report` — one-shot PDF
+  stream, no persistence.
+- `GET    /api/documents/canonical-lists` — UI seed data
+  (`CANONICAL_POOL_CHECKLIST`, `CANONICAL_LANDSCAPE_CHECKLIST`,
+  `STANDARD_READING_KEYS`).
+
+PDF layouts:
+- **T4.1 Checklist template**: tenant header + template name +
+  visit type + Property/Date/Tech blank lines + Chemistry
+  Readings 2×N grid (only for selected reading rows) + `☐` boxed
+  checklist + Photos section + Customer Notes + Internal Notes
+  sections (each toggleable) + Tech/Customer signature lines +
+  generation-date footer.
+- **T4.2 Quick service report**: tenant header + "Service Visit
+  Report" title + populated info table (Customer/Property/Date/
+  Tech/Visit type) + Chemistry Readings table + Chemicals Added
+  list + `✓` completed checklist + Customer Notes (verbatim) +
+  signature lines.
+
+### Frontend
+
+**New page:** `frontend/src/pages/admin/DocumentGenerators.jsx`
+(~420 LOC). Two tabs. Route `/admin/tools/documents` wrapped in
+`<AdminOnly>`.
+
+- **Checklist Template tab**: left-side form + right-side live
+  simplified preview panel. Reading pills toggle brand-color when
+  selected. "Load pool" / "Load landscape" starter buttons dump
+  the canonical list into the editable textarea. 6 section-
+  toggle checkboxes (photos, notes, notes-customer, notes-
+  internal, tech-sig, customer-sig). Saved-templates list below
+  preview with open + delete actions.
+- **Quick Service Report tab**: form-only (customer, address,
+  date, tech, readings rows editable, chemicals-added, checklist
+  items, customer notes, signature toggle). "Generate & Download"
+  button hits the POST endpoint and streams the PDF blob directly
+  to the browser download.
+
+Both PDFs stream via a small `downloadPdf` / `postPdf` helper
+that grabs `localStorage.token`, adds `Authorization: Bearer`,
+and does a `Blob → createObjectURL → <a download>` dance.
+
+### Tests
+
+`backend/tests/test_phase_t4_doc_generators.py` — **12 tests, 12
+passed, 1.09s**.
+
+- TestChecklistTemplate (6): save+list roundtrip, PDF stream returns
+  `application/pdf` + `%PDF-` magic + ≥800 bytes, pypdf text-
+  extraction contains at least one of `T4 Test Pool Weekly` /
+  `Chemistry Readings` / `Checklist` / `Skim`, tech 403 on save,
+  customer 403 on PDF, delete-then-404.
+- TestQuickServiceReport (4): PDF stream w/ text-extraction
+  asserting `Q4 Test Homeowner` / `123 Test` / `Mike Rivera`
+  present, missing-required-fields 422, tech 403, customer 403.
+- TestCanonicalLists (2): admin gets 3 seeded lists (>= 8 items
+  each + `pH` in reading keys), tech 403.
+
+### Live curl evidence
+
+**T4.1** — save-then-PDF roundtrip for `Aquaterra Pool Weekly`:
+- Save → returns id `34e46e8a-8f5e-47c5-b444-f471cbb4aa1d`.
+- Fetch → HTTP 200, `content-type: application/pdf`,
+  `content-length: 3300`, filename `checklist-34e46e8a.pdf`.
+- Magic bytes `%PDF-1.4`.
+- pypdf text extraction sample: "AquaTerra Aquaterra Pool Weekly
+  Visit type: Pool Property: ____... Chemistry Readings pH Free Cl
+  Alkalinity Calcium Hardness CYA ..." — proves tenant header +
+  template name + all 5 selected readings + property/date/tech
+  blank lines all present in the PDF byte stream.
+
+**T4.2** — quick service report for Jane Homeowner / 456 Palm Dr:
+- Response HTTP 200, `content-type: application/pdf`,
+  `Content-Disposition: inline; filename="service-report-jane-2026-07-18.pdf"`.
+- 2,726 bytes, magic `%PDF-1.4`.
+- pypdf text extraction confirms every field back verbatim
+  (`Jane Homeowner`, `456 Palm Dr, Peoria AZ`, `2026-07-18`,
+  `Mike Rivera`, `pH 7.4`, `Free Cl 3`, `Alkalinity 100`,
+  `Muriatic Acid — 32 oz`, all 4 `✓` items, customer notes,
+  signature lines).
+
+**RBAC verified**: Tech → 403 on both `/checklist-template/save`
+and `/quick-service-report` endpoints.
+
+### Screenshots
+1. **Checklist Template tab** (admin, canonical pool checklist
+   loaded): Left form shows "Weekly Pool Checklist" name, 5 brand-
+   color reading pills selected (pH, Free Cl, Alkalinity, Calcium
+   Hardness, CYA), textarea with 10 canonical pool checklist items.
+   Right preview panel simulates the PDF layout: title + visit type
+   + Property/Date/Tech blank lines + inline readings row +
+   `☐` checklist + Customer Notes + Internal Notes + Tech +
+   Customer signature lines. Load pool / Load landscape starter
+   buttons visible.
+2. **Quick Service Report tab**: Form filled with Jane Homeowner /
+   456 Palm Dr, Peoria AZ / 07/18/2026 / Mike Rivera. Chemistry
+   readings rows (pH, Free Cl), Checklist items textarea, Customer
+   notes textarea, "Generate & Download PDF" button ready.
+
+### Files touched
+
+- `backend/routers/document_generators.py` (**new**, ~370 LOC)
+- `backend/server.py` (import + registration)
+- `backend/tests/test_phase_t4_doc_generators.py` (**new**, 12 tests)
+- `frontend/src/pages/admin/DocumentGenerators.jsx` (**new**, ~420 LOC)
+- `frontend/src/App.js` (import + `<AdminOnly>` route)
+- `frontend/src/pages/tech/ToolsHub.jsx` (1 admin tile added)
+
+### Preflight
+`bash scripts/preflight.sh` → **exit 0** (`preflight OK`). Dead-
+import WARN stayed at 429 (no new false positives).
+
+### Deferrals (explicit)
+
+- **T4.3 Route Valuation PDF** — bonus item from the T5 ship
+  summary suggestion. Same `_get_reportlab` helper + T5.1 endpoint
+  math. Small ~20-min follow-up ship. Placeholder for the file:
+  `backend/routers/document_generators.py::route_valuation_pdf`.
+- No rich-text editor for template builder (plain textarea only).
+- No drag-reorder for checklist items (edit-and-save the raw list).
+- No email delivery of generated PDFs (download only; user can
+  attach to their own email if needed).
+- No versioning of saved templates (upsert overwrites).
+- No mobile parity (admin-only feature).
+
