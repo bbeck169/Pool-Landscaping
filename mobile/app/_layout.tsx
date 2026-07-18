@@ -10,6 +10,7 @@ import { useFonts } from "expo-font";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider } from "@/src/auth";
 import { ImpersonationBanner } from "@/src/components/ImpersonationBanner";
+import { registerOfflineTemplateDraftListeners } from "@/src/utils/offlineTemplateDrafts";
 
 // Disable logbox errors etc so that users can see the app
 // and agent works as expected.
@@ -37,6 +38,12 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [ready]);
+
+  // Register global offline template-draft sync listeners (NetInfo + AppState)
+  useEffect(() => {
+    const unsub = registerOfflineTemplateDraftListeners();
+    return unsub;
+  }, []);
 
   // If the CDN is unreachable we fall through on error rather than wedging
   // the app — icons will tofu, but the app still boots.

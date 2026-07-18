@@ -1,7 +1,12 @@
 /**
  * Templates Library — Phase 3 · Mobile Fill Page
  *
- * Schema-driven form with autosave. Mirrors the web TemplateFillPage.
+ * Schema-driven form with autosave + offline draft support.
+ * Mirrors the web TemplateFillPage, plus:
+ *   - Writes local snapshot BEFORE each PATCH
+ *   - Queues failed PATCHes for replay on reconnect
+ *   - Merges local-over-server on load when local is newer
+ *   - Blocks Finalize when pending sync entries exist
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -20,12 +25,22 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-import { api, api_base } from "@/src/api";
+import { api, ApiNetworkError, api_base } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useOnline } from "@/src/offline";
 import { Header } from "@/src/components/widgets";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import TemplateFieldRenderer from "@/src/components/templates/TemplateFieldRenderer";
 import TemplateStatusPill from "@/src/components/templates/TemplateStatusPill";
+import {
+  writeSnapshot,
+  clearSnapshot,
+  enqueuePending,
+  hasPendingForInstance,
+  mergeLocalOverServer,
+  removePending,
+  flushPendingTemplateDrafts,
+} from "@/src/utils/offlineTemplateDrafts";
 
 const AUTOSAVE_DEBOUNCE_MS = 1000;
 const AUTOSAVE_INTERVAL_MS = 15000;
@@ -41,12 +56,17 @@ export default function TemplateFillScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
+  const online = useOnline();
 
   const [instance, setInstance] = useState<any>(null);
   const [definition, setDefinition] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveState, setSaveState] = useState<
+    "idle" | "saving" | "saved" | "error" | "offline_queued"
+  >("idle");
   const [error, setError] = useState("");
+  const [hasPending, setHasPending] = useState(false);
+  const [loadedLocalEdits, setLoadedLocalEdits] = useState(false);
 
   const dirtyRef = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -62,47 +82,93 @@ export default function TemplateFillScreen() {
     return user.name || user.email || "";
   }, [user]);
 
-  // Load instance + definition
+  // Check pending state
+  const refreshPending = useCallback(async () => {
+    if (!id) return;
+    const pending = await hasPendingForInstance(id);
+    setHasPending(pending);
+  }, [id]);
+
+  // Load instance + definition, with local merge
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
+    setLoadedLocalEdits(false);
     try {
       const inst = await api.get(`/templates/instances/${id}`);
-      setInstance(inst);
-      instanceRef.current = inst;
+      // Merge local snapshot if newer
+      const { merged, hadLocalEdits } = await mergeLocalOverServer(inst);
+      setInstance(merged);
+      instanceRef.current = merged;
+      if (hadLocalEdits) {
+        setLoadedLocalEdits(true);
+        // Mark dirty so autosave pushes merged values
+        dirtyRef.current = true;
+      }
       const defn = await api.get(
         `/templates/definitions/${encodeURIComponent(inst.template_code)}`
       );
       setDefinition(defn);
+      await refreshPending();
     } catch (e: any) {
       setError(e.message || "Failed to load template.");
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, refreshPending]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  // Autosave
+  // Autosave — writes local snapshot BEFORE PATCH, queues on network failure
   const flushSave = useCallback(async () => {
     const inst = instanceRef.current;
     if (!inst || !dirtyRef.current || inst.status === "finalized") return;
     dirtyRef.current = false;
     setSaveState("saving");
+
+    const title = inst.title || "";
+    const values = inst.values || {};
+
+    // 1. Write local snapshot FIRST (before network call)
+    await writeSnapshot({
+      instance_id: inst.id,
+      title,
+      values,
+      dirty_since: new Date().toISOString(),
+    });
+
+    // 2. Attempt PATCH
     try {
       const updated = await api.patch(`/templates/instances/${inst.id}`, {
-        title: inst.title,
-        values: inst.values || {},
+        title,
+        values,
       });
       instanceRef.current = updated;
       setInstance((prev: any) => (prev ? { ...prev, ...updated } : updated));
+      // 3. On success — clear snapshot + remove from pending queue
+      await clearSnapshot(inst.id);
+      await removePending(inst.id);
+      setHasPending(false);
       setSaveState("saved");
     } catch (e: any) {
-      setSaveState("error");
-      setError(e.message || "Autosave failed.");
-      dirtyRef.current = true;
+      if (e instanceof ApiNetworkError) {
+        // 4. Network failure — enqueue for later replay
+        console.log(`[TemplateFill] offline — queued ${inst.id}`);
+        await enqueuePending({
+          instance_id: inst.id,
+          title,
+          values,
+          ts: new Date().toISOString(),
+        });
+        setHasPending(true);
+        setSaveState("offline_queued");
+      } else {
+        setSaveState("error");
+        setError(e.message || "Autosave failed.");
+        dirtyRef.current = true;
+      }
     }
   }, []);
 
@@ -125,6 +191,20 @@ export default function TemplateFillScreen() {
     };
   }, [flushSave]);
 
+  // Auto-flush pending queue when coming back online
+  useEffect(() => {
+    if (online && hasPending) {
+      flushPendingTemplateDrafts().then(async (res) => {
+        if (res.synced > 0) {
+          console.log(`[TemplateFill] flushed ${res.synced} pending drafts`);
+          await refreshPending();
+          // Reload server state after successful sync
+          load();
+        }
+      }).catch(() => {});
+    }
+  }, [online, hasPending, refreshPending, load]);
+
   // Value handlers
   const setValue = (key: string, val: any) => {
     if (readOnly) return;
@@ -142,7 +222,17 @@ export default function TemplateFillScreen() {
   };
 
   // Actions
-  const doFinalize = () => {
+  const doFinalize = async () => {
+    // Block finalize when pending sync entries exist
+    const pending = await hasPendingForInstance(id!);
+    if (pending) {
+      Alert.alert(
+        "Unsynced Changes",
+        "You have unsynced changes. Reconnect to sync before finalizing.",
+        [{ text: "OK" }]
+      );
+      return;
+    }
     Alert.alert(
       "Finalize this template?",
       "Once finalized, the form fields become read-only. You can still download a PDF or duplicate it.",
@@ -155,6 +245,8 @@ export default function TemplateFillScreen() {
               await flushSave();
               const updated = await api.post(`/templates/instances/${id}/finalize`);
               setInstance(updated);
+              // Clear local snapshot on finalize
+              await clearSnapshot(id!);
             } catch (e: any) {
               Alert.alert("Error", e.message || "Could not finalize.");
             }
@@ -236,6 +328,13 @@ export default function TemplateFillScreen() {
         back
         right={
           <View style={styles.headerActions}>
+            {/* Offline indicator in header */}
+            {(hasPending || saveState === "offline_queued") && (
+              <View style={styles.offlinePill} testID="template-fill-offline-indicator">
+                <Ionicons name="cloud-offline-outline" size={14} color="#A16207" />
+                <Text style={styles.offlinePillText}>Offline — will sync</Text>
+              </View>
+            )}
             {!isFinalized && (
               <TouchableOpacity
                 onPress={doFinalize}
@@ -315,6 +414,23 @@ export default function TemplateFillScreen() {
             </View>
           )}
 
+          {/* Local-edits-merged toast */}
+          {loadedLocalEdits && (
+            <View style={styles.localEditsBanner} testID="template-fill-local-edits-banner">
+              <Ionicons name="sync-outline" size={16} color="#A16207" />
+              <Text style={styles.localEditsText}>
+                Loaded unsynced local edits — will sync when online.
+              </Text>
+              <TouchableOpacity
+                onPress={() => setLoadedLocalEdits(false)}
+                hitSlop={8}
+                testID="template-fill-local-edits-dismiss"
+              >
+                <Ionicons name="close" size={16} color="#A16207" />
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Schema sections */}
           {definition?.schema?.map((section: any, si: number) => (
             <View
@@ -356,6 +472,14 @@ function SaveIndicator({
       <View style={styles.saveRow} testID="template-save-indicator">
         <ActivityIndicator size="small" color={colors.onSurfaceSecondary} />
         <Text style={styles.saveText}>Saving…</Text>
+      </View>
+    );
+  }
+  if (state === "offline_queued") {
+    return (
+      <View style={styles.saveRow} testID="template-save-indicator-offline">
+        <Ionicons name="cloud-offline-outline" size={14} color="#A16207" />
+        <Text style={[styles.saveText, { color: "#A16207" }]}>Saved locally</Text>
       </View>
     );
   }
@@ -481,5 +605,37 @@ const styles = StyleSheet.create({
   },
   fieldWrap: {
     marginBottom: spacing.md,
+  },
+  offlinePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#FEF9C3",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  offlinePillText: {
+    fontSize: 10,
+    fontFamily: font.bold,
+    color: "#A16207",
+  },
+  localEditsBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#FEF9C3",
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    borderRadius: radius.md,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: spacing.md,
+  },
+  localEditsText: {
+    fontSize: fontSize.sm,
+    fontFamily: font.regular,
+    color: "#A16207",
+    flex: 1,
   },
 });

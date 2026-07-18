@@ -2530,4 +2530,74 @@ Ships the admin-facing React UI that wires the fully-shipped Phase 1 backend. No
 ### Out of scope this phase
 - Mobile (Expo) UI — Phase 3
 - Signature drawing pad — Phase 4
-- Offline drafts + import/export of custom template definitions — later
+- Import/export of custom template definitions — later
+
+
+---
+
+## Templates Library — Phase 3 (Mobile UI + Offline Drafts) · Jul 2026
+
+Ships the Expo/React Native mobile UI for the Templates Library, with **offline-draft support** for editing existing draft instances without network.
+
+### Screens
+- `/(app)/templates` → `TemplatesLibraryScreen` — two-tab layout (Library | My Templates)
+- `/(app)/templates/[id]` → `TemplateFillScreen` — schema-driven form with autosave + offline drafts
+
+### Navigation entry points
+- **Tools hub tile** (both admin + technician roles): `sections.ts` → "Templates" tile
+- **More screen**: admin links row → "Templates Library"
+- Hidden tab screens registered in `_layout.tsx` (`templates/index`, `templates/[id]`)
+
+### Files added
+- `mobile/app/(app)/templates/index.tsx` — library + my-templates tabs
+- `mobile/app/(app)/templates/[id].tsx` — fill page with offline-draft integration
+- `mobile/src/components/templates/TemplateCard.tsx`
+- `mobile/src/components/templates/TemplateFieldRenderer.tsx` — all 9 field types
+- `mobile/src/components/templates/TemplateTableField.tsx`
+- `mobile/src/components/templates/TemplateStatusPill.tsx`
+- `mobile/src/utils/offlineTemplateDrafts.ts` — local snapshot, pending queue, flush routine, NetInfo + AppState listeners
+
+### Files modified
+- `mobile/app/(app)/_layout.tsx` — hidden tab screens + global offline-draft listener registration
+- `mobile/app/_layout.tsx` — `registerOfflineTemplateDraftListeners()` in root layout
+- `mobile/src/components/tools/sections.ts` — Templates tile in admin + tech sections
+- `mobile/app/(app)/more.tsx` — Templates Library admin link
+
+### Offline-Draft Behavior (critical)
+
+**Storage primitive**: Raw `AsyncStorage` (via `@react-native-async-storage/async-storage`), matching the existing `offline.ts` and `writeQueue.ts` patterns. Complex JSON objects are `JSON.stringify`/`JSON.parse` wrapped. The typed `storage` singleton from `@/src/utils/storage` is limited to scalar `StorageItemValue` — not suitable for nested draft objects.
+
+**Keys**:
+- `template_draft:{instance_id}` — per-instance local snapshot: `{ instance_id, title, values, dirty_since }`
+- `template_drafts_pending` — FIFO queue: `[ { instance_id, title, values, ts } ]`
+
+**Supported flow** (editing existing drafts offline):
+1. On every autosave, the fill screen writes `{ instance_id, title, values, dirty_since }` to `template_draft:{id}` **BEFORE** the PATCH network call.
+2. If PATCH succeeds → clear snapshot + remove from pending queue → show "Saved" indicator.
+3. If PATCH fails with `ApiNetworkError` (offline/timeout) → enqueue under `template_drafts_pending` (replaces any earlier entry for the same instance) → show "Offline — will sync" pill in header + "Saved locally" in save indicator.
+4. A global `NetInfo.addEventListener` + `AppState.addEventListener("change")` listener (registered in root `_layout.tsx` via `registerOfflineTemplateDraftListeners()`) auto-flushes the pending queue when network returns or app foregrounds.
+5. Flush processes entries FIFO. On success: clear snapshot, remove entry. On `ApiNetworkError`: stop (still offline). On server 4xx/5xx: drop entry (poison pill).
+6. On opening a fill screen: fetch server data, then call `mergeLocalOverServer(serverInstance)`. If local snapshot `dirty_since > server.updated_at`: merge local values over server (last-write-wins per field), show dismissible yellow banner: "Loaded unsynced local edits — will sync when online." Mark dirty so autosave pushes merged values on next tick.
+7. **Finalize is BLOCKED** while a pending sync entry exists for that instance — shows native `Alert`: "You have unsynced changes. Reconnect to sync before finalizing."
+
+**NOT supported** (explicit constraint):
+- **Fully-offline instance CREATION** is not supported. `POST /api/templates/instances` requires online. Only editing existing drafts is offline-tolerant.
+
+### API endpoints (same as web, Phase 1 backend)
+- `GET /api/templates/definitions` — list definitions (RBAC-filtered by `allowed_roles`)
+- `GET /api/templates/definitions/:code`
+- `GET /api/templates/instances?mine=true`
+- `GET /api/templates/instances/:id`
+- `POST /api/templates/instances` — create draft (online only)
+- `PATCH /api/templates/instances/:id` — autosave (offline-tolerant)
+- `POST /api/templates/instances/:id/finalize` — lock (blocked when pending)
+- `POST /api/templates/instances/:id/duplicate`
+- `DELETE /api/templates/instances/:id`
+- `POST /api/templates/instances/:id/pdf` — opened via `Linking.openURL`
+
+### Verification
+- All files lint-clean (ESLint, 0 errors)
+- Metro bundler compiles without errors (HTTP 200 on localhost:3001)
+- Expo preview tunnel unavailable (infrastructure inactivity, not code issue)
+- Code paths verified via grep/file inspection (see offline-draft deliverables below)
+

@@ -21,12 +21,19 @@
   - `mobile/app/(app)/_layout.tsx` — added hidden tab screens for templates
   - `mobile/src/components/tools/sections.ts` — added Templates tile to admin + tech
   - `mobile/app/(app)/more.tsx` — added Templates Library admin link
-- **Web files referenced**:
-  - `frontend/src/api/templates.js`
-  - `frontend/src/pages/admin/TemplatesLibraryPage.jsx`
-  - `frontend/src/pages/admin/TemplateFillPage.jsx`
-  - `frontend/src/components/templates/TemplateCard.jsx`
-  - `frontend/src/components/templates/TemplateFieldRenderer.jsx`
-  - `frontend/src/components/templates/TemplateTableField.jsx`
-  - `frontend/src/components/templates/TemplateStatusPill.jsx`
-  - `frontend/src/components/templates/TemplateInstanceList.jsx`
+
+## Iteration 2 — Offline Draft Support
+- **Commit**: 15a0dcefdd2c2df77cf8478788c1582ace1ec5af
+- **Date**: 2026-07-18
+- **Changes**:
+  - Created `offlineTemplateDrafts.ts` — full offline-draft module (snapshot CRUD, pending queue CRUD, FIFO flush, merge logic, global listeners)
+  - Rewrote `[id].tsx` fill screen with offline integration: snapshot-before-PATCH, queue-on-failure, merge-on-load, finalize-block
+  - Added offline indicator pill in header, "Saved locally" state, local-edits-merged banner
+  - Registered global NetInfo + AppState listeners in root `_layout.tsx`
+  - Updated PRD with complete offline-draft behavior documentation
+- **Files created**:
+  - `mobile/src/utils/offlineTemplateDrafts.ts`
+- **Files modified**:
+  - `mobile/app/(app)/templates/[id].tsx` — offline-draft integration
+  - `mobile/app/_layout.tsx` — global listener registration
+  - `memory/PRD.md` — Phase 3 documentation with offline-draft section
