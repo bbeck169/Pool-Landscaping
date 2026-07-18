@@ -73,6 +73,7 @@ function Select({ label, value, onChange, options, testid }) {
 }
 
 function ResultBox({ tone = "brand", title, value, note, extra, testid }) {
+  const [attached, setAttached] = useState(null);
   const bg = tone === "success" ? "#DCFCE7"
     : tone === "warning" ? "#FEF3C7"
     : tone === "error" ? "#FEE2E2"
@@ -84,6 +85,26 @@ function ResultBox({ tone = "brand", title, value, note, extra, testid }) {
   const Icon = tone === "success" ? CheckCircle2
     : (tone === "warning" || tone === "error") ? AlertTriangle
     : Calculator;
+  const summary = `${title}: ${value} — ${note || ""}`;
+
+  const attach = async () => {
+    try {
+      const r = await api.post("/service-report/attach-note", { text: summary });
+      if (r?.status === "attached") {
+        setAttached({ ok: true, msg: "Attached to service report ✓" });
+      } else if (r?.status === "multiple_open_reports") {
+        setAttached({ ok: false, msg: `Multiple open reports (${r.reports.length}) — open a job and try again.` });
+      } else {
+        setAttached({ ok: false, msg: "Not attached." });
+      }
+    } catch (e) {
+      const m = String(e?.message || "");
+      if (m.includes("404")) setAttached({ ok: false, msg: "No open service report — start a job first." });
+      else setAttached({ ok: false, msg: m || "Attach failed." });
+    }
+    setTimeout(() => setAttached(null), 5000);
+  };
+
   return (
     <div className="rounded-xl p-4 flex items-start gap-3 mt-4"
          style={{ backgroundColor: bg }}
@@ -98,13 +119,29 @@ function ResultBox({ tone = "brand", title, value, note, extra, testid }) {
           <div className="text-sm mt-2" style={{ color: fg }}>{note}</div>
         ) : null}
         {extra}
+        {attached ? (
+          <div className="text-xs mt-2 font-semibold"
+               style={{ color: attached.ok ? "#166534" : "#991B1B" }}
+               data-testid={`${testid}-attach-status`}>
+            {attached.msg}
+          </div>
+        ) : null}
       </div>
-      <button onClick={() => copyResult(`${title}: ${value} — ${note || ""}`)}
-              className="text-xs font-semibold rounded-lg px-2 py-1 flex items-center gap-1"
-              style={{ backgroundColor: `${fg}22`, color: fg }}
-              data-testid={`${testid}-copy`}>
-        <Copy size={12} /> Copy
-      </button>
+      <div className="flex flex-col gap-1">
+        <button onClick={() => copyResult(summary)}
+                className="text-xs font-semibold rounded-lg px-2 py-1 flex items-center gap-1"
+                style={{ backgroundColor: `${fg}22`, color: fg }}
+                data-testid={`${testid}-copy`}>
+          <Copy size={12} /> Copy
+        </button>
+        <button onClick={attach}
+                className="text-xs font-semibold rounded-lg px-2 py-1 flex items-center gap-1"
+                style={{ backgroundColor: `${fg}22`, color: fg }}
+                data-testid={`${testid}-attach`}
+                title="Attach to open service report">
+          + Attach
+        </button>
+      </div>
     </div>
   );
 }

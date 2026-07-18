@@ -1980,3 +1980,86 @@ mounted on a new tabbed web page under the tech tools hub.
 - Attach calculator result to customer service report — deferred.
 - Per-user saved-calculation history — deferred.
 
+
+---
+
+## Phase 56.20 — Auto End-of-Visit Email + Calculator Attach (Feb 2026)
+
+Two-item bundle shipped together — same code area, related UX.
+
+### What changed
+
+**Auto email:**
+- New service `backend/services/auto_visit_email.py` — renders a
+  customer-safe visit summary (subject, HTML, plain-text), dispatches
+  via Resend, logs every attempt to `db.outbound_emails`. Non-blocking
+  wrapper around the send.
+- Hook inserted into `POST /api/jobs/{jid}/service-report/submit`
+  right after the invoice-generation block.
+- Idempotency on `(kind=visit_summary, service_report_id,
+  customer_id)`. Missing key → `status: "not_sent_missing_key"`
+  (no crash). Resend error → `status: "failed"` + error snippet
+  captured in the audit row.
+- Tenant-level opt-in (`db.tenants.settings.auto_visit_email.enabled
+  = false` by default).
+- 3 new admin endpoints: `GET/PUT /api/settings/auto-visit-email`
+  + `POST /api/settings/auto-visit-email/preview` (renders using the
+  tenant's most recent submitted report so admin can eyeball before
+  turning the toggle on).
+- New admin page `/admin/settings/auto-visit-email` with 4 controls
+  + live HTML preview.
+
+**Calculator attach bundle** (from the prior ship's suggestion):
+- New endpoint `POST /api/service-report/attach-note` — appends a
+  tool-generated plain-text summary to a tech's open service report's
+  `internal_notes`. Multi-open-reports case returns a picker list.
+  Audit row written to `db.service_report_notes_audit`.
+- Web ResultBox in the Pool Calculators page gains an "Attach"
+  button next to Copy; posts the same plain-text summary the Copy
+  button uses. Toast surfaces the status inline.
+
+### Verification (all pass)
+
+- **11/11 pytest** (`test_phase56_20_auto_email.py`) in 1.19s.
+- **Live curl:** settings roundtrip, preview render, send-with-key
+  (Resend test-mode error captured verbatim in audit row),
+  idempotency (2nd call → skipped), missing-key fallback (row
+  written with status `not_sent_missing_key` and full payload).
+- **Calculator attach:** direct `internal_notes` append + audit row
+  in `service_report_notes_audit` confirmed via Mongo query. Multi-
+  open-reports branch surfaces the picker list.
+- **Playwright:** admin settings page renders, preview button
+  produces the HTML preview inline. Tech Pool Calculators page shows
+  Copy + Attach buttons stacked on the ResultBox.
+
+### Redaction guardrails (verified)
+
+- `internal_notes` string absent from both `html` and `text` output.
+- Photos tagged `internal`, `issue`, or `private` are filtered
+  before render.
+- Cost/pricing data never included (schema doesn't surface it in the
+  customer-facing redacted payload).
+- Regex safety scrub applied to `customer_notes` to strip accidental
+  `internal_notes:` leaks even if a tech types the label into the
+  customer field.
+
+### Rollout notes
+
+- Feature ships **off by default** per tenant. Admin must open
+  `/admin/settings/auto-visit-email`, preview, then toggle on.
+- Resend key currently in the pod env is a **test-mode** key that
+  can only send to the account owner. Production customer sends
+  will `status: "failed"` until a rotated key or verified sending
+  domain lands. All failures are captured in
+  `db.outbound_emails.find({status:"failed"})` with the exact
+  Resend error snippet — no redeploy needed to debug.
+
+### Deferrals
+
+- Multi-open-report picker UI on the calculator Attach button
+  (currently returns a toast; small ~30-min follow-up).
+- Mobile parity: admin settings + attach button on mobile
+  calculators — queued for a mobile-parity sweep.
+- Resend delivery-event webhooks (opens/clicks/bounces) — deferred.
+- Rich HTML templates beyond basic layout — deferred.
+

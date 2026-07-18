@@ -585,3 +585,206 @@ Dead-import WARN 424 → **423** (my new files contain no unused imports).
   to a service report — deferred.
 - Per-user result history (saved calculations) — deferred.
 
+
+---
+
+## Phase 56.20 — Auto End-of-Visit Customer Email + Calculator Attach (Feb 2026)
+
+Two related items shipped together: (A) auto-fires an email to the
+customer whenever a tech submits a service report, and (B) adds an
+"Attach to service report" button next to Copy on every pool
+calculator ResultBox.
+
+### A. Auto End-of-Visit Email
+
+**New service:** `backend/services/auto_visit_email.py` (~280 LOC).
+
+- `send_visit_summary_email(tenant, job, sr)` — non-blocking wrapper.
+  Any exception is caught and logged; the submit endpoint never fails
+  because of email trouble.
+- `render_email(tenant, job, sr, customer)` — pure function returning
+  `{subject, html, text, kind}`. Used by both the live pipeline and
+  the admin preview endpoint.
+- Idempotency: query `outbound_emails` for a matching
+  `(kind=visit_summary, service_report_id, customer_id)` before
+  sending. Duplicate submits emit no duplicate emails; the second
+  call returns `{"skipped": "idempotent", "existing": {...}}`.
+- Missing `RESEND_API_KEY` → row written with
+  `status: "not_sent_missing_key"` and the full rendered HTML/text
+  payload, ready to fire when the key lands.
+- Resend error → row written with `status: "failed"` + `error`
+  snippet (first 200 chars, no secret leak).
+- Success → row written with `status: "sent"` + `resend_id`.
+
+**Wired into `POST /api/jobs/{jid}/service-report/submit`** after the
+invoice-generation block and before the `if clock_out_summary`
+branch (see `service_reports.py`). One line of code + the try/except
+wrapping.
+
+**Rendered content (verified via live curls + tests):**
+- Subject: `Your {tenant.name} service visit — {YYYY-MM-DD}`
+- Header: tenant name + logo (if present) + "Service visit summary".
+- Info block: Date · Tech · Address.
+- Pool sections: Chemical readings table (readings dict) · Chemicals
+  added (name/amount/unit) · Completed checklist items · Algae
+  observation (customer-friendly: "Light algae was observed and
+  treated." / "Heavy algae was observed and treated.").
+- Landscape sections: 10-item checklist with ✓ marks.
+- **Customer Notes** verbatim + a regex safety scrub for accidental
+  `internal_notes:` leaks.
+- Customer-safe photos only — anything tagged `internal | issue |
+  private` is stripped before embed.
+- CTA: "Leave us a review" button (if tenant has `google_review_link`
+  set and `include_reviews_cta=true`) + "View full history in your
+  portal" link to `{APP_PUBLIC_URL}/portal/service-reports`.
+- Footer: "Internal service notes are not included." + optional
+  tenant custom footer text + Unsubscribe link.
+
+### Admin controls
+
+3 new endpoints under `/api/settings/auto-visit-email`:
+- `GET  /` — returns current tenant flags.
+- `PUT  /` — patches tenant settings (`enabled`,
+  `include_reviews_cta`, `google_review_link`, `footer_text`).
+- `POST /preview` — renders the email using the tenant's most recent
+  submitted service report so admin can eyeball the layout before
+  flipping the toggle.
+
+**New page:** `frontend/src/pages/settings/AutoVisitEmailSettings.jsx`
+(~180 LOC). Route: `/admin/settings/auto-visit-email`
+(`<AdminOnly>` gated). 4 controls + Save + Preview button; inline
+preview panel renders the HTML in a scrollable iframe-like container.
+
+### B. Calculator Attach Bundle
+
+**New endpoint:** `POST /api/service-report/attach-note`
+(techs + admins). Behavior:
+- With `report_id` → target that specific report (must belong to caller).
+- Without `report_id` → find open unsubmitted reports for
+  `user.technician_id or user.id`; exactly one → attach; zero → 404;
+  multiple → 200 with `status: multiple_open_reports` and a picker
+  list `[{id, job_id, tech_name}, ...]`.
+- Appends `[Calculator @ YYYY-MM-DD HH:MM] {text}` to the report's
+  `internal_notes` (never `customer_notes`).
+- Writes an audit row to `db.service_report_notes_audit` with
+  `{source: "calculator", actor_user_id, actor_name, text, created_at}`.
+
+**Frontend:** ResultBox in `PoolCalculators.jsx` now renders a
+vertical Copy + Attach button stack. Attach POSTs the plain-text
+summary produced by the existing Copy path. Toast status shown
+inline for 5 seconds ("Attached to service report ✓" / "No open
+service report — start a job first" / "Multiple open reports (N)").
+
+### Live curl + Playwright evidence
+
+- `GET/PUT/GET /api/settings/auto-visit-email` — roundtrip clean.
+  Customer role → 403.
+- `POST /api/settings/auto-visit-email/preview` — subject `Your
+  AquaTerra service visit — 2026-07-16`, 2081-char HTML, redaction
+  audit confirms `internal_notes` absent from body, `Leave us a
+  review` + `Family-owned since 2003` present.
+- **Send with key + wrong recipient** (Resend test-mode
+  restriction — the account's key can only email its owner) → row
+  `status: "failed"`, error snippet captured: `"You can only send
+  testing emails to your own email address (brianbeckmanaz@gmail.com)…"`.
+- **Idempotency (2nd call for same sr_id)** → returns
+  `{"skipped": "idempotent", "existing": {id, status}}`. Audit
+  collection has exactly ONE row for that report.
+- **Missing-key demo** (patched os.environ) → row
+  `status: "not_sent_missing_key"`, no crash, full rendered HTML/text
+  persisted.
+- Full audit trail sample (from `db.outbound_emails.find({kind:
+  "visit_summary"})`):
+
+    { status: "failed", to: "customer@aquaterra.com", ... }
+    { status: "not_sent_missing_key", to: "rblake@outlook.com", ... }
+
+- **Calculator attach with report_id** → 200 `{status:"attached",
+  report_id, internal_notes_len: 80}`. Verified via direct Mongo
+  query: `internal_notes: '[Calculator @ 2026-07-18 02:30]
+  Saturation Index (LSI): 0.03 — Water is balanced'` and audit row
+  `{source: "calculator", actor_name: "Mike Rivera", text: ...}`.
+- **Multi-open-report branch** → returns list of 7 open reports for
+  the tech (Playwright screenshot proves the toast surfaces
+  "Multiple open reports (7) — open a job and try again." in the
+  UI).
+
+### Screenshots
+
+1. **Admin settings page** (admin logged in): "Auto End-of-Visit
+   Customer Emails" title, Enabled checkbox ON, Reviews CTA ON,
+   Google review link populated, custom footer set. Save + Preview
+   buttons visible.
+2. **Preview rendering below the form**: subject `Your AquaTerra
+   service visit — 2026-07-16` + full HTML in scrollable panel
+   showing "AquaTerra" heading, redacted body.
+3. **Tech Pool Calculators page** with LSI computed to 0.03 balanced;
+   ResultBox now has Copy + **Attach** buttons stacked vertically.
+   Attach clicked → status message "Multiple open reports (7) —
+   open a job and try again." rendered below result.
+
+### Tests
+
+`backend/tests/test_phase56_20_auto_email.py` — **11 tests, 11
+passed, 1.19s**.
+
+Coverage:
+- Settings roundtrip: default disabled → toggle ON → GET returns ON.
+- Customer 403 on both settings endpoints.
+- Preview endpoint returns 200 (with `subject`/`html`/`text`) or 404
+  when no submitted reports exist.
+- Renderer offline unit tests: pool body contains chemical readings,
+  chemicals added, algae text, customer notes, review CTA, custom
+  footer. Landscape body contains checklist + notes + `kind =
+  "landscape"`. Redaction sanity: `internal_notes` string NOT in
+  html or text; `internal.jpg` photo NOT in html.
+- Calculator attach RBAC: customer 403, empty text 422, no-open
+  reports 404 (or 200/409 for edge cases).
+- Send pipeline: disabled tenant → returns None cleanly; missing
+  customer → returns None cleanly (no crash).
+
+### Files touched
+- `backend/services/auto_visit_email.py` (**new**, ~280 LOC)
+- `backend/routers/service_reports.py`
+  (send hook + 3 settings endpoints + attach endpoint, ~130 LOC added)
+- `backend/tests/test_phase56_20_auto_email.py` (**new**, ~200 LOC)
+- `frontend/src/pages/settings/AutoVisitEmailSettings.jsx` (**new**)
+- `frontend/src/pages/tech/PoolCalculators.jsx` (ResultBox extended
+  with Attach button + status toast)
+- `frontend/src/App.js` (import + route
+  `/admin/settings/auto-visit-email`)
+
+### Preflight
+`bash scripts/preflight.sh` → **exit 0** (`preflight OK`). Dead-import
+static WARN 423 → **426** (3 false positives from lucide icons used
+inside conditional JSX branches in the new settings page —
+non-blocking; recorded for the future cleanup pass).
+
+### Non-goals (explicit)
+- No customer-side opt-out UI beyond the unsubscribe link
+  (footer). No SMS delivery of the visit summary (blocked on
+  RingCentral OAU-153 rotation from Phase 56.19). No branded HTML
+  template beyond basic layout — richer templates queued. No A/B
+  testing of subject lines. No open/click tracking (would need
+  Resend webhook wiring — deferred).
+
+### `RESEND_API_KEY` note
+The pod env already has a `RESEND_API_KEY` set, but it's a
+**test-mode** key from `resend.dev` that can only send emails to
+the account owner (`brianbeckmanaz@gmail.com`). Real-customer sends
+will `status: "failed"` with that error until the user rotates in a
+production key (or verifies a sending domain on Resend). The
+audit-row `error` field captures the exact Resend response so the
+user can debug from `db.outbound_emails.find({status:"failed"})`
+without redeploying.
+
+### Deferred / future
+- Attach-with-picker UX: if `status: "multiple_open_reports"`, open a
+  small dropdown next to the button so the tech can select which
+  report to attach to instead of getting a "start a job" message.
+  Small task (~30 min), deferred to keep this ship focused.
+- Mobile parity for admin settings + attach button on mobile
+  calculators — queued for the next mobile-parity sweep.
+- End-to-end webhook wiring for Resend delivery events (opens,
+  clicks, bounces) — deferred.
+

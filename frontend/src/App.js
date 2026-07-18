@@ -26,6 +26,7 @@ import { MasterInvoicesList, MasterInvoiceNew, MasterInvoiceDetail } from "@/pag
 import PaymentHandlesSettings from "@/pages/settings/PaymentHandles";
 import LateFeesSettings from "@/pages/settings/LateFees";
 import BillingSettings from "@/pages/settings/BillingSettings";
+import AutoVisitEmailSettings from "@/pages/settings/AutoVisitEmailSettings";
 import PortalPhotos from "@/pages/portal/PortalPhotos";
 import PortalBook from "@/pages/portal/PortalBook";
 import PortalChatsPage from "@/pages/portal/PortalChatsPage";
@@ -399,6 +400,7 @@ export default function App() {
             <Route path="social/brand-kit" element={<AdminOnly><SocialBrandKit /></AdminOnly>} />
             {/* Admin editor for service report templates (pool/landscape/generic) */}
             <Route path="admin/settings/service-templates" element={<AdminOnly><ServiceTemplatesEditor /></AdminOnly>} />
+            <Route path="admin/settings/auto-visit-email" element={<AdminOnly><AutoVisitEmailSettings /></AdminOnly>} />
 
             {/* Phase 16B — Business OS */}
             <Route path="os" element={<AdminOnly><BusinessOSLayout /></AdminOnly>}>

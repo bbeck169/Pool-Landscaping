@@ -512,6 +512,16 @@ async def submit_service_report(jid: str,
     out = await db.service_reports.find_one(
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id}, {"_id": 0}
     )
+    # Phase 56.20 — Auto End-of-Visit Customer Email.
+    # Non-blocking: any exception is caught + logged inside the service.
+    try:
+        from services.auto_visit_email import send_visit_summary_email
+        email_row = await send_visit_summary_email(tenant, job, out or rep)
+        if email_row and email_row.get("id"):
+            out["visit_summary_email_id"] = email_row["id"]
+            out["visit_summary_email_status"] = email_row.get("status")
+    except Exception as e:
+        logger.warning(f"auto visit-summary email failed: {e}")
     if clock_out_summary:
         out["clock_out_summary"] = {
             "entry_id": clock_out_summary.get("id"),
@@ -1341,4 +1351,149 @@ async def get_my_service_report(
         "scheduled_start": job.get("scheduled_start"),
     }
     return sr
+
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 56.20 — Auto End-of-Visit Email settings + Calculator attach hook
+# ═══════════════════════════════════════════════════════════════════════
+
+class AutoVisitEmailIn(BaseModel):
+    enabled: Optional[bool] = None
+    include_reviews_cta: Optional[bool] = None
+    google_review_link: Optional[str] = None
+    footer_text: Optional[str] = None
+
+
+@router.get("/settings/auto-visit-email")
+async def get_auto_visit_email_settings(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    if user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin only")
+    settings = (tenant.get("settings") or {}).get("auto_visit_email") or {}
+    return {
+        "enabled": bool(settings.get("enabled", False)),
+        "include_reviews_cta": bool(settings.get("include_reviews_cta", True)),
+        "google_review_link": settings.get("google_review_link") or "",
+        "footer_text": settings.get("footer_text") or "",
+    }
+
+
+@router.put("/settings/auto-visit-email")
+async def set_auto_visit_email_settings(
+    body: AutoVisitEmailIn,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    if user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin only")
+    existing = (tenant.get("settings") or {}).get("auto_visit_email") or {}
+    upd = {k: v for k, v in body.dict().items() if v is not None}
+    merged = {**existing, **upd}
+    await db.tenants.update_one(
+        {"id": tenant["id"]},
+        {"$set": {"settings.auto_visit_email": merged, "updated_at": now_iso()}},
+    )
+    return merged
+
+
+@router.post("/settings/auto-visit-email/preview")
+async def preview_auto_visit_email(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Render the email using the tenant's most recent submitted service
+    report so admin can eyeball the layout before flipping the toggle."""
+    if user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin only")
+    sr = await db.service_reports.find_one(
+        {"tenant_id": tenant["id"], "submitted_at": {"$ne": None}},
+        {"_id": 0}, sort=[("submitted_at", -1)],
+    )
+    if not sr:
+        raise HTTPException(404, "No submitted service reports available for preview")
+    job = await db.jobs.find_one(
+        {"tenant_id": tenant["id"], "id": sr.get("job_id")}, {"_id": 0}) or {}
+    customer = await db.customers.find_one(
+        {"tenant_id": tenant["id"], "id": job.get("customer_id")}, {"_id": 0}) or {}
+    safe_sr = _redact_report_for_customer(dict(sr))
+    from services.auto_visit_email import render_email
+    rendered = render_email(tenant, job, safe_sr, customer)
+    return {
+        "subject": rendered["subject"],
+        "html": rendered["html"],
+        "text": rendered["text"],
+        "kind": rendered["kind"],
+        "based_on_report_id": sr.get("id"),
+        "based_on_job_id": sr.get("job_id"),
+    }
+
+
+class AttachNoteIn(BaseModel):
+    text: str
+    report_id: Optional[str] = None
+
+
+@router.post("/service-report/attach-note")
+async def attach_calculator_note(
+    body: AttachNoteIn,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase 56.20 bundle — append a plain-text summary (produced by a
+    tool like the Pool Calculators) to the tech's active open service
+    report's `internal_notes`. Techs+admins only. Never touches
+    customer-facing `customer_notes`.
+
+    Behavior:
+    - If `report_id` supplied → target that report (must belong to caller).
+    - Else find caller's open (unsubmitted) service reports; if exactly
+      one, use it; if none → 404; if multiple → 409 with the list so the
+      UI can render a picker.
+    """
+    if user.get("role") not in ("admin", "super_admin", "technician"):
+        raise HTTPException(403, "Techs and admins only")
+    if not body.text.strip():
+        raise HTTPException(422, "text is required")
+    tech_id = user.get("technician_id") or user.get("id")
+    q = {"tenant_id": tenant["id"], "tech_id": tech_id, "submitted_at": None}
+    if body.report_id:
+        q["id"] = body.report_id
+    reports = await db.service_reports.find(q, {"_id": 0}).to_list(20)
+    if body.report_id:
+        if not reports:
+            raise HTTPException(404, "Service report not found or not yours")
+        target = reports[0]
+    else:
+        if not reports:
+            raise HTTPException(404, "No open service report — start a job first")
+        if len(reports) > 1:
+            return {
+                "status": "multiple_open_reports",
+                "reports": [{"id": r["id"], "job_id": r.get("job_id"),
+                             "tech_name": r.get("tech_name")} for r in reports],
+            }
+        target = reports[0]
+    now = now_iso()
+    stamped = f"\n[Calculator @ {now[:16].replace('T', ' ')}] {body.text.strip()}"
+    prev = target.get("internal_notes") or ""
+    new_notes = (prev + stamped).strip()
+    await db.service_reports.update_one(
+        {"tenant_id": tenant["id"], "id": target["id"]},
+        {"$set": {"internal_notes": new_notes, "updated_at": now}},
+    )
+    # Audit trail (simple history append; separate from `service_report_history` if that exists).
+    await db.service_report_notes_audit.insert_one({
+        "id": new_id(),
+        "tenant_id": tenant["id"],
+        "service_report_id": target["id"],
+        "actor_user_id": user["id"],
+        "actor_name": user.get("name") or user.get("email"),
+        "source": "calculator",
+        "text": body.text.strip(),
+        "created_at": now,
+    })
+    return {"status": "attached", "report_id": target["id"], "internal_notes_len": len(new_notes)}
 
