@@ -5,7 +5,7 @@ import os
 import logging
 
 from config import client, db, logger
-from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user, seed_prior_readings, seed_phase51k_finance, seed_mike_today_job
+from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user, seed_landscape_tech_carlos, seed_prior_readings, seed_phase51k_finance, seed_mike_today_job
 from routers import (
     notifications as notifications_router,
     stripe_payments as stripe_payments_router,
@@ -217,6 +217,7 @@ async def _background_seed():
     await step("tenant_backfill", tenants.run_tenant_backfill())
     await step("super_admin", tenants._seed_super_admin())
     await step("landscaping_user", seed_landscaping_user())
+    await step("landscape_tech_carlos", seed_landscape_tech_carlos())
     await step("business_os", business_os.seed_business_os())
     await step("tech_today_demo", seed_tech_today_demo())
     await step("prior_readings", seed_prior_readings())

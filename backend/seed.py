@@ -55,6 +55,62 @@ async def seed_landscaping_user():
     })
 
 
+async def seed_landscape_tech_carlos():
+    """SEC-001 followup · Idempotent seed of `carlos@aquaterra.com`, the
+    named landscape-department technician the demo tenant references in
+    training, onboarding, and route-assignment fixtures.
+
+    Gated on ``SEED_DEMO_USERS=1`` (default off) — mirrors
+    ``seed_landscaping_user``'s security posture. Mirrors mike's row layout
+    (technicians row + users row) with the pool ``department`` flipped to
+    ``landscaping``. Password is a temporary placeholder that
+    ``scripts/rotate_demo_passwords.py`` overwrites via its ``--only``
+    filter on first invocation."""
+    if _os.environ.get("SEED_DEMO_USERS", "0") != "1":
+        from config import logger as _lg
+        _lg.warning("SEED_DEMO_USERS=0 — skipping seed.py demo users. Set the flag to seed dev/preview.")
+        return
+    from utils import hash_password
+    email = "carlos@aquaterra.com"
+    tenant = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0})
+    tenant_id = tenant["id"] if tenant else None
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    if existing:
+        upd = {}
+        if (existing.get("department") or "").lower() != "landscaping":
+            upd["department"] = "landscaping"
+        if existing.get("role") != "technician":
+            upd["role"] = "technician"
+        if tenant_id and existing.get("tenant_id") != tenant_id:
+            upd["tenant_id"] = tenant_id
+        if not existing.get("active", True):
+            upd["active"] = True
+        if upd:
+            await db.users.update_one({"id": existing["id"]}, {"$set": upd})
+        return
+    tech_id = new_id()
+    await db.technicians.insert_one({
+        "id": tech_id, "name": "Carlos Rivera", "email": email,
+        "phone": "480-555-0158", "specialty": "Landscaping",
+        "avatar": "", "active": True, "created_at": now_iso(),
+        **({"tenant_id": tenant_id} if tenant_id else {}),
+    })
+    await db.users.insert_one({
+        "id": new_id(),
+        "name": "Carlos Rivera",
+        "email": email,
+        "password_hash": hash_password("password123"),
+        "role": "technician",
+        "department": "landscaping",
+        "avatar": "",
+        "technician_id": tech_id,
+        "active": True,
+        "created_at": now_iso(),
+        **({"tenant_id": tenant_id} if tenant_id else {}),
+    })
+
+
+
 async def seed():
     if await db.users.count_documents({}) > 0:
         return
