@@ -591,3 +591,275 @@ async def service_price(
         "peer_sample_size": len(peer_amounts),
     }
 
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase T5 — Business Analysis Tools (admin + super_admin only)
+# ══════════════════════════════════════════════════════════════════════
+
+ROUTE_VALUATION_DEFAULTS = {
+    "churn_rate_pct": 8.0,
+    "tech_cost_percentage": 35.0,
+    "chemical_cost_percentage": 15.0,
+    "overhead_percentage": 12.0,
+    "route_density": "medium",  # dense | medium | spread
+    "contract_length_avg_months": 24,
+    # Multiple bounds — routes trade in the industry between roughly
+    # 4x monthly (spread + high churn + short contracts) and 8x monthly
+    # (dense + low churn + long contracts). All three factors mix
+    # linearly and are averaged.
+    "multiple_min": 4.0,
+    "multiple_max": 8.0,
+    # Density factor bounds (fraction 0..1 of the min→max window).
+    "density_weights": {"dense": 1.0, "medium": 0.55, "spread": 0.15},
+    # Churn factor: >12% pins to 0; <4% pins to 1.
+    "churn_low_pct": 4.0,
+    "churn_high_pct": 12.0,
+    # Contract length factor: >=36mo pins to 1; <=6mo pins to 0.
+    "contract_short_months": 6,
+    "contract_long_months": 36,
+    "industry_per_customer_low": 1500,
+    "industry_per_customer_high": 3500,
+}
+
+
+PAY_MODEL_DEFAULTS = {
+    "hourly_rate": 22.0,
+    "per_pool_rate": 18.0,
+    "route_buy_pct": 65.0,   # tech keeps this fraction of route revenue
+    # "Other costs" for company margin math when comparing pay models:
+    # chemicals + overhead (labor is the variable being modeled).
+    "chemical_cost_percentage": 15.0,
+    "overhead_percentage": 12.0,
+}
+
+
+def _rv_defaults(tenant: dict) -> dict:
+    override = ((tenant or {}).get("settings") or {}).get("route_valuation_defaults") or {}
+    return {**ROUTE_VALUATION_DEFAULTS, **override}
+
+
+def _pm_defaults(tenant: dict) -> dict:
+    override = ((tenant or {}).get("settings") or {}).get("pay_model_defaults") or {}
+    return {**PAY_MODEL_DEFAULTS, **override}
+
+
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * max(0.0, min(1.0, t))
+
+
+# ─── T5.1 Route Valuation ───────────────────────────────────────────
+class RouteValuationIn(BaseModel):
+    active_customers: Optional[float] = Field(None, description="null → auto pull tenant active count")
+    avg_monthly_revenue_per_customer: Optional[float] = Field(None, description="null → auto median")
+    total_monthly_revenue: Optional[float] = None
+    churn_rate_pct: Optional[float] = None
+    tech_cost_percentage: Optional[float] = None
+    chemical_cost_percentage: Optional[float] = None
+    overhead_percentage: Optional[float] = None
+    route_density: Optional[str] = None
+    contract_length_avg_months: Optional[float] = None
+
+
+@router.post("/route-valuation")
+async def route_valuation(
+    body: RouteValuationIn,
+    user: dict = Depends(_require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    d = _rv_defaults(tenant)
+
+    # Auto-pull active customer count if not provided.
+    if body.active_customers is None:
+        active_customers = float(await db.customers.count_documents({
+            "tenant_id": tenant["id"],
+            "$or": [{"is_active": True}, {"is_active": {"$exists": False}}],
+        }))
+    else:
+        active_customers = float(body.active_customers or 0)
+
+    # Auto-pull avg monthly revenue if not provided — median of the
+    # active billing_plans expressed as a monthly figure.
+    if body.avg_monthly_revenue_per_customer is None:
+        monthly_amounts: list[float] = []
+        async for plan in db.billing_plans.find(
+            {"tenant_id": tenant["id"], "active": True}, {"_id": 0}
+        ):
+            amt = float(plan.get("amount") or 0)
+            freq = (plan.get("frequency") or "").lower()
+            vpm = _VISITS_PER_MONTH.get(freq)
+            if not vpm or amt <= 0:
+                continue
+            monthly_amounts.append(amt * vpm if freq in ("weekly", "biweekly", "bi-weekly")
+                                     else amt if freq == "monthly"
+                                     else amt / 3.0)
+        if monthly_amounts:
+            avg_monthly = median(monthly_amounts)
+        else:
+            avg_monthly = 0.0
+    else:
+        avg_monthly = float(body.avg_monthly_revenue_per_customer or 0)
+
+    total_monthly_revenue = body.total_monthly_revenue \
+        if body.total_monthly_revenue is not None \
+        else avg_monthly * active_customers
+    annual_revenue = round(total_monthly_revenue * 12, 2)
+
+    churn = body.churn_rate_pct if body.churn_rate_pct is not None else d["churn_rate_pct"]
+    tech_pct = body.tech_cost_percentage if body.tech_cost_percentage is not None else d["tech_cost_percentage"]
+    chem_pct = body.chemical_cost_percentage if body.chemical_cost_percentage is not None else d["chemical_cost_percentage"]
+    oh_pct = body.overhead_percentage if body.overhead_percentage is not None else d["overhead_percentage"]
+    density = (body.route_density or d["route_density"]).lower()
+    contract_len = body.contract_length_avg_months if body.contract_length_avg_months is not None \
+        else d["contract_length_avg_months"]
+
+    annual_gross_profit = round(
+        annual_revenue * (1 - (tech_pct + chem_pct + oh_pct) / 100.0), 2
+    )
+
+    # 3-factor mix, each on [0,1]. Average, then lerp between min/max multiple.
+    density_factor = float(d["density_weights"].get(density, 0.55))
+    churn_factor = 1 - (max(0, churn - d["churn_low_pct"])
+                        / max(1e-6, (d["churn_high_pct"] - d["churn_low_pct"])))
+    churn_factor = max(0.0, min(1.0, churn_factor))
+    contract_factor = ((contract_len - d["contract_short_months"])
+                        / max(1e-6, (d["contract_long_months"] - d["contract_short_months"])))
+    contract_factor = max(0.0, min(1.0, contract_factor))
+    combined_factor = (density_factor + churn_factor + contract_factor) / 3.0
+    route_multiple = round(_lerp(d["multiple_min"], d["multiple_max"], combined_factor), 2)
+    route_valuation_amt = round(total_monthly_revenue * route_multiple, 2)
+    per_customer = round(route_valuation_amt / active_customers, 2) if active_customers else 0.0
+
+    return {
+        "active_customers": int(active_customers),
+        "avg_monthly_revenue_per_customer": round(avg_monthly, 2),
+        "total_monthly_revenue": round(total_monthly_revenue, 2),
+        "annual_revenue": annual_revenue,
+        "annual_gross_profit": annual_gross_profit,
+        "route_multiple": route_multiple,
+        "route_valuation": route_valuation_amt,
+        "valuation_per_customer": per_customer,
+        "breakdown": {
+            "density": density,
+            "density_factor": round(density_factor, 2),
+            "churn_rate_pct": churn,
+            "churn_factor": round(churn_factor, 2),
+            "contract_length_avg_months": contract_len,
+            "contract_factor": round(contract_factor, 2),
+            "combined_factor": round(combined_factor, 2),
+            "multiple_min": d["multiple_min"],
+            "multiple_max": d["multiple_max"],
+        },
+        "benchmarks": {
+            "industry_per_customer_low": d["industry_per_customer_low"],
+            "industry_per_customer_high": d["industry_per_customer_high"],
+            "position": ("below_industry" if per_customer < d["industry_per_customer_low"]
+                          else "above_industry" if per_customer > d["industry_per_customer_high"]
+                          else "in_industry_range"),
+        },
+    }
+
+
+# ─── T5.2 Pay Model Comparator ──────────────────────────────────────
+class PayModelIn(BaseModel):
+    tech_route_customers: float
+    avg_visit_time_minutes: float
+    avg_revenue_per_customer_month: float
+    visits_per_customer_per_month: float
+    hourly_rate: Optional[float] = None
+    per_pool_rate: Optional[float] = None
+    route_buy_pct: Optional[float] = None
+
+
+@router.post("/pay-model-compare")
+async def pay_model_compare(
+    body: PayModelIn,
+    user: dict = Depends(_require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    d = _pm_defaults(tenant)
+    n = max(0.0, float(body.tech_route_customers or 0))
+    vt = max(0.0, float(body.avg_visit_time_minutes or 0))
+    rev_per_cust_mo = max(0.0, float(body.avg_revenue_per_customer_month or 0))
+    vpcm = max(0.0, float(body.visits_per_customer_per_month or 0))
+
+    hourly = body.hourly_rate if body.hourly_rate is not None else d["hourly_rate"]
+    per_pool = body.per_pool_rate if body.per_pool_rate is not None else d["per_pool_rate"]
+    route_pct = body.route_buy_pct if body.route_buy_pct is not None else d["route_buy_pct"]
+    chem_pct = d["chemical_cost_percentage"]
+    oh_pct = d["overhead_percentage"]
+
+    monthly_visits = n * vpcm
+    monthly_hours = (monthly_visits * vt) / 60.0
+    weekly_hours = monthly_hours / 4.33 if monthly_hours else 0
+    monthly_revenue = n * rev_per_cust_mo
+    other_costs = monthly_revenue * (chem_pct + oh_pct) / 100.0
+
+    def build(name: str, tech_pay: float) -> dict:
+        remaining = monthly_revenue - tech_pay - other_costs
+        margin_pct = round((remaining / monthly_revenue * 100), 1) if monthly_revenue else 0.0
+        return {
+            "model": name,
+            "monthly_tech_pay": round(tech_pay, 2),
+            "weekly_tech_pay": round(tech_pay / 4.33, 2) if tech_pay else 0.0,
+            "annualized_tech_pay": round(tech_pay * 12, 2),
+            "company_gross_margin_pct": margin_pct,
+            "company_monthly_profit": round(remaining, 2),
+        }
+
+    hourly_pay = weekly_hours * hourly * 4.33
+    per_pool_pay = monthly_visits * per_pool
+    route_buy_pay = monthly_revenue * (route_pct / 100.0)
+
+    models = {
+        "hourly": build("hourly", hourly_pay),
+        "per_pool": build("per_pool", per_pool_pay),
+        "route_buy": build("route_buy", route_buy_pay),
+    }
+    for m in models.values():
+        m["hourly_rate"] = hourly if m["model"] == "hourly" else None
+        m["per_pool_rate"] = per_pool if m["model"] == "per_pool" else None
+        m["route_buy_pct"] = route_pct if m["model"] == "route_buy" else None
+
+    # Winner determination.
+    best_margin = max(models.values(), key=lambda x: x["company_gross_margin_pct"])
+    best_tech_pay = max(models.values(), key=lambda x: x["monthly_tech_pay"])
+
+    # Break-even: at how many customers does route_buy > hourly for the tech?
+    # Solve: n*rev/cust*route_pct = n*vpcm*vt/60 * hourly
+    #   → rev/cust * route_pct/100 = vpcm * vt/60 * hourly
+    # Note: n cancels. Result: not customer-count-dependent given the inputs.
+    # So instead sweep visits_per_customer to find the break: keep n fixed.
+    breakeven_hint: Optional[str] = None
+    if rev_per_cust_mo * (route_pct / 100.0) > vpcm * (vt / 60.0) * hourly:
+        breakeven_hint = "route_buy pays the tech more than hourly at any route size for these inputs."
+    elif rev_per_cust_mo * (route_pct / 100.0) < vpcm * (vt / 60.0) * hourly:
+        breakeven_hint = "hourly pays the tech more than route_buy at any route size for these inputs."
+    else:
+        breakeven_hint = "hourly and route_buy pay the same for these inputs."
+
+    recommendation = (
+        f"Highest company margin: {best_margin['model']} at "
+        f"{best_margin['company_gross_margin_pct']}%. "
+        f"Highest tech pay: {best_tech_pay['model']} at "
+        f"${best_tech_pay['monthly_tech_pay']}/mo."
+    )
+
+    return {
+        "inputs_echo": {
+            "tech_route_customers": n,
+            "avg_visit_time_minutes": vt,
+            "avg_revenue_per_customer_month": rev_per_cust_mo,
+            "visits_per_customer_per_month": vpcm,
+            "monthly_hours": round(monthly_hours, 2),
+            "weekly_hours": round(weekly_hours, 2),
+            "monthly_revenue": round(monthly_revenue, 2),
+            "other_costs_pct": chem_pct + oh_pct,
+        },
+        "models": models,
+        "recommendation": recommendation,
+        "best_company_margin": best_margin["model"],
+        "best_tech_pay": best_tech_pay["model"],
+        "breakeven_hint": breakeven_hint,
+    }
+

@@ -2108,3 +2108,44 @@ Three admin-only pricing tools shipped as one tabbed page under
 - Mobile parity for pricing tools (admin-only feature; likely never
   needed on mobile).
 
+
+---
+
+## Phase T5 — Business Analysis Tools (Feb 2026)
+
+Two admin-only business analysis tools. Extends the calculators
+router with 2 new endpoints; new tabbed page at
+`/admin/tools/analysis`.
+
+### What changed
+
+- **Backend:** Route Valuation (3-factor mix of density, churn,
+  contract length → lerped between 4x-8x monthly-revenue multiples)
+  and Pay Model Comparator (hourly vs per-pool vs route-buy with
+  side-by-side margin + tech pay). Both share the same tenant-
+  override pattern as T3 (`route_valuation_defaults` +
+  `pay_model_defaults` under `tenant.settings`).
+- **Web:** New `BusinessAnalysisTools.jsx` (~330 LOC) with 2 tabs.
+  Route Valuation surfaces an industry benchmark bar ($1500-$3500
+  per-customer band). Pay Model Compare highlights winner cells
+  green in the table.
+- **Tests:** 10/10 passing.
+- **RBAC:** Verified 403 for tech + customer on both endpoints.
+
+### Verification
+
+- **T5.1 spec** (100 cust, $150/mo, dense, 5% churn, 24mo):
+  multiple **7.3x**, valuation **$109,500**, per-customer **$1,095**
+  (all within spec ±5%).
+- **T5.2 spec** (40 cust, 45min, $135/mo, weekly):
+  hourly **$2,857.80/mo**, per_pool **$3,117.60/mo**, route_buy
+  **$3,510.00/mo** (all within spec ±10%). Recommendation +
+  breakeven surfaced correctly.
+
+### Deferrals
+
+- Sensitivity sliders on Route Valuation.
+- Route-comparator (two hypothetical routes side-by-side).
+- Historical valuation snapshot audit.
+- Mobile parity (admin-only feature).
+

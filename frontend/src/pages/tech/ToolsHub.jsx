@@ -13,7 +13,7 @@ import {
   Search as SearchIcon, X as XIcon,
   CalendarDays, DoorOpen, Clock, MessageSquare,
   Calculator, FlaskConical, Home as HomeIcon, Boxes, Wrench, Magnet,
-  ClipboardList, Trophy, IdCard, DollarSign,
+  ClipboardList, Trophy, IdCard, DollarSign, TrendingUp,
   UserCircle, MapPin,
 } from "lucide-react";
 const TECH_SECTIONS = [
@@ -68,6 +68,7 @@ const ADMIN_SECTIONS = [
       { key: "property-lookup", icon: HomeIcon, label: "Property Lookup", desc: "Owner + lot size search", to: "/property-lookup" },
       { key: "inventory", icon: Boxes, label: "Inventory", desc: "Stock & purchase orders", to: "/admin/inventory" },
       { key: "pricing-tools", icon: DollarSign, label: "Pricing Tools", desc: "In-cost · Portfolio margins · Price recommender", to: "/admin/tools/pricing" },
+      { key: "analysis-tools", icon: TrendingUp, label: "Business Analysis", desc: "Route valuation · Pay model comparator", to: "/admin/tools/analysis" },
       { key: "checks", icon: Wrench, label: "Check Register", desc: "Write checks, batch payroll", to: "/admin/checks" },
       { key: "dispatch", icon: CalendarDays, label: "Dispatch", desc: "Assign & auto-route jobs", to: "/admin/dispatch" },
     ],

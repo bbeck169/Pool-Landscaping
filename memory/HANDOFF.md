@@ -927,3 +927,124 @@ recorded for future cleanup).
 - Historical margin trend chart on Cost per Pool — currently a
   point-in-time snapshot only.
 
+
+---
+
+## Phase T5 — Business Analysis Tools (Feb 2026)
+
+Two admin-only analysis tools. Extends `pool_calculators.py` with 2
+new endpoints. New frontend page at `/admin/tools/analysis`.
+
+### Backend
+
+**Extended:** `backend/routers/pool_calculators.py` (~250 LOC added
+below T3).
+
+- `ROUTE_VALUATION_DEFAULTS` and `PAY_MODEL_DEFAULTS` constant dicts.
+  Both merged over `tenant.settings.route_valuation_defaults` /
+  `pay_model_defaults` via `_rv_defaults()` / `_pm_defaults()` helpers
+  (same override pattern as T3).
+- `_lerp(a, b, t)` — small linear interpolation helper used for the
+  route-multiple calculation.
+
+New endpoints:
+- `POST /api/calculators/route-valuation` — 3-factor mix of density
+  (dense 1.0 / medium 0.55 / spread 0.15) + churn (linear 4-12%) +
+  contract length (linear 6-36 months). Factors are averaged and
+  lerped between multiple_min=4x and multiple_max=8x. Auto-pulls
+  active customer count + median monthly revenue from
+  `db.customers` and `db.billing_plans` if inputs omitted (falls
+  back cleanly to 0 for empty tenants).
+- `POST /api/calculators/pay-model-compare` — computes hourly /
+  per_pool / route_buy tech pay + company margin side-by-side.
+  Returns `best_company_margin`, `best_tech_pay`, and a
+  `breakeven_hint` that names which model always dominates for the
+  given inputs (since `n` cancels in the hourly-vs-route_buy
+  comparison).
+
+### Frontend
+
+**New page:** `frontend/src/pages/admin/BusinessAnalysisTools.jsx`
+(~330 LOC). Two tabs matching the endpoints. Route
+`/admin/tools/analysis` wrapped in `<AdminOnly>`.
+
+- **Route Valuation tab**: form + 6-stat result card + **industry
+  benchmark bar** (per-customer valuation plotted against the
+  $1500-$3500 band with a colored marker: red below / green above /
+  brand-color inside) + multiple-breakdown list showing each
+  factor's contribution.
+- **Pay Model Compare tab**: form + recommendation banner + 3-row
+  side-by-side comparison table with best-margin cells and best-
+  tech-pay cells color-coded green (winner metrics) + inputs echo
+  footer + breakeven hint.
+- Copy summary button on each tab.
+
+### Live curl evidence (both spec cases pass)
+
+**T5.1** — 100 customers, $150/mo, dense, 5% churn, 24mo contracts:
+- `route_multiple: 7.3` (spec ~7.2 ✓)
+- `route_valuation: $109,500` (spec ~$108K ✓)
+- `valuation_per_customer: $1,095` (spec ~$1080 ✓)
+- `benchmarks.position: "below_industry"`
+- breakdown shows density_factor 1.0 · churn_factor 0.88 · contract_factor 0.6 · combined_factor 0.83
+
+**T5.2** — 40 customers, 45min, $135/mo, weekly (4.33 vpcm):
+- monthly_hours 129.9 · monthly_revenue $5,400 · other_costs 27%
+- hourly: **$2,857.80/mo** (spec ~$1400/wk × 4.33 = $2856 ✓), margin **20.1%**
+- per_pool: **$3,117.60/mo** (spec ~$3120 ✓), margin 15.3%
+- route_buy: **$3,510.00/mo** (spec ~$3510 ✓), margin 8.0%
+- Recommendation: "Highest company margin: hourly at 20.1%. Highest tech pay: route_buy at $3510.0/mo."
+- Breakeven: "route_buy pays the tech more than hourly at any route size for these inputs."
+
+### RBAC verified
+- Admin: 200 on both endpoints
+- Tech: **403** on both endpoints
+- Customer: **403** on both endpoints (via pytest)
+
+### Screenshots
+1. **Route Valuation tab** (admin, spec inputs): 100 customers /
+   $15,000 monthly revenue / $68,400 annual gross profit / **7.3x
+   multiple** / **$109,500 valuation** / **$1,095 per customer**.
+   Industry benchmark bar renders below with red marker at $1,095
+   marked "below industry" (industry range highlighted $1500-$3500).
+2. **Pay Model Compare tab**: recommendation banner "Highest
+   company margin: hourly at 20.1%. Highest tech pay: route_buy at
+   $3510.0/mo." Comparison table with hourly's margin cells
+   (20.1% / $1,084.2 profit) in green + route_buy's tech-pay cells
+   ($810.62 weekly / $3,510 monthly) in green.
+
+### Tests
+
+`backend/tests/test_phase_t5_analysis_tools.py` — **10 tests, 10
+passed, 0.78s**.
+
+- TestRouteValuation (6): known-answer spec case, zero-customers
+  no divzero, dense > spread interpolation sanity, tech 403,
+  customer 403, auto-pull-from-tenant returns positive count.
+- TestPayModel (4): known-answer within ±10% for all 3 models
+  + best_company_margin==hourly assertion, zero-customers all-
+  zero graceful, tech 403, customer 403.
+
+### Files touched
+- `backend/routers/pool_calculators.py` (~250 LOC appended after T3)
+- `backend/tests/test_phase_t5_analysis_tools.py` (**new**, 10 tests)
+- `frontend/src/pages/admin/BusinessAnalysisTools.jsx` (**new**, ~330 LOC)
+- `frontend/src/App.js` (import + `<AdminOnly>` route)
+- `frontend/src/pages/tech/ToolsHub.jsx` (1 admin tile + 1 icon import)
+
+### Preflight
+`bash scripts/preflight.sh` → **exit 0**. Dead-import WARN 428 → 429
+(1 lucide false positive in conditional JSX branch; non-blocking).
+
+### Deferrals (explicit)
+
+- **Sensitivity slider** on route valuation to see how multiple/
+  valuation shift as churn or density change — informative but not
+  in-scope for T5.
+- **Route-comparator**: compare two hypothetical routes side-by-side
+  (e.g., "acquiring route A vs organic growth of B"). Would layer
+  cleanly on top of T5.1 — deferred.
+- **Historical snapshot** of route valuations over time (would
+  require a persistent audit collection) — deferred.
+- Mobile parity — admin-only feature; no mobile version planned.
+

@@ -139,6 +139,7 @@ import ServiceReport from "@/pages/tech/ServiceReport";
 import ToolsHub from "@/pages/tech/ToolsHub";
 import PoolCalculators from "@/pages/tech/PoolCalculators";
 import BusinessPricingTools from "@/pages/admin/BusinessPricingTools";
+import BusinessAnalysisTools from "@/pages/admin/BusinessAnalysisTools";
 import BusinessCard from "@/pages/tech/BusinessCard";
 import LandscapingTimeClock from "@/pages/tech/LandscapingTimeClock";
 import PoolServiceReport from "@/pages/reports/PoolServiceReport";
@@ -384,6 +385,7 @@ export default function App() {
             <Route path="tech/tools" element={<ToolsHub />} />
             <Route path="tech/tools/calculators" element={<PoolCalculators />} />
             <Route path="admin/tools/pricing" element={<AdminOnly><BusinessPricingTools /></AdminOnly>} />
+            <Route path="admin/tools/analysis" element={<AdminOnly><BusinessAnalysisTools /></AdminOnly>} />
             {/* NFC business card — role-agnostic personal view (uses /api/card).
                 The /card route below is the admin-only team card manager. */}
             <Route path="tech/card" element={<BusinessCard />} />
