@@ -120,3 +120,25 @@ def cleanup_test_data():
         print(f"\n[conftest teardown] Purged test data: {removed}")
     else:
         print("\n[conftest teardown] No test data to purge.")
+
+
+
+def pytest_collection_modifyitems(config, items):
+    """SEC-001 followup — auto-skip ``destructive`` tests unless explicitly
+    requested via ``pytest -m destructive`` (or ``-m "destructive or ..."``).
+
+    The persistence test for the rotation script has to actually invoke
+    ``scripts/rotate_demo_passwords.py``, which mutates the shared demo
+    user passwords in Mongo and rewrites ``/app/memory/test_credentials.md``.
+    Running it on every ``pytest -q`` sweep silently invalidated the
+    credentials the pod owner uses to log into the preview twice in a
+    row — this hook prevents that by making destructive tests opt-in.
+    """
+    markexpr = (config.getoption("-m") or "").strip()
+    if "destructive" in markexpr:
+        return
+    skip = pytest.mark.skip(
+        reason="destructive test (mutates shared DB); run with `pytest -m destructive` to include")
+    for item in items:
+        if "destructive" in item.keywords:
+            item.add_marker(skip)

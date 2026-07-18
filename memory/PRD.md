@@ -2949,6 +2949,25 @@ Closed every finding from the Feb 2026 security audit — P0 through P3 — in a
 **Residual note:** the ~130 remaining iteration test files still hardcode `"password123"` inline. They were not touched by this hotfix (per user directive: do not refactor unrelated code). Preview CI that needs those suites green must either (a) migrate them to `demo_pw()` in a follow-up, or (b) `python scripts/rotate_demo_passwords.py` before running them and update the imports similarly. Production is unaffected — `SEED_DEMO_USERS=0` means the demo users don't exist there.
 
 
+### SEC-001 followup · Persistence test guarded with `destructive` marker
+
+**Problem:** the persistence test (and the earlier idempotency test) invoked `scripts/rotate_demo_passwords.py` as a subprocess on every default `pytest -q` sweep, silently mutating the shared demo passwords and rewriting `/app/memory/test_credentials.md`. This invalidated the credentials the pod owner uses to log into the preview twice in the same session before the guard was added.
+
+**Fix (applied):**
+- `backend/pytest.ini` — registered a new `destructive` marker: `destructive: rotates demo-user passwords in the shared DB; skipped by default; run with -m destructive.`
+- `backend/tests/conftest.py::pytest_collection_modifyitems` — auto-skips any test carrying the `destructive` keyword unless the caller passes `-m destructive` (or an expression containing `destructive`).
+- `backend/tests/test_sec001_rotation_persistence.py` — rewritten around a throwaway `rotation_probe@aquaterra.com` user. The test fixture seeds the probe with a known plaintext, calls `rotate_demo_passwords.py --only rotation_probe@aquaterra.com`, asserts new plaintext → 200 and old plaintext → 401, then deletes the probe row. A snapshot check on `test_credentials.md` before/after asserts the 5 real demo rows never move. Module marked `pytestmark = pytest.mark.destructive`.
+- `backend/tests/test_seed_demo_users_gate.py::test_rotation_script_is_idempotent` — marked `destructive` (same reason; runs a full rotation as a subprocess).
+- `backend/scripts/rotate_demo_passwords.py::_rotate` — relaxed `--only` to accept arbitrary emails (test-only probes). Emails outside the canonical `DEMO_EMAILS` list still get rotated in the DB but are omitted from `test_credentials.md`, so the probe never lands in the pod-owner-visible file.
+
+**Verification:**
+- `pytest tests/test_sec001_rotation_persistence.py -q` → `1 skipped`. `md5sum /app/memory/test_credentials.md` before and after byte-identical.
+- `pytest -m destructive tests/test_sec001_rotation_persistence.py -v` → `1 passed`. `md5sum /app/memory/test_credentials.md` before and after byte-identical (probe row omitted from file).
+- `pytest --ignore=tests/test_zillow_live.py -q` (285-test full sweep) → `177 passed, 3 skipped, 108 failed, 1311 errors` in 134s. The 3 skipped include both destructive rotation tests. `md5sum /app/memory/test_credentials.md` before and after byte-identical (`5a3e45c232d8087ebbcfb400ae9867d7`). The 108/1311 failures/errors are the ~130 iteration test files that still hardcode `password123` — a follow-up migration to `demo_pw()`, unrelated to this guard.
+- After `sudo supervisorctl restart backend`, all 5 demo accounts (super/admin/mike/carlos/customer) return HTTP 200 with their currently-listed plaintexts; `carlos@aquaterra.com` authenticates with `role: technician`, `department: landscaping`.
+
+
+
 
 - **SEC-002 (P1 · HIGH)** — Cross-tenant customer password reset.
   - `routers/portal_admin.py`: every `db.customers` lookup and every `db.users` upsert/update in `portal-invite`, `portal-reset`, `portal-revoke`, and `_upsert_customer_user` now includes `tenant_id`. Cross-tenant CIDs → **404** (not 403, avoiding existence leak).

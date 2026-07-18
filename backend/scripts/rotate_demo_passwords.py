@@ -39,13 +39,24 @@ CREDS_PATH = Path("/app/memory/test_credentials.md")
 
 
 async def _rotate(only: set[str] | None = None) -> list[tuple[str, str, str, bool]]:
-    """Rotate demo-user passwords. If `only` is provided, restrict to those emails."""
+    """Rotate demo-user passwords.
+
+    If ``only`` is provided, restrict to those emails. Emails outside
+    ``DEMO_EMAILS`` are supported for test-suite probes (e.g. a throwaway
+    ``rotation_probe@aquaterra.com`` user) — they get rotated in the DB
+    but are **not** listed in ``test_credentials.md``.
+    """
     client = AsyncIOMotorClient(os.environ["MONGO_URL"])
     db = client[os.environ["DB_NAME"]]
     out = []
-    for email, role_hint in DEMO_EMAILS:
-        if only is not None and email not in only:
-            continue
+    demo_by_email = dict(DEMO_EMAILS)
+    if only is not None:
+        # Extend the iteration set with any --only email that isn't a canonical
+        # demo user (they still get rotated but skip the credentials-file row).
+        iter_emails = [(e, demo_by_email.get(e, "probe")) for e in only]
+    else:
+        iter_emails = list(DEMO_EMAILS)
+    for email, role_hint in iter_emails:
         existing = await db.users.find_one({"email": email}, {"_id": 0, "id": 1, "role": 1})
         if not existing:
             out.append((email, role_hint, "", False))
@@ -148,13 +159,6 @@ def main() -> None:
     only_set: set[str] | None = None
     if args.only:
         only_set = {e.strip() for e in args.only.split(",") if e.strip()}
-        # Validate.
-        known = {e for e, _ in DEMO_EMAILS}
-        unknown = only_set - known
-        if unknown:
-            print(f"ERROR: unknown demo emails in --only: {unknown}", file=sys.stderr)
-            print(f"       valid: {sorted(known)}", file=sys.stderr)
-            sys.exit(2)
 
     rows = asyncio.run(_rotate(only_set))
     _write_credentials(rows, partial=only_set is not None)
