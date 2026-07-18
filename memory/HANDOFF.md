@@ -1841,3 +1841,228 @@ Admin (Alex Admin) on `/admin/tools/analysis` → Growth Playbook tab:
 - Ship 3 (Nudge non-starters + Recommendations queue widget) — awaiting
   go-signal.
 
+
+
+---
+
+## Ship 3 · Nudge non-starters + Recommendations queue + Growth snapshots (Feb 2026)
+
+Three-item bundle. Closes the "draft-first-UX follow-through loop" from
+the Ship 1 T3.2 flow, gives admins a bulk action to unstick stalled
+training modules, and quietly starts capturing growth-playbook telemetry
+for future chart rendering.
+
+### Item A · Nudge non-starters (CPO Readiness widget)
+
+**New endpoint:** `POST /api/training/nudge-non-starters`
+(`_require_admin`) in new router `backend/routers/training_nudge.py`
+(~230 LOC).
+
+Body: `{module_code, message, include_email: bool = false}`.
+
+Flow:
+1. Resolve target techs via
+   `role in [technician, tech]` + department filter (pool modules →
+   `[pool, both, ""]`, landscape modules → `[landscaping, both, ""]`).
+2. Filter to non-starters: no `training_progress` row OR
+   `lessons_completed: []`.
+3. **7-day / ISO-week bucket idempotency** (`week_of: "2026-W29"`).
+   Records for the current week in `db.training_nudges` per user ×
+   module are skipped silently.
+4. For each targeted tech:
+   - Persist a `training_nudges` audit row (`{tenant_id, module_code,
+     user_id, week_of, message, actor_user_id, actor_name, created_at}`).
+   - Insert a `notifications` row with
+     `kind: "training_nudge"`, `href: "/training"`.
+   - If `include_email: true` AND tech has an email on file:
+     - No RESEND_API_KEY → `outbound_emails` row with
+       `status: "not_sent_missing_key"` (audit-only, ready to fire when
+       key lands — same graceful-degradation pattern as 56.20 +
+       Ship 1 T3.2).
+     - With key → attempts Resend send; flips to `sent` / `failed` +
+       error snippet.
+5. Return `{module_code, count_nudged, count_skipped_idempotent,
+   notified_user_ids, email_ids, week_of}`.
+
+**Frontend:** `frontend/src/components/admin/TeamCpoReadinessWidget.jsx`
+(extended, +100 LOC).
+- **Nudge N non-starter(s)** button visible in the widget header when
+  `notStarted > 0`.
+- Modal with non-starter list (name-only), editable textarea (default
+  message: "The CPO Prep training module is now live in your Tests
+  menu…"), "Also draft email" checkbox (default OFF), Cancel + Send
+  Nudge footer.
+- Green result banner: "Nudged N tech(s). Skipped M already-nudged this
+  week."
+
+### Item B · Recommendations queue (admin dashboard widget)
+
+**New router:** `backend/routers/recommendations_queue.py` (~180 LOC).
+Three endpoints (`_require_admin`):
+
+- `GET /api/recommendations-queue?older_than_days=7&kind=price_increase_recommendation` —
+  returns drafts older than N days for the given kind. Enriches each row
+  with `customer_name`, `age_days` (computed from `created_at`),
+  `gap_dollars`, `gap_pct`. Sorted oldest-first. Tenant-scoped.
+- `POST /api/recommendations-queue/{email_id}/send` — flips a draft to
+  `sent` / `failed` / `not_sent_missing_key` via Resend pipeline. 404 if
+  not found; 409 if not currently `status: "draft"`.
+- `POST /api/recommendations-queue/{email_id}/discard` — marks
+  `status: "discarded"` + `discarded_by_user_id` + `discarded_at`. Row
+  preserved for audit (never hard-deleted).
+
+Enum guardrail: `kind` param must be in `{"price_increase_recommendation"}` (422 on unknown values).
+
+**Frontend:** `frontend/src/components/admin/RecommendationsQueueWidget.jsx`
+(**NEW**, ~230 LOC).
+- Mounted on admin Dashboard directly below the Team CPO Readiness
+  widget.
+- Empty state (positive framing): "No stale price-increase drafts. Nice
+  hygiene."
+- With drafts: expandable table (customer + email · current · recommended ·
+  gap % · age days · action buttons). Actions: View (eye icon → opens
+  read-only preview modal), Send (paper-plane brand button → fires via
+  Resend), Discard (red trash → confirm dialog → status=discarded).
+- Preview modal shows 3-stat grid (current · recommended · gap %) +
+  subject + effective_date + reason + action-result banner.
+- Bottom link "Manage all drafts →" → jumps to Ship 1's Cost per Pool
+  tab.
+
+### Item C · Growth playbook snapshots (chart-ready telemetry)
+
+Every `POST /api/analysis/growth-playbook` fetch now also writes a
+snapshot row to `db.growth_playbook_snapshots`. Non-blocking best-effort
+— any write failure logs a warning and returns cleanly (playbook
+response unaffected). Indexes:
+- **TTL: 2 years** (`63,072,000` seconds) on `snapshot_at_dt` (BSON
+  date column paired with the ISO-string `snapshot_at` API field).
+- Compound `(tenant_id, snapshot_at_dt desc)` for fast history queries.
+
+Snapshot row shape:
+```
+{id, tenant_id, snapshot_at, snapshot_at_dt, requested_by_user_id,
+ active_customers, monthly_revenue, today_valuation, today_multiple,
+ market_state, market_median_price, market_valuation, delta_valuation,
+ churn_breakeven_pct, playbook_flavor, state_fallback_used,
+ dominant_frequency}
+```
+
+**New endpoint:** `GET /api/analysis/growth-playbook/history?days=90`
+(`_require_admin`). Returns tenant-scoped snapshots within the window,
+sorted chronologically (oldest → newest) for straightforward chart
+x-axis rendering. `days` bounded [1, 730].
+
+**No new UI in this ship** for the history — data capture only.
+Chart deferred until ≥30 days of history exist.
+
+### Live curl evidence
+
+**A · nudge non-starters** (aquaterra, admin):
+```
+POST /training/nudge-non-starters
+{"module_code":"cpo-prep","message":"…","include_email":false}
+→ {"count_nudged":1,"count_skipped_idempotent":0,"week_of":"2026-W29",
+   "notified_user_ids":["785626e8-…"]}
+
+Re-fire same week:
+→ {"count_nudged":0,"count_skipped_idempotent":1}
+```
+Tech RBAC → 403 `Admin access required`.
+
+**B · recommendations queue** (aquaterra, admin):
+```
+GET /recommendations-queue?older_than_days=7
+→ {"count":0,"rows":[],"cutoff_days":7} (Ship 1 drafts <1 day old)
+
+GET /recommendations-queue?older_than_days=0
+→ {"count":3,"rows":[
+   {"id":"9d6b482a-…","customer_name":"Aimee Baram","gap_pct":60.0,"age_days":0.2},
+   …]}
+```
+Kind unknown → 422. Tech → 403. Discard-then-discard → 409.
+
+**C · playbook snapshots** (aquaterra, admin):
+```
+POST /analysis/growth-playbook {} → 200
+GET  /analysis/growth-playbook/history?days=1
+→ {"count":1,"rows":[{"snapshot_at":"2026-07-18T08:19:21+00:00",
+    "active_customers":149,"today_valuation":92380.0,
+    "playbook_flavor":"skip_playbook",…}]}
+```
+Chronological order verified with 3 consecutive fetches.
+
+### Tests
+
+`backend/tests/test_ship3_nudge_and_queue.py` — **17 tests / 17 passed / 5.31s**:
+
+- TestNudgeNonStarters (6): first nudge targets all non-starters, re-nudge
+  in same week idempotent, include_email fallback path (audits when key
+  missing), tech 403, customer 403, empty module_code 422.
+- TestRecommendationsQueue (7): shape, only drafts returned,
+  send transitions status, discard endpoint + can't double-discard 409,
+  send-on-nonexistent 404, invalid kind 422, tech 403.
+- TestGrowthPlaybookSnapshots (4): playbook writes snapshot, chronological
+  order, days-window filter monotonic, tech 403 on history.
+
+### Files touched / new
+
+- `backend/routers/training_nudge.py` (**NEW**, ~230 LOC)
+- `backend/routers/recommendations_queue.py` (**NEW**, ~180 LOC)
+- `backend/routers/growth_playbook.py` (+ `_ensure_snapshot_indexes()`
+  + `_write_snapshot()` + `/growth-playbook/history` endpoint; ~100 LOC
+  added)
+- `backend/server.py` (register `training_nudge` + `recommendations_queue`)
+- `backend/tests/test_ship3_nudge_and_queue.py` (**NEW**, 17 tests)
+- `frontend/src/components/admin/TeamCpoReadinessWidget.jsx`
+  (+ Nudge button + modal, +100 LOC)
+- `frontend/src/components/admin/RecommendationsQueueWidget.jsx`
+  (**NEW**, ~230 LOC)
+- `frontend/src/pages/admin/Dashboard.jsx` (mount RecommendationsQueueWidget
+  below TeamCpoReadinessWidget)
+
+### Preflight
+
+`bash scripts/preflight.sh` → **exit 0** (`preflight OK`). Dead-import
+WARN stayed at **429** (no new false positives).
+
+### Screenshots
+
+1. **Admin dashboard** with both widgets: Team CPO Readiness ("0 of 1
+   pool techs certified · 0 in progress · 1 not started") + brand-color
+   **Nudge 1 non-starter** button. Below it: Stale price-increase drafts
+   widget showing empty state "No stale price-increase drafts. Nice
+   hygiene." (Ship 1 drafts are <7 days old so correctly hidden).
+2. **Nudge non-starters modal**: header "Nudge non-starters · 1 tech
+   · CPO Prep module", non-starter list ("P19092 Pool"), default
+   message pre-populated, "Also draft email" checkbox unchecked, footer
+   Cancel · Send Nudge (brand fill).
+
+### Non-goals (explicit, per user brief)
+
+- No auto-nudge — all nudges admin-initiated.
+- No SMS delivery of nudges (RingCentral OAU-153 unresolved — separate
+  phase).
+- No rich-text editor for the nudge message (plain textarea only).
+- No cross-module nudging in v1 (each module code = separate nudge
+  action).
+- No chart UI for growth-playbook history yet — data-capture only.
+
+### Deferrals
+
+- Bulk-nudge across multiple modules — v1 is single-module per call.
+- Recommendations queue: bulk-send / bulk-discard row selection — v1 is
+  row-by-row.
+- Snapshot dedup — playbook fetch is idempotent from the UI (one write
+  per open), but frequent tab-refreshes will write duplicates. If
+  needed, add a `bucket_by_hour` idempotency later.
+- Growth-history chart UI (line chart of valuation over time) — deferred
+  until ≥30 days of history exist.
+
+### 3-ship arc complete
+
+Ship 1 (Polish batch · T4.3 + T4.1 + T3-followup + T3.2) ·
+Ship 2 (Growth Playbook tab) ·
+Ship 3 (Nudge + Queue + Snapshots) all landed. Next user direction
+awaited — paused queue items are 56.13d Supplemental Pool Modules /
+56.14 Landscape Training / 56.15 Handbook + dead-import cleanup pass.
+

@@ -10,13 +10,33 @@
  */
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { GraduationCap, ChevronDown, ChevronRight } from "lucide-react";
+import { GraduationCap, ChevronDown, ChevronRight, Send, X } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 
 export default function TeamCpoReadinessWidget() {
   const [expand, setExpand] = useState(false);
   const [state, setState] = useState({ loading: true, error: "", rows: [] });
+  const [nudge, setNudge] = useState(null);   // {message, include_email, result?, err?}
+
+  const openNudge = () => setNudge({
+    message: "The CPO Prep training module is now live in your Tests menu. It takes ~2 hours and earns you a completion certificate. Let me know if you have questions.",
+    include_email: false,
+    result: null, err: null,
+  });
+  const closeNudge = () => setNudge(null);
+  const sendNudge = async () => {
+    try {
+      const r = await api.post("/training/nudge-non-starters", {
+        module_code: "cpo-prep",
+        message: nudge.message,
+        include_email: !!nudge.include_email,
+      });
+      setNudge({ ...nudge, result: r, err: null });
+    } catch (e) {
+      setNudge({ ...nudge, err: e.message });
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -72,6 +92,7 @@ export default function TeamCpoReadinessWidget() {
   const inProg = state.rows.filter((r) => r.status === "In progress").length;
   const total = state.rows.length;
   const notStarted = total - certified - inProg;
+  const nonStarters = state.rows.filter((r) => r.status === "Not started");
 
   return (
     <div
@@ -107,6 +128,17 @@ export default function TeamCpoReadinessWidget() {
         {expand ? <ChevronDown size={14} color={colors.muted} />
                 : <ChevronRight size={14} color={colors.muted} />}
       </button>
+
+      {!state.loading && !state.error && notStarted > 0 ? (
+        <div className="mt-2">
+          <button onClick={openNudge}
+                  className="text-xs font-semibold rounded-lg px-3 py-1.5 inline-flex items-center gap-1"
+                  style={{ backgroundColor: colors.brand, color: "#fff" }}
+                  data-testid="cpo-nudge-btn">
+            <Send size={11} /> Nudge {notStarted} non-starter{notStarted === 1 ? "" : "s"}
+          </button>
+        </div>
+      ) : null}
 
       {expand && !state.loading && state.rows.length > 0 ? (
         <div className="mt-3 rounded-md overflow-hidden"
@@ -155,6 +187,94 @@ export default function TeamCpoReadinessWidget() {
             <Link to="/admin/training" className="ml-2" style={{ color: colors.brand, textDecoration: "underline" }}>
               Manage training →
             </Link>
+          </div>
+        </div>
+      ) : null}
+
+      {nudge ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center p-6 overflow-y-auto"
+             style={{ backgroundColor: "rgba(0,0,0,0.4)" }}
+             data-testid="cpo-nudge-modal">
+          <div className="rounded-2xl max-w-lg w-full my-4"
+               style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+            <div className="flex items-center justify-between p-4"
+                 style={{ borderBottom: `1px solid ${colors.border}` }}>
+              <div>
+                <div className="text-lg font-bold" style={{ color: colors.onSurface }}>
+                  Nudge non-starters
+                </div>
+                <div className="text-xs" style={{ color: colors.muted }}>
+                  {nonStarters.length} tech{nonStarters.length === 1 ? "" : "s"} · CPO Prep module
+                </div>
+              </div>
+              <button onClick={closeNudge} data-testid="cpo-nudge-close">
+                <X size={18} color={colors.muted} />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="rounded-lg p-2 text-xs"
+                   style={{ backgroundColor: colors.background, border: `1px solid ${colors.border}` }}>
+                <div className="font-semibold mb-1" style={{ color: colors.muted }}>
+                  Non-starters
+                </div>
+                <ul className="text-xs space-y-0.5" style={{ color: colors.onSurface }}>
+                  {nonStarters.map((r) => (
+                    <li key={r.id}>{r.name}</li>
+                  ))}
+                </ul>
+              </div>
+              <label className="block">
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.muted }}>
+                  Message
+                </span>
+                <textarea value={nudge.message}
+                          onChange={(e) => setNudge({ ...nudge, message: e.target.value })}
+                          rows={5}
+                          className="mt-1 w-full rounded-lg px-3 py-2 text-sm"
+                          style={{ backgroundColor: colors.background, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+                          data-testid="cpo-nudge-message" />
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={nudge.include_email}
+                       onChange={(e) => setNudge({ ...nudge, include_email: e.target.checked })}
+                       data-testid="cpo-nudge-include-email" />
+                <span className="text-sm" style={{ color: colors.onSurface }}>
+                  Also draft email
+                </span>
+                <span className="text-xs" style={{ color: colors.muted }}>
+                  (delivered if RESEND_API_KEY set; else audit row only)
+                </span>
+              </label>
+              {nudge.result ? (
+                <div className="rounded-lg p-2 text-xs" data-testid="cpo-nudge-result"
+                     style={{ backgroundColor: "#DCFCE7", color: "#166534" }}>
+                  Nudged <b>{nudge.result.count_nudged}</b> tech{nudge.result.count_nudged === 1 ? "" : "s"}.
+                  {" "}Skipped <b>{nudge.result.count_skipped_idempotent}</b> already-nudged this week.
+                  {nudge.result.email_ids?.length ? ` Emails queued: ${nudge.result.email_ids.length}.` : ""}
+                </div>
+              ) : null}
+              {nudge.err ? (
+                <div className="rounded-lg p-2 text-xs" data-testid="cpo-nudge-error"
+                     style={{ backgroundColor: "#FEE2E2", color: "#991B1B" }}>
+                  {nudge.err}
+                </div>
+              ) : null}
+            </div>
+            <div className="p-4 flex items-center justify-end gap-2"
+                 style={{ borderTop: `1px solid ${colors.border}` }}>
+              <button onClick={closeNudge}
+                      className="text-sm font-semibold px-3 py-2 rounded-lg"
+                      style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+                      data-testid="cpo-nudge-cancel">
+                Cancel
+              </button>
+              <button onClick={sendNudge}
+                      className="text-sm font-semibold px-3 py-2 rounded-lg inline-flex items-center gap-1"
+                      style={{ backgroundColor: colors.brand, color: "#fff" }}
+                      data-testid="cpo-nudge-send">
+                <Send size={13} /> Send Nudge
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

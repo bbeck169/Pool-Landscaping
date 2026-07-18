@@ -46,6 +46,8 @@ from routers import (
     document_generators,
     pricing_defaults_router,
     growth_playbook,
+    training_nudge,
+    recommendations_queue,
 )
 
 app = FastAPI(
@@ -94,7 +96,9 @@ for module in [notifications_router,
                pool_calculators,
                document_generators,
                pricing_defaults_router,
-               growth_playbook]:
+               growth_playbook,
+               training_nudge,
+               recommendations_queue]:
     api_router.include_router(module.router)
 
 

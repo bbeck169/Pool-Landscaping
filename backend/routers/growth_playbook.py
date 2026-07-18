@@ -8,16 +8,22 @@ valuation) + T6 (state market rates) into 3 scenarios:
 
 All admin + super_admin only. Reuses the same defaults + math as
 routers/pool_calculators.py so the numbers stay in lockstep.
+
+Ship 3 · Item C: every playbook fetch writes a snapshot row to
+`growth_playbook_snapshots` (2-year TTL). New GET history endpoint
+surfaces recent snapshots for future chart rendering.
 """
 from __future__ import annotations
+import asyncio
+from datetime import datetime, timedelta, timezone
 from statistics import median
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from config import db
-from utils import get_current_user
+from config import db, logger
+from utils import get_current_user, new_id, now_iso
 from routers.tenants import get_current_tenant
 from routers.pool_calculators import (
     ROUTE_VALUATION_DEFAULTS, PRICING_DEFAULTS,
@@ -27,6 +33,26 @@ from services.service_price_market import BY_STATE, SERVICE_TYPES
 
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
+
+
+_SNAPSHOTS_INDEX_READY = False
+
+
+async def _ensure_snapshot_indexes():
+    """Idempotent TTL + query indexes on growth_playbook_snapshots."""
+    global _SNAPSHOTS_INDEX_READY
+    if _SNAPSHOTS_INDEX_READY:
+        return
+    try:
+        # 2-year TTL on snapshot_at_dt (BSON date). String snapshot_at kept
+        # separately for readable API output.
+        await db.growth_playbook_snapshots.create_index(
+            "snapshot_at_dt", expireAfterSeconds=63072000)
+        await db.growth_playbook_snapshots.create_index(
+            [("tenant_id", 1), ("snapshot_at_dt", -1)])
+        _SNAPSHOTS_INDEX_READY = True
+    except Exception as e:
+        logger.warning(f"growth_playbook_snapshots index creation failed: {e}")
 
 
 def _require_admin(user: dict = Depends(get_current_user)) -> dict:
@@ -279,7 +305,7 @@ async def growth_playbook(
         else:
             breakeven_flavor = "healthy"
 
-    return {
+    response = {
         "tenant_id": tenant["id"],
         "state_code": state_code,
         "state_name": market_row["state_name"],
@@ -326,3 +352,55 @@ async def growth_playbook(
             "saturated_high": saturated_high,
         },
     }
+    # Ship 3 · Item C — snapshot write (non-blocking best-effort).
+    await _write_snapshot(tenant, user, response)
+    return response
+
+
+async def _write_snapshot(tenant: dict, user: dict, r: dict) -> None:
+    """Persist a compact snapshot for future chart rendering. Never
+    raises — silently logs and returns if the write fails."""
+    try:
+        await _ensure_snapshot_indexes()
+        now = datetime.now(timezone.utc)
+        await db.growth_playbook_snapshots.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "snapshot_at": now.isoformat(),
+            "snapshot_at_dt": now,  # BSON date for TTL
+            "requested_by_user_id": user["id"],
+            "active_customers": r["active_customers"],
+            "monthly_revenue": r["today"]["total_monthly_revenue"],
+            "today_valuation": r["today"]["route_valuation"],
+            "today_multiple": r["today"]["route_multiple"],
+            "market_state": r["state_code"],
+            "market_median_price": r["market_median_scenario"]["market_median_per_visit"],
+            "market_valuation": r["market_median_scenario"]["route_valuation"],
+            "delta_valuation": r["market_median_scenario"]["delta_valuation"],
+            "churn_breakeven_pct": r["churn_breakeven"]["breakeven_churn_pct"],
+            "playbook_flavor": r["churn_breakeven"]["flavor"],
+            "state_fallback_used": r["state_fallback_used"],
+            "dominant_frequency": r["dominant_frequency"],
+        })
+    except Exception as e:
+        logger.warning(f"growth_playbook snapshot write failed: {type(e).__name__}: {e}")
+
+
+@router.get("/growth-playbook/history")
+async def growth_playbook_history(
+    days: int = Query(90, ge=1, le=730),
+    user: dict = Depends(_require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Return snapshot rows for the tenant within the last `days` days,
+    sorted chronologically (oldest first) for straightforward
+    chart-x-axis rendering. Strict tenant isolation.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows: list[dict] = []
+    async for row in db.growth_playbook_snapshots.find({
+        "tenant_id": tenant["id"],
+        "snapshot_at": {"$gte": cutoff},
+    }, {"_id": 0, "snapshot_at_dt": 0}).sort("snapshot_at", 1):
+        rows.append(row)
+    return {"count": len(rows), "days": days, "rows": rows}

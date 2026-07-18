@@ -2320,3 +2320,29 @@ dropped 429 → 428.
 **Backlog:** Ship 3 (Nudge non-starters + Recommendations queue widget)
 STOPPED — awaiting user go-signal.
 
+
+
+## Ship 3 · Nudge + Queue + Snapshots (Feb 2026)
+
+3-item bundle closing the training-adoption gap + Ship 1 draft-first-UX
+follow-through loop + adding chart-ready telemetry.
+
+**Item A · Nudge non-starters** — `POST /api/training/nudge-non-starters`
++ CPO Readiness widget Nudge button + modal. 7-day ISO-week idempotency
+per (tenant, user, module). Optional email drafting via graceful
+Resend fallback.
+
+**Item B · Recommendations queue** — 3 admin-only endpoints under
+`/api/recommendations-queue`. Dashboard widget below Team CPO Readiness.
+View / Send / Discard row actions. Positive empty state.
+
+**Item C · Growth playbook snapshots** — non-blocking write on every
+playbook fetch to `db.growth_playbook_snapshots` (2-year TTL). New
+`GET /api/analysis/growth-playbook/history?days=90` endpoint. No UI yet
+— chart deferred until ≥30 days of data.
+
+**Tests:** 17/17 passed in 5.31s. Preflight exit 0. Dead-imports at 429.
+
+**3-ship arc:** Ship 1 · 2 · 3 all shipped. Paused queue (56.13d /
+56.14 / 56.15) + dead-import cleanup await user direction.
+
