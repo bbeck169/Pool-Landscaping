@@ -2601,3 +2601,56 @@ Ships the Expo/React Native mobile UI for the Templates Library, with **offline-
 - Expo preview tunnel unavailable (infrastructure inactivity, not code issue)
 - Code paths verified via grep/file inspection (see offline-draft deliverables below)
 
+
+---
+
+## Templates Library — Phase 4 · Batch A (Templates Polish) · Feb 2026
+
+Three deliverables shipped in a single batch (backend + web only — mobile signature pad handled in a separate follow-up).
+
+### Deliverable 1 — Deeper schemas on 20 templates
+- All 20 compact templates expanded to 4-6 sections, 12-25 fields each, at least one `table` where operationally natural, at least one `signature` where the doc is signed. Truck Inventory, Water Chemistry Log, Incident Report Form unchanged.
+- Field-type diversity now includes typed table columns (`text`, `number`, `date`, `checkbox`), `select` options, min/max on numerics, and explicit `header` / `long_text` for narrative sections.
+- Version bumped: the 20 expanded defs now seed at `version=2`, the three untouched at `version=1`.
+- Seed script `templates_seed/seed_templates.py` is upsert-safe (`update_one({code, is_system}, {$set}, upsert=True)`); re-running on an already-seeded DB updates in place — 23 rows, 0 dupes (verified via `db.template_definitions.count_documents({is_system: True})`).
+- IP-safety blacklist extended with 4 new guards (`courtesy of pooldial`, `adapted from pooldial`, `pentair proprietary`, `hayward proprietary`).
+
+### Deliverable 2 — Signature drawing pad (web)
+- New modal `frontend/src/components/templates/SignaturePadModal.jsx` uses `react-signature-canvas` (already in `package.json`). Canvas + Clear + Cancel + Save, with an editable signer-name input prefilled from `useAuth().user.name`.
+- On save the field value is stored as `{ image_data_url: "data:image/png;base64,…", signer_name, signed_at }`. Legacy Phase 2 stamp shape `{name, date}` is still rendered (backward compatible — no migration).
+- `TemplateFieldRenderer.jsx` refactored to host signature state in a subcomponent (`SignatureField`) so the modal open/close doesn't lift into the parent renderer. Signed state now shows: 200px-max PNG thumbnail + "Signed by … • timestamp" + **Re-sign** + **Clear** buttons (both disabled when the instance is finalized).
+- Backend `_render_pdf` in `routers/templates_library.py` now decodes a signature `image_data_url`, verifies PNG magic bytes, and embeds it as a proportional `reportlab.platypus.Image` (180×70) with a "Signed by … on …" caption. Silent fallback to the text stamp if decode/embed fails.
+- Workaround: the alpha build of `react-signature-canvas` ships a broken `trim-canvas` import under our webpack config; `SignaturePadModal` now try/catches `getTrimmedCanvas()` and falls back to `getCanvas()` — the raw untrimmed 480×180 PNG. Documented inline.
+
+### Deliverable 3 — PDF "Share to Customer Portal"
+- New endpoint: `POST /api/templates/instances/{id}/share-to-portal` — admin/super_admin only, requires `status == "finalized"` (409 otherwise), validates the target customer belongs to the caller's tenant (404 otherwise).
+- Reuses the existing `db.documents` collection (same one the Customer Portal Documents tray reads). Provenance columns added: `source_type: "template_instance"`, `source_id: <iid>`, `template_code`, `version`.
+- Idempotent per `(tenant_id, source_type, source_id, customer_id)` — re-sharing updates the same row and bumps `version` (no duplicates). New compound index added in `ensure_indexes`.
+- Best-effort `notify_customer(...)` call so customers with a portal login get an in-app notification. Silent no-op if the customer has no notif channel.
+- Seed `is_customer_facing: True` on 6 codes: `service_agreement`, `customer_welcome_packet`, `customer_satisfaction_survey`, `subcontractor_agreement`, `incident_report_form`, `complaint_response_template`.
+- New web components `SharePortalModal.jsx` + Share button in `TemplateFillPage.jsx` — visible only when the instance is finalized AND its definition is customer-facing. Searchable customer picker over `GET /api/customers?search=…`. Toast on success carries the preview link.
+
+### Files
+- Backend
+  - `backend/templates_seed/seed_templates.py` (rewrite — 20 expanded, 3 preserved, version bump, extended blacklist, `is_customer_facing` flag on 6 codes)
+  - `backend/routers/templates_library.py` (image-signature PDF embed, `POST /instances/{id}/share-to-portal`, extended `ensure_indexes`)
+  - `backend/tests/test_templates_library.py` (10 → 43 tests: 20 shape asserts + 6 flag asserts + 2 signature-PDF + 5 share-to-portal + all Phase 1 tests preserved)
+- Web
+  - `frontend/src/components/templates/SignaturePadModal.jsx` (new)
+  - `frontend/src/components/templates/SharePortalModal.jsx` (new)
+  - `frontend/src/components/templates/TemplateFieldRenderer.jsx` (signature refactor)
+  - `frontend/src/pages/admin/TemplateFillPage.jsx` (Share button + modal wiring + toast)
+  - `frontend/src/api/templates.js` (`shareInstanceToPortal`, `searchCustomers`)
+
+### Verification
+- **pytest** — `43 passed in 17.35s` (was 10 before Batch A). Covers deeper-schema asserts on all 20 expanded templates, `is_customer_facing` on 6 codes, signature-PDF happy path + legacy fallback, share-to-portal RBAC + tenant + draft-blocked + happy-path + idempotency.
+- **Live smoke (curl)** — `POST /instances/{id}/share-to-portal` returns 200 with `{document_id, customer_id, shared_at, portal_link: "/portal/documents"}`; second call returns the same `document_id` and the doc's `version` flips 1→2 in `db.documents`.
+- **Live smoke (Playwright)** — logged in as `admin@aquaterra.com`, created a Service Agreement draft, drew a signature in the pad, saved → PNG rendered inline + "Signed by Alex Admin • 7:38:23 PM"; finalized → banner shown + Share button appears; picked "Aimee Baram" → toast "Shared to Aimee Baram's portal. Preview: /portal/documents".
+- Backend `document_generators.py`, `portal.py`, and existing test suites untouched.
+- Mobile (`/app/mobile`) untouched — the mobile signature pad is the next brief.
+
+### Out of scope
+- Mobile signature pad + templates fill screen (separate follow-up brief).
+- Cross-tenant sharing (share endpoint is single-tenant by design).
+- Signature-pad drawing on the exported PDF at a fixed layout position (currently rendered inline in the section flow at proportional 180×70 — sufficient for MVP; PDF-designer polish is a P2).
+

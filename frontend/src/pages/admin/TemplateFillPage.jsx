@@ -12,7 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import {
-  ArrowLeft, CheckCircle2, Copy, Download, Trash2, Save, Loader2, Lock,
+  ArrowLeft, CheckCircle2, Copy, Download, Trash2, Save, Loader2, Lock, Send,
 } from "lucide-react";
 import { colors, brandGradientCss } from "@/theme";
 import { useAuth } from "@/auth";
@@ -22,6 +22,7 @@ import {
 } from "@/api/templates";
 import TemplateFieldRenderer from "@/components/templates/TemplateFieldRenderer";
 import TemplateStatusPill from "@/components/templates/TemplateStatusPill";
+import SharePortalModal from "@/components/templates/SharePortalModal";
 
 const AUTOSAVE_DEBOUNCE_MS = 750;
 const AUTOSAVE_INTERVAL_MS = 15000;
@@ -38,6 +39,8 @@ export default function TemplateFillPage() {
   const [error, setError] = useState("");
   const [confirming, setConfirming] = useState(null); // "finalize" | "delete" | null
   const [showLastSaved, setShowLastSaved] = useState(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareToast, setShareToast] = useState("");
 
   // Autosave plumbing — refs so the debounced/interval fns always see fresh values.
   const dirtyRef = useRef(false);
@@ -270,6 +273,16 @@ export default function TemplateFillPage() {
             >
               <Download size={14} /> Download PDF
             </button>
+            {isFinalized && definition?.is_customer_facing && (
+              <button
+                onClick={() => setShareOpen(true)}
+                className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-bold text-white"
+                style={{ background: brandGradientCss }}
+                data-testid="template-fill-share-portal-btn"
+              >
+                <Send size={14} /> Share to Customer Portal
+              </button>
+            )}
             <button
               onClick={() => setConfirming("delete")}
               className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-semibold"
@@ -346,6 +359,27 @@ export default function TemplateFillPage() {
           onCancel={() => setConfirming(null)}
           testId="template-fill-confirm-delete"
         />
+      )}
+
+      <SharePortalModal
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        instanceId={id}
+        onShared={({ customer, response }) => {
+          const link = response?.portal_link || "/portal/documents";
+          setShareToast(`Shared to ${customer.name}'s portal. Preview: ${link}`);
+          setTimeout(() => setShareToast(""), 6000);
+        }}
+      />
+
+      {shareToast && (
+        <div
+          className="fixed bottom-6 right-6 z-40 px-4 py-3 rounded-xl text-sm font-semibold shadow-lg"
+          style={{ backgroundColor: "#DCFCE7", color: "#166534", border: `1px solid #86EFAC` }}
+          data-testid="template-fill-share-toast"
+        >
+          {shareToast}
+        </div>
       )}
     </div>
   );

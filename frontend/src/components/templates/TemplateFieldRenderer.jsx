@@ -1,7 +1,8 @@
-import React from "react";
-import { PenLine, Check } from "lucide-react";
+import React, { useState } from "react";
+import { PenLine, Check, RefreshCw } from "lucide-react";
 import { colors } from "@/theme";
 import TemplateTableField from "@/components/templates/TemplateTableField";
+import SignaturePadModal from "@/components/templates/SignaturePadModal";
 
 /**
  * Renders every field type the backend ships in a template schema:
@@ -166,52 +167,18 @@ export default function TemplateFieldRenderer({ field, value, onChange, disabled
   }
 
   if (type === "signature") {
-    const sig = value && typeof value === "object" ? value : null;
+    // Signature has its own subcomponent so we can host useState for the
+    // modal open/close without lifting into the parent field renderer.
     return (
-      <div data-testid={testIdBase}>
-        <Label />
-        {sig?.name ? (
-          <div
-            className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg text-sm"
-            style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
-          >
-            <div className="flex items-center gap-2">
-              <Check size={16} style={{ color: colors.success }} />
-              <div>
-                <div className="font-bold" style={{ color: colors.onSurface }}>{sig.name}</div>
-                <div className="text-[11px]" style={{ color: colors.muted }}>Signed {sig.date}</div>
-              </div>
-            </div>
-            {!disabled && (
-              <button
-                onClick={() => onChange(null)}
-                className="text-xs font-semibold"
-                style={{ color: colors.error }}
-                data-testid={`${testIdBase}-clear`}
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        ) : (
-          <button
-            onClick={() => {
-              if (disabled) return;
-              onChange({
-                name: currentUserName || "Signer",
-                date: new Date().toISOString(),
-              });
-            }}
-            disabled={disabled}
-            className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-bold disabled:opacity-60"
-            style={{ backgroundColor: colors.brandTertiary, color: colors.brand, border: `1px solid ${colors.border}` }}
-            data-testid={`${testIdBase}-sign`}
-          >
-            <PenLine size={14} /> Sign as {currentUserName || "me"}
-          </button>
-        )}
-        <Help />
-      </div>
+      <SignatureField
+        field={field}
+        value={value}
+        onChange={onChange}
+        disabled={disabled}
+        currentUserName={currentUserName}
+        commonInputStyle={commonInputStyle}
+        testIdBase={testIdBase}
+      />
     );
   }
 
@@ -241,6 +208,116 @@ export default function TemplateFieldRenderer({ field, value, onChange, disabled
       <div className="text-[11px] mt-1" style={{ color: colors.warning }}>
         Unknown field type: <code>{type}</code>
       </div>
+    </div>
+  );
+}
+
+
+function formatSignedAt(iso) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString();
+  } catch {
+    return iso;
+  }
+}
+
+function SignatureField({ field, value, onChange, disabled, currentUserName, testIdBase }) {
+  const [padOpen, setPadOpen] = useState(false);
+
+  const sig = value && typeof value === "object" ? value : null;
+  // Phase 4 shape: {image_data_url, signer_name, signed_at}
+  // Legacy Phase 2 stamp shape: {name, date}
+  const signerName = sig?.signer_name || sig?.name || null;
+  const signedAt = sig?.signed_at || sig?.date || null;
+  const imageDataUrl = sig?.image_data_url || null;
+  const hasSignature = Boolean(signerName);
+
+  const Label = () => (
+    <label className="block text-xs font-bold mb-1" style={{ color: colors.onSurfaceSecondary }}>
+      {field.label}
+      {field.required && <span className="ml-1" style={{ color: colors.error }}>*</span>}
+    </label>
+  );
+
+  return (
+    <div data-testid={testIdBase}>
+      <Label />
+      {hasSignature ? (
+        <div
+          className="flex items-start justify-between gap-3 px-3 py-3 rounded-lg"
+          style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+        >
+          <div className="flex items-start gap-3">
+            {imageDataUrl ? (
+              <img
+                src={imageDataUrl}
+                alt={`Signature by ${signerName}`}
+                className="rounded bg-white"
+                style={{ maxWidth: 200, maxHeight: 80, border: `1px solid ${colors.border}` }}
+                data-testid={`${testIdBase}-image`}
+              />
+            ) : (
+              <Check size={16} style={{ color: colors.success, marginTop: 2 }} />
+            )}
+            <div>
+              <div className="text-sm font-bold" style={{ color: colors.onSurface }}>
+                Signed by {signerName}
+              </div>
+              <div className="text-[11px]" style={{ color: colors.muted }}>
+                {formatSignedAt(signedAt)}
+              </div>
+            </div>
+          </div>
+          {!disabled && (
+            <div className="flex flex-col gap-1">
+              <button
+                onClick={() => setPadOpen(true)}
+                className="inline-flex items-center gap-1 text-xs font-semibold"
+                style={{ color: colors.brand }}
+                data-testid={`${testIdBase}-resign`}
+              >
+                <RefreshCw size={12} /> Re-sign
+              </button>
+              <button
+                onClick={() => onChange(null)}
+                className="text-xs font-semibold text-left"
+                style={{ color: colors.error }}
+                data-testid={`${testIdBase}-clear`}
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <button
+          onClick={() => !disabled && setPadOpen(true)}
+          disabled={disabled}
+          className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-bold disabled:opacity-60"
+          style={{ backgroundColor: colors.brandTertiary, color: colors.brand, border: `1px solid ${colors.border}` }}
+          data-testid={`${testIdBase}-sign`}
+        >
+          <PenLine size={14} /> Sign
+        </button>
+      )}
+
+      {field.help_text && (
+        <p className="text-[11px] mt-1" style={{ color: colors.muted }}>{field.help_text}</p>
+      )}
+
+      <SignaturePadModal
+        open={padOpen}
+        onClose={() => setPadOpen(false)}
+        defaultSignerName={signerName || currentUserName || ""}
+        fieldLabel={field.label}
+        onSave={(payload) => {
+          onChange(payload);
+          setPadOpen(false);
+        }}
+      />
     </div>
   );
 }

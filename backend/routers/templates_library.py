@@ -8,10 +8,18 @@ Reuses:
   * `get_current_user`, `get_current_tenant` — auth/tenant deps
   * `document_generators._get_reportlab` + `_tenant_header` — PDF pipeline
 
+Phase 4 · Batch A additions:
+  * Signature fields now accept `{image_data_url, signer_name, signed_at}`
+    and are embedded as a PNG flowable in the exported PDF.
+  * New `POST /instances/{iid}/share-to-portal` endpoint writes the
+    finalized instance's PDF into the shared `db.documents` collection
+    (the same one that already backs the customer portal Documents page).
+
 No changes to existing training / autobilling / Zillow / RingCentral /
 document-generator code paths beyond registering this router.
 """
 from __future__ import annotations
+import base64
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any, Dict, List, Optional
@@ -21,7 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from config import db
-from utils import get_current_user, now_iso
+from utils import get_current_user, now_iso, notify_customer
 from routers.tenants import get_current_tenant
 from routers.document_generators import _get_reportlab, _tenant_header
 
@@ -343,8 +351,32 @@ async def delete_instance(iid: str,
 
 
 # ─── PDF export ──────────────────────────────────────────────────────
+def _decode_signature_png(data_url: str) -> Optional[bytes]:
+    """Return raw PNG bytes if `data_url` is a data-url PNG we can embed.
+
+    Signatures may arrive as `data:image/png;base64,<...>` (from the web
+    signature-pad modal) OR as a plain stamp with no image. We only
+    decode the former; a decode failure returns None and the renderer
+    falls back to the text stamp.
+    """
+    if not isinstance(data_url, str) or not data_url.startswith("data:image/"):
+        return None
+    try:
+        _, b64 = data_url.split(",", 1)
+        raw = base64.b64decode(b64)
+        # Guard: PNG magic bytes only. JPEGs / other formats fall through
+        # to the text stamp to keep the surface tiny.
+        if raw[:8] != b"\x89PNG\r\n\x1a\n":
+            return None
+        return raw
+    except Exception:
+        return None
+
+
 def _render_pdf(tenant: dict, defn: dict, inst: dict) -> bytes:
     r = _get_reportlab()
+    # Image flowable isn't in the shared helper; import inline.
+    from reportlab.platypus import Image as RLImage  # type: ignore
     buf = BytesIO()
     doc = r["SimpleDocTemplate"](buf, pagesize=r["letter"], title=inst.get("title") or defn["title"])
     story = []
@@ -365,9 +397,24 @@ def _render_pdf(tenant: dict, defn: dict, inst: dict) -> bytes:
                 story.append(r["Paragraph"](f"<i>{label}</i>", r["styles"]["Normal"]))
                 continue
             if ftype == "signature":
-                sig = val or {}
-                signed_by = sig.get("name") or "—"
-                signed_at = sig.get("date") or "—"
+                sig = val if isinstance(val, dict) else {}
+                # New signer_name key (Phase 4) with legacy `name` fallback.
+                signed_by = sig.get("signer_name") or sig.get("name") or "—"
+                signed_at = sig.get("signed_at") or sig.get("date") or "—"
+                png = _decode_signature_png(sig.get("image_data_url", ""))
+                if png:
+                    try:
+                        img = RLImage(BytesIO(png), width=180, height=70, kind="proportional")
+                        story.append(r["Paragraph"](f"<b>{label}:</b>", r["styles"]["Normal"]))
+                        story.append(img)
+                        story.append(r["Paragraph"](
+                            f'<font color="#666666" size="9">Signed by {signed_by} on {signed_at}</font>',
+                            r["styles"]["Normal"]))
+                        story.append(r["Spacer"](1, 4))
+                        continue
+                    except Exception:
+                        # Fall through to text stamp if image embed fails.
+                        pass
                 story.append(r["Paragraph"](
                     f"<b>{label}:</b> [Signed by {signed_by} on {signed_at}]",
                     r["styles"]["Normal"]))
@@ -424,7 +471,105 @@ async def ensure_indexes():
     try:
         await db.template_definitions.create_index("code")
         await db.template_definitions.create_index([("tenant_id", 1), ("code", 1)])
-        await db.template_instances.create_index([("tenant_id", 1), ("template_code", 1)])
         await db.template_instances.create_index([("tenant_id", 1), ("status", 1)])
+        await db.template_instances.create_index([("tenant_id", 1), ("template_code", 1)])
+        # Phase 4 · Batch A — share-to-portal provenance
+        await db.documents.create_index(
+            [("tenant_id", 1), ("source_type", 1), ("source_id", 1), ("customer_id", 1)])
     except Exception:
         pass
+
+
+# ─── Phase 4 · Batch A — Share finalized instance to Customer Portal ─
+class ShareToPortalIn(BaseModel):
+    customer_id: str
+
+
+@router.post("/instances/{iid}/share-to-portal")
+async def share_to_portal(iid: str, body: ShareToPortalIn,
+                           user: dict = Depends(_require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
+    """Push the finalized instance's PDF into the shared customer portal
+    document store (`db.documents` — same collection that already backs
+    `/api/portal/*/documents`).
+
+    Rules:
+      * Admin / super_admin only.
+      * Instance must be finalized (409 otherwise).
+      * Customer must belong to caller's tenant (404 otherwise).
+      * Idempotent per `(tenant_id, source_type='template_instance',
+        source_id=iid, customer_id)` — re-sharing overwrites the same
+        portal doc and bumps its `version` int.
+    """
+    inst = await db.template_instances.find_one(
+        {"id": iid, "tenant_id": tenant["id"]}, {"_id": 0})
+    if not inst:
+        raise HTTPException(404, "Instance not found")
+    if inst.get("status") != "finalized":
+        raise HTTPException(409, "Only finalized instances can be shared to the customer portal")
+    customer = await db.customers.find_one(
+        {"id": body.customer_id, "tenant_id": tenant["id"]}, {"_id": 0})
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    defn = await _load_def_for_tenant(inst["template_code"], tenant["id"])
+    pdf_bytes = _render_pdf(tenant, defn, inst)
+    b64 = base64.b64encode(pdf_bytes).decode("ascii")
+    data_url = f"data:application/pdf;base64,{b64}"
+
+    doc_name = f"{inst.get('title') or defn['title']}.pdf"
+    now = now_iso()
+
+    existing = await db.documents.find_one(
+        {"tenant_id": tenant["id"],
+         "customer_id": body.customer_id,
+         "source_type": "template_instance",
+         "source_id": iid}, {"_id": 0})
+
+    if existing:
+        new_version = int(existing.get("version") or 1) + 1
+        await db.documents.update_one(
+            {"id": existing["id"]},
+            {"$set": {
+                "name": doc_name,
+                "type": "template_pdf",
+                "data": data_url,
+                "uploaded_by": user.get("name") or user.get("email") or "Admin",
+                "version": new_version,
+                "updated_at": now,
+            }})
+        doc_id = existing["id"]
+    else:
+        doc_id = str(uuid.uuid4())
+        await db.documents.insert_one({
+            "id": doc_id,
+            "tenant_id": tenant["id"],
+            "customer_id": body.customer_id,
+            "name": doc_name,
+            "type": "template_pdf",
+            "data": data_url,
+            "uploaded_by": user.get("name") or user.get("email") or "Admin",
+            "source_type": "template_instance",
+            "source_id": iid,
+            "template_code": inst["template_code"],
+            "version": 1,
+            "created_at": now,
+            "updated_at": now,
+        })
+
+    # Best-effort customer notification. `notify_customer` no-ops if the
+    # customer has no login / notification channel set up.
+    try:
+        await notify_customer(
+            body.customer_id,
+            "New document",
+            f"'{doc_name}' was shared with you.")
+    except Exception:
+        pass
+
+    return {
+        "document_id": doc_id,
+        "customer_id": body.customer_id,
+        "shared_at": now,
+        "portal_link": f"/portal/documents",
+    }

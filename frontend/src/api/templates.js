@@ -67,6 +67,21 @@ export function deleteInstance(iid) {
 }
 
 /**
+ * Phase 4 · Batch A — push a finalized instance's PDF into the shared
+ * customer portal document store (`db.documents`). Backend enforces
+ * finalized + tenant + admin RBAC.
+ */
+export function shareInstanceToPortal(iid, customer_id) {
+  return api.post(`/templates/instances/${iid}/share-to-portal`, { customer_id });
+}
+
+/** Admin customer directory search (reused for the "Share to Portal" picker). */
+export function searchCustomers(query) {
+  const qs = query ? `?search=${encodeURIComponent(query)}` : "";
+  return api.get(`/customers${qs}`);
+}
+
+/**
  * Generate + download a PDF of the finalized (or draft) instance.
  * `filename` will be sanitized to a safe download name.
  */
