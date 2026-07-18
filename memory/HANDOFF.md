@@ -1634,3 +1634,210 @@ Dead-import WARN unchanged at **429** (no new false positives).
 - Historical log of sent price-increase emails on the customer detail
   page — data lives in `outbound_emails` collection; UI surface deferred.
 
+
+
+---
+
+## Ship 2 · Growth Playbook tab SHIPPED (Feb 2026)
+
+New 3rd tab on `/admin/tools/analysis` — synthesizes T5.1 (route
+valuation) + T6 (state market rates) into 3 scenarios via a single
+backend call. Frontend composition + one new backend endpoint. Admin +
+super_admin only. Reuses existing math helpers so numbers stay in
+lockstep with the standalone Route Valuation tab.
+
+### Backend
+
+**New router:** `backend/routers/growth_playbook.py` (~280 LOC).
+Endpoint: `POST /api/analysis/growth-playbook` (`_require_admin`).
+
+Auto-pulls (all overridable via request body):
+- `active_customers` — count of `customers` with `is_active: True`.
+- `avg_monthly_revenue_per_customer` — median of active `billing_plans`
+  normalized to monthly (weekly × 4.33, monthly ×1, quarterly ÷3).
+- `state_code` — checks `tenant.state_code` → `tenant.settings.state_code`
+  → `tenant.address.state` → `tenant.billing_address.state`, else falls
+  back to **AZ** with `state_fallback_used: True` flag surfaced to UI.
+- `dominant_frequency` — most-common billing frequency in the portfolio.
+  Maps to matching T6 `service_type` (`weekly` → `weekly_pool_service`,
+  etc.).
+- `density`, `churn_pct`, `contract_months` — from tenant's
+  `route_valuation_defaults` (merged over shipped
+  `ROUTE_VALUATION_DEFAULTS`).
+
+3 scenarios returned in one call:
+
+1. **`today`** — T5.1 route valuation with portfolio inputs.
+   Fields: `avg_monthly_revenue_per_customer`, `total_monthly_revenue`,
+   `annual_revenue`, `route_multiple`, `route_valuation`,
+   `valuation_per_customer`.
+
+2. **`market_median_scenario`** — same portfolio repriced to the state
+   market median for the dominant service type. Fields include:
+   `market_median_per_visit`, `market_median_monthly_per_customer`,
+   `market_position` (`below_market` / `at_market` / `above_market`, 15%
+   band), `total_monthly_revenue`, `annual_revenue`, `route_multiple`
+   (unchanged from today per spec — same assumptions),
+   `route_valuation`, and 3 deltas: `delta_monthly_revenue`,
+   `delta_annual_revenue`, `delta_valuation`, plus a
+   `price_delta_positive: bool` for UI logic.
+
+3. **`churn_breakeven`** — solves for the churn rate at which the
+   market-median scenario yields the SAME valuation as today.
+   Formula: `market_revenue × multiple(churn_new) = today_valuation`
+   → invert lerp to solve for `churn_factor_target`
+   → invert churn_factor formula to solve for `churn_new_pct`.
+   Fields: `current_churn_pct`, `breakeven_churn_pct`,
+   `additional_churn_tolerated_pct` (delta from today), `flavor`
+   (`healthy` / `very_generous` / `thin` / `skip_playbook`),
+   `saturated_low`, `saturated_high` (churn window pin flags).
+
+**Flavor logic:**
+- `skip_playbook` if `price_delta ≤ 0` (repricing would hurt).
+- `very_generous` if `saturated_high` (target multiple below what even
+  max-churn produces — enormous market gap) OR
+  `additional_churn > 50%`.
+- `thin` if `additional_churn < 3%` (a few percent additional churn
+  could erase the gain).
+- `healthy` otherwise.
+
+**Edge cases exercised:**
+- Zero customers → all-zero output, no divzero, flavor
+  `skip_playbook`.
+- Above-market tenant → `price_delta_positive: false` →
+  `skip_playbook`.
+- Unknown state code (e.g. "XX") → silently falls back to AZ +
+  `state_fallback_used: true`.
+- No tenant state code → falls back to AZ (aquaterra path in prod).
+
+### Frontend
+
+`BusinessAnalysisTools.jsx` — new **Growth Playbook** tab (`Sparkles`
+icon). Auto-computes on tab open via
+`POST /analysis/growth-playbook {}`.
+
+Layout:
+- Optional "**Set your state:**" banner (yellow) when
+  `state_fallback_used` is true, linking to `/settings/tenant`.
+- 3 stat cards in a `md:grid-cols-3` row:
+  * **Today's route value** — `$X`, sub `N customers · $M/mo · Kx multiple`
+  * **Market-median scenario (STATE)** — `$Y`, sub
+    `$M/visit market median · {position}`, delta line in
+    green/red depending on sign
+  * **Churn breakeven tolerance** — `+X%` in flavor color, sub
+    `Additional annual churn tolerated`, tag line with flavor
+    (`healthy` / `very generous` / `thin`). If `skip_playbook`, replaced
+    with "Skip playbook" + explanation.
+- **Narrative paragraph** synthesizing all three: `Your N active
+  customers currently generate a route worth $X. Repricing to STATE's
+  $M median frequency rate would grow monthly revenue by +$Y (+$Z
+  annual) → valuation +$W. You could tolerate up to K% additional
+  annual churn from the increase and still come out ahead.` Different
+  copy variants for `very_generous` (adds "pinned to churn scale max —
+  market gap is enormous"), `thin` (warns about phased increases),
+  `skip_playbook` (surfaces reduction magnitude).
+- **Assumptions used** section — 8-cell grid: density, churn (today),
+  contract length, multiple range, dominant frequency, market service
+  type, state, target margin. Header link `Tune defaults →` → jumps
+  to `/admin/settings/pricing-defaults` (Ship 1 T3-followup page).
+- **CTA** (hidden when `skip_playbook`): full-width brand button
+  "Draft rate-increase emails for low-margin customers →" → jumps to
+  `/admin/tools/pricing` (Ship 1 T3.2 Cost per Pool → Recommend flow).
+
+Uses `<Link>` from `react-router-dom` for internal nav (no full-page
+reload).
+
+### Live curl evidence
+
+**Aquaterra default portfolio** (149 customers, avg $100/mo, monthly
+dominant frequency, no state → AZ fallback):
+```
+today.route_valuation:  $92,380  · multiple 6.2x
+market.route_valuation: $75,751.60 · above_market (monthly $82 median)
+delta_valuation:        −$16,628.40
+churn_breakeven.flavor: skip_playbook  · breakeven null
+```
+Above-market tenant → correctly gates the playbook.
+
+**Below-market weekly scenario** (100 customers, $80/mo, weekly →
+AZ weekly median $143/visit → $619/mo/customer):
+```
+today.route_valuation:   $49,600
+market.route_valuation:  $384,195.40
+delta_valuation:         +$334,595.40
+churn_breakeven.flavor:  very_generous (saturated_high)
+additional_churn_tolerated: 4% (churn window max = 12%, current = 8%)
+```
+
+**CA state override** (50 customers, $300/mo weekly, CA median $234/visit):
+```
+state_code: CA · fallback: false
+market.market_position: below_market
+delta_valuation: +$221,340
+breakeven flavor: very_generous · additional: 4%
+```
+
+**Tech RBAC**: 403 `Admin access required`. Customer: 403.
+
+### Tests
+
+`backend/tests/test_growth_playbook.py` — **12 tests / 12 passed / 4.36s**:
+
+- TestGrowthPlaybookBasics (3): default admin pull, tech 403, customer 403.
+- TestGrowthPlaybookScenarios (7): below-market positive delta, above-market
+  skip_playbook, zero-customer edge, explicit state override, unknown
+  state → AZ fallback, assumptions echoed, saturated_high flavor
+  very_generous.
+- TestGrowthPlaybookMath (2): playbook `today.route_multiple` matches the
+  standalone T5.1 endpoint exactly (both paths share math);
+  churn breakeven monotonic in gap (wider gap → tolerates ≥ churn).
+
+### Files touched
+
+- `backend/routers/growth_playbook.py` (**NEW**, ~280 LOC)
+- `backend/server.py` (register `growth_playbook`)
+- `backend/tests/test_growth_playbook.py` (**NEW**, 12 tests)
+- `frontend/src/pages/admin/BusinessAnalysisTools.jsx`
+  (+ 3rd tab, `PlaybookPanel` component, +Sparkles+Link imports, ~230 LOC added)
+
+### Preflight
+
+`bash scripts/preflight.sh` → **exit 0** (`preflight OK`). Dead-import
+WARN 429 → **428** (my new file introduces zero false positives; the
+count dropped by 1 which is a wash from unrelated churn — no
+regressions).
+
+### Screenshot
+
+Admin (Alex Admin) on `/admin/tools/analysis` → Growth Playbook tab:
+- Yellow "**Set your state:**" banner ("We fell back to Arizona (AZ)…
+  Update it via Tenant Settings").
+- 3 stat cards:
+  * Today's route value: **$92,380** · 149 active customers · $14,900/mo · 6.2x multiple
+  * Market-median scenario (AZ): **$75,751.6** · $82/visit market median · above market · **−$16,628.4 valuation** (red)
+  * Churn breakeven tolerance: **Skip playbook** (red) · "Repricing would REDUCE your valuation — you're already at or above the market median."
+- Narrative: "Your 149 active customers currently generate a route
+  worth $92,380. You're already above market the Arizona median of
+  $82/visit — repricing to the state median would reduce revenue by
+  $2,682/mo and valuation by $16,628.4. Skip this playbook."
+- Assumptions used: density medium · churn 8% · contract 24mo · multiple
+  4x–8x · monthly · monthly_pool_service · Arizona (AZ) · 40%.
+- Tune defaults → link visible in assumptions header.
+- CTA correctly HIDDEN in skip_playbook mode (no premature push to draft
+  emails when repricing would hurt).
+
+### Deferrals (explicit)
+
+- Sensitivity slider (churn / density / contract) — deferred; admin can
+  tune via pricing-defaults editor (Ship 1) which changes today's math.
+- Historical playbook snapshots — no persistence; scenario is re-computed
+  on every tab open.
+- Bulk email-drafting from the playbook CTA — currently just deep-links
+  to the Cost per Pool tab; deferred.
+- Mobile parity — admin-only feature; not planned.
+
+### Explicitly STOPPED here per user directive
+
+- Ship 3 (Nudge non-starters + Recommendations queue widget) — awaiting
+  go-signal.
+

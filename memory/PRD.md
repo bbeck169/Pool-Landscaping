@@ -2299,3 +2299,24 @@ Preflight exit 0. Dead-imports unchanged at 429.
 - Send-scheduling on Recommend modal (immediate send only currently).
 - 429 dead-import cleanup pass.
 
+
+
+## Ship 2 · Growth Playbook (Feb 2026)
+
+New tab on `/admin/tools/analysis` composing T5.1 + T6 into 3 scenarios
+via one endpoint (`POST /api/analysis/growth-playbook`).
+
+**Scenarios:** today's route value · market-median repricing · churn
+breakeven tolerance (max additional churn the market scenario can absorb
+and still hit today's valuation).
+
+**Flavors:** `healthy` · `very_generous` (churn window saturated —
+market gap enormous) · `thin` (< 3% additional churn tolerance) ·
+`skip_playbook` (repricing would hurt).
+
+**Tests:** 12/12 passed in 4.36s. Preflight exit 0. Dead-import baseline
+dropped 429 → 428.
+
+**Backlog:** Ship 3 (Nudge non-starters + Recommendations queue widget)
+STOPPED — awaiting user go-signal.
+

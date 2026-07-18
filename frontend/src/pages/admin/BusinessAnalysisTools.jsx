@@ -10,14 +10,16 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  ArrowLeft, BarChart3, Users, TrendingUp, Copy, Download,
+  ArrowLeft, BarChart3, Users, TrendingUp, Copy, Download, Sparkles,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { api, api_base } from "@/api";
 import { colors } from "@/theme";
 
 const TABS = [
-  { key: "route",  label: "Route Valuation",  icon: BarChart3 },
-  { key: "pay",    label: "Pay Model Compare", icon: Users },
+  { key: "route",    label: "Route Valuation",  icon: BarChart3 },
+  { key: "pay",      label: "Pay Model Compare", icon: Users },
+  { key: "playbook", label: "Growth Playbook",   icon: Sparkles },
 ];
 
 function copy(text) { if (navigator.clipboard) navigator.clipboard.writeText(text); }
@@ -324,10 +326,226 @@ function PayPanel() {
   );
 }
 
+// ── Ship 2 · Growth Playbook ─────────────────────────────────────────
+function PlaybookPanel() {
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const compute = async () => {
+    setErr(null); setLoading(true);
+    try {
+      const r = await api.post("/analysis/growth-playbook", {});
+      setResult(r);
+    } catch (e) { setErr(e.message); }
+    setLoading(false);
+  };
+
+  useEffect(() => { compute(); }, []);
+
+  if (loading) {
+    return <div className="rounded-2xl p-6" data-testid="playbook-panel"
+                style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}`, color: colors.muted }}>
+      Computing playbook…
+    </div>;
+  }
+  if (err) {
+    return <div className="rounded-2xl p-6" data-testid="playbook-panel"
+                style={{ backgroundColor: "#FEE2E2", color: "#991B1B" }}>
+      Error: {err}
+    </div>;
+  }
+  if (!result) return null;
+
+  const t = result.today;
+  const m = result.market_median_scenario;
+  const be = result.churn_breakeven;
+  const skip = be.flavor === "skip_playbook";
+  const flavorColor = {
+    healthy:        "#166534",
+    very_generous:  "#166534",
+    thin:           "#92400E",
+    skip_playbook:  "#991B1B",
+  }[be.flavor] || colors.brand;
+
+  return (
+    <div className="rounded-2xl p-6 space-y-4" data-testid="playbook-panel"
+         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+      {result.state_fallback_used ? (
+        <div className="rounded-lg p-3 flex items-center gap-2"
+             style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
+             data-testid="playbook-state-fallback">
+          <span className="text-sm font-semibold">Set your state:</span>
+          <span className="text-xs">We fell back to Arizona ({result.state_code}) because your tenant profile has no state code. Update it via</span>
+          <Link to="/settings/tenant" className="text-xs font-semibold underline" style={{ color: colors.brand }}>
+            Tenant Settings
+          </Link>
+        </div>
+      ) : null}
+
+      {/* 3 stat cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="rounded-2xl p-4" data-testid="playbook-card-today"
+             style={{ backgroundColor: `${colors.brand}10`, border: `1px solid ${colors.brand}22` }}>
+          <div className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.muted }}>
+            Today's route value
+          </div>
+          <div className="text-3xl font-bold mt-2" style={{ color: colors.onSurface }}>
+            ${t.route_valuation.toLocaleString()}
+          </div>
+          <div className="text-xs mt-1" style={{ color: colors.muted }}>
+            {result.active_customers} active customers · ${t.total_monthly_revenue.toLocaleString()}/mo · {t.route_multiple}x multiple
+          </div>
+        </div>
+        <div className="rounded-2xl p-4" data-testid="playbook-card-market"
+             style={{ backgroundColor: skip ? "#FEE2E210" : `${flavorColor}12`,
+                      border: `1px solid ${skip ? "#FCA5A555" : `${flavorColor}44`}` }}>
+          <div className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.muted }}>
+            Market-median scenario ({result.state_code})
+          </div>
+          <div className="text-3xl font-bold mt-2" style={{ color: skip ? "#991B1B" : colors.onSurface }}>
+            ${m.route_valuation.toLocaleString()}
+          </div>
+          <div className="text-xs mt-1" style={{ color: colors.muted }}>
+            ${m.market_median_per_visit}/visit market median · {m.market_position.replace(/_/g, " ")}
+          </div>
+          <div className="text-sm font-bold mt-2" style={{ color: m.delta_valuation >= 0 ? "#166534" : "#991B1B" }}>
+            {m.delta_valuation >= 0 ? "+" : ""}${m.delta_valuation.toLocaleString()} valuation
+          </div>
+        </div>
+        <div className="rounded-2xl p-4" data-testid="playbook-card-breakeven"
+             style={{ backgroundColor: skip ? "#F4F4F5" : `${flavorColor}12`,
+                      border: `1px solid ${skip ? colors.border : `${flavorColor}44`}` }}>
+          <div className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.muted }}>
+            Churn breakeven tolerance
+          </div>
+          {skip ? (
+            <div className="mt-2">
+              <div className="text-xl font-bold" style={{ color: "#991B1B" }}>Skip playbook</div>
+              <div className="text-xs mt-1" style={{ color: colors.muted }}>
+                Repricing would REDUCE your valuation — you're already at or above the market median.
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="text-3xl font-bold mt-2" style={{ color: flavorColor }}>
+                {be.additional_churn_tolerated_pct > 0 ? "+" : ""}{be.additional_churn_tolerated_pct}%
+              </div>
+              <div className="text-xs mt-1" style={{ color: colors.muted }}>
+                Additional annual churn tolerated
+              </div>
+              <div className="text-xs mt-2 font-semibold" style={{ color: flavorColor }}>
+                {be.flavor.replace(/_/g, " ")}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Narrative paragraph */}
+      <div className="rounded-2xl p-4 leading-relaxed" data-testid="playbook-narrative"
+           style={{ backgroundColor: colors.background, border: `1px solid ${colors.border}`, color: colors.onSurface }}>
+        {skip ? (
+          <>
+            Your {result.active_customers} active customers currently generate a route worth
+            {" "}<b>${t.route_valuation.toLocaleString()}</b>.
+            You're already <b>{m.market_position.replace(/_/g, " ")}</b> the {result.state_name} median
+            of ${m.market_median_per_visit}/visit — repricing to the state median would
+            <b> reduce </b> revenue by ${Math.abs(m.delta_monthly_revenue).toLocaleString()}/mo
+            and valuation by ${Math.abs(m.delta_valuation).toLocaleString()}. Skip this playbook.
+          </>
+        ) : (
+          <>
+            Your <b>{result.active_customers}</b> active customers currently generate a route worth
+            {" "}<b>${t.route_valuation.toLocaleString()}</b>. Repricing to
+            {" "}<b>{result.state_name}'s ${m.market_median_per_visit}</b> median
+            {result.dominant_frequency === "weekly" ? " weekly" : result.dominant_frequency === "biweekly" ? " biweekly" : " monthly"} rate
+            would grow monthly revenue by <b>+${m.delta_monthly_revenue.toLocaleString()}</b>
+            {" "}(+${m.delta_annual_revenue.toLocaleString()} annual) → valuation
+            {" "}<b>+${m.delta_valuation.toLocaleString()}</b>.
+            {be.flavor === "very_generous" ? (
+              <> You could tolerate up to <b>{be.additional_churn_tolerated_pct}%</b> additional
+                 annual churn from the increase (pinned to the churn scale max — market gap is enormous)
+                 and still come out ahead.</>
+            ) : be.flavor === "thin" ? (
+              <> Warning: you could tolerate only <b>{be.additional_churn_tolerated_pct}%</b> additional
+                 churn before erasing the gain — consider a phased price increase to test elasticity.</>
+            ) : (
+              <> You could tolerate up to <b>{be.additional_churn_tolerated_pct}%</b> additional annual
+                 churn from the increase and still come out ahead.</>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Assumptions */}
+      <div className="rounded-2xl p-4" data-testid="playbook-assumptions"
+           style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.muted }}>
+            Assumptions used
+          </div>
+          <Link to="/admin/settings/pricing-defaults" className="text-xs font-semibold"
+                style={{ color: colors.brand }}
+                data-testid="playbook-tune-link">
+            Tune defaults →
+          </Link>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+          <div>
+            <div style={{ color: colors.muted }}>Density</div>
+            <div className="font-semibold" style={{ color: colors.onSurface }}>{result.assumptions.density}</div>
+          </div>
+          <div>
+            <div style={{ color: colors.muted }}>Churn (today)</div>
+            <div className="font-semibold" style={{ color: colors.onSurface }}>{result.assumptions.churn_pct}%</div>
+          </div>
+          <div>
+            <div style={{ color: colors.muted }}>Contract length</div>
+            <div className="font-semibold" style={{ color: colors.onSurface }}>{result.assumptions.contract_length_avg_months} mo</div>
+          </div>
+          <div>
+            <div style={{ color: colors.muted }}>Multiple range</div>
+            <div className="font-semibold" style={{ color: colors.onSurface }}>
+              {result.assumptions.multiple_min}x – {result.assumptions.multiple_max}x
+            </div>
+          </div>
+          <div>
+            <div style={{ color: colors.muted }}>Dominant frequency</div>
+            <div className="font-semibold" style={{ color: colors.onSurface }}>{result.dominant_frequency}</div>
+          </div>
+          <div>
+            <div style={{ color: colors.muted }}>Market service type</div>
+            <div className="font-semibold" style={{ color: colors.onSurface }}>{result.service_type}</div>
+          </div>
+          <div>
+            <div style={{ color: colors.muted }}>State</div>
+            <div className="font-semibold" style={{ color: colors.onSurface }}>{result.state_name} ({result.state_code})</div>
+          </div>
+          <div>
+            <div style={{ color: colors.muted }}>Target margin</div>
+            <div className="font-semibold" style={{ color: colors.onSurface }}>{result.assumptions.target_margin_pct}%</div>
+          </div>
+        </div>
+      </div>
+
+      {/* CTA */}
+      {!skip ? (
+        <Link to="/admin/tools/pricing"
+              className="block rounded-xl px-4 py-3 text-center text-sm font-bold"
+              style={{ backgroundColor: colors.brand, color: "#fff" }}
+              data-testid="playbook-draft-emails-link">
+          Draft rate-increase emails for low-margin customers →
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
 export default function BusinessAnalysisTools() {
   const nav = useNavigate();
   const [tab, setTab] = useState("route");
-  const Panel = { route: RoutePanel, pay: PayPanel }[tab];
+  const Panel = { route: RoutePanel, pay: PayPanel, playbook: PlaybookPanel }[tab];
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6" data-testid="analysis-tools-page">
