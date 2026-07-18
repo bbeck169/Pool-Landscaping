@@ -37,3 +37,18 @@
   - `mobile/app/(app)/templates/[id].tsx` — offline-draft integration
   - `mobile/app/_layout.tsx` — global listener registration
   - `memory/PRD.md` — Phase 3 documentation with offline-draft section
+
+## Iteration 3 — Phase 4 · Batch A Mobile Signature Pad
+- **Commit**: dff7a798966099aecacdbde2754e106163dbb97e
+- **Date**: 2026-07-18
+- **Changes**:
+  - Installed `react-native-signature-canvas@5.1.0`
+  - Created `SignaturePadModal.tsx` — full-screen modal with WebView-based drawing canvas
+  - Refactored signature branch in `TemplateFieldRenderer.tsx` — replaced plain-text stamp with drawing pad modal, added Image thumbnail display, backward compat for 3 value shapes
+  - Updated PRD with Phase 4 Batch A Mobile subsection
+- **Files created**:
+  - `mobile/src/components/templates/SignaturePadModal.tsx`
+- **Files modified**:
+  - `mobile/src/components/templates/TemplateFieldRenderer.tsx` — signature refactor
+  - `mobile/package.json` — added react-native-signature-canvas
+  - `memory/PRD.md` — Phase 4 Batch A Mobile subsection

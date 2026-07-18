@@ -2654,3 +2654,63 @@ Three deliverables shipped in a single batch (backend + web only — mobile sign
 - Cross-tenant sharing (share endpoint is single-tenant by design).
 - Signature-pad drawing on the exported PDF at a fixed layout position (currently rendered inline in the section flow at proportional 180×70 — sufficient for MVP; PDF-designer polish is a P2).
 
+
+
+---
+
+## Templates Library — Phase 4 · Batch A Mobile Signature Pad · Jul 2026
+
+Replaces the plain-text stamp ("Name • ISO") in the mobile template fill screen with a real WebView-based drawing pad, matching the web's signature behavior.
+
+### Library used
+**`react-native-signature-canvas@5.1.0`** — WebView-based, pure JS, no EAS custom dev client rebuild required. Uses the already-installed `react-native-webview@13.15.0` as its peer dependency.
+
+### Files added
+- `mobile/src/components/templates/SignaturePadModal.tsx` — full-screen modal with:
+  - Editable signer name input (prefilled with current user's full name)
+  - WebView-based signature canvas (fills available height, dashed border, off-white background)
+  - "Clear" button in bottom bar
+  - "Cancel" / "Save" in header row
+  - On save: produces `{ image_data_url: "data:image/png;base64,...", signer_name, signed_at }` — identical shape to web
+  - Size warning (`console.warn`) if PNG > 500KB
+
+### Files modified
+- `mobile/src/components/templates/TemplateFieldRenderer.tsx`:
+  - Import changed from `React` to `React, { useState }`; added `Image` import from react-native; added `SignaturePadModal` import
+  - Signature branch refactored into `SignatureFieldInner` sub-component (needs local `useState` for modal open/close)
+  - **Backward compatibility**: handles 3 value shapes:
+    1. Phase 4 object: `{ image_data_url, signer_name, signed_at }` → shows image thumbnail + caption
+    2. Legacy Phase 2 object: `{ name, date }` → maps via `sig.signer_name || sig.name`, shows checkmark icon + caption
+    3. Legacy plain string: `"John Smith"` → treated as `signer_name` only, renders "Signed by John Smith"
+  - After signing: displays signature image thumbnail (200×80px, white bg, border) + "Signed by {name}" + formatted date + "Re-sign" / "Clear" actions (hidden when finalized)
+  - Tapping "Sign" or "Re-sign" opens `SignaturePadModal`
+  - `onChange(payload)` call flows through the standard parent autosave path — no special offline handling needed in this component
+
+### Value shape (identical to web)
+```json
+{
+  "image_data_url": "data:image/png;base64,iVBOR...",
+  "signer_name": "Alex Admin",
+  "signed_at": "2026-07-18T19:45:00.000Z"
+}
+```
+
+### Offline compatibility
+- Signing calls `onChange(payload)` which triggers the parent `setValue()` → `scheduleSave()` → `flushSave()` in `[id].tsx`
+- `flushSave()` writes a local snapshot (including the base64 image in `values`) to AsyncStorage BEFORE the PATCH call
+- If PATCH fails (offline): the entire value including `image_data_url` is queued in `template_drafts_pending` for replay
+- Typical signature PNG is ~15-40KB; AsyncStorage handles this fine. A `console.warn` fires if > 500KB
+- On reconnect, the global NetInfo listener flushes the pending queue as normal
+
+### PDF preview from mobile
+- No change needed. The mobile "Download PDF" action already POSTs to `POST /api/templates/instances/:id/pdf` which the backend (Phase 4 Batch A) already handles by decoding the PNG data URL and embedding it in the reportlab PDF at 180×70
+
+### Verification
+- All files lint-clean (ESLint, 0 errors)
+- Metro bundler compiles without errors (HTTP 200 on localhost:3001)
+- Backend untouched (zero diff on `backend/`), web untouched (zero diff on `frontend/`)
+- No external repos cloned
+- Expo preview tunnel unavailable (infrastructure inactivity — not a code issue)
+
+### Dependencies added
+- `react-native-signature-canvas@5.1.0` (via `yarn add`)

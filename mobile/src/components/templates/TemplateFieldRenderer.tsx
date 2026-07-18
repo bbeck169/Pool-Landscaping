@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -7,10 +7,12 @@ import {
   TouchableOpacity,
   Switch,
   Platform,
+  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, font, fontSize, radius } from "@/src/theme";
 import TemplateTableField from "./TemplateTableField";
+import SignaturePadModal from "./SignaturePadModal";
 
 type Field = {
   type: string;
@@ -200,54 +202,17 @@ export default function TemplateFieldRenderer({
     );
   }
 
-  // Signature
+  // Signature — Phase 4 drawing pad (replaces Phase 2 stamp)
   if (type === "signature") {
-    const sig = value && typeof value === "object" ? value : null;
     return (
-      <View testID={testIdBase}>
-        {renderLabel()}
-        {sig?.name ? (
-          <View style={styles.signedBox}>
-            <View style={styles.signedRow}>
-              <Ionicons name="checkmark-circle" size={18} color={colors.success} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.signedName}>{sig.name}</Text>
-                <Text style={styles.signedDate}>
-                  Signed {new Date(sig.date).toLocaleString()}
-                </Text>
-              </View>
-            </View>
-            {!disabled && (
-              <TouchableOpacity
-                onPress={() => onChange(null)}
-                testID={`${testIdBase}-clear`}
-              >
-                <Text style={styles.clearText}>Clear</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        ) : (
-          <TouchableOpacity
-            onPress={() => {
-              if (disabled) return;
-              onChange({
-                name: currentUserName || "Signer",
-                date: new Date().toISOString(),
-              });
-            }}
-            disabled={disabled}
-            style={[styles.signBtn, disabled && { opacity: 0.6 }]}
-            activeOpacity={0.7}
-            testID={`${testIdBase}-sign`}
-          >
-            <Ionicons name="pencil-outline" size={16} color={colors.brand} />
-            <Text style={styles.signBtnText}>
-              Sign as {currentUserName || "me"}
-            </Text>
-          </TouchableOpacity>
-        )}
-        {renderHelp()}
-      </View>
+      <SignatureFieldInner
+        field={field}
+        value={value}
+        onChange={onChange}
+        disabled={disabled}
+        currentUserName={currentUserName}
+        testIdBase={testIdBase}
+      />
     );
   }
 
@@ -279,6 +244,134 @@ export default function TemplateFieldRenderer({
         testID={`${testIdBase}-input`}
       />
       <Text style={styles.unknownType}>Unknown field type: {type}</Text>
+    </View>
+  );
+}
+
+// ─── Signature sub-component (needs local state for modal) ──────────
+function formatSignedAt(iso: string | null | undefined): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString();
+  } catch {
+    return String(iso);
+  }
+}
+
+function SignatureFieldInner({
+  field,
+  value,
+  onChange,
+  disabled,
+  currentUserName,
+  testIdBase,
+}: {
+  field: Field;
+  value: any;
+  onChange: (v: any) => void;
+  disabled: boolean;
+  currentUserName: string;
+  testIdBase: string;
+}) {
+  const [padOpen, setPadOpen] = useState(false);
+
+  // Phase 4 shape: { image_data_url, signer_name, signed_at }
+  // Legacy Phase 2 stamp shape: { name, date }
+  // Legacy plain string: treat as signer_name only
+  let sig: any = null;
+  let signerName: string | null = null;
+  let signedAt: string | null = null;
+  let imageDataUrl: string | null = null;
+
+  if (typeof value === "string" && value) {
+    // Backward compat: bare string = legacy stamp
+    signerName = value;
+  } else if (value && typeof value === "object") {
+    sig = value;
+    signerName = sig.signer_name || sig.name || null;
+    signedAt = sig.signed_at || sig.date || null;
+    imageDataUrl = sig.image_data_url || null;
+  }
+
+  const hasSig = Boolean(signerName);
+
+  return (
+    <View testID={testIdBase}>
+      <Text style={styles.label}>
+        {field.label}
+        {field.required && <Text style={{ color: colors.error }}> *</Text>}
+      </Text>
+
+      {hasSig ? (
+        <View style={styles.signedBox} testID={`${testIdBase}-signed`}>
+          <View style={styles.signedContent}>
+            {imageDataUrl ? (
+              <Image
+                source={{ uri: imageDataUrl }}
+                style={styles.signatureImage}
+                resizeMode="contain"
+                testID={`${testIdBase}-image`}
+              />
+            ) : (
+              <Ionicons name="checkmark-circle" size={18} color={colors.success} />
+            )}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.signedName}>Signed by {signerName}</Text>
+              {signedAt ? (
+                <Text style={styles.signedDate}>{formatSignedAt(signedAt)}</Text>
+              ) : null}
+            </View>
+          </View>
+          {!disabled && (
+            <View style={styles.signActions}>
+              <TouchableOpacity
+                onPress={() => setPadOpen(true)}
+                testID={`${testIdBase}-resign`}
+                activeOpacity={0.7}
+              >
+                <View style={styles.resignRow}>
+                  <Ionicons name="refresh-outline" size={12} color={colors.brand} />
+                  <Text style={styles.resignText}>Re-sign</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => onChange(null)}
+                testID={`${testIdBase}-clear`}
+              >
+                <Text style={styles.clearText}>Clear</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      ) : (
+        <TouchableOpacity
+          onPress={() => !disabled && setPadOpen(true)}
+          disabled={disabled}
+          style={[styles.signBtn, disabled && { opacity: 0.6 }]}
+          activeOpacity={0.7}
+          testID={`${testIdBase}-sign`}
+        >
+          <Ionicons name="pencil-outline" size={16} color={colors.brand} />
+          <Text style={styles.signBtnText}>Sign</Text>
+        </TouchableOpacity>
+      )}
+
+      {field.help_text ? (
+        <Text style={styles.helpText}>{field.help_text}</Text>
+      ) : null}
+
+      <SignaturePadModal
+        visible={padOpen}
+        onClose={() => setPadOpen(false)}
+        defaultSignerName={signerName || currentUserName || ""}
+        fieldLabel={field.label || "Signature"}
+        onSave={(payload) => {
+          onChange(payload);
+          setPadOpen(false);
+        }}
+      />
     </View>
   );
 }
@@ -366,21 +459,26 @@ const styles = StyleSheet.create({
     color: colors.brand,
     fontFamily: font.bold,
   },
+  // Signature styles
   signedBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
     padding: 12,
     borderRadius: radius.sm,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surfaceSecondary,
   },
-  signedRow: {
+  signedContent: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    flex: 1,
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  signatureImage: {
+    width: 200,
+    height: 80,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: "#fff",
   },
   signedName: {
     fontSize: fontSize.base,
@@ -391,6 +489,26 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: font.regular,
     color: colors.muted,
+    marginTop: 2,
+  },
+  signActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  resignRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  resignText: {
+    fontSize: 12,
+    fontFamily: font.semibold,
+    color: colors.brand,
   },
   clearText: {
     fontSize: 12,
