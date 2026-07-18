@@ -1,0 +1,32 @@
+# Mobile Commit Log
+
+## Iteration 1 — Templates Library Phase 3 (Mobile UI)
+- **Commit**: 3af1fd6a6290b4d058770eb1b46944015c9b18f8 (base)
+- **Date**: 2026-07-18
+- **Changes**:
+  - Created templates library screen with two-tab layout (Library / My Templates)
+  - Created template fill screen with autosave, finalize, duplicate, delete, PDF download
+  - Created 4 template components: TemplateCard, TemplateFieldRenderer, TemplateTableField, TemplateStatusPill
+  - Added hidden tab screens in `_layout.tsx` for templates routes
+  - Added Templates tile to both admin and technician Tools hub sections
+  - Added Templates Library link to More/Admin links
+- **Files created**:
+  - `mobile/app/(app)/templates/index.tsx`
+  - `mobile/app/(app)/templates/[id].tsx`
+  - `mobile/src/components/templates/TemplateCard.tsx`
+  - `mobile/src/components/templates/TemplateFieldRenderer.tsx`
+  - `mobile/src/components/templates/TemplateTableField.tsx`
+  - `mobile/src/components/templates/TemplateStatusPill.tsx`
+- **Files modified**:
+  - `mobile/app/(app)/_layout.tsx` — added hidden tab screens for templates
+  - `mobile/src/components/tools/sections.ts` — added Templates tile to admin + tech
+  - `mobile/app/(app)/more.tsx` — added Templates Library admin link
+- **Web files referenced**:
+  - `frontend/src/api/templates.js`
+  - `frontend/src/pages/admin/TemplatesLibraryPage.jsx`
+  - `frontend/src/pages/admin/TemplateFillPage.jsx`
+  - `frontend/src/components/templates/TemplateCard.jsx`
+  - `frontend/src/components/templates/TemplateFieldRenderer.jsx`
+  - `frontend/src/components/templates/TemplateTableField.jsx`
+  - `frontend/src/components/templates/TemplateStatusPill.jsx`
+  - `frontend/src/components/templates/TemplateInstanceList.jsx`

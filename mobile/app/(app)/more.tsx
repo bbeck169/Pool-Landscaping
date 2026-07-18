@@ -78,6 +78,7 @@ export default function More() {
     { icon: "repeat-outline", label: "Auto Billing", onPress: () => router.push("/auto-billing") },
     { icon: "build-outline", label: "Equipment Repair", onPress: () => router.push("/equipment") },
     { icon: "water-outline", label: "Maintenance", onPress: () => router.push("/maintenance") },
+    { icon: "library-outline", label: "Templates Library", onPress: () => router.push("/(app)/templates" as any) },
     { icon: "flask-outline", label: "Log History Report", onPress: () => router.push("/log-history") },
     { icon: "timer-outline", label: "Job Timers", onPress: () => router.push("/job-timers") },
     { icon: "stats-chart-outline", label: "Avg Job Time", onPress: () => router.push("/avg-job-time") },

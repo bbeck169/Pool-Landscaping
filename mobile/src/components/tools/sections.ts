@@ -48,6 +48,7 @@ export const TECH_SECTIONS: ToolSection[] = [
     tiles: [
       { key: "onboarding", icon: "clipboard-outline", label: "My Onboarding", desc: "Checklist steps assigned to me", route: "/(app)/onboarding/mine" },
       { key: "tests", icon: "school-outline", label: "Tests", desc: "Training modules & CPO prep", route: "/(app)/tests" },
+      { key: "templates", icon: "library-outline", label: "Templates", desc: "Fill-in-the-blank forms & docs", route: "/(app)/templates" },
       { key: "d2d-leaderboard", icon: "trophy-outline", label: "D2D Leaderboard", desc: "See where your knocks rank", route: "/d2d/leaderboard" },
       { key: "card", icon: "id-card-outline", label: "Business Card", desc: "Share your digital card", route: "/card" },
     ],
@@ -107,6 +108,13 @@ export const ADMIN_SECTIONS: ToolSection[] = [
       { key: "quotes", icon: "document-text-outline", label: "Quotes & Invoices", desc: "Send, sign, collect", route: "/(app)/quotes" },
       { key: "property-lookup", icon: "home-outline", label: "Property Lookup", desc: "Owner + lot size search", route: "/(app)/property-lookup" },
       { key: "business-card", icon: "id-card-outline", label: "Business Card", desc: "NFC-ready digital card & .vcf", route: "/card" },
+    ],
+  },
+  {
+    key: "adm-operations-2",
+    title: "Documents",
+    tiles: [
+      { key: "templates", icon: "library-outline", label: "Templates Library", desc: "Fill-in-the-blank forms & docs", route: "/(app)/templates" },
     ],
   },
   {

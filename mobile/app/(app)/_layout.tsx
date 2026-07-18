@@ -175,6 +175,23 @@ export default function AppLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="clipboard-outline" size={size} color={color} />,
         }}
       />
+      {/* Phase 3 · Templates Library — hidden from tab bar, reachable via Tools hub + router.push. */}
+      <Tabs.Screen
+        name="templates/index"
+        options={{
+          title: "Templates",
+          href: null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="library-outline" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="templates/[id]"
+        options={{
+          title: "Template Fill",
+          href: null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="document-text-outline" size={size} color={color} />,
+        }}
+      />
       <Tabs.Screen
         name="quotes"
         options={{
