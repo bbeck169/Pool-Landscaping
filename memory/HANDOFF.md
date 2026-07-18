@@ -788,3 +788,142 @@ without redeploying.
 - End-to-end webhook wiring for Resend delivery events (opens,
   clicks, bounces) — deferred.
 
+
+---
+
+## Phase T3 — Business Pricing Tools (Feb 2026)
+
+Three admin-only pricing tools. Extends `pool_calculators.py` with 3
+new endpoints. Frontend is a single tabbed page at
+`/admin/tools/pricing` (route wrapped in `<AdminOnly>`; the backend
+endpoints also re-check via `_require_admin`).
+
+### Backend
+
+**Extended:** `backend/routers/pool_calculators.py` (~270 LOC added).
+
+New helpers:
+- `_require_admin(user)` — local dep (super_admin + admin only).
+- `_pricing_defaults(tenant)` — merges `tenant.settings.pricing_defaults`
+  over the shipped `PRICING_DEFAULTS` dict so admins can override any
+  constant without a code change.
+- `_chemical_cost_map(tenant_id)` — one Mongo scan of
+  `chemical_costs` returning `slug → row`.
+
+New endpoints:
+- `POST /api/calculators/service-in-cost` — per-visit chemical +
+  labor + overhead + minimum price + annualized revenue.
+- `GET  /api/calculators/cost-per-pool` — portfolio scan. For each
+  active customer with an active billing_plan: computes
+  `monthly_in_cost` from `baseline_chem + labor × overhead × visits/mo`
+  and `monthly_revenue` from `plan.amount × visits_per_month` (or
+  the plan's own monthly amount for monthly/quarterly). Flags
+  `negative_margin` / `low_margin` (<20%) / `high_margin` (>60%),
+  sorts outliers first, returns median margin + counts.
+- `POST /api/calculators/service-price` — new-customer price
+  recommender. `base + Σfeature_adders + gallons_step × step_price ×
+  zone_multiplier`. Includes peer-median comparison from live
+  billing_plans (same visit_type, ±25% gallons).
+
+Tenant-tunable defaults (in `PRICING_DEFAULTS`):
+- tech_hourly_cost 35, tech_time_minutes 45, overhead_multiplier 1.25, margin_target_pct 40
+- base_weekly 135, base_bi_weekly 95, base_monthly 80
+- gallons_baseline 15000, gallons_step 5000, gallons_step_price 5
+- adder_saltwater 15, adder_heater 10, adder_spa 25, adder_automation 15, adder_chlorine_tabs 5, adder_liquid_chlorine 20
+- zone_default_multiplier 1.0
+
+Admins can override any of these by writing to
+`db.tenants.settings.pricing_defaults`. **UI for that editor is
+deferred to a T3-followup** (per spec).
+
+### Frontend
+
+**New page:** `frontend/src/pages/admin/BusinessPricingTools.jsx`
+(~430 LOC). Three tabs:
+
+1. **Service In-cost** — pool volume, visit type, chemicals per
+   visit (repeatable rows with slug/qty/unit), tech time, hourly
+   cost, overhead multiplier, margin target. Result card shows
+   chem/labor/overhead/total in-cost + minimum price/visit +
+   annualized revenue. Copy summary button.
+2. **Cost per Pool** — auto-loads on tab open. 5 stat tiles
+   (Customers, Median margin, Negative, Low, High). Filter-by-name
+   text input. Export CSV button. Sortable table color-coded by
+   flag (red neg / yellow low / green high). Rows sorted with
+   negative + low margin first (attention drawn to the fixable
+   problems).
+3. **Service Price** — pool volume, visit type, feature toggle
+   buttons (saltwater/heater/spa/automation/chlorine_tabs/liquid_chlorine),
+   optional zone. Result card shows recommended price + full
+   breakdown line-by-line + peer median comparison ("above / at /
+   below peer median" with sample size).
+
+### Live curl evidence (all 3 spec cases match)
+
+- **T3.1 in-cost** — 20000gal weekly, standard chem load, 45min @
+  $35/hr, 1.25 overhead, 40% margin →
+  `chemical_cost_total: 7.75, labor_cost: 26.25, overhead_cost:
+  8.5, total_in_cost: 42.5, minimum_price_per_visit: 59.5,
+  annualized_revenue: 3094.0, visits_per_year: 52`.
+- **T3.2 cost-per-pool** — 3 aquaterra customers aggregated:
+  Aimee Baram (monthly $50 / in-cost $42.50 → 15% low_margin),
+  Whitmore HOA (monthly $480 / $42.50 → 91.1% high_margin),
+  Jennifer Carson (weekly $520/mo / $184.17 → 64.6% high_margin).
+  Median margin 64.6%. baseline_chem_cost_per_visit $7.75 surfaced.
+- **T3.3 service-price** — 20000gal weekly saltwater+heater →
+  `recommended_price: 165.0`. Breakdown: base 135 + saltwater 15
+  + heater 10 + gallons_adder 5 + zone ×1.0 → **exact spec value**.
+  Peer median $120 (1 sample: Jennifer Carson) surfaced with
+  "above peer median" comparison.
+
+### Screenshots
+
+1. Admin (Alex Admin) on `/admin/tools/pricing` — In-cost tab
+   with default weekly 20000gal computation showing all four stat
+   tiles: **Chem $7.75 · Labor $26.25 · Overhead $8.50 · Total in-cost
+   $42.50**. Below: Minimum price + Annualized. Chemicals-per-visit
+   list editable with 3 default rows + "+ Add chemical".
+2. Same admin on Cost per Pool tab — 5 stat tiles across the top
+   (3 customers · **64.6% median margin** · 0 negative · 1 low · 2
+   high). Color-coded table with Aimee's row in yellow (low
+   margin), Whitmore + Jennifer in green (high margin). Filter box
+   + Export CSV button visible.
+
+### Tests
+
+`backend/tests/test_phase_t3_pricing_tools.py` — **11 tests, 11
+passed, 0.86s**.
+
+- TestInCost (3): known-answer within tolerance, tech 403, customer 403.
+- TestCostPerPool (3): aggregation shape assertions on all row
+  fields, visit_type filter narrows results, tech 403.
+- TestServicePrice (5): known-answer $165 (spec case), biweekly
+  no-features $95 (default), bad visit_type 422, tech 403, customer 403.
+
+### Files touched
+
+- `backend/routers/pool_calculators.py` (~270 LOC appended)
+- `backend/tests/test_phase_t3_pricing_tools.py` (**new**)
+- `frontend/src/pages/admin/BusinessPricingTools.jsx` (**new**, ~430 LOC)
+- `frontend/src/App.js` (import + `<AdminOnly>` route)
+- `frontend/src/pages/tech/ToolsHub.jsx` (1 admin tile + 1 icon import)
+
+### Preflight
+`bash scripts/preflight.sh` → **exit 0** (`preflight OK`). Dead-import
+WARN 426 → **428** (2 false positives from lucide icons used inside
+conditional JSX branches in `BusinessPricingTools.jsx` — non-blocking;
+recorded for future cleanup).
+
+### Deferrals (explicit)
+
+- **T3-followup**: `pricing_defaults` editor UI in `/admin/settings`
+  so admins can tune constants (base_weekly, adder_saltwater, etc.)
+  without a code change. Backend already reads
+  `tenant.settings.pricing_defaults` — just needs the form. Small
+  ship, ~30 min.
+- Distance zone editor UI (currently `tenant.settings.pricing_zones`
+  is a raw dict admin can write to via `PATCH /tenants/{tid}`).
+- Mobile parity — techs don't need pricing tools; deferred if ever.
+- Historical margin trend chart on Cost per Pool — currently a
+  point-in-time snapshot only.
+

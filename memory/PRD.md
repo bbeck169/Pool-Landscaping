@@ -2063,3 +2063,48 @@ Two-item bundle shipped together — same code area, related UX.
 - Resend delivery-event webhooks (opens/clicks/bounces) — deferred.
 - Rich HTML templates beyond basic layout — deferred.
 
+
+---
+
+## Phase T3 — Business Pricing Tools (Feb 2026)
+
+Three admin-only pricing tools shipped as one tabbed page under
+`/admin/tools/pricing`.
+
+### What changed
+
+- **Backend:** Extended `routers/pool_calculators.py` with 3 new
+  endpoints (`/service-in-cost`, `/cost-per-pool`, `/service-price`).
+  All gated by a local `_require_admin` dep (super_admin + admin only,
+  techs and customers get 403). Pricing constants live in
+  `PRICING_DEFAULTS` and can be overridden per-tenant via
+  `db.tenants.settings.pricing_defaults`.
+- **Web:** New `pages/admin/BusinessPricingTools.jsx` (~430 LOC)
+  with 3 tabs matching the endpoints. Route
+  `/admin/tools/pricing` wrapped in `<AdminOnly>`. Portfolio scan
+  tab has color-coded outlier flags + filter + CSV export. Price
+  recommender surfaces a peer-median comparison for sanity.
+- **Tests:** 11/11 passing (`test_phase_t3_pricing_tools.py`).
+- **RBAC:** Confirmed 403 for tech + customer roles across all three
+  endpoints.
+
+### Verification
+
+- **T3.1 spec case** (20000 gal weekly, 45 min @ $35/hr, 1.25 overhead,
+  40% margin, standard 3-chem load) → in-cost $42.50, min price
+  $59.50, annualized $3,094.
+- **T3.2** aggregated 3 aquaterra customers, computed 64.6% median
+  margin, flagged 1 low-margin (Aimee 15%) + 2 high-margin (Whitmore
+  91.1%, Jennifer 64.6%).
+- **T3.3 spec case** (20000 gal weekly saltwater + heater) →
+  **$165.00** exactly (base 135 + salt 15 + heater 10 + gallons 5).
+
+### Deferrals
+
+- **T3-followup:** `pricing_defaults` editor UI (backend already
+  supports; needs ~30-min form under `/admin/settings`).
+- Distance zone editor UI.
+- Historical margin trend chart on Cost per Pool.
+- Mobile parity for pricing tools (admin-only feature; likely never
+  needed on mobile).
+

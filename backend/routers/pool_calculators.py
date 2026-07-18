@@ -258,3 +258,336 @@ async def heater_calc(body: HeaterIn, user: dict = Depends(require_tech_or_above
         "delta_t": round(delta_t, 1),
         "notes": notes,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase T3 — Business Pricing Tools (admin + super_admin only)
+# ══════════════════════════════════════════════════════════════════════
+from statistics import median
+from config import db
+from routers.tenants import get_current_tenant
+
+
+def _require_admin(user: dict = Depends(get_current_user)) -> dict:
+    if (user or {}).get("role") not in ("admin", "super_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+# Visit cadence → visits per month + per year. Includes quarterly for
+# T3.2 aggregation completeness (billing_plans has quarterly rows).
+_VISITS_PER_MONTH = {
+    "weekly": 52 / 12,
+    "bi-weekly": 26 / 12,
+    "biweekly": 26 / 12,
+    "monthly": 1.0,
+    "quarterly": 1 / 3,
+}
+_VISITS_PER_YEAR = {"weekly": 52, "bi-weekly": 26, "biweekly": 26,
+                    "monthly": 12, "quarterly": 4}
+
+
+PRICING_DEFAULTS = {
+    "tech_hourly_cost": 35.0,
+    "overhead_multiplier": 1.25,
+    "margin_target_pct": 40.0,
+    "tech_time_minutes": 45,
+    "base_weekly": 135.0,
+    "base_bi_weekly": 95.0,
+    "base_monthly": 80.0,
+    "gallons_baseline": 15000,
+    "gallons_step": 5000,
+    "gallons_step_price": 5.0,
+    "adder_saltwater": 15.0,
+    "adder_heater": 10.0,
+    "adder_spa": 25.0,
+    "adder_automation": 15.0,
+    "adder_chlorine_tabs": 5.0,
+    "adder_liquid_chlorine": 20.0,
+    "zone_default_multiplier": 1.0,
+}
+
+
+def _pricing_defaults(tenant: dict) -> dict:
+    """Merge tenant.pricing_defaults over PRICING_DEFAULTS spec defaults."""
+    override = ((tenant or {}).get("settings") or {}).get("pricing_defaults") or {}
+    return {**PRICING_DEFAULTS, **override}
+
+
+async def _chemical_cost_map(tenant_id: str) -> dict[str, dict]:
+    """slug → {name, unit_kind, cost_per_unit_cents}."""
+    out = {}
+    async for row in db.chemical_costs.find(
+        {"tenant_id": tenant_id}, {"_id": 0}
+    ):
+        out[row["chemical_slug"]] = row
+    return out
+
+
+# ─── T3.1 Service In-cost ────────────────────────────────────────────
+class ChemUsage(BaseModel):
+    chemical_slug: str
+    quantity: float
+    unit: Optional[str] = None
+
+
+class ServiceInCostIn(BaseModel):
+    pool_gallons: float
+    visit_type: str = "weekly"
+    chemicals_per_visit: list[ChemUsage] = Field(default_factory=list)
+    tech_time_minutes: Optional[float] = None
+    tech_hourly_cost: Optional[float] = None
+    overhead_multiplier: Optional[float] = None
+    margin_target_pct: Optional[float] = None
+
+
+@router.post("/service-in-cost")
+async def service_in_cost(
+    body: ServiceInCostIn,
+    user: dict = Depends(_require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    d = _pricing_defaults(tenant)
+    tech_minutes = body.tech_time_minutes or d["tech_time_minutes"]
+    tech_hourly = body.tech_hourly_cost if body.tech_hourly_cost is not None \
+        else d["tech_hourly_cost"]
+    overhead_mult = body.overhead_multiplier if body.overhead_multiplier is not None \
+        else d["overhead_multiplier"]
+    margin_pct = body.margin_target_pct if body.margin_target_pct is not None \
+        else d["margin_target_pct"]
+    cost_map = await _chemical_cost_map(tenant["id"])
+
+    chem_lines = []
+    chemical_total = 0.0
+    for c in body.chemicals_per_visit:
+        row = cost_map.get(c.chemical_slug)
+        unit_cost = (row or {}).get("cost_per_unit_cents", 0) / 100.0
+        line_cost = round(unit_cost * c.quantity, 2)
+        chem_lines.append({
+            "chemical_slug": c.chemical_slug,
+            "name": (row or {}).get("name", c.chemical_slug),
+            "quantity": c.quantity,
+            "unit": c.unit or (row or {}).get("unit_kind", ""),
+            "unit_cost": unit_cost,
+            "line_cost": line_cost,
+        })
+        chemical_total += line_cost
+
+    labor_cost = round((tech_minutes / 60.0) * tech_hourly, 2)
+    subtotal = chemical_total + labor_cost
+    overhead_cost = round(subtotal * (overhead_mult - 1), 2)
+    total_in_cost = round(subtotal + overhead_cost, 2)
+    minimum_price_per_visit = round(total_in_cost * (1 + margin_pct / 100.0), 2)
+    vpy = _VISITS_PER_YEAR.get(body.visit_type.lower(), 52)
+    annualized_revenue = round(minimum_price_per_visit * vpy, 2)
+
+    return {
+        "visit_type": body.visit_type,
+        "pool_gallons": body.pool_gallons,
+        "chemical_lines": chem_lines,
+        "chemical_cost_total": round(chemical_total, 2),
+        "labor_cost": labor_cost,
+        "labor_details": {"minutes": tech_minutes, "hourly": tech_hourly},
+        "overhead_cost": overhead_cost,
+        "overhead_multiplier": overhead_mult,
+        "total_in_cost": total_in_cost,
+        "margin_target_pct": margin_pct,
+        "minimum_price_per_visit": minimum_price_per_visit,
+        "visits_per_year": vpy,
+        "annualized_revenue": annualized_revenue,
+    }
+
+
+# ─── T3.2 Cost per Pool (portfolio aggregation) ─────────────────────
+@router.get("/cost-per-pool")
+async def cost_per_pool(
+    min_gallons: Optional[float] = None,
+    max_gallons: Optional[float] = None,
+    visit_type_filter: Optional[str] = None,
+    only_active_customers: bool = True,
+    user: dict = Depends(_require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    d = _pricing_defaults(tenant)
+    cost_map = await _chemical_cost_map(tenant["id"])
+
+    # Standard per-visit chemical mix baseline for the estimator when a
+    # customer has no per-customer override. Weekly service uses a bit
+    # more than monthly. Values are per-visit tenants can tune later.
+    standard_mix = [
+        {"chemical_slug": "liquid_chlorine", "quantity": 1.0},
+        {"chemical_slug": "muriatic_acid", "quantity": 0.25},
+        {"chemical_slug": "chlorine_tabs", "quantity": 2},
+    ]
+    def chem_total_for_mix(mix):
+        return sum(
+            (cost_map.get(m["chemical_slug"], {}).get("cost_per_unit_cents", 0) / 100.0)
+            * m["quantity"] for m in mix
+        )
+    baseline_chem_cost = chem_total_for_mix(standard_mix)
+
+    # Query
+    cust_q = {"tenant_id": tenant["id"]}
+    if only_active_customers:
+        cust_q["$or"] = [{"is_active": True}, {"is_active": {"$exists": False}}]
+    if min_gallons is not None:
+        cust_q["pool_gallons"] = {**cust_q.get("pool_gallons", {}), "$gte": min_gallons}
+    if max_gallons is not None:
+        cust_q["pool_gallons"] = {**cust_q.get("pool_gallons", {}), "$lte": max_gallons}
+
+    rows = []
+    async for cust in db.customers.find(cust_q, {"_id": 0}):
+        plan = await db.billing_plans.find_one(
+            {"tenant_id": tenant["id"], "customer_id": cust["id"], "active": True},
+            {"_id": 0}, sort=[("created_at", -1)],
+        )
+        if not plan:
+            continue
+        vt = (plan.get("frequency") or "").lower()
+        if visit_type_filter and vt != visit_type_filter.lower():
+            continue
+        vpm = _VISITS_PER_MONTH.get(vt, 0)
+        if not vpm:
+            continue
+        labor_cost = (d["tech_time_minutes"] / 60.0) * d["tech_hourly_cost"]
+        per_visit_in = (baseline_chem_cost + labor_cost) * d["overhead_multiplier"]
+        monthly_in_cost = round(per_visit_in * vpm, 2)
+        monthly_revenue = round(float(plan.get("amount") or 0) * vpm, 2) if vt in ("weekly","biweekly","bi-weekly") \
+            else round(float(plan.get("amount") or 0), 2) if vt == "monthly" \
+            else round(float(plan.get("amount") or 0) / 3.0, 2) if vt == "quarterly" \
+            else 0
+        margin_amount = round(monthly_revenue - monthly_in_cost, 2)
+        margin_pct = round((margin_amount / monthly_revenue * 100), 1) if monthly_revenue else None
+        # Outlier flags
+        flags = []
+        if margin_pct is not None:
+            if margin_amount < 0:
+                flags.append("negative_margin")
+            elif margin_pct < 20:
+                flags.append("low_margin")
+            elif margin_pct > 60:
+                flags.append("high_margin")
+        rows.append({
+            "customer_id": cust["id"],
+            "customer_name": cust.get("name") or "",
+            "pool_gallons": cust.get("pool_gallons") or 0,
+            "visit_type": vt,
+            "monthly_in_cost": monthly_in_cost,
+            "monthly_revenue": monthly_revenue,
+            "margin_amount": margin_amount,
+            "margin_pct": margin_pct,
+            "flags": flags,
+        })
+    # Sort by margin outliers first (negative/low), then high
+    def sort_key(r):
+        f = r.get("flags") or []
+        if "negative_margin" in f: return (0, r.get("margin_pct") or 0)
+        if "low_margin" in f: return (1, r.get("margin_pct") or 0)
+        if "high_margin" in f: return (3, -(r.get("margin_pct") or 0))
+        return (2, r.get("margin_pct") or 0)
+    rows.sort(key=sort_key)
+    margins = [r["margin_pct"] for r in rows if r["margin_pct"] is not None]
+    return {
+        "count": len(rows),
+        "rows": rows,
+        "summary": {
+            "median_margin_pct": round(median(margins), 1) if margins else None,
+            "low_margin_count": sum(1 for r in rows if "low_margin" in r["flags"]),
+            "high_margin_count": sum(1 for r in rows if "high_margin" in r["flags"]),
+            "negative_margin_count": sum(1 for r in rows if "negative_margin" in r["flags"]),
+        },
+        "baseline_chem_cost_per_visit": round(baseline_chem_cost, 2),
+    }
+
+
+# ─── T3.3 Service Price recommender ─────────────────────────────────
+class ServicePriceIn(BaseModel):
+    pool_gallons: float
+    visit_type: str = "weekly"
+    pool_features: list[str] = Field(default_factory=list)
+    distance_zone: Optional[str] = None
+
+
+@router.post("/service-price")
+async def service_price(
+    body: ServicePriceIn,
+    user: dict = Depends(_require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    d = _pricing_defaults(tenant)
+    vt = body.visit_type.lower()
+    if vt == "weekly":
+        base = d["base_weekly"]
+    elif vt in ("bi-weekly", "biweekly"):
+        base = d["base_bi_weekly"]
+    elif vt == "monthly":
+        base = d["base_monthly"]
+    else:
+        raise HTTPException(422, "visit_type must be weekly|bi-weekly|monthly")
+
+    adders = []
+    feat_map = {
+        "saltwater": d["adder_saltwater"],
+        "heater": d["adder_heater"],
+        "spa": d["adder_spa"],
+        "automation": d["adder_automation"],
+        "chlorine_tabs": d["adder_chlorine_tabs"],
+        "liquid_chlorine": d["adder_liquid_chlorine"],
+    }
+    features_total = 0.0
+    for f in body.pool_features or []:
+        amt = feat_map.get(f)
+        if amt is None:
+            continue
+        adders.append({"feature": f, "amount": amt})
+        features_total += amt
+
+    baseline = d["gallons_baseline"]
+    step = d["gallons_step"]
+    step_price = d["gallons_step_price"]
+    over = max(0, body.pool_gallons - baseline)
+    gallons_adder = round((over // step) * step_price, 2)
+
+    zones = ((tenant or {}).get("settings") or {}).get("pricing_zones") or {}
+    zone_mult = float(zones.get(body.distance_zone or "", d["zone_default_multiplier"])) \
+        if body.distance_zone else d["zone_default_multiplier"]
+
+    subtotal = base + features_total + gallons_adder
+    recommended = round(subtotal * zone_mult, 2)
+
+    # Median comparison — cheapest and roughest proxy: pull other
+    # customers with the same visit_type and gallons within ±25%.
+    lo = body.pool_gallons * 0.75
+    hi = body.pool_gallons * 1.25
+    peer_amounts: list[float] = []
+    async for plan in db.billing_plans.find(
+        {"tenant_id": tenant["id"], "active": True,
+         "frequency": {"$in": ["weekly", "bi-weekly", "biweekly", "monthly"]}},
+        {"_id": 0, "amount": 1, "frequency": 1, "customer_id": 1},
+    ):
+        pfreq = plan.get("frequency", "").lower()
+        if pfreq != vt and not (pfreq in ("bi-weekly", "biweekly") and vt in ("bi-weekly", "biweekly")):
+            continue
+        cust = await db.customers.find_one(
+            {"tenant_id": tenant["id"], "id": plan.get("customer_id")},
+            {"_id": 0, "pool_gallons": 1},
+        )
+        if cust and cust.get("pool_gallons") and lo <= cust["pool_gallons"] <= hi:
+            peer_amounts.append(float(plan.get("amount") or 0))
+    peer_median = round(median(peer_amounts), 2) if peer_amounts else None
+
+    return {
+        "recommended_price": recommended,
+        "breakdown": {
+            "base": base,
+            "features": adders,
+            "features_total": round(features_total, 2),
+            "gallons_adder": gallons_adder,
+            "zone_multiplier": zone_mult,
+            "subtotal_before_zone": round(subtotal, 2),
+        },
+        "visit_type": vt,
+        "peer_median_price": peer_median,
+        "peer_sample_size": len(peer_amounts),
+    }
+
