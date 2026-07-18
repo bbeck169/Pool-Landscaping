@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { ZillowUsageChip } from "@/components/ZillowUsageChip";
 
 export default function PropertyLookupPage() {
   const nav = useNavigate();
@@ -21,17 +22,22 @@ export default function PropertyLookupPage() {
   const [noteMsg, setNoteMsg] = useState("");
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [rateLimited, setRateLimited] = useState(false);
+  const [usageBump, setUsageBump] = useState(0);
 
   const runSearch = async (addr) => {
     const q = (addr ?? address).trim();
     if (q.length < 5) { setError("Enter a full property address"); return; }
     setLoading(true); setError(null); setResult(null); setNoteMsg("");
+    setRateLimited(false);
     try {
       const r = await api.get(
         `/property/search?address=${encodeURIComponent(q)}`);
       setResult(r);
       setAddress(r.property?.address || q);
+      setUsageBump((n) => n + 1);
     } catch (e) {
+      if (String(e?.message || "").includes("429")) setRateLimited(true);
       setError(e.message || "Search failed");
     } finally { setLoading(false); }
   };
@@ -85,6 +91,11 @@ export default function PropertyLookupPage() {
                 data-testid="prop-history-toggle">
           <Clock size={14} /> History ({history.length})
         </button>
+      </div>
+
+      <div className="mb-4">
+        <ZillowUsageChip rateLimited={rateLimited} refreshKey={usageBump}
+                          testid="prop-zillow-chip" />
       </div>
 
       <div className="flex gap-2 mb-4">

@@ -1,11 +1,13 @@
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.responses import JSONResponse
 from typing import Optional, List, Any, Dict
 from pydantic import BaseModel, Field
 
 from config import db, OPENWEB_NINJA_API_KEY, logger
-from utils import now_iso, new_id, require_admin
+from utils import now_iso, new_id, require_admin, require_zillow_access
 from routers.tenants import get_current_tenant
+from services import zillow_rate_limit as zrl
 
 router = APIRouter()
 
@@ -69,13 +71,59 @@ def _norm_detail(data: dict) -> dict:
 
 
 @router.get("/property/lookup")
-async def lookup(address: str = Query(...), user: dict = Depends(require_admin)):
-    """Pull a Zillow listing (photos + facts) by full street address for virtual bidding."""
+async def lookup(address: str = Query(...),
+                 override_budget: bool = Query(False),
+                 user: dict = Depends(require_zillow_access),
+                 tenant: dict = Depends(get_current_tenant)):
+    """Pull a Zillow listing (photos + facts) by full street address for virtual bidding.
+
+    Phase 56.9b Step 8 — Rate-limited + budget-guarded + cached. Techs
+    now have access; guardrails cap tech usage (20/day, 200/mo) and
+    tenant spend ($1000/mo default, super_admin may `?override_budget=true`).
+    """
     address = (address or "").strip()
     if len(address) < 5:
         raise HTTPException(400, "Enter a full property address")
     if not OPENWEB_NINJA_API_KEY:
         raise HTTPException(424, "Zillow data provider not configured")
+
+    endpoint = "/property/lookup"
+    caps = await zrl.check_caps(user, tenant)
+    caps = await zrl.apply_override_or_fail(caps, user, tenant, endpoint,
+                                             address, override_budget)
+    if not caps["allowed"]:
+        if caps.get("reason") == "tenant_budget_exhausted":
+            raise HTTPException(429, detail={
+                "error": "tenant_budget_exhausted",
+                "tenant_used": caps["tenant_used"],
+                "tenant_budget": caps["tenant_budget"],
+            })
+        raise HTTPException(429, detail={
+            "error": caps["reason"],
+            "reset_at": caps["reset_at"],
+            "usage": caps["usage"],
+        })
+
+    # Cache hit — no paid call, no usage log.
+    cached = await zrl.read_cache(address)
+    if cached is not None:
+        await db.zillow_audit.insert_one({
+            "id": new_id(),
+            "event": "zillow_cache_hit",
+            "tenant_id": tenant["id"],
+            "user_id": user["id"],
+            "endpoint": endpoint,
+            "address_hash": zrl.address_hash(address),
+            "ts": now_iso(),
+        })
+        body = {**cached, "_cached": True, "usage": caps["usage"],
+                "tenant_used": caps["tenant_used"], "tenant_budget": caps["tenant_budget"],
+                "budget_warning": caps["budget_warning"]}
+        if caps.get("override_audit_id"):
+            body["override_audit_id"] = caps["override_audit_id"]
+        return JSONResponse(body, headers=zrl.response_headers(caps))
+
+    # Paid provider call.
     try:
         async with httpx.AsyncClient(timeout=25) as c:
             r = await c.get(
@@ -95,7 +143,16 @@ async def lookup(address: str = Query(...), user: dict = Depends(require_admin))
     data = payload.get("data") or payload
     if not isinstance(data, dict) or not (data.get("zpid") or data.get("streetAddress") or data.get("address")):
         raise HTTPException(404, "No Zillow listing found for that address")
-    return _norm_detail(data)
+    normalized = _norm_detail(data)
+    await zrl.write_cache(address, normalized)
+    await zrl.log_call(user, tenant, endpoint, address)
+    caps_after = await zrl.check_caps(user, tenant)
+    body = {**normalized, "_cached": False, "usage": caps_after["usage"],
+            "tenant_used": caps_after["tenant_used"], "tenant_budget": caps_after["tenant_budget"],
+            "budget_warning": caps_after["budget_warning"]}
+    if caps.get("override_audit_id"):
+        body["override_audit_id"] = caps["override_audit_id"]
+    return JSONResponse(body, headers=zrl.response_headers(caps_after))
 
 
 class SaveIn(BaseModel):
@@ -120,7 +177,7 @@ class SaveIn(BaseModel):
 
 @router.post("/property/save")
 async def save_property(body: SaveIn,
-                        user: dict = Depends(require_admin),
+                        user: dict = Depends(require_zillow_access),
                         tenant: dict = Depends(get_current_tenant)):
     now = now_iso()
     lead_id = body.lead_id
@@ -182,7 +239,7 @@ async def save_property(body: SaveIn,
 
 @router.get("/property/saved")
 async def list_saved(customer_id: Optional[str] = Query(None), lead_id: Optional[str] = Query(None),
-                     user: dict = Depends(require_admin),
+                     user: dict = Depends(require_zillow_access),
                      tenant: dict = Depends(get_current_tenant)):
     q: dict = {"tenant_id": tenant["id"]}
     if customer_id:
@@ -194,7 +251,7 @@ async def list_saved(customer_id: Optional[str] = Query(None), lead_id: Optional
 
 @router.delete("/property/saved/{pid}")
 async def delete_saved(pid: str,
-                       user: dict = Depends(require_admin),
+                       user: dict = Depends(require_zillow_access),
                        tenant: dict = Depends(get_current_tenant)):
     await db.saved_properties.delete_one({"id": pid, "tenant_id": tenant["id"]})
     return {"ok": True}

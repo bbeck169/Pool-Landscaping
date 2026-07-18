@@ -17,19 +17,20 @@ import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 
 import { api } from "@/src/api";
-import { AdminOnly } from "@/src/components/AdminOnly";
+import { ZillowAccess } from "@/src/components/ZillowAccess";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
+import { ZillowUsageChip, ZillowRateLimitedBanner } from "@/src/components/ZillowUsageChip";
 
 const W = Dimensions.get("window").width;
 const num = (n: any) => (n === null || n === undefined || n === "" ? "—" : Number(n).toLocaleString());
 
 export default function VirtualBid() {
   return (
-    <AdminOnly>
+    <ZillowAccess>
       <VirtualBidScreen />
-    </AdminOnly>
+    </ZillowAccess>
   );
 }
 
@@ -46,6 +47,7 @@ function VirtualBidScreen() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [leads, setLeads] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
+  const [usageBump, setUsageBump] = useState(0);
 
   const lookup = async () => {
     const a = address.trim();
@@ -57,6 +59,7 @@ function VirtualBidScreen() {
     try {
       const d = await api.get(`/property/lookup?address=${encodeURIComponent(a)}`);
       setProp(d);
+      setUsageBump((n) => n + 1);
     } catch (e: any) {
       setError(e?.message || "Could not find that property.");
     } finally {
@@ -150,7 +153,9 @@ function VirtualBidScreen() {
 
   return (
     <View style={styles.root}>
-      <Header title="Virtual Bid" subtitle="Size up a property from Zillow" back />
+      <Header title="Virtual Bid" subtitle="Size up a property from Zillow" back
+              right={<ZillowUsageChip refreshKey={usageBump} testID="vbid-zillow-chip" />} />
+      <ZillowRateLimitedBanner testID="vbid-zillow-banner" />
 
       <View style={styles.searchWrap}>
         <View style={styles.searchBox}>

@@ -11,11 +11,11 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 
-from utils import require_admin
+from utils import require_admin, require_zillow_access
 from routers.tenants import get_current_tenant
 from config import OPENWEB_NINJA_API_KEY, db
 from services.zillow_rate_limit import (
-    _month_key, _tenant_budget, BUDGET_WARN_THRESHOLD,
+    _month_key, _tenant_budget, BUDGET_WARN_THRESHOLD, check_caps,
 )
 
 router = APIRouter(prefix="/zillow", tags=["zillow"])
@@ -91,4 +91,32 @@ async def zillow_usage_this_month(
         "cache_hits": hits,
         "cache_hit_rate": cache_hit_rate,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+
+@router.get("/me/usage")
+async def zillow_me_usage(
+    user: dict = Depends(require_zillow_access),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase 56.9b Step 6/7 — Per-caller usage chip payload.
+
+    Returned to the web + mobile chip so it can render "X/20 today,
+    Y/200 month" without recomputing on the client. Admins/super_admins
+    get `null` per-user caps (they're uncapped). Tenant budget +
+    warning + reset_at all mirror the same shape check_caps returns
+    at the guarded endpoints, so a rate-limited state is easy to spot.
+    """
+    caps = await check_caps(user, tenant)
+    return {
+        "role": (user or {}).get("role"),
+        "usage": caps["usage"],
+        "allowed": caps["allowed"],
+        "reason": caps["reason"],
+        "reset_at": caps["reset_at"],
+        "tenant_budget": caps["tenant_budget"],
+        "tenant_used": caps["tenant_used"],
+        "tenant_pct": caps["tenant_pct"],
+        "budget_warning": caps["budget_warning"],
     }

@@ -1851,3 +1851,67 @@ to match the new href (3/3 passing).
 - Live SMS send (blocked on user rotating RC OAuth credentials
   based on the OAU-153 signal above)
 
+
+---
+
+## Phase 56.9b — Steps 6+7+8 · Zillow-for-Techs SHIPPED (Feb 2026)
+
+Backend Steps 1–5 (guardrail infra) landed in the prior session.
+This ship wires the guardrail into user-visible surfaces and
+performs the RBAC swap, completing Option A end-to-end.
+
+### What changed
+
+- **Step 8 (Backend RBAC):** New `require_zillow_access` in
+  `utils.py` (super_admin + admin + technician). Swapped 4
+  property endpoints + 1 D2D endpoint from `require_admin`.
+  `/d2d/report` stays admin-only per spec.
+- **Guardrail wiring:** Paid endpoints (`/property/lookup`,
+  `/d2d/sold-leads`) now run: `check_caps` → `apply_override_or_fail`
+  → 429 (with `reason` + `reset_at`) OR cache-hit fast-path OR
+  paid provider call → `write_cache` + `log_call` → refresh caps
+  → JSON body + `X-Zillow-*` headers.
+- **New endpoint:** `GET /api/zillow/me/usage` returns the caps
+  shape for the chip to render.
+- **Step 6 (Web):** New `ZillowUsageChip` component
+  (auto-polls `/zillow/me/usage`, yellow ≥80%, red at 100% or
+  budget exhausted, inline "Ask admin for more" banner). Mounted
+  on all 4 Zillow-backed pages.
+- **Step 7 (Mobile):** New `ZillowAccess` route guard (mirrors
+  backend RBAC — replaces `AdminOnly` on `virtual-bid.tsx` to
+  unlock techs). New `ZillowUsageChip` + `ZillowRateLimitedBanner`
+  mobile components mounted in the header `right` slot on all 3
+  primary Zillow-backed screens.
+
+### Verification (all 5 required curl cases pass)
+
+- Tech successful lookup → 200 with data + `usage` fields + `X-Zillow-*` headers
+- Tech at daily cap → 429 `{error:"tech_daily_cap", reset_at:...}`
+- Cache hit → 200 with `_cached: true`, tech counter unchanged, `zillow_cache_hit` audit row emitted
+- Tenant near-budget → 200 with `X-Zillow-Budget-Warning: 1` + `budget_warning: true` in body
+- Super_admin `?override_budget=true` at exhaustion → 200 with `override_audit_id` in body + `zillow_budget_override` audit row in Mongo
+
+Screenshot of tech `mike@aquaterra.com` on `/property-lookup`
+shows the chip **"Zillow: 3/20 today · 3/200 mo"** rendered —
+previously this surface returned 403 to techs.
+
+### Rollout
+
+- Zero migration required (indexes already created lazily by
+  `services.zillow_rate_limit.ensure_indexes` in Phase 56.9b Option A).
+- 56.9b Option A is now **complete**. All Zillow-facing surfaces
+  are exposed to technicians under enforced per-user (20/day, 200/mo)
+  and per-tenant ($1000/mo default) rate limits, with super_admin
+  break-glass audit-logged override.
+
+### Deferred (unchanged from prior sessions)
+
+- Phase 56.18-followup (master invoice column, detail header,
+  PDF header, search-by-number, mobile invoice UI, email/Stripe
+  description hooks, 6 remaining invoice-birth code paths)
+- Dead-import cleanup pass (424 static WARN)
+- Live SMS send (blocked on user rotating RC OAuth credentials
+  per the OAU-153 signal captured in Phase 56.19)
+- T1–T6 calculators (queued, not started)
+- 56.13d / 56.14 / 56.15 (paused by user)
+

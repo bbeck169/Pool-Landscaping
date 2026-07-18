@@ -352,3 +352,119 @@ returns `href: "/notifications?kind=rc_sms_inbound_unmatched"`.
   PDF, search, mobile, email/Stripe hooks)
 - Dead-import cleanup (424 static WARN)
 
+
+---
+
+## Phase 56.9b — Steps 6 + 7 + 8 SHIPPED (Feb 2026)
+
+Completes 56.9b Option A. Backend guardrail infrastructure
+(Steps 1–5) landed in the prior session; this ship wires it into
+the user-visible surfaces + performs the RBAC swap.
+
+### Backend — Step 8
+
+- `utils.py` — new `require_zillow_access(user)` dep. Allows
+  `super_admin | admin | technician`, blocks customer + anonymous.
+- `routers/property.py` — 4 endpoints swapped from
+  `require_admin` → `require_zillow_access`:
+  - `GET  /property/lookup` (paid — wired full guardrail flow)
+  - `POST /property/save` (Mongo-only — RBAC only)
+  - `GET  /property/saved` (Mongo-only — RBAC only)
+  - `DELETE /property/saved/{pid}` (Mongo-only — RBAC only)
+- `routers/d2d.py` — 1 endpoint swapped:
+  - `GET  /d2d/sold-leads` (paid — wired full guardrail flow)
+- `routers/d2d.py::/d2d/report` **stays admin-only** as spec'd.
+- `routers/zillow_admin.py` — new
+  `GET /api/zillow/me/usage` — returns caps shape for the
+  chip UI. Uses `require_zillow_access` (both roles).
+
+Guardrail wiring pattern (per spec sketch in HANDOFF):
+1. `caps = await zrl.check_caps(user, tenant)`
+2. `caps = await zrl.apply_override_or_fail(caps, …, override_budget)`
+3. If `!caps.allowed` → `raise 429` with `reason` + `reset_at` / budget shape.
+4. `cached = await zrl.read_cache(address)` — cache hit short-circuits
+   with `_cached: true`, no `log_call`, but emits a `zillow_cache_hit`
+   audit row for the widget's cache-hit rate.
+5. Paid call → `write_cache` → `log_call` → refresh caps → return with
+   `usage` + `tenant_used` + `budget_warning` in body and
+   `X-Zillow-*` headers.
+
+### Frontend — Step 6 (web)
+
+- **new** `frontend/src/components/ZillowUsageChip.jsx` —
+  polls `/api/zillow/me/usage` every 60s. Yellow at ≥80 % of any
+  per-user cap or ≥90 % of tenant budget. Red at 100 % / budget
+  exhausted / caller-marked `rateLimited`. Below-chip inline
+  rate-limited banner with mailto **"Ask admin for more"**.
+- Chip mounted on 4 web pages:
+  1. `pages/property-lookup/PropertyLookupPage.jsx` (header)
+  2. `pages/d2d/D2dPages.jsx :: D2dCanvassingMap` (below legend)
+  3. `pages/d2d/D2dPages.jsx :: D2dSoldLeads` (below error banner)
+  4. `pages/aitools/AiToolsPages.jsx :: VirtualBid` (below H1)
+- Callers pass `rateLimited={String(err.message).includes("429")}`
+  so 429 responses trigger the banner deterministically.
+
+### Mobile — Step 7
+
+- **new** `mobile/src/components/ZillowAccess.tsx` — mirrors backend
+  `require_zillow_access`. Redirects non-eligible roles home.
+- **new** `mobile/src/components/ZillowUsageChip.tsx` — exports both
+  `<ZillowUsageChip />` (chip sized for Header `right` slot) and
+  `<ZillowRateLimitedBanner />` (self-fetching banner rendered
+  below the header). Same color rules as web.
+- Chip mounted on 3 primary screens (sub-screens skip because they
+  don't call the Zillow-backed endpoints):
+  1. `mobile/app/(app)/property-lookup.tsx`
+  2. `mobile/app/d2d/index.tsx` (and re-exported as `(app)/d2d.tsx`)
+  3. `mobile/app/virtual-bid.tsx` — **`AdminOnly` swapped for
+     `ZillowAccess`**, unlocking techs.
+
+### Live curl evidence (5/5 cases pass)
+
+| # | Case | Response |
+|---|---|---|
+| 1 | Tech successful lookup (cache-primed) | `200 OK` · `_cached: true` · `usage.tech_today: 0` · headers `X-Zillow-Tech-Today: 0`, `X-Zillow-Tenant-Budget: 1000` |
+| 2 | Tech at daily cap | `429` · `{error:"tech_daily_cap", reset_at:"2026-07-19T00:00:00+00:00", usage:{tech_today:20/20}}` |
+| 3 | Cache hit (same addr, 2nd call) | `200 OK` · `tech_today` unchanged at 0 · 2 `zillow_cache_hit` audit rows |
+| 4 | Tenant near-budget 900/1000 | `200 OK` · `X-Zillow-Budget-Warning: 1` · `X-Zillow-Tenant-Used: 900` · body `budget_warning: true` |
+| 5a | Admin at exhausted budget | `429` · `{error:"tenant_budget_exhausted", tenant_used:1001, tenant_budget:1000}` |
+| 5b | Super_admin `?override_budget=true` | `200 OK` · `override_audit_id: "b39740e8-..."` · Mongo `zillow_audit.event: "zillow_budget_override"` row confirmed |
+
+### Screenshot
+
+Tech `mike@aquaterra.com` navigating to `/property-lookup` renders
+the chip **"Zillow: 3/20 today · 3/200 mo"** in the page header —
+a surface that returned 403 to techs before this ship.
+
+### Files touched
+
+- `backend/utils.py`
+- `backend/routers/property.py`
+- `backend/routers/d2d.py`
+- `backend/routers/zillow_admin.py`
+- `frontend/src/components/ZillowUsageChip.jsx` (**new**)
+- `frontend/src/pages/property-lookup/PropertyLookupPage.jsx`
+- `frontend/src/pages/d2d/D2dPages.jsx`
+- `frontend/src/pages/aitools/AiToolsPages.jsx`
+- `mobile/src/components/ZillowAccess.tsx` (**new**)
+- `mobile/src/components/ZillowUsageChip.tsx` (**new**)
+- `mobile/app/virtual-bid.tsx`
+- `mobile/app/(app)/property-lookup.tsx`
+- `mobile/app/d2d/index.tsx`
+
+### Preflight
+`bash scripts/preflight.sh` → **exit 0** (`preflight OK`).
+Dead-import WARN unchanged at 424 (pre-existing tech debt).
+
+### Notes
+- Sub-screens `mobile/app/d2d/{leaderboard,report}.tsx` do NOT
+  call Zillow endpoints (they read `/d2d/leaderboard` and
+  `/d2d/report`, which are aggregations of local Mongo data), so
+  chip is intentionally not mounted there — mounting would be
+  misleading. Recorded here in case future audit re-questions.
+- The "hardcoded Admin access required banner" the fresh-session
+  brief referenced turned out to be the mobile `<AdminOnly>` route
+  guard on `virtual-bid.tsx` (there were no in-body text banners
+  matching that string on web). Swapping to `<ZillowAccess>`
+  accomplishes the same intent.
+

@@ -13,6 +13,7 @@ import * as Location from "expo-location";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import { ZillowUsageChip, ZillowRateLimitedBanner } from "@/src/components/ZillowUsageChip";
 
 interface Comp {
   address?: string;
@@ -96,7 +97,8 @@ export default function PropertyLookup() {
 
   return (
     <View style={styles.root}>
-      <Header title="Property lookup" />
+      <Header title="Property lookup" right={<ZillowUsageChip testID="prop-zillow-chip" />} />
+      <ZillowRateLimitedBanner testID="prop-zillow-banner" />
       <ScrollView contentContainerStyle={{ padding: spacing.lg,
                                              paddingBottom: spacing["3xl"] }}>
         <View style={styles.searchRow}>

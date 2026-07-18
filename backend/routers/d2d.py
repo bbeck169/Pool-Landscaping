@@ -1,14 +1,16 @@
 """D2D Sales router (tenant-scoped)."""
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import JSONResponse
 from typing import Optional
 import time
 import re
 import httpx
 
 from config import db, OPENWEB_NINJA_API_KEY
-from utils import now_iso, new_id, get_current_user, require_admin
+from utils import now_iso, new_id, get_current_user, require_admin, require_zillow_access
 from routers.tenants import get_current_tenant
 from models import D2DKnockIn, D2DKnockUpdate
+from services import zillow_rate_limit as zrl
 
 router = APIRouter()
 
@@ -130,16 +132,41 @@ def _norm_sold(p: dict) -> dict:
 async def sold_leads(zip: str, days: int = 30, page: int = 1,
                      min_price: Optional[float] = None, max_price: Optional[float] = None,
                      min_beds: Optional[int] = None,
-                     admin: dict = Depends(require_admin),
+                     override_budget: bool = False,
+                     user: dict = Depends(require_zillow_access),
                      tenant: dict = Depends(get_current_tenant)):
-    """Recently-sold homes in a ZIP (Zillow via OpenWeb Ninja) as canvassing targets."""
-    user = admin
+    """Recently-sold homes in a ZIP (Zillow via OpenWeb Ninja) as canvassing targets.
+
+    Phase 56.9b Step 8 — Rate-limited + budget-guarded. Techs now have
+    access. Not cached (data changes daily); usage is counted per call.
+    """
     _require_sales(user)
     zip = (zip or "").strip()
     if not re.fullmatch(r"\d{5}", zip):
         raise HTTPException(400, "Enter a valid 5-digit ZIP code")
     if not OPENWEB_NINJA_API_KEY:
         raise HTTPException(424, "Zillow data provider not configured")
+
+    endpoint = "/d2d/sold-leads"
+    # Address-hash proxy for cache/audit dedup. Not a real address —
+    # /sold-leads is a query search; we key by the query params instead.
+    address_key = f"zip:{zip}:days:{days}:min_price:{min_price}:max_price:{max_price}:min_beds:{min_beds}"
+    caps = await zrl.check_caps(user, tenant)
+    caps = await zrl.apply_override_or_fail(caps, user, tenant, endpoint,
+                                             address_key, override_budget)
+    if not caps["allowed"]:
+        if caps.get("reason") == "tenant_budget_exhausted":
+            raise HTTPException(429, detail={
+                "error": "tenant_budget_exhausted",
+                "tenant_used": caps["tenant_used"],
+                "tenant_budget": caps["tenant_budget"],
+            })
+        raise HTTPException(429, detail={
+            "error": caps["reason"],
+            "reset_at": caps["reset_at"],
+            "usage": caps["usage"],
+        })
+
     params = {"location": zip, "home_status": "RECENTLY_SOLD", "sort": "DEFAULT", "page": max(1, page)}
     try:
         async with httpx.AsyncClient(timeout=20) as c:
@@ -187,8 +214,16 @@ async def sold_leads(zip: str, days: int = 30, page: int = 1,
         p["logged"] = p["zpid"] in logged
         p["skipped"] = p["zpid"] in skipped
     props.sort(key=lambda x: x.get("date_sold") or float("inf"))
-    return {"zip": zip, "days": days, "count": len(props), "properties": props,
-            "filters": {"min_price": min_price, "max_price": max_price, "min_beds": min_beds}}
+    await zrl.log_call(user, tenant, endpoint, address_key)
+    caps_after = await zrl.check_caps(user, tenant)
+    body = {"zip": zip, "days": days, "count": len(props), "properties": props,
+            "filters": {"min_price": min_price, "max_price": max_price, "min_beds": min_beds},
+            "usage": caps_after["usage"], "tenant_used": caps_after["tenant_used"],
+            "tenant_budget": caps_after["tenant_budget"],
+            "budget_warning": caps_after["budget_warning"]}
+    if caps.get("override_audit_id"):
+        body["override_audit_id"] = caps["override_audit_id"]
+    return JSONResponse(body, headers=zrl.response_headers(caps_after))
 
 
 @router.post("/d2d/skip/{zpid}")

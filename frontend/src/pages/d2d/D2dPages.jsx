@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import MapView from "@/components/MapView";
+import { ZillowUsageChip } from "@/components/ZillowUsageChip";
 
 /* ═══ Phase 10 — D2D Sales module (admin-focused, single dense file) ═══ */
 
@@ -171,8 +172,8 @@ export function D2dMap() {
   useEffect(() => {
     setSold({ properties: [], error: null, loading: true });
     api.get(`/d2d/sold-leads?zip=${encodeURIComponent(zip)}&days=${days}`)
-      .then((r) => setSold({ properties: r?.properties || [], error: null, loading: false }))
-      .catch((e) => setSold({ properties: [], error: e.message || "Zillow data unavailable", loading: false }));
+      .then((r) => setSold({ properties: r?.properties || [], error: null, loading: false, rateLimited: false }))
+      .catch((e) => setSold({ properties: [], error: e.message || "Zillow data unavailable", loading: false, rateLimited: String(e?.message || "").includes("429") }));
   }, [zip, days]);
 
   const layers = useMemo(() => {
@@ -242,6 +243,9 @@ export function D2dMap() {
         <span>🟡 Not home</span><span>🔴 Not interested</span>
         <span>🟠 Callback</span><span>🟣 Sold/Booked</span>
       </div>
+
+      <ZillowUsageChip rateLimited={!!sold.rateLimited} refreshKey={sold.properties?.length || 0}
+                       testid="d2d-map-zillow-chip" />
 
       {sold.error && (
         <div className="rounded-xl px-4 py-3 text-sm" style={{ backgroundColor: "#FEF3C7", color: "#78350F" }} data-testid="d2d-zillow-warning">
@@ -479,13 +483,13 @@ export function D2dOpenLeads() {
 export function D2dSoldLeads() {
   const [zip, setZip] = useState("85383");
   const [days, setDays] = useState(60);
-  const [data, setData] = useState({ properties: [], count: 0, loading: false, error: null });
+  const [data, setData] = useState({ properties: [], count: 0, loading: false, error: null, rateLimited: false });
   const [toast, setToast] = useState("");
   const load = () => {
-    setData((d) => ({ ...d, loading: true, error: null }));
+    setData((d) => ({ ...d, loading: true, error: null, rateLimited: false }));
     api.get(`/d2d/sold-leads?zip=${encodeURIComponent(zip)}&days=${days}`)
-      .then((r) => setData({ properties: r?.properties || [], count: r?.count || 0, loading: false, error: null }))
-      .catch((e) => setData({ properties: [], count: 0, loading: false, error: e.message }));
+      .then((r) => setData({ properties: r?.properties || [], count: r?.count || 0, loading: false, error: null, rateLimited: false }))
+      .catch((e) => setData({ properties: [], count: 0, loading: false, error: e.message, rateLimited: String(e?.message || "").includes("429") }));
   };
   useEffect(() => { load(); }, [zip, days]);
   const skip = async (p) => {
@@ -515,6 +519,8 @@ export function D2dSoldLeads() {
           Zillow data unavailable — {data.error}
         </div>
       )}
+      <ZillowUsageChip rateLimited={!!data.rateLimited} refreshKey={data.count}
+                       testid="d2d-sold-zillow-chip" />
       <p className="text-sm" style={{ color: colors.onSurfaceSecondary }}>{data.count} homes sold in the last {days} days.</p>
       <Card>
         <table className="w-full text-sm">

@@ -11,6 +11,7 @@ import { Header } from "@/src/components/widgets";
 import { Loading, Sheet, PrimaryButton, EmptyState } from "@/src/components/ui";
 import MapCanvas from "@/src/components/d2d/MapCanvas";
 import { DISPO, ORDER, leadStatusMeta } from "@/src/components/d2d/dispo";
+import { ZillowUsageChip, ZillowRateLimitedBanner } from "@/src/components/ZillowUsageChip";
 
 const empty = { id: "", address: "", name: "", phone: "", disposition: "not_home", notes: "", lat: null as number | null, lng: null as number | null, zpid: null as string | null, sold_price: null as number | null };
 
@@ -375,7 +376,9 @@ export default function D2DCanvass() {
 
   return (
     <View style={styles.root}>
-      <Header title="Door-to-Door" back subtitle="Log knocks & capture leads" />
+      <Header title="Door-to-Door" back subtitle="Log knocks & capture leads"
+              right={<ZillowUsageChip testID="d2d-zillow-chip" />} />
+      <ZillowRateLimitedBanner testID="d2d-zillow-banner" />
 
       <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: spacing["3xl"] }} keyboardShouldPersistTaps="handled">
         <View style={styles.mapBox}>

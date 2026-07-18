@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import AddressAutocomplete from "@/components/AddressAutocomplete";
+import { ZillowUsageChip } from "@/components/ZillowUsageChip";
 
 /* ═══ Phase 11 — Web AI & Tools (all admin-only, one dense module) ═══ */
 
@@ -538,14 +539,18 @@ export function VirtualBid() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [manual, setManual] = useState({ lot: "", home: "" });
+  const [rateLimited, setRateLimited] = useState(false);
 
   const lookup = async () => {
     if (!address) return;
-    setBusy(true); setProp(null); setBid(null);
+    setBusy(true); setProp(null); setBid(null); setRateLimited(false);
     try {
       const r = await api.get(`/property/lookup?address=${encodeURIComponent(address)}`);
       setProp(r);
-    } catch (e) { setToast(`${e.message} — enter facts manually below`); }
+    } catch (e) {
+      if (String(e?.message || "").includes("429")) setRateLimited(true);
+      setToast(`${e.message} — enter facts manually below`);
+    }
     finally { setBusy(false); }
   };
 
@@ -570,6 +575,10 @@ export function VirtualBid() {
       <div>
         <h1 className="text-3xl font-bold">Virtual Bid</h1>
         <p className="text-sm" style={{ color: colors.onSurfaceSecondary }}>Address → Zillow lookup → AI-generated bid narrative + pricing.</p>
+        <div className="mt-3">
+          <ZillowUsageChip rateLimited={rateLimited} refreshKey={prop ? 1 : 0}
+                            testid="vbid-zillow-chip" />
+        </div>
       </div>
 
       <Card>

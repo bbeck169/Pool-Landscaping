@@ -69,6 +69,18 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+# Phase 56.9b Step 8 — RBAC gate for Zillow-backed surfaces (property
+# lookup, save/list/delete, D2D sold-leads canvassing). Techs get access
+# to the same data admins do, but the paid endpoints are additionally
+# rate-limited + budget-guarded via services.zillow_rate_limit. Customers
+# + anonymous callers are still blocked.
+def require_zillow_access(user: dict = Depends(get_current_user)) -> dict:
+    role = (user or {}).get("role")
+    if role in ("super_admin", "admin", "technician"):
+        return user
+    raise HTTPException(status_code=403, detail="Zillow access requires admin or technician role")
+
+
 def deny_impersonation(user: dict) -> None:
     """Block money-moving / credential actions while an admin is viewing as a customer."""
     if user.get("is_impersonated"):
