@@ -468,3 +468,120 @@ Dead-import WARN unchanged at 424 (pre-existing tech debt).
   matching that string on web). Swapping to `<ZillowAccess>`
   accomplishes the same intent.
 
+
+---
+
+## Phase T1 + T2 — Pool Calculators SHIPPED (Feb 2026)
+
+### Backend
+
+**New router:** `backend/routers/pool_calculators.py` (~230 LOC).
+5 stateless POST endpoints — pure math, no DB writes, no side
+effects. Prefix `/calculators`. Custom local dep
+`require_tech_or_above` (super_admin | admin | technician).
+Customers + anonymous → 403.
+
+Endpoints:
+- `POST /api/calculators/lsi`
+- `POST /api/calculators/volume`
+- `POST /api/calculators/salt`
+- `POST /api/calculators/turnover`
+- `POST /api/calculators/heater-size`
+
+Wired into `server.py` (import + list registration).
+
+Math:
+- **LSI**: `pH + tf + cf + af − tds_const`, tf via linear
+  interpolation over the 10-row temperature table copied from
+  the mobile calculator, `cf = log10(CH) − 0.4`,
+  `af = log10(max(1, TA − cya_adj))`, `tds_const = 12.2` when
+  TDS ≥ 1000 else 12.1. CYA correction options: `third | quarter | none`.
+- **Volume**: rectangle `L·W·d·7.48`, oval `L·W·d·5.9`,
+  circle `π·r²·d·7.48`, freeform `L·W·d·7.0` (conservative).
+  Accepts either `avg_depth` OR `shallow_depth + deep_depth`
+  (averaged automatically).
+- **Salt**: `lbs = pool_gallons × (target − current) / 120000`.
+  If over target, returns 0 lbs + a drain-and-refill estimate.
+- **Turnover**: `hours = pool_gallons / (pump_gpm · 60)`. Code
+  standards: residential informational; commercial ≤4ft = 4h;
+  commercial >4ft = 6h; spa = 0.5h.
+- **Heater size**: `BTU = gal × 8.33 × ΔT / heat_up_hours`
+  (default 24h). Ambient loss `= surface_area · ΔT_ambient · 12`.
+  Cost by heater type: gas (100k BTU/therm × 0.82 eff), heat
+  pump (COP 5.0), electric (COP 1.0), solar ($0). Default rates
+  overridable via `per_therm` (1.50) and `per_kwh` (0.15).
+- All endpoints include an actionable `note` field for UI rendering.
+
+### Frontend (Web)
+
+**New page:** `frontend/src/pages/tech/PoolCalculators.jsx`
+(~400 LOC). Tabbed panel of the 5 calculators. Each tab is a
+self-contained function component with local state, form
+inputs, "Compute" button, and a `<ResultBox>` that surfaces the
+value + interpretation with a **Copy** button that writes a
+plain-text summary via `navigator.clipboard.writeText`.
+
+- Route: `/tech/tools/calculators` (mounted in `App.js`).
+- Tile added to `ToolsHub.jsx` under both the tech "On the Job"
+  section and the admin "Tools" section (both roles surfaced).
+- Reused existing theme (`colors`, `lucide-react` icons — no new
+  deps installed).
+
+### Tests
+
+**New file:** `backend/tests/test_phase_t1_t2_calculators.py`
+(~200 LOC, **22 tests, 22 passed, 0.96s**).
+
+Coverage:
+- LSI: balanced known-answer (pH 7.4/80°F/CH 300/TA 100/TDS 500
+  → 0.03), scaling case, corrosive case, boundary invalid (pH=0
+  → 422), RBAC (customer 403).
+- Volume: rectangle 20×40×5 → 29,920 gal, circle r=15 d=5
+  → ~26,428 gal, shallow/deep averaging (3+8 → 5.5), unknown shape
+  422, admin RBAC 200.
+- Salt: known 20000gal 2500→3200 → 116.7 lbs, over-target
+  drain-and-refill path, RBAC customer 403.
+- Turnover: residential informational (compliant=None),
+  commercial shallow pass, commercial deep fail, spa pass.
+- Heater: gas sizing 20000gal 60→82°F 24h → 152,717 BTU/hr,
+  heat_pump/solar paths, target≤current 422, RBAC customer 403.
+
+### Live curl evidence (5/5 known-answer cases)
+
+| Calculator | Input | Result |
+|---|---|---|
+| LSI | pH 7.4, 80°F, CH 300, TA 100, TDS 500 | `lsi: 0.03`, `interpretation: balanced` |
+| Volume | rect 20×40×5 | `gallons: 29920` |
+| Salt | 20000 gal, 2500→3200 ppm | `lbs_to_add: 116.7`, `bags_40lb: 2.92` |
+| Turnover | 20000 gal @ 60 GPM, residential | `turnover_hours: 5.56`, `compliant: null` (informational) |
+| Heater | 20000 gal, 60→82°F, 800 sqft, gas | `btu_required: 152717`, `monthly_cost: $63.22` |
+
+### Screenshot
+
+`mike@aquaterra.com` (Technician role) navigates to
+`/tech/tools/calculators` and sees all 5 tabs (LSI selected
+by default). Compute button on default field values produces
+`SATURATION INDEX (LSI) 0.03 · Water is balanced` in a green
+result panel with a Copy button.
+
+### Files touched
+- `backend/routers/pool_calculators.py` (**new**)
+- `backend/server.py` (import + registration)
+- `backend/tests/test_phase_t1_t2_calculators.py` (**new**)
+- `frontend/src/pages/tech/PoolCalculators.jsx` (**new**)
+- `frontend/src/pages/tech/ToolsHub.jsx` (2 tile additions)
+- `frontend/src/App.js` (import + route)
+
+### Preflight
+`bash scripts/preflight.sh` → **exit 0** (`preflight OK`).
+Dead-import WARN 424 → **423** (my new files contain no unused imports).
+
+### Deferrals (explicit)
+- Mobile tools hub sync — the mobile app already has 3 of these
+  calculators (`mobile/app/(app)/calculators.tsx` — Dosing,
+  Volume, Salt, LSI). Adding Turnover + Heater to mobile is
+  queued for a future mobile-parity sweep.
+- Sharing calculator results into a customer report / attaching
+  to a service report — deferred.
+- Per-user result history (saved calculations) — deferred.
+

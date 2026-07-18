@@ -32,6 +32,7 @@ const TECH_SECTIONS = [
     title: "On the Job",
     tiles: [
       { key: "estimator", icon: Calculator, label: "Field Estimator", desc: "Quote on the spot", to: "/estimator" },
+      { key: "pool-calculators", icon: FlaskConical, label: "Pool Calculators", desc: "LSI · Volume · Salt · Turnover · Heater size", to: "/tech/tools/calculators" },
       { key: "property-lookup", icon: HomeIcon, label: "Property Lookup", desc: "Owner, lot size, notes (Zillow)", to: "/tech/property-lookup" },
       { key: "d2d-map", icon: MapPin, label: "D2D Map", desc: "Canvassing map", to: "/d2d/map" },
       { key: "d2d-knocks", icon: DoorOpen, label: "Knocks", desc: "Recent door activity", to: "/d2d/knocks" },
@@ -63,6 +64,7 @@ const ADMIN_SECTIONS = [
     tiles: [
       { key: "business-card", icon: IdCard, label: "Business Card", desc: "NFC-ready digital card & .vcf", to: "/tech/card" },
       { key: "estimator", icon: Calculator, label: "Field Estimator", desc: "Build a quote on-site", to: "/estimator" },
+      { key: "pool-calculators", icon: FlaskConical, label: "Pool Calculators", desc: "LSI · Volume · Salt · Turnover · Heater size", to: "/tech/tools/calculators" },
       { key: "property-lookup", icon: HomeIcon, label: "Property Lookup", desc: "Owner + lot size search", to: "/property-lookup" },
       { key: "inventory", icon: Boxes, label: "Inventory", desc: "Stock & purchase orders", to: "/admin/inventory" },
       { key: "checks", icon: Wrench, label: "Check Register", desc: "Write checks, batch payroll", to: "/admin/checks" },

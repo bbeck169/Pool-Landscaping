@@ -136,6 +136,7 @@ import TodaySchedule from "@/pages/schedule/TodaySchedule";
 import { TechHuddlePage, TechTimeClockPage } from "@/pages/tech/TechPages";
 import ServiceReport from "@/pages/tech/ServiceReport";
 import ToolsHub from "@/pages/tech/ToolsHub";
+import PoolCalculators from "@/pages/tech/PoolCalculators";
 import BusinessCard from "@/pages/tech/BusinessCard";
 import LandscapingTimeClock from "@/pages/tech/LandscapingTimeClock";
 import PoolServiceReport from "@/pages/reports/PoolServiceReport";
@@ -379,6 +380,7 @@ export default function App() {
             {/* Phase 29 — All My Tools hub (tech + admin). Non-role users are
                 redirected inside the component. */}
             <Route path="tech/tools" element={<ToolsHub />} />
+            <Route path="tech/tools/calculators" element={<PoolCalculators />} />
             {/* NFC business card — role-agnostic personal view (uses /api/card).
                 The /card route below is the admin-only team card manager. */}
             <Route path="tech/card" element={<BusinessCard />} />

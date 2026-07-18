@@ -1915,3 +1915,68 @@ previously this surface returned 403 to techs.
 - T1–T6 calculators (queued, not started)
 - 56.13d / 56.14 / 56.15 (paused by user)
 
+
+---
+
+## Phase T1 + T2 — Pool Calculators (Feb 2026)
+
+Small self-contained ship. 5 stateless pool math calculators
+mounted on a new tabbed web page under the tech tools hub.
+
+### What changed
+
+- **Backend:** New `routers/pool_calculators.py` with 5 POST
+  endpoints (LSI, Volume, Salt, Turnover, Heater Size). Pure
+  math — no DB writes. Custom local RBAC dep
+  `require_tech_or_above` (super_admin | admin | technician;
+  customers 403).
+- **Web:** New `pages/tech/PoolCalculators.jsx` (~400 LOC) with
+  a tabbed panel per calculator, each with per-tab local state,
+  a Compute button, and a copy-to-clipboard result box. Route
+  `/tech/tools/calculators` (mounted in `App.js`). Tile added to
+  `ToolsHub.jsx` under both tech "On the Job" and admin "Tools"
+  sections.
+- **Tests:** `backend/tests/test_phase_t1_t2_calculators.py`
+  — 22 tests, 22 passed, 0.96s.
+
+### Formulas (canonical reference)
+
+- **LSI:** `pH + tf + cf + af − tds_const` where tf is a linear
+  interpolation of the 10-row industry temperature table
+  (matches the mobile calc verbatim), `cf = log10(CH) − 0.4`,
+  `af = log10(max(1, TA − cya_adj))`, `tds_const = 12.2` if
+  TDS ≥ 1000 else 12.1. Interpretation: -0.3…+0.3 balanced,
+  <-0.3 corrosive, >+0.3 scaling.
+- **Volume (gal):** rect `L·W·d·7.48`, oval `L·W·d·5.9`,
+  circle `π·r²·d·7.48`, freeform `L·W·d·7.0`. Accepts avg_depth
+  or (shallow + deep) averaged.
+- **Salt (lbs):** `gal · (target − current) / 120000`. Over
+  target returns 0 lbs + drain-and-refill estimate.
+- **Turnover (hrs):** `gal / (GPM · 60)`. Code caps: spa 0.5h,
+  commercial ≤4ft 4h, commercial >4ft 6h, residential
+  informational only.
+- **Heater (BTU/hr):** `gal · 8.33 · ΔT / heat_up_hours`
+  (default 24h). Cost varies by heater_type: gas (100k BTU/therm
+  × 0.82 eff at $1.50/therm), heat_pump (COP 5.0 at $0.15/kWh),
+  electric (COP 1.0 at $0.15/kWh), solar ($0 operating).
+
+### Verification
+
+- **5 curl known-answer cases** all match spec-predicted values
+  (LSI 0.03 balanced · Volume 29,920 gal · Salt 116.7 lbs · Turnover
+  5.56 hours · Heater 152,717 BTU + $63.22/mo).
+- **22/22 pytest** passing in 0.96s. Coverage includes RBAC
+  (tech 200 / customer 403), boundary invalids (422), and code-
+  compliance branches (residential/commercial shallow/commercial
+  deep/spa).
+- Playwright: `/tech/tools/calculators` renders 5 tabs; LSI
+  compute produces expected 0.03 balanced with copy button.
+
+### Deferrals
+
+- Mobile parity for Turnover + Heater — mobile has 4 calcs
+  already (Dosing, Volume, Salt, LSI); adding the 2 new ones is
+  queued for a mobile-parity sweep.
+- Attach calculator result to customer service report — deferred.
+- Per-user saved-calculation history — deferred.
+
