@@ -366,12 +366,29 @@ def _decode_signature_png(data_url: str) -> Optional[bytes]:
     signature-pad modal) OR as a plain stamp with no image. We only
     decode the former; a decode failure returns None and the renderer
     falls back to the text stamp.
+
+    SEC-P3-4 hotfix: reject payloads whose decoded size exceeds 5 MB
+    (typical signatures are ~15-40 KB). Oversized inputs return None so
+    the PDF renderer degrades to the text stamp instead of allocating.
     """
+    _MAX_PNG_BYTES = 5 * 1024 * 1024
     if not isinstance(data_url, str) or not data_url.startswith("data:image/"):
         return None
     try:
         _, b64 = data_url.split(",", 1)
+        # Early-reject on encoded size — base64 inflates ~33%, so 5 MB decoded
+        # ≈ 6.9 MB encoded. Reject at ~7 MB encoded to avoid a huge decode.
+        if len(b64) > int(_MAX_PNG_BYTES * 1.4):
+            import logging as _lg
+            _lg.getLogger("pool_crm").warning(
+                "signature PNG rejected: encoded len=%d exceeds cap", len(b64))
+            return None
         raw = base64.b64decode(b64)
+        if len(raw) > _MAX_PNG_BYTES:
+            import logging as _lg
+            _lg.getLogger("pool_crm").warning(
+                "signature PNG rejected: decoded len=%d exceeds cap", len(raw))
+            return None
         # Guard: PNG magic bytes only. JPEGs / other formats fall through
         # to the text stamp to keep the surface tiny.
         if raw[:8] != b"\x89PNG\r\n\x1a\n":

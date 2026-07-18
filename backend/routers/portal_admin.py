@@ -13,6 +13,7 @@ from typing import Optional
 
 from config import db, logger, APP_PUBLIC_URL
 from utils import now_iso, new_id, require_admin, get_current_user, hash_password
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -111,9 +112,9 @@ class PortalInviteResp(BaseModel):
     emailed: bool = False
 
 
-async def _upsert_customer_user(cid: str, email: str, password: str) -> None:
+async def _upsert_customer_user(cid: str, tenant_id: str, email: str, password: str) -> None:
     hashed = hash_password(password)
-    existing = await db.users.find_one({"customer_id": cid}, {"_id": 0})
+    existing = await db.users.find_one({"customer_id": cid, "tenant_id": tenant_id}, {"_id": 0})
     if existing:
         await db.users.update_one(
             {"id": existing["id"]},
@@ -122,7 +123,8 @@ async def _upsert_customer_user(cid: str, email: str, password: str) -> None:
     else:
         await db.users.insert_one({
             "id": new_id(),
-            "name": (await db.customers.find_one({"id": cid}) or {}).get("name", ""),
+            "tenant_id": tenant_id,
+            "name": (await db.customers.find_one({"id": cid, "tenant_id": tenant_id}) or {}).get("name", ""),
             "email": email.lower(),
             "password_hash": hashed,
             "role": "customer",
@@ -133,7 +135,7 @@ async def _upsert_customer_user(cid: str, email: str, password: str) -> None:
             "created_at": now_iso(),
         })
     await db.customers.update_one(
-        {"id": cid}, {"$set": {"email": email.lower(), "has_login": True}}
+        {"id": cid, "tenant_id": tenant_id}, {"$set": {"email": email.lower(), "has_login": True}}
     )
 
 
@@ -163,11 +165,12 @@ async def _try_send_reset_email(to: str, name: str, temp_password: str, login_ur
 
 
 @router.post("/customers/{cid}/portal-invite", response_model=PortalInviteResp)
-async def portal_invite(cid: str, user: dict = Depends(require_admin)):
+async def portal_invite(cid: str, user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
     """Provisions the customer's portal login with an auto-generated password.
     Emails it via Resend if configured; otherwise returns the password in-body
     so the admin can send it manually."""
-    return await _do_portal_provision(cid, explicit_password=None)
+    return await _do_portal_provision(cid, tenant["id"], user, explicit_password=None)
 
 
 class PortalResetBody(BaseModel):
@@ -179,17 +182,20 @@ async def portal_reset(
     cid: str,
     body: Optional[PortalResetBody] = None,
     user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
 ):
     """Rotates the customer's portal password.
     If `password` is provided in body, sets it explicitly (validated against
     the standard password policy). Otherwise generates a random one."""
     explicit = (body.password if body else None) or None
-    return await _do_portal_provision(cid, explicit_password=explicit)
+    return await _do_portal_provision(cid, tenant["id"], user, explicit_password=explicit)
 
 
-async def _do_portal_provision(cid: str, explicit_password: Optional[str]) -> PortalInviteResp:
+async def _do_portal_provision(cid: str, tenant_id: str, actor: dict,
+                                 explicit_password: Optional[str]) -> PortalInviteResp:
     from models import validate_password_strength
-    cust = await db.customers.find_one({"id": cid}, {"_id": 0})
+    # SEC-002 hotfix: tenant-scoped customer lookup. Cross-tenant CID → 404.
+    cust = await db.customers.find_one({"id": cid, "tenant_id": tenant_id}, {"_id": 0})
     if not cust:
         raise HTTPException(404, "Customer not found")
     email = (cust.get("email") or "").strip().lower()
@@ -205,10 +211,22 @@ async def _do_portal_provision(cid: str, explicit_password: Optional[str]) -> Po
     else:
         password = _random_password()
 
-    await _upsert_customer_user(cid, email, password)
+    await _upsert_customer_user(cid, tenant_id, email, password)
+    # Audit-log the portal-reset action for accountability.
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant_id,
+            "event": "portal_reset",
+            "actor_id": (actor or {}).get("id"),
+            "actor_email": (actor or {}).get("email"),
+            "target_customer_id": cid,
+            "target_email": email,
+            "created_at": now_iso(),
+        })
+    except Exception:
+        pass
     login_url = f"{APP_PUBLIC_URL or ''}/login"
-    # Only try to email a fresh copy when we generated the password ourselves —
-    # if admin set a specific one they likely already have a share channel.
     emailed = False
     if not explicit_password:
         emailed = await _try_send_reset_email(email, cust.get("name", ""), password, login_url)
@@ -221,13 +239,13 @@ async def _do_portal_provision(cid: str, explicit_password: Optional[str]) -> Po
 
 
 @router.post("/customers/{cid}/portal-revoke")
-async def portal_revoke(cid: str, user: dict = Depends(require_admin)):
-    """Deactivates the customer's portal login. Sets `active:false` on their
-    user record so subsequent logins fail; existing tokens stay valid until
-    the customer signs out or the token expires — that's an acceptable trade-off."""
+async def portal_revoke(cid: str, user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    """Deactivates the customer's portal login. SEC-002 hotfix: tenant-scoped."""
     res = await db.users.update_many(
-        {"customer_id": cid, "role": "customer"},
+        {"customer_id": cid, "tenant_id": tenant["id"], "role": "customer"},
         {"$set": {"active": False, "revoked_at": now_iso()}},
     )
-    await db.customers.update_one({"id": cid}, {"$set": {"has_login": False}})
+    await db.customers.update_one({"id": cid, "tenant_id": tenant["id"]},
+                                    {"$set": {"has_login": False}})
     return {"ok": True, "revoked": res.modified_count}

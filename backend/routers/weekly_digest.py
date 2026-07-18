@@ -58,5 +58,16 @@ async def send_weekly_digest_now(body: SendNowIn,
                                    tenant: dict = Depends(get_current_tenant)):
     if "@" not in body.to:
         raise HTTPException(400, "Invalid email")
+    # SEC-P3-5 hotfix — recipient allowlist. Accept:
+    #   1. any admin/super_admin email in this tenant, or
+    #   2. an email whose domain matches an admin email's domain in this tenant.
+    to_lc = body.to.lower().strip()
+    admins = await __import__("services.weekly_digest", fromlist=["_tenant_admin_recipients"])\
+        ._tenant_admin_recipients(tenant["id"])
+    admin_emails = {(u.get("email") or "").lower() for u in admins if u.get("email")}
+    admin_domains = {e.split("@", 1)[1] for e in admin_emails if "@" in e}
+    domain = to_lc.split("@", 1)[1] if "@" in to_lc else ""
+    if to_lc not in admin_emails and domain not in admin_domains:
+        raise HTTPException(400, "Recipient must be a tenant admin or match a tenant admin's email domain.")
     return await send_weekly_digest_for_tenant(
         tenant, kind="weekly_digest_manual", override_to=body.to)

@@ -55,12 +55,33 @@ async def get_current_user(creds: HTTPAuthorizationCredentials = Depends(securit
     user = await db.users.find_one({"id": payload.get("sub")}, {"_id": 0, "password_hash": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    # SEC-004 hotfix — cached (30s TTL) active-state check. Existing tokens
+    # for a deactivated user stop working within one cache window.
+    if _active_is_false(user):
+        raise HTTPException(status_code=401, detail="Account is deactivated")
     # Surface impersonation context so sensitive endpoints can guard against it.
     act = payload.get("act") or {}
     if act.get("sub"):
         user["is_impersonated"] = True
         user["impersonator_id"] = act["sub"]
     return user
+
+
+_ACTIVE_CACHE: dict = {}
+_ACTIVE_TTL = 30.0  # seconds
+
+def _active_is_false(user: dict) -> bool:
+    import time as _t
+    uid = user.get("id")
+    if not uid:
+        return False
+    now = _t.time()
+    hit = _ACTIVE_CACHE.get(uid)
+    if hit and (now - hit[0]) < _ACTIVE_TTL:
+        return hit[1] is False
+    active = user.get("active")
+    _ACTIVE_CACHE[uid] = (now, active)
+    return active is False
 
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:

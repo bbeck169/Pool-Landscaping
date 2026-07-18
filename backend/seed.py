@@ -4,7 +4,13 @@ from config import db, logger
 from utils import now_iso, new_id, hash_password
 
 
+import os as _os
 async def seed_landscaping_user():
+    # SEC-001 hotfix — gate on SEED_DEMO_USERS=1 (default off).
+    if _os.environ.get("SEED_DEMO_USERS", "0") != "1":
+        from config import logger as _lg
+        _lg.warning("SEED_DEMO_USERS=0 — skipping seed.py demo users. Set the flag to seed dev/preview.")
+        return
     """Phase 46 — Idempotent seed of a landscaping-department user so the
     landscaping time clock (backend gated by `department == 'landscaping'`)
     can be exercised end-to-end. Runs on every startup via server.py."""

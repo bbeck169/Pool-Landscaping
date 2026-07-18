@@ -13,6 +13,7 @@ Stage 2 (this file, additive):
 **Stage 2 does NOT refactor entity queries.** Isolation ships in Stage 3.
 """
 import os
+import time
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -149,7 +150,19 @@ def require_super_admin(user: dict = Depends(get_current_user)) -> dict:
 
 async def _seed_super_admin() -> None:
     """Idempotent seed of super@aquaterra.com. Uses the default tenant so
-    the account can also manage aquaterra directly."""
+    the account can also manage aquaterra directly.
+
+    SEC-001 hotfix: gated on `SEED_DEMO_USERS=1`. When the flag is off (the
+    production default), this function short-circuits with a warning and
+    does NOT create the account. Rotation of the password on an existing
+    row is handled by `backend/scripts/rotate_demo_passwords.py`.
+    """
+    if os.environ.get("SEED_DEMO_USERS", "0") != "1":
+        existing = await db.users.find_one({"email": "super@aquaterra.com"}, {"_id": 0, "id": 1})
+        if not existing:
+            logger.warning("SEED_DEMO_USERS=0 — skipping super_admin demo seed. "
+                            "Set SEED_DEMO_USERS=1 to enable in dev/preview.")
+        return
     existing = await db.users.find_one({"email": "super@aquaterra.com"}, {"_id": 0})
     if existing:
         # Upgrade role if seed was created before super_admin existed.

@@ -73,6 +73,10 @@ async def login(request: Request, body: LoginRequest):
     # 3) Success -> reset counters
     if user.get("failed_login_attempts") or user.get("lockout_until"):
         await db.users.update_one({"id": user["id"]}, {"$set": {"failed_login_attempts": 0, "lockout_until": None}})
+    # SEC-004 hotfix — deactivated accounts cannot obtain a token.
+    if user.get("active") is False:
+        await _audit_auth("login", email, ip, "failure", "account deactivated")
+        raise HTTPException(status_code=403, detail="Account is deactivated")
     await _audit_auth("login", email, ip, "success")
     return auth_response(user)
 
@@ -177,17 +181,39 @@ async def revert_impersonation(user: dict = Depends(get_current_user)):
 
 
 @router.get("/admin/access-history")
-async def access_history(admin: dict = Depends(require_admin)):
-    """Audit trail of admin 'view as customer' sessions."""
-    logs = await db.audit_logs.find(
-        {"event": {"$in": ["impersonation_started", "impersonation_ended"]}},
-        {"_id": 0},
-    ).sort("created_at", -1).to_list(300)
-    # Enrich started events with the customer's name.
+async def access_history(admin: dict = Depends(require_admin),
+                          all_tenants: bool = False):
+    """Audit trail of admin 'view as customer' sessions.
+
+    SEC-003 hotfix: tenant-scoped by default. Super-admin may pass
+    `?all_tenants=true` to cross tenants; that access is itself logged.
+    """
+    tenant_id = admin.get("tenant_id")
+    q: dict = {"event": {"$in": ["impersonation_started", "impersonation_ended"]}}
+    role = admin.get("role")
+    cross = bool(all_tenants) and role == "super_admin"
+    if not cross:
+        q["tenant_id"] = tenant_id
+    if cross:
+        try:
+            await db.audit_logs.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant_id,
+                "event": "access_history_cross_tenant",
+                "actor_id": admin.get("id"),
+                "actor_email": admin.get("email"),
+                "created_at": now_iso(),
+            })
+        except Exception:
+            pass
+    logs = await db.audit_logs.find(q, {"_id": 0}).sort("created_at", -1).to_list(300)
     cust_ids = list({l.get("target_customer_id") for l in logs if l.get("target_customer_id")})
-    names = {}
+    names: dict = {}
     if cust_ids:
-        async for c in db.customers.find({"id": {"$in": cust_ids}}, {"_id": 0, "id": 1, "name": 1}):
+        cust_q = {"id": {"$in": cust_ids}}
+        if not cross:
+            cust_q["tenant_id"] = tenant_id
+        async for c in db.customers.find(cust_q, {"_id": 0, "id": 1, "name": 1}):
             names[c["id"]] = c.get("name", "")
     for l in logs:
         l["customer_name"] = names.get(l.get("target_customer_id"), "")

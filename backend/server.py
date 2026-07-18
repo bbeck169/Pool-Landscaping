@@ -1,6 +1,8 @@
 from fastapi import FastAPI, APIRouter
 from starlette.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import os
+import logging
 
 from config import client, db, logger
 from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user, seed_prior_readings, seed_phase51k_finance, seed_mike_today_job
@@ -123,10 +125,35 @@ api_router.include_router(public_social.router)
 app.include_router(api_router)
 app.include_router(public_social.router)
 
+# SEC-P3-1 hotfix — no wildcard CORS with credentials. Read allowlist from
+# ALLOWED_ORIGINS (comma-separated); auto-append APP_PUBLIC_URL if set.
+_APP_ENV_MW = os.environ.get("APP_ENV", "preview").lower()
+_allowed_raw = os.environ.get("ALLOWED_ORIGINS", "").strip()
+_app_public = os.environ.get("APP_PUBLIC_URL", "").strip()
+_origins = [o.strip() for o in _allowed_raw.split(",") if o.strip()]
+if _app_public and _app_public not in _origins:
+    _origins.append(_app_public)
+if not _origins:
+    if _APP_ENV_MW == "production":
+        logging.getLogger("pool_crm").error(
+            "ALLOWED_ORIGINS is unset in production — refusing to enable CORS.")
+        _origins = []
+    else:
+        # Dev/preview convenience: fall back to APP_PUBLIC_URL or localhost.
+        _origins = [_app_public or "http://localhost:3000"]
+logging.getLogger("pool_crm").info(f"CORS allow_origins = {_origins}")
+
+# SEC-P3-2 hotfix — auto-force ALLOW_TEST_HOOKS=0 in production, regardless
+# of the value in the mounted env. Existing dev/preview behavior unchanged.
+if _APP_ENV_MW == "production" and os.environ.get("ALLOW_TEST_HOOKS") == "1":
+    logging.getLogger("pool_crm").warning(
+        "APP_ENV=production forcing ALLOW_TEST_HOOKS=0 (was 1 in env).")
+    os.environ["ALLOW_TEST_HOOKS"] = "0"
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=["*"],
+    allow_origins=_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
