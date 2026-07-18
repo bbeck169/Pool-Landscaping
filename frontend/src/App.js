@@ -170,6 +170,10 @@ import ServiceTemplatesEditor from "@/pages/admin/ServiceTemplatesEditor";
 import TemplatesLibraryPage from "@/pages/admin/TemplatesLibraryPage";
 import TemplateFillPage from "@/pages/admin/TemplateFillPage";
 import TemplateInstanceNewRedirect from "@/pages/admin/TemplateInstanceNewRedirect";
+// Phase 4 · Batch B — Handbook + Onboarding
+import HandbookPage from "@/pages/HandbookPage";
+import EmployeeOnboardingChecklistPage from "@/pages/OnboardingPage";
+import AdminOnboardingDashboardPage from "@/pages/admin/AdminOnboardingDashboardPage";
 
 function CustomerServiceReportRedirect() {
   // Preserve the report id when redirecting from the /customer alias to
@@ -418,6 +422,11 @@ export default function App() {
             <Route path="admin/templates" element={<AdminOnly><TemplatesLibraryPage /></AdminOnly>} />
             <Route path="admin/templates/instances/new" element={<AdminOnly><TemplateInstanceNewRedirect /></AdminOnly>} />
             <Route path="admin/templates/instances/:id" element={<AdminOnly><TemplateFillPage /></AdminOnly>} />
+            {/* Phase 4 · Batch B — Handbook + Onboarding */}
+            <Route path="handbook" element={<HandbookPage />} />
+            <Route path="handbook/:code" element={<HandbookPage />} />
+            <Route path="onboarding-checklist" element={<EmployeeOnboardingChecklistPage />} />
+            <Route path="admin/onboarding" element={<AdminOnly><AdminOnboardingDashboardPage /></AdminOnly>} />
             <Route path="admin/settings/auto-visit-email" element={<AdminOnly><AutoVisitEmailSettings /></AdminOnly>} />
 
             {/* Phase 16B — Business OS */}

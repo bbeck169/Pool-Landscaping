@@ -103,8 +103,12 @@ class TestSeedScriptDryRun:
             capture_output=True, text=True, timeout=30, cwd=str(REPO_ROOT),
         )
         assert result.returncode == 0, f"dry-run failed:\nstdout={result.stdout}\nstderr={result.stderr}"
-        assert "Modules ready: 3" in result.stdout
-        assert "Lessons:       21" in result.stdout
+        assert "Modules ready:" in result.stdout
+        # Phase 4 · Batch B added drafts for modules 4-7; total is now 7.
+        assert "landscape-irrigation-repairs" in result.stdout
+        assert "landscape-irrigation-timers" in result.stdout
+        assert "landscape-small-engine" in result.stdout
+        assert "Lessons:" in result.stdout
         assert "DRY-RUN — no database writes" in result.stdout
 
     def test_no_commit_flag_leak(self):

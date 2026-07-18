@@ -20,6 +20,17 @@ import argparse, asyncio, json, os, re, sys, uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Shared blacklist scanner + upsert helper. Support direct-file invocation.
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from training_seed.seed_common import (  # type: ignore
+        run_blacklist_scan, upsert_template_definition,
+    )
+except ImportError:
+    from ..training_seed.seed_common import (  # type: ignore
+        run_blacklist_scan, upsert_template_definition,
+    )
+
 
 def _f(key, label, type_, **kw):
     d = {"key": key, "label": label, "type": type_, "required": kw.pop("required", False)}
@@ -915,29 +926,19 @@ for _t in TEMPLATES:
 
 
 # ─── IP-safety blacklist (word-boundary regex) ───────────────────────
-IP_BLACKLIST_REGEX = [
-    r"\breproduced with permission\b",
-    r"\bcopyright pooldial\b",
-    r"\bcopyright cpo\b",
-    r"\b\u00a9 pooldial\b",
-    r"\ball rights reserved\b",
+# Templates-specific extras layered on top of shared DEFAULT_BLACKLIST
+# in seed_common. Kept here so the template author sees them in-file.
+_TEMPLATE_EXTRAS = [re.compile(p, re.IGNORECASE) for p in [
     r"\bexcerpted from\b",
-    # Phase 4 · Batch A additions — extra vendor / OEM guards we noticed
-    # while expanding schemas. Word-boundary anchored to avoid false hits.
-    r"\bcourtesy of pooldial\b",
-    r"\badapted from pooldial\b",
-    r"\bpentair proprietary\b",
-    r"\bhayward proprietary\b",
-]
+]]
 
 
 def _blacklist_check(templates):
     for t in templates:
-        # scan title + description + help_text + labels — anywhere text lives.
-        blob = json.dumps(t, ensure_ascii=False).lower()
-        for pat in IP_BLACKLIST_REGEX:
-            if re.search(pat, blob):
-                raise SystemExit(f"IP-SAFETY VIOLATION in template '{t['code']}': matches '{pat}'")
+        blob = json.dumps(t, ensure_ascii=False)
+        hits = run_blacklist_scan(blob, extra_patterns=_TEMPLATE_EXTRAS)
+        if hits:
+            raise SystemExit(f"IP-SAFETY VIOLATION in template '{t['code']}': matches '{hits[0]}'")
 
 
 async def _seed_to_db(templates):
@@ -946,25 +947,14 @@ async def _seed_to_db(templates):
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
     client = AsyncIOMotorClient(os.environ["MONGO_URL"])
     db = client[os.environ["DB_NAME"]]
-    now = datetime.now(timezone.utc).isoformat()
     for t in templates:
-        existing = await db.template_definitions.find_one(
-            {"code": t["code"], "is_system": True}, {"_id": 0, "id": 1, "version": 1})
-        # Version bump on every reseed of expanded schemas — old rich three
-        # keep version=1; the 20 expanded templates start life at version=2
-        # once this seed runs. The upsert `$set` collapses any prior state,
-        # so re-running is idempotent — no duplicates.
         unchanged = {"truck_inventory_checklist","water_chemistry_log","incident_report_form"}
         default_version = 1 if t["code"] in unchanged else 2
         doc = {**t,
                 "is_system": True,
                 "tenant_id": None,
-                "version": default_version,
-                "created_at": now,
-                "updated_at": now,
-                "id": (existing or {}).get("id") or str(uuid.uuid4())}
-        await db.template_definitions.update_one(
-            {"code": t["code"], "is_system": True}, {"$set": doc}, upsert=True)
+                "version": default_version}
+        await upsert_template_definition(db, doc)
     # indexes
     await db.template_definitions.create_index("code")
     await db.template_definitions.create_index([("tenant_id", 1), ("code", 1)])

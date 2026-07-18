@@ -17,11 +17,26 @@ IP-safety:
 from __future__ import annotations
 import argparse
 import json
+import os
 import re
 import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Support both `python3 -m training_seed.seed_landscape` and
+# direct-file invocation.
+try:
+    from .seed_common import (
+        run_blacklist_scan, load_chapter_markdown,
+        build_quiz_questions, upsert_training_module,
+    )
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from training_seed.seed_common import (  # type: ignore
+        run_blacklist_scan, load_chapter_markdown,
+        build_quiz_questions, upsert_training_module,
+    )
 
 CHAPTERS_ROOT = Path(__file__).resolve().parent / "training_landscape_chapters"
 
@@ -53,66 +68,84 @@ MODULES = [
         "badge_label": "Small Engine — Certified",
         "disclaimer": "Original in-house material. Honda, Briggs & Stratton, Kohler, Kawasaki, Echo, Stihl cited by name/link only.",
     },
+    # Phase 56.14a2 · Modules 4-7 (drafts — commit gated behind --modules flag)
+    {
+        "code": "landscape-pavers-hardscape",
+        "title": "Pavers & Hardscape Repair",
+        "department": "landscaping",
+        "dir": "module_4_pavers",
+        "description": "Base preparation, pattern layout, cutting, joint sand, sealing, and repair of settled or heaved pavers.",
+        "badge_label": "Pavers & Hardscape — Certified",
+        "disclaimer": "Original in-house material. Vendor products cited by name/link only.",
+    },
+    {
+        "code": "landscape-turf-sod",
+        "title": "Turf & Sod Installation / Maintenance",
+        "department": "landscaping",
+        "dir": "module_5_turf_sod",
+        "description": "Site prep, sod selection, laying pattern, watering-in, aftercare, and ongoing mow / fertilize / dethatch cycles.",
+        "badge_label": "Turf & Sod — Certified",
+        "disclaimer": "Original in-house material. Vendor products cited by name/link only.",
+    },
+    {
+        "code": "landscape-outdoor-kitchen",
+        "title": "BBQ / Outdoor Kitchen Installation",
+        "department": "landscaping",
+        "dir": "module_6_outdoor_kitchen",
+        "description": "Site layout, gas / electrical rough-in decision tree, countertop and enclosure, appliance install, safety commissioning.",
+        "badge_label": "Outdoor Kitchen — Certified",
+        "disclaimer": "Original in-house material. Consult a licensed gas/electrical trade for any regulated work.",
+    },
+    {
+        "code": "landscape-valve-diagnostics",
+        "title": "Valve Diagnostics (Irrigation Zone Valves)",
+        "department": "landscaping",
+        "dir": "module_7_valve_diagnostics",
+        "description": "Anatomy, symptom-to-cause decision tree, solenoid vs diaphragm vs debris, in-field replacement flow.",
+        "badge_label": "Valve Diagnostics — Certified",
+        "disclaimer": "Original in-house material. Consult the OEM manual for model-specific torque and rebuild kit specs.",
+    },
 ]
 
+# Codes that default to committing when `--commit` is passed with no
+# `--modules` filter. Phase 56.14a2 modules 4-7 are gated: they need an
+# explicit `--modules 4,5,6,7` (or a list of codes) to be committed.
+DEFAULT_COMMIT_CODES = {
+    "landscape-irrigation-repairs",
+    "landscape-irrigation-timers",
+    "landscape-small-engine",
+}
 
-# IP-safety blacklist. Same word-boundary regex philosophy as the pool
-# supplemental script. Module-2 has extra scrutiny (controller menus).
-IP_BLACKLIST = [
-    "reproduced with permission",
-    "copyright hunter",
-    "copyright rain bird",
-    "copyright toro",
-    "copyright honda",
-    "copyright briggs",
-    "\u00a9 hunter",
-    "\u00a9 rain bird",
-    "\u00a9 toro",
-    "\u00a9 honda",
-    "\u00a9 briggs",
-    # Module 2 controller menu fingerprints (word-boundary regex).
-    r"re:\bpush prg\b",
-    r"re:\bpress prg\b",
-    r"re:\bstation [1-9]\b",
-    r"re:\bprogram [abc]\b",
-    r"re:\brotary switch\b",
-]
+# ─── Module-specific extra IP-safety guards ──────────────────────
+# Module-2 controller menu fingerprints (word-boundary regex).
+_M2_EXTRA = [re.compile(p, re.IGNORECASE) for p in [
+    r"\bpush prg\b", r"\bpress prg\b",
+    r"\bstation [1-9]\b", r"\bprogram [abc]\b", r"\brotary switch\b",
+]]
 
 REQUIRED_DISCLAIMER = "Original in-house authorship"
 MODULE_2_DIR = "module_2_irrigation_timers"
 M2_REDIRECT_PHRASE = "oem manual"
 
 
-def _blacklist_hit(text_lower: str) -> str | None:
-    for pat in IP_BLACKLIST:
-        if pat.startswith("re:"):
-            if re.search(pat[3:], text_lower):
-                return pat[3:]
-        else:
-            if pat in text_lower:
-                return pat
-    return None
-
-
 def _read_chapters(module_dir: Path) -> list[dict]:
     lessons = []
+    extra = _M2_EXTRA if module_dir.name == MODULE_2_DIR else None
     for i, md in enumerate(sorted(module_dir.glob("*.md")), start=1):
         text = md.read_text(encoding="utf-8")
-        hit = _blacklist_hit(text.lower())
-        if hit:
-            raise SystemExit(f"IP-SAFETY VIOLATION in {md}: matches '{hit}'")
+        hits = run_blacklist_scan(text, extra_patterns=extra)
+        if hits:
+            raise SystemExit(f"IP-SAFETY VIOLATION in {md}: matches {hits[0]}")
         if REQUIRED_DISCLAIMER.lower() not in text.lower():
             print(f"  warn: {md.name} missing disclaimer '{REQUIRED_DISCLAIMER}'",
                    file=sys.stderr)
-        title_line = text.splitlines()[0] if text.splitlines() else ""
-        m = re.match(r"^#\s+(.*)$", title_line)
-        title = m.group(1) if m else md.stem
+        doc = load_chapter_markdown(md, order=i)
         lessons.append({
             "id": f"lesson_{i:02d}",
-            "title": title,
-            "body_md": text,
+            "title": doc.title,
+            "body_md": doc.body,
             "order": i,
-            "word_count": len(text.split()),
+            "word_count": doc.word_count,
         })
     return lessons
 
@@ -122,29 +155,21 @@ def _build_quiz(module_dir: Path, module_code: str) -> dict:
     if not quiz_path.exists():
         return {"passing_score": 0.7, "questions": []}
     raw = json.loads(quiz_path.read_text(encoding="utf-8"))
-    letters = ["a", "b", "c", "d", "e"]
-    questions = []
-    for i, q in enumerate(raw.get("questions", []), start=1):
-        choices = [{"id": letters[j], "text": c} for j, c in enumerate(q["choices"])]
-        answer_id = letters[q["answer"]]
-        questions.append({
-            "id": f"{module_code}-q{i:02d}",
-            "chapter": None,
-            "prompt": q["q"],
-            "choices": choices,
-            "correct_choice_ids": [answer_id],
-            "explanation": q.get("explanation") or "",
-        })
+    questions = build_quiz_questions(raw.get("questions", []), module_code=module_code)
     return {"passing_score": 0.7, "questions": questions}
 
 
-def build_seed_payload() -> list[dict]:
+def build_seed_payload(only_codes: set | None = None) -> list[dict]:
     now = datetime.now(timezone.utc).isoformat()
     payload = []
     for mod in MODULES:
+        if only_codes is not None and mod["code"] not in only_codes:
+            continue
         module_dir = CHAPTERS_ROOT / mod["dir"]
         if not module_dir.exists():
-            raise SystemExit(f"missing module directory: {module_dir}")
+            # Draft-not-yet-authored modules are silently skipped.
+            print(f"  skip: {mod['code']} — {module_dir} not on disk", file=sys.stderr)
+            continue
         lessons = _read_chapters(module_dir)
         quiz = _build_quiz(module_dir, mod["code"])
         payload.append({
@@ -165,51 +190,78 @@ def build_seed_payload() -> list[dict]:
 
 
 async def seed_to_db(payload: list[dict]) -> None:
-    import os
     from motor.motor_asyncio import AsyncIOMotorClient  # type: ignore
     from dotenv import load_dotenv  # type: ignore
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
     client = AsyncIOMotorClient(os.environ["MONGO_URL"])
     db = client[os.environ["DB_NAME"]]
     for mod in payload:
-        existing = await db.training_modules.find_one(
-            {"code": mod["code"], "is_system": True}, {"_id": 0, "id": 1})
-        doc = {**mod}
-        if existing and existing.get("id"):
-            doc["id"] = existing["id"]
-        else:
-            doc["id"] = str(uuid.uuid4())
-        await db.training_modules.update_one(
-            {"code": mod["code"], "is_system": True},
-            {"$set": doc},
-            upsert=True,
-        )
+        await upsert_training_module(db, mod)
     client.close()
+
+
+def _resolve_modules_filter(arg: str | None) -> set | None:
+    """Accept `--modules 4,5,6,7` or explicit codes.
+    Falls back to DEFAULT_COMMIT_CODES when nothing is provided."""
+    if not arg:
+        return DEFAULT_COMMIT_CODES
+    tokens = [t.strip() for t in arg.split(",") if t.strip()]
+    codes = set()
+    for t in tokens:
+        if t.isdigit():
+            idx = int(t) - 1
+            if 0 <= idx < len(MODULES):
+                codes.add(MODULES[idx]["code"])
+        else:
+            codes.add(t)
+    return codes
+    """Accept `--modules 4,5,6,7` (numeric shorthand) OR
+    `--modules landscape-pavers-hardscape,...` (explicit codes).
+    Falls back to DEFAULT_COMMIT_CODES when nothing is provided."""
+    if not arg:
+        return DEFAULT_COMMIT_CODES
+    tokens = [t.strip() for t in arg.split(",") if t.strip()]
+    codes = set()
+    for t in tokens:
+        if t.isdigit():
+            idx = int(t) - 1
+            if 0 <= idx < len(MODULES):
+                codes.add(MODULES[idx]["code"])
+        else:
+            codes.add(t)
+    return codes
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--commit", action="store_true",
                     help="Actually write to Mongo (blocked by default).")
+    ap.add_argument("--modules", type=str, default=None,
+                    help="Comma-separated module codes or 1-based indices to include.")
     args = ap.parse_args()
 
-    payload = build_seed_payload()
-    total_lessons = sum(len(m["lessons"]) for m in payload)
-    total_words = sum(l["word_count"] for m in payload for l in m["lessons"])
-    total_q = sum(len(m["quiz"]["questions"]) for m in payload)
-    print(f"Modules ready: {len(payload)}")
-    print(f"Lessons:       {total_lessons}")
-    print(f"Words drafted: {total_words}")
-    print(f"Quiz Qs:       {total_q}")
-    for m in payload:
+    # Dry-run inspects EVERY authored module dir (so drafts are visible
+    # in the count); commit respects --modules filter.
+    payload_preview = build_seed_payload(None)
+    total_lessons = sum(len(m["lessons"]) for m in payload_preview)
+    total_words = sum(l["word_count"] for m in payload_preview for l in m["lessons"])
+    total_q = sum(len(m["quiz"]["questions"]) for m in payload_preview)
+    print(f"Modules ready:  {len(payload_preview)}")
+    print(f"Lessons:        {total_lessons}")
+    print(f"Words drafted:  {total_words}")
+    print(f"Quiz Qs:        {total_q}")
+    for m in payload_preview:
         print(f"  - {m['code']} · {len(m['lessons'])} lessons · "
               f"{sum(l['word_count'] for l in m['lessons'])} words · "
               f"{len(m['quiz']['questions'])} quiz Qs")
 
     if args.commit:
+        commit_codes = _resolve_modules_filter(args.modules)
+        commit_payload = [m for m in payload_preview if m["code"] in commit_codes]
+        print(f"\nCommitting {len(commit_payload)} module(s): "
+              f"{sorted(m['code'] for m in commit_payload)}")
         import asyncio
-        print("Committing to Mongo…")
-        asyncio.run(seed_to_db(payload))
+        asyncio.run(seed_to_db(commit_payload))
         print("Done.")
     else:
         print("\nDRY-RUN — no database writes. Pass --commit to seed.")

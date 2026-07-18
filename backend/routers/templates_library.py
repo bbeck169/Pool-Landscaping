@@ -311,6 +311,14 @@ async def finalize_instance(iid: str,
     await db.template_instances.update_one(
         {"id": iid},
         {"$set": {"status": "finalized", "finalized_at": now, "updated_at": now}})
+    # Phase 4 · Batch B — auto-complete any onboarding form-signature task
+    # whose `related_ref` is this template code.
+    try:
+        from routers.handbook import auto_complete_for_template_finalized
+        await auto_complete_for_template_finalized(
+            tenant["id"], user.get("id") or "", r.get("template_code") or "")
+    except Exception:
+        pass
     return await db.template_instances.find_one({"id": iid}, {"_id": 0})
 
 

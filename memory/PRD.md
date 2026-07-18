@@ -2714,3 +2714,116 @@ Replaces the plain-text stamp ("Name • ISO") in the mobile template fill scree
 
 ### Dependencies added
 - `react-native-signature-canvas@5.1.0` (via `yarn add`)
+
+---
+
+## Phase 4 · Batch B — Deferred Work · Feb 2026
+
+Three deliverables in one pass: (D4) shared seed helpers, (D5) landscape modules 4-7 draft-only, (D6) Company Handbook + Onboarding subsystem.
+
+### Deliverable 4 — `seed_common.py` refactor
+
+- New module `backend/training_seed/seed_common.py` centralizes the shared logic that previously lived in three seed scripts:
+  - `run_blacklist_scan(text, extra_patterns=None) -> list[str]`
+  - `DEFAULT_BLACKLIST` — 16 default patterns (pool + landscape vendor markers, "reproduced with permission", "all rights reserved", etc.)
+  - `load_chapter_markdown(path, order=0) -> ChapterDoc` — parses `# Heading` + optional YAML frontmatter
+  - `build_quiz_questions(raw, module_code=...)` — validates + shapes quiz JSON into the DB schema
+  - `upsert_training_module(db, doc) -> id` and `upsert_template_definition(db, doc) -> id` — idempotent upserts by (`code`, `is_system`)
+  - `cli_main(seeder_fn, description=...)` — shared argparse scaffold
+- Three seeders refactored: `seed_landscape.py`, `seed_pool_supplemental.py`, `templates_seed/seed_templates.py`. All keep their old CLI surface (`--commit`, output labels) intact.
+- Re-run parity confirmed:
+  - `templates_seed/seed_templates.py --commit` → 23 system rows, 0 dupes.
+  - `training_seed/seed_pool_supplemental.py --commit` → 3 system rows preserved.
+  - `training_seed/seed_landscape.py --commit` → 3 rows committed by default (modules 1-3); modules 4-7 available on-disk but only committed when passed `--modules 4,5,6,7`.
+
+### Deliverable 5 — Landscape modules 4-7 drafts (Phase 56.14a2, uncommitted)
+
+- 4 module directories added under `backend/training_seed/training_landscape_chapters/`:
+  - `module_4_pavers/` — 5 chapters (base prep, layout/cutting, edge/joint sand, sealing/aftercare, repair), 12 quiz questions.
+  - `module_5_turf_sod/` — 2 chapters (site prep, laying + aftercare), 10 quiz questions.
+  - `module_6_outdoor_kitchen/` — 2 chapters (layout/rough-in decision tree, enclosure/commissioning), 10 quiz questions.
+  - `module_7_valve_diagnostics/` — 2 chapters (anatomy + symptom-to-cause decision tree, in-field repair/replacement), 10 quiz questions.
+- ~11K words of original in-house content across the four modules. Modules 5-7 land as compact working drafts (2 chapters + full quizzes) awaiting user-voice expansion before commit; module 4 lands closer to the 5-7 chapter target.
+- Blacklist scan is clean across every file (verified via `python3 training_seed/seed_landscape.py`, no violations).
+- **Seed NOT committed to DB** — `db.training_modules` still holds 3 landscape modules (1-3). Modules 4-7 commit when the user runs `python3 training_seed/seed_landscape.py --commit --modules 4,5,6,7`.
+- `MODULES` list in `seed_landscape.py` extended with 4 entries; `--modules` flag added; `DEFAULT_COMMIT_CODES` gate keeps modules 1-3 as the default on a bare `--commit`.
+
+### Deliverable 6 — Company Handbook + Onboarding subsystem (Phase 56.15a/b/c)
+
+**Backend**
+- New router `backend/routers/handbook.py`. Endpoints:
+  - Handbook: `GET/POST /api/handbook/sections`, `GET/PATCH/DELETE /api/handbook/sections/{code}`. System sections read-only; tenant-custom sections editable by admin+ with version bump on each patch.
+  - Onboarding: `GET/POST /api/onboarding/tasks`, `PATCH /api/onboarding/tasks/{code}`, `GET /api/onboarding/user-progress`, `POST /api/onboarding/user-progress/mark-complete`, `GET /api/onboarding/dashboard`.
+  - Sub-paths chosen to avoid collision with the two pre-existing onboarding routers (`onboarding.py` admin wizard + `employee_onboarding.py` HR assignments).
+- Registered in `server.py` via the existing `api_router.include_router(module.router)` loop.
+- Auto-complete hook: `auto_complete_for_template_finalized(tenant_id, user_id, template_code)` — imported by `templates_library.finalize_instance` so finalizing a template whose code matches a `form_signature` task's `related_ref` flips that task to `complete` automatically.
+- Seed script `backend/handbook_seed/seed_handbook.py`:
+  - 12 in-house handbook sections seeded (Company Overview, Working Hours, PTO, Safety General, Chemical PPE, Vehicle Use, Uniform, Customer Comm, Route Efficiency, Damage/Incident, Payroll, Termination).
+  - 10 in-house onboarding tasks seeded, hitting all four `kind` values shipped (`read_handbook_section`, `training_module`, `form_signature`, plus `checklist` on tenant-custom tests).
+  - Blacklist scan runs before any DB write.
+
+**Web**
+- New pages: `HandbookPage.jsx` (list + section reader with admin-only edit for tenant-custom), `OnboardingPage.jsx` (user's own checklist with progress bar + Start / Mark-done actions), `AdminOnboardingDashboardPage.jsx` (per-user completion %, role filter, drill-in modal).
+- New API client `frontend/src/api/handbook.js` covering all endpoints + `taskDeepLink()` helper (`read_handbook_section` → `/handbook/[code]`, `form_signature` → `/admin/templates?code=…`, `training_module` → `/training?module=…`).
+- Routes registered in `App.js`:
+  - `/handbook`, `/handbook/:code` — all authenticated users
+  - `/onboarding-checklist` — all users (renamed from `/onboarding` to avoid colliding with the pre-existing admin onboarding wizard)
+  - `/admin/onboarding` — admin+ only
+- Sidebar nav (Operations → Business OS) gets **Handbook** + **Onboarding Dashboard** entries.
+- 30-second read on the handbook viewer auto-fires `mark-complete` for the matching `read_handbook_section` task.
+
+**Mobile (Expo, user view only)**
+- `mobile/app/(app)/handbook/index.tsx` — sections list with search.
+- `mobile/app/(app)/handbook/[code].tsx` — markdown reader with 30-second auto-complete for matching read task.
+- `mobile/app/(app)/onboarding-checklist/index.tsx` — user's own tasks, progress bar, Start (deep-link) + Done actions.
+- No new npm dependencies — existing `api` + `theme` + `ui` primitives cover the surface. `react-native-markdown-display` was not added because the seeded content is plain-text-safe; a formal Markdown renderer is a P2 follow-up.
+- Admin dashboard is web-only in this phase (per brief).
+
+**Tests**
+- `backend/tests/test_seed_common.py` — 7 tests: blacklist positive/negative/extra, chapter parsing, quiz shaping (happy + 3 rejection cases), upsert idempotency.
+- `backend/tests/test_handbook_and_onboarding.py` — 16 tests: seed counts, handbook RBAC (tech read-only, admin can't delete/patch system, admin can CRUD tenant-custom), onboarding tasks + progress + dashboard, tech-cannot-query-other-user (403), dashboard aggregation math, template-finalize auto-completes matching form_signature task.
+- Pre-existing tests updated for D5 side-effects: `test_phase_56_14a1_landscape_seed.py` relaxed from hard-coded "3 modules" to just checking the seed runs and lists modules 1-3 (drafts 4-7 now surface but aren't committed).
+- **Full curated suite: 86 passed** (`test_seed_common` 7 + `test_handbook_and_onboarding` 16 + `test_templates_library` 43 + prior pool/landscape 20).
+
+### Deviations
+- **Route naming**: user brief says `/onboarding` for the user checklist; the codebase already had a `/onboarding` route (admin wizard onboarding). Renamed the new user checklist to `/onboarding-checklist` on both web and mobile to avoid collision. `taskDeepLink()` was updated accordingly.
+- **Router prefix**: to avoid collision with `POST /onboarding/progress` in the pre-existing `onboarding.py`, my new progress endpoints use `/onboarding/user-progress` and `/onboarding/user-progress/mark-complete` instead of `/onboarding/progress`.
+- **Module 5-7 chapter count**: brief calls for 5-7 chapters per module; module 4 lands at 5 chapters (full spec) while modules 5-7 land at 2 chapters + full 10-question quiz each as tight working drafts. Reason: budget-scoped one-pass authorship. All content is in place and blacklist-clean; users can review the voice and green-light expansion to the full 5-7 chapter target in a follow-up.
+- **Mobile handbook markdown rendering**: raw text rendering instead of a Markdown component. The seeded content displays cleanly as monospace-friendly plain text; a proper renderer is deferred as P2.
+
+### Curl transcript (login → tasks → mark complete → progress → dashboard)
+```
+$ curl POST /api/auth/login  {mike@aquaterra.com}                → 200
+$ curl GET  /api/onboarding/tasks  (as mike)                     → 15 rows (10 system + 5 tenant-custom test-generated)
+$ curl POST /api/onboarding/user-progress/mark-complete {read_safety_general}
+                                                                  → status=complete completed_at=2026-07-18T20:23:25
+$ curl GET  /api/onboarding/user-progress?user_id=me             → total=15 complete=7 pct=46.7%
+$ curl GET  /api/onboarding/dashboard   (as admin)               → total_users=20 avg_pct=3.3%
+```
+
+### Files
+Backend:
+- `backend/training_seed/seed_common.py` (new · 179 lines)
+- `backend/training_seed/seed_landscape.py` (refactored + modules 4-7 registered)
+- `backend/training_seed/seed_pool_supplemental.py` (refactored)
+- `backend/templates_seed/seed_templates.py` (refactored)
+- `backend/training_seed/training_landscape_chapters/module_{4_pavers,5_turf_sod,6_outdoor_kitchen,7_valve_diagnostics}/` (11 new files)
+- `backend/routers/handbook.py` (new · 370 lines)
+- `backend/handbook_seed/seed_handbook.py` (new · 360 lines · content)
+- `backend/server.py` (register handbook router)
+- `backend/routers/templates_library.py` (call auto-complete hook)
+- `backend/tests/test_seed_common.py` (new)
+- `backend/tests/test_handbook_and_onboarding.py` (new · 16 tests)
+
+Web:
+- `frontend/src/api/handbook.js` (new)
+- `frontend/src/pages/HandbookPage.jsx` (new)
+- `frontend/src/pages/OnboardingPage.jsx` (new)
+- `frontend/src/pages/admin/AdminOnboardingDashboardPage.jsx` (new)
+- `frontend/src/App.js` + `nav/adminNav.js` (routes + sidebar)
+
+Mobile:
+- `mobile/app/(app)/handbook/index.tsx` (new)
+- `mobile/app/(app)/handbook/[code].tsx` (new)
+- `mobile/app/(app)/onboarding-checklist/index.tsx` (new)
+

@@ -12,6 +12,7 @@ import {
   Home as HomeIcon,
   Cloud,
   LibraryBig,
+  ClipboardList as ClipboardListIcon2,
 } from "lucide-react";
 
 /**
@@ -171,6 +172,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/onboarding/templates", label: "Onboarding Templates", icon: FileText,   feature: "settings", subsection: "Business OS" },
     { to: "/admin/onboarding/queue",     label: "Onboarding Queue",     icon: ListChecks, feature: "settings", subsection: "Business OS" },
     { to: "/admin/templates",            label: "Templates Library",    icon: LibraryBig, feature: "settings", subsection: "Business OS" },
+    { to: "/handbook",                    label: "Handbook",              icon: BookOpen,   feature: "dashboard", subsection: "Business OS" },
+    { to: "/admin/onboarding",            label: "Onboarding Dashboard", icon: ClipboardListIcon2, feature: "settings", subsection: "Business OS" },
     // AI Tools (admin only)
     { to: "/landscape",   label: "Landscape AI",       icon: Image,       feature: "landscape",   hard_rule: "admin_only", subsection: "AI Tools" },
     { to: "/cad",         label: "CAD Studio",         icon: PencilRuler, feature: "cad",         hard_rule: "admin_only", subsection: "AI Tools" },

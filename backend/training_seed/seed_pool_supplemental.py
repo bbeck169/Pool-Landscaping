@@ -21,11 +21,24 @@ IP-safety:
 from __future__ import annotations
 import argparse
 import json
+import os
 import re
 import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+try:
+    from .seed_common import (
+        run_blacklist_scan, load_chapter_markdown,
+        build_quiz_questions, upsert_training_module,
+    )
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from training_seed.seed_common import (  # type: ignore
+        run_blacklist_scan, load_chapter_markdown,
+        build_quiz_questions, upsert_training_module,
+    )
 
 CHAPTERS_ROOT = Path(__file__).resolve().parent / "training_pool_supplemental_chapters"
 
@@ -78,77 +91,38 @@ MODULES = [
 ]
 
 
-# IP-safety blacklist. Word-boundary matched so "full-speed 24/7" isn't a
-# false-positive against the "speed 2" OEM menu-label fingerprint.
-# Each entry is either a plain substring (compiled with word boundaries)
-# or a raw regex flagged with `re:` prefix.
-IP_BLACKLIST = [
-    # Universal (Modules A-E): copyright + republish markers.
-    "reproduced with permission",
-    "copyright pentair",
-    "copyright hayward",
-    "copyright jandy",
-    "\u00a9 pentair",
-    "\u00a9 hayward",
-    "\u00a9 jandy",
-    # Module E · verbatim OEM menu + keypress fingerprints (word-boundary
-    # protected to avoid catching accidental substrings like "full-speed 24/7").
-    "intellicenter",
-    r"re:\bpush menu\b",
-    r"re:\bpress menu\b",
-    r"re:\bmenu then edit\b",
-    r"re:\bmenu > edit\b",
-    r"re:\bpress select\b",
-    r"re:\bpress set\b",
-    r"re:\bspeed [1-9]\b",       # "Speed 1", "Speed 2", …
-    r"re:\baux[1-9]\b",           # AUX1, AUX2, …
-    r"re:\barrow to schedule\b",
-    r"re:\bpress start\b",
-]
-
-# Module-level extra assertions. Every chapter in Module E MUST carry the
-# "consult the OEM manual" language so techs are always redirected to the
-# authoritative source for exact keystrokes.
-E_REQUIRED_PHRASES = [
-    "oem manual",
-]
-
-
-def _blacklist_hit(text_lower: str) -> str | None:
-    """Return the offending phrase (or None) if any blacklist entry
-    matches. Handles both plain-substring and word-boundary regex forms."""
-    for pat in IP_BLACKLIST:
-        if pat.startswith("re:"):
-            if re.search(pat[3:], text_lower):
-                return pat[3:]
-        else:
-            if pat in text_lower:
-                return pat
-    return None
+# Module-E extra OEM-menu regex guards (word-boundary).
+_MODULE_E_EXTRA = [re.compile(p, re.IGNORECASE) for p in [
+    r"\bintellicenter\b",
+    r"\bpush menu\b", r"\bpress menu\b",
+    r"\bmenu then edit\b", r"\bmenu > edit\b",
+    r"\bpress select\b", r"\bpress set\b",
+    r"\bspeed [1-9]\b", r"\baux[1-9]\b",
+    r"\barrow to schedule\b", r"\bpress start\b",
+]]
 
 REQUIRED_DISCLAIMER = "Original in-house authorship"
 
 
 def _read_chapters(module_dir: Path) -> list[dict]:
     lessons = []
+    is_module_e = module_dir.name == "module_e_vsp_programming"
+    extra = _MODULE_E_EXTRA if is_module_e else None
     for i, md in enumerate(sorted(module_dir.glob("*.md")), start=1):
         text = md.read_text(encoding="utf-8")
-        hit = _blacklist_hit(text.lower())
-        if hit:
-            raise SystemExit(f"IP-SAFETY VIOLATION in {md}: matches '{hit}'")
+        hits = run_blacklist_scan(text, extra_patterns=extra)
+        if hits:
+            raise SystemExit(f"IP-SAFETY VIOLATION in {md}: matches '{hits[0]}'")
         if REQUIRED_DISCLAIMER.lower() not in text.lower():
             print(f"  warn: {md.name} missing disclaimer '{REQUIRED_DISCLAIMER}'",
                    file=sys.stderr)
-        title_line = text.splitlines()[0] if text.splitlines() else ""
-        m = re.match(r"^#\s+(.*)$", title_line)
-        title = m.group(1) if m else md.stem
-        lesson_id = f"lesson_{i:02d}"
+        doc = load_chapter_markdown(md, order=i)
         lessons.append({
-            "id": lesson_id,
-            "title": title,
-            "body_md": text,
+            "id": f"lesson_{i:02d}",
+            "title": doc.title,
+            "body_md": doc.body,
             "order": i,
-            "word_count": len(text.split()),
+            "word_count": doc.word_count,
         })
     return lessons
 
@@ -158,20 +132,7 @@ def _build_quiz(module_dir: Path, module_code: str) -> dict:
     if not quiz_path.exists():
         return {"passing_score": 0.7, "questions": []}
     raw = json.loads(quiz_path.read_text(encoding="utf-8"))
-    questions = []
-    for i, q in enumerate(raw.get("questions", []), start=1):
-        choice_letters = ["a", "b", "c", "d", "e"]
-        choices = [{"id": choice_letters[j], "text": c}
-                    for j, c in enumerate(q["choices"])]
-        answer_id = choice_letters[q["answer"]]
-        questions.append({
-            "id": f"{module_code}-q{i:02d}",
-            "chapter": None,        # not chapter-scoped in this ship
-            "prompt": q["q"],
-            "choices": choices,
-            "correct_choice_ids": [answer_id],
-            "explanation": q.get("explanation") or "",
-        })
+    questions = build_quiz_questions(raw.get("questions", []), module_code=module_code)
     return {"passing_score": 0.7, "questions": questions}
 
 
@@ -202,30 +163,14 @@ def build_seed_payload() -> list[dict]:
 
 
 async def seed_to_db(payload: list[dict]) -> None:
-    """Direct motor connection using MONGO_URL/DB_NAME (matches config.py
-    convention). Kept isolated so a dry-run has no motor/config coupling."""
-    import os
+    """Direct motor connection using MONGO_URL/DB_NAME."""
     from motor.motor_asyncio import AsyncIOMotorClient  # type: ignore
     from dotenv import load_dotenv  # type: ignore
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
-    mongo_url = os.environ["MONGO_URL"]
-    db_name = os.environ["DB_NAME"]
-    client = AsyncIOMotorClient(mongo_url)
-    db = client[db_name]
+    client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+    db = client[os.environ["DB_NAME"]]
     for mod in payload:
-        existing = await db.training_modules.find_one(
-            {"code": mod["code"], "is_system": True}, {"_id": 0, "id": 1})
-        doc = {**mod}
-        if existing and existing.get("id"):
-            doc["id"] = existing["id"]
-            doc["created_at"] = mod["created_at"]  # keep the write timestamp for re-seed
-        else:
-            doc["id"] = str(uuid.uuid4())
-        await db.training_modules.update_one(
-            {"code": mod["code"], "is_system": True},
-            {"$set": doc},
-            upsert=True,
-        )
+        await upsert_training_module(db, mod)
     client.close()
 
 
