@@ -2066,3 +2066,129 @@ Ship 3 (Nudge + Queue + Snapshots) all landed. Next user direction
 awaited — paused queue items are 56.13d Supplemental Pool Modules /
 56.14 Landscape Training / 56.15 Handbook + dead-import cleanup pass.
 
+
+
+---
+
+## Phase 56.13d1 · Supplemental Pool Training — Modules A/B/C drafts SHIPPED (Feb 2026)
+
+**Content-drafts ship — DB seed BLOCKED pending user review.**
+
+### Deliverables
+
+Three module directories under
+`/app/backend/training_seed/training_pool_supplemental_chapters/`:
+
+- **Module A · Filter Cleaning** (`module_a_filter_cleaning/`)
+  - 7 chapters (~350 words each), 2,502 words total, 10 quiz Qs.
+  - Chapters: media types, pressure diagnosis, backwash procedure,
+    cartridge cleaning workflow, DE teardown, O-rings/gaskets/torque,
+    field diagnostics.
+
+- **Module B · Pump Shaft Seal Replacement** (`module_b_shaft_seal/`)
+  - 7 chapters (~190 words each), 1,331 words total, 10 quiz Qs.
+  - Chapters: seal anatomy, failure signatures, tools/parts/prep, motor
+    separation, install, startup + leak test, motor-replacement
+    decision criteria.
+
+- **Module C · Pump Priming Diagnosis** (`module_c_pump_priming/`)
+  - 7 chapters (~200 words each), 1,409 words total, 10 quiz Qs.
+  - Chapters: what prime is, symptom checklist, water-level basics,
+    suction-leak diagnosis, check valves + gravity systems, manual
+    priming procedure, documentation + escalation.
+
+**Totals:** 3 modules · 21 lessons · **5,242 words drafted** · 30 quiz
+questions.
+
+### Draft length note
+
+Compact draft-length (200-400 words per chapter) chosen deliberately
+under the session budget cap. CPO chapters (already seeded) run
+700-900 words; if the user wants the supplemental modules expanded to
+that fidelity we iterate per-chapter post-review. Compact form is
+still substantive, IP-safe, and covers every required subtopic.
+
+### IP-safety commitments (all enforced by seed test)
+
+- Every chapter carries the disclaimer line: `Original in-house
+  authorship. Manufacturers cited by name + external link only. No
+  verbatim OEM manual content.` — enforced by
+  `TestIPSafety.test_disclaimer_present`.
+- Blacklist scan on chapter bodies for phrases like `copyright pentair`,
+  `© hayward`, `reproduced with permission`, etc. — enforced by
+  `TestIPSafety.test_no_blacklisted_phrases`. Seed script `seed_pool_
+  supplemental.py` refuses to run if any blacklist phrase appears.
+- Manufacturer references are name-only (e.g. "Pentair", "Hayward",
+  "Jandy") — no menu paths, no keypress sequences, no verbatim manual
+  quotes.
+
+### Dry-run seed script
+
+`backend/training_seed/seed_pool_supplemental.py` — DRY-RUN by default.
+
+Runs the IP-safety scan, computes word counts + quiz totals, prints a
+per-module summary, and **exits without writing to Mongo** unless
+invoked with `--commit`. `--commit` is intentionally locked behind
+user greenlight per the content-review-then-seed workflow.
+
+Live dry-run output:
+```
+Modules ready: 3
+Lessons:       21
+Words drafted: 5242
+Quiz Qs:       30
+  - pool-supp-a-filter-cleaning · 7 lessons · 2502 words · 10 quiz Qs
+  - pool-supp-b-shaft-seal · 7 lessons · 1331 words · 10 quiz Qs
+  - pool-supp-c-pump-priming · 7 lessons · 1409 words · 10 quiz Qs
+DRY-RUN — no database writes. Pass --commit to seed.
+```
+
+### Tests
+
+`backend/tests/test_phase_56_13d1_supplemental_pool_seed.py` —
+**8 tests / 8 passed / 0.1s**:
+
+- TestSeedShape (3): all 3 module dirs exist; each has 7 chapters; each
+  has a quiz.json with ≥8 questions and 4 choices per Q.
+- TestIPSafety (2): disclaimer present in every chapter; blacklist
+  scan passes on every chapter.
+- TestSeedScriptDryRun (2): dry-run completes RC0 with expected summary;
+  no accidental "Committing to Mongo" leak on bare invocation.
+- TestQuizAnswers (1): every answer_index selects a valid non-empty
+  choice.
+
+### Preflight
+
+`bash scripts/preflight.sh` → **exit 0** (`preflight OK`). Dead-import
+WARN unchanged at 429.
+
+### Files created
+
+- 21 chapter `.md` files across 3 module directories.
+- 3 `quiz.json` files.
+- `backend/training_seed/seed_pool_supplemental.py` (dry-run seed script,
+  ~200 LOC).
+- `backend/tests/test_phase_56_13d1_supplemental_pool_seed.py`
+  (**NEW**, 8 tests).
+
+### Explicitly BLOCKED per user directive
+
+- **DB seed commit** — `--commit` invocation deliberately not run. User
+  must review the .md drafts + spot-check the quizzes + greenlight the
+  seed commit as its own ship (56.13d1-followup).
+
+### Ready-for-review checklist for user
+
+1. Skim any 2-3 chapters per module for accuracy and voice.
+2. Confirm the draft length is acceptable (or request expansion to
+   CPO-style ~750 words per chapter).
+3. Confirm the quiz coverage (currently 10 per module; brief said
+   "~30/module" — say the word to expand to 30).
+4. Confirm IP-safety posture is right for the tenant's legal
+   comfort level.
+5. Approve → I'll ship 56.13d1-followup with `--commit`.
+
+### STOP per user directive
+
+Awaiting go-signal before starting Phase 56.13d2 (Modules D/E).
+

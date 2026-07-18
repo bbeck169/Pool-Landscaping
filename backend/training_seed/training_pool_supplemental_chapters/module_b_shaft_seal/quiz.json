@@ -1,0 +1,16 @@
+{
+  "module_code": "pool-supp-b-shaft-seal",
+  "title": "Shaft Seal — Module B",
+  "questions": [
+    {"q": "The mechanical shaft seal keeps water in the pump wet end while…", "choices": ["The motor is off", "The motor shaft spins through the volute", "The filter backwashes", "The heater is running"], "answer": 1},
+    {"q": "Which failure signature suggests a motor already at risk?", "choices": ["Slow drip at the base only", "Silent seepage with rust on the endbell", "No visible leak", "Water on the floor away from the pump"], "answer": 1},
+    {"q": "You should never lubricate O-rings with…", "choices": ["Silicone", "Teflon-safe silicone", "Petroleum grease", "Water"], "answer": 2},
+    {"q": "Before removing the pump motor you must…", "choices": ["Skip the breaker", "Power off, lock out, close valves, drain the volute", "Just close the valves", "Just turn off the timer"], "answer": 1},
+    {"q": "The rotating half of the seal sits on which component?", "choices": ["The seal plate", "The impeller hub", "The volute wall", "The motor endbell"], "answer": 1},
+    {"q": "A chipped ceramic face on the stationary seal half means…", "choices": ["It's fine — will polish in", "Replace before installing", "Reversed installation", "Use two seals"], "answer": 1},
+    {"q": "Which is a legitimate reason to recommend motor replacement over seal-only repair?", "choices": ["Motor is 1 year old", "Shaft is grooved where seal ran", "Pool is heated", "Filter is dirty"], "answer": 1},
+    {"q": "First minute after seal installation shows small weeping. This is…", "choices": ["Immediate warranty return", "Normal bed-in; check again at 5–15 minutes", "Sign of dry-run damage", "Sign of over-torqued impeller"], "answer": 1},
+    {"q": "You gripped the impeller vanes with pliers to hold the shaft. Result?", "choices": ["Nothing", "Bent vanes and unbalanced pump", "Better seal seat", "Longer motor life"], "answer": 1},
+    {"q": "A dropped shaft during motor separation…", "choices": ["Is recoverable", "Bends the shaft and destroys the new seal", "Only affects the volute", "Improves alignment"], "answer": 1}
+  ]
+}

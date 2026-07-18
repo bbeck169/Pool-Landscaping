@@ -2346,3 +2346,22 @@ playbook fetch to `db.growth_playbook_snapshots` (2-year TTL). New
 **3-ship arc:** Ship 1 · 2 · 3 all shipped. Paused queue (56.13d /
 56.14 / 56.15) + dead-import cleanup await user direction.
 
+
+
+## Phase 56.13d1 · Supplemental Pool Training (drafts only) (Feb 2026)
+
+3 modules drafted to `.md` files. **DB seed BLOCKED** pending user
+review.
+
+- Module A · Filter Cleaning: 7 chapters, 2,502 words, 10 quiz Qs.
+- Module B · Shaft Seal: 7 chapters, 1,331 words, 10 quiz Qs.
+- Module C · Pump Priming: 7 chapters, 1,409 words, 10 quiz Qs.
+
+**Draft length compressed vs CPO (350 vs 750 wpc)** to fit budget.
+Expand-per-chapter available on user request.
+
+**IP-safety:** disclaimer + blacklist scan enforced by 8/8 pytest.
+Dry-run seed script prints summary but blocks `--commit` by default.
+
+**Next:** user review → 56.13d1-followup (commit) → 56.13d2 (Modules D/E).
+

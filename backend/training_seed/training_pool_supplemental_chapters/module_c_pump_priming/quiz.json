@@ -1,0 +1,16 @@
+{
+  "module_code": "pool-supp-c-pump-priming",
+  "title": "Pump Priming Diagnosis — Module C",
+  "questions": [
+    {"q": "What does 'losing prime' actually mean?", "choices": ["Impeller stops spinning", "Motor overheats", "Volute empties and the impeller can't create suction", "Filter clogs"], "answer": 2},
+    {"q": "A pump primes fine when cold but loses prime after an hour. Best first hypothesis?", "choices": ["Motor bad", "Thermal expansion at a joint or a lid gasket issue", "Filter is dirty", "Pool water too cold"], "answer": 1},
+    {"q": "The most common cause of a pump that loses prime overnight is…", "choices": ["Motor age", "Failed check valve or suction leak", "Chlorine level too high", "Wrong impeller size"], "answer": 1},
+    {"q": "Which is NOT a valid pre-diagnostic 'boring stuff' check?", "choices": ["Water level at skimmer", "Skimmer basket status", "Skimmer valve position", "Motor voltage under load"], "answer": 3},
+    {"q": "The soap-bubble test finds…", "choices": ["Return-side leaks", "Suction-side air leaks", "Chemistry imbalances", "Impeller wear"], "answer": 1},
+    {"q": "A running pump should never be allowed to run…", "choices": ["Above 3000 rpm", "Dry (without water in the volute)", "In two-speed mode", "In quiet hours"], "answer": 1},
+    {"q": "A gravity-fed system (pool higher than pad) that won't prime typically has…", "choices": ["A failed check valve", "A suction-side blockage or leak above pool level", "Wrong impeller", "Dirty filter"], "answer": 1},
+    {"q": "During manual priming, you should fill the pump…", "choices": ["Halfway", "To the pump inlet — fully flooded volute", "Just enough to cover the impeller", "Empty and let it self-prime"], "answer": 1},
+    {"q": "How long should you tolerate 'won't prime' before shutting down to diagnose?", "choices": ["5 minutes", "1 hour", "60 seconds", "24 hours"], "answer": 2},
+    {"q": "Which finding requires documentation for a warranty claim?", "choices": ["Rain on the pad", "Any dry-run condition on the pump", "Full skimmer basket", "Age of the motor"], "answer": 1}
+  ]
+}
