@@ -14,7 +14,7 @@ import {
   CalendarDays, DoorOpen, Clock, MessageSquare,
   Calculator, FlaskConical, Home as HomeIcon, Boxes, Wrench, Magnet,
   ClipboardList, Trophy, IdCard, DollarSign, TrendingUp,
-  UserCircle, MapPin,
+  UserCircle, MapPin, Settings,
 } from "lucide-react";
 const TECH_SECTIONS = [
   {
@@ -71,6 +71,7 @@ const ADMIN_SECTIONS = [
       { key: "analysis-tools", icon: TrendingUp, label: "Business Analysis", desc: "Route valuation · Pay model comparator", to: "/admin/tools/analysis" },
       { key: "document-generators", icon: ClipboardList, label: "Document Generators", desc: "Printable checklist templates · Quick service reports", to: "/admin/tools/documents" },
       { key: "price-checker", icon: Magnet, label: "Service Price Checker", desc: "51-state market-rate lookup", to: "/admin/tools/price-check" },
+      { key: "pricing-defaults", icon: Settings, label: "Pricing Defaults", desc: "Tune the constants used by every T3/T5 calculator", to: "/admin/settings/pricing-defaults" },
       { key: "checks", icon: Wrench, label: "Check Register", desc: "Write checks, batch payroll", to: "/admin/checks" },
       { key: "dispatch", icon: CalendarDays, label: "Dispatch", desc: "Assign & auto-route jobs", to: "/admin/dispatch" },
     ],

@@ -44,6 +44,7 @@ from routers import (
     customer_equipment_photos as customer_equipment_photos_router,
     pool_calculators,
     document_generators,
+    pricing_defaults_router,
 )
 
 app = FastAPI(
@@ -90,7 +91,8 @@ for module in [notifications_router,
                training_router,
                customer_equipment_photos_router,
                pool_calculators,
-               document_generators]:
+               document_generators,
+               pricing_defaults_router]:
     api_router.include_router(module.router)
 
 

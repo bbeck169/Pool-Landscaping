@@ -2252,3 +2252,50 @@ ship (~110 min total): T4.3 Route Valuation PDF, T4.1 SYSTEM
 badge UI, T3-followup pricing_defaults editor, T3.2 recommend-
 price-increase one-click flow.
 
+
+
+---
+
+## Ship 1 · Polish Batch (Feb 2026)
+
+Closes deferred UI polish from the T-phase arc (T4.3 PDF, T4.1 SYSTEM
+badge, T3-followup defaults editor, T3.2 Recommend price increase).
+See HANDOFF.md for full evidence + curl output + screenshots.
+
+### Deliverables
+
+- **T4.3 · Route Valuation PDF** — `POST /api/documents/route-valuation-pdf`
+  ReportLab pipeline. Download button on `/admin/tools/analysis`.
+- **T4.1 · SYSTEM badge + Clone-to-Edit** — system templates
+  read-only-in-place; clone endpoint creates tenant-scoped editable
+  copies; delete guard on `is_system: True` rows.
+- **T3-followup · Pricing Defaults editor** —
+  `GET/PUT /api/settings/pricing-defaults` full CRUD on 30+ constants
+  across 3 tenant.settings sub-documents. Frontend at
+  `/admin/settings/pricing-defaults`.
+- **T3.2 · Recommend price increase** — row-level action on Cost per
+  Pool table for low_margin / negative_margin customers only. Draft-vs-
+  Send workflow with Resend-graceful email pipeline + snapshot-based
+  idempotency key.
+
+### Tests
+
+`backend/tests/test_polish_batch.py` — 22 tests / 22 passed / 5.25s.
+Preflight exit 0. Dead-imports unchanged at 429.
+
+### Backlog (STOPPED — awaiting user go-signal)
+
+- **Ship 2 · Growth Playbook tab** on `/admin/tools/analysis` — frontend
+  composition surfacing today's route value + market-median scenario +
+  churn breakeven in one glance.
+- **Ship 3 · Nudge non-starters** — bulk notification button on the CPO
+  Readiness widget targeting techs who haven't completed onboarding.
+
+### Deferred (post-Ship 3)
+
+- Mobile parity for pricing-defaults editor + Recommend modal.
+- Bulk price-increase campaign action (per-customer only currently).
+- Historical price-increase email log on customer detail page.
+- Send-scheduling on Recommend modal (immediate send only currently).
+- 429 dead-import cleanup pass.
+

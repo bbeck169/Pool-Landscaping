@@ -94,6 +94,20 @@ function ChecklistPanel() {
     } catch (e) { setErr(e.message); }
   };
 
+  const cloneToEdit = async (id) => {
+    setErr(null);
+    try {
+      const clone = await api.post(`/documents/checklist-templates/${id}/clone`, {});
+      const r = await api.get("/documents/checklist-templates");
+      setTemplates(r.rows || []);
+      // Load the fresh tenant-scoped clone into the editor.
+      const {is_system, cloned_from_id, cloned_from_code, created_by, created_at, updated_at, tenant_id, ...editable} = clone;
+      setT(editable);
+      setFlash({ ok: true, msg: `Cloned ✓ — now editable` });
+    } catch (e) { setErr(e.message); }
+    setTimeout(() => setFlash(null), 3000);
+  };
+
   const toggleReading = (k) => {
     setT({...t, readings_rows: t.readings_rows.includes(k)
         ? t.readings_rows.filter(r => r !== k)
@@ -228,16 +242,41 @@ function ChecklistPanel() {
         <div className="mt-4">
           <div className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: colors.muted }}>Saved templates ({templates.length})</div>
           <ul className="text-sm space-y-1">
-            {templates.map(tpl => (
-              <li key={tpl.id} className="flex items-center gap-2" data-testid={`cl-tpl-${tpl.id}`}>
-                <button onClick={() => setT(tpl)} className="flex-1 text-left font-semibold"
-                        style={{color: colors.brand}}
-                        data-testid={`cl-tpl-open-${tpl.id}`}>{tpl.name}</button>
-                <button onClick={() => del(tpl.id)} data-testid={`cl-tpl-delete-${tpl.id}`}>
-                  <Trash2 size={14} color="#991B1B" />
-                </button>
-              </li>
-            ))}
+            {templates.map(tpl => {
+              const isSystem = !!tpl.is_system;
+              return (
+                <li key={tpl.id} className="flex items-center gap-2" data-testid={`cl-tpl-${tpl.id}`}>
+                  {!isSystem ? (
+                    <button onClick={() => setT(tpl)} className="flex-1 text-left font-semibold"
+                            style={{color: colors.brand}}
+                            data-testid={`cl-tpl-open-${tpl.id}`}>{tpl.name}</button>
+                  ) : (
+                    <span className="flex-1 text-left font-semibold" style={{color: colors.onSurface}}>
+                      {tpl.name}
+                    </span>
+                  )}
+                  {isSystem ? (
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                          style={{ backgroundColor: `${colors.brand}22`, color: colors.brand, border: `1px solid ${colors.brand}55` }}
+                          data-testid={`cl-tpl-system-badge-${tpl.id}`}>
+                      System
+                    </span>
+                  ) : null}
+                  {isSystem ? (
+                    <button onClick={() => cloneToEdit(tpl.id)}
+                            className="text-xs font-semibold rounded-lg px-2 py-1"
+                            style={{ backgroundColor: colors.brand, color: "#fff" }}
+                            data-testid={`cl-tpl-clone-${tpl.id}`}>
+                      Clone to Edit
+                    </button>
+                  ) : (
+                    <button onClick={() => del(tpl.id)} data-testid={`cl-tpl-delete-${tpl.id}`}>
+                      <Trash2 size={14} color="#991B1B" />
+                    </button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       </div>

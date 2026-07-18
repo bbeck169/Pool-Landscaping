@@ -1363,3 +1363,274 @@ Total surface delivered across this multi-ship arc:
 Total polish batch: ~110 min. Sensible next ship after user
 review.
 
+
+
+---
+
+## Ship 1 · Polish Batch SHIPPED (Feb 2026)
+
+Closes deferred UI affordances from the T-phase arc. Four items landed in
+the order the user specified; STOP-gate honored (Ship 2 · Growth Playbook
+tab and Ship 3 · Nudge non-starters awaiting user go-signal).
+
+### Item 1 · T4.3 · Route Valuation PDF
+
+**New endpoint:** `POST /api/documents/route-valuation-pdf`
+(`_require_admin`). Accepts the exact `RouteValuationOut` shape returned
+by `POST /calculators/route-valuation` — frontend computes first, then
+POSTs the same payload for the printable version. Reuses
+`document_generators._get_reportlab` + `_tenant_header` helpers so the
+brand/header treatment matches T4.1 + T4.2 output.
+
+Renders:
+- Tenant header (name · phone)
+- Title "Route Valuation" + generated timestamp + generator email
+- 8-row headline stats table (active customers, monthly rev, annual rev,
+  annual gross profit, multiple, valuation, per-customer, avg monthly
+  rev/customer)
+- Multiple breakdown table (density/churn/contract/combined factors,
+  lerp bounds)
+- Industry benchmark narrative ("$X is `below industry` the industry
+  band of $1500 – $3500.")
+- Optional notes section
+- Footer disclaimer
+
+**Frontend:** `BusinessAnalysisTools.jsx` — new **Download PDF** button
+alongside **Copy summary** below the route valuation result. Uses the
+same `Blob → createObjectURL → <a download>` dance as T4.1/T4.2 PDF
+downloads; passes `generated_by` from `localStorage.user.email`.
+
+### Item 2 · T4.1 · SYSTEM badge + Clone-to-Edit
+
+**Backend:**
+- `GET /api/documents/checklist-templates` now returns tenant-scoped
+  **plus** `is_system: True` seeded templates (single-query
+  `$or: [{tenant_id: X}, {is_system: True}]`).
+- `DELETE /api/documents/checklist-templates/{id}` now returns **403
+  with detail "System templates cannot be deleted. Clone to edit
+  instead."** for `is_system: True` rows. Tenant-scoped rows delete as
+  before.
+- `GET /api/documents/checklist-template/{id}/pdf` now finds system rows
+  for any tenant (so admin can preview before cloning).
+- **NEW** `POST /api/documents/checklist-templates/{id}/clone`
+  (`_require_admin`) — creates a fresh tenant-scoped `is_system: False`
+  copy of any system OR tenant row. Copies all `readings_rows`,
+  `checklist_items`, section toggles. Names it `"<name> (copy)"`.
+  Persists `cloned_from_id` + `cloned_from_code` for traceability.
+  Repeat clicks intentionally create distinct copies (admin may want a
+  v2 draft).
+
+**Frontend:** `DocumentGenerators.jsx` saved-templates list —
+- Every row with `tpl.is_system === true` renders:
+  * name as plain text (no click-to-open)
+  * **SYSTEM** pill badge (brand-color, 1px border)
+  * **Clone to Edit** primary button (data-testid `cl-tpl-clone-{id}`)
+- Tenant-scoped rows unchanged (click-to-open + trash icon)
+- After a successful clone: fresh row loaded into the editor
+  automatically + templates list refetched; system fields stripped
+  (`is_system`, `cloned_from_*`, `tenant_id`, `created_by`, timestamps)
+  before assigning to the editor's `t` state.
+- "Cloned ✓ — now editable" toast for 3 seconds.
+
+### Item 3 · T3-followup · pricing_defaults editor page
+
+**Backend:** new router `backend/routers/pricing_defaults_router.py`
+(~330 LOC). Two endpoints (`_require_admin`):
+- `GET /api/settings/pricing-defaults` — returns three parallel dicts:
+  `spec_defaults`, `tenant_overrides`, `effective` (spec ← merge ← override).
+  Every UI reset-button uses the spec value as the "app default" label.
+- `PUT /api/settings/pricing-defaults` — partial patch. Structure:
+  `{pricing_defaults?: {...}, route_valuation_defaults?: {...}, pay_model_defaults?: {...}}`.
+  Any value with an explicit `null` **removes** the override (reset to
+  app default) via `merged.pop(key)`.
+
+**Validation** (`_BOUNDS` table) — every editable numeric field is
+range-checked at PUT time. Examples:
+- `pricing_defaults.margin_target_pct`: [0.0, 200.0]
+- `pricing_defaults.base_weekly`: [0.0, 10000.0]
+- `pay_model_defaults.route_buy_pct`: [0.0, 100.0]
+- `route_valuation_defaults.multiple_min|multiple_max`: [0.1, 20.0]
+Rejections return **422 with detail** `pricing_defaults.margin_target_pct:
+must be in [0.0, 200.0]`. Enum + dict fields have their own guards
+(e.g. `route_valuation_defaults.route_density ∈ {dense, medium, spread}`).
+
+**Frontend:** `PricingDefaultsEditor.jsx` at
+`/admin/settings/pricing-defaults` (AdminOnly gated). Three collapsible
+`<Section>` components — one per settings key. Each section:
+- Header title + subtitle + override count + "Reset section" button
+  (when overrides exist).
+- Per-field `<Row>`: label + numeric input (with $/%/×/mo/gal unit
+  suffix) + info tooltip + `RotateCcw` reset button per-field. Reset is
+  disabled + dimmed when the field is on spec default; enabled + brand
+  when overridden. "overridden" pill badge next to overridden labels.
+- Save button in header shows a pending-count badge (`(3)`) when unsaved
+  edits exist. Saves send only the fields the admin actually touched.
+
+Tools hub tile added: **Pricing Defaults · Tune the constants used by
+every T3/T5 calculator** under Admin Tools section.
+
+### Item 4 · T3.2 · Recommend price increase (Cost per Pool row action)
+
+**Backend** (new endpoints in `pricing_defaults_router.py`):
+
+- `GET /api/calculators/price-increase-suggestion?customer_id=X` —
+  loads customer + active billing_plan, computes per-visit in-cost
+  using the **same formula as `/calculators/cost-per-pool`** so the
+  numbers line up exactly. Returns:
+  - `per_visit_in_cost` (baseline chem + labor × overhead multiplier)
+  - `current_price_per_visit`, `current_monthly_revenue`,
+    `current_monthly_in_cost`, `current_margin_pct`
+  - `target_margin_pct` (from `pricing_defaults`)
+  - `recommended_price_per_visit` = `in_cost / (1 - target_margin/100)`
+  - `customer_email` (empty string if none — UI shows a warning)
+
+- `POST /api/calculators/recommend-price-increase` — 3 actions:
+  - `preview` (no persistence) — returns subject + html + text +
+    `existing_status` (surface if a draft already exists for this
+    snapshot).
+  - `draft` — upserts an `outbound_emails` row with `status: "draft"`,
+    kind `price_increase_recommendation`, `module: "price_increase"`.
+  - `send` — attempts Resend delivery on top of the draft row; flips
+    status to `sent` / `failed` / `not_sent_missing_key`.
+
+**Idempotency** (per user spec): key =
+`{tenant_id}:{customer_id}:price_increase:{current_price}->{recommended_price}`.
+Same snapshot twice → same row id. Different `recommended_price` → new
+draft (legitimate re-fire, not a duplicate). Verified via test
+`test_draft_idempotent_snapshot`.
+
+**Anti-accidental-send**: default modal action is **Save Draft**; admin
+must explicitly click **Send Now** to attempt Resend delivery. Draft
+persists indefinitely so admin can revisit.
+
+**Email pipeline** (`services/price_increase_email.py`, ~230 LOC):
+Same graceful-degradation as `services/auto_visit_email.py`:
+- Success → `status: "sent"` + `resend_id`.
+- Missing `RESEND_API_KEY` → `status: "not_sent_missing_key"`, full
+  HTML/text preserved for later firing.
+- Resend error → `status: "failed"` + `error` snippet (200 chars, no
+  secret leak).
+- No customer email on file → `status: "failed"` on `send`, but `draft`
+  still succeeds (row saved for later when email is added).
+
+**Frontend:** `BusinessPricingTools.jsx :: CostPerPoolPanel`:
+- New table column **Action** at the end of every row.
+- On rows with `low_margin` or `negative_margin` flag → **Recommend →**
+  button (brand fill, `TrendingUp` icon). Rows with `high_margin` show
+  no button (per user directive: don't tempt price hikes on customers
+  already above cost).
+- Clicking the button opens `<RecommendModal>` (new component) — fetches
+  `price-increase-suggestion`, pre-fills form, renders modal with:
+  - 3 stat tiles (Current price/visit · In-cost/visit · Current margin)
+  - Editable recommended price with live +$X (+X%) delta indicator
+    (green when positive, red when negative)
+  - Effective date (default = today + 30d)
+  - Optional reason (added to email body if provided)
+  - "No email on file" warning banner when applicable
+  - Preview panel (inline HTML render below inputs when preview action fires)
+  - Save state banner (green for `draft`/`sent`/`not_sent_missing_key`,
+    red for `failed` with error snippet)
+  - 4-button footer: Cancel · Preview · Save Draft · Send Now
+
+### Files touched / new
+
+- `backend/services/price_increase_email.py` (**NEW**, ~230 LOC)
+- `backend/routers/pricing_defaults_router.py` (**NEW**, ~330 LOC)
+- `backend/routers/document_generators.py`
+  (+ list guard, delete guard, clone endpoint, T4.3 PDF endpoint;
+   ~180 LOC added)
+- `backend/server.py` (register `pricing_defaults_router`)
+- `backend/tests/test_polish_batch.py` (**NEW**, 22 tests · all pass)
+- `frontend/src/pages/admin/PricingDefaultsEditor.jsx` (**NEW**, ~270 LOC)
+- `frontend/src/pages/admin/BusinessPricingTools.jsx`
+  (Action column + Recommend button + `<RecommendModal>` component)
+- `frontend/src/pages/admin/BusinessAnalysisTools.jsx`
+  (Download PDF button on Route Valuation tab)
+- `frontend/src/pages/admin/DocumentGenerators.jsx`
+  (SYSTEM badge + Clone-to-Edit + `cloneToEdit()` handler)
+- `frontend/src/pages/tech/ToolsHub.jsx` (Pricing Defaults tile)
+- `frontend/src/App.js` (import + route
+  `/admin/settings/pricing-defaults`)
+
+### Live curl evidence (all paths verified)
+
+**T4.3** — 200 OK · 2865-byte PDF · pypdf extraction confirms
+`$109,500.00`, `7.3x`, `dense`, `below industry` all present. Tech +
+customer both → 403.
+
+**T4.1** — `GET /documents/checklist-templates` returns 4 seeded
+system templates (`weekly_pool_service`, `weekly_landscape`,
+`new_customer_onboarding`, `winterization`). Clone endpoint returns
+new tenant-scoped row with `cloned_from_id` set. `DELETE` on system row
+→ 403 "System templates cannot be deleted…"
+
+**T3-followup** — `GET /settings/pricing-defaults` returns 3-key
+structure. `PUT` with partial patch works. Explicit `null` removes
+override. `margin_target_pct: 250` → 422 "must be in [0.0, 200.0]".
+`/calculators/service-price` reflects override immediately.
+
+**T3.2** — Aimee Baram (low_margin row) returns suggestion:
+in_cost $42.50, current price $50, current margin 15%, recommended
+$70.83 @ 40% target margin. Preview renders full HTML. First draft
+→ new id (`efc9…`). Same-snapshot re-draft → same id (idempotent ✓).
+Different `recommended_price` (75→80) → new id (`9d6b…`). `send` on
+existing draft → `failed` with test-mode Resend error snippet
+("You can only send testing emails to your own email address…").
+
+### Tests (22 pytest / 22 passed / 5.25s)
+
+`backend/tests/test_polish_batch.py`:
+
+- TestRouteValuationPDF (4): stream, headline contents, tech 403,
+  customer 403.
+- TestSystemTemplates (4): list includes system rows, delete blocked,
+  clone → tenant-scoped copy, tech cannot clone.
+- TestPricingDefaults (6): shape, roundtrip + reset, validation
+  bounds (2 cases), tech 403, customer 403, effective values reach
+  `/calculators/service-price`.
+- TestRecommendPriceIncrease (8): suggestion, preview does not persist,
+  draft idempotency across snapshots, send graceful fallback, invalid
+  action 422, negative price 422, tech 403, customer 403.
+
+### Preflight
+
+`bash scripts/preflight.sh` → **exit 0** (`preflight OK`).
+Dead-import WARN unchanged at **429** (no new false positives).
+
+### Screenshots
+
+1. **Pricing Defaults editor** — Service Pricing section expanded,
+   17 rows visible (tech_hourly_cost through adder_liquid_chlorine),
+   info-icon tooltips, per-field reset (dimmed when on default), header
+   Save button.
+2. **Cost per Pool table with Action column** — Aimee Baram (yellow
+   low_margin) has visible **Recommend →** button; Whitmore HOA and
+   Jennifer Carson (green high_margin) intentionally do NOT.
+3. **Recommend Price Increase modal** — Aimee Baram · littleflisser@gmail.com,
+   Current $50 · In-cost $42.50 · Margin 15%, Recommended $70.83
+   (+$20.83 / +41.7% in green), Effective 2026-08-17, Preview / Save
+   Draft / Send Now footer.
+4. **Document Generators** — Saved templates list showing "Weekly Pool
+   Service (copy)" (my clone from smoke test) followed by 4 SYSTEM rows,
+   each with SYSTEM pill badge + brand-filled Clone to Edit button.
+5. **Route Valuation** — Result panel with Copy summary + Download PDF
+   buttons in a flex row below the multiple breakdown.
+
+### Explicitly STOPPED here per user directive
+
+- Ship 2 (Growth Playbook tab on `/admin/tools/analysis`) — awaiting
+  go-signal.
+- Ship 3 (Nudge non-starters on CPO Readiness widget) — awaiting
+  go-signal.
+
+### Deferrals (explicit)
+
+- Mobile parity for pricing defaults editor + Recommend flow — admin
+  desktop-primary workflow; mobile not requested.
+- Send-scheduling ("schedule for X date") on the Recommend modal —
+  currently send is immediate; deferred.
+- Bulk "Recommend to all low_margin customers" action — deferred (per
+  user, this is a per-customer workflow, not a bulk campaign).
+- Historical log of sent price-increase emails on the customer detail
+  page — data lives in `outbound_emails` collection; UI surface deferred.
+

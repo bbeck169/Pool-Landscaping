@@ -10,9 +10,9 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  ArrowLeft, BarChart3, Users, TrendingUp, Copy,
+  ArrowLeft, BarChart3, Users, TrendingUp, Copy, Download,
 } from "lucide-react";
-import { api } from "@/api";
+import { api, api_base } from "@/api";
 import { colors } from "@/theme";
 
 const TABS = [
@@ -183,6 +183,7 @@ function RoutePanel() {
               <li>Combined factor <b>{result.breakdown.combined_factor}</b> → multiple lerped between {result.breakdown.multiple_min}x and {result.breakdown.multiple_max}x</li>
             </ul>
           </div>
+          <div className="flex items-center gap-2">
           <button onClick={() => copy(
             `Route valuation: $${result.route_valuation.toLocaleString()} · Multiple ${result.route_multiple}x · Per-customer $${result.valuation_per_customer}`
           )} className="text-xs font-semibold rounded-lg px-2 py-1 flex items-center gap-1"
@@ -190,6 +191,27 @@ function RoutePanel() {
              data-testid="route-copy">
             <Copy size={12} /> Copy summary
           </button>
+          <button onClick={async () => {
+            try {
+              const token = localStorage.getItem("token");
+              const r = await fetch(`${api_base()}/documents/route-valuation-pdf`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ ...result, generated_by: (JSON.parse(localStorage.getItem("user") || "{}").email || "") }),
+              });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              const blob = await r.blob();
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(blob);
+              a.download = "route-valuation.pdf";
+              a.click();
+            } catch (e) { setErr(e.message); }
+          }} className="ml-2 text-xs font-semibold rounded-lg px-2 py-1 flex items-center gap-1"
+             style={{ backgroundColor: colors.brand, color: "#fff" }}
+             data-testid="route-download-pdf">
+            <Download size={12} /> Download PDF
+          </button>
+          </div>
         </div>
       ) : null}
     </div>

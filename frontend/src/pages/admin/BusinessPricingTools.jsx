@@ -14,7 +14,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, DollarSign, LineChart, TrendingDown, Copy, Download,
-  CheckCircle2, AlertTriangle,
+  CheckCircle2, AlertTriangle, TrendingUp, X, Send, Save as SaveIcon, Eye,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -196,6 +196,7 @@ function CostPerPoolPanel() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [filter, setFilter] = useState("");
+  const [modal, setModal] = useState(null);  // {row, suggestion, recommended_price, effective_date, reason, preview, saveState}
   useEffect(() => {
     api.get("/calculators/cost-per-pool")
       .then(setData).catch((e) => setErr(e.message));
@@ -216,6 +217,59 @@ function CostPerPoolPanel() {
     a.href = URL.createObjectURL(blob);
     a.download = "cost-per-pool.csv";
     a.click();
+  };
+
+  const openRecommend = async (row) => {
+    setErr(null);
+    setModal({ row, loading: true });
+    try {
+      const s = await api.get(`/calculators/price-increase-suggestion?customer_id=${row.customer_id}`);
+      // default effective date = today + 30d
+      const eff = new Date(); eff.setDate(eff.getDate() + 30);
+      const iso = eff.toISOString().slice(0, 10);
+      setModal({
+        row, suggestion: s,
+        recommended_price: String(s.recommended_price_per_visit),
+        effective_date: iso,
+        reason: "",
+        preview: null,
+        saveState: null,
+      });
+    } catch (e) { setModal(null); setErr(e.message); }
+  };
+
+  const closeModal = () => setModal(null);
+
+  const doPreview = async () => {
+    if (!modal) return;
+    try {
+      const r = await api.post("/calculators/recommend-price-increase", {
+        customer_id: modal.row.customer_id,
+        current_price: modal.suggestion.current_price_per_visit,
+        recommended_price: parseFloat(modal.recommended_price),
+        current_margin_pct: modal.suggestion.current_margin_pct,
+        effective_date: modal.effective_date,
+        reason: modal.reason || null,
+        action: "preview",
+      });
+      setModal({...modal, preview: r, saveState: null});
+    } catch (e) { setModal({...modal, saveState: {error: e.message}}); }
+  };
+
+  const doAction = async (action) => {
+    if (!modal) return;
+    try {
+      const r = await api.post("/calculators/recommend-price-increase", {
+        customer_id: modal.row.customer_id,
+        current_price: modal.suggestion.current_price_per_visit,
+        recommended_price: parseFloat(modal.recommended_price),
+        current_margin_pct: modal.suggestion.current_margin_pct,
+        effective_date: modal.effective_date,
+        reason: modal.reason || null,
+        action,
+      });
+      setModal({...modal, saveState: r});
+    } catch (e) { setModal({...modal, saveState: {error: e.message}}); }
   };
 
   return (
@@ -256,6 +310,7 @@ function CostPerPoolPanel() {
                   <th className="text-right">Revenue/mo</th>
                   <th className="text-right">Margin $</th>
                   <th className="text-right">Margin %</th>
+                  <th className="text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -264,6 +319,7 @@ function CostPerPoolPanel() {
                   const isLow = (r.flags || []).includes("low_margin");
                   const isHigh = (r.flags || []).includes("high_margin");
                   const bg = isNeg ? "#FEE2E2" : isLow ? "#FEF3C7" : isHigh ? "#DCFCE7" : "transparent";
+                  const showRecommend = isNeg || isLow;
                   return (
                     <tr key={r.customer_id} style={{ backgroundColor: bg }} data-testid={`cpp-row-${r.customer_id}`}>
                       <td className="py-2">{r.customer_name}</td>
@@ -275,6 +331,16 @@ function CostPerPoolPanel() {
                         ${r.margin_amount}
                       </td>
                       <td className="text-right font-bold">{r.margin_pct ?? "—"}%</td>
+                      <td className="text-right">
+                        {showRecommend ? (
+                          <button onClick={() => openRecommend(r)}
+                                  className="text-xs font-semibold rounded-lg px-2 py-1 inline-flex items-center gap-1"
+                                  style={{ backgroundColor: colors.brand, color: "#fff" }}
+                                  data-testid={`cpp-recommend-${r.customer_id}`}>
+                            <TrendingUp size={11} /> Recommend →
+                          </button>
+                        ) : null}
+                      </td>
                     </tr>
                   );
                 })}
@@ -283,6 +349,164 @@ function CostPerPoolPanel() {
           </div>
         </>
       )}
+
+      {modal ? <RecommendModal
+                 modal={modal}
+                 onClose={closeModal}
+                 setModal={setModal}
+                 onPreview={doPreview}
+                 onDraft={() => doAction("draft")}
+                 onSend={() => doAction("send")} /> : null}
+    </div>
+  );
+}
+
+// ── T3.2 modal — "Recommend price increase" ─────────────────────────
+function RecommendModal({ modal, onClose, setModal, onPreview, onDraft, onSend }) {
+  if (!modal) return null;
+  if (modal.loading) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center"
+           style={{ backgroundColor: "rgba(0,0,0,0.4)" }} data-testid="recommend-modal">
+        <div className="rounded-2xl p-6" style={{backgroundColor: colors.surface}}>Loading suggestion…</div>
+      </div>
+    );
+  }
+  const s = modal.suggestion;
+  const p = modal.preview;
+  const sv = modal.saveState;
+  const change = parseFloat(modal.recommended_price || 0) - s.current_price_per_visit;
+  const changePct = s.current_price_per_visit ? (change / s.current_price_per_visit * 100) : 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center p-6 overflow-y-auto"
+         style={{ backgroundColor: "rgba(0,0,0,0.4)" }} data-testid="recommend-modal">
+      <div className="rounded-2xl max-w-2xl w-full my-4"
+           style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+        <div className="flex items-center justify-between p-4"
+             style={{ borderBottom: `1px solid ${colors.border}` }}>
+          <div>
+            <div className="text-lg font-bold" style={{ color: colors.onSurface }}>
+              Recommend price increase
+            </div>
+            <div className="text-xs" style={{ color: colors.muted }}>
+              {s.customer_name} · {s.customer_email || "no email on file"}
+            </div>
+          </div>
+          <button onClick={onClose} data-testid="recommend-close">
+            <X size={18} color={colors.muted} />
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            <Stat label="Current price/visit" value={`$${s.current_price_per_visit}`} />
+            <Stat label="In-cost/visit" value={`$${s.per_visit_in_cost}`} />
+            <Stat label="Current margin" value={`${s.current_margin_pct ?? "—"}%`} />
+          </div>
+          <label className="block">
+            <span className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.muted }}>
+              Recommended price / visit (target margin {s.target_margin_pct}%)
+            </span>
+            <div className="flex items-center gap-2 mt-1 rounded-lg px-3 py-2"
+                 style={{ backgroundColor: colors.background, border: `1px solid ${colors.border}` }}>
+              <span style={{color: colors.muted}}>$</span>
+              <input value={modal.recommended_price}
+                     onChange={(e) => setModal({...modal, recommended_price: e.target.value, preview: null, saveState: null})}
+                     type="number" step="any"
+                     className="w-full bg-transparent focus:outline-none text-base"
+                     style={{ color: colors.onSurface }}
+                     data-testid="recommend-price-input" />
+              <span className="text-xs" style={{color: change >= 0 ? "#166534" : "#991B1B"}}>
+                {change >= 0 ? "+" : ""}{change.toFixed(2)} ({changePct.toFixed(1)}%)
+              </span>
+            </div>
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.muted }}>Effective date</span>
+              <input value={modal.effective_date}
+                     onChange={(e) => setModal({...modal, effective_date: e.target.value, preview: null, saveState: null})}
+                     type="date"
+                     className="mt-1 w-full rounded-lg px-3 py-2"
+                     style={{backgroundColor: colors.background, border: `1px solid ${colors.border}`, color: colors.onSurface}}
+                     data-testid="recommend-effective-date" />
+            </label>
+            <label className="block">
+              <span className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.muted }}>Reason (optional, added to email body)</span>
+              <input value={modal.reason}
+                     onChange={(e) => setModal({...modal, reason: e.target.value, preview: null, saveState: null})}
+                     placeholder="e.g., chemical cost inflation"
+                     className="mt-1 w-full rounded-lg px-3 py-2"
+                     style={{backgroundColor: colors.background, border: `1px solid ${colors.border}`, color: colors.onSurface}}
+                     data-testid="recommend-reason" />
+            </label>
+          </div>
+          {!s.customer_email ? (
+            <div className="text-xs rounded-lg p-2"
+                 style={{ backgroundColor: "#FEE2E2", color: "#991B1B" }}
+                 data-testid="recommend-no-email">
+              This customer has no email on file. You can still Save Draft; Send Now will fail until an email is added.
+            </div>
+          ) : null}
+          {p ? (
+            <div className="rounded-lg p-3" data-testid="recommend-preview"
+                 style={{ backgroundColor: colors.background, border: `1px solid ${colors.border}` }}>
+              <div className="text-xs font-bold uppercase tracking-wider mb-2" style={{ color: colors.muted }}>Preview</div>
+              <div className="text-sm mb-1"><b>Subject:</b> {p.subject}</div>
+              <div className="text-sm mb-1"><b>To:</b> {p.customer_email || "—"}</div>
+              {p.existing_status ? (
+                <div className="text-xs mt-1" style={{ color: colors.brand }}>
+                  Existing row for this snapshot: <b>{p.existing_status}</b>
+                </div>
+              ) : null}
+              <div className="mt-2 rounded p-3 max-h-64 overflow-y-auto"
+                   style={{ backgroundColor: "#fff", border: `1px solid ${colors.border}`, color: "#000" }}
+                   dangerouslySetInnerHTML={{ __html: p.html }} />
+            </div>
+          ) : null}
+          {sv ? (
+            <div className="rounded-lg p-2 text-xs" data-testid="recommend-save-state"
+                 style={{ backgroundColor: sv.error ? "#FEE2E2" : "#DCFCE7",
+                          color: sv.error ? "#991B1B" : "#166534" }}>
+              {sv.error ? `Error: ${sv.error}` : (
+                <>
+                  {sv.status === "draft" ? `Draft saved ✓ (id ${sv.id?.slice(0, 8)}) — admin can revisit later` : null}
+                  {sv.status === "sent" ? `Sent ✓ (Resend id ${sv.resend_id})` : null}
+                  {sv.status === "not_sent_missing_key" ? `Row saved as not_sent_missing_key — RESEND_API_KEY is unset in this environment. Draft persisted; will send once key is added.` : null}
+                  {sv.status === "failed" ? `Send failed: ${sv.error || "unknown"}` : null}
+                </>
+              )}
+            </div>
+          ) : null}
+        </div>
+        <div className="p-4 flex items-center justify-end gap-2"
+             style={{ borderTop: `1px solid ${colors.border}` }}>
+          <button onClick={onClose}
+                  className="text-sm font-semibold px-3 py-2 rounded-lg"
+                  style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+                  data-testid="recommend-cancel">
+            Cancel
+          </button>
+          <button onClick={onPreview}
+                  className="text-sm font-semibold px-3 py-2 rounded-lg inline-flex items-center gap-1"
+                  style={{ backgroundColor: colors.surface, border: `1px solid ${colors.brand}`, color: colors.brand }}
+                  data-testid="recommend-preview-btn">
+            <Eye size={13} /> Preview
+          </button>
+          <button onClick={onDraft}
+                  className="text-sm font-semibold px-3 py-2 rounded-lg inline-flex items-center gap-1"
+                  style={{ backgroundColor: colors.brand, color: "#fff" }}
+                  data-testid="recommend-save-draft">
+            <SaveIcon size={13} /> Save Draft
+          </button>
+          <button onClick={onSend}
+                  className="text-sm font-semibold px-3 py-2 rounded-lg inline-flex items-center gap-1"
+                  style={{ backgroundColor: "#166534", color: "#fff" }}
+                  data-testid="recommend-send-now">
+            <Send size={13} /> Send Now
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
