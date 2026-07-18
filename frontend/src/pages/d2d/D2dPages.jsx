@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from 'react-router-dom';
 import { api } from "@/api";
 import { colors } from "@/theme";
 import MapView from "@/components/MapView";

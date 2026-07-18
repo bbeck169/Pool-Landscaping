@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Repeat, Sparkles } from "lucide-react";
+import { ArrowLeft, Repeat } from 'lucide-react';
 import { api } from "@/api";
 import { colors } from "@/theme";
 import {

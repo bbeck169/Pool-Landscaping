@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from "react-router-dom";
-import { Plus, ArrowLeft, Check, X as XIcon, Send } from "lucide-react";
+import { ArrowLeft, Check, X as XIcon, Send } from 'lucide-react';
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { useAuth } from "@/auth";

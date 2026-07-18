@@ -5,11 +5,8 @@
  * "All My Tools" hub or from the More menu without having to be on a job.
  */
 import React, { useMemo, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, Platform } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import { Header } from "@/src/components/widgets";
-import { Sheet } from "@/src/components/ui";
-import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { View, Text, Pressable, TextInput } from 'react-native';
+import { colors, spacing } from '@/src/theme';
 
 type Tool = "dosing" | "volume" | "salt" | "lsi";
 

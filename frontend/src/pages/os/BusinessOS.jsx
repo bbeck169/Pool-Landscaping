@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { NavLink, Outlet, Link, useParams, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, Link } from 'react-router-dom';
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 import {

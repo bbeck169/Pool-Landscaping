@@ -14,9 +14,9 @@ import {
   ClipboardCheck,
 } from "lucide-react";
 import { api } from "@/api";
-import { brandGradientCss, colors, money } from "@/theme";
+import { brandGradientCss, colors } from '@/theme';
 import { useAuth } from "@/auth";
-import { PageHeader, Button, Skeleton, Chip, StatusPill } from "@/components/ui-kit";
+import { Skeleton, StatusPill } from '@/components/ui-kit';
 
 export default function PortalHome() {
   const { user } = useAuth();

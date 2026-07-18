@@ -18,8 +18,7 @@ import {
   Star,
 } from "lucide-react";
 import { api } from "@/api";
-import { colors, money } from "@/theme";
-import { usePermissions } from "@/hooks/usePermissions";
+import { colors } from '@/theme';
 import {
   PageHeader,
   Button,

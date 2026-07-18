@@ -2,11 +2,8 @@
  * Phase 20B mobile A.4 · Employee onboarding checklist.
  * Any authenticated user can access; renders only their own assignments.
  */
-import React, { useCallback, useMemo, useState } from "react";
-import {
-  View, Text, StyleSheet, ScrollView, Pressable, RefreshControl,
-  Modal, TextInput, Alert,
-} from "react-native";
+import React, { useCallback, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, Modal, Alert } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import { WebView } from "react-native-webview";
 import { useFocusEffect } from "expo-router";

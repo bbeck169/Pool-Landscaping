@@ -14,9 +14,9 @@
  * remain admin-visible only. This matches the answer-key redaction
  * policy that shipped in Phase 56.13a-commit.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Award, CheckCircle, XCircle, RotateCcw, Download } from "lucide-react";
+import { ArrowLeft, Award, RotateCcw, Download } from 'lucide-react';
 import { api } from "@/api";
 import { colors } from "@/theme";
 

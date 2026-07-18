@@ -4,7 +4,7 @@
  * autosaves every 5s while dirty, enforces 10-photo cap, and finalizes with
  * "Submit Report & Clock Out".
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";

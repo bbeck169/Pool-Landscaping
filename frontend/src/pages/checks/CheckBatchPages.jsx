@@ -2,7 +2,7 @@
  * Phase 26.3 · Batch checks + Payroll CSV import.
  * Exports: CheckBatchNew (default), CheckPayrollImport.
  */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Plus, Trash2, Upload, FileText, Users,

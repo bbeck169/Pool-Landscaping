@@ -3,7 +3,7 @@ import { View, Text, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 
-import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { colors, spacing, font, fontSize } from '@/src/theme';
 import { PrimaryButton } from "@/src/components/ui";
 
 export default function PaymentComplete() {

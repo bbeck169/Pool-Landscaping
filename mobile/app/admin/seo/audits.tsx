@@ -1,13 +1,12 @@
 /** Phase 17A · Mobile — Site Auditor list. */
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput,
   Modal, Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter, useFocusEffect } from "expo-router";
+import { useRouter } from 'expo-router';
 
-import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { AdminOnlyGate, ScoreChip, BrandPill, CenterLoader } from "./_shared";

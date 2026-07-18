@@ -16,7 +16,7 @@
  * string verbatim.
  */
 import React, { useRef, useState, useEffect, useMemo, useCallback } from "react";
-import { AlertTriangle, CheckCircle2, FlaskConical, Plus, RefreshCw, Trash2, Pencil, X as CloseX } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FlaskConical, RefreshCw } from 'lucide-react';
 import { api } from "@/api";
 import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDropdownStack";
 import ChemicalPickerModal from "./ChemicalPickerModal";

@@ -9,7 +9,7 @@
  * zero-filled 12-month chart so the layout doesn't collapse, and
  * surface the `reason` string prominently above.
  */
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   TrendingUp, TrendingDown, Send, ChevronDown, ChevronUp, Loader2,
   Star, StarOff, Sparkles, RotateCw,

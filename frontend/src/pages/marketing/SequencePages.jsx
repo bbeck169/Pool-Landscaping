@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Plus, Play, Pause, X, Users } from "lucide-react";
+import { ArrowLeft, Plus, Play, Pause, X } from 'lucide-react';
 import { api } from "@/api";
 import { colors } from "@/theme";
 

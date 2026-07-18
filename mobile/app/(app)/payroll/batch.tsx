@@ -17,17 +17,14 @@
  *   POST /api/checks/payroll/import-csv?bank_account_id=...&execute=false|true
  */
 import React, { useCallback, useMemo, useState } from "react";
-import {
-  View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator,
-  TextInput, Platform, Linking,
-} from "react-native";
+import { View, Text, ScrollView, Pressable, ActivityIndicator, TextInput, Linking } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";
 
-import { api, api_base, getAuthToken } from "@/src/api";
+import { api, api_base } from '@/src/api';
 import { useAuth } from "@/src/auth";
-import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { colors, spacing } from '@/src/theme';
 import { Header } from "@/src/components/widgets";
 
 type Bank = { id: string; nickname: string; bank_name?: string; account_number_last4?: string; current_balance?: number };

@@ -1,7 +1,7 @@
 /**
  * Phase 20B mobile A.2 · Customer appointment booking.
  */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert,
 } from "react-native";

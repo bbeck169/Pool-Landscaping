@@ -9,7 +9,7 @@ import { useAuth } from "@/src/auth";
 import { useOnline, cacheJobs, getCachedJobs, flushPendingPhotos, flushPendingMutations } from "@/src/offline";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
-import { Header, JobCard, FilterRow, IconButton, NotificationBell, OfflineBanner } from "@/src/components/widgets";
+import { Header, JobCard, FilterRow, NotificationBell, OfflineBanner } from '@/src/components/widgets';
 
 const FILTERS = [
   { key: "all", label: "All" },

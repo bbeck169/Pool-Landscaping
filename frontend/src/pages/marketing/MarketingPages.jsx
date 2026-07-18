@@ -5,7 +5,7 @@ import {
   TrendingUp, Bot, Layers, MessageSquare, RefreshCw, Users, ClipboardList,
 } from "lucide-react";
 import { api } from "@/api";
-import { colors, money, brandGradient } from "@/theme";
+import { colors } from '@/theme';
 
 // Shared UI helpers ---------------------------------------------------------
 function Card({ children, className = "", testId }) {

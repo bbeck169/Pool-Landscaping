@@ -5,7 +5,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { RefreshCw, TrendingUp, Target, Percent, Activity } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, ReferenceLine, CartesianGrid, Tooltip, Legend } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { api } from "@/api";
 import { colors } from "@/theme";
 

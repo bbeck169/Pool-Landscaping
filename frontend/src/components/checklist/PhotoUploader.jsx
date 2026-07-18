@@ -10,7 +10,7 @@
  * JobDetail upload contract on web + mobile). No new endpoints.
  */
 import React, { useRef, useState } from "react";
-import { Camera, Image as ImageIcon, X, Loader2 } from "lucide-react";
+import { Camera, X, Loader2 } from 'lucide-react';
 import { api } from "@/api";
 
 const colors = {

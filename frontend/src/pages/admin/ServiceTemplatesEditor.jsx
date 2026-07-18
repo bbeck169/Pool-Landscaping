@@ -3,7 +3,7 @@
  * Tabs: Pool | Landscape | Generic. PUT-with-full-payload for simplicity;
  * per-field endpoints are available on the backend but not needed for MVP.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from 'react';
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 import {

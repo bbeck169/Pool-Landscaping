@@ -4,7 +4,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, BarChart, Bar,
 } from "recharts";
-import { ArrowLeft, DollarSign, Clock, ListChecks, TrendingUp, Users } from "lucide-react";
+import { ArrowLeft, DollarSign, Clock, ListChecks, TrendingUp } from 'lucide-react';
 import { api } from "@/api";
 import { colors, money, brandGradient } from "@/theme";
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";

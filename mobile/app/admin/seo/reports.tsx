@@ -1,5 +1,5 @@
 /** Phase 17C · Mobile — White-Label Reports: list, create, share PDF. */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput,
   Modal, Alert, ActivityIndicator, Switch,

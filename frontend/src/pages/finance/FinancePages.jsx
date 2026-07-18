@@ -6,7 +6,7 @@ import {
   Upload, FileDown, ExternalLink, Copy, Check,
 } from "lucide-react";
 import { api } from "@/api";
-import { colors, money, brandGradient } from "@/theme";
+import { colors, money } from '@/theme';
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
 
 function Card({ children, className = "", testId }) {

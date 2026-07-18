@@ -6,7 +6,7 @@
  * trail with fees, refunds, and net. Rows link to the underlying
  * invoice + Stripe receipt (when available). Admin-only.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, Filter, DollarSign, Receipt, RefreshCcw, ExternalLink } from "lucide-react";
 import { api } from "@/api";

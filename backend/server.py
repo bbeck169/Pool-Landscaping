@@ -50,6 +50,7 @@ from routers import (
     recommendations_queue,
     templates_library,
     handbook,
+    weekly_digest,
 )
 
 app = FastAPI(
@@ -102,7 +103,8 @@ for module in [notifications_router,
                training_nudge,
                recommendations_queue,
                templates_library,
-               handbook]:
+               handbook,
+               weekly_digest]:
     api_router.include_router(module.router)
 
 
@@ -286,6 +288,16 @@ async def _background_seed():
             run_monthly_pricing_digest,
             "cron", day=1, hour=9, minute=0,
             id="monthly_pricing_digest", replace_existing=True)
+        # Phase 4 · Batch C — Weekly digest email (Mondays 08:00 UTC).
+        # Per-tenant timezone is honored inside the service; the cron
+        # trigger fires globally at a reasonable US business hour.
+        from services.weekly_digest import run_weekly_digest, ensure_indexes as _wd_indexes
+        await _wd_indexes()
+        scheduler.add_job(
+            run_weekly_digest,
+            "cron", day_of_week="mon", hour=8, minute=0,
+            id="weekly_digest", replace_existing=True)
+        logger.info("scheduler: weekly_digest registered (Mondays 08:00 UTC)")
         scheduler.start()
     except Exception as e:
         logger.warning(f"scheduler registration skipped: {e}")

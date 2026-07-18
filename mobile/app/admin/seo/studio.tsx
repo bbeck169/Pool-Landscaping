@@ -1,5 +1,5 @@
 /** Phase 17C · Mobile — Studio: read-only page list + preview + 1-tap actions. */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Alert,
   Linking,

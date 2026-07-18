@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
-import { Plus, X, Check, Ban, Save } from "lucide-react";
+import { Plus, Check, Ban, Save } from 'lucide-react';
 
 const Card = ({ children, className = "", testId }) => (
   <div className={"rounded-2xl " + className}

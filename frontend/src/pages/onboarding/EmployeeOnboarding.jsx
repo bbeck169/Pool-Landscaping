@@ -2,8 +2,7 @@
  * Phase 20B.2 · Employee onboarding — templates editor, assignment queue,
  * and per-user "My onboarding" checklist. Bundled in one file for brevity.
  */
-import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useEffect, useState } from 'react';
 import { ClipboardCheck, Plus, Trash2, X, CheckCircle2, Circle, Users2, FileEdit } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";

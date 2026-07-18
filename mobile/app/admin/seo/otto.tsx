@@ -1,5 +1,5 @@
 /** Phase 17C · Mobile — OTTO cross-audit fix list with filters. */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable,
 } from "react-native";

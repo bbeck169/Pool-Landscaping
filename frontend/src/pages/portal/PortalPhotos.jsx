@@ -2,7 +2,7 @@
  * Phase 20B.1c · Customer photo history — grid gallery with zoom + filters.
  */
 import React, { useEffect, useState } from "react";
-import { Camera, ImageOff, X, ChevronDown } from "lucide-react";
+import { Camera, ImageOff, X } from 'lucide-react';
 import { api } from "@/api";
 import { colors } from "@/theme";
 

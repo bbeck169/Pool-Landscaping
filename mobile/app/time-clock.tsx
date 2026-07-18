@@ -8,7 +8,7 @@
  * only, keeping web/Expo-Go compatible.
  */
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView, Alert, Platform } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView, Alert } from 'react-native';
 import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";

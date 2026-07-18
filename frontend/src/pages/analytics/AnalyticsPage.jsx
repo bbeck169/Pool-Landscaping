@@ -5,7 +5,6 @@ import {
 } from "recharts";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
-import { TrendingUp, TrendingDown, Users, Activity, AlertTriangle, LineChart as LineIcon } from "lucide-react";
 
 /* ─── shared bits ────────────────────────────────────────────────── */
 const H = ({ title, sub, right }) => (

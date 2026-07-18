@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { X, ChevronRight, ExternalLink, Camera, ListChecks, FlaskConical,
-         Beaker, AlertTriangle, StickyNote, Wrench, PenTool, Link2, Share2 } from "lucide-react";
+import { X, ExternalLink, Camera, ListChecks, FlaskConical, Beaker, AlertTriangle, StickyNote, Wrench, PenTool, Link2, Share2 } from 'lucide-react';
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 

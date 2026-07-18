@@ -7,7 +7,7 @@
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { LibraryBig, Search, FileText, Waves, Calculator, ClipboardList } from "lucide-react";
+import { LibraryBig, Search, FileText, Calculator, ClipboardList } from 'lucide-react';
 import { colors, brandGradientCss } from "@/theme";
 import {
   TEMPLATE_CATEGORIES,

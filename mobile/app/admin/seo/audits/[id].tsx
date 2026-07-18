@@ -1,8 +1,6 @@
 /** Phase 17A · Mobile — Audit detail with score rings + tabbed issues/pages/otto. */
 import React, { useEffect, useState, useMemo } from "react";
-import {
-  View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator,
-} from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 

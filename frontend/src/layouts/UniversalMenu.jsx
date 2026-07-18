@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/auth";
 import { usePermissions } from "@/hooks/usePermissions";
-import { navForRole, navForRoleAndDept } from "@/nav/roleNav";
+import { navForRoleAndDept } from '@/nav/roleNav';
 import { colors } from "@/theme";
 import NotificationBell from "@/components/NotificationBell";
 

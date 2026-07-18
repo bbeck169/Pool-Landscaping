@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams } from 'react-router-dom';
 import SignatureCanvas from "react-signature-canvas";
 import { colors, brandGradientCss } from "@/theme";
 import { CheckCircle2, Download, RotateCcw } from "lucide-react";

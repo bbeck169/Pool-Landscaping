@@ -3,10 +3,7 @@
  * Auto-loaded after clock-in. Autosaves every 5s. Photo cap 10 (server-enforced).
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  ActivityIndicator, Alert, Platform, Modal, FlatList,
-} from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Alert } from 'react-native';
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";

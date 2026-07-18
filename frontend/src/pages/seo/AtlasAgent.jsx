@@ -4,7 +4,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Bot, Send, Wrench } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors } from '@/theme';
 
 export default function AtlasAgent() {
   const [messages, setMessages] = useState([]);

@@ -1,7 +1,7 @@
 /**
  * Phase 20B.1a · Portal chat threads (customer + admin, same shell).
  */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from 'react';
 import { MessageSquare, Plus, Send, X } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";

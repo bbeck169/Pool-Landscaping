@@ -9,7 +9,7 @@ import {
   AlertTriangle, Zap, X as CloseX, Crown,
 } from "lucide-react";
 import { api } from "@/api";
-import { colors, money } from "@/theme";
+import { colors } from '@/theme';
 
 /**
  * Phase 34g · Customer Retention Report (web-only).

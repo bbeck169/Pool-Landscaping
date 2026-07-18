@@ -26,7 +26,6 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { brandGradientCss, colors, money } from "@/theme";
-import { WeatherWidget } from "@/pages/aitools/AiToolsPages";
 import WeatherWidget5Day from "@/pages/aitools/WeatherWidget5Day";
 import TeamCpoReadinessWidget from "@/components/admin/TeamCpoReadinessWidget";
 import RecommendationsQueueWidget from "@/components/admin/RecommendationsQueueWidget";

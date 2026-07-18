@@ -1,8 +1,8 @@
 /**
  * Phase 20B.4 · Admin referral tier editor + polished analytics dashboard.
  */
-import React, { useEffect, useMemo, useState } from "react";
-import { Trophy, Plus, Trash2, Save, TrendingUp, Users, DollarSign, LineChart } from "lucide-react";
+import React, { useEffect, useState } from 'react';
+import { Trophy, Trash2, Save, TrendingUp, Users, LineChart } from 'lucide-react';
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 

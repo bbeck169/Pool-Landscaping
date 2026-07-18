@@ -6,9 +6,7 @@
  * `navigator.geolocation` on web via a small adapter below).
  */
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  View, Text, StyleSheet, Pressable, ScrollView, Platform,
-} from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/auth";

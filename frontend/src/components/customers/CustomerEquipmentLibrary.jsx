@@ -7,7 +7,7 @@
  * the cap is reached. Admins/super_admins can delete via lightbox.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Camera, X, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { Camera, ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
 import { api } from "@/api";
 
 const c = {

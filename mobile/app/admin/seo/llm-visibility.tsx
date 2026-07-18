@@ -1,5 +1,5 @@
 /** Phase 17B · Mobile — LLM Visibility: Queries tab + Dashboard tab. */
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput,
   Alert, ActivityIndicator,

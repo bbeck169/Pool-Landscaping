@@ -8,7 +8,7 @@ import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 
 import { api } from "@/src/api";
-import { colors, spacing, radius, fontSize, font } from "@/src/theme";
+import { colors, spacing, fontSize, font } from '@/src/theme';
 import { Loading } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 

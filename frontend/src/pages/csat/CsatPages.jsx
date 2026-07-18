@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { useParams } from 'react-router-dom';
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
-import { Star, TrendingUp, TrendingDown, Minus, Send, MessageCircle } from "lucide-react";
+import { Star } from 'lucide-react';
 
 /* ─── shared bits ────────────────────────────────────────────────── */
 const H = ({ title, sub, right }) => (

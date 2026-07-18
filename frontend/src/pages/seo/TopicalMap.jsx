@@ -2,7 +2,7 @@
  * Phase 17B.1 · Topical Map viewer.
  */
 import React, { useEffect, useState } from "react";
-import { Network, Plus, X, Copy, Sparkles } from "lucide-react";
+import { Network, Plus, X, Sparkles } from 'lucide-react';
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 

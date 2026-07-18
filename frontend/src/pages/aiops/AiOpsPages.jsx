@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Plus, Send, Bell, CheckSquare, Bot, Phone, Shield, Users } from "lucide-react";
+import { ArrowLeft, Plus, Send } from 'lucide-react';
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { usePermissions } from "@/hooks/usePermissions";

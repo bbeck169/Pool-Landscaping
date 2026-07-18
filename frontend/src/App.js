@@ -119,7 +119,7 @@ import PortalSignPage from "@/pages/portal/PortalSign";
 import { CsatDashboard, CsatDetail, PublicCsat } from "@/pages/csat/CsatPages";
 import { RealtimeProvider } from "@/realtime/NotificationSocket";
 import AnalyticsPage from "@/pages/analytics/AnalyticsPage";
-import OnboardingPage, { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
+import OnboardingPage from '@/pages/onboarding/OnboardingPage';
 import LeadRequestPage from "@/pages/leads/LeadRequestPage";
 import PublicLeadRequestPage from "@/pages/public/PublicLeadRequest";
 import TenantsAdminPage, { TenantBrandSettings } from "@/pages/tenants/TenantsAdminPage";

@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from "react-router-dom";
-import { Sun, Cloud, CloudRain, CloudLightning, Snowflake, Settings2, ArrowRight } from "lucide-react";
+import { Sun, Cloud, CloudRain, CloudLightning, Snowflake, Settings2 } from 'lucide-react';
 import { api } from "@/api";
 import { colors } from "@/theme";
 

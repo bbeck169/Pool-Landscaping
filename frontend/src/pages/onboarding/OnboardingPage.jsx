@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
-import { Check, ChevronRight, ChevronLeft, ExternalLink, X, Sparkles, Rocket } from "lucide-react";
+import { ChevronRight, ChevronLeft, ExternalLink, Sparkles, Rocket } from 'lucide-react';
 
 const STEPS = [
   { key: "welcome",       title: "Welcome",              blurb: "Tell us about your business." },

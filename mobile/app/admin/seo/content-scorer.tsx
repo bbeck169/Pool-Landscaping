@@ -1,14 +1,9 @@
 /** Phase 17A · Mobile — Content Scorer. */
 import React, { useState } from "react";
-import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  Alert,
-} from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 
-import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
-import { Header } from "@/src/components/widgets";
 import { AdminOnlyGate, ScoreChip, CenterLoader } from "./_shared";
 
 export default function ContentScorerMobile() {

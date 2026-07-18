@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
-import { PayNowButton, PayInAppForm, StripeCheckoutReturn } from "@/components/stripe/StripePayments";
+import { PayNowButton, StripeCheckoutReturn } from '@/components/stripe/StripePayments';
 import {
   PageHeader,
   Button,

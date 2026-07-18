@@ -1,23 +1,13 @@
 import React, { useCallback, useState } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  Pressable,
-  TextInput,
-  RefreshControl,
-  Alert,
-  Switch,
-} from "react-native";
+import { View, Text, ScrollView, Pressable, TextInput, RefreshControl, Alert, Switch } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
-import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import { colors, spacing, font, fontSize } from '@/src/theme';
 import { Header } from "@/src/components/widgets";
-import { Card, PrimaryButton, Sheet, EmptyState, Loading } from "@/src/components/ui";
+import { Card, PrimaryButton, EmptyState, Loading } from '@/src/components/ui';
 
 type Tab = "posts" | "reviews" | "business" | "connect";
 const DAYS = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];

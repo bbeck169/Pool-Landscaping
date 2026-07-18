@@ -1,19 +1,4 @@
-import {
-  LayoutDashboard, Briefcase, CalendarDays, Truck, Route, Workflow, DoorOpen,
-  Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers,
-  UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone,
-  Timer as TimerIcon, BarChart3, TrendingUp, PieChart, MegaphoneIcon, Megaphone, Palette,
-  MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Search,
-  Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit,
-  BadgeCheck, Shield, Bell as BellIcon, Settings, MapIcon, ScrollText,
-  Grid3x3, Compass, Rss, Wand2, PencilRuler, Building2,
-  Map as MapPinIcon, Gauge, Timer as StopwatchIcon,
-  Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon,
-  Home as HomeIcon,
-  Cloud,
-  LibraryBig,
-  ClipboardList as ClipboardListIcon2,
-} from "lucide-react";
+import { LayoutDashboard, CalendarDays, Truck, Route, Workflow, DoorOpen, Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers, UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone, Timer as TimerIcon, BarChart3, TrendingUp, PieChart, Megaphone, Palette, MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit, BadgeCheck, Shield, Bell as BellIcon, MapIcon, ScrollText, Grid3x3, Compass, Rss, PencilRuler, Building2, Map as MapPinIcon, Gauge, Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon, Home as HomeIcon, Cloud, LibraryBig, ClipboardList as ClipboardListIcon2 } from 'lucide-react';
 
 /**
  * Phase 35 — Admin navigation single-source-of-truth (6-category IA).

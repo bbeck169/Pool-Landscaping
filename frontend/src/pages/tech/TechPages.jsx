@@ -6,7 +6,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
-import { Send, CheckCircle2, Coffee, LogIn, LogOut, RefreshCw } from "lucide-react";
+import { Send, CheckCircle2, LogIn, RefreshCw } from 'lucide-react';
 
 const Card = ({ children, className = "", testId }) => (
   <div className={`rounded-2xl ${className}`}
