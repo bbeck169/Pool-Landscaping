@@ -2483,3 +2483,51 @@ All template titles + category names may mirror pooldial.com/resources/templates
 ### Next (Phase 2 + 3)
 - Phase 2: Admin web UI (view/fill/finalize/PDF; upload signature; category filters).
 - Phase 3: Mobile UI (technician-visible templates in field context).
+
+
+---
+
+## Templates Library — Phase 2 (Admin Web UI) · Feb 2026
+
+Ships the admin-facing React UI that wires the fully-shipped Phase 1 backend. No backend contracts were changed — this phase is purely React frontend.
+
+### Routes registered (in `/app/frontend/src/App.js`)
+- `/admin/templates` → `TemplatesLibraryPage` (AdminOnly)
+- `/admin/templates/instances/new?code=<template_code>` → `TemplateInstanceNewRedirect` — creates a draft via `POST /api/templates/instances` and redirects
+- `/admin/templates/instances/:id` → `TemplateFillPage` (AdminOnly)
+
+### Sidebar nav
+- Added **Templates Library** entry (`LibraryBig` icon) under **Operations → Business OS**, in `/app/frontend/src/nav/adminNav.js`.
+
+### Files added
+- `frontend/src/api/templates.js` — client (list/get/create/update/finalize/duplicate/delete/PDF + category constants)
+- `frontend/src/components/templates/TemplateCard.jsx`
+- `frontend/src/components/templates/TemplateFieldRenderer.jsx` — dispatches every field type (`header`, `text`, `long_text`, `number`, `date`, `checkbox`, `select`, `signature`, `table`)
+- `frontend/src/components/templates/TemplateTableField.jsx` — add-row / delete-row grid, cell types text/number/date/checkbox
+- `frontend/src/components/templates/TemplateStatusPill.jsx`
+- `frontend/src/components/templates/TemplateInstanceList.jsx` — grouped Drafts / Finalized rows with per-row Open / Duplicate / Delete / Download-PDF actions
+- `frontend/src/pages/admin/TemplatesLibraryPage.jsx`
+- `frontend/src/pages/admin/TemplateFillPage.jsx`
+- `frontend/src/pages/admin/TemplateInstanceNewRedirect.jsx`
+
+### UX behaviour
+- **Library tab**: Category chips (All | Pricing & Money | Ops & Checklists | Chemicals & Chemistry | Documents), client-side search on title/description/code, cards grid with "New from template".
+- **My Templates tab**: grouped Drafts / Finalized tables, hyperlinked title cell, Duplicate / Delete / Download PDF (finalized only) actions.
+- **Also available** section links to Commercial Bid Proposal, Price Increase Letter (Document Generators), Opening/Closing Checklists (Pool Service), Chemical Dosing Calculator (Pool Calculators).
+- **Fill page**: editable title, category chip, `TemplateStatusPill` (`draft` / `finalized`), save indicator (`Saving…` / `Saved <time>` / error).
+- **Autosave**: debounced 750ms on any field/title change AND a 15s interval safety-net (`AUTOSAVE_DEBOUNCE_MS`, `AUTOSAVE_INTERVAL_MS`). Also flushes before `finalize` / `duplicate` / `download` and on unmount.
+- **Finalize / Delete** trigger a confirm modal. Finalize flips inputs to read-only and shows a green banner: *This template is finalized. Duplicate it to make further changes.*
+- **Signature** field (this phase) — click-to-stamp with current user name + ISO timestamp. Drawing pad deferred to Phase 4.
+- **PDF download** — POSTs to `/api/templates/instances/:id/pdf`, blob → sanitized `<title>.pdf` download.
+
+### Verification
+- Live smoke via screenshot tool (admin login → library → create → fill → autosave → finalize → banner → duplicate + download PDF from My Templates). All flows green.
+- Backend PDF endpoint: `HTTP 200`, `application/pdf`, non-empty body (verified via curl).
+- No changes to backend/`templates_library.py`; Phase 1 tests remain 10/10.
+- Mobile (`/app/mobile`) untouched.
+- No external repo cloning occurred — `/app` is source of truth.
+
+### Out of scope this phase
+- Mobile (Expo) UI — Phase 3
+- Signature drawing pad — Phase 4
+- Offline drafts + import/export of custom template definitions — later

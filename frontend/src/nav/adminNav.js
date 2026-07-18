@@ -11,6 +11,7 @@ import {
   Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon,
   Home as HomeIcon,
   Cloud,
+  LibraryBig,
 } from "lucide-react";
 
 /**
@@ -169,6 +170,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/os/sprints",    label: "Sprints",      icon: Workflow,      feature: "settings", subsection: "Business OS" },
     { to: "/admin/onboarding/templates", label: "Onboarding Templates", icon: FileText,   feature: "settings", subsection: "Business OS" },
     { to: "/admin/onboarding/queue",     label: "Onboarding Queue",     icon: ListChecks, feature: "settings", subsection: "Business OS" },
+    { to: "/admin/templates",            label: "Templates Library",    icon: LibraryBig, feature: "settings", subsection: "Business OS" },
     // AI Tools (admin only)
     { to: "/landscape",   label: "Landscape AI",       icon: Image,       feature: "landscape",   hard_rule: "admin_only", subsection: "AI Tools" },
     { to: "/cad",         label: "CAD Studio",         icon: PencilRuler, feature: "cad",         hard_rule: "admin_only", subsection: "AI Tools" },

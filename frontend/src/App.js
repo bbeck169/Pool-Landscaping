@@ -166,6 +166,10 @@ import { ApprovalsPage as SocialApprovals, BulkUploadPage as SocialBulkUpload,
          ShortLinksPage as SocialShortLinks, BrandKitPage as SocialBrandKit }
   from "@/pages/social/SocialExtras";
 import ServiceTemplatesEditor from "@/pages/admin/ServiceTemplatesEditor";
+// Phase 2 · Templates Library — Admin Web UI
+import TemplatesLibraryPage from "@/pages/admin/TemplatesLibraryPage";
+import TemplateFillPage from "@/pages/admin/TemplateFillPage";
+import TemplateInstanceNewRedirect from "@/pages/admin/TemplateInstanceNewRedirect";
 
 function CustomerServiceReportRedirect() {
   // Preserve the report id when redirecting from the /customer alias to
@@ -410,6 +414,10 @@ export default function App() {
             <Route path="social/brand-kit" element={<AdminOnly><SocialBrandKit /></AdminOnly>} />
             {/* Admin editor for service report templates (pool/landscape/generic) */}
             <Route path="admin/settings/service-templates" element={<AdminOnly><ServiceTemplatesEditor /></AdminOnly>} />
+            {/* Phase 2 · Templates Library — Admin Web UI */}
+            <Route path="admin/templates" element={<AdminOnly><TemplatesLibraryPage /></AdminOnly>} />
+            <Route path="admin/templates/instances/new" element={<AdminOnly><TemplateInstanceNewRedirect /></AdminOnly>} />
+            <Route path="admin/templates/instances/:id" element={<AdminOnly><TemplateFillPage /></AdminOnly>} />
             <Route path="admin/settings/auto-visit-email" element={<AdminOnly><AutoVisitEmailSettings /></AdminOnly>} />
 
             {/* Phase 16B — Business OS */}
