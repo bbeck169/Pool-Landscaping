@@ -27,8 +27,10 @@ export const TECH_NAV = [
     icon: CalendarDays,
     entries: [
       { to: "/schedule", label: "Schedule", icon: CalendarDays },
-      { to: "/dispatch/board", label: "Dispatch Board", icon: MapPin },
-      { to: "/inbox", label: "Inbox", icon: MessageSquare },
+      // Tech Nav 404 fix · Feb 2026 — removed:
+      //   /dispatch/board (admin/dispatcher tier — techs shouldn't see the full board)
+      //   /inbox         (no proper tech-side inbox yet; follow-up P2)
+      // Route stays in App.js so admin navigation is unchanged.
       { to: "/time-clock", label: "Time Clock", icon: ClipboardList },
     ],
   },
@@ -62,7 +64,10 @@ export const TECH_NAV = [
     label: "Account",
     icon: User,
     entries: [
-      { to: "/settings/auto-clockin", label: "Auto Clock-In", icon: MapPin },
+      // Tech Nav 404 fix · Feb 2026 — removed /settings/auto-clockin
+      // (no matching route in App.js). Follow-up: build a tech-side
+      // auto-clockin geofence settings page (P2).
+      { to: "/portal/profile", label: "Profile", icon: User },
     ],
   },
 ];

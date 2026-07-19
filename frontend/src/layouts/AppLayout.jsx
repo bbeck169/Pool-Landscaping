@@ -39,6 +39,7 @@ import {
   Menu as MenuIcon,
   X as XIcon,
   LayoutGrid,
+  GraduationCap,
 } from "lucide-react";
 
 const ADMIN_NAV = [
@@ -145,6 +146,11 @@ const TECH_NAV = [
   { to: "/d2d",            label: "D2D",        icon: DoorOpen },
   { to: "/tech/time-clock",label: "Time Clock", icon: Clock },
   { to: "/tech/tools",     label: "Tools",      icon: LayoutGrid },
+  // Tech Nav Fix · Feb 2026 — Training promoted from the hamburger menu
+  // to the primary tech nav so techs can reach their CPO prep / algae
+  // modules / landscape training in one tap. Route `/tests` renders
+  // `TrainingList`; `/training` also redirects to `/tests` (App.js).
+  { to: "/tests",          label: "Training",   icon: GraduationCap },
   { to: "/portal/profile", label: "Profile",    icon: UserCircle },
 ];
 

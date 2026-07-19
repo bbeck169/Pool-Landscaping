@@ -137,6 +137,7 @@ import TodaySchedule from "@/pages/schedule/TodaySchedule";
 import { TechHuddlePage, TechTimeClockPage } from "@/pages/tech/TechPages";
 import ServiceReport from "@/pages/tech/ServiceReport";
 import ToolsHub from "@/pages/tech/ToolsHub";
+import ComingSoonPage from "@/pages/common/ComingSoonPage";
 import PoolCalculators from "@/pages/tech/PoolCalculators";
 import BusinessPricingTools from "@/pages/admin/BusinessPricingTools";
 import BusinessAnalysisTools from "@/pages/admin/BusinessAnalysisTools";
@@ -395,6 +396,30 @@ export default function App() {
                 redirected inside the component. */}
             <Route path="tech/tools" element={<ToolsHub />} />
             <Route path="tech/tools/calculators" element={<PoolCalculators />} />
+            {/* Tech Nav 404 fix · Feb 2026 — bare-path redirects + stubs so
+                the tech hamburger menu links stop 404ing.
+                  /calculators → /tech/tools/calculators (existing tech route)
+                  /time-clock  → /tech/time-clock       (existing tech route)
+                  /assets      → coming-soon stub       (admin/assets is AdminOnly)
+                  /inventory   → coming-soon stub       (admin/inventory is AdminOnly)
+                Follow-up P2 tasks: build real tech-side read-only variants
+                of /assets and /inventory, plus a tech-side /inbox and
+                /settings/auto-clockin. Those tech-menu entries were removed
+                for now — see nav/roleNav.js. */}
+            <Route path="calculators" element={<Navigate to="/tech/tools/calculators" replace />} />
+            <Route path="time-clock" element={<Navigate to="/tech/time-clock" replace />} />
+            <Route path="assets" element={<ComingSoonPage
+              title="My Equipment (coming soon)"
+              message="A read-only view of your assigned tools, meters, and truck kit is on the way."
+              contactHint="In the meantime, ask an admin to look up assigned equipment on your behalf."
+              testId="tech-assets-coming-soon"
+            />} />
+            <Route path="inventory" element={<ComingSoonPage
+              title="Truck Inventory (coming soon)"
+              message="Real-time truck-load counts and quick quantity adjustments are being built for the technician workspace."
+              contactHint="Until then, an admin can adjust inventory levels for you from the admin dashboard."
+              testId="tech-inventory-coming-soon"
+            />} />
             <Route path="admin/tools/pricing" element={<AdminOnly><BusinessPricingTools /></AdminOnly>} />
             <Route path="admin/tools/analysis" element={<AdminOnly><BusinessAnalysisTools /></AdminOnly>} />
             <Route path="admin/tools/documents" element={<AdminOnly><DocumentGenerators /></AdminOnly>} />
