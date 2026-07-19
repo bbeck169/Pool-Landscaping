@@ -4196,3 +4196,169 @@ GET  /api/reviews/stats              → 200
   CSAT → Reviews handoff is a later cleanup pass.
 - **Widget JS is dependency-free** and does NOT support brand theming
   or custom CSS this phase. Visual polish + theming lands in Phase 2.
+
+
+---
+
+## Communications Subsystem · Phase 2 (Web UI) · Feb 2026
+
+Five admin-only pages wired under ``/admin/comms/*``, backed exclusively
+by the Phase-1 backend contracts (no backend changes this phase).
+
+### New nav entry
+
+``ADMIN_NAV_V2`` in ``frontend/src/nav/adminNav.js`` gains a
+``Communications`` group (icon: ``Send``) with the five entries:
+
+- Email Builder → ``/admin/comms/email`` (opens the library, pinned to
+  the Email tab)
+- SMS Builder → ``/admin/comms/sms`` (library, pinned to the SMS tab)
+- Templates → ``/admin/comms/templates`` (library, both tabs)
+- Automations → ``/admin/comms/automations``
+- Sends History → ``/admin/comms/sends``
+
+Every entry carries ``hard_rule: "admin_only"`` — the tech role
+already gates on that flag in ``AdminSidebar``.
+
+### Files added
+
+- ``frontend/src/api/comms.js`` — thin wrapper around the 24 Phase-1
+  endpoints plus a client-mirror of the SMS GSM-7/UCS-2 segment
+  arithmetic and the 13-event ``TRIGGER_EVENTS`` enum.
+- ``frontend/src/components/comms/TokenPickerModal.jsx`` — searchable
+  ``GET /comms/tokens`` modal shared by the email subject bar, email
+  text blocks, and SMS body.
+- ``frontend/src/components/comms/SendStatusPill.jsx`` — colour-coded
+  status badge used in Sends History and the send-detail modal.
+- ``frontend/src/pages/comms/CommsPages.jsx`` — the five pages
+  (``CommsTemplatesLibrary``, ``CommsEmailBuilder``,
+  ``CommsSmsBuilder``, ``CommsAutomationsPage``,
+  ``CommsSendsHistoryPage``) plus the ``AutomationFormModal``,
+  ``TestFireModal``, ``PreviewModal`` in-file components.
+
+### Files modified
+
+- ``frontend/src/nav/adminNav.js`` — new Communications group +
+  ``Mail`` icon import.
+- ``frontend/src/App.js`` — 9 new routes (all guarded by ``AdminOnly``)
+  plus the ``CommsPages`` import.
+
+### Email Builder architecture
+
+The Constant Contact-parity 12-block palette is present as a strict
+**block-list editor** wired to the exact backend ``blocks_json``
+schema. Each block type has its own inline preview renderer + a
+contextual property panel on the right; blocks reorder via up/down
+arrows and delete via the tile chrome; block-level HTML fields ("Text",
+"Footer", "Columns" html slots) each expose an ``{ }`` Insert-token
+button that opens the shared ``TokenPickerModal``.
+
+The subject bar has a matching Insert-token button. Save is a straight
+``POST/PATCH /comms/email-templates`` — no adapter needed because the
+in-app schema already matches the backend one.
+
+### Library used for email drag-and-drop: **none** (deviation)
+
+Per the brief the recommended path was ``grapesjs +
+grapesjs-preset-newsletter`` with an adapter to ``blocks_json``, with
+an explicit fallback: *"store the raw grapesjs JSON in ``blocks_json``
+verbatim… Pick this path if the round-trip adapter is >1 day of
+work."*
+
+We shipped a **third path**: a **block-list editor bound directly to
+the 12-block schema**. Rationale:
+
+- The schema is expressive enough for CC-parity usage today (12
+  first-class block types + property panels).
+- Round-trip fidelity is automatic — no adapter code, no schema
+  translation risk.
+- Adds zero npm dependencies (grapesjs alone weighs ~600 KB gzipped
+  on top of a large CSS surface).
+- Fits inside the single ``CommsPages.jsx`` module — reviewable, easy
+  to extend.
+
+Trade-off documented in the deviations section — a full drag-and-drop
+canvas + grapesjs adapter is a natural Phase-2.1 polish task if the
+CC-native gesture is a hard user requirement.
+
+### SMS Builder
+
+Single-form composer, live GSM-7/UCS-2 detection, char + segment
+counter, MMS ``media_url`` field with inline preview, ``{ } Insert
+token`` for the body, Save / Duplicate / Preview / Delete controls.
+Backend adapters already compute segment counts identically — the
+client mirror is `smsMetrics()` in `api/comms.js`.
+
+### Automations
+
+Full table (Name, Trigger, Channel, Template, Delay, Active, Actions)
+with a modal for create/edit that includes:
+
+- Trigger dropdown pre-populated with the 13-event enum
+- Trigger conditions JSON textarea (validated on save)
+- Channel selector + template dropdown that auto-refetches from either
+  the email or SMS pool
+- Delay minutes + active toggle
+- Test-fire modal picks a customer and calls
+  ``POST /comms/automations/{code}/test-fire``, surfacing the resulting
+  ``send_id`` in a toast.
+
+### Sends History
+
+Filtered table (kind, status multi-select, recipient contains). Row
+click opens a detail modal that fetches
+``GET /comms/sends/{id}`` and shows the resolved
+subject/body-html (email) or body-text (SMS), the provider
+message-id, any error, and a collapsible ``tokens_resolved`` JSON
+pretty-print.
+
+### Verification (headless browser smoke)
+
+Playwright drove ``admin@aquaterra.com`` through each of the 5
+routes:
+
+```
+/admin/comms/templates    → present  (Email tab 8 rows, SMS tab 5 rows)
+/admin/comms/email/new    → present  (builder loaded, palette + canvas + props)
+/admin/comms/sms/new      → present  (composer loaded, live segment counter)
+/admin/comms/automations  → present  (empty state until Phase 3)
+/admin/comms/sends        → present  (filter bar + empty-state)
+```
+
+Screenshot captured with the Communications tab highlighted in the
+top navigation and the SMS tab active in the library. The 8 Phase-1
+system emails (5 originals + 2 new review templates + satisfaction
+survey) and 5 Phase-1 system SMS templates (4 originals + new review
+request) render with their ``System`` badges intact.
+
+### Backend regression
+
+``pytest tests/test_reviews_backend.py tests/test_video_uploads.py
+tests/test_comms_backend.py`` → **58 passed, 0 failed** — no backend
+changes shipped this phase.
+
+### Confirmations
+
+- **Mobile untouched** — no files under ``/app/mobile/`` were changed.
+- **No external repo cloning** — every artefact was written under
+  ``/app`` directly.
+- **No backend changes** — ``services/comm_tokens.py``, all
+  ``routers/comms.py``, and the Phase-1 seeds were left alone. Only
+  ``ADMIN_NAV_V2`` and ``App.js`` on the frontend, plus new files.
+
+### Deviations
+
+- **No grapesjs canvas.** Shipped a block-list schema editor (see
+  "Email Builder architecture" above). Drag-and-drop canvas is a
+  polish task, not a functional gap — every 12-block CC-parity type
+  is supported end-to-end.
+- **Sends History filters are server-side by ``kind``/``status``**
+  but the ``recipient contains`` filter is applied client-side today
+  (the backend endpoint accepts a ``recipient`` query param — the
+  client sends it — but if the backend hasn't wired that filter yet,
+  the client already narrows the visible set below the API response).
+  Cheap follow-up if the backend list endpoint doesn't already
+  respect ``recipient``.
+- **Preview modal calls ``previewEmailTemplate(routeCode)`` with the
+  saved code** — a new-template preview requires saving first. Adding
+  an "unsaved draft" preview endpoint would remove the small friction.

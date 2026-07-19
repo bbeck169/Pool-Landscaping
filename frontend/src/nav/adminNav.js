@@ -1,4 +1,4 @@
-import { LayoutDashboard, CalendarDays, Truck, Route, Workflow, DoorOpen, Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers, UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone, Timer as TimerIcon, BarChart3, TrendingUp, PieChart, Megaphone, Palette, MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit, BadgeCheck, Shield, Bell as BellIcon, MapIcon, ScrollText, Grid3x3, Compass, Rss, PencilRuler, Building2, Map as MapPinIcon, Gauge, Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon, Home as HomeIcon, Cloud, LibraryBig, ClipboardList as ClipboardListIcon2 } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, Truck, Route, Workflow, DoorOpen, Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers, UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone, Timer as TimerIcon, BarChart3, TrendingUp, PieChart, Megaphone, Palette, MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit, BadgeCheck, Shield, Bell as BellIcon, MapIcon, ScrollText, Grid3x3, Compass, Rss, PencilRuler, Building2, Map as MapPinIcon, Gauge, Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon, Home as HomeIcon, Cloud, LibraryBig, ClipboardList as ClipboardListIcon2, Mail } from 'lucide-react';
 
 /**
  * Phase 35 — Admin navigation single-source-of-truth (6-category IA).
@@ -214,6 +214,15 @@ export const ADMIN_NAV_V2 = [
     { to: "/landscape/time-clock",         label: "Landscape Time Clock", icon: Timer,  feature: "jobs" },
     { to: "/access-history",              label: "Access History",    icon: ScrollText, feature: "audit_logs" },
   ]},
+
+  { key: "communications", label: "Communications", icon: Send, entries: [
+    { to: "/admin/comms/email",       label: "Email Builder",  icon: Mail,          feature: "settings", hard_rule: "admin_only" },
+    { to: "/admin/comms/sms",         label: "SMS Builder",    icon: MessageSquare, feature: "settings", hard_rule: "admin_only" },
+    { to: "/admin/comms/templates",   label: "Templates",      icon: Layers,        feature: "settings", hard_rule: "admin_only" },
+    { to: "/admin/comms/automations", label: "Automations",    icon: Zap,           feature: "settings", hard_rule: "admin_only" },
+    { to: "/admin/comms/sends",       label: "Sends History",  icon: History,       feature: "settings", hard_rule: "admin_only" },
+  ]},
+
 ];
 
 // Flatten for the command palette page-search.

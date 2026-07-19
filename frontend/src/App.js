@@ -29,6 +29,10 @@ import BillingSettings from "@/pages/settings/BillingSettings";
 import AutoVisitEmailSettings from "@/pages/settings/AutoVisitEmailSettings";
 import PortalPhotos from "@/pages/portal/PortalPhotos";
 import PortalVideos from "@/pages/portal/PortalVideos";
+import {
+  CommsTemplatesLibrary, CommsEmailBuilder, CommsSmsBuilder,
+  CommsAutomationsPage, CommsSendsHistoryPage,
+} from "@/pages/comms/CommsPages";
 import PortalBook from "@/pages/portal/PortalBook";
 import PortalChatsPage from "@/pages/portal/PortalChatsPage";
 import AppointmentsQueue from "@/pages/admin/AppointmentsQueue";
@@ -584,6 +588,15 @@ export default function App() {
             <Route path="portal/book" element={<PortalBook />} />
             <Route path="portal/photos" element={<PortalPhotos />} />
             <Route path="portal/videos" element={<PortalVideos />} />
+            <Route path="admin/comms/templates"       element={<AdminOnly><CommsTemplatesLibrary /></AdminOnly>} />
+            <Route path="admin/comms/email"           element={<AdminOnly><CommsTemplatesLibrary /></AdminOnly>} />
+            <Route path="admin/comms/email/new"       element={<AdminOnly><CommsEmailBuilder /></AdminOnly>} />
+            <Route path="admin/comms/email/:code"     element={<AdminOnly><CommsEmailBuilder /></AdminOnly>} />
+            <Route path="admin/comms/sms"             element={<AdminOnly><CommsTemplatesLibrary /></AdminOnly>} />
+            <Route path="admin/comms/sms/new"         element={<AdminOnly><CommsSmsBuilder /></AdminOnly>} />
+            <Route path="admin/comms/sms/:code"       element={<AdminOnly><CommsSmsBuilder /></AdminOnly>} />
+            <Route path="admin/comms/automations"     element={<AdminOnly><CommsAutomationsPage /></AdminOnly>} />
+            <Route path="admin/comms/sends"           element={<AdminOnly><CommsSendsHistoryPage /></AdminOnly>} />
             <Route path="portal/profile" element={<PortalProfile />} />
             <Route path="portal/request-service" element={<PortalRequestService />} />
             <Route path="portal/payment-complete" element={<PortalPaymentComplete />} />
