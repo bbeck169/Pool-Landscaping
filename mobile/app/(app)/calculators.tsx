@@ -6,7 +6,7 @@
  */
 import React, { useMemo, useState } from "react";
 import { View, Text, Pressable, TextInput } from 'react-native';
-import { colors, spacing } from '@/src/theme';
+import { colors, spacing, radius, font, fontSize } from '@/src/theme';
 
 type Tool = "dosing" | "volume" | "salt" | "lsi";
 
