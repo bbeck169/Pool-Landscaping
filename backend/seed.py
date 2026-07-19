@@ -1,10 +1,87 @@
 from datetime import datetime, timezone, timedelta
 
 from config import db, logger
-from utils import now_iso, new_id, hash_password
+from utils import now_iso, new_id, hash_password, verify_password
 
 
 import os as _os
+
+
+DEMO_EMAILS_FOR_AUTOHEAL = [
+    "super@aquaterra.com",
+    "admin@aquaterra.com",
+    "mike@aquaterra.com",
+    "carlos@aquaterra.com",
+    "customer@aquaterra.com",
+]
+
+
+async def auto_heal_demo_passwords_if_needed():
+    """Deliverable (d) · Auto-heal demo-user password drift on startup.
+
+    Rehashes any of the 5 seeded demo accounts whose stored
+    ``password_hash`` no longer verifies against the plaintext
+    ``password123``. Clears ``failed_login_attempts`` + ``lockout_until``
+    while it's at that row. Never rotates to a random token — this only
+    heals TO the ``password123`` demo baseline. Use
+    ``scripts/rotate_demo_passwords.py`` explicitly for a security
+    review's random-token state.
+
+    Gating
+    ------
+    - ``APP_ENV=production`` → skipped entirely (info log line).
+    - ``DEMO_AUTOHEAL=0`` → skipped (info log line).
+    - Otherwise runs (default ``DEMO_AUTOHEAL=1`` behavior).
+    - The five demo user rows do not have to exist. Missing rows are
+      silently skipped so this is safe to call under
+      ``SEED_DEMO_USERS=0`` production posture.
+
+    Idempotent and safe to call on every startup.
+    """
+    if _os.environ.get("APP_ENV", "").lower() == "production":
+        logger.info("auto_heal_demo_passwords: skipped (APP_ENV=production)")
+        return
+    if _os.environ.get("DEMO_AUTOHEAL", "1") != "1":
+        logger.info("auto_heal_demo_passwords: skipped (DEMO_AUTOHEAL != 1)")
+        return
+    healed: list[str] = []
+    already_good: list[str] = []
+    missing: list[str] = []
+    default_pw = "password123"
+    for email in DEMO_EMAILS_FOR_AUTOHEAL:
+        row = await db.users.find_one({"email": email}, {"_id": 0, "id": 1, "password_hash": 1})
+        if not row:
+            missing.append(email)
+            continue
+        stored = row.get("password_hash") or ""
+        try:
+            ok = bool(stored) and verify_password(default_pw, stored)
+        except Exception:
+            ok = False
+        if ok:
+            already_good.append(email)
+            continue
+        await db.users.update_one(
+            {"id": row["id"]},
+            {"$set": {
+                "password_hash": hash_password(default_pw),
+                "failed_login_attempts": 0,
+                "lockout_until": None,
+                "active": True,
+            }},
+        )
+        healed.append(email)
+        logger.warning(f"auto_heal_demo_passwords: healed {email} back to password123")
+    if healed:
+        logger.warning(
+            f"auto_heal_demo_passwords: healed {len(healed)}/{len(DEMO_EMAILS_FOR_AUTOHEAL)} demo users. "
+            f"Missing rows: {missing or 'none'}")
+    else:
+        logger.info(
+            f"auto_heal_demo_passwords: all {len(already_good)} present demo users already authenticate with default. "
+            f"Missing rows: {missing or 'none'}")
+
+
 async def seed_landscaping_user():
     # SEC-001 hotfix — gate on SEED_DEMO_USERS=1 (default off).
     if _os.environ.get("SEED_DEMO_USERS", "0") != "1":

@@ -1,0 +1,89 @@
+# Kubernetes Ingress — Recommended CORS Tightening
+#
+# STATUS: Advisory only. This file is NOT applied automatically. The k8s
+# ingress for this deployment is managed outside `/app` by the platform.
+# Apply the annotations below to the ingress resource that fronts the
+# preview / production URL.
+#
+# Motivation
+# ----------
+# Security audit finding SEC-P3-1 followup: the FastAPI CORS layer is now
+# tightly scoped to `ALLOWED_ORIGINS` (see `backend/server.py` line ~128),
+# but the platform ingress currently injects `Access-Control-Allow-Origin: *`
+# via a snippet or default backend, which overrides FastAPI's response on
+# every OPTIONS preflight. Observed via:
+#
+#     $ curl -sI -X OPTIONS https://<preview>/api/health/seeds \
+#         -H "Origin: https://evil.example.com" \
+#         -H "Access-Control-Request-Method: GET"
+#     HTTP/2 204
+#     access-control-allow-origin: *          # ← injected by ingress
+#     access-control-allow-headers: *
+#     access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH
+#     access-control-max-age: 300
+#
+# When `Access-Control-Allow-Credentials: true` is also set (which our
+# FastAPI does need for the bearer token flows), the wildcard ACAO is
+# rejected by browsers per the CORS spec — the effective behavior today
+# only appears permissive because credentials-mode requests aren't the
+# common ones being probed. Any auth-flow tightening at the frontend
+# (e.g. cookie/session credentials) would break under this ingress config.
+#
+# Recommended annotations (nginx-ingress)
+# ----------------------------------------
+# Replace the wildcard snippet with an explicit allowlist matching the
+# FastAPI `ALLOWED_ORIGINS` env var. If the ingress uses nginx-ingress
+# annotations, the four annotations below are sufficient — remove any
+# competing snippet or `configuration-snippet` that adds a wildcard ACAO.
+#
+# ```yaml
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: pool-crm-preview           # substitute your actual ingress name
+#   annotations:
+#     nginx.ingress.kubernetes.io/enable-cors: "true"
+#     nginx.ingress.kubernetes.io/cors-allow-origin: "https://poolscape-audit.preview.emergentagent.com"
+#     nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+#     nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+#     nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type, Accept, X-Requested-With"
+#     nginx.ingress.kubernetes.io/cors-max-age: "300"
+#     # IMPORTANT: remove any existing configuration-snippet or
+#     # server-snippet that injects `add_header Access-Control-Allow-Origin *`.
+# ```
+#
+# Multiple origins — comma-separated:
+#     nginx.ingress.kubernetes.io/cors-allow-origin: "https://poolscape-audit.preview.emergentagent.com,https://poolscape.emergentagent.com"
+#
+# Verification (post-apply)
+# -------------------------
+#     # evil origin — no ACAO header, or ACAO != evil
+#     curl -sI -X OPTIONS https://<preview>/api/health/seeds \
+#         -H "Origin: https://evil.example.com" \
+#         -H "Access-Control-Request-Method: GET" | grep -i access-control-allow-origin
+#     # expect: no line, or a mismatched allowlist origin (never `*`, never the evil origin)
+#
+#     # legit origin — ACAO must equal the preview URL
+#     curl -sI -X OPTIONS https://<preview>/api/health/seeds \
+#         -H "Origin: https://poolscape-audit.preview.emergentagent.com" \
+#         -H "Access-Control-Request-Method: GET" | grep -i access-control-allow-origin
+#     # expect: `access-control-allow-origin: https://poolscape-audit.preview.emergentagent.com`
+#
+# What NOT to do
+# --------------
+# - Do NOT keep `cors-allow-origin: "*"` alongside `cors-allow-credentials: "true"` —
+#   the two are incompatible per the CORS spec.
+# - Do NOT rely on FastAPI-side CORS alone once the ingress starts adding
+#   headers — the browser sees the last-set header, and the ingress runs
+#   after FastAPI for the same response.
+# - Do NOT hardcode a preview subdomain that will change; template the
+#   `cors-allow-origin` value from the same env var (`ALLOWED_ORIGINS`)
+#   that FastAPI reads, so the two never drift.
+#
+# Owner
+# -----
+# This file is a coordination point between the app team (this repo,
+# which controls `ALLOWED_ORIGINS` in backend/.env) and the platform
+# team (which controls the ingress). Any change to `ALLOWED_ORIGINS`
+# in `backend/.env` should be mirrored in the ingress `cors-allow-origin`
+# annotation.
