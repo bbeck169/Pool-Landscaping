@@ -41,6 +41,34 @@ export default function AdminSidebar() {
   useEffect(() => saveLS(LS_PINNED, pinned), [pinned]);
   useEffect(() => saveLS(LS_GROUPS, groupsOpen), [groupsOpen]);
 
+  // Collapsible Left Nav · Feb 2026 — auto-expand the group that owns the
+  // current route on mount (and whenever the route changes). Preserves
+  // any other groups the user has manually toggled — only ever OPENS the
+  // active group; never closes anything.
+  useEffect(() => {
+    const activeGroupKey = (() => {
+      // Longest-prefix match wins so /admin/finance/stripe-payments beats /admin.
+      let best = null;
+      let bestLen = -1;
+      for (const g of ADMIN_NAV_V2) {
+        for (const e of (g.entries || [])) {
+          if (!e.to) continue;
+          const to = e.to;
+          if (location.pathname === to || location.pathname.startsWith(to + "/")) {
+            if (to.length > bestLen) {
+              best = g.key;
+              bestLen = to.length;
+            }
+          }
+        }
+      }
+      return best;
+    })();
+    if (activeGroupKey) {
+      setGroupsOpen((prev) => (prev[activeGroupKey] ? prev : { ...prev, [activeGroupKey]: true }));
+    }
+  }, [location.pathname]);
+
   // Track recent
   useEffect(() => {
     const item = NAV_FLAT.find((e) => e.to === location.pathname);

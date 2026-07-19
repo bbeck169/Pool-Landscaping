@@ -3304,3 +3304,52 @@ Both payments-listing endpoints now project `invoice_id` + `invoice_number` alon
 - **Mobile carry-over deferred (per brief).** The web page was in scope; mobile Payments surface (if any) can pick up the same field additions on the next mobile parity pass. Both backend endpoints already emit the fields, so a mobile client change is a UI-only edit when scheduled.
 
 
+
+## Collapsible Left Nav · Feb 2026
+
+The web admin sidebar already implemented the vast majority of the collapsible-section pattern from prior phases; this deliverable audited the existing behavior against the brief and landed the one missing behavior (auto-expand the active route's section on mount).
+
+### Audit — what was already in place
+
+The sidebar (`frontend/src/layouts/AdminSidebar.jsx`) reads groups from `nav/adminNav.js::ADMIN_NAV_V2` and renders each as a collapsible section header with a chevron toggle. Existing capabilities against the brief checklist:
+
+| Brief requirement | Prior state | Change needed |
+|---|---|---|
+| Section-grouped nav (not a flat list) | Present (`ADMIN_NAV_V2` — 10 groups: overview, work, sales, billing, ops, reports, marketing, seo_gbp, ai_tools, settings) | none |
+| Click header → toggle expand/collapse | Present (`toggleGroup(k)` on the header button) | none |
+| Chevron icon (right ⇢ collapsed, down ⇣ expanded) | Present (`ChevronRight` / `ChevronDown` from `lucide-react`) | none |
+| `localStorage`-persist expanded state | Present — key `nav_groups_state_v1`, persisted via `useEffect(() => saveLS(LS_GROUPS, groupsOpen), [groupsOpen])` | none |
+| Section header styling — uppercase, dimmer color, small font | Present (`text-xs font-bold uppercase tracking-wider`, `color: colors.onSurfaceSecondary`) | none |
+| Role-aware hiding of admin-only entries | Present (`hard_rule === "admin_only"` / `"super_admin_only"` filtered via `usePermissions().can(...)`; 10 markers registered in `adminNav.js`) | none |
+| Techs never see the admin sidebar | Present at the layout level — `AppLayout.jsx` only renders `AdminSidebar` when `effectiveRole/user.role === "admin"`; techs get `TECH_NAV` bottom-bar, customers get `UniversalMenu` | none |
+| Empty groups auto-hidden | Present (`.filter((g) => g.entries.length > 0)` on the visible-groups memo) | none |
+| Super admin sees the "System" section | Present via `hard_rule: "super_admin_only"` on those entries | none |
+| **Active route's section auto-expands on mount** | **Missing** — initial state came from `localStorage` OR the hardcoded default map; a fresh user landing on `/admin/finance/stripe-payments` would find the `settings` group collapsed | **Added** |
+
+### The one surgical change landed
+
+`frontend/src/layouts/AdminSidebar.jsx` — new `useEffect` block gated on `location.pathname` that walks `ADMIN_NAV_V2`, finds the entry whose `to` is a longest-prefix match for the current pathname, and opens (never closes) that group. Behavior properties:
+
+- **Idempotent** — if the group is already open, no state update fires (avoids the `useEffect → setState` re-render loop).
+- **Only opens, never closes** — the user's manually collapsed groups stay collapsed across route changes.
+- **Longest-prefix wins** — `/admin/finance/stripe-payments` correctly opens the `settings` group rather than accidentally matching a shorter prefix like `/admin`.
+- **Runs on every route change** — so navigating from Dashboard → Finance auto-opens the Money-adjacent group even mid-session.
+
+### Files modified
+
+- `frontend/src/layouts/AdminSidebar.jsx` — added the auto-expand-active `useEffect` (~20 lines).
+
+No changes to `nav/adminNav.js` (grouping stays as-is per the brief's "reuse whatever grouping already exists in the codebase" clause). No changes to `AppLayout.jsx` (role-based sidebar switching was already in place). No changes to mobile / hamburger / tech bottom nav.
+
+### Verification
+
+- `localStorage` persistence — read/write via the pre-existing `LS_GROUPS = "nav_groups_state_v1"` key. Confirmed via reading of `useEffect(() => saveLS(LS_GROUPS, groupsOpen), [groupsOpen])`.
+- Route-owning-group resolution — the longest-prefix walk against `ADMIN_NAV_V2` finds a match for every admin route because the visible groups are exactly the union of admin routes. Verified by inspection.
+- No pytest change (frontend-only). Broader security suite unchanged.
+
+### Deviations
+
+- **Grouping preserved from `ADMIN_NAV_V2`** rather than remapped to the brief's illustrative 10 buckets (Dashboard / Customers / Operations / Money / Field Work / Documents / Communications / Training / Admin / System). The brief's step 1 explicitly says "Reuse whatever grouping already exists in the codebase" — and the existing `ADMIN_NAV_V2` is already 10 groups that map cleanly onto that concept (overview ~ Dashboard, work ~ Field Work, sales ~ Customers/Money, billing ~ Money, ops ~ Operations, reports ~ Documents, marketing / seo_gbp / ai_tools ~ Admin, settings ~ Admin/System). Communications-scoped nav entries will be added by Comms Phase 2 (queue item 7).
+- **No new marker for `System` as a distinct group.** Super-admin-only entries are already flagged via `hard_rule: "super_admin_only"` inline within their existing groups. Consolidating them into a standalone "System" group is a cosmetic reorganization that would touch `adminNav.js` — deferred to a separate small task if desired.
+
+
