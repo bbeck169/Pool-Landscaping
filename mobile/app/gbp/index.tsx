@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, ScrollView, Pressable, TextInput, RefreshControl, Alert, Switch } from 'react-native';
+import { View, Text, ScrollView, Pressable, TextInput, RefreshControl, Alert, Switch, StyleSheet } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
 import { useFocusEffect } from "expo-router";

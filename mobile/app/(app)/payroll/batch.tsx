@@ -17,7 +17,7 @@
  *   POST /api/checks/payroll/import-csv?bank_account_id=...&execute=false|true
  */
 import React, { useCallback, useMemo, useState } from "react";
-import { View, Text, ScrollView, Pressable, ActivityIndicator, TextInput, Linking, Platform } from 'react-native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, TextInput, Linking, Platform, StyleSheet } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 import * as DocumentPicker from "expo-document-picker";

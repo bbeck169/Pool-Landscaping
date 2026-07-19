@@ -5,7 +5,7 @@
  * "All My Tools" hub or from the More menu without having to be on a job.
  */
 import React, { useMemo, useState } from "react";
-import { View, Text, Pressable, TextInput, Platform, ScrollView } from 'react-native';
+import { View, Text, Pressable, TextInput, Platform, ScrollView, StyleSheet } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radius, font, fontSize } from '@/src/theme';
 import { Header } from "@/src/components/widgets";
