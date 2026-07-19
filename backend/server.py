@@ -56,6 +56,7 @@ from routers import (
     comms,
     media_uploads,
     portal_videos,
+    reviews,
 )
 
 app = FastAPI(
@@ -112,8 +113,12 @@ for module in [notifications_router,
                weekly_digest,
                comms,
                media_uploads,
-               portal_videos]:
-    api_router.include_router(module.router)
+               portal_videos,
+               reviews]:
+        if module is reviews:
+            api_router.include_router(module.router, prefix="/reviews")
+            continue
+        api_router.include_router(module.router)
 
 
 @api_router.get("/")
@@ -230,6 +235,12 @@ async def _background_seed():
         await step("comms_system_rows", _seed_comms())
     except Exception as _e:
         logger.warning(f"seed_comms failed: {_e}")
+
+    try:
+        from reviews_seed.seed_reviews import seed_reviews as _seed_reviews
+        await step("reviews_phase1_seed", _seed_reviews())
+    except Exception as _e:
+        logger.warning(f"seed_reviews failed: {_e}")
     await step("business_os", business_os.seed_business_os())
     await step("tech_today_demo", seed_tech_today_demo())
     await step("prior_readings", seed_prior_readings())

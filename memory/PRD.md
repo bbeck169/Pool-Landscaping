@@ -3962,3 +3962,237 @@ lightbox playback are in place and verified by inspection.
   ``expo-video-thumbnails``. Web uses ``HTMLVideoElement.duration``;
   behavior is equivalent from the server's point of view (the
   ``X-Video-Duration`` header still arrives as a float in seconds).
+
+
+---
+
+## Reviews Subsystem · Phase 1 (Backend) · Feb 2026
+
+First-class review-request lifecycle modelled on NiceJob's flow —
+4-platform routing, manual admin trigger, server-side 5-star gate
+(4-5 → forward to public platform, 1-3 → private feedback that emails
+the admin team), tech attribution + leaderboard, embeddable public
+widget with an all-JS one-liner drop-in.
+
+### New collections (4)
+
+- ``tenant_review_platforms`` — one row per platform per tenant.
+  Fields: ``id, tenant_id, platform (google|facebook|yelp|bbb|custom),
+  display_name, review_url, is_active, sort_order, custom_slug,
+  created_at, updated_at``. Indexes: ``(tenant, platform, custom_slug)``
+  unique + ``(tenant, is_active, sort_order)``.
+- ``review_requests`` — one row per outreach. Magic-link ``token``
+  stored on the row (CSAT pattern — one-shot + revocable). Lifecycle
+  fields: ``sent_at, landing_visited_at, star_rating_submitted,
+  star_submitted_at, platform_chosen, platform_clicked_at, outcome,
+  expires_at``. Indexes: ``token`` unique, ``(tenant, outcome)``,
+  ``(tenant, customer, sent_at)``, ``(tenant, technician, star_rating)``.
+- ``reviews`` — persisted reviews (self-reported, manual entry, and
+  future-phase scraped). Fields include ``is_public``,
+  ``visible_on_widget`` (auto-defaults to ``is_public && star≥4``),
+  ``admin_response`` + ``admin_response_at`` for reply drafts, and a
+  ``platform`` field including ``private`` for post-1-3-star capture.
+- ``private_feedback_events`` — captures 1-3 star submissions from the
+  gated landing so admins can follow up before the customer decides to
+  post publicly. Fields: ``id, tenant_id, review_request_id,
+  customer_id, star_rating, body_text, admin_emails_notified[],
+  created_at``.
+
+Plus one operational collection:
+- ``reviews_widget_rate`` — TTL-indexed (300s) per-IP + per-tenant
+  minute-bucket counter that gates the public widget endpoint.
+  Mirrors the ``services/zillow_rate_limit.py`` pattern.
+
+### Endpoints (24 new, all under ``/api/reviews``)
+
+Admin CRUD:
+- ``GET|POST /platforms`` · ``PATCH|DELETE /platforms/{id}``
+- ``GET|POST /reviews`` · ``GET|PATCH|DELETE /reviews/{id}``
+- ``GET /requests`` · ``GET /requests/{id}`` · ``POST /requests/{id}/resend``
+- ``GET /stats`` · ``GET /leaderboard?min_reviews=3``
+
+Admin + tech:
+- ``POST /requests`` — creates a request; 7-day dedup guard per
+  customer, ``super_admin + expedite=true`` bypasses. Auto-invokes
+  the comms delivery pipe with the new templates unless
+  ``sent_via=link_only``.
+
+Public magic-link (no auth):
+- ``GET /public/r/{token}`` — landing payload, marks
+  ``landing_visited_at`` on first hit.
+- ``POST /public/r/{token}/rating`` — server-side star-gate; 5→
+  choose_platform, 4→choose_platform, 3-1→private_feedback.
+- ``POST /public/r/{token}/platform-clicked`` — records intent, flips
+  outcome to ``public_posted_intent``, returns redirect URL.
+- ``POST /public/r/{token}/private-feedback`` — creates the
+  ``private_feedback_events`` row + a matching ``reviews`` row
+  (``is_public=false, visible_on_widget=false, platform="private"``),
+  emails every tenant admin via the new
+  ``system.review_private_feedback_admin_alert`` template, and
+  ``create_staff_notification`` in-app.
+
+Public widget (rate-limited to 60 req/min per IP+tenant):
+- ``GET /public/widget/{tenant_slug}`` — JSON payload with
+  ``avg_star``, ``total_public``, ``total_with_text``, and reviews
+  filtered to ``is_public && visible_on_widget && review_text != null``.
+- ``GET /public/widget/{tenant_slug}.js`` — dependency-free JS snippet
+  that fetches the JSON and injects a styled reviews block into
+  ``<div id="pool-crm-reviews"></div>``. User-supplied strings run
+  through a ``textContent``-based escape helper on the client + the
+  server-side ``html.escape`` — defense-in-depth XSS guard.
+
+Token spam guard: 5 submissions/hour per (token, kind) via a
+lightweight ``review_request_hits`` counter — separate from the
+widget rate limiter because the semantics differ (write actions on a
+specific token vs. anonymous widget reads).
+
+### Comms integration
+
+New tokens in ``services/comm_tokens.py::AVAILABLE_TOKENS`` (33 total
+now):
+
+- ``review_request.public_url`` — composed from ``APP_PUBLIC_URL`` +
+  the row's token.
+- ``review_request.tenant_public_reviews_url`` — from
+  ``APP_PUBLIC_URL`` + ``tenants.slug``.
+- ``tech.first_name``, ``tech.full_name``, ``tech.avatar_url`` —
+  resolved from ``jobs.technician_id`` → ``db.technicians`` on the
+  fly.
+
+New async helper: ``build_context_for_review_request(tenant,
+review_request_doc)``. Reuses ``build_context_for_customer`` for the
+customer sub-tree (unchanged) and layers tech/review-request tokens
+on top.
+
+Three new templates seeded via ``comms_seed/system_data.py``
+(catalog-syntax, in-house original copy, blacklist-scanned):
+
+- ``system.review_request_email`` — post-visit ask with the
+  ``tech.first_name`` + ``review_request.public_url`` CTA.
+- ``system.review_private_feedback_admin_alert`` — admin-facing
+  follow-up prompt.
+- ``system.sms.review_request`` — 160-char SMS variant.
+
+The legacy ``sequences.py:48`` + ``marketing_studio.py:655-667``
+review-request seeds (which use ``{{name}}``/``{{link}}`` syntax
+outside the catalog) are LEFT ALONE — retire in a later cleanup
+pass per the phase brief.
+
+### Seeded demo data
+
+Idempotent seeder at ``reviews_seed/seed_reviews.py`` runs from
+``server.py::_background_seed`` on every startup:
+
+- 4 ``tenant_review_platforms`` rows for the ``aquaterra`` demo
+  tenant (Google, Facebook, Yelp, BBB — placeholder review URLs).
+- 4 sample ``reviews`` rows (source ``manual_entry``, 3× 5-star + 1×
+  4-star, review_text populated, technician_id linked to the seeded
+  ``mike@aquaterra.com`` and ``carlos@aquaterra.com`` techs when
+  present).
+
+Blacklist check on the seeded copy (test-enforced):
+``NiceJob | ServiceTitan | Housecall Pro | Jobber | Lorem Ipsum |
+"As an AI" | "As a language model"`` — none appear.
+
+### Tests
+
+``backend/tests/test_reviews_backend.py`` — 21 tests, all green.
+Coverage:
+
+1. Platform CRUD (list, create, patch, delete) + tenant scoping +
+   customer 403.
+2. Request lifecycle: link_only returns token, 7-day dedup blocks
+   the second within-window request, admin ``expedite=true`` is
+   ignored (super_admin only bypass), email delivery creates a
+   ``communication_sends`` row with template
+   ``system.review_request_email``.
+3. Public landing: no-auth GET works and marks
+   ``landing_visited_at``; 5-star returns ``choose_platform``;
+   2-star returns ``private_feedback``; second rating on the same
+   token returns 409 (one-shot); private_feedback submission creates
+   both a ``reviews`` row (private) and a ``private_feedback_events``
+   row and flips the request outcome; platform-click records intent
+   and returns a redirect URL.
+4. Reviews aggregations: ``/stats`` shape + ``/leaderboard`` gates
+   below ``min_reviews``.
+5. Widget: only ``visible_on_widget`` + non-null ``review_text`` rows
+   returned; unknown slug → 404; ``.js`` embed served with the
+   correct mime + safe render path; rate-limit trips at hit 61+
+   within a stable minute window.
+6. Seed row counts (4 platforms + 4 sample reviews) + blacklist scan.
+
+Broader-suite spot check (``reviews + video_uploads +
+customer_import_full_mapping + impexp + pool_crm_api + comms``):
+**95 passed, 11 skipped, 0 failed** after nudging the
+``test_seed_produces_exact_counts_and_is_idempotent`` expected
+counts from 6/4/5 to 8/5/5 (three new templates added — no
+behavioural drift).
+
+### Curl round-trip transcripts
+
+```
+POST /api/reviews/platforms          → 201
+  { id, tenant_id, platform: "custom", display_name: "CURL_ThumbTack",
+    review_url, sort_order:0, custom_slug:"tt-curl", ... }
+
+POST /api/reviews/requests           → 201
+  sent_via: "link_only" (no comms send)
+  token: 32-char urlsafe, public_url: "…/reviews/r/<token>"
+
+GET  /api/reviews/public/r/{token}   → 200  (no auth)
+  { tenant_name:"AquaTerra", tenant_slug:"aquaterra",
+    customer_first_name:"Jennifer",
+    platforms:[custom, google, facebook, yelp, bbb],
+    already_submitted:false, outcome:"pending" }
+
+POST /public/r/{token}/rating {5}    → { next_step:"choose_platform", star_rating:5 }
+POST /public/r/{fresh}/rating {2}    → { next_step:"private_feedback", star_rating:2 }
+
+GET  /api/reviews/public/widget/aquaterra → 200
+  { tenant_name:"AquaTerra", avg_star:4.75, total_public:4,
+    total_with_text:4, reviews:[…] }
+
+GET  /api/reviews/stats              → 200
+  { total, avg_star, count_by_star{1..5},
+    count_by_platform{...}, count_public, count_private,
+    delta_last_30d }
+```
+
+### Files added
+
+- ``backend/routers/reviews.py`` — the main router (~24 endpoints).
+- ``backend/services/reviews_rate_limit.py`` — widget rate limiter.
+- ``backend/reviews_seed/__init__.py`` + ``seed_reviews.py`` — demo
+  data seeder.
+- ``backend/tests/test_reviews_backend.py`` — 21 pytest cases.
+
+### Files modified
+
+- ``backend/server.py`` — imports + registers the new router under
+  ``/reviews``; calls ``seed_reviews`` in the background-seed hook.
+- ``backend/services/comm_tokens.py`` — 5 new tokens + new
+  ``build_context_for_review_request`` helper (existing
+  ``build_context_for_customer`` untouched).
+- ``backend/comms_seed/system_data.py`` — three new template
+  definitions + blocks builders.
+- ``backend/tests/test_comms_backend.py`` — expected system-template
+  counts bumped from 6/4 to 8/5 (three new review templates).
+
+### Deviations
+
+- **``super_admin`` bypass for ``expedite=true``** is server-side only.
+  There is no admin-UI affordance in this phase (UI ships in Phase 2).
+- **``review_request.tenant_public_reviews_url`` token** points to
+  ``<APP_PUBLIC_URL>/reviews/{slug}`` — the frontend Phase 2 will
+  add a matching public reviews page. Right now the URL is inert
+  outside the ``.js`` embed / raw API.
+- **Widget rate limiter** is fail-open (any Mongo hiccup logs and
+  admits the request) because blocking the *public* widget on a
+  storage blip would silently break embedded sites — mirrors the
+  Zillow adapter's stance.
+- **CSAT integration wiring deferred** per the phase brief. The
+  legacy ``routers/sequences.py`` still seeds a plain-syntax
+  ``review-request`` sequence; retiring those alongside a formal
+  CSAT → Reviews handoff is a later cleanup pass.
+- **Widget JS is dependency-free** and does NOT support brand theming
+  or custom CSS this phase. Visual polish + theming lands in Phase 2.

@@ -391,8 +391,8 @@ class TestSeedIdempotent:
             return e, s, a
 
         e, s, a = asyncio.run(_check())
-        assert e == 6, f"expected 6 system email templates, got {e}"
-        assert s == 4, f"expected 4 system sms templates, got {s}"
+        assert e == 8, f"expected 8 system email templates, got {e}"
+        assert s == 5, f"expected 5 system sms templates, got {s}"
         assert a == 5, f"expected 5 system automation rules, got {a}"
 
 

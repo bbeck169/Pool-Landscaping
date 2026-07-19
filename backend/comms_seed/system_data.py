@@ -172,6 +172,62 @@ def _satisfaction_survey_blocks() -> list:
     ]
 
 
+# Reviews Phase 1 — Feb 2026. Original copy, catalog-token syntax.
+def _review_request_blocks() -> list:
+    return [
+        _block("image", {"url": "{{company.logo_url}}", "alt": "{{company.name}}",
+                          "alignment": "center", "width_pct": 36,
+                          "padding": "24px 24px 4px"}),
+        _block("heading", {"text": "Thanks for having us out, {{customer.first_name}}",
+                            "level": 1, "alignment": "left", "color": "#0f6ed1",
+                            "padding": "12px 24px 4px"}),
+        _block("text", {"html": (
+            "<p>{{tech.first_name}} just wrapped your visit and we hope your pool "
+            "and yard are looking sharp. Would you tell us how we did? It takes about "
+            "30 seconds, and honest feedback is the single biggest gift you can give "
+            "a small business like ours.</p>"
+        ), "padding": "8px 24px", "text_color": "#222222", "font_size": "15px",
+           "font_family": "inherit", "background_color": "transparent"}),
+        _block("button", {"label": "Share your feedback",
+                            "link_url": "{{review_request.public_url}}",
+                            "alignment": "left", "background_color": "#0f6ed1",
+                            "text_color": "#ffffff", "border_radius": "6px",
+                            "padding": "14px 22px"}),
+        _block("spacer", {"height_px": 12}),
+        _block("text", {"html": (
+            "<p>If anything about the visit fell short, please tell us that too — "
+            "the same link goes straight to the owner's inbox, not to a public "
+            "review site. We would rather hear it from you first.</p>"
+        ), "padding": "8px 24px", "text_color": "#555"}),
+        _footer(),
+    ]
+
+
+def _review_private_feedback_admin_alert_blocks() -> list:
+    return [
+        _block("heading", {"text": "New private feedback — {{customer.full_name}}",
+                            "level": 1, "alignment": "left", "color": "#b34700",
+                            "padding": "24px 24px 8px"}),
+        _block("text", {"html": (
+            "<p>A recent customer used the private feedback path instead of posting "
+            "publicly. Full details are on the review-request landing page linked "
+            "below — the customer's rating, comments, and the job they were "
+            "reviewing are all there.</p>"
+        ), "padding": "8px 24px", "text_color": "#222222"}),
+        _block("button", {"label": "Open review-request record",
+                            "link_url": "{{review_request.public_url}}",
+                            "alignment": "left", "background_color": "#b34700",
+                            "text_color": "#ffffff", "border_radius": "6px",
+                            "padding": "12px 20px"}),
+        _block("text", {"html": (
+            "<p>Reach out to the customer within one business day — following up "
+            "quickly on private feedback is the single most effective way to "
+            "recover the relationship (and often, the public review).</p>"
+        ), "padding": "16px 24px 8px", "text_color": "#333"}),
+        _footer(),
+    ]
+
+
 SYSTEM_EMAIL_TEMPLATES = [
     {
         "code": "system.welcome_new_customer",
@@ -215,6 +271,24 @@ SYSTEM_EMAIL_TEMPLATES = [
         "subject": "How did we do, {{customer.first_name}}?",
         "blocks_json": _satisfaction_survey_blocks(),
     },
+    {
+        "code": "system.review_request_email",
+        "name": "Review request — post-visit ask",
+        "description": ("Manual or automated ask to a happy customer to leave a "
+                         "public review. Uses the star-gated landing so 1-3 star "
+                         "responses divert to private feedback."),
+        "subject": "How did we do, {{customer.first_name}}?",
+        "blocks_json": _review_request_blocks(),
+    },
+    {
+        "code": "system.review_private_feedback_admin_alert",
+        "name": "Review — private feedback admin alert",
+        "description": ("Emails the admin team the moment a customer submits a "
+                         "1-3 star private feedback response so they can follow "
+                         "up before the customer decides to post publicly."),
+        "subject": "Private feedback from {{customer.full_name}} — please follow up",
+        "blocks_json": _review_private_feedback_admin_alert_blocks(),
+    },
 ]
 
 
@@ -246,6 +320,13 @@ SYSTEM_SMS_TEMPLATES = [
         "name": "SMS · Thank-you after visit",
         "body": ("{{company.name}}: thanks for your business, {{customer.first_name}}. "
                   "Visit report: {{company.portal_link}} Reply STOP to opt out."),
+    },
+    {
+        "code": "system.sms.review_request",
+        "name": "SMS · Review request",
+        "body": ("{{company.name}}: hey {{customer.first_name}}, would you share "
+                  "30 seconds of feedback on your recent visit? "
+                  "{{review_request.public_url}} Reply STOP to opt out."),
     },
 ]
 

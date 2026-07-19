@@ -59,6 +59,12 @@ AVAILABLE_TOKENS: Dict[str, Dict[str, str]] = {
     "company.address":          {"label": "Company address block",     "sample": "18040 N. 27th Dr. Ste 200, Phoenix, AZ 85023"},
     # --- system --------------------------------------------------------
     "unsubscribe_url":          {"label": "Unsubscribe link (auto)",   "sample": "https://portal.example.com/unsubscribe/<signed>"},
+    # --- review_request.* + tech.* — Reviews Phase 1 (Feb 2026) --------
+    "review_request.public_url":                {"label": "Review-request landing URL", "sample": "https://portal.example.com/reviews/r/abc123"},
+    "review_request.tenant_public_reviews_url": {"label": "Public reviews page URL",    "sample": "https://portal.example.com/reviews/aquaterra"},
+    "tech.first_name":                          {"label": "Assigned technician first name", "sample": "Mike"},
+    "tech.full_name":                           {"label": "Assigned technician full name",  "sample": "Mike Rivera"},
+    "tech.avatar_url":                          {"label": "Assigned technician headshot URL", "sample": "https://cdn.example.com/techs/mike.jpg"},
 }
 
 _TOKEN_RE = re.compile(r"\{\{\s*([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)\s*\}\}", re.IGNORECASE)
@@ -371,4 +377,78 @@ def build_context_for_customer(customer: Dict[str, Any],
         "company.address":     co.get("address") or "",
         "unsubscribe_url":     unsubscribe_url or "",
     }
+    return ctx
+
+
+async def build_context_for_review_request(tenant: Dict[str, Any],
+                                            review_request_doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Reviews Phase 1 · Feb 2026 — compose the full context for a
+    review-request template render.
+
+    Reuses ``build_context_for_customer`` for the customer/job/company
+    sub-trees (unchanged behaviour) and layers the new
+    ``review_request.*`` + ``tech.*`` tokens on top. All DB reads are
+    tenant-scoped; a review-request whose parent job or customer has
+    been deleted still renders (missing keys → empty strings).
+    """
+    # Local imports to avoid a circular ``services → routers`` graph.
+    import os
+    from config import db  # type: ignore
+
+    tenant_id = tenant.get("id") if tenant else review_request_doc.get("tenant_id")
+
+    customer = None
+    if review_request_doc.get("customer_id"):
+        customer = await db.customers.find_one(
+            {"id": review_request_doc["customer_id"], "tenant_id": tenant_id},
+            {"_id": 0},
+        )
+    job = None
+    if review_request_doc.get("job_id"):
+        job = await db.jobs.find_one(
+            {"id": review_request_doc["job_id"], "tenant_id": tenant_id},
+            {"_id": 0},
+        )
+    tech = None
+    tech_id = review_request_doc.get("technician_id") or (job or {}).get("technician_id")
+    if tech_id:
+        tech = await db.technicians.find_one({"id": tech_id}, {"_id": 0})
+
+    # Company block is the same shape ``routers/comms.py::_company_block``
+    # produces from a tenant doc — keep it centralised here so callers
+    # don't have to import from that router.
+    t = tenant or {}
+    company = {
+        "name":        t.get("name") or "",
+        "phone":       t.get("phone") or "",
+        "email":       t.get("email") or t.get("support_email") or "",
+        "website":     t.get("website") or "",
+        "logo_url":    t.get("logo_url") or "",
+        "portal_link": t.get("portal_link") or t.get("portal_url") or "",
+        "address":     t.get("address") or "",
+    }
+
+    ctx = build_context_for_customer(
+        customer or {}, job=job or {}, invoice=None, company=company, unsubscribe_url="",
+    )
+
+    # Tech tokens — first_name is derived from the ``name`` field on the
+    # technician doc (technicians only store the composite name today).
+    tech_full = (tech or {}).get("name") or ""
+    tech_first = tech_full.split(" ", 1)[0] if tech_full else ""
+    ctx["tech.first_name"] = tech_first
+    ctx["tech.full_name"] = tech_full
+    ctx["tech.avatar_url"] = (tech or {}).get("avatar_url") or ""
+
+    # Review-request URLs — always computed from APP_PUBLIC_URL + tenant
+    # slug so they work in preview, staging, and production without
+    # per-tenant configuration.
+    origin = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
+    token = review_request_doc.get("token") or ""
+    slug = (tenant or {}).get("slug") or ""
+    ctx["review_request.public_url"] = f"{origin}/reviews/r/{token}" if (origin and token) else ""
+    ctx["review_request.tenant_public_reviews_url"] = (
+        f"{origin}/reviews/{slug}" if (origin and slug) else ""
+    )
+
     return ctx
