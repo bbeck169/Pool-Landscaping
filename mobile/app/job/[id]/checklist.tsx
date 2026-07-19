@@ -40,6 +40,7 @@ import VisitRecapModal from "@/src/components/checklist/VisitRecapModal";
 import { cacheJobBootstrap, getCachedBootstrap } from "@/src/services/offlineCache";
 import * as writeQueue from "@/src/services/writeQueue";
 import { useOnline } from "@/src/offline";
+import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 
 const AUTOSAVE_DEBOUNCE_MS = 800;
 // Phase 37 — minimum time the pill stays on "Saving…" so techs actually
@@ -502,6 +503,19 @@ export default function JobChecklistScreen() {
             onPhotosChange={(next) => setReport({ ...report, photos: next })}
             max={PHOTO_CAP}
             disabled={locked}
+          />
+        </View>
+
+        {/* Videos — Phase 5B */}
+        <View style={styles.card} testID="checklist-videos-card">
+          <VideoMediaUploader
+            entityKind="job"
+            entityId={String(id)}
+            existingVideos={job.videos || []}
+            onUploaded={(v) => setJob((j: any) => ({ ...j, videos: [...(j.videos || []), v] }))}
+            onDeleted={(vid) => setJob((j: any) => ({ ...j, videos: (j.videos || []).filter((vv: any) => vv.id !== vid) }))}
+            onPatched={(v) => setJob((j: any) => ({ ...j, videos: (j.videos || []).map((vv: any) => (vv.id === v.id ? v : vv)) }))}
+            readonly={locked}
           />
         </View>
 
