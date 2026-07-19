@@ -53,6 +53,7 @@ from routers import (
     templates_library,
     handbook,
     weekly_digest,
+    comms,
 )
 
 app = FastAPI(
@@ -106,7 +107,8 @@ for module in [notifications_router,
                recommendations_queue,
                templates_library,
                handbook,
-               weekly_digest]:
+               weekly_digest,
+               comms]:
     api_router.include_router(module.router)
 
 
@@ -219,6 +221,11 @@ async def _background_seed():
     await step("landscaping_user", seed_landscaping_user())
     await step("landscape_tech_carlos", seed_landscape_tech_carlos())
     await step("auto_heal_demo_passwords", auto_heal_demo_passwords_if_needed())
+    try:
+        from comms_seed.seed_comms import seed_comms as _seed_comms
+        await step("comms_system_rows", _seed_comms())
+    except Exception as _e:
+        logger.warning(f"seed_comms failed: {_e}")
     await step("business_os", business_os.seed_business_os())
     await step("tech_today_demo", seed_tech_today_demo())
     await step("prior_readings", seed_prior_readings())
