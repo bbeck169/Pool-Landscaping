@@ -54,6 +54,8 @@ from routers import (
     handbook,
     weekly_digest,
     comms,
+    media_uploads,
+    portal_videos,
 )
 
 app = FastAPI(
@@ -108,7 +110,9 @@ for module in [notifications_router,
                templates_library,
                handbook,
                weekly_digest,
-               comms]:
+               comms,
+               media_uploads,
+               portal_videos]:
     api_router.include_router(module.router)
 
 
@@ -373,6 +377,18 @@ async def startup():
         logger.info(f"[phase56.3.A] customer name-split migration: {migrated_n} row(s)")
     except Exception as e:
         logger.warning(f"customer name-split migration crashed: {e}")
+
+    # Phase 5A · Video Uploads (Feb 2026) — init Emergent object storage
+    # session key once at startup. Never crashes the boot: on failure the
+    # upload endpoints return 503 with a clear error.
+    try:
+        from services import object_storage as _obj_store
+        _obj_store.init_storage()
+        logger.info(
+            f"[object_storage] init complete — ready={_obj_store.is_ready()}"
+        )
+    except Exception as e:
+        logger.warning(f"object_storage init crashed: {e}")
 
     async def _defer():
         try:

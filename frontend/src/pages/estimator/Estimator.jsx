@@ -12,6 +12,7 @@ import {
   Toast,
   EmptyState,
 } from "@/components/ui-kit";
+import MediaUploader from "@/components/media/MediaUploader";
 
 // ────── Estimates list ──────
 export function EstimatesList() {
@@ -189,6 +190,7 @@ export function EstimatorEditor() {
     notes: "",
     terms: "",
   });
+  const [videos, setVideos] = useState([]);
   const [termsDefault, setTermsDefault] = useState("");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
@@ -200,7 +202,7 @@ export function EstimatorEditor() {
       setForm((f) => (f.terms ? f : { ...f, terms: r.default_quote_terms || "" }));
     }).catch(() => {});
     if (!isNew) {
-      api.get(`/estimates/${id}`).then((d) =>
+      api.get(`/estimates/${id}`).then((d) => {
         setForm({
           customer_id: d.customer_id || "",
           title: d.title || "Estimate",
@@ -208,8 +210,9 @@ export function EstimatorEditor() {
           tax_rate: d.tax_rate || 0,
           notes: d.notes || "",
           terms: d.terms || "",
-        })
-      ).catch(() => {});
+        });
+        setVideos(d.videos || []);
+      }).catch(() => {});
     }
   }, [id, isNew]);
 
@@ -312,6 +315,25 @@ export function EstimatorEditor() {
       </div>
 
       <div className="flex justify-end mt-4 pb-8"><Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save estimate"}</Button></div>
+
+      {!isNew ? (
+        <div className="rounded-2xl p-5 mb-8"
+             style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+             data-testid="est-media-section">
+          <h3 className="text-base font-bold mb-3" style={{ color: colors.onSurface }}>
+            Attachments · Videos
+          </h3>
+          <MediaUploader
+            entityKind="estimate"
+            entityId={id}
+            existingVideos={videos}
+            onUploaded={(v) => setVideos((xs) => [...xs, v])}
+            onDeleted={(vid) => setVideos((xs) => xs.map((x) => x.id === vid ? { ...x, is_deleted: true } : x))}
+            onPatched={(v) => setVideos((xs) => xs.map((x) => x.id === v.id ? { ...x, ...v } : x))}
+          />
+        </div>
+      ) : null}
+
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );

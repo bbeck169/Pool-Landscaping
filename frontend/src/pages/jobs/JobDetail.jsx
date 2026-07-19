@@ -32,6 +32,7 @@ import {
 import { useAuth } from "@/auth";
 import { useAttendance } from "@/hooks/useAttendance";
 import JobCostingPanel from "@/pages/budget/JobCostingPanel";
+import MediaUploader from "@/components/media/MediaUploader";
 
 export default function JobDetail() {
   const { id } = useParams();
@@ -391,6 +392,33 @@ export default function JobDetail() {
               </button>
             ))}
           </div>
+        </div>
+      ) : null}
+
+      {/* Videos — sits next to Photos in the Media section. Hidden for customers. */}
+      {job.id && !isCustomer ? (
+        <div
+          className="rounded-2xl p-6 mb-4"
+          style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+        >
+          <h3 className="text-lg font-bold mb-3" style={{ color: colors.onSurface }}>
+            Videos
+          </h3>
+          <MediaUploader
+            entityKind="job"
+            entityId={job.id}
+            existingVideos={job.videos || []}
+            readonly={techLocked}
+            onUploaded={(v) => setJob((j) => ({ ...j, videos: [...(j?.videos || []), v] }))}
+            onDeleted={(vid) => setJob((j) => ({
+              ...j,
+              videos: (j?.videos || []).map((x) => x.id === vid ? { ...x, is_deleted: true } : x),
+            }))}
+            onPatched={(v) => setJob((j) => ({
+              ...j,
+              videos: (j?.videos || []).map((x) => x.id === v.id ? { ...x, ...v } : x),
+            }))}
+          />
         </div>
       ) : null}
 

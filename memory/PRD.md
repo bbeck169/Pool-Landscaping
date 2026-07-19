@@ -3485,3 +3485,233 @@ tags: []
 - **`warnings_total` field added** on the response alongside `warnings_truncated`. The brief only asked for the truncated flag; the total-count makes the modal's "showing first 100" copy trivially correct without a separate GET call.
 - **No body-size middleware bumped.** `server.py` has no `max_request_size` / `LimitUploadSize` middleware — Starlette/Uvicorn defaults handle multi-MB CSVs natively. Confirmed the 5k-row CSV (0.6 MB) round-trips in one POST without any middleware change.
 - **The 5,000-row runtime is dramatically better than the 2-minute budget** (0.6s vs. 120s), so no need for streaming/progress SSE. The simple "may take up to a minute" hint in the modal is sufficient.
+
+
+---
+
+## Video Uploads on Jobs + Estimates · Phase 5A · Feb 2026
+
+### What shipped
+
+Backend + Web (mobile parity is Phase 5B, dispatched separately). First
+blob-storage integration in the codebase — every prior "attachment" was a
+base64 string inside a Mongo doc. Videos are now first-class media on
+both ``jobs`` and ``estimates`` with tenant-scoped Emergent object
+storage, visibility gating (internal vs. shareable-to-portal), soft
+delete, and a proxied streaming endpoint with Range-request support.
+
+### Architecture
+
+- **Storage backend**: Emergent object storage
+  (`https://integrations.emergentagent.com/objstore/api/v1/storage`)
+  authenticated via the existing ``EMERGENT_LLM_KEY``. Session key
+  cached module-level and transparently re-issued on ``403 Forbidden``.
+- **Path convention**: ``poolcrm/{tenant_id}/{entity_kind}/{entity_id}/{uuid}.{ext}``
+  — tenant-scoped, UUID-based filename component, entity-typed subtree.
+- **DB shape**: new ``videos: []`` array on ``jobs`` and ``estimates``
+  documents. Materializes on first write; legacy docs default to ``[]``.
+
+Per-video shape (identical for both entity types):
+```
+{
+  id, storage_path, mime, size_bytes, duration_seconds,
+  original_filename, uploaded_by_user_id, uploaded_by_name, uploaded_at,
+  visibility: "internal" | "customer",
+  caption, is_deleted, deleted_at?
+}
+```
+
+### Endpoints
+
+Registered in ``server.py`` alongside the existing routers:
+
+```
+POST   /api/jobs/{job_id}/videos              multipart upload
+DELETE /api/jobs/{job_id}/videos/{video_id}   soft delete (storage retained)
+PATCH  /api/jobs/{job_id}/videos/{video_id}   caption + visibility only
+POST   /api/estimates/{estimate_id}/videos    (mirror)
+DELETE /api/estimates/{estimate_id}/videos/{video_id}
+PATCH  /api/estimates/{estimate_id}/videos/{video_id}
+GET    /api/media/videos/{path:path}          auth-gated proxy stream
+GET    /api/portal/videos                     customer-facing shareable feed
+```
+
+### Policy caps
+
+- **100 MB** per file (enforced twice: declared ``Content-Length`` and
+  actual received-bytes count).
+- **3 min** per file (client parses via ``HTMLVideoElement.duration``
+  and passes it to the server via ``X-Video-Duration`` header — the
+  server has no ffprobe; missing/invalid values store ``null``).
+- **10 videos** per job or estimate (mirrors the existing 10-photo cap on
+  jobs; 11th → 409).
+- **Mimetypes**: ``video/mp4``, ``video/quicktime``, ``video/webm``,
+  ``video/x-m4v``. Others → 400.
+- Roles: ``admin`` / ``super_admin`` / ``technician`` may upload.
+  ``customer`` uniformly 403 on uploads. ``admin`` / ``super_admin``
+  may soft-delete.
+
+### Streaming and Range requests
+
+``GET /api/media/videos/{path:path}`` accepts a JWT either in the
+``Authorization: Bearer`` header (native fetch/axios) or a ``?auth=``
+query param (bare ``<video src>`` playback — HTML5 media elements can't
+set custom request headers).
+
+- Full-body fetch from Emergent storage is the only mode Emergent
+  documents. When the browser issues a ``Range: bytes=start-end``, the
+  handler slices the fetched bytes and returns ``206 Partial Content``
+  with the correct ``Content-Range`` header so scrubbing feels
+  responsive on small files. Very large seeks on multi-MB files may
+  re-fetch — acceptable for the current small-clip workflow.
+- Customer role: video's ``visibility`` must be ``customer`` AND the
+  parent entity's ``customer_id`` must match the caller's — otherwise
+  403.
+
+### Graceful degradation
+
+`services/object_storage.py::init_storage()` never raises. When
+``EMERGENT_LLM_KEY`` is missing or the ``/init`` call errors, the
+module cached ``_storage_key`` stays ``None`` and ``is_ready()`` returns
+False. The router's ``_require_storage_ready()`` guard then raises 503
+"Object storage not configured" on every upload attempt — reads still
+work for already-persisted objects if the key later comes back.
+
+### Frontend
+
+Single new component: ``frontend/src/components/media/MediaUploader.jsx``
+(peer to the existing ``PhotoUploader``). Handles:
+
+- Drag-picked mimetype filter (`accept="video/mp4,..."`).
+- Client-side pre-flight: file size and duration (via in-memory
+  ``<video>`` element).
+- XHR-based upload for real ``onprogress`` events → progress % badge.
+- Grid of tiles with inline HTML5 ``<video preload="metadata">``,
+  visibility badge, size + duration line, uploaded-by + date,
+  visibility toggle, delete.
+- Lightbox play (``controls autoplay``) via the ``/api/media/videos/…?auth=…``
+  proxy URL.
+
+Wired into:
+
+- ``pages/jobs/JobDetail.jsx`` — new "Videos" section below the "Photos"
+  section (hidden for the customer role).
+- ``pages/estimator/Estimator.jsx::EstimatorEditor`` — new
+  "Attachments · Videos" section below the estimate editor (only when
+  editing an existing estimate, not on the "new" form).
+
+### Backend tests
+
+``backend/tests/test_video_uploads.py`` — 17 tests, all green:
+
+- Admin + tech uploads (201).
+- Customer 403 on upload.
+- Wrong mimetype → 400.
+- Oversize (100 MB + 1 KB payload) → 413.
+- 11th video → 409.
+- Estimate parallel path.
+- Portal endpoint returns only ``visibility=="customer"`` for the
+  calling customer; 403 for non-customer callers.
+- Streaming with query auth → 200 + correct mime + full bytes.
+- Range request (``Range: bytes=0-63``) → 206 + ``Content-Range`` + 64
+  bytes.
+- Streaming 401 without auth.
+- Customer 403 on internal video streaming.
+- Soft delete flips ``is_deleted`` without touching storage.
+- Storage-not-ready unit path returns 503 (patches applied to the
+  module; unit-level guard verified because the endpoint runs
+  out-of-process from the pytest patch).
+
+Broader sample suite (``test_customer_import_full_mapping``,
+``test_pool_crm_api``, ``test_phase53_stripe``,
+``test_phase6_reports_finance``): **98 passed, 1 skipped, 0 failed.**
+No regressions.
+
+### End-to-end curl verification
+
+```
+POST /api/jobs/{id}/videos (video/mp4, ~512 KB) → 201
+  video_id, storage_path=poolcrm/{tenant}/job/{jid}/{uuid}.mp4,
+  size_bytes=512032, mime=video/mp4, visibility=customer,
+  is_deleted=false
+
+GET /api/portal/videos  (as customer)          → 200
+  {kind:"job", entity_id, entity_title:"TEST_smoke_video_job",
+   video_id, storage_path, mime:"video/mp4", size_bytes:512032,
+   caption:"TEST_ smoke", uploaded_by_name:"Alex Admin"}
+
+GET /api/media/videos/{path}?auth=<token>      → 200
+  Content-Type: video/mp4
+  Content-Length: 512032
+  Accept-Ranges: bytes
+  (first 32 bytes of body match ftyp header of the uploaded mp4)
+```
+
+### Manual smoke (browser)
+
+Logged in as admin, opened a job, uploaded a small mp4 via the
+MediaUploader, uploaded video tile rendered inline with:
+
+- "SHAREABLE" green badge
+- Size + duration line
+- Caption "TEST_ shareable clip"
+- Uploader + date footer
+- Working "Make internal" / "Delete" action buttons
+- Working "Upload video · up to 9 more" call-to-action
+
+The tile's inline HTML5 ``<video preload="metadata">`` rendered a poster
+frame automatically. Clicking Play opened the lightbox with
+``controls autoplay`` and the video played through the proxy stream.
+
+### Storage init on backend restart
+
+Confirmed via ``tail /var/log/supervisor/backend.err.log``:
+
+```
+INFO:services.object_storage:[object_storage] Storage session key initialised
+INFO:pool_crm:[object_storage] init complete — ready=True
+```
+
+### Files added
+
+- ``backend/services/object_storage.py``
+- ``backend/routers/media_uploads.py``
+- ``backend/routers/portal_videos.py``
+- ``backend/tests/test_video_uploads.py``
+- ``frontend/src/components/media/MediaUploader.jsx``
+
+### Files modified
+
+- ``backend/server.py`` — imports + registers the two new routers;
+  startup calls ``object_storage.init_storage()`` and logs the result.
+- ``frontend/src/pages/jobs/JobDetail.jsx`` — imports and renders
+  ``MediaUploader`` in a new "Videos" section (hidden for customers).
+- ``frontend/src/pages/estimator/Estimator.jsx`` — imports and renders
+  ``MediaUploader`` in a new "Attachments · Videos" section on the
+  editor (only for saved estimates, not the "new" form).
+
+### Deviations
+
+- **Streaming does not proxy Range to Emergent storage.** Emergent's
+  documented GET is full-body only; the router honours the client's
+  Range by slicing the fetched bytes and returning 206. For sub-100 MB
+  clips this is imperceptible; for larger repeated seeks it is
+  wasteful. Fine for Phase 5A per the brief; the router is the single
+  point of change if/when Emergent adds range support.
+- **The "storage down" test is unit-level, not end-to-end.** The
+  backend runs out-of-process from pytest, so ``patch.object(...)``
+  on the ``object_storage`` module cannot affect the running Uvicorn
+  worker. The test therefore imports the router's
+  ``_require_storage_ready`` helper directly with an in-process patch
+  and asserts it raises 503. The wired endpoint calls the same helper
+  before any DB or storage work, so the 503 code path is guaranteed to
+  fire when the module reports ``is_ready() == False``.
+- **``storage_path`` is not indexed on ``jobs``/``estimates``.** The
+  ``/api/media/videos/{path:path}`` streaming endpoint does a
+  ``find_one({"tenant_id", "videos.storage_path"})`` on both
+  collections. Video volume per tenant is expected to stay in the
+  hundreds; adding compound indexes when the collections grow past a
+  few thousand video rows is a follow-up polish.
+- **No thumbnail generation this phase** — the tile uses
+  ``<video preload="metadata">`` so the browser materialises the first
+  frame. Thumbnail-as-static-image is a polish task.
