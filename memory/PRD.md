@@ -3794,3 +3794,85 @@ None. Portal Videos followed the ``PortalPhotos.jsx`` reference
 implementation exactly (grid layout, lightbox modal, loading + empty
 states, ``portal-*`` testid convention) so the customer-side UX stays
 consistent.
+
+
+---
+
+## Video Uploads · Phase 5B (Mobile Expo) · Jul 2026
+
+Ships the Expo/React Native mobile video upload UI, playback, and customer-portal videos screen. Matches all web Phase 5A video functionality.
+
+### Files added
+- `mobile/src/api/media.ts` — video API client: upload (XHR with progress), PATCH visibility, DELETE, stream URL builder, portal fetch, offline guard, helpers
+- `mobile/src/components/media/VideoMediaUploader.tsx` — reusable video tile grid + upload component with record/pick buttons, progress bar, visibility toggle, delete, play
+- `mobile/src/components/media/VideoPlayerModal.tsx` — full-screen modal with expo-video `useVideoPlayer` + `VideoView`, native controls, loading/error states
+- `mobile/app/portal/videos.tsx` — customer portal Videos screen, grouped by entity, tap-to-play
+
+### Files modified
+- `mobile/app/job/[id].tsx` — integrated `VideoMediaUploader` in Videos section below photos
+- `mobile/app/estimator/[id].tsx` — integrated `VideoMediaUploader` for estimates (hidden when `isNew`)
+- `mobile/app/portal/home.tsx` — added "Videos" entry to customer portal nav
+- `mobile/app.json` — added `NSMicrophoneUsageDescription` (iOS), `READ_MEDIA_VIDEO` + `RECORD_AUDIO` (Android)
+
+### Libraries used
+- `expo-video@3.0.16` (SDK 54 compatible) — video playback via `useVideoPlayer` + `VideoView`
+- `expo-image-picker@~17.0.11` (existing) — video selection with `mediaTypes: ["videos"]`
+
+### API endpoints used (same as web Phase 5A)
+- `POST /api/jobs/{job_id}/videos` — multipart upload (FormData via XMLHttpRequest for progress)
+- `DELETE /api/jobs/{job_id}/videos/{video_id}` — soft delete
+- `PATCH /api/jobs/{job_id}/videos/{video_id}` — visibility/caption update
+- Same three for `/api/estimates/{estimate_id}/videos/…`
+- `GET /api/media/videos/{path}?auth=<token>` — authenticated streaming (Range-aware)
+- `GET /api/portal/videos` — customer portal videos
+
+### Upload flow
+1. User taps "Record" (camera) or "Choose video" (library) via `expo-image-picker`
+2. Client-side pre-flight: size ≤ 100 MB, duration ≤ 180s (from picker's `duration` field)
+3. Offline guard: checks `NetInfo.fetch()` — if offline, shows native Alert and aborts (no queuing)
+4. Upload via `XMLHttpRequest` with `upload.onprogress` for real-time percentage
+5. Sends `X-Video-Duration` header if duration was extracted
+6. On success: `onUploaded(video)` callback adds tile to grid
+7. On error: shows error message inline
+
+### Video tile features
+- Play button overlay on black background (poster frame deferred)
+- Visibility badge: "INTERNAL" (dim) / "SHAREABLE" (green)
+- Size + duration + uploader name + relative timestamp
+- Actions: Play (opens VideoPlayerModal), Toggle Visibility, Delete (confirm alert)
+
+### VideoPlayerModal
+- Full-screen modal with `expo-video` `VideoView` + `useVideoPlayer`
+- Authenticated stream URL: `api_base + /media/videos/ + storage_path + ?auth=token`
+- Native controls (play/pause/seek/fullscreen)
+- Loading spinner + error state
+
+### Customer portal Videos screen
+- Fetches `GET /api/portal/videos`, groups by `entity_title`
+- Each group shows entity name + kind (Job/Estimate) + date
+- Each video row: play icon + caption + meta (size, duration, uploader) + relative time
+- Tap → opens VideoPlayerModal
+- Read-only (no visibility toggle, no delete)
+- Empty state: "No videos shared yet"
+
+### Offline behavior
+- Video uploads are NOT supported offline (explicit scope decision)
+- The offline guard in `src/api/media.ts` checks `NetInfo.fetch()` before upload
+- If offline: throws `OfflineError`, caught in UI → shows native Alert: "Video uploads require an internet connection. Try again when connected."
+- No disk queuing for large blobs (would require chunking + resumable, out of scope)
+
+### Device permissions added
+- iOS: `NSMicrophoneUsageDescription` — "Record video with audio for service documentation"
+- Android: `READ_MEDIA_VIDEO`, `RECORD_AUDIO`
+
+### Deviations from spec
+- **Poster frame / thumbnail**: Deferred. Each tile shows a play-circle overlay on black background instead of extracting a poster frame. Thumbnail extraction from video would require `expo-video-thumbnails` or frame extraction — marked as nice-to-have for Phase 5C.
+- **Long-press overflow menu**: Replaced with inline action buttons (Toggle Visibility + Delete) below the meta row. More discoverable on mobile than a hidden long-press gesture.
+- `expo-av` was deprecated in SDK 54 — used `expo-video@3.0.16` instead (same `useVideoPlayer` + `VideoView` API).
+
+### Verification
+- All 6 new/modified files lint-clean (ESLint, 0 errors)
+- Metro bundler compiles without errors (HTTP 200 on localhost:3001)
+- Backend untouched (zero diff on `backend/`), web untouched (zero diff on `frontend/`)
+- No external repos cloned
+- Expo preview tunnel unavailable (infrastructure inactivity — confirmed not a code issue)

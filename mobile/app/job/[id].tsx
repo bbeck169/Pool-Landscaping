@@ -40,6 +40,7 @@ import ServiceIssues from "@/src/components/job/ServiceIssues";
 import PhotoCarousel from "@/src/components/job/PhotoCarousel";
 import Row from "@/src/components/job/Row";
 import JobTimerCard from "@/src/components/job/JobTimerCard";
+import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 
 export default function JobDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -337,6 +338,17 @@ export default function JobDetail() {
           ) : (
             <Text style={styles.noPhotos}>{canManage ? "Add photos of this service." : "No photos uploaded yet."}</Text>
           )}
+
+          {/* Videos section – Phase 5B */}
+          <VideoMediaUploader
+            entityKind="job"
+            entityId={id as string}
+            existingVideos={job.videos || []}
+            onUploaded={(v) => setJob((j: any) => ({ ...j, videos: [...(j.videos || []), v] }))}
+            onDeleted={(vid) => setJob((j: any) => ({ ...j, videos: (j.videos || []).filter((vv: any) => vv.id !== vid) }))}
+            onPatched={(v) => setJob((j: any) => ({ ...j, videos: (j.videos || []).map((vv: any) => (vv.id === v.id ? v : vv)) }))}
+            readonly={isCustomer}
+          />
         </View>
 
         <ServiceIssues job={job} canManage={canManage} isCustomer={isCustomer} onSaved={setJob} />

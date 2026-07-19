@@ -14,6 +14,7 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Take before and after photos of service jobs",
         "NSPhotoLibraryUsageDescription": "Attach job photos from your library",
+        "NSMicrophoneUsageDescription": "Record video with audio for service documentation",
         "NSLocationWhenInUseUsageDescription": "Enables auto clock-in when you arrive at a scheduled job's site.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Enables auto clock-in when you arrive at a scheduled job's site.",
         "UIBackgroundModes": [
@@ -37,7 +38,9 @@
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
         "POST_NOTIFICATIONS",
-        "READ_MEDIA_IMAGES"
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "RECORD_AUDIO"
       ]
     },
     "web": {

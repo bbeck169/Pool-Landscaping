@@ -9,6 +9,7 @@ import { Header } from "@/src/components/widgets";
 import { Loading, Sheet, PrimaryButton, EmptyState } from "@/src/components/ui";
 import { computeEstimate, CATEGORIES, CATEGORY_META, EstimateLine } from "@/src/utils/estimate";
 import { exportEstimatePdf } from "@/src/utils/exportEstimatePdf";
+import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 
 const emptyLine = (): EstimateLine => ({ category: "Material", description: "", quantity: 1, unit_cost: 0 });
 
@@ -43,6 +44,7 @@ export default function EstimateBuilder() {
   const [templates, setTemplates] = useState<any[]>([]);
   const [saveTplSheet, setSaveTplSheet] = useState(false);
   const [tplName, setTplName] = useState("");
+  const [videos, setVideos] = useState<any[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -77,6 +79,7 @@ export default function EstimateBuilder() {
         setNotes(e.notes || "");
         setStatus(e.status || "draft");
         setConvertedId(e.converted_quote_id || null);
+        setVideos(e.videos || []);
         setLoading(false);
       }
     } catch {
@@ -254,6 +257,19 @@ export default function EstimateBuilder() {
           <Ionicons name="document-attach-outline" size={16} color={colors.onSurface} />
           <Text style={styles.pdfBtnText}>Internal cost breakdown PDF</Text>
         </Pressable>
+
+        {/* Videos section – Phase 5B */}
+        {!isNew ? (
+          <VideoMediaUploader
+            entityKind="estimate"
+            entityId={id as string}
+            existingVideos={videos}
+            onUploaded={(v) => setVideos((prev) => [...prev, v])}
+            onDeleted={(vid) => setVideos((prev) => prev.filter((vv: any) => vv.id !== vid))}
+            onPatched={(v) => setVideos((prev) => prev.map((vv: any) => (vv.id === v.id ? v : vv)))}
+            readonly={readOnly}
+          />
+        ) : null}
 
         {!readOnly ? (
           <>

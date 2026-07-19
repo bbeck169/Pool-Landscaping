@@ -16,6 +16,7 @@ const SECTIONS: { key: string; label: string; icon: any; route: string }[] = [
   { key: "book",     label: "Book Service",    icon: "calendar-outline", route: "/portal/book" },
   { key: "appts",    label: "Appointments",    icon: "checkmark-done-outline", route: "/portal/appointments" },
   { key: "photos",   label: "Photos",          icon: "images-outline", route: "/portal/photos" },
+  { key: "videos",   label: "Videos",           icon: "videocam-outline", route: "/portal/videos" },
   { key: "chats",    label: "Chat Threads",    icon: "chatbubbles-outline", route: "/portal/chats" },
   { key: "invoices", label: "Invoices", icon: "receipt-outline", route: "/portal/invoices" },
   { key: "estimates", label: "Estimates", icon: "document-text-outline", route: "/portal/estimates" },

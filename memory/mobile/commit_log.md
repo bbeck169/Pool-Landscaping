@@ -52,3 +52,30 @@
   - `mobile/src/components/templates/TemplateFieldRenderer.tsx` — signature refactor
   - `mobile/package.json` — added react-native-signature-canvas
   - `memory/PRD.md` — Phase 4 Batch A Mobile subsection
+
+
+## Iteration 4 — Phase 5B · Video Uploads (Mobile Expo)
+- **Commit**: ad8709e66264ffff2d3e37e4a018763f13860b13
+- **Date**: 2026-07-19
+- **Changes**:
+  - Installed `expo-video@3.0.16` (SDK 54 compatible)
+  - Created video API client (`media.ts`): upload with XHR progress, PATCH, DELETE, stream URL builder, offline guard
+  - Created `VideoMediaUploader` component: tile grid, record/pick, progress, visibility toggle, delete
+  - Created `VideoPlayerModal`: full-screen expo-video player with native controls
+  - Created customer portal Videos screen with entity grouping
+  - Integrated video section into job detail + estimate detail screens
+  - Added Videos entry to customer portal nav
+  - Added microphone + video permissions to app.json
+  - Updated PRD with Phase 5B subsection
+- **Files created**:
+  - `mobile/src/api/media.ts`
+  - `mobile/src/components/media/VideoMediaUploader.tsx`
+  - `mobile/src/components/media/VideoPlayerModal.tsx`
+  - `mobile/app/portal/videos.tsx`
+- **Files modified**:
+  - `mobile/app/job/[id].tsx` — added VideoMediaUploader
+  - `mobile/app/estimator/[id].tsx` — added VideoMediaUploader
+  - `mobile/app/portal/home.tsx` — added Videos nav entry
+  - `mobile/app.json` — permissions
+  - `mobile/package.json` — added expo-video
+  - `memory/PRD.md` — Phase 5B subsection
