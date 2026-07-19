@@ -19,12 +19,18 @@ NEW_HEADERS = [
     "postal code", "phone", "mobile", "first name", "last name", "tags", "notes",
 ]
 
-REQUIRED_NEW = {
-    "service address street", "city", "state", "postal code",
-    "first name", "last name",
-}
+# Phase 56.2 (bug fix Feb-2026) — identity is the only hard requirement.
+# Missing address parts (street/city/state/postal) are stored as null and
+# reported as row-level warnings instead of aborting the import — real-world
+# CSVs frequently omit these for prospects, service-address-pending accounts,
+# or landscaping-only customers with no fixed job site.
+REQUIRED_NEW = {"first name", "last name"}
 
-# Legacy header aliases → canonical new-header key.
+# Legacy header aliases → canonical new-header key. Hitting one of
+# these still flips ``is_legacy=True`` because the presence of a truly
+# old-style column (``Name``, ``Address``, ``Zip``) means the caller
+# probably uploaded a pre-Phase-56 export and deserves the deprecation
+# nudge in the response payload.
 LEGACY_ALIAS: dict[str, str] = {
     "address": "service address street",
     "street": "service address street",
@@ -38,6 +44,30 @@ LEGACY_ALIAS: dict[str, str] = {
     "landline": "phone",
     "notes/memo": "notes",
     "memo": "notes",
+}
+
+# Modern header aliases → canonical new-header key. These are variant
+# spellings of columns that already exist in the Phase-56 12-column
+# template (e.g. ``Tag`` vs ``Tags``, ``First`` vs ``First Name``).
+# Resolving one of these does NOT flip ``is_legacy`` because the CSV
+# is structurally the new shape, just with a slightly different label.
+MODERN_ALIAS: dict[str, str] = {
+    # Tag / tags — CSV exporters split ~50/50 on plural vs. singular.
+    "tag": "tags",
+    # Name variants
+    "first": "first name",
+    "given name": "first name",
+    "last": "last name",
+    "family name": "last name",
+    "surname": "last name",
+    # Address / postal variants that are just wording differences.
+    "service address": "service address street",
+    "service address line 1": "service address street",
+    "address line 1": "service address street",
+    "address1": "service address street",
+    "postal": "postal code",
+    # Phone variant
+    "cell phone": "mobile",
 }
 
 
@@ -63,48 +93,75 @@ def parse_customer_since(raw: Optional[str]) -> Optional[str]:
     "Jun 23", "6/23/2026", "2026-06-23", "23 Jun 2026", "July 1, 2026".
     Returns ISO ``YYYY-MM-DD`` or None on failure. Year defaults to
     the current calendar year when omitted."""
+    return _parse_customer_since_impl(raw)[0]
+
+
+def parse_customer_since_verbose(raw: Optional[str]) -> tuple[Optional[str], bool]:
+    """Like ``parse_customer_since`` but also returns whether the parsed
+    date is in the future (relative to today, UTC calendar day). Callers
+    that surface warnings use this variant; the classic ``parse_customer_since``
+    stays intact for anything else in the codebase."""
+    return _parse_customer_since_impl(raw)
+
+
+def _parse_customer_since_impl(raw: Optional[str]) -> tuple[Optional[str], bool]:
     if raw is None:
-        return None
+        return None, False
     s = str(raw).strip().replace(",", " ")  # Phase 56.1 — kill embedded commas
     s = re.sub(r"\s+", " ", s)
     if not s:
-        return None
+        return None, False
     this_year = datetime.utcnow().year
+    parsed: Optional[str] = None
 
     # ISO first.
     for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
         try:
-            return datetime.strptime(s, fmt).date().isoformat()
+            parsed = datetime.strptime(s, fmt).date().isoformat()
+            break
         except ValueError:
             pass
 
     # US MDY (with or without year).
-    m = re.fullmatch(r"(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?", s)
-    if m:
-        mo, dy, yr = int(m.group(1)), int(m.group(2)), m.group(3)
-        y = int(yr) if yr else this_year
-        if y < 100: y += 2000
-        try: return date(y, mo, dy).isoformat()
-        except ValueError: return None
+    if parsed is None:
+        m = re.fullmatch(r"(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?", s)
+        if m:
+            mo, dy, yr = int(m.group(1)), int(m.group(2)), m.group(3)
+            y = int(yr) if yr else this_year
+            if y < 100: y += 2000
+            try:
+                parsed = date(y, mo, dy).isoformat()
+            except ValueError:
+                parsed = None
 
     # Month-name variants — tokens now guaranteed comma-free above.
-    tokens = [t for t in s.split(" ") if t]
-    mo = dy = yr = None
-    for t in tokens:
-        tl = t.lower().rstrip(".")
-        if tl in _MONTHS:        mo = _MONTHS[tl]
-        elif tl in _MONTHS_FULL: mo = _MONTHS_FULL[tl]
-        elif t.isdigit():
-            n = int(t)
-            if n > 31 and yr is None:  yr = n
-            elif dy is None and 1 <= n <= 31: dy = n
-            elif yr is None: yr = n
-    if mo and dy:
-        y = yr if yr else this_year
-        if y and y < 100: y += 2000
-        try: return date(y, mo, dy).isoformat()
-        except ValueError: return None
-    return None
+    if parsed is None:
+        tokens = [t for t in s.split(" ") if t]
+        mo = dy = yr = None
+        for t in tokens:
+            tl = t.lower().rstrip(".")
+            if tl in _MONTHS:        mo = _MONTHS[tl]
+            elif tl in _MONTHS_FULL: mo = _MONTHS_FULL[tl]
+            elif t.isdigit():
+                n = int(t)
+                if n > 31 and yr is None:  yr = n
+                elif dy is None and 1 <= n <= 31: dy = n
+                elif yr is None: yr = n
+        if mo and dy:
+            y = yr if yr else this_year
+            if y and y < 100: y += 2000
+            try:
+                parsed = date(y, mo, dy).isoformat()
+            except ValueError:
+                parsed = None
+
+    if parsed is None:
+        return None, False
+    try:
+        is_future = date.fromisoformat(parsed) > date.today()
+    except Exception:
+        is_future = False
+    return parsed, is_future
 
 
 # ─── Field validators ─────────────────────────────────────────────────
@@ -175,6 +232,9 @@ def _canon_row(raw: dict[str, str]) -> tuple[dict[str, str], bool]:
         if nk in NEW_HEADERS:
             out[nk] = ("" if v is None else str(v).strip())
             continue
+        if nk in MODERN_ALIAS:
+            out[MODERN_ALIAS[nk]] = ("" if v is None else str(v).strip())
+            continue
         if nk in LEGACY_ALIAS:
             out[LEGACY_ALIAS[nk]] = ("" if v is None else str(v).strip())
             is_legacy = True
@@ -187,25 +247,50 @@ def _canon_row(raw: dict[str, str]) -> tuple[dict[str, str], bool]:
 
 # ─── Row → customer doc ───────────────────────────────────────────────
 def build_customer_doc(canon: dict[str, str], tenant_id: str,
-                        normalize_phone) -> tuple[Optional[dict], Optional[str]]:
-    """Turn a canonicalized row into a customer document or return an
-    error string.
+                        normalize_phone) -> tuple[Optional[dict], Optional[str], list[str]]:
+    """Turn a canonicalized row into a customer document.
 
-    ``normalize_phone`` is passed in so the caller controls which
-    normalizer to use — we reuse Phase 54's ``_normalize_phone_e164``
-    from ``routers.ringcentral`` per the phase brief.
+    Returns ``(doc, error, warnings)``. When ``error`` is set the doc is
+    ``None`` and the row is skipped; ``warnings`` is a list of human-
+    readable strings describing recoverable issues (future customer_since
+    date, missing address components, invalid state, unparseable date).
+
+    Only identity (first + last name) is hard-required. Missing service-
+    address parts are stored as null and reported as warnings so real-
+    world CSVs — landscape-only accounts, prospects, address-pending
+    customers — still import cleanly.
     """
-    missing = [f for f in REQUIRED_NEW if not (canon.get(f) or "").strip()]
-    if missing:
-        return None, "missing required: " + ", ".join(sorted(missing))
+    warnings: list[str] = []
 
-    state = _upper_state(canon.get("state") or "")
-    if not state:
-        return None, "state must be a 2-letter code"
+    # Identity guard — need at least a first and last name to have any
+    # hope of matching this record to a human. Everything else is soft.
+    first = (canon.get("first name") or "").strip()
+    last = (canon.get("last name") or "").strip()
+    if not first and not last:
+        return None, "missing required: first name and last name", warnings
+    if not first:
+        return None, "missing required: first name", warnings
+    if not last:
+        return None, "missing required: last name", warnings
+    # "0" (or similar sentinels) → keep verbatim. Do NOT coerce to blank
+    # or reject: the CSV author put it there intentionally, we surface it.
+    if last == "0" or first == "0":
+        warnings.append("name field contains '0' — kept verbatim")
+
+    # State — 2-letter code required only when a value is supplied.
+    state_raw = (canon.get("state") or "").strip()
+    state: Optional[str] = None
+    if state_raw:
+        state = _upper_state(state_raw)
+        if not state:
+            warnings.append(f"state '{state_raw}' is not a 2-letter code — kept verbatim")
+            state = state_raw
+    else:
+        warnings.append("state missing — stored as null")
 
     email = (canon.get("email") or "").strip()
     if email and not _valid_email(email):
-        return None, f"invalid email: {email!r}"
+        warnings.append(f"email {email!r} failed validation — kept verbatim")
 
     phone_home_raw = _strip_phone_noise(canon.get("phone"))
     phone_mobile_raw = _strip_phone_noise(canon.get("mobile"))
@@ -222,11 +307,24 @@ def build_customer_doc(canon: dict[str, str], tenant_id: str,
                         "raw": phone_mobile_raw if not phone_mobile else None,
                         "e164": phone_mobile})
 
-    first = canon["first name"].strip()
-    last = canon["last name"].strip()
     full_name = f"{first} {last}".strip()
 
-    since = parse_customer_since(canon.get("customer since"))
+    since_raw = (canon.get("customer since") or "").strip()
+    since, since_is_future = parse_customer_since_verbose(since_raw)
+    if since_raw and not since:
+        warnings.append(f"customer_since {since_raw!r} unparseable — raw value preserved")
+    if since_is_future:
+        warnings.append(f"customer_since {since} is in the future — preserved as-is")
+
+    street = (canon.get("service address street") or "").strip()
+    city = (canon.get("city") or "").strip()
+    postal = (canon.get("postal code") or "").strip()  # preserves leading zeros
+    if not street:
+        warnings.append("service address street missing — stored as null")
+    if not city:
+        warnings.append("city missing — stored as null")
+    if not postal:
+        warnings.append("postal code missing — stored as null")
 
     doc = {
         "tenant_id": tenant_id,
@@ -237,17 +335,22 @@ def build_customer_doc(canon: dict[str, str], tenant_id: str,
         "phones": phones,
         # keep scalar `phone` field for legacy consumers (RC matcher, invoices).
         "phone": phone_mobile or phone_home or "",
+        # Raw phone values preserved for audit / re-parsing without touching
+        # phones[] which downstream consumers already depend on.
+        "phone_raw": phone_home_raw or None,
+        "mobile_raw": phone_mobile_raw or None,
         "service_address": {
-            "street": canon["service address street"].strip(),
-            "city": canon["city"].strip(),
-            "state": state,
-            "postal_code": canon["postal code"].strip(),  # preserves leading zeros
+            "street": street or None,
+            "city": city or None,
+            "state": state or None,
+            "postal_code": postal or None,
         },
         "customer_since": since,
+        "customer_since_raw": since_raw or None,
         "tags": _parse_tags(canon.get("tags") or ""),
         "notes": _clean_notes(canon.get("notes") or ""),
     }
-    return doc, None
+    return doc, None, warnings
 
 
 # ─── CSV reader (tolerant · Phase 56.1 semicolon-aware) ───────────────

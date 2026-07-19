@@ -1,6 +1,6 @@
 import csv
 import io
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from config import db
@@ -14,6 +14,16 @@ router = APIRouter()
 
 CUSTOMER_COLS = ["name", "email", "phone", "address", "billing_address", "gate_code", "notes"]
 ITEM_COLS = ["name", "category", "unit", "unit_price", "taxable"]
+
+# Feb-2026 hotfix — response payload cap for warnings. Full log is
+# persisted to ``customer_import_reports`` collection and retrievable
+# by ``import_id`` via ``GET /api/customers/imports/{import_id}``.
+_WARN_INLINE_CAP = 100
+_ERR_INLINE_CAP = 100
+# Insert batch size — Mongo/motor happily accept ~1000 docs per
+# ``insert_many``; 500 keeps memory bounded and per-batch latency short
+# even on modest deployments.
+_INSERT_BATCH = 500
 
 
 class CsvIn(BaseModel):
@@ -73,50 +83,122 @@ async def customers_template(user: dict = Depends(require_admin)):
 @router.post("/import/customers")
 async def import_customers(body: CsvIn, user: dict = Depends(require_admin),
                             tenant: dict = Depends(get_current_tenant)):
-    """Phase 56 — 12-column CSV importer with soft dedup on
-    (tenant_id, email, mobile).
+    """Phase 56 · Feb-2026 hotfix — full-mapping CSV importer.
 
-    Legacy CSVs (with ``Name``/``Address``/``Phone`` headers) are
-    still accepted via the fallback code path — the response then
-    carries a ``deprecation_warnings`` list so admins are nudged to
-    migrate.
+    * No row cap. Rows are streamed into batched inserts (500 docs per
+      ``insert_many``) so 5,000+ row imports finish in seconds without
+      spiking memory.
+    * ``import_id`` is stamped on the response and on every persisted
+      row of ``customer_import_reports`` so admins can retrieve the full
+      warning + error log via ``GET /api/customers/imports/{import_id}``
+      even when the inline payload is truncated.
+    * Response keeps both the historical ``*_count`` keys (ImportModal
+      reads these) and the new ``imported``/``skipped``/``warnings``
+      shape.
     """
     # Import from Phase 54 phone normalizer per the phase brief.
     from routers.ringcentral import _normalize_phone_e164
 
     rows = read_csv(body.csv)
     tenant_id = tenant["id"]
-    created = updated = skipped = 0
+    import_id = new_id()
+
+    # ─── Pass 1: build docs + collect dedup keys ──────────────────────
+    built: list[tuple[int, dict]] = []  # (row_idx, doc)
+    warnings: list[dict] = []
     errors: list[dict] = []
+    legacy_docs: list[tuple[int, dict]] = []  # (row_idx, doc) from legacy fallback
     deprecation_warnings: list[str] = []
     legacy_seen = False
+    skipped = 0
 
     for idx, raw in enumerate(rows, start=2):
         canon, is_legacy = _canon_row(raw)
         if is_legacy:
             legacy_seen = True
-        # Legacy path: if it looks like the old shape (has "name" or
-        # "address" AND is missing all the required new fields), fall
-        # back to the old importer for THIS row.
-        if is_legacy and not all(canon.get(f) for f in ("first name", "last name", "service address street", "city", "state", "postal code")):
+        if is_legacy and not all(canon.get(f) for f in (
+            "first name", "last name", "service address street", "city", "state", "postal code")):
             legacy_doc, err = _build_legacy_doc(raw, tenant_id, _normalize_phone_e164)
             if err:
                 skipped += 1
                 errors.append({"row": idx, "reason": err})
                 continue
-            action = await _upsert_customer(tenant_id, legacy_doc)
-            if action == "created": created += 1
-            else: updated += 1
+            legacy_docs.append((idx, legacy_doc))
             continue
 
-        doc, err = build_customer_doc(canon, tenant_id, _normalize_phone_e164)
+        doc, err, row_warnings = build_customer_doc(canon, tenant_id, _normalize_phone_e164)
         if err:
             skipped += 1
             errors.append({"row": idx, "reason": err})
             continue
-        action = await _upsert_customer(tenant_id, doc)
-        if action == "created": created += 1
-        else: updated += 1
+        for msg in row_warnings:
+            warnings.append({"row": idx, "message": msg})
+        built.append((idx, doc))
+
+    # ─── Pass 2: pre-fetch existing matches in one round-trip ─────────
+    emails = sorted({(d.get("email") or "").lower() for _, d in built + legacy_docs
+                     if (d.get("email") or "").strip()})
+    mobiles = sorted({p.get("number") for _, d in built + legacy_docs
+                      for p in (d.get("phones") or []) if p.get("type") == "mobile"
+                      and p.get("number")})
+    existing_by_email: dict[str, dict] = {}
+    existing_by_mobile: dict[str, dict] = {}
+    if emails or mobiles:
+        query: dict = {"tenant_id": tenant_id, "$or": []}
+        if emails:
+            query["$or"].append({"email": {"$in": emails}})
+        if mobiles:
+            query["$or"].append({"phones.number": {"$in": mobiles}})
+        cursor = db.customers.find(query, {"_id": 0, "id": 1, "email": 1, "phones": 1})
+        async for c in cursor:
+            e = (c.get("email") or "").lower()
+            if e:
+                existing_by_email.setdefault(e, c)
+            for p in (c.get("phones") or []):
+                if p.get("type") == "mobile" and p.get("number"):
+                    existing_by_mobile.setdefault(p["number"], c)
+
+    # ─── Pass 3: split into inserts vs updates, then batch-write ──────
+    inserts: list[dict] = []
+    updates: list[tuple[str, dict]] = []  # (customer_id, doc)
+
+    for _idx, doc in built + legacy_docs:
+        email = (doc.get("email") or "").lower().strip()
+        mobile = ""
+        for p in (doc.get("phones") or []):
+            if p.get("type") == "mobile":
+                mobile = p.get("number") or ""
+                break
+        match = existing_by_email.get(email) if email else None
+        if not match and mobile:
+            match = existing_by_mobile.get(mobile)
+        if match:
+            updates.append((match["id"], doc))
+        else:
+            fresh = {**doc, "id": new_id(), "created_at": now_iso()}
+            inserts.append(fresh)
+            # Track the freshly-inserted row so a duplicate later in the
+            # same CSV upserts against it instead of double-inserting.
+            if email:
+                existing_by_email[email] = {"id": fresh["id"], "email": email,
+                                             "phones": fresh.get("phones") or []}
+            if mobile:
+                existing_by_mobile[mobile] = existing_by_email.get(email) or {
+                    "id": fresh["id"], "phones": fresh.get("phones") or []}
+
+    created = 0
+    updated = 0
+    for i in range(0, len(inserts), _INSERT_BATCH):
+        chunk = inserts[i:i + _INSERT_BATCH]
+        if chunk:
+            await db.customers.insert_many(chunk, ordered=False)
+            created += len(chunk)
+    for cid, doc in updates:
+        await db.customers.update_one(
+            {"id": cid, "tenant_id": tenant_id},
+            {"$set": {**doc, "updated_at": now_iso()}},
+        )
+        updated += 1
 
     if legacy_seen:
         deprecation_warnings.append(
@@ -126,15 +208,62 @@ async def import_customers(body: CsvIn, user: dict = Depends(require_admin),
         )
 
     total = len(rows)
-    return {
+    imported = created + updated
+    warnings_truncated = len(warnings) > _WARN_INLINE_CAP
+    errors_truncated = len(errors) > _ERR_INLINE_CAP
+
+    # ─── Persist the full report so admins can look it up later ──────
+    await db.customer_import_reports.insert_one({
+        "id": import_id,
+        "tenant_id": tenant_id,
+        "created_by_user_id": user.get("id"),
+        "created_at": now_iso(),
         "total_rows": total,
-        "imported_count": created + updated,
+        "imported": imported,
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "warnings": warnings,
+        "errors": errors,
+        "deprecation_warnings": deprecation_warnings,
+    })
+
+    return {
+        # Feb-2026 real-world CSV fix — canonical keys.
+        "import_id": import_id,
+        "total_rows": total,
+        "imported": imported,
+        "skipped": skipped,
+        "warnings": warnings[:_WARN_INLINE_CAP],
+        "warnings_truncated": warnings_truncated,
+        "warnings_total": len(warnings),
+        # Historical keys — retained so the existing ImportModal in
+        # CustomersList.jsx keeps rendering its stat tiles correctly.
+        "imported_count": imported,
         "created_count": created,
         "updated_count": updated,
         "skipped_count": skipped,
-        "errors": errors[:50],
+        "errors": errors[:_ERR_INLINE_CAP],
+        "errors_truncated": errors_truncated,
         "deprecation_warnings": deprecation_warnings,
     }
+
+
+@router.get("/customers/imports/{import_id}")
+async def get_customer_import_report(
+    import_id: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Return the full log (all warnings + errors, untruncated) for a
+    prior customer-import run. Tenant-scoped: an admin from tenant A
+    cannot fetch tenant B's import report."""
+    doc = await db.customer_import_reports.find_one(
+        {"id": import_id, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(404, "Import report not found")
+    return doc
 
 
 async def _upsert_customer(tenant_id: str, doc: dict) -> str:

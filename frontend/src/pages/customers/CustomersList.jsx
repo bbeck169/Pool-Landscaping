@@ -605,6 +605,7 @@ export default function CustomersList() {
 function ImportModal({ open, onClose, onDone, setToast }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+  const [progressHint, setProgressHint] = useState("");
   const fileRef = useRef();
 
   const upload = async () => {
@@ -612,21 +613,34 @@ function ImportModal({ open, onClose, onDone, setToast }) {
     if (!file) return;
     setBusy(true);
     setResult(null);
+    // Show a friendly hint for large files so the modal doesn't feel frozen.
+    const sizeMb = file.size / (1024 * 1024);
+    if (sizeMb > 0.5) {
+      setProgressHint(`Uploading ${sizeMb.toFixed(1)} MB — this may take up to a minute for large files…`);
+    } else {
+      setProgressHint("Uploading…");
+    }
     try {
       const text = await file.text();
       const res = await api.post("/import/customers", { csv: text });
       setResult(res);
-      const imported = Number(res?.imported_count ?? 0);
-      const skipped = Number(res?.skipped_count ?? 0);
+      const imported = Number(res?.imported ?? res?.imported_count ?? 0);
+      const skipped = Number(res?.skipped ?? res?.skipped_count ?? 0);
+      const warnCount = Number(res?.warnings_total ?? (res?.warnings?.length || 0));
+      const suffix = [
+        skipped ? `${skipped} skipped` : null,
+        warnCount ? `${warnCount} warning${warnCount === 1 ? "" : "s"}` : null,
+      ].filter(Boolean).join(" · ");
       setToast({
         tone: skipped > 0 ? "warning" : "success",
-        message: `${imported} imported${skipped ? ` · ${skipped} skipped` : ""}`,
+        message: `${imported} imported${suffix ? " · " + suffix : ""}`,
       });
-      if (skipped === 0) onDone();
+      if (skipped === 0 && warnCount === 0) onDone();
     } catch (e) {
       setToast({ tone: "error", message: e.message });
     } finally {
       setBusy(false);
+      setProgressHint("");
     }
   };
 
@@ -708,6 +722,14 @@ function ImportModal({ open, onClose, onDone, setToast }) {
             Download template CSV
           </button>
           <input ref={fileRef} type="file" accept=".csv,text/csv" data-testid="customer-import-file" className="block" />
+          {busy && progressHint ? (
+            <div className="mt-3 text-xs px-3 py-2 rounded"
+                 style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurfaceSecondary,
+                          border: `1px solid ${colors.border}` }}
+                 data-testid="customer-import-progress">
+              {progressHint}
+            </div>
+          ) : null}
         </>
       ) : (
         <div data-testid="customer-import-result">
@@ -730,6 +752,30 @@ function ImportModal({ open, onClose, onDone, setToast }) {
                  style={{ backgroundColor: "#FEF3C7", color: "#92400E", border: "1px solid #FCD34D" }}
                  data-testid="customer-import-deprecation">
               {result.deprecation_warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}
+            </div>
+          ) : null}
+          {(result.warnings_total ?? result.warnings?.length) ? (
+            <div className="rounded-lg overflow-hidden border mb-3" style={{ borderColor: colors.border }}
+                 data-testid="customer-import-warnings">
+              <div className="px-3 py-2 text-xs font-bold uppercase tracking-wider flex items-center justify-between"
+                   style={{ backgroundColor: colors.surfaceSecondary, color: colors.muted }}>
+                <span>Row warnings ({result.warnings_total ?? result.warnings.length})</span>
+                {result.warnings_truncated ? (
+                  <span className="normal-case font-semibold" style={{ color: "#92400E" }}
+                        data-testid="customer-import-warnings-truncated">
+                    showing first {result.warnings.length} — full log at
+                    <code className="ml-1 text-[10px]">{result.import_id}</code>
+                  </span>
+                ) : null}
+              </div>
+              <div className="max-h-40 overflow-y-auto">
+                {(result.warnings || []).map((w, i) => (
+                  <div key={i} className="px-3 py-1.5 text-xs" style={{ borderTop: `1px solid ${colors.border}` }}>
+                    <span className="font-mono font-bold" style={{ color: "#92400E" }}>Row {w.row}</span>
+                    <span className="ml-2" style={{ color: colors.onSurface }}>{w.message}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : null}
           {result.errors?.length ? (
