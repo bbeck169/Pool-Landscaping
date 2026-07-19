@@ -333,6 +333,14 @@ async def payments_list(
             continue
         rows.append({
             "id": d["id"],
+            # Payments Page · Invoice Link (Feb 2026) — expose both `invoice_id`
+            # (an explicit alias of `id` since these ledger rows ARE the paid
+            # invoice) and `invoice_number` (already stored on the quote doc)
+            # so the frontend can render a clickable "INV-YYYY-NNNNNN" that
+            # routes to /invoices/{invoice_id}. Existing `id` field kept for
+            # backward compat.
+            "invoice_id": d["id"],
+            "invoice_number": d.get("invoice_number") or None,
             "customer_id": d.get("customer_id"),
             "customer_name": d.get("customer_name", ""),
             "invoice_title": d.get("title", ""),

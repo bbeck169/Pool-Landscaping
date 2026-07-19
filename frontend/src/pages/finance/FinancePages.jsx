@@ -103,11 +103,12 @@ export function PaymentsLedger() {
   );
 
   const exportCsv = () => {
-    const header = "Date,Customer,Invoice,Amount,Method,Status,Stripe PI";
+    const header = "Date,Customer,Invoice,Invoice #,Amount,Method,Status,Stripe PI";
     const body = filtered.map((r) => [
       (r.paid_at || r.created_at || "").slice(0, 10),
       `"${(r.customer_name || "").replace(/"/g, '""')}"`,
       `"${(r.invoice_title || "").replace(/"/g, '""')}"`,
+      r.invoice_number || "",
       r.amount,
       r.method,
       r.status,
@@ -179,7 +180,7 @@ export function PaymentsLedger() {
           <table className="w-full text-sm">
             <thead>
               <tr style={{ backgroundColor: colors.surfaceSecondary }}>
-                {["Date", "Customer", "Invoice", "Amount", "Method", "Status", "Stripe"].map((h) => (
+                {["Date", "Customer", "Invoice", "Invoice #", "Amount", "Method", "Status", "Stripe"].map((h) => (
                   <th key={h} className="text-left px-4 py-2.5 font-semibold text-xs uppercase tracking-wide"
                       style={{ color: colors.muted }}>{h}</th>
                 ))}
@@ -187,9 +188,9 @@ export function PaymentsLedger() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} className="py-10 text-center text-sm" style={{ color: colors.muted }}>Loading…</td></tr>
+                <tr><td colSpan={8} className="py-10 text-center text-sm" style={{ color: colors.muted }}>Loading…</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={7} className="py-10 text-center text-sm" style={{ color: colors.muted }}>No payments</td></tr>
+                <tr><td colSpan={8} className="py-10 text-center text-sm" style={{ color: colors.muted }}>No payments</td></tr>
               ) : filtered.map((r, i) => (
                 <tr key={r.id + i} style={{ borderTop: `1px solid ${colors.border}` }}>
                   <td className="px-4 py-2.5" style={{ color: colors.onSurface }}>
@@ -197,7 +198,21 @@ export function PaymentsLedger() {
                   </td>
                   <td className="px-4 py-2.5" style={{ color: colors.onSurface }}>{r.customer_name || "—"}</td>
                   <td className="px-4 py-2.5" style={{ color: colors.onSurface }}>
-                    <a href={`/invoices/${r.id}`} className="hover:underline">{r.invoice_title || r.id.slice(0, 8)}</a>
+                    <a href={`/invoices/${r.invoice_id || r.id}`} className="hover:underline">{r.invoice_title || (r.invoice_id || r.id).slice(0, 8)}</a>
+                  </td>
+                  <td className="px-4 py-2.5" data-testid={`payment-invoice-number-${r.id}`}>
+                    {(r.invoice_number && (r.invoice_id || r.id)) ? (
+                      <a
+                        href={`/invoices/${r.invoice_id || r.id}`}
+                        className="hover:underline"
+                        style={{ color: colors.brand, fontWeight: 600 }}
+                        data-testid={`payment-invoice-number-link-${r.id}`}
+                      >
+                        {r.invoice_number}
+                      </a>
+                    ) : (
+                      <span style={{ color: colors.muted }}>—</span>
+                    )}
                   </td>
                   <td className="px-4 py-2.5 font-semibold" style={{ color: colors.brand }}>{money(r.amount)}</td>
                   <td className="px-4 py-2.5" style={{ color: colors.onSurface }}>{r.method}</td>

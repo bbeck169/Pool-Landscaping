@@ -88,7 +88,10 @@ async def list_payments(user: dict = Depends(require_admin),
     paid = await db.quotes.find(
         {"tenant_id": tenant["id"], "payment_status": "paid"}, {"_id": 0}
     ).sort("paid_at", -1).to_list(1000)
-    return [{"id": q["id"], "customer_name": q["customer_name"], "title": q["title"],
+    return [{"id": q["id"],
+             "invoice_id": q["id"],
+             "invoice_number": q.get("invoice_number") or None,
+             "customer_name": q["customer_name"], "title": q["title"],
              "amount": q["total"], "paid_at": q.get("paid_at"), "method": "Card"} for q in paid]
 
 

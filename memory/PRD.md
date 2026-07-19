@@ -3216,3 +3216,91 @@ first 5 token names: ['customer.first_name', 'customer.last_name', 'customer.ful
 - **Legacy iteration marker expanded by 5.** The wider suite surfaced 5 pre-existing intermittent flakes (`test_auto_clockin.py`, `test_checks.py`, `test_cold_start.py`, `test_seo_phase17b.py`, `test_social_phase18a1.py`) — added to `_LEGACY_ITERATION_FILES` in `tests/conftest.py`. Their business logic is untouched.
 
 
+
+## Tech Nav Fix + Training Menu · Feb 2026
+
+Two-part deliverable landed against the tech-side navigation:
+
+### Part 1 · 7 URL 404s eliminated
+
+| URL | Decision | Implementation |
+|---|---|---|
+| `/settings/auto-clockin` | REMOVE from tech menu | No matching `App.js` route; entry deleted from tech Account section. |
+| `/dispatch/board`        | REMOVE from tech menu | Admin/dispatcher tier; techs get `/schedule` instead. |
+| `/inbox`                 | REMOVE from tech menu | No tech-side inbox exists; `admin/portal-inbox` stays admin-only. |
+| `/calculators`           | FIX (redirect) | `<Route path="calculators" element={<Navigate to="/tech/tools/calculators" replace />} />` |
+| `/time-clock`            | FIX (redirect) | `<Route path="time-clock" element={<Navigate to="/tech/time-clock" replace />} />` |
+| `/assets`                | BUILD STUB | Mounted `ComingSoonPage` with `testId="tech-assets-coming-soon"` — admin/assets stays AdminOnly. |
+| `/inventory`             | BUILD STUB | Mounted `ComingSoonPage` with `testId="tech-inventory-coming-soon"` — admin/inventory stays AdminOnly. |
+
+Route removals from `App.js` intentional zero: admin nav / hamburger are byte-identical to before. Only the tech-side surface changed.
+
+### Part 2 · Training entry promoted to tech primary nav
+
+`{ to: "/tests", label: "Training", icon: GraduationCap }` added to `TECH_NAV` in `frontend/src/layouts/AppLayout.jsx` between the Tools and Profile entries. Route `/tests` renders `TrainingList` (existing); `/training` already redirects to `/tests`.
+
+### Files added / modified
+
+- **Added** — `frontend/src/pages/common/ComingSoonPage.jsx` (reusable placeholder with `data-testid` markers on title / message / hint / back-button).
+- **Modified** — `frontend/src/nav/roleNav.js` (removed 3 dead entries from `TECH_NAV`; added `/portal/profile` in the Account section so it doesn't render empty).
+- **Modified** — `frontend/src/layouts/AppLayout.jsx` (imported `GraduationCap` from `lucide-react`; added Training entry to the tech primary nav).
+- **Modified** — `frontend/src/App.js` (imported `ComingSoonPage`; mounted 2 redirects + 2 stubs for the four bare-path URLs that had no route).
+
+### Verification
+
+External tester (`e1_tester`) confirmed 4/4 UI checks on the running preview:
+- `Training` link renders in the tech left sidebar and routes to the training modules list.
+- `/assets` and `/inventory` render the ComingSoon stub with correct copy — no 404.
+- `/calculators` and `/time-clock` redirect to their existing `/tech/*` mounts.
+- Admin-role nav / hamburger unchanged (no regressions).
+
+### Follow-ups (P2)
+
+- Build a real tech-side read-only view for `/assets` (assigned tools/meters/truck kit).
+- Build a real tech-side view for `/inventory` (truck-load counts + tech-permitted quantity adjustments).
+- Build a tech-side inbox surface (currently only `admin/portal-inbox` exists).
+- Build a tech-side geofence settings page to replace the removed `/settings/auto-clockin` entry.
+
+
+
+## Payments Page · Invoice Link · Feb 2026
+
+Small-scope click-through: each row on the admin **Payments Ledger** page now shows a clickable invoice number that routes to `/invoices/:id`. Users no longer need to eyeball the invoice title to find the underlying document.
+
+### Backend
+
+Both payments-listing endpoints now project `invoice_id` + `invoice_number` alongside their existing response shape (backward compat preserved):
+
+- `GET /api/payments/list` (admin — `routers/reports.py`, the ledger endpoint the Payments Ledger UI hits)
+- `GET /api/payments` (admin — `routers/payments.py`, the simpler recent-payments endpoint)
+
+`invoice_id` is an explicit alias of the existing `id` field (ledger rows already ARE the paid-invoice document). `invoice_number` is read directly off `db.quotes.invoice_number` — no `$lookup`, no batched `$in` fetch was needed because the number was already denormalized onto the quote/invoice doc at creation. Rows without a populated `invoice_number` (e.g., legacy paid quotes before numbering was added) return `null`, and the frontend renders an em-dash placeholder for those.
+
+### Frontend
+
+`frontend/src/pages/finance/FinancePages.jsx::PaymentsLedger`:
+- Added a new "**Invoice #**" column between "Invoice" and "Amount".
+- Cell renders `r.invoice_number` as a link to `/invoices/{r.invoice_id || r.id}` in the same brand color (`colors.brand`, hover-underline) that other in-table links use — matches the app's existing table link style.
+- Rows without an `invoice_number` render `—` in the muted color. Rows with a missing invoice document still route safely (the invoice detail page handles 404 itself).
+- CSV export updated to include the new column so downloaded ledgers carry the invoice number too.
+- Added two `data-testid` attributes per row (`payment-invoice-number-{id}` on the cell and `payment-invoice-number-link-{id}` on the anchor) so future E2E tests can drive click flows.
+
+### Files added / modified
+
+- **Modified** — `backend/routers/reports.py::payments_list` — row projection extended.
+- **Modified** — `backend/routers/payments.py::list_payments` — row projection extended.
+- **Modified** — `frontend/src/pages/finance/FinancePages.jsx::PaymentsLedger` — new column, updated colspan (7 → 8), updated CSV export.
+- **Added** — `backend/tests/test_payments_invoice_link.py` — 3 tests (list endpoint, /payments endpoint, real-data invoice_number format sanity).
+
+### Verification
+
+- Pytest: `test_payments_invoice_link.py` → **3 passed in 1.61s**. Broader security + comms + landscape suite: **80 passed, 1 skipped**.
+- Curl `GET /api/payments/list?page_size=3` (admin token) returns rows carrying both new keys — e.g., `INV-2026-000021`, `INV-2026-000013`, `INV-2026-000008` on the top three paid rows for the seeded aquaterra tenant.
+- Invoice detail route `/invoices/:id` was already mounted in `App.js` under `<NoTech>` (`QuoteInvoiceDetail docType="invoice"`) — no new route needed.
+
+### Deviations
+
+- **No `$lookup` needed.** The brief allowed for a batched `$in` fetch if `invoice_number` had to be joined from a separate collection. In this codebase the field is already denormalized on `db.quotes` (each doc has its own `invoice_number`), so the projection is a single field add per row — cheaper and simpler than the fallback path.
+- **Mobile carry-over deferred (per brief).** The web page was in scope; mobile Payments surface (if any) can pick up the same field additions on the next mobile parity pass. Both backend endpoints already emit the fields, so a mobile client change is a UI-only edit when scheduled.
+
+
