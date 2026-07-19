@@ -3715,3 +3715,82 @@ INFO:pool_crm:[object_storage] init complete — ready=True
 - **No thumbnail generation this phase** — the tile uses
   ``<video preload="metadata">`` so the browser materialises the first
   frame. Thumbnail-as-static-image is a polish task.
+
+
+### Feb-2026 UI hotfix (Phase 5A follow-up)
+
+Tester flagged two UI regressions after the backend went green. Both fixed, backend suite (17/17) still green.
+
+**Bug 1 — Toggle visibility + Delete hit `/api/api/...` (404).**
+
+Root cause: `MediaUploader.jsx` declared ``uploadPath`` with a ``/api``
+prefix and stripped it in the upload path but not in the PATCH/DELETE
+paths, so ``api_base()`` (which already ends in ``/api``) yielded
+``/api/api/…`` for those two verbs.
+
+Fix: declared ``uploadPath`` **without** the ``/api`` prefix
+(``/jobs/{id}/videos``) and added a single ``buildUrl(suffix = "")``
+helper. All three verbs now compose the URL identically — no more
+double-prefix regressions.
+
+**Bug 2 — Customer portal has no videos surface.**
+
+Root cause: ``GET /api/portal/videos`` had been shipped in Phase 5A but
+never consumed. Fix (Option A per the brief — top-level nav entry):
+
+- New page ``frontend/src/pages/portal/PortalVideos.jsx`` (parallel to
+  ``PortalPhotos.jsx``). Renders shareable videos grouped by parent
+  entity (``entity_title`` + job / estimate kind badge + scheduled
+  date), inline HTML5 ``<video preload="metadata">`` posters, lightbox
+  playback via the tokenised ``/api/media/videos/{path}?auth=…`` proxy,
+  empty-state, loading state. Read-only — no toggle, no delete.
+- New route: ``<Route path="portal/videos" element={<PortalVideos />} />``
+  in ``App.js``.
+- Nav wiring:
+  - ``layouts/AppLayout.jsx`` — added `Videos` item under CUSTOMER_NAV
+    right after `Photos` with a new ``Film`` icon import.
+  - ``nav/roleNav.js`` — added the same entry inside the ``cust-services``
+    group so grouped-nav customers see it too.
+
+### Verification of both fixes
+
+- Toggle click on a video tile flipped the badge from "Internal" →
+  "Shareable". Playwright network-response listener recorded **zero**
+  requests containing the substring ``/api/api`` during the entire
+  flow — confirming the URL-doubling regression is dead.
+- Signed in as ``customer@aquaterra.com`` → left nav shows a highlighted
+  "Videos" entry between Photos and Documents → ``/portal/videos``
+  renders "Service Videos" with 6 grouped sections (each showing job or
+  estimate title + kind badge + date), one tile per shareable clip with
+  poster frame, caption, size, uploader, and date. Lightbox play works
+  through the tokenised proxy stream.
+- Delete verb via cURL: ``DELETE /api/jobs/{id}/videos/{vid}`` →
+  ``200 {"ok": true, "deleted": ..., "hard_delete": false}``.
+- Backend regression: ``pytest tests/test_video_uploads.py`` → **17/17
+  passed, 0 failed** — no backend contract touched.
+
+### Files modified
+
+- ``frontend/src/components/media/MediaUploader.jsx`` — ``uploadPath``
+  refactor + ``buildUrl`` helper; three URL construction sites now
+  unified.
+
+### Files added
+
+- ``frontend/src/pages/portal/PortalVideos.jsx`` — customer portal
+  Videos page.
+
+### Files wired
+
+- ``frontend/src/App.js`` — new ``portal/videos`` route.
+- ``frontend/src/layouts/AppLayout.jsx`` — CUSTOMER_NAV entry + ``Film``
+  import.
+- ``frontend/src/nav/roleNav.js`` — ``cust-services`` group entry +
+  ``Film`` import.
+
+### Deviations
+
+None. Portal Videos followed the ``PortalPhotos.jsx`` reference
+implementation exactly (grid layout, lightbox modal, loading + empty
+states, ``portal-*`` testid convention) so the customer-side UX stays
+consistent.

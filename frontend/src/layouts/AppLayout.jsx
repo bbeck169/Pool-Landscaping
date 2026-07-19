@@ -40,6 +40,7 @@ import {
   X as XIcon,
   LayoutGrid,
   GraduationCap,
+  Film,
 } from "lucide-react";
 
 const ADMIN_NAV = [
@@ -163,6 +164,7 @@ const CUSTOMER_NAV = [
   { to: "/portal/estimates", label: "Estimates", icon: FileText },
   { to: "/portal/payments", label: "Payments", icon: CreditCard },
   { to: "/portal/photos", label: "Photos", icon: Waves },
+  { to: "/portal/videos", label: "Videos", icon: Film },
   { to: "/portal/documents", label: "Documents", icon: Files },
   { to: "/portal/messages", label: "Messages", icon: MessageSquare },
   { to: "/portal/chats", label: "Chat Threads", icon: MessageSquare },

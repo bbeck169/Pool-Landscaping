@@ -28,6 +28,7 @@ import LateFeesSettings from "@/pages/settings/LateFees";
 import BillingSettings from "@/pages/settings/BillingSettings";
 import AutoVisitEmailSettings from "@/pages/settings/AutoVisitEmailSettings";
 import PortalPhotos from "@/pages/portal/PortalPhotos";
+import PortalVideos from "@/pages/portal/PortalVideos";
 import PortalBook from "@/pages/portal/PortalBook";
 import PortalChatsPage from "@/pages/portal/PortalChatsPage";
 import AppointmentsQueue from "@/pages/admin/AppointmentsQueue";
@@ -582,6 +583,7 @@ export default function App() {
             <Route path="portal/chats" element={<PortalChatsPage />} />
             <Route path="portal/book" element={<PortalBook />} />
             <Route path="portal/photos" element={<PortalPhotos />} />
+            <Route path="portal/videos" element={<PortalVideos />} />
             <Route path="portal/profile" element={<PortalProfile />} />
             <Route path="portal/request-service" element={<PortalRequestService />} />
             <Route path="portal/payment-complete" element={<PortalPaymentComplete />} />

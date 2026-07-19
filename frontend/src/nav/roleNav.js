@@ -17,6 +17,7 @@ import {
   Home, Wallet, Shield, User, ClipboardList, Wrench, MapPin, Truck,
   Package, Boxes, Trophy, IdCard,
   Briefcase, Coins, TrendingUp, ScrollText, BarChart3, GraduationCap,
+  Film,
 } from "lucide-react";
 import { ADMIN_NAV_V2 } from "./adminNav";
 
@@ -110,6 +111,7 @@ export const CUSTOMER_NAV = [
     entries: [
       { to: "/portal/services", label: "Service History", icon: Truck },
       { to: "/portal/photos", label: "Photos", icon: Camera },
+      { to: "/portal/videos", label: "Videos", icon: Film },
       { to: "/portal/warranties", label: "Warranties", icon: Shield },
     ],
   },

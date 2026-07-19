@@ -75,7 +75,11 @@ export default function MediaUploader({
   );
   const remaining = Math.max(0, 10 - visibleVideos.length);
 
-  const uploadPath = `/api/${entityKind === "estimate" ? "estimates" : "jobs"}/${entityId}/videos`;
+  // Path suffix WITHOUT the ``/api`` prefix. ``api_base()`` already ends
+  // in ``/api``, so all three call sites (upload / patch / delete)
+  // compose the URL the same way — no more ``/api/api/…`` regressions.
+  const uploadPath = `/${entityKind === "estimate" ? "estimates" : "jobs"}/${entityId}/videos`;
+  const buildUrl = (suffix = "") => `${api_base()}${uploadPath}${suffix}`;
 
   const runUpload = async (file) => {
     setErr("");
@@ -107,7 +111,7 @@ export default function MediaUploader({
     setProgress(0);
     try {
       const token = localStorage.getItem(TOKEN_KEY) || "";
-      const url = `${api_base()}${uploadPath.replace("/api", "")}`;
+      const url = buildUrl();
       const form = new FormData();
       form.append("file", file, file.name);
       form.append("visibility", "internal");
@@ -165,7 +169,7 @@ export default function MediaUploader({
     setErr("");
     try {
       const token = localStorage.getItem(TOKEN_KEY) || "";
-      const url = `${api_base()}${uploadPath}/${v.id}`;
+      const url = buildUrl(`/${v.id}`);
       const form = new FormData();
       form.append("visibility", nextVis);
       const resp = await fetch(url, {
@@ -187,7 +191,7 @@ export default function MediaUploader({
     setErr("");
     try {
       const token = localStorage.getItem(TOKEN_KEY) || "";
-      const url = `${api_base()}${uploadPath}/${v.id}`;
+      const url = buildUrl(`/${v.id}`);
       const resp = await fetch(url, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
