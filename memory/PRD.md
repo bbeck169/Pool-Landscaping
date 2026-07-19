@@ -3876,3 +3876,89 @@ Ships the Expo/React Native mobile video upload UI, playback, and customer-porta
 - Backend untouched (zero diff on `backend/`), web untouched (zero diff on `frontend/`)
 - No external repos cloned
 - Expo preview tunnel unavailable (infrastructure inactivity — confirmed not a code issue)
+
+
+---
+
+## Phase 5B · Video Uploads — Mobile Parity (Feb 2026)
+
+Backend contracts from Phase 5A untouched; the mobile app now consumes
+them via the same policy surface (100 MB / 3 min / 10 per entity /
+mimetype allow-list). Tester confirmed the bundle loads clean and the
+UI renders as expected on the Schedule → Job Checklist route — actual
+device camera capture requires human-in-the-loop verification.
+
+### Files added
+
+- ``mobile/src/api/media.ts`` (191 lines) — thin API client. Uses
+  ``XMLHttpRequest`` for the multipart POST so ``upload.onprogress``
+  fires (React Native's ``fetch`` does not surface upload progress).
+  Handles token injection, ``X-Video-Duration`` header, and PATCH /
+  DELETE via the standard ``api`` helper.
+- ``mobile/src/components/media/VideoMediaUploader.tsx`` (552 lines) —
+  first-class mobile counterpart to the web ``MediaUploader.jsx``.
+  Buttons: **Record** (opens ``expo-image-picker`` with
+  ``mediaTypes: ["videos"]``) and **Choose video** (photo library).
+  Client-side pre-flight: size, duration (parsed via
+  ``expo-video-thumbnails`` fallback + picker's own asset metadata),
+  offline guard via ``@react-native-community/netinfo``. Tile grid with
+  poster thumbnail, visibility badge, size + duration, per-item actions
+  (Play / Toggle visibility / Delete). "VIDEOS · N OF 10" header.
+- ``mobile/src/components/media/VideoPlayerModal.tsx`` (160 lines) —
+  Lightbox playback via ``expo-av`` ``Video`` component using the
+  tokenised ``/api/media/videos/{path}?auth=…`` proxy URL — same auth
+  path the web uses.
+- ``mobile/app/portal/videos.tsx`` — customer portal Videos screen
+  mirroring web ``PortalVideos.jsx``. Groups shareable clips by parent
+  entity, read-only, ``expo-av`` playback.
+
+### Files modified (wiring only, no contract changes)
+
+- ``mobile/app/job/[id]/checklist.tsx`` — new "Checklist Videos" card
+  under the Photos card, ``testID="checklist-videos-card"``, wires
+  ``VideoMediaUploader`` with ``entityKind="job"`` and the current job
+  id.
+- ``mobile/app/estimator/[id].tsx`` — new "Attachments · Videos"
+  section on saved estimates (kind = ``"estimate"``).
+- ``mobile/app/portal/home.tsx`` — new tile in the customer portal
+  landing grid: ``{ key: "videos", label: "Videos",
+  icon: "videocam-outline", route: "/portal/videos" }``.
+
+### Route trace
+
+- Admin / tech: Schedule tab → tap a job → Checklist button → scroll
+  past the photos card → **VIDEOS · N OF 10** header with Record +
+  Choose video actions.
+- Estimator: Estimates tab → open a saved estimate → **Attachments ·
+  Videos** section under the totals.
+- Customer portal: home grid → tap **Videos** tile → grouped list of
+  every shareable clip across their jobs and estimates in the current
+  tenant, playable inline through ``expo-av``.
+
+### Bundle status
+
+Metro bundled clean after the sweep. Import chain resolves through the
+existing ``@/src/*`` alias configured in ``tsconfig.json`` and Metro
+resolver — no new alias, no new native module. ``expo-av`` and
+``expo-image-picker`` were already in ``package.json`` (used by
+existing photo pipeline); the new components extended their existing
+usage with ``mediaTypes: ["videos"]``.
+
+### Manual smoke required
+
+Physical device (or Expo Go on a simulator with a synthesized clip in
+the photo library) is needed to exercise the real capture path — the
+Playwright headless harness cannot drive the native camera. All UI
+scaffolding, network client, permission prompts, progress bar, and
+lightbox playback are in place and verified by inspection.
+
+### Deviations
+
+- ``VideoMediaUploader.tsx`` implements a **single component** for both
+  ``kind: "job"`` and ``kind: "estimate"`` (parity with the web). No
+  separate JobVideoUploader / EstimateVideoUploader split.
+- Duration extraction relies on the picker's asset ``duration`` field
+  (milliseconds → seconds) before falling back to
+  ``expo-video-thumbnails``. Web uses ``HTMLVideoElement.duration``;
+  behavior is equivalent from the server's point of view (the
+  ``X-Video-Duration`` header still arrives as a float in seconds).
