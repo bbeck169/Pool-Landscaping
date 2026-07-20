@@ -331,7 +331,26 @@ async def mark_complete(body: MarkCompleteIn,
             "evidence": body.evidence,
             "updated_at": now,
         }})
-    return await db.onboarding_progress.find_one({"id": row["id"]}, {"_id": 0})
+    fresh_row = await db.onboarding_progress.find_one({"id": row["id"]}, {"_id": 0})
+    # Comms Phase 3 — onboarding.milestone automation. Emits with
+    # customer_id=None because the milestone targets an internal user
+    # (technician/office), so the engine will label it
+    # ``skipped_no_customer`` unless the rule's trigger_conditions
+    # explicitly opt into a customer-scoped variant.
+    try:
+        from services.automation_engine import emit as _emit
+        await _emit(
+            "onboarding.milestone",
+            {"progress": fresh_row, "task_code": body.task_code,
+              "user_id": target_id},
+            tenant_id=tenant["id"],
+            entity_kind="onboarding_progress",
+            entity_id=(fresh_row or {}).get("id") or "",
+            customer_id=None,
+        )
+    except Exception:
+        pass
+    return fresh_row
 
 
 @router.get("/onboarding/dashboard")

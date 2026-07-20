@@ -82,6 +82,21 @@ async def create_quote(body: QuoteIn,
         await assign_invoice_number_if_missing(doc, tenant)
     await db.quotes.insert_one(doc)
     doc.pop("_id", None)
+    # Comms Phase 3 — invoice.created automation (only for docs that
+    # actually landed as invoices; quotes stay quiet).
+    try:
+        if body.doc_type == "invoice":
+            from services.automation_engine import emit as _emit
+            await _emit(
+                "invoice.created",
+                {"invoice": doc, "customer": {"id": doc.get("customer_id"),
+                                                 "name": doc.get("customer_name")}},
+                tenant_id=tenant["id"],
+                entity_kind="invoice", entity_id=doc["id"],
+                customer_id=doc.get("customer_id"),
+            )
+    except Exception:
+        pass
     return doc
 
 
@@ -363,6 +378,22 @@ async def record_payment(qid: str, body: RecordPaymentIn,
         msg = ("Your payment was received in full. Thank you!" if fully_paid
                else f"A partial payment of ${body.amount:,.2f} was recorded. Remaining balance: ${max(total - paid, 0):,.2f}.")
         await notify_customer(doc["customer_id"], "Payment recorded", msg)
+    # Comms Phase 3 — fire invoice.paid on the flip to fully-paid.
+    if fully_paid:
+        try:
+            fresh = await db.quotes.find_one(
+                {"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
+            from services.automation_engine import emit as _emit
+            await _emit(
+                "invoice.paid",
+                {"invoice": fresh or {}, "customer": {"id": (fresh or {}).get("customer_id"),
+                                                          "name": (fresh or {}).get("customer_name")}},
+                tenant_id=tenant["id"],
+                entity_kind="invoice", entity_id=qid,
+                customer_id=(fresh or {}).get("customer_id"),
+            )
+        except Exception:
+            pass
     return await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
@@ -384,6 +415,20 @@ async def pay_quote(qid: str,
     if doc.get("customer_id"):
         await notify_customer(doc["customer_id"], "Payment received",
                               f"Your payment for '{doc.get('title', 'invoice')}' was recorded. Thank you!")
+    # Comms Phase 3 — invoice.paid on manual/offline full payment.
+    try:
+        fresh = await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
+        from services.automation_engine import emit as _emit
+        await _emit(
+            "invoice.paid",
+            {"invoice": fresh or {}, "customer": {"id": (fresh or {}).get("customer_id"),
+                                                      "name": (fresh or {}).get("customer_name")}},
+            tenant_id=tenant["id"],
+            entity_kind="invoice", entity_id=qid,
+            customer_id=(fresh or {}).get("customer_id"),
+        )
+    except Exception:
+        pass
     return await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 

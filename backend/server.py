@@ -349,6 +349,19 @@ async def _background_seed():
             "cron", day_of_week="mon", hour=8, minute=0,
             id="weekly_digest", replace_existing=True)
         logger.info("scheduler: weekly_digest registered (Mondays 08:00 UTC)")
+
+        # Comms Phase 3 · Feb 2026 — automation-engine daily sweeps.
+        # invoice.overdue (09:00 UTC), customer.birthday (08:00),
+        # customer.anniversary (08:05). Rule index is warmed up too,
+        # so the very first domain event after boot does not pay the
+        # cold-start read cost.
+        try:
+            from services import automation_engine as _auto
+            await _auto.re_index_rules()
+            _auto.register_daily_sweeps(scheduler)
+        except Exception as _ae:
+            logger.warning(f"automation_engine registration crashed: {_ae}")
+
         scheduler.start()
     except Exception as e:
         logger.warning(f"scheduler registration skipped: {e}")

@@ -49,15 +49,28 @@ async def _ensure_indexes() -> None:
 
 async def re_index_rules(tenant_id: Optional[str] = None) -> int:
     """Reload the in-memory index of active rules. Called at startup and
-    from the automations CRUD endpoints after every write."""
+    from the automations CRUD endpoints after every write.
+
+    System rules (``tenant_id=None`` + ``is_system=True``) are stored
+    under the ``(None, trigger)`` key so ``emit()`` can fan them out to
+    every tenant that has activated them.
+    """
     global _RULES_INDEX, _INDEXED_ONCE
-    q: Dict[str, Any] = {"active": True}
     if tenant_id:
-        # Selective re-index: drop only this tenant's cache slice.
+        # Drop only the target tenant's slice (leave system slice intact).
         for k in [k for k in _RULES_INDEX if k[0] == tenant_id]:
             _RULES_INDEX.pop(k, None)
-        q["tenant_id"] = tenant_id
+        q: Dict[str, Any] = {"active": True, "tenant_id": tenant_id}
+        total = 0
+        async for r in db.automation_rules.find(q, {"_id": 0}):
+            key = (r.get("tenant_id"), r.get("trigger_event"))
+            _RULES_INDEX.setdefault(key, []).append(r)
+            total += 1
+        return total
 
+    # Full rebuild.
+    _RULES_INDEX = {}
+    q = {"active": True}
     total = 0
     async for r in db.automation_rules.find(q, {"_id": 0}):
         key = (r.get("tenant_id"), r.get("trigger_event"))
@@ -97,7 +110,7 @@ async def _fire_rule(rule: dict, payload: dict, tenant_id: str,
                       entity_kind: str, entity_id: str,
                       customer_id: Optional[str]) -> str:
     """Dispatch a single rule. Returns the event status."""
-    dedup_key = f"{rule['code']}::{entity_kind}::{entity_id}"
+    dedup_key = f"{tenant_id}::{rule['code']}::{entity_kind}::{entity_id}"
     now_dt = _now()
     event_doc = {
         "id": f"evt_{now_dt.timestamp():.6f}",
@@ -136,34 +149,39 @@ async def _fire_rule(rule: dict, payload: dict, tenant_id: str,
         await db.automation_engine_events.insert_one(event_doc)
         return "skipped_no_customer"
 
-    # Dispatch via the existing send-now helper. Import locally to avoid
-    # a circular services↔routers graph.
+    # Dispatch via the automation-engine entry point in the comms
+    # router. Import locally to avoid a circular services↔routers graph.
     try:
-        from routers.comms import _deliver_one, _load_customer
-        cust = await _load_customer(tenant_id, customer_id)
-        if not cust:
-            event_doc["status"] = "skipped_no_customer"
-            event_doc.pop("dedup_key", None)
-            await db.automation_engine_events.insert_one(event_doc)
-            return "skipped_no_customer"
-        send_row = await _deliver_one(
+        from routers.comms import deliver_one_by_ids
+        send_row = await deliver_one_by_ids(
             tenant_id=tenant_id,
             template_code=rule["template_code"],
             channel=rule.get("channel") or "email",
-            customer=cust,
+            recipient_id=customer_id,
             extras=payload,
             automation_code=rule["code"],
         )
-        event_doc["communication_send_id"] = (send_row or {}).get("id")
-        event_doc["status"] = "sent"
+        if not send_row:
+            event_doc["status"] = "failed"
+            event_doc["error"] = "delivery helper returned None (missing template or customer)"
+            await db.automation_engine_events.insert_one(event_doc)
+            return "failed"
+        event_doc["communication_send_id"] = send_row.get("id")
+        event_doc["status"] = "sent" if send_row.get("status") in ("sent", "mocked") else "failed"
+        if event_doc["status"] == "failed":
+            event_doc["error"] = send_row.get("error") or "delivery status not sent"
+        # Keep dedup_key on failure so a broken template/provider does
+        # not re-fire the same rule for the same entity every request
+        # inside the 24h TTL window. Admins can manually re-fire via
+        # ``POST /comms/automations/{code}/test-fire``.
         await db.automation_engine_events.insert_one(event_doc)
         # Bump last_fired_at / fire_count on the rule doc.
         await db.automation_rules.update_one(
-            {"code": rule["code"], "tenant_id": tenant_id},
+            {"code": rule["code"], "tenant_id": rule.get("tenant_id")},
             {"$set": {"last_fired_at": _iso()},
              "$inc": {"fire_count": 1}},
         )
-        return "sent"
+        return event_doc["status"]
     except Exception as e:
         logger.exception(f"[automation_engine] dispatch failed: {e}")
         event_doc["status"] = "failed"
@@ -185,10 +203,13 @@ async def emit(trigger_event: str, payload: dict, tenant_id: str,
     """
     global _INDEXED_ONCE
     try:
-        await _ensure_indexes()
         if not _INDEXED_ONCE:
+            await _ensure_indexes()
             await re_index_rules()
-        rules = list(_RULES_INDEX.get((tenant_id, trigger_event), []))
+        # Tenant-owned rules + activated system rules (tenant_id=None).
+        tenant_rules = list(_RULES_INDEX.get((tenant_id, trigger_event), []))
+        system_rules = list(_RULES_INDEX.get((None, trigger_event), []))
+        rules = tenant_rules + system_rules
         if not rules:
             return []
         outcomes: List[str] = []
@@ -222,11 +243,17 @@ async def emit(trigger_event: str, payload: dict, tenant_id: str,
 # ═════════════════════════════════════════════════════════════════════
 
 async def sweep_invoice_overdue() -> int:
-    """Emit ``invoice.overdue`` for every unpaid invoice past due_date."""
+    """Emit ``invoice.overdue`` for every unpaid invoice past due_date.
+
+    Invoices live in the ``quotes`` collection (``doc_type='invoice'``);
+    an invoice is overdue when ``payment_status`` is not ``paid`` and
+    ``due_date`` (ISO YYYY-MM-DD) is strictly before today's UTC date.
+    """
     today = _now().date().isoformat()
     n = 0
-    async for inv in db.invoices.find(
-        {"paid": {"$ne": True}, "payment_status": {"$ne": "paid"},
+    async for inv in db.quotes.find(
+        {"doc_type": "invoice",
+         "payment_status": {"$ne": "paid"},
          "due_date": {"$lt": today}},
         {"_id": 0},
     ):

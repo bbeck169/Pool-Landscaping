@@ -506,12 +506,44 @@ async def submit_service_report(jid: str,
                 logger.warning(f"invoice credit apply skipped: {e}")
             await db.quotes.insert_one(invoice)
             invoice_id = inv_id
+            # Comms Phase 3 — auto-invoice from a submitted service
+            # report still fires invoice.created so admins can wire a
+            # confirmation email/SMS on it.
+            try:
+                from services.automation_engine import emit as _emit
+                await _emit(
+                    "invoice.created",
+                    {"invoice": invoice,
+                      "customer": {"id": invoice.get("customer_id"),
+                                    "name": invoice.get("customer_name")},
+                      "source": "service_report_auto"},
+                    tenant_id=tenant["id"],
+                    entity_kind="invoice", entity_id=inv_id,
+                    customer_id=invoice.get("customer_id"),
+                )
+            except Exception:
+                pass
     except Exception as e:
         logger.warning(f"auto-invoice failed: {e}")
 
     out = await db.service_reports.find_one(
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id}, {"_id": 0}
     )
+    # Comms Phase 3 — fire service_report.finalized. Non-blocking.
+    try:
+        from services.automation_engine import emit as _emit
+        await _emit(
+            "service_report.finalized",
+            {"service_report": out or rep, "job": job,
+              "customer": {"id": job.get("customer_id"),
+                            "name": job.get("customer_name")}},
+            tenant_id=tenant["id"],
+            entity_kind="service_report",
+            entity_id=(out or rep or {}).get("id") or "",
+            customer_id=job.get("customer_id"),
+        )
+    except Exception:
+        pass
     # Phase 56.20 — Auto End-of-Visit Customer Email.
     # Non-blocking: any exception is caught + logged inside the service.
     try:

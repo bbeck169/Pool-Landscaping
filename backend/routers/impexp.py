@@ -188,17 +188,38 @@ async def import_customers(body: CsvIn, user: dict = Depends(require_admin),
 
     created = 0
     updated = 0
+    inserted_docs: list[dict] = []
     for i in range(0, len(inserts), _INSERT_BATCH):
         chunk = inserts[i:i + _INSERT_BATCH]
         if chunk:
             await db.customers.insert_many(chunk, ordered=False)
             created += len(chunk)
+            inserted_docs.extend(chunk)
     for cid, doc in updates:
         await db.customers.update_one(
             {"id": cid, "tenant_id": tenant_id},
             {"$set": {**doc, "updated_at": now_iso()}},
         )
         updated += 1
+
+    # Comms Phase 3 · fire customer.created for every newly inserted
+    # row. This uses the in-memory rule index; if the tenant has no
+    # active ``customer.created`` rule the engine returns immediately
+    # so a 5000-row import stays well under the request timeout.
+    # Runs outside the insert path so a downstream engine hiccup does
+    # not roll back the import.
+    try:
+        from services.automation_engine import emit as _emit
+        for doc in inserted_docs:
+            await _emit(
+                "customer.created",
+                {"customer": doc, "source": "csv_import"},
+                tenant_id=tenant_id,
+                entity_kind="customer", entity_id=doc.get("id") or "",
+                customer_id=doc.get("id"),
+            )
+    except Exception:
+        pass
 
     if legacy_seen:
         deprecation_warnings.append(

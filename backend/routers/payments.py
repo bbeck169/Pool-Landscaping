@@ -59,6 +59,22 @@ async def _mark_paid(invoice_id: str):
     if doc.get("customer_id"):
         await notify_customer(doc["customer_id"], "Payment received",
                               f"Your payment for '{doc.get('title', 'invoice')}' was received. Thank you!")
+    # Comms Phase 3 — invoice.paid automation. Load fresh doc so the
+    # engine payload reflects the flipped payment_status/paid_at.
+    try:
+        fresh = await db.quotes.find_one({"id": invoice_id}, {"_id": 0})
+        if fresh and fresh.get("tenant_id"):
+            from services.automation_engine import emit as _emit
+            await _emit(
+                "invoice.paid",
+                {"invoice": fresh, "customer": {"id": fresh.get("customer_id"),
+                                                   "name": fresh.get("customer_name")}},
+                tenant_id=fresh["tenant_id"],
+                entity_kind="invoice", entity_id=invoice_id,
+                customer_id=fresh.get("customer_id"),
+            )
+    except Exception:
+        pass
 
 
 # ----------------------- Payments list (admin) -----------------------

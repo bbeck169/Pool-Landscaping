@@ -512,6 +512,11 @@ async def create_automation(body: AutomationIn,
         "fire_count": 0,
     }
     await db.automation_rules.insert_one(doc)
+    try:
+        from services.automation_engine import re_index_rules
+        await re_index_rules(tenant["id"])
+    except Exception as e:
+        logger.warning(f"[comms] automation re-index failed after create: {e}")
     return _clean_doc(doc)
 
 
@@ -527,6 +532,15 @@ async def patch_automation(code: str, body: AutomationPatch,
         return _clean_doc(existing)
     updates["updated_at"] = now_iso()
     await db.automation_rules.update_one({"_id": existing["_id"]}, {"$set": updates})
+    try:
+        from services.automation_engine import re_index_rules
+        # System rules also carry `is_system=True` with tenant_id=None,
+        # but PATCH only reaches tenant-custom docs, so tenant-scoped
+        # re-index is sufficient. Re-run a full index if the toggle
+        # flipped ``active`` on a system rule via a future endpoint.
+        await re_index_rules(tenant["id"])
+    except Exception as e:
+        logger.warning(f"[comms] automation re-index failed after patch: {e}")
     return _clean_doc({**existing, **updates})
 
 
@@ -538,6 +552,11 @@ async def delete_automation(code: str,
     if not existing:
         raise HTTPException(404, "Not found (system automations cannot be deleted)")
     await db.automation_rules.delete_one({"_id": existing["_id"]})
+    try:
+        from services.automation_engine import re_index_rules
+        await re_index_rules(tenant["id"])
+    except Exception as e:
+        logger.warning(f"[comms] automation re-index failed after delete: {e}")
     return None
 
 
@@ -561,6 +580,102 @@ async def test_fire_automation(code: str, body: PreviewIn,
 
 
 # --- Send-now + sends log endpoints ------------------------------------
+
+async def deliver_one_by_ids(*, tenant_id: str, template_code: str,
+                              channel: str, recipient_id: str,
+                              extras: Optional[Dict[str, Any]] = None,
+                              automation_code: Optional[str] = None
+                              ) -> Optional[Dict[str, Any]]:
+    """Phase 3 · automation-engine entry point.
+
+    Same delivery mechanics as ``_deliver_one`` but callable purely by
+    IDs — the engine has no ``tenant``/``user`` dict on hand when a
+    domain event fires. Returns the ``communication_sends`` row on
+    success, ``None`` if the recipient/template is missing. Never
+    raises: dispatch failures land in the send row as ``status="failed"``.
+    """
+    tenant = await db.tenants.find_one({"id": tenant_id}, {"_id": 0})
+    if not tenant:
+        return None
+    customer = await _load_customer(tenant_id, recipient_id)
+    if not customer:
+        return None
+    company = _load_company(tenant)
+    extras = extras or {}
+
+    if channel == "email":
+        tpl = await _find_email_template(tenant_id, template_code)
+        if not tpl:
+            return None
+        contact = customer.get("email") or ""
+        unsub_token = _sign_unsubscribe(tenant_id, contact, "email") if contact else ""
+        unsub_url = f"{company.get('portal_link','')}/unsubscribe?token={unsub_token}&e={contact}" if contact else ""
+        ctx = sample_tokens_context()
+        ctx.update(build_context_for_customer(
+            customer, extras.get("job") or {}, extras.get("invoice") or {},
+            company, unsub_url, extras=extras,
+        ))
+        subject = resolve_email_subject(tpl.get("subject") or "", ctx)
+        html = render_email_html(tpl.get("blocks_json") or [], ctx)
+        try:
+            deliver = await send_email(tenant_id, contact, subject, html,
+                                         from_name=company.get("name") or None)
+        except Exception as e:
+            deliver = {"status": "failed", "provider_id": None, "error": str(e)[:400]}
+        doc = {
+            "id": new_id(), "tenant_id": tenant_id, "kind": "email",
+            "template_code": template_code, "automation_code": automation_code,
+            "recipient_id": customer.get("id"),
+            "recipient_email": contact, "recipient_phone": None,
+            "subject": subject, "rendered_body": html,
+            "tokens_resolved": {k: v for k, v in ctx.items() if v},
+            "status": deliver.get("status"),
+            "provider_message_id": deliver.get("provider_id"),
+            "error": deliver.get("error"),
+            "queued_at": now_iso(),
+            "sent_at": now_iso() if deliver.get("status") in ("sent", "mocked") else None,
+            "retry_count": 0,
+        }
+        await db.communication_sends.insert_one(doc)
+        return _clean_doc(doc)
+
+    if channel == "sms":
+        tpl = await _find_sms_template(tenant_id, template_code)
+        if not tpl:
+            return None
+        contact = customer.get("phone") or ""
+        ctx = sample_tokens_context()
+        ctx.update(build_context_for_customer(
+            customer, extras.get("job") or {}, extras.get("invoice") or {},
+            company, "", extras=extras,
+        ))
+        rendered = render_sms_text(tpl.get("body") or "", ctx)
+        try:
+            deliver = await send_sms(tenant_id, contact, rendered,
+                                       mms_url=tpl.get("mms_image_url"))
+        except Exception as e:
+            deliver = {"status": "failed", "provider_id": None, "error": str(e)[:400]}
+        doc = {
+            "id": new_id(), "tenant_id": tenant_id, "kind": "sms",
+            "template_code": template_code, "automation_code": automation_code,
+            "recipient_id": customer.get("id"),
+            "recipient_email": None, "recipient_phone": contact,
+            "subject": None, "rendered_body": rendered,
+            "tokens_resolved": {k: v for k, v in ctx.items() if v},
+            "status": deliver.get("status"),
+            "provider_message_id": deliver.get("provider_id"),
+            "error": deliver.get("error"),
+            "character_count": deliver.get("character_count"),
+            "segment_count": deliver.get("segment_count"),
+            "queued_at": now_iso(),
+            "sent_at": now_iso() if deliver.get("status") in ("sent", "mocked") else None,
+            "retry_count": 0,
+        }
+        await db.communication_sends.insert_one(doc)
+        return _clean_doc(doc)
+
+    return None
+
 
 async def _deliver_one(*, tenant: dict, user: dict, customer: dict,
                         channel: str, template_code: str,
@@ -677,6 +792,37 @@ async def get_send(send_id: str,
     if not row:
         raise HTTPException(404, "Not found")
     return _clean_doc(row)
+
+
+# --- Automation events (Phase 3) --------------------------------------
+
+@router.get("/automation-events")
+async def list_automation_events(user: dict = Depends(_require_admin),
+                                   tenant: dict = Depends(get_current_tenant),
+                                   automation_code: Optional[str] = Query(None),
+                                   trigger_event: Optional[str] = Query(None),
+                                   status: Optional[str] = Query(None),
+                                   since: Optional[str] = Query(
+                                       None, description="ISO timestamp; "
+                                       "returns rows fired at or after this instant"),
+                                   limit: int = Query(100, ge=1, le=500)):
+    """Phase 3 · engine journal. Returns dispatch events with rule +
+    outcome so admins can audit exactly which triggers fired and why
+    others were skipped (dedup / conditions / no-customer)."""
+    q: Dict[str, Any] = {"tenant_id": tenant["id"]}
+    if automation_code:
+        q["automation_code"] = automation_code
+    if trigger_event:
+        q["trigger_event"] = trigger_event
+    if status:
+        q["status"] = status
+    if since:
+        q["fired_at"] = {"$gte": since}
+    rows = await (db.automation_engine_events
+                    .find(q, {"_id": 0, "fired_at_dt": 0})
+                    .sort("fired_at", -1)
+                    .to_list(limit))
+    return {"count": len(rows), "events": rows}
 
 
 # --- Tokens catalog ----------------------------------------------------

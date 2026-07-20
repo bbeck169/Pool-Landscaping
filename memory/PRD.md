@@ -4362,3 +4362,105 @@ changes shipped this phase.
 - **Preview modal calls ``previewEmailTemplate(routeCode)`` with the
   saved code** — a new-template preview requires saving first. Adding
   an "unsaved draft" preview endpoint would remove the small friction.
+## Communications Subsystem · Phase 3 (Automation Engine) · Feb 2026
+
+**Ship**: In-process automation engine that wires `automation_rules`
+(Phase 1) to real domain events. Zero infra additions — the existing
+APScheduler drives the 3 daily sweeps. Every dispatch is journalled to
+`automation_engine_events` (24-hour TTL dedup, unique index on
+`dedup_key`).
+
+### What shipped
+- `services/automation_engine.py` — `emit()` pub-sub with in-memory
+  rule cache, per-tenant re-index API, 24-hour dedup, condition
+  matcher, delay-via-scheduler fallback, daily sweeps
+  (`sweep_invoice_overdue`, `sweep_customer_birthday`,
+  `sweep_customer_anniversary`), and `register_daily_sweeps()`
+  attached to the existing scheduler at boot (09:00 / 08:00 / 08:05
+  UTC respectively).
+- `services/comm_tokens.py::build_context_for_customer(..., extras=…)`
+  — additive `extras` merges automation payload attributes into the
+  token context (nested dicts flatten one level, e.g.
+  `invoice.total`).
+- `routers/comms.py::deliver_one_by_ids(...)` — new async helper the
+  engine calls (bypasses the tenant/user-scoped `_deliver_one`).
+  Existing `_deliver_one` untouched — Phase 3 backend-contract addition
+  is limited to this single helper.
+- Domain-event hooks (fire-and-forget, wrapped in try/except so a
+  broken engine never breaks the caller):
+  * `customer.created` — POST `/api/customers` + CSV bulk import.
+  * `job.scheduled` — POST `/api/jobs` (when `scheduled_date` set) +
+    PUT `/api/jobs/{id}` (on scheduled_date transition).
+  * `job.completed` — PUT `/api/jobs/{id}` (status → completed).
+  * `invoice.created` — POST `/api/quotes` (doc_type=invoice) +
+    service-report auto-invoice.
+  * `invoice.paid` — Stripe webhook path (`_mark_paid`), admin
+    record-payment (on flip to fully-paid), admin manual-pay.
+  * `invoice.overdue` — daily sweep at 09:00 UTC.
+  * `service_report.finalized` — POST
+    `/api/jobs/{jid}/service-report/submit`.
+  * `onboarding.milestone` — POST
+    `/api/onboarding/user-progress/mark-complete`.
+  * `customer.birthday` — daily sweep at 08:00 UTC.
+  * `customer.anniversary` — daily sweep at 08:05 UTC.
+- `routers/comms.py` CRUD re-index — POST/PATCH/DELETE
+  `/api/comms/automations/*` now call
+  `automation_engine.re_index_rules(tenant_id)` after writes so the
+  backend's in-memory cache stays fresh without a reboot.
+- `GET /api/comms/automation-events` — admin, tenant-scoped, filters
+  by `automation_code`, `trigger_event`, `status`, `since`, paginated
+  via `limit` (default 100, max 500).
+- **Test**: `backend/tests/test_automation_engine.py` — 7 tests cover
+  the HTTP fire path, dedup, condition gating, delayed rule outcome,
+  invoice overdue sweep, birthday sweep, and the automation-events
+  endpoint. Session-scoped teardown deletes TEST_-tagged rules via the
+  DELETE API so the backend's cache stays clean between tests.
+
+### Deviations from the brief
+- **`route.seasonal_open` / `route.seasonal_close` deferred**.
+  Exhaustive grep for `season_open`, `seasonal_open`, `open_for_season`,
+  `close_for_season`, `is_seasonal`, `seasonal_status`, `season_start`,
+  `season_end`, `winterize`, `dewinterize`, `open_pool`, `close_pool`
+  turned up only string constants in template seeds and comms enums —
+  there is no runtime host event today. Per the "no dead code"
+  directive, these triggers are shipped in the enum (unchanged from
+  Phase 1) but no emit hook is wired. Will land when the seasonal
+  cycle domain events ship.
+- Engine keeps `dedup_key` on both `sent` and `failed` events — one
+  attempt per rule/entity per 24h regardless of provider outcome.
+  Admins can force a retry via the existing
+  `POST /comms/automations/{code}/test-fire`.
+
+### Files added / modified
+- Added: `backend/tests/test_automation_engine.py`.
+- Modified: `backend/services/automation_engine.py`,
+  `backend/services/comm_tokens.py`,
+  `backend/routers/comms.py`, `backend/routers/customers.py`,
+  `backend/routers/impexp.py`, `backend/routers/jobs.py`,
+  `backend/routers/quotes.py`, `backend/routers/payments.py`,
+  `backend/routers/service_reports.py`,
+  `backend/routers/handbook.py`, `backend/server.py`.
+
+### Test results
+- New suite: `pytest tests/test_automation_engine.py` — 7 passed
+  (12s).
+- Regression sample:
+  `pytest tests/test_automation_engine.py tests/test_comms_backend.py
+   tests/test_reviews_backend.py tests/test_video_uploads.py
+   tests/test_customer_import_full_mapping.py` — **76 passed** (75s).
+- Scheduler confirmation from `/var/log/supervisor/backend.err.log`:
+  `[automation_engine] daily sweeps registered (invoice.overdue,
+  customer.birthday, customer.anniversary)` fires on every boot.
+
+### Curl transcript · end-to-end
+1. Login → JWT.
+2. POST `/api/comms/automations` with an active `customer.created`
+   rule bound to `system.welcome_new_customer`.
+3. POST `/api/customers` with a throwaway email.
+4. GET `/api/comms/automation-events?automation_code=$CODE` returns
+   the fresh event row with `dedup_key`, `communication_send_id`, and
+   trigger metadata.
+5. GET `/api/comms/sends?recipient_id=$CUST` returns the matching
+   `communication_sends` row with rendered subject + HTML.
+6. DELETE `/api/comms/automations/$CODE` returns 204 and refreshes
+   the backend's in-memory index.

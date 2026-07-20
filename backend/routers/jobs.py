@@ -366,6 +366,21 @@ async def create_job(body: JobIn,
     except Exception:
         pass
     doc.pop("_id", None)
+    # Comms Phase 3 — fire job.scheduled when the new job already has a
+    # concrete schedule. Non-blocking.
+    try:
+        if doc.get("scheduled_date"):
+            from services.automation_engine import emit as _emit
+            await _emit(
+                "job.scheduled",
+                {"job": doc, "customer": {"id": doc.get("customer_id"),
+                                             "name": doc.get("customer_name")}},
+                tenant_id=tenant["id"],
+                entity_kind="job", entity_id=doc["id"],
+                customer_id=doc.get("customer_id"),
+            )
+    except Exception:
+        pass
     return doc
 
 
@@ -799,6 +814,40 @@ async def update_job(jid: str, body: JobUpdate,
                 await maybe_schedule_survey_for_job(fresh)
             except Exception as e:
                 logger.warning(f"csat schedule failed: {e}")
+            # Comms Phase 3 — job.completed automation.
+            try:
+                from services.automation_engine import emit as _emit
+                await _emit(
+                    "job.completed",
+                    {"job": fresh, "customer": {"id": fresh.get("customer_id"),
+                                                   "name": fresh.get("customer_name")}},
+                    tenant_id=tenant["id"],
+                    entity_kind="job", entity_id=jid,
+                    customer_id=fresh.get("customer_id"),
+                )
+            except Exception:
+                pass
+
+    # Comms Phase 3 — job.scheduled automation. Fires when the update
+    # newly assigns/changes ``scheduled_date`` (transition semantics
+    # keep repeated saves idempotent thanks to the engine's 24h dedup).
+    try:
+        new_sched = update.get("scheduled_date")
+        if new_sched and new_sched != job.get("scheduled_date"):
+            fresh_j = await db.jobs.find_one(
+                {"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+            if fresh_j:
+                from services.automation_engine import emit as _emit
+                await _emit(
+                    "job.scheduled",
+                    {"job": fresh_j, "customer": {"id": fresh_j.get("customer_id"),
+                                                     "name": fresh_j.get("customer_name")}},
+                    tenant_id=tenant["id"],
+                    entity_kind="job", entity_id=jid,
+                    customer_id=fresh_j.get("customer_id"),
+                )
+    except Exception:
+        pass
 
     return await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
 

@@ -188,6 +188,18 @@ async def create_customer(body: CustomerIn,
     doc.update({"id": new_id(), "tenant_id": tenant["id"], "created_at": now_iso()})
     await db.customers.insert_one(doc)
     doc.pop("_id", None)
+    # Comms Phase 3 — fire customer.created automation. Never blocks.
+    try:
+        from services.automation_engine import emit as _emit
+        await _emit(
+            "customer.created",
+            {"customer": doc},
+            tenant_id=tenant["id"],
+            entity_kind="customer", entity_id=doc["id"],
+            customer_id=doc["id"],
+        )
+    except Exception:
+        pass
     return doc
 
 

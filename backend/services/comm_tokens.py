@@ -338,9 +338,17 @@ def build_context_for_customer(customer: Dict[str, Any],
                                 job: Optional[Dict[str, Any]] = None,
                                 invoice: Optional[Dict[str, Any]] = None,
                                 company: Optional[Dict[str, Any]] = None,
-                                unsubscribe_url: str = "") -> Dict[str, Any]:
+                                unsubscribe_url: str = "",
+                                extras: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Build a token-context dict from live records. Missing fields are
-    left absent so ``resolve_tokens`` renders them as empty strings."""
+    left absent so ``resolve_tokens`` renders them as empty strings.
+
+    ``extras`` is a Phase 3 addition (automation engine): additional
+    stringified key/value pairs that overlay the base context, letting
+    domain events pass through nested attributes (e.g. job/invoice
+    payloads emitted by the engine). Values are converted to strings
+    with ``str(v)`` so template renderers do not choke on numbers/None.
+    """
     c = customer or {}
     j = job or {}
     inv = invoice or {}
@@ -377,6 +385,19 @@ def build_context_for_customer(customer: Dict[str, Any],
         "company.address":     co.get("address") or "",
         "unsubscribe_url":     unsubscribe_url or "",
     }
+    if extras:
+        for k, v in extras.items():
+            if v is None:
+                continue
+            # Flatten one level of nested dicts so payloads like
+            # ``{"invoice": {...}}`` become ``"invoice.total": "..."``.
+            if isinstance(v, dict):
+                for nk, nv in v.items():
+                    if nv is None:
+                        continue
+                    ctx.setdefault(f"{k}.{nk}", str(nv))
+            else:
+                ctx[str(k)] = str(v)
     return ctx
 
 
