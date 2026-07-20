@@ -51,6 +51,10 @@ _ALLOWED_TOP_FIELDS = {
     "email", "phone", "first_name", "last_name", "status", "source",
     "tags", "customer_id", "created_at", "confirmed_at",
     "unsubscribed_at",
+    # Feb-2026 Customer Detail Additions — VIP flag mirrored from the
+    # customer doc into the subscriber row so the auto-seeded "VIP
+    # Customers" segment resolves to the right audience.
+    "is_vip",
 }
 
 

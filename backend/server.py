@@ -68,6 +68,7 @@ from routers import (
     instaschedule,
     chat,
     directories,
+    customer_tasks,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -142,7 +143,8 @@ for module in [notifications_router,
                instaquote,
                instaschedule,
                chat,
-               directories]:
+               directories,
+               customer_tasks]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -473,6 +475,17 @@ async def startup():
         logger.info(f"[phase56.3.A] customer name-split migration: {migrated_n} row(s)")
     except Exception as e:
         logger.warning(f"customer name-split migration crashed: {e}")
+
+    # Feb-2026 Customer Detail Additions — idempotent one-shot back-fill
+    # of the ``mobiles`` / ``emails`` arrays from the legacy scalar
+    # ``phone`` / ``email`` fields. Skipped for docs that already have
+    # the arrays.
+    try:
+        from services.customer_multi_contact import migrate_customer_multi_contact
+        n = await migrate_customer_multi_contact()
+        logger.info(f"[multi-contact] migration: {n} row(s)")
+    except Exception as e:
+        logger.warning(f"multi-contact migration crashed: {e}")
 
     # Phase 5A · Video Uploads (Feb 2026) — init Emergent object storage
     # session key once at startup. Never crashes the boot: on failure the

@@ -80,7 +80,7 @@ async def _resolve_public_tenant(request: Request,
 
 
 async def _ensure_default_seeds(tenant_id: str) -> None:
-    """Idempotent per-tenant seed: default list + default segment.
+    """Idempotent per-tenant seed: default list + default segment + VIP.
     Called lazily whenever a tenant hits its first M1 admin endpoint so
     every tenant has a working "everyone" audience out of the box."""
     seg = await db.marketing_segments.find_one(
@@ -93,6 +93,26 @@ async def _ensure_default_seeds(tenant_id: str) -> None:
             "name": "Active Subscribers",
             "description": "Everyone who has confirmed and not opted out.",
             "rules": {"combinator": "and", "rules": [
+                {"field": "status", "op": "eq", "value": "subscribed"},
+            ]},
+            "is_system_default": True,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        })
+    # Feb-2026 Customer Detail Additions — auto-seeded "VIP Customers"
+    # segment. Resolves against subscribers mirrored from the customers
+    # collection where ``is_vip=True``.
+    vip_seg = await db.marketing_segments.find_one(
+        {"tenant_id": tenant_id, "slug": "vip-customers"}, {"_id": 0})
+    if not vip_seg:
+        await db.marketing_segments.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant_id,
+            "slug": "vip-customers",
+            "name": "VIP Customers",
+            "description": "Customers flagged VIP on their profile.",
+            "rules": {"combinator": "and", "rules": [
+                {"field": "is_vip", "op": "eq", "value": True},
                 {"field": "status", "op": "eq", "value": "subscribed"},
             ]},
             "is_system_default": True,

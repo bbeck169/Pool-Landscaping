@@ -16,6 +16,8 @@ import {
   StickyNote,
   Droplets,
   Star,
+  ListChecks,
+  MessageSquare,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from '@/theme';
@@ -33,6 +35,9 @@ import {
 } from "@/components/ui-kit";
 import { ActivationControl } from "@/components/customers/ActivationControl";
 import CustomerEquipmentLibrary from "@/components/customers/CustomerEquipmentLibrary";
+import CustomerActionDropdowns from "@/components/customers/CustomerActionDropdowns";
+import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
+import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel";
 
 const TABS = [
   { k: "overview", label: "Overview", icon: MapPin },
@@ -40,6 +45,7 @@ const TABS = [
   { k: "quotes", label: "Quotes", icon: FileText },
   { k: "invoices", label: "Invoices", icon: FileText },
   { k: "equipment", label: "Equipment", icon: Beaker },
+  { k: "tasks", label: "Tasks", icon: ListChecks },
   { k: "notes", label: "Notes", icon: StickyNote },
   { k: "portal", label: "Portal Access", icon: KeyRound },
 ];
@@ -53,6 +59,9 @@ export default function CustomerDetail() {
   const [toast, setToast] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [loginModal, setLoginModal] = useState(false);
+  const [vipModal, setVipModal] = useState(false);
+  const [sendModal, setSendModal] = useState(null); // { channel, to }
+  const [taskQuickAddOpener, setTaskQuickAddOpener] = useState(null);
 
   const load = async () => {
     try {
@@ -91,6 +100,31 @@ export default function CustomerDetail() {
     }
   };
 
+  const toggleVip = async (isVip, note) => {
+    try {
+      const doc = await api.patch(`/customers/${id}/vip`, {
+        is_vip: isVip,
+        vip_note: note ?? customer?.vip_note ?? null,
+      });
+      setCustomer((c) => ({ ...c, ...doc }));
+      setToast({
+        tone: "success",
+        message: isVip ? "Flagged as VIP" : "Removed VIP flag",
+      });
+    } catch (e) {
+      setToast({ tone: "error", message: e.message });
+    }
+  };
+
+  const openSendModal = (payload) => setSendModal(payload);
+
+  const openQuickTaskFromDropdown = () => {
+    setTab("tasks");
+    setTimeout(() => {
+      if (typeof taskQuickAddOpener === "function") taskQuickAddOpener();
+    }, 100);
+  };
+
   if (!customer) {
     return (
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -120,20 +154,29 @@ export default function CustomerDetail() {
               <h1 className="text-3xl font-bold" style={{ color: colors.onSurface }}>
                 {customer.name}
               </h1>
-              {customer.is_vip ? (
-                <span
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider"
-                  style={{
-                    backgroundColor: "#FEF3C7",
-                    color: "#92400E",
-                    border: "1px solid #F59E0B",
-                  }}
-                  data-testid="customer-vip-badge"
-                  title="VIP customer"
-                >
-                  <Star size={12} fill="#F59E0B" color="#F59E0B" /> VIP
-                </span>
-              ) : null}
+              {/* Feb-2026 Customer Detail Additions — VIP toggle button
+                  replaces the previous read-only badge. Left-clicking the
+                  star flips is_vip; the small edit affordance opens the
+                  note modal. */}
+              <button
+                onClick={() => toggleVip(!customer.is_vip)}
+                onDoubleClick={() => setVipModal(true)}
+                title={customer.is_vip ? "Remove VIP flag (double-click to edit note)" : "Flag as VIP"}
+                data-testid="customer-vip-toggle"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider transition"
+                style={{
+                  backgroundColor: customer.is_vip ? "#FEF3C7" : colors.surfaceSecondary,
+                  color: customer.is_vip ? "#92400E" : colors.muted,
+                  border: `1px solid ${customer.is_vip ? "#F59E0B" : colors.border}`,
+                }}
+              >
+                <Star
+                  size={12}
+                  fill={customer.is_vip ? "#F59E0B" : "transparent"}
+                  color={customer.is_vip ? "#F59E0B" : colors.muted}
+                />{" "}
+                {customer.is_vip ? "VIP" : "Flag as VIP"}
+              </button>
               {customer.is_active === false ? (
                 <span
                   className="hidden"
@@ -166,34 +209,62 @@ export default function CustomerDetail() {
               {customer.has_login ? <Chip label="Portal enabled" tone="success" /> : null}
             </div>
           </div>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={() => navigate(`/customers/${id}/edit`)} testid="cd-edit">
-              <Edit3 size={14} /> Edit
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => navigate(`/customers/${id}/chemistry`)}
-              testid="cd-chemistry"
-            >
-              <Beaker size={14} /> Chemistry
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => navigate(`/customers/${id}/chemistry-history`)}
-              testid="cd-chemistry-history"
-            >
-              <Beaker size={14} /> Chem History
-            </Button>
-            <Button variant="danger" onClick={() => setConfirmDelete(true)} testid="cd-delete">
-              <Trash2 size={14} /> Delete
-            </Button>
+          <div className="flex flex-col items-end gap-2">
+            {/* Feb-2026 Customer Detail Additions — top-right Send + Create dropdowns */}
+            <CustomerActionDropdowns
+              customer={customer}
+              onSend={openSendModal}
+              onQuickTask={openQuickTaskFromDropdown}
+            />
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => navigate(`/customers/${id}/edit`)} testid="cd-edit">
+                <Edit3 size={14} /> Edit
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => navigate(`/customers/${id}/chemistry`)}
+                testid="cd-chemistry"
+              >
+                <Beaker size={14} /> Chemistry
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => navigate(`/customers/${id}/chemistry-history`)}
+                testid="cd-chemistry-history"
+              >
+                <Beaker size={14} /> Chem History
+              </Button>
+              <Button variant="danger" onClick={() => setConfirmDelete(true)} testid="cd-delete">
+                <Trash2 size={14} /> Delete
+              </Button>
+            </div>
           </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
           {[
-            { icon: Phone, label: "Phone", value: customer.phone },
-            { icon: Mail, label: "Email", value: customer.email },
+            {
+              icon: Phone,
+              label: (customer.mobiles || []).length > 1 ? "Mobiles" : "Phone",
+              value:
+                (customer.mobiles || []).length > 0
+                  ? (customer.mobiles || [])
+                      .map((m) => `${m.number_e164}${m.label ? ` (${m.label})` : ""}`)
+                      .join("  ·  ")
+                  : customer.phone,
+              testid: "customer-mobiles-display",
+            },
+            {
+              icon: Mail,
+              label: (customer.emails || []).length > 1 ? "Emails" : "Email",
+              value:
+                (customer.emails || []).length > 0
+                  ? (customer.emails || [])
+                      .map((e) => `${e.address}${e.label ? ` (${e.label})` : ""}`)
+                      .join("  ·  ")
+                  : customer.email,
+              testid: "customer-emails-display",
+            },
             {
               icon: Droplets,
               label: "Pool",
@@ -267,6 +338,14 @@ export default function CustomerDetail() {
                   </ul>
                 </div>
               ) : null}
+              <CustomerContactsPanel
+                customer={customer}
+                onSaved={(updated) => {
+                  setCustomer((c) => ({ ...c, ...updated }));
+                  setToast({ tone: "success", message: "Contacts saved" });
+                }}
+                onError={(msg) => setToast({ tone: "error", message: msg })}
+              />
               <Info label="Notes" value={customer.notes} preserveNewlines />
             </div>
           ) : null}
@@ -337,6 +416,13 @@ export default function CustomerDetail() {
             />
           ) : null}
 
+          {tab === "tasks" ? (
+            <CustomerTasksPanel
+              customerId={id}
+              registerOpener={(fn) => setTaskQuickAddOpener(() => fn)}
+            />
+          ) : null}
+
           {tab === "notes" ? (
             <Info label="Notes" value={customer.notes} preserveNewlines />
           ) : null}
@@ -377,6 +463,38 @@ export default function CustomerDetail() {
           history remain, but references become read-only.
         </p>
       </Modal>
+
+      {/* Feb-2026 Customer Detail Additions — VIP note modal (double-click star). */}
+      <VipNoteModal
+        open={vipModal}
+        onClose={() => setVipModal(false)}
+        customer={customer}
+        onSave={async (note) => {
+          try {
+            const doc = await api.patch(`/customers/${id}/vip`, {
+              is_vip: !!customer.is_vip,
+              vip_note: note || null,
+            });
+            setCustomer((c) => ({ ...c, ...doc }));
+            setToast({ tone: "success", message: "VIP note saved" });
+            setVipModal(false);
+          } catch (e) {
+            setToast({ tone: "error", message: e.message });
+          }
+        }}
+      />
+
+      {/* Feb-2026 Customer Detail Additions — Send Email/SMS modal. */}
+      <SendComposeModal
+        payload={sendModal}
+        customer={customer}
+        onClose={() => setSendModal(null)}
+        onSent={() => {
+          setSendModal(null);
+          setToast({ tone: "success", message: "Message sent" });
+        }}
+        onError={(msg) => setToast({ tone: "error", message: msg })}
+      />
 
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
@@ -530,3 +648,131 @@ function PortalLoginModal({ open, onClose, customer, onDone, onError }) {
     </Modal>
   );
 }
+
+// ─── Feb-2026 Customer Detail Additions helper modals ────────────────
+
+function VipNoteModal({ open, onClose, customer, onSave }) {
+  const [note, setNote] = useState("");
+  useEffect(() => {
+    if (open) setNote(customer?.vip_note || "");
+  }, [open, customer]);
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="VIP note"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => onSave(note.trim())} testid="cd-vip-note-save">
+            Save note
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-2">
+        <p className="text-xs" style={{ color: colors.muted }}>
+          Add context for teammates — service preferences, escalation contacts, do-not-disturb hours.
+        </p>
+        <textarea
+          className="w-full min-h-[120px] px-3 py-2 rounded-lg text-sm"
+          style={{
+            backgroundColor: colors.surface,
+            color: colors.onSurface,
+            border: `1px solid ${colors.border}`,
+          }}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="e.g. Big HOA — always call before visiting. Escalate to Maria on 555-…"
+          data-testid="cd-vip-note-textarea"
+        />
+      </div>
+    </Modal>
+  );
+}
+
+
+function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (payload) {
+      setSubject("");
+      setMessage("");
+    }
+  }, [payload]);
+  if (!payload) return null;
+  const isEmail = payload.channel === "email";
+  const submit = async () => {
+    if (!message.trim()) {
+      onError("Message body required");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (isEmail) {
+        await api.post(`/customers/${customer.id}/send-email`, {
+          to: payload.to,
+          subject: subject || `Message from ${customer?.name || "your service"}`,
+          body: message,
+          customer_id: customer?.id,
+        });
+      } else {
+        await api.post("/sms/send", {
+          phone_number: payload.to,
+          message,
+          customer_id: customer?.id,
+        });
+      }
+      onSent();
+    } catch (e) {
+      onError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open={!!payload}
+      onClose={onClose}
+      title={isEmail ? `Email ${payload.to}` : `Text ${payload.to}`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit} disabled={busy} testid="cd-send-submit">
+            {busy ? "Sending…" : "Send"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        {isEmail ? (
+          <TextInput
+            label="SUBJECT"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            testid="cd-send-subject"
+          />
+        ) : null}
+        <div>
+          <div className="text-xs font-semibold mb-1" style={{ color: colors.muted }}>
+            MESSAGE
+          </div>
+          <textarea
+            className="w-full min-h-[140px] px-3 py-2 rounded-lg text-sm"
+            style={{
+              backgroundColor: colors.surface,
+              color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+            }}
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            data-testid="cd-send-message"
+          />
+        </div>
+      </div>
+    </Modal>
+  );
+}
+

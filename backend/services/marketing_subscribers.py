@@ -47,55 +47,117 @@ def verify_confirmation(tenant_id: str, email: str, token: str) -> bool:
 # ─── Mirror hook ──────────────────────────────────────────────────────
 
 async def mirror_customer_created(tenant_id: str, customer: Dict[str, Any]) -> None:
-    """Idempotent upsert of a subscribers row for a CRM customer.
+    """Idempotent upsert of subscribers row(s) for a CRM customer.
 
     Called from ``routers/customers.create_customer`` right after the
     ``customer.created`` domain event is emitted. Never raises — a
     subscriber-mirror failure must never block customer creation.
+
+    Feb-2026 Customer Detail Additions:
+      * Iterates ``customer.emails[]`` — only mirrors entries whose
+        ``marketing_ok`` flag is truthy (default True for legacy scalar).
+      * Iterates ``customer.mobiles[]`` — only mirrors entries whose
+        ``sms_ok`` flag is truthy.
+      * Mirrors ``is_vip`` onto every subscriber row so the auto-seeded
+        "VIP Customers" segment resolves cleanly.
     """
     try:
-        email = (customer.get("email") or "").strip().lower()
-        phone = (customer.get("phone") or "").strip()
-        if not email and not phone:
-            return  # nothing to key on
-        # Prefer email as the natural key when present, else phone.
-        key: Dict[str, Any] = {"tenant_id": tenant_id}
-        if email:
-            key["email"] = email
-        else:
-            key["phone"] = phone
-        existing = await db.subscribers.find_one(key, {"_id": 0})
-        if existing:
-            # Already mirrored — just refresh the customer_id link.
-            if existing.get("customer_id") != customer.get("id"):
-                await db.subscribers.update_one(
-                    {"id": existing["id"]},
-                    {"$set": {"customer_id": customer.get("id"),
-                              "updated_at": now_iso()}},
-                )
+        is_vip = bool(customer.get("is_vip"))
+        # Build the list of (email, marketing_ok) candidates.
+        email_entries: list[tuple[str, bool]] = []
+        for e in (customer.get("emails") or []):
+            addr = (e.get("address") or "").strip().lower()
+            if not addr:
+                continue
+            email_entries.append((addr, bool(e.get("marketing_ok", True))))
+        if not email_entries:
+            legacy_email = (customer.get("email") or "").strip().lower()
+            if legacy_email:
+                email_entries.append((legacy_email, True))
+
+        # Same for mobiles.
+        phone_entries: list[tuple[str, bool]] = []
+        for m in (customer.get("mobiles") or []):
+            num = (m.get("number_e164") or "").strip()
+            if not num:
+                continue
+            phone_entries.append((num, bool(m.get("sms_ok", True))))
+        if not phone_entries:
+            legacy_phone = (customer.get("phone") or "").strip()
+            if legacy_phone:
+                phone_entries.append((legacy_phone, True))
+
+        # Determine the primary key row. Prefer the first marketing-OK
+        # email, else first marketing-OK phone.
+        candidates: list[tuple[str, str, bool]] = []
+        for addr, ok in email_entries:
+            candidates.append(("email", addr, ok))
+        for num, ok in phone_entries:
+            candidates.append(("phone", num, ok))
+        if not candidates:
             return
-        doc = {
-            "id": new_id(),
-            "tenant_id": tenant_id,
-            "email": email or None,
-            "phone": phone or None,
-            "first_name": customer.get("first_name") or "",
-            "last_name": customer.get("last_name") or "",
-            "status": "subscribed",
-            "source": "crm_customer",
-            "customer_id": customer.get("id"),
-            "tags": [],
-            "attributes": {},
-            "consent_at": now_iso(),
-            "confirmed_at": now_iso(),
-            "unsubscribed_at": None,
-            "confirmation_token": None,
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-        }
-        await db.subscribers.insert_one(doc)
+
+        # Ensure a subscriber row exists per candidate that has the
+        # relevant consent flag set. Skip candidates whose consent flag
+        # is False — those explicitly opt out of marketing.
+        for kind, value, ok in candidates:
+            if not ok:
+                continue
+            key: Dict[str, Any] = {"tenant_id": tenant_id, kind: value}
+            existing = await db.subscribers.find_one(key, {"_id": 0})
+            if existing:
+                # Refresh customer_id link + is_vip mirror.
+                patch = {"updated_at": now_iso()}
+                if existing.get("customer_id") != customer.get("id"):
+                    patch["customer_id"] = customer.get("id")
+                if existing.get("is_vip") != is_vip:
+                    patch["is_vip"] = is_vip
+                if patch:
+                    await db.subscribers.update_one(
+                        {"id": existing["id"]}, {"$set": patch},
+                    )
+                continue
+            doc = {
+                "id": new_id(),
+                "tenant_id": tenant_id,
+                "email": value if kind == "email" else None,
+                "phone": value if kind == "phone" else None,
+                "first_name": customer.get("first_name") or "",
+                "last_name": customer.get("last_name") or "",
+                "status": "subscribed",
+                "source": "crm_customer",
+                "customer_id": customer.get("id"),
+                "is_vip": is_vip,
+                "tags": [],
+                "attributes": {},
+                "consent_at": now_iso(),
+                "confirmed_at": now_iso(),
+                "unsubscribed_at": None,
+                "confirmation_token": None,
+                "created_at": now_iso(),
+                "updated_at": now_iso(),
+            }
+            await db.subscribers.insert_one(doc)
     except Exception as e:
         logger.warning(f"[marketing] mirror_customer_created failed: {e}")
+
+
+async def mirror_customer_updated(tenant_id: str, customer: Dict[str, Any]) -> None:
+    """Sync the ``is_vip`` flag from the customer doc onto every
+    subscriber row linked to it. Called from the VIP toggle handler so
+    the "VIP Customers" segment stays in lock-step with the source of
+    truth."""
+    try:
+        cid = customer.get("id")
+        if not cid:
+            return
+        is_vip = bool(customer.get("is_vip"))
+        await db.subscribers.update_many(
+            {"tenant_id": tenant_id, "customer_id": cid},
+            {"$set": {"is_vip": is_vip, "updated_at": now_iso()}},
+        )
+    except Exception as e:
+        logger.warning(f"[marketing] mirror_customer_updated failed: {e}")
 
 
 # ─── Confirmation email body ──────────────────────────────────────────

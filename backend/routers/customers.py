@@ -1,5 +1,6 @@
 # ruff: noqa: F403,F405
 from fastapi import APIRouter, HTTPException, Depends, Query
+from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 
@@ -37,6 +38,29 @@ def _sync_customer_names(doc: dict) -> dict:
         doc["first_name"] = parts[0] if parts else ""
         doc["last_name"] = parts[1] if len(parts) > 1 else ""
         doc["name"] = name
+    return doc
+
+
+def _apply_multi_contact(doc: dict) -> dict:
+    """Feb-2026 Customer Detail Additions — normalize the ``mobiles`` /
+    ``emails`` arrays, enforce caps + primary invariants, and sync the
+    legacy ``phone`` / ``email`` scalars back to the primary entries.
+    Idempotent — safe to call on every write. See
+    :mod:`services.customer_multi_contact` for the full rules."""
+    from services.customer_multi_contact import apply_multi_contact
+    return apply_multi_contact(doc)
+
+
+def _apply_vip_stamp(doc: dict, existing: Optional[dict] = None) -> dict:
+    """Auto-stamp ``vip_since`` when ``is_vip`` transitions to True;
+    clear it when transitioning to False. Preserves ``vip_note`` across
+    the toggle so admins can see historical notes even after un-VIP."""
+    was_vip = bool((existing or {}).get("is_vip"))
+    now_vip = bool(doc.get("is_vip"))
+    if now_vip and not was_vip:
+        doc["vip_since"] = doc.get("vip_since") or now_iso()
+    elif not now_vip and was_vip:
+        doc["vip_since"] = None
     return doc
 
 
@@ -186,6 +210,8 @@ async def create_customer(body: CustomerIn,
                           tenant: dict = Depends(get_current_tenant)):
     doc = body.dict()
     _sync_customer_names(doc)
+    _apply_multi_contact(doc)
+    _apply_vip_stamp(doc, existing=None)
     doc.update({"id": new_id(), "tenant_id": tenant["id"], "created_at": now_iso()})
     await db.customers.insert_one(doc)
     doc.pop("_id", None)
@@ -390,6 +416,11 @@ async def update_customer(cid: str, body: CustomerIn,
 
     payload = body.dict()
     _sync_customer_names(payload)
+    # Feb-2026 Customer Detail Additions — normalize arrays + sync
+    # scalars + auto-stamp VIP transitions BEFORE persisting.
+    _apply_multi_contact(payload)
+    _apply_vip_stamp(payload, existing=existing)
+    vip_flipped_on = bool(payload.get("is_vip")) and not bool(existing.get("is_vip"))
     await db.customers.update_one(
         {"id": cid, "tenant_id": tenant["id"]}, {"$set": payload}
     )
@@ -397,6 +428,21 @@ async def update_customer(cid: str, body: CustomerIn,
     cancelled_job_count, deactivated_recurring_count = await _apply_activation_cascade(
         cid, tenant["id"], user, was_active, now_active, existing.get("name")
     )
+
+    # Feb-2026 Customer Detail Additions — if this PUT flipped VIP on,
+    # mirror to subscribers + emit ``customer.vip_flagged`` notification
+    # so the auto-seeded "VIP Customers" segment updates immediately.
+    if vip_flipped_on:
+        try:
+            from services.marketing_subscribers import mirror_customer_updated
+            fresh = await db.customers.find_one(
+                {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+            )
+            if fresh:
+                await mirror_customer_updated(tenant["id"], fresh)
+                await _emit_vip_flagged(tenant["id"], user, fresh)
+        except Exception:
+            pass
 
     doc = await db.customers.find_one(
         {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
@@ -451,3 +497,191 @@ async def delete_customer(cid: str,
                           tenant: dict = Depends(get_current_tenant)):
     await db.customers.delete_one({"id": cid, "tenant_id": tenant["id"]})
     return {"ok": True}
+
+
+# ─── Feb-2026 Customer Detail Additions ──────────────────────────────
+# VIP toggle + multi-contact endpoints. These are lightweight PATCH
+# endpoints so the detail-page UI can flip flags without POSTing the
+# full CustomerIn body.
+
+class _VipToggle(BaseModel):
+    is_vip: bool
+    vip_note: Optional[str] = None
+
+
+class _MobilesUpdate(BaseModel):
+    mobiles: List[dict]
+
+
+class _EmailsUpdate(BaseModel):
+    emails: List[dict]
+
+
+class _SendEmailBody(BaseModel):
+    to: str
+    subject: str
+    body: str
+    customer_id: Optional[str] = None
+
+
+@router.post("/customers/{cid}/send-email")
+async def customer_send_email(cid: str, body: _SendEmailBody,
+                               user: dict = Depends(require_admin),
+                               tenant: dict = Depends(get_current_tenant)):
+    """Send an ad-hoc email to a customer contact address. Thin
+    passthrough into the existing ``send_email`` adapter so the
+    Customer detail Send ▼ Email option can compose freely without a
+    template. Validates that the target address is one of the
+    customer's mirrored emails so we don't accidentally leak."""
+    doc = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not doc:
+        raise HTTPException(404, "Customer not found")
+    to = body.to.strip().lower()
+    allowed = {(e.get("address") or "").strip().lower()
+                for e in (doc.get("emails") or [])}
+    allowed.add((doc.get("email") or "").strip().lower())
+    allowed.discard("")
+    if to not in allowed:
+        raise HTTPException(400, "recipient not among the customer's emails")
+    if not body.body.strip():
+        raise HTTPException(422, "empty message")
+    from services.comms_email_adapter import send_email
+    return await send_email(
+        tenant["id"], to,
+        subject=body.subject.strip() or "Message",
+        html=f"<pre style=\"font-family:inherit;white-space:pre-wrap\">{body.body}</pre>",
+    )
+
+
+
+async def _emit_vip_flagged(tenant_id: str, actor: dict, customer: dict) -> None:
+    """Emit ``customer.vip_flagged`` to tenant admins (excluding the
+    actor who just toggled it). Push defaults OFF for this kind — admins
+    can opt in via /settings/notifications."""
+    try:
+        from services.notifications import emit as notify_emit
+        admins = await db.users.find(
+            {"tenant_id": tenant_id, "role": {"$in": ["admin", "super_admin"]},
+             "id": {"$ne": actor.get("id")}},
+            {"_id": 0, "id": 1},
+        ).to_list(200)
+        aids = [a["id"] for a in admins if a.get("id")]
+        if not aids:
+            return
+        who = actor.get("name") or actor.get("email") or "Admin"
+        cname = customer.get("name") or "customer"
+        note = (customer.get("vip_note") or "").strip()
+        body_txt = f"{who} flagged {cname} as VIP."
+        if note:
+            body_txt = f"{body_txt} Note: {note[:200]}"
+        await notify_emit(
+            aids, kind="customer.vip_flagged",
+            title=f"{cname} is now a VIP",
+            body=body_txt,
+            href=f"/customers/{customer.get('id')}",
+            tenant_id=tenant_id, audience="internal",
+            source_ref={"kind": "customer", "id": customer.get("id")},
+            customer_id=customer.get("id"),
+        )
+    except Exception as e:
+        logger.warning(f"[customers] vip notification failed: {e}")
+
+
+@router.patch("/customers/{cid}/vip")
+async def patch_customer_vip(cid: str, body: _VipToggle,
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    """Flip the VIP flag on a customer. Auto-stamps ``vip_since`` on ON,
+    clears it on OFF, preserves ``vip_note`` across toggles, mirrors the
+    change to the ``subscribers`` collection so the VIP Customers
+    segment stays in sync, and fires the ``customer.vip_flagged``
+    notification when transitioning to True."""
+    existing = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not existing:
+        raise HTTPException(404, "Customer not found")
+
+    was_vip = bool(existing.get("is_vip"))
+    now_vip = bool(body.is_vip)
+    updates: dict = {"is_vip": now_vip}
+    if now_vip and not was_vip:
+        updates["vip_since"] = now_iso()
+    elif not now_vip and was_vip:
+        updates["vip_since"] = None
+    if body.vip_note is not None:
+        updates["vip_note"] = body.vip_note.strip() or None
+
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"$set": updates}
+    )
+    fresh = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    # Sync subscribers + notify on transition to VIP.
+    try:
+        from services.marketing_subscribers import mirror_customer_updated
+        await mirror_customer_updated(tenant["id"], fresh or {})
+    except Exception:
+        pass
+    if now_vip and not was_vip:
+        await _emit_vip_flagged(tenant["id"], user, fresh or {})
+    return fresh
+
+
+@router.patch("/customers/{cid}/mobiles")
+async def patch_customer_mobiles(cid: str, body: _MobilesUpdate,
+                                  user: dict = Depends(require_admin),
+                                  tenant: dict = Depends(get_current_tenant)):
+    """Replace the ``mobiles`` array. Enforces the 2-entry cap (via
+    :mod:`services.customer_multi_contact`) and keeps the scalar
+    ``phone`` field synced to the primary entry."""
+    from services.customer_multi_contact import normalize_mobiles, MAX_MOBILES, sync_scalars_from_arrays
+    existing = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not existing:
+        raise HTTPException(404, "Customer not found")
+    if len(body.mobiles or []) > MAX_MOBILES:
+        raise HTTPException(400, f"maximum {MAX_MOBILES} mobiles allowed per customer")
+    normalized = normalize_mobiles(body.mobiles or [], existing.get("phone"))
+    patch = {"mobiles": normalized}
+    # Mirror to legacy scalar so RC matcher, invoices, comm-tokens keep working.
+    tmp = {"mobiles": normalized, "phone": existing.get("phone")}
+    sync_scalars_from_arrays(tmp)
+    patch["phone"] = tmp["phone"]
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"$set": patch}
+    )
+    return await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+
+
+@router.patch("/customers/{cid}/emails")
+async def patch_customer_emails(cid: str, body: _EmailsUpdate,
+                                 user: dict = Depends(require_admin),
+                                 tenant: dict = Depends(get_current_tenant)):
+    """Replace the ``emails`` array. Enforces the 3-entry cap and keeps
+    the scalar ``email`` field synced to the primary entry."""
+    from services.customer_multi_contact import normalize_emails, MAX_EMAILS, sync_scalars_from_arrays
+    existing = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not existing:
+        raise HTTPException(404, "Customer not found")
+    if len(body.emails or []) > MAX_EMAILS:
+        raise HTTPException(400, f"maximum {MAX_EMAILS} emails allowed per customer")
+    normalized = normalize_emails(body.emails or [], existing.get("email"))
+    patch = {"emails": normalized}
+    tmp = {"emails": normalized, "email": existing.get("email")}
+    sync_scalars_from_arrays(tmp)
+    patch["email"] = tmp["email"]
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"$set": patch}
+    )
+    return await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )

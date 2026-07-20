@@ -13,6 +13,7 @@ import {
   BellRing,
   UserCheck,
   UserX,
+  Star,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -479,6 +480,20 @@ export default function CustomersList() {
                       <span className="font-semibold" style={{ color: colors.onSurface }}>
                         {c.name}
                       </span>
+                      {c.is_vip ? (
+                        <span
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider"
+                          style={{
+                            backgroundColor: "#FEF3C7",
+                            color: "#92400E",
+                            border: "1px solid #F59E0B",
+                          }}
+                          data-testid={`row-${c.id}-vip-badge`}
+                          title="VIP customer"
+                        >
+                          <Star size={10} fill="#F59E0B" color="#F59E0B" /> VIP
+                        </span>
+                      ) : null}
                       {(c.tags || []).map((t) => (
                         <TagChip tag={t} key={t} testid={`row-${c.id}-tag-${t}`} />
                       ))}

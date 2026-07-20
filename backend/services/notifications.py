@@ -97,6 +97,9 @@ KIND_LABELS: dict[str, str] = {
     "directory_status_change":    "Directory · Submission Status Change",
     # Marketing M2 (Feb 2026)
     "marketing_campaign_sent":    "Marketing Campaign · Sent",
+    # Customer Detail Additions (Feb 2026)
+    "customer.vip_flagged":       "Customer · VIP Flagged",
+    "task_assigned":              "Task Assigned to You",
 }
 
 # NB: two new channels added — ``push`` (Expo mobile push) + ``in_app`` alias
@@ -122,6 +125,9 @@ _NONADMIN_PUSH_DEFAULT_ON = {
     "chat_mention_in_channel",
     "inbound_customer_message_assigned",
     "job_status_change",
+    # Feb-2026 Customer Detail Additions — assignee should be pinged
+    # when a task lands in their queue.
+    "task_assigned",
 }
 
 

@@ -51,6 +51,18 @@ class CustomerIn(BaseModel):
     # customer. Existing docs without the field read back as False on the
     # client (JSON `undefined` is falsy in both React and RN).
     is_vip: Optional[bool] = False
+    # Feb-2026 Customer Detail Additions — VIP metadata. ``vip_since``
+    # is auto-stamped when ``is_vip`` flips to True and cleared when it
+    # flips back to False (see routers/customers.py::_apply_vip_stamp).
+    vip_since: Optional[str] = None
+    vip_note: Optional[str] = None
+    # Feb-2026 Customer Detail Additions — multi-contact arrays.
+    # Up to 2 mobiles / 3 emails per customer, each with a label,
+    # is_primary flag, and marketing/sms consent flag. The legacy
+    # scalar ``phone`` / ``email`` fields are auto-synced to the
+    # primary entry on every write via services.customer_multi_contact.
+    mobiles: Optional[List[dict]] = None
+    emails: Optional[List[dict]] = None
     # Phase 34f — Active/inactive lifecycle. Defaults to True; when an admin
     # flips this to False via PUT /api/customers/{id}, the router cascades a
     # cancellation over all future scheduled jobs and deactivates recurring
