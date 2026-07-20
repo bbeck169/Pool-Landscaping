@@ -186,6 +186,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/leads/request",         label: "Lead Requests",    icon: Send,       feature: "customers", subsection: "Directory" },
     { to: "/tech/property-lookup",  label: "Property Lookup",  icon: HomeIcon,   feature: "customers", subsection: "Directory" },
     { to: "/deals",                 label: "Deals (Kanban)",   icon: GitBranch,  feature: "customers", subsection: "Sales" },
+    { to: "/ai-estimator",          label: "AI Estimator",      icon: Sparkles,   feature: "customers", subsection: "Sales" },
     { to: "/quotes",                label: "Quotes",           icon: FileText,   feature: "quotes",    subsection: "Sales" },
     { to: "/estimator",             label: "Estimator",        icon: Calculator, feature: "estimator", subsection: "Sales" },
     { to: "/admin/estimator",       label: "Field Estimator",  icon: Wrench,     feature: "estimator", subsection: "Sales" },

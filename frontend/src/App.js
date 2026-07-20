@@ -44,6 +44,8 @@ import PublicReviewsWidgetPage from "@/pages/reviews/PublicReviewsWidgetPage";
 import AICreditsPage from "@/pages/settings/AICreditsPage";
 import ChemicalsPage from "@/pages/settings/ChemicalsPage";
 import DealsKanbanPage from "@/pages/deals/DealsKanbanPage";
+// QuoteIQ Q2-UI · Feb 2026
+import AIEstimatorPage from "@/pages/estimates/AIEstimatorPage";
 import PortalBook from "@/pages/portal/PortalBook";
 import PortalChatsPage from "@/pages/portal/PortalChatsPage";
 import AppointmentsQueue from "@/pages/admin/AppointmentsQueue";
@@ -621,6 +623,7 @@ export default function App() {
             <Route path="admin/ai-credits" element={<AdminOnly><AICreditsPage /></AdminOnly>} />
             <Route path="admin/chemicals" element={<AdminOnly><ChemicalsPage /></AdminOnly>} />
             <Route path="deals" element={<AdminOnly><DealsKanbanPage /></AdminOnly>} />
+            <Route path="ai-estimator" element={<AdminOnly><AIEstimatorPage /></AdminOnly>} />
             <Route path="customers/:id/chemistry-history" element={<AdminOnly><CustomerChemistryHistory /></AdminOnly>} />
             <Route path="portal/profile" element={<PortalProfile />} />
             <Route path="portal/request-service" element={<PortalRequestService />} />

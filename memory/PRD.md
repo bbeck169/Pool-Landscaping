@@ -5524,3 +5524,76 @@ $ curl "$API/api/chemicals/profitability?job_id=$jid" -H "$H"
 3. **Mobile top-up flow is view-only.** The web admin has the top-up modal; the mobile Credits screen surfaces a warning banner pointing techs / admins to the web. This matches the Comms mobile-parity pattern where deep-edit flows stay on web.
 4. **Frontend test coverage** is smoke-level (route HTTP 200 + Playwright screenshot render check) — a full frontend E2E test suite lives on the roadmap under Marketing M6 / Directories UI when we start bundling `@testing-library/react` + Playwright specs consistently.
 
+
+---
+
+## QuoteIQ Parity · Phase Q2 — AI Estimator + Options Estimates · Feb 2026
+
+### A) AI Estimator
+
+**LLM adapter** — `services/ai_estimator.py::generate_estimate()` loads the tenant's chemical catalog + estimate templates into the system prompt, calls Claude via `emergentintegrations` (`claude-sonnet-4-5` provider `anthropic`), validates the JSON response against a strict schema, and snaps every `source="catalog"` line-item's `unit_price_cents` to the current catalog value. Unknown SKUs demote to `source="ai_inferred"` — a bad model prediction can never fake a tenant catalog price. `TEST_LLM_MOCK=1` (env var, also set on `backend/.env`) returns a deterministic mock — same code path in tests.
+
+**Drafts collection** `ai_estimate_drafts` — `{id, tenant_id, created_by, source, photo_urls[], job_description, customer_id, service_area_sqft, pool_size_gallons, options_mode, status, credits_debited, line_items[] OR tiers[], suggested_total_cents, model, notes, credit_warning, created_at, completed_at, error}`. Every generation debits credits atomically via `services.ai_credits.debit_credits(feature="estimator", ref_id=<draft_id>, ref_type="ai_estimate_draft")` — soft enforcement (returns warning flag when balance drops below 20% or negative). Cost model: linear = 10 credits, options = 20 credits.
+
+**Endpoints (all admin+, `/api/ai-estimator/*`):**
+- `POST /generate` — creates draft, debits credits, invokes LLM, persists.
+- `GET /drafts?status=&limit=&cursor=` — paginated list.
+- `GET /drafts/{did}` · `PATCH /drafts/{did}` (user refinements — recomputes totals) · `DELETE /drafts/{did}`.
+- `POST /drafts/{did}/promote` — creates a real `db.estimates` row with `source="ai"`, `ai_draft_id=<did>`. Linear drafts write flat `line_items`; options drafts write the `options: {enabled, tiers, selected_tier_id}` block and materialize the default tier's line_items on the top level.
+
+### B) Options Estimates (Good/Better/Best)
+
+**Extended Estimate schema** — added optional `options: {enabled: bool, tiers: [{id, name, description, line_items[], total_cents, is_default}], selected_tier_id}`. Top-level `total_cents` and `line_items` mirror the currently-selected tier — every read path (PDF, convert-to-job, portal) sees a coherent single-tier view.
+
+**Endpoints (`/api/estimates/*` — admin unless noted):**
+- `POST /{eid}/enable-options {tiers[]}` — turn any manual estimate into options mode; auto-picks middle tier as default if none flagged.
+- `POST /{eid}/select-option {tier_id}` — admin path.
+- `GET  /{eid}/public-link` → `{token, estimate_id, tenant_id}`.
+- `POST /api/public/estimates/{token}/select-option?estimate_id&tenant_id` — **unauthenticated**, HMAC-signed token (reuses the `_sign_*` pattern from `comms.py`).
+- `POST /{eid}/convert-to-job` — respects `options.selected_tier_id`; job title suffixed with the selected tier name.
+
+### Files
+
+**Added:** `backend/services/ai_estimator.py`, `backend/routers/ai_estimator.py`, `backend/tests/test_quoteiq_q2.py` (17 tests · 8 classes), `frontend/src/pages/estimates/AIEstimatorPage.jsx`, `mobile/app/(app)/ai-estimator.tsx`.
+
+**Modified:** `backend/server.py` (register router), `backend/.env` (`TEST_LLM_MOCK=1` — flip to `0` when a live LLM key is in place), `frontend/src/App.js` (+1 route), `frontend/src/nav/adminNav.js` (+1 nav entry under Customers→Sales), `mobile/app/(app)/_layout.tsx` (+1 hidden Tabs.Screen), `mobile/src/components/tools/sections.ts` (+1 hub card).
+
+### Tests
+
+- **Q2 suite**: 17/17 passing in 4.6s. Coverage: credit debit + ledger row, catalog snapping invariant, linear + options draft flow, promote-to-estimate (both modes), enable/select tier flip, public HMAC token select-option + bad-token 403, convert-to-job carries selected tier, tenant isolation, OpenAPI has all Q2 paths.
+- **Regression**: Q2 + Q1 + M1 combined pass 95/95 (66s). Automation-engine passes 7/7 in isolation. The pre-existing pytest-asyncio event-loop pollution between test files is unchanged from before Q2.
+
+### Curl transcript (proof)
+
+```bash
+$ curl -X POST "$API/api/ai-estimator/generate" -H "$H" \
+    -d '{"job_description":"Weekly pool care","options_mode":false}'
+{"draft":{"id":"...","status":"complete","line_items":[3 items],
+          "suggested_total_cents":57500,"credits_debited":10},
+ "credits_balance_after":490,"credit_warning":false}
+
+$ curl "$API/api/ai-credits/transactions?feature=estimator&limit=3" -H "$H"
+{"transactions":[{"reason":"ai_estimator_generate","delta":-10,
+                    "ref_id":"...","ref_type":"ai_estimate_draft",...}]}
+
+$ curl -X POST "$API/api/ai-estimator/drafts/<did>/promote" -H "$H" \
+    -d '{"customer_id":"<cid>","title":"Weekly plan"}'
+{"ok":true,"estimate_id":"...",
+ "estimate":{"source":"ai","ai_draft_id":"<did>","total_cents":57500,
+              "options":{"enabled":false},...}}
+
+# Options-mode enable + select + convert
+$ curl -X POST "$API/api/estimates/<eid>/enable-options" -H "$H" -d '{"tiers":[Basic,Standard(default),Premium]}'
+# → total_cents = 58500 (default = Standard)
+$ curl -X POST "$API/api/estimates/<eid>/select-option" -H "$H" -d '{"tier_id":"<premium_id>"}'
+# → total_cents = 80500 (flipped to Premium)
+$ curl -X POST "$API/api/estimates/<eid>/convert-to-job" -H "$H"
+# → job.title = "... — Premium", estimate.status = "converted"
+```
+
+### Deviations
+
+1. **Photo upload UX is URL-paste for now** on both web and mobile. The Emergent Object Storage upload plumbing exists (used by video uploads); a proper drag-drop / camera flow is a small follow-up that inherits the storage integration wholesale. LLM already accepts hosted image URLs so the pipeline is intact.
+2. **PDF renderer for options-mode** — not extended in this ship. The existing PDF flow renders the top-level `line_items` array, which is materialized from the selected tier — so the PDF is coherent (single-tier view). A dedicated 3-column comparison layout for the PDF template is deferred as a UX polish item.
+3. **Mobile: no in-app "Promote" button** — mobile draft view surfaces the result and directs users to the web to promote (needs a customer picker + PDF preview surface that duplicates the web flow). Backend endpoint is fully wired; a mobile promote flow ships in Q2-follow-up.
+4. **Live LLM path is behind `TEST_LLM_MOCK=1`** by default in this pod's `.env` so the tester can exercise the flow deterministically. Flip to `0` (or remove) when a real Emergent LLM key is confirmed to be present and quota-safe.

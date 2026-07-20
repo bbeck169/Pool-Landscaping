@@ -90,6 +90,7 @@ export const ADMIN_SECTIONS: ToolSection[] = [
       { key: "reviews", icon: "star-outline", label: "Reviews", desc: "Requests, ratings, widget & sync", route: "/(app)/reviews" as any },
       { key: "ai-credits", icon: "sparkles-outline", label: "AI Credits", desc: "Balance & transactions", route: "/(app)/credits" as any },
       { key: "deals", icon: "git-branch-outline", label: "Deals", desc: "Pipeline · stages · won/lost", route: "/(app)/deals" as any },
+      { key: "ai-estimator", icon: "bulb-outline", label: "AI Estimator", desc: "Generate estimates from photos + description", route: "/(app)/ai-estimator" as any },
     ],
   },
   {
