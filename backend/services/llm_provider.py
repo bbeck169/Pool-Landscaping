@@ -113,19 +113,24 @@ async def _call_openai_text(*, system_prompt: str, user_text: str,
                               photo_urls: Optional[List[str]] = None,
                               model: Optional[str] = None,
                               ) -> Dict[str, Any]:
-    """Single OpenAI round-trip using the chat.completions API. Returns
-    ``{"raw": <parsed json>}`` on success or ``{"error": "..."}``."""
-    key = os.environ.get("OPENAI_API_KEY", "")
+    """OpenAI fallback branch — **STUBBED OUT** as of Feb 2026 per the
+    user's decision to run on Emergent only.
+
+    Returns ``{"error": "openai_disabled"}`` immediately when
+    ``OPENAI_API_KEY`` is unset. When a key IS set (opt-in), performs a
+    real ``chat.completions`` call. The ``openai`` SDK is imported
+    lazily inside this function so a completely uninstalled SDK still
+    lets the module load cleanly.
+    """
+    key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not key:
-        return {"error": "openai_key_missing"}
+        return {"error": "openai_disabled"}
     try:
         from openai import OpenAI, APITimeoutError
     except Exception as e:
         return {"error": f"openai_import_failed: {e}"}
     try:
         client = OpenAI(api_key=key, timeout=_TIMEOUT_SECONDS)
-        # Build content parts — GPT-4o supports interleaved image parts
-        # via ``{"type": "image_url", "image_url": {"url": ...}}``.
         user_parts: List[Dict[str, Any]] = [
             {"type": "text", "text": user_text}
         ]
@@ -169,15 +174,18 @@ async def call_llm_with_fallback(*, system_prompt: str, user_text: str,
     Returns::
       {"raw": <parsed json>, "provider": "emergent"|"openai"}
     OR::
-      {"error": "...", "provider": "emergent"|"openai"|"unavailable"}
+      {"error": "...", "provider": "emergent"|"openai"}
 
-    Behaviour
-    ---------
-    * ``PROVIDER_FORCE=openai`` → skip Emergent, call OpenAI directly.
-    * ``PROVIDER_FORCE=emergent`` → call Emergent only; NO fallback.
-    * Default → Emergent first; on hard failure fall back to OpenAI
-      when ``OPENAI_API_KEY`` is present. If OpenAI is unavailable the
-      Emergent error is returned as-is.
+    Behaviour (Feb 2026 — Emergent-only default)
+    ---------------------------------------------
+    * ``PROVIDER_FORCE=openai`` → skip Emergent, call OpenAI branch. When
+      ``OPENAI_API_KEY`` is unset the branch immediately returns
+      ``{"error": "openai_disabled", "provider": "openai"}``.
+    * ``PROVIDER_FORCE=emergent`` → call Emergent only; no fallback.
+    * Default (no force) → Emergent first. On hard failure we fall back
+      to OpenAI **only if** ``OPENAI_API_KEY`` is present. With no key
+      set, the Emergent error is returned as-is tagged
+      ``provider: "emergent"``.
     """
     forced = force_provider()
     if forced == _PROVIDER_OPENAI:
@@ -200,6 +208,9 @@ async def call_llm_with_fallback(*, system_prompt: str, user_text: str,
     if not first.get("error"):
         return {**first, "provider": _PROVIDER_EMERGENT}
     if not openai_available():
+        # Emergent-only mode — return the emergent error verbatim so
+        # upstream callers (estimator catalog-fallback, autopilot copy
+        # error surface) can decide their own recovery path.
         return {**first, "provider": _PROVIDER_EMERGENT}
     logger.info(
         f"[llm_provider] emergent path failed ({first.get('error')!r}) — "
