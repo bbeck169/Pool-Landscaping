@@ -5719,3 +5719,56 @@ $ curl -X POST "$API/api/estimates/<eid>/convert-to-job" -H "$H"
 - Multi-step wizard for the public page (currently single scroll).
 - Redis-backed rate-limit for horizontal scale.
 
+
+## Q4 InstaQuote — Tester Fix Delta · Feb 2026
+
+Fixed the 1 FAIL + 2 WARN from the Q4 tester report. All four proofs shipping in the curl transcript below.
+
+### FAIL — subscriber upsert (root cause + fix)
+- **Root cause**: convert's phone fallback was firing WHENEVER email had no match — even when a distinct email WAS supplied. Multiple submissions with the same phone but different emails aliased to the first subscriber.
+- **Fix** (`routers/instaquote.py::convert_submission`):
+  1. Contract change — phone fallback runs **only when email is missing on this submission**. Two different emails sharing a phone will now create two subscribers.
+  2. Email match is `.strip().lower()` (case-insensitive) and always tenant-scoped.
+  3. Phone is normalised to `+`-and-digits before comparison.
+  4. On match: keep the subscriber id, append the current submission_id to a NEW `linked_submission_ids[]` array (deduped), set `source="instaquote"` if unset, backfill email/phone if we matched by the other channel.
+  5. **Defensive post-check**: re-fetch the persisted subscriber and 500 (with rollback) if its email/phone doesn't match the submission's contact. Fails loudly instead of silently returning a wrong id.
+
+### WARN 1 — honeypot response fingerprinting
+- Honeypot ack now uses the **exact same shape** as a real submission ack: `{id, status:"new", total_cents:0, thank_you_html, success_redirect_url}`. A fresh `new_id()` is minted for the fake id. `spam_swallowed` / `ok` fields removed entirely. Nothing is persisted, no rate-limit slot consumed, no automation event fired.
+
+### WARN 2 — payload shape drift vs spec
+- Committed to the canonical shape: `selections` is an **array** (multi-service submissions), response uses **`total_cents`** (not `computed_total_cents`).
+- Added a `SubmitAckOut` Pydantic response model + rich `description=` on the submit route so OpenAPI documents both. `SubmissionIn.selections` is `Field(..., description="Array of service selections…")`; `_hp` is aliased on `hp_field` with a description.
+- Verified via `/api/openapi.json`: `SubmissionIn.selections.type = "array"`, response `$ref → #/components/schemas/SubmitAckOut`, ack fields `[id, status, total_cents, thank_you_html, success_redirect_url]`.
+
+### Curl transcript (proofs 1–4)
+```
+1. NEW EMAIL → NEW SUBSCRIBER
+   subscriber_id: 8c5f4052-… · email: fix-new-…@example.com
+   source: instaquote · linked_submission_ids: [sid_A]
+
+2. SAME EMAIL → SAME SUBSCRIBER + linked list has 2
+   subscriber_id returned: 8c5f4052-… (same as A) · linked_count: 2
+   (even with different phone + mixed-case email on submission B)
+
+3. HONEYPOT RESPONSE — SHAPE IDENTICAL TO REAL ACK
+   Real:     keys=['id','status','success_redirect_url','thank_you_html','total_cents']
+   Honeypot: keys=['id','status','success_redirect_url','thank_you_html','total_cents']
+   spam_swallowed present? False
+
+4. OPENAPI DOCUMENTS THE CANONICAL SHAPE
+   response $ref: #/components/schemas/SubmitAckOut
+   ack fields: ['id','status','total_cents','thank_you_html','success_redirect_url']
+   SubmissionIn selections type: array
+```
+
+### Tests
+- 4 new subscriber-upsert regression tests added under `TestSubscriberUpsert`:
+  * `test_new_email_creates_new_subscriber` — asserts returned subscriber's email matches submission's.
+  * `test_same_email_reuses_subscriber_and_appends_link` — mixed-case email + different phone → same id, linked_submission_ids has both.
+  * `test_shared_phone_different_emails_creates_two_subscribers` — the EXACT bug: shared phone + different emails must NOT alias.
+  * `test_phone_only_fallback_when_email_missing` — phone-only submissions correctly fall back to phone match.
+- Honeypot test updated to assert real-ack shape + absence of `spam_swallowed` / `ok`.
+- Rate-limit test now drives a deterministic client IP via `X-Forwarded-For` so it's independent of ingress NAT rotation.
+- **`test_quoteiq_q4.py` now 32/32 passing** under real LLM.
+

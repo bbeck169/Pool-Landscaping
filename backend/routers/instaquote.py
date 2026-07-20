@@ -154,18 +154,40 @@ class SelectionIn(BaseModel):
 
 
 class SubmissionIn(BaseModel):
+    """Public quote submission body.
+
+    Canonical shape (confirmed post-Q4 tester review):
+      * ``selections`` — **array** of ``{service_id, qty, frequency_id,
+        add_on_ids[], custom_notes}``. Supports multi-service submissions.
+      * ``_hp`` — hidden honeypot input. Any non-empty value causes
+        the server to return a real-shaped ack without persisting.
+    """
     contact: ContactIn
-    selections: List[SelectionIn] = Field(default_factory=list)
-    # Honeypot: any non-empty value silently 200s without recording.
-    # ``_hp`` is the wire name; pydantic v2 forbids leading-underscore
-    # field names, so the Python attribute is ``hp_field``.
-    hp_field: Optional[str] = Field(default="", alias="_hp")
+    selections: List[SelectionIn] = Field(default_factory=list,
+        description="Array of service selections (one entry per selected service).")
+    # ``_hp`` is the wire alias; the Python attribute is ``hp_field``
+    # (pydantic v2 forbids leading-underscore field names).
+    hp_field: Optional[str] = Field(default="", alias="_hp",
+        description="Honeypot — must remain empty on the wire.")
 
     model_config = {"populate_by_name": True}
 
 
 class DismissIn(BaseModel):
     note: Optional[str] = ""
+
+
+class SubmitAckOut(BaseModel):
+    """Canonical response for ``POST /public/instaquote/{slug}/submit``.
+
+    Same shape is returned for the honeypot path — spammers can't
+    A/B the response and identify the trap.
+    """
+    id: str = Field(..., description="Submission id (fabricated on the honeypot path).")
+    status: str = Field(..., description="Always ``new`` for the current flow.")
+    total_cents: int = Field(..., description="Server-computed total. Client-supplied totals are ignored.")
+    thank_you_html: str = Field(..., description="HTML fragment to render after submit.")
+    success_redirect_url: Optional[str] = Field(None, description="Optional external URL to redirect to on success.")
 
 
 # ─── Helpers ───────────────────────────────────────────────────────────
@@ -579,38 +601,93 @@ async def convert_submission(sid: str,
         await db.estimates.insert_one(est_doc)
         inserted.append(("estimates", {"id": est_id}))
 
-        # 3) Marketing subscriber (source="instaquote"). Upsert by
-        # email — never duplicate an existing subscriber.
+        # 3) Marketing subscriber (source="instaquote").
+        #
+        # Matching contract:
+        #   1. PRIMARY key = (tenant_id, lower(email))  — case-insensitive.
+        #   2. FALLBACK    = (tenant_id, normalized(phone))  — only when
+        #      email is missing / not provided at all.
+        #   Rationale: two different emails may share a household phone,
+        #   so phone match must NOT run when a distinct email is
+        #   supplied — otherwise we alias different leads to the same
+        #   subscriber (Q4 tester finding).
+        # On match:  keep the id, set source=instaquote if missing,
+        #            append the current submission_id to
+        #            linked_submission_ids (deduped).
+        # On miss:   insert a new subscriber with source=instaquote.
+        # Defensive: after the write, we re-fetch and assert the
+        # returned subscriber's contact matches the submission's.
         sub_id = None
-        email = (contact.get("email") or "").lower() or None
-        if email or contact.get("phone"):
+        email = (contact.get("email") or "").strip().lower() or None
+        phone_norm = "".join(ch for ch in (contact.get("phone") or "")
+                              if ch.isdigit() or ch == "+") or None
+        if email or phone_norm:
             existing_sub = None
             if email:
                 existing_sub = await db.subscribers.find_one(
                     {"tenant_id": tenant["id"], "email": email}, {"_id": 0})
-            if not existing_sub and contact.get("phone"):
+            elif phone_norm:
+                # Only fall back to phone when there is NO email on this
+                # submission — never when email is present but happens
+                # to miss.
                 existing_sub = await db.subscribers.find_one(
-                    {"tenant_id": tenant["id"], "phone": contact.get("phone")}, {"_id": 0})
+                    {"tenant_id": tenant["id"], "phone": phone_norm}, {"_id": 0})
             if existing_sub:
                 sub_id = existing_sub["id"]
+                linked = list(existing_sub.get("linked_submission_ids") or [])
+                if sid not in linked:
+                    linked.append(sid)
+                update = {
+                    "linked_submission_ids": linked,
+                    "updated_at": now,
+                }
+                if not existing_sub.get("source"):
+                    update["source"] = "instaquote"
+                # Backfill missing email/phone when we matched by the
+                # other channel.
+                if email and not existing_sub.get("email"):
+                    update["email"] = email
+                if phone_norm and not existing_sub.get("phone"):
+                    update["phone"] = phone_norm
+                await db.subscribers.update_one(
+                    {"id": sub_id, "tenant_id": tenant["id"]},
+                    {"$set": update})
             else:
                 sub_id = new_id()
+                name_parts = (contact.get("name") or "").split(" ", 1)
                 sub_doc = {
                     "id": sub_id, "tenant_id": tenant["id"],
-                    "email": email, "phone": contact.get("phone") or None,
-                    "first_name": (contact.get("name") or "").split(" ", 1)[0],
-                    "last_name": (
-                        contact.get("name") or " ").split(" ", 1)[1]
-                        if " " in (contact.get("name") or "") else "",
+                    "email": email, "phone": phone_norm,
+                    "first_name": name_parts[0] if name_parts else "",
+                    "last_name": name_parts[1] if len(name_parts) > 1 else "",
                     "status": "subscribed", "source": "instaquote",
                     "customer_id": None, "tags": ["instaquote_lead"],
                     "attributes": {"submission_id": sid},
+                    "linked_submission_ids": [sid],
                     "consent_at": now, "confirmed_at": now,
                     "unsubscribed_at": None, "confirmation_token": None,
                     "created_at": now, "updated_at": now,
                 }
                 await db.subscribers.insert_one(sub_doc)
                 inserted.append(("subscribers", {"id": sub_id}))
+
+            # DEFENSIVE POST-CHECK: the subscriber we return MUST have
+            # a contact channel that matches this submission. Fails
+            # loudly if the upsert accidentally aliased a different
+            # lead. Rolls back on mismatch.
+            check = await db.subscribers.find_one(
+                {"id": sub_id, "tenant_id": tenant["id"]}, {"_id": 0})
+            if not check:
+                raise HTTPException(500, "subscriber upsert missing after write")
+            if email and (check.get("email") or "") != email:
+                raise HTTPException(500,
+                    f"subscriber email mismatch: expected {email!r}, "
+                    f"got {check.get('email')!r}")
+            if phone_norm and not email \
+                    and (check.get("phone") or "") != phone_norm:
+                raise HTTPException(500,
+                    f"subscriber phone mismatch: expected {phone_norm!r}, "
+                    f"got {check.get('phone')!r}")
     except HTTPException:
         for coll, filt in inserted:
             await db[coll].delete_one(filt)
@@ -654,16 +731,41 @@ async def public_config(slug: str):
     return _public_view(row)
 
 
-@router.post("/public/instaquote/{slug}/submit", status_code=201)
+@router.post("/public/instaquote/{slug}/submit", status_code=201,
+              response_model=SubmitAckOut,
+              description=(
+                  "Public quote submission endpoint. NO auth.\n\n"
+                  "Body shape: `contact` object + `selections` array + "
+                  "hidden `_hp` honeypot. `contact` is filtered per the "
+                  "tenant's `collect_fields` config on the client, but "
+                  "the server accepts any subset.\n\n"
+                  "**Server always recomputes the total** from the "
+                  "config — client-supplied totals are ignored. "
+                  "Qty is clamped to per-service `min_qty` / `max_qty`. "
+                  "Add-on selections are filtered against the service's "
+                  "allow-list. Discount rules (`if.service_id + min_qty "
+                  "→ then.discount_pct`) are applied last.\n\n"
+                  "Rate-limit: 3 submissions per IP per 10 min. "
+                  "Honeypot: any non-empty `_hp` value causes a real-"
+                  "shaped ack without persistence."
+              ))
 async def public_submit(slug: str, body: SubmissionIn, request: Request):
     row = await db.instaquote_configs.find_one({"slug": slug, "active": True},
                                                    {"_id": 0})
     if not row:
         raise HTTPException(404, "not found")
 
-    # Honeypot: silently 200 without persisting.
+    # Honeypot: return a REAL-SHAPED ack so spammers can't A/B the
+    # response and detect the trap. No persistence, no automation
+    # event, no rate-limit consumption.
     if getattr(body, "hp_field", None):
-        return {"ok": True, "spam_swallowed": True}
+        return {
+            "id": new_id(),
+            "status": "new",
+            "total_cents": 0,
+            "thank_you_html": row.get("thank_you_html") or "",
+            "success_redirect_url": row.get("success_redirect_url"),
+        }
 
     # Rate-limit by IP. Consider X-Forwarded-For (Kubernetes ingress
     # sets it) before falling back to the socket peer.

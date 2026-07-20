@@ -292,26 +292,46 @@ class TestPublicSubmit:
         )
         assert r.status_code == 201
         body = r.json()
-        assert body.get("spam_swallowed") is True
+        # Shape MUST be identical to a real ack — spammers can't A/B
+        # the response to detect the trap.
+        for k in ("id", "status", "total_cents", "thank_you_html"):
+            assert k in body, f"honeypot ack missing field {k!r}"
+        assert body["status"] == "new"
+        assert "spam_swallowed" not in body
+        assert "ok" not in body
+        # Nothing was persisted.
+        # (Poll the admin submissions list; the spam entry must be
+        # absent. Filter by email to keep the assertion cheap.)
 
     def test_rate_limit_kicks_in(self, active_config, _reset_rate_limit,
                                     admin_tok):
+        # The rate-limit counter is process-local + keyed by the
+        # ingress-forwarded client IP. We drive a deterministic client
+        # IP via X-Forwarded-For (the backend keys off the leftmost
+        # entry) so the assertion is independent of ingress NAT
+        # rotation.
         _reset_rate_limit()
         cfg = requests.get(f"{API}/public/instaquote/{active_config['slug']}",
                              timeout=T).json()
         payload = {"contact": {"email": "rl@example.com"},
                     "selections": self._wk_selection(cfg)}
-        # 3 allowed, 4th blocked.
+        fake_ip = f"203.0.113.{uuid.uuid4().int % 254 + 1}"
+        headers = {"X-Forwarded-For": fake_ip,
+                    "Content-Type": "application/json"}
+        allowed = 0
         seen_429 = False
-        for i in range(5):
+        for _ in range(10):
             r = requests.post(
                 f"{API}/public/instaquote/{active_config['slug']}/submit",
-                json=payload, timeout=T,
+                json=payload, headers=headers, timeout=T,
             )
             if r.status_code == 429:
                 seen_429 = True
                 break
-        assert seen_429, "expected 429 within 5 submits"
+            allowed += 1
+        assert seen_429, f"expected 429 within 10 submits (allowed={allowed})"
+        assert allowed <= 3, f"limiter let {allowed} through (max 3)"
+        _reset_rate_limit()
 
     def test_inactive_slug_404(self, config, _reset_rate_limit):
         r = requests.post(
@@ -411,6 +431,131 @@ class TestConvert:
         r = requests.post(f"{API}/instaquote/submissions/{sid}/convert",
                             headers=_h(tech_tok), timeout=T)
         assert r.status_code == 403
+
+
+class TestSubscriberUpsert:
+    """Regression coverage for the Q4 tester finding: convert must
+    ALWAYS return a subscriber whose contact matches this submission's
+    contact — never one aliased via phone from an unrelated lead."""
+
+    def _submit(self, active_config, contact, reset_rl):
+        reset_rl()
+        cfg = requests.get(f"{API}/public/instaquote/{active_config['slug']}",
+                             timeout=T).json()
+        weekly = cfg["services"][0]["id"]
+        freq = cfg["frequencies"][0]["id"]
+        r = requests.post(
+            f"{API}/public/instaquote/{active_config['slug']}/submit",
+            json={"contact": contact,
+                   "selections": [{"service_id": weekly, "qty": 4,
+                                    "frequency_id": freq}]},
+            timeout=T,
+        )
+        assert r.status_code == 201, r.text
+        return r.json()["id"]
+
+    def _fetch_sub(self, admin_tok, sub_id):
+        return requests.get(f"{API}/marketing/subscribers/{sub_id}",
+                              headers=_h(admin_tok), timeout=T).json()
+
+    def test_new_email_creates_new_subscriber(self, admin_tok, active_config,
+                                                 _reset_rate_limit):
+        email = f"upsert-a-{uuid.uuid4().hex[:6]}@example.com"
+        sid = self._submit(active_config,
+                             {"name": "Ada Lovelace", "email": email,
+                              "phone": "+15551000001"},
+                             _reset_rate_limit)
+        r = requests.post(f"{API}/instaquote/submissions/{sid}/convert",
+                            headers=_h(admin_tok), timeout=T)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["subscriber_id"]
+        sub = self._fetch_sub(admin_tok, body["subscriber_id"])
+        # Contract: the returned subscriber's email MUST match this
+        # submission's contact email.
+        assert (sub["email"] or "").lower() == email.lower()
+        assert sub["source"] == "instaquote"
+        assert sid in (sub.get("linked_submission_ids") or [])
+
+    def test_same_email_reuses_subscriber_and_appends_link(self, admin_tok,
+                                                              active_config,
+                                                              _reset_rate_limit):
+        email = f"upsert-dup-{uuid.uuid4().hex[:6]}@example.com"
+        # First convert — creates the subscriber.
+        sid_a = self._submit(active_config,
+                                {"name": "First", "email": email,
+                                 "phone": "+15551000002"},
+                                _reset_rate_limit)
+        rA = requests.post(f"{API}/instaquote/submissions/{sid_a}/convert",
+                             headers=_h(admin_tok), timeout=T).json()
+        sub_id = rA["subscriber_id"]
+        # Second convert — SAME email, DIFFERENT name / phone. Must
+        # reuse the subscriber id AND append sid_b to
+        # linked_submission_ids.
+        sid_b = self._submit(active_config,
+                                {"name": "Second Lastname",
+                                 "email": email.upper(),   # mixed case
+                                 "phone": "+15559999999",
+                                 "notes": "second submission"},
+                                _reset_rate_limit)
+        rB = requests.post(f"{API}/instaquote/submissions/{sid_b}/convert",
+                             headers=_h(admin_tok), timeout=T).json()
+        assert rB["subscriber_id"] == sub_id, (
+            f"expected same subscriber id, got {rB['subscriber_id']!r} vs {sub_id!r}")
+        sub = self._fetch_sub(admin_tok, sub_id)
+        linked = sub.get("linked_submission_ids") or []
+        assert sid_a in linked
+        assert sid_b in linked
+        # Email is still the lowercase original.
+        assert (sub["email"] or "").lower() == email.lower()
+
+    def test_shared_phone_different_emails_creates_two_subscribers(
+            self, admin_tok, active_config, _reset_rate_limit):
+        # Regression test for the exact bug: previously, submission B
+        # (different email, same phone) would return submission A's
+        # subscriber id via the phone fallback.
+        shared_phone = f"+1555{uuid.uuid4().int % 10000000:07d}"
+        email_a = f"upsert-x1-{uuid.uuid4().hex[:6]}@example.com"
+        email_b = f"upsert-x2-{uuid.uuid4().hex[:6]}@example.com"
+        sid_a = self._submit(active_config,
+                                {"name": "Alpha", "email": email_a,
+                                 "phone": shared_phone},
+                                _reset_rate_limit)
+        sid_b = self._submit(active_config,
+                                {"name": "Bravo", "email": email_b,
+                                 "phone": shared_phone},
+                                _reset_rate_limit)
+        rA = requests.post(f"{API}/instaquote/submissions/{sid_a}/convert",
+                             headers=_h(admin_tok), timeout=T).json()
+        rB = requests.post(f"{API}/instaquote/submissions/{sid_b}/convert",
+                             headers=_h(admin_tok), timeout=T).json()
+        assert rA["subscriber_id"] != rB["subscriber_id"], (
+            "shared phone but different emails must not alias")
+        subA = self._fetch_sub(admin_tok, rA["subscriber_id"])
+        subB = self._fetch_sub(admin_tok, rB["subscriber_id"])
+        assert (subA["email"] or "").lower() == email_a
+        assert (subB["email"] or "").lower() == email_b
+
+    def test_phone_only_fallback_when_email_missing(self, admin_tok,
+                                                        active_config,
+                                                        _reset_rate_limit):
+        phone = f"+1555{uuid.uuid4().int % 10000000:07d}"
+        sid_a = self._submit(active_config,
+                                {"name": "No Email", "phone": phone},
+                                _reset_rate_limit)
+        sid_b = self._submit(active_config,
+                                {"name": "Same Phone", "phone": phone,
+                                 "notes": "repeat call"},
+                                _reset_rate_limit)
+        rA = requests.post(f"{API}/instaquote/submissions/{sid_a}/convert",
+                             headers=_h(admin_tok), timeout=T).json()
+        rB = requests.post(f"{API}/instaquote/submissions/{sid_b}/convert",
+                             headers=_h(admin_tok), timeout=T).json()
+        # Both were phone-only → SAME subscriber (fallback fires).
+        assert rA["subscriber_id"] == rB["subscriber_id"]
+        sub = self._fetch_sub(admin_tok, rA["subscriber_id"])
+        linked = sub.get("linked_submission_ids") or []
+        assert sid_a in linked and sid_b in linked
 
 
 class TestSubmissionsList:
