@@ -108,6 +108,26 @@ def test_brand_brain_patch_persists(admin_headers):
     assert r.json()["tone"] == f"Friendly {marker}"
 
 
+def test_brand_brain_persists_brand_voice_snippet(admin_headers):
+    """AE1 T1 fix — brand_voice_snippet must be documented on the
+    BrandBrain model + persist on PATCH + surface on GET. Prior
+    tester found it was silently dropped."""
+    marker = uuid.uuid4().hex[:6]
+    snippet = (
+        f"Warm and plain-spoken — no jargon. Case-{marker}: we treat "
+        f"every quote like a friendly conversation, not a hard sell."
+    )
+    r = requests.patch(f"{API}/brand-brain", headers=admin_headers, json={
+        "brand_voice_snippet": snippet,
+    }, timeout=15)
+    assert r.status_code == 200, r.text
+    assert r.json()["brand_voice_snippet"] == snippet
+    # And on subsequent GET.
+    r = requests.get(f"{API}/brand-brain", headers=admin_headers, timeout=15)
+    assert r.status_code == 200
+    assert r.json()["brand_voice_snippet"] == snippet
+
+
 def test_brand_brain_tech_forbidden(tech_headers):
     r = requests.get(f"{API}/brand-brain", headers=tech_headers, timeout=15)
     assert r.status_code in (401, 403)
@@ -362,6 +382,38 @@ def test_jobs_openapi_documents_enrichment():
     desc = body["responses"]["200"]["description"]
     assert "property_label" in desc
     assert "property_address" in desc
+
+
+def test_customers_openapi_has_populated_schema():
+    """AE1 T4 fix — /api/customers must expose a populated Pydantic
+    schema (was ``schema: {}`` before). The response is a union of
+    the list row and the ``count_only`` compact form, so we inspect
+    the referenced ``CustomerListItem`` model in components/schemas."""
+    r = requests.get(f"{API}/openapi.json", timeout=15)
+    doc = r.json()
+    schemas = doc["components"]["schemas"]
+    assert "CustomerListItem" in schemas, "CustomerListItem model missing"
+    props = schemas["CustomerListItem"].get("properties", {})
+    assert "properties_count" in props
+    assert "id" in props
+    assert "name" in props
+
+
+def test_jobs_openapi_has_populated_schema():
+    """AE1 T4 fix — /api/jobs schema must reference JobListItem and
+    include property_label + property_address (MP2 UI enrichment
+    fields) in the documented properties."""
+    r = requests.get(f"{API}/openapi.json", timeout=15)
+    doc = r.json()
+    paths = doc["paths"]["/api/jobs"]["get"]
+    schema = paths["responses"]["200"]["content"]["application/json"]["schema"]
+    # Should reference JobListItem as an array item.
+    ref = schema.get("items", {}).get("$ref", "")
+    assert "JobListItem" in ref, f"schema does not point at JobListItem: {schema}"
+    props = doc["components"]["schemas"]["JobListItem"].get("properties", {})
+    assert "property_label" in props
+    assert "property_address" in props
+    assert "customer_name" in props
 
 
 def test_customers_openapi_documents_properties_count():

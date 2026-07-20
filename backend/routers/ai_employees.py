@@ -116,6 +116,11 @@ class BrandBrainPatch(BaseModel):
     dont_say: Optional[List[str]] = None
     talking_points: Optional[List[str]] = None
     notes: Optional[str] = Field(None, max_length=4000)
+    # Feb-2026 AE1 T1 fix — unify with Marketing Autopilot. Short
+    # reference paragraph that pins voice / style; folded into every
+    # employee's system prompt so autopilot copy + AI employees speak
+    # in the same voice.
+    brand_voice_snippet: Optional[str] = Field(None, max_length=2000)
 
 
 class ConversationCreate(BaseModel):
@@ -193,10 +198,14 @@ async def _get_brand_brain(tenant_id: str) -> Dict[str, Any]:
             "tone": "", "audience": "",
             "do_say": [], "dont_say": [], "talking_points": [],
             "notes": "",
+            "brand_voice_snippet": "",
             "created_at": now_iso(), "updated_at": now_iso(),
         }
         await db.brand_brain.insert_one(doc)
         doc.pop("_id", None)
+    else:
+        # Backfill the field on rows created before the AE1 T1 fix.
+        doc.setdefault("brand_voice_snippet", "")
     return doc
 
 
@@ -206,6 +215,11 @@ def _brand_brain_summary(bb: Dict[str, Any]) -> str:
         parts.append(f"Brand voice: {bb['tone']}")
     if bb.get("audience"):
         parts.append(f"Audience: {bb['audience']}")
+    if bb.get("brand_voice_snippet"):
+        parts.append(
+            "Voice reference (mirror this style closely): "
+            f"{bb['brand_voice_snippet']}"
+        )
     if bb.get("do_say"):
         parts.append("DO SAY: " + "; ".join(bb["do_say"]))
     if bb.get("dont_say"):

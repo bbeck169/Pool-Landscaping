@@ -1,6 +1,7 @@
 # ruff: noqa: F403,F405
 from fastapi import APIRouter, HTTPException, Depends, Query, Response, Request
-from typing import Dict, List, Optional
+from pydantic import BaseModel, ConfigDict
+from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 
 from config import db, logger, EMERGENT_LLM_KEY
@@ -12,6 +13,60 @@ from models import *  # noqa: F403,F405
 from emailer import send_completion_email
 
 router = APIRouter()
+
+
+# ─── Response models for OpenAPI docs (Feb-2026 AE1 T4 fix) ────────────
+# JobListItem documents the visible fields on GET /api/jobs so generated
+# clients discover the shape. ``extra="allow"`` keeps the endpoint
+# backwards-compatible with dynamic legacy fields still consumed by
+# older UI/mobile builds.
+
+class JobListItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    tenant_id: Optional[str] = None
+    customer_id: Optional[str] = None
+    customer_name: Optional[str] = None
+    technician_id: Optional[str] = None
+    technician_name: Optional[str] = None
+    technician_avatar: Optional[str] = None
+    technician_department: Optional[str] = None
+    title: Optional[str] = None
+    service_type: Optional[str] = None
+    address: Optional[str] = None
+    status: Optional[str] = None
+    scheduled_date: Optional[str] = None
+    notes: Optional[str] = None
+    price: Optional[float] = None
+    photos: Optional[List[Any]] = None
+    videos: Optional[List[Any]] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    checklist_kind: Optional[str] = None
+    account_notes: Optional[str] = None
+    gate_code: Optional[str] = None
+    # Feb-2026 MP2 UI enrichments — always present (null when absent).
+    property_id: Optional[str] = None
+    property_label: Optional[str] = None
+    property_address: Optional[str] = None
+    # Customer denormalization — surfaced so schedule cards render
+    # without an N+1 fetch.
+    customer_is_vip: Optional[bool] = None
+    customer_gate_code: Optional[str] = None
+    customer_notes: Optional[str] = None
+    service_note: Optional[str] = None
+    # Recent-activity flags (Phase 56.11 add-on).
+    has_water_readings: Optional[bool] = None
+    has_chemicals_added: Optional[bool] = None
+    has_checklist: Optional[bool] = None
+    has_private_note: Optional[bool] = None
+    has_public_note: Optional[bool] = None
+    has_repair_request: Optional[bool] = None
+    has_shopping_request: Optional[bool] = None
+    last_activity_at: Optional[str] = None
+    service_report_submitted_at: Optional[str] = None
+    chemicals_added: Optional[List[Any]] = None
 
 
 def _timer_seconds(start_iso: str, stop_iso: str) -> int:
@@ -206,6 +261,7 @@ async def _enrich_jobs_dept_and_kind(docs: list, tenant_id: str) -> None:
 
 
 @router.get("/jobs",
+    response_model=List[JobListItem],
     summary="List jobs",
     responses={200: {"description": (
         "Job rows scoped to the caller's role + tenant. Beyond the "

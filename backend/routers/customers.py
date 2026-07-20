@@ -1,7 +1,7 @@
 # ruff: noqa: F403,F405
 from fastapi import APIRouter, HTTPException, Depends, Query
-from pydantic import BaseModel
-from typing import List, Optional
+from pydantic import BaseModel, ConfigDict
+from typing import Any, Dict, List, Optional, Union
 from datetime import datetime, timezone, timedelta
 
 from config import db, logger, EMERGENT_LLM_KEY
@@ -11,6 +11,53 @@ from routers.tenants import get_current_tenant
 from models import *  # noqa: F403,F405
 
 router = APIRouter()
+
+
+# ─── Response models for OpenAPI docs (Feb-2026 AE1 T4 fix) ────────────
+# These document the visible fields on customer + list endpoints so
+# generated clients / docs sites see a populated schema instead of
+# ``"schema": {}``. Extra keys are allowed (``extra="allow"``) so
+# existing UI callers reading dynamic legacy fields don't regress.
+
+class CustomerListItem(BaseModel):
+    """Row shape returned by ``GET /api/customers``."""
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    tenant_id: Optional[str] = None
+    name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    address_line1: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postal_code: Optional[str] = None
+    tags: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+    has_login: Optional[bool] = None
+    customer_since: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    notes: Optional[str] = None
+    # Feb-2026 MP2 UI addition — active property count for the row's
+    # "N properties" chip. Zero when the customer has no properties.
+    properties_count: int = 0
+    # Multi-contact arrays (Feb-2026 customer detail additions).
+    emails: Optional[List[Dict[str, Any]]] = None
+    mobiles: Optional[List[Dict[str, Any]]] = None
+    # Service notes cards (Pool / Landscape).
+    service_notes: Optional[Dict[str, Any]] = None
+    # VIP toggle + last portal login stamps (Feb-2026 Portal Access ship).
+    is_vip: Optional[bool] = None
+    last_portal_login_at: Optional[str] = None
+    last_portal_login_ip: Optional[str] = None
+    # Master billing (MP1 / MP1.5).
+    master_billing_mode: Optional[str] = None
+    master_billing_contact_email: Optional[str] = None
+    master_billing_contact_phone: Optional[str] = None
 
 
 def _sync_customer_names(doc: dict) -> dict:
@@ -135,14 +182,22 @@ async def update_my_profile(body: CustomerProfileUpdate,
     )
 
 
+class CustomerListCount(BaseModel):
+    """Compact ``count_only=true`` response for ``GET /api/customers``."""
+    count: int
+
+
 @router.get("/customers",
+    response_model=Union[List[CustomerListItem], CustomerListCount],
     summary="List customers",
     responses={200: {"description": (
         "Customer rows scoped to the caller's tenant. Each row includes "
         "the standard customer fields plus a Feb-2026 MP2 UI addition:\n\n"
         "- ``properties_count`` (int) — number of active properties for "
         "the customer. Zero when none exist. Used by the customers list "
-        "to render a `N properties` chip when ≥2."
+        "to render a `N properties` chip when ≥2.\n\n"
+        "When ``count_only=true``, the response is a compact "
+        "``{\"count\": int}`` object instead of the row array."
     )}})
 async def list_customers(
     user: dict = Depends(get_current_user),
