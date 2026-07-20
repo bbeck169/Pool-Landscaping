@@ -83,6 +83,8 @@ import {
 } from "@/pages/marketing/MarketingPages";
 import BeforeAfterStudio from "@/pages/marketing/BeforeAfterStudio";
 import AutopilotPage from "@/pages/marketing/AutopilotPage";
+import InstaQuoteAdminPage from "@/pages/marketing/InstaQuoteAdmin";
+import PublicInstaQuotePage from "@/pages/public/PublicInstaQuote";
 import {
   SequencesList, SequenceNew, SequenceDetail,
 } from "@/pages/marketing/SequencePages";
@@ -265,6 +267,9 @@ export default function App() {
           <Route path="/reviews/r/:token" element={<PublicReviewLanding />} />
           <Route path="/reviews/:tenant_slug" element={<PublicReviewsWidgetPage />} />
 
+          {/* QuoteIQ Q4 · public InstaQuote portal — no auth. */}
+          <Route path="/quote/:slug" element={<PublicInstaQuotePage />} />
+
           {/* Everything else lives inside the protected shell (side nav + top bar + bottom tabs). */}
           <Route path="/" element={<AppLayout />}>
             {/* Root — techs are redirected to their schedule (Dashboard removed for tech role). */}
@@ -335,6 +340,7 @@ export default function App() {
             <Route path="marketing/sequences/:id" element={<AdminOnly><SequenceDetail /></AdminOnly>} />
             <Route path="marketing/before-after" element={<AdminOnly><BeforeAfterStudio /></AdminOnly>} />
             <Route path="marketing/autopilot" element={<AdminOnly><AutopilotPage /></AdminOnly>} />
+            <Route path="marketing/instaquote" element={<AdminOnly><InstaQuoteAdminPage /></AdminOnly>} />
 
             {/* Phase 8 — SEO + GBP */}
             <Route path="seo" element={<AdminOnly><SeoHub /></AdminOnly>} />

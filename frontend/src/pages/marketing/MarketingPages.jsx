@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, Plus, Sparkles, Check, X, Send, Calendar as CalIcon, Image as ImageIcon,
-  TrendingUp, Bot, Layers, MessageSquare, RefreshCw, Users, ClipboardList,
+  TrendingUp, Bot, Layers, MessageSquare, RefreshCw, Users, ClipboardList, Wand2,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from '@/theme';
@@ -62,6 +62,7 @@ export function MarketingHub() {
     { to: "/marketing/templates", label: "Templates", icon: Layers, sub: "Campaign + email + SMS" },
     { to: "/marketing/before-after", label: "Before & After", icon: ImageIcon, sub: "AI-composed share cards" },
     { to: "/marketing/autopilot", label: "AI Autopilot", icon: Bot, sub: "Draft copy + seasonal/invoice ladders" },
+    { to: "/marketing/instaquote", label: "InstaQuote", icon: Wand2, sub: "Public self-quote portal" },
     { to: "/marketing/reviews", label: "Reviews", icon: MessageSquare, sub: "AI review reply drafts" },
     { to: "/marketing/brand", label: "Brand Memory", icon: Bot, sub: "Voice + persona + zips" },
   ];

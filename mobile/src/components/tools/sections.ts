@@ -93,6 +93,7 @@ export const ADMIN_SECTIONS: ToolSection[] = [
       { key: "deals", icon: "git-branch-outline", label: "Deals", desc: "Pipeline · stages · won/lost", route: "/(app)/deals" as any },
       { key: "ai-estimator", icon: "bulb-outline", label: "AI Estimator", desc: "Generate estimates from photos + description", route: "/(app)/ai-estimator" as any },
       { key: "before-after", icon: "images-outline", label: "Before / After", desc: "AI-composed share cards", route: "/(app)/before-after" as any },
+      { key: "instaquote", icon: "storefront-outline", label: "InstaQuote", desc: "Public self-quote submissions", route: "/(app)/instaquote" as any },
     ],
   },
   {

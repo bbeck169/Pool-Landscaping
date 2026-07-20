@@ -128,6 +128,10 @@ async def generate(body: EstimatorGenerateIn,
                 int(li.get("subtotal_cents") or 0)
                 for li in doc["line_items"])
         doc["notes"] = result.get("notes", "")
+        # Q3-hardening: surface which path ran (llm_ok / llm_retry_ok /
+        # catalog_fallback / mock_*). Retained on the draft doc so ops
+        # can see when the retry / fallback fires.
+        doc["ai_meta"] = result.get("_meta") or {}
     await db.ai_estimate_drafts.insert_one(doc)
     doc.pop("_id", None)
     return {"draft": doc,

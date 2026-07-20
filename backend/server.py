@@ -64,6 +64,7 @@ from routers import (
     pipelines,
     ai_estimator,
     before_after,
+    instaquote,
 )
 
 app = FastAPI(
@@ -128,7 +129,8 @@ for module in [notifications_router,
                chemical_products,
                pipelines,
                ai_estimator,
-               before_after]:
+               before_after,
+               instaquote]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue

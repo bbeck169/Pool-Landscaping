@@ -233,6 +233,124 @@ async def _snap_to_catalog(tenant_id: str, items: List[Dict[str, Any]]
     return out
 
 
+def _has_zero_lines(items: List[Dict[str, Any]]) -> bool:
+    """Any line item with qty * unit_price_cents == 0 (or missing) is
+    treated as invalid. Retry / fallback logic uses this signal."""
+    if not items:
+        return True
+    for li in items:
+        qty = float(li.get("qty") or 0)
+        unit = int(li.get("unit_price_cents") or 0)
+        sub = int(li.get("subtotal_cents") or 0)
+        if qty <= 0 or unit <= 0 or sub <= 0:
+            return True
+    return False
+
+
+def _result_has_zero(result: Dict[str, Any], *, options_mode: bool) -> bool:
+    """True if ANY tier/line-items entry contains a $0-total line, or
+    if the aggregate total is zero. Drives the retry decision."""
+    if options_mode:
+        for t in result.get("tiers") or []:
+            if _has_zero_lines(t.get("line_items") or []):
+                return True
+            if int(t.get("total_cents") or 0) <= 0:
+                return True
+        return False
+    items = result.get("line_items") or []
+    if _has_zero_lines(items):
+        return True
+    if sum(int(li.get("subtotal_cents") or 0) for li in items) <= 0:
+        return True
+    return False
+
+
+def _catalog_only_fallback(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Last-resort filter — keep only line-items that came from the
+    tenant catalog (post-``_snap_to_catalog``) AND have a positive
+    subtotal. Everything else is dropped so no $0 line ever leaks to
+    the user. If nothing survives the callers surface an empty list
+    with a specific error code."""
+    kept = []
+    for li in items:
+        if li.get("source") != "catalog":
+            continue
+        if float(li.get("qty") or 0) <= 0:
+            continue
+        if int(li.get("unit_price_cents") or 0) <= 0:
+            continue
+        kept.append(li)
+    return kept
+
+
+ZERO_RETRY_HINT = (
+    "The previous response contained one or more zero-valued line "
+    "items — this is not acceptable. Every line_item MUST have "
+    "qty > 0 and unit_price_cents > 0. subtotal_cents MUST equal "
+    "qty * unit_price_cents. Do not include any zero-cost or "
+    "zero-quantity rows. Re-emit the JSON with valid numbers."
+)
+
+
+async def _call_llm(*, system_prompt: str, job_description: str,
+                      photo_urls: Optional[List[str]] = None,
+                      extras: Optional[Dict[str, Any]] = None,
+                      extra_user_hint: str = "") -> Dict[str, Any]:
+    """Single LLM round-trip. Returns ``{"raw": <parsed json>}`` on
+    success or ``{"error": "..."}`` on any failure. Isolated so the
+    retry loop can reuse the same wire path."""
+    key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
+    if not key:
+        return {"error": "EMERGENT_LLM_KEY missing — set env or TEST_LLM_MOCK=1"}
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+    except Exception as e:
+        return {"error": f"emergentintegrations import failed: {e}"}
+    try:
+        chat = (LlmChat(api_key=key, session_id=new_id(),
+                         system_message=system_prompt)
+                .with_model(DEFAULT_MODEL_PROVIDER, DEFAULT_MODEL_NAME))
+        content_parts: List[Any] = [f"Job description: {job_description}"]
+        if extras:
+            content_parts.append(f"Context: {json.dumps(extras)}")
+        if extra_user_hint:
+            content_parts.append(extra_user_hint)
+        for url in (photo_urls or [])[:8]:
+            try:
+                content_parts.append(ImageContent(image_url=url))
+            except Exception:
+                pass
+        msg = UserMessage(text="\n".join(str(p) for p in content_parts
+                                          if isinstance(p, str)))
+        resp = await chat.send_message(msg)
+        raw_text = str(resp).strip()
+        start = raw_text.find("{")
+        end = raw_text.rfind("}")
+        payload = json.loads(raw_text[start:end + 1]) if start >= 0 else {}
+        return {"raw": payload}
+    except Exception as e:
+        logger.warning(f"[ai_estimator] LLM call failed: {e}")
+        return {"error": f"llm_call_failed: {e}"}
+
+
+async def _finalize(tenant_id: str, raw: Dict[str, Any], *,
+                      options_mode: bool) -> Dict[str, Any]:
+    """Validate → catalog-snap → recompute totals. Returns the result
+    dict ready for the caller."""
+    try:
+        result = _validate_response(raw, options_mode=options_mode)
+    except ValueError as e:
+        return {"error": f"invalid_response: {e}", "line_items": []}
+    if options_mode:
+        for t in result["tiers"]:
+            t["line_items"] = await _snap_to_catalog(tenant_id, t["line_items"])
+            t["total_cents"] = sum(li["subtotal_cents"] for li in t["line_items"])
+    else:
+        result["line_items"] = await _snap_to_catalog(
+            tenant_id, result["line_items"])
+    return result
+
+
 async def generate_estimate(*, tenant_id: str,
                               photo_urls: List[str],
                               job_description: str,
@@ -242,56 +360,104 @@ async def generate_estimate(*, tenant_id: str,
     """High-level entrypoint used by the router. Returns the validated
     + catalog-snapped result dict. Never raises for LLM failures — on
     error returns ``{"error": "...", "line_items": []}`` so callers can
-    log ``status="error"`` without a 500."""
+    log ``status="error"`` without a 500.
+
+    Q3-hardening: if the LLM emits any $0 line item (qty=0 OR
+    unit_price=0 OR subtotal=0), we retry once with an explicit
+    reformat hint. If the retry still produces $0 lines, we fall
+    back to a catalog-only pass — dropping any non-catalog $0 rows and
+    keeping only line items that map to real tenant catalog entries.
+    ``_meta`` on the returned dict tells the router which path ran.
+    """
     catalog = await _load_catalog(tenant_id)
+    system_prompt = _build_system_prompt(catalog, options_mode)
+
     if _mock_enabled():
-        raw = _mock_response(options_mode=options_mode)
-    else:
-        key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
-        if not key:
-            return {"error": "EMERGENT_LLM_KEY missing — set env or TEST_LLM_MOCK=1",
-                    "line_items": []}
-        try:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
-        except Exception as e:
-            return {"error": f"emergentintegrations import failed: {e}",
-                    "line_items": []}
-        try:
-            system_prompt = _build_system_prompt(catalog, options_mode)
-            chat = (LlmChat(api_key=key, session_id=new_id(),
-                             system_message=system_prompt)
-                    .with_model(DEFAULT_MODEL_PROVIDER, DEFAULT_MODEL_NAME))
-            content_parts: List[Any] = [f"Job description: {job_description}"]
-            if extras:
-                content_parts.append(f"Context: {json.dumps(extras)}")
-            for url in (photo_urls or [])[:8]:
-                try:
-                    content_parts.append(ImageContent(image_url=url))
-                except Exception:
-                    pass
-            msg = UserMessage(text="\n".join(str(p) for p in content_parts
-                                              if isinstance(p, str)))
-            resp = await chat.send_message(msg)
-            raw_text = str(resp).strip()
-            # Extract the first JSON object in case the model wraps it in prose.
-            start = raw_text.find("{")
-            end = raw_text.rfind("}")
-            payload = json.loads(raw_text[start:end + 1]) if start >= 0 else {}
-            raw = payload
-        except Exception as e:
-            logger.warning(f"[ai_estimator] LLM call failed: {e}")
-            return {"error": f"llm_call_failed: {e}", "line_items": []}
+        # Test-only injection: allow overriding the mock response so
+        # unit tests can force the retry / fallback branches without
+        # burning real-LLM quota. See ``services.ai_estimator._TEST_MOCK_OVERRIDES``.
+        raw = _next_test_mock(options_mode=options_mode) \
+            or _mock_response(options_mode=options_mode)
+        result = await _finalize(tenant_id, raw, options_mode=options_mode)
+        # Even in mock mode, honour the retry/fallback contract so tests
+        # exercise the same code path as prod.
+        meta = {"path": "mock_ok", "retries": 0}
+        if _result_has_zero(result, options_mode=options_mode):
+            raw2 = _next_test_mock(options_mode=options_mode)
+            if raw2:
+                result = await _finalize(tenant_id, raw2,
+                                            options_mode=options_mode)
+            meta["retries"] = 1
+            if _result_has_zero(result, options_mode=options_mode):
+                result = _apply_catalog_fallback(result, options_mode=options_mode)
+                meta["path"] = "catalog_fallback"
+            else:
+                meta["path"] = "mock_retry_ok"
+        result["_meta"] = meta
+        return result
 
-    try:
-        result = _validate_response(raw, options_mode=options_mode)
-    except ValueError as e:
-        return {"error": f"invalid_response: {e}", "line_items": []}
+    # Real-LLM path -------------------------------------------------------
+    first = await _call_llm(system_prompt=system_prompt,
+                              job_description=job_description,
+                              photo_urls=photo_urls, extras=extras)
+    if first.get("error"):
+        return {"error": first["error"], "line_items": []}
+    result = await _finalize(tenant_id, first["raw"], options_mode=options_mode)
+    if result.get("error"):
+        return result
+    meta = {"path": "llm_ok", "retries": 0}
+    if _result_has_zero(result, options_mode=options_mode):
+        # Retry once with an explicit reformat hint.
+        second = await _call_llm(system_prompt=system_prompt,
+                                    job_description=job_description,
+                                    photo_urls=photo_urls, extras=extras,
+                                    extra_user_hint=ZERO_RETRY_HINT)
+        meta["retries"] = 1
+        if not second.get("error"):
+            retry_result = await _finalize(tenant_id, second["raw"],
+                                              options_mode=options_mode)
+            if not retry_result.get("error") and not _result_has_zero(
+                    retry_result, options_mode=options_mode):
+                retry_result["_meta"] = {"path": "llm_retry_ok", "retries": 1}
+                return retry_result
+            result = retry_result if not retry_result.get("error") else result
+        # Retry still bad → catalog-only fallback.
+        result = _apply_catalog_fallback(result, options_mode=options_mode)
+        meta["path"] = "catalog_fallback"
+    result["_meta"] = meta
+    return result
 
+
+def _apply_catalog_fallback(result: Dict[str, Any], *,
+                              options_mode: bool) -> Dict[str, Any]:
+    """Drop $0 lines + non-catalog rows across a normalized result."""
     if options_mode:
-        for t in result["tiers"]:
-            t["line_items"] = await _snap_to_catalog(tenant_id, t["line_items"])
+        for t in result.get("tiers") or []:
+            t["line_items"] = _catalog_only_fallback(t.get("line_items") or [])
             t["total_cents"] = sum(li["subtotal_cents"] for li in t["line_items"])
     else:
-        result["line_items"] = await _snap_to_catalog(
-            tenant_id, result["line_items"])
+        result["line_items"] = _catalog_only_fallback(
+            result.get("line_items") or [])
     return result
+
+
+# Test-only queue of mock overrides. Populated by tests via
+# ``prime_test_mocks(...)`` to exercise the retry / fallback branches
+# deterministically. Never touched in production code paths.
+_TEST_MOCK_OVERRIDES: List[Dict[str, Any]] = []
+
+
+def prime_test_mocks(*payloads: Dict[str, Any]) -> None:
+    """Queue N mock payloads. ``generate_estimate`` will consume them in
+    order (one per call) instead of the default mock response."""
+    _TEST_MOCK_OVERRIDES.extend(payloads)
+
+
+def clear_test_mocks() -> None:
+    _TEST_MOCK_OVERRIDES.clear()
+
+
+def _next_test_mock(*, options_mode: bool) -> Optional[Dict[str, Any]]:
+    if _TEST_MOCK_OVERRIDES:
+        return _TEST_MOCK_OVERRIDES.pop(0)
+    return None

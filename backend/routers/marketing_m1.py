@@ -38,7 +38,7 @@ router = APIRouter(tags=["Marketing (M1)"])
 # ─── constants ────────────────────────────────────────────────────────
 
 _SUB_STATUS = {"pending_confirmation", "subscribed", "unsubscribed", "bounced"}
-_SUB_SOURCES = {"public_form", "crm_customer", "manual", "api_import"}
+_SUB_SOURCES = {"public_form", "crm_customer", "manual", "api_import", "instaquote"}
 _LIST_TYPES = {"static", "dynamic"}
 
 

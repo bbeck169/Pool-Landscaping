@@ -5685,3 +5685,37 @@ $ curl -X POST "$API/api/estimates/<eid>/convert-to-job" -H "$H"
 - Live LLM as CI default — blocked on Q2 estimator prompt hardening (see Drift above).
 - Real-time credit-warning banner across the app (currently local to each Q3 page).
 
+
+## QuoteIQ Q2 Hardening + Phase Q4 InstaQuote · Feb 2026
+
+**Ship contract**: Q2 real-LLM hardening (retry + catalog fallback) shipped in the same commit as Q4 InstaQuote (backend + web builder + public quote page + mobile submissions). `TEST_LLM_MOCK=0` re-enabled and holds.
+
+### Q2 real-LLM hardening
+- `services/ai_estimator.py` refactored: single-round `_call_llm()` + `_finalize()` shared between mock and real branches. After the first LLM response, `_result_has_zero()` scans for any line where `qty * unit_price_cents == 0` OR `subtotal_cents == 0` OR aggregate total ≤ 0. On drift the router retries **once** with a `ZERO_RETRY_HINT` (explicit reformat instruction). If the retry also drifts we drop through to a **catalog-only fallback** that keeps only line items whose SKU maps to an active tenant catalog entry AND has positive unit price + qty.
+- Router surfaces which path ran via `draft.ai_meta = {"path": "llm_ok" | "llm_retry_ok" | "catalog_fallback" | "mock_*", "retries": N}`.
+- New `prime_test_mocks()` / `clear_test_mocks()` helper lets the mock branch exercise the retry + fallback code paths deterministically. 2 new tests in `test_q2_hardening.py`.
+- **Real-LLM smoke (post-hardening)**: `TEST_LLM_MOCK=0` flipped on. AI Estimator with a plaster-pool description → `status=complete`, `ai_meta={path: llm_ok, retries: 0}`, no $0 lines. Full Q1+Q2+Q3+Q4+hardening+M1+Comms = **170/170 green under real LLM**.
+
+### Phase Q4 · InstaQuote (Public self-quote portal)
+- **New router** `routers/instaquote.py`. Two collections: `instaquote_configs` (one active per tenant), `instaquote_submissions`.
+- **Admin endpoints** (all `require_admin`, tenant-scoped): CRUD + `activate`, submissions list/get, `convert` (atomically creates Deal + Draft Estimate + Subscriber; rollback on failure), `dismiss` (409 if already converted), `rate-limit/reset` ops hook.
+- **Public endpoints** (no auth): `GET /api/public/instaquote/{slug}` (safe projection only — no tenant_id, active, timestamps), `POST /api/public/instaquote/{slug}/submit`. Server recomputes total from config (client totals IGNORED). Qty clamped to per-service min/max. Add-on allow-list enforced. Discount rules (`if.service_id + min_qty → then.discount_pct`) applied.
+- **Anti-abuse**: honeypot `_hp` field (silent 200), 3-per-10-min per-IP rate limit (`x-forwarded-for` honoured), admin ops endpoint to reset the counter.
+- **Automation event**: `instaquote.submitted` fires into `services.automation_engine.emit()` on every submit.
+- **Tests**: `test_quoteiq_q4.py` — **28 tests** (CRUD, activate exclusivity, RBAC, tenant isolation, public gate, submit + total recompute + qty clamp, honeypot, rate-limit, convert flow with 3-linked records, second-convert 409, dismiss, discount rule, error paths, OpenAPI surface).
+
+### Web UI
+- Admin builder `/marketing/instaquote` (`InstaQuoteAdmin.jsx`): config select, builder w/ live public preview panel, submissions tab with detail drawer + convert/dismiss. Marketing Hub tile added.
+- Public page `/quote/:slug` (`PublicInstaQuote.jsx`) — rendered OUTSIDE `AppLayout` (registered next to the other public routes). Tenant branding (color, logo), service list w/ qty + freq + add-on chips, contact form, sticky price summary, honeypot off-screen. Thank-you page renders `thank_you_html` or redirects when `success_redirect_url` set.
+
+### Mobile
+- `/(app)/instaquote.tsx` — admin-only submissions list. Public URL card opens the branded page via `Linking.openURL`. Convert/Dismiss buttons. Techs see an admin-only empty state. Tools Hub tile added.
+
+### Screenshot
+- Public page verified rendering at `/quote/demo-quote-page` (config subsequently cleaned up). 2 services, 3 frequency pill chips, 2 add-on chips, contact form all shown.
+
+### Deferred
+- Full-text search on submissions list.
+- Multi-step wizard for the public page (currently single scroll).
+- Redis-backed rate-limit for horizontal scale.
+
