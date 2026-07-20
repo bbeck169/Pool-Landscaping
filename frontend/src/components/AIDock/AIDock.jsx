@@ -54,6 +54,15 @@ export default function AIDock({ user }) {
     if (open && isAdmin) loadRoster();
   }, [open, isAdmin, loadRoster]);
 
+  // Feb-2026 — allow other admin surfaces (e.g. CreditsBudgetChip in
+  // the top bar) to open the dock via a window event.
+  React.useEffect(() => {
+    if (!isAdmin) return undefined;
+    const onOpen = () => setOpen(true);
+    window.addEventListener("ai-dock:open", onOpen);
+    return () => window.removeEventListener("ai-dock:open", onOpen);
+  }, [isAdmin]);
+
   const refreshBalance = React.useCallback(async () => {
     try {
       const bal = await api.get("/ai-credits/balance");

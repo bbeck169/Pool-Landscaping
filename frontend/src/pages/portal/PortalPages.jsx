@@ -7,7 +7,6 @@ import {
   Check,
   X as XIcon,
   Send,
-  Sparkles,
   Download,
   FileText,
   Plus,
@@ -464,13 +463,15 @@ export function PortalDocuments() {
 
 // ──────────────── /portal/messages ────────────────
 export function PortalMessages() {
+  // Feb-2026 — the per-conversation AI sparkles toggle used to live
+  // here (data-testid="msg-ai-toggle"). It has been removed from the
+  // customer portal per product guardrail: no AI-adjacent UI on
+  // customer-facing surfaces. Message text is now sent verbatim.
   const [threads, setThreads] = useState(null);
   const [active, setActive] = useState(null);
   const [text, setText] = useState("");
-  const [aiOn, setAiOn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
-  const hasAI = true;
 
   const load = async () => {
     try {
@@ -484,14 +485,7 @@ export function PortalMessages() {
     if (!text.trim()) return;
     setBusy(true);
     try {
-      let final = text;
-      if (aiOn) {
-        try {
-          const r = await api.post("/comms/refine", { text }, 15000);
-          if (r?.refined) final = r.refined;
-        } catch { /* leave text as-is if refine unavailable */ }
-      }
-      await api.post("/me/messages", { message: final });
+      await api.post("/me/messages", { message: text });
       setText("");
       await load();
     } catch (e) {
@@ -527,18 +521,6 @@ export function PortalMessages() {
           className="flex-1 px-3 py-2 text-sm rounded-lg outline-none resize-none focus:ring-2"
           style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
           data-testid="msg-input" />
-        {hasAI ? (
-          <button onClick={() => setAiOn(!aiOn)}
-            className="px-2 py-2 rounded-lg text-xs font-semibold"
-            style={{
-              backgroundColor: aiOn ? colors.brandTertiary : colors.surfaceSecondary,
-              color: aiOn ? colors.onBrandTertiary : colors.muted,
-              border: `1px solid ${colors.border}`,
-            }}
-            data-testid="msg-ai-toggle">
-            <Sparkles size={14} /> AI {aiOn ? "on" : "off"}
-          </button>
-        ) : null}
         <Button onClick={send} disabled={busy || !text.trim()} testid="msg-send"><Send size={14} /></Button>
       </div>
       <Toast toast={toast} onClose={() => setToast(null)} />

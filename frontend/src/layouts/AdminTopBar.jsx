@@ -24,6 +24,7 @@ import { ChevronDown, MenuIcon, Users, FileText, ClipboardList, CalendarDays, Li
 import { ADMIN_NAV_V2 } from "@/nav/adminNav";
 import { usePermissions } from "@/hooks/usePermissions";
 import NotificationBell from "@/components/NotificationBell";
+import CreditsBudgetChip from "@/components/AIDock/CreditsBudgetChip";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -290,7 +291,10 @@ export default function AdminTopBar() {
           data-testid="admin-topbar-narrow-wrap"
         >
           <MobileMenu visible={visible} />
-          <NotificationBell variant="inline" />
+          <div className="flex items-center gap-2">
+            <CreditsBudgetChip />
+            <NotificationBell variant="inline" />
+          </div>
         </div>
       ) : (
         <div
@@ -300,7 +304,8 @@ export default function AdminTopBar() {
           {visible.map((g) => (
             <CategoryDropdown key={g.key} group={g} />
           ))}
-          <div className="ml-auto shrink-0">
+          <div className="ml-auto shrink-0 flex items-center gap-2">
+            <CreditsBudgetChip />
             <NotificationBell variant="inline" />
           </div>
         </div>
