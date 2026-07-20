@@ -100,6 +100,9 @@ KIND_LABELS: dict[str, str] = {
     # Customer Detail Additions (Feb 2026)
     "customer.vip_flagged":       "Customer · VIP Flagged",
     "task_assigned":              "Task Assigned to You",
+    # Multi-Property MP1 (Feb 2026)
+    "property.created":           "Property · Added",
+    "property.deleted":           "Property · Removed",
 }
 
 # NB: two new channels added — ``push`` (Expo mobile push) + ``in_app`` alias

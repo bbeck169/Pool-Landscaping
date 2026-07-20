@@ -62,6 +62,16 @@ class CustomerIn(BaseModel):
     # only; techs see the note matching their service focus. ``None``
     # values render as empty placeholder cards.
     service_notes: Optional[Dict[str, Optional[str]]] = None
+    # Feb-2026 MP1 — Multi-property support. Master billing mode
+    # controls how invoices roll up across the customer's properties:
+    #   * off (default) — each property invoices independently
+    #   * consolidated — line items combine into one customer invoice
+    #   * forward_to_master_contact — separate invoices, one recipient
+    # See routers/properties.py::resolve_invoice_recipient for the
+    # routing logic every invoice send path plugs into.
+    master_billing_mode: Optional[str] = "off"
+    master_billing_contact_email: Optional[str] = None
+    master_billing_contact_phone: Optional[str] = None
     # Feb-2026 Customer Detail Additions — multi-contact arrays.
     # Up to 2 mobiles / 3 emails per customer, each with a label,
     # is_primary flag, and marketing/sms consent flag. The legacy
@@ -114,6 +124,11 @@ class JobIn(BaseModel):
     notes: Optional[str] = ""
     price: Optional[float] = 0.0
     status: Optional[str] = "pending"
+    # Feb-2026 MP1 — Multi-property. Optional at the schema level so
+    # legacy callers don't break; routers/jobs.create_job enforces the
+    # "required when customer has ≥2 properties" rule and auto-assigns
+    # when exactly 1 property exists.
+    property_id: Optional[str] = None
 
 
 class JobUpdate(BaseModel):

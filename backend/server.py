@@ -69,6 +69,7 @@ from routers import (
     chat,
     directories,
     customer_tasks,
+    properties,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -144,7 +145,8 @@ for module in [notifications_router,
                instaschedule,
                chat,
                directories,
-               customer_tasks]:
+               customer_tasks,
+               properties]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -497,6 +499,18 @@ async def startup():
         logger.info(f"[m2] template brace migration: {n} campaign(s)")
     except Exception as e:
         logger.warning(f"m2 brace migration crashed: {e}")
+
+    # Feb-2026 MP1 — Multi-property seed. Idempotent per-customer:
+    # inserts a single "Main" property for every legacy customer that
+    # has an address but no property rows yet. Also backfills jobs
+    # with a null ``property_id`` onto that new row when only 1 property
+    # exists (safe auto-assign).
+    try:
+        from routers.properties import migrate_customers_to_properties
+        n = await migrate_customers_to_properties()
+        logger.info(f"[mp1] properties migration seeded {n} property row(s)")
+    except Exception as e:
+        logger.warning(f"mp1 properties migration crashed: {e}")
 
     # Phase 5A · Video Uploads (Feb 2026) — init Emergent object storage
     # session key once at startup. Never crashes the boot: on failure the

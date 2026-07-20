@@ -359,6 +359,25 @@ async def create_job(body: JobIn,
     doc["customer_name"] = customer["name"]
     if not doc.get("address"):
         doc["address"] = customer.get("address", "")
+    # Feb-2026 MP1 — property_id validation. If the customer has ≥2
+    # active properties, the caller MUST specify which property this
+    # job is for. If the customer has exactly 1 active property, we
+    # auto-assign to it. If 0 properties exist (legacy customers), we
+    # don't touch the field.
+    if not doc.get("property_id"):
+        active_props = await db.properties.find(
+            {"tenant_id": tenant["id"], "customer_id": body.customer_id,
+              "active": {"$ne": False}},
+            {"_id": 0, "id": 1},
+        ).to_list(10)
+        if len(active_props) >= 2:
+            raise HTTPException(400, (
+                "property_id required — this customer has multiple "
+                f"active properties ({len(active_props)}). Specify "
+                "which property this job is for."
+            ))
+        if len(active_props) == 1:
+            doc["property_id"] = active_props[0]["id"]
     tech_name = None
     if body.technician_id:
         tech = await db.technicians.find_one(
