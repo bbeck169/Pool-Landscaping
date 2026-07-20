@@ -18,6 +18,7 @@ import {
   Star,
   ListChecks,
   MessageSquare,
+  Home,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from '@/theme';
@@ -39,9 +40,12 @@ import CustomerActionDropdowns from "@/components/customers/CustomerActionDropdo
 import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
 import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel";
 import CustomerServiceNotesCards from "@/components/customers/CustomerServiceNotesCards";
+import PropertiesTab from "./PropertiesTab";
+import MasterBillingCard from "./MasterBillingCard";
 
 const TABS = [
   { k: "overview", label: "Overview", icon: MapPin },
+  { k: "properties", label: "Properties", icon: Home },
   { k: "jobs", label: "Jobs", icon: Briefcase },
   { k: "quotes", label: "Quotes", icon: FileText },
   { k: "invoices", label: "Invoices", icon: FileText },
@@ -324,6 +328,11 @@ export default function CustomerDetail() {
         <div className="p-5">
           {tab === "overview" ? (
             <div className="space-y-4">
+              <MasterBillingCard
+                customer={customer}
+                onToast={(t) => setToast(t)}
+                onRefreshCustomer={load}
+              />
               <Info label="Primary address" value={customer.address} />
               <Info label="Billing address" value={customer.billing_address} />
               <Info label="Gate code" value={customer.gate_code} />
@@ -441,6 +450,14 @@ export default function CustomerDetail() {
 
           {tab === "portal" ? (
             <PortalAccessPanel customer={customer} onDone={load} onToast={(t) => setToast(t)} openLogin={() => setLoginModal(true)} />
+          ) : null}
+
+          {tab === "properties" ? (
+            <PropertiesTab
+              customer={customer}
+              onToast={(t) => setToast(t)}
+              onRefreshCustomer={load}
+            />
           ) : null}
         </div>
       </div>

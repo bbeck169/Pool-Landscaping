@@ -44,6 +44,9 @@ type Job = {
   status?: string;
   customer_name?: string;
   address?: string;
+  property_id?: string | null;
+  property_label?: string | null;
+  property_address?: string | null;
   technician_id?: string | null;
   estimated_hours?: number | null;
   actual_hours?: number | null;
@@ -510,6 +513,25 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
           {(job.service_type || "General").toUpperCase()}
         </Text>
         <Text style={gStyles.cust} numberOfLines={1}>{job.customer_name || "Unknown"}</Text>
+        {job.property_label ? (
+          <View
+            style={{
+              alignSelf: "flex-start",
+              marginTop: 3,
+              paddingHorizontal: 8,
+              paddingVertical: 2,
+              borderRadius: 999,
+              backgroundColor: "#E0F2FE",
+              borderWidth: 1,
+              borderColor: "#7DD3FC",
+            }}
+            testID={`job-property-chip-${job.id}`}
+          >
+            <Text style={{ fontSize: 10, fontWeight: "700", color: "#075985" }}>
+              🏠 {job.property_label}
+            </Text>
+          </View>
+        ) : null}
         {job.customer_is_vip ? (
           <View style={gStyles.vipBadge} testID={`job-vip-badge-${job.id}`}>
             <Ionicons name="star" size={9} color="#92400E" />

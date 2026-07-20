@@ -59,6 +59,8 @@ export default function JobDetail() {
   const [onWaySending, setOnWaySending] = useState(false);
   const [onWaySent, setOnWaySent] = useState(false);
   const [pendingPhotos, setPendingPhotos] = useState<any[]>([]);
+  // Feb-2026 MP2 UI — property info displayed alongside customer.
+  const [property, setProperty] = useState<any>(null);
   const online = useOnline();
 
   // Phase 47 follow-up — removed the "tech must be clocked in" redirect
@@ -76,6 +78,18 @@ export default function JobDetail() {
       const fresh = await api.get(`/jobs/${id}`);
       setJob(fresh);
       cacheJob(fresh);
+      // Feb-2026 MP2 UI — hydrate property info when the job carries
+      // a property_id so techs can see label + address on-site.
+      if (fresh?.property_id) {
+        try {
+          const p = await api.get(`/properties/${fresh.property_id}`);
+          setProperty(p);
+        } catch {
+          setProperty(null);
+        }
+      } else {
+        setProperty(null);
+      }
       setPendingPhotos(await pendingForJob(id));
     } catch (e) {
       // Offline — use the single-job cache, then fall back to the cached schedule.
@@ -225,6 +239,48 @@ export default function JobDetail() {
         </View>
 
         <View style={styles.body}>
+          {/* Feb-2026 MP2 UI — property card. Only rendered when the
+              job has a property_id AND the property fetch succeeded.
+              Legacy jobs (no property) render the customer-level
+              address as before via the Address row below. */}
+          {property ? (
+            <View
+              style={{
+                marginBottom: spacing.md,
+                padding: spacing.md,
+                borderRadius: 12,
+                backgroundColor: colors.surfaceMuted,
+                borderWidth: 1,
+                borderColor: colors.border,
+              }}
+              testID="job-property-card"
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                <Ionicons name="home-outline" size={16} color={colors.brand} />
+                <Text
+                  style={{ fontFamily: themeFont.bold, color: colors.onSurface, fontSize: 14 }}
+                  testID="job-property-label"
+                >
+                  {property.label || "Property"}
+                </Text>
+              </View>
+              <Text
+                style={{ marginTop: 4, color: colors.onSurfaceSecondary, fontSize: 13 }}
+                testID="job-property-address"
+              >
+                {[property.address?.line1, property.address?.city, property.address?.state, property.address?.postal_code].filter(Boolean).join(", ")}
+              </Text>
+              {property.service_notes?.pool || property.service_notes?.landscape ? (
+                <Text
+                  style={{ marginTop: 6, color: colors.onSurfaceSecondary, fontSize: 12, fontStyle: "italic" }}
+                  numberOfLines={2}
+                  testID="job-property-note"
+                >
+                  {property.service_notes.pool || property.service_notes.landscape}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
           <Row icon="pricetag-outline" label="Service Type" value={job.service_type} />
           <Row icon="calendar-outline" label="Scheduled" value={job.scheduled_date || "Unscheduled"} />
           <Row icon="location-outline" label="Address" value={job.address || "—"} />

@@ -498,6 +498,13 @@ export default function CustomersList() {
                         <TagChip tag={t} key={t} testid={`row-${c.id}-tag-${t}`} />
                       ))}
                       {c.waitlisted ? <Chip label="Waitlist" tone="warning" /> : null}
+                      {(c.properties_count || 0) >= 2 ? (
+                        <Chip
+                          label={`${c.properties_count} properties`}
+                          tone="brandTertiary"
+                          testid={`row-${c.id}-props-chip`}
+                        />
+                      ) : null}
                       {c.is_active === false ? (
                         <span
                           className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider"

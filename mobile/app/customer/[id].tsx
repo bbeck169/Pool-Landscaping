@@ -27,6 +27,9 @@ export default function CustomerDetail() {
   const [impersonating, setImpersonating] = useState(false);
   const [confirmImp, setConfirmImp] = useState(false);
   const [requesting, setRequesting] = useState(false);
+  // Feb-2026 MP2 UI — read-only property list. Editing lives on
+  // web-only (per the ship brief); mobile admins get visibility.
+  const [properties, setProperties] = useState<any[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -34,6 +37,9 @@ export default function CustomerDetail() {
       setC(data);
       setLoginEmail(data.email || "");
       api.get(`/documents?customer_id=${id}`).then(setDocs).catch(() => {});
+      api.get(`/customers/${id}/properties`)
+        .then((rows) => setProperties(rows || []))
+        .catch(() => setProperties([]));
     } finally {
       setLoading(false);
     }
@@ -290,6 +296,63 @@ export default function CustomerDetail() {
             )}
           </>
         ) : null}
+
+        {/* Feb-2026 MP2 UI — read-only property list for mobile admins.
+            Editing surfaces exist on web only per the ship brief. */}
+        <Text style={styles.sectionTitle}>
+          Properties ({properties.filter((p: any) => p.active !== false).length})
+        </Text>
+        {properties.filter((p: any) => p.active !== false).length === 0 ? (
+          <Text style={styles.empty}>No properties yet.</Text>
+        ) : (
+          properties.filter((p: any) => p.active !== false).map((p: any) => (
+            <View
+              key={p.id}
+              style={{
+                marginBottom: spacing.sm,
+                padding: spacing.md,
+                borderRadius: radius.md,
+                backgroundColor: colors.surface,
+                borderWidth: 1,
+                borderColor: colors.border,
+              }}
+              testID={`mobile-property-${p.id}`}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                <Ionicons name="home-outline" size={16} color={colors.brand} />
+                <Text style={{ fontFamily: font.bold, color: colors.onSurface, fontSize: fontSize.md }}>
+                  {p.label}
+                </Text>
+                {p.sort_order === 0 ? (
+                  <View
+                    style={{
+                      paddingHorizontal: 6,
+                      paddingVertical: 1,
+                      borderRadius: 999,
+                      backgroundColor: colors.brand,
+                    }}
+                  >
+                    <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700" }}>Primary</Text>
+                  </View>
+                ) : null}
+              </View>
+              <Text style={{ marginTop: 4, color: colors.onSurfaceSecondary, fontSize: fontSize.sm }}>
+                {[p.address?.line1, p.address?.city, p.address?.state, p.address?.postal_code]
+                  .filter(Boolean).join(", ")}
+              </Text>
+              {(p.service_types || []).length ? (
+                <Text style={{ marginTop: 4, color: colors.onSurfaceSecondary, fontSize: fontSize.xs }}>
+                  {(p.service_types || []).join(" · ")}
+                </Text>
+              ) : null}
+              {p.pool_size_gallons ? (
+                <Text style={{ marginTop: 2, color: colors.onSurfaceSecondary, fontSize: fontSize.xs }}>
+                  Pool: {p.pool_size_gallons.toLocaleString()} gal
+                </Text>
+              ) : null}
+            </View>
+          ))
+        )}
 
         {/* Phase 56.11-mobile — Equipment photo library section. */}
         <Text style={styles.sectionTitle}>Equipment</Text>

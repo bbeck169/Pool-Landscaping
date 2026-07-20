@@ -286,6 +286,31 @@ async def list_jobs(
                     d["customer_gate_code"] = None
                     d["customer_notes"] = None
                     d["service_note"] = None
+    # Feb-2026 MP2 UI — enrich each job with the property label so
+    # mobile schedule rows can render a chip without an N+1 fetch. The
+    # property doc's address is also surfaced under ``property_address``
+    # for the tech's Job Detail hero card.
+    try:
+        pids = list({d.get("property_id") for d in docs if d.get("property_id")})
+        if pids:
+            props = await db.properties.find(
+                {"id": {"$in": pids}, "tenant_id": tenant["id"]},
+                {"_id": 0, "id": 1, "label": 1, "address": 1},
+            ).to_list(len(pids) * 2)
+            pmap = {p["id"]: p for p in props}
+            for d in docs:
+                pid = d.get("property_id")
+                if pid and pid in pmap:
+                    p = pmap[pid]
+                    d["property_label"] = p.get("label") or None
+                    addr = p.get("address") or {}
+                    d["property_address"] = ", ".join(
+                        [x for x in (addr.get("line1"), addr.get("city"),
+                                          addr.get("state"), addr.get("postal_code")) if x]
+                    ) or None
+    except Exception:
+        # Non-fatal — the chip just doesn't render.
+        pass
     # Phase 16C add-on: strip revenue/pricing fields for technicians.
     if user.get("role") == "technician":
         for d in docs:

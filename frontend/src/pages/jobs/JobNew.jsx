@@ -29,6 +29,11 @@ export default function JobNew() {
   const [toast, setToast] = useState(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(null);
+  // Feb-2026 MP2 UI — property picker step. Loads active properties
+  // for the selected customer; when the customer has ≥2 active
+  // properties, a valid ``property_id`` is required before submit.
+  const [properties, setProperties] = useState([]);
+  const [propsLoading, setPropsLoading] = useState(false);
 
   const [form, setForm] = useState({
     customer_id: preselectedCustomer,
@@ -40,6 +45,7 @@ export default function JobNew() {
     notes: "",
     cadence: "one_time",
     price: 0,
+    property_id: "",
   });
 
   useEffect(() => {
@@ -47,6 +53,31 @@ export default function JobNew() {
     api.get("/technicians").then(setTechs).catch(() => {});
     api.get("/items").then(setItems).catch(() => {});
   }, []);
+
+  // Refresh property list whenever the picked customer changes.
+  useEffect(() => {
+    if (!form.customer_id) { setProperties([]); return; }
+    setPropsLoading(true);
+    api.get(`/customers/${form.customer_id}/properties`)
+      .then((rows) => {
+        const active = (rows || []).filter((r) => r.active !== false);
+        setProperties(active);
+        // Auto-pick when there's exactly one active property so the
+        // caller doesn't have to click. Pre-select sort_order=0 for
+        // customers with several properties.
+        setForm((f) => {
+          if (f.property_id) return f;  // preserve user pick
+          if (active.length === 1) return { ...f, property_id: active[0].id };
+          if (active.length >= 2) {
+            const primary = active.find((p) => (p.sort_order ?? 99) === 0) || active[0];
+            return { ...f, property_id: primary.id };
+          }
+          return f;
+        });
+      })
+      .catch(() => setProperties([]))
+      .finally(() => setPropsLoading(false));
+  }, [form.customer_id]);
 
   const services = useMemo(
     () => Array.from(new Set(items.map((i) => i.category).concat(["Pool Cleaning", "Repair", "Chemical Delivery", "Landscape"]))),
@@ -80,6 +111,14 @@ export default function JobNew() {
       setToast({ tone: "error", message: "Job title required" });
       return;
     }
+    // Feb-2026 MP2 UI — property picker enforcement. Backend rejects
+    // multi-property customers without an explicit ``property_id``;
+    // we surface a friendlier error client-side so the user notices
+    // the empty picker before hitting the API.
+    if (properties.length >= 2 && !form.property_id) {
+      setToast({ tone: "error", message: "Pick a property for this job" });
+      return;
+    }
     setBusy(true);
     try {
       const payload = {
@@ -92,6 +131,7 @@ export default function JobNew() {
         price: Number(form.price) || 0,
         status: "scheduled",
       };
+      if (form.property_id) payload.property_id = form.property_id;
       const first = await api.post("/jobs", payload);
       // If recurring, create the follow-up visits from the preview.
       if (preview && preview.dates?.length > 1) {
@@ -147,6 +187,44 @@ export default function JobNew() {
               ))}
             </select>
           </div>
+          {/* Feb-2026 MP2 UI — property picker. Required when the
+              customer has ≥2 active properties; hidden entirely when
+              the customer has zero (legacy). Auto-fills with the
+              sole active property for single-property customers. */}
+          {form.customer_id && properties.length > 0 ? (
+            <div>
+              <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>
+                PROPERTY {properties.length >= 2 ? "*" : ""}
+              </label>
+              <select
+                value={form.property_id}
+                onChange={set("property_id")}
+                className="w-full px-3.5 py-2.5 rounded-lg outline-none text-sm focus:ring-2"
+                style={{
+                  backgroundColor: colors.surface,
+                  color: colors.onSurface,
+                  border: `1px solid ${colors.border}`,
+                }}
+                data-testid="jf-property"
+              >
+                {properties.length >= 2 ? (
+                  <option value="">Choose a property…</option>
+                ) : null}
+                {properties.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label} — {p.address?.line1 || ""}
+                  </option>
+                ))}
+              </select>
+              {properties.length >= 2 && !form.property_id ? (
+                <div className="text-xs mt-1" style={{ color: colors.danger }} data-testid="jf-property-required">
+                  This customer has {properties.length} properties — pick one.
+                </div>
+              ) : null}
+            </div>
+          ) : (form.customer_id && propsLoading) ? (
+            <div className="text-xs" style={{ color: colors.onSurfaceSecondary }}>Loading properties…</div>
+          ) : null}
           <TextInput label="TITLE *" value={form.title} onChange={set("title")} testid="jf-title" />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>

@@ -176,6 +176,25 @@ async def list_customers(
             )]
         )
         docs = [d for d in docs if d["id"] not in scheduled_ids]
+    # Feb-2026 MP2 UI — augment each customer row with a
+    # ``properties_count`` (active properties only) so the list can
+    # render a chip without an N+1 fetch. Batched aggregation keeps
+    # this cheap for tenants with thousands of customers.
+    if docs:
+        cust_ids = [d["id"] for d in docs]
+        try:
+            pipeline = [
+                {"$match": {"tenant_id": tenant["id"],
+                              "customer_id": {"$in": cust_ids},
+                              "active": {"$ne": False}}},
+                {"$group": {"_id": "$customer_id", "n": {"$sum": 1}}},
+            ]
+            counts = {row["_id"]: int(row.get("n") or 0)
+                        async for row in db.properties.aggregate(pipeline)}
+        except Exception:
+            counts = {}
+        for d in docs:
+            d["properties_count"] = counts.get(d["id"], 0)
     return docs
 
 
