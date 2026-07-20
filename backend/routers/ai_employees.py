@@ -99,6 +99,24 @@ CASEY_ACTIONS = {
     "casey.draft_outreach_reply",
 }
 
+# ─── AE2 · Emmie (Email marketing copilot) ────────────────────────────
+# Emmie sits on top of Marketing M2 Campaigns. Every draft/variant/
+# batch-create action lands in the approval queue and is executed on
+# approve. Read-only helpers (analyze, rewrite) skip the queue.
+EMMIE_ACTIONS = {
+    "emmie.draft_campaign",
+    "emmie.suggest_ab_subjects",
+    "emmie.analyze_campaign",
+    "emmie.suggest_seasonal_ideas",
+    "emmie.rewrite_copy",
+}
+EMMIE_IMMEDIATE_ACTIONS = {
+    # Read-only analysis / copy helpers — return the LLM output straight
+    # to the assistant turn without landing in ai_employee_actions.
+    "emmie.analyze_campaign",
+    "emmie.rewrite_copy",
+}
+
 
 # ─── Models ───────────────────────────────────────────────────────────
 
@@ -555,6 +573,11 @@ async def approve_action(aid: str, body: Optional[ActionDecision] = None,
             "kind": "casey_draft_ready",
             "draft": doc.get("draft"),
         }
+    # AE2 · Emmie — approval side-effects. Each action has its own
+    # execute path; the underlying M2 campaigns are the source of
+    # truth so we never duplicate copy on the ai_employee_actions row.
+    elif doc["employee_key"] == "emmie":
+        upd = {**upd, **await _emmie_apply_approval(doc, tenant)}
     await db.ai_employee_actions.update_one(
         {"id": aid, "tenant_id": tenant["id"]}, {"$set": upd},
     )
@@ -595,44 +618,82 @@ async def _dispatch_action(*, tenant: dict, user: dict, employee: dict,
                              action: str, params: Dict[str, Any],
                              system_prompt: str,
                              user_text: str) -> tuple:
-    """Route to the employee's action handler. Only Casey ships in AE1;
-    other keys respond with a friendly `not-yet-shipped` note so the
-    UI can still call the endpoint without a 500."""
-    if action not in CASEY_ACTIONS or employee["key"] != "casey":
+    """Route to the employee's action handler. Casey (AE1) + Emmie
+    (AE2) are wired here; other employees respond with a friendly
+    `not-yet-shipped` note so the UI can still call the endpoint
+    without a 500."""
+    is_casey_action = action in CASEY_ACTIONS and employee["key"] == "casey"
+    is_emmie_action = action in EMMIE_ACTIONS and employee["key"] == "emmie"
+    if not (is_casey_action or is_emmie_action):
         assistant_text = (
             f"Action `{action}` isn't wired for {employee['name']} yet. "
-            f"Casey is the only employee with action handlers in this "
-            f"slice (AE1)."
+            f"Casey + Emmie ship in AE1/AE2. Analytics trio (Buddy, "
+            f"Vizzy, Dexter) ships in AE3."
         )
         return assistant_text, None
 
-    # Debit heavy-action cost up front (soft — never blocks).
-    await debit_credits(
-        tenant["id"], HEAVY_ACTION_COST,
-        feature=f"ai_employees.{action}",
-        ref_id=conversation_id, ref_type="ai_employee_conversation",
-        reason=action, actor_user_id=user["id"],
-    )
+    # Emmie's read-only helpers skip the heavy debit — they still hit
+    # the LLM but produce no queue entry, matching the ship brief.
+    charge_heavy = action not in EMMIE_IMMEDIATE_ACTIONS
+    if charge_heavy:
+        await debit_credits(
+            tenant["id"], HEAVY_ACTION_COST,
+            feature=f"ai_employees.{action}",
+            ref_id=conversation_id, ref_type="ai_employee_conversation",
+            reason=action, actor_user_id=user["id"],
+        )
 
-    if action == "casey.draft_directory_submission":
-        return await _casey_draft_submission(
-            tenant=tenant, user=user, employee=employee,
-            conversation_id=conversation_id, params=params,
-            system_prompt=system_prompt, user_text=user_text,
-        )
-    if action == "casey.suggest_directory_updates":
-        return await _casey_suggest_updates(
-            tenant=tenant, user=user, employee=employee,
-            conversation_id=conversation_id, params=params,
-            system_prompt=system_prompt, user_text=user_text,
-        )
-    if action == "casey.draft_outreach_reply":
-        return await _casey_draft_outreach_reply(
-            tenant=tenant, user=user, employee=employee,
-            conversation_id=conversation_id, params=params,
-            system_prompt=system_prompt, user_text=user_text,
-        )
-    return "Unknown Casey action.", None
+    if is_casey_action:
+        if action == "casey.draft_directory_submission":
+            return await _casey_draft_submission(
+                tenant=tenant, user=user, employee=employee,
+                conversation_id=conversation_id, params=params,
+                system_prompt=system_prompt, user_text=user_text,
+            )
+        if action == "casey.suggest_directory_updates":
+            return await _casey_suggest_updates(
+                tenant=tenant, user=user, employee=employee,
+                conversation_id=conversation_id, params=params,
+                system_prompt=system_prompt, user_text=user_text,
+            )
+        if action == "casey.draft_outreach_reply":
+            return await _casey_draft_outreach_reply(
+                tenant=tenant, user=user, employee=employee,
+                conversation_id=conversation_id, params=params,
+                system_prompt=system_prompt, user_text=user_text,
+            )
+    if is_emmie_action:
+        if action == "emmie.draft_campaign":
+            return await _emmie_draft_campaign(
+                tenant=tenant, user=user, employee=employee,
+                conversation_id=conversation_id, params=params,
+                system_prompt=system_prompt, user_text=user_text,
+            )
+        if action == "emmie.suggest_ab_subjects":
+            return await _emmie_suggest_ab_subjects(
+                tenant=tenant, user=user, employee=employee,
+                conversation_id=conversation_id, params=params,
+                system_prompt=system_prompt, user_text=user_text,
+            )
+        if action == "emmie.analyze_campaign":
+            return await _emmie_analyze_campaign(
+                tenant=tenant, user=user, employee=employee,
+                params=params, system_prompt=system_prompt,
+                user_text=user_text,
+            )
+        if action == "emmie.suggest_seasonal_ideas":
+            return await _emmie_suggest_seasonal_ideas(
+                tenant=tenant, user=user, employee=employee,
+                conversation_id=conversation_id, params=params,
+                system_prompt=system_prompt, user_text=user_text,
+            )
+        if action == "emmie.rewrite_copy":
+            return await _emmie_rewrite_copy(
+                tenant=tenant, user=user, employee=employee,
+                params=params, system_prompt=system_prompt,
+                user_text=user_text,
+            )
+    return "Unknown action.", None
 
 
 async def _fetch_nap(tenant_id: str) -> Optional[Dict[str, Any]]:
@@ -769,3 +830,342 @@ def _nap_summary_lines(nap: Optional[Dict[str, Any]]) -> str:
         f"Categories: {', '.join(nap.get('business_categories', []))}",
     ]
     return "\n".join(lines)
+
+
+
+# ─── AE2 · Emmie action handlers ──────────────────────────────────────
+
+async def _campaign_lookup(tenant_id: str, cid: str) -> Optional[Dict[str, Any]]:
+    return await db.marketing_campaigns.find_one(
+        {"id": cid, "tenant_id": tenant_id}, {"_id": 0}
+    )
+
+
+def _emmie_extract_section(text: str, header: str) -> str:
+    """Very small extractor: pulls the first line after a
+    ``## <header>`` or ``<header>:`` marker in the LLM output. Falls
+    back to an empty string when the LLM returned free-form text."""
+    if not text:
+        return ""
+    marker_variants = (
+        f"## {header}", f"# {header}", f"{header}:",
+        f"**{header}**", f"[{header}]",
+    )
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        low = line.strip().lower()
+        for marker in marker_variants:
+            m = marker.lower()
+            if low.startswith(m):
+                # Everything after the marker on this line, else next non-empty line.
+                remainder = line.split(":", 1)[-1].strip() if ":" in line else ""
+                if remainder and remainder.lower() != low.replace(m, "").strip():
+                    return remainder
+                # scan forward for next non-empty
+                for j in range(i + 1, min(i + 8, len(lines))):
+                    nxt = lines[j].strip()
+                    if nxt and not nxt.startswith(("#", "-", "*")):
+                        return nxt
+                    if nxt.startswith(("-", "*")):
+                        return nxt.lstrip("-* ").strip()
+    return ""
+
+
+async def _emmie_draft_campaign(*, tenant, user, employee, conversation_id,
+                                    params, system_prompt, user_text):
+    p = params or {}
+    name = (p.get("name") or "Untitled campaign").strip()[:120]
+    channel = (p.get("channel") or "email").lower()
+    audience_hint = p.get("audience_hint") or ""
+    goal = p.get("goal") or user_text
+    tone = p.get("tone") or ""
+
+    llm_prompt = (
+        f"Draft a marketing campaign named '{name}'.\n"
+        f"Channel: {channel} (must include an email if 'email' is in the channel; "
+        f"must include an SMS body if 'sms' is in the channel).\n"
+        f"Goal: {goal}\n"
+        f"Audience: {audience_hint or 'general customer list'}\n"
+        f"Tone: {tone or 'per brand brain default'}\n\n"
+        "Return sections with these exact headers (Markdown), each on its "
+        "own line — Subject:, Preheader:, Email HTML:, SMS Body:. Keep "
+        "Subject ≤ 60 chars, Preheader ≤ 90 chars, Email HTML as a short "
+        "single-column HTML block, SMS Body ≤ 160 chars (or an empty "
+        "line if SMS isn't in the channel)."
+    )
+    r = await _llm_chat(system_prompt, llm_prompt, history=[])
+    text = r["text"]
+    subject = _emmie_extract_section(text, "Subject")[:200]
+    preheader = _emmie_extract_section(text, "Preheader")[:200]
+    email_html = _emmie_extract_section(text, "Email HTML")
+    sms_body = _emmie_extract_section(text, "SMS Body")[:320]
+
+    # Create the M2 campaign row eagerly in ``status="draft"`` so the
+    # admin can preview it in Marketing → Campaigns even before the
+    # AI action is approved. Approve → keeps + surfaces; reject →
+    # soft-deletes via ``status="archived"`` so history is preserved.
+    now = now_iso()
+    campaign = {
+        "id": new_id(), "tenant_id": tenant["id"],
+        "name": name,
+        "subject": subject, "preheader": preheader,
+        "from_name": "", "from_email": "", "reply_to": "",
+        "channel": channel,
+        "content": {"email_html": email_html or text,
+                      "email_text": "", "sms_body": sms_body},
+        "audience": {"list_ids": [], "segment_ids": [],
+                       "exclude_list_ids": [], "exclude_segment_ids": [],
+                       "hint": audience_hint},
+        "schedule": {"mode": "draft"},
+        "ab_test": {"enabled": False},
+        "status": "draft",
+        "tracking_enabled": True,
+        "created_by": user["id"], "created_at": now, "updated_at": now,
+        "drafted_by_ai_employee": "emmie",
+    }
+    await db.marketing_campaigns.insert_one(campaign)
+    campaign.pop("_id", None)
+
+    action = await _create_action(
+        tenant_id=tenant["id"], user_id=user["id"],
+        employee_id=employee["id"], employee_key="emmie",
+        conversation_id=conversation_id,
+        action="emmie.draft_campaign",
+        params={"name": name, "channel": channel,
+                  "audience_hint": audience_hint, "goal": goal, "tone": tone},
+        draft={"campaign_id": campaign["id"],
+                "subject": subject, "preheader": preheader,
+                "email_html": email_html, "sms_body": sms_body,
+                "raw_llm_output": text},
+        title=f"Campaign draft — {name}",
+        summary=f"Subject: {subject}"[:200],
+    )
+    assistant_text = (
+        f"Drafted the **{name}** campaign (id `{campaign['id']}`) as a M2 "
+        f"draft. Subject → {subject}. Approve the action to keep it, "
+        f"reject to archive."
+    )
+    return assistant_text, action
+
+
+async def _emmie_suggest_ab_subjects(*, tenant, user, employee, conversation_id,
+                                          params, system_prompt, user_text):
+    p = params or {}
+    cid = p.get("campaign_id")
+    if not cid:
+        return "Send `campaign_id` in action_params so I know which campaign to draft variants for.", None
+    camp = await _campaign_lookup(tenant["id"], cid)
+    if not camp:
+        return f"Campaign `{cid}` not found in this tenant.", None
+    current_subject = camp.get("subject", "")
+    goal = user_text or "increase open rate"
+
+    llm_prompt = (
+        f"The current subject line is: '{current_subject}'.\n"
+        f"Draft THREE subject line variants to A/B test against it. "
+        f"Return only the three lines, no numbering, no quotes, one per "
+        f"line. Optimize for: {goal}."
+    )
+    r = await _llm_chat(system_prompt, llm_prompt, history=[])
+    lines = [ln.strip().lstrip("-*• ").strip('"').strip("'")
+                 for ln in r["text"].splitlines() if ln.strip()]
+    variants = [ln[:200] for ln in lines[:3]]
+    while len(variants) < 3:
+        variants.append(current_subject or "Try the new offer")
+
+    action = await _create_action(
+        tenant_id=tenant["id"], user_id=user["id"],
+        employee_id=employee["id"], employee_key="emmie",
+        conversation_id=conversation_id,
+        action="emmie.suggest_ab_subjects",
+        params={"campaign_id": cid},
+        draft={"campaign_id": cid, "variants": variants},
+        title=f"A/B subject variants — {camp.get('name', cid)}",
+        summary=" | ".join(variants)[:200],
+    )
+    assistant_text = (
+        "Three subject variants:\n"
+        + "\n".join(f"  • {v}" for v in variants)
+        + "\n\nApprove to attach them to the campaign's A/B test (50/25/25 default split)."
+    )
+    return assistant_text, action
+
+
+async def _emmie_analyze_campaign(*, tenant, user, employee, params,
+                                    system_prompt, user_text):
+    p = params or {}
+    cid = p.get("campaign_id")
+    if not cid:
+        return "Send `campaign_id` in action_params so I know which campaign to analyze.", None
+    camp = await _campaign_lookup(tenant["id"], cid)
+    if not camp:
+        return f"Campaign `{cid}` not found in this tenant.", None
+    from routers.marketing_campaigns import _compute_stats
+    try:
+        stats = await _compute_stats(tenant["id"], cid)
+    except Exception as e:
+        logger.warning(f"[ae2] stats compute failed: {e}")
+        stats = {}
+    llm_prompt = (
+        f"Campaign: {camp.get('name', cid)} (channel={camp.get('channel')}, "
+        f"status={camp.get('status')}).\nSubject: {camp.get('subject', '')}.\n"
+        f"Stats: {stats}\n\n"
+        "Write ONE short plain-English performance summary (2-3 sentences) "
+        "followed by exactly THREE actionable recommendations. Use a bullet "
+        "list for the recommendations. Ground them in the numbers above."
+    )
+    r = await _llm_chat(system_prompt, llm_prompt, history=[])
+    return r["text"], None
+
+
+async def _emmie_suggest_seasonal_ideas(*, tenant, user, employee,
+                                              conversation_id, params,
+                                              system_prompt, user_text):
+    p = params or {}
+    season = (p.get("season") or "current season").strip()
+    services = p.get("service_types") or []
+    if not isinstance(services, list):
+        services = [str(services)]
+    services_str = ", ".join(services) if services else "pool + landscape"
+
+    llm_prompt = (
+        f"Suggest exactly FIVE marketing campaign ideas for the '{season}' "
+        f"season across these service types: {services_str}.\n\n"
+        "Format: return five bullet points, each on its own line, each in "
+        "the shape 'Name — one-sentence hook'. No numbering."
+    )
+    r = await _llm_chat(system_prompt, llm_prompt, history=[])
+    ideas: List[Dict[str, str]] = []
+    for ln in r["text"].splitlines():
+        s = ln.strip().lstrip("-*• ").strip()
+        if not s or "—" not in s:
+            continue
+        name, _, hook = s.partition("—")
+        ideas.append({"name": name.strip()[:120], "hook": hook.strip()[:280]})
+        if len(ideas) >= 5:
+            break
+    if not ideas:
+        return "I couldn't parse any ideas from the model. Try re-running with a different tone param.", None
+
+    action = await _create_action(
+        tenant_id=tenant["id"], user_id=user["id"],
+        employee_id=employee["id"], employee_key="emmie",
+        conversation_id=conversation_id,
+        action="emmie.suggest_seasonal_ideas",
+        params={"season": season, "service_types": services},
+        draft={"ideas": ideas, "season": season, "service_types": services},
+        title=f"{season} seasonal ideas ({len(ideas)})",
+        summary="; ".join(i["name"] for i in ideas)[:200],
+    )
+    assistant_text = (
+        f"Five {season} ideas:\n"
+        + "\n".join(f"  • {i['name']} — {i['hook']}" for i in ideas)
+        + "\n\nApprove to spin them up as draft campaigns."
+    )
+    return assistant_text, action
+
+
+async def _emmie_rewrite_copy(*, tenant, user, employee, params,
+                                 system_prompt, user_text):
+    p = params or {}
+    text = p.get("text") or user_text
+    tone = p.get("tone") or ""
+    goal = p.get("goal") or "improve clarity + call to action"
+    if not text:
+        return "Send `text` in action_params (or in the message) — nothing to rewrite otherwise.", None
+    llm_prompt = (
+        f"Rewrite the following copy in three different variants. "
+        f"Target tone: {tone or 'per brand brain default'}. Goal: {goal}.\n"
+        f"Return exactly three variants, each numbered '1.', '2.', '3.', "
+        f"each on its own line (or paragraph).\n\n---\n{text}"
+    )
+    r = await _llm_chat(system_prompt, llm_prompt, history=[])
+    return r["text"], None
+
+
+async def _emmie_apply_approval(action_doc: Dict[str, Any],
+                                    tenant: Dict[str, Any]) -> Dict[str, Any]:
+    """Emmie approval side-effects. Return dict is merged into the
+    ai_employee_actions row (adds executed_at, result, and flips the
+    status to executed when the effect landed cleanly)."""
+    kind = action_doc.get("action")
+    draft = action_doc.get("draft") or {}
+    tenant_id = tenant["id"]
+    now = now_iso()
+    result_common = {"executed_at": now}
+
+    if kind == "emmie.draft_campaign":
+        cid = draft.get("campaign_id")
+        return {**result_common, "status": "executed",
+                "result": {"kind": "emmie_campaign_draft_ready",
+                             "campaign_id": cid,
+                             "subject": draft.get("subject"),
+                             "preheader": draft.get("preheader")}}
+
+    if kind == "emmie.suggest_ab_subjects":
+        cid = draft.get("campaign_id")
+        variants = draft.get("variants") or []
+        if not cid or not variants:
+            return {**result_common, "status": "failed",
+                     "result": {"kind": "emmie_ab_apply_failed",
+                                 "reason": "missing campaign_id or variants"}}
+        variant_docs = [
+            {"id": new_id(), "subject": v,
+              "weight_pct": w, "name": f"Variant {chr(65 + i)}"}
+            for i, (v, w) in enumerate(zip(variants, [50, 25, 25]))
+        ]
+        camp = await db.marketing_campaigns.find_one(
+            {"id": cid, "tenant_id": tenant_id}, {"_id": 0, "ab_test": 1},
+        )
+        existing_ab = (camp or {}).get("ab_test") or {}
+        merged_variants = list(existing_ab.get("variants") or [])
+        merged_variants.extend(variant_docs)
+        await db.marketing_campaigns.update_one(
+            {"id": cid, "tenant_id": tenant_id},
+            {"$set": {"ab_test": {"enabled": True,
+                                        "variants": merged_variants,
+                                        "split_field": "subject"},
+                       "updated_at": now}},
+        )
+        return {**result_common, "status": "executed",
+                "result": {"kind": "emmie_ab_variants_attached",
+                             "campaign_id": cid,
+                             "variants": merged_variants}}
+
+    if kind == "emmie.suggest_seasonal_ideas":
+        ideas = draft.get("ideas") or []
+        if not ideas:
+            return {**result_common, "status": "failed",
+                     "result": {"kind": "emmie_seasonal_apply_failed",
+                                 "reason": "no ideas parsed"}}
+        created_ids: List[str] = []
+        for idea in ideas:
+            doc = {
+                "id": new_id(), "tenant_id": tenant_id,
+                "name": idea.get("name") or "Seasonal draft",
+                "subject": "", "preheader": (idea.get("hook") or "")[:200],
+                "from_name": "", "from_email": "", "reply_to": "",
+                "channel": "email",
+                "content": {"email_html": "", "email_text": idea.get("hook") or "",
+                              "sms_body": ""},
+                "audience": {"list_ids": [], "segment_ids": [],
+                                "exclude_list_ids": [],
+                                "exclude_segment_ids": []},
+                "schedule": {"mode": "draft"},
+                "ab_test": {"enabled": False},
+                "status": "draft",
+                "tracking_enabled": True,
+                "created_by": action_doc.get("requested_by"),
+                "created_at": now, "updated_at": now,
+                "drafted_by_ai_employee": "emmie",
+                "seasonal_seed": draft.get("season"),
+            }
+            await db.marketing_campaigns.insert_one(doc)
+            created_ids.append(doc["id"])
+        return {**result_common, "status": "executed",
+                "result": {"kind": "emmie_seasonal_drafts_created",
+                             "campaign_ids": created_ids,
+                             "count": len(created_ids)}}
+
+    return {**result_common, "status": "approved",
+             "result": {"kind": "no_side_effect"}}
