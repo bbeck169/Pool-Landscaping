@@ -440,7 +440,18 @@ function SubmissionsList({ refresh }) {
                 <div className="font-semibold truncate">
                   {s.contact?.name || s.contact?.email || "(anonymous)"}
                 </div>
-                <Badge variant="outline">{s.status}</Badge>
+                <div className="flex items-center gap-1">
+                  {Number(s.contact_history_count || 0) > 1 && (
+                    <Badge
+                      className="bg-amber-500 hover:bg-amber-600 text-white text-[10px]"
+                      data-testid={`iq-returning-badge-${s.id}`}
+                      title="This contact has submitted before"
+                    >
+                      Returning ×{s.contact_history_count}
+                    </Badge>
+                  )}
+                  <Badge variant="outline">{s.status}</Badge>
+                </div>
               </div>
               <div className="text-xs" style={{ color: colors.muted }}>
                 {fmt$(s.computed_total_cents)} · {s.submitted_at?.slice(0, 16)}

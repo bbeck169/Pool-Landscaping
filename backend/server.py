@@ -402,6 +402,20 @@ async def _background_seed():
         except Exception as _ae:
             logger.warning(f"ai_credits monthly reset registration crashed: {_ae}")
 
+        # Feb 2026 · Unified Notifications — muted-notification digest
+        # (nightly 00:15 UTC). Sweeps every tenant with
+        # ``notification_digest_enabled=True`` and enqueues one digest
+        # email per user with muted push events in the last 24 h. Safe
+        # no-op when no tenants opt in.
+        try:
+            from services.notifications import run_muted_digest_sweep
+            scheduler.add_job(
+                run_muted_digest_sweep,
+                "cron", hour=0, minute=15,
+                id="muted_notification_digest", replace_existing=True)
+        except Exception as _de:
+            logger.warning(f"muted digest registration crashed: {_de}")
+
         scheduler.start()
     except Exception as e:
         logger.warning(f"scheduler registration skipped: {e}")

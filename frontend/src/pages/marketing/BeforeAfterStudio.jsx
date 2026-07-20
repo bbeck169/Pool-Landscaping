@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, Camera, Copy, Download, Layers, Sparkles, Trash2, Wand2,
-  RefreshCw,
+  RefreshCw, Eye, MousePointerClick,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -398,6 +398,18 @@ export default function BeforeAfterStudio() {
                   )}
                 </div>
                 {p.caption && <div className="truncate">{p.caption}</div>}
+                <div className="flex items-center gap-2 pt-0.5"
+                      style={{ color: colors.muted }}
+                      data-testid={`ba-stats-${p.id}`}>
+                  <span className="inline-flex items-center gap-0.5"
+                         title="Impressions on public share">
+                    <Eye className="w-3 h-3" /> {Number(p.impressions_count || 0)}
+                  </span>
+                  <span className="inline-flex items-center gap-0.5"
+                         title="Clicks on public share">
+                    <MousePointerClick className="w-3 h-3" /> {Number(p.click_count || 0)}
+                  </span>
+                </div>
                 <div className="flex gap-1 justify-end">
                   <button onClick={() => copyShare(p.share_token)}
                           className="p-1 hover:brightness-95 rounded"
