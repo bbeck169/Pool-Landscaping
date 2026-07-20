@@ -146,7 +146,10 @@ class MailingListIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     slug: Optional[str] = None
     description: Optional[str] = ""
-    type: str = "static"
+    type: str = Field(
+        "static",
+        description="List type: 'static' (manual membership) or 'dynamic' (auto-resolves via segment_id).",
+    )
     segment_id: Optional[str] = None
 
 

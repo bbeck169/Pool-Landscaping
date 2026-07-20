@@ -88,6 +88,8 @@ export const ADMIN_SECTIONS: ToolSection[] = [
       { key: "marketing-studio", icon: "megaphone-outline", label: "Marketing Studio", desc: "Campaigns, sequences, reviews", route: "/(app)/marketing" as any },
       { key: "comms", icon: "mail-outline", label: "Communications", desc: "Templates, automations, sends", route: "/(app)/comms" },
       { key: "reviews", icon: "star-outline", label: "Reviews", desc: "Requests, ratings, widget & sync", route: "/(app)/reviews" as any },
+      { key: "ai-credits", icon: "sparkles-outline", label: "AI Credits", desc: "Balance & transactions", route: "/(app)/credits" as any },
+      { key: "deals", icon: "git-branch-outline", label: "Deals", desc: "Pipeline · stages · won/lost", route: "/(app)/deals" as any },
     ],
   },
   {

@@ -678,9 +678,25 @@ async def update_field_report(jid: str, body: FieldReportUpdate,
     # Auto-bill: when chemicals are logged, accrue them onto the customer's monthly invoice.
     if "chemicals_added" in update:
         from routers.finances import accrue_chem_invoice
-        await accrue_chem_invoice(
-            await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
-        )
+        job_fresh = await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
+        await accrue_chem_invoice(job_fresh)
+        # QuoteIQ Q1-B — snapshot chemical usage for profitability rollups.
+        # Idempotent per (tenant, service_report_id=jid): re-submits replace
+        # prior events instead of double-counting.
+        try:
+            from routers.chemical_products import snapshot_chemical_usage
+            await snapshot_chemical_usage(
+                tenant_id=tenant["id"],
+                job_id=jid,
+                service_report_id=jid,
+                customer_id=(job_fresh or {}).get("customer_id"),
+                chemicals_added=update.get("chemicals_added") or [],
+                occurred_at=(job_fresh or {}).get("scheduled_date")
+                             or (job_fresh or {}).get("updated_at"),
+                actor_user_id=user.get("id"),
+            )
+        except Exception as _e:
+            pass  # snapshot failure never blocks the field-report write
     return with_field_report(
         await db.jobs.find_one({"id": jid, "tenant_id": tenant["id"]}, {"_id": 0})
     )

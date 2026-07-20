@@ -177,6 +177,13 @@ export default function CustomerDetail() {
             >
               <Beaker size={14} /> Chemistry
             </Button>
+            <Button
+              variant="ghost"
+              onClick={() => navigate(`/customers/${id}/chemistry-history`)}
+              testid="cd-chemistry-history"
+            >
+              <Beaker size={14} /> Chem History
+            </Button>
             <Button variant="danger" onClick={() => setConfirmDelete(true)} testid="cd-delete">
               <Trash2 size={14} /> Delete
             </Button>

@@ -463,6 +463,86 @@ class TestChemicalUsageSnapshotAndRollup:
         m.close()
 
 
+class TestFinalizeSnapshotWiring:
+    """Proves that the deferred wiring — snapshot on service-report write —
+    now fires from the ``PATCH /api/jobs/{jid}/report`` endpoint used by
+    the pool tech's mobile + web checklists."""
+
+    _job_id = None
+    _customer_id = None
+
+    def test_finalize_writes_usage_events(self, admin_tok, tenant_id):
+        # Create a fresh customer + job to write against.
+        cust = requests.post(
+            f"{API}/customers",
+            json={"name": f"TEST_ Finalize Cust {uuid.uuid4().hex[:6]}",
+                   "email": f"finalize_test_{uuid.uuid4().hex[:6]}@example.com"},
+            headers=_h(admin_tok), timeout=T)
+        assert cust.status_code == 200, cust.text
+        TestFinalizeSnapshotWiring._customer_id = cust.json()["id"]
+
+        job = requests.post(
+            f"{API}/jobs",
+            json={"title": "TEST_ Finalize Job",
+                   "customer_id": TestFinalizeSnapshotWiring._customer_id,
+                   "scheduled_date": "2026-07-20"},
+            headers=_h(admin_tok), timeout=T)
+        assert job.status_code == 200, job.text
+        TestFinalizeSnapshotWiring._job_id = job.json()["id"]
+
+        # PATCH field report with chemicals_added — this is what techs
+        # do when they log a visit. Snapshot must fire.
+        r = requests.put(
+            f"{API}/jobs/{TestFinalizeSnapshotWiring._job_id}/field-report",
+            json={"chemicals_added": [
+                {"product_slug": "liquid_chlorine",
+                  "quantity_used": 2, "unit": "gal"},
+                {"product_slug": "muriatic_acid",
+                  "quantity_used": 1, "unit": "gal"},
+            ]},
+            headers=_h(admin_tok), timeout=T)
+        assert r.status_code == 200, r.text
+
+        # Verify usage events were written for this job.
+        prof = requests.get(
+            f"{API}/chemicals/profitability?"
+            f"job_id={TestFinalizeSnapshotWiring._job_id}",
+            headers=_h(admin_tok), timeout=T)
+        assert prof.status_code == 200
+        d = prof.json()
+        assert d["event_count"] == 2
+        assert d["total_chemical_cost_cents"] > 0
+
+    def test_finalize_is_idempotent_on_resubmit(self, admin_tok):
+        # Re-submit the same PUT — event_count must stay at 2.
+        assert TestFinalizeSnapshotWiring._job_id
+        r = requests.put(
+            f"{API}/jobs/{TestFinalizeSnapshotWiring._job_id}/field-report",
+            json={"chemicals_added": [
+                {"product_slug": "liquid_chlorine",
+                  "quantity_used": 2, "unit": "gal"},
+                {"product_slug": "muriatic_acid",
+                  "quantity_used": 1, "unit": "gal"},
+            ]},
+            headers=_h(admin_tok), timeout=T)
+        assert r.status_code == 200
+        prof = requests.get(
+            f"{API}/chemicals/profitability?"
+            f"job_id={TestFinalizeSnapshotWiring._job_id}",
+            headers=_h(admin_tok), timeout=T).json()
+        assert prof["event_count"] == 2  # NOT 4
+
+    def test_cleanup(self, admin_tok):
+        if TestFinalizeSnapshotWiring._job_id:
+            requests.delete(
+                f"{API}/jobs/{TestFinalizeSnapshotWiring._job_id}",
+                headers=_h(admin_tok), timeout=T)
+        if TestFinalizeSnapshotWiring._customer_id:
+            requests.delete(
+                f"{API}/customers/{TestFinalizeSnapshotWiring._customer_id}",
+                headers=_h(admin_tok), timeout=T)
+
+
 # ═════════════════════════════════════════════════════════════════════
 # Sub-scope C — Pipelines CRM
 # ═════════════════════════════════════════════════════════════════════

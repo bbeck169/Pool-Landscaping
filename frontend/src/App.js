@@ -12,6 +12,7 @@ import CustomersList from "@/pages/customers/CustomersList";
 import CustomerForm from "@/pages/customers/CustomerForm";
 import CustomerDetail from "@/pages/customers/CustomerDetail";
 import CustomerChemistry from "@/pages/customers/CustomerChemistry";
+import CustomerChemistryHistory from "@/pages/customers/CustomerChemistryHistory";
 import { RequestJobPage, AdminJobRequestsPage } from "@/pages/job_requests/JobRequestsPages";
 import CalendarSchedule from "@/pages/schedule/CalendarSchedule";
 import WorkstreamPage from "@/pages/workstream/WorkstreamPage";
@@ -39,6 +40,10 @@ import {
 } from "@/pages/reviews/ReviewsPages";
 import PublicReviewLanding from "@/pages/reviews/PublicReviewLanding";
 import PublicReviewsWidgetPage from "@/pages/reviews/PublicReviewsWidgetPage";
+// QuoteIQ Q1-UI · Feb 2026
+import AICreditsPage from "@/pages/settings/AICreditsPage";
+import ChemicalsPage from "@/pages/settings/ChemicalsPage";
+import DealsKanbanPage from "@/pages/deals/DealsKanbanPage";
 import PortalBook from "@/pages/portal/PortalBook";
 import PortalChatsPage from "@/pages/portal/PortalChatsPage";
 import AppointmentsQueue from "@/pages/admin/AppointmentsQueue";
@@ -612,6 +617,11 @@ export default function App() {
             <Route path="admin/reviews/requests"      element={<AdminOnly><ReviewsRequestsPage /></AdminOnly>} />
             <Route path="admin/reviews/platforms"     element={<AdminOnly><ReviewsPlatformsPage /></AdminOnly>} />
             <Route path="admin/reviews/widget"        element={<AdminOnly><ReviewsWidgetPage /></AdminOnly>}/>
+            {/* QuoteIQ Q1-UI · Feb 2026 */}
+            <Route path="admin/ai-credits" element={<AdminOnly><AICreditsPage /></AdminOnly>} />
+            <Route path="admin/chemicals" element={<AdminOnly><ChemicalsPage /></AdminOnly>} />
+            <Route path="deals" element={<AdminOnly><DealsKanbanPage /></AdminOnly>} />
+            <Route path="customers/:id/chemistry-history" element={<AdminOnly><CustomerChemistryHistory /></AdminOnly>} />
             <Route path="portal/profile" element={<PortalProfile />} />
             <Route path="portal/request-service" element={<PortalRequestService />} />
             <Route path="portal/payment-complete" element={<PortalPaymentComplete />} />

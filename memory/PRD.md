@@ -5403,3 +5403,124 @@ $ curl "$API/api/deals/pipeline-view" -H "$H"
 5. **Sync test port for async helpers.** The direct-call unit tests for `debit_credits`, `reset_tenant_monthly`, and `snapshot_chemical_usage` are implemented via `pymongo` in the test file rather than via the async services. Motor binds to the first event loop it sees; the full-suite pytest run rotates loops per module which breaks direct async calls. Sync ports execute the same logic against Mongo and prove the same invariants, without touching the shipping code. The async helpers themselves are still the production path used by the routers + scheduler.
 
 Ready for e1_tester defense-in-depth pass. Standing by for Q2 green-light.
+
+---
+
+## QuoteIQ Parity · Phase Q1-UI — Web + Mobile · Feb 2026
+
+Web + mobile surfaces for the Q1 backend (AI Credits, Chemical Products + Profitability, Pipelines CRM), plus the deferred snapshot wiring into service-report finalize.
+
+### Backend closeouts (deferred from Q1)
+
+1. **Snapshot on service-report write** — `PUT /api/jobs/{jid}/field-report` now calls `snapshot_chemical_usage(tenant_id, job_id=jid, service_report_id=jid, customer_id, chemicals_added=…)` alongside the existing autobill accrual. Idempotent per `(tenant, service_report_id=jid)` — re-submits replace prior events, never double-count. Wrapped in try/except so a snapshot failure never blocks the field-report write. New pytest class **TestFinalizeSnapshotWiring** (3 tests) proves fire + idempotency + clean lifecycle.
+2. **OpenAPI docstring fix** — `MailingListIn.type` gained an explicit `description="List type: 'static' (manual membership) or 'dynamic' (auto-resolves via segment_id)."`. Integrators reading `/api/openapi.json` now see the correct field name (`type`, not `list_type`).
+
+### Web (React) surfaces
+
+**A) `/admin/ai-credits` — AI Credits page** (`pages/settings/AICreditsPage.jsx`, ~350 lines)
+- Balance header: big number, plan chip, monthly grant, last-reset time, progress bar (yellow at <20%, sky otherwise).
+- Warning banner: yellow when `warning=true`, red when `balance ≤ 0`, hidden otherwise.
+- Plan selector + Top-up button (both **super-admin only** — non-super sees a clear message).
+- Transactions table with feature filter (estimator/autopilot/before_after/virtual_call/other) + "Load more" cursor pagination.
+- All controls carry `data-testid` attributes (`ai-credits-balance-card`, `ai-credits-topup-open`, `ai-credits-plan-select`, `ai-credits-feature-filter`, `ai-credits-load-more`).
+
+**B) `/admin/chemicals` — Chemicals page** (`pages/settings/ChemicalsPage.jsx`, ~450 lines)
+- Tabs: Products / Profitability.
+- **Products tab**: search + active toggle + New product / Edit / Deactivate. Cents-to-dollars display. Modal form for create + edit. Soft-delete preserves history (as the backend contract requires).
+- **Profitability tab**: filters (customer_id, date range) → three summary cards (total cost, visits, avg per visit) + Recharts bar chart of per-product breakdown.
+
+**C) `/deals` — Pipelines CRM Kanban** (`pages/deals/DealsKanbanPage.jsx`, ~700 lines)
+- Pipeline picker (dropdown of tenant pipelines) + search + New deal + Edit pipeline buttons.
+- 6-column Kanban with color-coded stage headers + deal count + total value per column.
+- **Native HTML5 drag/drop** between columns — no dnd library dependency. Optimistic UI with rollback on API failure.
+- Deal cards show title, contact, value, probability, first 3 tags; won cards get emerald border, lost cards get red border + opacity.
+- Deal detail drawer: edit form (title, value, contact, dates, notes) + timeline sidebar (last N events with actor + timestamp) + action buttons (Save / Mark won / Mark lost with reason prompt / Convert to job).
+- Pipeline editor dialog: rename + edit stage names / colors / probabilities.
+
+**D) Customer detail Chemistry History tab** (`pages/customers/CustomerChemistryHistory.jsx`, ~150 lines) at `/customers/:id/chemistry-history`
+- Line chart (cost $ + visit count) over 3/6/12/24 month options.
+- Two summary cards (total chemical spend, visits with chemicals).
+- Deep-linked from CustomerDetail via new "Chem History" button (kept separate from the existing "Chemistry" dose-calculator page).
+
+**Nav** (`nav/adminNav.js`): three additions under Operations→Settings ("AI Credits", "Chemical Products") and Customers→Sales ("Deals (Kanban)"). All admin+super only per `AdminOnly` wrapper.
+
+### Mobile (Expo) surfaces
+
+**Credits** (`mobile/app/(app)/credits/index.tsx`, ~180 lines)
+- Big balance card with plan chip + low-balance warning banner.
+- Last 10 transactions list (reason, feature, delta with colour, timestamp).
+- Pull-to-refresh. Read-only per the brief; top-up guidance directs to web admin.
+
+**Deals** — 3-screen flow:
+- `mobile/app/(app)/deals/index.tsx` — segmented stage filter chips + vertical scroll list of deals + FAB "New deal".
+- `mobile/app/(app)/deals/[id].tsx` — deal detail + timeline + action buttons (Move stage bottom sheet, Mark won, Mark lost with reason modal, Convert to job).
+- `mobile/app/(app)/deals/new.tsx` — full form + starting-stage picker.
+
+**Mobile API client** (`mobile/src/api/quoteiq_q1.ts`, ~55 lines) — thin wrappers around all Q1 endpoints, uses the shared bearer-token `api` helper.
+
+**Nav** — hidden Tabs.Screen registrations in `(app)/_layout.tsx` (href:null, reachable via router.push). Tools Hub `sections.ts` grew two entries: `ai-credits`, `deals`, so techs / admins can discover them from the hub.
+
+**Chemicals mobile** deferred: adding a product-picker inside the existing service-report entry (which lives across several screens with unit-tested code paths) risks scope creep. The snapshot wiring on the backend accepts both the new `{product_slug, quantity_used}` shape and the legacy `{name, amount}` shape, so mobile keeps working unchanged — techs will just write `product_slug` when we upgrade the entry component in a separate follow-up.
+
+### Files touched
+
+**Added (backend):**
+- `backend/tests/test_quoteiq_q1.py` +1 new class TestFinalizeSnapshotWiring (3 tests)
+
+**Added (web):**
+- `frontend/src/pages/settings/AICreditsPage.jsx`
+- `frontend/src/pages/settings/ChemicalsPage.jsx`
+- `frontend/src/pages/customers/CustomerChemistryHistory.jsx`
+- `frontend/src/pages/deals/DealsKanbanPage.jsx`
+
+**Added (mobile):**
+- `mobile/src/api/quoteiq_q1.ts`
+- `mobile/app/(app)/credits/index.tsx`
+- `mobile/app/(app)/deals/index.tsx`
+- `mobile/app/(app)/deals/[id].tsx`
+- `mobile/app/(app)/deals/new.tsx`
+
+**Modified (backend):**
+- `backend/routers/jobs.py` — snapshot wiring in `update_field_report`
+- `backend/routers/marketing_m1.py` — added `Field(..., description="…")` to `MailingListIn.type`
+
+**Modified (web):**
+- `frontend/src/App.js` — 4 new routes (`/admin/ai-credits`, `/admin/chemicals`, `/deals`, `/customers/:id/chemistry-history`)
+- `frontend/src/nav/adminNav.js` — 3 nav entries + `FlaskConical` + `GitBranch` icons
+- `frontend/src/pages/customers/CustomerDetail.jsx` — added "Chem History" button
+
+**Modified (mobile):**
+- `mobile/app/(app)/_layout.tsx` — 4 hidden Tabs.Screen registrations
+- `mobile/src/components/tools/sections.ts` — 2 new hub entries
+
+### Test results
+
+- **Q1 backend suite:** 39 tests, all green (`test_quoteiq_q1.py`), including the 3 new finalize-snapshot tests.
+- **Marketing M1:** 35 tests, all green — regression clean.
+- **Backend full-suite delta:** unchanged failure list (only `test_zillow_live_property_lookup` pre-existing external flake).
+- **Frontend smoke:** all three new routes served HTTP 200 from the preview URL. Playwright screenshots confirmed the AI Credits page (balance card + plan + transactions table), the Chemicals page (products tab with 7 seeded rows), and the Deals Kanban board (6 columns) render correctly for admin login.
+- **Mobile:** files compile cleanly against the existing `@/src/api` / `@/src/theme` / `Header` widget primitives; Tools Hub gained 2 entries.
+
+### Curl transcripts (proof of life)
+
+```
+# Snapshot fires on field-report write, idempotent on re-submit
+$ curl -X PUT "$API/api/jobs/$jid/field-report" -H "$H" \
+    -d '{"chemicals_added":[{"product_slug":"liquid_chlorine","quantity_used":2,"unit":"gal"},
+                              {"product_slug":"muriatic_acid","quantity_used":1,"unit":"gal"}]}'
+{"id":"$jid",...,"chemicals_added":[...]}
+$ curl "$API/api/chemicals/profitability?job_id=$jid" -H "$H"
+{"total_chemical_cost_cents":1600,"visit_count":1,"event_count":2,...}
+$ curl -X PUT "$API/api/jobs/$jid/field-report" ...  # exact same body
+# then
+$ curl "$API/api/chemicals/profitability?job_id=$jid" -H "$H"
+{"event_count":2,...}   # still 2, not 4 — idempotent
+```
+
+### Deviations
+
+1. **Mobile chemicals product picker deferred** — see "Chemicals mobile deferred" section above. Backend snapshot accepts both shapes so no data-loss risk during the deferral.
+2. **HTML5 drag/drop** for the Kanban instead of a library (`@dnd-kit/core`, `react-beautiful-dnd`) — keeps the frontend bundle lean per the "reasonable size" directive. Optimistic UI with rollback covers the same UX affordance.
+3. **Mobile top-up flow is view-only.** The web admin has the top-up modal; the mobile Credits screen surfaces a warning banner pointing techs / admins to the web. This matches the Comms mobile-parity pattern where deep-edit flows stay on web.
+4. **Frontend test coverage** is smoke-level (route HTTP 200 + Playwright screenshot render check) — a full frontend E2E test suite lives on the roadmap under Marketing M6 / Directories UI when we start bundling `@testing-library/react` + Playwright specs consistently.
+

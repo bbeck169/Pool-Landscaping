@@ -1,4 +1,4 @@
-import { LayoutDashboard, CalendarDays, Truck, Route, Workflow, DoorOpen, Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers, UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone, Timer as TimerIcon, BarChart3, TrendingUp, PieChart, Megaphone, Palette, MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit, BadgeCheck, Shield, Bell as BellIcon, MapIcon, ScrollText, Grid3x3, Compass, Rss, PencilRuler, Building2, Map as MapPinIcon, Gauge, Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon, Home as HomeIcon, Cloud, LibraryBig, ClipboardList as ClipboardListIcon2, Mail } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, Truck, Route, Workflow, DoorOpen, Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers, UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone, Timer as TimerIcon, BarChart3, TrendingUp, PieChart, Megaphone, Palette, MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit, BadgeCheck, Shield, Bell as BellIcon, MapIcon, ScrollText, Grid3x3, Compass, Rss, PencilRuler, Building2, Map as MapPinIcon, Gauge, Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon, Home as HomeIcon, Cloud, LibraryBig, ClipboardList as ClipboardListIcon2, Mail, FlaskConical, GitBranch } from 'lucide-react';
 
 /**
  * Phase 35 — Admin navigation single-source-of-truth (6-category IA).
@@ -175,6 +175,9 @@ export const ADMIN_NAV_V2 = [
     { to: "/settings/terms",        label: "Terms",           icon: ScrollText, feature: "settings", subsection: "Settings" },
     { to: "/settings/legal",        label: "Legal Docs",      icon: ScrollText, feature: "settings", subsection: "Settings" },
     { to: "/settings/ringcentral",  label: "RingCentral",     icon: Bell,     feature: "settings", subsection: "Settings" },
+    // QuoteIQ Q1-UI · Feb 2026
+    { to: "/admin/ai-credits", label: "AI Credits",     icon: Sparkles,   feature: "settings", subsection: "Settings" },
+    { to: "/admin/chemicals",  label: "Chemical Products", icon: FlaskConical, feature: "settings", subsection: "Settings" },
   ]},
 
   { key: "customers", label: "Customers", icon: Users, entries: [
@@ -182,6 +185,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/leads",                 label: "Leads",            icon: UserPlus,   feature: "customers", subsection: "Directory" },
     { to: "/leads/request",         label: "Lead Requests",    icon: Send,       feature: "customers", subsection: "Directory" },
     { to: "/tech/property-lookup",  label: "Property Lookup",  icon: HomeIcon,   feature: "customers", subsection: "Directory" },
+    { to: "/deals",                 label: "Deals (Kanban)",   icon: GitBranch,  feature: "customers", subsection: "Sales" },
     { to: "/quotes",                label: "Quotes",           icon: FileText,   feature: "quotes",    subsection: "Sales" },
     { to: "/estimator",             label: "Estimator",        icon: Calculator, feature: "estimator", subsection: "Sales" },
     { to: "/admin/estimator",       label: "Field Estimator",  icon: Wrench,     feature: "estimator", subsection: "Sales" },

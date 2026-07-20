@@ -216,6 +216,11 @@ export default function AppLayout() {
       <Tabs.Screen name="reviews/leaderboard"          options={{ title: "Leaderboard", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="trophy-outline" size={size} color={color} /> }} />
       <Tabs.Screen name="reviews/platforms"            options={{ title: "Platforms", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="globe-outline" size={size} color={color} /> }} />
       <Tabs.Screen name="reviews/widget"               options={{ title: "Widget", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="code-slash-outline" size={size} color={color} /> }} />
+      {/* QuoteIQ Q1-UI · Feb 2026 — Credits + Deals (hidden from tab bar; reachable via Tools hub). */}
+      <Tabs.Screen name="credits/index" options={{ title: "AI Credits", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="sparkles-outline" size={size} color={color} /> }} />
+      <Tabs.Screen name="deals/index"   options={{ title: "Deals", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="git-branch-outline" size={size} color={color} /> }} />
+      <Tabs.Screen name="deals/new"     options={{ title: "New Deal", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="add-outline" size={size} color={color} /> }} />
+      <Tabs.Screen name="deals/[id]"    options={{ title: "Deal", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="git-branch-outline" size={size} color={color} /> }} />
       {/* Phase 3 · Templates Library — hidden from tab bar, reachable via Tools hub + router.push. */}
       <Tabs.Screen
         name="templates/index"
