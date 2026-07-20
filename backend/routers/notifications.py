@@ -188,3 +188,37 @@ async def test_push(
         tenant_id=tenant["id"],
     )
     return {"ok": True, "notification_ids": ids}
+
+
+# ─── Muted-notification digest (opt-in nightly rollup) ─────────────────
+@router.post("/notifications/digest/run")
+async def run_digest(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Admin-triggered synchronous digest sweep for the current tenant.
+
+    Feature-gated by ``tenants.notification_digest_enabled``. Returns the
+    per-user email-count report. In production APScheduler drives this
+    nightly at 00:15 UTC; this endpoint gives admins a manual trigger
+    for QA + the preview environment.
+    """
+    if (user.get("role") or "") not in ("admin", "super_admin"):
+        raise HTTPException(403, "admin only")
+    from services.notifications import (
+        build_muted_digest, enqueue_muted_digest_email,
+    )
+    tenant_doc = await db.tenants.find_one(
+        {"id": tenant["id"]},
+        {"_id": 0, "notification_digest_enabled": 1}) or {}
+    if not tenant_doc.get("notification_digest_enabled"):
+        return {"ok": False, "reason": "digest disabled for this tenant",
+                "emails_written": 0}
+    digest = await build_muted_digest(tenant["id"], hours_back=24)
+    written = 0
+    for entry in digest:
+        sid = await enqueue_muted_digest_email(tenant["id"], entry)
+        if sid:
+            written += 1
+    return {"ok": True, "emails_written": written,
+             "users_with_muted_events": len(digest)}

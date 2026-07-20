@@ -502,3 +502,120 @@ async def _dispatch_sms(tenant_id: Optional[str], user_id: str, body: str, kind:
 # TODO(push): OS-level push (APNs/FCM via Expo push service is already wired
 # through routers.mobile_push.send_push_to_user; a browser Push API endpoint
 # is deferred to a follow-up phase — see HANDOFF.md).
+
+
+# ─── Muted-notification digest (opt-in nightly rollup) ─────────────────
+
+async def build_muted_digest(tenant_id: str, hours_back: int = 24) -> list[dict]:
+    """Per-user roll-ups of the last N hours of notifications for which
+    the user has ``push`` OFF.
+
+    Returned shape::
+      [{"user_id": ..., "email": ..., "rows_by_kind": {kind: [rows]},
+        "total_muted": int}, ...]
+    """
+    from datetime import datetime, timedelta, timezone as _tz
+    cutoff = (datetime.now(_tz.utc) - timedelta(hours=hours_back)).isoformat()
+    rows: list[dict] = []
+    async for n in db.notifications.find(
+        {"tenant_id": tenant_id, "created_at": {"$gte": cutoff},
+          "audience": {"$in": ["internal", None]}},
+        {"_id": 0},
+    ):
+        rows.append(n)
+    if not rows:
+        return []
+    by_user: dict[str, list[dict]] = {}
+    for r in rows:
+        uid = r.get("user_id")
+        if not uid or uid == "*":
+            continue
+        by_user.setdefault(uid, []).append(r)
+    out: list[dict] = []
+    for uid, urows in by_user.items():
+        prefs = await get_user_prefs(tenant_id, uid)
+        muted: dict[str, list[dict]] = {}
+        for r in urows:
+            kind = r.get("kind") or "system_alert"
+            row_prefs = (prefs.get("channels") or {}).get(kind) or {}
+            if not row_prefs.get("push", False):
+                muted.setdefault(kind, []).append(r)
+        if not muted:
+            continue
+        u = await db.users.find_one(
+            {"id": uid}, {"_id": 0, "email": 1, "name": 1}) or {}
+        out.append({
+            "user_id": uid,
+            "email": u.get("email") or "",
+            "name": u.get("name") or "",
+            "rows_by_kind": muted,
+            "total_muted": sum(len(v) for v in muted.values()),
+        })
+    return out
+
+
+async def enqueue_muted_digest_email(tenant_id: str,
+                                        entry: dict) -> Optional[str]:
+    """Write a queued email row for one user's digest."""
+    if not entry.get("email") or not entry.get("rows_by_kind"):
+        return None
+    lines: list[str] = []
+    for kind, items in entry["rows_by_kind"].items():
+        label = KIND_LABELS.get(kind, kind)
+        lines.append(f"<h3 style='margin:16px 0 4px 0'>{label} · {len(items)}</h3>")
+        for it in items[:8]:
+            title = (it.get("title") or "")[:120]
+            body = (it.get("body") or "")[:160]
+            lines.append(
+                f"<div style='padding:6px 0;border-bottom:1px solid #eee'>"
+                f"<b>{title}</b><br/><span style='color:#555'>{body}</span></div>"
+            )
+        if len(items) > 8:
+            lines.append(f"<div style='color:#888;padding:4px 0'>… and {len(items) - 8} more</div>")
+    html = (
+        f"<div style='font-family:sans-serif;max-width:600px;margin:auto'>"
+        f"<h2>Your muted-notification digest</h2>"
+        f"<p style='color:#555'>Here are the notifications you had push-muted "
+        f"in the last 24 hours. Adjust preferences any time in Settings → "
+        f"Notifications.</p>{''.join(lines)}</div>"
+    )
+    doc = {
+        "id": new_id(),
+        "tenant_id": tenant_id,
+        "kind": "email",
+        "channel": "email",
+        "recipient_id": entry["user_id"],
+        "recipient_address": entry["email"],
+        "template_code": "system.muted_notification_digest",
+        "subject": f"Your muted-notification digest · {entry['total_muted']} events",
+        "body_html": html,
+        "status": "queued",
+        "queued_at": now_iso(),
+        "context_meta": {"digest_kind_counts": {k: len(v) for k, v in entry["rows_by_kind"].items()}},
+    }
+    await db.communication_sends.insert_one(doc)
+    return doc["id"]
+
+
+async def run_muted_digest_sweep() -> dict:
+    """Sweep every tenant with ``notification_digest_enabled=True`` and
+    write digest email rows for each user with muted events."""
+    total_written = 0
+    per_tenant: dict[str, int] = {}
+    async for t in db.tenants.find(
+        {"notification_digest_enabled": True, "active": {"$ne": False}},
+        {"_id": 0, "id": 1},
+    ):
+        tid = t.get("id")
+        if not tid:
+            continue
+        digest = await build_muted_digest(tid, hours_back=24)
+        written = 0
+        for entry in digest:
+            sid = await enqueue_muted_digest_email(tid, entry)
+            if sid:
+                written += 1
+        if written:
+            per_tenant[tid] = written
+            total_written += written
+    return {"emails_written": total_written, "per_tenant": per_tenant}

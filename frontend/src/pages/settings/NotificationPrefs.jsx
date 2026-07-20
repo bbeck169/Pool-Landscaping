@@ -24,6 +24,8 @@ export default function NotificationPrefs() {
   const [kinds, setKinds] = useState([]);
   const [channels, setChannels] = useState({});
   const [initial, setInitial] = useState({});
+  const [quietHours, setQuietHours] = useState({ enabled: false, start_time: "22:00", end_time: "07:00", timezone: "UTC" });
+  const [initialQuiet, setInitialQuiet] = useState({ enabled: false, start_time: "22:00", end_time: "07:00", timezone: "UTC" });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
 
@@ -33,6 +35,9 @@ export default function NotificationPrefs() {
       setKinds(r?.kinds || []);
       setChannels(r?.channels || {});
       setInitial(JSON.parse(JSON.stringify(r?.channels || {})));
+      const qh = r?.quiet_hours || { enabled: false, start_time: "22:00", end_time: "07:00", timezone: "UTC" };
+      setQuietHours(qh);
+      setInitialQuiet(JSON.parse(JSON.stringify(qh)));
     } catch { /* silent */ }
   }, []);
 
@@ -45,14 +50,18 @@ export default function NotificationPrefs() {
     }));
   };
 
-  const dirty = JSON.stringify(channels) !== JSON.stringify(initial);
+  const dirty = JSON.stringify(channels) !== JSON.stringify(initial)
+             || JSON.stringify(quietHours) !== JSON.stringify(initialQuiet);
 
   const save = async () => {
     setSaving(true);
     try {
-      const r = await api.put("/settings/notifications", { channels });
+      const r = await api.put("/settings/notifications", { channels, quiet_hours: quietHours });
       setChannels(r?.channels || channels);
       setInitial(JSON.parse(JSON.stringify(r?.channels || channels)));
+      const qh = r?.quiet_hours || quietHours;
+      setQuietHours(qh);
+      setInitialQuiet(JSON.parse(JSON.stringify(qh)));
       setToast("Preferences saved");
       setTimeout(() => setToast(""), 2000);
     } catch (e) {
@@ -62,7 +71,10 @@ export default function NotificationPrefs() {
     setSaving(false);
   };
 
-  const reset = () => setChannels(JSON.parse(JSON.stringify(initial)));
+  const reset = () => {
+    setChannels(JSON.parse(JSON.stringify(initial)));
+    setQuietHours(JSON.parse(JSON.stringify(initialQuiet)));
+  };
 
   const setAll = (chan, value) => {
     setChannels((prev) => {
@@ -191,6 +203,87 @@ export default function NotificationPrefs() {
             </div>
           );
         })}
+      </div>
+
+      <div className="mt-6 rounded-2xl p-4"
+           style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+           data-testid="notif-quiet-hours-card">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <div>
+            <div className="text-sm font-bold" style={{ color: colors.onSurface }}>Quiet hours</div>
+            <div className="text-xs mt-0.5" style={{ color: colors.muted }}>
+              Push notifications are silenced during this window. In-app inbox rows still record.
+            </div>
+          </div>
+          <label className="inline-flex items-center gap-2 text-xs font-semibold" style={{ color: colors.onSurface }}>
+            <input
+              type="checkbox"
+              checked={Boolean(quietHours.enabled)}
+              onChange={(e) => setQuietHours((q) => ({ ...q, enabled: e.target.checked }))}
+              data-testid="notif-quiet-hours-toggle"
+            />
+            Enabled
+          </label>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          <label className="flex flex-col gap-1" style={{ color: colors.muted }}>
+            <span>Start</span>
+            <input
+              type="time"
+              value={quietHours.start_time || "22:00"}
+              onChange={(e) => setQuietHours((q) => ({ ...q, start_time: e.target.value }))}
+              disabled={!quietHours.enabled}
+              className="px-2 py-1.5 rounded-lg text-sm"
+              style={{
+                backgroundColor: colors.surface,
+                border: `1px solid ${colors.border}`,
+                color: colors.onSurface,
+                opacity: quietHours.enabled ? 1 : 0.5,
+              }}
+              data-testid="notif-quiet-hours-start"
+            />
+          </label>
+          <label className="flex flex-col gap-1" style={{ color: colors.muted }}>
+            <span>End</span>
+            <input
+              type="time"
+              value={quietHours.end_time || "07:00"}
+              onChange={(e) => setQuietHours((q) => ({ ...q, end_time: e.target.value }))}
+              disabled={!quietHours.enabled}
+              className="px-2 py-1.5 rounded-lg text-sm"
+              style={{
+                backgroundColor: colors.surface,
+                border: `1px solid ${colors.border}`,
+                color: colors.onSurface,
+                opacity: quietHours.enabled ? 1 : 0.5,
+              }}
+              data-testid="notif-quiet-hours-end"
+            />
+          </label>
+          <label className="flex flex-col gap-1" style={{ color: colors.muted }}>
+            <span>Timezone</span>
+            <select
+              value={quietHours.timezone || "UTC"}
+              onChange={(e) => setQuietHours((q) => ({ ...q, timezone: e.target.value }))}
+              disabled={!quietHours.enabled}
+              className="px-2 py-1.5 rounded-lg text-sm"
+              style={{
+                backgroundColor: colors.surface,
+                border: `1px solid ${colors.border}`,
+                color: colors.onSurface,
+                opacity: quietHours.enabled ? 1 : 0.5,
+              }}
+              data-testid="notif-quiet-hours-tz"
+            >
+              <option value="UTC">UTC</option>
+              <option value="America/Phoenix">America/Phoenix</option>
+              <option value="America/Los_Angeles">America/Los_Angeles</option>
+              <option value="America/Denver">America/Denver</option>
+              <option value="America/Chicago">America/Chicago</option>
+              <option value="America/New_York">America/New_York</option>
+            </select>
+          </label>
+        </div>
       </div>
 
       <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-2 text-xs" style={{ color: colors.muted }}>

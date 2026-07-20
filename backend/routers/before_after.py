@@ -311,6 +311,31 @@ async def get_pair(pid: str,
     return row
 
 
+@router.get("/before-after/pairs/{pid}/stats")
+async def pair_stats(pid: str,
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    """Return counter surface for a single pair. CTR = clicks / impressions
+    (0 when impressions=0). Kept as its own endpoint so admin dashboards
+    can cheap-poll without pulling the full pair doc."""
+    row = await db.before_after_pairs.find_one(
+        {"id": pid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "impressions_count": 1, "click_count": 1,
+          "last_impression_at": 1, "last_click_at": 1})
+    if row is None:
+        raise HTTPException(404, "pair not found")
+    imp = int(row.get("impressions_count") or 0)
+    clk = int(row.get("click_count") or 0)
+    ctr = round((clk / imp) * 100, 2) if imp > 0 else 0.0
+    return {
+        "impressions_count": imp,
+        "click_count": clk,
+        "ctr_pct": ctr,
+        "last_impression_at": row.get("last_impression_at"),
+        "last_click_at": row.get("last_click_at"),
+    }
+
+
 @router.delete("/before-after/pairs/{pid}", status_code=204)
 async def delete_pair(pid: str,
                         user: dict = Depends(require_admin),
@@ -369,7 +394,12 @@ async def regenerate(pid: str, body: RegenerateIn,
 async def public_share(share_token: str):
     """Unauthenticated public share endpoint. Keyed by opaque token —
     no tenant/customer/job details ever leak. Returns ONLY the card
-    URL and non-sensitive metadata."""
+    URL and non-sensitive metadata.
+
+    On each fetch we atomically ``$inc: impressions_count`` and refresh
+    ``last_impression_at`` — no PII, no IP, no user-agent stored. The
+    impression counter powers the admin gallery + stats endpoint.
+    """
     if not share_token or len(share_token) < 16:
         raise HTTPException(404, "not found")
     row = await db.before_after_pairs.find_one(
@@ -378,6 +408,15 @@ async def public_share(share_token: str):
         raise HTTPException(404, "not found")
     if row.get("status") != "complete":
         raise HTTPException(404, "not ready")
+    # Atomic impression counter — bump on every serve. Never blocks the
+    # response on failure.
+    try:
+        await db.before_after_pairs.update_one(
+            {"share_token": share_token},
+            {"$inc": {"impressions_count": 1},
+              "$set": {"last_impression_at": now_iso()}})
+    except Exception as _e:
+        logger.warning(f"[before_after] impression inc failed: {_e}")
     return {
         "card_url": row.get("generated_card_url"),
         "style": row.get("style"),
@@ -385,3 +424,24 @@ async def public_share(share_token: str):
         "service_type": row.get("service_type") or "",
         "created_at": row.get("created_at"),
     }
+
+
+@router.post("/before-after/public/{share_token}/click")
+async def public_share_click(share_token: str):
+    """Client-side beacon fired when a viewer opens the share link (or
+    clicks the CTA within it). Silent 200 on unknown tokens so scanners
+    can't enumerate valid tokens by watching the response codes.
+
+    Route lives under ``/before-after/public/*`` so it can be dropped
+    on the same public prefix as the fetch endpoint above — no auth.
+    """
+    if not share_token or len(share_token) < 16:
+        return {"ok": True}
+    try:
+        await db.before_after_pairs.update_one(
+            {"share_token": share_token},
+            {"$inc": {"click_count": 1},
+              "$set": {"last_click_at": now_iso()}})
+    except Exception as _e:
+        logger.warning(f"[before_after] click inc failed: {_e}")
+    return {"ok": True}

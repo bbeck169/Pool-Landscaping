@@ -459,6 +459,51 @@ async def list_submissions(user: dict = Depends(require_admin),
         q["submitted_at"] = {"$lt": cursor}
     rows = await db.instaquote_submissions.find(q, {"_id": 0}) \
         .sort("submitted_at", -1).to_list(limit)
+    # Hydrate ``contact_history_count`` — number of prior submissions
+    # from the same subscriber (matched by lower-cased email OR
+    # normalized phone when email is missing). One aggregate keyed by
+    # email/phone → count. Kept per-request rather than persisted so
+    # counts stay accurate as the linked subscriber accumulates rows.
+    emails = set()
+    phones = set()
+    for r in rows:
+        c = r.get("contact") or {}
+        e = (c.get("email") or "").strip().lower()
+        if e:
+            emails.add(e)
+        else:
+            p = "".join(ch for ch in (c.get("phone") or "")
+                          if ch.isdigit() or ch == "+")
+            if p:
+                phones.add(p)
+    email_counts: Dict[str, int] = {}
+    phone_counts: Dict[str, int] = {}
+    if emails:
+        pipeline = [
+            {"$match": {"tenant_id": tenant["id"],
+                          "contact.email": {"$in": list(emails)}}},
+            {"$group": {"_id": {"$toLower": "$contact.email"},
+                          "n": {"$sum": 1}}},
+        ]
+        async for row in db.instaquote_submissions.aggregate(pipeline):
+            email_counts[row["_id"]] = int(row.get("n") or 0)
+    if phones:
+        pipeline = [
+            {"$match": {"tenant_id": tenant["id"],
+                          "contact.phone": {"$in": list(phones)}}},
+            {"$group": {"_id": "$contact.phone", "n": {"$sum": 1}}},
+        ]
+        async for row in db.instaquote_submissions.aggregate(pipeline):
+            phone_counts[row["_id"]] = int(row.get("n") or 0)
+    for r in rows:
+        c = r.get("contact") or {}
+        e = (c.get("email") or "").strip().lower()
+        if e:
+            r["contact_history_count"] = email_counts.get(e, 1)
+        else:
+            p = "".join(ch for ch in (c.get("phone") or "")
+                          if ch.isdigit() or ch == "+")
+            r["contact_history_count"] = phone_counts.get(p, 1) if p else 1
     return {
         "count": len(rows),
         "submissions": rows,
