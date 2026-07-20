@@ -24,7 +24,7 @@ casey.draft_outreach_reply. Every Casey action is approve-gated.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -115,6 +115,31 @@ EMMIE_IMMEDIATE_ACTIONS = {
     # to the assistant turn without landing in ai_employee_actions.
     "emmie.analyze_campaign",
     "emmie.rewrite_copy",
+}
+
+# ─── AE3 · Analytics trio (Buddy · Vizzy · Dexter) ────────────────────
+# All three ride on the AE1 wire. Only two of Buddy's actions are
+# approve-gated (weekly_growth_brief + pricing_recommendation) so admins
+# can mark them "read/actioned" for the audit trail. Everything else
+# is read-only — no writes to the DB, only chat 1c debit.
+BUDDY_ACTIONS = {
+    "buddy.weekly_growth_brief",
+    "buddy.pipeline_analysis",
+    "buddy.pricing_recommendation",
+}
+VIZZY_ACTIONS = {
+    "vizzy.daily_brief",
+    "vizzy.prep_call",
+    "vizzy.prioritize_today",
+}
+DEXTER_ACTIONS = {
+    "dexter.ad_hoc_query",
+    "dexter.top_customers_report",
+    "dexter.chemical_profitability_report",
+}
+AE3_APPROVE_GATED_ACTIONS = {
+    "buddy.weekly_growth_brief",
+    "buddy.pricing_recommendation",
 }
 
 
@@ -578,6 +603,17 @@ async def approve_action(aid: str, body: Optional[ActionDecision] = None,
     # truth so we never duplicate copy on the ai_employee_actions row.
     elif doc["employee_key"] == "emmie":
         upd = {**upd, **await _emmie_apply_approval(doc, tenant)}
+    # AE3 · Buddy — the two approve-gated actions
+    # (weekly_growth_brief, pricing_recommendation) are read-only
+    # briefs. Approval simply audits the admin actioned the brief.
+    elif doc["employee_key"] == "buddy":
+        upd["status"] = "executed"
+        upd["executed_at"] = now_iso()
+        upd["result"] = {
+            "kind": "buddy_brief_acknowledged",
+            "action": doc.get("action"),
+            "note": "Recorded for audit trail — no writes performed.",
+        }
     await db.ai_employee_actions.update_one(
         {"id": aid, "tenant_id": tenant["id"]}, {"$set": upd},
     )
@@ -624,17 +660,27 @@ async def _dispatch_action(*, tenant: dict, user: dict, employee: dict,
     without a 500."""
     is_casey_action = action in CASEY_ACTIONS and employee["key"] == "casey"
     is_emmie_action = action in EMMIE_ACTIONS and employee["key"] == "emmie"
-    if not (is_casey_action or is_emmie_action):
+    is_buddy_action = action in BUDDY_ACTIONS and employee["key"] == "buddy"
+    is_vizzy_action = action in VIZZY_ACTIONS and employee["key"] == "vizzy"
+    is_dexter_action = action in DEXTER_ACTIONS and employee["key"] == "dexter"
+    if not (is_casey_action or is_emmie_action or is_buddy_action
+              or is_vizzy_action or is_dexter_action):
         assistant_text = (
             f"Action `{action}` isn't wired for {employee['name']} yet. "
-            f"Casey + Emmie ship in AE1/AE2. Analytics trio (Buddy, "
-            f"Vizzy, Dexter) ships in AE3."
+            f"Casey (AE1), Emmie (AE2), Buddy/Vizzy/Dexter (AE3) are "
+            f"live. Soshie/Scouty/Commet ship in AE4."
         )
         return assistant_text, None
 
-    # Emmie's read-only helpers skip the heavy debit — they still hit
-    # the LLM but produce no queue entry, matching the ship brief.
-    charge_heavy = action not in EMMIE_IMMEDIATE_ACTIONS
+    # Emmie's read-only helpers + all Vizzy + Dexter actions + Buddy's
+    # pipeline_analysis skip the heavy debit — they still hit the LLM
+    # but produce no queue entry, matching the ship brief. Only the
+    # two approve-gated Buddy actions charge 5c on top of chat 1c.
+    charge_heavy = (
+        action in AE3_APPROVE_GATED_ACTIONS
+        or (is_casey_action)
+        or (is_emmie_action and action not in EMMIE_IMMEDIATE_ACTIONS)
+    )
     if charge_heavy:
         await debit_credits(
             tenant["id"], HEAVY_ACTION_COST,
@@ -693,6 +739,24 @@ async def _dispatch_action(*, tenant: dict, user: dict, employee: dict,
                 params=params, system_prompt=system_prompt,
                 user_text=user_text,
             )
+    if is_buddy_action:
+        return await _buddy_dispatch(
+            tenant=tenant, user=user, employee=employee,
+            conversation_id=conversation_id, action=action,
+            params=params, system_prompt=system_prompt, user_text=user_text,
+        )
+    if is_vizzy_action:
+        return await _vizzy_dispatch(
+            tenant=tenant, user=user, employee=employee,
+            action=action, params=params,
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if is_dexter_action:
+        return await _dexter_dispatch(
+            tenant=tenant, user=user, employee=employee,
+            action=action, params=params,
+            system_prompt=system_prompt, user_text=user_text,
+        )
     return "Unknown action.", None
 
 
@@ -1169,3 +1233,563 @@ async def _emmie_apply_approval(action_doc: Dict[str, Any],
 
     return {**result_common, "status": "approved",
              "result": {"kind": "no_side_effect"}}
+
+
+# ─── AE3 · Buddy (Growth Strategist) ──────────────────────────────────
+
+async def _buddy_dispatch(*, tenant, user, employee, conversation_id,
+                             action, params, system_prompt, user_text):
+    if action == "buddy.weekly_growth_brief":
+        return await _buddy_weekly_growth_brief(
+            tenant=tenant, user=user, employee=employee,
+            conversation_id=conversation_id, params=params,
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "buddy.pipeline_analysis":
+        return await _buddy_pipeline_analysis(
+            tenant=tenant, params=params,
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "buddy.pricing_recommendation":
+        return await _buddy_pricing_recommendation(
+            tenant=tenant, user=user, employee=employee,
+            conversation_id=conversation_id, params=params,
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    return "Unknown Buddy action.", None
+
+
+async def _pipeline_stats(tenant_id: str, days: int) -> Dict[str, Any]:
+    """Small read-only rollup — Deals pipeline stats. Never writes."""
+    since_iso = _iso_days_ago(days)
+    stages = {}
+    async for s in db.deal_stages.find(
+        {"tenant_id": tenant_id}, {"_id": 0}
+    ):
+        stages[s["id"]] = s
+    total = 0
+    won = 0
+    lost = 0
+    open_by_stage: Dict[str, int] = {}
+    stalled = 0
+    all_deals = []
+    async for d in db.deals.find(
+        {"tenant_id": tenant_id}, {"_id": 0}
+    ):
+        total += 1
+        all_deals.append(d)
+        status = d.get("status") or (stages.get(d.get("stage_id"), {}) or {}).get("status")
+        if status == "won":
+            won += 1
+        elif status == "lost":
+            lost += 1
+        else:
+            open_by_stage[d.get("stage_id")] = open_by_stage.get(d.get("stage_id"), 0) + 1
+            updated = d.get("updated_at") or ""
+            if updated and updated < since_iso:
+                stalled += 1
+    win_rate = round((won / max(1, won + lost)) * 100, 1) if (won + lost) else 0.0
+    return {
+        "total_deals": total,
+        "won": won, "lost": lost,
+        "open_by_stage": {(stages.get(k, {}) or {}).get("name", k or "?"): v
+                              for k, v in open_by_stage.items()},
+        "stalled_over_days": {"days": days, "count": stalled},
+        "win_rate_pct": win_rate,
+    }
+
+
+async def _instaquote_conversions(tenant_id: str, days: int) -> Dict[str, Any]:
+    since_iso = _iso_days_ago(days)
+    total = 0
+    converted = 0
+    async for s in db.instaquote_submissions.find(
+        {"tenant_id": tenant_id, "created_at": {"$gte": since_iso}},
+        {"_id": 0, "status": 1, "converted_deal_id": 1},
+    ):
+        total += 1
+        if s.get("converted_deal_id") or s.get("status") in ("converted", "won"):
+            converted += 1
+    rate = round((converted / max(1, total)) * 100, 1)
+    return {"days": days, "total": total, "converted": converted,
+             "conversion_pct": rate}
+
+
+async def _review_sentiment(tenant_id: str, days: int) -> Dict[str, Any]:
+    since_iso = _iso_days_ago(days)
+    n = 0
+    stars_sum = 0
+    lo = 0
+    async for r in db.reviews.find(
+        {"tenant_id": tenant_id, "created_at": {"$gte": since_iso}},
+        {"_id": 0, "star_rating": 1},
+    ):
+        s = int(r.get("star_rating") or 0)
+        if s:
+            n += 1
+            stars_sum += s
+            if s <= 3:
+                lo += 1
+    avg = round(stars_sum / n, 2) if n else 0.0
+    return {"days": days, "count": n, "avg_star": avg,
+             "low_star_count": lo}
+
+
+async def _campaign_activity(tenant_id: str, days: int) -> Dict[str, Any]:
+    since_iso = _iso_days_ago(days)
+    total = 0
+    sent = 0
+    async for c in db.marketing_campaigns.find(
+        {"tenant_id": tenant_id, "updated_at": {"$gte": since_iso}},
+        {"_id": 0, "status": 1},
+    ):
+        total += 1
+        if c.get("status") in ("sent", "sending"):
+            sent += 1
+    return {"days": days, "total_touched": total, "sent_or_sending": sent}
+
+
+def _iso_days_ago(days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=max(0, days))).isoformat()
+
+
+async def _buddy_weekly_growth_brief(*, tenant, user, employee,
+                                          conversation_id, params,
+                                          system_prompt, user_text):
+    days = int((params or {}).get("days") or 7)
+    pipeline = await _pipeline_stats(tenant["id"], days)
+    iq = await _instaquote_conversions(tenant["id"], days)
+    reviews = await _review_sentiment(tenant["id"], days)
+    campaigns = await _campaign_activity(tenant["id"], days)
+    # Seasonal indicator — a plain-text hint keyed off calendar month.
+    month = datetime.now(timezone.utc).month
+    season_map = {1: "Winter maintenance", 2: "Late-winter tune-ups",
+                    3: "Spring openings", 4: "Spring openings",
+                    5: "Peak swim ramp-up", 6: "Peak swim",
+                    7: "Peak swim", 8: "Late-summer service",
+                    9: "Fall prep", 10: "Fall closings",
+                    11: "Winterization", 12: "Winter maintenance"}
+    season = season_map.get(month, "Mixed season")
+
+    prompt = (
+        f"Weekly growth brief — window={days}d.\n"
+        f"Deals: {pipeline}\n"
+        f"InstaQuote: {iq}\n"
+        f"Reviews: {reviews}\n"
+        f"Campaigns: {campaigns}\n"
+        f"Season: {season}\n\n"
+        "Write a growth brief (≤ 200 words) with a one-paragraph "
+        "narrative followed by exactly 3-5 concrete recommendations "
+        "as a bullet list. Ground each recommendation in the numbers "
+        "above. Do NOT recommend actions that require writing to the "
+        "CRM — I only surface, I never edit."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    brief_text = r["text"]
+
+    action = await _create_action(
+        tenant_id=tenant["id"], user_id=user["id"],
+        employee_id=employee["id"], employee_key="buddy",
+        conversation_id=conversation_id,
+        action="buddy.weekly_growth_brief",
+        params={"days": days},
+        draft={
+            "text": brief_text,
+            "signals": {
+                "deals": pipeline, "instaquote": iq,
+                "reviews": reviews, "campaigns": campaigns,
+                "season": season,
+            },
+        },
+        title=f"Weekly growth brief — {days}d",
+        summary=brief_text[:200],
+    )
+    return brief_text, action
+
+
+async def _buddy_pipeline_analysis(*, tenant, params,
+                                        system_prompt, user_text):
+    days = int((params or {}).get("days") or 14)
+    stats = await _pipeline_stats(tenant["id"], days)
+    prompt = (
+        f"Deals pipeline stats over the last {days}d:\n{stats}\n\n"
+        "Write a short analysis (≤ 150 words) — one paragraph narrative "
+        "followed by 3 bullet recommendations for unsticking stalled "
+        "deals and improving win rate."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"], None
+
+
+async def _buddy_pricing_recommendation(*, tenant, user, employee,
+                                              conversation_id, params,
+                                              system_prompt, user_text):
+    # Read chemical profitability aggregate (already exposed via the
+    # profitability endpoint) but do the query inline so we don't need
+    # an HTTP self-call.
+    since = _iso_days_ago(90)
+    per_type: Dict[str, Dict[str, float]] = {}
+    async for row in db.chemicals_added.find(
+        {"tenant_id": tenant["id"], "created_at": {"$gte": since}},
+        {"_id": 0, "cost_usd": 1, "job_id": 1, "chemical_name": 1},
+    ):
+        name = row.get("chemical_name") or "unknown"
+        entry = per_type.setdefault(name, {"cost_usd": 0.0, "n": 0})
+        entry["cost_usd"] += float(row.get("cost_usd") or 0)
+        entry["n"] += 1
+
+    prompt = (
+        f"Chemical cost rollup over the last 90d:\n{per_type}\n"
+        f"Admin note: {user_text}\n\n"
+        "Write pricing recommendations (≤ 200 words) as one narrative "
+        "paragraph plus a bullet list of concrete adjustments per "
+        "service_type. Consider seasonal demand + margin. Do NOT "
+        "write to the CRM — I surface only."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    text = r["text"]
+    action = await _create_action(
+        tenant_id=tenant["id"], user_id=user["id"],
+        employee_id=employee["id"], employee_key="buddy",
+        conversation_id=conversation_id,
+        action="buddy.pricing_recommendation",
+        params={"days": 90},
+        draft={"text": text, "cost_rollup": per_type},
+        title="Pricing recommendation",
+        summary=text[:200],
+    )
+    return text, action
+
+
+# ─── AE3 · Vizzy (Executive Assistant) ────────────────────────────────
+
+async def _vizzy_dispatch(*, tenant, user, employee, action, params,
+                              system_prompt, user_text):
+    if action == "vizzy.daily_brief":
+        return await _vizzy_daily_brief(
+            tenant=tenant, user=user, system_prompt=system_prompt,
+            user_text=user_text,
+        )
+    if action == "vizzy.prep_call":
+        return await _vizzy_prep_call(
+            tenant=tenant, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "vizzy.prioritize_today":
+        return await _vizzy_prioritize_today(
+            tenant=tenant, user=user,
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    return "Unknown Vizzy action.", None
+
+
+async def _vizzy_daily_brief(*, tenant, user, system_prompt, user_text):
+    today = datetime.now(timezone.utc).date().isoformat()
+    # Jobs today by tech.
+    jobs_today = await db.jobs.find(
+        {"tenant_id": tenant["id"], "scheduled_date": today},
+        {"_id": 0, "id": 1, "technician_id": 1, "technician_name": 1,
+          "status": 1},
+    ).to_list(500)
+    by_tech: Dict[str, int] = {}
+    for j in jobs_today:
+        by_tech[j.get("technician_name") or "Unassigned"] = \
+            by_tech.get(j.get("technician_name") or "Unassigned", 0) + 1
+
+    open_estimates = await db.estimates.count_documents(
+        {"tenant_id": tenant["id"], "status": {"$in": ["draft", "sent", "pending"]}},
+    )
+    # Hot deals — any deal in a stage flagged as "hot" is unreliable;
+    # instead surface deals whose stage.status is "open" and were
+    # updated in the last 7d.
+    since = _iso_days_ago(7)
+    hot_deals = await db.deals.count_documents({
+        "tenant_id": tenant["id"],
+        "updated_at": {"$gte": since},
+        "status": {"$nin": ["won", "lost"]},
+    })
+    # Overdue tasks — customer_tasks with due_date before today.
+    overdue_tasks = await db.customer_tasks.count_documents({
+        "tenant_id": tenant["id"],
+        "status": {"$ne": "completed"},
+        "due_date": {"$lt": today, "$ne": None, "$exists": True},
+    })
+    # Unread mentions — count of unresolved chat mentions targeting user.
+    unread_mentions = 0
+    try:
+        unread_mentions = await db.chat_mentions.count_documents({
+            "tenant_id": tenant["id"], "user_id": user["id"],
+            "read_at": None,
+        })
+    except Exception:
+        pass
+
+    signals = {
+        "jobs_today": len(jobs_today),
+        "jobs_by_tech": by_tech,
+        "open_estimates": open_estimates,
+        "hot_deals_7d": hot_deals,
+        "overdue_tasks": overdue_tasks,
+        "unread_mentions": unread_mentions,
+    }
+    prompt = (
+        f"Daily brief for {today}:\n{signals}\n\n"
+        "Write a punchy morning brief (≤ 120 words). One-line summary, "
+        "then a bullet list of the 3 most urgent items with a quick "
+        "reason each. Admin note: " + (user_text or "n/a")
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"] + f"\n\n(signals: {signals})", None
+
+
+async def _vizzy_prep_call(*, tenant, params, system_prompt, user_text):
+    cid = (params or {}).get("customer_id")
+    if not cid:
+        return "Send `customer_id` in action_params so I know whose call to prep.", None
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not cust:
+        return f"Customer `{cid}` not found in this tenant.", None
+    recent_jobs = await db.jobs.find(
+        {"tenant_id": tenant["id"], "customer_id": cid},
+        {"_id": 0, "title": 1, "scheduled_date": 1, "status": 1},
+    ).sort("scheduled_date", -1).to_list(10)
+    open_invoices = await db.quotes.find(
+        {"tenant_id": tenant["id"], "customer_id": cid,
+          "doc_type": "invoice", "payment_status": {"$ne": "paid"}},
+        {"_id": 0, "id": 1, "invoice_number": 1, "total": 1, "amount_paid": 1,
+          "due_date": 1},
+    ).sort("created_at", -1).to_list(10)
+    open_estimates = await db.estimates.find(
+        {"tenant_id": tenant["id"], "customer_id": cid,
+          "status": {"$in": ["draft", "sent", "pending"]}},
+        {"_id": 0, "id": 1, "title": 1, "status": 1, "total": 1},
+    ).sort("created_at", -1).to_list(10)
+
+    signals = {
+        "customer": {"name": cust.get("name"),
+                        "email": cust.get("email"),
+                        "phone": cust.get("phone"),
+                        "notes": (cust.get("notes") or "")[:400],
+                        "is_vip": cust.get("is_vip") or False},
+        "recent_jobs": recent_jobs,
+        "open_invoices": open_invoices,
+        "open_estimates": open_estimates,
+    }
+    prompt = (
+        "Assemble a call-prep sheet for the admin. Keep it short "
+        "(≤ 180 words). Sections: Customer snapshot; Talking points "
+        "(3 bullets); Outstanding items (list open invoice #s + "
+        "amount-owed, open estimates). Data:\n" + str(signals)
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"], None
+
+
+async def _vizzy_prioritize_today(*, tenant, user, system_prompt, user_text):
+    today = datetime.now(timezone.utc).date().isoformat()
+    tasks = await db.customer_tasks.find(
+        {"tenant_id": tenant["id"], "status": {"$ne": "completed"}},
+        {"_id": 0, "title": 1, "priority": 1, "due_date": 1, "customer_id": 1},
+    ).sort("due_date", 1).to_list(50)
+    since = _iso_days_ago(7)
+    deals = await db.deals.find(
+        {"tenant_id": tenant["id"], "updated_at": {"$gte": since},
+          "status": {"$nin": ["won", "lost"]}},
+        {"_id": 0, "id": 1, "title": 1, "value_cents": 1},
+    ).sort("value_cents", -1).to_list(20)
+    prompt = (
+        f"Prioritize the admin's day ({today}).\n"
+        f"Open tasks: {tasks}\n"
+        f"Hot deals: {deals}\n"
+        f"Admin note: {user_text}\n\n"
+        "Return a ranked list of the 5 most important actions with a "
+        "short reason each. Skip anything already completed."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"], None
+
+
+# ─── AE3 · Dexter (Data Analyst) ──────────────────────────────────────
+
+_DEXTER_COLLECTION_BUDGET = 5
+
+
+async def _dexter_dispatch(*, tenant, user, employee, action, params,
+                                system_prompt, user_text):
+    if action == "dexter.ad_hoc_query":
+        return await _dexter_ad_hoc_query(
+            tenant=tenant, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "dexter.top_customers_report":
+        return await _dexter_top_customers_report(
+            tenant=tenant, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "dexter.chemical_profitability_report":
+        return await _dexter_chemical_profitability_report(
+            tenant=tenant, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    return "Unknown Dexter action.", None
+
+
+def _dexter_too_broad(question: str) -> bool:
+    """Guard against queries that would sweep half the CRM. Very
+    conservative heuristic — the shipping brief says to return a
+    'too broad — refine' hint when a query would need >5 collections
+    or unbounded aggregation."""
+    if not question:
+        return True
+    q = question.lower()
+    all_word = any(w in q for w in
+                       ("everything", "all data", "every collection",
+                         "whole database", "entire crm", "list all"))
+    unbounded = any(w in q for w in
+                        ("history", "since forever", "all time"))
+    return all_word and unbounded
+
+
+async def _dexter_ad_hoc_query(*, tenant, params, system_prompt, user_text):
+    question = (params or {}).get("question") or user_text
+    if _dexter_too_broad(question):
+        return (
+            "That's too broad — narrow it down. Try scoping by time "
+            "window (e.g. 'last 90 days'), a service type, or a single "
+            "collection."
+        ), None
+    # Snapshot small aggregates the LLM can reason over. We stay under
+    # the 5-collection budget on purpose.
+    snapshot: Dict[str, Any] = {"question": question}
+    customers = await db.customers.count_documents({"tenant_id": tenant["id"]})
+    jobs = await db.jobs.count_documents({"tenant_id": tenant["id"]})
+    invoices = await db.quotes.count_documents(
+        {"tenant_id": tenant["id"], "doc_type": "invoice"}
+    )
+    deals = await db.deals.count_documents({"tenant_id": tenant["id"]})
+    campaigns = await db.marketing_campaigns.count_documents({"tenant_id": tenant["id"]})
+    snapshot["counts"] = {"customers": customers, "jobs": jobs,
+                             "invoices": invoices, "deals": deals,
+                             "campaigns": campaigns}
+    # Extra city-level breakdown when the question mentions a city.
+    q_lower = question.lower() if question else ""
+    if any(city in q_lower for city in
+                ("peoria", "phoenix", "scottsdale", "glendale",
+                  "chandler", "mesa", "tempe")):
+        # City counts.
+        cursor = db.customers.aggregate([
+            {"$match": {"tenant_id": tenant["id"]}},
+            {"$group": {"_id": {"$toLower": "$city"}, "n": {"$sum": 1}}},
+            {"$limit": 20},
+        ])
+        cities = {row["_id"] or "unknown": int(row["n"]) async for row in cursor}
+        snapshot["customers_by_city"] = cities
+    prompt = (
+        f"You are answering the admin's question with numbers pulled "
+        f"from a CRM. Respect the following snapshot exactly — do not "
+        f"invent unrelated numbers.\n\n{snapshot}\n\n"
+        "Answer the question in ≤ 100 words. Start with a numeric "
+        "answer when possible (e.g. 'There are 42 customers in "
+        "Peoria.'). Follow with 1-2 sentences of interpretation."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"], None
+
+
+async def _dexter_top_customers_report(*, tenant, params, system_prompt, user_text):
+    metric = ((params or {}).get("metric") or "revenue").lower()
+    period_days = int((params or {}).get("period_days") or 90)
+    since = _iso_days_ago(period_days)
+    ranking: List[Dict[str, Any]] = []
+    if metric == "revenue":
+        cursor = db.quotes.aggregate([
+            {"$match": {"tenant_id": tenant["id"], "doc_type": "invoice",
+                          "created_at": {"$gte": since}}},
+            {"$group": {"_id": "$customer_id",
+                          "revenue": {"$sum": "$total"},
+                          "invoices": {"$sum": 1}}},
+            {"$sort": {"revenue": -1}},
+            {"$limit": 20},
+        ])
+        async for row in cursor:
+            ranking.append({"customer_id": row["_id"],
+                                "revenue": round(float(row.get("revenue") or 0), 2),
+                                "invoices": int(row.get("invoices") or 0)})
+    elif metric == "visits":
+        cursor = db.jobs.aggregate([
+            {"$match": {"tenant_id": tenant["id"],
+                          "created_at": {"$gte": since}}},
+            {"$group": {"_id": "$customer_id",
+                          "visits": {"$sum": 1}}},
+            {"$sort": {"visits": -1}},
+            {"$limit": 20},
+        ])
+        async for row in cursor:
+            ranking.append({"customer_id": row["_id"],
+                                "visits": int(row.get("visits") or 0)})
+    elif metric == "chemicals_cost":
+        cursor = db.chemicals_added.aggregate([
+            {"$match": {"tenant_id": tenant["id"],
+                          "created_at": {"$gte": since}}},
+            {"$lookup": {"from": "jobs", "localField": "job_id",
+                            "foreignField": "id", "as": "job"}},
+            {"$unwind": {"path": "$job", "preserveNullAndEmptyArrays": True}},
+            {"$group": {"_id": "$job.customer_id",
+                          "cost_usd": {"$sum": "$cost_usd"}}},
+            {"$sort": {"cost_usd": -1}},
+            {"$limit": 20},
+        ])
+        async for row in cursor:
+            ranking.append({"customer_id": row["_id"],
+                                "chemicals_cost": round(float(row.get("cost_usd") or 0), 2)})
+    else:
+        return f"Unknown metric `{metric}`. Try revenue, visits, or chemicals_cost.", None
+    # Hydrate customer names.
+    ids = [r["customer_id"] for r in ranking if r.get("customer_id")]
+    names = {}
+    async for c in db.customers.find(
+        {"id": {"$in": ids}, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "name": 1},
+    ):
+        names[c["id"]] = c.get("name")
+    for row in ranking:
+        row["name"] = names.get(row.get("customer_id"), "?")
+    prompt = (
+        f"Top 20 customers by {metric} over the last {period_days}d:\n"
+        f"{ranking}\n\nWrite a 3-sentence summary highlighting the top "
+        f"3 and any notable pattern."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"] + f"\n\n(ranking: {ranking})", None
+
+
+async def _dexter_chemical_profitability_report(*, tenant, params,
+                                                        system_prompt, user_text):
+    days = int((params or {}).get("period_days") or 60)
+    since = _iso_days_ago(days)
+    per_chem: Dict[str, Dict[str, float]] = {}
+    async for row in db.chemicals_added.find(
+        {"tenant_id": tenant["id"], "created_at": {"$gte": since}},
+        {"_id": 0, "cost_usd": 1, "chemical_name": 1, "billed_amount": 1},
+    ):
+        name = row.get("chemical_name") or "unknown"
+        entry = per_chem.setdefault(name, {"cost": 0.0, "billed": 0.0, "n": 0})
+        entry["cost"] += float(row.get("cost_usd") or 0)
+        entry["billed"] += float(row.get("billed_amount") or 0)
+        entry["n"] += 1
+    for entry in per_chem.values():
+        margin = entry["billed"] - entry["cost"]
+        entry["margin"] = round(margin, 2)
+        entry["margin_pct"] = round(
+            (margin / entry["billed"] * 100) if entry["billed"] else 0.0, 1
+        )
+    prompt = (
+        f"Chemical profitability over {days}d:\n{per_chem}\n\n"
+        "Write a 4-sentence analysis calling out the highest-margin "
+        "product, the lowest-margin product, and one recommendation."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"] + f"\n\n(rollup: {per_chem})", None
+
