@@ -575,3 +575,192 @@ class TestFilters:
         r = requests.get(f"{API}/marketing/campaigns?status=draft",
                           headers=_h(admin_tok), timeout=T).json()
         assert all(c["status"] == "draft" for c in r["campaigns"])
+
+
+
+# ═════════════════════════════════════════════════════════════════════
+# A/B variants + /timeline endpoint (Feb-2026 M2 delta)
+# ═════════════════════════════════════════════════════════════════════
+
+class TestAbVariants:
+    def test_variant_selection_deterministic(self):
+        """Same (campaign_id, subscriber_id) must always resolve to the
+        same variant — regardless of how many times we call the selector.
+        Guarantees dry-runs, resumes, and stats recompute all agree."""
+        from services.marketing_campaigns import _select_variant
+        camp = {
+            "id": "camp-abc-123",
+            "ab_test": {"enabled": True, "variants": [
+                {"id": "A", "subject": "Take A", "weight": 1},
+                {"id": "B", "subject": "Take B", "weight": 1},
+            ]},
+        }
+        picks = [_select_variant(camp, "sub-1") for _ in range(20)]
+        assert len(set(v["id"] for v in picks)) == 1, (
+            f"variant selection drifted for the same subscriber: {picks}"
+        )
+
+    def test_variant_selection_splits_across_subscribers(self):
+        """Across a modest cohort, both A and B must get hit at least
+        once — otherwise the selector is stuck on a single bucket."""
+        from services.marketing_campaigns import _select_variant
+        camp = {
+            "id": "camp-split-xyz",
+            "ab_test": {"enabled": True, "variants": [
+                {"id": "A", "weight": 1},
+                {"id": "B", "weight": 1},
+            ]},
+        }
+        picks = {_select_variant(camp, f"sub-{i}")["id"] for i in range(50)}
+        assert picks == {"A", "B"}, (
+            f"expected both variants to appear in a 50-subscriber cohort; got {picks}"
+        )
+
+    def test_variant_selection_respects_weights(self):
+        """A weight of 10:1 should hand ≥5× more traffic to A than B."""
+        from services.marketing_campaigns import _select_variant
+        camp = {
+            "id": "camp-weight-test",
+            "ab_test": {"enabled": True, "variants": [
+                {"id": "A", "weight": 10},
+                {"id": "B", "weight": 1},
+            ]},
+        }
+        picks = [_select_variant(camp, f"sub-{i}")["id"] for i in range(200)]
+        a_count = picks.count("A")
+        b_count = picks.count("B")
+        assert a_count > 5 * b_count, (
+            f"weighted split A:B should be ≥5:1; got {a_count}:{b_count}"
+        )
+
+    def test_variant_disabled_returns_none(self):
+        from services.marketing_campaigns import _select_variant
+        # ab_test missing → no variant.
+        assert _select_variant({"id": "x"}, "sub-1") is None
+        # enabled=False → no variant.
+        assert _select_variant({"id": "x", "ab_test": {"enabled": False,
+            "variants": [{"id": "A"}]}}, "sub-1") is None
+        # enabled=True but no variants → no variant.
+        assert _select_variant({"id": "x", "ab_test": {"enabled": True,
+            "variants": []}}, "sub-1") is None
+
+    def test_ab_send_stamps_variant_id_on_sends(self, admin_tok, tenant_id):
+        """End-to-end: A/B campaign sent to a small cohort → every
+        marketing_campaign_sends row must carry a variant_id ∈ {A, B}."""
+        from pymongo import MongoClient
+        from dotenv import dotenv_values
+        env = dotenv_values("/app/backend/.env")
+        client = MongoClient(env["MONGO_URL"])
+        db_ = client[env["DB_NAME"]]
+        try:
+            sub_ids = _seed_subs(admin_tok, 4, prefix="m2ab")
+            list_id = _seed_list(admin_tok, sub_ids, name=f"TEST_ab_list_{uuid.uuid4().hex[:6]}")
+            camp = _mkcamp(admin_tok,
+                            name=f"TEST_ab_send_{uuid.uuid4().hex[:6]}",
+                            audience={"list_ids": [list_id]})
+            # Enable A/B on the draft.
+            r = requests.patch(f"{API}/marketing/campaigns/{camp['id']}",
+                                 json={"ab_test": {"enabled": True, "variants": [
+                                     {"id": "A", "subject": "Subject A", "weight": 1},
+                                     {"id": "B", "subject": "Subject B", "weight": 1},
+                                 ]}},
+                                 headers=_h(admin_tok), timeout=T)
+            assert r.status_code == 200, r.text
+            # Send.
+            requests.post(f"{API}/marketing/campaigns/{camp['id']}/send-now",
+                            headers=_h(admin_tok), timeout=T)
+            # Every send row must carry a variant_id.
+            rows = list(db_.marketing_campaign_sends.find(
+                {"tenant_id": tenant_id, "campaign_id": camp["id"]},
+                {"_id": 0, "variant_id": 1},
+            ))
+            assert rows, "no send rows produced for A/B campaign"
+            variant_ids = {r.get("variant_id") for r in rows}
+            assert None not in variant_ids, (
+                f"at least one send row missing variant_id: {rows}"
+            )
+            assert variant_ids <= {"A", "B"}, (
+                f"unexpected variant ids: {variant_ids}"
+            )
+        finally:
+            client.close()
+
+    def test_ab_stats_include_per_variant_counters(self, admin_tok, tenant_id):
+        """GET /stats on an A/B campaign must surface a ``variants``
+        block with per-variant sent/opened/clicked counters."""
+        sub_ids = _seed_subs(admin_tok, 2, prefix="m2abstats")
+        list_id = _seed_list(admin_tok, sub_ids, name=f"TEST_ab_stats_{uuid.uuid4().hex[:6]}")
+        camp = _mkcamp(admin_tok,
+                        name=f"TEST_ab_stats_{uuid.uuid4().hex[:6]}",
+                        audience={"list_ids": [list_id]})
+        requests.patch(f"{API}/marketing/campaigns/{camp['id']}",
+                         json={"ab_test": {"enabled": True, "variants": [
+                             {"id": "A", "subject": "A", "weight": 1},
+                             {"id": "B", "subject": "B", "weight": 1},
+                         ]}},
+                         headers=_h(admin_tok), timeout=T)
+        requests.post(f"{API}/marketing/campaigns/{camp['id']}/send-now",
+                        headers=_h(admin_tok), timeout=T)
+        r = requests.get(f"{API}/marketing/campaigns/{camp['id']}/stats",
+                          headers=_h(admin_tok), timeout=T)
+        assert r.status_code == 200
+        data = r.json()
+        assert "variants" in data, (
+            f"expected 'variants' block on A/B stats; got keys={list(data.keys())}"
+        )
+        # Each variant entry must carry the canonical counter shape.
+        for vid, entry in (data["variants"] or {}).items():
+            assert vid in ("A", "B"), vid
+            for k in ("sent", "opened", "clicked", "failed",
+                       "open_rate_pct", "click_rate_pct"):
+                assert k in entry, (
+                    f"variant {vid!r} missing '{k}' in stats: {entry}"
+                )
+
+
+# ═════════════════════════════════════════════════════════════════════
+class TestTimeline:
+    def test_timeline_404_for_unknown_campaign(self, admin_tok):
+        r = requests.get(f"{API}/marketing/campaigns/does-not-exist/timeline",
+                          headers=_h(admin_tok), timeout=T)
+        assert r.status_code == 404
+
+    def test_timeline_returns_send_events_sorted_desc(self, admin_tok):
+        sub_ids = _seed_subs(admin_tok, 2, prefix="m2tl")
+        list_id = _seed_list(admin_tok, sub_ids, name=f"TEST_tl_{uuid.uuid4().hex[:6]}")
+        camp = _mkcamp(admin_tok,
+                        name=f"TEST_tl_{uuid.uuid4().hex[:6]}",
+                        audience={"list_ids": [list_id]})
+        requests.post(f"{API}/marketing/campaigns/{camp['id']}/send-now",
+                        headers=_h(admin_tok), timeout=T)
+        r = requests.get(f"{API}/marketing/campaigns/{camp['id']}/timeline",
+                          headers=_h(admin_tok), timeout=T)
+        assert r.status_code == 200
+        data = r.json()
+        assert data["count"] >= 2, (
+            f"expected ≥2 send events for a 2-subscriber campaign; got {data}"
+        )
+        # Every event has the canonical shape and a plausible type.
+        allowed = {"send", "bounce", "open", "click", "click_event",
+                    "unsubscribe"}
+        for e in data["events"]:
+            assert "at" in e and "type" in e
+            assert e["type"] in allowed, e["type"]
+        # Sorted DESC by ``at``.
+        ats = [e["at"] for e in data["events"] if e.get("at")]
+        assert ats == sorted(ats, reverse=True), "timeline not sorted DESC"
+
+    def test_timeline_respects_limit_query_param(self, admin_tok):
+        sub_ids = _seed_subs(admin_tok, 2, prefix="m2tllim")
+        list_id = _seed_list(admin_tok, sub_ids, name=f"TEST_tl_lim_{uuid.uuid4().hex[:6]}")
+        camp = _mkcamp(admin_tok,
+                        name=f"TEST_tl_lim_{uuid.uuid4().hex[:6]}",
+                        audience={"list_ids": [list_id]})
+        requests.post(f"{API}/marketing/campaigns/{camp['id']}/send-now",
+                        headers=_h(admin_tok), timeout=T)
+        r = requests.get(
+            f"{API}/marketing/campaigns/{camp['id']}/timeline?limit=1",
+            headers=_h(admin_tok), timeout=T,
+        )
+        assert r.status_code == 200
+        assert r.json()["count"] <= 1

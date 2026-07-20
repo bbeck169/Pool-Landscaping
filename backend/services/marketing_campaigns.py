@@ -223,6 +223,61 @@ def _base_backend_url() -> str:
             or "").rstrip("/")
 
 
+# ─── A/B variants ─────────────────────────────────────────────────────
+def _select_variant(campaign: Dict[str, Any],
+                     subscriber_id: str) -> Optional[Dict[str, Any]]:
+    """Pick one variant from ``campaign['ab_test']['variants']`` for the
+    given subscriber. Returns ``None`` when A/B testing is disabled or
+    the variants list is empty. Deterministic — the same subscriber
+    always resolves to the same variant across dry-runs, resumes, and
+    stats recomputation.
+
+    Variant schema (all optional except ``id``)::
+
+        {"id": "A", "subject": "…", "content": {…}, "weight": 1}
+
+    Weights are optional; missing/zero weights are treated as 1. When
+    weights sum to 0, variants split evenly. The selection uses a
+    stable HMAC-based hash of ``campaign_id|subscriber_id`` so we never
+    depend on Python's randomised hash().
+    """
+    ab = campaign.get("ab_test") or {}
+    if not ab.get("enabled"):
+        return None
+    variants = [v for v in (ab.get("variants") or []) if isinstance(v, dict) and v.get("id")]
+    if not variants:
+        return None
+    weights = [max(int(v.get("weight") or 1), 1) for v in variants]
+    total = sum(weights) or len(variants)
+    key = f"{campaign.get('id') or ''}|{subscriber_id}".encode("utf-8")
+    digest = hmac.new(_campaign_secret(), key, hashlib.sha256).digest()
+    # Take first 4 bytes as an unsigned int → deterministic bucket.
+    bucket = int.from_bytes(digest[:4], "big") % total
+    running = 0
+    for v, w in zip(variants, weights):
+        running += w
+        if bucket < running:
+            return v
+    return variants[-1]  # defensive; math guarantees we hit above
+
+
+def _apply_variant_overrides(campaign: Dict[str, Any],
+                              variant: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return a shallow copy of ``campaign`` with the variant's subject +
+    content merged on top. Original campaign doc is untouched so
+    subsequent iterations of the send loop see the base row again."""
+    if not variant:
+        return campaign
+    merged = dict(campaign)
+    if variant.get("subject"):
+        merged["subject"] = variant["subject"]
+    if variant.get("content"):
+        base_content = dict(campaign.get("content") or {})
+        base_content.update(variant["content"])
+        merged["content"] = base_content
+    return merged
+
+
 def rewrite_email_html(html: str, campaign_id: str, subscriber_id: str,
                           send_id: str) -> Tuple[str, List[Dict[str, Any]]]:
     """Rewrite every ``<a href="…">`` through the click tracker and
@@ -354,25 +409,31 @@ async def dispatch_campaign(tenant_id: str, campaign_id: str) -> Dict[str, Any]:
         if sub.get("status") != "subscribed":
             skipped += 1
             continue
+        # A/B variant selection — deterministic per (campaign_id, subscriber_id).
+        # When A/B is disabled, ``variant`` is None and ``camp_view`` is the
+        # base campaign so behaviour matches the pre-A/B code path exactly.
+        variant = _select_variant(camp, sub["id"])
+        camp_view = _apply_variant_overrides(camp, variant)
         send_id = new_id()
         send_doc = {
             "id": send_id, "tenant_id": tenant_id,
             "campaign_id": campaign_id, "subscriber_id": sub["id"],
             "channel": channel, "sent_at": None,
             "status": "queued", "provider_message_id": None,
+            "variant_id": (variant or {}).get("id"),
             "open_count": 0, "click_count": 0,
             "first_opened_at": None, "last_opened_at": None,
             "first_clicked_at": None, "last_clicked_at": None,
         }
         await db.marketing_campaign_sends.insert_one(send_doc)
 
-        ctx = build_ctx(sub, tenant, camp, send_id)
+        ctx = build_ctx(sub, tenant, camp_view, send_id)
         ok_email = True
         ok_sms = True
         provider_id: Optional[str] = None
 
         if channel in ("email", "both") and sub.get("email"):
-            html_tpl = (camp.get("content") or {}).get("email_html") or ""
+            html_tpl = (camp_view.get("content") or {}).get("email_html") or ""
             rendered, _ = render_body(html_tpl, ctx)
             tracked_html, url_index = rewrite_email_html(
                 rendered, campaign_id, sub["id"], send_id)
@@ -386,13 +447,13 @@ async def dispatch_campaign(tenant_id: str, campaign_id: str) -> Dict[str, Any]:
                                         "kind": "catalog",
                                         "created_at": now_iso()}},
                     upsert=True)
-            subject_r, _ = render_body(camp.get("subject") or "", ctx)
+            subject_r, _ = render_body(camp_view.get("subject") or "", ctx)
             try:
                 from services.comms_email_adapter import send_email
                 r = await send_email(
                     tenant_id, sub["email"], subject_r, tracked_html,
-                    from_name=camp.get("from_name"),
-                    from_email=camp.get("from_email"),
+                    from_name=camp_view.get("from_name"),
+                    from_email=camp_view.get("from_email"),
                     headers={"List-Unsubscribe":
                                  f"<{_base_backend_url()}/api/public/mkt/unsub/"
                                  f"{mint_token(campaign_id, sub['id'], send_id)}>"})
@@ -402,7 +463,7 @@ async def dispatch_campaign(tenant_id: str, campaign_id: str) -> Dict[str, Any]:
                 logger.warning(f"[m2] email send fail: {e}")
 
         if channel in ("sms", "both") and sub.get("phone"):
-            sms_tpl = (camp.get("content") or {}).get("sms_body") or ""
+            sms_tpl = (camp_view.get("content") or {}).get("sms_body") or ""
             rendered_sms, _ = render_body(sms_tpl, ctx)
             # Best-effort: first http(s) link in body becomes the tracker.
             m = re.search(r"https?://\S+", rendered_sms)

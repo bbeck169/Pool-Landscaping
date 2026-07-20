@@ -380,7 +380,7 @@ async def _compute_stats(tenant_id: str, cid: str) -> Dict[str, Any]:
     complained = counts.get("complained", 0)
     unsub = counts.get("unsubscribed", 0)
     total = max(1, sent + counts.get("failed", 0))
-    return {
+    out = {
         "sent": sent, "delivered": delivered,
         "opened": opened, "clicked": clicked,
         "bounced": bounced, "complained": complained,
@@ -391,6 +391,39 @@ async def _compute_stats(tenant_id: str, cid: str) -> Dict[str, Any]:
         "bounce_rate_pct": round(bounced / total * 100, 2) if sent else 0.0,
         "unsubscribe_rate_pct": round(unsub / total * 100, 2) if sent else 0.0,
     }
+    # A/B — surface per-variant counters when the campaign is A/B enabled
+    # AND at least one send carries a ``variant_id``. Keeps the plain
+    # shape unchanged for non-A/B campaigns (so the M2-UI can safely
+    # detect the presence of ``variants`` and render a comparison card).
+    camp = await db.marketing_campaigns.find_one(
+        {"id": cid, "tenant_id": tenant_id},
+        {"_id": 0, "ab_test": 1},
+    )
+    if (camp or {}).get("ab_test", {}).get("enabled"):
+        per_variant: Dict[str, Dict[str, int]] = {}
+        async for row in db.marketing_campaign_sends.find(
+            {"tenant_id": tenant_id, "campaign_id": cid,
+              "variant_id": {"$exists": True, "$ne": None}},
+            {"_id": 0, "variant_id": 1, "status": 1,
+              "open_count": 1, "click_count": 1}):
+            vid = row.get("variant_id") or "unknown"
+            entry = per_variant.setdefault(
+                vid, {"sent": 0, "opened": 0, "clicked": 0, "failed": 0})
+            if row.get("status") == "sent":
+                entry["sent"] += 1
+            elif row.get("status") == "failed":
+                entry["failed"] += 1
+            if int(row.get("open_count") or 0) > 0:
+                entry["opened"] += 1
+            if int(row.get("click_count") or 0) > 0:
+                entry["clicked"] += 1
+        # Add computed rates per variant for consistent shape with the top-level.
+        for vid, entry in per_variant.items():
+            v_total = max(1, entry["sent"] + entry["failed"])
+            entry["open_rate_pct"] = round(entry["opened"] / v_total * 100, 2)
+            entry["click_rate_pct"] = round(entry["clicked"] / v_total * 100, 2)
+        out["variants"] = per_variant
+    return out
 
 
 @router.get("/marketing/campaigns/{cid}/stats")
@@ -432,6 +465,73 @@ async def recipients(cid: str,
         .sort("sent_at", -1).to_list(limit)
     return {"count": len(rows), "recipients": rows,
              "next_cursor": rows[-1]["sent_at"] if len(rows) == limit else None}
+
+
+@router.get("/marketing/campaigns/{cid}/timeline")
+async def timeline(cid: str,
+                       limit: int = Query(200, ge=1, le=1000),
+                       user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    """Chronological event feed for a single campaign — send, delivered,
+    open, click, bounce, unsubscribe. Rolled up from
+    ``marketing_campaign_sends`` (status / open / click timestamps) and
+    ``marketing_campaign_click_events`` (individual click pings, so
+    we can show ``5 clicks on X``). Sorted DESC by event time; capped
+    per request so the M2-UI campaign detail view can paginate without
+    Mongo scan storms."""
+    # Guard: campaign must belong to caller's tenant.
+    camp = await db.marketing_campaigns.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1})
+    if not camp:
+        raise HTTPException(404, "Campaign not found")
+    events: List[Dict[str, Any]] = []
+    # Sends → send / delivered / bounce / unsub / open / click timestamps.
+    async for r in db.marketing_campaign_sends.find(
+        {"tenant_id": tenant["id"], "campaign_id": cid},
+        {"_id": 0, "id": 1, "subscriber_id": 1, "channel": 1,
+          "variant_id": 1, "status": 1, "sent_at": 1,
+          "first_opened_at": 1, "last_opened_at": 1, "open_count": 1,
+          "first_clicked_at": 1, "last_clicked_at": 1, "click_count": 1,
+          "bounced_at": 1, "unsubscribed_at": 1},
+    ):
+        sub_id = r.get("subscriber_id")
+        if r.get("sent_at"):
+            events.append({"at": r["sent_at"], "type": "send",
+                              "subscriber_id": sub_id, "channel": r.get("channel"),
+                              "variant_id": r.get("variant_id"),
+                              "status": r.get("status")})
+        if r.get("bounced_at"):
+            events.append({"at": r["bounced_at"], "type": "bounce",
+                              "subscriber_id": sub_id})
+        if r.get("unsubscribed_at"):
+            events.append({"at": r["unsubscribed_at"], "type": "unsubscribe",
+                              "subscriber_id": sub_id})
+        if r.get("first_opened_at"):
+            events.append({"at": r["first_opened_at"], "type": "open",
+                              "subscriber_id": sub_id,
+                              "open_count": int(r.get("open_count") or 0)})
+        if r.get("first_clicked_at"):
+            events.append({"at": r["first_clicked_at"], "type": "click",
+                              "subscriber_id": sub_id,
+                              "click_count": int(r.get("click_count") or 0)})
+    # Individual click events — surface as their own rows so heavy-
+    # clicking subscribers show up chronologically instead of collapsed.
+    click_docs = await db.marketing_campaign_click_events.find(
+        {"tenant_id": tenant["id"], "campaign_id": cid,
+          "kind": {"$ne": "catalog"}},
+        {"_id": 0, "clicked_at": 1, "url": 1, "url_hash": 1,
+          "subscriber_id": 1, "created_at": 1},
+    ).sort("clicked_at", -1).to_list(limit)
+    for e in click_docs:
+        at = e.get("clicked_at") or e.get("created_at")
+        if not at:
+            continue
+        events.append({"at": at, "type": "click_event",
+                          "subscriber_id": e.get("subscriber_id"),
+                          "url": e.get("url"),
+                          "url_hash": e.get("url_hash")})
+    events.sort(key=lambda x: x.get("at") or "", reverse=True)
+    return {"count": len(events[:limit]), "events": events[:limit]}
 
 
 # ─── Public tracking (unauth) ──────────────────────────────────────────
