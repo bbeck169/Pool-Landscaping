@@ -82,6 +82,9 @@ import {
   TemplatesHub, Reviews,
 } from "@/pages/marketing/MarketingPages";
 import BeforeAfterStudio from "@/pages/marketing/BeforeAfterStudio";
+import DirectoriesHub from "@/pages/marketing/directories/DirectoriesHub";
+import NapProfilePage from "@/pages/marketing/directories/NapProfilePage";
+import DirectorySubmissionsPage from "@/pages/marketing/directories/DirectorySubmissionsPage";
 import AutopilotPage from "@/pages/marketing/AutopilotPage";
 import InstaQuoteAdminPage from "@/pages/marketing/InstaQuoteAdmin";
 import PublicInstaQuotePage from "@/pages/public/PublicInstaQuote";
@@ -345,6 +348,9 @@ export default function App() {
             <Route path="marketing/sequences/new" element={<AdminOnly><SequenceNew /></AdminOnly>} />
             <Route path="marketing/sequences/:id" element={<AdminOnly><SequenceDetail /></AdminOnly>} />
             <Route path="marketing/before-after" element={<AdminOnly><BeforeAfterStudio /></AdminOnly>} />
+            <Route path="marketing/directories" element={<AdminOnly><DirectoriesHub /></AdminOnly>} />
+            <Route path="marketing/directories/nap-profile" element={<AdminOnly><NapProfilePage /></AdminOnly>} />
+            <Route path="marketing/directories/submissions" element={<AdminOnly><DirectorySubmissionsPage /></AdminOnly>} />
             <Route path="marketing/autopilot" element={<AdminOnly><AutopilotPage /></AdminOnly>} />
             <Route path="marketing/instaquote" element={<AdminOnly><InstaQuoteAdminPage /></AdminOnly>} />
             <Route path="marketing/instaschedule" element={<AdminOnly><InstaScheduleAdminPage /></AdminOnly>} />
