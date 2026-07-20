@@ -633,6 +633,127 @@ class TestDealsCRUD:
         assert r.json()["probability_pct"] == 100
 
 
+class TestWonLostStageAssignment:
+    """Regression coverage for the tester's Q1-UI T2 finding: /won and
+    /lost must move the deal into the pipeline's terminal Won / Lost
+    stage so it renders in the correct Kanban column."""
+
+    _pipeline = None
+    _won_stage_id = None
+    _lost_stage_id = None
+
+    def _pipeline_and_terminal_stages(self, admin_tok):
+        if not TestWonLostStageAssignment._pipeline:
+            pipelines = requests.get(f"{API}/deal-pipelines",
+                                       headers=_h(admin_tok), timeout=T).json()
+            default = next(p for p in pipelines["pipelines"] if p["is_default"])
+            TestWonLostStageAssignment._pipeline = default
+            for s in default["stages"]:
+                if s.get("is_terminal_won") or (s.get("name") or "").lower() == "won":
+                    TestWonLostStageAssignment._won_stage_id = s["id"]
+                if s.get("is_terminal_lost") or (s.get("name") or "").lower() == "lost":
+                    TestWonLostStageAssignment._lost_stage_id = s["id"]
+        return TestWonLostStageAssignment._pipeline
+
+    def test_default_pipeline_has_terminal_flags(self, admin_tok):
+        pipeline = self._pipeline_and_terminal_stages(admin_tok)
+        # After the fix + backfill, every seeded pipeline's Won/Lost
+        # stages carry the terminal flag.
+        wons = [s for s in pipeline["stages"] if s.get("is_terminal_won")]
+        losts = [s for s in pipeline["stages"] if s.get("is_terminal_lost")]
+        assert len(wons) == 1
+        assert len(losts) == 1
+        assert wons[0]["name"].lower() == "won"
+        assert losts[0]["name"].lower() == "lost"
+
+    def test_won_moves_to_terminal_won_stage(self, admin_tok):
+        pipeline = self._pipeline_and_terminal_stages(admin_tok)
+        # Create a fresh deal, start at New Lead.
+        new = requests.post(f"{API}/deals",
+                              json={"title": "TEST_ Won-Stage Deal",
+                                     "value_cents": 100000,
+                                     "stage_id": pipeline["stages"][0]["id"]},
+                              headers=_h(admin_tok), timeout=T).json()
+        assert new["stage_id"] == pipeline["stages"][0]["id"]
+        # Mark won → stage_id must flip to the terminal Won stage.
+        r = requests.post(f"{API}/deals/{new['id']}/won",
+                           headers=_h(admin_tok), timeout=T)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["status"] == "won"
+        assert d["probability_pct"] == 100
+        assert d["stage_id"] == TestWonLostStageAssignment._won_stage_id
+        # Timeline includes a stage_change plus the won event.
+        events = requests.get(f"{API}/deals/{new['id']}/events",
+                                headers=_h(admin_tok), timeout=T).json()
+        types = [e["type"] for e in events["events"]]
+        assert "won" in types
+        assert "stage_change" in types
+        # And the Won-stage column now contains this card.
+        view = requests.get(f"{API}/deals/pipeline-view",
+                              headers=_h(admin_tok), timeout=T).json()
+        won_col = next(c for c in view["columns"]
+                         if c["stage"]["id"] == TestWonLostStageAssignment._won_stage_id)
+        assert any(dd["id"] == new["id"] for dd in won_col["deals"])
+        # Cleanup.
+        requests.delete(f"{API}/deals/{new['id']}",
+                         headers=_h(admin_tok), timeout=T)
+
+    def test_lost_moves_to_terminal_lost_stage(self, admin_tok):
+        pipeline = self._pipeline_and_terminal_stages(admin_tok)
+        new = requests.post(f"{API}/deals",
+                              json={"title": "TEST_ Lost-Stage Deal",
+                                     "value_cents": 50000,
+                                     "stage_id": pipeline["stages"][2]["id"]},
+                              headers=_h(admin_tok), timeout=T).json()
+        r = requests.post(f"{API}/deals/{new['id']}/lost",
+                           json={"lost_reason": "price"},
+                           headers=_h(admin_tok), timeout=T)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["status"] == "lost"
+        assert d["stage_id"] == TestWonLostStageAssignment._lost_stage_id
+        events = requests.get(f"{API}/deals/{new['id']}/events",
+                                headers=_h(admin_tok), timeout=T).json()
+        types = [e["type"] for e in events["events"]]
+        assert "lost" in types
+        assert "stage_change" in types
+        view = requests.get(f"{API}/deals/pipeline-view",
+                              headers=_h(admin_tok), timeout=T).json()
+        lost_col = next(c for c in view["columns"]
+                          if c["stage"]["id"] == TestWonLostStageAssignment._lost_stage_id)
+        assert any(dd["id"] == new["id"] for dd in lost_col["deals"])
+        requests.delete(f"{API}/deals/{new['id']}",
+                         headers=_h(admin_tok), timeout=T)
+
+    def test_convert_to_job_also_moves_to_won_stage(self, admin_tok):
+        pipeline = self._pipeline_and_terminal_stages(admin_tok)
+        # Use a customer this time so job creation succeeds.
+        cust = requests.post(f"{API}/customers",
+                              json={"name": "TEST_ Convert Won-Stage",
+                                     "email": f"conv_won_test_{uuid.uuid4().hex[:6]}@example.com"},
+                              headers=_h(admin_tok), timeout=T).json()
+        deal = requests.post(f"{API}/deals",
+                              json={"title": "TEST_ Convert Won-Stage Deal",
+                                     "value_cents": 300000,
+                                     "customer_id": cust["id"],
+                                     "stage_id": pipeline["stages"][1]["id"]},
+                              headers=_h(admin_tok), timeout=T).json()
+        r = requests.post(f"{API}/deals/{deal['id']}/convert-to-job",
+                           headers=_h(admin_tok), timeout=T)
+        assert r.status_code == 200
+        assert r.json()["job_id"] is not None
+        fresh = requests.get(f"{API}/deals/{deal['id']}",
+                               headers=_h(admin_tok), timeout=T).json()
+        assert fresh["status"] == "won"
+        assert fresh["stage_id"] == TestWonLostStageAssignment._won_stage_id
+        # Cleanup.
+        requests.delete(f"{API}/deals/{deal['id']}",
+                         headers=_h(admin_tok), timeout=T)
+        requests.delete(f"{API}/customers/{cust['id']}",
+                         headers=_h(admin_tok), timeout=T)
+
+
 class TestPipelineView:
     def test_kanban_returns_columns(self, admin_tok):
         r = requests.get(f"{API}/deals/pipeline-view",

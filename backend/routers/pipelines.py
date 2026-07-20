@@ -35,8 +35,8 @@ DEFAULT_PIPELINE_STAGES = [
     {"name": "Contacted", "color": "#38BDF8", "probability_pct": 25},
     {"name": "Qualified", "color": "#0EA5E9", "probability_pct": 50},
     {"name": "Estimate Sent", "color": "#F59E0B", "probability_pct": 70},
-    {"name": "Won", "color": "#22C55E", "probability_pct": 100},
-    {"name": "Lost", "color": "#EF4444", "probability_pct": 0},
+    {"name": "Won", "color": "#22C55E", "probability_pct": 100, "is_terminal_won": True},
+    {"name": "Lost", "color": "#EF4444", "probability_pct": 0, "is_terminal_lost": True},
 ]
 
 
@@ -54,6 +54,8 @@ def _build_default_pipeline(tenant_id: str) -> Dict[str, Any]:
             "order": i,
             "color": s["color"],
             "probability_pct": s["probability_pct"],
+            "is_terminal_won": bool(s.get("is_terminal_won", False)),
+            "is_terminal_lost": bool(s.get("is_terminal_lost", False)),
         })
     return {
         "id": new_id(),
@@ -68,12 +70,49 @@ def _build_default_pipeline(tenant_id: str) -> Dict[str, Any]:
     }
 
 
+def _find_terminal_stage(pipeline: Dict[str, Any],
+                          kind: str) -> Optional[Dict[str, Any]]:
+    """Return the pipeline's Won or Lost terminal stage.
+
+    Prefers the explicit ``is_terminal_won`` / ``is_terminal_lost`` flag;
+    falls back to case-insensitive name match on 'won' / 'lost'.
+    Returns None if the pipeline has no matching stage (custom pipeline
+    that omits Won/Lost — caller can decide what to do).
+    """
+    stages = (pipeline or {}).get("stages") or []
+    flag = "is_terminal_won" if kind == "won" else "is_terminal_lost"
+    for s in stages:
+        if s.get(flag):
+            return s
+    target_name = kind.lower()
+    for s in stages:
+        if (s.get("name") or "").strip().lower() == target_name:
+            return s
+    return None
+
+
 async def _ensure_default_pipeline(tenant_id: str) -> None:
     existing = await db.deal_pipelines.find_one(
         {"tenant_id": tenant_id, "is_default": True}, {"_id": 0})
-    if existing:
+    if not existing:
+        await db.deal_pipelines.insert_one(_build_default_pipeline(tenant_id))
         return
-    await db.deal_pipelines.insert_one(_build_default_pipeline(tenant_id))
+    # Idempotent backfill: pre-existing pipelines from Q1 didn't carry
+    # the terminal-flag fields. Set them by name match on any stage
+    # missing the fields entirely.
+    stages = existing.get("stages") or []
+    dirty = False
+    for s in stages:
+        if "is_terminal_won" not in s or "is_terminal_lost" not in s:
+            nm = (s.get("name") or "").strip().lower()
+            s["is_terminal_won"] = nm == "won"
+            s["is_terminal_lost"] = nm == "lost"
+            dirty = True
+    if dirty:
+        await db.deal_pipelines.update_one(
+            {"id": existing["id"], "tenant_id": tenant_id},
+            {"$set": {"stages": stages, "updated_at": now_iso()}},
+        )
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -382,9 +421,13 @@ async def pipeline_view(user: dict = Depends(get_current_user),
     if not pipeline:
         raise HTTPException(404, "pipeline not found")
     stages = pipeline.get("stages") or []
+    # Include all statuses so terminal Won/Lost columns render their
+    # cards. Front-end DealCard visually distinguishes won (green
+    # border) and lost (red border + opacity) so the columns stay
+    # readable when they fill up.
     deals = await db.deals.find(
-        {"tenant_id": tenant["id"], "pipeline_id": pipeline["id"],
-          "status": "open"}, {"_id": 0}
+        {"tenant_id": tenant["id"], "pipeline_id": pipeline["id"]},
+        {"_id": 0}
     ).sort("updated_at", -1).to_list(2000)
     by_stage: Dict[str, List[Dict[str, Any]]] = {s["id"]: [] for s in stages}
     for d in deals:
@@ -531,15 +574,34 @@ async def won_deal(did: str,
         {"id": did, "tenant_id": tenant["id"]}, {"_id": 0})
     if not row:
         raise HTTPException(404, "deal not found")
+    pipeline = await db.deal_pipelines.find_one(
+        {"id": row["pipeline_id"], "tenant_id": tenant["id"]}, {"_id": 0})
+    stages = (pipeline or {}).get("stages") or []
+    won_stage = _find_terminal_stage(pipeline or {}, "won")
     now = now_iso()
+    upd: Dict[str, Any] = {
+        "status": "won", "probability_pct": 100,
+        "updated_at": now, "won_at": now,
+    }
+    from_stage_id = row.get("stage_id")
+    if won_stage and won_stage["id"] != from_stage_id:
+        upd["stage_id"] = won_stage["id"]
+        upd["stage_entered_at"] = now
     await db.deals.update_one(
-        {"id": did, "tenant_id": tenant["id"]},
-        {"$set": {"status": "won", "probability_pct": 100,
-                  "updated_at": now, "won_at": now}},
-    )
+        {"id": did, "tenant_id": tenant["id"]}, {"$set": upd})
+    # Log stage_change first (if we moved), then the won event.
+    if won_stage and won_stage["id"] != from_stage_id:
+        old_stage = next(
+            (s for s in stages if s["id"] == from_stage_id), {})
+        await _log_event(tenant["id"], did, "stage_change",
+                          from_value={"stage_id": from_stage_id,
+                                        "name": old_stage.get("name")},
+                          to_value={"stage_id": won_stage["id"],
+                                      "name": won_stage.get("name")},
+                          actor_user_id=user.get("id"),
+                          meta={"via": "won_transition"})
     await _log_event(tenant["id"], did, "won",
-                      from_value=row.get("status"),
-                      to_value="won",
+                      from_value=row.get("status"), to_value="won",
                       actor_user_id=user.get("id"))
     return await db.deals.find_one(
         {"id": did, "tenant_id": tenant["id"]}, {"_id": 0})
@@ -553,16 +615,34 @@ async def lost_deal(did: str, body: LostIn,
         {"id": did, "tenant_id": tenant["id"]}, {"_id": 0})
     if not row:
         raise HTTPException(404, "deal not found")
+    pipeline = await db.deal_pipelines.find_one(
+        {"id": row["pipeline_id"], "tenant_id": tenant["id"]}, {"_id": 0})
+    stages = (pipeline or {}).get("stages") or []
+    lost_stage = _find_terminal_stage(pipeline or {}, "lost")
     now = now_iso()
+    upd: Dict[str, Any] = {
+        "status": "lost", "probability_pct": 0,
+        "lost_reason": body.lost_reason or "",
+        "updated_at": now, "lost_at": now,
+    }
+    from_stage_id = row.get("stage_id")
+    if lost_stage and lost_stage["id"] != from_stage_id:
+        upd["stage_id"] = lost_stage["id"]
+        upd["stage_entered_at"] = now
     await db.deals.update_one(
-        {"id": did, "tenant_id": tenant["id"]},
-        {"$set": {"status": "lost", "probability_pct": 0,
-                  "lost_reason": body.lost_reason or "",
-                  "updated_at": now, "lost_at": now}},
-    )
+        {"id": did, "tenant_id": tenant["id"]}, {"$set": upd})
+    if lost_stage and lost_stage["id"] != from_stage_id:
+        old_stage = next(
+            (s for s in stages if s["id"] == from_stage_id), {})
+        await _log_event(tenant["id"], did, "stage_change",
+                          from_value={"stage_id": from_stage_id,
+                                        "name": old_stage.get("name")},
+                          to_value={"stage_id": lost_stage["id"],
+                                      "name": lost_stage.get("name")},
+                          actor_user_id=user.get("id"),
+                          meta={"via": "lost_transition"})
     await _log_event(tenant["id"], did, "lost",
-                      from_value=row.get("status"),
-                      to_value="lost",
+                      from_value=row.get("status"), to_value="lost",
                       actor_user_id=user.get("id"),
                       meta={"lost_reason": body.lost_reason or ""})
     return await db.deals.find_one(
@@ -581,13 +661,18 @@ async def convert_to_job(did: str,
         {"id": did, "tenant_id": tenant["id"]}, {"_id": 0})
     if not row:
         raise HTTPException(404, "deal not found")
+    pipeline = await db.deal_pipelines.find_one(
+        {"id": row["pipeline_id"], "tenant_id": tenant["id"]}, {"_id": 0})
+    won_stage = _find_terminal_stage(pipeline or {}, "won")
     now = now_iso()
-    # Won transition.
+    # Won transition — same terminal-stage assignment as /won.
+    upd: Dict[str, Any] = {"status": "won", "probability_pct": 100,
+                            "updated_at": now, "won_at": now}
+    if won_stage and won_stage["id"] != row.get("stage_id"):
+        upd["stage_id"] = won_stage["id"]
+        upd["stage_entered_at"] = now
     await db.deals.update_one(
-        {"id": did, "tenant_id": tenant["id"]},
-        {"$set": {"status": "won", "probability_pct": 100,
-                  "updated_at": now, "won_at": now}},
-    )
+        {"id": did, "tenant_id": tenant["id"]}, {"$set": upd})
     await _log_event(tenant["id"], did, "won",
                       from_value=row.get("status"), to_value="won",
                       actor_user_id=user.get("id"),
