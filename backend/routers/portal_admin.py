@@ -248,4 +248,87 @@ async def portal_revoke(cid: str, user: dict = Depends(require_admin),
     )
     await db.customers.update_one({"id": cid, "tenant_id": tenant["id"]},
                                     {"$set": {"has_login": False}})
+    # Feb-2026 Portal Access ship — audit trail for revocations too.
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "event": "portal_revoke",
+            "actor_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "target_customer_id": cid,
+            "created_at": now_iso(),
+        })
+    except Exception:
+        pass
     return {"ok": True, "revoked": res.modified_count}
+
+
+# ─── Feb-2026 Portal Access ship ──────────────────────────────────────
+# Two admin-only read endpoints that back the customer-detail Portal
+# Access card: current status + recent activity feed.
+
+@router.get("/customers/{cid}/portal-status")
+async def portal_status(cid: str, user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    """Compact view of a customer's portal login state for the admin
+    Portal Access card.
+
+    Returns::
+
+        {
+          "has_login": bool,
+          "active": bool,               # false when revoked
+          "email": str | None,
+          "last_portal_login_at": str | None,
+          "last_portal_login_ip": str | None,
+          "revoked_at": str | None,
+        }
+    """
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not cust:
+        raise HTTPException(404, "Customer not found")
+    cust_user = await db.users.find_one(
+        {"customer_id": cid, "tenant_id": tenant["id"], "role": "customer"},
+        {"_id": 0},
+    )
+    return {
+        "has_login": bool(cust_user),
+        "active": bool(cust_user and cust_user.get("active", True)),
+        "email": (cust_user or {}).get("email") or cust.get("email") or None,
+        "last_portal_login_at": cust.get("last_portal_login_at"),
+        "last_portal_login_ip": cust.get("last_portal_login_ip"),
+        "revoked_at": (cust_user or {}).get("revoked_at"),
+    }
+
+
+@router.get("/customers/{cid}/portal-history")
+async def portal_history(cid: str,
+                           limit: int = 50,
+                           user: dict = Depends(require_admin),
+                           tenant: dict = Depends(get_current_tenant)):
+    """Recent portal-related audit events for a single customer:
+    portal_login (customer signed in), portal_reset (admin rotated
+    password), portal_revoke (admin killed access), and
+    impersonation_started / impersonation_ended (admin viewed as
+    customer).  Admin-only + tenant-scoped."""
+    if not await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1}
+    ):
+        raise HTTPException(404, "Customer not found")
+    lim = max(1, min(int(limit or 50), 500))
+    events = ("portal_login", "portal_reset", "portal_revoke",
+              "impersonation_started", "impersonation_ended")
+    rows = await db.audit_logs.find(
+        {"tenant_id": tenant["id"],
+          "target_customer_id": cid,
+          "event": {"$in": list(events)}},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(lim)
+    return {
+        "customer_id": cid,
+        "count": len(rows),
+        "events": rows,
+    }

@@ -24,7 +24,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from config import db, logger
 from routers.tenants import get_current_tenant
@@ -39,12 +39,31 @@ _ALLOWED_BILLING_MODES = {"off", "consolidated", "forward_to_master_contact"}
 # ─── Models ───────────────────────────────────────────────────────────
 
 class _AddressIn(BaseModel):
+    # Feb-2026 MP1.5 tester polish (obs #2) — accept ``address_line1``
+    # as an alias for ``line1`` so callers whose form model uses the
+    # flat customer schema key don't silently drop the value. Same for
+    # ``address_line2`` → ``line2``. The model_validator folds the
+    # alias into the canonical field before serialization so downstream
+    # code only has to know about ``line1`` / ``line2``.
     line1: Optional[str] = None
     line2: Optional[str] = None
     city: Optional[str] = None
     state: Optional[str] = None
     postal_code: Optional[str] = None
     country: Optional[str] = "US"
+    address_line1: Optional[str] = None
+    address_line2: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _fold_address_aliases(self):
+        if not self.line1 and self.address_line1:
+            self.line1 = self.address_line1
+        if not self.line2 and self.address_line2:
+            self.line2 = self.address_line2
+        # Drop the alias fields from the persisted representation.
+        self.address_line1 = None
+        self.address_line2 = None
+        return self
 
 
 class _SiteContactIn(BaseModel):
@@ -172,7 +191,7 @@ async def _lazy_backfill_from_customer(tenant_id: str, customer_id: str) -> Opti
     )
     if not cust:
         return None
-    line1 = cust.get("address_line1") or cust.get("address")
+    line1 = (cust.get("address_line1") or "").strip() or (cust.get("address") or "").strip()
     if not line1:
         return None
     doc = {
@@ -318,6 +337,11 @@ async def create_property(cid: str, body: PropertyIn,
     # Normalize nested dicts.
     if isinstance(doc.get("address"), _AddressIn):
         doc["address"] = doc["address"].dict()
+    # Strip transient alias fields (see _AddressIn model_validator).
+    addr = doc.get("address")
+    if isinstance(addr, dict):
+        addr.pop("address_line1", None)
+        addr.pop("address_line2", None)
     await db.properties.insert_one(doc)
     _strip(doc)
     await _emit("property.created", tenant["id"], user, cid, doc)
@@ -344,6 +368,11 @@ async def patch_property(pid: str, body: PropertyPatch,
                           user: dict = Depends(require_admin),
                           tenant: dict = Depends(get_current_tenant)):
     updates = {k: v for k, v in body.dict(exclude_unset=True).items()}
+    # Strip transient address alias fields (see _AddressIn model_validator).
+    addr = updates.get("address")
+    if isinstance(addr, dict):
+        addr.pop("address_line1", None)
+        addr.pop("address_line2", None)
     if not updates:
         return await db.properties.find_one(
             {"id": pid, "tenant_id": tenant["id"]}, {"_id": 0},

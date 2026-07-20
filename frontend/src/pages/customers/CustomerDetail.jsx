@@ -534,13 +534,31 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
   const [busy, setBusy] = React.useState("");
   const [inviteLink, setInviteLink] = React.useState(null);
   const [tempPassword, setTempPassword] = React.useState(null);
+  const [status, setStatus] = React.useState(null);
+  const [history, setHistory] = React.useState([]);
+  const [resetModalOpen, setResetModalOpen] = React.useState(false);
 
-  const doAction = async (endpoint, label) => {
+  const loadStatus = React.useCallback(async () => {
+    try {
+      const [s, h] = await Promise.all([
+        api.get(`/customers/${customer.id}/portal-status`),
+        api.get(`/customers/${customer.id}/portal-history?limit=25`),
+      ]);
+      setStatus(s || null);
+      setHistory((h && h.events) || []);
+    } catch (e) {
+      // Non-fatal — panel still renders with the legacy customer.has_login flag.
+    }
+  }, [customer.id]);
+
+  React.useEffect(() => { loadStatus(); }, [loadStatus]);
+
+  const doAction = async (endpoint, label, body) => {
     setBusy(endpoint);
     setInviteLink(null);
     setTempPassword(null);
     try {
-      const r = await api.post(`/customers/${customer.id}/${endpoint}`);
+      const r = await api.post(`/customers/${customer.id}/${endpoint}`, body || undefined);
       if (r?.emailed) {
         onToast({ tone: "success", message: `${label} email sent to ${r.email}` });
       } else if (r?.password) {
@@ -551,6 +569,7 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
         onToast({ tone: "success", message: `${label} done` });
       }
       await onDone();
+      await loadStatus();
     } catch (e) {
       onToast({ tone: "error", message: e.message });
     } finally { setBusy(""); }
@@ -569,46 +588,222 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
     finally { setBusy(""); }
   };
 
+  const hasLogin = (status && status.has_login) ?? customer.has_login;
+  const active = (status && status.active) ?? true;
+
   return (
-    <div className="space-y-4">
-      {customer.has_login ? (
-        <div className="text-sm" style={{ color: colors.onSurface }}>
-          Portal login active for <strong>{customer.email}</strong>.
-        </div>
-      ) : (
-        <div className="text-sm" style={{ color: colors.onSurfaceSecondary }}>
-          No portal login yet. Send an invite (auto-generated password) or create one manually.
-        </div>
-      )}
+    <div className="space-y-5" data-testid="portal-access-panel">
+      {/* Status row */}
+      <div
+        className="rounded-lg p-3 text-sm"
+        style={{ backgroundColor: colors.surfaceMuted, color: colors.onSurface }}
+        data-testid="portal-status-row"
+      >
+        {hasLogin ? (
+          <>
+            <div className="font-semibold" data-testid="portal-status-email">
+              Portal login: {status?.email || customer.email}
+              {" "}
+              {active ? (
+                <Chip label="Active" tone="success" testid="portal-status-active" />
+              ) : (
+                <Chip label="Revoked" tone="danger" testid="portal-status-revoked" />
+              )}
+            </div>
+            <div className="mt-1" style={{ color: colors.onSurfaceSecondary }}>
+              {status?.last_portal_login_at ? (
+                <span data-testid="portal-last-login">
+                  Last portal login: {new Date(status.last_portal_login_at).toLocaleString()}
+                  {status.last_portal_login_ip ? ` · IP ${status.last_portal_login_ip}` : ""}
+                </span>
+              ) : (
+                <span>No portal login recorded yet.</span>
+              )}
+            </div>
+          </>
+        ) : (
+          <div style={{ color: colors.onSurfaceSecondary }}>
+            No portal login yet. Send an invite (auto-generated password) or create one manually.
+          </div>
+        )}
+      </div>
+
+      {/* Actions */}
       <div className="flex flex-wrap gap-2">
-        <Button onClick={() => doAction("portal-invite", "Portal invite")} disabled={busy === "portal-invite"} testid="cd-portal-invite">
+        <Button
+          onClick={() => doAction("portal-invite", "Portal invite")}
+          disabled={busy === "portal-invite"}
+          testid="cd-portal-invite"
+        >
           {busy === "portal-invite" ? "Sending…" : "Send portal invite"}
         </Button>
-        {customer.has_login ? (
+        {hasLogin ? (
           <>
-            <Button variant="ghost" onClick={() => doAction("portal-reset", "Portal reset")} disabled={busy === "portal-reset"} testid="cd-portal-reset">
-              {busy === "portal-reset" ? "Resetting…" : "Reset password"}
+            <Button
+              variant="ghost"
+              onClick={() => setResetModalOpen(true)}
+              testid="cd-portal-reset"
+            >
+              Reset password…
             </Button>
-            <Button variant="ghost" onClick={impersonate} disabled={busy === "impersonate"} testid="cd-impersonate">
+            <Button
+              variant="ghost"
+              onClick={impersonate}
+              disabled={busy === "impersonate" || !active}
+              testid="cd-impersonate"
+            >
               View as customer
             </Button>
-            <Button variant="danger" onClick={() => doAction("portal-revoke", "Portal revoked")} disabled={busy === "portal-revoke"} testid="cd-portal-revoke">
+            <Button
+              variant="danger"
+              onClick={() => doAction("portal-revoke", "Portal revoked")}
+              disabled={busy === "portal-revoke" || !active}
+              testid="cd-portal-revoke"
+            >
               Revoke access
             </Button>
           </>
         ) : (
-          <Button variant="ghost" onClick={openLogin}>Manual create…</Button>
+          <Button variant="ghost" onClick={openLogin} testid="cd-portal-manual-create">Manual create…</Button>
         )}
       </div>
+
       {inviteLink && tempPassword ? (
-        <div className="rounded-lg p-3 text-sm" style={{ backgroundColor: colors.brandTertiary, color: colors.onBrandTertiary }} data-testid="portal-invite-payload">
+        <div
+          className="rounded-lg p-3 text-sm"
+          style={{ backgroundColor: colors.brandTertiary, color: colors.onBrandTertiary }}
+          data-testid="portal-invite-payload"
+        >
           <div className="font-semibold mb-1">Share these credentials manually:</div>
           <div>Login: <a href={inviteLink} className="underline" target="_blank" rel="noreferrer">{inviteLink}</a></div>
-          <div>Email: <code>{customer.email}</code></div>
+          <div>Email: <code>{status?.email || customer.email}</code></div>
           <div>Temp password: <code>{tempPassword}</code></div>
         </div>
       ) : null}
+
+      {/* Activity feed */}
+      <div data-testid="portal-history-section">
+        <div
+          className="text-xs uppercase font-semibold mb-2"
+          style={{ color: colors.muted }}
+        >
+          Recent portal activity
+        </div>
+        {history.length === 0 ? (
+          <div className="text-sm" style={{ color: colors.onSurfaceSecondary }} data-testid="portal-history-empty">
+            No recent activity.
+          </div>
+        ) : (
+          <ul className="space-y-1 text-sm" data-testid="portal-history-list">
+            {history.slice(0, 10).map((row) => (
+              <li key={row.id} className="flex justify-between gap-2">
+                <span style={{ color: colors.onSurface }}>
+                  {PORTAL_EVENT_LABELS[row.event] || row.event}
+                  {row.actor_email ? ` — ${row.actor_email}` : ""}
+                  {row.ip_address ? ` (${row.ip_address})` : ""}
+                </span>
+                <span style={{ color: colors.onSurfaceSecondary }}>
+                  {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <PortalResetModal
+        open={resetModalOpen}
+        onClose={() => setResetModalOpen(false)}
+        onSubmit={async (explicitPassword) => {
+          setResetModalOpen(false);
+          await doAction(
+            "portal-reset",
+            "Portal reset",
+            explicitPassword ? { password: explicitPassword } : {},
+          );
+        }}
+      />
     </div>
+  );
+}
+
+const PORTAL_EVENT_LABELS = {
+  portal_login: "Customer signed in",
+  portal_reset: "Admin reset password",
+  portal_revoke: "Admin revoked access",
+  impersonation_started: "Admin viewed as customer",
+  impersonation_ended: "Admin ended impersonation",
+};
+
+function PortalResetModal({ open, onClose, onSubmit }) {
+  const [mode, setMode] = React.useState("auto");
+  const [password, setPassword] = React.useState("");
+  React.useEffect(() => {
+    if (open) { setMode("auto"); setPassword(""); }
+  }, [open]);
+  const canSubmit = mode === "auto" || (mode === "explicit" && password.length >= 8);
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Reset portal password"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} testid="portal-reset-cancel">Cancel</Button>
+          <Button
+            onClick={() => onSubmit(mode === "explicit" ? password : null)}
+            disabled={!canSubmit}
+            testid="portal-reset-submit"
+          >
+            {mode === "auto" ? "Generate & send" : "Set password"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <label className="flex items-start gap-2 text-sm" style={{ color: colors.onSurface }}>
+          <input
+            type="radio"
+            name="reset-mode"
+            checked={mode === "auto"}
+            onChange={() => setMode("auto")}
+            data-testid="portal-reset-mode-auto"
+          />
+          <div>
+            <div className="font-medium">Generate + email to customer</div>
+            <div className="text-xs" style={{ color: colors.onSurfaceSecondary }}>
+              A one-time password is generated and emailed via Resend. If Resend is
+              not configured, the password is returned here so you can share it manually.
+            </div>
+          </div>
+        </label>
+        <label className="flex items-start gap-2 text-sm" style={{ color: colors.onSurface }}>
+          <input
+            type="radio"
+            name="reset-mode"
+            checked={mode === "explicit"}
+            onChange={() => setMode("explicit")}
+            data-testid="portal-reset-mode-explicit"
+          />
+          <div className="flex-1">
+            <div className="font-medium">Set a specific password</div>
+            <div className="text-xs mb-2" style={{ color: colors.onSurfaceSecondary }}>
+              Minimum 8 characters, at least one uppercase, one lowercase, one digit.
+            </div>
+            {mode === "explicit" ? (
+              <TextInput
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="New password"
+                type="password"
+                autoFocus
+                testid="portal-reset-password-input"
+              />
+            ) : null}
+          </div>
+        </label>
+      </div>
+    </Modal>
   );
 }
 

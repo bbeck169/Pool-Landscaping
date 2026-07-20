@@ -79,6 +79,31 @@ async def login(request: Request, body: LoginRequest):
         await _audit_auth("login", email, ip, "failure", "account deactivated")
         raise HTTPException(status_code=403, detail="Account is deactivated")
     await _audit_auth("login", email, ip, "success")
+    # Feb-2026 Portal Access ship — stamp the customer doc with the
+    # last portal login timestamp/IP + write a dedicated ``portal_login``
+    # audit row so the admin Portal Access panel can show the customer's
+    # recent activity without scanning the raw auth audit stream.
+    if user.get("role") == "customer" and user.get("customer_id"):
+        try:
+            await db.customers.update_one(
+                {"id": user["customer_id"], "tenant_id": user.get("tenant_id")},
+                {"$set": {
+                    "last_portal_login_at": now_iso(),
+                    "last_portal_login_ip": ip,
+                }},
+            )
+            await db.audit_logs.insert_one({
+                "id": new_id(),
+                "tenant_id": user.get("tenant_id"),
+                "event": "portal_login",
+                "target_customer_id": user["customer_id"],
+                "target_user_id": user["id"],
+                "email": email,
+                "ip_address": ip,
+                "created_at": now_iso(),
+            })
+        except Exception as e:
+            logger.warning(f"portal_login audit skipped: {e}")
     return auth_response(user)
 
 
