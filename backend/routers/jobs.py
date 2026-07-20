@@ -215,6 +215,7 @@ async def list_jobs(
     end: Optional[str] = Query(None, description="Phase 30: inclusive upper bound on scheduled_date (YYYY-MM-DD)"),
     scheduled_date: Optional[str] = Query(None, description="Phase 51.0/52: exact date (YYYY-MM-DD) — matches bare date or ISO datetime prefix"),
     recurring_template_id: Optional[str] = Query(None, description="Phase 51.I: filter by recurring template origin"),
+    limit: int = Query(1000, ge=1, le=5000, description="Feb-2026: cap on returned rows; default 1000"),
 ):
     q = scope_jobs_query(user, tenant, status, technician_id)
     # Phase 30 · optional inclusive date-range filter so the new calendar
@@ -233,7 +234,10 @@ async def list_jobs(
     # Phase 51.I fix — recurring-template origin filter.
     if recurring_template_id:
         q["recurring_template_id"] = recurring_template_id
-    docs = await db.jobs.find(q, {"_id": 0}).sort("scheduled_date", 1).to_list(1000)
+    # Feb-2026 hygiene fix — ``limit`` param now actually caps the
+    # to_list() call. Previously the query silently returned 1000
+    # regardless of ``?limit=X``.
+    docs = await db.jobs.find(q, {"_id": 0}).sort("scheduled_date", 1).to_list(limit)
     # Phase 57.d — enrich every returned job with the assigned tech's
     # department + derived checklist_kind so schedule/dispatch cards +
     # mobile clients see the right form without a per-job GET.

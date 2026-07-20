@@ -34,6 +34,7 @@ import { useAuth } from "@/auth";
 import { Gate, useCan } from "@/hooks/usePermissions";
 import { useClockInGate, ClockInGateDialog } from "@/hooks/useClockInGate";
 import ChecklistModal from "@/components/checklist/ChecklistModal";
+import ServiceNotePill from "@/components/schedule/ServiceNotePill";
 
 /** Phase 30W · service-type → card palette. Mirrors the mobile fix-pass. */
 const SERVICE_PALETTE = (raw) => {
@@ -933,6 +934,17 @@ function GridPanel({
                                   fontFamily: "ui-monospace, SFMono-Regular, monospace" }}
                          data-testid={`job-gate-code-${j.id}`}>
                       🔑 Gate: {j.customer_gate_code || j.gate_code}
+                    </div>
+                  ) : null}
+                  {/* Feb-2026 Note-pill — specialty-specific service note. */}
+                  {j.service_note ? (
+                    <div className="mt-1">
+                      <ServiceNotePill
+                        note={j.service_note}
+                        serviceType={j.service_type}
+                        jobId={j.id}
+                        compact
+                      />
                     </div>
                   ) : null}
                   {(j.customer_notes || j.account_notes) ? (

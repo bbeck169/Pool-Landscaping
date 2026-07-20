@@ -233,3 +233,33 @@ def test_technician_can_read_schedule_slice_but_cannot_patch(admin_headers, cust
     r = requests.patch(f"{API}/customers/{cid}/service-notes", headers=th,
                         json={"pool": "TECH_WROTE_THIS"}, timeout=15)
     assert r.status_code in (401, 403), r.status_code
+
+
+def test_jobs_endpoint_respects_limit_query_param(admin_headers):
+    """Feb-2026 hygiene fix — tester found ``GET /api/jobs?limit=20``
+    returned 1000 items because the value was ignored. Pin the fix."""
+    r = requests.get(f"{API}/jobs?limit=3", headers=admin_headers, timeout=15)
+    assert r.status_code == 200
+    assert len(r.json()) <= 3, f"limit=3 returned {len(r.json())} items"
+    r = requests.get(f"{API}/jobs?limit=1", headers=admin_headers, timeout=15)
+    assert len(r.json()) <= 1
+
+
+def test_schedule_today_carries_service_note(admin_headers):
+    """Feb-2026 Note-pill ship — techs on their /schedule/today feed must
+    see the specialty-specific note enriched onto each job item so the
+    mobile Schedule row can render the pill without an extra RPC."""
+    tech_tok = _login("mike@aquaterra.com")
+    th = {"Authorization": f"Bearer {tech_tok}"}
+    r = requests.get(f"{API}/schedule/today", headers=th, timeout=15)
+    assert r.status_code == 200
+    data = r.json()
+    items = data.get("items") if isinstance(data, dict) else data
+    # Field must be present on every job-typed item (may be None when
+    # neither the customer nor the tech's specialty resolves a note).
+    for it in (items or []):
+        if it.get("type") == "job":
+            assert "service_note" in it, (
+                f"schedule/today job missing 'service_note': keys={list(it.keys())}"
+            )
+

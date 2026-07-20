@@ -159,7 +159,7 @@ export function JobCard({ job, testID, locked, unread, onView }: { job: any; tes
           {!hidePrice ? <Text style={styles.price}>· {money(job.price)}</Text> : null}
         </View>
       </View>
-      {job.gate_code || job.account_notes ? (
+      {job.gate_code || job.account_notes || job.service_note ? (
         <View style={styles.infoBlock}>
           {job.gate_code ? (
             <View style={styles.gateChip} testID={`job-gate-code-${job.id}`}>
@@ -167,6 +167,32 @@ export function JobCard({ job, testID, locked, unread, onView }: { job: any; tes
               <Text style={styles.gateText}>Gate {job.gate_code}</Text>
             </View>
           ) : null}
+          {/* Feb-2026 Note-pill — specialty-specific service note. */}
+          {job.service_note ? (() => {
+            const st = String(job.service_type || "").toLowerCase();
+            const isLand = st.includes("landscap");
+            const isPool = st.includes("pool") || st.includes("clean");
+            const bg = isLand ? "#DCFCE7" : isPool ? "#DBEAFE" : "#F3F4F6";
+            const fg = isLand ? "#166534" : isPool ? "#075985" : "#4B5563";
+            const bd = isLand ? "#86EFAC" : isPool ? "#7DD3FC" : "#D1D5DB";
+            const iconName = isLand ? "leaf" : isPool ? "water" : "information-circle-outline";
+            return (
+              <Pressable
+                onPress={() => (locked ? undefined : router.push(`/job/${job.id}?focus=notes`))}
+                testID={`service-note-pill-${job.id}`}
+                style={{
+                  flexDirection: "row", alignItems: "center", gap: 4,
+                  paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6,
+                  backgroundColor: bg, borderWidth: 1, borderColor: bd,
+                }}
+              >
+                <Ionicons name={iconName as any} size={11} color={fg} />
+                <Text style={{ color: fg, fontSize: 10, fontWeight: "700" }}>
+                  Note
+                </Text>
+              </Pressable>
+            );
+          })() : null}
           {job.account_notes ? (
             <View style={styles.noteRow} testID={`job-notes-preview-${job.id}`}>
               <Ionicons name="document-text-outline" size={13} color={colors.muted} style={{ marginTop: 1 }} />

@@ -10,6 +10,7 @@ import { colors, brandGradientCss } from "@/theme";
 import { useJsApiLoader } from "@react-google-maps/api";
 import { useAuth } from "@/auth";
 import WeatherWidget5Day from "@/pages/aitools/WeatherWidget5Day";
+import ServiceNotePill from "@/components/schedule/ServiceNotePill";
 import {
   Clock, MapPin, Navigation, Car, Coffee, PlayCircle, StopCircle,
   AlertTriangle, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare,
@@ -822,8 +823,16 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
                 )}
 
                 {/* Gate code + notes preview (Phase 16C follow-up) */}
-                {(j.gate_code || notesFull) && (
+                {(j.gate_code || notesFull || j.service_note) && (
                   <div className="mt-2 flex items-start gap-2 flex-wrap">
+                    {/* Feb-2026 Note-pill — specialty-specific instruction
+                        surfaced from customer.service_notes.{pool,landscape}
+                        based on this job's service_type. */}
+                    <ServiceNotePill
+                      note={j.service_note}
+                      serviceType={j.service_type}
+                      jobId={j.id}
+                    />
                     {j.gate_code && (
                       <button
                         onClick={(e) => {
