@@ -64,6 +64,12 @@ KIND_LABELS: dict[str, str] = {
     "tech_message":       "Technician Message",
     "tech_note":          "Technician Note",
     "customer_message":   "Customer Portal Message",
+    # TODO(HL-inbox): When the HighLevel Conversation Inbox phase lands,
+    # its inbound handlers (FB DM / IG DM / WhatsApp / Google Business
+    # Messages) MUST also fire ``inbound_customer_message`` so the
+    # unified category stays authoritative across every channel. Reuse
+    # ``enqueue_for_tenant_admins`` + the ``_assigned`` variant when a
+    # deal/owner is resolvable.
     "inbound_customer_message":          "Inbound Customer Message",
     "inbound_customer_message_assigned": "Inbound Customer Message (assigned to you)",
     # Team messaging (Phase 56)

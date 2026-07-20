@@ -470,6 +470,43 @@ async def _handle_sms_event(body: Dict[str, Any]) -> None:
             customer_id=(match or {}).get("id"),
             source_ref={"kind": "sms_message", "id": doc["id"]},
         )
+        # Feb-2026 Unified Notifications spec — also fire the
+        # cross-channel ``inbound_customer_message`` category so admins
+        # who have the RC-specific kind muted still get the unified
+        # ping (default push=ON for admins).
+        try:
+            from services.notifications import (
+                enqueue_for_tenant_admins as _emit_admins,
+                enqueue_for_record_owner as _emit_owner,
+            )
+            tenant_id_final = (match or {}).get("tenant_id")
+            # Prefer the customer's assigned tech (if any) for the
+            # ``inbound_customer_message_assigned`` kind; falls back to
+            # admins on the plain ``inbound_customer_message``.
+            assigned_uid = (match or {}).get("assigned_user_id") \
+                or (match or {}).get("default_technician_id")
+            await _emit_admins(
+                tenant_id_final, "inbound_customer_message",
+                title=f"Customer message · {(match or {}).get('name') or from_number}",
+                body=(msg or "")[:200],
+                source_ref={"kind": "sms_message", "id": doc["id"]},
+                href=f"/customers/{(match or {}).get('id')}",
+                priority="high",
+            )
+            if assigned_uid:
+                await _emit_owner(
+                    tenant_id_final,
+                    owner_user_id=assigned_uid,
+                    kind="inbound_customer_message_assigned",
+                    title=f"Customer message · {(match or {}).get('name') or from_number}",
+                    body=(msg or "")[:200],
+                    source_ref={"kind": "sms_message", "id": doc["id"]},
+                    href=f"/customers/{(match or {}).get('id')}",
+                    priority="high",
+                    fallback_admins=False,
+                )
+        except Exception as _e:
+            logger.warning(f"[rc] unified inbound_customer notify failed: {_e}")
     elif direction == "inbound" and from_number:
         # Phase 55.1 — surface SMS from unknown numbers to admins.
         await _notify_admins(
