@@ -70,6 +70,7 @@ from routers import (
     directories,
     customer_tasks,
     properties,
+    invoices_mp15,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -146,7 +147,8 @@ for module in [notifications_router,
                chat,
                directories,
                customer_tasks,
-               properties]:
+               properties,
+               invoices_mp15]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -511,6 +513,20 @@ async def startup():
         logger.info(f"[mp1] properties migration seeded {n} property row(s)")
     except Exception as e:
         logger.warning(f"mp1 properties migration crashed: {e}")
+
+    # Feb-2026 MP1.5 — Multi-property invoice plumbing. Idempotent:
+    # backfills ``property_id`` on legacy invoices/estimates whose
+    # linked jobs already carry a property. Skipped silently when a
+    # doc's jobs span multiple properties (admin can consolidate
+    # manually via POST /api/invoices/consolidate).
+    try:
+        from routers.invoices_mp15 import migrate_invoices_estimates_property_id
+        counts = await migrate_invoices_estimates_property_id()
+        logger.info(
+            f"[mp1.5] invoice/estimate property_id backfill — {counts}"
+        )
+    except Exception as e:
+        logger.warning(f"mp1.5 backfill migration crashed: {e}")
 
     # Phase 5A · Video Uploads (Feb 2026) — init Emergent object storage
     # session key once at startup. Never crashes the boot: on failure the

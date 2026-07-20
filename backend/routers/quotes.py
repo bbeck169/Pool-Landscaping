@@ -44,6 +44,32 @@ async def create_quote(body: QuoteIn,
     )
     if not customer:
         raise HTTPException(400, "Customer not found")
+    # Feb-2026 MP1.5 — property_id validation. Same rules as
+    # POST /jobs: if the customer has exactly 1 active property, auto-
+    # assign; if the caller sent an explicit id, verify it belongs to
+    # this customer + tenant AND is still active. Leaving the field
+    # null when the customer has multiple properties is allowed — that's
+    # the "consolidated across properties" case (master_billing_mode
+    # ``consolidated``).
+    property_id = body.property_id
+    if property_id:
+        prop = await db.properties.find_one(
+            {"id": property_id, "tenant_id": tenant["id"],
+              "customer_id": body.customer_id},
+            {"_id": 0, "id": 1, "active": 1},
+        )
+        if not prop:
+            raise HTTPException(400, "property_id not found for this customer")
+        if prop.get("active") is False:
+            raise HTTPException(400, "property_id refers to an inactive property")
+    else:
+        active_props = await db.properties.find(
+            {"tenant_id": tenant["id"], "customer_id": body.customer_id,
+              "active": {"$ne": False}},
+            {"_id": 0, "id": 1},
+        ).to_list(10)
+        if len(active_props) == 1:
+            property_id = active_props[0]["id"]
     items = [li.dict() for li in body.line_items]
     subtotal, tax, total = compute_totals(items, body.tax_rate)
     due_date = body.due_date
@@ -60,6 +86,7 @@ async def create_quote(body: QuoteIn,
         "tenant_id": tenant["id"],
         "customer_id": body.customer_id,
         "customer_name": customer["name"],
+        "property_id": property_id,
         "title": body.title,
         "doc_type": body.doc_type,
         "line_items": items,
@@ -118,6 +145,18 @@ async def update_quote(qid: str, body: QuoteUpdate,
     if "invoice_number" in upd and upd["invoice_number"] != existing.get("invoice_number"):
         raise HTTPException(400, "invoice_number is immutable once assigned")
     upd.pop("invoice_number", None)
+    # Feb-2026 MP1.5 — property_id patch validation. Must reference an
+    # active property belonging to this quote's customer + tenant.
+    if "property_id" in upd and upd["property_id"]:
+        prop = await db.properties.find_one(
+            {"id": upd["property_id"], "tenant_id": tenant["id"],
+              "customer_id": existing.get("customer_id")},
+            {"_id": 0, "id": 1, "active": 1},
+        )
+        if not prop:
+            raise HTTPException(400, "property_id not found for this customer")
+        if prop.get("active") is False:
+            raise HTTPException(400, "property_id refers to an inactive property")
     if "line_items" in upd:
         upd["line_items"] = [li if isinstance(li, dict) else li.dict() for li in upd["line_items"]]
     if "line_items" in upd or "tax_rate" in upd:

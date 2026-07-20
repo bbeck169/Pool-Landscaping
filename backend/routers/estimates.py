@@ -154,6 +154,26 @@ async def create_estimate(body: EstimateIn,
     )
     if not customer:
         raise HTTPException(400, "Customer not found")
+    # Feb-2026 MP1.5 — property_id validation + single-property auto-assign.
+    property_id = body.property_id
+    if property_id:
+        prop = await db.properties.find_one(
+            {"id": property_id, "tenant_id": tenant["id"],
+              "customer_id": body.customer_id},
+            {"_id": 0, "id": 1, "active": 1},
+        )
+        if not prop:
+            raise HTTPException(400, "property_id not found for this customer")
+        if prop.get("active") is False:
+            raise HTTPException(400, "property_id refers to an inactive property")
+    else:
+        active_props = await db.properties.find(
+            {"tenant_id": tenant["id"], "customer_id": body.customer_id,
+              "active": {"$ne": False}},
+            {"_id": 0, "id": 1},
+        ).to_list(10)
+        if len(active_props) == 1:
+            property_id = active_props[0]["id"]
     items = [li.dict() for li in body.line_items]
     calc = compute_estimate(items, body.overhead_pct, body.margin_pct)
     terms = body.terms
@@ -163,6 +183,7 @@ async def create_estimate(body: EstimateIn,
     doc = {
         "id": new_id(), "tenant_id": tenant["id"],
         "customer_id": body.customer_id, "customer_name": customer["name"],
+        "property_id": property_id,
         "title": body.title, "line_items": items,
         "overhead_pct": body.overhead_pct, "margin_pct": body.margin_pct,
         "notes": body.notes or "", "terms": terms, "status": "draft",
@@ -201,9 +222,27 @@ async def update_estimate(eid: str, body: EstimateIn,
         raise HTTPException(400, "Customer not found")
     items = [li.dict() for li in body.line_items]
     calc = compute_estimate(items, body.overhead_pct, body.margin_pct)
+    # Feb-2026 MP1.5 — property_id patch validation. If the caller
+    # explicitly sent a value, verify it belongs to this customer +
+    # tenant AND is still active. If body.property_id is null, we
+    # leave the existing value untouched (PUT is not a full replace
+    # for this field — callers should use PATCH-style intent).
+    property_id = existing.get("property_id")
+    if body.property_id is not None:
+        prop = await db.properties.find_one(
+            {"id": body.property_id, "tenant_id": tenant["id"],
+              "customer_id": body.customer_id},
+            {"_id": 0, "id": 1, "active": 1},
+        )
+        if not prop:
+            raise HTTPException(400, "property_id not found for this customer")
+        if prop.get("active") is False:
+            raise HTTPException(400, "property_id refers to an inactive property")
+        property_id = body.property_id
     upd = {
         "customer_id": body.customer_id, "customer_name": customer["name"], "title": body.title,
         "line_items": items, "overhead_pct": body.overhead_pct, "margin_pct": body.margin_pct,
+        "property_id": property_id,
         "notes": body.notes or "", "updated_at": now_iso(), **calc,
     }
     if body.terms is not None:
@@ -246,6 +285,8 @@ async def convert_estimate_to_quote(eid: str,
     quote = {
         "id": new_id(), "tenant_id": tenant["id"],
         "customer_id": est["customer_id"], "customer_name": est.get("customer_name", ""),
+        # MP1.5 — carry property_id through the estimate → quote conversion.
+        "property_id": est.get("property_id"),
         "title": est.get("title", "Estimate"), "doc_type": "quote",
         "line_items": [{"description": est.get("title", "Project"), "quantity": 1, "unit_price": sell}],
         "tax_rate": 0.0, "subtotal": sell, "tax": 0.0, "total": sell,

@@ -170,6 +170,12 @@ class QuoteIn(BaseModel):
     due_date: Optional[str] = None  # YYYY-MM-DD (invoices)
     notes: Optional[str] = ""
     terms: Optional[str] = None  # None → auto-fill from /settings/terms defaults
+    # Feb-2026 MP1.5 — Multi-property billing plumbing. Optional pointer
+    # to the ``properties`` row this doc bills against. When the customer
+    # owns exactly one active property the router auto-assigns it. When
+    # the customer owns multiple, callers should send an explicit id;
+    # leaving it null is allowed (consolidated-across-properties case).
+    property_id: Optional[str] = None
 
 
 class QuoteUpdate(BaseModel):
@@ -179,6 +185,7 @@ class QuoteUpdate(BaseModel):
     tax_rate: Optional[float] = None
     due_date: Optional[str] = None
     line_items: Optional[List[LineItem]] = None
+    property_id: Optional[str] = None
 
 
 class TermsSettingsIn(BaseModel):
@@ -596,6 +603,10 @@ class EstimateIn(BaseModel):
     margin_pct: float = 0.0
     notes: Optional[str] = ""
     terms: Optional[str] = None  # None → auto-fill from /settings/terms defaults
+    # Feb-2026 MP1.5 — Multi-property estimate plumbing. Same semantics
+    # as ``QuoteIn.property_id``: optional pointer to the property the
+    # estimate is scoped to. Carried through on conversion to a quote.
+    property_id: Optional[str] = None
 
 
 class EstimateSettingsIn(BaseModel):

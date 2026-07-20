@@ -486,38 +486,73 @@ async def patch_master_billing(cid: str, body: MasterBillingIn,
 
 
 def resolve_invoice_recipient(customer: dict, property_doc: Optional[dict]) -> Dict[str, Optional[str]]:
-    """Billing routing per user's Q1c spec:
+    """Billing routing per Feb-2026 MP1.5 spec:
 
       * ``off`` (default) — deliver to the property's on-site contact
-        (falls back to customer primary if property is unset).
-      * ``consolidated`` — invoices are consolidated at the customer
-        level; caller aggregates line items per cycle and delivers to
-        the customer's primary billing contact.
-      * ``forward_to_master_contact`` — each property invoices
-        separately, but the delivery address is the customer's master
-        billing contact (overrides available for email + phone).
+        primary email/phone. Fallback chain: property.site_contact
+        primary → customer's primary email/phone (from ``emails`` /
+        ``mobiles`` arrays with the legacy scalar as final fallback).
+        If nothing resolves, returns ``send_status_hint=
+        "not_sent_missing_recipient"`` so the caller can log + skip.
+      * ``consolidated`` — one invoice per customer, aggregated across
+        all properties. Delivered to
+        ``customer.master_billing_contact_email`` (override) →
+        ``primary_email(customer)`` → ``customer.email`` (legacy).
+      * ``forward_to_master_contact`` — per-property invoices, but the
+        delivery target is the customer's master billing contact
+        (same fallback chain as consolidated).
 
-    Returns ``{email, phone, delivery_kind}``. Callers use
-    ``delivery_kind`` to decide whether to consolidate lines.
+    Returns::
+
+        {
+          "email":  Optional[str],
+          "phone":  Optional[str],
+          "delivery_kind": "per_property" | "consolidated" | "forwarded",
+          "send_status_hint": "ready" | "not_sent_missing_recipient",
+          "mode": <the resolved mode string>,
+        }
     """
-    mode = (customer or {}).get("master_billing_mode") or "off"
+    # Local import to avoid a circular boot cycle with customers router.
+    try:
+        from services.customer_multi_contact import (
+            primary_email as _prim_email, primary_mobile as _prim_mobile,
+        )
+    except Exception:
+        def _prim_email(_d):
+            return None
+        def _prim_mobile(_d):
+            return None
+
+    cust = customer or {}
+    prop = property_doc or {}
+    mode = cust.get("master_billing_mode") or "off"
+
+    cust_primary_email = _prim_email(cust) or cust.get("email") or None
+    cust_primary_phone = _prim_mobile(cust) or cust.get("phone") or None
+
+    def _wrap(email: Optional[str], phone: Optional[str], kind: str) -> Dict[str, Optional[str]]:
+        return {
+            "email": (email or None) or None,
+            "phone": (phone or None) or None,
+            "delivery_kind": kind,
+            "mode": mode,
+            "send_status_hint": (
+                "ready" if (email or phone) else "not_sent_missing_recipient"
+            ),
+        }
+
     if mode == "consolidated":
-        # Customer's primary email + phone.
-        return {
-            "email": customer.get("email"),
-            "phone": customer.get("phone"),
-            "delivery_kind": "consolidated",
-        }
+        email = cust.get("master_billing_contact_email") or cust_primary_email
+        phone = cust.get("master_billing_contact_phone") or cust_primary_phone
+        return _wrap(email, phone, "consolidated")
+
     if mode == "forward_to_master_contact":
-        return {
-            "email": (customer.get("master_billing_contact_email")
-                        or customer.get("email")),
-            "phone": (customer.get("master_billing_contact_phone")
-                        or customer.get("phone")),
-            "delivery_kind": "forwarded",
-        }
-    # off — property on-site contact (fallback: customer primary).
-    site = ((property_doc or {}).get("site_contact") or {})
+        email = cust.get("master_billing_contact_email") or cust_primary_email
+        phone = cust.get("master_billing_contact_phone") or cust_primary_phone
+        return _wrap(email, phone, "forwarded")
+
+    # off — property site contact primary → customer primary fallback.
+    site = (prop.get("site_contact") or {})
     site_email = None
     site_phone = None
     for e in (site.get("emails") or []):
@@ -528,8 +563,6 @@ def resolve_invoice_recipient(customer: dict, property_doc: Optional[dict]) -> D
         if m.get("is_primary") and m.get("number_e164"):
             site_phone = m["number_e164"]
             break
-    return {
-        "email": site_email or customer.get("email"),
-        "phone": site_phone or customer.get("phone"),
-        "delivery_kind": "per_property",
-    }
+    email = site_email or cust_primary_email
+    phone = site_phone or cust_primary_phone
+    return _wrap(email, phone, "per_property")
