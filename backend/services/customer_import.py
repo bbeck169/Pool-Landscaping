@@ -105,14 +105,23 @@ def parse_customer_since_verbose(raw: Optional[str]) -> tuple[Optional[str], boo
 
 
 def _parse_customer_since_impl(raw: Optional[str]) -> tuple[Optional[str], bool]:
+    """Return ``(iso_date, is_future)``. ``is_future`` — parsed date is
+    after today (UTC). See ``parse_customer_since_verbose_partial`` when
+    the caller also needs the "year only" partial-parse flag."""
+    parsed, is_future, _partial = _parse_customer_since_impl_verbose(raw)
+    return parsed, is_future
+
+
+def _parse_customer_since_impl_verbose(raw: Optional[str]) -> tuple[Optional[str], bool, bool]:
     if raw is None:
-        return None, False
+        return None, False, False
     s = str(raw).strip().replace(",", " ")  # Phase 56.1 — kill embedded commas
     s = re.sub(r"\s+", " ", s)
     if not s:
-        return None, False
+        return None, False, False
     this_year = datetime.utcnow().year
     parsed: Optional[str] = None
+    partial_year_only = False
 
     # ISO first.
     for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
@@ -133,6 +142,21 @@ def _parse_customer_since_impl(raw: Optional[str]) -> tuple[Optional[str], bool]
                 parsed = date(y, mo, dy).isoformat()
             except ValueError:
                 parsed = None
+
+    # Feb-2026 real-world CSV fix — bare year (e.g. "2023").
+    # A caller who wrote just the year has no way to convey a specific
+    # day, so we assume Jan 1 of that year. Callers surface this via
+    # the "partial — assumed Jan 1" warning (see build_customer_doc).
+    if parsed is None:
+        m = re.fullmatch(r"(\d{4})", s)
+        if m:
+            y = int(m.group(1))
+            if 1900 <= y <= 2100:
+                try:
+                    parsed = date(y, 1, 1).isoformat()
+                    partial_year_only = True
+                except ValueError:
+                    parsed = None
 
     # Month-name variants — tokens now guaranteed comma-free above.
     if parsed is None:
@@ -156,12 +180,12 @@ def _parse_customer_since_impl(raw: Optional[str]) -> tuple[Optional[str], bool]
                 parsed = None
 
     if parsed is None:
-        return None, False
+        return None, False, False
     try:
         is_future = date.fromisoformat(parsed) > date.today()
     except Exception:
         is_future = False
-    return parsed, is_future
+    return parsed, is_future, partial_year_only
 
 
 # ─── Field validators ─────────────────────────────────────────────────
@@ -294,6 +318,16 @@ def build_customer_doc(canon: dict[str, str], tenant_id: str,
 
     phone_home_raw = _strip_phone_noise(canon.get("phone"))
     phone_mobile_raw = _strip_phone_noise(canon.get("mobile"))
+    # Feb-2026 real-world CSV fix — when Phone column is blank but Mobile
+    # is set, promote Mobile into the "phone" role too. Reason: downstream
+    # matchers (SMS inbound, invoice merge fields, comm-token substitution)
+    # historically look at both ``phone`` scalar and ``phones[type=home]``.
+    # Duplicating the number preserves match parity when the CSV only
+    # carries a mobile.
+    phone_promoted_from_mobile = False
+    if not phone_home_raw and phone_mobile_raw:
+        phone_home_raw = phone_mobile_raw
+        phone_promoted_from_mobile = True
     phone_home = normalize_phone(phone_home_raw) if phone_home_raw else None
     phone_mobile = normalize_phone(phone_mobile_raw) if phone_mobile_raw else None
 
@@ -306,18 +340,23 @@ def build_customer_doc(canon: dict[str, str], tenant_id: str,
         phones.append({"type": "mobile", "number": phone_mobile or phone_mobile_raw,
                         "raw": phone_mobile_raw if not phone_mobile else None,
                         "e164": phone_mobile})
+    if phone_promoted_from_mobile:
+        warnings.append("phone column blank — mobile value promoted to phone")
 
     full_name = f"{first} {last}".strip()
 
     since_raw = (canon.get("customer since") or "").strip()
-    since, since_is_future = parse_customer_since_verbose(since_raw)
+    since, since_is_future, since_partial = _parse_customer_since_impl_verbose(since_raw)
     if since_raw and not since:
         warnings.append(f"customer_since {since_raw!r} unparseable — raw value preserved")
     if since_is_future:
         warnings.append(f"customer_since {since} is in the future — preserved as-is")
+    if since_partial:
+        warnings.append(f"customer_since {since_raw!r} partial — assumed Jan 1")
 
     street = (canon.get("service address street") or "").strip()
     city = (canon.get("city") or "").strip()
+    state_final = state  # normalized 2-letter or raw preserved above
     postal = (canon.get("postal code") or "").strip()  # preserves leading zeros
     if not street:
         warnings.append("service address street missing — stored as null")
@@ -325,6 +364,15 @@ def build_customer_doc(canon: dict[str, str], tenant_id: str,
         warnings.append("city missing — stored as null")
     if not postal:
         warnings.append("postal code missing — stored as null")
+
+    # Feb-2026 real-world CSV fix — populate the flat ``address`` string
+    # that CustomersList / CustomerDetail render. Without this, imported
+    # rows show a blank address column even though the parts are stored
+    # under ``service_address``. We keep the nested block for newer
+    # consumers (comm_tokens, google.py) and add flat + top-level fields
+    # for legacy display + comm-token substitution.
+    address_parts = [p for p in (street, city, state_final, postal) if p]
+    address_flat = ", ".join(address_parts)
 
     doc = {
         "tenant_id": tenant_id,
@@ -339,10 +387,19 @@ def build_customer_doc(canon: dict[str, str], tenant_id: str,
         # phones[] which downstream consumers already depend on.
         "phone_raw": phone_home_raw or None,
         "mobile_raw": phone_mobile_raw or None,
+        # Feb-2026 real-world CSV fix — flat + top-level address fields
+        # so CustomersList / CustomerDetail render populated rows and
+        # comm-token substitution (customer.address_line1) resolves
+        # without an extra service_address lookup.
+        "address": address_flat,
+        "address_line1": street or None,
+        "city": city or None,
+        "state": state_final or None,
+        "postal_code": postal or None,
         "service_address": {
             "street": street or None,
             "city": city or None,
-            "state": state or None,
+            "state": state_final or None,
             "postal_code": postal or None,
         },
         "customer_since": since,

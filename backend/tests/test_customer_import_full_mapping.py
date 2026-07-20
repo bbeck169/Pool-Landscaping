@@ -309,22 +309,30 @@ class TestBulkImportScale:
         )
         assert data["skipped"] == 0
         assert elapsed < 120, f"5k-row import took {elapsed:.1f}s — exceeds 2min budget"
-        # No warnings on the happy synthetic rows.
-        assert data["warnings_total"] == 0
-        assert data["warnings_truncated"] is False
+        # Feb-2026 real-world CSV fix — synthetic rows leave Phone blank
+        # and rely on Mobile alone, so every row emits the informational
+        # "mobile promoted to phone" warning. Expect exactly one warning
+        # per row (5000 total). No other warning categories should fire
+        # because address parts + state are fully populated.
+        assert data["warnings_total"] == self._BULK_ROWS, (
+            f"expected 1 warning/row (mobile-promoted); got {data['warnings_total']}"
+        )
+        # 5000 > 100 inline cap → truncation flag set.
+        assert data["warnings_truncated"] is True
         # import_id must be present.
         assert isinstance(data.get("import_id"), str) and len(data["import_id"]) > 8
 
     def test_bulk_import_report_endpoint(self, admin_headers):
         # Re-run a smaller import that produces >100 warnings (each row
-        # contributes 3 warnings: street/city/postal missing) so the
-        # response truncates at 100 while the persisted report retains all.
+        # contributes 4 warnings: street/city/postal missing + phone-column
+        # blank → mobile promoted). Response truncates at 100 inline while
+        # the persisted report retains the full 240.
         header = (
             "Customer Since,,Email,Service address Street,City,State,Postal Code,"
             "Phone,Mobile,First Name,Last Name,Tag,\n"
         )
         lines = [header]
-        for i in range(60):  # 60 rows × 3 warnings/row = 180 warnings
+        for i in range(60):  # 60 rows × 4 warnings/row = 240 warnings
             lines.append(
                 f",,test_bulk_ci_warn_{i}@example.com,,,AZ,,,4805551{i:03d},"
                 f"Warn,TEST_Bulk{i},,\n"
@@ -336,7 +344,7 @@ class TestBulkImportScale:
         assert r.status_code == 200, r.text
         data = r.json()
         import_id = data["import_id"]
-        assert data["warnings_total"] == 180
+        assert data["warnings_total"] == 240
         assert data["warnings_truncated"] is True
         assert len(data["warnings"]) == 100  # inline cap
 
@@ -347,7 +355,7 @@ class TestBulkImportScale:
         assert r2.status_code == 200, r2.text
         report = r2.json()
         assert report["id"] == import_id
-        assert len(report["warnings"]) == 180, (
+        assert len(report["warnings"]) == 240, (
             f"full log should carry all warnings; got {len(report['warnings'])}"
         )
         # Wipe the warn-batch rows so the next test's cleanup fixture is clean.

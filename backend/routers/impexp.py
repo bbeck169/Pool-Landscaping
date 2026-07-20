@@ -169,9 +169,20 @@ async def import_customers(body: CsvIn, user: dict = Depends(require_admin),
             if p.get("type") == "mobile":
                 mobile = p.get("number") or ""
                 break
-        match = existing_by_email.get(email) if email else None
-        if not match and mobile:
-            match = existing_by_mobile.get(mobile)
+        # Feb-2026 real-world CSV fix — hard guard: never fall through
+        # to a false-positive match when neither email nor mobile are
+        # present. Two "John Smith" rows with no email/phone must NOT
+        # collapse onto whichever John was inserted first. Explicit
+        # warning surfaces the identity gap so the admin can enrich the
+        # row post-import.
+        if not email and not mobile:
+            match = None
+            warnings.append({"row": _idx, "message":
+                "no email or phone provided — inserted as new record (no dedup key)"})
+        else:
+            match = existing_by_email.get(email) if email else None
+            if not match and mobile:
+                match = existing_by_mobile.get(mobile)
         if match:
             updates.append((match["id"], doc))
         else:
