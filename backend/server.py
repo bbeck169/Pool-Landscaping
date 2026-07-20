@@ -59,6 +59,9 @@ from routers import (
     reviews,
     review_sync,
     marketing_m1,
+    ai_credits,
+    chemical_products,
+    pipelines,
 )
 
 app = FastAPI(
@@ -118,7 +121,10 @@ for module in [notifications_router,
                portal_videos,
                reviews,
                review_sync,
-               marketing_m1]:
+               marketing_m1,
+               ai_credits,
+               chemical_products,
+               pipelines]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -375,6 +381,16 @@ async def _background_seed():
             _scraper.register_daily_sync(scheduler)
         except Exception as _rse:
             logger.warning(f"review_scraper registration crashed: {_rse}")
+
+        # QuoteIQ Phase Q1 · AI Credits monthly reset (1st @ 00:05 UTC).
+        try:
+            from services.ai_credits import run_monthly_reset_all
+            scheduler.add_job(
+                run_monthly_reset_all,
+                "cron", day=1, hour=0, minute=5,
+                id="ai_credits_monthly_reset", replace_existing=True)
+        except Exception as _ae:
+            logger.warning(f"ai_credits monthly reset registration crashed: {_ae}")
 
         scheduler.start()
     except Exception as e:

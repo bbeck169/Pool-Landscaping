@@ -90,6 +90,12 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+def require_super_admin(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Super admin access required")
+    return user
+
+
 # Phase 56.9b Step 8 — RBAC gate for Zillow-backed surfaces (property
 # lookup, save/list/delete, D2D sold-leads canvassing). Techs get access
 # to the same data admins do, but the paid endpoints are additionally

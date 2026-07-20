@@ -59,6 +59,28 @@ async def ensure_deployment_indexes() -> None:
          [("tenant_id", ASCENDING), ("list_id", ASCENDING),
           ("subscriber_id", ASCENDING)],
          {"unique": True, "name": "uniq_tenant_list_sub", "background": True}),
+        # QuoteIQ Phase Q1 · Feb 2026
+        ("ai_credit_transactions",
+         [("tenant_id", ASCENDING), ("created_at", DESCENDING)],
+         {"name": "ai_credit_tenant_created", "background": True}),
+        ("chemical_usage_events",
+         [("tenant_id", ASCENDING), ("customer_id", ASCENDING),
+          ("occurred_at", DESCENDING)],
+         {"name": "chem_usage_tenant_customer_time", "background": True}),
+        ("chemical_usage_events",
+         [("tenant_id", ASCENDING), ("service_report_id", ASCENDING)],
+         {"name": "chem_usage_tenant_report", "background": True}),
+        ("deal_pipelines",
+         [("tenant_id", ASCENDING), ("slug", ASCENDING)],
+         {"unique": True, "name": "uniq_tenant_pipeline_slug", "background": True}),
+        ("deals",
+         [("tenant_id", ASCENDING), ("pipeline_id", ASCENDING),
+          ("status", ASCENDING), ("updated_at", DESCENDING)],
+         {"name": "deals_tenant_pipeline_status_updated", "background": True}),
+        ("deal_events",
+         [("tenant_id", ASCENDING), ("deal_id", ASCENDING),
+          ("created_at", DESCENDING)],
+         {"name": "deal_events_tenant_deal_created", "background": True}),
     ]
     for coll, keys, opts in plans:
         try:
