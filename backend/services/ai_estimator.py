@@ -296,41 +296,30 @@ async def _call_llm(*, system_prompt: str, job_description: str,
                       photo_urls: Optional[List[str]] = None,
                       extras: Optional[Dict[str, Any]] = None,
                       extra_user_hint: str = "") -> Dict[str, Any]:
-    """Single LLM round-trip. Returns ``{"raw": <parsed json>}`` on
-    success or ``{"error": "..."}`` on any failure. Isolated so the
-    retry loop can reuse the same wire path."""
-    key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
-    if not key:
-        return {"error": "EMERGENT_LLM_KEY missing — set env or TEST_LLM_MOCK=1"}
-    try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
-    except Exception as e:
-        return {"error": f"emergentintegrations import failed: {e}"}
-    try:
-        chat = (LlmChat(api_key=key, session_id=new_id(),
-                         system_message=system_prompt)
-                .with_model(DEFAULT_MODEL_PROVIDER, DEFAULT_MODEL_NAME))
-        content_parts: List[Any] = [f"Job description: {job_description}"]
-        if extras:
-            content_parts.append(f"Context: {json.dumps(extras)}")
-        if extra_user_hint:
-            content_parts.append(extra_user_hint)
-        for url in (photo_urls or [])[:8]:
-            try:
-                content_parts.append(ImageContent(image_url=url))
-            except Exception:
-                pass
-        msg = UserMessage(text="\n".join(str(p) for p in content_parts
-                                          if isinstance(p, str)))
-        resp = await chat.send_message(msg)
-        raw_text = str(resp).strip()
-        start = raw_text.find("{")
-        end = raw_text.rfind("}")
-        payload = json.loads(raw_text[start:end + 1]) if start >= 0 else {}
-        return {"raw": payload}
-    except Exception as e:
-        logger.warning(f"[ai_estimator] LLM call failed: {e}")
-        return {"error": f"llm_call_failed: {e}"}
+    """Single LLM round-trip via the shared ``llm_provider`` dispatcher.
+
+    Returns ``{"raw": <parsed json>, "provider": "emergent"|"openai"}``
+    on success or ``{"error": "..."}`` on failure. Provider tag flows
+    up into ``_meta`` so downstream persistence knows who served the
+    request.
+    """
+    from services.llm_provider import call_llm_with_fallback
+    parts: List[str] = [f"Job description: {job_description}"]
+    if extras:
+        parts.append(f"Context: {json.dumps(extras)}")
+    if extra_user_hint:
+        parts.append(extra_user_hint)
+    user_text = "\n".join(parts)
+    r = await call_llm_with_fallback(
+        system_prompt=system_prompt,
+        user_text=user_text,
+        photo_urls=photo_urls,
+        provider=DEFAULT_MODEL_PROVIDER,
+        model=DEFAULT_MODEL_NAME,
+    )
+    if r.get("error"):
+        return {"error": r["error"], "provider": r.get("provider")}
+    return {"raw": r["raw"], "provider": r.get("provider")}
 
 
 async def _finalize(tenant_id: str, raw: Dict[str, Any], *,
@@ -381,7 +370,7 @@ async def generate_estimate(*, tenant_id: str,
         result = await _finalize(tenant_id, raw, options_mode=options_mode)
         # Even in mock mode, honour the retry/fallback contract so tests
         # exercise the same code path as prod.
-        meta = {"path": "mock_ok", "retries": 0}
+        meta = {"path": "mock_ok", "retries": 0, "provider": "mock"}
         if _result_has_zero(result, options_mode=options_mode):
             raw2 = _next_test_mock(options_mode=options_mode)
             if raw2:
@@ -391,6 +380,7 @@ async def generate_estimate(*, tenant_id: str,
             if _result_has_zero(result, options_mode=options_mode):
                 result = _apply_catalog_fallback(result, options_mode=options_mode)
                 meta["path"] = "catalog_fallback"
+                meta["provider"] = "catalog_fallback"
             else:
                 meta["path"] = "mock_retry_ok"
         result["_meta"] = meta
@@ -401,11 +391,15 @@ async def generate_estimate(*, tenant_id: str,
                               job_description=job_description,
                               photo_urls=photo_urls, extras=extras)
     if first.get("error"):
-        return {"error": first["error"], "line_items": []}
+        return {"error": first["error"], "line_items": [],
+                 "_meta": {"path": "llm_error", "retries": 0,
+                            "provider": first.get("provider")}}
     result = await _finalize(tenant_id, first["raw"], options_mode=options_mode)
     if result.get("error"):
+        result["_meta"] = {"path": "llm_invalid_response", "retries": 0,
+                             "provider": first.get("provider")}
         return result
-    meta = {"path": "llm_ok", "retries": 0}
+    meta = {"path": "llm_ok", "retries": 0, "provider": first.get("provider")}
     if _result_has_zero(result, options_mode=options_mode):
         # Retry once with an explicit reformat hint.
         second = await _call_llm(system_prompt=system_prompt,
@@ -418,12 +412,22 @@ async def generate_estimate(*, tenant_id: str,
                                               options_mode=options_mode)
             if not retry_result.get("error") and not _result_has_zero(
                     retry_result, options_mode=options_mode):
-                retry_result["_meta"] = {"path": "llm_retry_ok", "retries": 1}
+                retry_result["_meta"] = {
+                    "path": "llm_retry_ok", "retries": 1,
+                    "provider": second.get("provider"),
+                }
                 return retry_result
             result = retry_result if not retry_result.get("error") else result
+            # Retry provider tag wins when it produced parseable JSON.
+            if not retry_result.get("error"):
+                meta["provider"] = second.get("provider")
         # Retry still bad → catalog-only fallback.
         result = _apply_catalog_fallback(result, options_mode=options_mode)
         meta["path"] = "catalog_fallback"
+        # Catalog fallback path means the provider tag is
+        # informational — flip to ``catalog_fallback`` so downstream
+        # can tell "we didn't trust the LLM output".
+        meta["provider"] = meta.get("provider") or "catalog_fallback"
     result["_meta"] = meta
     return result
 

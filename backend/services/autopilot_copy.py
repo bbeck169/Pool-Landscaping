@@ -149,33 +149,26 @@ async def generate_copy(*, trigger_event: str, channel: str,
                            tone=tone, use_case=use_case,
                            brand_voice_snippet=brand_voice_snippet,
                            company_name=company_name)
-    else:
-        key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
-        if not key:
-            return {"error": "EMERGENT_LLM_KEY missing — set env or TEST_LLM_MOCK=1"}
-        try:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage
-        except Exception as e:
-            return {"error": f"emergentintegrations import failed: {e}"}
-        try:
-            system_prompt = _build_system_prompt(
-                trigger_event=trigger_event, channel=channel,
-                tone=tone, use_case=use_case,
-                brand_voice_snippet=brand_voice_snippet,
-                company_name=company_name,
-                extra_context=extra_context,
-            )
-            chat = (LlmChat(api_key=key, session_id=new_id(),
-                             system_message=system_prompt)
-                    .with_model(DEFAULT_MODEL_PROVIDER, DEFAULT_MODEL_NAME))
-            msg = UserMessage(text=f"Draft the {channel} copy now.")
-            resp = await chat.send_message(msg)
-            text = str(resp).strip()
-            start = text.find("{")
-            end = text.rfind("}")
-            raw = json.loads(text[start:end + 1]) if start >= 0 else {}
-        except Exception as e:
-            logger.warning(f"[autopilot_copy] LLM call failed: {e}")
-            return {"error": f"llm_call_failed: {e}"}
+        out = _normalize(raw, channel=channel)
+        out["ai_meta"] = {"provider": "mock"}
+        return out
 
-    return _normalize(raw, channel=channel)
+    system_prompt = _build_system_prompt(
+        trigger_event=trigger_event, channel=channel,
+        tone=tone, use_case=use_case,
+        brand_voice_snippet=brand_voice_snippet,
+        company_name=company_name,
+        extra_context=extra_context,
+    )
+    from services.llm_provider import call_llm_with_fallback
+    r = await call_llm_with_fallback(
+        system_prompt=system_prompt,
+        user_text=f"Draft the {channel} copy now.",
+        provider=DEFAULT_MODEL_PROVIDER,
+        model=DEFAULT_MODEL_NAME,
+    )
+    if r.get("error"):
+        return {"error": r["error"], "ai_meta": {"provider": r.get("provider")}}
+    out = _normalize(r["raw"], channel=channel)
+    out["ai_meta"] = {"provider": r.get("provider")}
+    return out
