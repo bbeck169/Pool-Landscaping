@@ -383,3 +383,73 @@ def test_cross_employee_action_returns_stub(admin_headers):
     assert body["action"] is None
     assert "isn't wired" in body["assistant_message"]["text"] \
         or "aren't wired" in body["assistant_message"]["text"]
+
+
+# ─── Feb-2026 AE polish — refund heavy debit when no action created ───
+
+def test_refund_on_commet_ab_variants_missing_copy(admin_headers):
+    """commet.suggest_ab_variants is approve-gated (would charge 6c),
+    but when the caller omits ``current_copy`` the handler returns
+    without a pending action row. The 5c heavy portion must be
+    refunded so net debit = 1c chat only."""
+    eid = _emp_id(admin_headers, "commet")
+    c = _new_conv(admin_headers, eid)
+    before = _balance(admin_headers)
+    r = _send(admin_headers, eid, c["id"], "empty",
+                action="commet.suggest_ab_variants",
+                action_params={"element": "cta"})
+    assert r.status_code == 201
+    assert r.json()["action"] is None
+    after = _balance(admin_headers)
+    assert before - after == 1, \
+        f"expected 1c net (5c refund); got delta={before - after}"
+
+
+def test_refund_on_soshie_schedule_post_missing_caption(admin_headers):
+    eid = _emp_id(admin_headers, "soshie")
+    c = _new_conv(admin_headers, eid)
+    before = _balance(admin_headers)
+    r = _send(admin_headers, eid, c["id"], "schedule",
+                action="soshie.schedule_post",
+                action_params={"platform": "instagram", "caption": ""})
+    assert r.status_code == 201
+    assert r.json()["action"] is None
+    after = _balance(admin_headers)
+    assert before - after == 1
+
+
+def test_refund_on_scouty_offer_letter_success_still_charges_6c(admin_headers):
+    """Sanity — approve-gated action that DOES create an action row
+    still charges the full 6c. Refund only fires on early-return."""
+    eid = _emp_id(admin_headers, "scouty")
+    c = _new_conv(admin_headers, eid)
+    before = _balance(admin_headers)
+    r = _send(admin_headers, eid, c["id"], "offer",
+                action="scouty.generate_offer_letter",
+                action_params={"candidate_name": "Refund Test",
+                                 "role": "Tech", "salary": "$50k",
+                                 "start_date": "2026-04-01"})
+    assert r.status_code == 201
+    assert r.json()["action"] is not None
+    after = _balance(admin_headers)
+    assert before - after == 6
+
+
+def test_refund_on_emmie_ab_missing_campaign_id(admin_headers):
+    """AE2 mirror — emmie.suggest_ab_subjects without campaign_id
+    was landing pending? No — it returns action=None. Verify 5c
+    refund fires."""
+    eid = _emp_id(admin_headers, "emmie")
+    c = _new_conv(admin_headers, eid)
+    before = _balance(admin_headers)
+    r = _send(admin_headers, eid, c["id"], "ab",
+                action="emmie.suggest_ab_subjects")
+    assert r.status_code == 201
+    assert r.json()["action"] is None
+    after = _balance(admin_headers)
+    assert before - after == 1
+
+
+def _emp_id_e(headers, key):
+    rows = requests.get(f"{API}/ai-employees", headers=headers, timeout=15).json()
+    return next(e["id"] for e in rows if e["key"] == key)

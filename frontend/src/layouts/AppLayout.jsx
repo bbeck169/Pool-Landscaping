@@ -7,6 +7,7 @@ import AdminSidebar from "@/layouts/AdminSidebar";
 import AdminTopBar from "@/layouts/AdminTopBar";
 import UniversalMenu from "@/layouts/UniversalMenu";
 import LandscapingClockWidget from "@/components/LandscapingClockWidget";
+import AIDock from "@/components/AIDock/AIDock";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
 import { brandGradientCss, colors, font } from "@/theme";
 import {
@@ -586,6 +587,12 @@ function AppLayout() {
         </div>
 
         <Outlet />
+
+        {/* Feb-2026 AE Dock — floating AI Employees drawer. Admin-only
+            (self-guards on the ``user.role`` prop; renders null for
+            non-admins). Mounted here so it's reachable from every
+            authenticated route. */}
+        <AIDock user={user} />
 
         {/* Bottom tab bar (<md) */}
         <nav

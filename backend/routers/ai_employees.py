@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 from config import db, logger, EMERGENT_LLM_KEY
 from routers.tenants import get_current_tenant
 from utils import get_current_user, new_id, now_iso, require_admin
-from services.ai_credits import debit_credits
+from services.ai_credits import debit_credits, credit_credits
 
 router = APIRouter(tags=["AI Employees"])
 
@@ -735,38 +735,63 @@ async def _dispatch_action(*, tenant: dict, user: dict, employee: dict,
             reason=action, actor_user_id=user["id"],
         )
 
+    async def _run_and_refund_if_no_action(coro):
+        """Feb-2026 AE polish — approve-gated handlers can bail out
+        early (missing param, validation short-circuit) and return
+        ``(assistant_text, None)``. In that case the 5c heavy charge
+        we already applied has no matching approval flow — the user
+        shouldn't burn credits per validation-failed attempt. Refund
+        the heavy portion when the handler produces no pending action
+        row. Real drafts still cost the full 6c."""
+        text_out, action_out = await coro
+        if charge_heavy and action_out is None:
+            try:
+                await credit_credits(
+                    tenant["id"], HEAVY_ACTION_COST,
+                    feature=f"ai_employees.{action}",
+                    ref_id=conversation_id,
+                    ref_type="ai_employee_conversation",
+                    reason=f"refund:{action}:no_action_created",
+                    actor_user_id=user["id"],
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[ae-polish] heavy-refund failed for {action}: {e}"
+                )
+        return text_out, action_out
+
     if is_casey_action:
         if action == "casey.draft_directory_submission":
-            return await _casey_draft_submission(
+            return await _run_and_refund_if_no_action(_casey_draft_submission(
                 tenant=tenant, user=user, employee=employee,
                 conversation_id=conversation_id, params=params,
                 system_prompt=system_prompt, user_text=user_text,
-            )
+            ))
         if action == "casey.suggest_directory_updates":
-            return await _casey_suggest_updates(
+            return await _run_and_refund_if_no_action(_casey_suggest_updates(
                 tenant=tenant, user=user, employee=employee,
                 conversation_id=conversation_id, params=params,
                 system_prompt=system_prompt, user_text=user_text,
-            )
+            ))
         if action == "casey.draft_outreach_reply":
-            return await _casey_draft_outreach_reply(
+            return await _run_and_refund_if_no_action(_casey_draft_outreach_reply(
                 tenant=tenant, user=user, employee=employee,
                 conversation_id=conversation_id, params=params,
                 system_prompt=system_prompt, user_text=user_text,
-            )
+            ))
     if is_emmie_action:
         if action == "emmie.draft_campaign":
-            return await _emmie_draft_campaign(
+            return await _run_and_refund_if_no_action(_emmie_draft_campaign(
                 tenant=tenant, user=user, employee=employee,
                 conversation_id=conversation_id, params=params,
                 system_prompt=system_prompt, user_text=user_text,
-            )
+            ))
         if action == "emmie.suggest_ab_subjects":
-            return await _emmie_suggest_ab_subjects(
+            return await _run_and_refund_if_no_action(_emmie_suggest_ab_subjects(
                 tenant=tenant, user=user, employee=employee,
                 conversation_id=conversation_id, params=params,
                 system_prompt=system_prompt, user_text=user_text,
-            )
+            ))
         if action == "emmie.analyze_campaign":
             return await _emmie_analyze_campaign(
                 tenant=tenant, user=user, employee=employee,
@@ -774,11 +799,11 @@ async def _dispatch_action(*, tenant: dict, user: dict, employee: dict,
                 user_text=user_text,
             )
         if action == "emmie.suggest_seasonal_ideas":
-            return await _emmie_suggest_seasonal_ideas(
+            return await _run_and_refund_if_no_action(_emmie_suggest_seasonal_ideas(
                 tenant=tenant, user=user, employee=employee,
                 conversation_id=conversation_id, params=params,
                 system_prompt=system_prompt, user_text=user_text,
-            )
+            ))
         if action == "emmie.rewrite_copy":
             return await _emmie_rewrite_copy(
                 tenant=tenant, user=user, employee=employee,
@@ -786,11 +811,11 @@ async def _dispatch_action(*, tenant: dict, user: dict, employee: dict,
                 user_text=user_text,
             )
     if is_buddy_action:
-        return await _buddy_dispatch(
+        return await _run_and_refund_if_no_action(_buddy_dispatch(
             tenant=tenant, user=user, employee=employee,
             conversation_id=conversation_id, action=action,
             params=params, system_prompt=system_prompt, user_text=user_text,
-        )
+        ))
     if is_vizzy_action:
         return await _vizzy_dispatch(
             tenant=tenant, user=user, employee=employee,
@@ -804,23 +829,23 @@ async def _dispatch_action(*, tenant: dict, user: dict, employee: dict,
             system_prompt=system_prompt, user_text=user_text,
         )
     if is_soshie_action:
-        return await _soshie_dispatch(
+        return await _run_and_refund_if_no_action(_soshie_dispatch(
             tenant=tenant, user=user, employee=employee,
             conversation_id=conversation_id, action=action,
             params=params, system_prompt=system_prompt, user_text=user_text,
-        )
+        ))
     if is_scouty_action:
-        return await _scouty_dispatch(
+        return await _run_and_refund_if_no_action(_scouty_dispatch(
             tenant=tenant, user=user, employee=employee,
             conversation_id=conversation_id, action=action,
             params=params, system_prompt=system_prompt, user_text=user_text,
-        )
+        ))
     if is_commet_action:
-        return await _commet_dispatch(
+        return await _run_and_refund_if_no_action(_commet_dispatch(
             tenant=tenant, user=user, employee=employee,
             conversation_id=conversation_id, action=action,
             params=params, system_prompt=system_prompt, user_text=user_text,
-        )
+        ))
     return "Unknown action.", None
 
 
