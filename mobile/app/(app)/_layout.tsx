@@ -175,6 +175,39 @@ export default function AppLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="clipboard-outline" size={size} color={color} />,
         }}
       />
+      {/* Phase 4 · Comms — hidden from tab bar, reachable via Tools hub + router.push. */}
+      <Tabs.Screen
+        name="comms/index"
+        options={{ title: "Comms", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="mail-outline" size={size} color={color} /> }}
+      />
+      <Tabs.Screen
+        name="comms/templates/index"
+        options={{ title: "Comms Templates", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="mail-outline" size={size} color={color} /> }}
+      />
+      <Tabs.Screen
+        name="comms/templates/[code]"
+        options={{ title: "Template Detail", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="mail-outline" size={size} color={color} /> }}
+      />
+      <Tabs.Screen
+        name="comms/automations/index"
+        options={{ title: "Automations", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="flash-outline" size={size} color={color} /> }}
+      />
+      <Tabs.Screen
+        name="comms/automations/[code]"
+        options={{ title: "Automation Detail", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="flash-outline" size={size} color={color} /> }}
+      />
+      <Tabs.Screen
+        name="comms/sends/index"
+        options={{ title: "Sends", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="paper-plane-outline" size={size} color={color} /> }}
+      />
+      <Tabs.Screen
+        name="comms/sends/[id]"
+        options={{ title: "Send Detail", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="paper-plane-outline" size={size} color={color} /> }}
+      />
+      <Tabs.Screen
+        name="comms/test-send"
+        options={{ title: "Test Send", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="rocket-outline" size={size} color={color} /> }}
+      />
       {/* Phase 3 · Templates Library — hidden from tab bar, reachable via Tools hub + router.push. */}
       <Tabs.Screen
         name="templates/index"

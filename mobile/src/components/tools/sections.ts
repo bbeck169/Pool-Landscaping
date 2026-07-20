@@ -86,6 +86,7 @@ export const ADMIN_SECTIONS: ToolSection[] = [
     title: "Marketing",
     tiles: [
       { key: "marketing-studio", icon: "megaphone-outline", label: "Marketing Studio", desc: "Campaigns, sequences, reviews", route: "/(app)/marketing" as any },
+      { key: "comms", icon: "mail-outline", label: "Communications", desc: "Templates, automations, sends", route: "/(app)/comms" },
     ],
   },
   {
