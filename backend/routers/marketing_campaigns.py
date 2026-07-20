@@ -364,8 +364,17 @@ async def _compute_stats(tenant_id: str, cid: str) -> Dict[str, Any]:
     counts: Dict[str, int] = {}
     async for row in db.marketing_campaign_sends.aggregate(pipe):
         counts[row["_id"] or "unknown"] = int(row["n"])
-    sent = counts.get("sent", 0)
-    delivered = counts.get("delivered", 0) + sent
+    # Feb-2026 monotonicity fix — ``sent`` and ``delivered`` MUST NOT
+    # drop when a downstream event (open / click / bounce / unsub)
+    # rewrites the send row's current status. Count everything that
+    # made it past dispatch: sent, delivered, opened, clicked,
+    # bounced, complained, unsubscribed, failed. Only pre-dispatch
+    # statuses (queued, sending, etc.) are excluded.
+    _POST_DISPATCH = {"sent", "delivered", "opened", "clicked",
+                       "bounced", "complained", "unsubscribed", "failed"}
+    _POST_DELIVERED = {"sent", "delivered", "opened", "clicked"}
+    sent = sum(counts.get(s, 0) for s in _POST_DISPATCH)
+    delivered = sum(counts.get(s, 0) for s in _POST_DELIVERED)
     opened = 0
     clicked = 0
     # Opens / clicks come from ``open_count`` + ``click_count`` fields:
@@ -379,17 +388,26 @@ async def _compute_stats(tenant_id: str, cid: str) -> Dict[str, Any]:
     bounced = counts.get("bounced", 0)
     complained = counts.get("complained", 0)
     unsub = counts.get("unsubscribed", 0)
-    total = max(1, sent + counts.get("failed", 0))
+    failed = counts.get("failed", 0)
+    # Rate denominator is the immutable "attempted" count (everything
+    # past dispatch) so open/click rates stay stable as engagement
+    # events roll in.
+    attempted = max(1, sent + failed)
+    # ``not_yet_engaged`` — dispatched sends that have not opened or
+    # clicked yet. Optional UI helper; safe to ignore in the M2 UI.
+    not_yet_engaged = max(0, sent - opened - clicked
+                              - bounced - complained - unsub)
     out = {
         "sent": sent, "delivered": delivered,
         "opened": opened, "clicked": clicked,
         "bounced": bounced, "complained": complained,
-        "unsubscribed": unsub,
-        "open_rate_pct": round(opened / total * 100, 2) if sent else 0.0,
-        "click_rate_pct": round(clicked / total * 100, 2) if sent else 0.0,
+        "unsubscribed": unsub, "failed": failed,
+        "not_yet_engaged": not_yet_engaged,
+        "open_rate_pct": round(opened / attempted * 100, 2) if sent else 0.0,
+        "click_rate_pct": round(clicked / attempted * 100, 2) if sent else 0.0,
         "ctor_pct": round((clicked / opened * 100) if opened else 0.0, 2),
-        "bounce_rate_pct": round(bounced / total * 100, 2) if sent else 0.0,
-        "unsubscribe_rate_pct": round(unsub / total * 100, 2) if sent else 0.0,
+        "bounce_rate_pct": round(bounced / attempted * 100, 2) if sent else 0.0,
+        "unsubscribe_rate_pct": round(unsub / attempted * 100, 2) if sent else 0.0,
     }
     # A/B — surface per-variant counters when the campaign is A/B enabled
     # AND at least one send carries a ``variant_id``. Keeps the plain

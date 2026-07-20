@@ -764,3 +764,218 @@ class TestTimeline:
         )
         assert r.status_code == 200
         assert r.json()["count"] <= 1
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Tester feedback — M2 backend fixes (Feb-2026 round 2)
+# ═════════════════════════════════════════════════════════════════════
+
+class TestRenderBraceCompat:
+    """Preview must resolve BOTH single- and double-brace tokens so seed
+    data written with ``{first_name}`` no longer silently leaks through
+    into the sent email. Missing tokens in either shape must surface as
+    warnings — the tester found the empty-warnings array was the real
+    UX bug."""
+
+    def test_single_and_double_brace_both_resolve(self):
+        from services.marketing_campaigns import render_body
+        ctx = {"first_name": "Sara", "last_name": "Garcia"}
+        out_dbl, missing_dbl = render_body("Hello {{first_name}} {{last_name}}!", ctx)
+        out_sgl, missing_sgl = render_body("Hello {first_name} {last_name}!", ctx)
+        assert out_dbl == "Hello Sara Garcia!", out_dbl
+        assert out_sgl == "Hello Sara Garcia!", out_sgl
+        assert missing_dbl == []
+        assert missing_sgl == []
+
+    def test_unknown_token_warns_double_brace(self):
+        from services.marketing_campaigns import render_body
+        _, missing = render_body("Hi {{first_name}}, {{bogus_field}} here", {"first_name": "S"})
+        assert "bogus_field" in missing, missing
+
+    def test_unknown_token_warns_single_brace(self):
+        from services.marketing_campaigns import render_body
+        _, missing = render_body("Hi {first_name}, {mystery} here", {"first_name": "S"})
+        assert "mystery" in missing, missing
+
+    def test_preview_endpoint_surfaces_single_brace_warnings(self, admin_tok):
+        """End-to-end: a campaign whose stored subject uses ``{name_typo}``
+        must render a warning in the /preview response instead of
+        returning warnings=[] as before."""
+        c = _mkcamp(admin_tok,
+                     name=f"TEST_brace_{uuid.uuid4().hex[:6]}",
+                     subject="Hi {first_name}, greetings {name_typo}",
+                     content={"email_html": "<p>Hi {first_name}!</p>",
+                                "sms_body": "Hi {first_name}"})
+        r = requests.post(f"{API}/marketing/campaigns/{c['id']}/preview",
+                            json={}, headers=_h(admin_tok), timeout=T)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        # {first_name} must resolve to the preview subscriber's name (Sam).
+        assert "Sam" in data["subject"], data["subject"]
+        # {name_typo} must NOT be silently dropped — expect a warning.
+        joined = " | ".join(data["warnings"] or [])
+        assert "name_typo" in joined, (
+            f"expected 'name_typo' warning; got warnings={data['warnings']!r}"
+        )
+
+
+class TestStatsMonotonicity:
+    """The tester saw ``sent`` drop from 4 → 3 after an open event
+    because the aggregator counted ``status='sent'`` literally. Fix:
+    ``sent`` counts every send row past dispatch (sent, delivered,
+    opened, clicked, bounced, complained, unsubscribed, failed) so the
+    number never decrements after send-now completes."""
+
+    def _open_pixel(self, campaign_id, subscriber_id, send_id):
+        from services.marketing_campaigns import mint_token
+        tok = mint_token(campaign_id, subscriber_id, send_id)
+        r = requests.get(f"{API}/public/mkt/o/{tok}", timeout=T)
+        return r.status_code
+
+    def test_sent_does_not_decrease_after_open(self, admin_tok, tenant_id):
+        sub_ids = _seed_subs(admin_tok, 2, prefix="m2mono")
+        list_id = _seed_list(admin_tok, sub_ids,
+                              name=f"TEST_mono_{uuid.uuid4().hex[:6]}")
+        camp = _mkcamp(admin_tok,
+                        name=f"TEST_mono_{uuid.uuid4().hex[:6]}",
+                        audience={"list_ids": [list_id]})
+        requests.post(f"{API}/marketing/campaigns/{camp['id']}/send-now",
+                        headers=_h(admin_tok), timeout=T)
+        stats_before = requests.get(
+            f"{API}/marketing/campaigns/{camp['id']}/stats",
+            headers=_h(admin_tok), timeout=T,
+        ).json()
+        sent_before = stats_before["sent"]
+        assert sent_before >= 2, (
+            f"expected ≥2 sends for a 2-subscriber campaign; got {sent_before}"
+        )
+        # Pull the first send row and fire the open pixel for it.
+        recips = requests.get(
+            f"{API}/marketing/campaigns/{camp['id']}/recipients",
+            headers=_h(admin_tok), timeout=T,
+        ).json()["recipients"]
+        assert recips, "no recipients rows produced"
+        first = recips[0]
+        code = self._open_pixel(camp["id"], first["subscriber_id"], first["id"])
+        assert code == 200, code
+        stats_after = requests.get(
+            f"{API}/marketing/campaigns/{camp['id']}/stats",
+            headers=_h(admin_tok), timeout=T,
+        ).json()
+        assert stats_after["sent"] >= sent_before, (
+            f"'sent' regressed: before={sent_before} after={stats_after['sent']}"
+        )
+        assert stats_after["opened"] >= 1, stats_after
+        # ``delivered`` must be monotonic too (dispatched, still counts).
+        assert stats_after["delivered"] >= stats_before["delivered"], (
+            f"'delivered' regressed: {stats_before['delivered']} → {stats_after['delivered']}"
+        )
+
+    def test_stats_shape_includes_not_yet_engaged(self, admin_tok):
+        sub_ids = _seed_subs(admin_tok, 1, prefix="m2nye")
+        list_id = _seed_list(admin_tok, sub_ids,
+                              name=f"TEST_nye_{uuid.uuid4().hex[:6]}")
+        camp = _mkcamp(admin_tok,
+                        name=f"TEST_nye_{uuid.uuid4().hex[:6]}",
+                        audience={"list_ids": [list_id]})
+        requests.post(f"{API}/marketing/campaigns/{camp['id']}/send-now",
+                        headers=_h(admin_tok), timeout=T)
+        stats = requests.get(
+            f"{API}/marketing/campaigns/{camp['id']}/stats",
+            headers=_h(admin_tok), timeout=T,
+        ).json()
+        assert "not_yet_engaged" in stats, list(stats.keys())
+        assert "failed" in stats, list(stats.keys())
+
+
+class TestAbDeterminismLock:
+    """Explicit lock per tester's HUMAN_REQUIRED note — same subscriber
+    → same variant across repeat calls; 500-cohort 60/40 split stays
+    within ±5%."""
+
+    def test_repeat_call_returns_same_variant_for_10_subscribers(self):
+        from services.marketing_campaigns import _select_variant
+        camp = {
+            "id": "camp-lock",
+            "ab_test": {"enabled": True, "variants": [
+                {"id": "A", "weight": 1}, {"id": "B", "weight": 1},
+            ]},
+        }
+        for i in range(10):
+            sid = f"sub-lock-{i}"
+            first = _select_variant(camp, sid)
+            second = _select_variant(camp, sid)
+            assert first["id"] == second["id"], (
+                f"drift for {sid}: {first['id']} != {second['id']}"
+            )
+
+    def test_500_cohort_60_40_split_within_5_percent(self):
+        from services.marketing_campaigns import _select_variant
+        camp = {
+            "id": "camp-6040",
+            "ab_test": {"enabled": True, "variants": [
+                {"id": "A", "weight": 60},
+                {"id": "B", "weight": 40},
+            ]},
+        }
+        picks = [_select_variant(camp, f"sub-{i}")["id"] for i in range(500)]
+        pct_a = picks.count("A") / len(picks) * 100
+        pct_b = picks.count("B") / len(picks) * 100
+        assert 55 <= pct_a <= 65, (
+            f"A share {pct_a:.1f}% outside 60±5 (A={picks.count('A')}, B={picks.count('B')})"
+        )
+        assert 35 <= pct_b <= 45, (
+            f"B share {pct_b:.1f}% outside 40±5"
+        )
+
+
+class TestBraceMigration:
+    """Startup migration rewrites stored single-brace tokens to
+    double-brace shape. Idempotent — running it twice on already-
+    migrated data must be a no-op."""
+
+    def test_migration_rewrites_single_brace_tokens_in_place(self, admin_tok, tenant_id):
+        import asyncio
+        from pymongo import MongoClient
+        from dotenv import dotenv_values
+        env = dotenv_values("/app/backend/.env")
+        client = MongoClient(env["MONGO_URL"])
+        db_ = client[env["DB_NAME"]]
+        try:
+            # Write a campaign with SINGLE-brace tokens directly (simulating
+            # legacy seed data that lands in DB without going through the
+            # canonicalisation path).
+            cid = f"TEST_brace_mig_{uuid.uuid4().hex[:8]}"
+            db_.marketing_campaigns.insert_one({
+                "id": cid, "tenant_id": tenant_id,
+                "name": "TEST_brace_mig",
+                "subject": "Hi {first_name}, {tenant_name} here",
+                "content": {
+                    "email_html": "<p>Hi {first_name}!</p>",
+                    "sms_body": "Save 10% {first_name}",
+                },
+                "status": "draft",
+                "created_at": "2026-02-01T00:00:00Z",
+                "updated_at": "2026-02-01T00:00:00Z",
+            })
+            from services.marketing_campaigns import migrate_campaign_templates_to_double_brace
+            asyncio.get_event_loop().run_until_complete(
+                migrate_campaign_templates_to_double_brace()
+            )
+            doc = db_.marketing_campaigns.find_one({"id": cid})
+            assert "{{first_name}}" in doc["subject"], doc["subject"]
+            assert "{{tenant_name}}" in doc["subject"], doc["subject"]
+            assert "{{first_name}}" in doc["content"]["email_html"]
+            assert "{{first_name}}" in doc["content"]["sms_body"]
+            # Idempotence — second run must not double-brace to ``{{{first_name}}}``.
+            asyncio.get_event_loop().run_until_complete(
+                migrate_campaign_templates_to_double_brace()
+            )
+            doc2 = db_.marketing_campaigns.find_one({"id": cid})
+            assert "{{{" not in doc2["subject"], (
+                f"double-migration doubled the braces: {doc2['subject']!r}"
+            )
+        finally:
+            db_.marketing_campaigns.delete_one({"id": cid})
+            client.close()
+

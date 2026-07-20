@@ -184,23 +184,102 @@ async def resolve_audience(tenant_id: str,
 
 
 # ─── Rendering ─────────────────────────────────────────────────────────
-_TOKEN_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+# Feb-2026 fix — accept BOTH ``{{token}}`` (canonical) and ``{token}``
+# (legacy seed data) so we don't silently pass ``{first_name}`` through
+# untouched. The parser matches an optional pair of braces on each side
+# and captures dotted paths (e.g. ``customer.first_name``) too.
+_TOKEN_RE = re.compile(
+    r"\{\{?\s*([a-zA-Z_][a-zA-Z0-9_\.]*)\s*\}\}?"
+)
 
 
 def render_body(template: str, ctx: Dict[str, Any]) -> Tuple[str, List[str]]:
-    """Substitute ``{{token}}`` placeholders. Returns
-    ``(rendered, missing_tokens)``. Missing tokens leave the raw
-    ``{{token}}`` intact so the caller can surface them as warnings."""
+    """Substitute placeholders. Returns ``(rendered, missing_tokens)``.
+
+    Accepts BOTH ``{token}`` and ``{{token}}`` syntax so seed data
+    written with single braces still resolves. Missing tokens are left
+    verbatim in the output AND emitted to the ``missing`` list so
+    callers can surface them as warnings (fixes the "silent failure"
+    UX bug: unresolved tokens no longer disappear into an empty
+    warnings array).
+    """
     if not template:
         return "", []
     missing: List[str] = []
+
     def _sub(m: re.Match) -> str:
         key = m.group(1)
-        if key in ctx and ctx[key] is not None:
-            return str(ctx[key])
+        val = ctx.get(key)
+        if val is None and "." in key:
+            # Support dotted lookups like ``customer.first_name`` when the
+            # ctx has been flattened for us.
+            val = ctx.get(key)
+        if val is not None:
+            return str(val)
         missing.append(key)
         return m.group(0)
+
     return _TOKEN_RE.sub(_sub, template), missing
+
+
+# Curly-brace tokens that MUST be considered valid targets for the
+# single→double brace migration. Anything not in this set is left alone
+# (avoids clobbering user-typed prose like ``save {up to 20}%``).
+_KNOWN_TOKEN_NAMES = {
+    "first_name", "last_name", "email", "phone",
+    "tenant_name", "sender_name",
+    "unsubscribe_url", "preferences_url", "web_view_url",
+}
+
+
+async def migrate_campaign_templates_to_double_brace() -> int:
+    """Idempotent one-shot: rewrite any campaign whose subject / content
+    still uses single-brace ``{first_name}`` for a known token name so
+    the stored shape is canonical going forward. The parser already
+    accepts both shapes — this migration exists purely so DB snapshots
+    look consistent to admins reading the raw doc. Returns the number
+    of campaigns actually mutated."""
+    # Match a single ``{token}`` that is NOT part of a ``{{token}}``.
+    pattern = re.compile(
+        r"(?<!\{)\{\s*(" + "|".join(sorted(_KNOWN_TOKEN_NAMES)) + r")\s*\}(?!\})"
+    )
+    def _rewrite(s: Optional[str]) -> Tuple[Optional[str], bool]:
+        if not s or not isinstance(s, str):
+            return s, False
+        new = pattern.sub(lambda m: "{{" + m.group(1) + "}}", s)
+        return new, new != s
+
+    n = 0
+    async for camp in db.marketing_campaigns.find(
+        {},  # every tenant; migration is idempotent + fast
+        {"_id": 0, "id": 1, "tenant_id": 1, "subject": 1, "preheader": 1,
+          "content": 1},
+    ):
+        updates: Dict[str, Any] = {}
+        subj_new, changed = _rewrite(camp.get("subject"))
+        if changed:
+            updates["subject"] = subj_new
+        pre_new, changed = _rewrite(camp.get("preheader"))
+        if changed:
+            updates["preheader"] = pre_new
+        content = camp.get("content") or {}
+        new_content: Dict[str, Any] = {}
+        content_changed = False
+        for k, v in content.items():
+            nv, changed = _rewrite(v)
+            new_content[k] = nv if changed else v
+            content_changed = content_changed or changed
+        if content_changed:
+            updates["content"] = new_content
+        if updates:
+            await db.marketing_campaigns.update_one(
+                {"id": camp["id"], "tenant_id": camp.get("tenant_id")},
+                {"$set": updates},
+            )
+            n += 1
+    if n:
+        logger.info(f"[m2] single→double brace migration touched {n} campaign(s)")
+    return n
 
 
 _SPAM_WORDS = {"free", "guaranteed", "click here", "act now",

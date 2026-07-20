@@ -487,6 +487,17 @@ async def startup():
     except Exception as e:
         logger.warning(f"multi-contact migration crashed: {e}")
 
+    # Feb-2026 M2 fix — idempotent single-brace → double-brace migration
+    # on stored campaign templates. The render engine now accepts both
+    # shapes; this migration just normalises DB snapshots so admins
+    # reading the raw doc see the canonical form.
+    try:
+        from services.marketing_campaigns import migrate_campaign_templates_to_double_brace
+        n = await migrate_campaign_templates_to_double_brace()
+        logger.info(f"[m2] template brace migration: {n} campaign(s)")
+    except Exception as e:
+        logger.warning(f"m2 brace migration crashed: {e}")
+
     # Phase 5A · Video Uploads (Feb 2026) — init Emergent object storage
     # session key once at startup. Never crashes the boot: on failure the
     # upload endpoints return 503 with a clear error.
