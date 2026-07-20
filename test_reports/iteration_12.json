@@ -1,0 +1,42 @@
+{
+  "summary": "Verified bug-fix attempt for Satellite Measure address autocomplete. Suggestions dropdown STILL does not appear. Direct call to google.maps.places.AutocompleteService.getPlacePredictions from browser console works (status OK, 5 predictions for '1600 Amph' including '1600 Amphitheatre Parkway, Mountain View, CA, USA'), API key is valid, Places API enabled — but the component never instantiates its AutocompleteService, so no dropdown ever renders. RCA nailed via injected debug logs.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "AddressAutocomplete.jsx (used by /measure, /customers/new, and other callers)",
+        "issue": "Race condition in loadGoogleMaps(): the Maps JS bootstrap script fires its onload BEFORE the 'places' library is finished loading because the URL uses `loading=async`. onFocus does `await loadGoogleMaps(); setReady(true);` — setReady triggers the useEffect that reads `window.google?.maps?.places` and finds it **undefined**, so `svcRef.current = new g.AutocompleteService()` is never executed. All subsequent keystrokes call fetchPredictions with svcRef.current===null and early-return. Places finishes loading ~200-800ms later but nothing re-runs the effect. Result: dropdown never appears, silently — no console error.",
+        "selector": "[data-testid=\"measure-address-suggestions\"] (never rendered)",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      { "flow": "Satellite Measure address entry", "issue": "Typing '1600 Amph' produces zero suggestions in UI though Google API returns 5 correct predictions.", "affected_selectors": ["[data-testid=\"measure-address-suggestions\"]","[data-testid^=\"measure-address-suggestion-\"]"] },
+      { "flow": "Customer create form (/customers/new) address field", "issue": "Same component, same bug — no suggestions appear.", "affected_selectors": ["[data-testid=\"cf-address-suggestions\"]"] }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "FIX AddressAutocomplete.jsx loadGoogleMaps race: either (a) switch to the new `google.maps.importLibrary('places')` async loader — call `await window.google.maps.importLibrary('places')` after script onload and only then resolve; or (b) remove `loading=async` from the script URL so onload waits for places; or (c) after script onload, poll `window.google?.maps?.places` every 50ms up to ~5s before resolving. Option (a) is Google-recommended for 2025+.",
+    "Additionally consider re-running the useEffect on a 'places-loaded' signal so that if the effect fires before places is ready, it will retry once places attaches — belt-and-suspenders.",
+    "Verified: API key AIzaSyBo8jayAXMTKDUW8kebqE7QxdKb6Msi-mI works from browser (5 OK predictions for '1600 Amph'). No Google Cloud console action needed. This is purely a client-side loader-timing bug in the rewritten component.",
+    "Positive: <3 char guard works correctly (typing '12' does NOT open dropdown, as designed)."
+  ],
+  "critical_code_review_comments": [
+    "loadGoogleMaps uses `s.onload` on a `loading=async` Maps JS bootstrap — that onload fires when the tiny loader script is done, NOT when the auxiliary bundles (places_impl.js, common.js) finish. Any component that reads window.google.maps.places synchronously in the resolved-callback WILL see undefined. This is a well-known 2025 pitfall — Google's own docs recommend `google.maps.importLibrary(...)`.",
+    "The useEffect that creates svcRef/placesRef only depends on [ready] and never retries. If the effect body no-ops (because places isn't ready yet), there's no mechanism to recover — the component is effectively dead until page reload.",
+    "fetchPredictions silently returns when svcRef.current is null (no user-visible feedback). Suggest at least setting a state so the input UI shows a subtle 'loading suggestions…' or logs a warning.",
+    "componentRestrictions is hardcoded to country:'us' — fine for this app but worth documenting."
+  ],
+  "updated_files": [
+    "/app/frontend/src/components/AddressAutocomplete.jsx (added then reverted temporary AC-DBG console.log statements during RCA — final file matches original committed version)"
+  ],
+  "success_rate": { "backend": "n/a", "frontend": "20% (only <3-char no-dropdown assertion passes; all suggestion-display assertions FAIL)" },
+  "test_credentials": "admin@aquaterra.com / password123 — worked",
+  "seed_data_creation": "none",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "RCA is definitive. See action_items for exact fix. To verify fix, in browser: after focus + loadGoogleMaps().then(setReady), console.log(!!window.google.maps.places) should be true — currently prints false. Once fixed, `getPlacePredictions` call will fire on the debounced input and the <ul data-testid='...-suggestions'> renders with <li data-testid='...-suggestion-{i}'>. Also verify /customers/new — same component, same fix flows through automatically. Do NOT touch templates/comms/reviews/etc (frozen).",
+  "rca of the issue": "1) User types in [data-testid='measure-address-input']. 2) onFocus (first char) → loadGoogleMaps() → injects <script src='...maps/api/js?...&libraries=places&loading=async&v=weekly'> → s.onload resolves promise. 3) setReady(true) → useEffect runs and reads window.google?.maps?.places → undefined because loading=async defers the places bundle. 4) svcRef.current stays null. 5) All subsequent keystrokes → handleInput → debounced fetchPredictions → early-return on `!svcRef.current`. 6) No error, no dropdown. Direct evaluation ~2s later confirms places IS eventually loaded, but the component never re-runs its bootstrap. Verified by injecting console.log statements: log '[AC-DBG] g places? false' fires immediately after 'effect ready= true'."
+}
