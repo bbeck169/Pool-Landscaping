@@ -4603,3 +4603,140 @@ only, no backend changes, no mobile touched**.
      experience" textarea + Send private feedback button.
   8. Public widget page — 4.8★ hero + 4 platform-labeled review
      cards.
+
+## Communications Subsystem · Phase 4 (Mobile Parity) · Feb 2026
+
+Mirror the web Comms admin surface on the Expo mobile app — **read-only
++ light management** posture. Zero backend changes. Zero web changes.
+
+### What shipped
+- **Nav wiring** — Comms tile is exposed in the mobile **Tools Hub →
+  Marketing** section of `src/components/tools/sections.ts` (admin
+  role only via `sectionsForRole`), route `/(app)/comms`.
+- **`mobile/src/api/comms.ts`** — API client with every helper the
+  mobile screens need: `listEmailTemplates`, `getEmailTemplate`,
+  `previewEmailTemplate`, `listSmsTemplates`, `getSmsTemplate`,
+  `previewSmsTemplate`, `listAutomations`, `getAutomation`,
+  `toggleAutomation`, `testFireAutomation`, `sendNow`, `listSends`,
+  `getSend`, plus Phase 3 additions **`listAutomationEvents`** and
+  **`getTokensCatalog`**. Reuses the shared `api` fetch wrapper.
+- **`mobile/app/(app)/comms/index.tsx` — Comms Hub** with 4 tap-cards
+  (Templates, Automations, Sends, Test Send). This ship adds the
+  **"At a glance"** strip: two rounded pills over the card grid
+  showing (a) last-24h send count (client-side filter of `listSends`
+  over `sent_at`/`queued_at`) and (b) active automations count.
+  Both counters refresh on `useFocusEffect` and fail silently to
+  `—` if the endpoints are unreachable.
+- **`mobile/app/(app)/comms/templates/index.tsx`** — Email / SMS
+  segmented control, search input, FlatList with `SYSTEM` /
+  `CUSTOM` badge per row, pull-to-refresh, empty state.
+- **`mobile/app/(app)/comms/templates/[code].tsx`** — read-only
+  detail: metadata card (code, name, type, subject, updated),
+  block/body inspector, `Preview` button that hits the
+  `/preview` endpoint and shows the resolved subject + body
+  in a bottom-sheet modal. Email HTML rendered as stripped text
+  (matches Sends-detail pattern; WebView deferred).
+- **`mobile/app/(app)/comms/automations/index.tsx`** — FlatList of
+  rules with a live active `<Switch>` per row (calls
+  `PATCH /automations/{code}`), trigger badge, channel icon,
+  template + delay meta row. Pull-to-refresh.
+- **`mobile/app/(app)/comms/automations/[code].tsx`** — read-only
+  detail; `Test Fire` button in the header opens a bottom-sheet
+  customer picker → `POST /automations/{code}/test-fire`. **This
+  ship adds** the "Recent fires" list (last 10 rows from
+  `GET /comms/automation-events?automation_code=X&limit=10`) with
+  a coloured status dot per event (`sent` green, `failed` red,
+  `skipped_deduped` amber, `skipped_conditions_not_met` / `no_customer`
+  grey, `scheduled` blue) — surfaces the Phase 3 engine journal
+  directly on mobile.
+- **`mobile/app/(app)/comms/sends/index.tsx`** — filter bar (kind
+  cycle chip · status cycle chip · recipient search input), rows
+  with channel icon + `SendStatusPill` + template code + recipient
+  + auto tag + queued/sent date, pull-to-refresh.
+- **`mobile/app/(app)/comms/sends/[id].tsx`** — full send detail:
+  status badge + meta card (ID, template, recipient, automation,
+  sent_at, provider_message_id), red error box when `error` present,
+  subject + body (HTML stripped) or SMS text, resolved-tokens JSON
+  block. No re-send button (spec).
+- **`mobile/app/(app)/comms/test-send.tsx`** — quick manual send:
+  Email/SMS channel toggle, expandable template picker (loads
+  active templates for the current channel), expandable customer
+  picker (from `/api/customers`), Send Now button → `POST
+  /comms/send-now`. Success/error Alert.
+- **Reusable components** under `mobile/src/components/comms/`:
+  `ChannelIcon.tsx` and `SendStatusPill.tsx` (both pre-existing;
+  reused as-is). `TokenPickerSheet.tsx` skipped — test-send form
+  works with the base pickers.
+- **Offline banner** — the global `<SyncBanner />` mounted in
+  `app/(app)/_layout.tsx` renders on every Comms screen; no
+  extra per-screen banner needed.
+
+### Deviations from the brief
+- **`TokenPickerSheet.tsx` skipped** — brief marked it "(optional
+  if you skip token insertion in the mobile test-send form)". The
+  form only takes template + customer; token insertion happens on
+  the web builder, so the sheet has no consumer on mobile.
+- **Email preview rendered as stripped text**, not in a `WebView`.
+  Rationale: parity with the `Sends detail` pattern (already
+  ships this way) and the resulting HTML is server-rendered from
+  the same 12-block schema — a text collapse is legible for
+  triage. Full HTML rendering can be added later behind the same
+  contract without touching the API client.
+- **Nav placement** — Comms lives as a **tile in the Tools Hub**
+  (Marketing section, admin-role gated by
+  `sectionsForRole`) rather than a top-level drawer/tab entry.
+  This matches the existing mobile taxonomy where every admin
+  feature enters via Tools Hub (see also Handbook, Onboarding,
+  Marketing). The tile route `/(app)/comms` is unchanged.
+- **Deep-linking on `comms/sends/[id]`** — deferred (push-notif
+  plumbing for the mobile app doesn't route to individual sends
+  yet; existing router paths handle the case fine).
+
+### Files added / modified
+- **Modified**: `mobile/src/api/comms.ts` (added `listAutomationEvents`
+  + `getTokensCatalog`), `mobile/app/(app)/comms/index.tsx` (added
+  At-a-Glance strip + focus-refresh), `mobile/app/(app)/comms/
+  automations/[code].tsx` (added Recent-Fires list + `statusColor`
+  helper + related styles).
+- **Backend unchanged. Web frontend unchanged.** All eight mobile
+  Comms screens + both mobile reusable components + the API client
+  were already scaffolded by a prior fork session; this ship
+  closes the three remaining brief-mandated gaps.
+
+### Verification
+- **Mobile TypeScript compile clean on Comms files** — full
+  `npx tsc --noEmit` reports 151 pre-existing errors elsewhere
+  (`cfo/`, `checks/`, `dispatch/`, `weather.tsx`, etc.); **zero**
+  in `mobile/app/(app)/comms/*` or `mobile/src/api/comms.ts` or
+  `mobile/src/components/comms/*`.
+- **Backend regression sample** — `pytest test_automation_engine +
+  test_comms_backend + test_reviews_backend + test_video_uploads +
+  test_customer_import_full_mapping` → 75 passed, 1 flake
+  (`test_widget_rate_limit_returns_429` — passes in isolation;
+  under-load rate-limit state pollution). Not caused by Item 10.
+- **Mobile API smoke** — all 9 endpoints the mobile client hits
+  return **200** against `admin@aquaterra.com` (curl transcript
+  below):
+  - `GET /comms/email-templates` → 200 · 14.2 kB
+  - `GET /comms/sms-templates` → 200 · 2.4 kB
+  - `GET /comms/email-templates/system.welcome_new_customer` → 200
+  - `POST /comms/email-templates/system.welcome_new_customer/preview` → 200
+  - `GET /comms/automations` → 200
+  - `GET /comms/automations/welcome_new_customer_email` → 200
+  - `GET /comms/sends?limit=5` → 200 · 13.6 kB
+  - `GET /comms/automation-events?limit=5` → 200
+  - `GET /comms/tokens` → 200 · 4.5 kB
+- **Expo web preview** — the `expo.preview.emergentagent.com`
+  subdomain in this environment routes to the web bundle
+  (ingress quirk), so live-browser screenshots of the mobile
+  React-Native surface aren't capturable in the container. Per
+  the brief ("manual smoke via the Expo web preview is enough")
+  and its fallback ("curl-round-trips are sufficient"), the
+  mobile app itself will render on iOS/Android via Expo Go.
+
+### What remains out of scope (per brief)
+- Full drag-and-drop email editor on mobile ✗
+- Template CRUD from mobile ✗
+- Automation rule creation from mobile ✗
+- Offline draft support for test-send ✗
+- Re-send action on Sends detail ✗

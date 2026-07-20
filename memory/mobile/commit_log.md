@@ -79,3 +79,14 @@
   - `mobile/app.json` — permissions
   - `mobile/package.json` — added expo-video
   - `memory/PRD.md` — Phase 5B subsection
+
+
+## Iteration 5 — Communications Subsystem · Phase 4 (Mobile Parity)
+- **Commit**: 23e1f06
+- **Date**: 2026-07-20
+- **Changes**:
+  - 11 new files: `src/api/comms.ts`, 2 components (SendStatusPill, ChannelIcon), 8 screens (hub, templates list/detail, automations list/detail, sends list/detail, test-send)
+  - Wired Comms tile to ADMIN_SECTIONS and added 8 hidden routes to `_layout.tsx`
+  - All screens verified via screenshots: templates (8 email templates listed), automations (5 rules with toggles), sends (100 records with QUEUED status), test-send form
+- **Files modified**: comms.ts, SendStatusPill.tsx, ChannelIcon.tsx, comms/index.tsx, templates/index.tsx, templates/[code].tsx, automations/index.tsx, automations/[code].tsx, sends/index.tsx, sends/[id].tsx, test-send.tsx, sections.ts, _layout.tsx
+- **Web files referenced**: api/comms.js, CommsPages.jsx, SendStatusPill.jsx

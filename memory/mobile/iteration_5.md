@@ -1,0 +1,40 @@
+## Iteration 5 — Communications Subsystem · Phase 4 (Mobile Parity)
+- **Commit**: 23e1f06a9f967ca5e584d37652086eff57ac0e76
+- **Date**: 2026-07-20
+- **Changes**:
+  - Implemented complete Communications Subsystem mobile UI
+  - Created `src/api/comms.ts` API client with all 10 endpoints (list/get/preview email+SMS templates, list/get/toggle/test-fire automations, send-now, list/get sends)
+  - Created `SendStatusPill.tsx` component (6 status colors: queued/sent/mocked/failed/opted_out/missing_key)
+  - Created `ChannelIcon.tsx` component (email/sms badges)
+  - Created 8 screen files under `app/(app)/comms/`:
+    - `index.tsx` — Hub with 4 section cards
+    - `templates/index.tsx` — Email/SMS toggle, search, template list
+    - `templates/[code].tsx` — Template detail + preview modal
+    - `automations/index.tsx` — Automation rules list with active toggle (PATCH)
+    - `automations/[code].tsx` — Automation detail + test-fire modal
+    - `sends/index.tsx` — Sends history with filters
+    - `sends/[id].tsx` — Send detail (recipient, body, status, error, provider ID)
+    - `test-send.tsx` — Manual send form (channel → template → customer → POST /send-now)
+  - Added Communications tile to `ADMIN_SECTIONS` in `sections.ts`
+  - Added 8 hidden `Tabs.Screen` entries to `_layout.tsx`
+- **Files modified**:
+  - `mobile/src/api/comms.ts` (NEW)
+  - `mobile/src/components/comms/SendStatusPill.tsx` (NEW)
+  - `mobile/src/components/comms/ChannelIcon.tsx` (NEW)
+  - `mobile/app/(app)/comms/index.tsx` (NEW)
+  - `mobile/app/(app)/comms/templates/index.tsx` (NEW)
+  - `mobile/app/(app)/comms/templates/[code].tsx` (NEW)
+  - `mobile/app/(app)/comms/automations/index.tsx` (NEW)
+  - `mobile/app/(app)/comms/automations/[code].tsx` (NEW)
+  - `mobile/app/(app)/comms/sends/index.tsx` (NEW)
+  - `mobile/app/(app)/comms/sends/[id].tsx` (NEW)
+  - `mobile/app/(app)/comms/test-send.tsx` (NEW)
+  - `mobile/src/components/tools/sections.ts` (MODIFIED)
+  - `mobile/app/(app)/_layout.tsx` (MODIFIED)
+- **Web files referenced**:
+  - `frontend/src/api/comms.js`
+  - `frontend/src/pages/comms/CommsPages.jsx`
+  - `frontend/src/components/comms/SendStatusPill.jsx`
+  - `frontend/src/components/comms/TokenPickerModal.jsx`
+- **Dependencies installed**: None (all required packages already in project)
+- **Known issues**: None
