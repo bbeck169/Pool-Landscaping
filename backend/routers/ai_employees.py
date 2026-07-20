@@ -142,6 +142,37 @@ AE3_APPROVE_GATED_ACTIONS = {
     "buddy.pricing_recommendation",
 }
 
+# ─── AE4 · Soshie / Scouty / Commet ───────────────────────────────────
+SOSHIE_ACTIONS = {
+    "soshie.draft_post",
+    "soshie.schedule_post",
+    "soshie.suggest_content_calendar",
+    "soshie.analyze_engagement",
+    "soshie.hashtag_research",
+}
+SCOUTY_ACTIONS = {
+    "scouty.draft_job_posting",
+    "scouty.screen_resume",
+    "scouty.suggest_interview_questions",
+    "scouty.generate_offer_letter",
+    "scouty.pipeline_summary",
+}
+COMMET_ACTIONS = {
+    "commet.draft_funnel_copy",
+    "commet.analyze_conversion",
+    "commet.suggest_ab_variants",
+    "commet.recommend_cta_changes",
+    "commet.funnel_stage_report",
+}
+AE4_APPROVE_GATED_ACTIONS = {
+    "soshie.draft_post",
+    "soshie.schedule_post",
+    "scouty.draft_job_posting",
+    "scouty.generate_offer_letter",
+    "commet.draft_funnel_copy",
+    "commet.suggest_ab_variants",
+}
+
 
 # ─── Models ───────────────────────────────────────────────────────────
 
@@ -614,6 +645,18 @@ async def approve_action(aid: str, body: Optional[ActionDecision] = None,
             "action": doc.get("action"),
             "note": "Recorded for audit trail — no writes performed.",
         }
+    # AE4 · Soshie / Scouty / Commet — approval flips to executed
+    # with a per-employee ``result.kind``. All AE4 approvals are
+    # audit-trail only in this slice; downstream (M6 social sender,
+    # HR portal, funnel builder) will consume the draft payload.
+    elif doc["employee_key"] in ("soshie", "scouty", "commet"):
+        upd["status"] = "executed"
+        upd["executed_at"] = now_iso()
+        upd["result"] = {
+            "kind": f"{doc['employee_key']}_draft_ready",
+            "action": doc.get("action"),
+            "draft": doc.get("draft"),
+        }
     await db.ai_employee_actions.update_one(
         {"id": aid, "tenant_id": tenant["id"]}, {"$set": upd},
     )
@@ -663,21 +706,24 @@ async def _dispatch_action(*, tenant: dict, user: dict, employee: dict,
     is_buddy_action = action in BUDDY_ACTIONS and employee["key"] == "buddy"
     is_vizzy_action = action in VIZZY_ACTIONS and employee["key"] == "vizzy"
     is_dexter_action = action in DEXTER_ACTIONS and employee["key"] == "dexter"
+    is_soshie_action = action in SOSHIE_ACTIONS and employee["key"] == "soshie"
+    is_scouty_action = action in SCOUTY_ACTIONS and employee["key"] == "scouty"
+    is_commet_action = action in COMMET_ACTIONS and employee["key"] == "commet"
     if not (is_casey_action or is_emmie_action or is_buddy_action
-              or is_vizzy_action or is_dexter_action):
+              or is_vizzy_action or is_dexter_action
+              or is_soshie_action or is_scouty_action or is_commet_action):
         assistant_text = (
             f"Action `{action}` isn't wired for {employee['name']} yet. "
-            f"Casey (AE1), Emmie (AE2), Buddy/Vizzy/Dexter (AE3) are "
-            f"live. Soshie/Scouty/Commet ship in AE4."
+            f"All eight employees (Casey, Emmie, Buddy, Vizzy, Dexter, "
+            f"Soshie, Scouty, Commet) are live — check the action key."
         )
         return assistant_text, None
 
-    # Emmie's read-only helpers + all Vizzy + Dexter actions + Buddy's
-    # pipeline_analysis skip the heavy debit — they still hit the LLM
-    # but produce no queue entry, matching the ship brief. Only the
-    # two approve-gated Buddy actions charge 5c on top of chat 1c.
+    # Read-only helpers skip the heavy debit. Only approve-gated
+    # actions from any slice charge 5c on top of chat 1c.
     charge_heavy = (
         action in AE3_APPROVE_GATED_ACTIONS
+        or action in AE4_APPROVE_GATED_ACTIONS
         or (is_casey_action)
         or (is_emmie_action and action not in EMMIE_IMMEDIATE_ACTIONS)
     )
@@ -756,6 +802,24 @@ async def _dispatch_action(*, tenant: dict, user: dict, employee: dict,
             tenant=tenant, user=user, employee=employee,
             action=action, params=params,
             system_prompt=system_prompt, user_text=user_text,
+        )
+    if is_soshie_action:
+        return await _soshie_dispatch(
+            tenant=tenant, user=user, employee=employee,
+            conversation_id=conversation_id, action=action,
+            params=params, system_prompt=system_prompt, user_text=user_text,
+        )
+    if is_scouty_action:
+        return await _scouty_dispatch(
+            tenant=tenant, user=user, employee=employee,
+            conversation_id=conversation_id, action=action,
+            params=params, system_prompt=system_prompt, user_text=user_text,
+        )
+    if is_commet_action:
+        return await _commet_dispatch(
+            tenant=tenant, user=user, employee=employee,
+            conversation_id=conversation_id, action=action,
+            params=params, system_prompt=system_prompt, user_text=user_text,
         )
     return "Unknown action.", None
 
@@ -1792,4 +1856,443 @@ async def _dexter_chemical_profitability_report(*, tenant, params,
     )
     r = await _llm_chat(system_prompt, prompt, history=[])
     return r["text"] + f"\n\n(rollup: {per_chem})", None
+
+
+
+# ─── AE4 · Soshie (Social media copilot) ──────────────────────────────
+
+async def _soshie_dispatch(*, tenant, user, employee, conversation_id,
+                              action, params, system_prompt, user_text):
+    if action == "soshie.draft_post":
+        return await _soshie_draft_post(
+            tenant=tenant, user=user, employee=employee,
+            conversation_id=conversation_id, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "soshie.schedule_post":
+        return await _soshie_schedule_post(
+            tenant=tenant, user=user, employee=employee,
+            conversation_id=conversation_id, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "soshie.suggest_content_calendar":
+        return await _soshie_content_calendar(
+            tenant=tenant, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "soshie.analyze_engagement":
+        return await _soshie_analyze_engagement(
+            tenant=tenant, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "soshie.hashtag_research":
+        return await _soshie_hashtag_research(
+            tenant=tenant, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    return "Unknown Soshie action.", None
+
+
+async def _soshie_draft_post(*, tenant, user, employee, conversation_id,
+                                params, system_prompt, user_text):
+    platform = (params.get("platform") or "instagram").lower()
+    topic = params.get("topic") or user_text
+    tone = params.get("tone") or ""
+    prompt = (
+        f"Draft a {platform} post about: {topic}\n"
+        f"Tone: {tone or 'per brand brain default'}. "
+        f"Keep it authentic to the pool/landscaping brand.\n\n"
+        "Return sections with these exact headers on their own lines: "
+        "Caption:, Hashtags: (5-10 comma-separated), CTA:. Do not "
+        "include placeholders like [BRAND] — expand them into real "
+        "copy per the brand brain."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    text = r["text"]
+    action = await _create_action(
+        tenant_id=tenant["id"], user_id=user["id"],
+        employee_id=employee["id"], employee_key="soshie",
+        conversation_id=conversation_id,
+        action="soshie.draft_post",
+        params={"platform": platform, "topic": topic, "tone": tone},
+        draft={"text": text, "platform": platform},
+        title=f"Post draft — {platform}",
+        summary=text[:200],
+    )
+    return text, action
+
+
+async def _soshie_schedule_post(*, tenant, user, employee, conversation_id,
+                                    params, system_prompt, user_text):
+    platform = (params.get("platform") or "instagram").lower()
+    when = params.get("scheduled_at") or ""
+    caption = (params.get("caption") or "").strip()
+    if not caption:
+        return "Send `caption` in action_params so I know what to schedule.", None
+    action = await _create_action(
+        tenant_id=tenant["id"], user_id=user["id"],
+        employee_id=employee["id"], employee_key="soshie",
+        conversation_id=conversation_id,
+        action="soshie.schedule_post",
+        params={"platform": platform, "scheduled_at": when,
+                  "caption": caption[:400]},
+        draft={"platform": platform, "scheduled_at": when,
+                "caption": caption},
+        title=f"Schedule {platform} post",
+        summary=f"{platform} @ {when or 'unspecified'}: {caption[:120]}",
+    )
+    reply = (
+        f"Queued a {platform} post" +
+        (f" for {when}" if when else " (no time set)") +
+        f". Approve to move it to the outbox.\n\nCaption preview:\n{caption[:400]}"
+    )
+    return reply, action
+
+
+async def _soshie_content_calendar(*, tenant, params, system_prompt, user_text):
+    days = int(params.get("days") or 14)
+    services = params.get("service_types") or ["Pool", "Landscape"]
+    prompt = (
+        f"Draft a {days}-day social content calendar for a pool + "
+        f"landscape business covering {services}. Return a bullet list "
+        f"of ideas, one per day, in the shape 'Day N — Platform — "
+        f"Hook'. Alternate platforms across Instagram, Facebook, "
+        f"LinkedIn. Ground ideas in seasonality + service mix."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"], None
+
+
+async def _soshie_analyze_engagement(*, tenant, params, system_prompt, user_text):
+    days = int(params.get("days") or 30)
+    # Best-effort read of any social_posts collection — safe fallback
+    # when the collection isn't present yet.
+    counts = {"posts": 0, "recent_days": days}
+    try:
+        since = _iso_days_ago(days)
+        counts["posts"] = await db.social_posts.count_documents({
+            "tenant_id": tenant["id"], "created_at": {"$gte": since},
+        })
+    except Exception:
+        pass
+    prompt = (
+        f"Recent social activity snapshot: {counts}\n"
+        "Write a short engagement analysis (≤ 120 words) with 3 "
+        "actionable recommendations. If activity is zero or low, "
+        "recommend a starter cadence."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"], None
+
+
+async def _soshie_hashtag_research(*, tenant, params, system_prompt, user_text):
+    topic = params.get("topic") or user_text or "pool service"
+    prompt = (
+        f"Give me 15 hashtags for the topic '{topic}' in the pool + "
+        "landscape service niche. Mix niche + broad. Return a comma-"
+        "separated list, no numbering, no # symbols missing."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"], None
+
+
+# ─── AE4 · Scouty (Recruiting copilot) ────────────────────────────────
+
+async def _scouty_dispatch(*, tenant, user, employee, conversation_id,
+                              action, params, system_prompt, user_text):
+    if action == "scouty.draft_job_posting":
+        return await _scouty_draft_job_posting(
+            tenant=tenant, user=user, employee=employee,
+            conversation_id=conversation_id, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "scouty.screen_resume":
+        return await _scouty_screen_resume(
+            tenant=tenant, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "scouty.suggest_interview_questions":
+        return await _scouty_interview_questions(
+            tenant=tenant, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "scouty.generate_offer_letter":
+        return await _scouty_offer_letter(
+            tenant=tenant, user=user, employee=employee,
+            conversation_id=conversation_id, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "scouty.pipeline_summary":
+        return await _scouty_pipeline_summary(
+            tenant=tenant, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    return "Unknown Scouty action.", None
+
+
+async def _scouty_draft_job_posting(*, tenant, user, employee,
+                                        conversation_id, params,
+                                        system_prompt, user_text):
+    role = params.get("role") or "Pool Technician"
+    location = params.get("location") or "Peoria, AZ"
+    pay_range = params.get("pay_range") or ""
+    prompt = (
+        f"Draft a job posting for a {role} role based in {location}. "
+        f"Pay range: {pay_range or 'competitive'}. "
+        "Include sections: Overview, Responsibilities (bullet list, "
+        "5-7 items), Requirements (bullet list, 4-6 items), Why work "
+        "with us (bullet list, 3-4 items), How to apply."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    text = r["text"]
+    action = await _create_action(
+        tenant_id=tenant["id"], user_id=user["id"],
+        employee_id=employee["id"], employee_key="scouty",
+        conversation_id=conversation_id,
+        action="scouty.draft_job_posting",
+        params={"role": role, "location": location,
+                  "pay_range": pay_range},
+        draft={"text": text, "role": role, "location": location},
+        title=f"Job posting draft — {role}",
+        summary=text[:200],
+    )
+    return text, action
+
+
+async def _scouty_screen_resume(*, tenant, params, system_prompt, user_text):
+    resume = params.get("resume_text") or user_text
+    role = params.get("role") or "Pool Technician"
+    if not resume or len(resume.strip()) < 40:
+        return "Send `resume_text` in action_params (≥ 40 chars).", None
+    prompt = (
+        f"Screen the following resume against a {role} role for a "
+        f"pool + landscape service company. Rate fit 1-10, list top "
+        f"3 strengths, top 3 concerns, and a recommended next step.\n\n"
+        f"--- Resume ---\n{resume}"
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"], None
+
+
+async def _scouty_interview_questions(*, tenant, params, system_prompt, user_text):
+    role = params.get("role") or "Pool Technician"
+    count = int(params.get("count") or 8)
+    prompt = (
+        f"Draft {count} interview questions for a {role} role. Mix "
+        "behavioural, situational, and role-specific technical items. "
+        "Return one per line, no numbering. Skip anything that would "
+        "raise legal concerns (age, family, disability, etc.)."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"], None
+
+
+async def _scouty_offer_letter(*, tenant, user, employee, conversation_id,
+                                   params, system_prompt, user_text):
+    candidate = params.get("candidate_name") or "[Candidate Name]"
+    role = params.get("role") or "Pool Technician"
+    salary = params.get("salary") or ""
+    start_date = params.get("start_date") or "[Start Date]"
+    prompt = (
+        f"Draft an offer letter for {candidate} for the {role} role. "
+        f"Salary: {salary or '[Salary TBD]'}. Start date: {start_date}. "
+        "Include: warm opening, role title + reporting structure, "
+        "compensation, benefits summary, at-will note, response "
+        "deadline (1 week), and a sign-off. Do NOT invent numbers "
+        "beyond what's provided."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    text = r["text"]
+    action = await _create_action(
+        tenant_id=tenant["id"], user_id=user["id"],
+        employee_id=employee["id"], employee_key="scouty",
+        conversation_id=conversation_id,
+        action="scouty.generate_offer_letter",
+        params={"candidate_name": candidate, "role": role,
+                  "salary": salary, "start_date": start_date},
+        draft={"text": text},
+        title=f"Offer letter draft — {candidate}",
+        summary=text[:200],
+    )
+    return text, action
+
+
+async def _scouty_pipeline_summary(*, tenant, params, system_prompt, user_text):
+    # Best-effort — read any candidates collection if present.
+    counts = {"applications": 0, "in_review": 0, "hired_30d": 0}
+    try:
+        counts["applications"] = await db.recruit_applications.count_documents({
+            "tenant_id": tenant["id"],
+        })
+        counts["in_review"] = await db.recruit_applications.count_documents({
+            "tenant_id": tenant["id"], "status": "in_review",
+        })
+        since = _iso_days_ago(30)
+        counts["hired_30d"] = await db.recruit_applications.count_documents({
+            "tenant_id": tenant["id"], "status": "hired",
+            "updated_at": {"$gte": since},
+        })
+    except Exception:
+        pass
+    prompt = (
+        f"Recruit pipeline snapshot: {counts}\n"
+        "Write a short (≤ 100 words) pipeline summary + 3 actionable "
+        "next steps for the hiring manager."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"], None
+
+
+# ─── AE4 · Commet (Funnels copilot) ────────────────────────────────────
+
+async def _commet_dispatch(*, tenant, user, employee, conversation_id,
+                              action, params, system_prompt, user_text):
+    if action == "commet.draft_funnel_copy":
+        return await _commet_draft_funnel_copy(
+            tenant=tenant, user=user, employee=employee,
+            conversation_id=conversation_id, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "commet.analyze_conversion":
+        return await _commet_analyze_conversion(
+            tenant=tenant, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "commet.suggest_ab_variants":
+        return await _commet_suggest_ab_variants(
+            tenant=tenant, user=user, employee=employee,
+            conversation_id=conversation_id, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "commet.recommend_cta_changes":
+        return await _commet_recommend_cta_changes(
+            tenant=tenant, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    if action == "commet.funnel_stage_report":
+        return await _commet_funnel_stage_report(
+            tenant=tenant, params=params or {},
+            system_prompt=system_prompt, user_text=user_text,
+        )
+    return "Unknown Commet action.", None
+
+
+async def _commet_draft_funnel_copy(*, tenant, user, employee, conversation_id,
+                                          params, system_prompt, user_text):
+    goal = params.get("goal") or user_text or "get InstaQuote submissions"
+    audience = params.get("audience") or "homeowners with in-ground pools"
+    prompt = (
+        f"Draft copy for a marketing funnel targeting: {audience}.\n"
+        f"Goal: {goal}\n\n"
+        "Return the following sections on their own lines: "
+        "Headline:, Subheadline:, Body (3-4 short paragraphs), "
+        "Primary CTA:, Trust builders (3 bullets)."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    text = r["text"]
+    action = await _create_action(
+        tenant_id=tenant["id"], user_id=user["id"],
+        employee_id=employee["id"], employee_key="commet",
+        conversation_id=conversation_id,
+        action="commet.draft_funnel_copy",
+        params={"goal": goal, "audience": audience},
+        draft={"text": text},
+        title=f"Funnel copy draft — {goal[:40]}",
+        summary=text[:200],
+    )
+    return text, action
+
+
+async def _commet_analyze_conversion(*, tenant, params, system_prompt, user_text):
+    days = int(params.get("days") or 30)
+    since = _iso_days_ago(days)
+    counts = {"days": days}
+    try:
+        counts["instaquote_submissions"] = \
+            await db.instaquote_submissions.count_documents({
+                "tenant_id": tenant["id"], "created_at": {"$gte": since},
+            })
+    except Exception:
+        counts["instaquote_submissions"] = 0
+    try:
+        counts["deals_created"] = await db.deals.count_documents({
+            "tenant_id": tenant["id"], "created_at": {"$gte": since},
+        })
+    except Exception:
+        counts["deals_created"] = 0
+    prompt = (
+        f"Funnel conversion snapshot over {days}d: {counts}\n"
+        "Write a short analysis (≤ 120 words) with 3 concrete "
+        "recommendations for lifting conversion."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"], None
+
+
+async def _commet_suggest_ab_variants(*, tenant, user, employee, conversation_id,
+                                          params, system_prompt, user_text):
+    element = params.get("element") or "headline"
+    current = (params.get("current_copy") or "").strip()
+    if not current:
+        return "Send `current_copy` in action_params so I know what to A/B against.", None
+    prompt = (
+        f"Draft THREE A/B variants for the {element}. Return only the "
+        f"three variants, one per line, no numbering.\n\n"
+        f"--- Current copy ---\n{current}"
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    variants = [ln.strip().lstrip("-*• ").strip('"').strip("'")
+                    for ln in r["text"].splitlines() if ln.strip()][:3]
+    while len(variants) < 3:
+        variants.append(current)
+    action = await _create_action(
+        tenant_id=tenant["id"], user_id=user["id"],
+        employee_id=employee["id"], employee_key="commet",
+        conversation_id=conversation_id,
+        action="commet.suggest_ab_variants",
+        params={"element": element, "current_copy": current[:400]},
+        draft={"element": element, "variants": variants,
+                "raw_llm_output": r["text"]},
+        title=f"A/B {element} variants",
+        summary=" | ".join(variants)[:200],
+    )
+    reply = (
+        f"Three {element} variants:\n"
+        + "\n".join(f"  • {v}" for v in variants)
+        + "\n\nApprove to log them for the funnel builder."
+    )
+    return reply, action
+
+
+async def _commet_recommend_cta_changes(*, tenant, params, system_prompt, user_text):
+    current = params.get("current_cta") or user_text or "Get a Quote"
+    prompt = (
+        f"The current CTA is: '{current}'. Suggest 3 stronger CTAs, "
+        "each on its own line, no numbering. Optimize for pool + "
+        "landscape service booking."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"], None
+
+
+async def _commet_funnel_stage_report(*, tenant, params, system_prompt, user_text):
+    counts = {}
+    try:
+        counts["instaquote_pending"] = \
+            await db.instaquote_submissions.count_documents({
+                "tenant_id": tenant["id"], "status": "pending",
+            })
+        counts["deals_open"] = await db.deals.count_documents({
+            "tenant_id": tenant["id"],
+            "status": {"$nin": ["won", "lost"]},
+        })
+    except Exception:
+        pass
+    prompt = (
+        f"Funnel stage counts: {counts}\n"
+        "Write a stage-by-stage report (≤ 100 words). Call out any "
+        "stage that looks blocked and suggest one action."
+    )
+    r = await _llm_chat(system_prompt, prompt, history=[])
+    return r["text"], None
 
