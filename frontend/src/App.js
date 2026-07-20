@@ -2,6 +2,7 @@ import React from "react";
 import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/auth";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
+import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import AppLayout from "@/layouts/AppLayout";
 import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
@@ -713,6 +714,12 @@ export default function App() {
           {/* Anything unmatched → home */}
           <Route path="*" element={<NotFound />} />
         </Routes>
+        {/* Global Sonner host — MUST be mounted here or every `toast.*()`
+             call across the app silently no-ops. Positioned top-right with
+             a data-testid on the wrapper so E2E can locate it in the DOM. */}
+        <div data-testid="app-toaster-root">
+          <SonnerToaster position="top-right" richColors closeButton />
+        </div>
       </BrowserRouter>
       </ConfirmProvider>
       </RealtimeProvider>
