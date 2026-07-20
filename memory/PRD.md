@@ -5125,3 +5125,142 @@ tracked as a **future backlog item**, not urgent.
 **None.** Google Maps API key + Places API were verified working
 via direct REST calls (returned real predictions). Bug was purely
 a client-side loader-timing race in our own component.
+
+---
+
+## Marketing Subsystem · Phase M1 (Foundation Backend) · Feb 2026
+
+**Scope:** Sender.net-style Marketing subsystem — Phase M1 lays the audience-side foundation (subscribers + lists + segments + double-opt-in + tenant marketing settings) so that M2 Campaigns can broadcast, track, and attribute revenue against a real audience.
+
+### Design decisions (locked with user)
+
+1. **Subscribers collection is standalone.** Nullable `customer_id` links back to CRM when applicable. Email-only signups (no CRM presence) work cleanly. Marketing state does NOT bolt onto the Customer schema.
+2. **Customers are auto-mirrored into subscribers** on `POST /api/customers` via a best-effort hook in `routers/customers.create_customer`. Mirror row is `source="crm_customer"`, already-consented (service agreement) → `status="subscribed"`, `confirmed_at=now`. Idempotent — re-creating never duplicates.
+3. **Namespace `/api/marketing/*`** (not `/api/mkt/*`). Coexists with legacy `routers/marketing.py` (which owns `/api/forms`, `/api/campaigns`, `/api/reviews` etc. — no path collision).
+4. **Double-opt-in ON by default.** Tenant-level `require_double_optin: bool` (default `true`) with per-form override via `double_opt_in: bool` on the form doc. CRM-mirrored customers are NOT double-opt-in (already consented).
+5. **Attribution window** 30 days (default), configurable per-tenant via `revenue_attribution_days` on the tenant record. Model: last-touch (M2 will implement).
+6. **HMAC signing** for confirmation tokens reuses the same pattern as `routers/comms.py::_sign_unsubscribe` — one signing scheme, one secret (`JWT_SECRET`).
+
+### Data model
+
+**`subscribers`** (new, tenant-scoped)
+- `id, tenant_id, email, phone, first_name, last_name`
+- `status ∈ {pending_confirmation, subscribed, unsubscribed, bounced}`
+- `source ∈ {public_form, crm_customer, manual, api_import}`
+- `customer_id` (nullable FK), `tags[]`, `attributes{}`
+- `consent_at, confirmed_at, unsubscribed_at, confirmation_token`
+- `form_slug` (nullable — for DOI flow), `created_at, updated_at`
+- Indexes: `(tenant_id, email)` sparse, `(tenant_id, phone)` sparse, `(tenant_id, status, created_at desc)`
+
+**`marketing_lists`** (new, tenant-scoped)
+- `id, tenant_id, slug, name, description, type ∈ {static, dynamic}, segment_id, is_system_default, created_at, updated_at`
+- Unique index `(tenant_id, slug)`
+
+**`marketing_segments`** (new, tenant-scoped)
+- `id, tenant_id, slug, name, description, rules (JSON DSL), is_system_default, created_at, updated_at`
+- Unique index `(tenant_id, slug)`
+
+**`marketing_list_memberships`** (new, tenant-scoped, static lists only)
+- `id, tenant_id, list_id, subscriber_id, added_at`
+- Unique index `(tenant_id, list_id, subscriber_id)`
+
+**Extensions**
+- `tenants` doc gets `require_double_optin: bool` (default `true`) and `revenue_attribution_days: int` (default `30`).
+
+### Endpoints (all under `/api/marketing/*`)
+
+**Subscribers (admin+)**
+- `GET /marketing/subscribers?q=&status=&source=&tag=&limit=`
+- `POST /marketing/subscribers`
+- `GET /marketing/subscribers/{sid}`
+- `PATCH /marketing/subscribers/{sid}`
+- `DELETE /marketing/subscribers/{sid}` (cascades memberships)
+- `POST /marketing/subscribers/{sid}/unsubscribe`
+
+**Lists (admin+)**
+- `GET /marketing/lists` (auto-seeds default "All Subscribers" list)
+- `POST /marketing/lists`
+- `GET /marketing/lists/{lid}` · `PATCH` · `DELETE` (system-defaults blocked)
+- `GET /marketing/lists/{lid}/members` (static: joins memberships; dynamic: resolves via segment)
+- `POST /marketing/lists/{lid}/members` (batch add, idempotent)
+- `DELETE /marketing/lists/{lid}/members/{sid}`
+
+**Segments (admin+)**
+- `GET /marketing/segments` (auto-seeds default "Active Subscribers")
+- `POST /marketing/segments`
+- `GET /marketing/segments/{sid}` · `PATCH` · `DELETE` (system-defaults + in-use blocked)
+- `POST /marketing/segments/{sid}/preview` → `{matched_count, sample[], sample_size}`
+- `POST /marketing/segments/preview` (ad-hoc, no save, drives the segment builder UI)
+
+**Settings (admin+)**
+- `GET /marketing/settings`
+- `PUT /marketing/settings`
+
+**Public (unauthenticated)**
+- `POST /marketing/public/signup-form/{form_slug}/subscribe` — resolves tenant from form doc → X-Tenant-Slug → custom domain → default tenant. Honeypot field auto-detected. Returns `{ok, subscriber_id, status, require_confirm, confirmation_email_status, redirect_url}`.
+- `POST /marketing/public/confirm` — body `{tenant_id, email, token}`. HMAC-verifies the token, flips subscriber to `subscribed`, and applies bound_list_ids from the originating form.
+
+### Segment DSL
+
+JSON tree with leaf rules `{field, op, value}` and groups `{combinator: "and"|"or", rules: []}`. Ops: `eq, ne, contains, not_contains, gt, gte, lt, lte, in, not_in, exists, before, after`. Fields: any top-level subscriber column plus `attributes.<any-key>`. Compiler is `services/marketing_segments.py::compile_to_filter(tenant_id, tree) → Mongo filter`. Every filter is tenant-scoped by construction — impossible to leak across tenants even if a rule tree is empty.
+
+### Auto-seed per tenant
+
+On the first admin hit to `GET /marketing/segments` or `GET /marketing/lists`, the tenant idempotently seeds:
+- Segment: **`active-subscribers`** (rules: `status == "subscribed"`, `is_system_default=true`)
+- List: **`all-subscribers`** (static, `is_system_default=true`)
+
+System defaults cannot be deleted (blocked at the endpoint layer).
+
+### RBAC + tenant isolation
+
+- All admin endpoints require `role ∈ {admin, super_admin}`. Technicians are 403 across the surface.
+- Every query filters by `tenant_id` at the router layer. Segment filters are tenant-scoped at compile time.
+- Public endpoints resolve tenant via form doc + `X-Tenant-Slug` + custom-domain host — same pattern as the reviews-public and portal-public surfaces.
+
+### Files added / modified
+
+**Added:**
+- `backend/routers/marketing_m1.py` (700 lines)
+- `backend/services/marketing_segments.py` (rule DSL compiler)
+- `backend/services/marketing_subscribers.py` (mirror + DOI helpers)
+- `backend/tests/test_marketing_m1.py` (35 tests, 8 classes)
+
+**Modified:**
+- `backend/server.py` — register `marketing_m1` router
+- `backend/routers/customers.py` — best-effort call to `mirror_customer_created` after `customer.created` emit
+- `backend/db_indexes.py` — 6 new indexes for the M1 collections
+
+### Test results
+
+- **New M1 suite:** 35/35 passed in 9.7s
+- **Full backend pytest (with M1):** 1006 passed · 752 skipped (legacy_iteration + live-net) · 1 failed (`test_zillow_live_property_lookup` — external Zillow scraper hit, unrelated to M1; skips cleanly in isolation)
+- **Targeted regression:** `test_comms_backend` (20 ✓), `test_reviews_backend` (21 ✓), `test_video_uploads` (17 ✓), `test_customer_import_full_mapping` (11 ✓), `test_review_scraping` (10 ✓), `test_automation_engine` (7 ✓) — all green
+
+### Curl transcripts (proof of life)
+
+1. **CRM mirror** — `POST /api/customers` (name=Mirror, email=mirror_TEST@example.com) → 200; subsequent `GET /api/marketing/subscribers?q=mirror_TEST` shows a row with `source=crm_customer, status=subscribed, customer_id=<cid>`.
+2. **Public signup (DOI on)** — unauthenticated `POST /api/marketing/public/signup-form/<slug>/subscribe {"email":"public_test@..."}` → 200 `{ok:true, status:"pending_confirmation", require_confirm:true, confirmation_email_status:"..."}`.
+3. **Public confirm** — unauthenticated `POST /api/marketing/public/confirm {tenant_id, email, token}` → 200 subscriber row flips to `status=subscribed, confirmed_at=<iso>`. Bad token → 403.
+4. **Segment + dynamic list** — created VIP segment (tags contains "VIP" AND status subscribed) → preview returned `matched_count=1, sample_size=1`; created dynamic list bound to segment → `GET /marketing/lists/<lid>/members` returned the same subscriber.
+
+### Seed counts on first admin call per tenant
+
+- `marketing_segments`: **1** row (`active-subscribers`)
+- `marketing_lists`: **1** row (`all-subscribers`, static, system-default)
+- Idempotent on subsequent calls (second hit does not duplicate).
+
+### Deviations from the audit's DELTA plan
+
+- **Marketing settings shape.** Audit proposed adding `require_double_optin` + `revenue_attribution_days` under a new `marketing_settings` collection. Shipped as fields on the tenant doc instead — one fewer collection, one fewer join. Endpoint reads/writes the tenant doc directly.
+- **`FormIn` extension is optional.** Audit called for extending `FormIn` with `bound_list_ids[]`, `double_opt_in`, `honeypot_field`, `thank_you_html`. The `FormIn` model already declares `model_config = {"extra": "allow"}`, so those keys pass through unchanged when POSTed. No model change required to make the public signup endpoint honor them. If a UI wants strong typing, we'll add them explicitly in M6 alongside the form-builder web UI.
+- **`Customer.marketing_consent` deferred.** Audit called for adding a `marketing_consent` boolean to the Customer schema. The mirror hook already writes `consent_at` + `confirmed_at` onto the subscribers row (source-of-truth for marketing consent), and `Customer.pyd` didn't need a churn-inducing schema change. If we later need to opt a customer out of marketing without deleting the CRM record, we set `status=unsubscribed` on the mirrored subscriber row — Customer stays clean.
+
+### Marketing subsystem PRD — next phases (unchanged from audit)
+
+- **M2 Campaigns** — broadcast engine + open/click tracking + link rewriter + analytics aggregation. Slots in after Directories subsystem lands.
+- **M3 Web push** — VAPID + `sw.js` + `pywebpush` + `channel="push"` on send router
+- **M4 Workflows** — node-graph builder + advancer, layered on top of `sequences.py`'s tick pattern
+- **M5 A/B testing**
+- **M6 Web UI** — Subscribers, Lists, Segments, Forms, Campaigns, Analytics (split into M6a admin core + M6b advanced surfaces)
+- **M7 Mobile parity**

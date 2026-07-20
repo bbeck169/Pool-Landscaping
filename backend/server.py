@@ -58,6 +58,7 @@ from routers import (
     portal_videos,
     reviews,
     review_sync,
+    marketing_m1,
 )
 
 app = FastAPI(
@@ -116,7 +117,8 @@ for module in [notifications_router,
                media_uploads,
                portal_videos,
                reviews,
-               review_sync]:
+               review_sync,
+               marketing_m1]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue

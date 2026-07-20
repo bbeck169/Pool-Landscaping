@@ -200,6 +200,13 @@ async def create_customer(body: CustomerIn,
         )
     except Exception:
         pass
+    # Marketing M1 — mirror the new customer into the subscribers
+    # collection with source="crm_customer" (already-consented).
+    try:
+        from services.marketing_subscribers import mirror_customer_created
+        await mirror_customer_created(tenant["id"], doc)
+    except Exception:
+        pass
     return doc
 
 
