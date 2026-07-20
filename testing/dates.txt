@@ -1,0 +1,4 @@
+WEEKDAY_10: 2026-07-30 wday= Thu
+SAT: 2026-07-25 wday= Sat
+TOMORROW: 2026-07-21 wday= Tue
+FAR: 2026-09-08
