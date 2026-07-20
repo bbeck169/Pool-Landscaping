@@ -755,14 +755,17 @@ async def public_submit(slug: str, body: SubmissionIn, request: Request):
     if not row:
         raise HTTPException(404, "not found")
 
-    # Honeypot: return a REAL-SHAPED ack so spammers can't A/B the
-    # response and detect the trap. No persistence, no automation
-    # event, no rate-limit consumption.
+    # Honeypot: return a REAL-SHAPED ack + the SAME server-computed
+    # total_cents a legit submit would have produced. A determined
+    # attacker can no longer fingerprint the trap by comparing totals.
+    # No persistence, no automation event, no rate-limit slot spent.
     if getattr(body, "hp_field", None):
+        hp_selections = [s.model_dump() for s in body.selections]
+        hp_computed = _compute_total(row, hp_selections)
         return {
             "id": new_id(),
             "status": "new",
-            "total_cents": 0,
+            "total_cents": hp_computed["total_cents"],
             "thank_you_html": row.get("thank_you_html") or "",
             "success_redirect_url": row.get("success_redirect_url"),
         }

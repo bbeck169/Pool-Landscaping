@@ -5772,3 +5772,39 @@ Fixed the 1 FAIL + 2 WARN from the Q4 tester report. All four proofs shipping in
 - Rate-limit test now drives a deterministic client IP via `X-Forwarded-For` so it's independent of ingress NAT rotation.
 - **`test_quoteiq_q4.py` now 32/32 passing** under real LLM.
 
+
+## QuoteIQ Q4 honeypot polish + Phase Q5 · InstaSchedule · Feb 2026
+
+### Q4 honeypot polish (5-line tweak)
+- Honeypot now returns the SAME `total_cents` a legit submit would have produced — computed via `_compute_total(row, hp_selections)`, no DB write. Even a determined attacker with a known config can no longer fingerprint the trap by comparing totals against their expected base price.
+
+### Phase Q5 · InstaSchedule (Public self-book widget)
+- **Router** `routers/instaschedule.py`. Two collections: `instaschedule_configs` (activate-exclusive) + `instaschedule_bookings`.
+- **Admin endpoints** (`require_admin`, tenant-scoped): CRUD + activate + `rate-limit/reset`; bookings list w/ status + `from`/`to`/cursor filters; `confirm` / `decline` / `cancel`; `confirm` creates a real `jobs` row + upserts a `customers` row (email-first, phone-fallback only when email missing) + assigns per `route_integration.assign_strategy` (`admin_manual` / `round_robin` / `least_loaded`); `cancel` cascades to cancel the linked job.
+- **Public endpoints** (no auth): `GET /public/instaschedule/{slug}` (safe projection — no tenant_id / active / timestamps, hides service_types with `allow_public_book=false`); `GET /public/instaschedule/{slug}/slots?service_type_id=&date=YYYY-MM-DD` (computes availability from weekday_windows, blackouts, min_notice, max_lead, subtracting both pending bookings AND existing scheduled jobs); `POST /public/instaschedule/{slug}/book` — re-validates the slot inside the write path (409 on race), enforces per-service `requires_address` (422) and `restricted_to_existing_customer` (403), documented via `BookingAckOut` on OpenAPI.
+- **Anti-abuse**: separate in-memory IP counter (3 per 10 min); honeypot `_hp` returns a real-shaped ack **including the derived slot `date` key** (no DB write, no automation event, no rate-limit slot spent); admin ops reset endpoint for the counter.
+- **Automation events**: `instaschedule.booked` on submit, `instaschedule.confirmed` on confirm, `instaschedule.declined` on decline-with-notify. Non-fatal on adapter failure.
+
+### Web UI
+- **Admin** `/marketing/instaschedule` (`InstaScheduleAdmin.jsx`): builder + bookings tabs. Builder: slug (immutable after create), headline, brand color, service_types (name/duration/public-toggle/needs-address), per-weekday time-window editor, min-notice + max-lead + max-bookings + assign-strategy dropdown, thank-you HTML. Bookings tab: list w/ status chips, detail drawer with Confirm/Decline/Cancel buttons. Copy public URL button. Marketing Hub tile added.
+- **Public** `/book/:slug` (`PublicInstaSchedule.jsx`): registered OUTSIDE `AppLayout` (no auth). 4-step wizard — service → date → slot → contact + submit. Date picker greys out days with no window AND blackout dates. Slot grid rendered from `/slots` endpoint. Honeypot off-screen. Success screen renders `thank_you_html` + reference id or redirects to `success_redirect_url`.
+
+### Mobile
+- `/(app)/instaschedule.tsx` — admin-only bookings list with public-URL open + confirm / decline / cancel. Techs see admin-only empty state. Tools Hub tile added.
+
+### Screenshot verified
+- Public page rendered at `/book/book-demo`: Aquaterra headline with brand color top border, 2 services, date picker with Sundays correctly disabled (config had no `sun` window), 31 selectable days within `max_lead_days=30`, Back navigation. Screenshot at `/tmp/instaschedule_public.png`.
+
+### Tests
+- `test_quoteiq_q5.py` — **33 tests** covering: CRUD + activate exclusivity + bad-strategy 422 + delete; RBAC tech-forbidden on configs + confirm; tenant isolation; public config inactive-404 + safe-view; slot computation (weekday windows w/ 8h/60m grid = 8 slots; blackout empty; past-date empty; max-lead horizon empty; min-notice filter; bad date 422; non-public service 404); happy-path book with persistence check; honeypot shape identical to real; rate-limit with deterministic X-Forwarded-For; race guard (double book same slot = one 201 + one 409); requires-address 422; restricted-to-existing-customer 403; confirm creates job + customer w/ source=instaschedule; double-confirm 409; round-robin assigns technician; decline blocks subsequent confirm; cancel cascades to job.status=cancelled; error paths (unknown 404 x2); OpenAPI surface + `BookingAckOut` schema present.
+- 32 Q4 + 33 Q5 + 2 Q2-hardening = **67/67 passing** under real LLM.
+
+### Real-LLM status
+- `TEST_LLM_MOCK=0` held on. No drift observed on Q4 fixes or Q5 introduction.
+
+### Deferred / next
+- Full-text search on bookings list.
+- iCal export for confirmed bookings so techs get calendar invites.
+- SMS confirmation on `instaschedule.confirmed` via existing Comms system.
+- InstaSchedule "customer profile" mode — restricted-to-existing-customer flow currently accepts any email that already exists; a signed magic link would harden it.
+

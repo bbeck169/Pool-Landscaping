@@ -63,6 +63,7 @@ export function MarketingHub() {
     { to: "/marketing/before-after", label: "Before & After", icon: ImageIcon, sub: "AI-composed share cards" },
     { to: "/marketing/autopilot", label: "AI Autopilot", icon: Bot, sub: "Draft copy + seasonal/invoice ladders" },
     { to: "/marketing/instaquote", label: "InstaQuote", icon: Wand2, sub: "Public self-quote portal" },
+    { to: "/marketing/instaschedule", label: "InstaSchedule", icon: CalIcon, sub: "Public self-book widget" },
     { to: "/marketing/reviews", label: "Reviews", icon: MessageSquare, sub: "AI review reply drafts" },
     { to: "/marketing/brand", label: "Brand Memory", icon: Bot, sub: "Voice + persona + zips" },
   ];
