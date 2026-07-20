@@ -5037,3 +5037,91 @@ publishes are back):
 - **PDF service-report export** was not modified — it already
   renders chemistry rows off the same array; restoring the array
   restores the PDF row.
+
+## Satellite Measure Address Autocomplete Fix · Feb 2026
+
+**Bug**: `/measure` (Satellite Measure) address input surfaced zero
+Google Places suggestions no matter what the user typed. Reported
+across the entire site — the shared `AddressAutocomplete.jsx`
+component is also used on `/customers/new` and other admin surfaces,
+so the regression was fleet-wide.
+
+### Two-part root cause
+
+1. **Deprecated `google.maps.places.Autocomplete` widget** — the
+   legacy widget (which mounted a `.pac-container` dropdown)
+   silently stopped rendering predictions in Google Maps JS
+   `v=weekly` in early 2025 as part of the migration to
+   `PlaceAutocompleteElement`. Our code depended on that widget's
+   internal dropdown to surface suggestions.
+2. **`loading=async` bootstrap race** — after replacing the widget
+   with a custom dropdown backed by `AutocompleteService`, the
+   loader still used `s.onload = resolve`. But with
+   `loading=async`, the bootstrap script's `onload` fires **before**
+   the `places` sub-library (`places_impl.js`) finishes attaching,
+   so `new google.maps.places.AutocompleteService()` executed
+   against `undefined`, and `svcRef.current` stayed null forever.
+   Every subsequent keystroke early-returned silently — no console
+   error, no network call, no dropdown.
+
+### Fix
+
+- **Rewrote `AddressAutocomplete.jsx`** to stop using the deprecated
+  widget entirely. Now calls
+  `google.maps.places.AutocompleteService.getPlacePredictions()`
+  directly, renders our own dropdown of suggestions with keyboard
+  navigation (`ArrowUp` / `ArrowDown` / `Enter` / `Escape`), and
+  calls `PlacesService.getDetails()` on selection to get the full
+  geometry + address components.
+- **Loader race fix**: after script `onload`, additionally `await
+  window.google.maps.importLibrary('places')` per Google's 2025
+  async-loader spec, then poll for `AutocompleteService` up to
+  5 seconds (belt-and-suspenders for older bootstraps).
+- **Latch pre-ready input**: if the user types before the SDK is
+  ready, `pendingInputRef.current` stores the last keystroke, and
+  the ready-effect flushes it to `fetchPredictions()` as soon as
+  `AutocompleteService` attaches. Zero silently-dropped input.
+- **Loader kicks off on mount**, not on first focus, so services
+  are usually ready by the time the user starts typing.
+- **Session tokens** — reuse a single `AutocompleteSessionToken`
+  per selection cycle (one billing session per commit).
+
+### Testing-agent verification (`/app/test_reports/iteration_13.json`)
+
+**All 6 scenarios PASS**:
+
+1. `/measure` input surfaces **5 suggestions** for `1600 Amph`
+   within ~2 s, first suggestion is `1600 Amphitheatre Parkway,
+   Mountain View, CA, USA`.
+2. Clicking `measure-address-suggestion-0` populates the input
+   with `1600 Amphitheatre Pkwy, Mountain View, CA 94043, USA`
+   and closes the dropdown.
+3. Race-condition retest: reload `/measure` + type immediately —
+   dropdown still appears (the `pendingInputRef` latch flushed
+   the pre-ready input once the library attached).
+4. Debounce + `<3-char` guard works — `12` does NOT open the
+   dropdown; `12 M` does.
+5. `/customers/new` (the other consumer) works end-to-end with
+   the same dropdown pattern.
+6. Zero console errors during any flow.
+
+Non-blocking informational note from the testing agent: Google
+logs deprecation warnings for `AutocompleteService` +
+`PlacesService` (12+ month notice window; no user-facing impact
+today). Migration to `AutocompleteSuggestion` + `Place` classes
+tracked as a **future backlog item**, not urgent.
+
+### Files added / modified
+
+- **Modified**: `frontend/src/components/AddressAutocomplete.jsx`
+  (full rewrite — legacy widget → custom `AutocompleteService`-
+  driven dropdown + async-loader race fix + input latch).
+- **Not touched**: no consumers changed — same public API
+  (`onChange`, `onSelect(parsed)`) so `/measure`,
+  `/customers/new`, and every other caller works without edits.
+
+### User action required
+
+**None.** Google Maps API key + Places API were verified working
+via direct REST calls (returned real predictions). Bug was purely
+a client-side loader-timing race in our own component.
