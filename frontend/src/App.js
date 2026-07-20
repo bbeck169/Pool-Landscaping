@@ -33,6 +33,12 @@ import {
   CommsTemplatesLibrary, CommsEmailBuilder, CommsSmsBuilder,
   CommsAutomationsPage, CommsSendsHistoryPage,
 } from "@/pages/comms/CommsPages";
+import {
+  ReviewsDashboard, ReviewsRequestsPage,
+  ReviewsPlatformsPage, ReviewsWidgetPage,
+} from "@/pages/reviews/ReviewsPages";
+import PublicReviewLanding from "@/pages/reviews/PublicReviewLanding";
+import PublicReviewsWidgetPage from "@/pages/reviews/PublicReviewsWidgetPage";
 import PortalBook from "@/pages/portal/PortalBook";
 import PortalChatsPage from "@/pages/portal/PortalChatsPage";
 import AppointmentsQueue from "@/pages/admin/AppointmentsQueue";
@@ -245,6 +251,10 @@ export default function App() {
           <Route path="/portal/sign/:token" element={<PortalSignPage />} />
           {/* Phase 15B slot-in — Lead Request public form (no auth) */}
           <Route path="/lead-request/:token" element={<PublicLeadRequestPage />} />
+
+          {/* Reviews Subsystem · Phase 2 — public flows (no auth) */}
+          <Route path="/reviews/r/:token" element={<PublicReviewLanding />} />
+          <Route path="/reviews/:tenant_slug" element={<PublicReviewsWidgetPage />} />
 
           {/* Everything else lives inside the protected shell (side nav + top bar + bottom tabs). */}
           <Route path="/" element={<AppLayout />}>
@@ -597,6 +607,11 @@ export default function App() {
             <Route path="admin/comms/sms/:code"       element={<AdminOnly><CommsSmsBuilder /></AdminOnly>} />
             <Route path="admin/comms/automations"     element={<AdminOnly><CommsAutomationsPage /></AdminOnly>} />
             <Route path="admin/comms/sends"           element={<AdminOnly><CommsSendsHistoryPage /></AdminOnly>} />
+            {/* Reviews Subsystem · Phase 2 — admin surface */}
+            <Route path="admin/reviews"               element={<AdminOnly><ReviewsDashboard /></AdminOnly>} />
+            <Route path="admin/reviews/requests"      element={<AdminOnly><ReviewsRequestsPage /></AdminOnly>} />
+            <Route path="admin/reviews/platforms"     element={<AdminOnly><ReviewsPlatformsPage /></AdminOnly>} />
+            <Route path="admin/reviews/widget"        element={<AdminOnly><ReviewsWidgetPage /></AdminOnly>}/>
             <Route path="portal/profile" element={<PortalProfile />} />
             <Route path="portal/request-service" element={<PortalRequestService />} />
             <Route path="portal/payment-complete" element={<PortalPaymentComplete />} />

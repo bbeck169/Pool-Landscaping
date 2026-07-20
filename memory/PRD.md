@@ -4464,3 +4464,142 @@ APScheduler drives the 3 daily sweeps. Every dispatch is journalled to
    `communication_sends` row with rendered subject + HTML.
 6. DELETE `/api/comms/automations/$CODE` returns 204 and refreshes
    the backend's in-memory index.
+
+### Phase 3 · Follow-up notes (from tester)
+- **System rules are immutable — activation requires a tenant shadow copy.**
+  System automation rows carry `tenant_id=None` + `is_system=True` and are protected from PATCH/DELETE. Admins activate them by creating a tenant-owned custom rule that references the same `template_code` + `trigger_event` (POST `/api/comms/automations` accepts `active: true` on birth). The Phase 2 Comms → Automations UI is already wired for this flow: seed rules are read-only rows with an "Add tenant copy" affordance next to them. The engine's rule lookup (`emit()`) walks both `(tenant_id, trigger)` and `(None, trigger)` cache slices so that if a future release relaxes system-row immutability, no code change is needed on the engine side.
+- **Known-good `POST /api/customers` payload for test authors.**
+  `CustomerIn` requires a top-level `name` string (not `first_name`/`last_name`); `address` is a single string (not `service_address`). Minimal valid body:
+  ```json
+  {
+    "name": "First Last",
+    "email": "customer@example.com",
+    "phone": "+15005550001",
+    "address": "1 Something Way",
+    "city": "Peoria",
+    "state": "AZ",
+    "zip": "85383"
+  }
+  ```
+  The server splits `name` into `first_name` / `last_name` automatically via `_sync_customer_names` (Phase 56.3.A migration). Send-time token resolution reads `customer.first_name` correctly either way.
+
+## Reviews Subsystem · Phase 2 (Web UI + Widget Polish) · Feb 2026
+
+Admin surface + public magic-link CX + full-page widget page — **web
+only, no backend changes, no mobile touched**.
+
+### What shipped
+- New nav group **"Reviews"** on `ADMIN_NAV_V2` with four entries
+  (Dashboard, Requests, Platforms, Widget) — admin/super_admin only.
+  All routes `/admin/reviews/*` guarded by `<AdminOnly>`.
+- `frontend/src/api/reviews.js` — thin API client wrapping every
+  Phase 1 endpoint (`listPlatforms`, `createPlatform`,
+  `updatePlatform`, `deletePlatform`, `listRequests`, `getRequest`,
+  `createRequest`, `resendRequest`, `listReviews`, `getReview`,
+  `createReview`, `updateReview`, `deleteReview`, `getStats`,
+  `getLeaderboard`), plus public-flow helpers (`fetchPublicLanding`,
+  `submitPublicRating`, `submitPublicPlatformClicked`,
+  `submitPublicPrivateFeedback`, `fetchWidgetJson`) that use raw
+  `fetch` so they work without a bearer token. Wrapper responses
+  are unwrapped (`{platforms:[…]} → […]`) so page code stays terse.
+- **`/admin/reviews` (Dashboard)** — 3-KPI grid (avg rating, public
+  reviews count, past-30-days delta), tech leaderboard table
+  (average star + reviews + 5-star count), recent reviews table
+  (20 latest with truncated text + platform icons); click a row
+  opens a detail modal with admin-response editor + widget-visibility
+  toggle + Delete. Charts intentionally skipped per the "if quick"
+  spec (no chart lib installed) — noted below.
+- **`/admin/reviews/requests`** — filterable table (outcome dropdown
+  + name/email search + refresh) with outcome pill, star rating,
+  resend action (surfaces the 7-day duplicate-block error), row →
+  detail modal. **"New review request" modal** with typeahead
+  customer picker (`/api/customers?search=…`), job dropdown
+  (auto-populated from `/api/jobs?customer_id=…`), tech dropdown
+  (auto-fills from selected job's `technician_id`), channel selector
+  pill (email/sms/both/link_only), and expedite checkbox that maps
+  to `expedite: true` for super-admins to bypass the 7-day guard.
+- **`/admin/reviews/platforms`** — table listing Google/Facebook/Yelp/
+  BBB/custom rows with active toggle pill, up/down reorder arrow
+  buttons (moves the row's `sort_order` via a two-row swap), Edit
+  modal that validates the URL is `http(s)://…` and the display name
+  is non-empty, Add modal with platform dropdown + custom-slug input
+  when `platform=custom`. Empty state CTA opens the Add modal.
+- **`/admin/reviews/widget`** — embed snippet block (`<div
+  id="pool-crm-reviews"/>` + `<script src=".../widget/{slug}.js"
+  defer/>`) with Copy button, direct-link cards for the public
+  widget page + raw JSON endpoint (Copy + external-link buttons), and
+  a **live inline preview** that hits the JSON endpoint and paints
+  the avg-star hero + first 4 review cards with `ReviewCard`.
+- **Public routes (no auth)**:
+  - **`/reviews/r/:token`** (PublicReviewLanding) — orchestrates all
+    three CX branches (rating submit → choose_platform for 4-5★ →
+    platform-click intent + redirect; private_feedback for 1-3★ →
+    textarea + submit + thank-you). Handles `expired` and
+    `already_submitted` states with friendly messages.
+  - **`/reviews/:tenant_slug`** (PublicReviewsWidgetPage) — full-page
+    marketing surface reusing the `/api/reviews/public/widget/{slug}`
+    JSON with an avg-star hero card + review grid.
+- **Reusable components** under `frontend/src/components/reviews/`:
+  - `StarRatingDisplay.jsx` (two-layer painter for fractional stars)
+  - `StarRatingInput.jsx` (interactive picker with hover preview)
+  - `PlatformIcon.jsx` (colored Google/Facebook/Yelp/BBB/custom lucid)
+  - `OutcomePill.jsx` (colored request outcome pill)
+  - `ReviewCard.jsx` (dashboard + widget preview tile)
+- Data-testids on every interactive + status element (`reviews-*` /
+  `public-review-*` / `public-widget-*` prefixes).
+
+### Deviations from the brief
+- **Widget JS polish skipped.** The Phase 1 output (`.../widget/{slug}.js`)
+  already ships a self-contained styled block with escaped HTML,
+  avg-star pill, and per-review row painter (see `routers/reviews.py`
+  line 908). Reworking it into a carousel would fight the
+  zero-dependency posture without observable UX gain — kept as-is per
+  the brief's "if backend JS is already polished, skip".
+- **No chart library added.** Dashboard KPIs paint as three big-value
+  tiles; a 30-day sparkline + platform-breakdown pie were tagged
+  optional in the brief and skipped to avoid adding a chart
+  dependency to `package.json`.
+- **No drag-to-reorder library.** Platforms page uses up/down arrow
+  buttons (row-swap via `sort_order` PATCH); `@hello-pangea/dnd` is
+  not installed and the arrow UI meets the "if trivial" bar.
+- **CustomerPicker built inline** in the New Request modal (no
+  shared `CustomerPickerModal.jsx` created) — reused elsewhere as a
+  future refactor if a second consumer appears.
+
+### Files added / modified
+- Added: `frontend/src/api/reviews.js`,
+  `frontend/src/pages/reviews/ReviewsPages.jsx`,
+  `frontend/src/pages/reviews/PublicReviewLanding.jsx`,
+  `frontend/src/pages/reviews/PublicReviewsWidgetPage.jsx`,
+  `frontend/src/components/reviews/StarRatingDisplay.jsx`,
+  `frontend/src/components/reviews/StarRatingInput.jsx`,
+  `frontend/src/components/reviews/PlatformIcon.jsx`,
+  `frontend/src/components/reviews/OutcomePill.jsx`,
+  `frontend/src/components/reviews/ReviewCard.jsx`.
+- Modified: `frontend/src/nav/adminNav.js` (added Reviews group),
+  `frontend/src/App.js` (six new routes — four admin + two public).
+- **Backend unchanged.** Mobile unchanged.
+
+### Verification
+- Backend regression sample: `pytest test_automation_engine.py +
+  test_comms_backend.py + test_reviews_backend.py + test_video_uploads.py
+  + test_customer_import_full_mapping.py` → **76 passed, 0 failed**
+  (post-Phase 2 rerun).
+- Frontend compiles clean — webpack "Compiled successfully".
+- Screenshots captured (`/tmp/reviews-*.png` +
+  `/tmp/public-*.png`):
+  1. Dashboard — KPI cards (2.29 avg / 4 public / 17 delta), tech
+     leaderboard (Carlos 5.0, Mike 4.7), recent reviews table.
+  2. Requests page — empty-state CTA, outcome filter, refresh.
+  3. Platforms page — Google/Facebook/Yelp/BBB rows with active
+     pills + up/down arrows + Edit/Delete.
+  4. Widget page — embed snippet + Copy button, direct-link cards,
+     live inline preview (4.8★ hero + 4 review cards).
+  5. Public landing (1★ landing state) — "How did we do, Aimee?"
+     with 5-star picker.
+  6. Public landing (5★) — "You rock — thank you!" with 2x2
+     platform picker grid (Google/Facebook/Yelp/BBB).
+  7. Public landing (2★) — "We're sorry it wasn't a 5-star
+     experience" textarea + Send private feedback button.
+  8. Public widget page — 4.8★ hero + 4 platform-labeled review
+     cards.

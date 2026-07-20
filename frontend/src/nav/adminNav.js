@@ -223,6 +223,13 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/comms/sends",       label: "Sends History",  icon: History,       feature: "settings", hard_rule: "admin_only" },
   ]},
 
+  { key: "reviews", label: "Reviews", icon: StarIcon, entries: [
+    { to: "/admin/reviews",            label: "Dashboard", icon: StarIcon,       feature: "marketing", hard_rule: "admin_only" },
+    { to: "/admin/reviews/requests",   label: "Requests",  icon: Send,           feature: "marketing", hard_rule: "admin_only" },
+    { to: "/admin/reviews/platforms",  label: "Platforms", icon: Globe,          feature: "marketing", hard_rule: "admin_only" },
+    { to: "/admin/reviews/widget",     label: "Widget",    icon: Globe,          feature: "marketing", hard_rule: "admin_only" },
+  ]},
+
 ];
 
 // Flatten for the command palette page-search.
