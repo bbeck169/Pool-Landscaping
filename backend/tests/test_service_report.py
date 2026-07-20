@@ -250,3 +250,93 @@ def test_tenant_isolation_and_customer_forbidden(tech_h, tech_user, sunbelt_admi
         assert r.status_code in (403, 404)
     finally:
         _cleanup_job(dbc, jid)
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Feb 2026 — Chemical readings restoration + algae round-trip
+# ═════════════════════════════════════════════════════════════════════
+
+def test_empty_tenant_template_falls_back_to_pool_defaults(admin_h, tech_h, tech_user, dbc):
+    """A tenant that accidentally saved ``chemical_reading_fields=[]``
+    on the pool template must NOT wipe chemistry from subsequent
+    reports — ``_get_template`` coalesces an empty list back to the
+    hard-coded defaults. Regression protection for the Feb 2026 fix.
+    """
+    tenant = dbc.tenants.find_one({"slug": "aquaterra"})
+    assert tenant
+    # Save a bad template + assert the report still surfaces defaults.
+    dbc.service_report_templates.update_one(
+        {"tenant_id": tenant["id"], "kind": "pool"},
+        {"$set": {"tenant_id": tenant["id"], "kind": "pool",
+                    "chemical_reading_fields": [],  # the bad state
+                    "chemicals_catalog": [],
+                    "chemical_units": [],
+                    "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    tid = tech_user["user"].get("technician_id") or tech_user["user"]["id"]
+    jid = _make_job_direct(dbc, "aquaterra", tid, "Weekly Pool Service")
+    try:
+        r = requests.get(f"{API}/jobs/{jid}/service-report",
+                         headers=tech_h, timeout=15)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["template"] == "pool"
+        keys = [f["key"] for f in data["chemical_reading_fields"]]
+        # Every canonical chemistry field must still be present.
+        for expected in ("chlorine", "ph", "alkalinity", "cyanuric",
+                          "calcium_hardness", "salt", "water_temp"):
+            assert expected in keys, (
+                f"chemistry field '{expected}' missing after tenant saved "
+                f"empty chemical_reading_fields — Feb 2026 regression"
+            )
+        # Chemicals catalog also restored.
+        assert len(data["chemicals_catalog"]) >= 5
+    finally:
+        _cleanup_job(dbc, jid)
+        # Clean up the bad template so downstream tests aren't affected.
+        dbc.service_report_templates.delete_one(
+            {"tenant_id": tenant["id"], "kind": "pool"},
+        )
+
+
+def test_algae_field_round_trips_alongside_chemistry(admin_h, tech_h, tech_user, dbc):
+    """Confirm ``observations.visible_algae`` persists through PATCH +
+    GET and coexists with chemistry updates."""
+    tid = tech_user["user"].get("technician_id") or tech_user["user"]["id"]
+    jid = _make_job_direct(dbc, "aquaterra", tid, "Weekly Pool Service")
+    try:
+        r0 = requests.get(f"{API}/jobs/{jid}/service-report",
+                          headers=tech_h, timeout=15)
+        assert r0.status_code == 200, r0.text
+        initial = r0.json()
+        readings = list(initial.get("chemical_readings") or [])
+        assert readings, "bootstrap must return chemistry rows"
+        # Populate a couple of chemistry values + set algae=light.
+        for row in readings:
+            if row.get("key") == "chlorine":
+                row["value"] = 2.5
+            if row.get("key") == "ph":
+                row["value"] = 7.5
+
+        r1 = requests.patch(
+            f"{API}/jobs/{jid}/service-report",
+            headers={**tech_h, "Content-Type": "application/json"},
+            json={"chemical_readings": readings,
+                   "observations": {"visible_algae": "light",
+                                    "algae_notes": "TEST_light on skimmer"}},
+            timeout=15,
+        )
+        assert r1.status_code == 200, r1.text
+
+        r2 = requests.get(f"{API}/jobs/{jid}/service-report",
+                          headers=tech_h, timeout=15)
+        after = r2.json()
+        assert after["observations"]["visible_algae"] == "light"
+        assert after["observations"]["algae_notes"] == "TEST_light on skimmer"
+        chl = next(x for x in after["chemical_readings"] if x.get("key") == "chlorine")
+        ph = next(x for x in after["chemical_readings"] if x.get("key") == "ph")
+        assert chl["value"] == 2.5
+        assert ph["value"] == 7.5
+    finally:
+        _cleanup_job(dbc, jid)

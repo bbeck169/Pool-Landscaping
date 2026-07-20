@@ -4941,3 +4941,99 @@ endpoints + a `review_sync_events` journal.
 This ships **items 1–11** of the original 11-item plan. All queue
 items landed with a passing regression sample every time (76 →
 86 tests now). Awaiting the final wrap report.
+
+## Pool Chemical Readings Restoration · Feb 2026
+
+**Bug**: users reported chemical readings disappearing from the pool
+checklist / service report while algae options remained visible.
+Root cause traced to `routers/service_reports.py::_get_template` —
+when a tenant admin saved a template PATCH with
+``chemical_reading_fields=[]`` (accidentally, during the Phase 56.16
+landscape-checklist rewrite), the merge treated the empty list as an
+intentional override and blanked chemistry on every subsequent pool
+report for that tenant. Web wizard + mobile screen then had nothing
+to render.
+
+### Restored fields (all 10 that ``POOL_READING_FIELDS_DEFAULT``
+publishes are back):
+
+- Combined Chlorine (`combined_chlorine`, ppm)
+- Free Chlorine (`chlorine`, ppm)
+- pH (`ph`)
+- Total Alkalinity (`alkalinity`, ppm)
+- Cyanuric Acid / Stabilizer (`cyanuric`, ppm)
+- Calcium Hardness (`calcium_hardness`, ppm)
+- Salt (`salt`, ppm — only relevant for saltwater pools)
+- Total Dissolved Solids (`tds`, ppm)
+- Phosphates (`phosphates`, ppb)
+- Water Temperature (`water_temp`, °F)
+
+### Fix
+
+- **`_get_template` merge** — for `kind="pool"`, an empty
+  `chemical_reading_fields` / `chemicals_catalog` / `chemical_units`
+  list on the tenant customization document is now treated as **"use
+  defaults"** rather than "hide everything." Non-empty lists still
+  win (legitimate customizations preserved).
+- **Algae options preserved** — the web wizard's algae severity
+  picker (`PoolChecklistForm.jsx` lines 736+) and the AI algae-
+  remediation dosing hook were untouched and continue to
+  read/write `observations.visible_algae`.
+- **Mobile parity** — added the missing `visible_algae` toggle to
+  `mobile/app/(app)/service-report/[id].tsx` (three-way None / Light
+  / Heavy pill row under a "Visible Algae" `SectionCard`). The
+  screen's autosave payload + inline PATCH already dirty-marked
+  chemistry; extended both payloads to also include
+  `observations`. Marks dirty on tap.
+
+### Files added / modified
+
+- **Modified**: `backend/routers/service_reports.py`
+  (`_get_template` empty-list coalescing for pool kind — 15 lines
+  changed);
+  `mobile/app/(app)/service-report/[id].tsx` (added algae
+  SectionCard + styles + `observations` in autosave payloads);
+  `backend/tests/test_service_report.py` (+ 2 new tests).
+
+### Tests
+
+- `backend/tests/test_service_report.py::test_empty_tenant_template_falls_back_to_pool_defaults`
+  — writes `chemical_reading_fields=[]` into the tenant template,
+  hits GET, asserts all canonical chemistry field keys are still
+  returned. **PASSED.**
+- `test_algae_field_round_trips_alongside_chemistry` — PATCHes
+  `observations.visible_algae="light"` + two chemistry values,
+  reads back, asserts persistence and coexistence.
+  **PASSED.**
+- **Full regression sample** — `pytest test_service_report +
+  test_automation_engine + test_comms_backend + test_reviews_backend
+  + test_video_uploads + test_customer_import_full_mapping +
+  test_review_scraping` → **96 passed, 0 failed** (147s). Zero
+  regressions.
+
+### Verification transcript
+
+- `GET /api/jobs/{id}/service-report` returns **10 chemistry field
+  descriptors** on a fresh pool report (Combined Chlorine, Free
+  Chlorine, pH, Total Alkalinity, Cyanuric Acid, Calcium Hardness,
+  Salt, TDS, Phosphates, Water Temp).
+- The regression test proves an intentionally-blanked tenant
+  template no longer wipes chemistry.
+- No new TypeScript errors in the mobile file (151 pre-existing
+  errors elsewhere unchanged; **0 in the modified file's new
+  code**).
+
+### Deviations
+
+- **Web wizard was untouched** — the wizard's chemistry section
+  (`PoolChecklistForm.jsx`) reads whatever the backend serves via
+  `chemical_reading_fields`. Because the fix restores those fields
+  server-side, no web UI change was needed. Verified via curl
+  that GET returns 10 fields; both the wizard's `mergedReadings`
+  memo and the algae picker render off that same payload.
+- **The empty-list-means-defaults semantics are pool-kind-only**
+  — landscape/etc. templates rightly ship without chemistry, so
+  their empty lists are still honoured as "no chemistry."
+- **PDF service-report export** was not modified — it already
+  renders chemistry rows off the same array; restoring the array
+  restores the PDF row.

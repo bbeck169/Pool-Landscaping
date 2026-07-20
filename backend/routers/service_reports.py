@@ -197,8 +197,24 @@ async def _get_template(tenant_id: str, kind: str) -> dict:
     merged = dict(defaults)
     for field in ("checklist_items", "chemical_reading_fields",
                   "chemicals_catalog", "chemical_units"):
-        if doc.get(field) is not None:
-            merged[field] = doc[field]
+        val = doc.get(field)
+        if val is None:
+            continue
+        # Feb 2026 regression fix — for pool templates, treat an empty
+        # ``chemical_reading_fields`` list as "use defaults" rather than
+        # "hide every chemistry row." Prior admin PUTs that landed
+        # ``chemical_reading_fields=[]`` (accidentally, during the Phase
+        # 56.16 landscape-checklist rewrite) wiped chemistry from every
+        # subsequent pool report for that tenant. Coalescing here
+        # restores the defaults without breaking legit customizations
+        # (there is no legitimate reason to configure a pool template
+        # with zero chemistry rows).
+        if (kind == "pool" and field in ("chemical_reading_fields",
+                                            "chemicals_catalog",
+                                            "chemical_units")
+                and isinstance(val, list) and len(val) == 0):
+            continue
+        merged[field] = val
     # Also carry admin audit fields.
     for f in ("updated_by", "updated_at", "created_at"):
         if doc.get(f) is not None:

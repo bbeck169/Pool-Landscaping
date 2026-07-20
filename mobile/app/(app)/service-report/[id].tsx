@@ -50,6 +50,7 @@ export default function ServiceReportScreen() {
           chemicals_added: report.chemicals_added,
           checklist_items: report.checklist_items,
           notes: report.notes,
+          observations: report.observations,
         }),
       });
       dirtyRef.current = false;
@@ -93,6 +94,7 @@ export default function ServiceReportScreen() {
           chemicals_added: report.chemicals_added,
           checklist_items: report.checklist_items,
           notes: report.notes,
+          observations: report.observations,
         });
         dirtyRef.current = false;
         setSaveState("saved");
@@ -102,7 +104,7 @@ export default function ServiceReportScreen() {
     }, AUTOSAVE_MS);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [report?.notes, report?.chemical_readings, report?.chemicals_added, report?.checklist_items]);
+  }, [report?.notes, report?.chemical_readings, report?.chemicals_added, report?.checklist_items, report?.observations]);
 
   const markDirty = () => { dirtyRef.current = true; };
 
@@ -164,6 +166,7 @@ export default function ServiceReportScreen() {
               chemicals_added: report.chemicals_added,
               checklist_items: report.checklist_items,
               notes: report.notes,
+              observations: report.observations,
             });
             const submitted: any = await api.post(`/jobs/${id}/service-report/submit`, {});
             try { await api.post("/workforce/clock-out", {}); } catch {}
@@ -295,6 +298,52 @@ export default function ServiceReportScreen() {
                 );
               })}
             </View>
+          </SectionCard>
+        )}
+
+        {/* Visible-algae toggle — pool only (Phase 56.10 web parity, Feb 2026). */}
+        {isPool && (
+          <SectionCard title="Visible Algae" testID="svc-report-algae"
+            subtitle="Trigger AI algae remediation dosing">
+            <View style={styles.algaeRow}>
+              {[
+                { value: "none",  label: "None",  bg: colors.surface,       fg: colors.onSurface, border: colors.border },
+                { value: "light", label: "Light", bg: "#FEF3C7",             fg: "#92400E",         border: "#FCD34D" },
+                { value: "heavy", label: "Heavy", bg: "#FEE2E2",             fg: "#991B1B",         border: "#FCA5A5" },
+              ].map((opt) => {
+                const current = ((report.observations || {}).visible_algae || "none").toLowerCase();
+                const active = current === opt.value;
+                return (
+                  <Pressable
+                    key={opt.value}
+                    disabled={locked}
+                    onPress={() => {
+                      markDirty();
+                      setReport({
+                        ...report,
+                        observations: { ...(report.observations || {}), visible_algae: opt.value },
+                      });
+                    }}
+                    style={[
+                      styles.algaeBtn,
+                      {
+                        backgroundColor: active ? opt.bg : colors.surfaceSecondary,
+                        borderColor: active ? opt.border : colors.border,
+                        opacity: locked ? 0.5 : 1,
+                      },
+                    ]}
+                    testID={`svc-algae-${opt.value}`}
+                  >
+                    <Text style={[styles.algaeBtnLabel, { color: active ? opt.fg : colors.muted, fontWeight: active ? "700" : "500" }]}>
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={styles.algaeHint}>
+              Toggling Light or Heavy adds algae-remediation doses to the AI recommendation on the web wizard.
+            </Text>
           </SectionCard>
         )}
 
@@ -497,6 +546,14 @@ const styles = StyleSheet.create({
   readingCell: { width: "48%" },
   readingLabel: { fontFamily: font.bold, fontSize: fontSize.xs,
     color: colors.muted, textTransform: "uppercase", marginBottom: 4 },
+  algaeRow: { flexDirection: "row", gap: spacing.sm, marginBottom: 6 },
+  algaeBtn: {
+    flex: 1, paddingVertical: 12, borderRadius: radius.md,
+    borderWidth: 1, alignItems: "center", justifyContent: "center",
+  },
+  algaeBtnLabel: { fontFamily: font.medium, fontSize: fontSize.sm },
+  algaeHint: { fontFamily: font.regular, fontSize: 11,
+    color: colors.muted, marginTop: 4, lineHeight: 15 },
   input: {
     borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
     paddingHorizontal: spacing.sm, paddingVertical: 10,
