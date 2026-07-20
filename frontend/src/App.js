@@ -79,10 +79,16 @@ import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
 import PortalTerms from "@/pages/portal/PortalTerms";
 import {
-  MarketingHub, BrandMemory, CampaignsList, CampaignNew, CampaignDetail,
+  MarketingHub, BrandMemory,
   Posts, ApprovalQueue, ContentCalendar, SchedulingConfig, Performance,
   TemplatesHub, Reviews,
 } from "@/pages/marketing/MarketingPages";
+// M2 UI — new Campaigns experience overrides the legacy placeholders
+// from MarketingPages.jsx. Routes below (/marketing/campaigns*) point
+// at these.
+import {
+  CampaignsList, CampaignNew, CampaignDetail,
+} from "@/pages/marketing/M2Campaigns";
 import BeforeAfterStudio from "@/pages/marketing/BeforeAfterStudio";
 import DirectoriesHub from "@/pages/marketing/directories/DirectoriesHub";
 import NapProfilePage from "@/pages/marketing/directories/NapProfilePage";

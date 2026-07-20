@@ -979,3 +979,80 @@ class TestBraceMigration:
             db_.marketing_campaigns.delete_one({"id": cid})
             client.close()
 
+
+class TestTemplateLinter:
+    """Feb-2026 M2 UI — linter endpoint surfaces unresolved tokens +
+    deprecated single-brace usage BEFORE send, so the wizard can gate
+    scheduling until the admin fixes them (with an explicit override
+    checkbox to allow a send-anyway)."""
+
+    def test_linter_clean_when_all_tokens_resolve(self, admin_tok):
+        r = requests.post(f"{API}/marketing/templates/lint", headers=_h(admin_tok), json={
+            "subject": "Hi {{first_name}} from {{tenant_name}}",
+            "email_html": "<p>Hi {{first_name}}!</p>",
+            "sms_body": "Hi {{first_name}}",
+        }, timeout=T)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["clean"] is True
+        assert data["unresolved_tokens"] == []
+        assert data["deprecated_single_brace"] == []
+
+    def test_linter_flags_unresolved_tokens_by_field(self, admin_tok):
+        r = requests.post(f"{API}/marketing/templates/lint", headers=_h(admin_tok), json={
+            "subject": "Hi {{first_name}}, {{bogus}}",
+            "email_html": "<p>{{another_bogus}}</p>",
+            "sms_body": "",
+        }, timeout=T)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["clean"] is False
+        tokens = {u["token"] for u in data["unresolved_tokens"]}
+        assert "bogus" in tokens
+        assert "another_bogus" in tokens
+        fields = {u["field"] for u in data["unresolved_tokens"]}
+        assert "subject" in fields
+        assert "email_html" in fields
+
+    def test_linter_flags_deprecated_single_brace(self, admin_tok):
+        r = requests.post(f"{API}/marketing/templates/lint", headers=_h(admin_tok), json={
+            "subject": "Hi {first_name}",
+            "email_html": "<p>From {tenant_name}</p>",
+            "sms_body": "",
+        }, timeout=T)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["clean"] is False
+        deprecated = {(d["field"], d["token"]) for d in data["deprecated_single_brace"]}
+        assert ("subject", "first_name") in deprecated
+        assert ("email_html", "tenant_name") in deprecated
+        unresolved_tokens = {u["token"] for u in data["unresolved_tokens"]}
+        assert "first_name" not in unresolved_tokens
+        assert "tenant_name" not in unresolved_tokens
+
+
+class TestVipDigestSeed:
+    """Every tenant hitting a Marketing M1 admin endpoint must
+    lazy-seed the "VIP Monthly Digest" campaign template alongside the
+    "VIP Customers" segment."""
+
+    def test_vip_digest_template_present_after_first_admin_hit(self, admin_tok, tenant_id):
+        requests.get(f"{API}/marketing/segments", headers=_h(admin_tok), timeout=T)
+        from pymongo import MongoClient
+        from dotenv import dotenv_values
+        env = dotenv_values("/app/backend/.env")
+        client = MongoClient(env["MONGO_URL"])
+        db_ = client[env["DB_NAME"]]
+        try:
+            digest = db_.marketing_campaigns.find_one({
+                "tenant_id": tenant_id,
+                "template_slug": "vip-monthly-digest",
+            })
+            assert digest is not None, "VIP Monthly Digest not seeded on M1 hit"
+            assert digest["status"] == "draft"
+            assert digest["ab_test"]["enabled"] is True
+            assert len(digest["ab_test"]["variants"]) == 2
+            assert digest["is_system_template"] is True
+        finally:
+            client.close()
+

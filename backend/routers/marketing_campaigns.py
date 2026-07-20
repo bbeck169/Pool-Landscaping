@@ -181,6 +181,56 @@ async def delete_campaign(cid: str,
 
 
 # ─── Preview / audience ────────────────────────────────────────────────
+@router.post("/marketing/templates/lint")
+async def lint_template(body: Dict[str, Any] = Body(...),
+                         user: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
+    """Feb-2026 M2 UI — surface unresolved tokens + deprecated single-
+    brace usage BEFORE the admin schedules a send. Body accepts
+    ``{subject, preheader, email_html, sms_body}``; empty strings are
+    silently skipped. Returns::
+
+        {
+          "unresolved_tokens": [{"field": "subject", "token": "bogus"}, …],
+          "deprecated_single_brace": [{"field": "email_html", "token": "first_name"}, …],
+          "clean": bool,
+        }
+    """
+    import re as _re
+    from services.marketing_campaigns import (
+        render_body, _KNOWN_TOKEN_NAMES,
+    )
+    tenant_doc = await db.tenants.find_one(
+        {"id": tenant["id"]}, {"_id": 0}) or {}
+    sample_sub = {"id": "linter", "email": "linter@example.com",
+                    "first_name": "Sam", "last_name": "Preview",
+                    "phone": "+15005550006", "status": "subscribed"}
+    ctx = svc.build_ctx(sample_sub, tenant_doc, {"id": "linter"},
+                          send_id="linter")
+    unresolved: List[Dict[str, str]] = []
+    deprecated: List[Dict[str, str]] = []
+    # ``(?<!\{)\{token\}(?!\})`` — a single-brace usage that isn't part
+    # of the canonical double-brace form.
+    single_pat = _re.compile(
+        r"(?<!\{)\{\s*(" + "|".join(sorted(_KNOWN_TOKEN_NAMES)) +
+        r")\s*\}(?!\})"
+    )
+    for field in ("subject", "preheader", "email_html", "sms_body"):
+        text = (body or {}).get(field) or ""
+        if not text:
+            continue
+        _, missing = render_body(text, ctx)
+        for tok in set(missing):
+            unresolved.append({"field": field, "token": tok})
+        for m in single_pat.finditer(text):
+            deprecated.append({"field": field, "token": m.group(1)})
+    return {
+        "unresolved_tokens": unresolved,
+        "deprecated_single_brace": deprecated,
+        "clean": not unresolved and not deprecated,
+    }
+
+
 @router.post("/marketing/campaigns/{cid}/preview")
 async def preview_campaign(cid: str, body: PreviewBody,
                                 user: dict = Depends(require_admin),

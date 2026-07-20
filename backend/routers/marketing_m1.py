@@ -119,6 +119,49 @@ async def _ensure_default_seeds(tenant_id: str) -> None:
             "created_at": now_iso(),
             "updated_at": now_iso(),
         })
+    # Feb-2026 M2 UI — stock "VIP Monthly Digest" campaign template
+    # (draft only; admins can activate + set recurring). A/B on by
+    # default so tenants see a working example of variant testing.
+    digest = await db.marketing_campaigns.find_one(
+        {"tenant_id": tenant_id, "template_slug": "vip-monthly-digest"},
+        {"_id": 0})
+    if not digest and vip_seg is None:
+        # Re-fetch to pick up the segment we just inserted.
+        vip_seg = await db.marketing_segments.find_one(
+            {"tenant_id": tenant_id, "slug": "vip-customers"}, {"_id": 0})
+    if not digest:
+        vip_sid = (vip_seg or {}).get("id")
+        if vip_sid:
+            await db.marketing_campaigns.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant_id,
+                "template_slug": "vip-monthly-digest",
+                "name": "VIP Monthly Digest",
+                "subject": "{{first_name}}, your VIP updates from {{tenant_name}}",
+                "preheader": "Curated for VIP customers only",
+                "channel": "email",
+                "from_name": "",
+                "from_email": "",
+                "content": {
+                    "email_html": (
+                        "<p>Hi {{first_name}},</p>"
+                        "<p>Here's what's new for our VIP customers this month "
+                        "at {{tenant_name}}.</p>"
+                        "<p>Warm regards,<br/>The {{tenant_name}} team</p>"
+                    ),
+                    "sms_body": "",
+                },
+                "audience": {"segment_ids": [vip_sid]},
+                "ab_test": {"enabled": True, "variants": [
+                    {"id": "A", "subject": "{{first_name}}, your VIP updates from {{tenant_name}}", "weight": 1},
+                    {"id": "B", "subject": "Exclusive · new for you at {{tenant_name}}", "weight": 1},
+                ]},
+                "status": "draft",
+                "is_system_template": True,
+                "tracking_enabled": True,
+                "created_at": now_iso(),
+                "updated_at": now_iso(),
+            })
     lst = await db.marketing_lists.find_one(
         {"tenant_id": tenant_id, "slug": "all-subscribers"}, {"_id": 0})
     if not lst:
