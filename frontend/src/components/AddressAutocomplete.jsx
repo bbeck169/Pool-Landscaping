@@ -25,19 +25,50 @@ let googleLoader = null;
 
 function loadGoogleMaps() {
   if (!KEY) return Promise.reject(new Error("no-key"));
-  if (window.google?.maps?.places) return Promise.resolve(window.google);
+  if (window.google?.maps?.places?.AutocompleteService) {
+    return Promise.resolve(window.google);
+  }
   if (googleLoader) return googleLoader;
+  // Feb 2026 fix — with `loading=async` the bootstrap script's onload
+  // fires BEFORE the `places` sub-library finishes attaching, so any
+  // `new google.maps.places.AutocompleteService()` right after onload
+  // hits `undefined`. Per Google's 2025 async-loader spec, `await
+  // google.maps.importLibrary("places")` is the supported way to know
+  // the library is ready — we chain it after script onload.
   googleLoader = new Promise((resolve, reject) => {
+    const finish = async () => {
+      try {
+        if (window.google?.maps?.importLibrary) {
+          await window.google.maps.importLibrary("places");
+        }
+        // Belt-and-suspenders — poll for AutocompleteService for up to
+        // 5 s in case importLibrary is unavailable (older bootstrap).
+        const start = Date.now();
+        while (!window.google?.maps?.places?.AutocompleteService) {
+          if (Date.now() - start > 5000) break;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        resolve(window.google);
+      } catch (e) {
+        reject(e);
+      }
+    };
+
     const existing = document.querySelector("script[data-google-maps]");
     if (existing) {
-      existing.addEventListener("load", () => resolve(window.google));
-      existing.addEventListener("error", reject);
+      // Script already in flight from a prior mount — either it has
+      // already run (finish immediately) or hook onto its onload.
+      if (window.google?.maps) finish();
+      else {
+        existing.addEventListener("load", finish);
+        existing.addEventListener("error", reject);
+      }
       return;
     }
     const s = document.createElement("script");
     s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(KEY)}&libraries=places&loading=async&v=weekly`;
     s.async = true; s.defer = true; s.setAttribute("data-google-maps", "1");
-    s.onload = () => resolve(window.google);
+    s.onload = finish;
     s.onerror = reject;
     document.head.appendChild(s);
   });
@@ -74,7 +105,9 @@ export default function AddressAutocomplete({
   disabled,
 }) {
   const [text, setText] = useState(value || "");
-  const [ready, setReady] = useState(!!window.google?.maps?.places);
+  const [ready, setReady] = useState(
+    !!window.google?.maps?.places?.AutocompleteService
+  );
   const [error, setError] = useState("");
   const [suggestions, setSuggestions] = useState([]);
   const [open, setOpen] = useState(false);
@@ -85,20 +118,36 @@ export default function AddressAutocomplete({
   const placesRef = useRef(null);       // PlacesService (for details)
   const sessionRef = useRef(null);      // AutocompleteSessionToken
   const debounceRef = useRef(null);
+  const pendingInputRef = useRef("");   // latched text if user typed pre-ready
 
   useEffect(() => { setText(value || ""); }, [value]);
+
+  // Kick off the loader on mount so services are ready by first focus.
+  useEffect(() => {
+    if (ready || !KEY) return;
+    let cancelled = false;
+    loadGoogleMaps()
+      .then(() => { if (!cancelled) setReady(true); })
+      .catch(() => { if (!cancelled) setError("Google Places load failed"); });
+    return () => { cancelled = true; };
+  }, [ready]);
 
   // Bootstrap Google services once the SDK is ready.
   useEffect(() => {
     if (!ready) return;
     const g = window.google?.maps?.places;
-    if (!g) return;
+    if (!g?.AutocompleteService) return;
     if (!svcRef.current) svcRef.current = new g.AutocompleteService();
     if (!placesRef.current) {
-      // PlacesService needs a DOM node; a detached div is fine.
       placesRef.current = new g.PlacesService(document.createElement("div"));
     }
     if (!sessionRef.current) sessionRef.current = new g.AutocompleteSessionToken();
+    // If the user already typed something while we were loading, run it now.
+    const latched = pendingInputRef.current;
+    if (latched && latched.length >= 3) {
+      pendingInputRef.current = "";
+      fetchPredictions(latched);
+    }
   }, [ready]);
 
   // Close dropdown on outside click.
@@ -112,8 +161,14 @@ export default function AddressAutocomplete({
   }, []);
 
   const fetchPredictions = useCallback((input) => {
-    if (!svcRef.current || !input || input.length < 3) {
+    if (!input || input.length < 3) {
       setSuggestions([]);
+      return;
+    }
+    if (!svcRef.current) {
+      // Loader still bootstrapping — latch the text so the ready-
+      // effect can flush it as soon as AutocompleteService attaches.
+      pendingInputRef.current = input;
       return;
     }
     svcRef.current.getPlacePredictions(
