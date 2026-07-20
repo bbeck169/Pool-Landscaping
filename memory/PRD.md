@@ -5636,3 +5636,52 @@ $ curl -X POST "$API/api/estimates/<eid>/convert-to-job" -H "$H"
 - Nano-banana / Gemini image-gen adapter behind `_ai_enhance()` — the Pillow composite is the primary path per the confirmed brief; the AI-enhance path is stubbed for future replacement.
 - Seasonal-plan / invoice-followup planners (also 3 credits/drafted step per brief) — not landed in this slice; captured for Q3 UI / Q4.
 
+
+## QuoteIQ Parity · Phase Q3-UI + Real-LLM Smoke · Feb 2026
+
+**Ship contract**: Q3 UI (Web + Mobile) shipped in the same commit as the backend touch-ups + planner endpoints + real-LLM smoke.
+
+### Backend touch-ups
+1. **`GenerateCopyIn` expanded** — now accepts `channel` (email|sms), `tone` (friendly|professional|urgent|casual), `use_case` (seasonal|invoice_followup|generic), `brand_voice_snippet`, `extra_context`. All fields threaded into both mock + real-LLM prompt. `services/autopilot_copy.py` prompt now includes an explicit use-case framing paragraph and a brand-voice reference block.
+2. **`ai_generated_history`** — every generate-copy call prepends the snapshot to the rule's history (capped at `AUTOPILOT_HISTORY_MAX=5`). UI reads this to render the versioned timeline.
+3. **Tech RBAC on `GET /before-after/pairs`** — techs can now hit the list endpoint IF they pass `job_id=` or `customer_id=`. Unfiltered list stays admin-only. Same tenant-scoping intact.
+
+### Planner endpoints (new)
+- `POST /api/comms/planners/seasonal/draft` — accepts `{season, service_types[], channel, tone, brand_voice_snippet?}`. Drafts a 3-step ladder per service (heads-up / day-of / follow-up). Trigger event = `route.seasonal_open` for spring/summer, `route.seasonal_close` for fall/winter. Debits `3 * step_count` credits (feature=`autopilot`).
+- `POST /api/comms/planners/invoice-followup/draft` — accepts `{days_ladder: [7,14,30], channel, tone, brand_voice_snippet?}`. Drafts one step per day with `trigger_event=invoice.overdue` and `send_delay_minutes = day * 1440`. Debits `3 * step_count` credits.
+- `POST /api/comms/planners/seasonal/approve` + `POST /api/comms/planners/invoice-followup/approve` — accept `{steps: [...]}` and upsert real `automation_rules` + `email_templates` / `sms_templates` for each kept step. Idempotent by rule code. Marks rules with `source=ai_planner`. Re-indexes the automation engine after approval.
+
+### Web UI
+- **`/marketing/before-after`** — `BeforeAfterStudio.jsx`: two drop-zone photo pickers (browser file → data URI → backend), style selector (side_by_side | stacked | slider), service_type dropdown (5 options), caption, branding toggle, credit-preview banner (5 credits, low-balance warning), generate → composite preview + copy-share-link + open card + regenerate (with style override). Gallery of recent pairs (copy-share / open / delete). Query-string prefill via `?job_id=` / `?customer_id=`. Every interactive element has a `data-testid`.
+- **`/marketing/autopilot`** — `AutopilotPage.jsx`: two tabs (`Copy Generator`, `Campaign Planners`).
+  - Copy Generator: rule dropdown, tone/channel/use_case dropdowns, brand-voice snippet, extra context, generate button (3 credits). Preview pane shows subject/body with channel-aware SMS char-count. Rule history timeline shows last 5 generations with tone + use-case badges.
+  - Planners tab: two cards side by side.
+    - **Seasonal Planner** — season/services/channel/tone inputs → draft (charges N×3 credits, N = 3 offsets × service_count) → keep/discard checkboxes per step → approve creates real automation_rules.
+    - **Invoice Follow-up** — comma-separated days ladder + channel/tone → draft → keep/discard → approve.
+- Marketing Hub tiles added for both pages.
+
+### Mobile UI
+- **`/(app)/before-after.tsx`** — reuses `expo-image-picker` (base64 → data URI, matches MaintenanceLog / VideoMediaUploader pattern). Two-photo picker, style chips (side_by_side / stacked / slider), Generate → composite preview + native `Share` sheet for the public share URL (opaque token). Admin/super_admin can generate; techs get a read-only view scoped to `?job_id=` / `?customer_id=` (backend RBAC enforces this). Gallery below shows recent cards. Wired into Tools Hub in both the tech "On the Job" section and the admin "Marketing" section.
+- **Comms automations list** — added a small `AI Copy` badge on any rule that has `ai_generated_copy` persisted. Deep-edit stays on web (mobile view remains list-only for automations).
+
+### Real-LLM smoke (validated)
+- `TEST_LLM_MOCK=0` flipped in `/app/backend/.env` for the smoke pass, then flipped back to `1` (see "Drift" below).
+- **1) AI Estimator (`/api/ai-estimator/generate`)** — real Claude Sonnet call. Returned `status=complete`, 5 line-items, plaster-pool + salt-cell context correctly reflected, catalog snapping applied (`source=catalog` on 4/5 lines with real cents from tenant catalog).
+- **2) Autopilot copy (`/api/comms/automations/{code}/generate-copy` email + seasonal + brand voice)** — subject: "Time to Close Your Pool for Winter, {customer.first_name}", model=`claude-sonnet-4-5`, credits_debited=3, brand voice reflected in body (warm/neighborly tone), tokens present as literal placeholders, no template artifacts. Persisted on the rule.
+- **3) Before/After (`/api/before-after/generate`, Pillow path)** — status=complete, generated_card_url populated (Emergent Object Storage path), share_token_len=32, credits_debited=5, model=`pillow-composite-v1`. Confirms Pillow path unaffected by the LLM env flip.
+
+### Drift (flagged per brief)
+- With `TEST_LLM_MOCK=0`, the **Q2 promote test** occasionally sees Claude produce line-items where `qty * unit_price_cents = 0` (real-LLM output variance), causing `test_promote_creates_estimate_with_source_ai` + `test_promote_options_mode_carries_tiers` to fail intermittently. The mock branch is 100% deterministic; the real path produces valid-shape but occasionally $0-valued line-items depending on how the LLM interprets a sparse job description.
+- **Action taken**: flipped `TEST_LLM_MOCK=1` back on in `.env` per the "flip back and flag it" instruction. Full pytest suite (140/140) green under mock. Real-LLM smoke evidence retained above.
+- **Follow-up**: harden the Q2 estimator prompt (or add a validation retry when total_cents==0 in the router) before flipping the env flag off for good. Tracked for Q3-follow-up / Q4.
+
+### Test coverage
+- `test_quoteiq_q3.py` grew 16 → **25 tests**. Added: expanded schema (use_case + brand_voice), history append, channel override, tech-scoped list RBAC, seasonal planner (draft + approve + bad season 422 + tech 403), invoice ladder (draft + approve).
+- Full regression under mock: Q1 (43) + Q2 (17) + Q3 (25) + M1 (35) + Comms (20) = **140/140 passing**.
+- Test timeouts bumped 25 → 90s in Q2/Q3 files so both mock and real-LLM paths clear the read timeout.
+
+### Deferred
+- Job-detail-page "Create Before/After" CTA on web (backend now supports the query-string prefill; UI hook-up is a small follow-up).
+- Live LLM as CI default — blocked on Q2 estimator prompt hardening (see Drift above).
+- Real-time credit-warning banner across the app (currently local to each Q3 page).
+

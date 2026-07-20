@@ -29,7 +29,9 @@ from tests.conftest import demo_pw
 BACKEND = os.environ.get("REACT_APP_BACKEND_URL") \
     or "https://poolscape-audit.preview.emergentagent.com"
 API = f"{BACKEND}/api"
-T = 25
+# Timeout accommodates real-LLM path when TEST_LLM_MOCK=0. Planner
+# endpoints fan out N calls, so this needs headroom.
+T = 90
 
 
 # --- helpers -----------------------------------------------------------
@@ -79,9 +81,10 @@ def tenant_id(admin_tok):
 
 @pytest.fixture(scope="module", autouse=True)
 def _bootstrap_credits(super_tok):
-    # Keep balance comfortably above the Q3 test spend (5 + 5 + 3 + 3 = 16).
+    # Q3 test spend now includes planners (up to ~30 credits). Give
+    # headroom so no test sees a warning it doesn't expect.
     requests.post(f"{API}/ai-credits/topup",
-                   json={"amount": 200, "note": "q3_test_bootstrap"},
+                   json={"amount": 600, "note": "q3_test_bootstrap"},
                    headers=_h(super_tok), timeout=T)
     yield
 
@@ -200,7 +203,7 @@ class TestBeforeAfterGenerate:
 
 
 class TestBeforeAfterRBAC:
-    def test_tech_forbidden(self, tech_tok, data_uri_before, data_uri_after):
+    def test_tech_forbidden_on_generate(self, tech_tok, data_uri_before, data_uri_after):
         r = requests.post(
             f"{API}/before-after/generate",
             json={"before_photo_url": data_uri_before,
@@ -209,6 +212,19 @@ class TestBeforeAfterRBAC:
             headers=_h(tech_tok), timeout=T,
         )
         assert r.status_code == 403
+
+    def test_tech_can_list_only_when_scoped(self, tech_tok):
+        # No filter → 403.
+        r = requests.get(f"{API}/before-after/pairs",
+                          headers=_h(tech_tok), timeout=T)
+        assert r.status_code == 403
+        # Scoped by job_id → allowed (empty list is fine).
+        r2 = requests.get(f"{API}/before-after/pairs?job_id=abc",
+                            headers=_h(tech_tok), timeout=T)
+        assert r2.status_code == 200
+        r3 = requests.get(f"{API}/before-after/pairs?customer_id=xyz",
+                            headers=_h(tech_tok), timeout=T)
+        assert r3.status_code == 200
 
     def test_bad_style_422(self, admin_tok, data_uri_before, data_uri_after):
         r = requests.post(
@@ -273,6 +289,8 @@ class TestAutopilotGenerateCopy:
         r = requests.post(
             f"{API}/comms/automations/{custom_automation}/generate-copy",
             json={"tone": "friendly",
+                   "use_case": "seasonal",
+                   "brand_voice_snippet": "Warm, plain-spoken, no jargon.",
                    "extra_context": "customers love reminders"},
             headers=_h(admin_tok), timeout=T,
         )
@@ -283,11 +301,41 @@ class TestAutopilotGenerateCopy:
         assert copy["body_text"]
         assert copy["credits_debited"] == 3
         assert copy["tone"] == "friendly"
+        assert copy["use_case"] == "seasonal"
+        assert copy["brand_voice_snippet"].startswith("Warm")
         assert body["persisted"] is True
         assert body["credits_balance_after"] == pre - 3
         # Rule doc echoed back with the ai_generated_copy attached.
         rule = body["automation"]
         assert rule.get("ai_generated_copy", {}).get("body_text") == copy["body_text"]
+
+    def test_second_generation_appends_history(self, admin_tok,
+                                                  custom_automation):
+        r = requests.post(
+            f"{API}/comms/automations/{custom_automation}/generate-copy",
+            json={"tone": "professional", "use_case": "generic"},
+            headers=_h(admin_tok), timeout=T,
+        )
+        assert r.status_code == 200, r.text
+        rule = r.json()["automation"]
+        history = rule.get("ai_generated_history") or []
+        assert len(history) >= 2, history
+        # Latest is at index 0.
+        assert history[0]["tone"] == "professional"
+
+    def test_channel_override_wins_over_rule(self, admin_tok,
+                                                custom_automation):
+        # Rule is 'email' by construction; override to sms.
+        r = requests.post(
+            f"{API}/comms/automations/{custom_automation}/generate-copy",
+            json={"channel": "sms", "tone": "urgent"},
+            headers=_h(admin_tok), timeout=T,
+        )
+        assert r.status_code == 200, r.text
+        copy = r.json()["ai_generated_copy"]
+        assert copy["channel"] == "sms"
+        assert copy["subject"] is None
+        assert copy["body_sms"]
 
     def test_ledger_row_matches(self, admin_tok, custom_automation):
         txns = requests.get(
@@ -351,6 +399,125 @@ class TestAutopilotErrors:
 
 
 # ═════════════════════════════════════════════════════════════════════
+# Autopilot Planners
+# ═════════════════════════════════════════════════════════════════════
+
+class TestSeasonalPlanner:
+    def test_draft_charges_per_step_and_returns_ladder(self, admin_tok):
+        pre = requests.get(f"{API}/ai-credits/balance",
+                            headers=_h(admin_tok), timeout=T).json()["balance"]
+        r = requests.post(
+            f"{API}/comms/planners/seasonal/draft",
+            json={"season": "spring",
+                   "service_types": ["pool_open", "landscape"],
+                   "channel": "email", "tone": "friendly"},
+            headers=_h(admin_tok), timeout=T,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        # 2 services × 3 offsets = 6 steps.
+        assert len(body["steps"]) == 6
+        assert body["total_credits_debited"] == 6 * 3
+        assert body["credits_balance_after"] == pre - 6 * 3
+        for s in body["steps"]:
+            assert s["trigger_event"] == "route.seasonal_open"
+            assert s["channel"] == "email"
+            assert s["subject"]
+
+    def test_approve_creates_rules_and_templates(self, admin_tok):
+        # Fresh 1-step ladder for a controlled approve.
+        draft = requests.post(
+            f"{API}/comms/planners/seasonal/draft",
+            json={"season": "fall", "service_types": ["pool_close"],
+                   "channel": "email", "tone": "professional"},
+            headers=_h(admin_tok), timeout=T,
+        ).json()
+        # Keep only the first step to make the test deterministic.
+        step = draft["steps"][0]
+        r = requests.post(
+            f"{API}/comms/planners/seasonal/approve",
+            json={"steps": [step]},
+            headers=_h(admin_tok), timeout=T,
+        )
+        assert r.status_code == 201, r.text
+        created = r.json()["created"]
+        assert len(created) == 1
+        code = created[0]["code"]
+        # Verify the rule + template were persisted.
+        rule = requests.get(f"{API}/comms/automations/{code}",
+                              headers=_h(admin_tok), timeout=T).json()
+        assert rule["trigger_event"] == "route.seasonal_close"
+        assert rule["template_code"].startswith("tpl_")
+        assert rule.get("source") == "ai_planner"
+        # Cleanup.
+        requests.delete(f"{API}/comms/automations/{code}",
+                         headers=_h(admin_tok), timeout=T)
+
+    def test_tech_forbidden(self, tech_tok):
+        r = requests.post(
+            f"{API}/comms/planners/seasonal/draft",
+            json={"season": "spring", "channel": "email"},
+            headers=_h(tech_tok), timeout=T,
+        )
+        assert r.status_code == 403
+
+    def test_bad_season_422(self, admin_tok):
+        r = requests.post(
+            f"{API}/comms/planners/seasonal/draft",
+            json={"season": "monsoon", "channel": "email"},
+            headers=_h(admin_tok), timeout=T,
+        )
+        assert r.status_code == 422
+
+
+class TestInvoiceFollowupPlanner:
+    def test_draft_charges_per_step_and_returns_ladder(self, admin_tok):
+        pre = requests.get(f"{API}/ai-credits/balance",
+                            headers=_h(admin_tok), timeout=T).json()["balance"]
+        r = requests.post(
+            f"{API}/comms/planners/invoice-followup/draft",
+            json={"days_ladder": [7, 14, 30], "channel": "email",
+                   "tone": "professional"},
+            headers=_h(admin_tok), timeout=T,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["days_ladder"] == [7, 14, 30]
+        assert len(body["steps"]) == 3
+        assert body["total_credits_debited"] == 9
+        assert body["credits_balance_after"] == pre - 9
+        for s, d in zip(body["steps"], [7, 14, 30]):
+            assert s["trigger_event"] == "invoice.overdue"
+            assert s["delay_days"] == d
+            assert s["send_delay_minutes"] == d * 24 * 60
+
+    def test_approve_creates_rules(self, admin_tok):
+        draft = requests.post(
+            f"{API}/comms/planners/invoice-followup/draft",
+            json={"days_ladder": [5], "channel": "sms",
+                   "tone": "urgent"},
+            headers=_h(admin_tok), timeout=T,
+        ).json()
+        step = draft["steps"][0]
+        r = requests.post(
+            f"{API}/comms/planners/invoice-followup/approve",
+            json={"steps": [step]},
+            headers=_h(admin_tok), timeout=T,
+        )
+        assert r.status_code == 201
+        created = r.json()["created"]
+        assert len(created) == 1
+        code = created[0]["code"]
+        rule = requests.get(f"{API}/comms/automations/{code}",
+                              headers=_h(admin_tok), timeout=T).json()
+        assert rule["trigger_event"] == "invoice.overdue"
+        assert rule["channel"] == "sms"
+        # Cleanup.
+        requests.delete(f"{API}/comms/automations/{code}",
+                         headers=_h(admin_tok), timeout=T)
+
+
+# ═════════════════════════════════════════════════════════════════════
 # OpenAPI surface
 # ═════════════════════════════════════════════════════════════════════
 
@@ -366,5 +533,9 @@ class TestOpenApi:
             "/api/before-after/pairs/{pid}/regenerate",
             "/api/before-after/public/{share_token}",
             "/api/comms/automations/{code}/generate-copy",
+            "/api/comms/planners/seasonal/draft",
+            "/api/comms/planners/seasonal/approve",
+            "/api/comms/planners/invoice-followup/draft",
+            "/api/comms/planners/invoice-followup/approve",
         ]:
             assert p in paths, f"missing OpenAPI path: {p}"

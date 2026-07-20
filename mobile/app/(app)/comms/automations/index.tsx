@@ -90,6 +90,13 @@ export default function CommsAutomationsListScreen() {
           <Ionicons name="flash-outline" size={11} color={colors.muted} />
           <Text style={styles.triggerText}>{item.trigger_event}</Text>
         </View>
+        {item.ai_generated_copy && (
+          <View style={styles.aiCopyBadge}
+                testID={`comms-automation-ai-badge-${item.code}`}>
+            <Ionicons name="sparkles-outline" size={11} color="#fff" />
+            <Text style={styles.aiCopyBadgeText}>AI Copy</Text>
+          </View>
+        )}
       </View>
 
       <View style={styles.metaRow}>
@@ -191,6 +198,20 @@ const styles = StyleSheet.create({
     fontFamily: font.regular,
     fontSize: 10,
     color: colors.muted,
+  },
+  aiCopyBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    backgroundColor: colors.brand,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  aiCopyBadgeText: {
+    fontFamily: font.semibold,
+    fontSize: 10,
+    color: "#fff",
   },
   metaRow: {
     flexDirection: "row",

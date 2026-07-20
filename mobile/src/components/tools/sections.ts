@@ -40,6 +40,7 @@ export const TECH_SECTIONS: ToolSection[] = [
       { key: "inventory", icon: "layers-outline", label: "Inventory", desc: "Truck stock & re-order alerts", route: "/(app)/inventory" },
       { key: "equipment", icon: "cube-outline", label: "My Equipment", desc: "Assets assigned to me", route: "/(app)/assets" },
       { key: "new-lead", icon: "magnet-outline", label: "New Lead", desc: "Log a walk-in or referral", route: "/(app)/new-lead" },
+      { key: "before-after", icon: "images-outline", label: "Before / After", desc: "Share the wow shot", route: "/(app)/before-after" as any },
     ],
   },
   {
@@ -91,6 +92,7 @@ export const ADMIN_SECTIONS: ToolSection[] = [
       { key: "ai-credits", icon: "sparkles-outline", label: "AI Credits", desc: "Balance & transactions", route: "/(app)/credits" as any },
       { key: "deals", icon: "git-branch-outline", label: "Deals", desc: "Pipeline · stages · won/lost", route: "/(app)/deals" as any },
       { key: "ai-estimator", icon: "bulb-outline", label: "AI Estimator", desc: "Generate estimates from photos + description", route: "/(app)/ai-estimator" as any },
+      { key: "before-after", icon: "images-outline", label: "Before / After", desc: "AI-composed share cards", route: "/(app)/before-after" as any },
     ],
   },
   {

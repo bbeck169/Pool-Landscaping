@@ -60,6 +60,8 @@ export function MarketingHub() {
     { to: "/marketing/performance", label: "Performance", icon: TrendingUp, sub: "Engagement + reach" },
     { to: "/marketing/sequences", label: "Sequences", icon: Users, sub: "Automation flows" },
     { to: "/marketing/templates", label: "Templates", icon: Layers, sub: "Campaign + email + SMS" },
+    { to: "/marketing/before-after", label: "Before & After", icon: ImageIcon, sub: "AI-composed share cards" },
+    { to: "/marketing/autopilot", label: "AI Autopilot", icon: Bot, sub: "Draft copy + seasonal/invoice ladders" },
     { to: "/marketing/reviews", label: "Reviews", icon: MessageSquare, sub: "AI review reply drafts" },
     { to: "/marketing/brand", label: "Brand Memory", icon: Bot, sub: "Voice + persona + zips" },
   ];

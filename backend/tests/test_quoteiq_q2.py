@@ -25,7 +25,9 @@ from tests.conftest import demo_pw
 BACKEND = os.environ.get("REACT_APP_BACKEND_URL") \
     or "https://poolscape-audit.preview.emergentagent.com"
 API = f"{BACKEND}/api"
-T = 25
+# T bumped from 25 → 90 to accommodate the real Claude Sonnet round-trip
+# now that TEST_LLM_MOCK=0 is the default. Mock path (CI) is fast.
+T = 90
 
 
 def _login(email, pw):

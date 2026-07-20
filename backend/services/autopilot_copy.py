@@ -24,6 +24,7 @@ DEFAULT_MODEL_PROVIDER = "anthropic"
 DEFAULT_MODEL_NAME = "claude-sonnet-4-5"
 
 ALLOWED_TONES = {"friendly", "professional", "urgent", "casual"}
+ALLOWED_USE_CASES = {"seasonal", "invoice_followup", "generic"}
 
 
 def _mock_enabled() -> bool:
@@ -31,26 +32,33 @@ def _mock_enabled() -> bool:
 
 
 def _mock_copy(*, trigger_event: str, channel: str, tone: str,
+                 use_case: str, brand_voice_snippet: str,
                  company_name: str) -> Dict[str, Any]:
     """Deterministic mock — safe for tests and offline dev.
 
     Shape matches the real-LLM contract: {subject?, body_text, body_sms?}.
     Subject is only populated for email; ``body_sms`` only for sms.
+    Voice/use_case are threaded into the strings so the caller can
+    verify they reached the generator end-to-end.
     """
     trig = (trigger_event or "").replace(".", " ").title()
+    voice_hint = f" [voice:{brand_voice_snippet[:20]}]" if brand_voice_snippet else ""
+    use_hint = f" [{use_case}]" if use_case and use_case != "generic" else ""
     if channel == "sms":
-        text = (f"Hi {{customer.first_name}} — {company_name} here. "
-                 f"Quick note re: {trig.lower()}. Reply STOP to opt out.")
+        text = (f"Hi {{customer.first_name}} — {company_name} here.{use_hint}"
+                 f" Quick {tone} note re: {trig.lower()}.{voice_hint}"
+                 f" Reply STOP to opt out.")
         return {
             "subject": None,
             "body_text": text,
             "body_sms": text,
             "notes": "Mocked response — TEST_LLM_MOCK=1.",
         }
-    subject = f"[{company_name}] {trig}"
+    subject = f"[{company_name}] {trig}{use_hint}"
     body = (
         f"Hi {{customer.first_name}},\n\n"
-        f"This is an automated update about your {trig.lower()}.\n"
+        f"This is a {tone} update about your {trig.lower()}.{use_hint}\n"
+        f"{voice_hint}\n"
         f"— The {company_name} team\n"
     )
     return {
@@ -62,6 +70,7 @@ def _mock_copy(*, trigger_event: str, channel: str, tone: str,
 
 
 def _build_system_prompt(*, trigger_event: str, channel: str, tone: str,
+                           use_case: str, brand_voice_snippet: str,
                            company_name: str, extra_context: str) -> str:
     channel_line = (
         "Return an SMS body (max 240 chars). No subject. Include a "
@@ -70,6 +79,19 @@ def _build_system_prompt(*, trigger_event: str, channel: str, tone: str,
         "Return an email subject and a plain-text body. Keep subject "
         "≤ 60 chars. Body should be ≤ 180 words."
     )
+    use_case_line = {
+        "seasonal": "Frame the message around a seasonal service opportunity "
+                    "(pool open/close, spring/fall care).",
+        "invoice_followup": "Frame the message as a professional invoice "
+                            "follow-up (unpaid balance, gentle reminder, "
+                            "clear next step).",
+        "generic": "General-purpose customer-facing update.",
+    }.get(use_case, "General-purpose customer-facing update.")
+    voice_line = (
+        f"Brand voice reference (mirror this style closely): {brand_voice_snippet}"
+        if brand_voice_snippet else
+        "No explicit brand voice supplied — use a natural, human tone."
+    )
     return (
         f"You are the AI Autopilot copy generator for {company_name} — "
         "a field-service business (pool / landscaping).\n"
@@ -77,6 +99,8 @@ def _build_system_prompt(*, trigger_event: str, channel: str, tone: str,
         f"Trigger event: {trigger_event}\n"
         f"Channel: {channel}\n"
         f"Tone: {tone}\n"
+        f"Use-case: {use_case} — {use_case_line}\n"
+        f"{voice_line}\n"
         f"Extra context: {extra_context or '(none)'}\n\n"
         f"{channel_line}\n\n"
         "Output STRICT JSON. Do not include text outside the JSON block. "
@@ -107,6 +131,8 @@ def _normalize(raw: Dict[str, Any], *, channel: str) -> Dict[str, Any]:
 
 async def generate_copy(*, trigger_event: str, channel: str,
                           tone: str, company_name: str,
+                          use_case: str = "generic",
+                          brand_voice_snippet: str = "",
                           extra_context: str = "") -> Dict[str, Any]:
     """High-level entrypoint. Never raises — on LLM failure returns
     ``{"error": "..."}`` with an empty body so the router can log and
@@ -114,10 +140,15 @@ async def generate_copy(*, trigger_event: str, channel: str,
     tone = (tone or "friendly").lower()
     if tone not in ALLOWED_TONES:
         tone = "friendly"
+    use_case = (use_case or "generic").lower()
+    if use_case not in ALLOWED_USE_CASES:
+        use_case = "generic"
 
     if _mock_enabled():
         raw = _mock_copy(trigger_event=trigger_event, channel=channel,
-                           tone=tone, company_name=company_name)
+                           tone=tone, use_case=use_case,
+                           brand_voice_snippet=brand_voice_snippet,
+                           company_name=company_name)
     else:
         key = EMERGENT_LLM_KEY or os.environ.get("EMERGENT_LLM_KEY", "")
         if not key:
@@ -129,7 +160,9 @@ async def generate_copy(*, trigger_event: str, channel: str,
         try:
             system_prompt = _build_system_prompt(
                 trigger_event=trigger_event, channel=channel,
-                tone=tone, company_name=company_name,
+                tone=tone, use_case=use_case,
+                brand_voice_snippet=brand_voice_snippet,
+                company_name=company_name,
                 extra_context=extra_context,
             )
             chat = (LlmChat(api_key=key, session_id=new_id(),

@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from config import db, logger
-from utils import require_admin, new_id, now_iso
+from utils import get_current_user, require_admin, new_id, now_iso
 from routers.tenants import get_current_tenant
 from services.ai_credits import debit_credits
 
@@ -269,12 +269,24 @@ async def generate(body: GenerateIn,
 
 
 @router.get("/before-after/pairs")
-async def list_pairs(user: dict = Depends(require_admin),
+async def list_pairs(user: dict = Depends(get_current_user),
                        tenant: dict = Depends(get_current_tenant),
                        job_id: Optional[str] = Query(None),
                        customer_id: Optional[str] = Query(None),
                        limit: int = Query(50, ge=1, le=200),
                        cursor: Optional[str] = Query(None)):
+    # RBAC: admins can list all. Techs need a scope filter (job_id or
+    # customer_id) — they can see pairs on jobs/customers they operate
+    # against but no unfiltered dumps. Everyone else 403.
+    role = (user or {}).get("role")
+    if role not in ("admin", "super_admin"):
+        if role != "technician":
+            raise HTTPException(403, "Access denied")
+        if not (job_id or customer_id):
+            raise HTTPException(
+                403,
+                "Technicians must filter by job_id or customer_id",
+            )
     q: Dict[str, Any] = {"tenant_id": tenant["id"]}
     if job_id:
         q["job_id"] = job_id

@@ -81,6 +81,8 @@ import {
   Posts, ApprovalQueue, ContentCalendar, SchedulingConfig, Performance,
   TemplatesHub, Reviews,
 } from "@/pages/marketing/MarketingPages";
+import BeforeAfterStudio from "@/pages/marketing/BeforeAfterStudio";
+import AutopilotPage from "@/pages/marketing/AutopilotPage";
 import {
   SequencesList, SequenceNew, SequenceDetail,
 } from "@/pages/marketing/SequencePages";
@@ -331,6 +333,8 @@ export default function App() {
             <Route path="marketing/sequences" element={<AdminOnly><SequencesList /></AdminOnly>} />
             <Route path="marketing/sequences/new" element={<AdminOnly><SequenceNew /></AdminOnly>} />
             <Route path="marketing/sequences/:id" element={<AdminOnly><SequenceDetail /></AdminOnly>} />
+            <Route path="marketing/before-after" element={<AdminOnly><BeforeAfterStudio /></AdminOnly>} />
+            <Route path="marketing/autopilot" element={<AdminOnly><AutopilotPage /></AdminOnly>} />
 
             {/* Phase 8 — SEO + GBP */}
             <Route path="seo" element={<AdminOnly><SeoHub /></AdminOnly>} />
