@@ -25,6 +25,7 @@ import {
   listRequests, createRequest, resendRequest,
   listReviews, updateReview, deleteReview,
   getStats, getLeaderboard,
+  syncPlatformNow, getLatestSyncPerPlatform,
   PLATFORMS, OUTCOMES, SENT_VIA_OPTIONS,
 } from "@/api/reviews";
 import { StarRatingDisplay } from "@/components/reviews/StarRatingDisplay";
@@ -150,6 +151,7 @@ export function ReviewsDashboard() {
   const [stats, setStats] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
   const [recent, setRecent] = useState([]);
+  const [syncStrip, setSyncStrip] = useState(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [detail, setDetail] = useState(null); // review under edit
@@ -160,10 +162,12 @@ export function ReviewsDashboard() {
       getStats(),
       getLeaderboard(1),
       listReviews({ limit: 20 }),
-    ]).then(([s, l, r]) => {
+      getLatestSyncPerPlatform(),
+    ]).then(([s, l, r, y]) => {
       setStats(s.status === "fulfilled" ? s.value : null);
       setLeaderboard(l.status === "fulfilled" ? l.value : []);
       setRecent(r.status === "fulfilled" ? r.value : []);
+      setSyncStrip(y.status === "fulfilled" ? y.value : null);
     }).finally(() => setLoading(false));
   };
   useEffect(reload, []);
@@ -216,6 +220,40 @@ export function ReviewsDashboard() {
               hint="new reviews in the last month"
               testid="reviews-kpi-delta" />
       </div>
+
+      {/* Sync status strip */}
+      {syncStrip ? (
+        <Card className="p-4 mb-6" data-testid="reviews-sync-strip">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs font-semibold uppercase tracking-wider"
+                  style={{ color: colors.muted }}>External sync status</div>
+            <div className="text-xs" style={{ color: colors.muted }}>Daily · 03:00 UTC</div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {["google", "facebook", "yelp"].map((p) => {
+              const row = syncStrip[p];
+              const tone = row?.status === "ok" ? "#16A34A"
+                          : row?.status === "error" ? "#DC2626"
+                          : "#94A3B8";
+              return (
+                <div key={p}
+                      className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full"
+                      style={{ background: colors.surfaceSecondary, border: `1px solid ${tone}` }}
+                      data-testid={`reviews-sync-strip-${p}`}>
+                  <span className="w-2 h-2 rounded-full" style={{ background: tone }} />
+                  <span className="text-xs font-semibold capitalize" style={{ color: colors.onSurface }}>
+                    {p}
+                  </span>
+                  <span className="text-[10px]" style={{ color: colors.muted }}>
+                    · {row?.status || "never"}
+                    {row?.ran_at ? ` · ${(row.ran_at || "").slice(0, 10)}` : ""}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      ) : null}
 
       {/* Leaderboard */}
       <Card className="p-5 mb-6" data-testid="reviews-leaderboard">
@@ -804,6 +842,20 @@ export function ReviewsPlatformsPage() {
     } catch (e) { setToast({ tone: "error", message: e.message }); }
   };
 
+  const [syncing, setSyncing] = useState(null);
+  const SYNCABLE = new Set(["google", "facebook", "yelp"]);
+  const onSyncNow = async (platform) => {
+    setSyncing(platform);
+    try {
+      const summary = await syncPlatformNow(platform);
+      const msg = summary.status === "ok"
+        ? `Synced ${summary.fetched_count} · +${summary.new_count} new · ${summary.updated_count} updated`
+        : `${platform}: ${summary.status}${summary.detail ? " — " + summary.detail : ""}`;
+      setToast({ tone: summary.status === "ok" ? "success" : "warning", message: msg });
+    } catch (e) { setToast({ tone: "error", message: e.message }); }
+    finally { setSyncing(null); }
+  };
+
   const onDelete = async (row) => {
     if (!window.confirm(`Delete "${row.display_name}"?`)) return;
     try {
@@ -893,6 +945,19 @@ export function ReviewsPlatformsPage() {
                   </td>
                   <td className="py-2 px-4">
                     <div className="flex items-center gap-2 justify-end">
+                      {SYNCABLE.has(r.platform) ? (
+                        <BtnGhost
+                          onClick={() => onSyncNow(r.platform)}
+                          disabled={syncing === r.platform}
+                          testid={`reviews-platform-sync-${r.platform}`}>
+                          <span className="inline-flex items-center gap-1.5">
+                            {syncing === r.platform
+                              ? <Loader2 size={12} className="animate-spin" />
+                              : <RefreshCw size={12} />}
+                            Sync
+                          </span>
+                        </BtnGhost>
+                      ) : null}
                       <BtnGhost onClick={() => setEditing(r)}
                                  testid={`reviews-platform-edit-${r.id}`}>Edit</BtnGhost>
                       <BtnGhost onClick={() => onDelete(r)}

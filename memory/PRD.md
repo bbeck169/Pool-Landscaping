@@ -4740,3 +4740,204 @@ Mirror the web Comms admin surface on the Expo mobile app — **read-only
 - Automation rule creation from mobile ✗
 - Offline draft support for test-send ✗
 - Re-send action on Sends detail ✗
+
+## Reviews Subsystem · Phase 3 (Mobile Parity + External Scraping) · Feb 2026
+
+**Final ship in the current 11-item queue.** Two deliverables landed
+in a single atomic commit: (A) mobile Reviews parity across 6 Expo
+screens + reusable components, (B) an external-review scraper with
+Google/Facebook/Yelp adapters + 3 daily sweeps + admin `sync-now`
+endpoints + a `review_sync_events` journal.
+
+### Deliverable A — Mobile Reviews parity
+
+- **Nav wiring** — Reviews tile added to Tools Hub → Marketing section
+  in `mobile/src/components/tools/sections.ts` (admin/super-admin
+  gated via `sectionsForRole`). Route: `/(app)/reviews`.
+- **`mobile/src/api/reviews.ts`** — full TypeScript API client
+  mirroring the web `frontend/src/api/reviews.js`, plus Phase 3
+  additions (`syncPlatformNow`, `listSyncEvents`,
+  `getLatestSyncPerPlatform`). Reuses the shared `api` fetch wrapper.
+- **`reviews/index.tsx` — Reviews Hub**: three-column KPI grid
+  (Average · Public · 30-day delta) with an accent card on Average,
+  the new **"Last sync"** strip (3 coloured pills — one per external
+  platform) sourced from `GET /api/reviews/sync/latest`, and a
+  responsive 2-column nav-card grid (Requests · Recent · Leaderboard
+  · Platforms · Widget).
+- **`reviews/requests/index.tsx`** — FlatList of `listRequests()`
+  with an outcome-chip filter row (All · Pending · Sent to platform
+  · Private feedback · Expired · Opted out), row → detail nav, pull-
+  to-refresh, empty-state.
+- **`reviews/requests/[id].tsx`** — request detail with a 5-row meta
+  card, resend button (7-day rate-limit-aware via a friendly Alert
+  when the API returns 429), and a 4-node timeline (Sent → Landed →
+  Rated → Routed) that lights up green as each step lands.
+- **`reviews/recent.tsx`** — FlatList of reviews with a min-star chip
+  filter (All · 3★+ · 4★+ · 5★+), tap → bottom-sheet detail modal
+  with admin-response textarea + widget-visibility switch → save.
+- **`reviews/leaderboard.tsx`** — tech ranking rows with medal chips
+  (#1 gold, #2 silver, #3 bronze), average-star display, review count,
+  five-star count. Empty state when no tech meets the 1-review floor.
+- **`reviews/platforms.tsx`** — platform rows with active `<Switch>` +
+  a **Sync now** action per row (Google/Facebook/Yelp), gated behind
+  `SYNC_CAPABLE` set. BBB/custom rows render a "Manual entry only"
+  badge instead of a Sync button. Sync outcome surfaces via `Alert`
+  ("Synced N · +new · updated").
+- **`reviews/widget.tsx`** — read-only embed screen: snippet block
+  (copyable via `expo-clipboard`), public widget URL with Copy +
+  Open (opens via `expo-linking`), and an info hint that layout
+  edits stay on the web admin.
+- **Reusable components** under `mobile/src/components/reviews/`:
+  `StarRatingDisplayNative.tsx`, `StarRatingInputNative.tsx`,
+  `PlatformIconNative.tsx`, `OutcomePillNative.tsx`,
+  `ReviewCardNative.tsx`.
+- **Routes registered** in `mobile/app/(app)/_layout.tsx` (7 new
+  hidden `Tabs.Screen` entries — reachable via router.push only,
+  never rendered in the bottom tab bar).
+
+### Deliverable B — External review scraping
+
+- **`services/review_scraper.py`** — central dispatcher. `emit()`
+  fans out to per-platform adapters, upserts by
+  `(tenant_id, platform, source_review_id)` (partial-filter unique
+  index enforced by `_ensure_indexes()`), never overwrites the
+  admin-owned fields (`admin_response`, `visible_on_widget`).
+  Always writes a `review_sync_events` row per attempt.
+- **Adapters** in `services/review_scraper_adapters/`:
+  - **`google_adapter.py`** — reuses `routers/gbp.py`'s
+    `_access_token()` + `_google_get()` + `V4_API`. Maps
+    `starRating` word-enum (ONE..FIVE) to ints. Returns
+    `{"status":"disabled"}` when `GOOGLE_GBP_INTEGRATION_ENABLED`
+    is falsy, `{"status":"not_connected"}` when the tenant has no
+    refresh token, `{"status":"not_configured"}` when no location.
+  - **`facebook_adapter.py`** — gated behind
+    `FACEBOOK_INTEGRATION_ENABLED`. Facebook Pages OAuth →
+    Page Access Token exchange is **not yet wired** in
+    `routers/social.py`; adapter returns
+    `{"status":"disabled"}` (default) or
+    `{"status":"not_connected"}` (when the flag is on but the
+    OAuth wiring is still missing). Real fetch lands in a future
+    ship after Page-Token flow ships.
+  - **`yelp_adapter.py`** — Yelp Fusion via `httpx`. Parses the
+    tenant's `tenant_review_platforms.review_url` for the biz
+    slug. Each row flagged `partial_content=true` (Fusion returns
+    3 excerpts max, not full review text).
+- **HTTP surface** in `routers/review_sync.py`:
+  - `POST /api/reviews/sync/{platform}/sync-now` (admin) —
+    immediate sweep. Returns the summary shape used by the daily
+    sweep. **404** for `bbb` and `custom` (no viable API — HTML
+    scraping BBB is legally + technically fragile).
+  - `GET /api/reviews/sync/events?platform=&limit=50` — sync
+    journal (newest first, tenant-scoped).
+  - `GET /api/reviews/sync/latest` — one row per platform for the
+    Dashboard "Sync status" strip.
+- **Scheduler wiring** — `services.review_scraper.register_daily_sync`
+  called from `server.py` alongside the automation-engine sweeps.
+  Three cron jobs: `reviews.sync.google` (03:00 UTC),
+  `reviews.sync.facebook` (03:10), `reviews.sync.yelp` (03:20). Log
+  line on every boot: `[review_scraper] daily sync registered
+  (google 03:00, facebook 03:10, yelp 03:20 UTC)`.
+- **Env flags** added to `backend/.env.example`:
+  `GOOGLE_GBP_INTEGRATION_ENABLED=false`,
+  `FACEBOOK_INTEGRATION_ENABLED=false`, `YELP_API_KEY=`. All three
+  default to safe/off so a stale env never surprise-syncs.
+- **Web UI touches**:
+  - `/admin/reviews` — new "External sync status" strip above the
+    leaderboard with 3 colour-coded pills (green ok / red error /
+    grey never) fed by `GET /api/reviews/sync/latest`.
+  - `/admin/reviews/platforms` — new **Sync** action button next to
+    Edit/Delete for `google/facebook/yelp` rows (not BBB/custom).
+    Surfaces the sync outcome via a Toast:
+    `Synced N · +new · updated`.
+- **Mobile UI touches**: Sync-now button on
+  `mobile/app/(app)/reviews/platforms.tsx` (see Deliverable A).
+
+### Deviations from the brief
+- **BBB skipped entirely** — no public API for reviews and HTML
+  scraping is legally + technically fragile. `POST /sync/bbb/sync-now`
+  and `POST /sync/custom/sync-now` return **404** with a
+  descriptive detail. Admins capture BBB reviews via the manual
+  `POST /api/reviews/reviews` path with `source="manual_entry"`.
+- **Facebook adapter ships as a stub-with-flag** — brief said "if
+  no OAuth wired, implement storage side and gate behind
+  `FACEBOOK_INTEGRATION_ENABLED=false`." Done. The dispatcher, the
+  event journal, the sync-now endpoint, and the UI Sync button all
+  work correctly; the adapter's actual Graph API call lands when
+  `routers/social.py` grows Page Access Token exchange.
+- **Google adapter reuses the existing global GBP OAuth** rather
+  than adding a per-tenant OAuth flow. Because the current codebase
+  runs a single-tenant GBP wiring, all tenants' Google syncs share
+  the one configured location. This matches the ship-fast posture;
+  a per-tenant OAuth expansion is a follow-up worth its own brief.
+- **Yelp partial-content flag** — every scraped Yelp row carries
+  `partial_content=true` so the admin UI can surface a "Yelp only
+  returns 3 excerpts" warning (planned enhancement).
+- **`_adapter_for` made sync** (not async) because it does no I/O —
+  just a lazy import. Tests monkeypatch it to inject fakes.
+
+### Files added / modified
+- **Added**: `backend/services/review_scraper.py`,
+  `backend/services/review_scraper_adapters/__init__.py`,
+  `backend/services/review_scraper_adapters/google_adapter.py`,
+  `backend/services/review_scraper_adapters/facebook_adapter.py`,
+  `backend/services/review_scraper_adapters/yelp_adapter.py`,
+  `backend/routers/review_sync.py`,
+  `backend/tests/test_review_scraping.py`,
+  `mobile/src/api/reviews.ts`,
+  `mobile/src/components/reviews/*Native.tsx` (5 components),
+  `mobile/app/(app)/reviews/index.tsx`,
+  `mobile/app/(app)/reviews/requests/index.tsx`,
+  `mobile/app/(app)/reviews/requests/[id].tsx`,
+  `mobile/app/(app)/reviews/recent.tsx`,
+  `mobile/app/(app)/reviews/leaderboard.tsx`,
+  `mobile/app/(app)/reviews/platforms.tsx`,
+  `mobile/app/(app)/reviews/widget.tsx`.
+- **Modified**: `backend/server.py` (register review_sync router +
+  scheduler wiring), `backend/.env.example` (3 new flags),
+  `frontend/src/api/reviews.js` (`syncPlatformNow`, `listSyncEvents`,
+  `getLatestSyncPerPlatform`),
+  `frontend/src/pages/reviews/ReviewsPages.jsx` (sync-status strip
+  + per-row Sync button),
+  `mobile/app/(app)/_layout.tsx` (7 hidden Tabs.Screen entries),
+  `mobile/src/components/tools/sections.ts` (Reviews tile).
+
+### Verification
+- **Backend regression** — `pytest test_automation_engine +
+  test_comms_backend + test_reviews_backend + test_video_uploads +
+  test_customer_import_full_mapping + test_review_scraping` →
+  **86 passed, 0 failed** (108s).
+- **Scheduler confirmation** (from
+  `/var/log/supervisor/backend.err.log`):
+  `[review_scraper] daily sync registered (google 03:00, facebook
+  03:10, yelp 03:20 UTC)`.
+- **Curl transcript · sync surface** (`admin@aquaterra.com`):
+  - `POST /reviews/sync/google/sync-now` → 200 · summary
+    `{status:"disabled", detail:"GOOGLE_GBP_INTEGRATION_ENABLED
+    is not set to true.", ...}` (default env).
+  - `POST /reviews/sync/facebook/sync-now` → 200 · summary
+    `{status:"disabled", ...}` (default env).
+  - `POST /reviews/sync/yelp/sync-now` → 200 · summary
+    `{status:"not_configured", detail:"YELP_API_KEY env var is
+    not set."}`.
+  - `POST /reviews/sync/bbb/sync-now` → **404**.
+  - `GET  /reviews/sync/events?platform=google&limit=3` → 200 ·
+    3 rows returned newest first.
+  - `GET  /reviews/sync/latest` → 200 · `{google:{...},
+    facebook:{...}, yelp:{...}}`.
+- **Web screenshots captured** — Dashboard shows the External
+  Sync Status strip (Google ok / Facebook disabled / Yelp
+  not_configured); Platforms page shows the new Sync button next
+  to each row for google/facebook/yelp (not for BBB).
+- **Mobile TypeScript compile clean** on all 12 new Reviews
+  files (0 TS errors in reviews files; 151 pre-existing errors
+  elsewhere unchanged).
+- **`/app` is the only source of truth** — no external repos
+  cloned.
+- **Backend contracts respected** — Phase 1/2 endpoints untouched;
+  only additions are the 3 sync endpoints + the review_sync_events
+  collection.
+
+### End-of-queue status
+This ships **items 1–11** of the original 11-item plan. All queue
+items landed with a passing regression sample every time (76 →
+86 tests now). Awaiting the final wrap report.

@@ -57,6 +57,17 @@ export const getLeaderboard = (min_reviews = 3) =>
   api.get(`/reviews/leaderboard?min_reviews=${min_reviews}`)
     .then((d) => d?.leaderboard || []);
 
+// ─── Phase 3 · external platform sync ─────────────────────────────────
+export const syncPlatformNow = (platform) =>
+  api.post(`/reviews/sync/${encodeURIComponent(platform)}/sync-now`, {});
+export const listSyncEvents = (platform, limit = 50) => {
+  const qs = new URLSearchParams();
+  if (platform) qs.append("platform", platform);
+  qs.append("limit", String(limit));
+  return api.get(`/reviews/sync/events?${qs.toString()}`);
+};
+export const getLatestSyncPerPlatform = () => api.get("/reviews/sync/latest");
+
 // ─── Public magic-link (no auth — used by the landing page) ──────────
 export const fetchPublicLanding = (token) => {
   const base = process.env.REACT_APP_BACKEND_URL;

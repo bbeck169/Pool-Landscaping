@@ -208,6 +208,14 @@ export default function AppLayout() {
         name="comms/test-send"
         options={{ title: "Test Send", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="rocket-outline" size={size} color={color} /> }}
       />
+      {/* Reviews Phase 3 · Feb 2026 — hidden from tab bar, reachable via Tools hub + router.push. */}
+      <Tabs.Screen name="reviews/index"                options={{ title: "Reviews", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="star-outline" size={size} color={color} /> }} />
+      <Tabs.Screen name="reviews/requests/index"       options={{ title: "Requests", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="send-outline" size={size} color={color} /> }} />
+      <Tabs.Screen name="reviews/requests/[id]"        options={{ title: "Request Detail", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="send-outline" size={size} color={color} /> }} />
+      <Tabs.Screen name="reviews/recent"               options={{ title: "Recent Reviews", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles-outline" size={size} color={color} /> }} />
+      <Tabs.Screen name="reviews/leaderboard"          options={{ title: "Leaderboard", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="trophy-outline" size={size} color={color} /> }} />
+      <Tabs.Screen name="reviews/platforms"            options={{ title: "Platforms", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="globe-outline" size={size} color={color} /> }} />
+      <Tabs.Screen name="reviews/widget"               options={{ title: "Widget", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="code-slash-outline" size={size} color={color} /> }} />
       {/* Phase 3 · Templates Library — hidden from tab bar, reachable via Tools hub + router.push. */}
       <Tabs.Screen
         name="templates/index"

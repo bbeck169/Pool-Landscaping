@@ -57,6 +57,7 @@ from routers import (
     media_uploads,
     portal_videos,
     reviews,
+    review_sync,
 )
 
 app = FastAPI(
@@ -114,7 +115,8 @@ for module in [notifications_router,
                comms,
                media_uploads,
                portal_videos,
-               reviews]:
+               reviews,
+               review_sync]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -361,6 +363,16 @@ async def _background_seed():
             _auto.register_daily_sweeps(scheduler)
         except Exception as _ae:
             logger.warning(f"automation_engine registration crashed: {_ae}")
+
+        # Reviews Phase 3 · Feb 2026 — external platform daily syncs
+        # (google 03:00, facebook 03:10, yelp 03:20 UTC). Adapters no-op
+        # when their env flag / API key is missing, so this is safe to
+        # register unconditionally.
+        try:
+            from services import review_scraper as _scraper
+            _scraper.register_daily_sync(scheduler)
+        except Exception as _rse:
+            logger.warning(f"review_scraper registration crashed: {_rse}")
 
         scheduler.start()
     except Exception as e:
