@@ -54,6 +54,33 @@ def customer(admin_headers):
     requests.delete(f"{API}/customers/{doc['id']}", headers=admin_headers, timeout=15)
 
 
+def test_first_patch_on_customer_without_service_notes_succeeds(admin_headers):
+    """Tester regression fix — legacy customer docs have no ``service_notes``
+    key. The projection ``{_id:0, service_notes:1}`` returned ``{}``
+    for them, and the old ``if not existing:`` guard raised 404. This
+    test seeds a fresh customer WITHOUT service_notes and asserts the
+    first PATCH lands cleanly."""
+    marker = uuid.uuid4().hex[:8]
+    r = requests.post(f"{API}/customers", headers=admin_headers, json={
+        "name": f"FirstPatch {marker}",
+        "first_name": "TEST_FP", "last_name": f"FirstPatch{marker}",
+    }, timeout=15)
+    assert r.status_code in (200, 201), r.text
+    cid = r.json()["id"]
+    # Sanity — this fresh customer must not have service_notes yet.
+    try:
+        first = requests.patch(f"{API}/customers/{cid}/service-notes",
+                                 headers=admin_headers,
+                                 json={"pool": "First-write pool note"}, timeout=15)
+        assert first.status_code == 200, (
+            f"first-write PATCH must succeed on legacy customer; got "
+            f"{first.status_code} {first.text}"
+        )
+        assert first.json()["service_notes"]["pool"] == "First-write pool note"
+    finally:
+        requests.delete(f"{API}/customers/{cid}", headers=admin_headers, timeout=15)
+
+
 def test_patch_pool_note_stored_and_retrieved(admin_headers, customer):
     cid = customer["id"]
     r = requests.patch(f"{API}/customers/{cid}/service-notes",

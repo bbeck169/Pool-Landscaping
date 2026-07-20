@@ -584,9 +584,15 @@ async def patch_service_notes(cid: str, body: _ServiceNotesPatch,
     """Partial update — omitted keys are preserved. Explicit ``null``
     clears. Admin-only per user directive; techs read but never write."""
     existing = await db.customers.find_one(
-        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0, "service_notes": 1},
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "service_notes": 1},
     )
-    if not existing:
+    # Feb-2026 tester fix — an empty projected dict ``{}`` (customer
+    # exists but has no ``service_notes`` field yet) is falsy, so the
+    # old ``if not existing:`` guard raised 404 on every FIRST write.
+    # Use an explicit ``is None`` check + include ``id`` in the
+    # projection so the match always returns at least the id.
+    if existing is None:
         raise HTTPException(404, "Customer not found")
     current = existing.get("service_notes") or {}
     patch = body.dict(exclude_unset=True)
