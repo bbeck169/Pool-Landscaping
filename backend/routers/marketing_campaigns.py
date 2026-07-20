@@ -227,7 +227,10 @@ async def lint_template(body: Dict[str, Any] = Body(...),
     return {
         "unresolved_tokens": unresolved,
         "deprecated_single_brace": deprecated,
-        "clean": not unresolved and not deprecated,
+        # ``clean`` = "safe to send". Unresolved tokens are the only
+        # blocker — deprecated single-brace usage renders correctly
+        # via the dual-brace parser and is advisory-only.
+        "clean": not unresolved,
     }
 
 

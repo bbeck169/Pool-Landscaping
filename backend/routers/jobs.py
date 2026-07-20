@@ -248,7 +248,8 @@ async def list_jobs(
         if cids:
             custs = await db.customers.find(
                 {"id": {"$in": cids}, "tenant_id": tenant["id"]},
-                {"_id": 0, "id": 1, "notes": 1, "gate_code": 1, "is_vip": 1},
+                {"_id": 0, "id": 1, "notes": 1, "gate_code": 1, "is_vip": 1,
+                  "service_notes": 1},
             ).to_list(1000)
             cmap = {c["id"]: c for c in custs}
             for d in docs:
@@ -267,10 +268,20 @@ async def list_jobs(
                     # for backward-compat with older consumers.
                     d["customer_gate_code"] = c.get("gate_code") or None
                     d["customer_notes"] = c.get("notes") or None
+                    # Feb-2026 service-notes ship — surface the note
+                    # matching this job's service_type (fallback: the
+                    # tech's specialty). Only the relevant snippet is
+                    # returned so mobile payloads stay cheap and techs
+                    # only see their own scope.
+                    from routers.customers import _resolve_service_note
+                    d["service_note"] = _resolve_service_note(
+                        c, d.get("service_type"), user,
+                    )
                 else:
                     d["customer_is_vip"] = False
                     d["customer_gate_code"] = None
                     d["customer_notes"] = None
+                    d["service_note"] = None
     # Phase 16C add-on: strip revenue/pricing fields for technicians.
     if user.get("role") == "technician":
         for d in docs:

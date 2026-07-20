@@ -1022,13 +1022,38 @@ class TestTemplateLinter:
         }, timeout=T)
         assert r.status_code == 200, r.text
         data = r.json()
-        assert data["clean"] is False
+        # Deprecated shape is advisory only — the parser resolves them
+        # cleanly via the dual-brace regex, so ``clean`` must stay True.
+        # ``unresolved_tokens`` is the only blocker.
+        assert data["clean"] is True, (
+            f"clean should be True when only deprecated shape present; got {data}"
+        )
         deprecated = {(d["field"], d["token"]) for d in data["deprecated_single_brace"]}
         assert ("subject", "first_name") in deprecated
         assert ("email_html", "tenant_name") in deprecated
         unresolved_tokens = {u["token"] for u in data["unresolved_tokens"]}
         assert "first_name" not in unresolved_tokens
         assert "tenant_name" not in unresolved_tokens
+
+    def test_linter_clean_true_with_deprecated_only_but_false_with_unresolved(self, admin_tok):
+        """Explicit lock per tester feedback — deprecated warnings are
+        advisory. Only unresolved tokens gate the send."""
+        # Deprecated only → clean=True.
+        r1 = requests.post(f"{API}/marketing/templates/lint", headers=_h(admin_tok), json={
+            "subject": "Hi {first_name}",
+        }, timeout=T)
+        assert r1.status_code == 200
+        d1 = r1.json()
+        assert d1["clean"] is True
+        assert d1["deprecated_single_brace"], "expected deprecated flag"
+        # Deprecated + unresolved → clean=False.
+        r2 = requests.post(f"{API}/marketing/templates/lint", headers=_h(admin_tok), json={
+            "subject": "Hi {first_name}, {{no_such_token}}",
+        }, timeout=T)
+        assert r2.status_code == 200
+        d2 = r2.json()
+        assert d2["clean"] is False
+        assert any(u["token"] == "no_such_token" for u in d2["unresolved_tokens"])
 
 
 class TestVipDigestSeed:

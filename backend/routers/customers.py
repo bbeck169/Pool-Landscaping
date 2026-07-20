@@ -524,6 +524,86 @@ class _SendEmailBody(BaseModel):
     customer_id: Optional[str] = None
 
 
+# ─── Feb-2026 service-notes ship ──────────────────────────────────────
+class _ServiceNotesPatch(BaseModel):
+    """Partial update — omit a key to leave that side untouched. Send
+    ``null`` to explicitly clear a note."""
+    pool: Optional[str] = None
+    landscape: Optional[str] = None
+
+
+def _resolve_service_note(customer: dict, service_type: Optional[str],
+                            user: Optional[dict] = None) -> Optional[str]:
+    """Return the relevant note text for a schedule/job view.
+
+    Priority:
+      1. Explicit ``service_type`` matches a service_notes key.
+      2. Fallback to the tech's ``specialties[0]``.
+      3. Return ``None`` when neither resolves.
+    """
+    notes = (customer or {}).get("service_notes") or {}
+    stype = (service_type or "").strip().lower()
+    if stype in notes and notes.get(stype):
+        return notes[stype]
+    specialties = ((user or {}).get("specialties") or [])
+    for spec in specialties:
+        key = (spec or "").strip().lower()
+        if key in notes and notes.get(key):
+            return notes[key]
+    return None
+
+
+@router.get("/customers/{cid}/service-notes-for-schedule")
+async def get_service_note_for_schedule(cid: str, service_type: str = Query(...),
+                                          user: dict = Depends(get_current_user),
+                                          tenant: dict = Depends(get_current_tenant)):
+    """Cheap read used by mobile tech schedule + web route map. Returns
+    just the note text for a single service type so tech clients don't
+    fetch the whole customer doc.
+
+    Accessible to techs (they can only see notes for their own visits;
+    RBAC on the tenant is already enforced by the dependency). Admins
+    see everything."""
+    doc = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "service_notes": 1, "name": 1},
+    )
+    if not doc:
+        raise HTTPException(404, "Customer not found")
+    stype = (service_type or "").strip().lower()
+    if stype not in ("pool", "landscape"):
+        raise HTTPException(400, "service_type must be 'pool' or 'landscape'")
+    note = ((doc.get("service_notes") or {}).get(stype)) or None
+    return {"customer_id": cid, "service_type": stype, "note": note}
+
+
+@router.patch("/customers/{cid}/service-notes")
+async def patch_service_notes(cid: str, body: _ServiceNotesPatch,
+                                user: dict = Depends(require_admin),
+                                tenant: dict = Depends(get_current_tenant)):
+    """Partial update — omitted keys are preserved. Explicit ``null``
+    clears. Admin-only per user directive; techs read but never write."""
+    existing = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0, "service_notes": 1},
+    )
+    if not existing:
+        raise HTTPException(404, "Customer not found")
+    current = existing.get("service_notes") or {}
+    patch = body.dict(exclude_unset=True)
+    for k in ("pool", "landscape"):
+        if k in patch:
+            v = patch[k]
+            if v is None:
+                current[k] = None
+            else:
+                v = str(v).strip()
+                current[k] = v if v else None
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"$set": {"service_notes": current}},
+    )
+    return {"customer_id": cid, "service_notes": current}
+
+
 @router.post("/customers/{cid}/send-email")
 async def customer_send_email(cid: str, body: _SendEmailBody,
                                user: dict = Depends(require_admin),

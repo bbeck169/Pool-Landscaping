@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 import re
 
 
@@ -56,6 +56,12 @@ class CustomerIn(BaseModel):
     # flips back to False (see routers/customers.py::_apply_vip_stamp).
     vip_since: Optional[str] = None
     vip_note: Optional[str] = None
+    # Feb-2026 service-notes ship — two long-form notes per customer,
+    # surfaced on the schedule view based on the assigned tech's
+    # specialty or the job's ``service_type`` field. Admin-editable
+    # only; techs see the note matching their service focus. ``None``
+    # values render as empty placeholder cards.
+    service_notes: Optional[Dict[str, Optional[str]]] = None
     # Feb-2026 Customer Detail Additions — multi-contact arrays.
     # Up to 2 mobiles / 3 emails per customer, each with a label,
     # is_primary flag, and marketing/sms consent flag. The legacy

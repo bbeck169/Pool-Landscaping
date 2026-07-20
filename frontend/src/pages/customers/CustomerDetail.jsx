@@ -38,6 +38,7 @@ import CustomerEquipmentLibrary from "@/components/customers/CustomerEquipmentLi
 import CustomerActionDropdowns from "@/components/customers/CustomerActionDropdowns";
 import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
 import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel";
+import CustomerServiceNotesCards from "@/components/customers/CustomerServiceNotesCards";
 
 const TABS = [
   { k: "overview", label: "Overview", icon: MapPin },
@@ -343,6 +344,17 @@ export default function CustomerDetail() {
                 onSaved={(updated) => {
                   setCustomer((c) => ({ ...c, ...updated }));
                   setToast({ tone: "success", message: "Contacts saved" });
+                }}
+                onError={(msg) => setToast({ tone: "error", message: msg })}
+              />
+              {/* Feb-2026 service-notes ship — Pool + Landscape long-form
+                  notes. Admin-editable; techs see only the note matching
+                  their service_type via /jobs?* enrichment. */}
+              <CustomerServiceNotesCards
+                customer={customer}
+                onSaved={(updated) => {
+                  setCustomer((c) => ({ ...c, ...updated }));
+                  setToast({ tone: "success", message: "Service notes saved" });
                 }}
                 onError={(msg) => setToast({ tone: "error", message: msg })}
               />
