@@ -87,6 +87,8 @@ KIND_LABELS: dict[str, str] = {
     # Automation / system
     "automation_error":           "Automation Error",
     "system_alert":               "System Alert",
+    # Directories (Phase D1 — Feb 2026)
+    "directory_status_change":    "Directory · Submission Status Change",
 }
 
 # NB: two new channels added — ``push`` (Expo mobile push) + ``in_app`` alias

@@ -67,6 +67,7 @@ from routers import (
     instaquote,
     instaschedule,
     chat,
+    directories,
 )
 
 app = FastAPI(
@@ -134,7 +135,8 @@ for module in [notifications_router,
                before_after,
                instaquote,
                instaschedule,
-               chat]:
+               chat,
+               directories]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -267,6 +269,12 @@ async def _background_seed():
     await step("phase51k_finance", seed_phase51k_finance())
     await step("mike_today_job", seed_mike_today_job())
     await step("chemical_costs", chemical_costs.seed_chemical_costs())
+    # Directories subsystem · Phase D1 (Feb 2026) — global catalogue.
+    try:
+        from services.directory_seed import ensure_seeded as _dir_seed
+        await step("directory_catalogue", _dir_seed())
+    except Exception as _e:
+        logger.warning(f"directory_seed skipped: {_e}")
 
     # Scheduler registration (needs the DB but not auth).
     try:
