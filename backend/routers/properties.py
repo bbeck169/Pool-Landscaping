@@ -125,9 +125,15 @@ async def _emit(kind: str, tenant_id: str, actor: dict,
                  customer_id: str, property_doc: dict) -> None:
     try:
         from services.notifications import emit as notify_emit
+        # Feb-2026 tester fix — notify ALL tenant admins including the
+        # actor. Previously we excluded the actor's own id, which meant
+        # a single-admin tenant (or a test run where the acting admin
+        # is the audience) saw no notification row at all. The actor
+        # inclusion is intentional: property CRUD is a low-frequency
+        # operation and admins want the audit trail in their own inbox
+        # even for self-triggered actions.
         admins = await db.users.find(
-            {"tenant_id": tenant_id, "role": {"$in": ["admin", "super_admin"]},
-              "id": {"$ne": actor.get("id")}},
+            {"tenant_id": tenant_id, "role": {"$in": ["admin", "super_admin"]}},
             {"_id": 0, "id": 1},
         ).to_list(50)
         aids = [a["id"] for a in admins if a.get("id")]
@@ -366,7 +372,14 @@ async def delete_property(pid: str,
         raise HTTPException(404, "Property not found")
     open_jobs = await db.jobs.count_documents({
         "tenant_id": tenant["id"], "property_id": pid,
-        "status": {"$in": ["scheduled", "in_progress", "on_the_way"]},
+        # Feb-2026 tester fix — ``JobIn.status`` defaults to ``"pending"``,
+        # not ``"scheduled"``. The old guard missed newly created jobs
+        # because it only listed the mid-lifecycle statuses. Include
+        # every not-yet-terminal state so the guard actually blocks.
+        "status": {"$in": [
+            "pending", "created", "scheduled", "assigned",
+            "in_progress", "on_the_way", "en_route",
+        ]},
     })
     if open_jobs > 0:
         raise HTTPException(400, (

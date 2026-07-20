@@ -383,3 +383,80 @@ def test_openapi_paths_include_properties(admin_headers):
     assert "/api/properties/reorder" in paths
     assert "/api/properties/{pid}/schedule" in paths
     assert "/api/customers/{cid}/master-billing" in paths
+
+
+# ─── Tester regression pins (Feb-2026 T4 delta) ────────────────────────
+
+def test_delete_blocked_when_default_pending_status_job_exists(admin_headers, customer):
+    """Tester regression — the delete guard used to whitelist only
+    ["scheduled", "in_progress", "on_the_way"], missing the default
+    ``JobIn.status = "pending"`` from newly created jobs. Freshly
+    created jobs slipped through and the property could be deleted
+    while a real open job existed."""
+    pid = _new_prop(admin_headers, customer["id"], label="PendingGuard").json()["id"]
+    # Create a job with NO explicit status — defaults to "pending".
+    r = requests.post(f"{API}/jobs", headers=admin_headers, json={
+        "customer_id": customer["id"],
+        "property_id": pid,
+        "title": "TEST_pending_default_blocks_delete",
+    }, timeout=15)
+    assert r.status_code in (200, 201), r.text
+    jid = r.json()["id"]
+    # Sanity — job's status is indeed "pending" (or similar).
+    assert r.json().get("status") in ("pending", "created", "scheduled")
+    try:
+        r = requests.delete(f"{API}/properties/{pid}",
+                              headers=admin_headers, timeout=15)
+        assert r.status_code == 400, (
+            f"delete guard failed to catch default-status job; got {r.status_code} {r.text}"
+        )
+        assert "open job" in r.text.lower()
+    finally:
+        requests.delete(f"{API}/jobs/{jid}", headers=admin_headers, timeout=15)
+
+
+def test_property_created_notification_row_written(admin_headers, customer):
+    """Tester regression — ``property.created`` was registered as a
+    unified notification kind but no row was actually written on
+    create because ``_emit`` excluded the actor from the audience.
+    Fix: audience now includes every tenant admin including the actor.
+    """
+    marker = uuid.uuid4().hex[:8]
+    r = _new_prop(admin_headers, customer["id"], label=f"NotifCreate_{marker}")
+    assert r.status_code == 201, r.text
+    pid = r.json()["id"]
+    # Wait a tick for the fire-and-forget emit path to complete.
+    import time
+    time.sleep(0.6)
+    # Notifications inbox — endpoint returns a bare list.
+    r = requests.get(f"{API}/notifications?kind=property.created",
+                       headers=admin_headers, timeout=15)
+    assert r.status_code == 200, r.text
+    rows = r.json()
+    assert isinstance(rows, list), f"expected list; got {type(rows)}"
+    matched = [n for n in rows
+                if (n.get("source_ref") or {}).get("id") == pid]
+    assert matched, (
+        f"expected a property.created notification for property {pid}; "
+        f"got {len(rows)} rows total"
+    )
+
+
+def test_property_deleted_notification_row_written(admin_headers, customer):
+    """Same fix, delete path."""
+    marker = uuid.uuid4().hex[:8]
+    pid = _new_prop(admin_headers, customer["id"], label=f"NotifDel_{marker}").json()["id"]
+    # Delete cleanly (no open jobs on this fresh property).
+    r = requests.delete(f"{API}/properties/{pid}", headers=admin_headers, timeout=15)
+    assert r.status_code == 200, r.text
+    import time
+    time.sleep(0.6)
+    r = requests.get(f"{API}/notifications?kind=property.deleted",
+                       headers=admin_headers, timeout=15)
+    assert r.status_code == 200
+    rows = r.json()
+    assert isinstance(rows, list)
+    matched = [n for n in rows
+                if (n.get("source_ref") or {}).get("id") == pid]
+    assert matched, f"expected a property.deleted notification for {pid}"
+
