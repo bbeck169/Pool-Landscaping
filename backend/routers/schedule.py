@@ -106,20 +106,22 @@ async def schedule_today(date: Optional[str] = None,
     for j in jobs:
         cust = cust_map.get(j.get("customer_id")) or {}
         job_notes_raw = "\n".join(filter(None, [j.get("notes"), j.get("internal_notes")]))
-        # Feb-2026 service-notes ship — inject the pool/landscape note
-        # matching this job's service_type (fallback: the tech's own
-        # specialty). Cheap because we already have the customer doc in
-        # ``cust_map`` from the batch fetch above.
+        # Feb-2026 service-notes ship + tester fix — inject the note
+        # matching this job's service type. Try ``service_type`` first,
+        # then ``job_type`` (legacy schema alias), then the resolver's
+        # tech-specialty fallback. Substring match handles values like
+        # "Weekly Pool Service".
         from routers.customers import _resolve_service_note
+        stype_for_resolver = j.get("service_type") or j.get("job_type")
         service_note = _resolve_service_note(
-            cust, j.get("service_type"), user,
+            cust, stype_for_resolver, user,
         )
         items.append({
             "type": "job",
             "id": j.get("id"),
             "title": j.get("title") or j.get("service_type") or "Job",
-            "service_type": j.get("service_type") or j.get("title") or "Service",
-            "job_type": j.get("job_type"),
+            "service_type": j.get("service_type") or j.get("job_type") or j.get("title") or "Service",
+            "job_type": j.get("job_type") or j.get("service_type"),
             "customer_name": j.get("customer_name"),
             "customer_id": j.get("customer_id"),
             "address": j.get("address") or j.get("site_address"),

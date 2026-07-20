@@ -536,15 +536,31 @@ def _resolve_service_note(customer: dict, service_type: Optional[str],
                             user: Optional[dict] = None) -> Optional[str]:
     """Return the relevant note text for a schedule/job view.
 
+    ``service_type`` may be a bare string ("pool"/"landscape") or any
+    string containing those tokens (e.g. "Weekly Pool Service"). We
+    normalize + substring-match so the resolver survives legacy job
+    docs whose type field carries the full service name.
+
     Priority:
-      1. Explicit ``service_type`` matches a service_notes key.
+      1. Substring match on ``service_type`` against a service_notes key.
       2. Fallback to the tech's ``specialties[0]``.
       3. Return ``None`` when neither resolves.
     """
     notes = (customer or {}).get("service_notes") or {}
+    if not notes:
+        return None
     stype = (service_type or "").strip().lower()
-    if stype in notes and notes.get(stype):
-        return notes[stype]
+    if stype:
+        # Direct key hit (fast path).
+        if stype in notes and notes.get(stype):
+            return notes[stype]
+        # Substring match — covers "Weekly Pool Service" → "pool",
+        # "Landscape maintenance" → "landscape", etc.
+        for key, val in notes.items():
+            if not val:
+                continue
+            if key and key.lower() in stype:
+                return val
     specialties = ((user or {}).get("specialties") or [])
     for spec in specialties:
         key = (spec or "").strip().lower()

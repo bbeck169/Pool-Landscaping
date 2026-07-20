@@ -272,14 +272,14 @@ async def list_jobs(
                     # for backward-compat with older consumers.
                     d["customer_gate_code"] = c.get("gate_code") or None
                     d["customer_notes"] = c.get("notes") or None
-                    # Feb-2026 service-notes ship — surface the note
-                    # matching this job's service_type (fallback: the
-                    # tech's specialty). Only the relevant snippet is
-                    # returned so mobile payloads stay cheap and techs
-                    # only see their own scope.
+                    # Feb-2026 service-notes ship + tester fix — surface the note
+                    # matching this job's service_type OR job_type (legacy
+                    # alias). Substring match survives values like
+                    # "Weekly Pool Service". Only the relevant snippet
+                    # is returned so mobile payloads stay cheap.
                     from routers.customers import _resolve_service_note
                     d["service_note"] = _resolve_service_note(
-                        c, d.get("service_type"), user,
+                        c, d.get("service_type") or d.get("job_type"), user,
                     )
                 else:
                     d["customer_is_vip"] = False

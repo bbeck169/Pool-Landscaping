@@ -263,3 +263,124 @@ def test_schedule_today_carries_service_note(admin_headers):
                 f"schedule/today job missing 'service_note': keys={list(it.keys())}"
             )
 
+
+
+def test_resolver_substring_matches_weekly_pool_service(admin_headers, customer):
+    """Feb-2026 tester fix — legacy jobs carry values like ``"Weekly Pool
+    Service"`` in service_type / job_type. The resolver must substring-
+    match those onto the ``"pool"`` note key so the pill renders."""
+    from routers.customers import _resolve_service_note
+    cust = {"service_notes": {"pool": "POOL_NOTE_XYZ",
+                                "landscape": "LAND_NOTE_ABC"}}
+    # Direct key hit.
+    assert _resolve_service_note(cust, "pool", None) == "POOL_NOTE_XYZ"
+    # Substring — the actual regression from prod data.
+    assert _resolve_service_note(cust, "Weekly Pool Service", None) == "POOL_NOTE_XYZ"
+    assert _resolve_service_note(cust, "Landscape Maintenance", None) == "LAND_NOTE_ABC"
+    # No match, no specialty fallback → None.
+    assert _resolve_service_note(cust, "Roof Repair", None) is None
+    # Specialty fallback kicks in when service_type doesn't match.
+    tech = {"specialties": ["pool"]}
+    assert _resolve_service_note(cust, "Roof Repair", tech) == "POOL_NOTE_XYZ"
+
+
+def test_schedule_today_resolves_service_note_from_job_type_alias(admin_headers):
+    """End-to-end regression for the tester finding: seed a customer with
+    a pool note + a job whose ``job_type == 'pool'`` (no ``service_type``
+    set) assigned to a specific tech. GET /schedule/today as that tech
+    and assert both ``service_note`` and ``job_type`` are present + not
+    null."""
+    from pymongo import MongoClient
+    from dotenv import dotenv_values
+    from datetime import datetime, timezone
+    env = dotenv_values("/app/backend/.env")
+    client = MongoClient(env["MONGO_URL"])
+    db_ = client[env["DB_NAME"]]
+
+    marker = uuid.uuid4().hex[:8]
+    # Seed customer with a note.
+    r = requests.post(f"{API}/customers", headers=admin_headers, json={
+        "name": f"NoteSchedule {marker}",
+        "first_name": "TEST_NS", "last_name": f"Sched{marker}",
+        "service_notes": {"pool": f"POOL_TEST_{marker}"},
+    }, timeout=15)
+    assert r.status_code in (200, 201), r.text
+    cid = r.json()["id"]
+
+    # Resolve mike's user id + tenant.
+    tech_tok = _login("mike@aquaterra.com")
+    tech_who = requests.get(f"{API}/auth/me",
+                              headers={"Authorization": f"Bearer {tech_tok}"},
+                              timeout=15).json()
+    tid = tech_who["tenant_id"]
+    mike_id = tech_who["id"]
+
+    # Insert a job assigned to mike, scheduled today, with job_type=pool
+    # (no service_type) so we're testing the alias resolution path.
+    # ``/schedule/today`` queries ``scheduled_date`` with a full ISO
+    # datetime range so we must use that shape (matches the seed data).
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    jid = uuid.uuid4().hex
+    db_.jobs.insert_one({
+        "id": jid, "tenant_id": tid,
+        "customer_id": cid, "assigned_technician_id": mike_id,
+        "title": f"TEST_ns_{marker}", "job_type": "pool",
+        "customer_name": f"NoteSchedule {marker}",
+        "status": "scheduled",
+        "scheduled_date": now_iso,
+    })
+    try:
+        r = requests.get(f"{API}/schedule/today",
+                           headers={"Authorization": f"Bearer {tech_tok}"},
+                           timeout=15)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        items = data.get("items") if isinstance(data, dict) else data
+        target = next((it for it in (items or []) if it.get("id") == jid), None)
+        assert target is not None, (
+            f"seeded job not returned by /schedule/today for mike; items={items!r}"
+        )
+        # Both fields must land on the serialized item.
+        assert target.get("job_type") == "pool", (
+            f"job_type dropped from serialized item: {target}"
+        )
+        assert target.get("service_note") == f"POOL_TEST_{marker}", (
+            f"service_note not resolved via job_type alias: "
+            f"got {target.get('service_note')!r}, item={target}"
+        )
+    finally:
+        db_.jobs.delete_one({"id": jid})
+        requests.delete(f"{API}/customers/{cid}", headers=admin_headers, timeout=15)
+        client.close()
+
+
+def test_jobs_list_resolves_service_note_from_job_type_alias(admin_headers):
+    """Defense-in-depth — same alias fallback must work for /api/jobs
+    enrichment. Seed a customer + a job whose only type field is
+    ``job_type`` and assert /jobs surfaces the correct service_note."""
+    marker = uuid.uuid4().hex[:8]
+    r = requests.post(f"{API}/customers", headers=admin_headers, json={
+        "name": f"JobsNote {marker}",
+        "first_name": "TEST_JN", "last_name": f"Jobs{marker}",
+        "service_notes": {"pool": f"JOBS_POOL_{marker}"},
+    }, timeout=15)
+    assert r.status_code in (200, 201), r.text
+    cid = r.json()["id"]
+    r = requests.post(f"{API}/jobs", headers=admin_headers, json={
+        "customer_id": cid,
+        "title": f"TEST_jobs_note_{marker}",
+        "job_type": "pool",
+    }, timeout=15)
+    assert r.status_code in (200, 201), r.text
+    jid = r.json()["id"]
+    try:
+        r = requests.get(f"{API}/jobs", headers=admin_headers, timeout=15)
+        target = next((j for j in r.json() if j.get("id") == jid), None)
+        assert target is not None, "seeded job not in /jobs list"
+        assert target.get("service_note") == f"JOBS_POOL_{marker}", (
+            f"expected pool note via job_type alias; got {target.get('service_note')!r}"
+        )
+    finally:
+        requests.delete(f"{API}/jobs/{jid}", headers=admin_headers, timeout=15)
+        requests.delete(f"{API}/customers/{cid}", headers=admin_headers, timeout=15)
+
