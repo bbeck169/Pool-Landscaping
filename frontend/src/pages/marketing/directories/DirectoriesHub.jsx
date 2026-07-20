@@ -82,9 +82,13 @@ export default function DirectoriesHub() {
     setScanning(true);
     try {
       const run = await api.post("/directories/scan/run", {});
+      // Backend runs synchronously and returns the completed row —
+      // ``completed_at`` is always set on success. If we ever move
+      // to async, we'd poll GET /scan/runs/{id} here for
+      // ``completed_at`` before showing the summary.
       const s = run?.summary || {};
       toast.success(
-        `Scan complete · matched ${s.total_matched ?? 0} · mismatched ${s.total_mismatched ?? 0} · not_found ${s.total_not_found ?? 0}`
+        `Scan complete. ${s.total_matched ?? 0} verified, ${s.total_mismatched ?? 0} mismatched, ${s.total_not_found ?? 0} not found.`
       );
       await load();
     } catch (e) {

@@ -60,6 +60,7 @@ export default function DirectorySubmissionsPage() {
   const [view, setView] = useState("kanban");
   const [rows, setRows] = useState([]);
   const [defs, setDefs] = useState({});
+  const [users, setUsers] = useState([]);
   const [filter, setFilter] = useState({ category: "", status: "", priority: "" });
   const [selRow, setSelRow] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -68,14 +69,16 @@ export default function DirectorySubmissionsPage() {
 
   const load = useCallback(async () => {
     try {
-      const [subs, dr] = await Promise.all([
+      const [subs, dr, usersResp] = await Promise.all([
         api.get("/directories/submissions?limit=200"),
         api.get("/directories/definitions"),
+        api.get("/team").catch(() => []),
       ]);
       setRows(subs.submissions || []);
       const byslug = {};
       for (const d of dr.definitions || []) byslug[d.slug] = d;
       setDefs(byslug);
+      setUsers(Array.isArray(usersResp) ? usersResp : []);
     } catch (e) {
       toast.error(e?.message || "Load failed");
     }
@@ -342,6 +345,7 @@ export default function DirectorySubmissionsPage() {
       <SubmissionDetail
         row={selRow}
         defn={selRow ? defs[selRow.directory_slug] : null}
+        users={users}
         onClose={() => setSelRow(null)}
         onUpdated={(r) => {
           setRows((cur) => cur.map((x) => x.id === r.id ? r : x));
@@ -385,11 +389,12 @@ export default function DirectorySubmissionsPage() {
 }
 
 // ─── Detail drawer ────────────────────────────────────────────────────
-function SubmissionDetail({ row, defn, onClose, onUpdated }) {
+function SubmissionDetail({ row, defn, users, onClose, onUpdated }) {
   const [status, setStatus] = useState(row?.status || "not_started");
   const [notes, setNotes] = useState(row?.notes || "");
   const [url, setUrl] = useState(row?.external_listing_url || "");
   const [saving, setSaving] = useState(false);
+  const [assigning, setAssigning] = useState(false);
 
   useEffect(() => {
     if (row) {
@@ -423,6 +428,22 @@ function SubmissionDetail({ row, defn, onClose, onUpdated }) {
       toast.error(e?.message || "Verify failed");
     }
   };
+  const assign = async (uid) => {
+    setAssigning(true);
+    try {
+      const r = await api.post(`/directories/submissions/${row.id}/assign`,
+                                  { assigned_user_id: uid || null });
+      onUpdated(r);
+      toast.success(uid ? "Assigned" : "Cleared assignment");
+    } catch (e) {
+      toast.error(e?.message || "Assign failed");
+    }
+    setAssigning(false);
+  };
+
+  const assignedUser = (users || []).find((u) => u.id === row.assigned_user_id);
+  const initials = (assignedUser?.name || assignedUser?.email || "?")
+    .split(/\s+/).filter(Boolean).slice(0, 2).map((s) => s[0]?.toUpperCase()).join("");
 
   return (
     <Sheet open={!!row} onOpenChange={(v) => !v && onClose()}>
@@ -480,6 +501,42 @@ function SubmissionDetail({ row, defn, onClose, onUpdated }) {
             <Label className="text-xs">Notes</Label>
             <Textarea value={notes} rows={3}
                         onChange={(e) => setNotes(e.target.value)} />
+          </div>
+
+          <div className="rounded-lg p-3"
+                style={{ backgroundColor: colors.surfaceSecondary }}
+                data-testid="assign-section">
+            <Label className="text-xs mb-1 block">Assign to</Label>
+            <div className="flex items-center gap-2">
+              {assignedUser ? (
+                <div className="flex items-center gap-1 px-2 py-1 rounded-full"
+                      style={{ backgroundColor: colors.brand, color: "#fff" }}>
+                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold"
+                         style={{ backgroundColor: "rgba(255,255,255,0.25)" }}>
+                    {initials || "?"}
+                  </span>
+                  <span className="text-xs" data-testid="assigned-name">
+                    {assignedUser.name || assignedUser.email}
+                  </span>
+                </div>
+              ) : (
+                <span className="text-xs" style={{ color: colors.muted }}>
+                  Unassigned
+                </span>
+              )}
+              <select className="border rounded px-2 py-1 text-xs ml-auto"
+                       value={row.assigned_user_id || ""}
+                       disabled={assigning}
+                       onChange={(e) => assign(e.target.value)}
+                       data-testid="assign-select">
+                <option value="">— Unassigned —</option>
+                {(users || []).map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name || u.email} · {u.role}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {row.nap_match_score != null && (
