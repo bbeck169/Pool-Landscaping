@@ -579,6 +579,80 @@ async def test_fire_automation(code: str, body: PreviewIn,
     )
 
 
+# --- QuoteIQ Phase Q3-B · AI Autopilot copy generator -----------------
+
+AUTOPILOT_COPY_COST = 3
+
+
+class GenerateCopyIn(BaseModel):
+    tone: Optional[str] = Field(default="friendly", max_length=32)
+    extra_context: Optional[str] = Field(default="", max_length=2000)
+
+
+@router.post("/automations/{code}/generate-copy")
+async def generate_automation_copy(code: str, body: GenerateCopyIn,
+                                     user: dict = Depends(_require_admin),
+                                     tenant: dict = Depends(get_current_tenant)):
+    """QuoteIQ Q3-B — generate AI copy suggestions for an automation
+    rule. Debits ``AUTOPILOT_COPY_COST`` credits (feature=autopilot).
+    Attaches the generated copy under ``ai_generated_copy`` on the rule
+    — does NOT silently overwrite the linked template.
+
+    Tenant-custom rules are updated in place; system rules only get
+    the copy in the response (a tenant would need to clone the rule
+    first to persist the copy).
+    """
+    rule = await _find_automation(tenant["id"], code)
+    if not rule:
+        raise HTTPException(404, "automation not found")
+    from services.autopilot_copy import generate_copy
+    from services.ai_credits import debit_credits
+
+    debit = await debit_credits(
+        tenant["id"], AUTOPILOT_COPY_COST, feature="autopilot",
+        ref_id=rule.get("code") or rule.get("_id") and str(rule["_id"]),
+        ref_type="automation_rule",
+        reason="autopilot_generate_copy", actor_user_id=user.get("id"),
+    )
+    copy = await generate_copy(
+        trigger_event=str(rule.get("trigger_event") or ""),
+        channel=str(rule.get("channel") or "email"),
+        tone=(body.tone or "friendly"),
+        company_name=(tenant.get("name") or "Your Service Team"),
+        extra_context=(body.extra_context or ""),
+    )
+    generated_at = now_iso()
+    ai_copy_doc = {
+        **{k: copy.get(k) for k in ("subject", "body_text", "body_sms")},
+        "tone": (body.tone or "friendly").lower(),
+        "generated_at": generated_at,
+        "generated_by": user.get("id"),
+        "model": "claude-sonnet-4-5" if not copy.get("error") else "mock-fallback",
+        "credits_debited": AUTOPILOT_COPY_COST,
+        "error": copy.get("error"),
+    }
+    # Persist onto the rule doc so the UI can retrieve the last
+    # suggestion — but only for tenant-custom rules. System rules stay
+    # read-only; the copy is still returned in the response.
+    persisted = False
+    if rule.get("tenant_id") == tenant["id"]:
+        await db.automation_rules.update_one(
+            {"_id": rule["_id"]},
+            {"$set": {"ai_generated_copy": ai_copy_doc,
+                       "ai_generated_copy_at": generated_at,
+                       "updated_at": generated_at}},
+        )
+        persisted = True
+    fresh = await _find_automation(tenant["id"], code)
+    return {
+        "automation": _clean_doc(fresh),
+        "ai_generated_copy": ai_copy_doc,
+        "persisted": persisted,
+        "credits_balance_after": debit.get("balance_after"),
+        "credit_warning": bool(debit.get("warning")),
+    }
+
+
 # --- Send-now + sends log endpoints ------------------------------------
 
 async def deliver_one_by_ids(*, tenant_id: str, template_code: str,

@@ -5597,3 +5597,42 @@ $ curl -X POST "$API/api/estimates/<eid>/convert-to-job" -H "$H"
 2. **PDF renderer for options-mode** — not extended in this ship. The existing PDF flow renders the top-level `line_items` array, which is materialized from the selected tier — so the PDF is coherent (single-tier view). A dedicated 3-column comparison layout for the PDF template is deferred as a UX polish item.
 3. **Mobile: no in-app "Promote" button** — mobile draft view surfaces the result and directs users to the web to promote (needs a customer picker + PDF preview surface that duplicates the web flow). Backend endpoint is fully wired; a mobile promote flow ships in Q2-follow-up.
 4. **Live LLM path is behind `TEST_LLM_MOCK=1`** by default in this pod's `.env` so the tester can exercise the flow deterministically. Flip to `0` (or remove) when a real Emergent LLM key is confirmed to be present and quota-safe.
+
+## QuoteIQ Parity · Phase Q3 — Before/After AI Generator + AI Autopilot (Backend Only) · Feb 2026
+
+**Ship contract**: sliced delivery — backend + tests only. Web/mobile UI + real-LLM smoke deferred until tester signs off on contracts.
+
+### What's in
+1. **Before/After AI Generator** (router: `/app/backend/routers/before_after.py`, mounted at `/api/before-after/*`)
+   - `POST /before-after/generate` — accepts `{before_photo_url, after_photo_url, style, caption, service_type, include_branding, job_id?, customer_id?}`. Composites via Pillow (styles: `side_by_side` | `stacked` | `slider`), overlays BEFORE/AFTER badges + branded footer, uploads PNG to Emergent Object Storage (local `/api/media/before-after/...` fallback in dev). Debits **5 credits** (feature=`before_after`).
+   - `GET /before-after/pairs` — tenant-scoped list with cursor pagination and `job_id` / `customer_id` filters.
+   - `GET/DELETE /before-after/pairs/{pid}` — get + delete a pair.
+   - `POST /before-after/pairs/{pid}/regenerate` — re-composite with a new style/caption. Debits **5 credits** each call. Same `share_token` is preserved so the public URL never rotates.
+   - `GET /before-after/public/{share_token}` — **unauthenticated**. Opaque 24-byte urlsafe token key. Returns only `{card_url, style, caption, service_type, created_at}` — no `tenant_id`, no `customer_id`, no `job_id`, no `id`, no `share_token`, no `generated_by`.
+   - Data-URI photo support (`data:image/...;base64,...`) so tests + client paste-uploads work without a network fetch.
+
+2. **AI Autopilot copy generator** (`POST /api/comms/automations/{code}/generate-copy`)
+   - Extends the existing `automation_rules` collection (does **not** fork). Persists `ai_generated_copy` = `{subject, body_text, body_sms, tone, generated_at, generated_by, model, credits_debited}` onto tenant-custom rules. System rules return the copy in the response but don't persist (they must be cloned first).
+   - Body: `{tone?: friendly|professional|urgent|casual, extra_context?: str}`. Debits **3 credits** (feature=`autopilot`).
+   - Channel-aware output: `email` → `subject` + `body_text`; `sms` → `body_sms` (+ STOP-to-opt-out).
+   - Backed by `services/autopilot_copy.py` (Claude Sonnet via Emergent LLM key; deterministic mock behind `TEST_LLM_MOCK=1`).
+
+### Credit costs (constants at the top of each router)
+- Before/After generate = 5 · Before/After regenerate = 5 · Autopilot generate-copy = 3.
+
+### Guards preserved
+- Tenant isolation: every read/write is filtered by `tenant["id"]`; public share endpoint returns 404 for unknown tokens and only exposes non-sensitive fields.
+- RBAC: admin/super_admin only for all authed endpoints (`require_admin` on Before/After; `_require_admin` on Autopilot). Tests confirm 403 for `technician`.
+- Soft credit enforcement: `debit_credits()` never blocks; warning surfaces in `credit_warning` on the response.
+
+### Tests (`/app/backend/tests/test_quoteiq_q3.py`)
+- 16/16 passing under `TEST_LLM_MOCK=1`. Covers generate/regenerate + credit ledger, list/get/delete, public share content-scope, unknown-token 404, RBAC tech-block, tenant isolation, autopilot email + SMS shapes, unknown-rule 404, and OpenAPI surface presence.
+- Existing Q1 (43), Q2 (17), M1 (35), Comms Phase 1 (20) suites all still pass — 115 green post-Q3.
+
+### Deferred / next
+- Q3 Web UI (Before/After studio + Autopilot copy suggestions inside the automations admin).
+- Q3 Mobile UI (tech-side Before/After generator + share sheet).
+- Real-LLM smoke test — flip `TEST_LLM_MOCK=0` (or unset) once quota is confirmed.
+- Nano-banana / Gemini image-gen adapter behind `_ai_enhance()` — the Pillow composite is the primary path per the confirmed brief; the AI-enhance path is stubbed for future replacement.
+- Seasonal-plan / invoice-followup planners (also 3 credits/drafted step per brief) — not landed in this slice; captured for Q3 UI / Q4.
+

@@ -56,7 +56,10 @@ class DraftPatchIn(BaseModel):
 
 
 class PromoteIn(BaseModel):
-    customer_id: Optional[str] = None
+    customer_id: Optional[str] = Field(
+        None,
+        description="Required at promote time — falls back to the draft's customer_id. Estimates must attach to a customer.",
+    )
     title: Optional[str] = None
     tier_id: Optional[str] = None  # options-mode: which tier to promote as-selected
 
