@@ -71,6 +71,7 @@ from routers import (
     customer_tasks,
     properties,
     invoices_mp15,
+    ai_employees,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -148,7 +149,8 @@ for module in [notifications_router,
                directories,
                customer_tasks,
                properties,
-               invoices_mp15]:
+               invoices_mp15,
+               ai_employees]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -527,6 +529,18 @@ async def startup():
         )
     except Exception as e:
         logger.warning(f"mp1.5 backfill migration crashed: {e}")
+
+    # Feb-2026 AE1 — AI Employees roster seed. Idempotent per tenant:
+    # inserts the 8 default employees (Casey, Emmie, Buddy, Vizzy,
+    # Dexter, Soshie, Scouty, Commet) on any tenant that doesn't have
+    # them yet. Admin edits (rename, custom system prompt, disable)
+    # survive re-runs.
+    try:
+        from routers.ai_employees import seed_ai_employees_all_tenants
+        counts = await seed_ai_employees_all_tenants()
+        logger.info(f"[ae1] ai_employees seed — {counts}")
+    except Exception as e:
+        logger.warning(f"ae1 ai_employees seed crashed: {e}")
 
     # Phase 5A · Video Uploads (Feb 2026) — init Emergent object storage
     # session key once at startup. Never crashes the boot: on failure the

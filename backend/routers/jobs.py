@@ -205,7 +205,21 @@ async def _enrich_jobs_dept_and_kind(docs: list, tenant_id: str) -> None:
 
 
 
-@router.get("/jobs")
+@router.get("/jobs",
+    summary="List jobs",
+    responses={200: {"description": (
+        "Job rows scoped to the caller's role + tenant. Beyond the "
+        "standard job fields, every row includes the following Feb-2026 "
+        "MP2 UI enrichments (present as ``null`` when not applicable):\n\n"
+        "- ``property_label`` (str | null) — display label of the linked "
+        "property when ``property_id`` is set.\n"
+        "- ``property_address`` (str | null) — comma-joined address of "
+        "the linked property.\n"
+        "- ``customer_is_vip`` (bool), ``customer_gate_code`` (str | "
+        "null), ``customer_notes`` (str | null), ``service_note`` (str | "
+        "null) — surfaced from the customer doc so schedule cards render "
+        "without an N+1 fetch."
+    )}})
 async def list_jobs(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
@@ -289,7 +303,12 @@ async def list_jobs(
     # Feb-2026 MP2 UI — enrich each job with the property label so
     # mobile schedule rows can render a chip without an N+1 fetch. The
     # property doc's address is also surfaced under ``property_address``
-    # for the tech's Job Detail hero card.
+    # for the tech's Job Detail hero card. AE1 hygiene fix — both keys
+    # are ALWAYS present (null when the job has no property_id) so
+    # admin + tech responses share a consistent shape.
+    for d in docs:
+        d.setdefault("property_label", None)
+        d.setdefault("property_address", None)
     try:
         pids = list({d.get("property_id") for d in docs if d.get("property_id")})
         if pids:

@@ -135,7 +135,15 @@ async def update_my_profile(body: CustomerProfileUpdate,
     )
 
 
-@router.get("/customers")
+@router.get("/customers",
+    summary="List customers",
+    responses={200: {"description": (
+        "Customer rows scoped to the caller's tenant. Each row includes "
+        "the standard customer fields plus a Feb-2026 MP2 UI addition:\n\n"
+        "- ``properties_count`` (int) — number of active properties for "
+        "the customer. Zero when none exist. Used by the customers list "
+        "to render a `N properties` chip when ≥2."
+    )}})
 async def list_customers(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),

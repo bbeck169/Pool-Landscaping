@@ -29,11 +29,6 @@ AI_EMPLOYEES = [
 ]
 
 
-@router.get("/ai-employees")
-async def list_ai_employees(user: dict = Depends(require_admin)):
-    return [{k: v for k, v in e.items() if k != "system"} for e in AI_EMPLOYEES]
-
-
 @router.get("/ai-employees/{eid}/history")
 async def ai_history(eid: str, session_id: str, user: dict = Depends(require_admin)):
     msgs = await db.ai_messages.find(
