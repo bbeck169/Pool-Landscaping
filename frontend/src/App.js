@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-
 import { AuthProvider, useAuth } from "@/auth";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
+import ScrollToTop from "@/components/ScrollToTop";
 import AppLayout from "@/layouts/AppLayout";
 import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
@@ -258,6 +259,7 @@ export default function App() {
       <RealtimeProvider>
       <ConfirmProvider>
       <BrowserRouter>
+        <ScrollToTop />
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />

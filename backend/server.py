@@ -68,6 +68,7 @@ from routers import (
     instaschedule,
     chat,
     directories,
+    marketing_campaigns as marketing_campaigns_router,
 )
 
 app = FastAPI(
@@ -77,6 +78,11 @@ app = FastAPI(
     redoc_url="/api/redoc",
 )
 api_router = APIRouter(prefix="/api")
+
+# Marketing M2 registered BEFORE the generic loop so its
+# ``/marketing/campaigns/*`` routes win over the legacy
+# ``marketing_studio`` handlers that share the base prefix.
+api_router.include_router(marketing_campaigns_router.router)
 
 for module in [notifications_router,
                stripe_payments_router,
@@ -154,6 +160,10 @@ async def root():
 # root (/r/{alias}) so the endpoint stays reachable when hitting the backend
 # directly (dev, curl, tests). Must be registered BEFORE app.include_router.
 api_router.include_router(public_social.router)
+# Marketing M2 public tracking endpoints — pixel/click/unsub/webhook.
+# Kept separate from the admin ``marketing_campaigns_router.router`` so
+# these routes are unauthenticated.
+api_router.include_router(marketing_campaigns_router.public_router)
 
 app.include_router(api_router)
 app.include_router(public_social.router)
