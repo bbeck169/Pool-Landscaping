@@ -85,7 +85,7 @@ async def run_tenant_backfill() -> dict:
 
 
 # ─── Dependency ──────────────────────────────────────────────────────────────
-from utils import get_current_user
+from utils import get_current_user  # noqa: F811
 
 
 async def get_current_tenant(

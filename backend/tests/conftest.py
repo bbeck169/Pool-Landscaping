@@ -131,7 +131,8 @@ _CLEANUP = {
     "quotes": {"$or": [{"title": _TEST_PREFIX}, {"billing_plan_id": {"$exists": True}}]},
     "leads": {"name": _TEST_PREFIX},
     "customers": {"$or": [{"name": _TEST_PREFIX}, {"email": _EXAMPLE_EMAIL}]},
-    "users": {"email": _EXAMPLE_EMAIL},
+    "users": {"$or": [{"email": _EXAMPLE_EMAIL},
+                        {"email": {"$regex": "^TEST_dedup_|^TEST_solo_|^test-pool-tech@"}}]},
     "billing_plans": {"service": _TEST_PREFIX},
     "repairs": {"$or": [{"equipment": _TEST_PREFIX}, {"issue": _TEST_PREFIX}]},
     "forms": {"name": _TEST_PREFIX},
@@ -151,7 +152,8 @@ _CLEANUP = {
     "retention_campaign_targets": {"customer_ids": {"$elemMatch": {"$regex": "^TEST-|^TEST_"}}},
     "marketing_campaigns": {"goal": {"$regex": "at-risk|retention.*TEST", "$options": "i"}},
     "idempotency_keys": {"tenant_id": {"$regex": "TEST_|^TEST-"}},
-    "users": {"email": {"$regex": "^TEST_dedup_|^TEST_solo_|^test-pool-tech@"}},
+    # Both example.com throwaways AND TEST_-prefixed dedup/solo/pool-tech
+    # accounts are cleaned. Kept as a single OR to avoid duplicate keys.
     "technicians": {"id": {"$regex": "^TEST-tech"}},
     "training_modules": {"$or": [{"code": {"$regex": "^test_", "$options": "i"}}, {"code": "test_system_immutable"}]},
     "training_progress": {"module_code": {"$regex": "^test_|^cpo-prep$", "$options": "i"}},

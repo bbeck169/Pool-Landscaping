@@ -1,3 +1,4 @@
+# ruff: noqa: F403,F405
 from fastapi import APIRouter, HTTPException, Depends, Query, Response
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
@@ -7,7 +8,7 @@ from utils import (now_iso, new_id, hash_password, verify_password, create_token
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
 from routers.tenants import get_current_tenant
 from emailer import send_invoice_reminder_email
-from models import *
+from models import *  # noqa: F403,F405
 
 router = APIRouter()
 
@@ -136,6 +137,30 @@ async def update_quote(qid: str, body: QuoteUpdate,
     return await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
+@router.get("/quotes/ready-to-schedule")
+async def ready_to_schedule(admin: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
+    """Approved online estimates not yet turned into a scheduled job."""
+    docs = await db.quotes.find(
+        {"tenant_id": tenant["id"], "doc_type": "quote", "status": "accepted",
+         "scheduled_job_id": {"$in": [None, ""]}},
+        {"_id": 0},
+    ).sort("accepted_at", -1).to_list(500)
+    # Include legacy accepted quotes that predate the scheduled_job_id field.
+    extra = await db.quotes.find(
+        {"tenant_id": tenant["id"], "doc_type": "quote", "status": "accepted",
+         "scheduled_job_id": {"$exists": False}},
+        {"_id": 0},
+    ).to_list(500)
+    seen = {d["id"] for d in docs}
+    docs.extend([e for e in extra if e["id"] not in seen])
+    return [{
+        "id": d["id"], "title": d.get("title", ""), "customer_id": d.get("customer_id"),
+        "customer_name": d.get("customer_name", ""), "total": d.get("total", 0),
+        "accepted_at": d.get("accepted_at"),
+    } for d in docs]
+
+
 @router.get("/quotes/{qid}")
 async def get_quote(qid: str,
                     user: dict = Depends(get_current_user),
@@ -171,30 +196,6 @@ async def customer_quote_decision(qid: str,
         upd["accepted_at"] = now_iso()
     await db.quotes.update_one({"id": qid, "tenant_id": tenant["id"]}, {"$set": upd})
     return await db.quotes.find_one({"id": qid, "tenant_id": tenant["id"]}, {"_id": 0})
-
-
-@router.get("/quotes/ready-to-schedule")
-async def ready_to_schedule(admin: dict = Depends(require_admin),
-                            tenant: dict = Depends(get_current_tenant)):
-    """Approved online estimates not yet turned into a scheduled job."""
-    docs = await db.quotes.find(
-        {"tenant_id": tenant["id"], "doc_type": "quote", "status": "accepted",
-         "scheduled_job_id": {"$in": [None, ""]}},
-        {"_id": 0},
-    ).sort("accepted_at", -1).to_list(500)
-    # Include legacy accepted quotes that predate the scheduled_job_id field.
-    extra = await db.quotes.find(
-        {"tenant_id": tenant["id"], "doc_type": "quote", "status": "accepted",
-         "scheduled_job_id": {"$exists": False}},
-        {"_id": 0},
-    ).to_list(500)
-    seen = {d["id"] for d in docs}
-    docs.extend([e for e in extra if e["id"] not in seen])
-    return [{
-        "id": d["id"], "title": d.get("title", ""), "customer_id": d.get("customer_id"),
-        "customer_name": d.get("customer_name", ""), "total": d.get("total", 0),
-        "accepted_at": d.get("accepted_at"),
-    } for d in docs]
 
 
 @router.post("/quotes/{qid}/schedule")

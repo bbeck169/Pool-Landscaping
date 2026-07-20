@@ -867,6 +867,21 @@ async def public_book(slug: str, body: BookIn, request: Request):
         "contact_email": (body.contact.email or ""),
         "contact_name": (body.contact.name or ""),
     })
+    # Unified notifications — new_lead ping to tenant admins.
+    try:
+        from services.notifications import enqueue_for_tenant_admins
+        who = body.contact.name or body.contact.email or "New prospect"
+        service_name = (st or {}).get("name") or "Service"
+        await enqueue_for_tenant_admins(
+            row["tenant_id"], "new_lead",
+            title=f"New lead · {who}",
+            body=f"InstaSchedule booking — {service_name} on {date_key}. Slug: {slug}.",
+            source_ref={"kind": "instaschedule_booking", "id": doc["id"]},
+            href=f"/instaschedule/bookings/{doc['id']}",
+            priority="high",
+        )
+    except Exception as _e:
+        logger.warning(f"[instaschedule] unified notify failed: {_e}")
     return BookingAckOut(
         id=doc["id"], status="pending",
         service_type_id=body.service_type_id,

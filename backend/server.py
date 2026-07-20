@@ -66,6 +66,7 @@ from routers import (
     before_after,
     instaquote,
     instaschedule,
+    chat,
 )
 
 app = FastAPI(
@@ -132,7 +133,8 @@ for module in [notifications_router,
                ai_estimator,
                before_after,
                instaquote,
-               instaschedule]:
+               instaschedule,
+               chat]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue

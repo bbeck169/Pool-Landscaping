@@ -48,55 +48,182 @@ KIND_LABELS: dict[str, str] = {
     "rc_voicemail_unmatched":    "RingCentral · Voicemail (unknown number)",
     "rc_fax_unmatched":          "RingCentral · Fax (unknown number)",
     # Jobs / dispatch
-    "job_assigned":      "Job Assigned",
-    "job_completed":     "Job Completed",
-    "job_cancelled":     "Job Cancelled",
-    "dispatch_alert":    "Dispatch Alert",
-    "autosave_conflict": "Autosave Conflict",
+    "job_assigned":       "Job Assigned",
+    "job_completed":      "Job Completed",
+    "job_cancelled":      "Job Cancelled",
+    "job_status_change":  "Job Status Change",
+    "dispatch_alert":     "Dispatch Alert",
+    "autosave_conflict":  "Autosave Conflict",
     # Money
-    "invoice_paid":      "Invoice Paid",
-    "invoice_overdue":   "Invoice Overdue",
-    "payment_received":  "Payment Received",
-    "payment_refunded":  "Payment Refunded",
+    "invoice_paid":       "Invoice Paid",
+    "invoice_overdue":    "Invoice Overdue",
+    "payment_received":   "Payment Received",
+    "payment_failed":     "Payment Failed",
+    "payment_refunded":   "Payment Refunded",
     # Communications
-    "tech_message":      "Technician Message",
-    "tech_note":         "Technician Note",
-    "customer_message":  "Customer Portal Message",
+    "tech_message":       "Technician Message",
+    "tech_note":          "Technician Note",
+    "customer_message":   "Customer Portal Message",
+    "inbound_customer_message":          "Inbound Customer Message",
+    "inbound_customer_message_assigned": "Inbound Customer Message (assigned to you)",
+    # Team messaging (Phase 56)
+    "chat_dm":                    "Team Chat · DM to you",
+    "chat_dm_to_admin":           "Team Chat · DM to an admin",
+    "chat_mention_in_channel":    "Team Chat · You were @mentioned",
+    "chat_message_in_channel":    "Team Chat · New channel message",
     # Leads / marketing
-    "lead_new":          "New Lead",
-    # Meta
-    "system_alert":      "System Alert",
+    "lead_new":                   "New Lead (legacy)",
+    "new_lead":                   "New Lead",
+    "customer_created":           "Customer Created",
+    "subscriber_confirmed":       "Marketing Subscriber Confirmed",
+    "marketing_import_complete":  "Marketing Import Complete",
+    # Reviews
+    "review_received":            "Review Received",
+    "review_low_star":            "Low-star Review (≤3★)",
+    # Deals
+    "deal_created":               "Deal Created",
+    "deal_won":                   "Deal Won",
+    "deal_lost":                  "Deal Lost",
+    # Automation / system
+    "automation_error":           "Automation Error",
+    "system_alert":               "System Alert",
 }
 
-DEFAULT_CHANNELS = {"bell": True, "email": False, "sms": False}
+# NB: two new channels added — ``push`` (Expo mobile push) + ``in_app`` alias
+# for ``bell``. Existing rows persisted under the legacy 3-key shape merge
+# forward cleanly because ``get_user_prefs`` layers stored values on top of
+# ``DEFAULT_CHANNELS``.
+DEFAULT_CHANNELS = {"bell": True, "email": False, "sms": False, "push": False}
 BODY_TRUNCATE = 500
 
+# Categories that ship push=on for admins/super_admins by default. Everything
+# else stays push=off; admins can flip individually. Bell stays on for all
+# so the in-app inbox is exhaustive.
+_ADMIN_PUSH_DEFAULT_ON = {
+    "review_received", "review_low_star",
+    "chat_dm_to_admin",
+    "inbound_customer_message",
+    "new_lead",
+}
+# Non-admin techs / sales default: chat DMs to them, own mentions,
+# customer messages tied to their assigned work. Everything else off.
+_NONADMIN_PUSH_DEFAULT_ON = {
+    "chat_dm",
+    "chat_mention_in_channel",
+    "inbound_customer_message_assigned",
+    "job_status_change",
+}
 
-def default_prefs() -> dict:
-    """Fresh preference blob — bell ON, email/sms OFF for every kind."""
-    return {k: dict(DEFAULT_CHANNELS) for k in KIND_LABELS}
+
+def default_prefs(role: str | None = None) -> dict:
+    """Fresh preference blob keyed by kind.
+
+    Bell stays ON for every kind (the in-app inbox is always exhaustive
+    — the toggle only controls whether push/email/sms fire, not whether
+    the notification is recorded). Push defaults are role-scoped per
+    the Feb-2026 unified-notifications spec.
+    """
+    is_admin = (role or "").lower() in ("admin", "super_admin")
+    on_set = _ADMIN_PUSH_DEFAULT_ON if is_admin else _NONADMIN_PUSH_DEFAULT_ON
+    out: dict[str, dict] = {}
+    for k in KIND_LABELS:
+        row = dict(DEFAULT_CHANNELS)
+        if k in on_set:
+            row["push"] = True
+        out[k] = row
+    return out
 
 
-async def get_user_prefs(tenant_id: str, user_id: str) -> dict:
-    """Return the merged preference doc for a user. Never returns None."""
+DEFAULT_QUIET_HOURS = {
+    "enabled": False,
+    "start_time": "22:00",
+    "end_time":   "07:00",
+    "timezone":   "UTC",
+}
+
+
+def _minutes_of_day_utc() -> int:
+    from datetime import datetime, timezone as _tz
+    now = datetime.now(_tz.utc)
+    return now.hour * 60 + now.minute
+
+
+def _hhmm_to_min(s: str | None) -> int | None:
+    if not s or ":" not in s:
+        return None
+    try:
+        h, m = s.split(":", 1)
+        return int(h) * 60 + int(m[:2])
+    except Exception:
+        return None
+
+
+def is_in_quiet_hours(prefs: dict) -> bool:
+    """Return True when 'now' falls in the user's configured quiet window.
+
+    Timezone-aware conversion is intentionally naive here: we treat both
+    the current instant and the window in UTC, which is correct for the
+    tenant defaults today and matches the seed data. A follow-up will
+    honor user tz explicitly once every user carries a resolved tz.
+    """
+    qh = (prefs or {}).get("quiet_hours") or {}
+    if not qh.get("enabled"):
+        return False
+    start = _hhmm_to_min(qh.get("start_time"))
+    end = _hhmm_to_min(qh.get("end_time"))
+    if start is None or end is None:
+        return False
+    now = _minutes_of_day_utc()
+    if start == end:
+        return False
+    if start < end:
+        return start <= now < end
+    # Wraps midnight, e.g. 22:00–07:00.
+    return now >= start or now < end
+
+
+async def _resolve_user_role(user_id: str) -> str | None:
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "role": 1}) or {}
+    return u.get("role")
+
+
+async def get_user_prefs(tenant_id: str, user_id: str,
+                            role: str | None = None) -> dict:
+    """Return the merged preference doc for a user. Never returns None.
+
+    When the doc is missing OR present without stored channels, the
+    role-aware defaults from ``default_prefs(role)`` seed the response
+    so first-read on an admin user surfaces the correct push defaults.
+    """
     doc = await db.notification_preferences.find_one(
         {"tenant_id": tenant_id, "user_id": user_id}, {"_id": 0}
     ) or {}
+    if role is None:
+        role = doc.get("role") or await _resolve_user_role(user_id)
     stored = doc.get("channels") or {}
-    merged = default_prefs()
+    merged = default_prefs(role)
     for kind, chans in stored.items():
         if isinstance(chans, dict):
             merged[kind] = {**merged.get(kind, dict(DEFAULT_CHANNELS)), **chans}
+    quiet = {**DEFAULT_QUIET_HOURS, **(doc.get("quiet_hours") or {})}
     return {
         "tenant_id": tenant_id,
         "user_id": user_id,
+        "role": role,
         "channels": merged,
+        "quiet_hours": quiet,
         "updated_at": doc.get("updated_at"),
     }
 
 
-async def set_user_prefs(tenant_id: str, user_id: str, channels: dict) -> dict:
-    """Upsert. Silently drops kinds we don't recognize (schema guard)."""
+async def set_user_prefs(tenant_id: str, user_id: str,
+                            channels: dict,
+                            quiet_hours: dict | None = None) -> dict:
+    """Upsert. Silently drops kinds we don't recognize (schema guard).
+
+    ``quiet_hours`` is optional; when omitted the previously-stored
+    block is preserved.
+    """
     clean: dict[str, dict] = {}
     for kind, chans in (channels or {}).items():
         if kind not in KIND_LABELS:
@@ -107,14 +234,74 @@ async def set_user_prefs(tenant_id: str, user_id: str, channels: dict) -> dict:
             "bell":  bool(chans.get("bell",  DEFAULT_CHANNELS["bell"])),
             "email": bool(chans.get("email", DEFAULT_CHANNELS["email"])),
             "sms":   bool(chans.get("sms",   DEFAULT_CHANNELS["sms"])),
+            "push":  bool(chans.get("push",  DEFAULT_CHANNELS["push"])),
         }
     now = now_iso()
+    update: dict = {"channels": clean, "updated_at": now,
+                     "tenant_id": tenant_id, "user_id": user_id}
+    if quiet_hours is not None:
+        qh = {**DEFAULT_QUIET_HOURS, **(quiet_hours or {})}
+        # Only persist the recognised keys.
+        update["quiet_hours"] = {
+            "enabled":    bool(qh.get("enabled", False)),
+            "start_time": str(qh.get("start_time") or "22:00")[:5],
+            "end_time":   str(qh.get("end_time")   or "07:00")[:5],
+            "timezone":   str(qh.get("timezone")   or "UTC")[:64],
+        }
     await db.notification_preferences.update_one(
         {"tenant_id": tenant_id, "user_id": user_id},
-        {"$set": {"channels": clean, "updated_at": now, "tenant_id": tenant_id, "user_id": user_id}},
+        {"$set": update},
         upsert=True,
     )
     return await get_user_prefs(tenant_id, user_id)
+
+
+# ─── Admin helpers ─────────────────────────────────────────────────────
+async def enqueue_for_tenant_admins(tenant_id: str, kind: str, title: str,
+                                       body: str,
+                                       source_ref: Optional[dict] = None,
+                                       href: Optional[str] = None,
+                                       priority: str = "normal") -> list[str]:
+    """Fire the given kind to every admin / super_admin in the tenant.
+
+    No-op (returns []) when the tenant has no admin accounts — never
+    raises so caller sites can drop this in without guards.
+    """
+    user_ids: list[str] = []
+    async for u in db.users.find(
+        {"tenant_id": tenant_id,
+          "role": {"$in": ["admin", "super_admin"]}},
+        {"_id": 0, "id": 1},
+    ):
+        if u.get("id"):
+            user_ids.append(u["id"])
+    return await emit(user_ids, kind, title, body,
+                        source_ref=source_ref, href=href,
+                        priority=priority, tenant_id=tenant_id)
+
+
+async def enqueue_for_record_owner(tenant_id: str,
+                                      owner_user_id: Optional[str],
+                                      kind: str, title: str, body: str,
+                                      source_ref: Optional[dict] = None,
+                                      href: Optional[str] = None,
+                                      priority: str = "normal",
+                                      fallback_admins: bool = True) -> list[str]:
+    """Emit to the owner of a record; falls back to tenant admins.
+
+    Owner resolution is the caller's responsibility — pass the resolved
+    ``owner_user_id`` or None. When None and fallback_admins is True the
+    notification fans out to admins so tenant-wide visibility is kept.
+    """
+    if owner_user_id:
+        return await emit([owner_user_id], kind, title, body,
+                            source_ref=source_ref, href=href,
+                            priority=priority, tenant_id=tenant_id)
+    if fallback_admins:
+        return await enqueue_for_tenant_admins(
+            tenant_id, kind, title, body,
+            source_ref=source_ref, href=href, priority=priority)
+    return []
 
 
 # ─── Emit ──────────────────────────────────────────────────────────────────
@@ -167,7 +354,9 @@ async def emit(
             u = await db.users.find_one({"id": uid}, {"_id": 0, "tenant_id": 1}) or {}
             t_id = u.get("tenant_id")
 
-        prefs = (await get_user_prefs(t_id, uid))["channels"].get(kind, dict(DEFAULT_CHANNELS))
+        prefs_doc = await get_user_prefs(t_id, uid)
+        prefs = prefs_doc["channels"].get(kind, dict(DEFAULT_CHANNELS))
+        quiet = is_in_quiet_hours(prefs_doc)
 
         if prefs.get("bell", True):
             nid = new_id()
@@ -198,11 +387,16 @@ async def emit(
                                                          "href", "priority", "created_at")}})
             except Exception:
                 pass
-            # Expo mobile push — best effort. Respects registered devices.
+
+        # Expo mobile push — gated on the ``push`` channel toggle AND
+        # not-in-quiet-hours. In-app row above is written independently
+        # so users always have a browsable inbox of muted events.
+        if prefs.get("push", False) and not quiet:
             try:
                 from routers.mobile_push import send_push_to_user
                 await send_push_to_user(uid, title, body,
-                                        data={"notification_id": nid, "kind": kind, "href": href})
+                                        data={"kind": kind, "href": href,
+                                              "source_ref": source_ref or {}})
             except Exception:
                 pass
 

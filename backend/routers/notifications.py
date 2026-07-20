@@ -144,6 +144,7 @@ async def delete_notification(
 # ─── Preferences ───────────────────────────────────────────────────────────
 class PrefsBody(BaseModel):
     channels: dict
+    quiet_hours: Optional[dict] = None
 
 
 @router.get("/settings/notifications")
@@ -152,7 +153,7 @@ async def get_my_prefs(
     tenant: dict = Depends(get_current_tenant),
 ):
     return {
-        **(await get_user_prefs(tenant["id"], user["id"])),
+        **(await get_user_prefs(tenant["id"], user["id"], role=user.get("role"))),
         "kinds": [{"key": k, "label": v} for k, v in KIND_LABELS.items()],
     }
 
@@ -163,4 +164,27 @@ async def put_my_prefs(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
-    return await set_user_prefs(tenant["id"], user["id"], body.channels or {})
+    return await set_user_prefs(tenant["id"], user["id"],
+                                    body.channels or {},
+                                    quiet_hours=body.quiet_hours)
+
+
+# ─── Test push (admin debug) ───────────────────────────────────────────────
+@router.post("/notifications/test-push")
+async def test_push(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Fires a test push notification to the calling user. Always writes
+    an in-app notification row so the caller can prove the pipeline in
+    tests / preview even when ``EXPO_PUSH_ACCESS_TOKEN`` is unset."""
+    from services.notifications import emit as _emit
+    ids = await _emit(
+        [user["id"]], "system_alert",
+        title="Test push",
+        body="If you see this on your device, mobile push is wired.",
+        source_ref={"kind": "test_push"},
+        href=None, priority="normal",
+        tenant_id=tenant["id"],
+    )
+    return {"ok": True, "notification_ids": ids}

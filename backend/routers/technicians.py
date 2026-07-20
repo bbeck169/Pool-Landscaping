@@ -1,3 +1,4 @@
+# ruff: noqa: F403,F405
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
@@ -5,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
-from models import *
+from models import *  # noqa: F403,F405
 
 router = APIRouter()
 
@@ -47,7 +48,7 @@ async def technician_performance(tid: str, user: dict = Depends(get_current_user
     """Computed performance metrics over the last 90 days."""
     if user.get("role") == "technician" and user.get("id") != tid and user.get("technician_id") != tid:
         raise HTTPException(403, "You can only view your own profile")
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timezone, timedelta  # noqa: F811
     cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
     jobs = await db.jobs.find(
         {"technician_id": tid, "created_at": {"$gte": cutoff}}, {"_id": 0}

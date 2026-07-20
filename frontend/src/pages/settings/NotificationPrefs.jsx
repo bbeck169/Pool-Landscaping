@@ -8,12 +8,13 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Bell, Mail, MessageSquare, Save, Undo2 } from "lucide-react";
+import { ArrowLeft, Bell, Mail, MessageSquare, Save, Smartphone, Undo2 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 
 const CHANNELS = [
   { key: "bell",  label: "Bell",  Icon: Bell,           hint: "In-app inbox + realtime toast" },
+  { key: "push",  label: "Push",  Icon: Smartphone,     hint: "Mobile push via Expo (respects quiet hours)" },
   { key: "email", label: "Email", Icon: Mail,           hint: "Delivered via Resend when configured" },
   { key: "sms",   label: "SMS",   Icon: MessageSquare,  hint: "Delivered via RingCentral when outbound is enabled" },
 ];
@@ -121,7 +122,7 @@ export default function NotificationPrefs() {
 
       <div className="rounded-2xl overflow-hidden"
            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
-        <div className="grid grid-cols-[1fr_repeat(3,88px)] items-center px-4 py-3 border-b"
+        <div className="grid grid-cols-[1fr_repeat(4,88px)] items-center px-4 py-3 border-b"
              style={{ borderColor: colors.border, backgroundColor: colors.surfaceSecondary }}>
           <div className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.muted }}>
             Notification kind
@@ -157,10 +158,10 @@ export default function NotificationPrefs() {
         </div>
 
         {kinds.map((k) => {
-          const row = channels[k.key] || { bell: true, email: false, sms: false };
+          const row = channels[k.key] || { bell: true, push: false, email: false, sms: false };
           return (
             <div key={k.key}
-                 className="grid grid-cols-[1fr_repeat(3,88px)] items-center px-4 py-3 border-b"
+                 className="grid grid-cols-[1fr_repeat(4,88px)] items-center px-4 py-3 border-b"
                  style={{ borderColor: colors.border }}
                  data-testid={`notif-prefs-row-${k.key}`}>
               <div className="text-sm font-semibold pr-3" style={{ color: colors.onSurface }}>
@@ -192,7 +193,7 @@ export default function NotificationPrefs() {
         })}
       </div>
 
-      <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-2 text-xs" style={{ color: colors.muted }}>
+      <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-2 text-xs" style={{ color: colors.muted }}>
         {CHANNELS.map(({ key, label, Icon, hint }) => (
           <div key={key} className="rounded-lg p-3 flex items-start gap-2"
                style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>

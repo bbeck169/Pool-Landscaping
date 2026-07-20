@@ -1,3 +1,4 @@
+# ruff: noqa: F403,F405
 from fastapi import APIRouter, HTTPException, Depends, Query, Response, Request
 from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
@@ -7,7 +8,7 @@ from utils import (now_iso, new_id, hash_password, verify_password, create_token
                    get_current_user, require_admin, send_sms, notify_customer, auth_response,
                    create_staff_notification)
 from routers.tenants import get_current_tenant
-from models import *
+from models import *  # noqa: F403,F405
 from emailer import send_completion_email
 
 router = APIRouter()

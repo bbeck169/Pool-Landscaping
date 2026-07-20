@@ -87,6 +87,7 @@ import InstaQuoteAdminPage from "@/pages/marketing/InstaQuoteAdmin";
 import PublicInstaQuotePage from "@/pages/public/PublicInstaQuote";
 import InstaScheduleAdminPage from "@/pages/marketing/InstaScheduleAdmin";
 import PublicInstaSchedulePage from "@/pages/public/PublicInstaSchedule";
+import TeamChatPage from "@/pages/chat/TeamChatPage";
 import {
   SequencesList, SequenceNew, SequenceDetail,
 } from "@/pages/marketing/SequencePages";
@@ -347,6 +348,7 @@ export default function App() {
             <Route path="marketing/autopilot" element={<AdminOnly><AutopilotPage /></AdminOnly>} />
             <Route path="marketing/instaquote" element={<AdminOnly><InstaQuoteAdminPage /></AdminOnly>} />
             <Route path="marketing/instaschedule" element={<AdminOnly><InstaScheduleAdminPage /></AdminOnly>} />
+            <Route path="chat" element={<TeamChatPage />} />
 
             {/* Phase 8 — SEO + GBP */}
             <Route path="seo" element={<AdminOnly><SeoHub /></AdminOnly>} />

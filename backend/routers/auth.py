@@ -1,3 +1,4 @@
+# ruff: noqa: F403,F405
 from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
@@ -6,7 +7,7 @@ from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
 from routers.tenants import _ensure_default_tenant
-from models import *
+from models import *  # noqa: F403,F405
 
 router = APIRouter()
 

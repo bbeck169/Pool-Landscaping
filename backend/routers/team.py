@@ -1,3 +1,4 @@
+# ruff: noqa: F403,F405
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
@@ -9,7 +10,7 @@ from routers.portal_admin import _random_password
 from services.notifications import emit as notify_emit
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
-from models import *
+from models import *  # noqa: F403,F405
 
 router = APIRouter()
 

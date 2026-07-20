@@ -413,7 +413,7 @@ async def build_context_for_review_request(tenant: Dict[str, Any],
     been deleted still renders (missing keys → empty strings).
     """
     # Local imports to avoid a circular ``services → routers`` graph.
-    import os
+    import os  # noqa: F811
     from config import db  # type: ignore
 
     tenant_id = tenant.get("id") if tenant else review_request_doc.get("tenant_id")

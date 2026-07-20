@@ -569,6 +569,38 @@ async def submit_rating(token: str, body: RatingIn):
         "star_submitted_at": now_iso(),
     }
     await db.review_requests.update_one({"id": doc["id"]}, {"$set": updates})
+
+    # Unified notifications — always fire ``review_received``. If the
+    # star rating trips the low-star threshold (≤3) we ALSO fire
+    # ``review_low_star`` so admins with the highlight kind toggled on
+    # get an escalated ping regardless of whether they muted the
+    # broad "review_received" category.
+    try:
+        from services.notifications import enqueue_for_tenant_admins
+        customer = await db.customers.find_one(
+            {"id": doc.get("customer_id"), "tenant_id": doc["tenant_id"]},
+            {"_id": 0, "name": 1}) if doc.get("customer_id") else None
+        who = (customer or {}).get("name") or "Anonymous"
+        await enqueue_for_tenant_admins(
+            doc["tenant_id"], "review_received",
+            title=f"{star}★ review · {who}",
+            body=f"Customer submitted a {star}-star rating.",
+            source_ref={"kind": "review_request", "id": doc["id"]},
+            href=f"/reviews/requests/{doc['id']}",
+            priority=("high" if star <= 3 else "normal"),
+        )
+        if star <= 3:
+            await enqueue_for_tenant_admins(
+                doc["tenant_id"], "review_low_star",
+                title=f"Low-star review · {star}★ from {who}",
+                body="Follow up privately — a low rating just came in.",
+                source_ref={"kind": "review_request", "id": doc["id"]},
+                href=f"/reviews/requests/{doc['id']}",
+                priority="high",
+            )
+    except Exception as _e:
+        logger.warning(f"[reviews] unified notify failed: {_e}")
+
     return {"next_step": next_step, "star_rating": star}
 
 

@@ -808,6 +808,23 @@ async def public_submit(slug: str, body: SubmissionIn, request: Request):
         "contact_name": (body.contact.name or "") if body.contact else "",
     })
 
+    # Unified notifications — new_lead ping to tenant admins.
+    try:
+        from services.notifications import enqueue_for_tenant_admins
+        contact = body.contact
+        who = (contact.name if contact else "") or (contact.email if contact else "") or "New prospect"
+        amount = f"${computed['total_cents'] / 100:,.2f}"
+        await enqueue_for_tenant_admins(
+            row["tenant_id"], "new_lead",
+            title=f"New lead · {who}",
+            body=f"InstaQuote submission — {amount}. Slug: {slug}.",
+            source_ref={"kind": "instaquote_submission", "id": doc["id"]},
+            href=f"/instaquote/submissions/{doc['id']}",
+            priority="high",
+        )
+    except Exception as _e:
+        logger.warning(f"[instaquote] unified notify failed: {_e}")
+
     # Public response is minimal — no tenant leak, no breakdown echo.
     return {
         "id": doc["id"],
