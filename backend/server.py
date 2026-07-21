@@ -294,44 +294,14 @@ async def _background_seed():
     await step("tenant_backfill", tenants.run_tenant_backfill())
     await step("super_admin", tenants._seed_super_admin())
 
-    # Feb-2026 · Slice GH0 post-fix — mirror the sync-boot seed of the
-    # dev preview host onto the aquaterra tenant's
-    # ``widget_allowed_domains``. This second call catches the fresh
-    # cold-boot case where the tenant didn't exist yet when the sync
-    # startup ran. Idempotent (only appends when absent).
-    # GH-Fix: gated on APP_ENV != "production" and skippable via
-    # ``WIDGET_DEV_DOMAIN_SEED=0``. Prod tenants never get a phantom
-    # dev host quietly appended.
+    # Feb-2026 · Slice GH0 post-fix — mirror the sync-boot dev-domain
+    # seed after ``tenant_backfill`` so a fresh cold boot (where the
+    # aquaterra tenant didn't exist yet at sync-startup) still gets
+    # the dev hosts pinned. Uses the same helper as sync-boot.
     try:
-        from urllib.parse import urlparse
-        _env = os.environ.get("APP_ENV", "preview").lower()
-        _seed_toggle = os.environ.get("WIDGET_DEV_DOMAIN_SEED", "1").strip()
-        if _env != "production" and _seed_toggle not in ("0", "false", "no", ""):
-            dev_host = (os.environ.get("WIDGET_DEV_DOMAIN") or "").strip().lower() or None
-            if not dev_host:
-                pub = (os.environ.get("APP_PUBLIC_URL") or "").strip()
-                if pub:
-                    try:
-                        dev_host = (urlparse(pub).netloc or pub).split(":")[0].lower() or None
-                    except Exception:
-                        dev_host = None
-            if not dev_host:
-                dev_host = "poolscape-audit.preview.emergentagent.com"
-            aqua = await db.tenants.find_one(
-                {"slug": "aquaterra"},
-                {"_id": 0, "id": 1, "widget_allowed_domains": 1},
-            )
-            if aqua and dev_host:
-                current = aqua.get("widget_allowed_domains") or []
-                if dev_host not in current:
-                    await db.tenants.update_one(
-                        {"id": aqua["id"]},
-                        {"$addToSet": {"widget_allowed_domains": dev_host}},
-                    )
-                    logger.info(
-                        f"[gh0-seed:bg] appended dev host '{dev_host}' to "
-                        f"aquaterra widget_allowed_domains"
-                    )
+        from routers.widget_config import seed_dev_widget_domains_for_aquaterra
+        result = await seed_dev_widget_domains_for_aquaterra()
+        logger.info(f"[gh0-seed:bg] {result}")
     except Exception as e:
         logger.warning(f"gh0 dev-domain background seed crashed: {e}")
 
@@ -554,6 +524,25 @@ async def _background_seed():
         except Exception as _m6e:
             logger.warning(f"m6 scheduler registration crashed: {_m6e}")
 
+        # Feb-2026 · GH-Fix v2 — self-healing tick that re-seeds the
+        # aquaterra dev-domain allowlist every 10 min. Non-prod only
+        # (helper self-gates on APP_ENV). Keeps the widget bundle
+        # working through test PATCH-replace churn.
+        try:
+            from routers.widget_config import seed_dev_widget_domains_for_aquaterra
+            async def _widget_dev_seed_tick():
+                try:
+                    await seed_dev_widget_domains_for_aquaterra()
+                except Exception as exc:  # pragma: no cover — logged only
+                    logger.warning(f"gh0 dev-domain tick crashed: {exc}")
+            scheduler.add_job(
+                _widget_dev_seed_tick,
+                "interval", minutes=10,
+                id="gh0_widget_dev_seed", replace_existing=True)
+            logger.info("scheduler: gh0 dev-domain seed tick (*/10 min) registered")
+        except Exception as _gh0e:
+            logger.warning(f"gh0 dev-domain tick registration crashed: {_gh0e}")
+
         scheduler.start()
     except Exception as e:
         logger.warning(f"scheduler registration skipped: {e}")
@@ -684,47 +673,17 @@ async def startup():
 
     # Feb-2026 · Slice GH0 post-fix — seed the dev preview host onto the
     # aquaterra tenant's widget_allowed_domains so the widget bundle
-    # served from poolscape-audit.preview.emergentagent.com works
-    # immediately. Idempotent (only appends when absent).
-    # GH-Fix: gated on APP_ENV != "production" + WIDGET_DEV_DOMAIN_SEED
-    # env toggle. Never runs in production tenants.
+    # served from poolscape-audit.preview.emergentagent.com (and the
+    # ingress-rewritten cluster host) works immediately.
+    # GH-Fix v2: unified in routers.widget_config.seed_dev_widget_domains_for_aquaterra
+    # so the sync-boot, background-seed, and scheduler-tick hooks all
+    # apply the SAME multi-host seed and can be re-run at any time.
     try:
-        from urllib.parse import urlparse
-        _env = os.environ.get("APP_ENV", "preview").lower()
-        _seed_toggle = os.environ.get("WIDGET_DEV_DOMAIN_SEED", "1").strip()
-        if _env != "production" and _seed_toggle not in ("0", "false", "no", ""):
-            dev_host = (os.environ.get("WIDGET_DEV_DOMAIN") or "").strip().lower() or None
-            if not dev_host:
-                pub = (os.environ.get("APP_PUBLIC_URL") or "").strip()
-                if pub:
-                    try:
-                        dev_host = (urlparse(pub).netloc or pub).split(":")[0].lower() or None
-                    except Exception:
-                        dev_host = None
-            if not dev_host:
-                dev_host = "poolscape-audit.preview.emergentagent.com"
-            aqua = await db.tenants.find_one(
-                {"slug": "aquaterra"},
-                {"_id": 0, "id": 1, "widget_allowed_domains": 1},
-            )
-            if aqua and dev_host:
-                current = aqua.get("widget_allowed_domains") or []
-                if dev_host not in current:
-                    await db.tenants.update_one(
-                        {"id": aqua["id"]},
-                        {"$addToSet": {"widget_allowed_domains": dev_host}},
-                    )
-                    logger.info(
-                        f"[gh0-seed] appended dev host '{dev_host}' to "
-                        f"aquaterra widget_allowed_domains"
-                    )
-        else:
-            logger.info(
-                f"[gh0-seed] dev-domain seed skipped "
-                f"(APP_ENV={_env!r}, WIDGET_DEV_DOMAIN_SEED={_seed_toggle!r})"
-            )
+        from routers.widget_config import seed_dev_widget_domains_for_aquaterra
+        result = await seed_dev_widget_domains_for_aquaterra()
+        logger.info(f"[gh0-seed] sync-boot: {result}")
     except Exception as e:
-        logger.warning(f"gh0 dev-domain seed crashed: {e}")
+        logger.warning(f"gh0 dev-domain sync seed crashed: {e}")
 
     # Feb-2026 · Slice H1 — Turnstile status log (single WARN when the
     # TURNSTILE_SECRET env var is missing so ops know form submissions

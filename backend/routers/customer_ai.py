@@ -18,7 +18,7 @@ admin group.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -149,64 +149,189 @@ async def customer_scoped_context(
         ctx["service_types_available"] = sorted(types)
 
     elif kind == "billing":
-        invoices = await db.quotes.find(
+        # Feb-2026 · Slice J2 — Billy now has FULL invoice access for
+        # the caller customer only. Cross-customer isolation preserved
+        # (every query below is scoped by ``tenant_id + customer_id``);
+        # this ask is about DEPTH on the caller's own data, not
+        # BREADTH across customers.
+
+        # Cap the window to the last 24 months so the LLM context
+        # doesn't blow up on ancient tenants. Full lifetime aggregates
+        # (spend, credit) are still computed off the whole set below.
+        window_cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=730)
+        ).isoformat()
+
+        # ── Pull EVERY invoice for this customer + line items ──────
+        all_invoices = await db.quotes.find(
             {
                 "tenant_id": tenant_id,
                 "customer_id": customer_id,
                 "doc_type": "invoice",
             },
-            {"_id": 0, "id": 1, "total": 1, "amount_paid": 1,
-             "due_date": 1, "invoice_number": 1, "issued_at": 1,
-             "created_at": 1, "status": 1},
-        ).to_list(500)
+            # Full projection now — we intentionally expose the line
+            # items to the AI so it can answer "what was on the July
+            # invoice" style questions. Internal-only fields are
+            # dropped by the sanitizer below.
+            {"_id": 0},
+        ).to_list(2000)
 
+        recent_invoices = [
+            i for i in all_invoices
+            if str(i.get("issued_at") or i.get("created_at") or "") >= window_cutoff
+        ] or all_invoices  # fall back to all if tenant has <24mo history
+
+        # ── Aggregates + aging (whole history) ─────────────────────
         balance = past_due = credit = 0.0
         open_ct = past_ct = 0
-        for inv in invoices:
+        lifetime_spend = 0.0
+        aging = {"current_0_30": 0.0, "days_31_60": 0.0,
+                 "days_61_90": 0.0, "days_90_plus": 0.0}
+
+        def _days_past(due_iso: str) -> int:
+            try:
+                due_d = datetime.strptime(due_iso[:10], "%Y-%m-%d").date()
+                today_d = datetime.strptime(today, "%Y-%m-%d").date()
+                return (today_d - due_d).days
+            except (TypeError, ValueError):
+                return 0
+
+        for inv in all_invoices:
             total = _num(inv.get("total"))
             paid = _num(inv.get("amount_paid"))
             remaining = round(total - paid, 2)
             due = str(inv.get("due_date") or "")[:10]
+            lifetime_spend += paid
             if remaining > 0:
                 balance += remaining
                 open_ct += 1
                 if due and due < today:
                     past_due += remaining
                     past_ct += 1
+                    d = _days_past(due)
+                    if d <= 30:
+                        aging["current_0_30"] += remaining
+                    elif d <= 60:
+                        aging["days_31_60"] += remaining
+                    elif d <= 90:
+                        aging["days_61_90"] += remaining
+                    else:
+                        aging["days_90_plus"] += remaining
+                else:
+                    aging["current_0_30"] += remaining
             elif remaining < 0:
                 credit += -remaining
 
-        # Latest 5 invoices summary (never their full body — that
-        # would leak line-items which the customer doesn't need for a
-        # summary conversation and often contain internal SKUs).
-        latest = sorted(
-            invoices,
+        # ── Redacted-yet-detailed invoice list for the LLM ────────
+        def _clean_line_item(li: Dict[str, Any]) -> Dict[str, Any]:
+            # Drop internal SKUs, costs, margins; keep customer-facing
+            # description + quantity + unit price + line total.
+            qty = _num(li.get("quantity") or li.get("qty") or 1)
+            unit = _num(li.get("unit_price") or li.get("price"))
+            line_total = _num(
+                li.get("total") or li.get("line_total") or (qty * unit)
+            )
+            return {
+                "description": li.get("description") or li.get("name") or "",
+                "quantity": qty,
+                "unit_price": _money(unit),
+                "total": _money(line_total),
+                "category": li.get("category") or li.get("income_category") or None,
+            }
+
+        ctx["invoices"] = []
+        for inv in sorted(
+            recent_invoices,
             key=lambda x: str(x.get("issued_at") or x.get("created_at") or ""),
             reverse=True,
-        )[:5]
+        ):
+            total = _num(inv.get("total"))
+            paid = _num(inv.get("amount_paid"))
+            remaining = round(total - paid, 2)
+            due = str(inv.get("due_date") or "")[:10] or None
+            issued = str(inv.get("issued_at") or inv.get("created_at") or "")[:10]
+            line_items = inv.get("line_items") or []
+            if not isinstance(line_items, list):
+                line_items = []
+            ctx["invoices"].append({
+                "invoice_number": inv.get("invoice_number"),
+                "issued": issued,
+                "due": due,
+                "days_past_due": (
+                    _days_past(due) if (due and remaining > 0 and due < today) else 0
+                ),
+                "subtotal": _money(_num(inv.get("subtotal") or inv.get("total"))),
+                "tax": _money(_num(inv.get("tax"))),
+                "total": _money(total),
+                "amount_paid": _money(paid),
+                "remaining": _money(remaining),
+                "status": inv.get("status"),
+                "payment_status": inv.get("payment_status"),
+                "title": inv.get("title") or inv.get("description") or "",
+                "line_items": [_clean_line_item(li) for li in line_items[:40]],
+                # Never expose: internal_notes, admin_notes, cost/margin
+                # fields, tech identifiers, or any tenant HQ data.
+            })
+
+        # ── Payment history (masked, receipt-linked) ──────────────
+        payments: List[Dict[str, Any]] = []
+        try:
+            rows = await db.payments.find(
+                {"tenant_id": tenant_id, "customer_id": customer_id},
+                {"_id": 0, "amount": 1, "paid_at": 1, "created_at": 1,
+                 "method": 1, "brand": 1, "last4": 1,
+                 "invoice_id": 1, "invoice_number": 1,
+                 "receipt_url": 1, "status": 1},
+            ).sort("paid_at", -1).to_list(200)
+            for p in rows:
+                payments.append({
+                    "date": str(p.get("paid_at") or p.get("created_at") or "")[:10],
+                    "amount": _money(_num(p.get("amount"))),
+                    "method": p.get("method") or "card",
+                    "brand": p.get("brand") or None,
+                    "last4": p.get("last4") or None,
+                    "invoice_number": p.get("invoice_number"),
+                    "receipt_url": p.get("receipt_url") or None,
+                    "status": p.get("status") or "succeeded",
+                })
+        except Exception as exc:  # pragma: no cover
+            logger.warning("[j2] payments read failed: %s", exc)
+        ctx["payment_history"] = payments
+
+        # ── Recurring / subscription info ─────────────────────────
+        recurring: List[Dict[str, Any]] = []
+        try:
+            rows = await db.billing_plans.find(
+                {"tenant_id": tenant_id, "customer_id": customer_id},
+                {"_id": 0, "service": 1, "amount": 1, "cadence": 1,
+                 "next_run_at": 1, "active": 1, "start_date": 1},
+            ).to_list(50)
+            for plan in rows:
+                recurring.append({
+                    "service": plan.get("service") or "Service",
+                    "amount": _money(_num(plan.get("amount"))),
+                    "cadence": plan.get("cadence") or "monthly",
+                    "active": bool(plan.get("active")),
+                    "next_run": str(plan.get("next_run_at") or "")[:10] or None,
+                    "started": str(plan.get("start_date") or "")[:10] or None,
+                })
+        except Exception as exc:  # pragma: no cover
+            logger.warning("[j2] billing_plans read failed: %s", exc)
+        ctx["recurring_services"] = recurring
+
+        # ── Aggregate summary at the top of the payload ───────────
         ctx["balance_due"] = _money(balance)
         ctx["past_due"] = _money(past_due)
         ctx["credit"] = _money(credit)
+        ctx["lifetime_spend"] = _money(lifetime_spend)
         ctx["open_invoice_count"] = open_ct
         ctx["past_due_invoice_count"] = past_ct
-        ctx["recent_invoices"] = [
-            {
-                "invoice_number": inv.get("invoice_number"),
-                "issued": str(inv.get("issued_at") or inv.get("created_at") or "")[:10],
-                "due": str(inv.get("due_date") or "")[:10] or None,
-                "total": _money(_num(inv.get("total"))),
-                "amount_paid": _money(_num(inv.get("amount_paid"))),
-                "remaining": _money(
-                    round(_num(inv.get("total")) - _num(inv.get("amount_paid")), 2)
-                ),
-                "status": inv.get("status"),
-            }
-            for inv in latest
-        ]
+        ctx["invoice_count_total"] = len(all_invoices)
+        ctx["aging"] = {k: _money(v) for k, v in aging.items()}
 
-        # Next payment due — earliest open invoice with a due_date >= today.
+        # Next payment due — earliest open invoice with a due_date.
         upcoming_due = None
-        for inv in invoices:
+        for inv in all_invoices:
             total = _num(inv.get("total"))
             paid = _num(inv.get("amount_paid"))
             if total - paid <= 0:
@@ -222,9 +347,7 @@ async def customer_scoped_context(
                 }
         ctx["next_payment_due"] = upcoming_due
 
-        # Payment methods on file (masked). Cards come from the
-        # customers doc (existing Stripe setup-session flow); ACH
-        # rows come from the ``payment_methods`` collection (Slice 3A).
+        # ── Payment methods on file (masked) ──────────────────────
         methods: List[Dict[str, Any]] = []
         if cust.get("default_payment_method_id"):
             methods.append({

@@ -52,6 +52,25 @@ def _rebind_db_to_loop():
 def _bind_db():
     _rebind_db_to_loop()
     yield
+    async def _restore():
+        try:
+            from routers.widget_config import seed_dev_widget_domains_for_aquaterra
+            await seed_dev_widget_domains_for_aquaterra()
+        except Exception:
+            pass
+    _run(_restore())
+    try:
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from dotenv import load_dotenv
+        load_dotenv("/app/backend/.env")
+        fresh = AsyncIOMotorClient(os.environ["MONGO_URL"])
+        fresh_db = fresh[os.environ["DB_NAME"]]
+        import config as _cfg
+        _cfg.db = fresh_db
+        import routers.widget_config as _wc
+        _wc.db = fresh_db
+    except Exception:
+        pass
 
 
 def _db():

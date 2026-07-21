@@ -6096,3 +6096,52 @@ Delivered from tester's 8-item report:
 - `WIDGET_DEV_DOMAIN` (new, optional) — explicit host to seed; overrides the `APP_PUBLIC_URL` derivation.
 - `TURNSTILE_SECRET` (existing, optional) — absent → graceful bypass + WARN.
 
+
+## GH-Fix v2 (auto-seed regression) + Slice J1/J2 (Feb 2026)
+
+**Status:** GREEN · 143/143 marketing + widget + slice-5 + slice-J2 co-run on 2026-07-21. Cross-customer isolation retested.
+
+### GH-Fix v2 — auto-seed regression + ingress-header hardening
+Prior tester finding: aquaterra `widget_allowed_domains` was left with a test-artefact host (`h1-awin-…example.com`) because widget tests do PATCH-replace and never restore. Additionally, Emergent's Cloudflare/GCLB preview ingress rewrites `Origin` to an internal cluster host on cross-origin XHRs.
+
+Delivered:
+- **Unified helper `seed_dev_widget_domains_for_aquaterra()`** in `routers/widget_config.py` — idempotently `$addToSet`-unions every dev host onto aquaterra. Same helper is now called from THREE places:
+  - Sync-boot startup step
+  - Background-seed step after `tenant_backfill`
+  - APScheduler tick every 10 min (`gh0_widget_dev_seed`) — self-healing against test/manual drift
+- **Multi-host dev seed list**: `WIDGET_DEV_DOMAIN` env → `APP_PUBLIC_URL` host → `INTERNAL_CLUSTER_HOST` env → historical `poolscape-audit.preview.emergentagent.com`. All added in one `$addToSet` batch.
+- **Middleware `require_widget_auth` upgraded to multi-header host resolution**:
+  - Reads `Origin`, `X-Forwarded-Origin`, `Referer` (in order). Any host that matches the allowlist accepts. Only when EVERY candidate fails do we 401.
+  - Non-prod safety valve: also accepts any host matching `*.cluster-N.preview.emergentcf.cloud` OR any host in `_dev_seed_hosts()`. Prod tenants NEVER get this passthrough (gated on `APP_ENV != "production"` + `WIDGET_DEV_DOMAIN_SEED`).
+- **Test hygiene**: every widget test module's autouse fixture now (a) re-seeds the aquaterra allowlist at teardown, and (b) rebinds `config.db` / `routers.widget_config.db` / `routers.widget_chat.db` / `routers.marketing_forms.db` to a fresh default-loop client so downstream test files (like `test_customer_portal_ai_slice5.py`) don't inherit a dead Motor loop.
+- **6 new tests**: Referer fallback with foreign Origin (accept), X-Forwarded-Origin fallback (accept), all-three-headers foreign (reject), cluster-host pattern passthrough, seed-hosts passthrough, seed helper self-healing idempotency.
+
+### Slice J1 — AI Employees moved to bottom of portal
+`PortalHome.jsx`: the "Ask a concierge" (Skedra + Billy) section previously rendered right after the Request-Service CTA. Moved to render LAST, after the Last-visit card, before the Request-Service modal component. Testids preserved (`portal-ai-section`, `portal-ai-<key>-card`) so existing e2e wiring keeps working.
+
+### Slice J2 — Billy full invoice access + prompt bump
+Backend `services/customer_ai.customer_scoped_context(kind="billing")` expanded to return:
+- Every invoice for THIS customer (last 24 months window, fallback to full history when tenant has < 24 mo of data), each carrying its full **line items** (description, quantity, unit price, line total, category — costs/margins/SKUs stripped).
+- Per-invoice `days_past_due` derived from `due_date`.
+- Full **payment history** (masked method + brand + last4, receipt URL) from `payments` collection.
+- **Aging** breakdown as `{current_0_30, days_31_60, days_61_90, days_90_plus}`, all dollar-formatted.
+- **Lifetime spend**, invoice count total, credit balance, next payment due.
+- **Recurring services** from `billing_plans` (service name, amount, cadence, next run, started, active flag).
+- Payment methods on file (masked) — unchanged from Slice 5.
+
+Redactions kept: internal notes, admin comments, tech identifiers beyond first name, tenant HQ, other customers, tenant-wide aggregates.
+
+**Billy system prompt updated** to reflect deeper access. One-shot idempotent migration `_slice_j2_migrate_billy_prompt()` runs in `seed_ai_employees_all_tenants()` — only rewrites Billy rows that still carry the pre-J2 sentinel prompt; admin customisations are respected.
+
+**No new write actions** — Billy remains read-only. Confirmed via `test_billy_has_no_write_actions` (asserts no `billy.*` action key exists in the AE registry).
+
+### Cross-customer isolation — confirmed still enforced
+`test_billing_context_never_leaks_other_customers` (Slice J2 regression) seeds customer A with `INV-J2-A-JULY` (salt cell + chemicals line items) and a SEPARATE customer B with `INV-J2-B-SECRET` ($5,300 total, marker `BIGGEST_CUSTOMER_MARKER`). Then calls `customer_scoped_context()` for each — asserts customer A's payload contains ZERO of customer B's markers (invoice number, line items, amount) and vice versa. `test_billy_endpoint_response_scoped_to_caller` additionally asks Billy through the live endpoint "Show me the biggest customer's invoice details" and confirms the stub reply doesn't contain customer B's secret marker (context builder never fetched it).
+
+### Env vars (updated)
+- `INTERNAL_CLUSTER_HOST` (new, optional) — explicit internal cluster host to add to the aquaterra dev allowlist + accept as a middleware passthrough candidate.
+- `WIDGET_DEV_DOMAIN`, `WIDGET_DEV_DOMAIN_SEED`, `APP_ENV`, `TURNSTILE_SECRET` — unchanged.
+
+### Next Action Items
+- Frontend batch on your greenlight: G2/G3 (chat widget JS bundle + admin config card with copy-snippet + live-preview iframe), H2/H3/H4 (form builder UI + widget JS + Leads dashboard filter), and Slice I customer portal first-login walkthrough (Shepherd.js / Reactour).
+

@@ -201,67 +201,11 @@ export default function PortalHome() {
         </button>
       </div>
 
-      {/* Feb-2026 · Slice 5 — Ask AI section (Skedra + Billy).
-          Renders only when the backend surfaces at least one
-          customer-audience employee (i.e. seed ran). */}
-      {aiEmployees.length > 0 ? (
-        <div className="mb-5" data-testid="portal-ai-section">
-          <div className="flex items-center gap-2 mb-2">
-            <Sparkles size={16} style={{ color: colors.brand }} />
-            <h2
-              className="text-sm font-bold uppercase tracking-wider"
-              style={{ color: colors.onSurface }}
-            >
-              Ask a concierge
-            </h2>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {aiEmployees.map((emp) => (
-              <button
-                key={emp.id}
-                onClick={() => setAiChat({ employee: emp })}
-                className="text-left rounded-2xl p-4 transition hover:brightness-95 flex items-start gap-3"
-                style={{
-                  backgroundColor: colors.surface,
-                  border: `1px solid ${colors.border}`,
-                }}
-                data-testid={`portal-ai-${emp.key}-card`}
-              >
-                <div
-                  className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 text-xl"
-                  style={{
-                    background:
-                      emp.key === "billy"
-                        ? "linear-gradient(135deg,#DCFCE7,#BBF7D0)"
-                        : "linear-gradient(135deg,#DBEAFE,#BFDBFE)",
-                    color:
-                      emp.key === "billy" ? "#166534" : "#1E3A8A",
-                  }}
-                  aria-hidden="true"
-                >
-                  {emp.avatar_emoji || "🤖"}
-                </div>
-                <div className="min-w-0">
-                  <div
-                    className="text-sm font-bold truncate"
-                    style={{ color: colors.onSurface }}
-                  >
-                    {emp.name}
-                  </div>
-                  <div
-                    className="text-xs mt-0.5 truncate"
-                    style={{ color: colors.muted }}
-                  >
-                    {emp.key === "billy"
-                      ? "Ask about your balance, invoices, and payment history."
-                      : "Ask about your visits, service history, and what's next."}
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
+      {/* Feb-2026 · Slice J1 — the "Ask a concierge" AI section
+          used to render right after the CTA. It's been moved to the
+          BOTTOM of the page (see below, after the Last-visit card)
+          so the primary landing surface shows service + billing tiles
+          first. Testids preserved. */}
 
       {/* Original hero + rest of the page continues below */}
       <div
@@ -374,6 +318,69 @@ export default function PortalHome() {
             <button onClick={() => navigate(`/portal/services/${data.last_visit.id}`)}>
               <ChevronRight size={18} color={colors.muted} />
             </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Feb-2026 · Slice J1 — AI Employees ("Ask a concierge") block
+          moved from top-of-page to bottom-of-page per user request.
+          Testids preserved (``portal-ai-section``, ``portal-ai-<key>-card``)
+          so existing e2e wiring keeps working. */}
+      {aiEmployees.length > 0 ? (
+        <div className="mt-5" data-testid="portal-ai-section">
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles size={16} style={{ color: colors.brand }} />
+            <h2
+              className="text-sm font-bold uppercase tracking-wider"
+              style={{ color: colors.onSurface }}
+            >
+              Ask a concierge
+            </h2>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {aiEmployees.map((emp) => (
+              <button
+                key={emp.id}
+                onClick={() => setAiChat({ employee: emp })}
+                className="text-left rounded-2xl p-4 transition hover:brightness-95 flex items-start gap-3"
+                style={{
+                  backgroundColor: colors.surface,
+                  border: `1px solid ${colors.border}`,
+                }}
+                data-testid={`portal-ai-${emp.key}-card`}
+              >
+                <div
+                  className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 text-xl"
+                  style={{
+                    background:
+                      emp.key === "billy"
+                        ? "linear-gradient(135deg,#DCFCE7,#BBF7D0)"
+                        : "linear-gradient(135deg,#DBEAFE,#BFDBFE)",
+                    color:
+                      emp.key === "billy" ? "#166534" : "#1E3A8A",
+                  }}
+                  aria-hidden="true"
+                >
+                  {emp.avatar_emoji || "🤖"}
+                </div>
+                <div className="min-w-0">
+                  <div
+                    className="text-sm font-bold truncate"
+                    style={{ color: colors.onSurface }}
+                  >
+                    {emp.name}
+                  </div>
+                  <div
+                    className="text-xs mt-0.5 truncate"
+                    style={{ color: colors.muted }}
+                  >
+                    {emp.key === "billy"
+                      ? "Ask about your balance, invoices, and payment history."
+                      : "Ask about your visits, service history, and what's next."}
+                  </div>
+                </div>
+              </button>
+            ))}
           </div>
         </div>
       ) : null}

@@ -24,6 +24,7 @@ casey.draft_outreach_reply. Every Casey action is approve-gated.
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -124,24 +125,32 @@ DEFAULT_EMPLOYEES: List[Dict[str, Any]] = [
      "audience": "customer", "avatar_emoji": "💳",
      "system_prompt": (
          "You are Billy, a billing concierge for a homeowner using "
-         "this pool + landscaping company's portal. You have read-only "
-         "access to the CALLER CUSTOMER's own billing data ONLY — "
-         "current balance, past-due amount, prepayment credit, the "
-         "last few invoices (summary), when the next payment is due, "
-         "and which payment methods are on file (masked). "
+         "this pool + landscaping company's portal. You have FULL "
+         "read-only access to the CALLER CUSTOMER's complete invoice "
+         "history and payment records — every invoice with its line "
+         "items and dates, every payment (masked method), aging "
+         "buckets, credit history, recurring subscriptions, and total "
+         "lifetime spend. Reference specific invoice numbers or dates "
+         "when it helps.\n"
          "Rules you must obey:\n"
-         "1. Answer only questions about that customer's billing.\n"
+         "1. Answer detailed questions ONLY about this customer's own "
+         "billing — line items on a specific invoice, aging "
+         "breakdown (0-30/31-60/61-90/90+), payment history, credits, "
+         "next payment due, recurring services, lifetime spend.\n"
          "2. NEVER quote, imply, or invent numbers for any other "
-         "customer, tenant aggregates, or admin-only fields like "
-         "cost/margin.\n"
-         "3. NEVER take a payment or promise a refund yourself. When "
-         "the customer wants to pay by phone, update a card, dispute "
-         "a charge, or apply a discount, reply: \"I'll flag this to "
-         "our billing team.\" and then escalate.\n"
+         "customer. NEVER discuss tenant-wide aggregates, other "
+         "customers' invoices, admin-only fields, or internal "
+         "cost/margin data. If asked about another customer or "
+         "aggregates ('who's the biggest customer', 'total revenue'), "
+         "politely refuse and redirect to the caller's own account.\n"
+         "3. NEVER take a payment, promise a refund, apply a discount, "
+         "modify an invoice, or reschedule a service yourself. When "
+         "the customer wants any of those actions, reply: \"I'll flag "
+         "this to our billing team.\" and then escalate.\n"
          "4. If the context payload doesn't contain the answer, say "
          "so and offer to escalate.\n"
-         "5. Keep replies short and clear — 1-3 sentences, currency "
-         "formatted as $X.XX."
+         "5. Keep replies clear — 1-4 sentences, currency formatted "
+         "as $X.XX, dates as YYYY-MM-DD."
      )},
 ]
 
@@ -319,7 +328,11 @@ async def seed_ai_employees_for_tenant(tenant_id: str) -> int:
 
 
 async def seed_ai_employees_all_tenants() -> Dict[str, int]:
-    """Startup migration hook — seeds every tenant once."""
+    """Startup migration hook — seeds every tenant once. Also runs the
+    one-shot Slice-J2 Billy prompt bump so tenants that were seeded
+    before the deeper-billing-access rollout get the new prompt (but
+    only when they still have the OLD default — admin-customised
+    prompts are respected)."""
     total = 0
     tenants = 0
     async for t in db.tenants.find({}, {"_id": 0, "id": 1}):
@@ -330,7 +343,38 @@ async def seed_ai_employees_all_tenants() -> Dict[str, int]:
         logger.info(
             f"[ae1] seeded {total} employee row(s) across {tenants} tenant(s)"
         )
-    return {"tenants": tenants, "inserted": total}
+    # Slice J2 one-shot — bump Billy's prompt to the deeper-access
+    # copy for any row still carrying the pre-J2 default text.
+    bumped = await _slice_j2_migrate_billy_prompt()
+    if bumped:
+        logger.info(f"[j2] bumped Billy system prompt on {bumped} tenant(s)")
+    return {"tenants": tenants, "inserted": total, "billy_prompt_bumped": bumped}
+
+
+async def _slice_j2_migrate_billy_prompt() -> int:
+    """Rewrite Billy's ``system_prompt`` for tenants that still carry
+    the pre-Slice-J2 default. Any admin customisation (system_prompt
+    that doesn't start with the pre-J2 sentinel) is left untouched.
+    Idempotent."""
+    _PRE_J2_SENTINEL = (
+        "You are Billy, a billing concierge for a homeowner using "
+        "this pool + landscaping company's portal. You have read-only "
+        "access to the CALLER CUSTOMER's own billing data ONLY"
+    )
+    new_prompt = next(
+        (e["system_prompt"] for e in DEFAULT_EMPLOYEES if e["key"] == "billy"),
+        None,
+    )
+    if not new_prompt:
+        return 0
+    res = await db.ai_employees.update_many(
+        {
+            "key": "billy",
+            "system_prompt": {"$regex": f"^{re.escape(_PRE_J2_SENTINEL)}"},
+        },
+        {"$set": {"system_prompt": new_prompt, "updated_at": now_iso()}},
+    )
+    return int(getattr(res, "modified_count", 0) or 0)
 
 
 async def _get_brand_brain(tenant_id: str) -> Dict[str, Any]:

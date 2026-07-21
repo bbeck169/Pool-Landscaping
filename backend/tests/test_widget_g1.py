@@ -64,6 +64,30 @@ def _rebind_db_to_loop():
 def _bind_db():
     _rebind_db_to_loop()
     yield
+    async def _restore():
+        try:
+            from routers.widget_config import seed_dev_widget_domains_for_aquaterra
+            await seed_dev_widget_domains_for_aquaterra()
+        except Exception:
+            pass
+    _run(_restore())
+    # Motor loop-cache guard: reset ``config.db`` (and the routers we
+    # rebound) to a FRESH default-loop client so downstream test files
+    # don't inherit our dying loop.
+    try:
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from dotenv import load_dotenv
+        load_dotenv("/app/backend/.env")
+        fresh = AsyncIOMotorClient(os.environ["MONGO_URL"])
+        fresh_db = fresh[os.environ["DB_NAME"]]
+        import config as _cfg
+        _cfg.db = fresh_db
+        import routers.widget_config as _wc
+        _wc.db = fresh_db
+        import routers.widget_chat as _wch
+        _wch.db = fresh_db
+    except Exception:
+        pass
 
 
 def _db():
@@ -586,5 +610,138 @@ def test_aquaterra_dev_domain_seeded_on_boot(super_headers):
             {"slug": "aquaterra"}, {"_id": 0, "widget_allowed_domains": 1}
         )
         assert expected in (aqua.get("widget_allowed_domains") or [])
+    _run(_go())
+
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# GH-Fix v2 — multi-header host resolution + dev-mode cluster passthrough
+# ═══════════════════════════════════════════════════════════════════════
+def test_referer_fallback_when_origin_is_foreign(super_headers):
+    """Ingresses that rewrite Origin to a foreign cluster host still
+    let the widget work because we accept ANY matching header. Foreign
+    Origin + allowlisted Referer → 201."""
+    host = f"g1-refer-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+
+    r = requests.post(
+        f"{API}/widget/chat/conversations",
+        headers={
+            "X-Widget-Key": key,
+            "Origin": "https://ingress-rewrote-me.foreign",
+            "Referer": f"https://{host}/contact",
+        },
+        json={}, timeout=15,
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_x_forwarded_origin_fallback(super_headers):
+    """When ingress rewrites Origin but sets X-Forwarded-Origin, that
+    header is accepted."""
+    host = f"g1-xfo-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+
+    r = requests.post(
+        f"{API}/widget/chat/conversations",
+        headers={
+            "X-Widget-Key": key,
+            "Origin": "https://ingress-rewrote-me.foreign",
+            "X-Forwarded-Origin": f"https://{host}",
+        },
+        json={}, timeout=15,
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_all_three_headers_foreign_rejects(super_headers):
+    """When every candidate header is foreign, 401."""
+    host = f"g1-allf-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+
+    r = requests.post(
+        f"{API}/widget/chat/conversations",
+        headers={
+            "X-Widget-Key": key,
+            "Origin": "https://foreign-a.evil",
+            "X-Forwarded-Origin": "https://foreign-b.evil",
+            "Referer": "https://foreign-c.evil",
+        },
+        json={}, timeout=15,
+    )
+    assert r.status_code == 401
+
+
+def test_dev_mode_cluster_host_passthrough(super_headers):
+    """Non-prod safety valve: an Origin matching
+    ``*.cluster-N.preview.emergentcf.cloud`` is accepted even when
+    ``widget_allowed_domains`` doesn't list it. Prod tenants never
+    get this passthrough."""
+    # Ensure the aquaterra tenant has at least one allowlisted host so
+    # the ``empty allowlist`` guard doesn't short-circuit us.
+    host = f"g1-cluster-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+
+    r = requests.post(
+        f"{API}/widget/chat/conversations",
+        headers={
+            "X-Widget-Key": key,
+            "Origin": "https://poolscape-audit.cluster-12.preview.emergentcf.cloud",
+        },
+        json={}, timeout=15,
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_dev_mode_seed_hosts_passthrough(super_headers):
+    """Any host in ``_dev_seed_hosts()`` (public preview URL, env
+    overrides, historical default) passes even when the tenant PATCHed
+    them off the allowlist — matches how the ingress may present the
+    request."""
+    _whitelist(super_headers, f"g1-seed-{uuid.uuid4().hex[:6]}.example.com")
+    key = _widget_key(super_headers)
+
+    # Hit with the canonical public preview host as Origin — should
+    # pass even if the tenant allowlist doesn't list it.
+    r = requests.post(
+        f"{API}/widget/chat/conversations",
+        headers={
+            "X-Widget-Key": key,
+            "Origin": "https://poolscape-audit.preview.emergentagent.com",
+        },
+        json={}, timeout=15,
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_seed_dev_widget_domains_is_idempotent_and_self_heals(super_headers):
+    """P0 #2 fix — the seed helper reliably re-adds dev hosts even
+    after tests wipe the allowlist. Verifies the self-healing path
+    the scheduler tick relies on."""
+    # First, wipe the allowlist to a single unrelated host.
+    junk_host = f"g1-junk-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, junk_host)
+
+    async def _go():
+        from routers.widget_config import (
+            seed_dev_widget_domains_for_aquaterra, _dev_seed_hosts,
+        )
+        # Reset db binding to our loop first (already bound autouse).
+        result = await seed_dev_widget_domains_for_aquaterra()
+        assert result.get("skipped") is False, result
+        db = _db()
+        aqua = await db.tenants.find_one(
+            {"slug": "aquaterra"}, {"_id": 0, "widget_allowed_domains": 1}
+        )
+        allowlist = set(aqua.get("widget_allowed_domains") or [])
+        # Every dev host is present after the seed.
+        for h in _dev_seed_hosts():
+            assert h in allowlist, (h, allowlist)
+        # And our junk host was NOT stomped — the seed is UNION-only.
+        assert junk_host in allowlist, (junk_host, allowlist)
     _run(_go())
 
