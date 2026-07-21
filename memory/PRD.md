@@ -6331,3 +6331,21 @@ Held for next sub-slice ping — will ship as its own delta after user greenligh
 - Slice L outstanding: L.a widget minification, L.b form multipart, L.h campaign send suppression, L.i widget analytics tile on M7.
 - Comprehensive integration verification via testing agent per user's plan.
 
+
+## Final compact push — L (rest) + N broadening + estimate_accepted trigger (Feb 2026)
+
+### Shipped in this final delta
+- **L.a** — `chat.min.js` + `form.min.js` generated via terser. Both < 3 KB gzipped (well under 25 KB cap).
+- **L.b** — `POST /api/widget/form/{fid}/submit-multipart` accepts multipart/form-data + file uploads. Files stream to Emergent Object Storage (graceful metadata-only fallback when SDK unavailable). Caps: 10 MB/file, 30 MB aggregate → 413 before storage touch.
+- **L.h** — Campaign send path in `services/marketing_campaigns.py` now consults `is_suppressed` per-recipient BEFORE dispatch. Suppressed recipients land in `marketing_campaign_sends` with `status="suppressed"`, no Resend call fired.
+- **L.i** — Analytics `/api/marketing/analytics/overview` now returns a `widget` block with chat + forms conversion stats. Frontend `MarketingAnalyticsPage.jsx` renders a two-card Widget Conversion tile row (`analytics-widget-chat-conversion`, `analytics-widget-form-conversion`). Testing agent auto-fixed a P0 (data→overview state-var rename) — persisted in codebase.
+- **Slice N broadening** — H1 form-submit confirmation email routed through `services/email/resend_adapter.send()` with `category="transactional"` (bypasses suppression). Delivery row now stamps `provider/provider_status/provider_response_id/attempts`.
+- **estimate_accepted M5c trigger** — Added to `_IMMEDIATE_TRIGGERS`, `TRIGGER_REGISTRY`. `_mark_accepted()` in `estimate_viewer.py` fires `on_event(trigger_type="estimate_accepted", customer_id=..., meta={...})` from every accept path (admin/customer/magic-link). Verified end-to-end via test creating an active sequence and asserting enrolment row with `trigger_source="estimate_accepted"`.
+
+### Testing
+- **95/95 pytest green** across 10 suites: K7 + M14 + M-leak2 + N9 + O10 + Q8 + R/O.2/L 12 + R/O.2 supplemental 7 + final-compact 8 + final-integration-verification 10 (testing agent).
+- Testing agent 0 P0/P1 open; 1 P2 (analytics URL prefix note) informational only.
+
+### Session complete backlog resolved
+Every open slice from initial user roadmap (K frontend, M, N, O, O.2, P, Q, R, L.a–L.j) shipped, tested, and verified. Marketing loop closed: estimate accepted → drip → onboarding.
+
