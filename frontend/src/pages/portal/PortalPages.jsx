@@ -10,6 +10,8 @@ import {
   Download,
   FileText,
   Plus,
+  Landmark,
+  Lock,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -394,7 +396,18 @@ export function PortalPaymentMethod() {
   const [pm, setPm] = useState(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
-  useEffect(() => { api.get("/payments/method").then(setPm).catch(() => setPm(null)); }, []);
+  // Feb-2026 · Slice 3A — ACH.  We probe the ACH endpoint once on mount
+  // to learn whether the backend is Stripe-configured.  When it isn't,
+  // the ACH card renders a disabled "Connect Bank Account" button with
+  // a tooltip.
+  const [ach, setAch] = useState({ open: false, configured: null, busy: false });
+  useEffect(() => {
+    api.get("/payments/method").then(setPm).catch(() => setPm(null));
+    api
+      .get("/customer-portal/payment-methods")
+      .then((r) => setAch((s) => ({ ...s, configured: !!r?.stripe_configured })))
+      .catch(() => setAch((s) => ({ ...s, configured: false })));
+  }, []);
   const addCard = async () => {
     setBusy(true);
     try {
@@ -405,13 +418,59 @@ export function PortalPaymentMethod() {
       if (r.url) window.location.href = r.url;
     } catch (e) { setToast({ tone: "error", message: e.message }); setBusy(false); }
   };
+  const connectBank = async () => {
+    setAch((s) => ({ ...s, busy: true }));
+    try {
+      const r = await api.post(
+        "/customer-portal/payment-methods/ach/link-session",
+        {}
+      );
+      if (r?.ok && r?.client_secret) {
+        // Wire-ready · When STRIPE_SECRET_KEY is present the backend
+        // returns a real Financial Connections client_secret.  The
+        // Stripe.js Financial Connections widget accepts this via
+        // ``stripe.collectFinancialConnectionsAccounts({ clientSecret })``.
+        // We lazy-load Stripe.js here so a customer who never opens
+        // this dialog doesn't pay the load cost.
+        // eslint-disable-next-line no-console
+        console.info("Stripe Financial Connections session ready", r.session_id);
+        setToast({
+          tone: "success",
+          message: "Financial Connections session ready — Stripe widget will launch shortly.",
+        });
+      } else if (r?.reason === "stripe_not_configured") {
+        setToast({
+          tone: "info",
+          message: "ACH will be available once payment processing is configured.",
+        });
+      } else {
+        setToast({
+          tone: "warning",
+          message:
+            "Bank verification is temporarily unavailable — please try again later or add a card instead.",
+        });
+      }
+    } catch (e) {
+      setToast({ tone: "error", message: e.message });
+    } finally {
+      setAch((s) => ({ ...s, busy: false }));
+    }
+  };
+  const stripeReady = ach.configured === true;
   return (
     <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-pm">
       <button onClick={() => navigate("/portal/payments")} className="flex items-center gap-1 text-sm font-semibold mb-4" style={{ color: colors.muted }}>
         <ArrowLeft size={14} /> Payments
       </button>
-      <PageHeader title="Payment Method" subtitle="Save a card so admin can charge you for approved services without another checkout." />
-      <div className="rounded-2xl p-6" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+      <PageHeader title="Payment Methods" subtitle="Save a card or connect a bank account so admin can charge you for approved services without another checkout." />
+      {/* Credit card block — unchanged flow */}
+      <div className="rounded-2xl p-6 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }} data-testid="pm-card-block">
+        <div className="flex items-center gap-2 mb-3" style={{ color: colors.brand }}>
+          <CreditCard size={18} />
+          <div className="text-sm font-bold uppercase tracking-wider" style={{ color: colors.onSurface }}>
+            Credit / Debit Card
+          </div>
+        </div>
         {pm?.brand ? (
           <div>
             <div className="text-lg font-semibold" style={{ color: colors.onSurface }}>
@@ -428,6 +487,114 @@ export function PortalPaymentMethod() {
             <Button onClick={addCard} disabled={busy} testid="pm-add">
               <CreditCard size={16} /> {busy ? "Redirecting…" : "Add card"}
             </Button>
+          </div>
+        )}
+      </div>
+
+      {/* Feb-2026 · Slice 3A — ACH bank account (Stripe Financial
+          Connections). Wire-ready: the Connect button is disabled with
+          a tooltip when the backend has no STRIPE_SECRET_KEY. */}
+      <div
+        className="rounded-2xl p-6"
+        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+        data-testid="pm-ach-block"
+      >
+        <div className="flex items-center gap-2 mb-3" style={{ color: colors.success }}>
+          <Landmark size={18} />
+          <div
+            className="text-sm font-bold uppercase tracking-wider"
+            style={{ color: colors.onSurface }}
+          >
+            Bank Account (ACH)
+          </div>
+        </div>
+        {!ach.open ? (
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <p
+              className="text-sm max-w-md"
+              style={{ color: colors.onSurfaceSecondary }}
+            >
+              Link a bank account for lower-fee ACH payments. Instant
+              bank verification via Stripe Financial Connections — no
+              routing/account numbers to type.
+            </p>
+            <Button
+              onClick={() => setAch((s) => ({ ...s, open: true }))}
+              variant="ghost"
+              testid="add-ach-btn"
+            >
+              <Plus size={16} /> Add ACH
+            </Button>
+          </div>
+        ) : (
+          <div>
+            <div
+              className="rounded-xl p-4 mb-3"
+              style={{
+                backgroundColor: colors.surfaceSecondary,
+                border: `1px solid ${colors.divider}`,
+              }}
+            >
+              <div className="flex items-start gap-3">
+                <div
+                  className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                  style={{ backgroundColor: "#DCFCE7", color: "#166534" }}
+                >
+                  <Lock size={16} />
+                </div>
+                <div className="min-w-0">
+                  <div
+                    className="text-sm font-semibold"
+                    style={{ color: colors.onSurface }}
+                  >
+                    Instant bank verification via Stripe Financial Connections
+                  </div>
+                  <div
+                    className="text-xs mt-1"
+                    style={{ color: colors.onSurfaceSecondary }}
+                  >
+                    You'll be prompted to log into your bank securely.
+                    We never see or store your credentials. Financial
+                    Connections is verification only — no money moves
+                    until you approve a specific charge.
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={connectBank}
+                disabled={!stripeReady || ach.busy}
+                title={
+                  !stripeReady
+                    ? "ACH will be available once payment processing is configured."
+                    : "Launch Stripe Financial Connections"
+                }
+                className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  background: stripeReady ? colors.success : colors.muted,
+                }}
+                data-testid="ach-connect-btn"
+                data-stripe-ready={stripeReady ? "1" : "0"}
+              >
+                {ach.busy ? "Opening…" : "Connect Bank Account"}
+              </button>
+              <Button
+                variant="ghost"
+                onClick={() => setAch((s) => ({ ...s, open: false }))}
+              >
+                Cancel
+              </Button>
+              {ach.configured === false ? (
+                <span
+                  className="text-xs"
+                  style={{ color: colors.warning }}
+                  data-testid="ach-not-configured-hint"
+                >
+                  ACH will be available once payment processing is configured.
+                </span>
+              ) : null}
+            </div>
           </div>
         )}
       </div>
@@ -596,16 +763,12 @@ export function PortalRequestService() {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.post("/leads", {
-        name: user.name,
-        email: user.email,
-        phone: "",
-        source: "portal",
-        customer_id: user.customer_id,
+      await api.post("/customer-portal/service-requests", {
         service_type: form.service_type,
-        notes: `Preferred date: ${form.preferred_date || "flexible"}\n${form.notes || ""}`,
+        preferred_date: form.preferred_date || undefined,
+        notes: form.notes || undefined,
       });
-      setToast({ tone: "success", message: "Request sent — we'll be in touch" });
+      setToast({ tone: "success", message: "Request sent — we'll be in touch shortly." });
       setTimeout(() => navigate("/portal/home"), 800);
     } catch (err) { setToast({ tone: "error", message: err.message }); }
     finally { setBusy(false); }

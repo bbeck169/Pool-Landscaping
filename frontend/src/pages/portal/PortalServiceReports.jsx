@@ -263,7 +263,7 @@ export function PortalServiceReportDetail() {
 
   const readings = Array.isArray(sr.chemical_readings)
     ? sr.chemical_readings.filter(
-        (r) => r?.value !== null && r?.value !== undefined && r?.value !== ""
+        (r) => r && (r.label || r.value !== null && r.value !== undefined && r.value !== "")
       )
     : [];
   const chemicalsAdded = Array.isArray(sr.chemicals_added)
@@ -370,49 +370,57 @@ export function PortalServiceReportDetail() {
         </div>
       ) : null}
 
-      {/* Pool: chemical readings */}
+      {/* Pool: chemical readings — Feb-2026 · Slice 3C · qualitative
+          chips only. Customers see Below / Average / Above Avg /
+          Elevated per reading; raw numeric values are never shown on
+          the portal.  Backend already strips numeric readings and
+          attaches the classification band. */}
       {kind === "pool" && readings.length > 0 ? (
         <Section
           icon={Droplet}
-          title="Water chemistry readings"
+          title="Water chemistry"
           testid="portal-service-report-readings"
         >
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr
-                  className="text-left"
-                  style={{ borderBottom: `1px solid ${colors.divider}` }}
+          <ul
+            className="grid grid-cols-1 sm:grid-cols-2 gap-2"
+            data-testid="portal-service-report-readings-list"
+          >
+            {readings.map((r, i) => {
+              const band = r.label || sr?.readings_label?.[r.key] || "average";
+              return (
+                <li
+                  key={r.key || r.name || i}
+                  className="flex items-center justify-between rounded-xl p-3"
+                  style={{
+                    backgroundColor: colors.surfaceSecondary,
+                    border: `1px solid ${colors.divider}`,
+                  }}
+                  data-testid={`portal-service-report-reading-${r.key || i}`}
                 >
-                  <th className="py-2 pr-4 font-semibold"
-                      style={{ color: colors.muted }}>Reading</th>
-                  <th className="py-2 pr-4 font-semibold"
-                      style={{ color: colors.muted }}>Value</th>
-                  <th className="py-2 font-semibold"
-                      style={{ color: colors.muted }}>Unit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {readings.map((r, i) => (
-                  <tr
-                    key={r.key || r.name || i}
-                    style={{ borderBottom: `1px solid ${colors.divider}` }}
-                    data-testid={`portal-service-report-reading-${r.key || i}`}
-                  >
-                    <td className="py-2 pr-4" style={{ color: colors.onSurface }}>
+                  <div className="min-w-0">
+                    <div
+                      className="text-sm font-semibold truncate"
+                      style={{ color: colors.onSurface }}
+                    >
                       {r.name || r.key}
-                    </td>
-                    <td className="py-2 pr-4 font-semibold" style={{ color: colors.onSurface }}>
-                      {String(r.value)}
-                    </td>
-                    <td className="py-2" style={{ color: colors.muted }}>
-                      {r.unit || ""}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </div>
+                    {r.unit ? (
+                      <div
+                        className="text-xs"
+                        style={{ color: colors.muted }}
+                      >
+                        {r.unit}
+                      </div>
+                    ) : null}
+                  </div>
+                  <ChemChip
+                    band={band}
+                    testid={`chem-label-${r.key || i}`}
+                  />
+                </li>
+              );
+            })}
+          </ul>
         </Section>
       ) : null}
 
@@ -568,5 +576,29 @@ function Section({ icon: Icon, title, testid, children }) {
       </div>
       {children}
     </div>
+  );
+}
+
+
+// Feb-2026 · Slice 3C · Chemistry band chip.  Colour hint per spec:
+// below=blue · average=green · above=amber · elevated=red.
+const CHEM_BAND_STYLES = {
+  below:    { bg: "#DBEAFE", fg: "#1E3A8A", label: "Below" },
+  average:  { bg: "#DCFCE7", fg: "#166534", label: "Average" },
+  above:    { bg: "#FEF3C7", fg: "#92400E", label: "Above Avg" },
+  elevated: { bg: "#FEE2E2", fg: "#991B1B", label: "Elevated" },
+};
+
+function ChemChip({ band, testid }) {
+  const style = CHEM_BAND_STYLES[band] || CHEM_BAND_STYLES.average;
+  return (
+    <span
+      className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold shrink-0"
+      style={{ backgroundColor: style.bg, color: style.fg }}
+      data-testid={testid}
+      data-band={band}
+    >
+      {style.label}
+    </span>
   );
 }

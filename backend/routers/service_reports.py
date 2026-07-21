@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from config import db, logger
 from utils import now_iso, new_id, get_current_user, require_admin
 from routers.tenants import get_current_tenant
+from services.chemistry import classify_reading, classify_readings
 
 router = APIRouter()
 
@@ -315,6 +316,10 @@ async def get_service_report(jid: str,
         "scheduled_start": job.get("scheduled_start"),
         "scheduled_end": job.get("scheduled_end"),
     }
+    # Feb-2026 · Slice 3C — attach classification bands next to the raw
+    # numeric readings so admin/tech UI can show "3.2 ppm · Average"
+    # without repeating the threshold logic in the frontend.
+    existing = _annotate_report_for_admin(existing)
     return existing
 
 
@@ -1313,6 +1318,10 @@ def _redact_report_for_customer(sr: dict) -> dict:
     - `chemicals_added` remains visible so customers can see what went
       into their pool. Readings + checklist items are already
       customer-safe.
+
+    Feb-2026 · Slice 3C — Chemistry readings are converted from raw
+    numeric values to qualitative bands. Customers see ``below /
+    average / above / elevated`` chips only; raw values are stripped.
     """
     if not sr:
         return sr
@@ -1325,6 +1334,42 @@ def _redact_report_for_customer(sr: dict) -> dict:
         if not any(str(t).lower() in ("internal", "issue", "private")
                    for t in ((p.get("tags") or []) if isinstance(p, dict) else []))
     ]
+    # Feb-2026 · Slice 3C — replace numeric readings with labelled bands.
+    readings = sr.get("chemical_readings") or []
+    labels_map: Dict[str, str] = {}
+    labelled_readings: List[Dict[str, Any]] = []
+    for r in readings:
+        if not isinstance(r, dict):
+            continue
+        key = r.get("key") or ""
+        band = classify_reading(key, r.get("value"))
+        if band is None:
+            # Unclassifiable chemicals (salt, calcium hardness, water
+            # temp, combined chlorine, …) are hidden from the customer
+            # entirely — no numeric leakage.
+            continue
+        labels_map[str(key)] = band
+        labelled_readings.append({
+            "key": key,
+            "name": r.get("name"),
+            "unit": r.get("unit"),
+            "label": band,
+        })
+    sr["chemical_readings"] = labelled_readings
+    sr["readings_label"] = labels_map
+    return sr
+
+
+def _annotate_report_for_admin(sr: dict) -> dict:
+    """Feb-2026 · Slice 3C — Admin/tech callers still see the raw
+    numeric readings; we additionally attach a ``readings_label`` map
+    so admin UI can render the classification band as a tooltip next
+    to the number. No stored fields are mutated.
+    """
+    if not sr:
+        return sr
+    sr = dict(sr)
+    sr["readings_label"] = classify_readings(sr.get("chemical_readings") or [])
     return sr
 
 
