@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 import { Plus, Check, Ban, Save } from 'lucide-react';
+import AddressAutocomplete from "@/components/AddressAutocomplete";
 
 const Card = ({ children, className = "", testId }) => (
   <div className={"rounded-2xl " + className}
@@ -278,13 +279,13 @@ function HqLocationCard() {
   if (!me) return null;
   if (!isSuper) return null;
 
-  const save = async () => {
+  const saveAddress = async (addr) => {
     setError("");
     setBusy(true);
     try {
       const r = await api.request("/tenants/mine/geocode", {
         method: "PATCH",
-        body: JSON.stringify({ address }),
+        body: JSON.stringify({ address: addr }),
       });
       setExisting(r);
       // Invalidate the module-level tenant-location cache so the
@@ -302,6 +303,25 @@ function HqLocationCard() {
     }
   };
 
+  const onSaveClick = () => {
+    const trimmed = (address || "").trim();
+    if (!trimmed || trimmed.length < 3) return;
+    saveAddress(trimmed);
+  };
+
+  // Feb-2026 · Google Places Autocomplete on the HQ input. When the
+  // user picks a suggestion we auto-save immediately using the
+  // Google-normalised formatted string — no need to click "Save".
+  // Raw text is still honoured via the Save button, so a user who
+  // types without picking a suggestion can still submit.
+  const onPlaceSelect = (place) => {
+    const formatted = place?.formatted || place?.description || address;
+    if (formatted) {
+      setAddress(formatted);
+      saveAddress(formatted);
+    }
+  };
+
   return (
     <div className="mt-6" data-testid="tenant-hq-card">
       <div className="rounded-2xl p-5" style={{ background: colors.surface, border: `1px solid ${colors.border}` }}>
@@ -311,22 +331,22 @@ function HqLocationCard() {
         <p className="text-xs mb-4" style={{ color: colors.muted }}>
           Enter your headquarters address. We&apos;ll geocode it once via Google Places and anchor the weather widget + forecast on this location for every user in your tenant. Super-admin only.
         </p>
-        <div className="flex flex-col sm:flex-row gap-2">
-          <input
-            type="text"
-            value={address}
-            onChange={(e) => setAddress(e.target.value)}
-            placeholder="e.g. 10840 W Saddlehorn Rd, Peoria AZ 85383"
-            className="flex-1 px-3 py-2 rounded-lg text-sm outline-none focus:ring-2"
-            style={{ background: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
-            data-testid="tenant-hq-address-input"
-          />
+        <div className="flex flex-col sm:flex-row gap-2 items-stretch">
+          <div className="flex-1 min-w-0">
+            <AddressAutocomplete
+              value={address}
+              onChange={setAddress}
+              onSelect={onPlaceSelect}
+              placeholder="e.g. 10840 W Saddlehorn Rd, Peoria AZ 85383"
+              testid="tenant-hq-address"
+            />
+          </div>
           <button
-            onClick={save}
+            onClick={onSaveClick}
             disabled={busy || !address.trim() || address.trim().length < 3}
-            className="px-4 py-2 rounded-lg text-sm font-bold text-white"
+            className="px-4 py-2 rounded-lg text-sm font-bold text-white shrink-0"
             style={{ background: colors.brand, opacity: busy ? 0.6 : 1 }}
-            data-testid="tenant-hq-save"
+            data-testid="tenant-hq-save-btn"
           >
             {busy ? "Saving…" : "Save"}
           </button>

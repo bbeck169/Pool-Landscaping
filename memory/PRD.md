@@ -5808,3 +5808,29 @@ Fixed the 1 FAIL + 2 WARN from the Q4 tester report. All four proofs shipping in
 - SMS confirmation on `instaschedule.confirmed` via existing Comms system.
 - InstaSchedule "customer profile" mode — restricted-to-existing-customer flow currently accepts any email that already exists; a signed magic link would harden it.
 
+
+---
+
+## Slice 2.5 · Google Places Autocomplete on Tenant HQ (Feb 2026)
+
+**Status:** Green · verified via screenshot tool on 2026-07-21.
+
+### What shipped
+- `HqLocationCard` inside `TenantsAdminPage.jsx` (`/settings/tenant`, super_admin only).
+- `AddressAutocomplete` (`/app/frontend/src/components/AddressAutocomplete.jsx`) wired in place of the plain text input. Custom dropdown (not the deprecated `google.maps.places.Autocomplete` widget) backed by `AutocompleteService` + `PlacesService.getDetails`, `AutocompleteSessionToken` per session, 180 ms debounce, arrow-key + Enter + Escape support.
+- Selection auto-fires `PATCH /api/tenants/mine/geocode` with the Google-normalised `formatted_address` — no click on Save required.
+- Raw text fallback preserved: user typing without picking a suggestion can still submit via the `tenant-hq-save-btn` button (min-length 3, disables during in-flight save).
+- On successful save, `invalidateTenantLocation()` clears the module-level cache in `useTenantLocation` so the Weather Widget re-anchors without a page reload.
+- `data-testid`s: `tenant-hq-card`, `tenant-hq-address-input`, `tenant-hq-address-suggestions`, `tenant-hq-address-suggestion-{i}`, `tenant-hq-save-btn`, `tenant-hq-lat`, `tenant-hq-lng`, `tenant-hq-current`, `tenant-hq-toast`, `tenant-hq-error`.
+
+### Screenshot verification (super@aquaterra.com)
+- Typed `500 Terry Francois` → dropdown mounted with predictions.
+- Clicked `tenant-hq-address-suggestion-0` → input auto-populated to `500 Terry A Francois Blvd, San Francisco, CA 94158, USA`.
+- `tenant-hq-current` block rendered `lat 37.770697 · lng -122.386770 (geocoded 2026-07-21)`.
+- `admin@aquaterra.com` cannot see the card (super_admin gate holds).
+
+### Deferred / next
+- P1: Standby for user's next command (Expo specialist to handle mobile parity — do NOT scaffold).
+- Phase Q6 (Virtual Call Team) — DEFERRED pending Twilio credentials.
+- MP1.6 route-optimisation geocoding refactor.
+- Auto-open "Top up credits" flow when the credit chip hits the red tier.
