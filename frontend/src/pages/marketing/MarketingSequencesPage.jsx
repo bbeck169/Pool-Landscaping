@@ -25,9 +25,10 @@ const TRIGGER_LABELS = {
   segment_join: "Segment join",
 };
 
-// Triggers that M5c has yet to wire up on the backend event bus.
-// Purely a UI hint; the backend still accepts them.
-const NOT_YET_WIRED_TRIGGERS = new Set(["birthday", "segment_join"]);
+// Triggers that have no live event hook wired yet (empty after M5c —
+// every trigger fires either instantly via the event bus or via the
+// daily sweep).
+const NOT_YET_WIRED_TRIGGERS = new Set();
 
 
 export default function MarketingSequencesPage() {

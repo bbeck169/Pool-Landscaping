@@ -309,6 +309,12 @@ async def create_customer(body: CustomerIn,
         )
     except Exception:
         pass
+    # Feb-2026 · Marketing Slice M5c — drip event bus (customer_created).
+    try:
+        from services.marketing.drip_events import on_event as _drip_on_event
+        await _drip_on_event("customer_created", tenant["id"], doc["id"])
+    except Exception:
+        pass
     # Marketing M1 — mirror the new customer into the subscribers
     # collection with source="crm_customer" (already-consented).
     try:

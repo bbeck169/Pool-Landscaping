@@ -206,6 +206,13 @@ async def submit_review(
         except Exception as exc:  # pragma: no cover — logged, never blocks
             logger.warning("review %s escalation failed: %s", rid, exc)
 
+    # Feb-2026 · Marketing Slice M5c — drip event bus (review_left).
+    try:
+        from services.marketing.drip_events import on_event as _drip_on_event
+        await _drip_on_event("review_left", tenant["id"], cid)
+    except Exception:
+        pass
+
     return {
         "ok": True,
         "review_id": rid,

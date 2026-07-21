@@ -565,6 +565,15 @@ async def submit_service_report(jid: str,
         )
     except Exception:
         pass
+    # Feb-2026 · Marketing Slice M5c — drip event bus (service_completed).
+    try:
+        if job.get("customer_id"):
+            from services.marketing.drip_events import on_event as _drip_on_event
+            await _drip_on_event(
+                "service_completed", tenant["id"], job.get("customer_id"),
+            )
+    except Exception:
+        pass
     # Phase 56.20 — Auto End-of-Visit Customer Email.
     # Non-blocking: any exception is caught + logged inside the service.
     try:

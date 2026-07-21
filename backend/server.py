@@ -456,6 +456,29 @@ async def _background_seed():
         except Exception as _de:
             logger.warning(f"muted digest registration crashed: {_de}")
 
+        # Feb-2026 · Marketing Slice M5c — Drip / Nurture Sequences.
+        # Two jobs:
+        #   1. Step processor — every 5 minutes: advance every enrolment
+        #      whose next_send_at is due, record mock deliveries.
+        #   2. Daily sweep — 09:00 UTC: eval invoice_past_due_N_days,
+        #      birthday and segment_join across every tenant.
+        try:
+            from services.marketing.drip_events import (
+                sequences_tick_all_tenants,
+                daily_marketing_trigger_sweep,
+            )
+            scheduler.add_job(
+                sequences_tick_all_tenants,
+                "cron", minute="*/5",
+                id="m5_sequences_tick", replace_existing=True)
+            scheduler.add_job(
+                daily_marketing_trigger_sweep,
+                "cron", hour=9, minute=0,
+                id="m5_daily_trigger_sweep", replace_existing=True)
+            logger.info("scheduler: m5 tick (*/5 min) + daily sweep (09:00 UTC) registered")
+        except Exception as _m5e:
+            logger.warning(f"m5c scheduler registration crashed: {_m5e}")
+
         scheduler.start()
     except Exception as e:
         logger.warning(f"scheduler registration skipped: {e}")
