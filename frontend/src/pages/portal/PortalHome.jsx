@@ -17,6 +17,8 @@ import {
   Wallet,
   X as XIcon,
   Send,
+  Sparkles,
+  UserRound,
 } from "lucide-react";
 import { api } from "@/api";
 import { brandGradientCss, colors } from '@/theme';
@@ -49,6 +51,9 @@ export default function PortalHome() {
   const [summary, setSummary] = useState(null);
   // Feb-2026 · Slice 3D — Quick service-request modal.
   const [requestOpen, setRequestOpen] = useState(false);
+  // Feb-2026 · Slice 5 — customer AI carve-out (Skedra + Billy).
+  const [aiEmployees, setAiEmployees] = useState([]);
+  const [aiChat, setAiChat] = useState(null);   // { employee } or null
 
   const loadSummary = () =>
     api.get("/customer-portal/summary").then(setSummary).catch(() => setSummary(null));
@@ -57,6 +62,12 @@ export default function PortalHome() {
     api.get("/portal/home").then(setData).catch(() => setData({ counts: {} }));
     api.get("/portal/terms/status").then(setTosStatus).catch(() => {});
     loadSummary();
+    // Feb-2026 · Slice 5 — pull the two customer-audience AI
+    // employees so the "Ask AI" section can render their cards.
+    api
+      .get("/customer-portal/ai-employees")
+      .then((rows) => setAiEmployees(Array.isArray(rows) ? rows : []))
+      .catch(() => setAiEmployees([]));
     // Feb-2026 · Slice 3B — refresh the tiles when the tab regains focus
     // so a customer who paid an invoice in another tab sees the new
     // Balance Due without a full reload.
@@ -189,6 +200,68 @@ export default function PortalHome() {
         </button>
       </div>
 
+      {/* Feb-2026 · Slice 5 — Ask AI section (Skedra + Billy).
+          Renders only when the backend surfaces at least one
+          customer-audience employee (i.e. seed ran). */}
+      {aiEmployees.length > 0 ? (
+        <div className="mb-5" data-testid="portal-ai-section">
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles size={16} style={{ color: colors.brand }} />
+            <h2
+              className="text-sm font-bold uppercase tracking-wider"
+              style={{ color: colors.onSurface }}
+            >
+              Ask a concierge
+            </h2>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {aiEmployees.map((emp) => (
+              <button
+                key={emp.id}
+                onClick={() => setAiChat({ employee: emp })}
+                className="text-left rounded-2xl p-4 transition hover:brightness-95 flex items-start gap-3"
+                style={{
+                  backgroundColor: colors.surface,
+                  border: `1px solid ${colors.border}`,
+                }}
+                data-testid={`portal-ai-${emp.key}-card`}
+              >
+                <div
+                  className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 text-xl"
+                  style={{
+                    background:
+                      emp.key === "billy"
+                        ? "linear-gradient(135deg,#DCFCE7,#BBF7D0)"
+                        : "linear-gradient(135deg,#DBEAFE,#BFDBFE)",
+                    color:
+                      emp.key === "billy" ? "#166534" : "#1E3A8A",
+                  }}
+                  aria-hidden="true"
+                >
+                  {emp.avatar_emoji || "🤖"}
+                </div>
+                <div className="min-w-0">
+                  <div
+                    className="text-sm font-bold truncate"
+                    style={{ color: colors.onSurface }}
+                  >
+                    {emp.name}
+                  </div>
+                  <div
+                    className="text-xs mt-0.5 truncate"
+                    style={{ color: colors.muted }}
+                  >
+                    {emp.key === "billy"
+                      ? "Ask about your balance, invoices, and payment history."
+                      : "Ask about your visits, service history, and what's next."}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {/* Original hero + rest of the page continues below */}
       <div
         className="rounded-2xl p-6 md:p-8 mb-4 text-white relative overflow-hidden"
@@ -316,6 +389,14 @@ export default function PortalHome() {
             // up shortly after appears without a full reload.
             loadSummary();
           }}
+        />
+      ) : null}
+
+      {/* Feb-2026 · Slice 5 — Customer AI chat pane (Skedra or Billy) */}
+      {aiChat ? (
+        <CustomerAiChatPane
+          employee={aiChat.employee}
+          onClose={() => setAiChat(null)}
         />
       ) : null}
     </div>
@@ -591,6 +672,272 @@ function RequestServiceModal({ onClose, onSent }) {
           className="fixed bottom-6 right-6 z-50 px-4 py-2 rounded-xl text-sm text-white shadow-lg"
           style={{ backgroundColor: colors.onSurface }}
           data-testid="portal-request-service-toast"
+        >
+          {toast}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+// Feb-2026 · Slice 5 — Customer AI chat pane.  Modal / bottom-sheet
+// bound to one AI employee (Skedra or Billy).  Backend handles all
+// escalation logic + credit debits; this shell just renders turns and
+// exposes a manual "Handoff to human" button.
+function CustomerAiChatPane({ employee, onClose }) {
+  const [conv, setConv] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const c = await api.post(
+          `/customer-portal/ai-employees/${employee.id}/conversations`,
+          {},
+        );
+        if (!alive) return;
+        setConv(c);
+        const msgs = await api.get(
+          `/customer-portal/ai-employees/${employee.id}/conversations/${c.id}/messages`,
+        );
+        if (alive) setMessages(Array.isArray(msgs) ? msgs : []);
+      } catch {
+        if (alive) setToast("Could not open chat — please try again.");
+      }
+    })();
+    return () => { alive = false; };
+  }, [employee.id]);
+
+  const send = async (e) => {
+    e?.preventDefault?.();
+    const body = text.trim();
+    if (!body || !conv || busy) return;
+    setBusy(true);
+    setText("");
+    // Optimistic user echo — replaced by the server payload on success.
+    const stamp = new Date().toISOString();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `optimistic-${stamp}`,
+        role: "user",
+        text: body,
+        created_at: stamp,
+      },
+    ]);
+    try {
+      const r = await api.post(
+        `/customer-portal/ai-employees/${employee.id}/conversations/${conv.id}/messages`,
+        { text: body },
+      );
+      setMessages((prev) => {
+        const stripped = prev.filter((m) => !String(m.id).startsWith("optimistic-"));
+        return [...stripped, r.user_message, r.assistant_message];
+      });
+      if (r.escalated) {
+        setToast("A team member has been notified.");
+      }
+    } catch (err) {
+      setToast(err?.message || "Send failed");
+      // Remove the optimistic echo on failure.
+      setMessages((prev) =>
+        prev.filter((m) => !String(m.id).startsWith("optimistic-")),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handoff = async () => {
+    if (!conv) return;
+    setBusy(true);
+    try {
+      await api.post(
+        `/customer-portal/ai-employees/${employee.id}/conversations/${conv.id}/handoff`,
+        {},
+      );
+      setToast("Handoff sent — someone will follow up.");
+    } catch (err) {
+      setToast(err?.message || "Handoff failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      style={{ background: "rgba(15,23,42,0.55)" }}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose?.();
+      }}
+    >
+      <div
+        className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col"
+        style={{
+          backgroundColor: colors.surface,
+          border: `1px solid ${colors.border}`,
+          height: "min(92vh, 640px)",
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div
+          className="flex items-center justify-between px-5 pt-4 pb-3"
+          style={{ borderBottom: `1px solid ${colors.divider}` }}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <div
+              className="w-9 h-9 rounded-full flex items-center justify-center text-lg shrink-0"
+              style={{
+                background:
+                  employee.key === "billy"
+                    ? "linear-gradient(135deg,#DCFCE7,#BBF7D0)"
+                    : "linear-gradient(135deg,#DBEAFE,#BFDBFE)",
+              }}
+              aria-hidden="true"
+            >
+              {employee.avatar_emoji || "🤖"}
+            </div>
+            <div className="min-w-0">
+              <div
+                className="text-sm font-bold truncate"
+                style={{ color: colors.onSurface }}
+              >
+                {employee.name}
+              </div>
+              <div
+                className="text-xs truncate"
+                style={{ color: colors.muted }}
+              >
+                {employee.role}
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 rounded-lg hover:brightness-95"
+            style={{ color: colors.muted }}
+            aria-label="Close"
+            data-testid="portal-ai-close"
+          >
+            <XIcon size={18} />
+          </button>
+        </div>
+
+        {/* Thread */}
+        <div
+          className="flex-1 overflow-y-auto px-4 py-3 space-y-2"
+          data-testid="portal-ai-chat-thread"
+        >
+          {messages.length === 0 ? (
+            <div
+              className="text-xs px-1"
+              style={{ color: colors.muted }}
+              data-testid="portal-ai-chat-empty"
+            >
+              Ask a quick question — the concierge will reply straight away.
+            </div>
+          ) : null}
+          {messages.map((m) => {
+            const mine = m.role === "user";
+            return (
+              <div
+                key={m.id}
+                className={`flex ${mine ? "justify-end" : "justify-start"}`}
+                data-testid={`portal-ai-msg-${m.role}`}
+                data-escalated={m.escalated ? "1" : "0"}
+              >
+                <div
+                  className="max-w-[85%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap"
+                  style={{
+                    backgroundColor: mine
+                      ? colors.brand
+                      : colors.surfaceSecondary,
+                    color: mine ? "#fff" : colors.onSurface,
+                    borderTopLeftRadius: mine ? 16 : 4,
+                    borderTopRightRadius: mine ? 4 : 16,
+                  }}
+                >
+                  {m.text}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Composer */}
+        <form
+          onSubmit={send}
+          className="px-3 py-3 flex items-end gap-2"
+          style={{ borderTop: `1px solid ${colors.divider}` }}
+          data-testid="portal-ai-composer"
+        >
+          <textarea
+            rows={1}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send(e);
+              }
+            }}
+            placeholder={
+              employee.key === "billy"
+                ? "e.g. What's my current balance?"
+                : "e.g. When's my next visit?"
+            }
+            className="flex-1 px-3 py-2 rounded-xl text-sm outline-none resize-none"
+            style={{
+              backgroundColor: colors.surfaceSecondary,
+              color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+              maxHeight: 120,
+            }}
+            data-testid="portal-ai-composer-input"
+          />
+          <button
+            type="submit"
+            disabled={busy || !text.trim()}
+            className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
+            style={{ background: brandGradientCss }}
+            data-testid="portal-ai-composer-send"
+          >
+            <Send size={14} /> Send
+          </button>
+        </form>
+        <div className="px-4 pb-3 flex justify-between items-center">
+          <button
+            type="button"
+            onClick={handoff}
+            disabled={busy}
+            className="inline-flex items-center gap-1 text-xs font-semibold"
+            style={{ color: colors.brand }}
+            data-testid="portal-ai-handoff-btn"
+          >
+            <UserRound size={12} /> Handoff to human
+          </button>
+          <div
+            className="text-[10px]"
+            style={{ color: colors.muted }}
+          >
+            {employee.name} may make mistakes — sensitive changes go to our team.
+          </div>
+        </div>
+      </div>
+
+      {toast ? (
+        <div
+          className="fixed bottom-6 right-6 z-[60] px-4 py-2 rounded-xl text-sm text-white shadow-lg"
+          style={{ backgroundColor: colors.onSurface }}
+          data-testid="portal-ai-toast"
         >
           {toast}
         </div>

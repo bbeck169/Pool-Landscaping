@@ -74,6 +74,7 @@ from routers import (
     invoices_mp15,
     ai_employees,
     customer_portal,
+    customer_ai,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -154,7 +155,8 @@ for module in [notifications_router,
                properties,
                invoices_mp15,
                ai_employees,
-               customer_portal]:
+               customer_portal,
+               customer_ai]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue

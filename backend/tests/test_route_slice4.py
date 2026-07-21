@@ -334,6 +334,24 @@ def test_resolve_stop_geo_direct(seed):
     from services.stop_geo import resolve_stop_geo
 
     async def _go():
+        # Reset the shared Motor client so it re-binds to the current
+        # loop.  Without this, running this test after any other test
+        # that used a different loop (e.g. Slice-5's context isolation
+        # test) fails with "attached to a different loop".
+        import os
+        import config as _cfg
+        try:
+            _cfg.client.close()
+        except Exception:
+            pass
+        from motor.motor_asyncio import AsyncIOMotorClient
+        _cfg.client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+        _cfg.db = _cfg.client[os.environ["DB_NAME"]]
+        # Re-bind ``db`` inside services.stop_geo which captured the
+        # old reference at import time.
+        import services.stop_geo as _sg
+        _sg.db = _cfg.db
+
         # property-A stop
         stop = {"property_id": seed["pid_a"]}
         r = await resolve_stop_geo(stop, seed["tenant_id"])

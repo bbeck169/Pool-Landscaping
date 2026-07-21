@@ -87,9 +87,61 @@ DEFAULT_EMPLOYEES: List[Dict[str, Any]] = [
          "scheduling. (Ships in slice AE4.)"
      )},
     {"key": "commet", "name": "Commet", "role": "Funnels",          "avatar_emoji": "🚀",
+     "audience": "admin",
      "system_prompt": (
          "You are Commet, a minimal funnel/landing-page builder. Draft "
          "copy + CTAs, propose sections. (Ships in slice AE4.)"
+     )},
+    # ─── Feb-2026 · Slice 5 · Customer-facing AI carve-out ─────────
+    # These two employees are surfaced ONLY on the customer portal.
+    # They are read-only (no action queue), tenant-credit-billed like
+    # admin AI, and escalate to the human admin group when they hit
+    # anything outside their read-only lookup scope.
+    {"key": "skedra", "name": "Skedra", "role": "Scheduling concierge",
+     "audience": "customer", "avatar_emoji": "📅",
+     "system_prompt": (
+         "You are Skedra, a scheduling concierge for a homeowner using "
+         "this pool + landscaping company's portal. You have read-only "
+         "access to the CALLER CUSTOMER's own scheduling data ONLY — "
+         "their upcoming visits, past service history, and the service "
+         "types offered at their properties. "
+         "Rules you must obey:\n"
+         "1. Answer only questions about scheduling — visit dates, "
+         "which service is next, what was performed last time, when "
+         "the tech is likely to arrive.\n"
+         "2. NEVER reveal, invent, or infer data about any other "
+         "customer, the tenant's staff, aggregate metrics, or "
+         "financial details. If asked, refuse politely.\n"
+         "3. NEVER commit to rescheduling, cancelling, or booking a "
+         "visit yourself. When the customer asks for a change, reply "
+         "with: \"I'll ask our team to reach out about this.\" and "
+         "then escalate.\n"
+         "4. If the answer isn't in the context payload, say so and "
+         "offer to escalate.\n"
+         "5. Keep replies short and warm — 1-3 sentences, no jargon."
+     )},
+    {"key": "billy", "name": "Billy", "role": "Billing concierge",
+     "audience": "customer", "avatar_emoji": "💳",
+     "system_prompt": (
+         "You are Billy, a billing concierge for a homeowner using "
+         "this pool + landscaping company's portal. You have read-only "
+         "access to the CALLER CUSTOMER's own billing data ONLY — "
+         "current balance, past-due amount, prepayment credit, the "
+         "last few invoices (summary), when the next payment is due, "
+         "and which payment methods are on file (masked). "
+         "Rules you must obey:\n"
+         "1. Answer only questions about that customer's billing.\n"
+         "2. NEVER quote, imply, or invent numbers for any other "
+         "customer, tenant aggregates, or admin-only fields like "
+         "cost/margin.\n"
+         "3. NEVER take a payment or promise a refund yourself. When "
+         "the customer wants to pay by phone, update a card, dispute "
+         "a charge, or apply a discount, reply: \"I'll flag this to "
+         "our billing team.\" and then escalate.\n"
+         "4. If the context payload doesn't contain the answer, say "
+         "so and offer to escalate.\n"
+         "5. Keep replies short and clear — 1-3 sentences, currency "
+         "formatted as $X.XX."
      )},
 ]
 
@@ -226,19 +278,35 @@ def _strip(doc: Optional[dict]) -> Optional[dict]:
 async def seed_ai_employees_for_tenant(tenant_id: str) -> int:
     """Idempotent per-tenant seed. Never overwrites an existing row —
     admins can rename/customize each employee freely and their edits
-    survive re-seeding. Returns the number of freshly inserted rows."""
+    survive re-seeding. Returns the number of freshly inserted rows.
+
+    Feb-2026 · Slice 5 — every doc now carries an ``audience`` field
+    (``"admin"`` or ``"customer"``). Existing rows without the field
+    are lazily backfilled to ``"admin"`` since every pre-Slice-5
+    employee is admin-only.
+    """
     n = 0
     for e in DEFAULT_EMPLOYEES:
+        audience = e.get("audience", "admin")
         exists = await db.ai_employees.find_one(
-            {"tenant_id": tenant_id, "key": e["key"]}, {"_id": 0, "id": 1},
+            {"tenant_id": tenant_id, "key": e["key"]},
+            {"_id": 0, "id": 1, "audience": 1},
         )
         if exists:
+            # Backfill the ``audience`` field on legacy rows.
+            if not exists.get("audience"):
+                await db.ai_employees.update_one(
+                    {"id": exists["id"]},
+                    {"$set": {"audience": audience,
+                              "updated_at": now_iso()}},
+                )
             continue
         doc = {
             "id": new_id(), "tenant_id": tenant_id, "key": e["key"],
             "name": e["name"], "role": e["role"],
             "avatar_emoji": e["avatar_emoji"],
             "system_prompt": e["system_prompt"],
+            "audience": audience,
             "active": True,
             "created_at": now_iso(), "updated_at": now_iso(),
         }
@@ -305,7 +373,8 @@ def _brand_brain_summary(bb: Dict[str, Any]) -> str:
     return "\n".join(parts) if parts else "(no brand brain content yet)"
 
 
-async def _get_employee(tenant_id: str, eid: str) -> Dict[str, Any]:
+async def _get_employee(tenant_id: str, eid: str,
+                          expected_audience: Optional[str] = None) -> Dict[str, Any]:
     emp = await db.ai_employees.find_one(
         {"id": eid, "tenant_id": tenant_id}, {"_id": 0}
     )
@@ -313,6 +382,15 @@ async def _get_employee(tenant_id: str, eid: str) -> Dict[str, Any]:
         raise HTTPException(404, "AI employee not found")
     if not emp.get("active", True):
         raise HTTPException(400, "AI employee is disabled")
+    # Feb-2026 · Slice 5 — enforce audience boundaries. Admin routes
+    # pass ``expected_audience="admin"`` (rejecting Skedra/Billy);
+    # customer-portal routes pass ``expected_audience="customer"``
+    # (rejecting Casey/Emmie/Buddy/etc). Legacy rows without an
+    # ``audience`` field default to ``"admin"``.
+    if expected_audience is not None:
+        actual = emp.get("audience") or "admin"
+        if actual != expected_audience:
+            raise HTTPException(403, "AI employee not available in this scope")
     return emp
 
 
@@ -354,8 +432,15 @@ async def list_employees(user: dict = Depends(require_admin),
                           tenant: dict = Depends(get_current_tenant)):
     # Lazy seed for pods provisioned before AE1 shipped.
     await seed_ai_employees_for_tenant(tenant["id"])
+    # Feb-2026 · Slice 5 — only surface ``audience: "admin"`` rows on
+    # the admin Dock. Skedra + Billy are customer-portal-only.
     rows = await db.ai_employees.find(
-        {"tenant_id": tenant["id"]}, {"_id": 0}
+        {"tenant_id": tenant["id"],
+         "$or": [
+             {"audience": "admin"},
+             {"audience": {"$exists": False}},   # legacy rows default to admin
+         ]},
+        {"_id": 0},
     ).sort("created_at", 1).to_list(50)
     return rows
 
@@ -380,7 +465,7 @@ async def list_actions(status: Optional[str] = None,
 async def get_employee(eid: str,
                         user: dict = Depends(require_admin),
                         tenant: dict = Depends(get_current_tenant)):
-    return await _get_employee(tenant["id"], eid)
+    return await _get_employee(tenant["id"], eid, expected_audience="admin")
 
 
 @router.patch("/ai-employees/{eid}")
@@ -389,7 +474,7 @@ async def patch_employee(eid: str, body: EmployeePatch,
                           tenant: dict = Depends(get_current_tenant)):
     updates = {k: v for k, v in body.dict(exclude_unset=True).items()}
     if not updates:
-        return await _get_employee(tenant["id"], eid)
+        return await _get_employee(tenant["id"], eid, expected_audience="admin")
     updates["updated_at"] = now_iso()
     r = await db.ai_employees.update_one(
         {"id": eid, "tenant_id": tenant["id"]}, {"$set": updates},
@@ -428,7 +513,7 @@ async def patch_brand_brain(body: BrandBrainPatch,
 async def list_conversations(eid: str,
                               user: dict = Depends(require_admin),
                               tenant: dict = Depends(get_current_tenant)):
-    await _get_employee(tenant["id"], eid)
+    await _get_employee(tenant["id"], eid, expected_audience="admin")
     rows = await db.ai_employee_conversations.find(
         {"tenant_id": tenant["id"], "employee_id": eid,
           "user_id": user["id"]},
@@ -441,7 +526,7 @@ async def list_conversations(eid: str,
 async def create_conversation(eid: str, body: ConversationCreate,
                                 user: dict = Depends(require_admin),
                                 tenant: dict = Depends(get_current_tenant)):
-    await _get_employee(tenant["id"], eid)
+    await _get_employee(tenant["id"], eid, expected_audience="admin")
     doc = {
         "id": new_id(), "tenant_id": tenant["id"],
         "employee_id": eid, "user_id": user["id"],
@@ -487,7 +572,7 @@ async def send_message(eid: str, cid: str, body: MessageIn,
     pending-approval action row (in addition to the plain assistant
     reply). Chat sends debit ``CHAT_MSG_COST``; action drafts debit
     ``HEAVY_ACTION_COST`` on top."""
-    emp = await _get_employee(tenant["id"], eid)
+    emp = await _get_employee(tenant["id"], eid, expected_audience="admin")
     conv = await _load_conversation(tenant["id"], eid, cid, user["id"])
 
     # 1) Persist the user turn.
