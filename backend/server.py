@@ -88,6 +88,9 @@ from routers import (
     portal_walkthrough,
     job_media_line_items,
     workstream_job_detail,
+    resend_webhooks,
+    portal_referrals,
+    invoice_viewer,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -182,7 +185,10 @@ for module in [notifications_router,
                marketing_forms,
                portal_walkthrough,
                job_media_line_items,
-               workstream_job_detail]:
+               workstream_job_detail,
+               resend_webhooks,
+               portal_referrals,
+               invoice_viewer]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue

@@ -49,6 +49,32 @@ PHOTO_LIMIT = 10
 VIDEO_LIMIT = 3
 
 
+# Deep-scrub key set. Any dict encountered under the tech payload has
+# these keys popped, no matter how deeply nested. This is the last
+# line of defence for the tech-pricing invariant (Slice K2 + M5). Add
+# to the tuple below if a new admin-only field is introduced anywhere
+# in the aggregator response tree.
+_TECH_DEEP_HIDDEN_KEYS = (
+    "price", "cost", "total", "subtotal", "tax_rate", "tax_amount",
+    "revenue", "invoice_total", "quote_total", "margin", "labor_cost",
+    "materials_cost", "gross_margin", "job_totals", "unit_price",
+    "internal_notes",
+)
+
+
+def _scrub_tech_deep(node):
+    """Recursively strip every admin-only field from ``node``. Mutates
+    lists/dicts in place; scalars are returned untouched."""
+    if isinstance(node, dict):
+        for k in _TECH_DEEP_HIDDEN_KEYS:
+            node.pop(k, None)
+        for v in node.values():
+            _scrub_tech_deep(v)
+    elif isinstance(node, list):
+        for item in node:
+            _scrub_tech_deep(item)
+
+
 def _is_admin(user: dict) -> bool:
     return user.get("role") in ("admin", "super_admin")
 
@@ -312,11 +338,11 @@ async def get_job_detail(
         "timeline": timeline,
     }
 
-    # Belt-and-braces: strip any pricing that leaked into the header
-    # from legacy job fields. The header builder above already doesn't
-    # copy them, but this makes tampering with the spec cost-free.
+    # Belt-and-braces: recursively scrub every admin-only field from
+    # the ENTIRE payload tree for techs — header, forms, timeline,
+    # notes, everything. This is the last line of defence; per-section
+    # projection above is the first.
     if _is_tech(user):
-        for k in _TECH_HIDDEN_JOB_FIELDS:
-            payload["header"].pop(k, None)
+        _scrub_tech_deep(payload)
 
     return payload

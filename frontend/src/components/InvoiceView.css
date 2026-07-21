@@ -1,0 +1,228 @@
+/* Slice Q · InvoiceView layout — mirrors the Vistancia stub-style PDF.
+   Scoped to .iv-* to avoid clashing with global styles. */
+
+.iv-shell {
+  max-width: 850px;
+  margin: 0 auto;
+  padding: 12px 16px;
+  color: #0F172A;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+.iv-toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0 12px;
+  justify-content: flex-end;
+}
+.iv-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #E2E8F0;
+  background: #FFFFFF;
+  color: #0F172A;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+.iv-btn:hover { filter: brightness(0.97); }
+.iv-btn-primary {
+  background: #0EA5E9;
+  border-color: #0EA5E9;
+  color: #FFFFFF;
+}
+
+.iv-doc {
+  background: #FFFFFF;
+  padding: 32px 40px;
+  border: 1px solid #E5E7EB;
+  border-radius: 4px;
+}
+
+.iv-header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 32px;
+  align-items: start;
+}
+.iv-header-left { font-size: 13px; line-height: 1.5; }
+.iv-company-name {
+  font-weight: 800;
+  font-size: 15px;
+  margin-bottom: 4px;
+}
+.iv-company-addr { white-space: pre-wrap; }
+
+.iv-header-right { text-align: right; }
+.iv-title {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 40px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: #0F172A;
+  letter-spacing: -0.5px;
+}
+.iv-kv {
+  border-collapse: collapse;
+  margin-left: auto;
+  font-size: 12px;
+}
+.iv-kv td { padding: 2px 0; }
+.iv-kv-label {
+  padding-right: 16px !important;
+  color: #6B7280;
+  text-align: right;
+}
+.iv-kv-value {
+  font-weight: 700;
+  min-width: 100px;
+  text-align: right;
+}
+
+.iv-divider {
+  border-bottom: 1px solid #111827;
+  margin: 16px 0 20px;
+}
+
+.iv-bill-to { font-size: 13px; line-height: 1.5; margin-bottom: 16px; }
+.iv-bill-name { font-weight: 800; font-size: 15px; }
+.iv-bill-addr { white-space: pre-wrap; }
+
+.iv-prop-addr {
+  font-size: 13px;
+  margin: 8px 0 16px;
+}
+
+.iv-lines-wrap {
+  overflow-x: auto;
+  margin-bottom: 20px;
+}
+.iv-lines {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.iv-lines thead th {
+  background: #F3F4F6;
+  color: #374151;
+  text-align: left;
+  padding: 8px 10px;
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-bottom: 2px solid #E5E7EB;
+}
+.iv-lines tbody td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #F3F4F6;
+  vertical-align: top;
+}
+.iv-num { text-align: right; }
+.iv-empty { text-align: center; color: #9CA3AF; padding: 24px !important; }
+
+.iv-totals-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 24px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+.iv-notes {
+  background: #F9FAFB;
+  border: 1px solid #E5E7EB;
+  border-radius: 6px;
+  padding: 12px 16px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.iv-notes-title { font-weight: 800; margin-bottom: 4px; }
+.iv-notes-body { color: #374151; }
+.iv-totals {
+  border-collapse: collapse;
+  min-width: 240px;
+  font-size: 12.5px;
+}
+.iv-totals td {
+  padding: 4px 12px;
+}
+.iv-totals td:first-child { color: #6B7280; }
+.iv-totals td:last-child {
+  text-align: right;
+  font-weight: 700;
+  min-width: 110px;
+}
+.iv-total-due td {
+  border-top: 1.5px solid #111827;
+  padding-top: 8px !important;
+  font-weight: 800;
+  font-size: 14px;
+  color: #0F172A;
+}
+.iv-total-due td:first-child { color: #0F172A; }
+
+.iv-due-marker {
+  text-align: right;
+  color: #B91C1C;
+  font-weight: 800;
+  font-size: 15px;
+  margin: 8px 0 24px;
+}
+
+.iv-stub-divider {
+  border-top: 1px dashed #6B7280;
+  margin: 32px 0 20px;
+}
+.iv-stub-title {
+  font-weight: 800;
+  letter-spacing: 1px;
+  margin-bottom: 12px;
+}
+.iv-stub-cols {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 24px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.iv-stub-right { border-collapse: collapse; min-width: 260px; }
+.iv-stub-right td {
+  padding: 3px 12px;
+  border-bottom: 1px solid #F3F4F6;
+}
+.iv-stub-right td:first-child { color: #6B7280; }
+.iv-stub-right td:last-child { text-align: right; font-weight: 700; }
+
+.iv-link {
+  color: #0369A1;
+  text-decoration: underline;
+}
+.iv-link:hover { color: #075985; }
+
+/* Print rules */
+@media print {
+  body { background: #FFFFFF; }
+  .iv-toolbar { display: none !important; }
+  .iv-shell { padding: 0; max-width: none; }
+  .iv-doc { border: none; padding: 0; }
+  /* Reasonable page break inside stub */
+  .iv-stub { page-break-inside: avoid; }
+}
+
+/* Printable variant — same as print media, but forced for viewport render. */
+.iv-printable .iv-toolbar { display: none; }
+.iv-printable .iv-doc { border: none; padding: 24px 0; }
+
+/* Narrow screens */
+@media (max-width: 640px) {
+  .iv-doc { padding: 20px 16px; }
+  .iv-header { grid-template-columns: 1fr; }
+  .iv-header-right { text-align: left; }
+  .iv-kv { margin-left: 0; }
+  .iv-title { font-size: 32px; }
+  .iv-totals-row { grid-template-columns: 1fr; }
+  .iv-stub-cols { grid-template-columns: 1fr; }
+}

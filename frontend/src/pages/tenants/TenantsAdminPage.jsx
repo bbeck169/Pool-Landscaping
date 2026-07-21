@@ -250,6 +250,8 @@ export function TenantBrandSettings() {
       {/* Feb-2026 · HQ Location — super-admin only. The rest of the
           page above is admin-visible, so we self-gate this card. */}
       <HqLocationCard />
+      {/* Slice O1 · Support phone number surfaced on the customer portal. */}
+      <SupportPhoneCard />
       {/* Feb-2026 · Slice 6 · Google Review URL — super-admin only. */}
       <GoogleReviewUrlCard />
       {/* Feb-2026 · Slice GH0 · Website Widget config — super-admin only. */}
@@ -861,3 +863,143 @@ function GoogleReviewUrlCard() {
   );
 }
 
+
+
+// Slice O1 · Super-admin card to edit the tenant support_phone_number.
+// Reads/writes ``/api/tenants/mine/public-config`` (GET) and the
+// ``/api/tenants/mine/support-phone`` PATCH.  Non-super-admins never
+// see this card — matches the HQ + Google review card pattern above.
+function SupportPhoneCard() {
+  const [me, setMe] = React.useState(null);
+  const [value, setValue] = React.useState("");
+  const [current, setCurrent] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [toast, setToast] = React.useState("");
+
+  React.useEffect(() => {
+    api.get("/auth/me").then(setMe).catch(() => setMe({}));
+  }, []);
+
+  const isSuper = me && me.role === "super_admin";
+
+  React.useEffect(() => {
+    if (!isSuper) return;
+    api.get("/tenants/mine/public-config").then((r) => {
+      setCurrent(r?.support_phone_number || "");
+      setValue(r?.support_phone_number || "");
+    }).catch(() => setCurrent(""));
+  }, [isSuper]);
+
+  if (!me || !isSuper) return null;
+
+  const save = async () => {
+    setError("");
+    setBusy(true);
+    try {
+      const r = await api.request("/tenants/mine/support-phone", {
+        method: "PATCH",
+        body: JSON.stringify({ support_phone_number: value || null }),
+      });
+      setCurrent(r?.support_phone_number || "");
+      setToast("Support phone saved");
+      setTimeout(() => setToast(""), 2500);
+    } catch (e) {
+      setError(e.message || "Failed to save");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clear = async () => {
+    setValue("");
+    setError("");
+    setBusy(true);
+    try {
+      await api.request("/tenants/mine/support-phone", {
+        method: "PATCH",
+        body: JSON.stringify({ support_phone_number: null }),
+      });
+      setCurrent("");
+      setToast("Support phone cleared");
+      setTimeout(() => setToast(""), 2500);
+    } catch (e) {
+      setError(e.message || "Failed to clear");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-6" data-testid="tenant-support-phone-card">
+      <div
+        className="rounded-2xl p-5"
+        style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+      >
+        <div className="text-sm font-bold uppercase tracking-wider mb-2" style={{ color: colors.onSurface }}>
+          Customer Support Phone
+        </div>
+        <p className="text-xs mb-4" style={{ color: colors.muted }}>
+          Powers the "Call Now" button on the customer portal. Leave empty to hide it. Super-admin only.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2 items-stretch">
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="+16028874400 or (602) 887-4400"
+            className="flex-1 min-w-0 px-3 py-2 rounded-lg text-sm outline-none"
+            style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
+            data-testid="tenant-support-phone-input"
+          />
+          <button
+            onClick={save}
+            disabled={busy}
+            className="px-4 py-2 rounded-lg text-sm font-bold text-white shrink-0"
+            style={{ background: colors.brand, opacity: busy ? 0.6 : 1 }}
+            data-testid="tenant-support-phone-save-btn"
+          >
+            {busy ? "Saving…" : "Save"}
+          </button>
+          {current ? (
+            <button
+              onClick={clear}
+              disabled={busy}
+              className="px-3 py-2 rounded-lg text-xs font-semibold shrink-0"
+              style={{ border: `1px solid ${colors.border}`, background: "#fff", color: colors.muted }}
+              data-testid="tenant-support-phone-clear-btn"
+            >
+              Clear
+            </button>
+          ) : null}
+        </div>
+        {current ? (
+          <div
+            className="mt-3 rounded-lg px-3 py-2 text-xs"
+            style={{ background: colors.surfaceSecondary, color: colors.onSurfaceSecondary }}
+            data-testid="tenant-support-phone-current"
+          >
+            Currently stored: <b>{current}</b>
+          </div>
+        ) : null}
+        {error ? (
+          <div
+            className="mt-3 text-sm"
+            style={{ color: colors.error }}
+            data-testid="tenant-support-phone-error"
+          >
+            {error}
+          </div>
+        ) : null}
+        {toast ? (
+          <div
+            className="fixed bottom-6 right-6 z-50 px-4 py-2 rounded-xl text-sm text-white shadow-lg"
+            style={{ backgroundColor: colors.onSurface }}
+            data-testid="tenant-support-phone-toast"
+          >
+            {toast}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}

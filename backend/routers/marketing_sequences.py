@@ -362,6 +362,32 @@ async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, i
         if step["channel"] == "sms":
             body = strip_html(body)
         delivery_id = new_id()
+        # Slice N · route email sends through Resend adapter.  SMS
+        # remains on the legacy mock path until an SMS adapter lands.
+        provider_status = None
+        provider = "mock"
+        provider_response_id = None
+        attempts = 0
+        if step["channel"] == "email":
+            recipient = (cust.get("email") or "").strip()
+            try:
+                from services.email.resend_adapter import send as _resend_send
+                res = await _resend_send(
+                    to=recipient,
+                    subject=subj,
+                    html=body,
+                    category="drip",
+                    tenant_id=e["tenant_id"],
+                    customer_id=e["customer_id"],
+                    idempotency_key=f"drip:{e['id']}:{step_idx}",
+                )
+                provider = res.get("provider") or "mock"
+                provider_status = res.get("provider_status")
+                provider_response_id = res.get("provider_response_id")
+                attempts = res.get("attempts") or 0
+            except Exception as exc:  # pragma: no cover
+                logger.warning("[m5c] resend adapter failed: %s", exc)
+                provider_status = "failed"
         await db.marketing_deliveries.insert_one({
             "id": delivery_id,
             "tenant_id": e["tenant_id"],
@@ -373,7 +399,11 @@ async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, i
             "template_id": step["template_id"],
             "subject_rendered": subj if step["channel"] == "email" else None,
             "body_rendered": body,
-            "mock": True,
+            "mock": provider == "mock",
+            "provider": provider,
+            "provider_status": provider_status,
+            "provider_response_id": provider_response_id,
+            "attempts": attempts,
             "sent_at": now.isoformat(),
             "provider_response_stub": {"ok": True, "id": f"mock-{delivery_id[:8]}"},
         })

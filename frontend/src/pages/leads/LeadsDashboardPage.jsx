@@ -28,8 +28,12 @@ const SOURCE_LABEL = (src) => {
   if (!src) return "—";
   if (src === "chat_widget") return "Chat widget";
   if (src.startsWith("form:")) return `Form · ${src.slice(5)}`;
+  if (src.startsWith("referral_from_customer:")) return "Referral";
   return src;
 };
+
+const isReferral = (l) =>
+  typeof l?.source === "string" && l.source.startsWith("referral_from_customer:");
 
 export default function LeadsDashboardPage() {
   const [rows, setRows] = useState([]);
@@ -56,6 +60,7 @@ export default function LeadsDashboardPage() {
         if (filters.source === "form" && !(l.source || "").startsWith("form:")) return false;
         if (filters.source === "manual"
             && (l.source && l.source !== "manual" && l.source !== "")) return false;
+        if (filters.source === "referral" && !isReferral(l)) return false;
       }
       if (q) {
         const hay = `${l.name || ""} ${l.email || ""} ${l.phone || ""}`.toLowerCase();
@@ -102,7 +107,8 @@ export default function LeadsDashboardPage() {
           <option value="chat_widget">Chat widget</option>
           <option value="form">Any form</option>
           <option value="manual">Manual</option>
-          {sources.filter((s) => !["chat_widget", "form", "manual"].includes(s)).map((s) => (
+          <option value="referral">Referrals only</option>
+          {sources.filter((s) => !["chat_widget", "form", "manual"].includes(s) && !s.startsWith("referral_from_customer:")).map((s) => (
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
@@ -162,6 +168,27 @@ export default function LeadsDashboardPage() {
                     style={{ background: "#F1F5F9", color: "#475569" }}>
                 {SOURCE_LABEL(l.source)}
               </span>
+              {isReferral(l) ? (
+                <span
+                  className="ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase"
+                  style={{ background: "#FEF3C7", color: "#92400E" }}
+                  data-testid={`lead-referral-badge-${l.id}`}
+                  title={l.referrer_customer_name
+                    ? `Referred by ${l.referrer_customer_name}`
+                    : "Referred by an existing customer"}
+                >
+                  Referral
+                </span>
+              ) : null}
+              {l.duplicate_of_existing_contact ? (
+                <span
+                  className="ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase"
+                  style={{ background: "#FEE2E2", color: "#991B1B" }}
+                  title="This contact matches an existing customer or a recent lead."
+                >
+                  Dup
+                </span>
+              ) : null}
             </div>
             <div className="col-span-2">
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
@@ -240,6 +267,36 @@ function LeadDetailDrawer({ lead, onClose, onUpdated }) {
             {lead.phone && <div><b>Phone:</b> {lead.phone}</div>}
             {lead.address && <div><b>Address:</b> {lead.address}</div>}
           </div>
+
+          {isReferral(lead) ? (
+            <div
+              className="mb-4 p-3 rounded-lg text-sm"
+              style={{ background: "#FEF3C7", border: "1px solid #FCD34D" }}
+              data-testid="lead-referrer-info"
+            >
+              <div className="text-[10px] font-bold uppercase" style={{ color: "#92400E" }}>
+                Referred by
+              </div>
+              <div className="font-semibold mt-0.5" style={{ color: "#92400E" }}>
+                {lead.referrer_customer_name || "Existing customer"}
+              </div>
+              {lead.referrer_customer_id ? (
+                <a
+                  href={`/customers/${lead.referrer_customer_id}`}
+                  className="text-xs font-semibold underline"
+                  style={{ color: "#78350F" }}
+                  data-testid="lead-referrer-link"
+                >
+                  Open referrer's profile →
+                </a>
+              ) : null}
+              {lead.service_of_interest ? (
+                <div className="text-xs mt-1" style={{ color: "#78350F" }}>
+                  Interested in: <b>{lead.service_of_interest}</b>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           {lead.meta && Object.keys(lead.meta).length > 0 && (
             <details className="mb-4 text-sm">

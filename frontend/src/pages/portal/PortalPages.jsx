@@ -16,6 +16,7 @@ import {
 import { api } from "@/api";
 import { colors, money } from "@/theme";
 import { useAuth } from "@/auth";
+import InvoiceView from "@/components/InvoiceView";
 import {
   PageHeader,
   Button,
@@ -195,6 +196,8 @@ export function PortalInvoices() {
 export function PortalInvoiceDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const printable = params.get("format") === "printable";
   const [doc, setDoc] = useState(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
@@ -213,47 +216,32 @@ export function PortalInvoiceDetail() {
     }
   };
 
-  if (!doc) return <div className="max-w-2xl mx-auto p-6"><Skeleton style={{ height: 200 }} /></div>;
-  const balance = Math.max(0, Number(doc.total || 0) - Number(doc.amount_paid || 0));
+  const balance = doc
+    ? Math.max(0, Number(doc.total || 0) - Number(doc.amount_paid || 0))
+    : 0;
+
   return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-inv-detail">
-      <button onClick={() => navigate("/portal/invoices")} className="flex items-center gap-1 text-sm font-semibold mb-4" style={{ color: colors.muted }}>
-        <ArrowLeft size={14} /> My invoices
-      </button>
-      <div className="rounded-2xl p-6 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
-        <Chip label={doc.payment_status || "unpaid"} tone={doc.payment_status === "paid" ? "success" : "danger"} />
-        <h1 className="text-2xl font-bold mt-2" style={{ color: colors.onSurface }}>{doc.title}</h1>
-        <div className="text-3xl font-bold mt-2" style={{ color: colors.brand }}>{money(doc.total)}</div>
-        <div className="text-sm mt-1" style={{ color: colors.muted }}>Balance {money(balance)}</div>
-        {balance > 0 ? (
-          <Button onClick={pay} disabled={busy} testid="port-pay" className="mt-4">
-            <CreditCard size={16} /> {busy ? "Redirecting…" : "Pay online (Stripe)"}
-          </Button>
-        ) : null}
-      </div>
-      <div className="rounded-2xl p-5" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
-        <h3 className="font-bold mb-2" style={{ color: colors.onSurface }}>Line items</h3>
-        <table className="w-full text-sm">
-          <tbody>
-            {(doc.line_items || []).map((li, i) => (
-              <tr key={i} style={{ borderBottom: `1px solid ${colors.divider}` }}>
-                <td className="py-2">{li.description}</td>
-                <td className="py-2 text-right" style={{ color: colors.muted }}>{li.quantity} × {money(li.unit_price)}</td>
-                <td className="py-2 text-right font-semibold">{money((li.quantity || 0) * (li.unit_price || 0))}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="rounded-2xl p-5 mt-3" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-           data-testid="portal-invoice-terms">
-        <h3 className="font-bold mb-2" style={{ color: colors.onSurface }}>Terms &amp; Conditions</h3>
-        {(doc.terms || "").trim() ? (
-          <p className="text-sm whitespace-pre-wrap" style={{ color: colors.onSurface }}>{doc.terms}</p>
-        ) : (
-          <p className="text-sm italic" style={{ color: colors.muted }}>No terms provided.</p>
-        )}
-      </div>
+    <div
+      className={printable ? "" : "max-w-4xl mx-auto px-2 sm:px-4 lg:px-6 py-4"}
+      data-testid="portal-inv-detail"
+    >
+      {!printable ? (
+        <div className="max-w-4xl mx-auto flex items-center justify-between mb-3 px-2">
+          <button
+            onClick={() => navigate("/portal/invoices")}
+            className="flex items-center gap-1 text-sm font-semibold"
+            style={{ color: colors.muted }}
+          >
+            <ArrowLeft size={14} /> My invoices
+          </button>
+          {doc && balance > 0 ? (
+            <Button onClick={pay} disabled={busy} testid="port-pay">
+              <CreditCard size={16} /> {busy ? "Redirecting…" : `Pay ${money(balance)}`}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      <InvoiceView invoiceId={id} printable={printable} />
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );

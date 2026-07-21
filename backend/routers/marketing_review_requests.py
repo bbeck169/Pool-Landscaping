@@ -602,6 +602,31 @@ async def _deliver(rr: Dict[str, Any], now: datetime) -> None:
     if rr["channel"] == "sms":
         body = strip_html(body)
     delivery_id = new_id()
+    # Slice N · Resend adapter for email review-requests. SMS falls
+    # through to the mock path until an SMS adapter lands.
+    provider_status = None
+    provider = "mock"
+    provider_response_id = None
+    attempts = 0
+    if rr["channel"] == "email":
+        try:
+            from services.email.resend_adapter import send as _resend_send
+            res = await _resend_send(
+                to=(cust.get("email") or "").strip(),
+                subject=subj,
+                html=body,
+                category="review_request",
+                tenant_id=rr["tenant_id"],
+                customer_id=rr["customer_id"],
+                idempotency_key=f"m6:{rr['id']}",
+            )
+            provider = res.get("provider") or "mock"
+            provider_status = res.get("provider_status")
+            provider_response_id = res.get("provider_response_id")
+            attempts = res.get("attempts") or 0
+        except Exception as exc:  # pragma: no cover
+            logger.warning("[m6] resend adapter failed: %s", exc)
+            provider_status = "failed"
     await db.marketing_deliveries.insert_one({
         "id": delivery_id,
         "tenant_id": rr["tenant_id"],
@@ -614,7 +639,11 @@ async def _deliver(rr: Dict[str, Any], now: datetime) -> None:
         "template_id": rr.get("template_id"),
         "subject_rendered": subj if rr["channel"] == "email" else None,
         "body_rendered": body,
-        "mock": True,
+        "mock": provider == "mock",
+        "provider": provider,
+        "provider_status": provider_status,
+        "provider_response_id": provider_response_id,
+        "attempts": attempts,
         "sent_at": now.isoformat(),
         "provider_response_stub": {"ok": True, "id": f"mock-{delivery_id[:8]}"},
     })

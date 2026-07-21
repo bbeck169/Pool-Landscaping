@@ -26,6 +26,8 @@ import { brandGradientCss, colors } from '@/theme';
 import { useAuth } from "@/auth";
 import { Skeleton, StatusPill } from '@/components/ui-kit';
 import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
+import CallNowButton from "@/pages/portal/CallNowButton";
+import ReferralSection from "@/pages/portal/ReferralSection";
 
 const money = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
@@ -118,6 +120,11 @@ export default function PortalHome() {
           </button>
         </div>
       ) : null}
+
+      {/* Slice O1 · Call Now CTA — prominent above the balance tiles. */}
+      <div className="mb-4 flex justify-center sm:justify-start">
+        <CallNowButton />
+      </div>
 
       {/* Feb-2026 · Slice 3B — Account tiles: Balance Due · Past Due ·
           Credit · Next Service. Rendered before the hero so the numbers
@@ -291,6 +298,9 @@ export default function PortalHome() {
           <ActionTile icon={Star} label="Leave a Review" tone="#F59E0B" onClick={() => navigate("/portal/reviews")} testid="portal-reviews-tab" />
         </div>
       </div>
+
+      {/* Slice O2 · Refer a Friend section. */}
+      <ReferralSection />
 
       {/* Last visit */}
       {data?.last_visit ? (

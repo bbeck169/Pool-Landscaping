@@ -6295,3 +6295,22 @@ The user is looking at the Workstream **events** page. The events collection onl
 
 Held for next sub-slice ping — will ship as its own delta after user greenlight on the plan above.
 
+
+## Slices M + K-frontend + N + O + Q — Multi-slice ship (Feb 2026)
+
+### What shipped
+- **Slice M** — `GET /api/workstream/jobs` aggregator (filters/sort/media summary) + `GET /api/jobs/{id}/detail` 7-section aggregator + WorkstreamPage.jsx UI (filter bar, sort dropdown, chips, thumbnails, clickable cards). Recursive tech-pricing deep-scrubber added in `workstream_job_detail.py` after P0 regression flag from testing agent.
+- **Slice K frontend** — Line Items section (K2) + 10-image / 3-video counter chips (K1) on Job Detail. Server-projected pricing invariant preserved.
+- **Slice N** — `services/email/resend_adapter.py` (retry+backoff, category suppression, idempotency key) + M5c drip and M6 review-request wire-up + `/api/webhooks/resend` receiver (svix signature verify + auto-suppress bounces/complaints) + `/api/dev/email-smoke-test`. Real Resend API key wired.
+- **Slice O** — `GET /api/tenants/mine/public-config` + `PATCH /api/tenants/mine/support-phone` (super-admin) + Portal Call Now CTA + Refer a Friend section + admin leads dashboard REFERRAL badge + filter + `POST /api/customer-portal/referrals` with self-referral guard + 5/day rate limit + dup detection + admin bell notification.
+- **Slice Q** — `GET /api/invoices/{id}/full` aggregator + `<InvoiceView>` shared component + Portal invoice detail refresh with Print/Download PDF toolbar + `?format=printable` query variant + ReportLab PDF endpoint at `/api/invoices/{id}/pdf` (Vistancia stub-style layout).
+
+### Tests
+- 58/58 green across `test_slice_k_jobs.py` (7), `test_slice_m_workstream.py` (14), `test_slice_m_rbac_leak.py` (2), `test_slice_n_resend_adapter.py` (9), `test_slice_o_referrals.py` (10), `test_slice_q_invoice_viewer.py` (8).
+
+### Backlog / Next
+- **Slice R** — Estimate viewer with Accept/Decline + magic-link tokens + PDF (mirrors Slice Q).
+- **Slice P** — Cross-cutting breadcrumb nav.
+- **Slice L** — Widget minification, form multipart upload, denied-requests capped collection, M7 widget analytics tile.
+- Optional: extend Slice N wiring to H1 form submit + widget escalation + portal notifications.
+
