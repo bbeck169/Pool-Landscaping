@@ -1,0 +1,55 @@
+{
+  "summary": "FINAL integration verification for Slices K/M/N/O/O.2/P/Q/R + final compact push (L.a/L.b/L.c/L.h/L.i + Slice N broadening + estimate_accepted M5c). Backend pytest 85/85 green across all nine slice suites (test_slice_k_jobs, test_slice_m_workstream, test_slice_m_rbac_leak, test_slice_n_resend_adapter, test_slice_o_referrals, test_slice_q_invoice_viewer, test_slice_r_o2_l_batch, test_slice_r_o2_supplemental, test_final_compact_push) — must run with PYTHONPATH=/app/backend. Added new /app/backend/tests/test_final_integration_verification.py (10 tests, all green) covering L.a widget-bundle 200+size via preview URL, L.c denied-requests endpoint + Mongo TTL/compound indexes present at rest, L.j walkthrough alias parity, L.h suppression-before-send code check, trigger registry has estimate_accepted, RBAC sweep (tech blocked on estimate/invoice /full,/pdf,/accept; customer 404 on foreign records), and analytics/overview widget block populated. Frontend: found + fixed a P0 ReferenceError in MarketingAnalyticsPage.jsx (used `data.widget.*` instead of `overview.widget.*`) that was crashing the entire /admin/marketing/analytics page with `data is not defined`. After fix, analytics-widget-conversion tile renders with both sub-cards and correct mini-stat counts (chat: 4, form: 3).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "MarketingAnalyticsPage.jsx (Slice L.i widget tile)",
+        "issue": "P0 (FIXED by testing agent): References to `data.widget.chat.*` / `data.widget.forms.*` used undefined identifier `data` — component state is named `overview`. Threw `ReferenceError: data is not defined`, crashing the entire /admin/marketing/analytics route with a red runtime error overlay. Renamed all six occurrences to `overview.*` — page now loads and widget tile renders (chat: 4 mini-stats, form: 3 mini-stats).",
+        "selector": "[data-testid='analytics-widget-conversion']",
+        "priority": "P0-was"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_final_integration_verification.py",
+    "/app/backend/tests/test_final_compact_push.py",
+    "/app/backend/tests/test_slice_r_o2_supplemental.py",
+    "/app/backend/tests/test_slice_r_o2_l_batch.py",
+    "/app/backend/tests/test_slice_o_referrals.py",
+    "/app/backend/tests/test_slice_q_invoice_viewer.py",
+    "/app/backend/tests/test_slice_n_resend_adapter.py",
+    "/app/backend/tests/test_slice_m_workstream.py",
+    "/app/backend/tests/test_slice_m_rbac_leak.py",
+    "/app/backend/tests/test_slice_k_jobs.py",
+    "/app/test_reports/pytest/final_integration.xml",
+    "/app/test_reports/pytest/final_verification.xml"
+  ],
+  "action_items": [
+    "P2 (info): Analytics route lives at `/admin/marketing/analytics` — the problem statement referenced `/marketing/analytics`, which 404s. Not a bug; test suites should use the /admin prefix."
+  ],
+  "critical_code_review_comments": [
+    "MarketingAnalyticsPage.jsx Slice L.i block referenced undefined `data` local — likely a copy/paste from a scaffold that used `const { data } = ...`. Fixed by mapping to the actual state var `overview`. Six references corrected.",
+    "Pytest suites must be executed with `PYTHONPATH=/app/backend` (rootdir=/app/backend). Running from /app without PYTHONPATH results in ModuleNotFoundError: 'services'. Consider adding `sys.path` shims in test files, or a `pytest_plugins`/`pyproject.toml` entry.",
+    "`_seed_estimate_and_invoice` — the customer@aquaterra.com demo account is linked to customer_id `e36bce2c-...` (Jennifer Carson); tests that mean to hit a *foreign* record must filter by customer_id, not just first-hit."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/marketing/MarketingAnalyticsPage.jsx (data → overview rename in Slice L.i widget tile)",
+    "/app/backend/tests/test_final_integration_verification.py (new — 10 integration verification tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (85/85 slice suite + 10/10 new final-integration-verification)",
+    "frontend": "100% after L.i fix (analytics widget tile + chat/form sub-cards render; portal home renders with referrals section gated as designed on ≥1-referral condition)"
+  },
+  "test_credentials": "admin@aquaterra.com / password123, super@aquaterra.com / password123, customer@aquaterra.com (Jennifer Carson, customer_id e36bce2c-7ea6-4b99-876c-05225aeb352f) / password123, mike@aquaterra.com / password123 — from /app/memory/test_credentials.md",
+  "seed_data_creation": "None — conftest.py session teardown purges TEST_-prefixed data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All backend acceptance criteria for Slices K/M/N/O/O.2/P/Q/R + final compact push are green. Frontend L.i widget tile now renders correctly after fix. If you need to re-verify: 1) cd /app/backend && PYTHONPATH=/app/backend pytest tests/test_final_integration_verification.py tests/test_slice_r_o2_l_batch.py tests/test_slice_r_o2_supplemental.py tests/test_slice_o_referrals.py tests/test_slice_q_invoice_viewer.py tests/test_slice_n_resend_adapter.py tests/test_slice_m_workstream.py tests/test_slice_m_rbac_leak.py tests/test_slice_k_jobs.py tests/test_final_compact_push.py — expect 95/95 green. 2) Analytics UI is at /admin/marketing/analytics (NOT /marketing/analytics). 3) Portal referrals list is designed to only render when customer has ≥1 referral, so the seed customer's portal home won't show it until a referral is submitted.",
+  "rca of the issue": "MarketingAnalyticsPage.jsx Slice L.i widget conversion block (lines 168-219) used the identifier `data` which is not declared anywhere in the component. The component's fetched state is `overview` (line 28). Every render past `loading` false hit this JSX and threw `ReferenceError: data is not defined`, crashing the entire /admin/marketing/analytics route into React's dev error overlay. Reproduction: log in as admin@aquaterra.com, visit /admin/marketing/analytics — see red 'Uncaught runtime errors' overlay. Mitigation applied: renamed all six `data.*` references to `overview.*` in the widget tile block (chat conversation_started/leads_captured/escalations/conversion_pct and form views/submissions/submission_rate_pct). Post-fix the widget tile renders with all 7 mini-stats populated (chat: 232/68/82/29.3%, form: 0/0/—)."
+}

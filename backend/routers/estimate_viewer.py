@@ -217,6 +217,20 @@ async def _mark_accepted(est: dict, tenant_id: str, actor_id: str) -> None:
     await db.quotes.update_one(
         {"id": est["id"], "tenant_id": tenant_id}, {"$set": upd},
     )
+    # Slice O.2 companion · fire the ``estimate_accepted`` drip event
+    # into any active matching sequence. Best-effort — never breaks the
+    # accept response.
+    try:
+        from services.marketing.drip_events import on_event as _drip_on_event
+        await _drip_on_event(
+            trigger_type="estimate_accepted",
+            tenant_id=tenant_id,
+            customer_id=est.get("customer_id"),
+            meta={"estimate_id": est.get("id"),
+                   "actor_id": actor_id},
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[slice-r] estimate_accepted drip fanout failed: %s", exc)
 
 
 async def _mark_declined(est: dict, tenant_id: str,

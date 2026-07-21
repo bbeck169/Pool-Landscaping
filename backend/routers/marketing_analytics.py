@@ -213,6 +213,10 @@ async def _compute_overview(tenant_id: str, window: str) -> Dict[str, Any]:
     # only when opens aren't tracked yet).
     trend = await _daily_trend(tenant_id, window)
 
+    # Slice L.i · Widget conversion — chat conversation → lead capture
+    # ratio + form view → submission ratio.
+    widget = await _widget_conversion(tenant_id, since_iso)
+
     return {
         "window": window,
         "campaigns": camp_agg,
@@ -221,6 +225,65 @@ async def _compute_overview(tenant_id: str, window: str) -> Dict[str, Any]:
         "top_sequences": top_sequences,
         "top_campaigns": top_campaigns,
         "trend": trend,
+        "widget": widget,
+    }
+
+
+async def _widget_conversion(tenant_id: str,
+                               since_iso: Optional[str]) -> Dict[str, Any]:
+    """Aggregate widget chat + form conversion metrics for the M7 tile."""
+    conv_match: Dict[str, Any] = {"tenant_id": tenant_id}
+    if since_iso:
+        conv_match["created_at"] = {"$gte": since_iso}
+    try:
+        chat_started = await db.widget_chat_conversations.count_documents(conv_match)
+    except Exception:
+        chat_started = 0
+
+    lead_match: Dict[str, Any] = {"tenant_id": tenant_id, "source": "chat_widget"}
+    if since_iso:
+        lead_match["created_at"] = {"$gte": since_iso}
+    try:
+        chat_leads = await db.leads.count_documents(lead_match)
+    except Exception:
+        chat_leads = 0
+
+    # Escalations are marked on the chat conversation itself.
+    esc_match: Dict[str, Any] = {"tenant_id": tenant_id, "escalated": True}
+    if since_iso:
+        esc_match["created_at"] = {"$gte": since_iso}
+    try:
+        chat_escalations = await db.widget_chat_conversations.count_documents(esc_match)
+    except Exception:
+        chat_escalations = 0
+
+    # Form views + submissions.
+    view_match: Dict[str, Any] = {"tenant_id": tenant_id}
+    sub_match: Dict[str, Any] = {"tenant_id": tenant_id}
+    if since_iso:
+        view_match["created_at"] = {"$gte": since_iso}
+        sub_match["submitted_at"] = {"$gte": since_iso}
+    try:
+        form_views = await db.widget_form_views.count_documents(view_match)
+    except Exception:
+        form_views = 0
+    try:
+        form_subs = await db.form_submissions.count_documents(sub_match)
+    except Exception:
+        form_subs = 0
+
+    return {
+        "chat": {
+            "conversations_started": chat_started,
+            "leads_captured": chat_leads,
+            "escalations": chat_escalations,
+            "conversion_pct": _pct(chat_leads, chat_started),
+        },
+        "forms": {
+            "views": form_views,
+            "submissions": form_subs,
+            "submission_rate_pct": _pct(form_subs, form_views),
+        },
     }
 
 

@@ -164,6 +164,60 @@ export default function MarketingAnalyticsPage() {
                   icon={<Star size={14} />} testid="kpi-avg-rating" />
           </div>
 
+          {/* Slice L.i · Widget conversion tile */}
+          {overview?.widget ? (
+            <div
+              className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6"
+              data-testid="analytics-widget-conversion"
+            >
+              <div
+                className="rounded-2xl p-4"
+                style={{
+                  backgroundColor: colors.surface,
+                  border: `1px solid ${colors.border}`,
+                }}
+                data-testid="analytics-widget-chat-conversion"
+              >
+                <h3 className="text-base font-bold mb-2"
+                     style={{ color: colors.onSurface }}>
+                  Chat widget conversion
+                </h3>
+                <div className="grid grid-cols-4 gap-2 text-center">
+                  <MiniStat label="Started" value={overview.widget.chat.conversations_started} />
+                  <MiniStat label="Leads" value={overview.widget.chat.leads_captured} />
+                  <MiniStat label="Escalations" value={overview.widget.chat.escalations} />
+                  <MiniStat
+                    label="Conversion"
+                    value={fmtPct(overview.widget.chat.conversion_pct)}
+                    tone="#0369A1"
+                  />
+                </div>
+              </div>
+              <div
+                className="rounded-2xl p-4"
+                style={{
+                  backgroundColor: colors.surface,
+                  border: `1px solid ${colors.border}`,
+                }}
+                data-testid="analytics-widget-form-conversion"
+              >
+                <h3 className="text-base font-bold mb-2"
+                     style={{ color: colors.onSurface }}>
+                  Form widget conversion
+                </h3>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <MiniStat label="Views" value={overview.widget.forms.views} />
+                  <MiniStat label="Submissions" value={overview.widget.forms.submissions} />
+                  <MiniStat
+                    label="Submit rate"
+                    value={fmtPct(overview.widget.forms.submission_rate_pct)}
+                    tone="#0369A1"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {/* Trend chart */}
           <div className="rounded-2xl p-4 mb-6"
                style={{ backgroundColor: colors.surface,
@@ -414,4 +468,23 @@ function TopTable({ title, rows, cols, testid }) {
 function fmtPct(v) {
   if (v === null || v === undefined) return "—";
   return `${v}%`;
+}
+
+function MiniStat({ label, value, tone }) {
+  return (
+    <div>
+      <div
+        className="text-lg font-bold"
+        style={{ color: tone || colors.onSurface }}
+      >
+        {value ?? "—"}
+      </div>
+      <div
+        className="text-[10px] font-bold uppercase"
+        style={{ color: colors.muted, letterSpacing: "0.3px" }}
+      >
+        {label}
+      </div>
+    </div>
+  );
 }

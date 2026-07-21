@@ -33,7 +33,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field, model_validator
 
 from config import db, logger
@@ -697,6 +697,32 @@ async def _queue_confirmation_email(
         body_rendered = tpl.get("body") or ""
 
     delivery_id = new_id()
+    # Slice N broadening · route the confirmation through the Resend
+    # adapter with category=transactional (confirmations bypass
+    # marketing suppression).
+    provider = "mock"
+    provider_status = None
+    provider_response_id = None
+    attempts = 0
+    try:
+        from services.email.resend_adapter import send as _resend_send
+        res = await _resend_send(
+            to=recipient_email,
+            subject=subject,
+            html=body_rendered,
+            category="transactional",
+            tenant_id=tenant_id,
+            customer_id=(subject_id if subject_kind == "customer" else None),
+            idempotency_key=f"h1:{submission_id}",
+        )
+        provider = res.get("provider") or "mock"
+        provider_status = res.get("provider_status")
+        provider_response_id = res.get("provider_response_id")
+        attempts = res.get("attempts") or 0
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[h1] resend adapter failed: %s", exc)
+        provider_status = "failed"
+
     await db.marketing_deliveries.insert_one({
         "id": delivery_id,
         "tenant_id": tenant_id,
@@ -712,7 +738,11 @@ async def _queue_confirmation_email(
         "subject_rendered": subject,
         "body_rendered": body_rendered,
         "recipient_email": recipient_email,
-        "mock": True,
+        "mock": provider == "mock",
+        "provider": provider,
+        "provider_status": provider_status,
+        "provider_response_id": provider_response_id,
+        "attempts": attempts,
         "sent_at": now_iso(),
         "provider_response_stub": {"ok": True, "id": f"mock-{delivery_id[:8]}"},
     })
@@ -772,3 +802,118 @@ def _first_str(d: Dict[str, Any], keys: List[str]) -> Optional[str]:
         if isinstance(v, str) and v.strip():
             return v.strip()
     return None
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Slice L.b · Multipart submit — files land in Object Storage.
+# ══════════════════════════════════════════════════════════════════════
+_MAX_FILE_BYTES = 10 * 1024 * 1024    # 10 MB per file
+_MAX_TOTAL_BYTES = 30 * 1024 * 1024   # 30 MB aggregate per submission
+
+
+@router.post("/widget/form/{fid}/submit-multipart", status_code=201)
+async def submit_widget_form_multipart(
+    fid: str,
+    request: Request,
+    answers: str = Form("{}"),   # JSON-encoded blob of the non-file answers
+    turnstile_token: Optional[str] = Form(None),
+    page_url: Optional[str] = Form(None),
+    files: List[UploadFile] = File(default=[]),
+    tenant: Dict[str, Any] = Depends(require_widget_auth),
+):
+    """Multipart variant of :func:`submit_widget_form`.  Accepts the
+    non-file answers under a JSON blob (``answers``) + zero or more
+    file uploads which are streamed to the Emergent Object Storage
+    bucket.  Each upload is recorded under ``file_uploads`` on the
+    submission doc with ``{field_name, url, filename, size_bytes}``.
+
+    Caps: 10 MB per file, 30 MB aggregate.  Requests that exceed either
+    cap return 413 before touching storage."""
+    import json
+    form = await db.marketing_forms.find_one(
+        {"id": fid, "tenant_id": tenant["id"], "active": {"$ne": False}},
+        {"_id": 0},
+    )
+    if not form:
+        raise HTTPException(404, "Form not found or not active")
+
+    client_ip = request.client.host if request.client else None
+    await _verify_turnstile(turnstile_token, client_ip)
+
+    try:
+        payload = json.loads(answers or "{}")
+    except json.JSONDecodeError:
+        raise HTTPException(422, "answers must be JSON")
+    if not isinstance(payload, dict):
+        raise HTTPException(422, "answers must be an object")
+
+    # Read + validate file uploads before touching storage.
+    file_records: List[Dict[str, Any]] = []
+    total = 0
+    for f in files:
+        data = await f.read()
+        size = len(data)
+        if size > _MAX_FILE_BYTES:
+            raise HTTPException(413, f"file {f.filename} exceeds 10MB limit")
+        total += size
+        if total > _MAX_TOTAL_BYTES:
+            raise HTTPException(413, "aggregate upload exceeds 30MB limit")
+        file_records.append({
+            "field_name": f.filename or "attachment",
+            "filename": f.filename or "attachment",
+            "content_type": f.content_type or "application/octet-stream",
+            "size_bytes": size,
+            "_bytes": data,
+        })
+
+    # Stream to Object Storage.  Import lazily so environments without
+    # the SDK (early dev) can still submit forms — those uploads land as
+    # local-only metadata rows.
+    uploaded: List[Dict[str, Any]] = []
+    try:
+        from emergentintegrations.storage.object_storage import EmergentObjectStorage
+        storage = EmergentObjectStorage()
+        for rec in file_records:
+            key = f"tenants/{tenant['id']}/form-uploads/{new_id()}/{rec['filename']}"
+            url = storage.upload_file(
+                bucket_name="form-uploads",
+                key=key, data=rec["_bytes"],
+                content_type=rec["content_type"],
+            )
+            uploaded.append({
+                "field_name": rec["field_name"],
+                "filename": rec["filename"],
+                "content_type": rec["content_type"],
+                "size_bytes": rec["size_bytes"],
+                "url": url,
+                "storage_key": key,
+            })
+    except Exception as exc:
+        logger.warning("[l.b] object storage upload failed, keeping metadata: %s", exc)
+        for rec in file_records:
+            uploaded.append({
+                "field_name": rec["field_name"],
+                "filename": rec["filename"],
+                "content_type": rec["content_type"],
+                "size_bytes": rec["size_bytes"],
+                "url": None, "storage_key": None,
+                "upload_error": str(exc)[:200],
+            })
+
+    # Persist submission with file metadata.
+    sub_id = new_id()
+    sub_doc = {
+        "id": sub_id, "tenant_id": tenant["id"],
+        "form_id": fid, "form_slug": form.get("slug"),
+        "form_name": form.get("name"),
+        "answers": payload, "data": payload,
+        "file_uploads": uploaded,
+        "page_url": page_url, "ip": client_ip,
+        "user_agent": request.headers.get("user-agent"),
+        "submission_kind": "multipart",
+        "created_at": now_iso(),
+    }
+    await db.form_submissions.insert_one(sub_doc)
+    return {"submission_id": sub_id,
+             "file_count": len(uploaded),
+             "total_bytes": sum(u["size_bytes"] for u in uploaded)}

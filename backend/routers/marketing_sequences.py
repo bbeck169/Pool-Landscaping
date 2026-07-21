@@ -23,6 +23,8 @@ TRIGGER_REGISTRY: List[Dict[str, Any]] = [
     {"type": "customer_created",          "config_schema": {}},
     {"type": "birthday",                  "config_schema": {}},
     {"type": "review_left",               "config_schema": {}},
+    # Slice O.2 companion — fires from customer/admin/token accept paths.
+    {"type": "estimate_accepted",         "config_schema": {}},
     {"type": "manual",                    "config_schema": {}},
     {"type": "segment_join",              "config_schema": {"segment_id": "str"}},
 ]

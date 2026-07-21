@@ -488,6 +488,37 @@ async def dispatch_campaign(tenant_id: str, campaign_id: str) -> Dict[str, Any]:
         if sub.get("status") != "subscribed":
             skipped += 1
             continue
+        # Slice L.h · Slice-F suppression check runs BEFORE any send
+        # attempt.  A suppressed recipient is recorded on the send
+        # ledger with status="suppressed" (never counted as sent), no
+        # network call happens, and no ad-hoc dispatch is fired.
+        try:
+            from routers.marketing_preferences import is_suppressed
+            check_email = channel in ("email", "both") and sub.get("email")
+            check_sms = channel in ("sms", "both") and sub.get("phone")
+            suppressed = False
+            if check_email:
+                suppressed = await is_suppressed(
+                    tenant_id, {"email": sub.get("email")},
+                    channel="email", category="campaign",
+                )
+            if not suppressed and check_sms:
+                suppressed = await is_suppressed(
+                    tenant_id, {"phone": sub.get("phone")},
+                    channel="sms", category="campaign",
+                )
+            if suppressed:
+                await db.marketing_campaign_sends.insert_one({
+                    "id": new_id(), "tenant_id": tenant_id,
+                    "campaign_id": campaign_id, "subscriber_id": sub["id"],
+                    "channel": channel, "sent_at": None,
+                    "status": "suppressed", "provider_message_id": None,
+                    "variant_id": None, "open_count": 0, "click_count": 0,
+                })
+                skipped += 1
+                continue
+        except Exception as exc:  # pragma: no cover
+            logger.warning("[l.h] suppression check crashed: %s", exc)
         # A/B variant selection — deterministic per (campaign_id, subscriber_id).
         # When A/B is disabled, ``variant`` is None and ``camp_view`` is the
         # base campaign so behaviour matches the pre-A/B code path exactly.

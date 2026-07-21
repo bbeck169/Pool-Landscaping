@@ -85,6 +85,10 @@ async def enrol_customer_into_sequence(
 # ─── Immediate event bus ──────────────────────────────────────────────
 _IMMEDIATE_TRIGGERS = {
     "service_completed", "invoice_sent", "customer_created", "review_left",
+    # Feb-2026 · Slice O.2 companion — accepting an estimate can kick off
+    # a post-sale onboarding drip.  Fires from both authenticated + magic-
+    # link accept paths (see routers/estimate_viewer.py).
+    "estimate_accepted",
 }
 
 
