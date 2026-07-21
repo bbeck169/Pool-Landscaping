@@ -546,7 +546,34 @@ async def m6_tick_all_tenants() -> Dict[str, int]:
 async def _deliver(rr: Dict[str, Any], now: datetime) -> None:
     """Render the tenant-configured template, record a mock delivery,
     flip the row to ``sent``.  Reuses M5's ``marketing_deliveries``
-    collection so downstream M7 analytics counts M5+M6 uniformly."""
+    collection so downstream M7 analytics counts M5+M6 uniformly.
+
+    Slice F · suppression check runs BEFORE template render; a
+    suppressed row is flipped to ``failed`` with
+    ``halt_reason='suppressed'`` and NO delivery is recorded (compliance
+    guarantee: mocked or live, a suppressed contact never receives)."""
+    cust = await db.customers.find_one(
+        {"id": rr["customer_id"], "tenant_id": rr["tenant_id"]},
+        {"_id": 0, "name": 1, "email": 1, "phone": 1},
+    ) or {}
+    from routers.marketing_preferences import is_suppressed, build_unsubscribe_url
+    try:
+        suppressed = await is_suppressed(
+            rr["tenant_id"], cust,
+            channel=rr["channel"], category="review_requests",
+        )
+    except Exception as exc:  # pragma: no cover — loop-cache defense
+        logger.warning("[m6] is_suppressed crashed: %s", exc)
+        suppressed = False
+    if suppressed:
+        await db.marketing_review_requests.update_one(
+            {"id": rr["id"]},
+            {"$set": {"status": "failed",
+                        "halt_reason": "suppressed",
+                        "updated_at": now.isoformat()}},
+        )
+        logger.info("[m6] suppressed rr=%s cust=%s", rr["id"], rr["customer_id"])
+        return
     tpl = None
     if rr.get("template_id"):
         tpl = await db.marketing_templates.find_one(
@@ -554,11 +581,6 @@ async def _deliver(rr: Dict[str, Any], now: datetime) -> None:
             {"_id": 0},
         )
     ctx = dict(DEFAULT_SAMPLE_CONTEXT)
-    # Hydrate real customer name + inject the magic link.
-    cust = await db.customers.find_one(
-        {"id": rr["customer_id"], "tenant_id": rr["tenant_id"]},
-        {"_id": 0, "name": 1, "email": 1, "phone": 1},
-    ) or {}
     first = (cust.get("name") or "there").split(" ", 1)[0]
     ctx.setdefault("customer", {})
     ctx["customer"] = {
@@ -569,6 +591,9 @@ async def _deliver(rr: Dict[str, Any], now: datetime) -> None:
         "phone": cust.get("phone") or ctx["customer"].get("phone"),
     }
     ctx["portal_review_url"] = _absolute_portal_url(rr["magic_link"])
+    ctx["unsubscribe_url"] = _absolute_portal_url(
+        build_unsubscribe_url(rr["customer_id"], rr["tenant_id"]),
+    )
     subj, body, missing = render_subject_and_body(
         (tpl or {}).get("subject") or "",
         (tpl or {}).get("body") or "",

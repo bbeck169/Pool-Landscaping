@@ -80,6 +80,7 @@ from routers import (
     marketing_segments,
     marketing_sequences,
     marketing_review_requests,
+    marketing_preferences,
     marketing_analytics,
     marketing_campaigns as marketing_campaigns_router,
 )
@@ -168,6 +169,7 @@ for module in [notifications_router,
                marketing_segments,
                marketing_sequences,
                marketing_review_requests,
+               marketing_preferences,
                marketing_analytics]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")

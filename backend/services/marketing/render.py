@@ -102,6 +102,10 @@ DEFAULT_SAMPLE_CONTEXT: Dict[str, Any] = {
         "phone": "+1 (623) 555-0100",
         "google_review_url": "https://g.page/r/example/review",
     },
+    # Slice F · unsubscribe magic-link is filled in per-recipient at
+    # send time by the M5/M6 tick handlers.  Preview renderer shows a
+    # dummy path so admins can see the footer placement.
+    "unsubscribe_url": "/portal/preferences?token=example",
 }
 
 
@@ -117,4 +121,5 @@ VARIABLES_REGISTRY: List[Dict[str, str]] = [
     {"name": "tenant.name",               "description": "Your business name."},
     {"name": "tenant.phone",              "description": "Your business phone number."},
     {"name": "tenant.google_review_url",  "description": "Your Google review URL (configured under Settings > Tenant)."},
+    {"name": "unsubscribe_url",           "description": "Per-recipient one-click unsubscribe link. Compliance-required in every marketing send."},
 ]

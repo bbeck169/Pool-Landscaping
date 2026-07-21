@@ -5914,3 +5914,51 @@ Frontend:
 ### Next
 - **P1 · Slice E** — mobile parity backfill re-check via testing agent (skipped for now; mobile is off-limits per project rule).
 - **P1 · Slice F** — Marketing polish: unsubscribe management page.
+
+
+---
+
+## Slice F · Unsubscribe Management + Suppression List (Feb 2026)
+
+**Status:** GREEN · 10/10 slice tests + 82/82 marketing-suite regression on 2026-07-21.
+
+### What shipped
+- **Backend router** `routers/marketing_preferences.py`:
+  - `GET/PATCH /api/customer-portal/preferences` — logged-in customer, transactional flags compliance-locked to true (422 if flipped)
+  - `GET /api/portal/preferences/token/verify` — public magic-link (JWT `sub="unsub"`, 90-day exp)
+  - `POST /api/portal/preferences/via-token` — public token-gated update (same transactional lock)
+  - `GET /api/marketing/suppressions` — admin list w/ channel + reason filters
+  - `POST /api/marketing/suppressions` — admin add (lowercases email addresses)
+  - `DELETE /api/marketing/suppressions/{id}` — soft-delete (`deleted_at` stamped)
+  - Shared `is_suppressed(tenant_id, customer, channel, category)` — used by tick handlers
+  - `build_unsubscribe_url(customer_id, tenant_id)` — signed JWT link `/r/preferences?token=…`
+- **Auto-suppression**: `_apply_preferences` + `_reconcile_suppressions` — any opt-in flipped OFF auto-creates a `marketing_suppressions` row (channel-level `"all"` or category-level). Flipped back ON → soft-delete matching rows.
+- **Enforcement**:
+  - M5 sequence tick — pre-render suppression check per step; suppressed → enrolment `halted` with `halt_reason="suppressed"`, zero delivery recorded.
+  - M6 review-request tick — pre-render suppression check; suppressed → row `failed` with `halt_reason="suppressed"`, zero delivery recorded.
+  - Both ticks inject per-recipient `unsubscribe_url` into the render context.
+- **Template variable**: `unsubscribe_url` added to `VARIABLES_REGISTRY` + `DEFAULT_SAMPLE_CONTEXT` so admins can drop `{{unsubscribe_url}}` into any template.
+- **Frontend**:
+  - `pages/portal/PortalPreferences.jsx` — Channels + Categories cards with padlock-locked transactional rows. Dual mode: logged-in (`/portal/preferences`) OR magic-link (`/r/preferences?token=…`).
+  - `pages/marketing/MarketingSuppressionsPage.jsx` — admin list + Add modal + Revoke row action, `/admin/marketing/suppressions`.
+  - Nav: **Suppressions** entry under Marketing → Sequences & Templates.
+
+### Data model
+- Extended `customers`: `channel_opt_in` (4 flags), `category_opt_in` (3 flags), `preferences_updated_at`. Lazy backfill on read via `_merge_defaults`.
+- New collection `marketing_suppressions`: `{id, tenant_id, channel, address, reason, category, customer_id, created_at, created_by, deleted_at}`.
+
+### Guardrails held
+- Transactional email/SMS never suppressible (compliance-locked at the API layer — 422 on flip).
+- Slice-6 review submission unchanged.
+- Suppression checks best-effort wrapped in `try/except` in ticks — fail-open on infra hiccups (a mocked send is a no-op anyway; real provider will need a stricter policy).
+- Delivery still 100% mocked.
+- Cross-tenant isolation asserted.
+
+### Files touched
+- Backend: `routers/marketing_preferences.py` (NEW), `routers/marketing_review_requests.py`, `routers/marketing_sequences.py`, `services/marketing/render.py`, `server.py`, `tests/test_marketing_m6.py` (rebind helper), `tests/test_marketing_slice_f.py` (NEW · 10 tests)
+- Frontend: `pages/portal/PortalPreferences.jsx` (NEW), `pages/marketing/MarketingSuppressionsPage.jsx` (NEW), `App.js`, `nav/adminNav.js`
+
+### Next actions
+- **P1** — Add M2 campaign send path check when the live provider integration lands (currently M2 uses a different delivery model; the enforcement hook is ready to drop in).
+- **P2** — Send-time render preview mode that shows `{{unsubscribe_url}}` resolved for a chosen customer, so admins can eyeball compliance.
+- **P2** — Row-level bounce/complaint hook: webhook endpoint that ingests provider bounce events and adds them to `marketing_suppressions` with `reason="bounce"`.

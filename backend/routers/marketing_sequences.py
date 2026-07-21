@@ -319,14 +319,45 @@ async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, i
             completed += 1
             continue
         step = steps[step_idx]
+        # Slice F · suppression enforcement — check the recipient's
+        # opt-in state before rendering.  A suppressed contact halts
+        # the enrolment cleanly with ``halt_reason="suppressed"``.
+        cust = await db.customers.find_one(
+            {"id": e["customer_id"], "tenant_id": e["tenant_id"]},
+            {"_id": 0, "email": 1, "phone": 1},
+        ) or {}
+        try:
+            from routers.marketing_preferences import (
+                is_suppressed as _is_suppressed,
+                build_unsubscribe_url as _unsub_url,
+            )
+            if await _is_suppressed(
+                e["tenant_id"], cust,
+                channel=step["channel"], category="sequences",
+            ):
+                await db.marketing_drip_enrolments.update_one(
+                    {"id": e["id"]},
+                    {"$set": {"status": "halted",
+                                "halt_reason": "suppressed",
+                                "next_send_at": None}},
+                )
+                continue
+        except Exception:
+            pass
         # Render + record mock delivery
         tpl = await db.marketing_templates.find_one(
             {"id": step["template_id"], "tenant_id": e["tenant_id"]}, {"_id": 0},
         )
+        # Per-recipient render context — include unsubscribe URL.
+        _ctx = dict(DEFAULT_SAMPLE_CONTEXT)
+        try:
+            _ctx["unsubscribe_url"] = _unsub_url(e["customer_id"], e["tenant_id"])
+        except Exception:
+            pass
         subj, body, missing = render_subject_and_body(
             (tpl or {}).get("subject") or "",
             (tpl or {}).get("body") or "",
-            DEFAULT_SAMPLE_CONTEXT,
+            _ctx,
         )
         if step["channel"] == "sms":
             body = strip_html(body)

@@ -38,6 +38,8 @@ import MarketingSegmentsPage from "@/pages/marketing/MarketingSegmentsPage";
 import MarketingSequencesPage from "@/pages/marketing/MarketingSequencesPage";
 import MarketingReviewRequestsPage from "@/pages/marketing/MarketingReviewRequestsPage";
 import MarketingAnalyticsPage from "@/pages/marketing/MarketingAnalyticsPage";
+import MarketingSuppressionsPage from "@/pages/marketing/MarketingSuppressionsPage";
+import PortalPreferences from "@/pages/portal/PortalPreferences";
 import PortalVideos from "@/pages/portal/PortalVideos";
 import {
   CommsTemplatesLibrary, CommsEmailBuilder, CommsSmsBuilder,
@@ -295,6 +297,9 @@ export default function App() {
               ProtectedShell. */}
           <Route path="/r/review" element={<PortalReviews />} />
 
+          {/* Marketing Slice F · Feb 2026 — magic-link unsubscribe (no auth). */}
+          <Route path="/r/preferences" element={<PortalPreferences />} />
+
           {/* QuoteIQ Q4 · public InstaQuote portal — no auth. */}
           <Route path="/quote/:slug" element={<PublicInstaQuotePage />} />
 
@@ -371,6 +376,8 @@ export default function App() {
             <Route path="admin/marketing/sequences" element={<AdminOnly><MarketingSequencesPage /></AdminOnly>} />
             <Route path="admin/marketing/review-requests" element={<AdminOnly><MarketingReviewRequestsPage /></AdminOnly>} />
             <Route path="admin/marketing/analytics" element={<AdminOnly><MarketingAnalyticsPage /></AdminOnly>} />
+            <Route path="admin/marketing/suppressions" element={<AdminOnly><MarketingSuppressionsPage /></AdminOnly>} />
+            <Route path="portal/preferences" element={<PortalPreferences />} />
             <Route path="marketing/reviews" element={<AdminOnly><Reviews /></AdminOnly>} />
             <Route path="marketing/sequences" element={<AdminOnly><SequencesList /></AdminOnly>} />
             <Route path="marketing/sequences/new" element={<AdminOnly><SequenceNew /></AdminOnly>} />

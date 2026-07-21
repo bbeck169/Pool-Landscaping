@@ -48,6 +48,11 @@ def _rebind_db_to_loop():
     _de.db = fresh_db
     import routers.marketing_review_requests as _mrr
     _mrr.db = fresh_db
+    try:
+        import routers.marketing_preferences as _mp
+        _mp.db = fresh_db
+    except Exception:
+        pass
     return fresh_db
 
 
