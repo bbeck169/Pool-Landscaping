@@ -25,11 +25,11 @@ export type AIAction = {
   id: string;
   employee_id?: string;
   employee_key?: string;
-  action_type?: string;
-  label?: string;
-  description?: string;
-  status?: string; // pending | approved | rejected
-  payload?: any;
+  action?: string;
+  title?: string;
+  summary?: string;
+  status?: string; // pending | approved | rejected | executed | failed
+  draft?: any;
   created_at?: string;
 };
 
@@ -45,32 +45,26 @@ export const getAICreditsBalance = (): Promise<AICreditBalance> =>
 export const listConversations = (eid: string) =>
   api.get(`/ai-employees/${eid}/conversations`);
 
-export const createConversation = (eid: string) =>
-  api.post(`/ai-employees/${eid}/conversations`, {});
+export const createConversation = (eid: string, title?: string) =>
+  api.post(`/ai-employees/${eid}/conversations`, { title: title || "New conversation" });
 
 export const getMessages = (eid: string, cid: string) =>
   api.get(`/ai-employees/${eid}/conversations/${cid}/messages`);
 
-export const sendMessage = (
+export const sendConversationMessage = (
   eid: string,
   cid: string,
-  message: string,
-  action?: any
+  text: string,
+  action?: string,
+  actionParams?: Record<string, any>,
 ) =>
   api.post(`/ai-employees/${eid}/conversations/${cid}/messages`, {
-    message,
-    ...(action ? { action } : {}),
+    text,
+    ...(action ? { action, action_params: actionParams } : {}),
   });
 
-export const chatSimple = (employeeId: string, message: string, sessionId?: string | null) =>
-  api.post("/ai-employees/chat", {
-    employee_id: employeeId,
-    message,
-    ...(sessionId ? { session_id: sessionId } : {}),
-  });
-
-export const listPendingActions = (): Promise<AIAction[]> =>
-  api.get("/ai-employees/actions");
+export const listPendingActions = (employeeKey?: string): Promise<AIAction[]> =>
+  api.get(`/ai-employees/actions${employeeKey ? `?status=pending&employee_key=${employeeKey}` : ""}`);
 
 export const approveAction = (aid: string) =>
   api.post(`/ai-employees/actions/${aid}/approve`, {});

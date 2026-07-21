@@ -12,7 +12,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import {
-  listAIEmployees, getAICreditsBalance, chatSimple,
+  listAIEmployees, getAICreditsBalance,
+  createConversation, sendConversationMessage,
   listPendingActions, approveAction, rejectAction,
   AIEmployee, AIAction,
 } from "@/src/api/aiDock";
@@ -94,6 +95,10 @@ export default function AIDockDrawer({ visible, onClose }: Props) {
             employee={activeEmp}
             onBack={() => { setActiveEmp(null); loadRoster(); }}
             insets={insets}
+            refreshBalance={async () => {
+              const bal = await getAICreditsBalance().catch(() => null);
+              if (bal) setBalance(bal.balance);
+            }}
           />
         ) : (
           <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -103,8 +108,8 @@ export default function AIDockDrawer({ visible, onClose }: Props) {
                 <Text style={styles.sectionLabel}>Pending Approvals ({actions.length})</Text>
                 {actions.map((a) => (
                   <View key={a.id} style={styles.actionCard} testID={`ai-action-${a.id}`}>
-                    <Text style={styles.actionLabel}>{a.label || a.action_type}</Text>
-                    <Text style={styles.actionDesc} numberOfLines={2}>{a.description || ""}</Text>
+                    <Text style={styles.actionLabel}>{a.title || a.action}</Text>
+                    <Text style={styles.actionDesc} numberOfLines={2}>{a.summary || ""}</Text>
                     <View style={styles.actionBtns}>
                       <TouchableOpacity
                         testID={`ai-action-approve-${a.id}`}
@@ -150,35 +155,84 @@ export default function AIDockDrawer({ visible, onClose }: Props) {
   );
 }
 
-function ChatView({ employee, onBack, insets }: { employee: AIEmployee; onBack: () => void; insets: any }) {
+function ChatView({ employee, onBack, insets, refreshBalance }: { employee: AIEmployee; onBack: () => void; insets: any; refreshBalance: () => void }) {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const sessionRef = useRef<string | null>(null);
+  const [convId, setConvId] = useState<string | null>(null);
+  const [pendingActions, setPendingActions] = useState<AIAction[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
+
+  // Load or create a conversation on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const conv = await createConversation(employee.id, `${employee.name} chat`);
+        if (cancelled) return;
+        setConvId(conv.id);
+        // Load pending actions scoped to this employee
+        const acts = await listPendingActions(employee.key).catch(() => []);
+        if (!cancelled) setPendingActions((acts || []).filter((a: any) => a.status === "pending"));
+      } catch (e: any) {
+        if (!cancelled) setError(e?.message || "Failed to start conversation");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [employee.id, employee.key, employee.name]);
 
   const send = useCallback(async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || sending) return;
+    if (!trimmed || sending || !convId) return;
     setInput("");
-    setMessages((m) => [...m, { id: `u-${Date.now()}`, role: "user", text: trimmed }]);
+    setError(null);
     setSending(true);
     try {
-      const res = await chatSimple(employee.id, trimmed, sessionRef.current);
-      sessionRef.current = res.session_id;
-      setMessages((m) => [...m, { id: `a-${Date.now()}`, role: "assistant", text: res.reply }]);
+      const res = await sendConversationMessage(employee.id, convId, trimmed);
+      // Response shape: { user_message, assistant_message, action? }
+      if (res.user_message) {
+        setMessages((m) => [...m, { id: res.user_message.id, role: "user", text: res.user_message.text }]);
+      }
+      if (res.assistant_message) {
+        setMessages((m) => [...m, { id: res.assistant_message.id, role: "assistant", text: res.assistant_message.text }]);
+      }
+      if (res.action) {
+        setPendingActions((p) => [res.action, ...p]);
+      }
+      refreshBalance();
     } catch (e: any) {
+      setError(e?.message || "Send failed");
       setMessages((m) => [...m, { id: `e-${Date.now()}`, role: "assistant", text: `⚠️ ${e?.message || "Error"}` }]);
     } finally {
       setSending(false);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
     }
-  }, [employee.id, sending]);
+  }, [employee.id, convId, sending, refreshBalance]);
+
+  const onApproveChat = async (aid: string) => {
+    try {
+      await approveAction(aid);
+      setPendingActions((p) => p.filter((a) => a.id !== aid));
+      refreshBalance();
+    } catch (e: any) {
+      setError(e?.message || "Approval failed");
+    }
+  };
+
+  const onRejectChat = async (aid: string) => {
+    try {
+      await rejectAction(aid);
+      setPendingActions((p) => p.filter((a) => a.id !== aid));
+    } catch (e: any) {
+      setError(e?.message || "Rejection failed");
+    }
+  };
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <View style={styles.chatHeader}>
-        <TouchableOpacity onPress={onBack} hitSlop={12}>
+        <TouchableOpacity onPress={onBack} hitSlop={12} testID="ai-dock-back">
           <Ionicons name="arrow-back" size={22} color={colors.onSurface} />
         </TouchableOpacity>
         <View style={styles.chatEmpAvatar}>
@@ -189,6 +243,39 @@ function ChatView({ employee, onBack, insets }: { employee: AIEmployee; onBack: 
           <Text style={styles.chatEmpRole}>{employee.role}</Text>
         </View>
       </View>
+
+      {/* Pending actions scoped to this employee */}
+      {pendingActions.length > 0 && (
+        <View style={styles.chatActionsBar}>
+          <Text style={styles.chatActionsLabel}>Pending approval ({pendingActions.length})</Text>
+          {pendingActions.slice(0, 3).map((a) => (
+            <View key={a.id} style={styles.chatActionRow} testID={`ai-dock-pending-${a.id}`}>
+              <Text style={styles.chatActionTitle} numberOfLines={1}>{a.title || a.action}</Text>
+              <View style={{ flexDirection: "row", gap: 6 }}>
+                <TouchableOpacity
+                  style={styles.approveBtn}
+                  onPress={() => onApproveChat(a.id)}
+                  testID={`ai-dock-approve-${a.id}`}
+                >
+                  <Ionicons name="checkmark" size={12} color="#fff" />
+                  <Text style={styles.approveBtnText}>Approve</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.rejectBtn} onPress={() => onRejectChat(a.id)}>
+                  <Text style={styles.rejectBtnText}>Discard</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {error && (
+        <View style={styles.errorBar}>
+          <Ionicons name="alert-circle" size={14} color={colors.error} />
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      )}
+
       <FlatList
         ref={listRef}
         data={messages}
@@ -210,6 +297,7 @@ function ChatView({ employee, onBack, insets }: { employee: AIEmployee; onBack: 
       />
       <View style={[styles.composer, { paddingBottom: insets.bottom || 12 }]}>
         <TextInput
+          testID="ai-dock-input"
           style={styles.composerInput}
           value={input}
           onChangeText={setInput}
@@ -220,9 +308,10 @@ function ChatView({ employee, onBack, insets }: { employee: AIEmployee; onBack: 
           onSubmitEditing={() => send(input)}
         />
         <TouchableOpacity
-          style={[styles.sendBtn, (!input.trim() || sending) && styles.sendBtnDisabled]}
+          testID="ai-dock-send"
+          style={[styles.sendBtn, (!input.trim() || sending || !convId) && styles.sendBtnDisabled]}
           onPress={() => send(input)}
-          disabled={!input.trim() || sending}
+          disabled={!input.trim() || sending || !convId}
         >
           {sending ? (
             <ActivityIndicator size="small" color="#fff" />
@@ -275,4 +364,11 @@ const styles = StyleSheet.create({
   composerInput: { flex: 1, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: 10, fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, maxHeight: 100, ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}) },
   sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
   sendBtnDisabled: { opacity: 0.4 },
+  /* Chat-scoped actions & error */
+  chatActionsBar: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.surface },
+  chatActionsLabel: { fontFamily: font.bold, fontSize: 10, color: colors.muted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 },
+  chatActionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: colors.surfaceSecondary, padding: spacing.sm, borderRadius: radius.sm, marginBottom: 4 },
+  chatActionTitle: { flex: 1, fontFamily: font.regular, fontSize: fontSize.sm, color: colors.onSurface, marginRight: 8 },
+  errorBar: { flexDirection: "row", alignItems: "center", gap: 6, marginHorizontal: spacing.lg, marginTop: spacing.sm, padding: spacing.sm, borderRadius: radius.sm, backgroundColor: colors.surfaceSecondary },
+  errorText: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.error, flex: 1 },
 });
