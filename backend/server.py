@@ -703,6 +703,15 @@ async def startup():
     except Exception as e:
         logger.warning(f"ae1 ai_employees seed crashed: {e}")
 
+    # Feb-2026 · Slice L.c — ensure the widget_denied_requests TTL +
+    # tenant-time indexes exist. Idempotent; failures are logged.
+    try:
+        from routers.widget_config import _ensure_denied_indexes
+        await _ensure_denied_indexes()
+        logger.info("[l.c] widget_denied_requests indexes ensured")
+    except Exception as e:
+        logger.warning(f"[l.c] denied indexes failed: {e}")
+
     # Feb-2026 · Marketing Slice M3 — seed 12 starter email + SMS
     # templates for any tenant that has zero templates today. Admin
     # edits + custom templates survive re-runs (seed only fires when
