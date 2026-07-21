@@ -19,6 +19,7 @@ import {
   Send,
   Sparkles,
   UserRound,
+  Star,
 } from "lucide-react";
 import { api } from "@/api";
 import { brandGradientCss, colors } from '@/theme';
@@ -342,6 +343,7 @@ export default function PortalHome() {
           <ActionTile icon={Receipt} label="Invoices" tone="#A16207" onClick={() => navigate("/portal/invoices")} testid="qa-invoices" />
           <ActionTile icon={FileText} label="Estimates" tone="#4338CA" onClick={() => navigate("/portal/estimates")} testid="qa-estimates" />
           <ActionTile icon={Wrench} label="Payment Method" tone={colors.success} onClick={() => navigate("/portal/payment-method")} testid="qa-pm" />
+          <ActionTile icon={Star} label="Leave a Review" tone="#F59E0B" onClick={() => navigate("/portal/reviews")} testid="portal-reviews-tab" />
         </div>
       </div>
 

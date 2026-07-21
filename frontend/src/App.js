@@ -31,6 +31,8 @@ import LateFeesSettings from "@/pages/settings/LateFees";
 import BillingSettings from "@/pages/settings/BillingSettings";
 import AutoVisitEmailSettings from "@/pages/settings/AutoVisitEmailSettings";
 import PortalPhotos from "@/pages/portal/PortalPhotos";
+import PortalReviews from "@/pages/portal/PortalReviews";
+import AdminReviewsPage from "@/pages/admin/AdminReviewsPage";
 import PortalVideos from "@/pages/portal/PortalVideos";
 import {
   CommsTemplatesLibrary, CommsEmailBuilder, CommsSmsBuilder,
@@ -305,6 +307,7 @@ export default function App() {
             {/* Phase 56.4 · Tech Job Request workflow */}
             <Route path="request-job" element={<RequestJobPage />} />
             <Route path="admin/job-requests" element={<AdminJobRequestsPage />} />
+            <Route path="admin/reviews" element={<AdminOnly><AdminReviewsPage /></AdminOnly>} />
 
             {/* Jobs (Phase 2) */}
             {/* Phase 30 · Jobs list retired — techs & admins land on the unified calendar. */}
@@ -660,6 +663,7 @@ export default function App() {
             <Route path="customers/:id/chemistry-history" element={<AdminOnly><CustomerChemistryHistory /></AdminOnly>} />
             <Route path="portal/profile" element={<PortalProfile />} />
             <Route path="portal/request-service" element={<PortalRequestService />} />
+            <Route path="portal/reviews" element={<PortalReviews />} />
             <Route path="portal/payment-complete" element={<PortalPaymentComplete />} />
             <Route path="onboarding/mine" element={<MyOnboarding />} />
             <Route path="admin/portal-inbox" element={<AdminOnly><PortalChatsPage /></AdminOnly>} />

@@ -250,6 +250,8 @@ export function TenantBrandSettings() {
       {/* Feb-2026 · HQ Location — super-admin only. The rest of the
           page above is admin-visible, so we self-gate this card. */}
       <HqLocationCard />
+      {/* Feb-2026 · Slice 6 · Google Review URL — super-admin only. */}
+      <GoogleReviewUrlCard />
     </div>
   );
 }
@@ -384,3 +386,154 @@ function HqLocationCard() {
     </div>
   );
 }
+
+// Feb-2026 · Slice 6 — Super-admin only card for the tenant's Google
+// review URL.  Backend read is auth-any, but write is 403 for
+// anything below super_admin — we self-gate the UI to reduce noise
+// on the page for regular admins.
+function GoogleReviewUrlCard() {
+  const [me, setMe] = React.useState(null);
+  const [url, setUrl] = React.useState("");
+  const [current, setCurrent] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [toast, setToast] = React.useState("");
+
+  React.useEffect(() => {
+    api.get("/auth/me").then(setMe).catch(() => setMe(null));
+  }, []);
+  const isSuper = me && me.role === "super_admin";
+  React.useEffect(() => {
+    if (!isSuper) return;
+    api
+      .get("/tenants/mine/google-review-url")
+      .then((r) => {
+        setCurrent(r.url);
+        setUrl(r.url || "");
+      })
+      .catch(() => setCurrent(null));
+  }, [isSuper]);
+
+  if (!isSuper) return null;
+
+  const save = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await api.patch("/tenants/mine/google-review-url", {
+        url: url.trim(),
+      });
+      setCurrent(r.url);
+      setToast("Saved");
+      setTimeout(() => setToast(""), 2500);
+    } catch (err) {
+      // Server 422 messages come through as "Bad request" — surface
+      // the raw explanation the router returns so a super-admin
+      // knows what shape to paste.
+      setError(err?.message || "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="mt-6 rounded-2xl p-6"
+      style={{
+        backgroundColor: "var(--color-surface)",
+        border: "1px solid var(--color-border)",
+      }}
+      data-testid="tenant-google-review-card"
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <span
+          className="inline-flex items-center justify-center w-8 h-8 rounded-lg"
+          style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
+        >
+          ★
+        </span>
+        <h2
+          className="text-lg font-bold"
+          style={{ color: "var(--color-on-surface)" }}
+        >
+          Google Review URL
+        </h2>
+      </div>
+      <p
+        className="text-sm mb-3"
+        style={{ color: "var(--color-muted)" }}
+      >
+        Happy customers (4-5 stars) will be prompted to share on Google.
+        Paste the tenant's Google Business review link below. Accepted
+        formats: <code className="text-xs">https://g.page/r/…/review</code>,{" "}
+        <code className="text-xs">
+          https://search.google.com/local/writereview?placeid=…
+        </code>
+        .
+      </p>
+      <input
+        type="url"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        placeholder="https://g.page/r/..."
+        className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+        style={{
+          backgroundColor: "var(--color-surface)",
+          color: "var(--color-on-surface)",
+          border: "1px solid var(--color-border)",
+        }}
+        data-testid="tenant-google-review-url-input"
+      />
+      {error ? (
+        <div
+          className="mt-2 text-sm"
+          style={{ color: "var(--color-error)" }}
+          data-testid="tenant-google-review-url-error"
+        >
+          {error}
+        </div>
+      ) : null}
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <div className="text-xs" style={{ color: "var(--color-muted)" }}>
+          {current ? (
+            <>
+              Currently saved:{" "}
+              <a
+                href={current}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold"
+                style={{ color: "var(--color-brand)" }}
+              >
+                {current.length > 60
+                  ? current.slice(0, 57) + "…"
+                  : current}
+              </a>
+            </>
+          ) : (
+            "No Google review URL configured yet."
+          )}
+        </div>
+        <button
+          onClick={save}
+          disabled={busy}
+          className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
+          style={{ background: "var(--color-brand)" }}
+          data-testid="tenant-google-review-url-save-btn"
+        >
+          {busy ? "Saving…" : "Save URL"}
+        </button>
+      </div>
+      {toast ? (
+        <div
+          className="mt-3 text-xs font-semibold"
+          style={{ color: "var(--color-success)" }}
+          data-testid="tenant-google-review-url-toast"
+        >
+          {toast}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
