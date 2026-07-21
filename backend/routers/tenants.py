@@ -276,6 +276,103 @@ async def patch_own_brand(body: BrandUpdate, user: dict = Depends(get_current_us
     return await db.tenants.find_one({"id": tid}, {"_id": 0})
 
 
+# ─── Feb-2026 — Tenant HQ geocode ─────────────────────────────────────────
+# Admin-owned single-row settings for the tenant's headquarters
+# address + Google-geocoded lat/lng. Consumed by the web
+# ``WeatherWidget`` (falls back to a hardcoded Peoria centroid
+# when unset) so multi-tenant deployments stop sharing the same
+# forecast anchor.
+class HqGeocodeUpdate(BaseModel):
+    address: str = Field(..., min_length=3, max_length=200)
+
+
+def _require_super_admin_local(user: dict = Depends(get_current_user)) -> dict:
+    """Local guard so this section doesn't have to depend on the
+    forward-declared ``require_super_admin`` above (avoids Pydantic
+    schema-build ordering surprises during hot reload)."""
+    if user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Super-admin access required")
+    return user
+
+
+@router.get("/tenants/mine/geocode")
+async def get_tenant_geocode(user: dict = Depends(_require_super_admin_local)):
+    tid = user.get("tenant_id")
+    if not tid:
+        raise HTTPException(400, "User has no tenant")
+    t = await db.tenants.find_one({"id": tid}, {"_id": 0}) or {}
+    return {
+        "hq_address": t.get("hq_address"),
+        "hq_address_formatted": t.get("hq_address_formatted"),
+        "hq_lat": t.get("hq_lat"),
+        "hq_lng": t.get("hq_lng"),
+        "hq_place_id": t.get("hq_place_id"),
+        "hq_geocoded_at": t.get("hq_geocoded_at"),
+    }
+
+
+@router.patch("/tenants/mine/geocode")
+async def patch_tenant_geocode(body: HqGeocodeUpdate,
+                                 user: dict = Depends(_require_super_admin_local)):
+    """One-shot Google Geocoding lookup — stores canonical
+    ``hq_lat/hq_lng/hq_address_formatted/hq_place_id`` on the
+    tenant document."""
+    tid = user.get("tenant_id")
+    if not tid:
+        raise HTTPException(400, "User has no tenant")
+    # Local import to keep this router free of a hard dep on the
+    # Google router module and its config imports.
+    from routers.google import _geocode_one
+    import httpx as _httpx
+    address = (body.address or "").strip()
+    if not address:
+        raise HTTPException(400, "address is required")
+    async with _httpx.AsyncClient(timeout=15) as c:
+        geo = await _geocode_one(c, address)
+    if not geo or geo.get("lat") is None or geo.get("lng") is None:
+        raise HTTPException(422, "Google could not geocode this address")
+    patch = {
+        "hq_address": address,
+        "hq_address_formatted": geo.get("formatted"),
+        "hq_lat": float(geo["lat"]),
+        "hq_lng": float(geo["lng"]),
+        "hq_place_id": geo.get("place_id"),
+        "hq_geocoded_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.tenants.update_one({"id": tid}, {"$set": patch})
+    t = await db.tenants.find_one({"id": tid}, {"_id": 0}) or {}
+    return {
+        "hq_address": t.get("hq_address"),
+        "hq_address_formatted": t.get("hq_address_formatted"),
+        "hq_lat": t.get("hq_lat"),
+        "hq_lng": t.get("hq_lng"),
+        "hq_place_id": t.get("hq_place_id"),
+        "hq_geocoded_at": t.get("hq_geocoded_at"),
+    }
+
+
+# ─── Feb-2026 — Tenant HQ read for weather widget ──────────────────────
+# Admins + techs need read access to the HQ geocode so the weather
+# widget can anchor forecasts on the tenant's location. Only
+# lat/lng are exposed here — the address details are super-admin
+# only via ``/tenants/mine/geocode`` above.
+@router.get("/tenants/mine/location")
+async def get_tenant_location(user: dict = Depends(get_current_user)):
+    role = user.get("role")
+    if role not in ("admin", "super_admin", "technician"):
+        raise HTTPException(status_code=403, detail="Not authorised")
+    tid = user.get("tenant_id")
+    if not tid:
+        return {"hq_lat": None, "hq_lng": None}
+    t = await db.tenants.find_one({"id": tid}, {"_id": 0}) or {}
+    return {
+        "hq_lat": t.get("hq_lat"),
+        "hq_lng": t.get("hq_lng"),
+        "hq_address_formatted": t.get("hq_address_formatted"),
+    }
+
+
 # ─── Stage 2 — Membership listing (multi-tenant users) ────────────────────
 @router.get("/tenants/memberships/mine")
 async def my_memberships(user: dict = Depends(get_current_user)):

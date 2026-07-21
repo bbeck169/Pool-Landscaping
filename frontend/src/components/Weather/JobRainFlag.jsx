@@ -15,12 +15,16 @@
 import React from "react";
 import { CloudRain } from "lucide-react";
 import useWeatherHourly, { hasRainOnDate, maxRainChanceOnDate } from "@/hooks/useWeatherHourly";
+import useTenantLocation from "@/hooks/useTenantLocation";
 
 const RAIN_THRESHOLD = 60;
 const DEFAULT_LAT = 33.7897;
 const DEFAULT_LON = -112.3226;
 
-export default function JobRainFlag({ jobId, scheduledDate, lat = DEFAULT_LAT, lon = DEFAULT_LON }) {
+export default function JobRainFlag({ jobId, scheduledDate }) {
+  const tenantLoc = useTenantLocation();
+  const lat = tenantLoc?.lat ?? DEFAULT_LAT;
+  const lon = tenantLoc?.lon ?? DEFAULT_LON;
   const hourly = useWeatherHourly(lat, lon);
   if (!hourly || !scheduledDate) return null;
   if (!hasRainOnDate(hourly, scheduledDate, RAIN_THRESHOLD)) return null;

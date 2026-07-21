@@ -21,6 +21,7 @@ import { CloudSun, Radar as RadarIcon, Droplets, Wind, X } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import useWeatherHourly from "@/hooks/useWeatherHourly";
+import useTenantLocation from "@/hooks/useTenantLocation";
 
 // Same Peoria, AZ fallback the rest of the codebase already uses
 // (see routers/ops.py + WeatherWidget5Day). Tenant-configured
@@ -49,10 +50,15 @@ export default function WeatherWidget({ user }) {
   const role = (user?.role || "").toLowerCase();
   const allowed = role === "technician" || role === "admin" || role === "super_admin";
 
-  // Tenant/tech geocode is not yet plumbed — fall back to the
-  // shared Peoria fallback.
-  const lat = DEFAULT_LAT;
-  const lon = DEFAULT_LON;
+  // Location resolution — Feb-2026:
+  //   1. ``tenant.hq_lat/hq_lng`` (set via super-admin Settings)
+  //   2. Hardcoded Peoria fallback (kept so demo tenants without
+  //      an HQ configured still see a working widget).
+  // Tech ``home_base`` override is TBD — no schema on the tech
+  // side yet. When it lands, prepend it above tenant HQ.
+  const tenantLoc = useTenantLocation({ enabled: allowed });
+  const lat = tenantLoc?.lat ?? DEFAULT_LAT;
+  const lon = tenantLoc?.lon ?? DEFAULT_LON;
 
   // Hourly is fetched through the shared hook so JobRainFlag badges
   // on job cards can reuse the same payload without extra HTTP calls.

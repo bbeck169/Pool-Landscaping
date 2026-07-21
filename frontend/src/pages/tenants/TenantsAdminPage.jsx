@@ -245,6 +245,122 @@ export function TenantBrandSettings() {
              style={{ backgroundColor: colors.onSurface }}
              data-testid="brand-toast">{toast}</div>
       )}
+
+      {/* Feb-2026 · HQ Location — super-admin only. The rest of the
+          page above is admin-visible, so we self-gate this card. */}
+      <HqLocationCard />
+    </div>
+  );
+}
+
+function HqLocationCard() {
+  const [me, setMe] = useState(null);
+  const [existing, setExisting] = useState(null);
+  const [address, setAddress] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api.get("/auth/me").then(setMe).catch(() => setMe({}));
+  }, []);
+
+  const isSuper = me && me.role === "super_admin";
+
+  useEffect(() => {
+    if (!isSuper) return;
+    api.get("/tenants/mine/geocode").then((r) => {
+      setExisting(r);
+      setAddress(r?.hq_address || "");
+    }).catch(() => setExisting({}));
+  }, [isSuper]);
+
+  if (!me) return null;
+  if (!isSuper) return null;
+
+  const save = async () => {
+    setError("");
+    setBusy(true);
+    try {
+      const r = await api.request("/tenants/mine/geocode", {
+        method: "PATCH",
+        body: JSON.stringify({ address }),
+      });
+      setExisting(r);
+      // Invalidate the module-level tenant-location cache so the
+      // weather widget re-fetches without a full page reload.
+      try {
+        const { invalidateTenantLocation } = await import("@/hooks/useTenantLocation");
+        invalidateTenantLocation();
+      } catch { /* ignore */ }
+      setToast("HQ location saved");
+      setTimeout(() => setToast(""), 2500);
+    } catch (e) {
+      setError(e.message || "Failed to save");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-6" data-testid="tenant-hq-card">
+      <div className="rounded-2xl p-5" style={{ background: colors.surface, border: `1px solid ${colors.border}` }}>
+        <div className="text-sm font-bold uppercase tracking-wider mb-2" style={{ color: colors.onSurface }}>
+          HQ Location
+        </div>
+        <p className="text-xs mb-4" style={{ color: colors.muted }}>
+          Enter your headquarters address. We&apos;ll geocode it once via Google Places and anchor the weather widget + forecast on this location for every user in your tenant. Super-admin only.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            type="text"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            placeholder="e.g. 10840 W Saddlehorn Rd, Peoria AZ 85383"
+            className="flex-1 px-3 py-2 rounded-lg text-sm outline-none focus:ring-2"
+            style={{ background: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+            data-testid="tenant-hq-address-input"
+          />
+          <button
+            onClick={save}
+            disabled={busy || !address.trim() || address.trim().length < 3}
+            className="px-4 py-2 rounded-lg text-sm font-bold text-white"
+            style={{ background: colors.brand, opacity: busy ? 0.6 : 1 }}
+            data-testid="tenant-hq-save"
+          >
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+        {existing?.hq_lat != null && existing?.hq_lng != null ? (
+          <div className="mt-3 rounded-lg px-3 py-2 text-xs"
+                style={{ background: colors.surfaceSecondary, color: colors.onSurfaceSecondary }}
+                data-testid="tenant-hq-current">
+            <div>
+              <span className="font-semibold">Currently stored:</span>{" "}
+              {existing.hq_address_formatted || existing.hq_address}
+            </div>
+            <div className="mt-1 opacity-80">
+              lat <b data-testid="tenant-hq-lat">{existing.hq_lat.toFixed(6)}</b>
+              {" · "}
+              lng <b data-testid="tenant-hq-lng">{existing.hq_lng.toFixed(6)}</b>
+              {existing.hq_geocoded_at ? (
+                <span className="ml-2 opacity-60">
+                  (geocoded {String(existing.hq_geocoded_at).slice(0, 10)})
+                </span>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+        {error ? (
+          <div className="mt-3 text-sm" style={{ color: colors.error }}
+                data-testid="tenant-hq-error">{error}</div>
+        ) : null}
+        {toast ? (
+          <div className="fixed bottom-6 right-6 z-50 px-4 py-2 rounded-xl text-sm text-white shadow-lg"
+                style={{ backgroundColor: colors.onSurface }}
+                data-testid="tenant-hq-toast">{toast}</div>
+        ) : null}
+      </div>
     </div>
   );
 }
