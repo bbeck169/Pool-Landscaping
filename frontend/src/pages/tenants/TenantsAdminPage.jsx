@@ -252,7 +252,148 @@ export function TenantBrandSettings() {
       <HqLocationCard />
       {/* Feb-2026 · Slice 6 · Google Review URL — super-admin only. */}
       <GoogleReviewUrlCard />
+      {/* Feb-2026 · Slice GH0 · Website Widget config — super-admin only. */}
+      <WidgetConfigCard />
     </div>
+  );
+}
+
+
+/* ═══════════ Slice GH0 · Website Widget config ═════════════════════════ */
+function WidgetConfigCard() {
+  const [me, setMe] = useState(null);
+  const [cfg, setCfg] = useState(null);
+  const [domainsText, setDomainsText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api.get("/auth/me").then(setMe).catch(() => {});
+    api.get("/tenants/mine/widget-config")
+      .then((r) => {
+        setCfg(r);
+        setDomainsText((r.widget_allowed_domains || []).join("\n"));
+      })
+      .catch(() => {});
+  }, []);
+
+  if (!me || me.role !== "super_admin" || !cfg) return null;
+
+  const copy = () => {
+    try { navigator.clipboard?.writeText(cfg.public_widget_key); }
+    catch { /* graceful — some browsers block clipboard */ }
+    setToast("Key copied");
+    setTimeout(() => setToast(""), 2000);
+  };
+
+  const regenerate = async () => {
+    if (!window.confirm("Rotate the widget key? Existing widget embeds using the old key will stop working until you update them.")) return;
+    setBusy(true); setError("");
+    try {
+      const r = await api.post(
+        "/tenants/mine/widget-config/regenerate-key", {},
+      );
+      setCfg((c) => ({ ...c, public_widget_key: r.public_widget_key }));
+      setToast("New key generated");
+      setTimeout(() => setToast(""), 2000);
+    } catch (e) { setError(e?.message || "Regenerate failed"); }
+    finally { setBusy(false); }
+  };
+
+  const save = async () => {
+    setBusy(true); setError("");
+    try {
+      const domains = domainsText
+        .split(/[\n,]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const r = await api.patch(
+        "/tenants/mine/widget-config/domains",
+        { widget_allowed_domains: domains },
+      );
+      setCfg((c) => ({ ...c, widget_allowed_domains: r.widget_allowed_domains }));
+      setDomainsText((r.widget_allowed_domains || []).join("\n"));
+      setToast("Allowed domains saved");
+      setTimeout(() => setToast(""), 2000);
+    } catch (e) { setError(e?.message || "Save failed"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Card className="p-5 mt-6" testId="tenant-widget-card">
+      <h2 className="text-lg font-bold mb-1" style={{ color: colors.onSurface }}>
+        Website Widget
+      </h2>
+      <p className="text-sm mb-4" style={{ color: colors.muted }}>
+        The public key identifies your widget on customer sites (like a
+        Stripe publishable key — safe to expose). Widgets only load on
+        the exact domains you list below.
+      </p>
+
+      <div className="mb-4">
+        <div className="text-[10px] font-bold uppercase tracking-wider mb-1"
+             style={{ color: colors.muted }}>
+          Public widget key
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <code className="px-3 py-2 rounded-lg text-sm font-mono flex-1 min-w-0 break-all"
+                style={{ backgroundColor: colors.surfaceSecondary,
+                         color: colors.onSurface,
+                         border: `1px solid ${colors.border}` }}
+                data-testid="tenant-widget-key">
+            {cfg.public_widget_key}
+          </code>
+          <button onClick={copy}
+                  className="px-3 py-2 rounded-lg text-xs font-semibold"
+                  style={{ backgroundColor: colors.surfaceSecondary,
+                           color: colors.onSurface,
+                           border: `1px solid ${colors.border}` }}
+                  data-testid="tenant-widget-key-copy">
+            Copy
+          </button>
+          <button onClick={regenerate} disabled={busy}
+                  className="px-3 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+                  style={{ backgroundColor: colors.surfaceSecondary,
+                           color: colors.error,
+                           border: `1px solid ${colors.border}` }}
+                  data-testid="tenant-widget-key-regenerate-btn">
+            Regenerate
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <div className="text-[10px] font-bold uppercase tracking-wider mb-1"
+             style={{ color: colors.muted }}>
+          Allowed domains (one per line)
+        </div>
+        <textarea rows={4} value={domainsText}
+                  onChange={(e) => setDomainsText(e.target.value)}
+                  placeholder="www.example.com&#10;shop.example.com"
+                  className="w-full px-3 py-2 rounded-lg text-sm outline-none font-mono"
+                  style={{ backgroundColor: colors.surface,
+                           color: colors.onSurface,
+                           border: `1px solid ${colors.border}` }}
+                  data-testid="tenant-widget-domains-input" />
+        <div className="text-[10px] mt-1" style={{ color: colors.muted }}>
+          Widgets refuse to load anywhere else. Add
+          <b> {window.location.host} </b>for local dev.
+        </div>
+      </div>
+
+      {error && <div className="mt-3 text-sm" style={{ color: colors.error }}>{error}</div>}
+      {toast && <div className="mt-2 text-sm" style={{ color: colors.brand }}>{toast}</div>}
+
+      <div className="mt-4 flex justify-end">
+        <button onClick={save} disabled={busy}
+                className="inline-flex items-center gap-1 px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
+                style={{ background: brandGradientCss }}
+                data-testid="tenant-widget-config-save-btn">
+          <Save size={14} /> {busy ? "Saving…" : "Save allowed domains"}
+        </button>
+      </div>
+    </Card>
   );
 }
 

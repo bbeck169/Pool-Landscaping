@@ -5962,3 +5962,39 @@ Frontend:
 - **P1** — Add M2 campaign send path check when the live provider integration lands (currently M2 uses a different delivery model; the enforcement hook is ready to drop in).
 - **P2** — Send-time render preview mode that shows `{{unsubscribe_url}}` resolved for a chosen customer, so admins can eyeball compliance.
 - **P2** — Row-level bounce/complaint hook: webhook endpoint that ingests provider bounce events and adds them to `marketing_suppressions` with `reason="bounce"`.
+
+
+---
+
+## Slice GH0 · Public widget key + domain whitelist (Feb 2026)
+
+**Status:** GREEN · 7/7 GH0 tests + 89/89 marketing-suite regression on 2026-07-21. Shared precursor for Slice G (chat widget) + Slice H (form builder).
+
+### What shipped
+- Tenant schema extension: `public_widget_key` (auto-generated, `pk_` + 32-char base64 urlsafe), `widget_allowed_domains` (list, exact host match, default `[]`).
+- Router `/app/backend/routers/widget_config.py`:
+  - `GET /api/tenants/mine/widget-config` (admin + super) — lazy-generates the key on first read.
+  - `POST /api/tenants/mine/widget-config/regenerate-key` (super_admin only) — rotates the key.
+  - `PATCH /api/tenants/mine/widget-config/domains` (super_admin only) — normalises (strips scheme/port/slashes/case) + dedupes + validates against a strict domain regex.
+  - `require_widget_auth(request, x_widget_key)` — the shared dep every Slice G/H public endpoint imports. Validates `X-Widget-Key` header AND checks the `Origin` (with `Referer` fallback) host is in `widget_allowed_domains`. Empty allowlist = deny by default.
+- Frontend: `<WidgetConfigCard>` on `/settings/tenant` (super-admin only) — shows the key with Copy + Regenerate buttons, allowed-domains textarea, and Save CTA.
+
+### Test coverage (`test_widget_gh0.py` — 7/7 green)
+1. Lazy key generation + idempotent on re-read
+2. RBAC on GET config (tech + unauthenticated blocked)
+3. `regenerate-key` blocks admin + tech (super_admin only); rotation returns a NEW key
+4. Domain PATCH normalises input (`Example.COM` → `example.com`), strips scheme/port/path, dedupes
+5. Domain PATCH rejects garbage input (422)
+6. `require_widget_auth` end-to-end — missing key / wrong key / wrong domain / empty allowlist all 401; Origin OR Referer host match succeeds
+7. Cross-tenant key uniqueness
+
+### Guardrails held
+- Public key is safe to expose (like Stripe publishable) — cannot mutate anything on its own.
+- Empty allowlist = deny by default. A leaked key does nothing until a super-admin explicitly whitelists domains.
+- Only `super_admin` can rotate the key or change allowed domains — regular tenant admins can only READ.
+
+### Next
+- Slice G1 (backend anonymous chat mode for Skedra + Billy) — next.
+- Slice H1 (backend forms + submissions + Turnstile) — parallel with G1.
+- Then G2/G3 (widget JS + admin UI) and H2/H3/H4 (form builder UI + widget JS + leads dashboard).
+- **Turnstile keys** — user still needs to sign up at cloudflare.com/products/turnstile and paste `TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY` into `/app/backend/.env` before H1 ships live verification. Until then, H1 will skip verification with a warning log (dev-friendly).
