@@ -167,6 +167,9 @@ import AnalyticsPage from "@/pages/analytics/AnalyticsPage";
 import OnboardingPage from '@/pages/onboarding/OnboardingPage';
 import LeadRequestPage from "@/pages/leads/LeadRequestPage";
 import PublicLeadRequestPage from "@/pages/public/PublicLeadRequest";
+import WidgetDemoPage from "@/pages/widget/WidgetDemoPage";
+import MarketingFormsPage from "@/pages/marketing/MarketingFormsPage";
+import LeadsDashboardPage from "@/pages/leads/LeadsDashboardPage";
 import TenantsAdminPage, { TenantBrandSettings } from "@/pages/tenants/TenantsAdminPage";
 import {
   TimesheetsPage as WorkforceTimesheets, CrewMapPage as WorkforceCrewMap,
@@ -280,6 +283,7 @@ export default function App() {
           <Route path="/signup" element={<Signup />} />
           <Route path="/tenant-picker" element={<TenantPicker />} />
           <Route path="/public/card/:slug" element={<PublicCard />} />
+          <Route path="/widget-demo" element={<WidgetDemoPage />} />
           <Route path="/f/:slug" element={<PublicForm />} />
           {/* Phase 15A public magic-link routes (no auth) */}
           <Route path="/csat/:token" element={<PublicCsat />} />
@@ -377,6 +381,8 @@ export default function App() {
             <Route path="admin/marketing/review-requests" element={<AdminOnly><MarketingReviewRequestsPage /></AdminOnly>} />
             <Route path="admin/marketing/analytics" element={<AdminOnly><MarketingAnalyticsPage /></AdminOnly>} />
             <Route path="admin/marketing/suppressions" element={<AdminOnly><MarketingSuppressionsPage /></AdminOnly>} />
+            <Route path="admin/marketing/forms" element={<AdminOnly><MarketingFormsPage /></AdminOnly>} />
+            <Route path="admin/leads" element={<AdminOnly><LeadsDashboardPage /></AdminOnly>} />
             <Route path="portal/preferences" element={<PortalPreferences />} />
             <Route path="marketing/reviews" element={<AdminOnly><Reviews /></AdminOnly>} />
             <Route path="marketing/sequences" element={<AdminOnly><SequencesList /></AdminOnly>} />

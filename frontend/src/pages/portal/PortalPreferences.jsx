@@ -12,6 +12,7 @@ import { ArrowLeft, Save, Lock, ShieldCheck, MailX } from "lucide-react";
 import { api } from "@/api";
 import { brandGradientCss, colors } from "@/theme";
 import { useAuth } from "@/auth";
+import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 
 
 const CHANNEL_LABELS = {
@@ -195,7 +196,33 @@ export default function PortalPreferences() {
           <Save size={14} /> {busy ? "Saving…" : "Save preferences"}
         </button>
       </div>
+
+      {/* Feb-2026 · Slice I — Replay the first-login walkthrough
+          without clearing the server-side ``portal_walkthrough_completed_at``
+          flag. The tour is force-opened via the ``forceOpen`` prop and
+          only closed locally when the customer completes/skips it. */}
+      <ReplayTourButton />
     </div>
+  );
+}
+
+
+function ReplayTourButton() {
+  const [replaying, setReplaying] = React.useState(false);
+  return (
+    <>
+      <div className="mt-4">
+        <button onClick={() => setReplaying(true)}
+                className="text-sm font-semibold underline"
+                style={{ color: colors.brand }}
+                data-testid="portal-preferences-replay-tour-btn">
+          Replay portal tour
+        </button>
+      </div>
+      {replaying && (
+        <PortalWalkthrough forceOpen onClose={() => setReplaying(false)} />
+      )}
+    </>
   );
 }
 

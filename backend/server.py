@@ -85,6 +85,7 @@ from routers import (
     widget_config,
     widget_chat,
     marketing_forms,
+    portal_walkthrough,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -176,7 +177,8 @@ for module in [notifications_router,
                marketing_analytics,
                widget_config,
                widget_chat,
-               marketing_forms]:
+               marketing_forms,
+               portal_walkthrough]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -234,6 +236,42 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ─── Slice G2 · CORS reflect-origin for /api/widget/* ────────────────
+# The widget JS runs on tenant marketing sites (any allowlisted host),
+# so the CORS response for widget endpoints must reflect the caller's
+# Origin. Security is enforced by ``require_widget_auth`` — CORS here
+# is purely so browsers don't block legitimate cross-origin XHRs.
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response as _StResponse
+
+_WIDGET_CORS_HEADERS = {
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, X-Widget-Key, X-Forwarded-Origin",
+    "Access-Control-Max-Age": "86400",
+}
+
+
+class _WidgetCorsMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        path = request.url.path
+        if not path.startswith("/api/widget/"):
+            return await call_next(request)
+        origin = request.headers.get("origin")
+        if request.method == "OPTIONS":
+            resp = _StResponse(status_code=204)
+        else:
+            resp = await call_next(request)
+        if origin:
+            resp.headers["Access-Control-Allow-Origin"] = origin
+            resp.headers["Vary"] = "Origin"
+        for k, v in _WIDGET_CORS_HEADERS.items():
+            resp.headers[k] = v
+        return resp
+
+
+app.add_middleware(_WidgetCorsMiddleware)
 
 
 scheduler = AsyncIOScheduler(timezone="UTC")
@@ -304,6 +342,14 @@ async def _background_seed():
         logger.info(f"[gh0-seed:bg] {result}")
     except Exception as e:
         logger.warning(f"gh0 dev-domain background seed crashed: {e}")
+
+    # Slice I — walkthrough backfill (idempotent, grandfathers existing customers).
+    try:
+        from routers.portal_walkthrough import run_walkthrough_backfill
+        result = await run_walkthrough_backfill()
+        logger.info(f"[slice-i] walkthrough backfill: {result}")
+    except Exception as e:
+        logger.warning(f"walkthrough backfill crashed: {e}")
 
     await step("landscaping_user", seed_landscaping_user())
     await step("landscape_tech_carlos", seed_landscape_tech_carlos())

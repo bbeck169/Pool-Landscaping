@@ -25,6 +25,7 @@ import { api } from "@/api";
 import { brandGradientCss, colors } from '@/theme';
 import { useAuth } from "@/auth";
 import { Skeleton, StatusPill } from '@/components/ui-kit';
+import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 
 const money = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
@@ -385,7 +386,7 @@ export default function PortalHome() {
         </div>
       ) : null}
 
-      {/* Feb-2026 · Slice 3D — Quick Request Service modal.  Renders
+      {/* Feb-2026 · Slice 3D — Quick Request Service modal.
           only when the CTA is tapped.  Submits to the same endpoint
           as the full-page /portal/request-service route, so admins
           get the same message + bell + push regardless of entry. */}
@@ -408,6 +409,11 @@ export default function PortalHome() {
           onClose={() => setAiChat(null)}
         />
       ) : null}
+
+      {/* Feb-2026 · Slice I — First-login walkthrough. Self-gates on
+          the server-side ``portal_walkthrough_completed_at`` flag so
+          returning customers never see it a second time. */}
+      <PortalWalkthrough />
     </div>
   );
 }

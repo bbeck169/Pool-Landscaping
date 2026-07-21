@@ -6175,3 +6175,67 @@ Legitimate ingress-rewrite calls still succeed because browsers preserve `Refere
 ### Next Action Items
 - Frontend batch on your greenlight: G2/G3 (chat widget JS bundle + admin config card with copy-snippet + live-preview iframe), H2/H3/H4 (form builder UI + widget JS + Leads dashboard filter), and Slice I customer portal first-login walkthrough (Shepherd.js / Reactour).
 
+
+## Frontend batch — G2 · G3 · H2 · H3 · H4 · Slice I (Feb 2026)
+
+**Status:** GREEN · 95/95 backend co-run · frontend compiles clean. Bundles: `chat.js` 12.6 kB / `form.js` 11.6 kB (both < 40 kB target well under budget, no minification yet).
+
+### G2 · Chat Widget JS Bundle
+- Self-contained vanilla-JS bundle at `/app/frontend/public/widget/chat.js` (served by frontend dev-server/webpack at `${APP_PUBLIC_URL}/widget/chat.js` — no `/api` prefix, no React runtime, no cookies from the main app).
+- Embed snippet: `<script async defer src=".../widget/chat.js" data-widget-key="pk_..."></script>`.
+- Behaviour: reads `data-widget-key`, fetches `GET /api/widget/config` on load, renders a floating brand-coloured bubble bottom-right (z-index 2147483000, respects mobile viewport). Clicking opens a chat panel with tenant name/branding + welcome message. First user turn auto-creates a conversation via `POST /widget/chat/conversations` and posts via `POST /widget/chat/conversations/{cid}/messages`. `conversation_id` persisted in `localStorage["aq_widget_conv_<key-tail>"]` so returning visitors resume. Typing indicator. Graceful "Chat unavailable" pill when the config fetch 401s (invalid key, foreign origin, etc.).
+- New backend endpoint `GET /api/widget/config` — widget-auth-gated; returns `{tenant_name, tenant_slug, brand_color, logo_url, welcome_message, turnstile_site_key}`.
+- New CORS middleware `_WidgetCorsMiddleware`: reflects the incoming `Origin` for any `/api/widget/*` path, adds `Access-Control-Allow-Headers: Content-Type, X-Widget-Key, X-Forwarded-Origin`, handles OPTIONS preflight. Security stays enforced by `require_widget_auth` — the reflect is purely so browsers don't block legitimate cross-origin XHRs.
+- New React route `/widget-demo` (`WidgetDemoPage.jsx`) that dynamically injects the widget `<script>` for a `?key=…` query param. Used by G3 preview iframes and by manual QA.
+
+### G3 · Admin Widget Config Card enhancements
+Extended `<WidgetConfigCard>` in `TenantsAdminPage.jsx` with three new sections beneath the existing key/domains editor:
+- **Embed snippet** — auto-generated with the tenant's actual public key substituted. Testids: `widget-embed-snippet-code`, `widget-embed-copy-btn`, `widget-embed-preview-refresh-btn`. Copy button shows "Copied ✓" for 2s.
+- **Live preview iframe** loading `/widget-demo?key=<pk>&t=<nonce>`. Refresh button bumps nonce to force reload. Testid: `widget-embed-preview-iframe`.
+- **Recent denied requests** — reads `GET /api/tenants/mine/widget-config/denied-requests`, shows last 10 by default with "Show all 50" expand. Each row shows time, reason chip, offending host, path. Testids: `widget-denied-requests-list`, `widget-denied-request-row-{idx}`, `widget-denied-expand-btn`, `widget-denied-refresh-btn`.
+
+### G3 · Backend — Denied-Requests Ring Buffer (**approved improvement**)
+- New in-memory tenant-scoped LIFO ring (max 50 entries per tenant) in `routers/widget_config.py`. Cleared on backend restart.
+- Rows: `{at, reason, path, origin, referer, x_forwarded_origin}`. Truncated to 200 chars per header, no PII, no request body.
+- Reasons: `missing_key`, `invalid_key`, `empty_allowlist`, `no_origin`, `foreign_origin`.
+- Security: rows with unresolvable keys (`missing_key` / `invalid_key`) go into a special `__unknown__` bucket that the admin API cannot read — foreign hits with fabricated keys can never leak into any tenant's ring.
+- New endpoint `GET /api/tenants/mine/widget-config/denied-requests` — admin/super only (tech/customer 403). Explicit test `test_denied_ring_never_leaks_invalid_key_rows` proves isolation.
+
+### H2 · Form Builder Admin UI
+- New page `/admin/marketing/forms` (`MarketingFormsPage.jsx`). Table with active toggle, submission count, field count. Row click opens editor drawer.
+- Editor drawer:
+  - Name + Fields builder (add/reorder up-down/delete). Each field: label (auto-slugs the name), type (all 13 types from H1), required, placeholder, options list (for dropdown/multiselect/radio).
+  - Submit-config panel: `creates` radio (lead/customer/both), M3 email-template select, M5 sequence select, admin_bell toggle. Testids `form-submit-config-creates-{lead|customer|both}`, `form-submit-config-email-select`, `form-submit-config-drip-select`, `form-submit-config-bell-toggle`.
+  - Save via `POST/PATCH /admin/forms`. Drawer keeps saved form loaded so admin can copy the embed snippet + see live preview inline.
+  - Embed snippet + copy button + refresh button + preview iframe (mirroring G3). Testids `form-embed-snippet-code`, `form-embed-copy-btn`, `form-embed-preview-refresh-btn`, `form-embed-preview-iframe`.
+- Testids: `admin-forms-page`, `form-create-btn`, `form-row-{id}`, `form-edit-drawer`, `form-save-btn`, `form-active-toggle-{id}`, `form-add-field-btn`, `form-field-{i}`, `form-field-type-{i}`, `form-field-label-{i}`, `form-field-required-{i}`, `form-field-name-{i}`, `form-field-placeholder-{i}`, `form-field-options-{i}`, `form-field-delete-{i}`, `form-field-up-{i}`, `form-field-down-{i}`.
+
+### H3 · Form Widget JS Bundle
+- Self-contained vanilla-JS bundle at `/app/frontend/public/widget/form.js`. Fetches `GET /api/widget/form/{id}` for schema, `GET /api/widget/config` for branding, renders inline (or replaces `<div data-form-mount>` if provided). Submit calls `POST /api/widget/form/{id}/submit` with `{answers, page_url, turnstile_token}`.
+- Renders all 13 field types (text/email/phone/textarea/number/url/date/address_google/dropdown/multiselect/checkbox/radio/file) with proper HTML input types + client-side required-attr validation.
+- Cloudflare Turnstile widget auto-injected when `turnstile_site_key` is present in `/api/widget/config`; server-side gracefully bypasses verification when `TURNSTILE_SECRET` is unset.
+- Success state renders backend-configured `success_message`. Error state shows a red banner with the server's detail message.
+
+### H4 · Leads Dashboard
+- New page `/admin/leads` (`LeadsDashboardPage.jsx`). Table columns: date · name · contact · source pill · status pill. Filters: source (chat_widget / any form / manual / other), status (new/contacted/qualified/converted/closed), search.
+- Row click → detail drawer showing `extra_fields` collapsed JSON, status dropdown, notes textarea. Buttons: Save (calls `PUT /leads/{id}`), Convert (calls existing `POST /leads/{id}/convert`).
+- Testids: `admin-leads-page`, `lead-search-input`, `lead-filter-source-select`, `lead-filter-status-select`, `lead-row-{id}`, `lead-detail-drawer`, `lead-status-select`, `lead-notes-input`, `lead-save-btn`, `lead-convert-btn`, `lead-close-btn`.
+
+### Slice I · Portal First-Login Walkthrough
+- Custom lightweight tour (`PortalWalkthrough.jsx`) — no external deps. Rationale in shipping report: Shepherd/Reactour would add 40+ kB for a 9-step self-contained tour that never re-runs on the same customer. Custom control keeps the bundle small and matches our design tokens.
+- CSS clip-path spotlight cutout + positioned tooltip card. Prev/Next/Skip. Steps: welcome → balance → service records → invoices → messages/request → reviews → preferences → Ask AI (now bottom-of-page per J1) → done.
+- Server side: `routers/portal_walkthrough.py` with `GET /walkthrough/status`, `POST /walkthrough/complete`. Both endpoints are customer-role-only (403 for admin/tech).
+- Idempotent backfill `run_walkthrough_backfill()` runs once at background-seed post-`tenant_backfill`: existing customers get `portal_walkthrough_completed_at="grandfathered"` sentinel so they don't get spammed. 190 customers grandfathered on the first boot after the migration. New customers created AFTER the backfill still trigger the tour (field is absent → `should_show=true`).
+- Mounted in `PortalHome.jsx` (self-gates on server status). Replay button in `PortalPreferences.jsx` sets `forceOpen` prop — the tour re-opens but the completion flag is NOT cleared (matches spec).
+- Testids: `portal-walkthrough-container`, `portal-walkthrough-skip-btn`, `portal-walkthrough-next-btn`, `portal-walkthrough-prev-btn`, `portal-walkthrough-step-{i}`, `portal-preferences-replay-tour-btn`.
+
+### New backend tests (9 total in `test_widget_g2_g3_slice_i.py`)
+- G2: widget config returns branding + hides internal fields (2)
+- G3: denied ring stores foreign_origin rows, admin can read; tech/customer 403; invalid_key rows quarantined to `__unknown__` (never leak into tenant ring) (4)
+- Slice I: status returns grandfathered for backfilled customer; POST /complete flips the flag to ISO ts; admin can't call the customer walkthrough endpoints (3)
+
+### Env vars (updated / new)
+- `TURNSTILE_SITE_KEY` (optional, new) — public site key served in `/api/widget/config` so the form widget can render the Turnstile challenge inline.
+- `TURNSTILE_SECRET` (existing) — server-side verify; absent → graceful bypass + one WARN at boot (unchanged).
+- All other env vars unchanged.
+

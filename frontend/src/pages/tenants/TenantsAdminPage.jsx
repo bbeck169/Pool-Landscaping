@@ -393,7 +393,190 @@ function WidgetConfigCard() {
           <Save size={14} /> {busy ? "Saving…" : "Save allowed domains"}
         </button>
       </div>
+
+      {/* Feb-2026 · Slice G3 — auto-generated embed snippet with
+          copy-to-clipboard + live preview iframe + denied-requests
+          ring buffer. Everything below is admin-visible. */}
+      <WidgetEmbedSnippetSection publicKey={cfg.public_widget_key} />
+      <WidgetDeniedRequestsSection />
     </Card>
+  );
+}
+
+
+/* ═══════════ Slice G3 · Embed snippet + live preview ═══════════════════ */
+function WidgetEmbedSnippetSection({ publicKey }) {
+  const [copied, setCopied] = useState(false);
+  const [previewNonce, setPreviewNonce] = useState(0);
+  const publicUrl = window.location.origin;
+  const snippet =
+    `<script async defer\n  src="${publicUrl}/widget/chat.js"\n  data-widget-key="${publicKey}"></script>`;
+
+  const copySnippet = () => {
+    try { navigator.clipboard?.writeText(snippet); } catch { /* graceful */ }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="mt-6 pt-5" style={{ borderTop: `1px solid ${colors.border}` }}>
+      <h3 className="text-sm font-bold mb-1" style={{ color: colors.onSurface }}>
+        Embed snippet
+      </h3>
+      <p className="text-xs mb-3" style={{ color: colors.muted }}>
+        Paste this into your marketing site's HTML. The chat bubble appears
+        automatically once the page loads.
+      </p>
+      <pre className="text-xs font-mono p-3 rounded-lg overflow-x-auto"
+           style={{ backgroundColor: colors.surfaceSecondary,
+                    border: `1px solid ${colors.border}`,
+                    color: colors.onSurface }}
+           data-testid="widget-embed-snippet-code">
+{snippet}
+      </pre>
+      <div className="flex items-center gap-2 mt-2">
+        <button onClick={copySnippet}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+                style={{ backgroundColor: colors.surfaceSecondary,
+                         color: colors.onSurface,
+                         border: `1px solid ${colors.border}` }}
+                data-testid="widget-embed-copy-btn">
+          {copied ? "Copied ✓" : "Copy to clipboard"}
+        </button>
+        <button onClick={() => setPreviewNonce((n) => n + 1)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+                style={{ backgroundColor: colors.surfaceSecondary,
+                         color: colors.onSurface,
+                         border: `1px solid ${colors.border}` }}
+                data-testid="widget-embed-preview-refresh-btn">
+          Refresh preview
+        </button>
+      </div>
+
+      <div className="mt-4">
+        <div className="text-[10px] font-bold uppercase tracking-wider mb-2"
+             style={{ color: colors.muted }}>
+          Live preview
+        </div>
+        <iframe
+          key={previewNonce}
+          src={`/widget-demo?key=${encodeURIComponent(publicKey)}&t=${previewNonce}`}
+          title="Widget live preview"
+          data-testid="widget-embed-preview-iframe"
+          style={{
+            width: "100%",
+            height: "480px",
+            border: `1px solid ${colors.border}`,
+            borderRadius: "12px",
+            background: "#fff",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+
+/* ═══════════ Slice G3 · Denied-requests ring buffer viewer ═════════════ */
+function WidgetDeniedRequestsSection() {
+  const [rows, setRows] = useState([]);
+  const [expanded, setExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const refresh = () => {
+    setLoading(true);
+    api.get("/tenants/mine/widget-config/denied-requests")
+      .then((r) => setRows(r.denied || []))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { refresh(); }, []);
+
+  if (!rows.length && !loading) {
+    return (
+      <div className="mt-6 pt-5" style={{ borderTop: `1px solid ${colors.border}` }}>
+        <h3 className="text-sm font-bold mb-1" style={{ color: colors.onSurface }}
+            data-testid="widget-denied-requests-heading">
+          Recent denied requests
+        </h3>
+        <p className="text-xs" style={{ color: colors.muted }}
+           data-testid="widget-denied-requests-empty">
+          No rejections in memory. Any widget request that fails
+          origin/key checks will appear here (up to 50, cleared on
+          backend restart).
+        </p>
+      </div>
+    );
+  }
+
+  const visible = expanded ? rows : rows.slice(0, 10);
+
+  const reasonPill = (r) => {
+    const map = {
+      foreign_origin: { bg: "#FEE2E2", fg: "#991B1B", label: "foreign origin" },
+      no_origin: { bg: "#FEF3C7", fg: "#854D0E", label: "no origin/referer" },
+      invalid_key: { bg: "#EDE9FE", fg: "#5B21B6", label: "invalid key" },
+      missing_key: { bg: "#F3F4F6", fg: "#374151", label: "missing key" },
+      empty_allowlist: { bg: "#DBEAFE", fg: "#1E3A8A", label: "empty allowlist" },
+    };
+    const c = map[r] || { bg: "#F3F4F6", fg: "#374151", label: r };
+    return (
+      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold"
+            style={{ backgroundColor: c.bg, color: c.fg }}>
+        {c.label}
+      </span>
+    );
+  };
+
+  return (
+    <div className="mt-6 pt-5" style={{ borderTop: `1px solid ${colors.border}` }}>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-bold" style={{ color: colors.onSurface }}
+            data-testid="widget-denied-requests-heading">
+          Recent denied requests ({rows.length})
+        </h3>
+        <button onClick={refresh}
+                className="text-xs font-semibold px-2 py-1 rounded-lg"
+                style={{ color: colors.brand,
+                         border: `1px solid ${colors.border}` }}
+                data-testid="widget-denied-refresh-btn">
+          Refresh
+        </button>
+      </div>
+      <div className="rounded-lg overflow-hidden"
+           style={{ border: `1px solid ${colors.border}` }}
+           data-testid="widget-denied-requests-list">
+        {visible.map((row, idx) => (
+          <div key={row.at + idx}
+               data-testid={`widget-denied-request-row-${idx}`}
+               className="px-3 py-2 flex items-center gap-3 text-xs"
+               style={{
+                 borderBottom: idx < visible.length - 1 ? `1px solid ${colors.border}` : undefined,
+                 backgroundColor: idx % 2 ? colors.surfaceSecondary : "transparent",
+               }}>
+            <div className="whitespace-nowrap" style={{ color: colors.muted, minWidth: 90 }}>
+              {row.at.slice(11, 19)}
+            </div>
+            <div>{reasonPill(row.reason)}</div>
+            <div className="truncate flex-1" style={{ color: colors.onSurface }}>
+              {row.origin || row.referer || row.x_forwarded_origin || "—"}
+            </div>
+            <div className="hidden sm:block whitespace-nowrap"
+                 style={{ color: colors.muted }}>
+              {row.path}
+            </div>
+          </div>
+        ))}
+      </div>
+      {rows.length > 10 && (
+        <button onClick={() => setExpanded((v) => !v)}
+                className="mt-2 text-xs font-semibold"
+                style={{ color: colors.brand }}
+                data-testid="widget-denied-expand-btn">
+          {expanded ? "Show only 10" : `Show all ${rows.length}`}
+        </button>
+      )}
+    </div>
   );
 }
 

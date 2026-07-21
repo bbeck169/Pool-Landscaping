@@ -123,6 +123,53 @@ async def seed_dev_widget_domains_for_aquaterra() -> Dict[str, Any]:
     ]}
 
 
+
+# ═══════════════════════════════════════════════════════════════════════
+# GH-Fix v3 · Slice G3 — denied-requests ring buffer (in-memory)
+# ═══════════════════════════════════════════════════════════════════════
+# Tenant-scoped LIFO ring of the last N rejections. Debugging aid only;
+# no PII, no request body. Cleared on backend restart.
+
+from collections import deque
+from threading import Lock
+
+_DENIED_RING_MAX = 50
+_denied_rings: Dict[str, "deque"] = {}
+_denied_lock = Lock()
+
+
+def _record_denied(tenant_id: Optional[str], *,
+                    reason: str, path: str,
+                    origin_hdr: Optional[str],
+                    referer_hdr: Optional[str],
+                    x_forwarded_origin_hdr: Optional[str]) -> None:
+    """Append a rejected-widget-request row to the tenant ring.
+    ``tenant_id`` may be None (no valid key resolved) — such rows are
+    keyed under the special ``__unknown__`` bucket which the admin UI
+    can't read (avoids leaking foreign hits between tenants)."""
+    key = tenant_id or "__unknown__"
+    with _denied_lock:
+        ring = _denied_rings.get(key)
+        if ring is None:
+            ring = deque(maxlen=_DENIED_RING_MAX)
+            _denied_rings[key] = ring
+        ring.appendleft({
+            "at": now_iso(),
+            "reason": reason,
+            "path": path[:120],
+            "origin": (origin_hdr or "")[:200] or None,
+            "referer": (referer_hdr or "")[:200] or None,
+            "x_forwarded_origin": (x_forwarded_origin_hdr or "")[:200] or None,
+        })
+
+
+def get_denied_ring(tenant_id: str) -> List[Dict[str, Any]]:
+    with _denied_lock:
+        ring = _denied_rings.get(tenant_id)
+        return list(ring) if ring else []
+
+
+
 def _new_widget_key() -> str:
     return _KEY_PREFIX + secrets.token_urlsafe(_KEY_ENTROPY_BYTES)
 
@@ -282,15 +329,36 @@ async def require_widget_auth(
 
     Empty allowlist == deny-by-default. No matching candidate → 401.
     """
+    def _req_path() -> str:
+        try:
+            return str(request.url.path)
+        except Exception:
+            return "?"
+
     if not x_widget_key:
+        _record_denied(None, reason="missing_key",
+                        path=_req_path(),
+                        origin_hdr=request.headers.get("origin"),
+                        referer_hdr=request.headers.get("referer"),
+                        x_forwarded_origin_hdr=request.headers.get("x-forwarded-origin"))
         raise HTTPException(401, "Missing X-Widget-Key header")
     tenant = await db.tenants.find_one(
         {"public_widget_key": x_widget_key}, {"_id": 0},
     )
     if not tenant:
+        _record_denied(None, reason="invalid_key",
+                        path=_req_path(),
+                        origin_hdr=request.headers.get("origin"),
+                        referer_hdr=request.headers.get("referer"),
+                        x_forwarded_origin_hdr=request.headers.get("x-forwarded-origin"))
         raise HTTPException(401, "Invalid widget key")
     allowed = list(tenant.get("widget_allowed_domains") or [])
     if not allowed:
+        _record_denied(tenant.get("id"), reason="empty_allowlist",
+                        path=_req_path(),
+                        origin_hdr=request.headers.get("origin"),
+                        referer_hdr=request.headers.get("referer"),
+                        x_forwarded_origin_hdr=request.headers.get("x-forwarded-origin"))
         raise HTTPException(401, "Widget not enabled for any domain yet")
 
     candidates: List[str] = []
@@ -303,14 +371,62 @@ async def require_widget_auth(
         if v and v not in candidates:
             candidates.append(v)
     if not candidates:
+        _record_denied(tenant.get("id"), reason="no_origin",
+                        path=_req_path(),
+                        origin_hdr=request.headers.get("origin"),
+                        referer_hdr=request.headers.get("referer"),
+                        x_forwarded_origin_hdr=request.headers.get("x-forwarded-origin"))
         raise HTTPException(401, "Missing Origin or Referer header")
 
     for host in candidates:
         if host in allowed:
             return tenant
 
+    _record_denied(tenant.get("id"), reason="foreign_origin",
+                    path=_req_path(),
+                    origin_hdr=request.headers.get("origin"),
+                    referer_hdr=request.headers.get("referer"),
+                    x_forwarded_origin_hdr=request.headers.get("x-forwarded-origin"))
     raise HTTPException(
         401,
         f"Origin '{candidates[0]}' is not on the widget allowlist"
         + (f" (checked {len(candidates)} header candidate(s))" if len(candidates) > 1 else ""),
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Slice G2 · Public widget config — read-only, widget-auth
+# ═══════════════════════════════════════════════════════════════════════
+@router.get("/widget/config")
+async def get_widget_public_config(
+    tenant: Dict[str, Any] = Depends(require_widget_auth),
+):
+    """Public config surface consumed by the widget JS bundle at load
+    time. Returns branding + welcome copy + Turnstile site key when
+    configured. Widget-auth enforced (X-Widget-Key + Origin allowlist)."""
+    branding = tenant.get("branding") or {}
+    return {
+        "tenant_name": tenant.get("name") or tenant.get("slug") or "",
+        "tenant_slug": tenant.get("slug"),
+        "brand_color": branding.get("brand_color") or tenant.get("brand_color") or "#0EA5E9",
+        "logo_url": branding.get("logo_url") or tenant.get("logo_url") or None,
+        "welcome_message": (
+            tenant.get("widget_welcome_message")
+            or "Hi! How can I help you today?"
+        ),
+        "turnstile_site_key": (os.environ.get("TURNSTILE_SITE_KEY") or "").strip() or None,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Slice G3 · Admin — denied-requests ring buffer read
+# ═══════════════════════════════════════════════════════════════════════
+@router.get("/tenants/mine/widget-config/denied-requests")
+async def get_widget_denied_requests(user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin access required")
+    tid = user.get("tenant_id")
+    if not tid:
+        raise HTTPException(400, "User has no tenant")
+    return {"denied": get_denied_ring(tid)}
+

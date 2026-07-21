@@ -1,0 +1,299 @@
+// Feb-2026 · Slice H4 — Leads dashboard.
+//
+// Table + drawer detail. Filters (source, status, date range). Convert
+// action calls existing POST /api/leads/{id}/convert.
+import React, { useEffect, useMemo, useState } from "react";
+import { api } from "@/api";
+import { Card } from "@/components/ui/card";
+import { Search, Filter, ArrowRight, X } from "lucide-react";
+
+const colors = {
+  brand: "#0EA5E9",
+  onSurface: "#0F172A",
+  muted: "#64748B",
+  border: "#E2E8F0",
+  surface: "#FFFFFF",
+  surfaceSecondary: "#F8FAFC",
+};
+
+const STATUS_COLORS = {
+  new: { bg: "#DBEAFE", fg: "#1E3A8A" },
+  contacted: { bg: "#FEF3C7", fg: "#854D0E" },
+  converted: { bg: "#DCFCE7", fg: "#166534" },
+  closed: { bg: "#F3F4F6", fg: "#374151" },
+  qualified: { bg: "#E0E7FF", fg: "#3730A3" },
+};
+
+const SOURCE_LABEL = (src) => {
+  if (!src) return "—";
+  if (src === "chat_widget") return "Chat widget";
+  if (src.startsWith("form:")) return `Form · ${src.slice(5)}`;
+  return src;
+};
+
+export default function LeadsDashboardPage() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [filters, setFilters] = useState({ source: "", status: "", search: "" });
+  const [selected, setSelected] = useState(null);
+
+  const refresh = () => {
+    setLoading(true);
+    api.get("/leads")
+      .then((r) => setRows(Array.isArray(r) ? r : (r?.leads || [])))
+      .catch((e) => setError(e?.message || "Failed to load"))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { refresh(); }, []);
+
+  const visible = useMemo(() => {
+    const q = filters.search.toLowerCase().trim();
+    return rows.filter((l) => {
+      if (filters.status && l.status !== filters.status) return false;
+      if (filters.source) {
+        if (filters.source === "chat_widget" && l.source !== "chat_widget") return false;
+        if (filters.source === "form" && !(l.source || "").startsWith("form:")) return false;
+        if (filters.source === "manual"
+            && (l.source && l.source !== "manual" && l.source !== "")) return false;
+      }
+      if (q) {
+        const hay = `${l.name || ""} ${l.email || ""} ${l.phone || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [rows, filters]);
+
+  const sources = useMemo(() => {
+    const s = new Set();
+    rows.forEach((l) => l.source && s.add(l.source.startsWith("form:") ? "form" : l.source));
+    return Array.from(s);
+  }, [rows]);
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto" data-testid="admin-leads-page">
+      <div className="mb-4">
+        <h1 className="text-2xl font-bold" style={{ color: colors.onSurface }}>
+          Leads
+        </h1>
+        <p className="text-sm" style={{ color: colors.muted }}>
+          Every chat conversation with contact info and every form submission
+          lands here. Convert to a customer with one click.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <div className="flex items-center gap-1 px-2 py-1.5 rounded-lg"
+             style={{ border: `1px solid ${colors.border}`, background: "#fff" }}>
+          <Search size={14} color={colors.muted} />
+          <input value={filters.search}
+                 onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
+                 placeholder="Search name, email, phone"
+                 className="outline-none text-sm bg-transparent w-56"
+                 data-testid="lead-search-input" />
+        </div>
+        <select value={filters.source}
+                onChange={(e) => setFilters((f) => ({ ...f, source: e.target.value }))}
+                className="text-sm px-2 py-1.5 rounded-lg outline-none"
+                style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
+                data-testid="lead-filter-source-select">
+          <option value="">All sources</option>
+          <option value="chat_widget">Chat widget</option>
+          <option value="form">Any form</option>
+          <option value="manual">Manual</option>
+          {sources.filter((s) => !["chat_widget", "form", "manual"].includes(s)).map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <select value={filters.status}
+                onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
+                className="text-sm px-2 py-1.5 rounded-lg outline-none"
+                style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
+                data-testid="lead-filter-status-select">
+          <option value="">All statuses</option>
+          {["new", "contacted", "qualified", "converted", "closed"].map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <div className="ml-auto text-xs" style={{ color: colors.muted }}>
+          {visible.length} of {rows.length}
+        </div>
+      </div>
+
+      {error && <div className="mb-3 text-sm p-2 rounded-lg"
+                     style={{ color: "#991B1B", background: "#FEE2E2" }}>{error}</div>}
+
+      <Card className="p-0 overflow-hidden">
+        <div className="grid grid-cols-12 gap-2 px-4 py-2 text-[11px] uppercase font-semibold"
+             style={{ color: colors.muted, background: colors.surfaceSecondary,
+                      borderBottom: `1px solid ${colors.border}` }}>
+          <div className="col-span-2">Date</div>
+          <div className="col-span-3">Name</div>
+          <div className="col-span-3">Contact</div>
+          <div className="col-span-2">Source</div>
+          <div className="col-span-2">Status</div>
+        </div>
+        {loading && <div className="p-6 text-sm" style={{ color: colors.muted }}>Loading…</div>}
+        {!loading && visible.length === 0 && (
+          <div className="p-8 text-sm text-center" style={{ color: colors.muted }}
+               data-testid="admin-leads-empty">
+            No leads matching filters.
+          </div>
+        )}
+        {visible.map((l) => (
+          <div key={l.id}
+               data-testid={`lead-row-${l.id}`}
+               className="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-slate-50 cursor-pointer"
+               style={{ borderBottom: `1px solid ${colors.border}` }}
+               onClick={() => setSelected(l)}>
+            <div className="col-span-2 text-xs" style={{ color: colors.muted }}>
+              {(l.created_at || "").slice(0, 10)}
+            </div>
+            <div className="col-span-3 font-semibold" style={{ color: colors.onSurface }}>
+              {l.name || "—"}
+            </div>
+            <div className="col-span-3 text-xs" style={{ color: colors.muted }}>
+              {l.email && <div>{l.email}</div>}
+              {l.phone && <div>{l.phone}</div>}
+            </div>
+            <div className="col-span-2">
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                    style={{ background: "#F1F5F9", color: "#475569" }}>
+                {SOURCE_LABEL(l.source)}
+              </span>
+            </div>
+            <div className="col-span-2">
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                    style={{
+                      background: (STATUS_COLORS[l.status] || STATUS_COLORS.new).bg,
+                      color: (STATUS_COLORS[l.status] || STATUS_COLORS.new).fg,
+                    }}>
+                {l.status || "new"}
+              </span>
+            </div>
+          </div>
+        ))}
+      </Card>
+
+      {selected && (
+        <LeadDetailDrawer
+          lead={selected}
+          onClose={() => setSelected(null)}
+          onUpdated={() => { setSelected(null); refresh(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+
+function LeadDetailDrawer({ lead, onClose, onUpdated }) {
+  const [status, setStatus] = useState(lead.status || "new");
+  const [notes, setNotes] = useState(lead.notes || "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = async () => {
+    setBusy(true); setError("");
+    try {
+      await api.put(`/leads/${lead.id}`, { status, notes });
+      onUpdated();
+    } catch (e) { setError(e?.message || "Save failed"); }
+    finally { setBusy(false); }
+  };
+
+  const convert = async () => {
+    if (!window.confirm(`Convert "${lead.name || lead.email}" into a customer?`)) return;
+    setBusy(true); setError("");
+    try {
+      await api.post(`/leads/${lead.id}/convert`, {});
+      onUpdated();
+    } catch (e) { setError(e?.message || "Convert failed"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end"
+         style={{ background: "rgba(15,23,42,.35)" }}
+         onClick={onClose}
+         data-testid="lead-detail-drawer">
+      <div className="bg-white w-full max-w-lg overflow-y-auto"
+           style={{ height: "100vh" }}
+           onClick={(e) => e.stopPropagation()}>
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-bold" style={{ color: colors.onSurface }}>
+                {lead.name || "Lead"}
+              </h2>
+              <div className="text-xs" style={{ color: colors.muted }}>
+                {SOURCE_LABEL(lead.source)} · {(lead.created_at || "").slice(0, 10)}
+              </div>
+            </div>
+            <button onClick={onClose} data-testid="lead-close-btn"
+                    className="p-1"><X size={18} color={colors.muted} /></button>
+          </div>
+
+          <div className="mb-4 text-sm">
+            {lead.email && <div><b>Email:</b> {lead.email}</div>}
+            {lead.phone && <div><b>Phone:</b> {lead.phone}</div>}
+            {lead.address && <div><b>Address:</b> {lead.address}</div>}
+          </div>
+
+          {lead.meta && Object.keys(lead.meta).length > 0 && (
+            <details className="mb-4 text-sm">
+              <summary className="cursor-pointer font-semibold"
+                       style={{ color: colors.muted }}>Extra fields</summary>
+              <pre className="text-xs font-mono p-2 rounded mt-2"
+                   style={{ background: colors.surfaceSecondary }}>
+{JSON.stringify(lead.meta, null, 2)}
+              </pre>
+            </details>
+          )}
+
+          <label className="block text-[10px] font-bold uppercase mb-1"
+                 style={{ color: colors.muted }}>Status</label>
+          <select value={status}
+                  onChange={(e) => setStatus(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg text-sm outline-none mb-3"
+                  style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
+                  data-testid="lead-status-select">
+            {["new", "contacted", "qualified", "converted", "closed"].map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+
+          <label className="block text-[10px] font-bold uppercase mb-1"
+                 style={{ color: colors.muted }}>Notes</label>
+          <textarea value={notes} onChange={(e) => setNotes(e.target.value)}
+                    rows={4}
+                    className="w-full px-3 py-2 rounded-lg text-sm outline-none mb-3"
+                    style={{ border: `1px solid ${colors.border}` }}
+                    data-testid="lead-notes-input" />
+
+          {error && <div className="mb-3 text-sm p-2 rounded-lg"
+                         style={{ color: "#991B1B", background: "#FEE2E2" }}>{error}</div>}
+
+          <div className="flex justify-end gap-2">
+            <button onClick={save} disabled={busy}
+                    className="px-3 py-2 rounded-xl text-sm font-semibold"
+                    style={{ border: `1px solid ${colors.border}`,
+                             color: colors.onSurface, background: "#fff" }}
+                    data-testid="lead-save-btn">
+              Save
+            </button>
+            {lead.status !== "converted" && (
+              <button onClick={convert} disabled={busy}
+                      className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
+                      style={{ background: colors.brand }}
+                      data-testid="lead-convert-btn">
+                Convert to customer <ArrowRight size={14} />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
