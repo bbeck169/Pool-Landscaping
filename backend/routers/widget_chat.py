@@ -47,8 +47,13 @@ MAX_MSG_LEN = 2000
 HISTORY_WINDOW = 20
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+# Phone regex tightened (GH-Fix): require at least 10 digits with real
+# phone punctuation. We strip emails from the text BEFORE running the
+# phone match so timestamp-heavy email local parts (e.g.
+# "widget-test-1707422400@example.com") don't get mis-detected as
+# phone numbers.
 _PHONE_RE = re.compile(
-    r"(?<!\d)(?:\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}(?!\d)"
+    r"(?<!\w)(?:\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}(?!\d)"
 )
 # Rough name extractor: "my name is X" or "I'm X" — best-effort only.
 _NAME_RE = re.compile(
@@ -100,7 +105,10 @@ class ConvStart(BaseModel):
 
 
 class WidgetMsgIn(BaseModel):
-    conversation_id: str
+    # GH-Fix: ``conversation_id`` in the body is OPTIONAL now — the
+    # path param is authoritative. Kept for backwards compat with the
+    # old widget JS bundle that may still send it.
+    conversation_id: Optional[str] = None
     text: str = Field(..., min_length=1, max_length=MAX_MSG_LEN)
 
 
@@ -111,10 +119,18 @@ def _extract_contact(text: str) -> Dict[str, Optional[str]]:
     All fields optional. Names are best-effort — the LLM system prompt
     reminds it to ask, so a missed extraction here still gets picked
     up on the next turn.
+
+    GH-Fix: emails are stripped from the message BEFORE the phone regex
+    runs so ``widget-test-1707422400@example.com`` doesn't extract
+    ``1707422400`` as a phone number.
     """
-    email_m = _EMAIL_RE.search(text or "")
-    phone_m = _PHONE_RE.search(text or "")
-    name_m = _NAME_RE.search(text or "")
+    raw = text or ""
+    email_m = _EMAIL_RE.search(raw)
+    # Strip any email addresses from the text before phone matching to
+    # avoid false-positives on numeric email local parts.
+    text_no_email = _EMAIL_RE.sub(" ", raw)
+    phone_m = _PHONE_RE.search(text_no_email)
+    name_m = _NAME_RE.search(raw)
     return {
         "email": email_m.group(0).strip() if email_m else None,
         "phone": phone_m.group(0).strip() if phone_m else None,
@@ -246,7 +262,14 @@ async def start_widget_conversation(
     }
     await db.widget_chat_conversations.insert_one(doc)
     doc.pop("_id", None)
-    return {"id": doc["id"], "tenant_id": doc["tenant_id"]}
+    # GH-Fix: expose both ``id`` (legacy) and ``conversation_id``
+    # (canonical going forward) so the frontend can move to the new
+    # name without waiting on a widget bundle rebuild.
+    return {
+        "id": doc["id"],
+        "conversation_id": doc["id"],
+        "tenant_id": doc["tenant_id"],
+    }
 
 
 @router.get("/widget/chat/conversations/{cid}")

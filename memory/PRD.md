@@ -6053,3 +6053,46 @@ Router: `/app/backend/routers/marketing_forms.py`.
 - H3 · Widget JS bundle for forms.
 - H4 · Leads dashboard filter for `source="chat_widget"` + `source="form:*"`.
 - Slice I · Customer portal first-login walkthrough (Shepherd.js / Reactour).
+
+## GH-Fix delta on Slice GH0 + G1 + H1 (Feb 2026)
+
+**Status:** GREEN · 55/55 co-run (`test_widget_gh0.py` 7 · `test_widget_g1.py` 20 · `test_widget_h1.py` 28) on 2026-07-21.
+
+Delivered from tester's 8-item report:
+
+### P0
+1. **Origin header enforcement** — `require_widget_auth` docstring hardened to spell out the security intent: reads client-supplied `Origin` (Referer fallback), never trusts proxy `Host`. Added tests `test_middleware_rejects_foreign_origin_hard` (3 foreign hosts) + `test_middleware_rejects_when_neither_origin_nor_referer`.
+2. **Preview host auto-seed** — server.py boot now:
+   - Runs the aquaterra `$addToSet` at BOTH sync-boot AND background-seed (post-`tenant_backfill`) — covers fresh cold-boot races.
+   - Gated on `APP_ENV != "production"` + `WIDGET_DEV_DOMAIN_SEED != "0"` — production tenants can NEVER get a phantom dev host quietly appended.
+   - Dev host picked in order: `WIDGET_DEV_DOMAIN` env → `APP_PUBLIC_URL` host → `poolscape-audit.preview.emergentagent.com`.
+   - Logs one INFO line per successful append + one INFO line when the seed is skipped in prod.
+3. **Empty fields array** — `FormIn.fields` now `min_length=1`. `POST /admin/forms {"name":"Bad"}` → 422. Also 422 when `fields` key is absent entirely.
+4. **`submit_config` wired end-to-end** — new `SubmitConfig` model on `FormIn`/`FormPatch`:
+   - `creates` ∈ `{lead, customer, both}` (default `lead`) — enforced with a `model_validator`.
+   - `confirmation_email_template_id` — validated on save (exists in tenant + `channel="email"`).
+   - `drip_sequence_id` — validated on save (exists in tenant).
+   - `admin_bell` — default `True`; legacy `notify_admin_bell` kept as an aliased mirror.
+   - Post-submit handler now:
+     - Creates lead / customer / both per `creates`. Existing-by-email/phone dedupe reused for both entities.
+     - When `confirmation_email_template_id` set + submission carries `email` → renders the M3 template through `render_subject_and_body` and drops a `marketing_deliveries` row (`mock=True`, same shape M5/M6 use — analytics dashboard picks it up for free). Row carries `form_id` + `form_submission_id`.
+     - When `drip_sequence_id` set + subject id available → inserts a `marketing_drip_enrolments` row with `trigger_source="form_submission"`, `subject_kind` populated, and `customer_id` set to the subject id (lead or customer) so the M5 tick worker keys on it uniformly. Duplicate active enrolments are skipped.
+     - Admin bell fired only when `submit_config.admin_bell=True`.
+   - Response now includes `lead_id`, `customer_id`, `delivery_id`, `enrolment_id` so the frontend can render a rich success state.
+
+### P1
+5. **Chat conv-id alias** — `POST /widget/chat/conversations` response now includes both `id` (legacy) AND `conversation_id` (canonical). `WidgetMsgIn.conversation_id` is now `Optional[str]` — the path param is authoritative; body key kept for backwards compat.
+6. **Form field schema** — `FormField` extended with `id` (auto-slug from `name` on save, uniqueness-suffixed), `order` (auto-populated from array index when missing), `validation` (freeform dict, forward compat). Field type set broadened to `{text, email, phone, textarea, number, url, date, address_google, dropdown, select, multiselect, checkbox, radio, file}`. Options are required for `dropdown/select/multiselect/radio`.
+7. **Form submit body aliases** — `POST /widget/form/{fid}/submit` accepts BOTH `answers` (canonical) and `data` (legacy). `answers` wins when both are supplied. Submission doc stores under both keys so pre-existing consumers keep working.
+8. **Chat lead phone-regex false positive** — `_extract_contact` now strips email addresses from the text BEFORE running the phone regex, so timestamp-heavy email local parts (`visitor-1707422400@example.com`) no longer mis-extract as a phone number. Regex also tightened with `(?<!\w)` guard. Real phones like `(602) 555-0142` still match.
+
+### New test coverage (23 new tests added on top of the pre-GH-fix 32)
+- G1 (7 new): foreign-origin hard-reject × 3 cases, empty-headers hard-reject, `conversation_id` alias in response, optional body-side `conversation_id`, phone-regex false-positive kill + real-phone regression, aquaterra boot-seed presence.
+- H1 (16 new): empty fields 422, missing fields key 422, field-id auto-derive, all 13 field types round-trip, `submit_config` defaults, template/sequence/SMS-as-confirmation validation × 3, confirmation-email delivery wire, drip enrolment wire, `admin_bell=False` respected, `creates=customer` no-lead, `creates=both`, `answers` alias, `data` legacy alias, `answers` wins over `data`.
+
+### Env vars (updated)
+- `APP_ENV` (existing) — set to `"production"` in prod tenants to block dev-domain auto-seed.
+- `WIDGET_DEV_DOMAIN_SEED` (new, default `"1"`) — set to `"0"` to opt any non-prod tenant out of the auto-seed too.
+- `WIDGET_DEV_DOMAIN` (new, optional) — explicit host to seed; overrides the `APP_PUBLIC_URL` derivation.
+- `TURNSTILE_SECRET` (existing, optional) — absent → graceful bypass + WARN.
+

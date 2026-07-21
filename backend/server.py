@@ -299,32 +299,39 @@ async def _background_seed():
     # ``widget_allowed_domains``. This second call catches the fresh
     # cold-boot case where the tenant didn't exist yet when the sync
     # startup ran. Idempotent (only appends when absent).
+    # GH-Fix: gated on APP_ENV != "production" and skippable via
+    # ``WIDGET_DEV_DOMAIN_SEED=0``. Prod tenants never get a phantom
+    # dev host quietly appended.
     try:
         from urllib.parse import urlparse
-        dev_host = None
-        pub = (os.environ.get("APP_PUBLIC_URL") or "").strip()
-        if pub:
-            try:
-                dev_host = (urlparse(pub).netloc or pub).split(":")[0].lower() or None
-            except Exception:
-                dev_host = None
-        if not dev_host:
-            dev_host = "poolscape-audit.preview.emergentagent.com"
-        aqua = await db.tenants.find_one(
-            {"slug": "aquaterra"},
-            {"_id": 0, "id": 1, "widget_allowed_domains": 1},
-        )
-        if aqua and dev_host:
-            current = aqua.get("widget_allowed_domains") or []
-            if dev_host not in current:
-                await db.tenants.update_one(
-                    {"id": aqua["id"]},
-                    {"$addToSet": {"widget_allowed_domains": dev_host}},
-                )
-                logger.info(
-                    f"[gh0-seed:bg] appended dev host '{dev_host}' to "
-                    f"aquaterra widget_allowed_domains"
-                )
+        _env = os.environ.get("APP_ENV", "preview").lower()
+        _seed_toggle = os.environ.get("WIDGET_DEV_DOMAIN_SEED", "1").strip()
+        if _env != "production" and _seed_toggle not in ("0", "false", "no", ""):
+            dev_host = (os.environ.get("WIDGET_DEV_DOMAIN") or "").strip().lower() or None
+            if not dev_host:
+                pub = (os.environ.get("APP_PUBLIC_URL") or "").strip()
+                if pub:
+                    try:
+                        dev_host = (urlparse(pub).netloc or pub).split(":")[0].lower() or None
+                    except Exception:
+                        dev_host = None
+            if not dev_host:
+                dev_host = "poolscape-audit.preview.emergentagent.com"
+            aqua = await db.tenants.find_one(
+                {"slug": "aquaterra"},
+                {"_id": 0, "id": 1, "widget_allowed_domains": 1},
+            )
+            if aqua and dev_host:
+                current = aqua.get("widget_allowed_domains") or []
+                if dev_host not in current:
+                    await db.tenants.update_one(
+                        {"id": aqua["id"]},
+                        {"$addToSet": {"widget_allowed_domains": dev_host}},
+                    )
+                    logger.info(
+                        f"[gh0-seed:bg] appended dev host '{dev_host}' to "
+                        f"aquaterra widget_allowed_domains"
+                    )
     except Exception as e:
         logger.warning(f"gh0 dev-domain background seed crashed: {e}")
 
@@ -679,32 +686,43 @@ async def startup():
     # aquaterra tenant's widget_allowed_domains so the widget bundle
     # served from poolscape-audit.preview.emergentagent.com works
     # immediately. Idempotent (only appends when absent).
+    # GH-Fix: gated on APP_ENV != "production" + WIDGET_DEV_DOMAIN_SEED
+    # env toggle. Never runs in production tenants.
     try:
         from urllib.parse import urlparse
-        dev_host = None
-        pub = (os.environ.get("APP_PUBLIC_URL") or "").strip()
-        if pub:
-            try:
-                dev_host = (urlparse(pub).netloc or pub).split(":")[0].lower() or None
-            except Exception:
-                dev_host = None
-        if not dev_host:
-            dev_host = "poolscape-audit.preview.emergentagent.com"
-        aqua = await db.tenants.find_one(
-            {"slug": "aquaterra"},
-            {"_id": 0, "id": 1, "widget_allowed_domains": 1},
-        )
-        if aqua and dev_host:
-            current = aqua.get("widget_allowed_domains") or []
-            if dev_host not in current:
-                await db.tenants.update_one(
-                    {"id": aqua["id"]},
-                    {"$addToSet": {"widget_allowed_domains": dev_host}},
-                )
-                logger.info(
-                    f"[gh0-seed] appended dev host '{dev_host}' to "
-                    f"aquaterra widget_allowed_domains"
-                )
+        _env = os.environ.get("APP_ENV", "preview").lower()
+        _seed_toggle = os.environ.get("WIDGET_DEV_DOMAIN_SEED", "1").strip()
+        if _env != "production" and _seed_toggle not in ("0", "false", "no", ""):
+            dev_host = (os.environ.get("WIDGET_DEV_DOMAIN") or "").strip().lower() or None
+            if not dev_host:
+                pub = (os.environ.get("APP_PUBLIC_URL") or "").strip()
+                if pub:
+                    try:
+                        dev_host = (urlparse(pub).netloc or pub).split(":")[0].lower() or None
+                    except Exception:
+                        dev_host = None
+            if not dev_host:
+                dev_host = "poolscape-audit.preview.emergentagent.com"
+            aqua = await db.tenants.find_one(
+                {"slug": "aquaterra"},
+                {"_id": 0, "id": 1, "widget_allowed_domains": 1},
+            )
+            if aqua and dev_host:
+                current = aqua.get("widget_allowed_domains") or []
+                if dev_host not in current:
+                    await db.tenants.update_one(
+                        {"id": aqua["id"]},
+                        {"$addToSet": {"widget_allowed_domains": dev_host}},
+                    )
+                    logger.info(
+                        f"[gh0-seed] appended dev host '{dev_host}' to "
+                        f"aquaterra widget_allowed_domains"
+                    )
+        else:
+            logger.info(
+                f"[gh0-seed] dev-domain seed skipped "
+                f"(APP_ENV={_env!r}, WIDGET_DEV_DOMAIN_SEED={_seed_toggle!r})"
+            )
     except Exception as e:
         logger.warning(f"gh0 dev-domain seed crashed: {e}")
 

@@ -16,21 +16,25 @@ Cloudflare Turnstile:
   :func:`log_turnstile_status_once`) and accept submissions without
   verification. This keeps dev + preview builds unblocked.
 
-Lead capture:
-* Every submission spawns a ``leads`` doc scoped to the tenant. If the
-  form's ``name`` / ``email`` / ``phone`` fields are present we use
-  them; otherwise the lead is created with placeholder values so the
-  admin can still triage it via ``form_submissions``.
+Post-submit actions (per-form ``submit_config``):
+* ``creates`` — ``"lead"`` (default), ``"customer"``, or ``"both"``.
+* ``confirmation_email_template_id`` — M3 template rendered against
+  the submission answers and dropped into ``marketing_deliveries``
+  (mocked, same pipeline as M5/M6).
+* ``drip_sequence_id`` — enrol the resulting lead/customer into an M5
+  sequence via ``marketing_drip_enrolments``.
+* ``admin_bell`` — fan the classic Slice-3D bell (default True).
 """
 from __future__ import annotations
 
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from config import db, logger
 from utils import get_current_user, new_id, now_iso, require_admin
@@ -95,10 +99,19 @@ async def _verify_turnstile(token: Optional[str], remote_ip: Optional[str]) -> N
 
 # ─── Field / form models ─────────────────────────────────────────────
 
-_FIELD_TYPES = {"text", "email", "phone", "textarea",
-                 "select", "checkbox", "number", "url"}
+# GH-Fix: broadened field type set to match the tester's spec — every
+# widget builder type round-trips: text, email, phone, textarea,
+# number, url, address_google, dropdown, multiselect, checkbox, radio,
+# date, file, select (alias for dropdown for backwards compat).
+_FIELD_TYPES = {
+    "text", "email", "phone", "textarea", "number", "url", "date",
+    "address_google", "dropdown", "select", "multiselect",
+    "checkbox", "radio", "file",
+}
+_OPTIONS_REQUIRED_TYPES = {"dropdown", "select", "multiselect", "radio"}
 
 _SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,63})$")
+_FIELD_ID_RE = re.compile(r"[^a-z0-9]+")
 
 
 def _norm_slug(v: str) -> str:
@@ -111,24 +124,64 @@ def _norm_slug(v: str) -> str:
     return v[:64]
 
 
+def _norm_field_id(v: str) -> str:
+    """Deterministic field id derived from ``name`` (or explicit id).
+    Lowercase, alphanumeric-plus-underscore, ≤ 60 chars."""
+    v = (v or "").strip().lower()
+    v = _FIELD_ID_RE.sub("_", v).strip("_")
+    return v[:60] or "field"
+
+
 class FormField(BaseModel):
+    # Both ``id`` and ``name`` are stored. ``id`` is auto-generated
+    # from ``name`` when the client doesn't provide one, so submissions
+    # can key by either while the frontend renders by ``id``/``order``.
+    id: Optional[str] = Field(None, max_length=60)
     name: str = Field(..., min_length=1, max_length=60)
     label: str = Field(..., min_length=1, max_length=120)
-    type: str = Field(..., description=f"one of {_FIELD_TYPES}")
+    type: str = Field(..., description=f"one of {sorted(_FIELD_TYPES)}")
     required: bool = False
     placeholder: Optional[str] = Field(None, max_length=120)
-    options: Optional[List[str]] = None  # for select
+    options: Optional[List[str]] = None
+    # Freeform ``validation`` blob — passed through untouched for now
+    # (min/max/pattern etc. — the widget UI will enforce client-side;
+    # server-side enforcement is best-effort forward compat).
+    validation: Optional[Dict[str, Any]] = None
+    # Client can set explicit order; when absent we assign the array
+    # index on save.
+    order: Optional[int] = None
+
+
+class SubmitConfig(BaseModel):
+    # GH-Fix: submit_config wired per tester brief.
+    creates: str = Field("lead", description='one of "lead" | "customer" | "both"')
+    confirmation_email_template_id: Optional[str] = None
+    drip_sequence_id: Optional[str] = None
+    admin_bell: bool = True
+
+    @model_validator(mode="after")
+    def _check_creates(self):  # noqa: D401
+        v = (self.creates or "lead").lower().strip()
+        if v not in ("lead", "customer", "both"):
+            raise ValueError('creates must be one of "lead" | "customer" | "both"')
+        self.creates = v
+        return self
 
 
 class FormIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     slug: Optional[str] = None
-    fields: List[FormField] = Field(default_factory=list)
+    # GH-Fix: fields list now MUST be non-empty (min_items=1). A form
+    # with zero fields is meaningless.
+    fields: List[FormField] = Field(..., min_length=1)
     submit_button_label: str = Field("Send", max_length=40)
     success_message: str = Field(
         "Thanks! We'll be in touch shortly.", max_length=280
     )
-    notify_admin_bell: bool = True
+    submit_config: SubmitConfig = Field(default_factory=SubmitConfig)
+    # ``notify_admin_bell`` kept for backwards compat but the canonical
+    # switch is now ``submit_config.admin_bell``.
+    notify_admin_bell: Optional[bool] = None
 
 
 class FormPatch(BaseModel):
@@ -136,34 +189,80 @@ class FormPatch(BaseModel):
     fields: Optional[List[FormField]] = None
     submit_button_label: Optional[str] = Field(None, max_length=40)
     success_message: Optional[str] = Field(None, max_length=280)
+    submit_config: Optional[SubmitConfig] = None
     notify_admin_bell: Optional[bool] = None
     active: Optional[bool] = None
 
 
 class FormSubmit(BaseModel):
-    data: Dict[str, Any] = Field(default_factory=dict)
+    # GH-Fix: accept both ``data`` and ``answers`` (canonical). The
+    # public-facing spec uses ``answers``; the initial H1 implementation
+    # used ``data``. Both are normalised server-side.
+    data: Optional[Dict[str, Any]] = None
+    answers: Optional[Dict[str, Any]] = None
     turnstile_token: Optional[str] = None
     page_url: Optional[str] = Field(None, max_length=500)
 
 
-def _validate_field_defs(fields: List[FormField]) -> None:
+def _validate_field_defs(fields: List[FormField]) -> List[Dict[str, Any]]:
+    """Validate + normalise. Auto-populates ``id`` and ``order``.
+    Returns the plain-dict list ready for persistence."""
+    if not fields:
+        raise HTTPException(422, "form must have at least one field")
     seen_names: set = set()
-    for f in fields:
+    seen_ids: set = set()
+    normalised: List[Dict[str, Any]] = []
+    for idx, f in enumerate(fields):
         if f.type not in _FIELD_TYPES:
             raise HTTPException(422, f"field '{f.name}': unsupported type '{f.type}'")
         if f.name in seen_names:
             raise HTTPException(422, f"duplicate field name '{f.name}'")
         seen_names.add(f.name)
-        if f.type == "select" and not f.options:
+        if f.type in _OPTIONS_REQUIRED_TYPES and not f.options:
             raise HTTPException(
-                422, f"field '{f.name}': select fields need options"
+                422,
+                f"field '{f.name}': {f.type} fields need options",
             )
+        fid = _norm_field_id(f.id or f.name)
+        # Ensure id uniqueness (auto-suffix if collides).
+        base = fid; n = 2
+        while fid in seen_ids:
+            fid = f"{base}_{n}"; n += 1
+        seen_ids.add(fid)
+        d = f.dict()
+        d["id"] = fid
+        d["order"] = f.order if isinstance(f.order, int) else idx
+        normalised.append(d)
+    return normalised
 
 
-def _clean_form(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if doc:
-        doc.pop("_id", None)
-    return doc
+async def _validate_submit_config(sc: Optional[SubmitConfig],
+                                     tenant_id: str) -> Dict[str, Any]:
+    """Ensure referenced M3 template + M5 sequence exist in this
+    tenant (and template.channel == 'email' when configured for the
+    confirmation email). Returns the plain dict for persistence."""
+    if sc is None:
+        sc = SubmitConfig()
+    if sc.confirmation_email_template_id:
+        tpl = await db.marketing_templates.find_one(
+            {"id": sc.confirmation_email_template_id, "tenant_id": tenant_id},
+            {"_id": 0, "id": 1, "channel": 1, "active": 1},
+        )
+        if not tpl:
+            raise HTTPException(
+                422, "confirmation_email_template_id not found in this tenant")
+        if tpl.get("channel") != "email":
+            raise HTTPException(
+                422, "confirmation_email_template_id must be an email template")
+    if sc.drip_sequence_id:
+        seq = await db.marketing_sequences.find_one(
+            {"id": sc.drip_sequence_id, "tenant_id": tenant_id},
+            {"_id": 0, "id": 1},
+        )
+        if not seq:
+            raise HTTPException(
+                422, "drip_sequence_id not found in this tenant")
+    return sc.dict()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -173,23 +272,31 @@ def _clean_form(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 async def create_form(body: FormIn,
                         user: dict = Depends(require_admin),
                         tenant: dict = Depends(get_current_tenant)):
-    _validate_field_defs(body.fields)
+    normalised_fields = _validate_field_defs(body.fields)
     slug = _norm_slug(body.slug or body.name)
-    # Slug must be unique within tenant.
     dupe = await db.marketing_forms.find_one(
         {"tenant_id": tenant["id"], "slug": slug}, {"_id": 0, "id": 1}
     )
     if dupe:
         raise HTTPException(409, f"slug '{slug}' already exists for this tenant")
+
+    # Reconcile legacy notify_admin_bell → submit_config.admin_bell.
+    sc = body.submit_config
+    if body.notify_admin_bell is not None:
+        sc = sc.copy(update={"admin_bell": body.notify_admin_bell})
+    submit_cfg = await _validate_submit_config(sc, tenant["id"])
+
     doc = {
         "id": new_id(),
         "tenant_id": tenant["id"],
         "name": body.name,
         "slug": slug,
-        "fields": [f.dict() for f in body.fields],
+        "fields": normalised_fields,
         "submit_button_label": body.submit_button_label,
         "success_message": body.success_message,
-        "notify_admin_bell": body.notify_admin_bell,
+        "submit_config": submit_cfg,
+        # Legacy mirror for existing consumers.
+        "notify_admin_bell": submit_cfg["admin_bell"],
         "active": True,
         "created_by": user["id"],
         "created_at": now_iso(),
@@ -228,12 +335,24 @@ async def patch_form(fid: str, body: FormPatch,
                        tenant: dict = Depends(get_current_tenant)):
     updates = {k: v for k, v in body.dict(exclude_unset=True).items()}
     if "fields" in updates and updates["fields"] is not None:
-        _validate_field_defs([FormField(**f) if isinstance(f, dict) else f
-                                 for f in updates["fields"]])
-        updates["fields"] = [
-            (f.dict() if isinstance(f, FormField) else f)
-            for f in updates["fields"]
-        ]
+        field_objs = [FormField(**f) if isinstance(f, dict) else f
+                       for f in updates["fields"]]
+        updates["fields"] = _validate_field_defs(field_objs)
+    if "submit_config" in updates and updates["submit_config"] is not None:
+        sc_obj = (updates["submit_config"] if isinstance(updates["submit_config"], SubmitConfig)
+                     else SubmitConfig(**updates["submit_config"]))
+        updates["submit_config"] = await _validate_submit_config(sc_obj, tenant["id"])
+        # Keep the legacy mirror in sync.
+        updates["notify_admin_bell"] = updates["submit_config"]["admin_bell"]
+    elif "notify_admin_bell" in updates and updates["notify_admin_bell"] is not None:
+        # Mirror the legacy toggle back into submit_config.admin_bell.
+        cur = await db.marketing_forms.find_one(
+            {"id": fid, "tenant_id": tenant["id"]},
+            {"_id": 0, "submit_config": 1},
+        )
+        base = (cur or {}).get("submit_config") or {}
+        base["admin_bell"] = bool(updates["notify_admin_bell"])
+        updates["submit_config"] = base
     updates["updated_at"] = now_iso()
     r = await db.marketing_forms.update_one(
         {"id": fid, "tenant_id": tenant["id"]}, {"$set": updates},
@@ -260,7 +379,6 @@ async def list_form_submissions(fid: str,
                                     user: dict = Depends(require_admin),
                                     tenant: dict = Depends(get_current_tenant),
                                     limit: int = 100):
-    # Confirm the form exists in this tenant first — cheap 404 guard.
     exists = await db.marketing_forms.find_one(
         {"id": fid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1}
     )
@@ -307,11 +425,22 @@ async def submit_widget_form(fid: str, body: FormSubmit,
         client_ip = request.client.host
     await _verify_turnstile(body.turnstile_token, client_ip)
 
+    # GH-Fix: normalise ``answers`` / ``data`` into a single mapping.
+    # ``answers`` wins when both are supplied.
+    payload = body.answers if body.answers is not None else body.data
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        raise HTTPException(422, "answers/data must be an object")
+
     # Required-field validation.
     missing: List[str] = []
     for f in form.get("fields") or []:
         if f.get("required"):
-            val = body.data.get(f["name"])
+            # Accept the value under either the field's ``name`` or ``id``.
+            val = payload.get(f["name"])
+            if val is None and f.get("id"):
+                val = payload.get(f["id"])
             if val is None or (isinstance(val, str) and not val.strip()):
                 missing.append(f["name"])
     if missing:
@@ -327,7 +456,9 @@ async def submit_widget_form(fid: str, body: FormSubmit,
         "form_id": fid,
         "form_slug": form.get("slug"),
         "form_name": form.get("name"),
-        "data": body.data or {},
+        "answers": payload,
+        # Legacy mirror to keep the pre-fix consumers reading ``data``.
+        "data": payload,
         "page_url": body.page_url,
         "ip": client_ip,
         "user_agent": request.headers.get("user-agent"),
@@ -335,56 +466,63 @@ async def submit_widget_form(fid: str, body: FormSubmit,
     }
     await db.form_submissions.insert_one(sub_doc)
 
-    # Lead upsert. Look for standard field names first, fall back to
-    # loose scans of the submitted values.
-    name = _first_str(body.data, ["name", "full_name", "fullname"])
-    email = _first_str(body.data, ["email", "email_address"])
-    phone = _first_str(body.data, ["phone", "phone_number", "tel", "mobile"])
-    notes = _first_str(body.data, ["message", "notes", "details", "comments"])
+    # Contact extraction from submitted answers.
+    name = _first_str(payload, ["name", "full_name", "fullname"])
+    email = _first_str(payload, ["email", "email_address"])
+    phone = _first_str(payload, ["phone", "phone_number", "tel", "mobile"])
+    notes = _first_str(payload, ["message", "notes", "details", "comments"])
+    address = _first_str(payload, ["address", "street_address"])
 
+    # ── Post-submit orchestration ────────────────────────────────────
+    submit_cfg = form.get("submit_config") or {}
+    creates = (submit_cfg.get("creates") or "lead").lower()
     lead_id: Optional[str] = None
-    if email or phone:
-        # Try to match an existing lead by contact.
-        existing = None
-        if email:
-            existing = await db.leads.find_one(
-                {"tenant_id": tenant["id"], "email": email}, {"_id": 0, "id": 1}
-            )
-        if not existing and phone:
-            existing = await db.leads.find_one(
-                {"tenant_id": tenant["id"], "phone": phone}, {"_id": 0, "id": 1}
-            )
-        if existing:
-            lead_id = existing["id"]
-        else:
-            lead_id = new_id()
-            lead_doc = {
-                "id": lead_id,
-                "tenant_id": tenant["id"],
-                "name": name or "Form visitor",
-                "email": email or "",
-                "phone": phone or "",
-                "source": f"form:{form.get('slug') or fid}",
-                "status": "new",
-                "notes": (notes or "")[:500],
-                "meta": {"form_id": fid, "submission_id": sub_id,
-                         "page_url": body.page_url},
-                "created_at": now_iso(),
-            }
-            await db.leads.insert_one(lead_doc)
+    customer_id: Optional[str] = None
 
-    # Update submission with lead_id + bump form counter.
-    await db.form_submissions.update_one(
-        {"id": sub_id}, {"$set": {"lead_id": lead_id}}
-    )
-    await db.marketing_forms.update_one(
-        {"id": fid, "tenant_id": tenant["id"]},
-        {"$inc": {"submission_count": 1},
-         "$set": {"updated_at": now_iso()}},
-    )
+    if creates in ("lead", "both") and (email or phone):
+        lead_id = await _upsert_lead_from_submission(
+            tenant_id=tenant["id"], form=form, submission_id=sub_id,
+            name=name, email=email, phone=phone, notes=notes,
+            page_url=body.page_url,
+        )
+    if creates in ("customer", "both") and (email or phone):
+        customer_id = await _upsert_customer_from_submission(
+            tenant_id=tenant["id"],
+            name=name, email=email, phone=phone,
+            address=address, notes=notes,
+        )
 
-    # Optional admin bell.
-    if form.get("notify_admin_bell", True):
+    subject_kind, subject_id = _pick_subject(creates, lead_id, customer_id)
+
+    # Confirmation email — mocked delivery reusing the M5/M6 pipeline.
+    delivery_id: Optional[str] = None
+    if submit_cfg.get("confirmation_email_template_id") and email:
+        delivery_id = await _queue_confirmation_email(
+            tenant_id=tenant["id"],
+            template_id=submit_cfg["confirmation_email_template_id"],
+            payload=payload, form=form, submission_id=sub_id,
+            recipient_email=email, recipient_name=name,
+            subject_kind=subject_kind, subject_id=subject_id,
+        )
+
+    # Drip enrolment (M5) — one active enrolment per subject per sequence.
+    enrolment_id: Optional[str] = None
+    if submit_cfg.get("drip_sequence_id") and subject_id:
+        enrolment_id = await _enrol_in_sequence(
+            tenant_id=tenant["id"],
+            sequence_id=submit_cfg["drip_sequence_id"],
+            subject_kind=subject_kind, subject_id=subject_id,
+            source_ref={"form_id": fid, "submission_id": sub_id},
+        )
+
+    # Admin bell — the canonical flag lives on ``submit_config`` now;
+    # fall back to the legacy top-level ``notify_admin_bell`` for
+    # backwards-compat with any pre-GH-fix rows.
+    admin_bell = submit_cfg.get(
+        "admin_bell",
+        form.get("notify_admin_bell", True),
+    )
+    if admin_bell:
         try:
             from services.notifications import enqueue_for_tenant_admins
             display = name or email or phone or "Anonymous"
@@ -398,22 +536,235 @@ async def submit_widget_form(fid: str, body: FormSubmit,
                     "form_id": fid,
                     "submission_id": sub_id,
                     "lead_id": lead_id,
+                    "customer_id": customer_id,
                 },
-                href=(f"/leads/{lead_id}" if lead_id else "/marketing/forms"),
+                href=(
+                    f"/leads/{lead_id}" if lead_id
+                    else (f"/customers/{customer_id}" if customer_id
+                            else "/marketing/forms")
+                ),
                 priority="normal",
             )
         except Exception as exc:  # pragma: no cover — logged only
             logger.warning("[h1] admin bell fan-out failed: %s", exc)
 
+    # Persist cross-refs onto the submission + bump form counter.
+    await db.form_submissions.update_one(
+        {"id": sub_id},
+        {"$set": {
+            "lead_id": lead_id,
+            "customer_id": customer_id,
+            "delivery_id": delivery_id,
+            "enrolment_id": enrolment_id,
+        }},
+    )
+    await db.marketing_forms.update_one(
+        {"id": fid, "tenant_id": tenant["id"]},
+        {"$inc": {"submission_count": 1},
+         "$set": {"updated_at": now_iso()}},
+    )
+
     return {
         "ok": True,
         "submission_id": sub_id,
         "lead_id": lead_id,
+        "customer_id": customer_id,
+        "delivery_id": delivery_id,
+        "enrolment_id": enrolment_id,
         "success_message": form.get("success_message"),
     }
 
 
-# ─── Utilities ────────────────────────────────────────────────────────
+# ─── Post-submit helpers ──────────────────────────────────────────────
+
+def _pick_subject(creates: str,
+                    lead_id: Optional[str],
+                    customer_id: Optional[str]) -> tuple:
+    """Choose which entity a downstream action (email, drip) is bound
+    to. Preference: explicit ``customer`` > ``both``-then-customer >
+    fallback ``lead``."""
+    if creates in ("customer", "both") and customer_id:
+        return "customer", customer_id
+    if lead_id:
+        return "lead", lead_id
+    if customer_id:
+        return "customer", customer_id
+    return "lead", None
+
+
+async def _upsert_lead_from_submission(
+    *, tenant_id: str, form: Dict[str, Any], submission_id: str,
+    name: Optional[str], email: Optional[str], phone: Optional[str],
+    notes: Optional[str], page_url: Optional[str],
+) -> Optional[str]:
+    if not (email or phone):
+        return None
+    existing = None
+    if email:
+        existing = await db.leads.find_one(
+            {"tenant_id": tenant_id, "email": email},
+            {"_id": 0, "id": 1},
+        )
+    if not existing and phone:
+        existing = await db.leads.find_one(
+            {"tenant_id": tenant_id, "phone": phone},
+            {"_id": 0, "id": 1},
+        )
+    if existing:
+        return existing["id"]
+    lead_id = new_id()
+    await db.leads.insert_one({
+        "id": lead_id,
+        "tenant_id": tenant_id,
+        "name": name or "Form visitor",
+        "email": email or "",
+        "phone": phone or "",
+        "source": f"form:{form.get('slug') or form.get('id')}",
+        "status": "new",
+        "notes": (notes or "")[:500],
+        "meta": {"form_id": form.get("id"),
+                 "submission_id": submission_id,
+                 "page_url": page_url},
+        "created_at": now_iso(),
+    })
+    return lead_id
+
+
+async def _upsert_customer_from_submission(
+    *, tenant_id: str, name: Optional[str], email: Optional[str],
+    phone: Optional[str], address: Optional[str], notes: Optional[str],
+) -> Optional[str]:
+    if not (email or phone):
+        return None
+    existing = None
+    if email:
+        existing = await db.customers.find_one(
+            {"tenant_id": tenant_id, "email": email},
+            {"_id": 0, "id": 1},
+        )
+    if not existing and phone:
+        existing = await db.customers.find_one(
+            {"tenant_id": tenant_id, "phone": phone},
+            {"_id": 0, "id": 1},
+        )
+    if existing:
+        return existing["id"]
+    cust_id = new_id()
+    await db.customers.insert_one({
+        "id": cust_id,
+        "tenant_id": tenant_id,
+        "name": name or "Form visitor",
+        "email": email or "",
+        "phone": phone or "",
+        "address": address or "",
+        "notes": (notes or "")[:500],
+        "source": "form_submission",
+        "created_at": now_iso(),
+    })
+    return cust_id
+
+
+async def _queue_confirmation_email(
+    *, tenant_id: str, template_id: str,
+    payload: Dict[str, Any], form: Dict[str, Any], submission_id: str,
+    recipient_email: str, recipient_name: Optional[str],
+    subject_kind: str, subject_id: Optional[str],
+) -> Optional[str]:
+    """Render the M3 template against the submission answers + drop a
+    mock delivery row into ``marketing_deliveries``. Matches the same
+    contract M5/M6 already writes so the analytics dashboard picks it
+    up for free."""
+    tpl = await db.marketing_templates.find_one(
+        {"id": template_id, "tenant_id": tenant_id}, {"_id": 0}
+    )
+    if not tpl:
+        logger.warning("[h1] confirmation template %s vanished", template_id)
+        return None
+    try:
+        from services.marketing.render import render_subject_and_body
+        ctx = {
+            "customer": {"name": recipient_name or "there",
+                          "email": recipient_email},
+            "form": {"name": form.get("name"), "slug": form.get("slug")},
+            "answers": payload,
+        }
+        subject, body_rendered, _missing = render_subject_and_body(
+            (tpl.get("subject") or ""), (tpl.get("body") or ""), ctx,
+        )
+    except Exception as exc:
+        logger.warning("[h1] template render failed: %s", exc)
+        subject = tpl.get("subject") or "Thanks for your submission"
+        body_rendered = tpl.get("body") or ""
+
+    delivery_id = new_id()
+    await db.marketing_deliveries.insert_one({
+        "id": delivery_id,
+        "tenant_id": tenant_id,
+        "sequence_id": None,
+        "enrolment_id": None,
+        "form_id": form.get("id"),
+        "form_submission_id": submission_id,
+        "step_index": 0,
+        "customer_id": subject_id if subject_kind == "customer" else None,
+        "lead_id": subject_id if subject_kind == "lead" else None,
+        "channel": "email",
+        "template_id": template_id,
+        "subject_rendered": subject,
+        "body_rendered": body_rendered,
+        "recipient_email": recipient_email,
+        "mock": True,
+        "sent_at": now_iso(),
+        "provider_response_stub": {"ok": True, "id": f"mock-{delivery_id[:8]}"},
+    })
+    return delivery_id
+
+
+async def _enrol_in_sequence(
+    *, tenant_id: str, sequence_id: str,
+    subject_kind: str, subject_id: str,
+    source_ref: Dict[str, Any],
+) -> Optional[str]:
+    """Insert a ``marketing_drip_enrolments`` row. Uses the M5 shape
+    (customer_id + status=active) so the existing sequence-tick worker
+    picks it up. When the subject is a Lead we still populate
+    ``customer_id`` (with the lead's id) so the tick worker keys on it
+    uniformly, and set ``subject_kind`` for downstream disambiguation."""
+    seq = await db.marketing_sequences.find_one(
+        {"id": sequence_id, "tenant_id": tenant_id}, {"_id": 0},
+    )
+    if not seq:
+        logger.warning("[h1] drip sequence %s vanished", sequence_id)
+        return None
+    # Skip if an active enrolment already exists for this subject.
+    dup = await db.marketing_drip_enrolments.find_one(
+        {"tenant_id": tenant_id, "sequence_id": sequence_id,
+         "customer_id": subject_id, "status": "active"},
+        {"_id": 0, "id": 1},
+    )
+    if dup:
+        return dup["id"]
+    first_delay = 0
+    if seq.get("steps"):
+        first_delay = int(seq["steps"][0].get("delay_hours") or 0)
+    next_at = (datetime.now(timezone.utc)
+                + timedelta(hours=first_delay)).isoformat()
+    eid = new_id()
+    await db.marketing_drip_enrolments.insert_one({
+        "id": eid, "tenant_id": tenant_id,
+        "sequence_id": sequence_id,
+        "customer_id": subject_id,
+        "subject_kind": subject_kind,
+        "trigger_source": "form_submission",
+        "source_ref": source_ref,
+        "enrolled_at": now_iso(),
+        "current_step": 0,
+        "next_send_at": next_at if seq.get("steps") else None,
+        "status": "active" if seq.get("steps") else "completed",
+        "halt_reason": None,
+        "history": [],
+    })
+    return eid
+
 
 def _first_str(d: Dict[str, Any], keys: List[str]) -> Optional[str]:
     for k in keys:

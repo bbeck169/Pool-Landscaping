@@ -419,3 +419,439 @@ def test_widget_submit_404_for_wrong_tenant_form(admin_headers, super_headers):
         timeout=15,
     )
     assert r.status_code == 404
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# GH-Fix delta — P0 #3, #4 · P1 #6, #7
+# ═══════════════════════════════════════════════════════════════════════
+def test_form_rejects_empty_fields_array(admin_headers):
+    """P0 #3 — a form with an empty ``fields`` array must 422."""
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json={"name": f"TEST_Empty {uuid.uuid4().hex[:6]}",
+                             "fields": []},
+                       timeout=15)
+    assert r.status_code == 422, r.text
+
+
+def test_form_rejects_missing_fields_key(admin_headers):
+    """P0 #3 — a form body with no ``fields`` key at all must 422."""
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json={"name": f"TEST_NoFields {uuid.uuid4().hex[:6]}"},
+                       timeout=15)
+    assert r.status_code == 422, r.text
+
+
+def test_form_field_auto_id_and_order(admin_headers):
+    """P1 #6 — ``id`` is auto-derived from ``name`` and ``order`` is
+    filled in from array position when not supplied."""
+    body = _standard_form_body(f"auto{uuid.uuid4().hex[:5]}")
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json=body, timeout=15)
+    assert r.status_code == 201, r.text
+    form = r.json()
+    for idx, f in enumerate(form["fields"]):
+        assert f["id"], f"field {f['name']} missing id"
+        assert f["order"] == idx, (idx, f)
+        # ``id`` derives from ``name`` (lowercase, underscores).
+        assert f["id"] == f["name"].lower().replace("-", "_"), f
+
+
+def test_form_all_field_types_roundtrip(admin_headers, super_headers):
+    """P1 #6 — every widget-builder field type round-trips."""
+    fields = [
+        {"name": "full_name", "label": "Name", "type": "text", "required": True},
+        {"name": "email", "label": "Email", "type": "email", "required": True},
+        {"name": "phone", "label": "Phone", "type": "phone"},
+        {"name": "notes", "label": "Notes", "type": "textarea"},
+        {"name": "budget", "label": "Budget", "type": "number"},
+        {"name": "website", "label": "Website", "type": "url"},
+        {"name": "start_date", "label": "Start date", "type": "date"},
+        {"name": "address", "label": "Address", "type": "address_google"},
+        {"name": "service", "label": "Service",
+          "type": "dropdown", "options": ["Pool", "Landscape", "Both"]},
+        {"name": "add_ons", "label": "Add-ons",
+          "type": "multiselect", "options": ["Salt", "Chlorine", "Algae"]},
+        {"name": "tos", "label": "Agree to terms",
+          "type": "checkbox"},
+        {"name": "contact_method", "label": "Preferred contact",
+          "type": "radio", "options": ["Email", "Phone", "SMS"]},
+        {"name": "attachment", "label": "Attachment", "type": "file"},
+    ]
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json={"name": f"TEST_AllTypes {uuid.uuid4().hex[:6]}",
+                             "fields": fields},
+                       timeout=15)
+    assert r.status_code == 201, r.text
+    form = r.json()
+    assert len(form["fields"]) == len(fields)
+    types_out = {f["type"] for f in form["fields"]}
+    assert types_out >= {"text", "email", "phone", "textarea", "number",
+                            "url", "date", "address_google", "dropdown",
+                            "multiselect", "checkbox", "radio", "file"}
+
+
+def test_form_submit_config_defaults(admin_headers):
+    """P0 #4 — creating a form without submit_config still gives us
+    the default: creates=lead, admin_bell=True, no template/sequence."""
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json=_standard_form_body(f"scdef{uuid.uuid4().hex[:5]}"),
+                       timeout=15)
+    form = r.json()
+    sc = form["submit_config"]
+    assert sc["creates"] == "lead"
+    assert sc["admin_bell"] is True
+    assert sc["confirmation_email_template_id"] is None
+    assert sc["drip_sequence_id"] is None
+
+
+def test_form_submit_config_rejects_missing_template(admin_headers):
+    """P0 #4 — bad template id → 422 on create."""
+    body = _standard_form_body(f"badt{uuid.uuid4().hex[:5]}")
+    body["submit_config"] = {
+        "creates": "lead",
+        "confirmation_email_template_id": "template-that-does-not-exist",
+    }
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json=body, timeout=15)
+    assert r.status_code == 422, r.text
+
+
+def test_form_submit_config_rejects_sms_template_as_confirmation(admin_headers):
+    """P0 #4 — the confirmation email requires channel='email'."""
+    # Create an SMS template first.
+    r = requests.post(
+        f"{API}/marketing/templates", headers=admin_headers,
+        json={"name": f"TEST_SMSconf {uuid.uuid4().hex[:5]}",
+              "channel": "sms", "body": "TEST_ hi",
+              "category": "onboarding"},
+        timeout=15,
+    )
+    assert r.status_code in (200, 201), r.text
+    sms_tpl = r.json()
+
+    body = _standard_form_body(f"sms{uuid.uuid4().hex[:5]}")
+    body["submit_config"] = {
+        "creates": "lead",
+        "confirmation_email_template_id": sms_tpl["id"],
+    }
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json=body, timeout=15)
+    assert r.status_code == 422, r.text
+
+
+def test_form_submit_config_rejects_missing_sequence(admin_headers):
+    body = _standard_form_body(f"badseq{uuid.uuid4().hex[:5]}")
+    body["submit_config"] = {"creates": "lead",
+                                "drip_sequence_id": "seq-nope"}
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json=body, timeout=15)
+    assert r.status_code == 422, r.text
+
+
+def _create_email_template(admin_headers):
+    r = requests.post(
+        f"{API}/marketing/templates", headers=admin_headers,
+        json={"name": f"TEST_Confirm {uuid.uuid4().hex[:5]}",
+              "channel": "email", "category": "onboarding",
+              "subject": "Thanks {{customer.name}}",
+              "body": "We got your form submission."},
+        timeout=15,
+    )
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def _find_email_sequence(admin_headers, tenant_id):
+    """Fetch (or create) any tenant email-only sequence for drip
+    enrolment tests."""
+    r = requests.get(f"{API}/marketing/sequences",
+                      headers=admin_headers, timeout=15)
+    assert r.status_code == 200, r.text
+    payload = r.json()
+    seqs = payload["sequences"] if isinstance(payload, dict) else payload
+    if seqs:
+        return seqs[0]
+    # Create a minimal 1-step email sequence.
+    tpl = _create_email_template(admin_headers)
+    r = requests.post(
+        f"{API}/marketing/sequences", headers=admin_headers,
+        json={"name": f"TEST_Seq {uuid.uuid4().hex[:5]}",
+              "trigger_type": "manual",
+              "steps": [{"delay_hours": 0, "channel": "email",
+                          "template_id": tpl["id"]}]},
+        timeout=15,
+    )
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def test_form_submit_wires_confirmation_email(admin_headers, super_headers):
+    """P0 #4 — a form with confirmation_email_template_id + a
+    submission carrying an email drops one marketing_deliveries row."""
+    tpl = _create_email_template(admin_headers)
+    body = _standard_form_body(f"conf{uuid.uuid4().hex[:5]}")
+    body["submit_config"] = {"creates": "lead",
+                                "confirmation_email_template_id": tpl["id"],
+                                "admin_bell": False}
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json=body, timeout=15)
+    assert r.status_code == 201, r.text
+    fid = r.json()["id"]
+
+    host = f"h1-conf-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+
+    unique = uuid.uuid4().hex[:6]
+    email = f"conf-{unique}@example.com"
+    r = requests.post(
+        f"{API}/widget/form/{fid}/submit",
+        headers=_widget_headers(key, host),
+        json={"answers": {
+                    "name": f"TEST_Conf {unique}",
+                    "email": email,
+                    "message": "TEST_ hi"}},
+        timeout=15,
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["delivery_id"], "expected a mocked delivery row id"
+
+    async def _go():
+        db = _db()
+        d = await db.marketing_deliveries.find_one(
+            {"id": body["delivery_id"]}, {"_id": 0}
+        )
+        assert d["template_id"] == tpl["id"]
+        assert d["channel"] == "email"
+        assert d["recipient_email"] == email
+        assert d["mock"] is True
+        # Rendered subject uses ``customer.name`` from context.
+        assert "TEST_Conf" in (d.get("subject_rendered") or "") \
+            or "there" in (d.get("subject_rendered") or "")
+    _run(_go())
+
+
+def test_form_submit_wires_drip_enrolment(admin_headers, super_headers):
+    """P0 #4 — a form with drip_sequence_id enrols the resulting lead
+    into ``marketing_drip_enrolments``."""
+    admin_me = requests.get(f"{API}/auth/me", headers=admin_headers,
+                             timeout=15).json()
+    tenant_id = admin_me.get("tenant_id")
+    seq = _find_email_sequence(admin_headers, tenant_id)
+
+    body = _standard_form_body(f"drip{uuid.uuid4().hex[:5]}")
+    body["submit_config"] = {"creates": "lead",
+                                "drip_sequence_id": seq["id"],
+                                "admin_bell": False}
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json=body, timeout=15)
+    fid = r.json()["id"]
+
+    host = f"h1-drip-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+
+    unique = uuid.uuid4().hex[:6]
+    r = requests.post(
+        f"{API}/widget/form/{fid}/submit",
+        headers=_widget_headers(key, host),
+        json={"answers": {
+                    "name": f"TEST_Drip {unique}",
+                    "email": f"drip-{unique}@example.com",
+                    "message": "TEST_"}},
+        timeout=15,
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["enrolment_id"], "expected a drip enrolment row id"
+
+    async def _go():
+        db = _db()
+        e = await db.marketing_drip_enrolments.find_one(
+            {"id": body["enrolment_id"]}, {"_id": 0}
+        )
+        assert e["sequence_id"] == seq["id"]
+        assert e["customer_id"] == body["lead_id"]
+        assert e["subject_kind"] == "lead"
+        assert e["status"] in ("active", "completed")
+    _run(_go())
+
+
+def test_form_submit_admin_bell_toggle_respected(admin_headers, super_headers):
+    """P0 #4 — when ``submit_config.admin_bell=false`` no bell fires."""
+    body = _standard_form_body(f"bell{uuid.uuid4().hex[:5]}")
+    body["submit_config"] = {"creates": "lead", "admin_bell": False}
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json=body, timeout=15)
+    fid = r.json()["id"]
+
+    host = f"h1-bell-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+
+    unique = uuid.uuid4().hex[:6]
+
+    async def _count():
+        db = _db()
+        return await db.notifications.count_documents(
+            {"kind": "form_submission",
+             "source_ref.form_id": fid},
+        )
+
+    before = _run(_count())
+
+    r = requests.post(
+        f"{API}/widget/form/{fid}/submit",
+        headers=_widget_headers(key, host),
+        json={"answers": {
+                    "name": f"TEST_Bell {unique}",
+                    "email": f"bell-{unique}@example.com",
+                    "message": "TEST_"}},
+        timeout=15,
+    )
+    assert r.status_code == 201, r.text
+
+    after = _run(_count())
+    assert after == before, "admin bell fired despite admin_bell=false"
+
+
+def test_form_submit_creates_customer(admin_headers, super_headers):
+    """P0 #4 — ``creates="customer"`` builds a customer, no lead."""
+    body = _standard_form_body(f"cust{uuid.uuid4().hex[:5]}")
+    body["submit_config"] = {"creates": "customer", "admin_bell": False}
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json=body, timeout=15)
+    fid = r.json()["id"]
+
+    host = f"h1-cust-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+
+    unique = uuid.uuid4().hex[:6]
+    r = requests.post(
+        f"{API}/widget/form/{fid}/submit",
+        headers=_widget_headers(key, host),
+        json={"answers": {
+                    "name": f"TEST_Cust {unique}",
+                    "email": f"cust-{unique}@example.com",
+                    "message": "TEST_ hi"}},
+        timeout=15,
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["customer_id"] is not None
+    assert body["lead_id"] is None
+
+
+def test_form_submit_creates_both(admin_headers, super_headers):
+    body = _standard_form_body(f"both{uuid.uuid4().hex[:5]}")
+    body["submit_config"] = {"creates": "both", "admin_bell": False}
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json=body, timeout=15)
+    fid = r.json()["id"]
+
+    host = f"h1-both-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+
+    unique = uuid.uuid4().hex[:6]
+    r = requests.post(
+        f"{API}/widget/form/{fid}/submit",
+        headers=_widget_headers(key, host),
+        json={"answers": {
+                    "name": f"TEST_Both {unique}",
+                    "email": f"both-{unique}@example.com",
+                    "message": "TEST_"}},
+        timeout=15,
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["lead_id"] and body["customer_id"], body
+
+
+def test_form_submit_accepts_answers_alias(admin_headers, super_headers):
+    """P1 #7 — the canonical body key is ``answers``."""
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json=_standard_form_body(f"ans{uuid.uuid4().hex[:5]}"),
+                       timeout=15)
+    fid = r.json()["id"]
+
+    host = f"h1-ans-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+
+    unique = uuid.uuid4().hex[:6]
+    r = requests.post(
+        f"{API}/widget/form/{fid}/submit",
+        headers=_widget_headers(key, host),
+        json={"answers": {
+                    "name": f"TEST_Ans {unique}",
+                    "email": f"ans-{unique}@example.com",
+                    "message": "TEST_hello"}},
+        timeout=15,
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["lead_id"]
+
+
+def test_form_submit_accepts_data_alias_legacy(admin_headers, super_headers):
+    """P1 #7 — legacy ``data`` key still works (backwards compat)."""
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json=_standard_form_body(f"legdata{uuid.uuid4().hex[:5]}"),
+                       timeout=15)
+    fid = r.json()["id"]
+
+    host = f"h1-legdata-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+
+    unique = uuid.uuid4().hex[:6]
+    r = requests.post(
+        f"{API}/widget/form/{fid}/submit",
+        headers=_widget_headers(key, host),
+        json={"data": {
+                    "name": f"TEST_Data {unique}",
+                    "email": f"data-{unique}@example.com",
+                    "message": "TEST_"}},
+        timeout=15,
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_form_submit_answers_wins_over_data(admin_headers, super_headers):
+    """P1 #7 — when both are supplied, ``answers`` is canonical."""
+    r = requests.post(f"{API}/admin/forms", headers=admin_headers,
+                       json=_standard_form_body(f"awin{uuid.uuid4().hex[:5]}"),
+                       timeout=15)
+    fid = r.json()["id"]
+
+    host = f"h1-awin-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+
+    unique = uuid.uuid4().hex[:6]
+    canonical_email = f"answers-wins-{unique}@example.com"
+    r = requests.post(
+        f"{API}/widget/form/{fid}/submit",
+        headers=_widget_headers(key, host),
+        json={"answers": {
+                    "name": f"TEST_Win {unique}",
+                    "email": canonical_email,
+                    "message": "TEST_from_answers"},
+              "data": {
+                    "name": f"TEST_Lose {unique}",
+                    "email": f"loser-{unique}@example.com",
+                    "message": "TEST_from_data"}},
+        timeout=15,
+    )
+    assert r.status_code == 201, r.text
+    lead_id = r.json()["lead_id"]
+
+    async def _go():
+        db = _db()
+        lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+        assert lead["email"] == canonical_email
+    _run(_go())
+

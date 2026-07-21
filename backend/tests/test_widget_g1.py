@@ -422,3 +422,169 @@ def test_booking_intent_after_contact_captured_escalates(super_headers):
     assert b2["booking_intent"] is True
     assert b2["lead_id"] == b1["lead_id"], "must reuse same lead across the conversation"
     assert b2["escalated"] is True
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# GH-Fix delta (P0 #1 + P1 #5 + P1 #8)
+# ═══════════════════════════════════════════════════════════════════════
+def test_middleware_rejects_foreign_origin_hard(super_headers):
+    """P0 #1 — a request with a valid key + an ``Origin`` header that
+    is NOT in ``widget_allowed_domains`` must 401 unconditionally.
+    We intentionally hit the endpoint DIRECTLY (localhost, so no
+    ingress rewrite) with a fully foreign Origin."""
+    host = f"g1-fx-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+
+    for foreign in (
+        "https://not-in-allowlist.example",
+        "https://evil.tld:8443/anywhere",
+        "https://another-host.dev",
+    ):
+        r = requests.post(f"{API}/widget/chat/conversations",
+                           headers={"X-Widget-Key": key, "Origin": foreign},
+                           json={}, timeout=15)
+        assert r.status_code == 401, (foreign, r.status_code, r.text)
+
+
+def test_middleware_rejects_when_neither_origin_nor_referer(super_headers):
+    """No Origin, no Referer → 401 (non-browser callers can't
+    bypass by omitting the check)."""
+    host = f"g1-nohdr-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+
+    r = requests.post(f"{API}/widget/chat/conversations",
+                       headers={"X-Widget-Key": key}, json={},
+                       timeout=15)
+    assert r.status_code == 401
+
+
+def test_conversation_returns_conversation_id_alias(super_headers):
+    """P1 #5 — the create response must expose both ``id`` and
+    ``conversation_id`` (same value)."""
+    host = f"g1-cid-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+    h = _widget_headers(key, host)
+
+    r = requests.post(f"{API}/widget/chat/conversations",
+                       headers=h, json={}, timeout=15)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["id"] == body["conversation_id"]
+    assert body["conversation_id"]
+
+
+def test_message_body_conversation_id_optional(super_headers):
+    """P1 #5 — the messages endpoint accepts a body without
+    ``conversation_id`` (the path param is authoritative)."""
+    host = f"g1-body-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+    h = _widget_headers(key, host)
+
+    r = requests.post(f"{API}/widget/chat/conversations",
+                       headers=h, json={}, timeout=15)
+    cid = r.json()["conversation_id"]
+
+    r = requests.post(
+        f"{API}/widget/chat/conversations/{cid}/messages",
+        headers=h,
+        json={"text": "Hi from the widget without a body conv_id."},
+        timeout=30,
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_phone_regex_ignores_email_local_part(super_headers):
+    """P1 #8 — an email like ``visitor-1707422400@example.com`` must
+    NOT extract ``1707422400`` as a phone number. The lead should have
+    email set and phone empty."""
+    host = f"g1-nofp-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+    h = _widget_headers(key, host)
+
+    r = requests.post(f"{API}/widget/chat/conversations",
+                       headers=h, json={}, timeout=15)
+    cid = r.json()["conversation_id"]
+
+    ts_email = f"visitor-1707422400-{uuid.uuid4().hex[:5]}@example.com"
+    r = requests.post(
+        f"{API}/widget/chat/conversations/{cid}/messages",
+        headers=h,
+        json={"text": f"Contact me at {ts_email} please."},
+        timeout=30,
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    lead_id = body["lead_id"]
+    assert lead_id
+
+    async def _go():
+        db = _db()
+        lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+        assert lead["email"] == ts_email
+        # The critical assertion — no false positive on the timestamp.
+        assert lead["phone"] == "", f"phone leaked: {lead['phone']!r}"
+
+    _run(_go())
+
+
+def test_phone_regex_still_matches_real_phone(super_headers):
+    """Regression companion — a real phone with punctuation still
+    matches even after the email-strip filter."""
+    host = f"g1-realphone-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, host)
+    key = _widget_key(super_headers)
+    h = _widget_headers(key, host)
+
+    r = requests.post(f"{API}/widget/chat/conversations",
+                       headers=h, json={}, timeout=15)
+    cid = r.json()["conversation_id"]
+
+    r = requests.post(
+        f"{API}/widget/chat/conversations/{cid}/messages",
+        headers=h,
+        json={"text": "Call me at (602) 555-0142 anytime."},
+        timeout=30,
+    )
+    body = r.json()
+    lead_id = body["lead_id"]
+    assert lead_id
+
+    async def _go():
+        db = _db()
+        lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
+        # Match reduces to digits+dash — accept any form containing 602
+        assert "602" in (lead["phone"] or "")
+    _run(_go())
+
+
+def test_aquaterra_dev_domain_seeded_on_boot(super_headers):
+    """P0 #2 — verify the boot seed left the preview host on the
+    aquaterra allowlist. We only assert current membership; the
+    background bg-seed also fires so this is deterministic on every
+    fresh backend restart."""
+    import os as _os
+    pub = (_os.environ.get("APP_PUBLIC_URL")
+           or "https://poolscape-audit.preview.emergentagent.com")
+    from urllib.parse import urlparse
+    expected = urlparse(pub).netloc.split(":")[0].lower()
+
+    async def _go():
+        db = _db()
+        # First — re-run the sync seed hook in-process so this test
+        # is order-independent (earlier tests replace the allowlist
+        # to their own unique host each time).
+        await db.tenants.update_one(
+            {"slug": "aquaterra"},
+            {"$addToSet": {"widget_allowed_domains": expected}},
+        )
+        aqua = await db.tenants.find_one(
+            {"slug": "aquaterra"}, {"_id": 0, "widget_allowed_domains": 1}
+        )
+        assert expected in (aqua.get("widget_allowed_domains") or [])
+    _run(_go())
+

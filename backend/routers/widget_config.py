@@ -168,9 +168,20 @@ async def require_widget_auth(
     x_widget_key: Optional[str] = Header(None, alias="X-Widget-Key"),
 ) -> Dict[str, Any]:
     """Validates ``X-Widget-Key`` against the tenant's public key AND
-    the incoming ``Origin``/``Referer`` host against
-    ``widget_allowed_domains``.  Returns the tenant document (minus
-    ``_id``) so downstream endpoints have full context."""
+    the *client-supplied* ``Origin`` (with ``Referer`` fallback when
+    ``Origin`` is absent) against ``widget_allowed_domains``.
+
+    Security intent:
+    * We NEVER trust the proxy/ingress ``Host`` header — a foreign
+      client can send whatever ``Host`` it wants but browsers set
+      ``Origin`` from the actual page and cannot spoof it in an XHR
+      cross-origin call. That's what we authenticate against.
+    * Empty allowlist == deny-by-default (a leaked key is still inert
+      until a super_admin whitelists domains).
+    * Neither header present → 401 (a non-browser caller doesn't get
+      to bypass the check).
+    * Host not in allowlist → 401 with the host echoed for observability.
+    """
     if not x_widget_key:
         raise HTTPException(401, "Missing X-Widget-Key header")
     tenant = await db.tenants.find_one(
