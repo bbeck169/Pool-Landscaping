@@ -1,0 +1,148 @@
+/* Slice R · EstimateView — layered on top of InvoiceView.css. */
+.ev-shell { max-width: 1080px; }
+.ev-doc { padding: 28px 36px; }
+
+.ev-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 0;
+  margin-bottom: 8px;
+  align-items: center;
+}
+.ev-tool-group {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ev-tool-group.ev-right { margin-left: auto; }
+.ev-btn-accept { background: #0F172A; color: #FFFFFF; border-color: #0F172A; }
+.ev-btn-accept:hover { background: #1E293B; }
+.ev-btn-decline { background: #DC2626; color: #FFFFFF; border-color: #DC2626; }
+.ev-btn-decline:hover { background: #B91C1C; }
+.ev-btn-danger { background: #FEE2E2; color: #991B1B; border-color: #FCA5A5; }
+.ev-customer-cta { justify-content: flex-end; margin-left: auto; }
+
+.ev-locked-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 13px;
+  margin-left: auto;
+}
+.ev-locked-accept { background: #DCFCE7; color: #166534; }
+.ev-locked-decline { background: #FEE2E2; color: #991B1B; }
+
+.ev-banner {
+  background: #DBEAFE;
+  color: #1E3A8A;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.ev-header {
+  grid-template-columns: 1fr auto 1fr !important;
+}
+.ev-title {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 48px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: -0.5px;
+  align-self: center;
+}
+.ev-header-details { text-align: right; }
+
+.ev-est-title {
+  font-weight: 800;
+  font-size: 16px;
+  margin: 8px 0 12px;
+  color: #0F172A;
+}
+
+.ev-lines-wrap {
+  overflow-x: auto;
+}
+.ev-lines-wrap table {
+  min-width: 700px;
+}
+
+.ev-notes {
+  margin: 12px 0 16px;
+}
+
+.ev-totals-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+.ev-totals {
+  border-collapse: collapse;
+  min-width: 280px;
+  font-size: 12.5px;
+}
+.ev-totals td {
+  padding: 6px 12px;
+  border-bottom: 1px solid #F3F4F6;
+}
+.ev-totals td:first-child { color: #6B7280; }
+.ev-totals td:last-child { text-align: right; font-weight: 700; min-width: 100px; }
+.ev-total-highlight td {
+  background: #F3F4F6;
+  font-weight: 800;
+  color: #0F172A;
+  font-size: 14px;
+}
+
+.ev-disclaimer {
+  border-top: 1px solid #E5E7EB;
+  padding-top: 10px;
+  color: #6B7280;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ev-modal {
+  background: #FFFFFF;
+  border-radius: 12px;
+  padding: 20px 22px;
+  width: 100%;
+  max-width: 480px;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.25);
+}
+.ev-modal-title { font-weight: 800; font-size: 16px; margin-bottom: 6px; }
+.ev-modal-help { color: #6B7280; font-size: 13px; margin-bottom: 10px; }
+.ev-modal-input {
+  width: 100%;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+.ev-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.ev-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: #0F172A;
+  color: #FFFFFF;
+  padding: 10px 14px;
+  border-radius: 12px;
+  z-index: 60;
+  font-size: 13px;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.25);
+}

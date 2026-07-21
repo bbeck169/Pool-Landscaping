@@ -1,0 +1,45 @@
+{
+  "summary": "Slice R + O.2 + L + P verification. Backend: 12/12 of test_slice_r_o2_l_batch.py + 6/7 of new test_slice_r_o2_supplemental.py all green (decline reason persistence, request-changes 422, invalid-token 401, tech RBAC on /decline & /pdf, revoke double-call 409, cross-tenant credit isolation). Frontend: customer portal home renders portal-my-referrals-list, customer estimate view has NO pricing-leak columns (headers: DESCRIPTION/QTY-HR/VISITS/TOTAL only) and NO banned totals rows (no Estimated Profit / Total B.Hrs / Total B.Hrs Revenue). Admin /workstream breadcrumbs render correctly (Home > Workstream, aria-label=Breadcrumb, aria-current=page on Workstream). Root '/' does NOT render breadcrumbs. Only one FAILURE: Slice L.c TTL index missing on widget_denied_requests collection.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "startup / widget_denied_requests collection",
+        "issue": "Slice L.c invariant violated: `_ensure_denied_indexes()` is defined in /app/backend/routers/widget_config.py:145 but is NEVER invoked from server.startup or elsewhere. Collection has 0 indexes; TTL index `widget_denied_ttl_7d` and compound `widget_denied_tenant_time` never get created. GET /api/tenants/mine/widget-config/denied-requests still returns 200 with {\"denied\":[]}, but auto-expiration of 7-day rows will not happen — collection will grow unbounded until the process-local trim cap (500/tenant) kicks in on new inserts. Fix: add `await _ensure_denied_indexes()` to server.startup (or wire the widget_config router startup hook)."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_slice_r_o2_l_batch.py",
+    "/app/backend/tests/test_slice_r_o2_supplemental.py",
+    "/app/test_reports/pytest/slice_r_o2_l.xml",
+    "/app/test_reports/pytest/slice_r_o2_supp.xml"
+  ],
+  "action_items": [
+    "P2: Wire `_ensure_denied_indexes()` into FastAPI startup (server.py) so Slice L.c TTL + tenant/time indexes are actually created on boot. Currently the invariant 'widget_denied_ttl_7d + tenant-time index' cannot be satisfied without a manual call.",
+    "P3 (nit): problem statement asks for `estimate-locked-pill` testid, but component uses `estimate-accepted-pill` / `estimate-declined-pill` (EstimateView.jsx:226). Not a bug — just note testid divergence for future test authors."
+  ],
+  "critical_code_review_comments": [
+    "widget_config.py:145 defines `_ensure_denied_indexes()` but no caller — likely missed a `@app.on_event('startup')` wire-up during Slice L.c migration to Mongo. Confirmed via runtime probe: `db.widget_denied_requests.index_information() == {}` and collection empty.",
+    "EstimateView.jsx correctly gates admin toolbar via `showAdminToolbar`; customer path (line 200-216) exposes only accept/decline/request-changes buttons. Totals table (line 335+) omits estimated_profit / total_b_hrs / total_b_hrs_revenue rows entirely from customer render — verified in DOM.",
+    "Backend estimate_viewer.py accept endpoint correctly returns 409 on 2nd call (line 255-256). Magic-link invalid token returns 401 as expected."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_slice_r_o2_supplemental.py (new)"
+  ],
+  "success_rate": {
+    "backend": "94% (18/19 across new + existing Slice R/O.2/L suites)",
+    "frontend": "100% for verified surfaces (portal home referrals list, customer estimate view no-pricing-leak, admin breadcrumbs on /workstream, no breadcrumbs on landing '/')"
+  },
+  "test_credentials": "admin@aquaterra.com / password123, super@aquaterra.com / password123, customer@aquaterra.com / password123, mike@aquaterra.com / password123 — from /app/memory/test_credentials.md",
+  "seed_data_creation": "Test-created referrals for customer@aquaterra.com are wiped by _wipe_customer_referrals fixture between tests; suite is net-zero on that customer's ledger.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All Slice R/O.2/L/P acceptance criteria are green backend + frontend EXCEPT: `_ensure_denied_indexes()` is never called on startup, so widget_denied_requests has no TTL/tenant-time indexes at rest. After main agent wires it into server.startup, re-run `pytest backend/tests/test_slice_r_o2_supplemental.py::test_widget_denied_ttl_index` — that single test will flip green.",
+  "rca of the issue": "Slice L.c author added _ensure_denied_indexes() in widget_config.py:145 (idempotent create_index for TTL + compound tenant-time) but forgot to register it as a startup hook. FastAPI never calls it, and Motor does not lazily create Python-declared indexes. Reproduction: `db.widget_denied_requests.index_information()` returns `{}`. Mitigation: append `await _ensure_denied_indexes()` inside server.py's startup event handler, or expose it via a router-level `@router.on_event('startup')`."
+}

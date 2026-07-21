@@ -17,6 +17,7 @@ import { api } from "@/api";
 import { colors, money } from "@/theme";
 import { useAuth } from "@/auth";
 import InvoiceView from "@/components/InvoiceView";
+import EstimateView from "@/components/EstimateView";
 import {
   PageHeader,
   Button,
@@ -277,62 +278,21 @@ export function PortalEstimates() {
 
 export function PortalEstimateDetail() {
   const { id } = useParams();
-  const navigate = useNavigate();
-  const [doc, setDoc] = useState(null);
+  const [params] = useSearchParams();
+  const printable = params.get("format") === "printable";
   const [toast, setToast] = useState(null);
-  const load = () => api.get(`/quotes/${id}`).then(setDoc).catch(() => {});
-  useEffect(() => { load(); }, [id]);
-  const decide = async (d) => {
-    try {
-      await api.post(`/quotes/${id}/decision?decision=${d}`);
-      setToast({ tone: "success", message: `${d[0].toUpperCase()}${d.slice(1)} recorded` });
-      await load();
-    } catch (e) { setToast({ tone: "error", message: e.message }); }
-  };
-  if (!doc) return <div className="max-w-2xl mx-auto p-6"><Skeleton style={{ height: 200 }} /></div>;
-  const pending = !doc.decision || doc.decision === "pending";
   return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-est-detail">
-      <button onClick={() => navigate("/portal/estimates")} className="flex items-center gap-1 text-sm font-semibold mb-4" style={{ color: colors.muted }}>
-        <ArrowLeft size={14} /> Estimates
-      </button>
-      <div className="rounded-2xl p-6 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
-        <StatusPill status={doc.decision || doc.status} />
-        <h1 className="text-2xl font-bold mt-2">{doc.title}</h1>
-        <div className="text-3xl font-bold mt-2" style={{ color: colors.brand }}>{money(doc.total)}</div>
-        {pending ? (
-          <div className="mt-4 flex gap-2">
-            <Button onClick={() => decide("approved")} testid="port-est-approve"><Check size={16} /> Approve</Button>
-            <Button variant="danger" onClick={() => decide("declined")} testid="port-est-decline"><XIcon size={16} /> Decline</Button>
-          </div>
-        ) : null}
-      </div>
-      <div className="rounded-2xl p-5" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
-        <h3 className="font-bold mb-2">Line items</h3>
-        <table className="w-full text-sm">
-          <tbody>
-            {(doc.line_items || []).map((li, i) => (
-              <tr key={i} style={{ borderBottom: `1px solid ${colors.divider}` }}>
-                <td className="py-2">{li.description}</td>
-                <td className="py-2 text-right font-semibold">{money((li.quantity || 0) * (li.unit_price || 0))}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="rounded-2xl p-5 mt-3" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-           data-testid="portal-estimate-terms">
-        <h3 className="font-bold mb-2">Terms &amp; Conditions</h3>
-        {(doc.terms || "").trim() ? (
-          <p className="text-sm whitespace-pre-wrap" style={{ color: colors.onSurface }}>{doc.terms}</p>
-        ) : (
-          <p className="text-sm italic" style={{ color: colors.muted }}>No terms provided.</p>
-        )}
-      </div>
+    <div
+      className={printable ? "" : "max-w-4xl mx-auto px-2 sm:px-4 lg:px-6 py-4"}
+      data-testid="portal-est-detail"
+    >
+      <EstimateView estimateId={id} isAdmin={false} printable={printable} />
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }
+
+// ──────────────── /portal (rest) ────────────────
 
 // ──────────────── /portal/payments + /portal/payment-method ────────────────
 export function PortalPayments() {

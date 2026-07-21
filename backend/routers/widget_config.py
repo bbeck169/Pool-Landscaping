@@ -127,15 +127,73 @@ async def seed_dev_widget_domains_for_aquaterra() -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════
 # GH-Fix v3 · Slice G3 — denied-requests ring buffer (in-memory)
 # ═══════════════════════════════════════════════════════════════════════
-# Tenant-scoped LIFO ring of the last N rejections. Debugging aid only;
-# no PII, no request body. Cleared on backend restart.
+# Tenant-scoped rolling record of the last N rejections.  Slice L.c
+# migrated this from an in-memory deque to a Mongo-backed row so the
+# admin UI survives process restarts + horizontal scale.  Retention is
+# enforced by:
+#   1. A 7-day TTL index on ``created_at`` (see boot migration).
+#   2. Per-tenant trim on every write, keeping only the newest
+#      ``_DENIED_RING_MAX`` rows.
 
 from collections import deque
 from threading import Lock
 
-_DENIED_RING_MAX = 50
-_denied_rings: Dict[str, "deque"] = {}
-_denied_lock = Lock()
+_DENIED_RING_MAX = 500          # Slice L.c cap per tenant
+_denied_lock = Lock()           # process-local trim guard
+
+
+async def _ensure_denied_indexes() -> None:
+    """Idempotently create the TTL + per-tenant read indexes.  Called
+    from ``server.startup`` best-effort; failure is logged, not fatal."""
+    try:
+        await db.widget_denied_requests.create_index(
+            "created_at", expireAfterSeconds=7 * 24 * 3600,
+            name="widget_denied_ttl_7d",
+        )
+        await db.widget_denied_requests.create_index(
+            [("tenant_id", 1), ("created_at", -1)],
+            name="widget_denied_tenant_time",
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[l.c] widget_denied index create failed: %s", exc)
+
+
+async def _record_denied_async(tenant_id: Optional[str], *,
+                                 reason: str, path: str,
+                                 origin_hdr: Optional[str],
+                                 referer_hdr: Optional[str],
+                                 x_forwarded_origin_hdr: Optional[str]) -> None:
+    key = tenant_id or "__unknown__"
+    row = {
+        "id": secrets.token_urlsafe(8),
+        "tenant_id": key,
+        "reason": reason,
+        "path": (path or "")[:120],
+        "origin": (origin_hdr or "")[:200] or None,
+        "referer": (referer_hdr or "")[:200] or None,
+        "x_forwarded_origin": (x_forwarded_origin_hdr or "")[:200] or None,
+        "created_at": now_iso(),
+    }
+    try:
+        await db.widget_denied_requests.insert_one(row)
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[l.c] widget_denied insert failed: %s", exc)
+        return
+    # Trim per-tenant rings to _DENIED_RING_MAX rows (opportunistic).
+    try:
+        cnt = await db.widget_denied_requests.count_documents({"tenant_id": key})
+        if cnt > _DENIED_RING_MAX:
+            excess = cnt - _DENIED_RING_MAX
+            # Delete the oldest ``excess`` rows for this tenant.
+            oldest = await db.widget_denied_requests.find(
+                {"tenant_id": key}, {"_id": 0, "id": 1},
+            ).sort("created_at", 1).limit(excess).to_list(excess)
+            if oldest:
+                await db.widget_denied_requests.delete_many(
+                    {"id": {"$in": [r["id"] for r in oldest]}},
+                )
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[l.c] widget_denied trim failed: %s", exc)
 
 
 def _record_denied(tenant_id: Optional[str], *,
@@ -143,30 +201,36 @@ def _record_denied(tenant_id: Optional[str], *,
                     origin_hdr: Optional[str],
                     referer_hdr: Optional[str],
                     x_forwarded_origin_hdr: Optional[str]) -> None:
-    """Append a rejected-widget-request row to the tenant ring.
-    ``tenant_id`` may be None (no valid key resolved) — such rows are
-    keyed under the special ``__unknown__`` bucket which the admin UI
-    can't read (avoids leaking foreign hits between tenants)."""
-    key = tenant_id or "__unknown__"
-    with _denied_lock:
-        ring = _denied_rings.get(key)
-        if ring is None:
-            ring = deque(maxlen=_DENIED_RING_MAX)
-            _denied_rings[key] = ring
-        ring.appendleft({
-            "at": now_iso(),
-            "reason": reason,
-            "path": path[:120],
-            "origin": (origin_hdr or "")[:200] or None,
-            "referer": (referer_hdr or "")[:200] or None,
-            "x_forwarded_origin": (x_forwarded_origin_hdr or "")[:200] or None,
-        })
+    """Sync wrapper for legacy call sites (middleware).  Schedules the
+    insert on the running loop when available, falls back to a no-op
+    when called outside a loop context."""
+    try:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(_record_denied_async(
+                tenant_id, reason=reason, path=path,
+                origin_hdr=origin_hdr, referer_hdr=referer_hdr,
+                x_forwarded_origin_hdr=x_forwarded_origin_hdr,
+            ))
+    except Exception:  # pragma: no cover
+        pass
 
 
-def get_denied_ring(tenant_id: str) -> List[Dict[str, Any]]:
-    with _denied_lock:
-        ring = _denied_rings.get(tenant_id)
-        return list(ring) if ring else []
+async def get_denied_ring(tenant_id: str) -> List[Dict[str, Any]]:
+    """Async read for the admin UI.  Returns the newest ``_DENIED_RING_MAX``
+    rows for the tenant."""
+    try:
+        rows = await db.widget_denied_requests.find(
+            {"tenant_id": tenant_id}, {"_id": 0},
+        ).sort("created_at", -1).limit(_DENIED_RING_MAX).to_list(_DENIED_RING_MAX)
+        # Preserve the legacy ``at`` field consumed by the admin UI.
+        for r in rows:
+            r["at"] = r.get("created_at")
+        return rows
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[l.c] widget_denied read failed: %s", exc)
+        return []
 
 
 
@@ -428,5 +492,5 @@ async def get_widget_denied_requests(user: dict = Depends(get_current_user)):
     tid = user.get("tenant_id")
     if not tid:
         raise HTTPException(400, "User has no tenant")
-    return {"denied": get_denied_ring(tid)}
+    return {"denied": await get_denied_ring(tid)}
 

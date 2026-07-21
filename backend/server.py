@@ -91,6 +91,8 @@ from routers import (
     resend_webhooks,
     portal_referrals,
     invoice_viewer,
+    estimate_viewer,
+    referral_rewards,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -188,7 +190,9 @@ for module in [notifications_router,
                workstream_job_detail,
                resend_webhooks,
                portal_referrals,
-               invoice_viewer]:
+               invoice_viewer,
+               estimate_viewer,
+               referral_rewards]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue

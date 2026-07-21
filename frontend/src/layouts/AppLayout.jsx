@@ -8,6 +8,7 @@ import AdminTopBar from "@/layouts/AdminTopBar";
 import UniversalMenu from "@/layouts/UniversalMenu";
 import LandscapingClockWidget from "@/components/LandscapingClockWidget";
 import AIDock from "@/components/AIDock/AIDock";
+import Breadcrumbs from "@/components/breadcrumbs/Breadcrumbs";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
 import { brandGradientCss, colors, font } from "@/theme";
 import {
@@ -585,6 +586,10 @@ function AppLayout() {
         <div className="px-4 md:px-8 pt-4">
           <LandscapingClockWidget />
         </div>
+
+        {/* Slice P · Breadcrumb navigation — auto-derives from route
+            metadata. Component hides itself on landing/auth pages. */}
+        <Breadcrumbs />
 
         <Outlet />
 

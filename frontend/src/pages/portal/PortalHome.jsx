@@ -28,6 +28,7 @@ import { Skeleton, StatusPill } from '@/components/ui-kit';
 import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 import CallNowButton from "@/pages/portal/CallNowButton";
 import ReferralSection from "@/pages/portal/ReferralSection";
+import MyReferralsSection from "@/pages/portal/MyReferralsSection";
 
 const money = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
@@ -301,6 +302,8 @@ export default function PortalHome() {
 
       {/* Slice O2 · Refer a Friend section. */}
       <ReferralSection />
+      {/* Slice O.2 · My Referrals — hides when list is empty. */}
+      <MyReferralsSection />
 
       {/* Last visit */}
       {data?.last_visit ? (

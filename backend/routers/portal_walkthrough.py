@@ -36,10 +36,14 @@ async def get_walkthrough_status(user: Dict[str, Any] = Depends(get_current_user
         {"_id": 0, "portal_walkthrough_completed_at": 1},
     ) or {}
     completed_at = row.get("portal_walkthrough_completed_at")
+    is_completed = bool(completed_at)
     return {
-        "completed": bool(completed_at),
+        "completed": is_completed,
+        # Slice L.j · alias — some frontend surfaces (older builds)
+        # reference ``has_completed``. Emit both so both keep working.
+        "has_completed": is_completed,
         "completed_at": completed_at,
-        "should_show": not bool(completed_at),
+        "should_show": not is_completed,
     }
 
 

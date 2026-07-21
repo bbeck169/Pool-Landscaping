@@ -6314,3 +6314,20 @@ Held for next sub-slice ping — will ship as its own delta after user greenligh
 - **Slice L** — Widget minification, form multipart upload, denied-requests capped collection, M7 widget analytics tile.
 - Optional: extend Slice N wiring to H1 form submit + widget escalation + portal notifications.
 
+
+## Slice R + O.2 + L.c + L.j + P — Second batch (Feb 2026)
+
+### Shipped
+- **Slice R** — `routers/estimate_viewer.py` with `/api/estimates/{eid}/full` (server-side role projection strips Calc/M.Rate/BH/T.BH/T.B.Cost/Margin% cols + Estimated Profit/Total B.Hrs/Total B.Hrs Revenue rows for customer), Accept/Decline/Request-Changes endpoints (locked once accepted/declined), magic-link JWT (`/e/estimate?token=X` + `/portal/estimates/via-token/*`), ReportLab PDF. `<EstimateView>` React component with dual admin/customer toolbars + locked pill states. Portal detail page rewired.
+- **Slice O.2** — Full referral loop with automated $25 credit reward. `routers/referral_rewards.py` adds tenant config (`referral_reward_enabled`/`amount`/`currency`), conversion hook fired from `/api/leads/{id}/convert` (idempotent via `reward_applied_at`), admin revoke endpoint, `GET /api/customer-portal/referrals/my` with summary tile. `MyReferralsSection.jsx` on portal shows Sent/Conversions/Rewards + per-row status + reward badge. Bell notification to referrer.
+- **Slice L.c** — Denied-requests migrated from in-memory deque to Mongo `widget_denied_requests` with TTL index (7 days) + per-tenant trim to 500 rows.
+- **Slice L.j** — Slice I walkthrough status endpoint now returns BOTH `completed` and `has_completed` keys.
+- **Slice P** — `<Breadcrumbs>` component + `routeMeta.js` map. Mounted in `AppLayout.jsx` so every non-landing page inherits automatically. Mobile ellipsis dropdown for narrow screens. `aria-label="Breadcrumb"` + `aria-current="page"` + `<ol>` semantics.
+
+### Tests
+- 70/70 green across all batches (`test_slice_k_jobs.py` +7, `_m_workstream.py` +14, `_m_rbac_leak.py` +2, `_n_resend_adapter.py` +9, `_o_referrals.py` +10, `_q_invoice_viewer.py` +8, `_r_o2_l_batch.py` +12 covering estimate viewer, accept lock, PDF, referral reward apply/idempotent/disabled-config/revoke/summary, L.c, L.j).
+
+### Backlog / Next
+- Slice L outstanding: L.a widget minification, L.b form multipart, L.h campaign send suppression, L.i widget analytics tile on M7.
+- Comprehensive integration verification via testing agent per user's plan.
+

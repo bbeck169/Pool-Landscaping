@@ -71,6 +71,15 @@ async def convert_lead(lid: str,
         {"id": lid, "tenant_id": tenant["id"]},
         {"$set": {"status": "won", "converted": {"type": "customer", "id": cust["id"]}}},
     )
+    # Slice O.2 · Referral reward hook — safe no-op when the lead
+    # isn't referral-sourced. Never raises; hook enforces idempotency.
+    try:
+        from routers.referral_rewards import fire_referral_conversion_hook
+        await fire_referral_conversion_hook(
+            tenant_id=tenant["id"], lead=lead, new_customer_id=cust["id"],
+        )
+    except Exception as exc:
+        logger.warning("[leads] referral hook failed: %s", exc)
     return cust
 
 
