@@ -1,24 +1,29 @@
 import React, { useEffect, useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
-import { ArrowLeft, Star, Send, ExternalLink, CheckCircle2 } from "lucide-react";
+import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { ArrowLeft, Star, Send, ExternalLink, CheckCircle2, Sparkles } from "lucide-react";
 import { api } from "@/api";
 import { brandGradientCss, colors } from "@/theme";
 import { useAuth } from "@/auth";
 
 /**
- * Feb-2026 · Slice 6 — Customer portal "Leave a Review" tab.
+ * Feb-2026 · Slice 6 + M6 — Customer portal "Leave a Review" tab.
  *
- * Rating-gated flow:
- *   - < 4 stars  → private feedback thank-you (server also fires the
- *                  admin escalation — bell + internal message)
- *   - ≥ 4 stars  → Google review CTA (opens tenant's configured URL
- *                  in a new tab); if the tenant hasn't configured a
- *                  URL yet, the CTA is hidden and only the thank-you
- *                  text is shown.
+ * Two modes:
+ *   - Logged-in customer  → hits POST /customer-portal/reviews
+ *   - Magic-link (?token=)→ verifies the token, hits POST /portal/reviews/via-token
+ *
+ * Rating-gated flow unchanged (< 4 star → private feedback thank-you,
+ * ≥ 4 star → Google review CTA).
  */
 export default function PortalReviews() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const token = searchParams.get("token");
+  const [tokenCtx, setTokenCtx] = useState(null);
+  const [tokenErr, setTokenErr] = useState("");
+  const [tokenChecked, setTokenChecked] = useState(!token);
+
   const [rating, setRating] = useState(0);
   const [hover, setHover] = useState(0);
   const [comment, setComment] = useState("");
@@ -27,17 +32,32 @@ export default function PortalReviews() {
   const [error, setError] = useState("");
   const [history, setHistory] = useState([]);
 
-  const loadHistory = () =>
+  useEffect(() => {
+    if (!token) return;
+    api.get(`/portal/review-token/verify?token=${encodeURIComponent(token)}`)
+      .then((r) => setTokenCtx(r))
+      .catch((e) => setTokenErr(e?.message || "This review link has expired."))
+      .finally(() => setTokenChecked(true));
+  }, [token]);
+
+  const loadHistory = () => {
+    if (!user || user.role !== "customer") return;
     api
       .get("/customer-portal/reviews/my")
       .then((rows) => setHistory(Array.isArray(rows) ? rows : []))
       .catch(() => setHistory([]));
+  };
 
   useEffect(() => {
     loadHistory();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
-  if (user && user.role !== "customer") return <Navigate to="/" replace />;
+  // Token mode bypasses auth entirely; logged-in-non-customer still
+  // redirects (admins/techs don't leave reviews on the portal).
+  if (!token && user && user.role !== "customer") {
+    return <Navigate to="/" replace />;
+  }
 
   const submit = async (e) => {
     e?.preventDefault?.();
@@ -45,10 +65,14 @@ export default function PortalReviews() {
     setBusy(true);
     setError("");
     try {
-      const r = await api.post("/customer-portal/reviews", {
-        rating,
-        comment: comment.trim(),
-      });
+      const payload = { rating, comment: comment.trim() };
+      let r;
+      if (token && tokenCtx) {
+        r = await api.post("/portal/reviews/via-token",
+                            { ...payload, token });
+      } else {
+        r = await api.post("/customer-portal/reviews", payload);
+      }
       setResult(r);
       loadHistory();
     } catch (err) {
@@ -75,13 +99,47 @@ export default function PortalReviews() {
 
   return (
     <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-reviews-page">
-      <button
-        onClick={() => navigate("/portal/home")}
-        className="flex items-center gap-1 text-sm font-semibold mb-4"
-        style={{ color: colors.muted }}
-      >
-        <ArrowLeft size={14} /> Home
-      </button>
+      {!token ? (
+        <button
+          onClick={() => navigate("/portal/home")}
+          className="flex items-center gap-1 text-sm font-semibold mb-4"
+          style={{ color: colors.muted }}
+        >
+          <ArrowLeft size={14} /> Home
+        </button>
+      ) : null}
+
+      {token && !tokenChecked ? (
+        <div className="text-sm" style={{ color: colors.muted }}>
+          Verifying your review link…
+        </div>
+      ) : null}
+
+      {token && tokenChecked && tokenErr ? (
+        <div className="rounded-2xl p-6 text-center"
+             style={{ backgroundColor: colors.surface,
+                      border: `1px solid ${colors.border}` }}
+             data-testid="portal-review-token-expired">
+          <div className="mx-auto w-12 h-12 rounded-full flex items-center justify-center mb-3"
+               style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}>
+            <Star size={22} />
+          </div>
+          <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
+            This review link has expired
+          </h2>
+          <p className="text-sm mt-2" style={{ color: colors.onSurfaceSecondary }}>
+            {tokenErr} Log in to your customer portal to leave a review.
+          </p>
+          <button onClick={() => navigate("/portal/login")}
+                  className="mt-4 text-sm font-semibold"
+                  style={{ color: colors.brand }}>
+            Log in
+          </button>
+        </div>
+      ) : null}
+
+      {(!token || (tokenCtx && !tokenErr)) ? (
+        <>
       <div className="mb-5">
         <h1
           className="text-2xl font-bold tracking-tight"
@@ -90,8 +148,24 @@ export default function PortalReviews() {
           Leave a Review
         </h1>
         <p className="text-sm mt-1" style={{ color: colors.muted }}>
-          Rate your recent experience with our team.
+          {tokenCtx?.customer_name
+            ? `Hi ${tokenCtx.customer_name.split(" ")[0]} — rate your recent service with our team.`
+            : "Rate your recent experience with our team."}
         </p>
+        {tokenCtx?.service_context ? (
+          <div className="mt-3 rounded-xl p-3 inline-flex items-center gap-2"
+               style={{ backgroundColor: colors.brandTertiary,
+                        color: colors.brand }}
+               data-testid="portal-review-service-context">
+            <Sparkles size={14} />
+            <span className="text-xs font-semibold">
+              Reviewing your {tokenCtx.service_context.service_type || "service"}
+              {tokenCtx.service_context.completed_at ? (
+                <> on {String(tokenCtx.service_context.completed_at).slice(0, 10)}</>
+              ) : null}
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {result ? (
@@ -261,6 +335,8 @@ export default function PortalReviews() {
             ))}
           </ul>
         </div>
+      ) : null}
+      </>
       ) : null}
     </div>
   );

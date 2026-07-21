@@ -79,6 +79,7 @@ from routers import (
     marketing_templates,
     marketing_segments,
     marketing_sequences,
+    marketing_review_requests,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -164,7 +165,8 @@ for module in [notifications_router,
                customer_reviews,
                marketing_templates,
                marketing_segments,
-               marketing_sequences]:
+               marketing_sequences,
+               marketing_review_requests]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -478,6 +480,27 @@ async def _background_seed():
             logger.info("scheduler: m5 tick (*/5 min) + daily sweep (09:00 UTC) registered")
         except Exception as _m5e:
             logger.warning(f"m5c scheduler registration crashed: {_m5e}")
+
+        # Feb-2026 · Marketing Slice M6 — Review Requests.
+        # Piggy-backs on the mocked marketing_deliveries pipeline.
+        # Two jobs:
+        #   1. Tick — every 5 minutes: fire due queued rows.
+        #   2. Expiry sweep — 03:15 UTC daily: flip expired rows.
+        try:
+            from routers.marketing_review_requests import (
+                m6_tick_all_tenants, m6_expiry_sweep,
+            )
+            scheduler.add_job(
+                m6_tick_all_tenants,
+                "cron", minute="*/5",
+                id="m6_review_request_tick", replace_existing=True)
+            scheduler.add_job(
+                m6_expiry_sweep,
+                "cron", hour=3, minute=15,
+                id="m6_review_request_expiry", replace_existing=True)
+            logger.info("scheduler: m6 tick (*/5 min) + expiry sweep (03:15 UTC) registered")
+        except Exception as _m6e:
+            logger.warning(f"m6 scheduler registration crashed: {_m6e}")
 
         scheduler.start()
     except Exception as e:

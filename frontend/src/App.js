@@ -36,6 +36,7 @@ import AdminReviewsPage from "@/pages/admin/AdminReviewsPage";
 import MarketingTemplatesLibraryPage from "@/pages/marketing/MarketingTemplatesLibraryPage";
 import MarketingSegmentsPage from "@/pages/marketing/MarketingSegmentsPage";
 import MarketingSequencesPage from "@/pages/marketing/MarketingSequencesPage";
+import MarketingReviewRequestsPage from "@/pages/marketing/MarketingReviewRequestsPage";
 import PortalVideos from "@/pages/portal/PortalVideos";
 import {
   CommsTemplatesLibrary, CommsEmailBuilder, CommsSmsBuilder,
@@ -287,6 +288,12 @@ export default function App() {
           <Route path="/reviews/r/:token" element={<PublicReviewLanding />} />
           <Route path="/reviews/:tenant_slug" element={<PublicReviewsWidgetPage />} />
 
+          {/* Marketing M6 · Feb 2026 — magic-link review requests (no auth).
+              PortalReviews reads ?token=… and hits the public verify +
+              via-token endpoints, so this needs to render outside the
+              ProtectedShell. */}
+          <Route path="/r/review" element={<PortalReviews />} />
+
           {/* QuoteIQ Q4 · public InstaQuote portal — no auth. */}
           <Route path="/quote/:slug" element={<PublicInstaQuotePage />} />
 
@@ -361,6 +368,7 @@ export default function App() {
             <Route path="marketing/template-library" element={<AdminOnly><MarketingTemplatesLibraryPage /></AdminOnly>} />
             <Route path="marketing/segments" element={<AdminOnly><MarketingSegmentsPage /></AdminOnly>} />
             <Route path="admin/marketing/sequences" element={<AdminOnly><MarketingSequencesPage /></AdminOnly>} />
+            <Route path="admin/marketing/review-requests" element={<AdminOnly><MarketingReviewRequestsPage /></AdminOnly>} />
             <Route path="marketing/reviews" element={<AdminOnly><Reviews /></AdminOnly>} />
             <Route path="marketing/sequences" element={<AdminOnly><SequencesList /></AdminOnly>} />
             <Route path="marketing/sequences/new" element={<AdminOnly><SequenceNew /></AdminOnly>} />

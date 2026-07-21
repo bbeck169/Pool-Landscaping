@@ -574,6 +574,19 @@ async def submit_service_report(jid: str,
             )
     except Exception:
         pass
+    # Feb-2026 · Marketing Slice M6 — enqueue automated review request
+    # when the tenant has opted in.  Non-blocking + duplicate-guarded.
+    try:
+        if job.get("customer_id"):
+            from routers.marketing_review_requests import (
+                enqueue_from_service_completed,
+            )
+            await enqueue_from_service_completed(
+                tenant["id"], job.get("customer_id"),
+                (out or rep or {}).get("id"),
+            )
+    except Exception:
+        pass
     # Phase 56.20 — Auto End-of-Visit Customer Email.
     # Non-blocking: any exception is caught + logged inside the service.
     try:

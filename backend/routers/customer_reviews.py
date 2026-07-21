@@ -94,6 +94,7 @@ class ReviewIn(BaseModel):
     rating: int = Field(..., ge=1, le=5)
     comment: Optional[str] = ""
     service_report_id: Optional[str] = None
+    review_request_id: Optional[str] = None    # Feb-2026 · Marketing M6
 
     @field_validator("comment", mode="before")
     @classmethod
@@ -142,8 +143,26 @@ async def submit_review(
         "read_at": None,
         "admin_notes": "",
         "service_report_id": body.service_report_id,
+        "review_request_id": body.review_request_id,   # Marketing M6
     }
     await db.customer_portal_reviews.insert_one(doc)
+
+    # Feb-2026 · Marketing M6 — if this review is linked to a queued
+    # review-request row, flip that row to ``reviewed`` and copy the
+    # rating for fast reporting.  Non-blocking; the review submission
+    # itself succeeds regardless.
+    if body.review_request_id:
+        try:
+            await db.marketing_review_requests.update_one(
+                {"id": body.review_request_id, "tenant_id": tenant["id"],
+                 "customer_id": cid},
+                {"$set": {"status": "reviewed",
+                            "review_id": rid,
+                            "review_rating": int(body.rating),
+                            "reviewed_at": now_iso()}},
+            )
+        except Exception as exc:
+            logger.warning("m6 link on review %s crashed: %s", rid, exc)
 
     google_url: Optional[str] = None
     if is_public:
