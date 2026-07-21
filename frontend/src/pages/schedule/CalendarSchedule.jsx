@@ -35,6 +35,7 @@ import { Gate, useCan } from "@/hooks/usePermissions";
 import { useClockInGate, ClockInGateDialog } from "@/hooks/useClockInGate";
 import ChecklistModal from "@/components/checklist/ChecklistModal";
 import ServiceNotePill from "@/components/schedule/ServiceNotePill";
+import TechWeatherWidget from "@/components/Weather/TechWeatherWidget";
 
 /** Phase 30W · service-type → card palette. Mirrors the mobile fix-pass. */
 const SERVICE_PALETTE = (raw) => {
@@ -385,6 +386,10 @@ export default function CalendarSchedule() {
       style={{ fontFamily: font.family }}
       data-testid="calendar-schedule"
     >
+      {/* Feb-2026 · Tech-only weather header. TechWeatherWidget
+          self-gates on ``user.role === "technician"``, so admins and
+          impersonated views render nothing here. */}
+      <TechWeatherWidget user={user} />
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: colors.onSurface }} data-testid="calendar-title">

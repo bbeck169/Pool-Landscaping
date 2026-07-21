@@ -108,6 +108,17 @@ def require_zillow_access(user: dict = Depends(get_current_user)) -> dict:
     raise HTTPException(status_code=403, detail="Zillow access requires admin or technician role")
 
 
+# Feb-2026 · Weather widget on tech dashboard header — techs need
+# read access to the proxied WeatherAPI.com endpoints, and admins
+# need it too for testing / preview. Customers + anonymous stay
+# blocked.
+def require_tech_or_admin(user: dict = Depends(get_current_user)) -> dict:
+    role = (user or {}).get("role")
+    if role in ("super_admin", "admin", "technician"):
+        return user
+    raise HTTPException(status_code=403, detail="Tech or admin required")
+
+
 def deny_impersonation(user: dict) -> None:
     """Block money-moving / credential actions while an admin is viewing as a customer."""
     if user.get("is_impersonated"):
