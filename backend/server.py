@@ -83,6 +83,8 @@ from routers import (
     marketing_preferences,
     marketing_analytics,
     widget_config,
+    widget_chat,
+    marketing_forms,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -172,7 +174,9 @@ for module in [notifications_router,
                marketing_review_requests,
                marketing_preferences,
                marketing_analytics,
-               widget_config]:
+               widget_config,
+               widget_chat,
+               marketing_forms]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -289,6 +293,41 @@ async def _background_seed():
     await step("lead_request_form", lead_requests._seed_lead_request_form())
     await step("tenant_backfill", tenants.run_tenant_backfill())
     await step("super_admin", tenants._seed_super_admin())
+
+    # Feb-2026 · Slice GH0 post-fix — mirror the sync-boot seed of the
+    # dev preview host onto the aquaterra tenant's
+    # ``widget_allowed_domains``. This second call catches the fresh
+    # cold-boot case where the tenant didn't exist yet when the sync
+    # startup ran. Idempotent (only appends when absent).
+    try:
+        from urllib.parse import urlparse
+        dev_host = None
+        pub = (os.environ.get("APP_PUBLIC_URL") or "").strip()
+        if pub:
+            try:
+                dev_host = (urlparse(pub).netloc or pub).split(":")[0].lower() or None
+            except Exception:
+                dev_host = None
+        if not dev_host:
+            dev_host = "poolscape-audit.preview.emergentagent.com"
+        aqua = await db.tenants.find_one(
+            {"slug": "aquaterra"},
+            {"_id": 0, "id": 1, "widget_allowed_domains": 1},
+        )
+        if aqua and dev_host:
+            current = aqua.get("widget_allowed_domains") or []
+            if dev_host not in current:
+                await db.tenants.update_one(
+                    {"id": aqua["id"]},
+                    {"$addToSet": {"widget_allowed_domains": dev_host}},
+                )
+                logger.info(
+                    f"[gh0-seed:bg] appended dev host '{dev_host}' to "
+                    f"aquaterra widget_allowed_domains"
+                )
+    except Exception as e:
+        logger.warning(f"gh0 dev-domain background seed crashed: {e}")
+
     await step("landscaping_user", seed_landscaping_user())
     await step("landscape_tech_carlos", seed_landscape_tech_carlos())
     await step("auto_heal_demo_passwords", auto_heal_demo_passwords_if_needed())
@@ -635,6 +674,48 @@ async def startup():
         logger.info(f"[m5] marketing_sequences seed — {counts}")
     except Exception as e:
         logger.warning(f"m5 marketing_sequences seed crashed: {e}")
+
+    # Feb-2026 · Slice GH0 post-fix — seed the dev preview host onto the
+    # aquaterra tenant's widget_allowed_domains so the widget bundle
+    # served from poolscape-audit.preview.emergentagent.com works
+    # immediately. Idempotent (only appends when absent).
+    try:
+        from urllib.parse import urlparse
+        dev_host = None
+        pub = (os.environ.get("APP_PUBLIC_URL") or "").strip()
+        if pub:
+            try:
+                dev_host = (urlparse(pub).netloc or pub).split(":")[0].lower() or None
+            except Exception:
+                dev_host = None
+        if not dev_host:
+            dev_host = "poolscape-audit.preview.emergentagent.com"
+        aqua = await db.tenants.find_one(
+            {"slug": "aquaterra"},
+            {"_id": 0, "id": 1, "widget_allowed_domains": 1},
+        )
+        if aqua and dev_host:
+            current = aqua.get("widget_allowed_domains") or []
+            if dev_host not in current:
+                await db.tenants.update_one(
+                    {"id": aqua["id"]},
+                    {"$addToSet": {"widget_allowed_domains": dev_host}},
+                )
+                logger.info(
+                    f"[gh0-seed] appended dev host '{dev_host}' to "
+                    f"aquaterra widget_allowed_domains"
+                )
+    except Exception as e:
+        logger.warning(f"gh0 dev-domain seed crashed: {e}")
+
+    # Feb-2026 · Slice H1 — Turnstile status log (single WARN when the
+    # TURNSTILE_SECRET env var is missing so ops know form submissions
+    # are being accepted without verification).
+    try:
+        from routers.marketing_forms import log_turnstile_status_once
+        log_turnstile_status_once()
+    except Exception as e:
+        logger.warning(f"turnstile status log crashed: {e}")
 
     # Phase 5A · Video Uploads (Feb 2026) — init Emergent object storage
     # session key once at startup. Never crashes the boot: on failure the

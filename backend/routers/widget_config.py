@@ -100,20 +100,44 @@ async def regenerate_widget_key(user: dict = Depends(require_super_admin)):
 
 
 # ── Super-admin — replace allowed domains ───────────────────────────
-class DomainsPatch(BaseModel):
-    widget_allowed_domains: List[str] = Field(default_factory=list)
-
-
+# Post-GH0 fix (Feb-2026): accept BOTH ``domains`` and
+# ``widget_allowed_domains`` as aliases so the widget UI, the admin
+# API SDK, and the tester spec can all speak the same endpoint.  Neither
+# key present ⇒ 422 with a helpful message.
 @router.patch("/tenants/mine/widget-config/domains")
-async def patch_widget_domains(body: DomainsPatch,
+async def patch_widget_domains(request: Request,
                                user: dict = Depends(require_super_admin)):
     tid = user.get("tenant_id")
     if not tid:
         raise HTTPException(400, "User has no tenant")
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if not isinstance(body, dict):
+        raise HTTPException(422, "Request body must be a JSON object")
+
+    # Accept either alias; ``widget_allowed_domains`` wins when both are
+    # present (matches the getter's response shape).
+    raw = body.get("widget_allowed_domains")
+    if raw is None:
+        raw = body.get("domains")
+    if raw is None:
+        raise HTTPException(
+            422, "Missing 'domains' (or 'widget_allowed_domains') in body"
+        )
+    if not isinstance(raw, list):
+        raise HTTPException(
+            422, "'domains'/'widget_allowed_domains' must be a list of strings"
+        )
+
     # Normalize + dedupe (preserve order).
     seen = set()
     cleaned: List[str] = []
-    for d in body.widget_allowed_domains:
+    for d in raw:
+        if not isinstance(d, str):
+            raise HTTPException(422, "each domain must be a string")
         norm = _norm_domain(d)
         if norm not in seen:
             seen.add(norm)

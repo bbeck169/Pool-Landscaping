@@ -5998,3 +5998,58 @@ Frontend:
 - Slice H1 (backend forms + submissions + Turnstile) — parallel with G1.
 - Then G2/G3 (widget JS + admin UI) and H2/H3/H4 (form builder UI + widget JS + leads dashboard).
 - **Turnstile keys** — user still needs to sign up at cloudflare.com/products/turnstile and paste `TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET_KEY` into `/app/backend/.env` before H1 ships live verification. Until then, H1 will skip verification with a warning log (dev-friendly).
+
+
+## Slice GH0 post-fix + Slice G1 + Slice H1 backends (Feb 2026)
+
+**Status:** GREEN · 32/32 tests (`test_widget_gh0.py` 7/7 + `test_widget_g1.py` 13/13 + `test_widget_h1.py` 12/12) on 2026-07-21.
+
+### GH0 post-fix
+- `PATCH /api/tenants/mine/widget-config/domains` now accepts BOTH `domains` and `widget_allowed_domains` as aliases (`widget_allowed_domains` wins if both are supplied). Returns 422 with a helpful message when neither key is present or the value isn't a list of strings.
+- Startup hook (sync boot + background seed for cold-start races) idempotently appends the preview host (`APP_PUBLIC_URL` if set, else `poolscape-audit.preview.emergentagent.com`) to the aquaterra tenant's `widget_allowed_domains` via `$addToSet` so the widget bundle works from the dev preview URL out-of-the-box.
+
+### Slice G1 · AI Website Chat Widget (backend)
+Router: `/app/backend/routers/widget_chat.py` — mounted under `/api/widget/chat/*` and gated by `require_widget_auth`.
+- `POST /api/widget/chat/conversations` — start anonymous conversation, stores `page_url`/`referrer` context, returns `{id, tenant_id}`.
+- `GET /api/widget/chat/conversations/{cid}` — fetch conversation + transcript (tenant-scoped 404 otherwise).
+- `POST /api/widget/chat/conversations/{cid}/messages` — send visitor turn + get assistant reply.
+  - Reuses `_llm_chat` (Emergent LLM key, Claude Sonnet 4.5). Falls back to stub reply when key missing.
+  - Anonymous system prompt: helpful up-front; opportunistic contact capture ask over next 1-2 turns; booking intent requires name + contact before promising anything.
+  - Live `[capture_state]` line appended to the system prompt each turn so the model knows if it still needs to ask.
+- Opportunistic lead capture:
+  - Email/phone/name regexes on each visitor turn; upserts a `leads` row (`source="chat_widget"`) idempotently within the tenant when at least email or phone is captured. Existing lead by email/phone is linked instead of duplicated.
+  - Booking-intent keyword sweep (`book`, `schedule`, `appointment`, `estimate`, `quote`, ...) on each turn.
+  - Admin bell (`enqueue_for_tenant_admins`, kind=`widget_chat_lead`) fans out when a NEW lead is created OR when booking intent is detected AND a contact is already on the conversation.
+- Data model: `widget_chat_conversations` + `widget_chat_messages` collections; both carry `tenant_id` for cross-tenant isolation.
+
+### Slice H1 · Public Form Builder (backend)
+Router: `/app/backend/routers/marketing_forms.py`.
+- Admin (`/api/admin/forms/*` — JWT):
+  - `POST /admin/forms` — create; slug auto-derived + validated + unique-within-tenant; field types validated (`text|email|phone|textarea|select|checkbox|number|url`); dup field names + missing select options rejected 422.
+  - `GET /admin/forms`, `GET /admin/forms/{fid}` — list + fetch.
+  - `PATCH /admin/forms/{fid}` — rename, edit fields, toggle `active`, tweak success message.
+  - `DELETE /admin/forms/{fid}`.
+  - `GET /admin/forms/{fid}/submissions` — paginated tenant-scoped submissions list.
+- Public (`/api/widget/form/*` — widget-auth):
+  - `GET /widget/form/{fid}` — returns the public-safe schema (no `tenant_id`, `created_by`, or `submission_count`).
+  - `POST /widget/form/{fid}/submit` — required-field validation, Turnstile verify (graceful bypass when `TURNSTILE_SECRET` is missing — single `WARN` at startup, verification enforced when secret is present), persists `form_submissions` row, upserts a `leads` doc (`source="form:<slug>"`) idempotently by email/phone, bumps `submission_count`, fires optional admin bell (kind=`form_submission`).
+- Turnstile helper (`_verify_turnstile`) posts to `https://challenges.cloudflare.com/turnstile/v0/siteverify` with `remoteip` when available; returns 400 for missing/invalid tokens when secret is set, 502 when verify network fails.
+- Data model: `marketing_forms` + `form_submissions` collections.
+
+### Guardrails held
+- Widget key alone still can't do anything — `Origin`/`Referer` allowlist enforced on every widget call (via `require_widget_auth`, unchanged from GH0).
+- Anonymous chat NEVER receives customer data (the anonymous system prompt explicitly forbids it and no customer-scoped context is loaded).
+- Every conversation and every form row carries `tenant_id`; cross-tenant reads always 404 even with a valid widget key.
+- Lead upsert reuses existing tenant-scoped leads instead of duplicating — a returning visitor with the same email/phone lands on the same `leads.id`.
+
+### Env vars
+- `TURNSTILE_SECRET` (optional, H1) — Cloudflare Turnstile server secret. Absent → graceful bypass + one `WARN` log at boot.
+- `APP_PUBLIC_URL` (existing) — drives the aquaterra dev-domain seed.
+
+### Follow-ups (deferred to G2/G3 + H2/H3/H4)
+- G2 · Widget JS bundle for chat (`/app/frontend/widget/`).
+- G3 · Admin `/settings/tenant` widget config card: auto-generated embed snippet (with tenant's public key substituted) + copy-to-clipboard button + live preview iframe; testids `widget-embed-snippet-code`, `widget-embed-copy-btn`, `widget-embed-preview-iframe`, `widget-embed-preview-refresh-btn`.
+- H2 · Form builder UI (form editor drawer includes per-form embed snippet + copy button + live preview iframe; testids `form-embed-snippet-code`, `form-embed-copy-btn`, `form-embed-preview-iframe`).
+- H3 · Widget JS bundle for forms.
+- H4 · Leads dashboard filter for `source="chat_widget"` + `source="form:*"`.
+- Slice I · Customer portal first-login walkthrough (Shepherd.js / Reactour).
