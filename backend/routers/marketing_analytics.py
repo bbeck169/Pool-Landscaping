@@ -63,6 +63,27 @@ def _pct(numerator: int, denominator: int) -> Optional[float]:
     return round(100.0 * numerator / denominator, 1) if denominator else None
 
 
+def _build_ab_variants(counts: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Slice A · shape the ``ab_variants`` payload from raw per-variant
+    counters + compute the review-rate lift of B over A."""
+    def side(rows):
+        sent = rows["sent"]; opened = rows["opened"]; reviewed = rows["reviewed"]
+        ratings = rows["ratings"]
+        return {
+            "sent": sent, "opened": opened, "reviewed": reviewed,
+            "review_rate_pct": _pct(reviewed, sent),
+            "avg_rating": round(sum(ratings) / len(ratings), 2) if ratings else None,
+        }
+    a = side(counts["A"]); b = side(counts["B"])
+    lift: Optional[float] = None
+    if a["review_rate_pct"]:
+        lift = round(
+            ((b["review_rate_pct"] or 0.0) - a["review_rate_pct"])
+            / a["review_rate_pct"] * 100.0, 1,
+        )
+    return {"A": a, "B": b, "lift_pct": lift}
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Overview
 # ═══════════════════════════════════════════════════════════════════════
@@ -143,13 +164,32 @@ async def _compute_overview(tenant_id: str, window: str) -> Dict[str, Any]:
     rr_agg = {"queued": 0, "sent": 0, "opened": 0, "reviewed": 0,
               "expired": 0, "failed": 0, "total": 0}
     ratings: List[int] = []
+    # Slice A · A/B per-variant counters.  Populated lazily so
+    # ``ab_variants`` stays ``None`` when nothing was ever variant-tagged.
+    variant_seen = False
+    variant_counts = {
+        "A": {"sent": 0, "opened": 0, "reviewed": 0, "ratings": []},
+        "B": {"sent": 0, "opened": 0, "reviewed": 0, "ratings": []},
+    }
     async for r in db.marketing_review_requests.find(rr_q, {"_id": 0}):
         rr_agg["total"] += 1
         s = r.get("status") or "queued"
         rr_agg[s] = rr_agg.get(s, 0) + 1
         if r.get("review_rating"):
             ratings.append(int(r["review_rating"]))
+        v = r.get("variant")
+        if v in ("A", "B"):
+            variant_seen = True
+            reached_sent   = s in ("sent", "opened", "reviewed", "expired")
+            reached_open   = s in ("opened", "reviewed")
+            reached_review = s == "reviewed"
+            if reached_sent:   variant_counts[v]["sent"] += 1
+            if reached_open:   variant_counts[v]["opened"] += 1
+            if reached_review: variant_counts[v]["reviewed"] += 1
+            if r.get("review_rating"):
+                variant_counts[v]["ratings"].append(int(r["review_rating"]))
     avg_rating = round(sum(ratings) / len(ratings), 2) if ratings else None
+    ab_variants = _build_ab_variants(variant_counts) if variant_seen else None
     rr_summary = {
         "queued": rr_agg["queued"],
         "sent": rr_agg["sent"],
@@ -160,6 +200,7 @@ async def _compute_overview(tenant_id: str, window: str) -> Dict[str, Any]:
         "total": rr_agg["total"],
         "avg_rating": avg_rating,
         "review_rate_pct": _pct(rr_agg["reviewed"], rr_agg["total"]),
+        "ab_variants": ab_variants,
     }
 
     # ── Top sequences (by enrolment volume) ────────────────────────
@@ -389,11 +430,27 @@ async def get_review_request_analytics(
     counts = {"queued": 0, "sent": 0, "opened": 0,
               "reviewed": 0, "expired": 0, "failed": 0}
     ratings: List[int] = []
+    variant_seen = False
+    variant_counts = {
+        "A": {"sent": 0, "opened": 0, "reviewed": 0, "ratings": []},
+        "B": {"sent": 0, "opened": 0, "reviewed": 0, "ratings": []},
+    }
     async for r in db.marketing_review_requests.find(q, {"_id": 0}):
         s = r.get("status") or "queued"
         counts[s] = counts.get(s, 0) + 1
         if r.get("review_rating"):
             ratings.append(int(r["review_rating"]))
+        v = r.get("variant")
+        if v in ("A", "B"):
+            variant_seen = True
+            reached_sent   = s in ("sent", "opened", "reviewed", "expired")
+            reached_open   = s in ("opened", "reviewed")
+            reached_review = s == "reviewed"
+            if reached_sent:   variant_counts[v]["sent"] += 1
+            if reached_open:   variant_counts[v]["opened"] += 1
+            if reached_review: variant_counts[v]["reviewed"] += 1
+            if r.get("review_rating"):
+                variant_counts[v]["ratings"].append(int(r["review_rating"]))
     total = sum(counts.values())
     # Funnel: queued(all) → sent(sent+opened+reviewed+expired) →
     # opened(opened+reviewed) → reviewed(reviewed).
@@ -412,6 +469,7 @@ async def get_review_request_analytics(
         ],
         "avg_rating": round(sum(ratings) / len(ratings), 2) if ratings else None,
         "review_rate_pct": _pct(reached_rev, total),
+        "ab_variants": _build_ab_variants(variant_counts) if variant_seen else None,
     }
 
 

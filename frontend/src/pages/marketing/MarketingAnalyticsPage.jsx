@@ -258,8 +258,92 @@ export default function MarketingAnalyticsPage() {
               ))}
             </div>
           </div>
+
+          {overview?.review_requests?.ab_variants ? (
+            <AbTestCard ab={overview.review_requests.ab_variants} />
+          ) : null}
         </>
       )}
+    </div>
+  );
+}
+
+
+function AbTestCard({ ab }) {
+  const lift = ab?.lift_pct;
+  const liftColor =
+    lift === null || lift === undefined ? colors.muted
+      : lift >= 5 ? "#16A34A"
+      : lift <= -5 ? colors.error
+      : colors.muted;
+  return (
+    <div className="rounded-2xl p-4 mb-6"
+         style={{ backgroundColor: colors.surface,
+                  border: `1px solid ${colors.border}` }}
+         data-testid="analytics-ab-test-card">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-base font-bold" style={{ color: colors.onSurface }}>
+          A/B Test Results
+        </h3>
+        {lift !== null && lift !== undefined ? (
+          <span className="px-2 py-1 rounded-full text-xs font-bold"
+                style={{ backgroundColor: liftColor + "22", color: liftColor }}
+                data-testid="analytics-ab-lift">
+            Lift {lift > 0 ? "+" : ""}{lift}%
+          </span>
+        ) : (
+          <span className="text-xs" style={{ color: colors.muted }}
+                data-testid="analytics-ab-lift">
+            Lift — (need more A data)
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <VariantColumn label="A" testid="analytics-ab-variant-a" data={ab?.A} />
+        <VariantColumn label="B" testid="analytics-ab-variant-b" data={ab?.B} />
+      </div>
+    </div>
+  );
+}
+
+
+function VariantColumn({ label, data, testid }) {
+  return (
+    <div className="rounded-xl p-3"
+         style={{ backgroundColor: colors.surfaceSecondary,
+                  border: `1px solid ${colors.divider}` }}
+         data-testid={testid}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-lg font-bold" style={{ color: colors.onSurface }}>
+          Variant {label}
+        </span>
+        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+              style={{ backgroundColor: label === "A" ? "#E0E7FF" : "#DBEAFE",
+                       color: label === "A" ? "#4338CA" : "#1E3A8A" }}>
+          {label}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+        <span style={{ color: colors.muted }}>Sent</span>
+        <span className="text-right font-semibold"
+              style={{ color: colors.onSurface }}>{data?.sent ?? 0}</span>
+        <span style={{ color: colors.muted }}>Opened</span>
+        <span className="text-right font-semibold"
+              style={{ color: colors.onSurface }}>{data?.opened ?? 0}</span>
+        <span style={{ color: colors.muted }}>Reviewed</span>
+        <span className="text-right font-semibold"
+              style={{ color: colors.onSurface }}>{data?.reviewed ?? 0}</span>
+        <span style={{ color: colors.muted }}>Review rate</span>
+        <span className="text-right font-semibold"
+              style={{ color: colors.onSurface }}>
+          {fmtPct(data?.review_rate_pct)}
+        </span>
+        <span style={{ color: colors.muted }}>Avg rating</span>
+        <span className="text-right font-semibold"
+              style={{ color: colors.onSurface }}>
+          {data?.avg_rating ?? "—"}
+        </span>
+      </div>
     </div>
   );
 }

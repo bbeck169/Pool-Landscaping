@@ -195,6 +195,65 @@ export default function MarketingReviewRequestsPage() {
           </Field>
         </div>
 
+        {/* ── Slice A · A/B test toggle ─────────────────────────── */}
+        <div className="mt-4 rounded-xl p-3"
+             style={{ backgroundColor: colors.surfaceSecondary,
+                      border: `1px solid ${colors.divider}` }}>
+          <label className="flex items-center gap-2 cursor-pointer mb-2">
+            <input type="checkbox" checked={!!cfg.ab_test_enabled}
+                   onChange={(e) =>
+                     setCfg({ ...cfg, ab_test_enabled: e.target.checked })}
+                   data-testid="review-requests-ab-toggle" />
+            <span className="text-sm font-bold" style={{ color: colors.onSurface }}>
+              A/B test
+            </span>
+            <span className="text-xs" style={{ color: colors.muted }}>
+              Randomly send variant B to <b>{cfg.ab_split_pct ?? 50}%</b> of review requests.
+              Stats appear in Marketing Analytics.
+            </span>
+          </label>
+          {cfg.ab_test_enabled ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+              <Field label="Email template · variant B">
+                <select value={cfg.email_template_id_variant || ""}
+                        onChange={(e) =>
+                          setCfg({ ...cfg,
+                                    email_template_id_variant: e.target.value || null })}
+                        className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
+                        style={inputStyle}
+                        data-testid="review-requests-email-variant-select">
+                  <option value="">— pick a variant template —</option>
+                  {templatesByChannel.email.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name} ({t.category})</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="SMS template · variant B">
+                <select value={cfg.sms_template_id_variant || ""}
+                        onChange={(e) =>
+                          setCfg({ ...cfg,
+                                    sms_template_id_variant: e.target.value || null })}
+                        className="w-full px-2 py-1.5 rounded-lg text-sm outline-none"
+                        style={inputStyle}
+                        data-testid="review-requests-sms-variant-select">
+                  <option value="">— pick a variant template —</option>
+                  {templatesByChannel.sms.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name} ({t.category})</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label={`Split % to variant B — ${cfg.ab_split_pct ?? 50}%`}>
+                <input type="range" min={0} max={100}
+                       value={cfg.ab_split_pct ?? 50}
+                       onChange={(e) =>
+                         setCfg({ ...cfg, ab_split_pct: Number(e.target.value) })}
+                       className="w-full"
+                       data-testid="review-requests-ab-split-slider" />
+              </Field>
+            </div>
+          ) : null}
+        </div>
+
         {cfgError ? (
           <div className="text-sm mt-3" style={{ color: colors.error }}>{cfgError}</div>
         ) : null}
@@ -265,6 +324,17 @@ export default function MarketingReviewRequestsPage() {
                   </td>
                   <td className="py-2 px-3" style={{ color: colors.onSurface }}>
                     {r.customer_name || r.customer_id}
+                    {r.variant ? (
+                      <span
+                        className="ml-2 inline-block px-1.5 py-0.5 rounded-full text-[10px] font-bold"
+                        style={{ backgroundColor: r.variant === "B"
+                                   ? "#DBEAFE" : "#E0E7FF",
+                                 color: r.variant === "B"
+                                   ? "#1E3A8A" : "#4338CA" }}
+                        data-testid={`review-request-variant-badge-${r.id}`}>
+                        {r.variant}
+                      </span>
+                    ) : null}
                   </td>
                   <td className="py-2 px-3" style={{ color: colors.onSurface }}>
                     {r.channel === "email"
@@ -309,6 +379,9 @@ const DEFAULTS = {
   email_template_id: null, sms_template_id: null,
   quiet_hours_start: "18:00", quiet_hours_end: "09:00",
   expire_days: 30,
+  // Slice A · A/B testing.
+  ab_test_enabled: false, ab_split_pct: 50,
+  email_template_id_variant: null, sms_template_id_variant: null,
 };
 
 const inputStyle = {

@@ -5885,3 +5885,32 @@ Frontend:
 - **P2 · SMS quiet-hours enforcement** — config is stored (`quiet_hours_start`/`end`) but the tick handler currently ignores it. Add a shift-to-next-window step when live SMS lands.
 - **P2 · Buddy in-Dock deep link** — "Ask Buddy for a recap" button opens a full conversation; a lighter inline sheet would be a nicer UX.
 - Phase Q6 (Virtual Call Team) — still deferred pending Twilio credentials.
+
+
+---
+
+## Slice A · Review-Request A/B Testing (Feb 2026)
+
+**Status:** GREEN · 8/8 slice tests + 72/72 marketing-suite regression on 2026-07-21.
+
+### What shipped
+- **Config**: `review_requests_config` gained `ab_test_enabled` (bool), `ab_split_pct` (0-100, default 50), `email_template_id_variant`, `sms_template_id_variant`. PATCH cross-field validation rejects `ab_test_enabled=true` without a variant template for the active channel; `ab_split_pct` bounds validated.
+- **Enqueue**: `_enqueue_one` picks the variant at row-insertion time using `secrets.SystemRandom().random()` (cryptographic-quality, audit-friendly). Row now carries `variant: "A"|"B"|null` + `template_id` records the actually-used template.
+- **Analytics**: `/marketing/analytics/overview` and `/analytics/review-requests` now include an `ab_variants: {A, B, lift_pct} | null` block. `null` when no variant-tagged rows exist in the window. `lift_pct = ((B.review_rate_pct - A.review_rate_pct) / A.review_rate_pct) * 100`.
+- **Frontend · admin config**: A/B toggle + 2 variant template pickers + split-percent slider on `MarketingReviewRequestsPage`. `NOT_YET_WIRED_TRIGGERS` set on the sequences page still empty.
+- **Frontend · analytics**: `<AbTestCard>` shows Variant A/B side-by-side with sent/opened/reviewed/review-rate/avg-rating + a colour-coded Lift badge (green ≥+5%, red ≤-5%, grey otherwise).
+- **Frontend · requests table**: per-row A/B badge next to the customer name (`review-request-variant-badge-{id}`).
+
+### Files touched
+- Backend: `routers/marketing_review_requests.py`, `routers/marketing_analytics.py`, `tests/test_marketing_slice_a.py` (NEW)
+- Frontend: `pages/marketing/MarketingReviewRequestsPage.jsx`, `pages/marketing/MarketingAnalyticsPage.jsx`
+
+### Guardrails held
+- Slice-6 review submission logic untouched.
+- Analytics changes scoped strictly to the review-requests section; campaigns + sequences aggregations unmodified.
+- Delivery remains 100% mocked.
+- Cross-tenant isolation asserted (`test_ab_variants_dont_leak_across_tenants`).
+
+### Next
+- **P1 · Slice E** — mobile parity backfill re-check via testing agent (skipped for now; mobile is off-limits per project rule).
+- **P1 · Slice F** — Marketing polish: unsubscribe management page.

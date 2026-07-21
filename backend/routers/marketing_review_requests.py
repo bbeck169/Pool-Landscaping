@@ -46,6 +46,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "quiet_hours_start": "18:00",
     "quiet_hours_end": "09:00",
     "expire_days": 30,
+    # Slice A · A/B testing on review requests.  Off by default.
+    "ab_test_enabled": False,
+    "ab_split_pct": 50,
+    "email_template_id_variant": None,
+    "sms_template_id_variant": None,
 }
 
 
@@ -59,6 +64,12 @@ class ReviewRequestConfigPatch(BaseModel):
     quiet_hours_start: Optional[str] = None
     quiet_hours_end: Optional[str] = None
     expire_days: Optional[int] = Field(None, ge=1, le=365)
+    # Slice A — A/B testing knobs.  Every field optional; validation
+    # runs cross-field in :func:`patch_review_requests_config`.
+    ab_test_enabled: Optional[bool] = None
+    ab_split_pct: Optional[int] = Field(None, ge=0, le=100)
+    email_template_id_variant: Optional[str] = None
+    sms_template_id_variant: Optional[str] = None
 
     @field_validator("channel")
     @classmethod
@@ -168,6 +179,27 @@ async def patch_review_requests_config(
             raise HTTPException(422, "sms_template_id required when enabling sms channel")
     await _validate_template(tenant["id"], new_cfg.get("email_template_id"), "email")
     await _validate_template(tenant["id"], new_cfg.get("sms_template_id"), "sms")
+    # Slice A — A/B test cross-field validation + variant template checks.
+    if new_cfg.get("ab_test_enabled"):
+        ch = new_cfg["channel"]
+        if ch in ("email", "both"):
+            if not new_cfg.get("email_template_id"):
+                raise HTTPException(422,
+                    "email_template_id required as A/B control for the email channel")
+            if not new_cfg.get("email_template_id_variant"):
+                raise HTTPException(422,
+                    "email_template_id_variant required when ab_test_enabled and channel includes email")
+        if ch in ("sms", "both"):
+            if not new_cfg.get("sms_template_id"):
+                raise HTTPException(422,
+                    "sms_template_id required as A/B control for the sms channel")
+            if not new_cfg.get("sms_template_id_variant"):
+                raise HTTPException(422,
+                    "sms_template_id_variant required when ab_test_enabled and channel includes sms")
+    await _validate_template(tenant["id"],
+                              new_cfg.get("email_template_id_variant"), "email")
+    await _validate_template(tenant["id"],
+                              new_cfg.get("sms_template_id_variant"), "sms")
     await db.tenants.update_one(
         {"id": tenant["id"]},
         {"$set": {"review_requests_config": new_cfg,
@@ -416,11 +448,31 @@ async def _enqueue_one(
     # If "both", queue an email row now; SMS is out of MVP scope — email
     # covers the primary channel and the config stays forward-compat.
     active_channel = "email" if channel == "both" else channel
-    template_id = (
+    control_template = (
         cfg.get("email_template_id")
         if active_channel == "email"
         else cfg.get("sms_template_id")
     )
+    variant_template = (
+        cfg.get("email_template_id_variant")
+        if active_channel == "email"
+        else cfg.get("sms_template_id_variant")
+    )
+    # Slice A · A/B — pick variant using SystemRandom for
+    # cryptographic-quality per-row randomness.
+    variant_label: Optional[str] = None
+    template_id = control_template
+    if cfg.get("ab_test_enabled") and control_template and variant_template:
+        import secrets as _secrets
+        split_pct = int(cfg.get("ab_split_pct") if cfg.get("ab_split_pct") is not None else 50)
+        # secrets.SystemRandom().random() returns [0.0, 1.0); B gets picked
+        # when the roll lands under ``split_pct/100``.
+        if _secrets.SystemRandom().random() * 100.0 < split_pct:
+            variant_label = "B"
+            template_id = variant_template
+        else:
+            variant_label = "A"
+            template_id = control_template
     rid = new_id()
     doc = {
         "id": rid, "tenant_id": tenant_id,
@@ -429,6 +481,7 @@ async def _enqueue_one(
         "drip_enrolment_id": None,
         "channel": active_channel,
         "template_id": template_id,
+        "variant": variant_label,          # Slice A — "A" | "B" | None
         "delivery_id": None,
         "magic_link": _build_magic_link(
             customer_id, rid, service_report_id,
