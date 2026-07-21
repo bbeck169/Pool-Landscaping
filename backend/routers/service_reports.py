@@ -1357,6 +1357,17 @@ def _redact_report_for_customer(sr: dict) -> dict:
         })
     sr["chemical_readings"] = labelled_readings
     sr["readings_label"] = labels_map
+    # Feb-2026 · Slice 3E — drop checklist items that weren't checked.
+    # The tech didn't perform them, so surfacing them on the customer
+    # report would either confuse (looks like a missed task) or leak
+    # detail the customer doesn't need. Admin retains the full list
+    # via ``_annotate_report_for_admin`` so incomplete work is still
+    # visible internally.
+    checklist = sr.get("checklist_items") or []
+    sr["checklist_items"] = [
+        it for it in checklist
+        if isinstance(it, dict) and bool(it.get("checked"))
+    ]
     return sr
 
 
