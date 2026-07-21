@@ -1,0 +1,48 @@
+{
+  "summary": "Tested Slice M (Workstream) + Slice K (Job Detail line items) end-to-end. 8-test RBAC/pricing-leak pytest suite added (7 passed, 1 CRITICAL P0 FAIL). Frontend admin flow verified: filter chips, sort chip, clear-all, 7-section Job Detail, media counters, Add-line pricebook picker, quantity update ($89 -> $267 on qty=3), row delete + toast all work. Tech workstream page correctly hides Technician dropdown, scopes to Mike Rivera only, and no pricing strings leak into the workstream DOM. Tech Job Detail could NOT be verified in browser because JobDetail.jsx forces techs to clock in before opening any job (redirects /jobs -> /schedule); backend API level tests fully covered the tech surface instead.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/jobs/{jid}/detail (technician role)",
+        "issue": "P0 PRICING-LEAK-INVARIANT VIOLATION: forms.service_reports[].internal_notes is returned to technicians. _build_forms() in /app/backend/routers/workstream_job_detail.py projects service_reports with only {\"_id\":0} so internal_notes stays in the payload. The tech-hidden strip in get_job_detail only sanitizes payload['header'], not payload['forms']. Confirmed live: raw JSON as mike@aquaterra.com contains \"internal_notes\": \"\" inside a service_report. Other banned keys (unit_price, job_totals, subtotal, tax_rate, cost) are clean.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Tech opens a job from /workstream",
+        "issue": "JobDetail.jsx useEffect at line 80-86 redirects any not-clocked-in tech to /jobs which routes to /schedule (App.js:334). This makes it impossible to view Job Detail as a tech without first clocking in via the shell. Not necessarily a bug (belt-and-suspenders behavior noted in comment), but it means the acceptance criterion 'tech clicks card -> Job Detail renders' only holds when the tech is clocked in. Recommend either clock-in seed for demo tech or a bypass for testing.",
+        "affected_selectors": ["[data-testid=ws-job-*]", "[data-testid=job-line-items-section]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_slice_m_rbac_leak.py",
+    "/app/test_reports/pytest/slice_m_rbac_leak.xml"
+  ],
+  "action_items": [
+    "P0: In /app/backend/routers/workstream_job_detail.py::_build_forms strip internal_notes (and any future pricing keys like unit_price/cost/tax_rate) from each service_report before returning to non-admins. Simplest fix: pass `user` in, drop `internal_notes` for techs; or centralize a `_strip_for_tech(payload)` walker that scrubs the entire response tree, not just header.",
+    "Recommend adding a regression assertion so any tech-side response is deep-scanned for the forbidden key set {job_totals, unit_price, subtotal, tax_rate, cost, internal_notes} before returning."
+  ],
+  "critical_code_review_comments": [
+    "workstream_job_detail.py:318-320 only strips _TECH_HIDDEN_JOB_FIELDS from payload['header']. This is fragile; any future section (forms, notes, timeline events) that echoes raw Mongo docs can leak. Introduce a recursive scrubber applied at the very end when _is_tech(user).",
+    "_build_forms projects `{\"_id\": 0}` but keeps every other field on service_reports — needs explicit allowlist projection instead of blacklist.",
+    "WorkstreamPage.jsx JobCard uses a plain div with onClick — good keyboard support present (tabIndex=0, onKeyDown handleKey) — verified working. No issue.",
+    "LineItemsSection.jsx correctly gates unit/subtotal columns and Add-line button by !locked and admin flag; tech-side columns are Item/Qty/Notes only (verified in code, could not verify in browser due to clock-in gate)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_slice_m_rbac_leak.py (new)"
+  ],
+  "success_rate": { "backend": "87.5% (7/8)", "frontend": "~95% (admin flows all green, tech JD blocked by clock-in gate)" },
+  "test_credentials": "admin@aquaterra.com / password123, mike@aquaterra.com / password123, customer@aquaterra.com / password123 — from /app/memory/test_credentials.md",
+  "seed_data_creation": "None. Line item was created and deleted during admin test (net-zero).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After main agent scrubs internal_notes from _build_forms for techs, re-run pytest backend/tests/test_slice_m_rbac_leak.py. To validate tech-side Job Detail in browser, first clock Mike in via ClockIn button on shell, then navigate to /workstream and click a card. All 6 Slice-M UI acceptance items on admin side already verified.",
+  "rca of the issue": "Root cause: workstream_job_detail._build_forms() returns raw service_reports docs with a Mongo blacklist projection ({\"_id\":0}) rather than an explicit allowlist. Every service_report doc carries internal_notes, which is on the tech-forbidden list. The get_job_detail() endpoint only sanitizes payload['header'] for techs — sections forms/notes/timeline are trusted to build tech-safe payloads themselves, and forms does not. Reproduction: POST /api/auth/login as mike@aquaterra.com; GET /api/workstream/jobs -> pick jobs[0].id; GET /api/jobs/{id}/detail -> observe forms.service_reports[*].internal_notes present. Mitigation: (1) explicit projection like {\"_id\":0, \"internal_notes\":0, \"unit_price\":0, \"cost\":0, ...} for tech OR (2) end-of-endpoint recursive scrubber that pops any key in FORBIDDEN_TECH_KEYS from the whole payload tree when _is_tech(user)."
+}

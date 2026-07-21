@@ -87,6 +87,7 @@ from routers import (
     marketing_forms,
     portal_walkthrough,
     job_media_line_items,
+    workstream_job_detail,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -180,7 +181,8 @@ for module in [notifications_router,
                widget_chat,
                marketing_forms,
                portal_walkthrough,
-               job_media_line_items]:
+               job_media_line_items,
+               workstream_job_detail]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue

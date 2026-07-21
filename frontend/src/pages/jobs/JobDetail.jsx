@@ -33,6 +33,8 @@ import { useAuth } from "@/auth";
 import { useAttendance } from "@/hooks/useAttendance";
 import JobCostingPanel from "@/pages/budget/JobCostingPanel";
 import MediaUploader from "@/components/media/MediaUploader";
+import LineItemsSection from "@/pages/jobs/LineItemsSection";
+import TimelineSection from "@/pages/jobs/TimelineSection";
 
 export default function JobDetail() {
   const { id } = useParams();
@@ -41,6 +43,7 @@ export default function JobDetail() {
   const attendance = useAttendance();
   const [job, setJob] = useState(null);
   const [customer, setCustomer] = useState(null);
+  const [detail, setDetail] = useState(null);
   const [toast, setToast] = useState(null);
   const [emailModal, setEmailModal] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -57,6 +60,13 @@ export default function JobDetail() {
       setJob(j);
       if (j.customer_id) {
         api.get(`/customers/${j.customer_id}`).then(setCustomer).catch(() => {});
+      }
+      // Slice M5 aggregator — used for the Line Items / Timeline sections
+      // and the K1 photo/video remaining-slot counters. Customers never
+      // reach this endpoint (403); silently swallow to keep customer
+      // read paths — /customer/jobs/{id} — working.
+      if (!isCustomer) {
+        api.get(`/jobs/${id}/detail`).then(setDetail).catch(() => setDetail(null));
       }
     } catch (e) {
       setToast({ tone: "error", message: e.message });
@@ -287,6 +297,43 @@ export default function JobDetail() {
         </div>
       </div>
 
+      {/* K1 media counter chip — shows remaining photo/video slots so
+          the tech knows the cap before opening the uploader. */}
+      {detail?.media && !isCustomer ? (
+        <div
+          className="flex flex-wrap gap-2 mb-3"
+          data-testid="jd-media-counters"
+        >
+          <span
+            className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-full"
+            style={{
+              background: colors.surface,
+              border: `1px solid ${colors.border}`,
+              color: colors.onSurface,
+            }}
+            data-testid="jd-photo-counter"
+          >
+            <Camera size={11} /> {detail.media.photos_count}/{detail.media.photo_limit} photos
+          </span>
+          <span
+            className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-full"
+            style={{
+              background: colors.surface,
+              border: `1px solid ${colors.border}`,
+              color: colors.onSurface,
+            }}
+            data-testid="jd-video-counter"
+          >
+            <Play size={11} /> {detail.media.videos_count}/{detail.media.video_limit} videos
+          </span>
+        </div>
+      ) : null}
+
+      {/* Slice K2 · Line Items (server-side pricing projection for tech) */}
+      {!isCustomer ? (
+        <LineItemsSection jobId={job.id} jobStatus={job.status} user={user} />
+      ) : null}
+
       {/* Field Report card */}
       <div
         className="rounded-2xl p-6 mb-4"
@@ -453,6 +500,11 @@ export default function JobDetail() {
             ))}
           </ul>
         </div>
+      ) : null}
+
+      {/* Slice M5 · Timeline of workstream events for this job. */}
+      {!isCustomer && detail?.timeline ? (
+        <TimelineSection events={detail.timeline.events || []} />
       ) : null}
 
       {/* Lightbox */}
