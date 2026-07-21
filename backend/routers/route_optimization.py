@@ -4,6 +4,10 @@ Nearest-neighbor Haversine ordering, cached per-day per-user, ready to be
 upgraded to Google Directions/Distance-Matrix later without changing the
 public contract. Emits a `route_optimized` WS event so the schedule UI can
 reorder cards without a manual reload.
+
+Feb-2026 · Slice 4 (MP1.6) — stops with ``property_id`` set now route on
+the property's coords + address instead of the customer default. See
+``services.stop_geo.resolve_stop_geo``.
 """
 import hashlib
 from datetime import datetime, timezone
@@ -15,6 +19,7 @@ from pydantic import BaseModel
 from config import db, logger
 from utils import now_iso, new_id, get_current_user
 from routers.tenants import get_current_tenant
+from services.stop_geo import resolve_stop_geo
 
 # Reuse the existing Haversine + settings helpers.
 from routers.workforce import _haversine_m, _settings  # type: ignore
@@ -86,6 +91,22 @@ async def optimize_route(
         "scheduled_start": {"$gte": day_start, "$lte": day_end},
     }
     jobs = await db.jobs.find(query, {"_id": 0}).to_list(100)
+    # Feb-2026 · Slice 4 (MP1.6) — resolve every stop through the
+    # shared stop-geo resolver so a job with ``property_id`` set uses
+    # the property's coords (lazy-geocoding the property once when
+    # its geocode cache is cold). The resolved coords land back on
+    # the working job dict as ``site_lat/site_lng`` so the existing
+    # nearest-neighbour loop below (which reads those keys) is
+    # unchanged. Also cache ``address_source`` so the WS payload can
+    # surface it for the UI.
+    for j in jobs:
+        geo = await resolve_stop_geo(j, tenant["id"], geocode_if_missing=True)
+        if geo.get("lat") is not None and geo.get("lng") is not None:
+            j["site_lat"] = geo["lat"]
+            j["site_lng"] = geo["lng"]
+        j["address_source"] = geo.get("address_source", "customer")
+        if geo.get("address"):
+            j["stop_address"] = geo["address"]
     jobs_with_geo = [
         j for j in jobs
         if (j.get("site_lat") is not None or j.get("lat") is not None)
@@ -168,3 +189,87 @@ async def optimize_route(
     except Exception as e:
         logger.warning(f"WS notify (route_optimized) failed: {e}")
     return out
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Feb-2026 · Slice 4 (MP1.6) — Route stops read endpoint
+# ═══════════════════════════════════════════════════════════════════════
+@router.get("/routes/{tech_id}/stops")
+async def get_route_stops(
+    tech_id: str,
+    date: Optional[str] = Query(None),
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """List a tech's route stops for a date, resolved property-first.
+
+    Each stop's ``address`` + ``lat`` + ``lng`` come from the
+    property doc when ``property_id`` is set (falling back to the
+    customer-scoped coords otherwise). ``address_source`` is
+    ``"property"`` or ``"customer"`` for debuggability.
+
+    Admin can query any tech in the tenant; a tech can only query
+    themselves; customers are 403'd (unchanged with the optimizer).
+    """
+    if user.get("role") == "customer":
+        raise HTTPException(403, "Not allowed")
+    if user.get("role") not in ("admin", "super_admin"):
+        # A technician can only fetch their own route stops. Both the
+        # ``id`` (user row) and ``technician_id`` (technicians table)
+        # forms are accepted so older seeds still resolve.
+        if tech_id not in (user.get("id"), user.get("technician_id")):
+            raise HTTPException(403, "Cannot read another user's route")
+
+    date_str = date or datetime.now(timezone.utc).date().isoformat()
+    day_start = f"{date_str}T00:00:00+00:00"
+    day_end = f"{date_str}T23:59:59+00:00"
+
+    # Load the tech row so we can match either user_id or technician_id
+    # on the jobs collection (mirrors ``optimize_route``).
+    tech_user = await db.users.find_one(
+        {"id": tech_id, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "technician_id": 1},
+    ) or {}
+    tid = tech_user.get("technician_id") or tech_id
+
+    q = {
+        "tenant_id": tenant["id"],
+        "$or": [
+            {"technician_id": tech_id},
+            {"technician_id": tid},
+            {"assigned_technician_id": tech_id},
+        ],
+        "status": {"$nin": ["completed", "cancelled"]},
+        "scheduled_start": {"$gte": day_start, "$lte": day_end},
+    }
+    jobs = await db.jobs.find(q, {"_id": 0}).sort(
+        [("route_order", 1), ("scheduled_start", 1)]
+    ).to_list(200)
+
+    stops: List[dict] = []
+    for j in jobs:
+        geo = await resolve_stop_geo(j, tenant["id"], geocode_if_missing=False)
+        stops.append({
+            "job_id": j.get("id"),
+            "title": j.get("title"),
+            "service_type": j.get("service_type") or j.get("job_type"),
+            "customer_id": j.get("customer_id"),
+            "customer_name": j.get("customer_name"),
+            "property_id": j.get("property_id"),
+            "property_label": j.get("property_label"),
+            "scheduled_start": j.get("scheduled_start"),
+            "scheduled_end": j.get("scheduled_end"),
+            "status": j.get("status"),
+            "route_order": j.get("route_order"),
+            "address": geo.get("address"),
+            "lat": geo.get("lat"),
+            "lng": geo.get("lng"),
+            "address_source": geo.get("address_source"),
+        })
+
+    return {
+        "tech_id": tech_id,
+        "date": date_str,
+        "count": len(stops),
+        "stops": stops,
+    }

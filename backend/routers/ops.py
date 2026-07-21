@@ -203,16 +203,34 @@ def _hav(lat1, lon1, lat2, lon2) -> float:
 
 
 @router.post("/routes/optimize")
-async def routes_optimize(body: RouteOptimizeIn, user: dict = Depends(require_admin)):
+async def routes_optimize(body: RouteOptimizeIn, user: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
     """Greedy nearest-neighbor ordering of a tech's scheduled jobs for a day.
     Falls back to `route_order` if lat/lng missing. LLM refinement is a no-op
-    for now — hook is here so Phase 7+ can plug in Claude reasoning."""
-    q: dict = {"scheduled_date": {"$regex": f"^{body.date}"}}
+    for now — hook is here so Phase 7+ can plug in Claude reasoning.
+
+    Feb-2026 · Slice 4 (MP1.6) — a stop with ``property_id`` set now
+    uses the property's lat/lng (lazy-geocoded on first use) instead
+    of the customer default. See ``services.stop_geo``.
+    """
+    from services.stop_geo import resolve_stop_geo
+    q: dict = {"scheduled_date": {"$regex": f"^{body.date}"}, "tenant_id": tenant["id"]}
     if body.tech_id:
         q["technician_id"] = body.tech_id
     jobs = await db.jobs.find(q, {"_id": 0}).to_list(200)
     if not jobs:
         return {"ok": True, "order": [], "note": "No jobs"}
+
+    # Resolve each stop through the shared resolver so ``property_id``
+    # stops route on property coords. Cache the outcome directly on the
+    # working job dict — the nearest-neighbour loop below reads
+    # ``lat/lng`` so we drop the resolved coords there.
+    for j in jobs:
+        geo = await resolve_stop_geo(j, tenant["id"], geocode_if_missing=True)
+        if geo.get("lat") is not None and geo.get("lng") is not None:
+            j["lat"] = geo["lat"]
+            j["lng"] = geo["lng"]
+        j["address_source"] = geo.get("address_source", "customer")
 
     # Nearest-neighbor greedy. Start from the tech's clock-in coords if known.
     start_lat, start_lng = 33.7392, -112.3106      # Peoria AZ fallback
@@ -233,6 +251,7 @@ async def routes_optimize(body: RouteOptimizeIn, user: dict = Depends(require_ad
     return {
         "ok": True,
         "order": [j["id"] for j in ordered],
+        "address_sources": {j["id"]: j.get("address_source") for j in ordered},
         "method": "ai" if EMERGENT_LLM_KEY else "greedy-nearest-neighbor",
         "note": "AI refinement will land in Phase 7 (Marketing Studio) — using greedy for now.",
     }
