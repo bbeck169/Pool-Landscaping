@@ -35,6 +35,7 @@ import PortalReviews from "@/pages/portal/PortalReviews";
 import AdminReviewsPage from "@/pages/admin/AdminReviewsPage";
 import MarketingTemplatesLibraryPage from "@/pages/marketing/MarketingTemplatesLibraryPage";
 import MarketingSegmentsPage from "@/pages/marketing/MarketingSegmentsPage";
+import MarketingSequencesPage from "@/pages/marketing/MarketingSequencesPage";
 import PortalVideos from "@/pages/portal/PortalVideos";
 import {
   CommsTemplatesLibrary, CommsEmailBuilder, CommsSmsBuilder,
@@ -359,6 +360,7 @@ export default function App() {
             <Route path="marketing/templates" element={<AdminOnly><TemplatesHub /></AdminOnly>} />
             <Route path="marketing/template-library" element={<AdminOnly><MarketingTemplatesLibraryPage /></AdminOnly>} />
             <Route path="marketing/segments" element={<AdminOnly><MarketingSegmentsPage /></AdminOnly>} />
+            <Route path="admin/marketing/sequences" element={<AdminOnly><MarketingSequencesPage /></AdminOnly>} />
             <Route path="marketing/reviews" element={<AdminOnly><Reviews /></AdminOnly>} />
             <Route path="marketing/sequences" element={<AdminOnly><SequencesList /></AdminOnly>} />
             <Route path="marketing/sequences/new" element={<AdminOnly><SequenceNew /></AdminOnly>} />
