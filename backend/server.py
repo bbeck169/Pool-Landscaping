@@ -86,6 +86,7 @@ from routers import (
     widget_chat,
     marketing_forms,
     portal_walkthrough,
+    job_media_line_items,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -178,7 +179,8 @@ for module in [notifications_router,
                widget_config,
                widget_chat,
                marketing_forms,
-               portal_walkthrough]:
+               portal_walkthrough,
+               job_media_line_items]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue

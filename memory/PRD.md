@@ -6239,3 +6239,59 @@ Extended `<WidgetConfigCard>` in `TenantsAdminPage.jsx` with three new sections 
 - `TURNSTILE_SECRET` (existing) — server-side verify; absent → graceful bypass + one WARN at boot (unchanged).
 - All other env vars unchanged.
 
+
+## Slice K1 + K2 backends (Feb 2026)
+
+**Status:** GREEN · 9/9 new tests in `test_slice_k_jobs.py`. All 95 prior widget/portal/marketing tests still pass co-run.
+
+### K1 · Job videos — tightened
+- Discovered existing Phase-5A implementation in `routers/media_uploads.py` (`POST/DELETE /api/jobs/{jid}/videos` with multipart uploads + object-storage integration). No new endpoints created — that would have caused route collisions.
+- **Cap tightened**: `MAX_VIDEOS_PER_ENTITY` 10 → **3** per user brief.
+- **Delete RBAC updated**: `DELETE_ROLES` now includes `technician`, but the handler explicitly checks that the caller's `user.id` matches the video's `uploaded_by_user_id`. Techs deleting another user's video → 403; admins can delete any.
+- Photos unchanged (still 10-image cap on `routers/jobs.py`).
+
+### K2 · Job line items (pricebook-backed, tech-hidden pricing)
+- New router `routers/job_media_line_items.py`. Endpoints (all `/api/*`):
+  - `POST /jobs/{jid}/line-items` — add from pricebook; snapshots price fields at add-time; both admin + assigned tech can call.
+  - `PATCH /jobs/{jid}/line-items/{lid}` — update quantity / notes. Tech can only edit items they added.
+  - `DELETE /jobs/{jid}/line-items/{lid}` — same RBAC as PATCH.
+  - `GET /jobs/{jid}/line-items` — role-projected response (see below).
+  - `GET /pricebook-items` — role-projected pricebook picker.
+- **Projection rules (server-side, always enforced)**:
+  - Admin/super_admin: full payload (`unit_price`, `subtotal`, `tax_rate`, `cost`, `job_totals` on GET).
+  - Tech: those fields are stripped from every response body. Tech-added items pass through the same stripping filter on the POST response too.
+- **Cross-tenant isolation**: pricebook item lookup is scoped by `tenant_id` (with a legacy-shared-catalogue fallback for rows missing `tenant_id`). A foreign-tenant pricebook_item_id returns 404. Verified by `test_k2_cross_tenant_pricebook_isolation`.
+- **Unlimited items per job**: verified by `test_k2_unlimited_line_items` (50 in a loop).
+- **Job totals**: computed server-side on every mutation and stored on `job.job_totals = {subtotal, tax, total}`. Tax rate falls back to the tenant's default rate when the pricebook item is `taxable` but has no explicit `tax_rate`.
+
+### New tests (9 in `test_slice_k_jobs.py`)
+- K1: 3-cap enforced, tech-own-delete RBAC (admin's video + tech's own video), customer forbidden.
+- K2: pricebook projection strips pricing for tech, line-item add + admin/tech GET projections (with `job_totals` only on admin GET), edit RBAC (tech can't touch admin's item), unlimited items, cross-tenant isolation, customer forbidden.
+
+## Slice M diagnosis — Workstream (Feb 2026)
+
+**Not yet shipped — diagnosis and next-step plan only.**
+
+### Locate — what's there today
+- **Page**: `/app/frontend/src/pages/workstream/WorkstreamPage.jsx` — admin-only route.
+- **Data source**: `GET /api/workstream/events` (from `/app/backend/routers/workstream.py`, "Phase 31 · Step 1 — Workstream events (tap-job → checklist telemetry spine)").
+- **What it actually shows**: individual TELEMETRY events (tap-job started, checklist item completed, note added, media attached, tap-job closed) — NOT job records.
+- **Related surfaces**: `/app/frontend/src/pages/ops/OpsHub.jsx` and `WorkstreamJobDrawer.jsx` render jobs; the "Workstream" page renders event rows.
+
+### M1 root cause (why completed jobs don't appear)
+The user is looking at the Workstream **events** page. The events collection only captures activity moments (tap-job, checklist, media). A completed job with no telemetry activity in the query window won't have any events, so it appears absent. Two options for the fix:
+1. **Reinterpret Workstream as a job feed** — swap the data source from `GET /workstream/events` to a new `GET /jobs?status=…` aggregator that surfaces every job across statuses (with per-card telemetry counts pulled from the events collection for the timeline). This matches the user's mental model best.
+2. **Keep events as the primary feed** and add a "Completed jobs" summary event when a job's status flips to completed. Simpler but changes the definition of what a "row" is.
+
+**Recommendation: option 1.** Adds a small aggregator endpoint, keeps existing telemetry intact.
+
+### Next-step plan for M1–M5 (queued, not yet shipped)
+- **M1 fix**: new backend endpoint `GET /api/workstream/jobs` returning all jobs across all statuses by default, with a per-job telemetry summary (`events_count`, `last_activity_at`) joined from the existing events collection.
+- **M2 filters + sort + chips**: `?since=&until=&tech_id=&customer_id=&sort=newest|oldest|tech_asc|tech_desc|customer_asc|customer_desc` on the same endpoint. Active filter chips bar above the results with per-chip remove buttons. Testids per Slice M reinforcement.
+- **M3 thumbnails**: pull `photos[0..3]` + `videos[0..1]` from the K1 job doc into each card row. `+N more` indicator when count exceeds threshold. Lightbox modal opens on thumbnail click.
+- **M4 clickable card**: whole card `role="link" tabindex="0"` navigating to `/admin/jobs/{id}`. Thumbnail click uses `stopPropagation` so the lightbox opens instead.
+- **M5 refreshed job detail**: new `GET /api/jobs/{id}/detail` aggregator (RBAC-respecting — tech gets K2-stripped payload). Frontend `/admin/jobs/{id}` renders header + media + line items + notes + checklist + forms + timeline sections.
+- **Tests**: mixed-status seed for M1, filter combos for M2, thumbnails for M3, aggregator RBAC for M5.
+
+Held for next sub-slice ping — will ship as its own delta after user greenlight on the plan above.
+

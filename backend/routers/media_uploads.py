@@ -53,7 +53,9 @@ router = APIRouter()
 # ── policy constants ────────────────────────────────────────────────────
 MAX_VIDEO_BYTES = 100 * 1024 * 1024          # 100 MB per file
 MAX_VIDEO_DURATION_S = 180.0                 # 3 min per file
-MAX_VIDEOS_PER_ENTITY = 10                   # mirrors 10-photo cap on jobs
+# Slice K1 (Feb 2026): tightened from 10 → 3 per user brief. Photos
+# still capped at 10 (see routers/jobs.py); this cap is video-only.
+MAX_VIDEOS_PER_ENTITY = 3
 ALLOWED_MIMES = {
     "video/mp4",
     "video/quicktime",
@@ -65,7 +67,11 @@ ENTITY_COLLECTIONS = {
     "estimate": "estimates",
 }
 UPLOAD_ROLES = {"admin", "super_admin", "technician"}
-DELETE_ROLES = {"admin", "super_admin"}
+# Slice K1 (Feb 2026): admins can hard-delete anyone's video; techs
+# can only hard-delete videos they themselves uploaded (enforced by
+# comparing ``uploaded_by`` against the caller in the delete handler,
+# NOT by role gate alone).
+DELETE_ROLES = {"admin", "super_admin", "technician"}
 
 
 def _role(u: dict) -> str:
@@ -269,12 +275,20 @@ async def _delete_video(kind: str, entity_id: str, video_id: str,
                         user: dict, tenant: dict) -> dict:
     _forbid_customer(user)
     if _role(user) not in DELETE_ROLES:
-        raise HTTPException(403, "Admin access required to delete videos")
+        raise HTTPException(403, "Access denied")
 
     entity = await _get_entity_or_404(kind, entity_id, tenant["id"])
     videos = entity.get("videos") or []
-    if not any(v.get("id") == video_id for v in videos):
+    video = next((v for v in videos if v.get("id") == video_id), None)
+    if not video:
         raise HTTPException(404, "Video not found")
+
+    # Slice K1 RBAC — techs may hard-delete ONLY videos they themselves
+    # uploaded. Admins can hard-delete anyone's video.
+    if _role(user) == "technician":
+        uploader = video.get("uploaded_by_user_id") or video.get("uploaded_by")
+        if uploader != user.get("id"):
+            raise HTTPException(403, "You can only delete your own uploads")
 
     coll = ENTITY_COLLECTIONS[kind]
     await db[coll].update_one(
