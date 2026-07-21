@@ -492,8 +492,10 @@ export function PortalPaymentMethod() {
       </div>
 
       {/* Feb-2026 · Slice 3A — ACH bank account (Stripe Financial
-          Connections). Wire-ready: the Connect button is disabled with
-          a tooltip when the backend has no STRIPE_SECRET_KEY. */}
+          Connections). Wire-ready: when the backend reports Stripe
+          is not configured (missing key or placeholder-shaped key),
+          both the outer "Add ACH" button and the inner "Connect Bank
+          Account" button render disabled with a "Coming soon" tooltip. */}
       <div
         className="rounded-2xl p-6"
         style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
@@ -514,17 +516,29 @@ export function PortalPaymentMethod() {
               className="text-sm max-w-md"
               style={{ color: colors.onSurfaceSecondary }}
             >
-              Link a bank account for lower-fee ACH payments. Instant
-              bank verification via Stripe Financial Connections — no
-              routing/account numbers to type.
+              {stripeReady
+                ? "Link a bank account for lower-fee ACH payments. Instant bank verification via Stripe Financial Connections — no routing/account numbers to type."
+                : "Instant bank verification via Stripe · Coming soon. This will let you link a bank account for lower-fee ACH payments once payment processing is configured."}
             </p>
-            <Button
+            <button
               onClick={() => setAch((s) => ({ ...s, open: true }))}
-              variant="ghost"
-              testid="add-ach-btn"
+              disabled={!stripeReady}
+              title={
+                stripeReady
+                  ? "Add a bank account via Stripe Financial Connections"
+                  : "Coming soon — ACH will be available once payment processing is configured."
+              }
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{
+                backgroundColor: stripeReady ? colors.surfaceSecondary : "#F1F5F9",
+                color: stripeReady ? colors.onSurface : colors.muted,
+                border: `1px solid ${colors.border}`,
+              }}
+              data-testid="add-ach-btn"
+              data-stripe-ready={stripeReady ? "1" : "0"}
             >
-              <Plus size={16} /> Add ACH
-            </Button>
+              <Plus size={16} /> {stripeReady ? "Add ACH" : "Add ACH · Coming soon"}
+            </button>
           </div>
         ) : (
           <div>

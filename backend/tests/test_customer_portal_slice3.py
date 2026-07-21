@@ -99,8 +99,9 @@ def test_summary_anonymous_forbidden():
 # ═══════════════════════════════════════════════════════════════════════
 def _stripe_key_present(customer_headers) -> bool:
     """Probe the backend's ``/customer-portal/payment-methods`` route —
-    it returns ``stripe_configured`` reflecting the live env of the
-    running process. Reliable across supervisor + .env-loaded setups."""
+    it returns ``stripe_configured`` reflecting whether the live env of
+    the running process has a NON-placeholder Stripe secret key.
+    Reliable across supervisor + .env-loaded setups."""
     try:
         r = requests.get(f"{API}/customer-portal/payment-methods",
                           headers=customer_headers, timeout=15)
@@ -111,6 +112,62 @@ def _stripe_key_present(customer_headers) -> bool:
         return False
 
 
+def test_ach_placeholder_key_detection_helpers():
+    """Unit-test the placeholder-detection helper directly so future
+    edits can't silently degrade the shortcut fast-path back to a
+    round-trip to Stripe."""
+    # Import inside the test so a syntax error surfaces here rather
+    # than at module import time.
+    from routers.customer_portal import _stripe_key_is_placeholder
+
+    assert _stripe_key_is_placeholder("") is True
+    assert _stripe_key_is_placeholder("   ") is True
+    assert _stripe_key_is_placeholder('""') is True
+    assert _stripe_key_is_placeholder("'sk_test_'") is True
+    assert _stripe_key_is_placeholder("sk_test_") is True
+    assert _stripe_key_is_placeholder("sk_live_") is True
+    assert _stripe_key_is_placeholder("sk_test_placeholder") is True
+    assert _stripe_key_is_placeholder("sk_live_placeholder") is True
+    assert _stripe_key_is_placeholder("your_key_here") is True
+    # Anything shorter than 24 chars total can't be a real Stripe key.
+    assert _stripe_key_is_placeholder("sk_test_abc") is True
+
+    # Real-shaped keys must NOT be flagged.
+    assert _stripe_key_is_placeholder(
+        "sk_test_51NE9ygABCDEFGHIJKLMNOPQRSTUV"
+    ) is False
+    assert _stripe_key_is_placeholder(
+        "sk_live_51NE9ygABCDEFGHIJKLMNOPQRSTUV"
+    ) is False
+
+
+def test_ach_link_session_placeholder_key_short_circuits(customer_headers, monkeypatch):
+    """When ``STRIPE_SECRET_KEY`` is a placeholder value, the endpoint
+    MUST fast-return ``stripe_not_configured`` without ever calling
+    Stripe. Previous behaviour was to attempt the SDK call and
+    return ``stripe_error`` — misleading for callers and pointless."""
+    # We can't monkeypatch env on the running FastAPI process from
+    # here — that would need an in-process test client. Instead we
+    # invoke the helper directly with a temp env in an isolated
+    # subprocess so the assertion is deterministic.
+    import textwrap
+    code = textwrap.dedent("""
+        import os, asyncio
+        os.environ["STRIPE_SECRET_KEY"] = "sk_test_"   # placeholder
+        from routers.customer_portal import _stripe_configured
+        assert _stripe_configured() is False, "placeholder must be rejected"
+        os.environ["STRIPE_SECRET_KEY"] = ""
+        assert _stripe_configured() is False, "empty must be rejected"
+        os.environ["STRIPE_SECRET_KEY"] = "sk_test_51NE9ygABCDEFGHIJKLMNOPQRSTUV"
+        assert _stripe_configured() is True, "real-shaped test key accepted"
+        print("OK")
+    """)
+    out = subprocess.check_output(
+        ["python", "-c", code], cwd="/app/backend", timeout=15,
+    ).decode().strip()
+    assert out.endswith("OK"), out
+
+
 def test_ach_link_session_customer_ok(customer_headers):
     r = requests.post(
         f"{API}/customer-portal/payment-methods/ach/link-session",
@@ -118,12 +175,16 @@ def test_ach_link_session_customer_ok(customer_headers):
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    # Shape — always ``ok`` boolean. When Stripe is not configured we
-    # get ``reason == "stripe_not_configured"`` and no client_secret.
+    # Shape — always ``ok`` boolean.
     assert "ok" in body
     if not _stripe_key_present(customer_headers):
+        # When Stripe is not configured we get
+        # ``reason == "stripe_not_configured"`` and no client_secret.
         assert body["ok"] is False
-        assert body.get("reason") == "stripe_not_configured"
+        assert body.get("reason") == "stripe_not_configured", (
+            f"placeholder key should short-circuit to stripe_not_configured, "
+            f"got {body!r}"
+        )
         assert not body.get("client_secret")
     else:
         # Real Stripe call — either succeeds (client_secret present) or

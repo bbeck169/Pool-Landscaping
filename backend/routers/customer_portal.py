@@ -164,8 +164,36 @@ class AchLinkSessionResp(BaseModel):
     session_id: Optional[str] = None
 
 
+def _stripe_key_is_placeholder(key: str) -> bool:
+    """Return True when ``key`` is empty or a well-known placeholder
+    that must NOT be sent to Stripe.
+
+    Anything Stripe would reject as malformed before hitting network
+    (empty prefix, quotes accidentally captured from ``.env``, blank
+    string, etc.) counts as a placeholder.  This lets the frontend
+    render a grey "Coming soon" button in dev environments where an
+    admin hasn't wired real credentials yet, without incurring a
+    round-trip that would time out anyway.
+    """
+    k = (key or "").strip().strip('"').strip("'")
+    if not k:
+        return True
+    # Well-known placeholder shapes.  ``sk_test_`` / ``sk_live_`` with no
+    # suffix means someone pasted only the prefix.
+    if k in {"sk_test_", "sk_live_", "sk_test_placeholder",
+              "sk_live_placeholder", "sk_placeholder", "your_key_here"}:
+        return True
+    # A real Stripe key is always at least ~30 chars after the prefix.
+    # ``sk_test_`` = 8 chars, so anything shorter than 24 total can't be
+    # a live/test secret.
+    if len(k) < 24:
+        return True
+    return False
+
+
 def _stripe_configured() -> bool:
-    return bool((os.environ.get("STRIPE_SECRET_KEY") or "").strip())
+    """True when STRIPE_SECRET_KEY is present AND not a placeholder."""
+    return not _stripe_key_is_placeholder(os.environ.get("STRIPE_SECRET_KEY") or "")
 
 
 @router.post(
