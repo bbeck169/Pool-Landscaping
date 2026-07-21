@@ -12,6 +12,8 @@ import { Loading, StatusChip, Sheet, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import BudgetHealthCard from "@/src/components/BudgetHealthCard";
 import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
+import WeatherWidget from "@/src/components/weather/WeatherWidget";
+import CreditsBudgetChip from "@/src/components/ai/CreditsBudgetChip";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -43,7 +45,9 @@ export default function Dashboard() {
   if (loading) {
     return (
       <View style={styles.root}>
-        <Header title="Dashboard" subtitle={`Hi, ${user?.name?.split(" ")[0] || ""}`} />
+        <Header title="Dashboard" subtitle={`Hi, ${user?.name?.split(" ")[0] || ""}`}
+        right={<CreditsBudgetChip />}
+      />
         <Loading testID="dashboard-loading" />
       </View>
     );
@@ -51,7 +55,9 @@ export default function Dashboard() {
 
   return (
     <View style={styles.root}>
-      <Header title="Dashboard" subtitle={`Hi, ${user?.name?.split(" ")[0] || ""}`} />
+      <Header title="Dashboard" subtitle={`Hi, ${user?.name?.split(" ")[0] || ""}`}
+        right={<CreditsBudgetChip />}
+      />
       <ScrollView
         testID="dashboard-scroll"
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
@@ -59,6 +65,7 @@ export default function Dashboard() {
       >
         <LandscapingClockWidget />
         <BudgetHealthCard />
+        <WeatherWidget />
         <View style={styles.hero}>
           <Image source={{ uri: IMAGES.dashboardHero }} style={StyleSheet.absoluteFill} contentFit="cover" />
           <LinearGradient colors={["rgba(0,60,95,0.55)", "rgba(26,43,60,0.92)"]} style={StyleSheet.absoluteFill} />

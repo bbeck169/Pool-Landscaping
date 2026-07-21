@@ -35,6 +35,9 @@ import { storage } from "@/src/utils/storage";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
+import WeatherWidget from "@/src/components/weather/WeatherWidget";
+import RainFlag from "@/src/components/weather/RainFlag";
+import type { HourlyEntry } from "@/src/api/weather";
 
 type Job = {
   id: string;
@@ -121,6 +124,7 @@ export default function ScheduleCalendar() {
   const [rearrangeMode, setRearrangeMode] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveDate, setMoveDate] = useState("");
+  const [hourlyData, setHourlyData] = useState<HourlyEntry[]>([]);
 
   // Load persisted mode.
   useEffect(() => {
@@ -269,6 +273,7 @@ export default function ScheduleCalendar() {
       />
       <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.md }}>
         <LandscapingClockWidget />
+        {(isTech || isAdmin) && <WeatherWidget onHourlyLoaded={setHourlyData} />}
       </View>
 
       {/* Top-level Grid ↔ Calendar toggle. */}
@@ -318,9 +323,10 @@ export default function ScheduleCalendar() {
           moveDate={moveDate} setMoveDate={setMoveDate}
           onConfirmMove={bulkMove}
           busy={busy}
-          onOpenJob={(id) => router.push(`/job/${id}/checklist` as any)}
+          onOpenJob={(id: string) => router.push(`/job/${id}/checklist` as any)}
           onNewJob={() => router.push(`/job/new?date=${focusISO}` as any)}
           isAdmin={isAdmin}
+          hourlyData={hourlyData}
         />
       ) : (
         <CalendarView
@@ -344,7 +350,7 @@ function GridView(props: any) {
     focus, setFocus, jobs, loading, checked, onToggle, canWrite,
     rearrangeMode, onToggleRearrange, onSaveReorder, onShift,
     onBulkComplete, onOpenMove, moveOpen, setMoveOpen, moveDate, setMoveDate,
-    onConfirmMove, busy, onOpenJob, onNewJob, isAdmin,
+    onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, hourlyData,
   } = props;
   const focusISO = iso(focus);
   const isToday = focusISO === iso(new Date());
@@ -457,13 +463,14 @@ function GridView(props: any) {
           onShift={onShift}
           first={idx === 0}
           last={idx === jobs.length - 1}
+          hourlyData={hourlyData}
         />
       ))}
     </ScrollView>
   );
 }
 
-function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last }: any) {
+function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last, hourlyData }: any) {
   const pill = STATUS_PILL[(job.status || "scheduled").toLowerCase()] || STATUS_PILL.scheduled;
   const svc = SERVICE_COLOR(job.service_type);
   // Phase 31 · Step 2a hotfix — the entire row body is now the primary
@@ -538,6 +545,14 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
             <Text style={gStyles.vipText}>VIP</Text>
           </View>
         ) : null}
+        {hourlyData.length > 0 && (
+          <RainFlag
+            jobId={job.id}
+            scheduledDate={job.scheduled_date}
+            scheduledTime={job.scheduled_time}
+            hourlyData={hourlyData}
+          />
+        )}
         {job.customer_gate_code || job.gate_code ? (
           <View style={gStyles.gateChip} testID={`job-gate-code-${job.id}`}>
             <Ionicons name="key" size={10} color="#92400E" />

@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
+import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
@@ -17,6 +18,8 @@ function relTime(iso?: string) {
 }
 
 export default function Campaigns() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin" || (user?.role as string) === "super_admin";
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -51,7 +54,7 @@ export default function Campaigns() {
 
   return (
     <View style={styles.root}>
-      <Header title="Communication" back subtitle="Email & SMS campaigns" right={<IconButton icon="add" onPress={() => setAddOpen(true)} testID="add-campaign-button" />} />
+      <Header title="Campaigns" back subtitle="Email & SMS campaigns" right={isAdmin ? <IconButton icon="add" onPress={() => setAddOpen(true)} testID="add-campaign-button" /> : undefined} />
       {loading ? (
         <Loading testID="campaigns-loading" />
       ) : items.length === 0 ? (
@@ -64,7 +67,7 @@ export default function Campaigns() {
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
           renderItem={({ item }) => (
-            <View style={styles.card} testID={`campaign-${item.id}`}>
+            <View style={styles.card} testID={`campaign-row-${item.id}`}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                 <View style={[styles.icon, { backgroundColor: item.channel === "sms" ? "#DCFCE7" : colors.brandTertiary }]}>
                   <Ionicons name={item.channel === "sms" ? "chatbubble-ellipses-outline" : "mail-outline"} size={18} color={item.channel === "sms" ? colors.success : colors.brand} />

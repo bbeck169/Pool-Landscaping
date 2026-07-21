@@ -1,18 +1,21 @@
+import React, { useState } from "react";
 import { Tabs, Redirect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { View } from 'react-native';
+import { View, TouchableOpacity, StyleSheet } from 'react-native';
 
 import { useAuth } from "@/src/auth";
 import { colors, font } from "@/src/theme";
 import { SyncBanner } from "@/src/components/SyncBanner";
 import { GlobalMenu } from "@/src/components/tools/GlobalMenu";
+import AIDockDrawer from "@/src/components/ai/AIDockDrawer";
 
 export default function AppLayout() {
   const { user, loading } = useAuth();
+  const [dockOpen, setDockOpen] = useState(false);
   if (loading) return null;
   if (!user) return <Redirect href="/login" />;
 
-  const isAdmin = user.role === "admin";
+  const isAdmin = user.role === "admin" || (user.role as string) === "super_admin";
   const isTech = user.role === "technician";
   const isCustomer = user.role === "customer";
 
@@ -270,6 +273,38 @@ export default function AppLayout() {
           positioned so no per-screen header changes are needed. Sheet
           reuses the Phase 42 body via `<ToolsMenuBody variant="sheet" />`. */}
       <GlobalMenu />
+      {/* B1 · AI Dock FAB — admin/super_admin only. Never for tech or customer. */}
+      {isAdmin && (
+        <TouchableOpacity
+          testID="ai-dock-fab"
+          style={fabStyles.fab}
+          onPress={() => setDockOpen(true)}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="sparkles" size={20} color="#fff" />
+        </TouchableOpacity>
+      )}
+      {isAdmin && <AIDockDrawer visible={dockOpen} onClose={() => setDockOpen(false)} />}
     </View>
   );
 }
+
+const fabStyles = StyleSheet.create({
+  fab: {
+    position: "absolute",
+    bottom: 24,
+    right: 20,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: colors.brand,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 6,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    zIndex: 40,
+  },
+});

@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Linking, TextInput, Platform, Alert, Switch } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Linking, TextInput, Platform, Alert, Switch, TouchableOpacity } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
@@ -10,6 +10,10 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, JobCard } from "@/src/components/widgets";
 import CustomerEquipmentLibrary from "@/src/components/customers/CustomerEquipmentLibrary";
+import MultiContact from "@/src/components/customers/MultiContact";
+import CustomerTasks from "@/src/components/customers/CustomerTasks";
+import ServiceNotes from "@/src/components/customers/ServiceNotes";
+import SendCreateSheet from "@/src/components/customers/SendCreateSheet";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -27,6 +31,8 @@ export default function CustomerDetail() {
   const [impersonating, setImpersonating] = useState(false);
   const [confirmImp, setConfirmImp] = useState(false);
   const [requesting, setRequesting] = useState(false);
+  const [actionSheetOpen, setActionSheetOpen] = useState(false);
+  const [noteComposerOpen, setNoteComposerOpen] = useState(false);
   // Feb-2026 MP2 UI — read-only property list. Editing lives on
   // web-only (per the ship brief); mobile admins get visibility.
   const [properties, setProperties] = useState<any[]>([]);
@@ -173,7 +179,7 @@ export default function CustomerDetail() {
       />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}>
         {c.is_vip ? (
-          <View style={styles.vipBadge} testID="customer-vip-badge">
+          <View style={styles.vipBadge} testID="vip-badge">
             <Ionicons name="star" size={14} color="#92400E" />
             <Text style={styles.vipBadgeText}>VIP</Text>
           </View>
@@ -220,6 +226,9 @@ export default function CustomerDetail() {
             </Text>
           </View>
         </View>
+
+        {/* A4. Multi-contact viewer (read-only for tech) */}
+        <MultiContact mobiles={c.mobiles} emails={c.emails} />
 
         {isAdmin && c.has_login ? (
           <Pressable style={styles.impersonateBtn} onPress={loginAsCustomer} disabled={impersonating} testID="impersonate-customer-button">
@@ -358,6 +367,12 @@ export default function CustomerDetail() {
         <Text style={styles.sectionTitle}>Equipment</Text>
         <CustomerEquipmentLibrary customerId={id as string} />
 
+        {/* A5. Tasks tab */}
+        <CustomerTasks customerId={id as string} />
+
+        {/* A8. Service notes */}
+        <ServiceNotes customerId={id as string} />
+
         <Text style={styles.sectionTitle}>Job History ({c.jobs?.length || 0})</Text>
         {c.jobs?.length ? (
           c.jobs.map((j: any) => <JobCard key={j.id} job={j} testID={`customer-job-${j.id}`} />)
@@ -401,6 +416,22 @@ export default function CustomerDetail() {
         <View style={{ height: spacing.md }} />
         <PrimaryButton title="Create Login" onPress={createLogin} loading={loginBusy} testID="submit-create-login" />
       </Sheet>
+
+      {/* A6. Send-Create action sheet + FAB */}
+      <TouchableOpacity
+        testID="send-create-fab"
+        style={styles.fab}
+        onPress={() => setActionSheetOpen(true)}
+        activeOpacity={0.8}
+      >
+        <Ionicons name="add" size={26} color="#fff" />
+      </TouchableOpacity>
+      <SendCreateSheet
+        visible={actionSheetOpen}
+        onClose={() => setActionSheetOpen(false)}
+        customerId={id as string}
+        onAddNote={() => setNoteComposerOpen(true)}
+      />
     </View>
   );
 }
@@ -487,4 +518,14 @@ const styles = StyleSheet.create({
   },
   statusPillTextActive: { color: "#166534" },
   statusPillTextInactive: { color: "#4B5563" },
+  fab: {
+    position: "absolute", bottom: 24, right: 20,
+    width: 52, height: 52, borderRadius: 26,
+    backgroundColor: colors.brand,
+    alignItems: "center", justifyContent: "center",
+    elevation: 6,
+    shadowColor: "#000", shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25, shadowRadius: 4,
+    zIndex: 40,
+  },
 });
