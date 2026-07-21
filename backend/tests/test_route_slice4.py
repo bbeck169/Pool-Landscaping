@@ -50,6 +50,10 @@ def customer_headers():
 # ─── Direct DB seeding — needed to plant known-coord properties ────────────
 def _db():
     from motor.motor_asyncio import AsyncIOMotorClient
+    from dotenv import load_dotenv
+    # Load backend .env so MONGO_URL / DB_NAME are present when this
+    # test module is invoked outside a supervisor-managed process.
+    load_dotenv("/app/backend/.env")
     mongo_url = os.environ.get("MONGO_URL") or "mongodb://localhost:27017"
     db_name = os.environ.get("DB_NAME") or "test_database"
     return AsyncIOMotorClient(mongo_url)[db_name]
