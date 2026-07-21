@@ -5834,3 +5834,54 @@ Fixed the 1 FAIL + 2 WARN from the Q4 tester report. All four proofs shipping in
 - Phase Q6 (Virtual Call Team) — DEFERRED pending Twilio credentials.
 - MP1.6 route-optimisation geocoding refactor.
 - Auto-open "Top up credits" flow when the credit chip hits the red tier.
+
+
+---
+
+## Marketing Slices M3 → M7 · Automation Engine (Feb 2026)
+
+**Status:** GREEN · 64/64 backend tests co-run on 2026-07-21. Frontend surfaces screenshot-verified.
+
+### What shipped end-to-end
+- **M3 · Templates Library** — email + SMS template CRUD (`marketing_templates`), variable registry, live preview render, per-tenant system template seed (Post-service follow-up, Review Request, Past-due reminder).
+- **M4 · Audience Segments** — `marketing_audience_segments` with `evaluate_conditions` engine (14 operators over `field`/`op`/`value` conditions), 4 default seeded segments per tenant, admin editor + preview.
+- **M5a · Sequences Backend** — `marketing_sequences` CRUD + 8 triggers, `marketing_drip_enrolments`, `marketing_deliveries` mocked ledger, `process_due_enrolments`, soft-delete cascade halt.
+- **M5b · Sequences UI** — `/admin/marketing/sequences` drawer editor with vertical step timeline, enrolments panel, Enrol Customers modal (individual + segment), template preview modal.
+- **M5c · Scheduler + Event Bus** — `services/marketing/drip_events.py` with `on_event()` (4 immediate triggers: `service_completed`, `invoice_sent`, `customer_created`, `review_left`) wired into domain routers + APScheduler `m5_sequences_tick` (`*/5 min`) + `m5_daily_trigger_sweep` (09:00 UTC covering `invoice_past_due_N_days`, `birthday`, `segment_join`).
+- **M6 · Review Requests** — `marketing_review_requests` collection + `review_requests_config` per tenant + JWT magic-link (`/r/review?token=`) + public verify + `/portal/reviews/via-token` (no login) + APScheduler `m6_review_request_tick` (`*/5 min`) + `m6_review_request_expiry` (03:15 UTC). Slice-6 review submission gained `review_request_id` link + rating copy-back. PortalReviews page auto-populates from token.
+- **M7 · Analytics Dashboard** — `/api/marketing/analytics/{overview,campaigns/:id,sequences/:id,review-requests}` with 5-min in-process cache + `POST /_cache/clear`. Frontend `/admin/marketing/analytics` with KPI row, Recharts daily-trend line, top-sequences + top-campaigns tables, review-request funnel bar. Three new AI actions: `buddy.marketing_weekly_recap`, `vizzy.top_performing_sequences`, `dexter.review_pipeline_health` (read-only, 1c chat cost).
+
+### Files
+Backend:
+- `/app/backend/routers/marketing_templates.py`, `marketing_segments.py`, `marketing_sequences.py`, `marketing_review_requests.py`, `marketing_analytics.py`
+- `/app/backend/services/marketing/segments.py`, `services/marketing/drip_events.py`, `services/marketing/render.py`
+- Domain hook call-sites: `customers.py`, `quotes.py`, `service_reports.py`, `customer_reviews.py`
+- `ai_employees.py` — 3 new analytics action handlers
+- Tests: `tests/test_marketing_m3.py`, `test_marketing_m4.py`, `test_marketing_m5.py`, `test_marketing_m5c.py`, `test_marketing_m6.py`, `test_marketing_m7.py`
+
+Frontend:
+- `/app/frontend/src/pages/marketing/MarketingTemplatesLibraryPage.jsx`, `MarketingSegmentsPage.jsx`, `MarketingSequencesPage.jsx`, `MarketingReviewRequestsPage.jsx`, `MarketingAnalyticsPage.jsx`
+- `pages/portal/PortalReviews.jsx` — token-mode support
+- `App.js` — `/admin/marketing/{sequences,review-requests,analytics}` + public `/r/review`
+- `nav/adminNav.js` — Sequences · Review Requests · Analytics under Marketing → Sequences & Templates
+
+### Scheduler cadence (UTC)
+| Job | Cadence | Handler |
+|---|---|---|
+| `m5_sequences_tick` | `*/5 min` | advance due drip enrolments |
+| `m5_daily_trigger_sweep` | 09:00 | past-due invoices, birthdays, segment-join deltas |
+| `m6_review_request_tick` | `*/5 min` | send queued review requests, record mock deliveries |
+| `m6_review_request_expiry` | 03:15 | expire stale review requests |
+
+### Guardrails held
+- Delivery is 100% mocked (`marketing_deliveries.mock=true`) — real provider drop-in requires only swapping the tick handler's insert-doc block.
+- Multi-tenant isolation asserted on every endpoint via cross-tenant tests.
+- No M1/M2 router changes; M3–M7 layer on top additively.
+- Public magic-link endpoints require valid JWT (`sub="rr"`) — expired/tampered tokens 401.
+
+### Next actions (post-M7)
+- **P1 · Provider drop-in** — when a live email/SMS provider is chosen, replace `mock=True` insert in `services/marketing/drip_events._deliver_step` + `routers/marketing_review_requests._deliver` with the live send call. All analytics + funnels will automatically start reflecting real engagement once open/click webhooks land in `marketing_deliveries`.
+- **P2 · Materialised aggregates** — analytics is on-the-fly; move to a nightly-materialised `marketing_analytics_daily_rollup` collection when tenant delivery volumes exceed ~10k rows/day.
+- **P2 · SMS quiet-hours enforcement** — config is stored (`quiet_hours_start`/`end`) but the tick handler currently ignores it. Add a shift-to-next-window step when live SMS lands.
+- **P2 · Buddy in-Dock deep link** — "Ask Buddy for a recap" button opens a full conversation; a lighter inline sheet would be a nicer UX.
+- Phase Q6 (Virtual Call Team) — still deferred pending Twilio credentials.

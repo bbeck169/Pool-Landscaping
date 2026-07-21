@@ -178,16 +178,19 @@ BUDDY_ACTIONS = {
     "buddy.weekly_growth_brief",
     "buddy.pipeline_analysis",
     "buddy.pricing_recommendation",
+    "buddy.marketing_weekly_recap",           # Marketing M7
 }
 VIZZY_ACTIONS = {
     "vizzy.daily_brief",
     "vizzy.prep_call",
     "vizzy.prioritize_today",
+    "vizzy.top_performing_sequences",         # Marketing M7
 }
 DEXTER_ACTIONS = {
     "dexter.ad_hoc_query",
     "dexter.top_customers_report",
     "dexter.chemical_profitability_report",
+    "dexter.review_pipeline_health",          # Marketing M7
 }
 AE3_APPROVE_GATED_ACTIONS = {
     "buddy.weekly_growth_brief",
@@ -1430,6 +1433,10 @@ async def _buddy_dispatch(*, tenant, user, employee, conversation_id,
             conversation_id=conversation_id, params=params,
             system_prompt=system_prompt, user_text=user_text,
         )
+    if action == "buddy.marketing_weekly_recap":
+        return await _buddy_marketing_weekly_recap(
+            tenant=tenant, params=params or {},
+        )
     return "Unknown Buddy action.", None
 
 
@@ -1654,6 +1661,10 @@ async def _vizzy_dispatch(*, tenant, user, employee, action, params,
             tenant=tenant, user=user,
             system_prompt=system_prompt, user_text=user_text,
         )
+    if action == "vizzy.top_performing_sequences":
+        return await _vizzy_top_performing_sequences(
+            tenant=tenant, params=params or {},
+        )
     return "Unknown Vizzy action.", None
 
 
@@ -1807,7 +1818,116 @@ async def _dexter_dispatch(*, tenant, user, employee, action, params,
             tenant=tenant, params=params or {},
             system_prompt=system_prompt, user_text=user_text,
         )
+    if action == "dexter.review_pipeline_health":
+        return await _dexter_review_pipeline_health(
+            tenant=tenant, params=params or {},
+        )
     return "Unknown Dexter action.", None
+
+
+# ─── Marketing Slice M7 · Analytics narratives (read-only) ────────────
+# Three light handlers that call the M7 analytics router and render an
+# executive brief.  Read-only; no writes, no approve gating (1c chat
+# debit only per the standard AE3 wire).
+
+async def _buddy_marketing_weekly_recap(*, tenant, params):
+    """Pulls last-7-day overview and renders an executive brief."""
+    from routers.marketing_analytics import _compute_overview
+    ov = await _compute_overview(tenant["id"], "7d")
+    camps = ov["campaigns"]
+    seqs = ov["sequences"]
+    rr = ov["review_requests"]
+    top_seq_line = ", ".join(
+        f"{t['name']} ({t['enrolments']})" for t in ov["top_sequences"]
+    ) or "none active this week"
+    top_camp_line = ", ".join(
+        f"{t['name']} ({t['delivered']})" for t in ov["top_campaigns"]
+    ) or "no campaigns delivered"
+    review_rate = rr.get("review_rate_pct")
+    body = (
+        "**Marketing recap · last 7 days**\n\n"
+        f"• Campaigns: {camps['total_sent']} sent this week "
+        f"({camps['active']} still running), "
+        f"{camps['delivered']} deliveries, {camps['opened']} opens.\n"
+        f"• Sequences: {seqs['total_enrolments']} new enrolments "
+        f"({seqs['active']} active · {seqs['completed']} completed · "
+        f"{seqs['halted']} halted). "
+        f"Avg completion: "
+        f"{seqs['avg_completion_hours'] or '—'} hours.\n"
+        f"• Reviews: {rr['reviewed']} of {rr['total']} requests converted "
+        f"({review_rate if review_rate is not None else '—'}%). "
+        f"Avg rating: {rr['avg_rating'] or '—'}.\n"
+        f"• Top sequences: {top_seq_line}.\n"
+        f"• Top campaigns: {top_camp_line}."
+    )
+    return body, None
+
+
+async def _vizzy_top_performing_sequences(*, tenant, params):
+    """30-day view of top sequences ranked by enrolment volume."""
+    from routers.marketing_analytics import _compute_overview
+    ov = await _compute_overview(tenant["id"], "30d")
+    rows = ov["top_sequences"]
+    if not rows:
+        return ("No sequences have collected enrolments in the last 30 days. "
+                 "Turn on Sequences from Marketing → Sequences to get started."), None
+    lines = ["**Top-performing sequences · last 30 days**", ""]
+    for r in rows:
+        rate = r.get("completion_rate")
+        lines.append(
+            f"• **{r['name']}** — {r['enrolments']} enrolments, "
+            f"{rate if rate is not None else '—'}% completion rate",
+        )
+    return "\n".join(lines), None
+
+
+async def _dexter_review_pipeline_health(*, tenant, params):
+    """Call out bottlenecks in the review-request funnel."""
+    from routers.marketing_analytics import _compute_overview
+    ov = await _compute_overview(tenant["id"], "30d")
+    rr = ov["review_requests"]
+    total = rr.get("total") or 0
+    if total == 0:
+        return ("No review requests in the last 30 days. Enable Marketing → "
+                 "Review Requests to start collecting."), None
+    queued_share = _local_pct(rr["queued"], total)
+    sent_share = _local_pct(rr["sent"], total)
+    review_share = _local_pct(rr["reviewed"], total)
+    expire_share = _local_pct(rr["expired"], total)
+    notes = []
+    if queued_share and queued_share > 50:
+        notes.append(
+            f"⚠️ {queued_share}% still queued — check quiet-hour config + "
+            f"tick job health.",
+        )
+    if sent_share and rr["opened"] == 0 and rr["sent"] > 0:
+        notes.append(
+            "⚠️ Messages are being sent but nobody has opened them yet — "
+            "worth verifying deliverability once a live provider is wired.",
+        )
+    if expire_share and expire_share > 20:
+        notes.append(
+            f"⚠️ {expire_share}% expired — consider shortening delay_hours "
+            f"or lengthening expire_days.",
+        )
+    if not notes:
+        notes.append("✅ Funnel looks healthy — no bottlenecks stand out.")
+    body = (
+        "**Review request pipeline · last 30 days**\n\n"
+        f"• Total: {total}\n"
+        f"• Queued: {rr['queued']} · Sent: {rr['sent']} · "
+        f"Opened: {rr['opened']} · Reviewed: {rr['reviewed']} · "
+        f"Expired: {rr['expired']}\n"
+        f"• Review conversion rate: "
+        f"{rr.get('review_rate_pct') if rr.get('review_rate_pct') is not None else '—'}%\n"
+        f"• Avg rating captured: {rr.get('avg_rating') or '—'}\n\n"
+        + "\n".join(notes)
+    )
+    return body, None
+
+
+def _local_pct(n, d):
+    return round(100.0 * n / d, 1) if d else None
 
 
 def _dexter_too_broad(question: str) -> bool:

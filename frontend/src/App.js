@@ -37,6 +37,7 @@ import MarketingTemplatesLibraryPage from "@/pages/marketing/MarketingTemplatesL
 import MarketingSegmentsPage from "@/pages/marketing/MarketingSegmentsPage";
 import MarketingSequencesPage from "@/pages/marketing/MarketingSequencesPage";
 import MarketingReviewRequestsPage from "@/pages/marketing/MarketingReviewRequestsPage";
+import MarketingAnalyticsPage from "@/pages/marketing/MarketingAnalyticsPage";
 import PortalVideos from "@/pages/portal/PortalVideos";
 import {
   CommsTemplatesLibrary, CommsEmailBuilder, CommsSmsBuilder,
@@ -369,6 +370,7 @@ export default function App() {
             <Route path="marketing/segments" element={<AdminOnly><MarketingSegmentsPage /></AdminOnly>} />
             <Route path="admin/marketing/sequences" element={<AdminOnly><MarketingSequencesPage /></AdminOnly>} />
             <Route path="admin/marketing/review-requests" element={<AdminOnly><MarketingReviewRequestsPage /></AdminOnly>} />
+            <Route path="admin/marketing/analytics" element={<AdminOnly><MarketingAnalyticsPage /></AdminOnly>} />
             <Route path="marketing/reviews" element={<AdminOnly><Reviews /></AdminOnly>} />
             <Route path="marketing/sequences" element={<AdminOnly><SequencesList /></AdminOnly>} />
             <Route path="marketing/sequences/new" element={<AdminOnly><SequenceNew /></AdminOnly>} />
