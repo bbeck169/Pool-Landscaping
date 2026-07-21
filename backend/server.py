@@ -76,6 +76,7 @@ from routers import (
     customer_portal,
     customer_ai,
     customer_reviews,
+    marketing_templates,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -158,7 +159,8 @@ for module in [notifications_router,
                ai_employees,
                customer_portal,
                customer_ai,
-               customer_reviews]:
+               customer_reviews,
+               marketing_templates]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -549,6 +551,17 @@ async def startup():
         logger.info(f"[ae1] ai_employees seed — {counts}")
     except Exception as e:
         logger.warning(f"ae1 ai_employees seed crashed: {e}")
+
+    # Feb-2026 · Marketing Slice M3 — seed 12 starter email + SMS
+    # templates for any tenant that has zero templates today. Admin
+    # edits + custom templates survive re-runs (seed only fires when
+    # the tenant is empty).
+    try:
+        from routers.marketing_templates import seed_marketing_templates_all_tenants
+        counts = await seed_marketing_templates_all_tenants()
+        logger.info(f"[m3] marketing_templates seed — {counts}")
+    except Exception as e:
+        logger.warning(f"m3 marketing_templates seed crashed: {e}")
 
     # Phase 5A · Video Uploads (Feb 2026) — init Emergent object storage
     # session key once at startup. Never crashes the boot: on failure the

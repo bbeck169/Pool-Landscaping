@@ -60,6 +60,7 @@ export function MarketingHub() {
     { to: "/marketing/performance", label: "Performance", icon: TrendingUp, sub: "Engagement + reach" },
     { to: "/marketing/sequences", label: "Sequences", icon: Users, sub: "Automation flows" },
     { to: "/marketing/templates", label: "Templates", icon: Layers, sub: "Campaign + email + SMS" },
+    { to: "/marketing/template-library", label: "Template Library", icon: Layers, sub: "Editable email + SMS store (M3)" },
     { to: "/marketing/before-after", label: "Before & After", icon: ImageIcon, sub: "AI-composed share cards" },
     { to: "/marketing/autopilot", label: "AI Autopilot", icon: Bot, sub: "Draft copy + seasonal/invoice ladders" },
     { to: "/marketing/instaquote", label: "InstaQuote", icon: Wand2, sub: "Public self-quote portal" },
