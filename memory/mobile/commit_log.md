@@ -90,3 +90,30 @@
   - All screens verified via screenshots: templates (8 email templates listed), automations (5 rules with toggles), sends (100 records with QUEUED status), test-send form
 - **Files modified**: comms.ts, SendStatusPill.tsx, ChannelIcon.tsx, comms/index.tsx, templates/index.tsx, templates/[code].tsx, automations/index.tsx, automations/[code].tsx, sends/index.tsx, sends/[id].tsx, test-send.tsx, sections.ts, _layout.tsx
 - **Web files referenced**: api/comms.js, CommsPages.jsx, SendStatusPill.jsx
+
+## Iteration 6 — Mobile Parity Slice (Tech + Admin Roles)
+- **Commit**: 1fd0acb
+- **Date**: 2026-07-20
+- **Changes**:
+  - PART A (Tech): WeatherWidget, RainFlag badge, VIP badge, MultiContact viewer, CustomerTasks tab, SendCreateSheet, Campaigns list, ServiceNotes
+  - PART B (Admin): AIDockDrawer, WeatherWidget (shared), CreditsBudgetChip
+  - Role gate enforced: Tech & Customer roles NEVER see AI Dock, credits chip, or AI-adjacent UI
+  - Bug fix: MultiContact.tsx crash — mapped `number_e164`/`address` from objects instead of treating as strings
+- **Files created**:
+  - `mobile/src/api/aiDock.ts`
+  - `mobile/src/api/weather.ts`
+  - `mobile/src/components/ai/AIDockDrawer.tsx`
+  - `mobile/src/components/ai/CreditsBudgetChip.tsx`
+  - `mobile/src/components/customers/CustomerTasks.tsx`
+  - `mobile/src/components/customers/MultiContact.tsx`
+  - `mobile/src/components/customers/SendCreateSheet.tsx`
+  - `mobile/src/components/customers/ServiceNotes.tsx`
+  - `mobile/src/components/weather/RainFlag.tsx`
+  - `mobile/src/components/weather/WeatherWidget.tsx`
+- **Files modified**:
+  - `mobile/app/(app)/_layout.tsx` — hidden route for campaigns
+  - `mobile/app/(app)/index.tsx` — role-gated dashboard widgets
+  - `mobile/app/(app)/schedule/calendar.tsx` — weather on calendar
+  - `mobile/app/campaigns.tsx` — new campaigns screen
+  - `mobile/app/customer/[id].tsx` — Tasks, MultiContact, ServiceNotes, SendCreate, VIP badge
+- **Web files referenced**: WeatherWidget, AIDock sidebar, CreditsBudget, CampaignsList, CustomerDetail
