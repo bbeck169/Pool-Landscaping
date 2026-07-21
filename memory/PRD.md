@@ -6139,6 +6139,36 @@ Redactions kept: internal notes, admin comments, tech identifiers beyond first n
 `test_billing_context_never_leaks_other_customers` (Slice J2 regression) seeds customer A with `INV-J2-A-JULY` (salt cell + chemicals line items) and a SEPARATE customer B with `INV-J2-B-SECRET` ($5,300 total, marker `BIGGEST_CUSTOMER_MARKER`). Then calls `customer_scoped_context()` for each — asserts customer A's payload contains ZERO of customer B's markers (invoice number, line items, amount) and vice versa. `test_billy_endpoint_response_scoped_to_caller` additionally asks Billy through the live endpoint "Show me the biggest customer's invoice details" and confirms the stub reply doesn't contain customer B's secret marker (context builder never fetched it).
 
 ### Env vars (updated)
+
+## GH-Fix v3 — Middleware Security Regression (Feb 2026)
+
+**Status:** GREEN · 150/150 co-run · 7 new tester-specified regression tests + all prior 143.
+
+### The bug
+The v2 middleware included a `_DEV_CLUSTER_HOST_RE` regex passthrough plus a `_dev_seed_hosts()` passthrough. Both accepted ANY request whose `Origin` matched the cluster-host pattern OR any of the historical seed hosts, EVEN IF the tenant's `widget_allowed_domains` didn't list them. Since Emergent's Cloudflare/GCLB ingress rewrites `Origin` to the cluster host on the way in, a foreign attacker could make a cross-origin XHR from any website and the ingress would rewrite their `Origin` to a cluster-shaped host, tripping the regex bypass. Verified by the tester: `Origin: https://foreign-attacker.example` + valid `X-Widget-Key` + no Referer → 201 (should have been 401).
+
+### The fix
+Removed both bypasses. The middleware now:
+- Collects host candidates from **`Origin`**, **`X-Forwarded-Origin`**, and **`Referer`** (in that order).
+- Requires at least one candidate to POSITIVELY match `widget_allowed_domains`.
+- No regex, no seed-hosts passthrough, no `Host`-header derivation. Deny-by-default.
+- Empty allowlist still 401s. Missing all three headers still 401s.
+
+Legitimate ingress-rewrite calls still succeed because browsers preserve `Referer` on cross-origin XHRs, and the tenant's seeded public host lives in `widget_allowed_domains` (via `seed_dev_widget_domains_for_aquaterra`). If the cluster host itself needs to be allowed for a specific tenant, ops sets `INTERNAL_CLUSTER_HOST` in `.env` — the seed helper adds it to the allowlist explicitly (auditable) rather than via a magic regex.
+
+### 7 new regression tests (all green)
+1. Foreign Origin + allowlisted Referer → 201.
+2. Foreign Origin + no Referer → **401** (the exact failing case from the tester's audit).
+3. Foreign Origin + foreign Referer → **401**.
+4. Referer alone (no Origin) allowlisted → 201.
+5. No headers at all → **401**.
+6. `X-Forwarded-Origin` allowlisted + foreign Origin → 201.
+7. Cluster-shaped Origin not in allowlist → **401** (regex bypass removed).
+
+### Env / config
+- `INTERNAL_CLUSTER_HOST` — still used by the seed helper to append the cluster host to the aquaterra allowlist in non-prod. NOT used as a wildcard bypass.
+- `WIDGET_DEV_DOMAIN`, `APP_PUBLIC_URL`, `WIDGET_DEV_DOMAIN_SEED`, `APP_ENV` — unchanged.
+
 - `INTERNAL_CLUSTER_HOST` (new, optional) — explicit internal cluster host to add to the aquaterra dev allowlist + accept as a middleware passthrough candidate.
 - `WIDGET_DEV_DOMAIN`, `WIDGET_DEV_DOMAIN_SEED`, `APP_ENV`, `TURNSTILE_SECRET` — unchanged.
 

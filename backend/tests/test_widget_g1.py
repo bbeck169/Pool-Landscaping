@@ -675,13 +675,12 @@ def test_all_three_headers_foreign_rejects(super_headers):
     assert r.status_code == 401
 
 
-def test_dev_mode_cluster_host_passthrough(super_headers):
-    """Non-prod safety valve: an Origin matching
-    ``*.cluster-N.preview.emergentcf.cloud`` is accepted even when
-    ``widget_allowed_domains`` doesn't list it. Prod tenants never
-    get this passthrough."""
-    # Ensure the aquaterra tenant has at least one allowlisted host so
-    # the ``empty allowlist`` guard doesn't short-circuit us.
+def test_dev_mode_cluster_host_regex_no_longer_passthrough(super_headers):
+    """GH-Fix v3 security hardening — the cluster-host regex bypass
+    was removed. A cluster-shaped Origin that isn't in
+    ``widget_allowed_domains`` now 401s, closing the ingress-rewrite
+    bypass attack (a foreign attacker's request whose Origin was
+    rewritten by ingress to the cluster host must NOT succeed)."""
     host = f"g1-cluster-{uuid.uuid4().hex[:6]}.example.com"
     _whitelist(super_headers, host)
     key = _widget_key(super_headers)
@@ -694,19 +693,34 @@ def test_dev_mode_cluster_host_passthrough(super_headers):
         },
         json={}, timeout=15,
     )
-    assert r.status_code == 201, r.text
+    assert r.status_code == 401, r.text
 
 
-def test_dev_mode_seed_hosts_passthrough(super_headers):
-    """Any host in ``_dev_seed_hosts()`` (public preview URL, env
-    overrides, historical default) passes even when the tenant PATCHed
-    them off the allowlist — matches how the ingress may present the
-    request."""
+def test_dev_mode_seed_host_only_passes_when_in_allowlist(super_headers):
+    """GH-Fix v3 — seed hosts are trusted ONLY because the seed
+    helper puts them into ``widget_allowed_domains``. Wipe the
+    allowlist to a single unrelated host and the seed-host Origin
+    must 401. Re-seed and it passes."""
     _whitelist(super_headers, f"g1-seed-{uuid.uuid4().hex[:6]}.example.com")
     key = _widget_key(super_headers)
 
-    # Hit with the canonical public preview host as Origin — should
-    # pass even if the tenant allowlist doesn't list it.
+    # 1) With the seed host NOT in allowlist → 401.
+    r = requests.post(
+        f"{API}/widget/chat/conversations",
+        headers={
+            "X-Widget-Key": key,
+            "Origin": "https://poolscape-audit.preview.emergentagent.com",
+        },
+        json={}, timeout=15,
+    )
+    assert r.status_code == 401, r.text
+
+    # 2) Re-seed → dev host is now in allowlist → 201.
+    async def _reseed():
+        from routers.widget_config import seed_dev_widget_domains_for_aquaterra
+        await seed_dev_widget_domains_for_aquaterra()
+    _run(_reseed())
+
     r = requests.post(
         f"{API}/widget/chat/conversations",
         headers={
@@ -744,4 +758,128 @@ def test_seed_dev_widget_domains_is_idempotent_and_self_heals(super_headers):
         # And our junk host was NOT stomped — the seed is UNION-only.
         assert junk_host in allowlist, (junk_host, allowlist)
     _run(_go())
+
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# GH-Fix v3 — tester-specified security regression suite (7 cases)
+# ═══════════════════════════════════════════════════════════════════════
+def _setup_ghv3(super_headers) -> tuple:
+    """Prime a known allowlisted host + return the current widget key.
+    The dev seed host is re-added so the ``Referer`` tests below see
+    it in the allowlist."""
+    allowed = f"g1-ghv3-{uuid.uuid4().hex[:6]}.example.com"
+    _whitelist(super_headers, allowed)
+    async def _reseed():
+        from routers.widget_config import seed_dev_widget_domains_for_aquaterra
+        await seed_dev_widget_domains_for_aquaterra()
+    _run(_reseed())
+    return allowed, _widget_key(super_headers)
+
+
+def test_ghv3_1_foreign_origin_with_allowlisted_referer_accepts(super_headers):
+    """(#1) Origin foreign + Referer allowlisted → 201."""
+    allowed, key = _setup_ghv3(super_headers)
+    r = requests.post(
+        f"{API}/widget/chat/conversations",
+        headers={
+            "X-Widget-Key": key,
+            "Origin": "https://foreign-attacker.example",
+            "Referer": f"https://{allowed}/some/page",
+        },
+        json={}, timeout=15,
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_ghv3_2_foreign_origin_no_referer_rejects(super_headers):
+    """(#2) Origin foreign + NO Referer + valid key → 401. This is
+    the exact P0 case that failed pre-v3."""
+    _, key = _setup_ghv3(super_headers)
+    r = requests.post(
+        f"{API}/widget/chat/conversations",
+        headers={
+            "X-Widget-Key": key,
+            "Origin": "https://foreign-attacker.example",
+        },
+        json={}, timeout=15,
+    )
+    assert r.status_code == 401, r.text
+
+
+def test_ghv3_3_foreign_origin_foreign_referer_rejects(super_headers):
+    """(#3) Origin foreign + Referer foreign → 401 (both foreign)."""
+    _, key = _setup_ghv3(super_headers)
+    r = requests.post(
+        f"{API}/widget/chat/conversations",
+        headers={
+            "X-Widget-Key": key,
+            "Origin": "https://foreign-attacker.example",
+            "Referer": "https://foreign-attacker.example/other",
+        },
+        json={}, timeout=15,
+    )
+    assert r.status_code == 401, r.text
+
+
+def test_ghv3_4_referer_alone_sufficient(super_headers):
+    """(#4) No Origin + Referer allowlisted + valid key → 201."""
+    allowed, key = _setup_ghv3(super_headers)
+    r = requests.post(
+        f"{API}/widget/chat/conversations",
+        headers={
+            "X-Widget-Key": key,
+            "Referer": f"https://{allowed}/page",
+        },
+        json={}, timeout=15,
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_ghv3_5_no_headers_rejects(super_headers):
+    """(#5) No Origin, no Referer, no X-Forwarded-Origin → 401."""
+    _, key = _setup_ghv3(super_headers)
+    r = requests.post(
+        f"{API}/widget/chat/conversations",
+        headers={"X-Widget-Key": key},
+        json={}, timeout=15,
+    )
+    assert r.status_code == 401, r.text
+
+
+def test_ghv3_6_x_forwarded_origin_allowlisted_accepts(super_headers):
+    """(#6) X-Forwarded-Origin allowlisted + Origin foreign + valid
+    key → 201."""
+    allowed, key = _setup_ghv3(super_headers)
+    r = requests.post(
+        f"{API}/widget/chat/conversations",
+        headers={
+            "X-Widget-Key": key,
+            "Origin": "https://foreign.example",
+            "X-Forwarded-Origin": f"https://{allowed}",
+        },
+        json={}, timeout=15,
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_ghv3_7_cluster_shaped_origin_not_in_allowlist_rejects(super_headers):
+    """(#7) Cluster-host regex passthrough was REMOVED for security.
+    A cluster-shaped Origin that isn't literally in the allowlist
+    now 401s. This closes the ingress-rewrite bypass attack — the
+    tester's real 401 case.
+
+    Prod safety: same behavior in production (nothing more permissive
+    than in dev). Verified by asserting the raw 401."""
+    _whitelist(super_headers, f"g1-nocluster-{uuid.uuid4().hex[:6]}.example.com")
+    key = _widget_key(super_headers)
+    r = requests.post(
+        f"{API}/widget/chat/conversations",
+        headers={
+            "X-Widget-Key": key,
+            "Origin": "https://poolscape-audit.cluster-42.preview.emergentcf.cloud",
+        },
+        json={}, timeout=15,
+    )
+    assert r.status_code == 401, r.text
 

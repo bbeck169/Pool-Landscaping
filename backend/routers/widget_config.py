@@ -260,22 +260,27 @@ async def require_widget_auth(
       1. ``Origin``
       2. ``X-Forwarded-Origin`` — set by some ingresses that also
          rewrite ``Origin``.
-      3. ``Referer`` — final fallback.
+      3. ``Referer`` — final fallback. Browsers set this on cross-
+         origin XHRs and it survives most ingress rewrites intact,
+         so an ingress that rewrites ``Origin`` to an internal host
+         still lets us verify the REAL calling page.
 
-    Any candidate that matches ``widget_allowed_domains`` accepts.
-    Only when EVERY candidate fails do we 401. This protects against
-    ingress rewrites that swap ``Origin`` for an internal cluster host
-    on the way in (Emergent's Cloudflare/GCLB pod does this).
+    GH-Fix v3 (security hardening): we now require at least ONE
+    candidate to POSITIVELY match ``widget_allowed_domains``. There is
+    NO regex-based passthrough for cluster-shaped hostnames — that
+    was a security hole because Emergent's Cloudflare/GCLB ingress
+    can rewrite ``Origin`` to the internal cluster host, which would
+    let a foreign attacker's request masquerade as a legitimate
+    ingress-rewritten request.
 
-    Non-prod safety valve: in ``APP_ENV != "production"`` we also
-    accept any host matching ``*.cluster-N.preview.emergentcf.cloud``
-    OR any of the ``_dev_seed_hosts()`` — matches the ingress rewrite
-    surface without requiring the super_admin to whitelist a new host
-    every time the cluster hostname rolls. Prod tenants NEVER get this
-    passthrough.
+    Instead, legitimate ingress-rewrite calls still pass because:
+      * The browser's ``Referer`` header is preserved by the ingress,
+        so ``Referer`` will match the tenant's allowlisted public URL.
+      * If the tenant's cluster host is known (``INTERNAL_CLUSTER_HOST``
+        env in non-prod), it's seeded into the allowlist directly so
+        ``Origin`` matches literally.
 
-    Empty allowlist == deny-by-default (a leaked key is still inert
-    until a super_admin whitelists at least one host).
+    Empty allowlist == deny-by-default. No matching candidate → 401.
     """
     if not x_widget_key:
         raise HTTPException(401, "Missing X-Widget-Key header")
@@ -300,18 +305,12 @@ async def require_widget_auth(
     if not candidates:
         raise HTTPException(401, "Missing Origin or Referer header")
 
-    dev_mode = _dev_mode_enabled()
-    seed_hosts = set(_dev_seed_hosts()) if dev_mode else set()
-
     for host in candidates:
         if host in allowed:
             return tenant
-        if dev_mode and (
-            host in seed_hosts
-            or _DEV_CLUSTER_HOST_RE.match(host)
-        ):
-            return tenant
 
     raise HTTPException(
-        401, f"Origin '{candidates[0]}' is not on the widget allowlist"
+        401,
+        f"Origin '{candidates[0]}' is not on the widget allowlist"
+        + (f" (checked {len(candidates)} header candidate(s))" if len(candidates) > 1 else ""),
     )
