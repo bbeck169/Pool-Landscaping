@@ -117,3 +117,17 @@
   - `mobile/app/campaigns.tsx` — new campaigns screen
   - `mobile/app/customer/[id].tsx` — Tasks, MultiContact, ServiceNotes, SendCreate, VIP badge
 - **Web files referenced**: WeatherWidget, AIDock sidebar, CreditsBudget, CampaignsList, CustomerDetail
+
+## Iteration 7 — AI Dock Bug Fix (Identifier Mismatch)
+- **Commit**: 89321db
+- **Date**: 2026-07-21
+- **Changes**:
+  - **Root cause**: Mobile used legacy `chatSimple` endpoint with string slugs; backend expects UUID-based conversation flow
+  - Refactored `aiDock.ts`: replaced `chatSimple` with `createConversation`, `sendConversationMessage`, `approveAction`, `rejectAction`
+  - Rewrote `AIDockDrawer.tsx` ChatView: conversation state management, proper message parsing, pending action cards
+  - Fixed action card display fields: `label/action_type` → `title/action`, `description` → `summary`
+  - Verified via screenshots: chat works, approve works, credits debit, no "AI employee not found" error
+- **Files modified**:
+  - `mobile/src/api/aiDock.ts` — full API rewrite for conversation flow
+  - `mobile/src/components/ai/AIDockDrawer.tsx` — ChatView rewrite + action card field fix
+- **Web files referenced**: backend/routers/ai_employees.py (endpoint schema), frontend AI Dock patterns
