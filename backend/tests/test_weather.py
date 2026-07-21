@@ -51,6 +51,7 @@ def customer_headers():
 ENDPOINTS = [
     ("current",  f"/weather/current?lat={TEST_LAT}&lon={TEST_LON}"),
     ("hourly",   f"/weather/hourly?lat={TEST_LAT}&lon={TEST_LON}&hours=24"),
+    ("daily",    f"/weather/daily?lat={TEST_LAT}&lon={TEST_LON}&days=5"),
     ("radar",    f"/weather/radar?lat={TEST_LAT}&lon={TEST_LON}"),
 ]
 
@@ -119,3 +120,25 @@ def test_radar_returns_embed_url(admin_headers):
     assert r.get("ok") is True
     assert isinstance(r.get("embed_url"), str) and r["embed_url"].startswith("http")
     assert r.get("provider")
+
+
+# ─── Daily payload shape ──────────────────────────────────────────────
+
+def test_daily_reports_days_returned(admin_headers):
+    r = requests.get(
+        f"{API}/weather/daily?lat={TEST_LAT}&lon={TEST_LON}&days=5",
+        headers=admin_headers, timeout=30,
+    ).json()
+    if r.get("ok") is False:
+        pytest.skip(f"upstream provider unavailable — {r.get('reason')}")
+    assert isinstance(r.get("days_returned"), int)
+    assert r["days_returned"] >= 1
+    assert r["days_returned"] <= 5
+    assert isinstance(r.get("daily"), list)
+    assert len(r["daily"]) == r["days_returned"]
+    for d in r["daily"]:
+        assert "date" in d
+        assert "high" in d
+        assert "low" in d
+        assert "chance_of_rain" in d
+        assert "condition_text" in d

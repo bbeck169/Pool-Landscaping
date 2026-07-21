@@ -254,6 +254,75 @@ async def weather_hourly(
     return {**payload, "cache": "miss"}
 
 
+# ─── /weather/daily ───────────────────────────────────────────────────
+
+@router.get("/weather/daily")
+async def weather_daily(
+    lat: float = Query(...),
+    lon: float = Query(...),
+    days: int = Query(5, ge=1, le=10),
+    _user: dict = Depends(require_tech_or_admin),
+):
+    """Multi-day daily forecast strip (5 days default).
+
+    WeatherAPI's free tier caps forecast horizon at ~3 days — we
+    ask for what the caller wants and pass through whatever the
+    upstream returns via ``days_returned``. The frontend renders
+    only the delivered cells, no fake data.
+    """
+    await _ensure_index()
+    cache_key = f"daily_{days}"
+    cached = await _cache_get(cache_key, lat, lon)
+    if cached is not None:
+        return {**cached, "cache": "hit"}
+
+    resp = await _weatherapi_get(
+        "/forecast.json",
+        {"q": f"{lat},{lon}", "days": days, "aqi": "no", "alerts": "no"},
+    )
+    if not resp.get("ok"):
+        return {"ok": False, "reason": resp.get("reason"), "cache": "miss"}
+    j = resp["data"]
+    loc = j.get("location") or {}
+    forecast_days = ((j.get("forecast") or {}).get("forecastday") or [])
+
+    def _day(d: dict) -> dict:
+        day = d.get("day") or {}
+        cond = day.get("condition") or {}
+        icon = cond.get("icon") or ""
+        return {
+            "date": d.get("date"),
+            "high": day.get("maxtemp_f"),
+            "low": day.get("mintemp_f"),
+            "high_c": day.get("maxtemp_c"),
+            "low_c": day.get("mintemp_c"),
+            "chance_of_rain": day.get("daily_chance_of_rain"),
+            "precip_mm": day.get("totalprecip_mm"),
+            "condition_text": cond.get("text"),
+            "condition_icon": (
+                f"https:{icon}" if icon.startswith("//") else icon
+            ),
+        }
+
+    daily_rows = [_day(d) for d in forecast_days[:days]]
+
+    payload = {
+        "ok": True,
+        "location": {
+            "name": loc.get("name"),
+            "lat": loc.get("lat"),
+            "lon": loc.get("lon"),
+            "tz_id": loc.get("tz_id"),
+            "localtime": loc.get("localtime"),
+        },
+        "days_requested": days,
+        "days_returned": len(daily_rows),
+        "daily": daily_rows,
+    }
+    await _cache_put(cache_key, lat, lon, payload)
+    return {**payload, "cache": "miss"}
+
+
 # ─── /weather/radar ───────────────────────────────────────────────────
 
 @router.get("/weather/radar")

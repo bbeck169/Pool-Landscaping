@@ -1,25 +1,26 @@
 /**
- * TechWeatherWidget — Feb-2026.
+ * WeatherWidget — Feb-2026.
  *
- * Compact live-weather widget rendered in the tech dashboard
- * (OpsHub) header only. Talks to the FastAPI proxies at
- * ``/api/weather/current``, ``/api/weather/hourly`` and
- * ``/api/weather/radar`` — the WeatherAPI.com key never leaves the
- * server.
+ * Compact live-weather widget rendered on the tech landing page
+ * (``/schedule``) and on the admin dashboard. Talks to the FastAPI
+ * proxies at ``/api/weather/current``, ``/api/weather/hourly``
+ * and ``/api/weather/radar`` — the WeatherAPI.com key never
+ * leaves the server.
  *
- * Role gate: renders ``null`` unless the current user's role is
- * ``technician``. Admins/customers are intentionally NOT shown the
- * widget (their dashboards are different surfaces — spec says
- * "tech dashboard header ONLY").
+ * Role gate: renders ``null`` for anyone other than
+ * ``admin`` / ``super_admin`` / ``technician``. Customers and
+ * anonymous callers are intentionally NOT shown the widget. The
+ * backend endpoints already enforce the same allow-list via
+ * ``require_tech_or_admin`` (see ``routers/weather_v2.py``).
  *
  * Failure behaviour: any upstream failure or missing config
- * collapses the widget to ``null`` silently — no red banners on
- * the tech dashboard.
+ * collapses the widget to ``null`` silently — no red banners.
  */
 import React from "react";
 import { CloudSun, Radar as RadarIcon, Droplets, Wind, X } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import useWeatherHourly from "@/hooks/useWeatherHourly";
 
 // Same Peoria, AZ fallback the rest of the codebase already uses
 // (see routers/ops.py + WeatherWidget5Day). Tenant-configured
@@ -38,33 +39,39 @@ function fmtHour(iso) {
   return `${hour12}${h >= 12 ? "p" : "a"}`;
 }
 
-export default function TechWeatherWidget({ user }) {
+export default function WeatherWidget({ user }) {
   const [current, setCurrent] = React.useState(null);
-  const [hourly, setHourly] = React.useState(null);
+  const [daily, setDaily] = React.useState(null);
   const [radar, setRadar] = React.useState(null);
   const [radarOpen, setRadarOpen] = React.useState(false);
   const [hidden, setHidden] = React.useState(false);
 
   const role = (user?.role || "").toLowerCase();
-  const isTech = role === "technician";
+  const allowed = role === "technician" || role === "admin" || role === "super_admin";
 
   // Tenant/tech geocode is not yet plumbed — fall back to the
   // shared Peoria fallback.
   const lat = DEFAULT_LAT;
   const lon = DEFAULT_LON;
 
+  // Hourly is fetched through the shared hook so JobRainFlag badges
+  // on job cards can reuse the same payload without extra HTTP calls.
+  const hourly = useWeatherHourly(lat, lon, { enabled: allowed });
+
   const load = React.useCallback(async () => {
     try {
-      const [cur, hr] = await Promise.all([
+      const [cur, dl] = await Promise.all([
         api.get(`/weather/current?lat=${lat}&lon=${lon}`),
-        api.get(`/weather/hourly?lat=${lat}&lon=${lon}&hours=24`),
+        api.get(`/weather/daily?lat=${lat}&lon=${lon}&days=5`),
       ]);
-      if (cur?.ok === false || hr?.ok === false) {
+      if (cur?.ok === false) {
         setHidden(true);
         return;
       }
       setCurrent(cur);
-      setHourly(hr);
+      // Daily is optional — a graceful ok:false just hides the
+      // 5-day strip without collapsing the whole widget.
+      setDaily(dl?.ok === false ? null : dl);
       setHidden(false);
     } catch {
       setHidden(true);
@@ -72,7 +79,7 @@ export default function TechWeatherWidget({ user }) {
   }, [lat, lon]);
 
   React.useEffect(() => {
-    if (!isTech) return undefined;
+    if (!allowed) return undefined;
     load();
     const iv = setInterval(load, REFRESH_MS);
     const onVis = () => {
@@ -83,7 +90,7 @@ export default function TechWeatherWidget({ user }) {
       clearInterval(iv);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [isTech, load]);
+  }, [allowed, load]);
 
   const openRadar = async () => {
     if (!radar) {
@@ -96,11 +103,24 @@ export default function TechWeatherWidget({ user }) {
     setRadarOpen(true);
   };
 
-  if (!isTech || hidden || !current?.ok || !hourly?.ok) return null;
+  if (!allowed || hidden || !current?.ok || !hourly?.ok) return null;
 
   const cur = current.current || {};
   const hi = Math.max(...(hourly.hourly || []).map((h) => h.temp_f).filter((v) => v != null));
   const lo = Math.min(...(hourly.hourly || []).map((h) => h.temp_f).filter((v) => v != null));
+
+  const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dayLabel = (dateStr, idx) => {
+    if (idx === 0) return "Today";
+    try {
+      const d = new Date(`${dateStr}T12:00:00`);
+      if (Number.isNaN(d.getTime())) return dateStr;
+      return DAY_NAMES[d.getDay()];
+    } catch {
+      return dateStr;
+    }
+  };
+  const dailyRows = (daily?.daily || []).slice(0, 5);
 
   return (
     <div
@@ -205,6 +225,54 @@ export default function TechWeatherWidget({ user }) {
           </div>
         ))}
       </div>
+
+      {/* Row 3 — 5-day forecast strip (renders only what the
+          provider actually returned; free tier may cap at 3). */}
+      {dailyRows.length > 0 ? (
+        <div
+          className="flex items-stretch gap-2 overflow-x-auto px-4 py-3 border-t"
+          style={{ borderColor: colors.border, background: colors.surfaceSecondary }}
+          data-testid="weather-5day-forecast"
+        >
+          {dailyRows.map((d, i) => (
+            <div
+              key={d.date || i}
+              className="flex flex-col items-center gap-0.5 shrink-0 min-w-[68px] rounded-xl px-2 py-2"
+              style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+              data-testid={`weather-day-${i}`}
+              data-date={d.date || ""}
+            >
+              <span
+                className="text-[10px] font-bold uppercase tracking-wider"
+                style={{ color: colors.onSurfaceSecondary }}
+              >
+                {dayLabel(d.date, i)}
+              </span>
+              {d.condition_icon ? (
+                <img src={d.condition_icon} alt="" className="w-7 h-7" />
+              ) : (
+                <div className="w-7 h-7" />
+              )}
+              <div
+                className="text-xs font-bold whitespace-nowrap"
+                style={{ color: colors.onSurface }}
+              >
+                {d.high != null ? `${Math.round(d.high)}°` : "—"}
+                <span style={{ color: colors.muted, fontWeight: 500 }}>
+                  {" / "}
+                  {d.low != null ? `${Math.round(d.low)}°` : "—"}
+                </span>
+              </div>
+              <span
+                className="text-[10px] font-semibold"
+                style={{ color: colors.brand }}
+              >
+                {d.chance_of_rain != null ? `${d.chance_of_rain}%` : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {/* Radar modal */}
       {radarOpen && radar?.embed_url ? (

@@ -35,7 +35,8 @@ import { Gate, useCan } from "@/hooks/usePermissions";
 import { useClockInGate, ClockInGateDialog } from "@/hooks/useClockInGate";
 import ChecklistModal from "@/components/checklist/ChecklistModal";
 import ServiceNotePill from "@/components/schedule/ServiceNotePill";
-import TechWeatherWidget from "@/components/Weather/TechWeatherWidget";
+import TechWeatherWidget from "@/components/Weather/WeatherWidget";
+import JobRainFlag from "@/components/Weather/JobRainFlag";
 
 /** Phase 30W · service-type → card palette. Mirrors the mobile fix-pass. */
 const SERVICE_PALETTE = (raw) => {
@@ -929,6 +930,13 @@ function GridPanel({
                         <Star size={9} fill="#F59E0B" color="#F59E0B" /> VIP
                       </span>
                     ) : null}
+                    {/* Feb-2026 · rain-flag — informational only, no
+                        rescheduling. Uses the shared hourly hook so
+                        no extra HTTP requests. */}
+                    <JobRainFlag
+                      jobId={j.id}
+                      scheduledDate={j.scheduled_date}
+                    />
                   </div>
                   {j.address ? (
                     <div className="text-xs truncate" style={{ color: colors.muted }}>{j.address}</div>

@@ -27,6 +27,7 @@ import {
 import { api } from "@/api";
 import { brandGradientCss, colors, money } from "@/theme";
 import WeatherWidget5Day from "@/pages/aitools/WeatherWidget5Day";
+import LiveWeatherWidget from "@/components/Weather/WeatherWidget";
 import TeamCpoReadinessWidget from "@/components/admin/TeamCpoReadinessWidget";
 import RecommendationsQueueWidget from "@/components/admin/RecommendationsQueueWidget";
 import { useAuth } from "@/auth";
@@ -375,6 +376,7 @@ export default function AdminDashboard() {
 
       {user?.role === "admin" && (
         <div className="mb-6">
+          <LiveWeatherWidget user={user} />
           <WeatherWidget5Day role="admin" />
         </div>
       )}
