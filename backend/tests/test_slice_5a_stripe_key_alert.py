@@ -26,6 +26,7 @@ asyncio.set_event_loop(_LOOP)
 
 
 def _run(coro):
+    asyncio.set_event_loop(_LOOP)
     return _LOOP.run_until_complete(coro)
 
 

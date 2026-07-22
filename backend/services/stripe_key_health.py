@@ -294,7 +294,9 @@ async def run_stripe_key_health_scan() -> Dict[str, Any]:
             f"[stripe-key-alert] OK — account={ping.get('account_id')} "
             f"charges_enabled={ping.get('charges_enabled')}"
         )
-        return {"ok": True, "alerted": False, "account_id": ping.get("account_id")}
+        return {"ok": True, "alerted": False, "account_id": ping.get("account_id"),
+                 "ping": ping, "email_sent": 0, "sms_sent": 0,
+                 "cooldown_active": False}
     logger.warning(
         f"[stripe-key-alert] FAIL type={ping.get('error_type')} "
         f"msg={(ping.get('error_message') or '')[:200]}"
@@ -303,10 +305,27 @@ async def run_stripe_key_health_scan() -> Dict[str, Any]:
     ts_iso = now_iso()
     fanned: Dict[str, int] = {"email": 0, "sms": 0}
     tenants_alerted = 0
+    tenants_suppressed = 0
+    earliest_expiry: Optional[datetime] = None
     async for t in db.tenants.find(
         {"active": {"$ne": False}}, {"_id": 0, "id": 1, "sms_escalation_recipients": 1},
     ):
         if await _should_suppress(t["id"], sig):
+            tenants_suppressed += 1
+            # Track when the cooldown expires (for the manual-run response).
+            row = await db.ops_alerts_state.find_one(
+                {"tenant_id": t["id"], "kind": "stripe_key_alert"},
+                {"_id": 0, "last_sent_at": 1},
+            ) or {}
+            last = row.get("last_sent_at")
+            if last:
+                try:
+                    last_dt = datetime.fromisoformat(str(last).replace("Z", "+00:00"))
+                    exp = last_dt + _IDEMPOTENCY_WINDOW
+                    if earliest_expiry is None or exp < earliest_expiry:
+                        earliest_expiry = exp
+                except Exception:
+                    pass
             continue
         counts = await _alert_tenant(t, ping, ts_iso)
         await _record_alert_state(t["id"], sig)
@@ -314,9 +333,17 @@ async def run_stripe_key_health_scan() -> Dict[str, Any]:
         fanned["sms"] += counts["sms"]
         tenants_alerted += 1
     return {
-        "ok": False, "alerted": True,
+        "ok": False,
+        "alerted": tenants_alerted > 0,
         "tenants_alerted": tenants_alerted,
+        "tenants_suppressed": tenants_suppressed,
+        "cooldown_active": tenants_alerted == 0 and tenants_suppressed > 0,
+        "cooldown_expires_at": (
+            earliest_expiry.isoformat().replace("+00:00", "Z")
+            if earliest_expiry else None
+        ),
         "email_sent": fanned["email"],
         "sms_sent": fanned["sms"],
         "signature": sig,
+        "ping": ping,
     }

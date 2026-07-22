@@ -243,6 +243,38 @@ async def stripe_live_ping(user: dict = Depends(get_current_user)):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# POST /api/dev/stripe-key-health-run — manual invocation of the daily
+#                                        scheduled health scan.
+# ──────────────────────────────────────────────────────────────────────
+@router.post("/dev/stripe-key-health-run")
+async def stripe_key_health_run(user: dict = Depends(get_current_user)):
+    """Admin-only. Invokes the same scan the daily cron runs and returns
+    an inspection-friendly summary. Reuses the 4-hour idempotency guard
+    — a repeat trigger within 4h returns ``cooldown_active=true`` and
+    does NOT fire a fresh email/SMS burst."""
+    if (user or {}).get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin only")
+    logger.info(f"[stripe-key-alert] manual run by user={user.get('id')}")
+    from services.stripe_key_health import run_stripe_key_health_scan
+    res = await run_stripe_key_health_scan()
+    ran_at = now_iso()
+    if res.get("skipped"):
+        return {"ran_at": ran_at, "skipped": True,
+                 "reason": "stripe mode is not live"}
+    return {
+        "ran_at": ran_at,
+        "ping": res.get("ping"),
+        "alert_fanned_out": bool(res.get("alerted")),
+        "deliveries_created": {
+            "email": int(res.get("email_sent") or 0),
+            "sms": int(res.get("sms_sent") or 0),
+        },
+        "cooldown_active": bool(res.get("cooldown_active")),
+        "cooldown_expires_at": res.get("cooldown_expires_at"),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
 # GET /api/invoices/{iid}/magic-link — admin issues portal token
 # ──────────────────────────────────────────────────────────────────────
 @router.get("/invoices/{iid}/magic-link")
@@ -651,6 +683,23 @@ if os.getenv("ALLOW_TEST_HOOKS") == "1":
     async def _phase4b_stub_account_ok():
         _ACCT_MODE["raise"] = False
         return {"stubbed": True}
+
+    from pydantic import BaseModel as _BM
+
+    class _EnvSet(_BM):
+        key: str
+        value: str
+
+    @router.post("/dev/_phase4b_env_set")
+    async def _phase4b_env_set(body: _EnvSet):
+        # Test-only in-process env toggle. Gated by ALLOW_TEST_HOOKS so
+        # it never mounts in production. Restricted to STRIPE_MODE +
+        # STRIPE_ACCOUNT_ID — the two vars whose test-runtime flipping
+        # the tests need. Anything else is a no-op.
+        if body.key not in ("STRIPE_MODE", "STRIPE_ACCOUNT_ID"):
+            return {"ok": False, "reason": "key not whitelisted"}
+        os.environ[body.key] = body.value or ""
+        return {"ok": True, "key": body.key}
 
     @router.post("/dev/_phase4b_unstub_stripe")
     async def _phase4b_unstub_stripe():
