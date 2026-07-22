@@ -97,6 +97,7 @@ from routers import (
     stripe_webhooks_live,
     checklists,
     workstream_service_log,
+    ringcentral_jwt,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -200,7 +201,8 @@ for module in [notifications_router,
                payments_stripe_live,
                stripe_webhooks_live,
                checklists,
-               workstream_service_log]:
+               workstream_service_log,
+               ringcentral_jwt]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -693,6 +695,32 @@ async def startup():
         get_stripe()  # boot SDK
     except Exception as e:
         logger.warning(f"[phase4b] stripe boot log crashed: {e}")
+
+    # Phase 6 · Feb 2026 — RingCentral banner + subscription index.
+    try:
+        from services.ringcentral.rc_client import log_startup_banner
+        log_startup_banner()
+        from pymongo import ASCENDING as _A, DESCENDING as _D
+        await db.call_logs.create_index(
+            [("tenant_id", _A), ("session_id", _A)],
+            unique=True,
+            partialFilterExpression={"session_id": {"$exists": True, "$type": "string"}},
+            name="uniq_call_log_session",
+        )
+        await db.call_logs.create_index([("tenant_id", _A), ("from_number", _A),
+                                            ("started_at", _D)],
+                                          name="calls_by_from")
+        await db.call_logs.create_index([("tenant_id", _A), ("to_number", _A),
+                                            ("started_at", _D)],
+                                          name="calls_by_to")
+        await db.voicemails.create_index([("tenant_id", _A), ("message_id", _A)],
+                                            unique=True, name="uniq_vm")
+        await db.ringcentral_subscriptions.create_index(
+            [("tenant_id", _A), ("subscription_id", _A)],
+            unique=True, name="uniq_rc_sub",
+        )
+    except Exception as e:
+        logger.warning(f"[phase6] rc boot init crashed: {e}")
 
     # Phase 56.3.A — idempotent one-shot: back-fill first_name / last_name
     # on any legacy customer doc that only has the combined `name` field.

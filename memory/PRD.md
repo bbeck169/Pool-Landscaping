@@ -6493,3 +6493,34 @@ key. To make `.env` authoritative regardless of what the UI injects,
 call `load_dotenv(..., override=True)` in `backend/config.py`. Not
 required today because the UI only injects a placeholder `STRIPE_API_KEY`
 (which the backend doesn't read).
+
+## Ops · RingCentral (Phase 6, Feb 2026)
+
+**Runtime source**: `/app/backend/.env`. Vars: `RC_CLIENT_ID`,
+`RC_CLIENT_SECRET`, `RC_JWT`, `RC_SERVER_URL`, `RC_WEBHOOK_URL`,
+`RC_VERIFICATION_TOKEN` (40 hex chars, alphanumeric-only per RC CMN-101),
+`RC_MODE=live`. `.env.example` placeholders only. Startup banner logs
+`[phase6] ringcentral mode=live sub=…7018 server=platform.ringcentral.com`.
+
+**Endpoints shipped (new, JWT-bearer)**
+* POST `/api/dev/ringcentral-ping` (admin)
+* POST `/api/rc/call` (admin/manager/tech)
+* POST `/api/rc/setup-webhooks` (admin, idempotent)
+* GET  `/api/rc/subscriptions` · DELETE `/api/rc/subscriptions/{sid}` (admin)
+* POST `/api/rc/log-outbound` (authenticated)
+* GET  `/api/rc/timeline` · GET `/api/rc/logs`
+
+Existing Phase-54 `/api/ringcentral/webhook` continues to handle inbound
+RC events (telephony/sessions + voicemail); Phase-6 subscription rows
+are stored in `ringcentral_subscriptions` alongside legacy rows.
+
+**RC Developer Console — action items for the user**
+1. Update the redirect/webhook URI from stale `pool-crm-app.preview.emergentagent.com` → `https://poolscape-audit.preview.emergentagent.com/api/ringcentral/webhook`.
+2. Confirm JWT extension `746987018` scopes: **RingOut, WebhookSubscriptions, ReadCallLog, ReadAccounts, ReadMessages**. Voicemail feed needs ReadMessages.
+3. `RC_VERIFICATION_TOKEN` must be **alphanumeric only** (8-64 chars). Symbols cause RC's CMN-101. This pod uses `secrets.token_hex(20)` (40 hex chars) — safe.
+4. Rotation: edit `.env` → `sudo supervisorctl restart backend` → hit `POST /api/dev/ringcentral-ping` to confirm.
+
+**Follow-ups (deferred)**
+- Frontend `<ClickToCallButton>` + `/settings/telephony` admin page — code path is ready via `/api/rc/call` + `/api/rc/log-outbound`; wire-up scoped to next pass.
+- Per-tenant RC credentials (currently env-based; TODO in `services/ringcentral/rc_client.py`).
+- Missed-call SMS fanout: shipped in the new webhook handler in `routers/ringcentral_jwt.py::_upsert_call_log` but the LIVE webhook still routes to Phase-54's `routers/ringcentral.py::/webhook`. Consolidate in next pass so the new missed-call trigger fires on prod traffic.
