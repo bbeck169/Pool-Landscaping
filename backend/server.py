@@ -82,6 +82,7 @@ from routers import (
     marketing_review_requests,
     marketing_preferences,
     marketing_analytics,
+    marketing_media,
     widget_config,
     widget_chat,
     marketing_forms,
@@ -100,6 +101,9 @@ from routers import (
     ringcentral_jwt,
     marketing_campaigns as marketing_campaigns_router,
 )
+# Phase 9C · Feb 2026 — QuickBooks retirement helper (idempotent
+# boot migration + ALLOW_TEST_HOOKS-gated purge endpoint).
+from routers import quickbooks_cleanup
 
 app = FastAPI(
     title="Pool CRM API",
@@ -187,7 +191,9 @@ for module in [notifications_router,
                marketing_review_requests,
                marketing_preferences,
                marketing_analytics,
+               marketing_media,
                widget_config,
+               quickbooks_cleanup,
                widget_chat,
                marketing_forms,
                portal_walkthrough,
@@ -700,6 +706,12 @@ async def startup():
     try:
         from services.ringcentral.rc_client import log_startup_banner
         log_startup_banner()
+        # Phase 9C · Feb 2026 — one-shot idempotent QuickBooks cleanup.
+        try:
+            from routers.quickbooks_cleanup import run_migration as _qb_migrate
+            await _qb_migrate()
+        except Exception as _qb_exc:
+            logger.warning(f"[startup] qb-cleanup migration failed: {_qb_exc}")
         from pymongo import ASCENDING as _A, DESCENDING as _D
         await db.call_logs.create_index(
             [("tenant_id", _A), ("session_id", _A)],
