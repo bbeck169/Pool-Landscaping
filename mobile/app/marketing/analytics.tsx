@@ -1,7 +1,7 @@
 /**
  * Marketing Analytics — admin only.
- * GET /api/marketing/analytics/overview
- * GET /api/marketing/campaigns (recent campaigns with stats)
+ * GET /api/marketing/analytics/overview → { window, campaigns, sequences, review_requests, top_sequences, top_campaigns, trend }
+ * GET /api/marketing/campaigns → recent campaigns list
  */
 import React, { useCallback, useState } from "react";
 import {
@@ -16,16 +16,48 @@ import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 
-type Analytics = {
+type AnalyticsOverview = {
   window: string;
-  campaigns: { total: number; sent: number; active: number };
-  totals: { sends: number; opens: number; clicks: number; replies: number; unsubscribes: number; bounces: number };
-  rates: { open_rate: number; click_rate: number; reply_rate: number; unsubscribe_rate: number; bounce_rate: number };
+  campaigns: {
+    total_sent: number;
+    active: number;
+    delivered: number;
+    opened: number;
+    clicked: number;
+    converted: number;
+  };
+  sequences: {
+    total_enrolments: number;
+    active: number;
+    completed: number;
+    halted: number;
+    avg_completion_hours: number;
+  };
+  review_requests: {
+    total: number;
+    sent: number;
+    opened: number;
+    reviewed: number;
+    expired: number;
+    failed: number;
+    review_rate_pct: number;
+    avg_rating: number | null;
+  };
+  top_sequences?: any[];
+  top_campaigns?: any[];
 };
 
-type Campaign = { id: string; name?: string; subject?: string; channel?: string; status?: string; sent_count?: number; open_count?: number; click_count?: number; created_at?: string };
-
-const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+type Campaign = {
+  id: string;
+  name?: string;
+  subject?: string;
+  channel?: string;
+  status?: string;
+  sent_count?: number;
+  open_count?: number;
+  click_count?: number;
+  created_at?: string;
+};
 
 export default function AnalyticsScreen() {
   const insets = useSafeAreaInsets();
@@ -34,7 +66,7 @@ export default function AnalyticsScreen() {
   const role = String((user as any)?.role || "");
   const allowed = role === "admin" || role === "super_admin";
 
-  const [data, setData] = useState<Analytics | null>(null);
+  const [data, setData] = useState<AnalyticsOverview | null>(null);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -59,58 +91,133 @@ export default function AnalyticsScreen() {
       <View style={[s.center, { paddingTop: insets.top + 60 }]} testID="analytics-role-gate">
         <Ionicons name="lock-closed" size={36} color={colors.muted} />
         <Text style={s.gateText}>Not authorized</Text>
-        <TouchableOpacity onPress={() => router.replace("/(app)")} style={s.gateBtn}><Text style={s.gateBtnText}>Go Home</Text></TouchableOpacity>
+        <TouchableOpacity onPress={() => router.replace("/(app)")} style={s.gateBtn}>
+          <Text style={s.gateBtnText}>Go Home</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
-  if (loading) return <View style={[s.center, { paddingTop: insets.top + 60 }]}><ActivityIndicator size="large" color={colors.brand} /></View>;
+  if (loading) {
+    return (
+      <View style={[s.center, { paddingTop: insets.top + 60 }]}>
+        <ActivityIndicator size="large" color={colors.brand} />
+      </View>
+    );
+  }
 
-  const rates = data?.rates;
-  const totals = data?.totals;
+  const camp = data?.campaigns;
+  const seq = data?.sequences;
+  const rev = data?.review_requests;
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
       <View style={s.navBar}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={12}><Ionicons name="arrow-back" size={22} color={colors.onSurface} /></TouchableOpacity>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
+          <Ionicons name="arrow-back" size={22} color={colors.onSurface} />
+        </TouchableOpacity>
         <Text style={s.navTitle}>Analytics</Text>
         <View style={{ width: 22 }} />
       </View>
+
       <ScrollView
         contentContainerStyle={s.scroll}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.brand} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => { setRefreshing(true); load(); }}
+            tintColor={colors.brand}
+          />
+        }
       >
-        {/* KPI cards */}
-        <View style={s.kpiGrid} testID="analytics-kpis">
-          <KPICard label="Sends" value={String(totals?.sends || 0)} icon="send" color="#0F766E" />
-          <KPICard label="Open Rate" value={pct(rates?.open_rate || 0)} icon="mail-open" color="#0369A1" />
-          <KPICard label="Click Rate" value={pct(rates?.click_rate || 0)} icon="hand-left" color="#7E22CE" />
-          <KPICard label="Reply Rate" value={pct(rates?.reply_rate || 0)} icon="chatbubble" color="#0E7490" />
-          <KPICard label="Unsub Rate" value={pct(rates?.unsubscribe_rate || 0)} icon="remove-circle" color="#C2410C" />
-          <KPICard label="Bounce Rate" value={pct(rates?.bounce_rate || 0)} icon="alert-circle" color="#B91C1C" />
+        {/* Campaign KPIs */}
+        <Text style={s.sectionLabel}>CAMPAIGNS ({data?.window || "30d"})</Text>
+        <View style={s.kpiGrid} testID="analytics-campaign-kpis">
+          <KPICard label="Total Sent" value={String(camp?.total_sent || 0)} icon="send" color="#0F766E" />
+          <KPICard label="Active" value={String(camp?.active || 0)} icon="flash" color="#0369A1" />
+          <KPICard label="Delivered" value={String(camp?.delivered || 0)} icon="checkmark-circle" color="#166534" />
+          <KPICard label="Opened" value={String(camp?.opened || 0)} icon="mail-open" color="#7E22CE" />
+          <KPICard label="Clicked" value={String(camp?.clicked || 0)} icon="hand-left" color="#0E7490" />
+          <KPICard label="Converted" value={String(camp?.converted || 0)} icon="trophy" color="#B45309" />
         </View>
 
-        {/* Campaign summary */}
-        <View style={s.card} testID="analytics-campaign-summary">
-          <Text style={s.sectionLabel}>CAMPAIGN SUMMARY ({data?.window || "30d"})</Text>
+        {/* Sequences Summary */}
+        <View style={s.card} testID="analytics-sequences-summary">
+          <Text style={s.cardSectionLabel}>SEQUENCES</Text>
           <View style={s.summRow}>
-            <Text style={s.summLabel}>Total Campaigns</Text>
-            <Text style={s.summValue}>{data?.campaigns?.total || 0}</Text>
-          </View>
-          <View style={s.summRow}>
-            <Text style={s.summLabel}>Sent</Text>
-            <Text style={s.summValue}>{data?.campaigns?.sent || 0}</Text>
+            <Text style={s.summLabel}>Total Enrolments</Text>
+            <Text style={s.summValue}>{seq?.total_enrolments || 0}</Text>
           </View>
           <View style={s.summRow}>
             <Text style={s.summLabel}>Active</Text>
-            <Text style={s.summValue}>{data?.campaigns?.active || 0}</Text>
+            <Text style={s.summValue}>{seq?.active || 0}</Text>
+          </View>
+          <View style={s.summRow}>
+            <Text style={s.summLabel}>Completed</Text>
+            <Text style={s.summValue}>{seq?.completed || 0}</Text>
+          </View>
+          <View style={s.summRow}>
+            <Text style={s.summLabel}>Halted</Text>
+            <Text style={s.summValue}>{seq?.halted || 0}</Text>
           </View>
         </View>
 
-        {/* Recent campaigns */}
+        {/* Review Requests Summary */}
+        <View style={s.card} testID="analytics-reviews-summary">
+          <Text style={s.cardSectionLabel}>REVIEW REQUESTS</Text>
+          <View style={s.summRow}>
+            <Text style={s.summLabel}>Total</Text>
+            <Text style={s.summValue}>{rev?.total || 0}</Text>
+          </View>
+          <View style={s.summRow}>
+            <Text style={s.summLabel}>Sent</Text>
+            <Text style={s.summValue}>{rev?.sent || 0}</Text>
+          </View>
+          <View style={s.summRow}>
+            <Text style={s.summLabel}>Opened</Text>
+            <Text style={s.summValue}>{rev?.opened || 0}</Text>
+          </View>
+          <View style={s.summRow}>
+            <Text style={s.summLabel}>Reviewed</Text>
+            <Text style={s.summValue}>{rev?.reviewed || 0}</Text>
+          </View>
+          <View style={s.summRow}>
+            <Text style={s.summLabel}>Review Rate</Text>
+            <Text style={s.summValue}>{(rev?.review_rate_pct || 0).toFixed(1)}%</Text>
+          </View>
+          {rev?.avg_rating != null && (
+            <View style={s.summRow}>
+              <Text style={s.summLabel}>Avg Rating</Text>
+              <Text style={s.summValue}>{rev.avg_rating.toFixed(1)} ★</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Top Sequences */}
+        {data?.top_sequences && data.top_sequences.length > 0 && (
+          <>
+            <Text style={s.sectionHeader}>Top Sequences</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.campScroll}>
+              {data.top_sequences.slice(0, 8).map((ts: any) => (
+                <View key={ts.id} style={s.campCard} testID={`top-seq-${ts.id}`}>
+                  <Text style={s.campName} numberOfLines={2}>{ts.name || "Untitled"}</Text>
+                  <View style={s.campMeta}>
+                    <Text style={s.campStat}>Enrolments: {ts.enrolments || 0}</Text>
+                    <Text style={s.campStat}>Completed: {ts.completed || 0}</Text>
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+          </>
+        )}
+
+        {/* Recent Campaigns */}
         <Text style={s.sectionHeader}>Recent Campaigns</Text>
         {campaigns.length === 0 ? (
-          <View style={s.emptyWrap}><Ionicons name="megaphone-outline" size={28} color={colors.muted} /><Text style={s.emptyText}>No campaigns yet</Text></View>
+          <View style={s.emptyWrap}>
+            <Ionicons name="megaphone-outline" size={28} color={colors.muted} />
+            <Text style={s.emptyText}>No campaigns yet</Text>
+          </View>
         ) : (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.campScroll}>
             {campaigns.map((c) => (
@@ -122,7 +229,9 @@ export default function AnalyticsScreen() {
                   <Text style={s.campStat}>Clicks: {c.click_count || 0}</Text>
                 </View>
                 <View style={[s.campChPill, { backgroundColor: c.channel === "sms" ? "#E0F2FE" : "#F3E8FF" }]}>
-                  <Text style={[s.campChText, { color: c.channel === "sms" ? "#0369A1" : "#7E22CE" }]}>{(c.channel || "email").toUpperCase()}</Text>
+                  <Text style={[s.campChText, { color: c.channel === "sms" ? "#0369A1" : "#7E22CE" }]}>
+                    {(c.channel || "email").toUpperCase()}
+                  </Text>
                 </View>
               </View>
             ))}
@@ -152,16 +261,17 @@ const s = StyleSheet.create({
   navBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.surface },
   navTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface },
   scroll: { padding: spacing.lg, paddingBottom: 40 },
+  sectionLabel: { fontFamily: font.bold, fontSize: 10, color: colors.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: spacing.sm },
   kpiGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
   kpiCard: { width: "48%", backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, alignItems: "center", flexGrow: 1, minWidth: 140 },
   kpiValue: { fontFamily: font.bold, fontSize: fontSize.xl, marginTop: 4 },
   kpiLabel: { fontFamily: font.regular, fontSize: 11, color: colors.muted, marginTop: 2 },
   card: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.border },
-  sectionLabel: { fontFamily: font.bold, fontSize: 10, color: colors.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: spacing.sm },
+  cardSectionLabel: { fontFamily: font.bold, fontSize: 10, color: colors.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: spacing.sm },
   summRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 6 },
   summLabel: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted },
   summValue: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
-  sectionHeader: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface, marginBottom: spacing.sm },
+  sectionHeader: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface, marginBottom: spacing.sm, marginTop: spacing.sm },
   campScroll: { gap: spacing.sm, paddingBottom: spacing.md },
   campCard: { width: 200, backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border },
   campName: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.onSurface, marginBottom: 6 },

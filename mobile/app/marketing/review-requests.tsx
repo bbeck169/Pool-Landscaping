@@ -15,13 +15,41 @@ import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 
-type ReviewReq = { id: string; customer_name?: string; customer_email?: string; status?: string; sent_at?: string; opened_at?: string; clicked_at?: string; review_left_at?: string; created_at?: string };
-const STATES = [{ key: "", label: "All" }, { key: "queued", label: "Queued" }, { key: "sent", label: "Sent" }, { key: "opened", label: "Opened" }, { key: "clicked", label: "Clicked" }, { key: "left_review", label: "Reviewed" }];
+type ReviewReq = {
+  id: string;
+  customer_id?: string;
+  customer_name?: string | null;
+  channel?: string;
+  variant?: string;
+  status?: string;
+  source?: string;
+  requested_at?: string;
+  sent_at?: string;
+  opened_at?: string;
+  reviewed_at?: string;
+  review_rating?: number | null;
+  created_at?: string;
+};
+
+const STATES = [
+  { key: "", label: "All" },
+  { key: "queued", label: "Queued" },
+  { key: "sent", label: "Sent" },
+  { key: "opened", label: "Opened" },
+  { key: "reviewed", label: "Reviewed" },
+  { key: "expired", label: "Expired" },
+  { key: "failed", label: "Failed" },
+];
 
 const stColor: Record<string, { bg: string; fg: string }> = {
-  queued: { bg: "#E0F2FE", fg: "#0369A1" }, sent: { bg: "#DBEAFE", fg: "#1D4ED8" },
-  opened: { bg: "#FEF9C3", fg: "#A16207" }, clicked: { bg: "#E0F2FE", fg: "#0E7490" },
+  queued: { bg: "#E0F2FE", fg: "#0369A1" },
+  sent: { bg: "#DBEAFE", fg: "#1D4ED8" },
+  opened: { bg: "#FEF9C3", fg: "#A16207" },
+  clicked: { bg: "#E0F2FE", fg: "#0E7490" },
+  reviewed: { bg: "#DCFCE7", fg: "#166534" },
   left_review: { bg: "#DCFCE7", fg: "#166534" },
+  expired: { bg: "#F1F5F9", fg: "#475569" },
+  failed: { bg: "#FEE2E2", fg: "#B91C1C" },
 };
 
 export default function ReviewRequestsScreen() {
@@ -51,7 +79,9 @@ export default function ReviewRequestsScreen() {
       <View style={[s.center, { paddingTop: insets.top + 60 }]} testID="reviews-role-gate">
         <Ionicons name="lock-closed" size={36} color={colors.muted} />
         <Text style={s.gateText}>Not authorized</Text>
-        <TouchableOpacity onPress={() => router.replace("/(app)")} style={s.gateBtn}><Text style={s.gateBtnText}>Go Home</Text></TouchableOpacity>
+        <TouchableOpacity onPress={() => router.replace("/(app)")} style={s.gateBtn}>
+          <Text style={s.gateBtnText}>Go Home</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -61,37 +91,89 @@ export default function ReviewRequestsScreen() {
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
       <View style={s.navBar}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={12}><Ionicons name="arrow-back" size={22} color={colors.onSurface} /></TouchableOpacity>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={12}>
+          <Ionicons name="arrow-back" size={22} color={colors.onSurface} />
+        </TouchableOpacity>
         <Text style={s.navTitle}>Review Requests</Text>
         <View style={{ width: 22 }} />
       </View>
+
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filterRow}>
         {STATES.map((st) => (
-          <TouchableOpacity key={st.key} style={[s.pill, filter === st.key && s.pillActive]} onPress={() => setFilter(st.key)} testID={`rr-filter-${st.key || "all"}`}>
+          <TouchableOpacity
+            key={st.key}
+            style={[s.pill, filter === st.key && s.pillActive]}
+            onPress={() => setFilter(st.key)}
+            testID={`rr-filter-${st.key || "all"}`}
+          >
             <Text style={[s.pillText, filter === st.key && s.pillTextActive]}>{st.label}</Text>
           </TouchableOpacity>
         ))}
       </ScrollView>
-      {loading ? <View style={s.center}><ActivityIndicator size="large" color={colors.brand} /></View> : (
+
+      {loading ? (
+        <View style={s.center}><ActivityIndicator size="large" color={colors.brand} /></View>
+      ) : (
         <FlatList
           data={filtered}
           keyExtractor={(r) => r.id}
           contentContainerStyle={s.list}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.brand} />}
-          ListEmptyComponent={<View style={s.emptyWrap}><Ionicons name="star-outline" size={32} color={colors.muted} /><Text style={s.emptyText}>No review requests</Text></View>}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.brand} />
+          }
+          ListEmptyComponent={
+            <View style={s.emptyWrap}>
+              <Ionicons name="star-outline" size={32} color={colors.muted} />
+              <Text style={s.emptyText}>No review requests</Text>
+            </View>
+          }
           renderItem={({ item }) => {
             const sc = stColor[item.status || ""] || { bg: "#F1F5F9", fg: "#475569" };
+            const displayName = item.customer_name || item.customer_id || "Customer";
             return (
               <View style={s.card} testID={`rr-${item.id}`}>
                 <View style={s.cardTop}>
-                  <Text style={s.cardName}>{item.customer_name || item.customer_email || "Unknown"}</Text>
-                  <View style={[s.stPill, { backgroundColor: sc.bg }]}><Text style={[s.stText, { color: sc.fg }]}>{(item.status || "unknown").toUpperCase()}</Text></View>
+                  <Text style={s.cardName} numberOfLines={1}>{displayName}</Text>
+                  <View style={[s.stPill, { backgroundColor: sc.bg }]}>
+                    <Text style={[s.stText, { color: sc.fg }]}>{(item.status || "unknown").toUpperCase()}</Text>
+                  </View>
                 </View>
-                {item.customer_email ? <Text style={s.cardEmail}>{item.customer_email}</Text> : null}
+
+                <View style={s.metaRow}>
+                  {item.channel && (
+                    <View style={s.metaChip}>
+                      <Ionicons name={item.channel === "sms" ? "chatbox" : "mail"} size={10} color={colors.muted} />
+                      <Text style={s.metaText}>{item.channel}</Text>
+                    </View>
+                  )}
+                  {item.variant && (
+                    <View style={s.metaChip}>
+                      <Text style={s.metaText}>Variant {item.variant}</Text>
+                    </View>
+                  )}
+                  {item.source && (
+                    <View style={s.metaChip}>
+                      <Text style={s.metaText}>{item.source.replace(/_/g, " ")}</Text>
+                    </View>
+                  )}
+                </View>
+
                 <View style={s.tsRow}>
-                  {item.sent_at ? <Text style={s.ts}>Sent {new Date(item.sent_at).toLocaleDateString()}</Text> : null}
-                  {item.opened_at ? <Text style={s.ts}>Opened {new Date(item.opened_at).toLocaleDateString()}</Text> : null}
-                  {item.review_left_at ? <Text style={[s.ts, { color: colors.success }]}>Review {new Date(item.review_left_at).toLocaleDateString()}</Text> : null}
+                  {item.sent_at && (
+                    <Text style={s.ts}>Sent {new Date(item.sent_at).toLocaleDateString()}</Text>
+                  )}
+                  {item.opened_at && (
+                    <Text style={s.ts}>Opened {new Date(item.opened_at).toLocaleDateString()}</Text>
+                  )}
+                  {item.reviewed_at && (
+                    <Text style={[s.ts, { color: colors.success }]}>
+                      Reviewed {new Date(item.reviewed_at).toLocaleDateString()}
+                      {item.review_rating != null ? ` (${item.review_rating}★)` : ""}
+                    </Text>
+                  )}
+                  {!item.sent_at && item.requested_at && (
+                    <Text style={s.ts}>Requested {new Date(item.requested_at).toLocaleDateString()}</Text>
+                  )}
                 </View>
               </View>
             );
@@ -118,10 +200,12 @@ const s = StyleSheet.create({
   list: { padding: spacing.lg, paddingBottom: 40 },
   card: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, marginBottom: spacing.sm, borderWidth: 1, borderColor: colors.border },
   cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  cardName: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, flex: 1 },
-  cardEmail: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
+  cardName: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, flex: 1, marginRight: 8 },
   stPill: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
   stText: { fontFamily: font.bold, fontSize: 9, letterSpacing: 0.5 },
+  metaRow: { flexDirection: "row", gap: 6, marginTop: 6, flexWrap: "wrap" },
+  metaChip: { flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: "#F1F5F9", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  metaText: { fontFamily: font.medium, fontSize: 10, color: colors.muted, textTransform: "capitalize" },
   tsRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm, flexWrap: "wrap" },
   ts: { fontFamily: font.regular, fontSize: 11, color: colors.muted },
   emptyWrap: { alignItems: "center", paddingTop: 80 },
