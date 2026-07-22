@@ -131,3 +131,28 @@
   - `mobile/src/api/aiDock.ts` — full API rewrite for conversation flow
   - `mobile/src/components/ai/AIDockDrawer.tsx` — ChatView rewrite + action card field fix
 - **Web files referenced**: backend/routers/ai_employees.py (endpoint schema), frontend AI Dock patterns
+
+## Iteration 8 — Phase 5A + 5A.2 Mobile Mirror
+- **Commit**: db8bb93
+- **Date**: 2026-07-22
+- **Changes**:
+  - Tech UX cleanup: removed Field Estimator + Property Lookup from TECH_SECTIONS + techLinks
+  - Added role-gate screens for estimator + property-lookup (techs → "Not available on your role")
+  - Workstream restricted to admin/super_admin only with role-gate UI
+  - Workstream: removed status filters, default completed-only, title "Workstream — Completed Jobs"
+  - NEW Service Log detail at /workstream/[id]: 4 sections (Log Details + Water Test + Chemicals/Notes + Images)
+  - EMAIL DOOR HANGER button with 429 cooldown handling
+  - FieldReport checklist now backend-driven via GET /api/checklists/daily
+  - Work Stream moved to adminLinks in More screen
+  - Business Card confirmed correct for techs (company only, no My Card)
+- **Files created**:
+  - `mobile/src/api/serviceLog.ts`
+  - `mobile/app/workstream/[id].tsx`
+- **Files modified**:
+  - `mobile/app/workstream.tsx` (rewrite)
+  - `mobile/src/components/tools/sections.ts`
+  - `mobile/src/components/job/FieldReport.tsx`
+  - `mobile/app/(app)/more.tsx`
+  - `mobile/app/(app)/estimator/index.tsx`
+  - `mobile/app/(app)/property-lookup.tsx`
+- **Web files referenced**: none (backend API-only integration)
