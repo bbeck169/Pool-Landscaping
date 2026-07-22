@@ -461,6 +461,25 @@ async def _background_seed():
             run_recurring_job_generator,
             "cron", hour=2, minute=0,
             id="recurring_job_generator", replace_existing=True)
+
+        # Phase 4B follow-up · Feb 2026 — daily Stripe live-key health
+        # alert. Runs 08:00 America/Phoenix; when ``zoneinfo`` is
+        # unavailable falls back to 15:00 UTC (rough Phoenix equivalent).
+        from services.stripe_key_health import run_stripe_key_health_scan
+        try:
+            from zoneinfo import ZoneInfo
+            _phoenix_tz = ZoneInfo("America/Phoenix")
+            scheduler.add_job(
+                run_stripe_key_health_scan, "cron",
+                hour=8, minute=0, timezone=_phoenix_tz,
+                id="stripe_key_daily_health", replace_existing=True,
+            )
+        except Exception:
+            scheduler.add_job(
+                run_stripe_key_health_scan, "cron",
+                hour=15, minute=0,
+                id="stripe_key_daily_health", replace_existing=True,
+            )
         # Phase 54 — nightly RingCentral contact pull-sync (03:00 UTC).
         async def _rc_nightly_pull():
             try:
