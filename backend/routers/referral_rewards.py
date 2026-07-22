@@ -140,8 +140,18 @@ async def fire_referral_conversion_hook(*, tenant_id: str, lead: Dict[str, Any],
     cfg = _rewards_config(tenant)
 
     now = now_iso()
+    # Phase 10 · Feb 2026 — the immediate-credit branch below is now
+    # GATED by the tenant-scoped legacy flag ``legacy_immediate_referral_credit``
+    # (default False). With the flag OFF, we set the referral to
+    # ``pending_paid_window`` instead so the daily watcher can credit
+    # after the 30-day paid-window guard clears. Tenants that
+    # explicitly opt back into the pre-Phase-10 behavior (rare — only
+    # while running the back-migration) may set the flag to True.
+    legacy_immediate = bool(tenant.get("legacy_immediate_referral_credit", False))
     upd: Dict[str, Any] = {
-        "status": "converted",
+        "status": (
+            "converted" if legacy_immediate else "pending_paid_window"
+        ),
         "converted_to_customer_id": new_customer_id,
         "converted_at": now,
         "updated_at": now,
@@ -149,7 +159,7 @@ async def fire_referral_conversion_hook(*, tenant_id: str, lead: Dict[str, Any],
     reward_tx_id: Optional[str] = None
     reward_amount = 0.0
 
-    if cfg["referral_reward_enabled"] and cfg["referral_reward_amount"] > 0:
+    if legacy_immediate and cfg["referral_reward_enabled"] and cfg["referral_reward_amount"] > 0:
         reward_amount = cfg["referral_reward_amount"]
         # Ledger row — idempotency guarded by the ``reward_applied_at``
         # short-circuit above, but we also namespace the row via

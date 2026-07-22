@@ -189,6 +189,41 @@ def _equipment_interval_months(ctx: Dict[str, Any]) -> str:
         return ""
 
 
+# Phase 10 · Feb 2026 — Referral credit resolvers. Resolve against
+# ``ctx['referral']`` — outside that scope they resolve empty and
+# land in ``unresolved_tokens`` when ``missing="placeholder"``.
+def _referral_friend_name(ctx: Dict[str, Any]) -> str:
+    r = ctx.get("referral") or {}
+    return _safe_str(r.get("friend_first_name") or r.get("friend_name") or "")
+
+
+def _referral_credit_amount(ctx: Dict[str, Any]) -> str:
+    r = ctx.get("referral") or {}
+    cents = r.get("credit_amount_cents")
+    if cents is None:
+        return ""
+    try:
+        return f"${float(cents) / 100.0:,.2f}"
+    except (TypeError, ValueError):
+        return ""
+
+
+def _referral_eligible_date(ctx: Dict[str, Any]) -> str:
+    r = ctx.get("referral") or {}
+    return _safe_str(r.get("eligible_at_pretty") or r.get("eligible_at") or "")
+
+
+def _customer_credit_balance(ctx: Dict[str, Any]) -> str:
+    c = ctx.get("customer") or {}
+    cents = c.get("credits_balance_cents")
+    if cents is None:
+        return ""
+    try:
+        return f"${float(cents) / 100.0:,.2f}"
+    except (TypeError, ValueError):
+        return ""
+
+
 # ═══════════════════════════ Catalogue ═══════════════════════════════
 MERGE_TAGS: List[Dict[str, Any]] = [
     # ─── Customer
@@ -385,6 +420,27 @@ MERGE_TAGS: List[Dict[str, Any]] = [
      "category": "Equipment",
      "description": "Cadence in whole months (e.g. 3 for filters, 12 for salt cells).",
      "resolver": _equipment_interval_months},
+
+    # ─── Referral credits (Phase 10 · Feb 2026)
+    # Resolves against ``ctx['referral']`` (per-referral scope). The
+    # customer balance tag reads from ``ctx['customer']`` (already
+    # populated by ``render_context``).
+    {"token": "REFERRAL_FRIEND_NAME", "label": "Referred Friend",
+     "category": "Referrals",
+     "description": "First name of the referred customer.",
+     "resolver": _referral_friend_name},
+    {"token": "REFERRAL_CREDIT_AMOUNT", "label": "Credit Amount",
+     "category": "Referrals",
+     "description": "Referral credit amount, formatted (e.g. $25.00).",
+     "resolver": _referral_credit_amount},
+    {"token": "REFERRAL_ELIGIBLE_DATE", "label": "Eligible Date",
+     "category": "Referrals",
+     "description": "Date the referral first became eligible for credit.",
+     "resolver": _referral_eligible_date},
+    {"token": "CUSTOMER_CREDIT_BALANCE", "label": "Credit Balance",
+     "category": "Referrals",
+     "description": "Customer's current account credit balance, formatted.",
+     "resolver": _customer_credit_balance},
 ]
 
 _TAG_INDEX: Dict[str, Callable] = {t["token"].upper(): t["resolver"]

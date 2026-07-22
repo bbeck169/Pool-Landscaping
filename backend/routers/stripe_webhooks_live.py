@@ -279,6 +279,48 @@ async def _handle_payment_intent_failed(event: dict) -> dict:
     return {"handled": True}
 
 
+# ─── Phase 10 · Feb 2026 — Referral safeguard helper ─────────────────
+async def _phase10_void_referrals_on_refund(row: dict, *, kind: str) -> None:
+    """Called from ``_handle_charge_refunded`` + ``_handle_dispute_created``.
+
+    Emits a ``stripe_events`` marker (so the referral watcher's own
+    retro check can see it) AND, for any referral of the affected
+    customer that is still ``pending_paid_window``, marks it voided
+    with ``voided_reason="refunded"`` or ``"disputed"``.
+
+    Never raises — caller has its own try/except but this fn is
+    already defensive."""
+    tenant_id = row.get("tenant_id")
+    customer_id = row.get("customer_id")
+    if not tenant_id or not customer_id:
+        return
+    reason = "refunded" if kind == "charge.refunded" else "disputed"
+    await db.stripe_events.insert_one({
+        "id": new_id(),
+        "event_id": f"phase10-{new_id()}",
+        "tenant_id": tenant_id,
+        "customer_id": customer_id,
+        "event_type": kind,
+        "created_at": now_iso(),
+        "source_row_id": row.get("id"),
+    })
+    now = now_iso()
+    await db.referrals.update_many(
+        {"tenant_id": tenant_id,
+          "$or": [
+              {"converted_to_customer_id": customer_id},
+              {"referred_customer_id": customer_id},
+          ],
+          "status": "pending_paid_window"},
+        {"$set": {"status": "voided",
+                   "voided_reason": reason,
+                   "voided_at": now,
+                   "updated_at": now}},
+    )
+
+
+
+
 async def _handle_charge_refunded(event: dict) -> dict:
     obj = _get(_get(event, "data", {}), "object", {}) or {}
     pi_id = obj.get("payment_intent")
@@ -297,6 +339,14 @@ async def _handle_charge_refunded(event: dict) -> dict:
                        "status": new_status,
                        "updated_at": now_iso()}},
         )
+        # Phase 10 · Feb 2026 — void any pending_paid_window referral
+        # whose referred customer had this refunded invoice inside
+        # the 30-day window. Also log a stripe_events row for the
+        # watcher's own retro check.
+        try:
+            await _phase10_void_referrals_on_refund(row, kind="charge.refunded")
+        except Exception as exc:
+            logger.warning(f"[phase10] refund void hook failed: {exc}")
     try:
         from routers.stripe_admin import _handle_charge_refunded as _p53
         await _p53(event)
@@ -320,6 +370,11 @@ async def _handle_dispute_created(event: dict) -> dict:
                    "dispute_reason": reason,
                    "updated_at": now_iso()}},
     )
+    # Phase 10 · Feb 2026 — same void-inside-window safeguard as refund.
+    try:
+        await _phase10_void_referrals_on_refund(row, kind="charge.dispute.created")
+    except Exception as exc:
+        logger.warning(f"[phase10] dispute void hook failed: {exc}")
     tenant_id = row.get("tenant_id")
     if not tenant_id:
         return {"handled": True}

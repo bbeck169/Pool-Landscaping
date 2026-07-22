@@ -38,17 +38,7 @@ _DB_NAME = _BACKEND_ENV.get("DB_NAME") or os.environ.get("DB_NAME")
 _sync_client = MongoClient(_MONGO_URL)
 _sync_db = _sync_client[_DB_NAME]
 
-# Motor is bound to whichever loop first touched ``config.db``. To
-# safely exercise production async code paths under test without
-# "Future attached to a different loop" errors, every test that
-# touches Motor shares this single module-scoped loop.
-_LOOP = asyncio.new_event_loop()
-
-
-def _run(coro):
-    """Run a coroutine on the module-scoped event loop so Motor stays
-    happy across tests."""
-    return _LOOP.run_until_complete(coro)
+from tests._shared_loop import LOOP as _LOOP, run as _run
 
 
 def _login(email: str, pw: str = "password123") -> str:

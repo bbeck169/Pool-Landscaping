@@ -100,6 +100,8 @@ from routers import (
     workstream_service_log,
     ringcentral_jwt,
     equipment_trackers,
+    promo_codes,
+    referrals_phase10,
     marketing_campaigns as marketing_campaigns_router,
 )
 # Phase 9C · Feb 2026 — QuickBooks retirement helper (idempotent
@@ -210,7 +212,9 @@ for module in [notifications_router,
                checklists,
                workstream_service_log,
                ringcentral_jwt,
-               equipment_trackers]:
+               equipment_trackers,
+               promo_codes,
+               referrals_phase10]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -556,6 +560,34 @@ async def _background_seed():
             )
         except Exception as _ee:
             logger.warning(f"equipment_service cron registration crashed: {_ee}")
+
+        # Phase 10 · Feb 2026 — Referral credit watcher (30-day paid
+        # window). Hourly cron; each tenant's dispatch is gated by its
+        # local hour (default 03:00). Also seeds the two credit-earned
+        # templates + runs the legacy immediate-credit back-migration.
+        try:
+            from routers.promo_codes import ensure_indexes as _promo_indexes
+            from services.referral_watcher import (
+                hourly_scan as _ref_hourly,
+                ensure_indexes as _ref_indexes,
+                seed_referral_credit_templates as _seed_tpls,
+                backmigrate_legacy_referral_credits as _backmigrate,
+            )
+            await _promo_indexes()
+            await _ref_indexes()
+            await _seed_tpls()
+            bm_res = await _backmigrate()
+            logger.info(f"[phase10] back-migration: {bm_res}")
+            scheduler.add_job(
+                _ref_hourly, "cron", minute=0,
+                id="referral_watcher_hourly", replace_existing=True,
+            )
+            logger.info(
+                "scheduler: referral_watcher_hourly registered "
+                "(per-tenant local-hour dispatch, default 03:00)"
+            )
+        except Exception as _re:
+            logger.warning(f"referral watcher registration crashed: {_re}")
 
         # Comms Phase 3 · Feb 2026 — automation-engine daily sweeps.
         # invoice.overdue (09:00 UTC), customer.birthday (08:00),

@@ -6666,3 +6666,113 @@ None — the existing 60+ Phase 9 catalog plus the flat-key fallback covered eve
 - P1: Phase 10 (promo codes + $25 referral credit + 30-day paid-window watcher + Stripe refund safeguard).
 - P2: Per-property equipment-tracker reminder overrides.
 - Deferred non-9D flakes: `test_heavy_action_debits_more_than_chat`, cross-file loop flake, and the 4 pre-9D marketing/M3/M5c/M6/M2-notif failures above.
+
+## 2026-07-22 · Feb 2026 · Session recap (Phase 10 backend — Promo codes + gated $25 referral credit)
+
+### Backend files added / modified
+- **NEW** `backend/routers/promo_codes.py` — full CRUD (`POST/GET/PATCH/DELETE /api/promo-codes`), `POST /promo-codes/validate`, `POST /promo-codes/redeem` (atomic uses_count CAS guard), plus `create_promo_code_internal()` helper for the watcher. Unique index `{tenant_id, code}`. Structured 409 detail with `existing_promo_code_id` (matches media library + equipment tracker shape).
+- **NEW** `backend/routers/referrals_phase10.py` — `GET /api/referrals/summary` (KPIs w/ counts_by_status + total_credited), admin `POST /referrals/{rid}/re-eligible`, admin `POST /referrals/{rid}/void`, `GET /api/customers/{cid}/credits` (self OR admin), manual `POST /api/admin/referral-watcher/run`. Also exposes `PHASE10_STATUSES` enum.
+- **NEW** `backend/services/referral_watcher.py` — `hourly_scan()` APScheduler entry (per-tenant local-hour dispatch, default 03:00, fallback `America/Phoenix`), `run_referral_watcher(tenant)`, `_try_credit_referral()` with status-guarded CAS (`pending_paid_window` → `crediting_in_progress` → `credited` OR rollback). `_check_refund_or_dispute_inside_window()` looks up `stripe_events` for `charge.refunded`/`charge.dispute.created` in the 30-day window. Seeds `referral_credit_earned_email`/`_sms` templates on boot. `backmigrate_legacy_referral_credits()` — idempotent, dedupes by referral_id, mints retro promo codes for legacy immediately-credited rows.
+- **MODIFIED** `backend/routers/referral_rewards.py::fire_referral_conversion_hook()` — the immediate-credit branch is now gated by `tenant.legacy_immediate_referral_credit` (default False). New referrals land in `status="pending_paid_window"` for the watcher; legacy flag=True preserves the old behavior for tenants that need it during their own back-migration. All existing tests still pass.
+- **MODIFIED** `backend/routers/stripe_webhooks_live.py` — `_handle_charge_refunded` + `_handle_dispute_created` now call new helper `_phase10_void_referrals_on_refund(row, kind=…)` which:
+  * Emits a `stripe_events` row so the watcher's retro sweep sees it.
+  * `updateMany` on `referrals` — voids any `pending_paid_window` row for the affected customer with `voided_reason="refunded"` or `"disputed"`.
+- **MODIFIED** `backend/services/marketing/merge_tags.py` — 4 new resolvers + catalog entries under a NEW `Referrals` category: `REFERRAL_FRIEND_NAME`, `REFERRAL_CREDIT_AMOUNT`, `REFERRAL_ELIGIBLE_DATE`, `CUSTOMER_CREDIT_BALANCE`. Resolvers read from `ctx["referral"]` and `ctx["customer"]["credits_balance_cents"]`.
+- **MODIFIED** `backend/server.py` — registered `promo_codes` + `referrals_phase10` routers, wired the hourly APScheduler cron `referral_watcher_hourly`, called `seed_referral_credit_templates()` + `backmigrate_legacy_referral_credits()` on startup. Boot log confirmed: `[phase10] back-migration: {'upgraded': 1, 'minted': 1}` (first boot) → `{'upgraded': 0, 'minted': 0}` (subsequent boots).
+
+### New endpoints (openapi)
+```
+POST   /api/promo-codes                    (admin)   create
+GET    /api/promo-codes                    (admin)   list + filters
+GET    /api/promo-codes/{pid}              (admin)   detail
+PATCH  /api/promo-codes/{pid}              (admin)   patch (uses_count immutable via API)
+DELETE /api/promo-codes/{pid}              (admin)   soft-delete → is_active=false
+POST   /api/promo-codes/validate           (any auth) check code + effective discount
+POST   /api/promo-codes/redeem             (any auth) atomic uses_count++ + attach to invoice
+
+GET    /api/referrals/summary              (admin)   counts_by_status + total_credited
+POST   /api/referrals/{rid}/re-eligible    (admin)   voided → pending_paid_window
+POST   /api/referrals/{rid}/void           (admin)   force void with reason
+
+GET    /api/customers/{cid}/credits        (self OR admin) balance_cents + ledger[]
+POST   /api/admin/referral-watcher/run     (admin)   manual trigger for current tenant
+```
+
+### Verbatim scenario proof (30-day paid window, happy path)
+```
+Referrer A: e36bce2c-…-05225aeb352f (Jennifer Carson)
+Referred B: 5ba56b0b-…-f85cdc72dad0 (Robert Blake)
+
+BEFORE — referral doc:
+  status="pending_paid_window", first_paid_at=<45d ago>, credited_promo_code_id=absent
+
+WATCHER RESULT: {credited: ['scenario-fc10b4ef'], still_waiting: 1, voided: []}
+
+AFTER — referral doc:
+  status="credited", credit_amount_cents=2500, eligible_at=<15d ago>,
+  credited_promo_code_id="d8dc23c6-…", credited_at=<now>
+
+AFTER — promo code minted:
+  code="REF-7DJESYBS", type="referral_reward", discount_kind="fixed_credit",
+  amount_cents=2500, max_uses=1, uses_count=0, is_active=true,
+  metadata.referral_id=<rid>, metadata.referrer_customer_id=A, metadata.referred_customer_id=B
+
+AFTER — customer_credits ledger:
+  delta_cents=2500, source="referral_credit", promo_code_id=<promo id>, referral_id=<rid>,
+  note="Referral credit — Robert Blake paid on Jun 7, 2026, eligible Jul 7, 2026"
+
+AFTER — customer_credits_balance:
+  {balance: 25.0, balance_cents: 2500}
+
+AFTER — marketing_deliveries rows:
+  channel=email, template_id=<referral_credit_earned_email>, status=sent,
+    trigger_entity={kind:"referral_credit_issued", referral_id, promo_code_id}
+  channel=sms,   template_id=<referral_credit_earned_sms>, status=failed  ← test address not RC-valid; row logged for audit
+    trigger_entity={kind:"referral_credit_issued", referral_id, promo_code_id}
+```
+
+### Refund safeguard proof (paid → refunded 5 days into window)
+```
+BEFORE: status="pending_paid_window", first_paid_at=<45d ago>
+        stripe_event logged: charge.refunded at <40d ago> (5d into window)
+
+WATCHER RESULT: {credited: [], voided: ['refund-scen-a2ec3832']}
+
+AFTER: status="voided", voided_reason="refunded", voided_at=<now>,
+       credit_amount_cents=None, credited_promo_code_id=absent
+```
+
+### Deprecation confirmation
+Any pre-existing immediate `$25-on-close-won` path is deprecated: the immediate-credit branch in `fire_referral_conversion_hook` is now gated by `tenant.legacy_immediate_referral_credit` (default **False**). Existing immediately-credited rows are handled by `backmigrate_legacy_referral_credits()` — idempotent, dedupes by `referral_id`. First boot: **1 upgraded / 1 promo minted**. Second boot: **0 / 0**.
+
+### Tests
+- **NEW** `tests/test_phase10_referrals.py` — **17 tests**, all green:
+  1. Promo code create uppercases the code + returns `uses_count=0`
+  2. Duplicate code → 409 with `existing_promo_code_id` in detail
+  3. Technician role gate on create
+  4. Validate returns effective amount for `percent_off_invoice`
+  5. Validate flags expired + max_uses_reached
+  6. Redeem increments uses_count + blocks same-invoice-twice with 400
+  7. `/referrals/summary` returns counts_by_status + total_credited_formatted
+  8. Watcher credits after 30d + writes ledger + email/SMS delivery rows
+  9. Watcher skips under 30d
+  10. Refund inside window voids referral
+  11. Dispute inside window voids referral
+  12. Admin re-eligible restores voided referral
+  13. Admin void endpoint marks referral voided with reason
+  14. Customer credits endpoint returns balance + ledger
+  15. Back-migration second run inserts zero (idempotent)
+  16. Referral merge tags present in catalog (4/4)
+  17. Referral merge tags resolve end-to-end
+- **NEW** `tests/_shared_loop.py` — shared module-scoped event loop so Phase 10 + Phase 11 tests can both exercise Motor code paths without cross-file "attached to a different loop" errors. Both files now import from it.
+- **Full green regression: 78/78** (17 Phase 10 + 20 Phase 11 + 17 Phase 9D + 13 Phase 9 merge tags + 11 Phase 9 test-send).
+
+### Deferred (next session)
+- **Frontend UI** — `/portal/referrals` customer view, `/settings/promo-codes` admin CRUD page, `/admin/referrals` list + summary tile, customer detail Credits tab, invoice viewer promo code input.
+- **Auto-apply credits on invoice creation** — orthogonal hook that reads `customer_credits_balance` and posts a discount line on invoice PDF/HTML + decrements the balance on payment. Deferred because it touches many invoice-creation callsites (`finances.py`, `estimator.py`, `estimates.py`, `ai_employees.py`, `billing.py`) — needs a compact `services/credits_apply.py` helper called from each. Backend mechanics + ledger + balance are all in place; the auto-apply is a display + payment-time decrement layer.
+- **Public leads intake `?ref=<code>` capture** — the pre-Phase-10 conversion hook already sets `source="referral_from_customer:<id>"` when the lead payload's `source` matches, so this works with the existing flow. Wiring the query param → `source` translation on `POST /api/public/leads` is a small follow-up.
+
+### Backlog after Phase 10
+- P1: Phase 10 frontend + auto-apply-on-invoice + `?ref=` capture on public leads.
+- P2: Per-property equipment-tracker reminder overrides.
+- Deferred non-9D flakes: `test_heavy_action_debits_more_than_chat`, cross-file loop flake (partially mitigated by shared loop), pre-existing marketing/M3/M5c/M6/M2-notif failures.
