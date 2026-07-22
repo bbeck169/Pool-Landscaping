@@ -335,6 +335,186 @@ async def preview_template(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Phase 9 · Feb 2026 — Test-send endpoint
+# ═══════════════════════════════════════════════════════════════════════
+import asyncio as _phase9_asyncio
+import time as _phase9_time
+from collections import defaultdict as _phase9_dd
+
+_TEST_SEND_LIMIT = 5
+_TEST_SEND_WINDOW_S = 60.0
+_test_send_hits: Dict[str, List[float]] = _phase9_dd(list)
+_test_send_lock = _phase9_asyncio.Lock()
+
+
+async def _rate_limit_test_send(user_id: str) -> None:
+    now = _phase9_time.monotonic()
+    async with _test_send_lock:
+        bucket = _test_send_hits[user_id]
+        cutoff = now - _TEST_SEND_WINDOW_S
+        i = 0
+        while i < len(bucket) and bucket[i] < cutoff:
+            i += 1
+        if i:
+            del bucket[:i]
+        if len(bucket) >= _TEST_SEND_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail=(f"Rate limit — max {_TEST_SEND_LIMIT} test sends "
+                          "/ minute"),
+            )
+        bucket.append(now)
+
+
+@router.post("/marketing/templates/_test-send-rate-reset")
+async def test_send_rate_reset(user: dict = Depends(require_admin)):
+    """Phase 9 · Feb 2026 — admin-only reset of the caller's
+    test-send rate-limit bucket. Exists so pytest can prove the 5/min
+    gate deterministically without waiting 60 seconds between runs."""
+    async with _test_send_lock:
+        _test_send_hits.pop(user.get("id") or "anon", None)
+    return {"ok": True}
+
+
+class TemplateTestSendBody(BaseModel):
+    to: str = Field(..., description="Recipient email (email templates) "
+                                       "or phone (SMS templates)")
+    sample_context: Optional[Dict[str, Any]] = None
+
+
+@router.post("/marketing/templates/{tid}/test-send")
+async def test_send_template(
+    tid: str, body: TemplateTestSendBody,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase 9 · Feb 2026 — send a live email or SMS preview to a
+    specific recipient using the merge-tag renderer.
+
+    * Admin / super_admin / manager only.
+    * Rate-limited to 5 sends / minute / user (returns 429 on the 6th
+      request inside a 60-second window). Rate limit resets naturally
+      as calls age out.
+    * Uses the SAME code path production sends do — Resend for email,
+      RingCentral adapter for SMS — so a successful test send is
+      *proof* the tenant's outbound wiring works end-to-end.
+    * Both uppercase merge tags (Phase 9) and legacy Mustache tags
+      substitute before the send.
+    """
+    if user.get("role") not in ("admin", "super_admin", "manager"):
+        raise HTTPException(403, "Not allowed")
+    await _rate_limit_test_send(user.get("id") or "anon")
+
+    row = await db.marketing_templates.find_one(
+        {"id": tid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, "Template not found")
+
+    to_field = (body.to or "").strip()
+    if not to_field:
+        raise HTTPException(400, "Recipient 'to' is required")
+
+    ctx_in = body.sample_context or DEFAULT_SAMPLE_CONTEXT
+    demo_ctx = build_merge_ctx(
+        customer={
+            "name": ((ctx_in.get("customer") or {}).get("first_name", "") + " "
+                     + (ctx_in.get("customer") or {}).get("last_name", "")).strip(),
+            "first_name": (ctx_in.get("customer") or {}).get("first_name"),
+            "last_name": (ctx_in.get("customer") or {}).get("last_name"),
+            "email": to_field if row.get("channel") == "email" else (ctx_in.get("customer") or {}).get("email"),
+            "phone": to_field if row.get("channel") == "sms" else (ctx_in.get("customer") or {}).get("phone"),
+            "open_balance": (ctx_in.get("customer") or {}).get("balance_due", 0),
+        },
+        tenant=ctx_in.get("tenant") or {"name": tenant.get("name")},
+        invoice=ctx_in.get("invoice"),
+    )
+    pre_subject, sub_missing = render_uppercase_tags(
+        row.get("subject") or "", demo_ctx,
+    )
+    pre_body, body_missing = render_uppercase_tags(
+        row.get("body") or "", demo_ctx,
+    )
+    subject_rendered, body_rendered, missing = render_subject_and_body(
+        pre_subject, pre_body, ctx_in,
+    )
+
+    channel = row.get("channel")
+    provider_res: Dict[str, Any] = {"provider": "unknown"}
+
+    if channel == "sms":
+        if "@" in to_field or "+" not in to_field and not to_field.isdigit():
+            # Best-effort input hygiene — RC adapter's normaliser is
+            # the source of truth so we just warn on obvious mistakes.
+            logger.warning(
+                f"[phase9-test-send] SMS to-field looks odd: '{to_field}'"
+            )
+        rendered_plain = strip_html(body_rendered)
+        try:
+            from services.sms.rc_adapter import send as _rc_send
+            provider_res = await _rc_send(
+                to=to_field, body=rendered_plain,
+                category="transactional", tenant_id=tenant["id"],
+                idempotency_key=(f"tpl-testsend:{tid}:{user.get('id')}:"
+                                    f"{int(_phase9_time.time())}"),
+            )
+        except Exception as exc:  # pragma: no cover
+            provider_res = {"provider": "ringcentral",
+                             "provider_status": "failed",
+                             "provider_response_id": None,
+                             "error": str(exc)}
+        return {
+            "ok": provider_res.get("provider_status") == "sent",
+            "channel": "sms",
+            "recipient": to_field,
+            "provider": provider_res.get("provider"),
+            "provider_status": provider_res.get("provider_status"),
+            "provider_response_id": provider_res.get("provider_response_id"),
+            "rendered_body": rendered_plain,
+            "unresolved_tokens": sorted(set(list(sub_missing) + list(body_missing))),
+            "missing_vars": sorted(set(missing)),
+        }
+
+    # ─── email
+    if "@" not in to_field:
+        raise HTTPException(400, "Email 'to' must be a valid address")
+    try:
+        # Reuse the transactional emailer used by welcome / invoice paths.
+        try:
+            from emailer import send_transactional_email
+            provider_res = await send_transactional_email(
+                to=to_field,
+                subject=subject_rendered or "(test)",
+                html=body_rendered or "",
+            )
+        except Exception as _e:
+            # Fallback to the Resend adapter directly, if the shim import fails.
+            from services.marketing_email.resend_adapter import send as _resend_send
+            provider_res = await _resend_send(
+                to=to_field, subject=subject_rendered or "(test)",
+                html=body_rendered or "",
+                category="transactional", tenant_id=tenant["id"],
+            )
+    except Exception as exc:  # pragma: no cover
+        provider_res = {"provider": "resend",
+                         "provider_status": "failed",
+                         "provider_response_id": None,
+                         "error": str(exc)}
+    return {
+        "ok": provider_res.get("provider_status") in ("sent", "queued"),
+        "channel": "email",
+        "recipient": to_field,
+        "provider": provider_res.get("provider"),
+        "provider_status": provider_res.get("provider_status"),
+        "provider_response_id": provider_res.get("provider_response_id"),
+        "rendered_subject": subject_rendered,
+        "rendered_body": body_rendered,
+        "unresolved_tokens": sorted(set(list(sub_missing) + list(body_missing))),
+        "missing_vars": sorted(set(missing)),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Seed
 # ═══════════════════════════════════════════════════════════════════════
 DEFAULT_SEED = [
