@@ -580,10 +580,22 @@ async def dispatch_campaign(tenant_id: str, campaign_id: str) -> Dict[str, Any]:
             primary = m.group(0) if m else None
             final_sms = rewrite_sms_body(rendered_sms, campaign_id,
                                               sub["id"], send_id, primary)
+            # Phase-3 · route through the Slice-S Twilio adapter which
+            # handles E.164, retry, STOP suffix on category=campaign,
+            # and a marketing-suppression re-check as belt-and-braces.
             try:
-                from services.comms_sms_adapter import send_sms
-                r = await send_sms(tenant_id, sub["phone"], final_sms)
-                provider_id = provider_id or (r or {}).get("provider_message_id")
+                from services.sms.twilio_adapter import send as _twilio_send
+                r = await _twilio_send(
+                    to=sub["phone"], body=final_sms,
+                    category="campaign", tenant_id=tenant_id,
+                    customer_id=sub.get("customer_id"),
+                    idempotency_key=f"m2:{campaign_id}:{sub['id']}",
+                )
+                provider_id = provider_id or (r or {}).get("provider_response_id")
+                if (r or {}).get("provider_status") == "failed":
+                    ok_sms = False
+                    logger.warning("[m2] twilio failed: %s",
+                                    (r or {}).get("error"))
             except Exception as e:
                 ok_sms = False
                 logger.warning(f"[m2] sms send fail: {e}")

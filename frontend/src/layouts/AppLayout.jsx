@@ -451,7 +451,10 @@ function AppLayout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 min-w-0 pb-20 md:pb-0">
+      <main
+        className="flex-1 min-w-0 min-h-0 pb-20 md:pb-0"
+        data-testid="app-main"
+      >
         {/* Mobile top bar (<md) */}
         <header
           className="md:hidden px-4 py-3 flex items-center justify-between sticky top-0 z-30"

@@ -216,6 +216,92 @@ async def fire_referral_conversion_hook(*, tenant_id: str, lead: Dict[str, Any],
     except Exception as exc:  # pragma: no cover
         logger.warning("[o2] referrer bell failed: %s", exc)
 
+    # Phase-3 · transactional email + SMS to the referrer via real
+    # adapters.  Suppression skipped for account-critical notifications
+    # unless the tenant explicitly disabled that policy.
+    try:
+        allow_over_suppression = bool(
+            tenant.get("allow_transactional_over_suppression", True)
+        )
+        cat = "transactional" if allow_over_suppression else "marketing"
+        referrer = await db.customers.find_one(
+            {"id": referral["referrer_customer_id"], "tenant_id": tenant_id},
+            {"_id": 0, "name": 1, "email": 1, "phone": 1},
+        ) or {}
+        friend = referral.get("friend_name") or "your friend"
+        first = (referrer.get("name") or "").split(" ")[0] or "there"
+        subject = f"Your referral of {friend} became a customer!"
+        html = (
+            f"<p>Hi {first},</p>"
+            f"<p>Great news — <b>{friend}</b> just became a customer with "
+            f"{tenant.get('name') or 'us'}.</p>"
+        )
+        sms_body = subject
+        if reward_amount > 0:
+            html += (
+                f"<p>We've added a <b>${reward_amount:.2f}</b> credit to your "
+                "account as a thank-you. It will apply automatically on your "
+                "next invoice.</p>"
+            )
+            sms_body += f" ${reward_amount:.2f} credit applied."
+        html += "<p>Thanks for spreading the word!</p>"
+
+        if referrer.get("email"):
+            try:
+                from services.email.resend_adapter import send as _resend_send
+                res = await _resend_send(
+                    to=referrer["email"], subject=subject, html=html,
+                    category=cat, tenant_id=tenant_id,
+                    customer_id=referral["referrer_customer_id"],
+                    idempotency_key=f"referral-conv:{referral['id']}",
+                )
+                await db.marketing_deliveries.insert_one({
+                    "id": new_id(), "tenant_id": tenant_id,
+                    "kind": "transactional",
+                    "trigger_entity": {"kind": "referral",
+                                        "id": referral["id"]},
+                    "customer_id": referral["referrer_customer_id"],
+                    "channel": "email", "recipient_email": referrer["email"],
+                    "subject_rendered": subject, "body_rendered": html,
+                    "provider": res.get("provider"),
+                    "provider_status": res.get("provider_status"),
+                    "provider_response_id": res.get("provider_response_id"),
+                    "attempts": res.get("attempts") or 0,
+                    "mock": res.get("provider") == "mock",
+                    "sent_at": now_iso(),
+                })
+            except Exception as exc:  # pragma: no cover
+                logger.warning("[o2] referral email failed: %s", exc)
+
+        if referrer.get("phone"):
+            try:
+                from services.sms.twilio_adapter import send as _sms_send
+                res = await _sms_send(
+                    to=referrer["phone"], body=sms_body,
+                    category=cat, tenant_id=tenant_id,
+                    customer_id=referral["referrer_customer_id"],
+                    idempotency_key=f"referral-conv:{referral['id']}",
+                )
+                await db.marketing_deliveries.insert_one({
+                    "id": new_id(), "tenant_id": tenant_id,
+                    "kind": "transactional",
+                    "trigger_entity": {"kind": "referral",
+                                        "id": referral["id"]},
+                    "customer_id": referral["referrer_customer_id"],
+                    "channel": "sms", "recipient_phone": referrer["phone"],
+                    "body_rendered": sms_body,
+                    "provider": res.get("provider"),
+                    "provider_status": res.get("provider_status"),
+                    "provider_response_id": res.get("provider_response_id"),
+                    "attempts": res.get("attempts") or 0,
+                    "mock": res.get("provider") == "mock",
+                    "sent_at": now_iso(),
+                })
+            except Exception as exc:  # pragma: no cover
+                logger.warning("[o2] referral SMS failed: %s", exc)
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[o2] referral transactional send crashed: %s", exc)
+
     return {
         "applied": bool(reward_amount > 0),
         "referral_id": referral["id"],

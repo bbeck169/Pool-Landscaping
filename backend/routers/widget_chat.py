@@ -401,6 +401,51 @@ async def post_widget_message(
             conversation_id=cid,
         )
 
+        # Phase-3 · SMS escalation to configured recipients.  Tenant
+        # settings ``sms_escalation_recipients`` drives fan-out; when
+        # absent falls back to the tenant primary admin phone.  When
+        # neither is populated we log and no-op — no send attempts.
+        try:
+            tenant_row = await db.tenants.find_one(
+                {"id": tenant["id"]}, {"_id": 0},
+            ) or {}
+            recips: list = list(tenant_row.get("sms_escalation_recipients") or [])
+            if not recips:
+                # Fallback: first admin user's phone.
+                admin_row = await db.users.find_one(
+                    {"tenant_id": tenant["id"],
+                     "role": {"$in": ["admin", "super_admin"]},
+                     "phone": {"$exists": True, "$ne": ""}},
+                    {"_id": 0, "phone": 1},
+                )
+                if admin_row and admin_row.get("phone"):
+                    recips = [admin_row["phone"]]
+            if not recips:
+                logger.warning(
+                    "[widget-chat] escalation for tenant=%s but no sms_"
+                    "escalation_recipients configured — SMS not sent.",
+                    tenant["id"],
+                )
+            else:
+                from services.sms.twilio_adapter import send as _twilio_send
+                sms_body = (
+                    f"{tenant_row.get('name') or 'Widget'} chat lead "
+                    f"({cid[:8]}): {who} · {contact_str} — "
+                    f"{body.text[:120]}"
+                )
+                for r in recips[:5]:  # hard cap fan-out
+                    try:
+                        await _twilio_send(
+                            to=r, body=sms_body,
+                            category="transactional",
+                            tenant_id=tenant["id"],
+                            idempotency_key=f"chat-esc:{cid}",
+                        )
+                    except Exception as exc:  # pragma: no cover
+                        logger.warning("[widget-chat] esc SMS %s: %s", r, exc)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("[widget-chat] escalation wiring crashed: %s", exc)
+
     # 9) Persist conversation updates + bump counter.
     await db.widget_chat_conversations.update_one(
         {"id": cid, "tenant_id": tenant["id"]},

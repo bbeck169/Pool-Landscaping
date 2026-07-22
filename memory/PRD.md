@@ -6373,3 +6373,34 @@ Every open slice from initial user roadmap (K frontend, M, N, O, O.2, P, Q, R, L
 - Broader wiring: campaign SMS channel + widget escalation + portal notifications still emit via legacy paths. Adapter itself is production-ready; wiring is mechanical follow-up.
 - QuickBooks Payments — awaiting user credentials.
 
+
+## Phase 3 — Broader Twilio + Resend wiring + Tech Schedule scroll fix (Feb 2026)
+
+### Shipped
+- **M2 campaign SMS** — `services/marketing_campaigns.py` SMS branch now dispatches via `services/sms/twilio_adapter.send()` (was legacy `comms_sms_adapter`). Slice L.h suppression pre-check + adapter-level suppression as belt-and-braces. Idempotency key `m2:{campaign_id}:{sub_id}`. Real message SIDs persisted on `marketing_campaign_sends`.
+- **Widget chat escalation SMS** — `routers/widget_chat.py` fans out an escalation SMS via Twilio adapter (`category=transactional`) to `tenant.sms_escalation_recipients[]` when set, else falls back to the first admin user's phone. Hard cap 5 recipients. No recipients → warning-only, no send.
+- **Portal transactional referral-conversion sends** — Referral-conversion hook (`routers/referral_rewards.py`) now emits BOTH a Resend email AND a Twilio SMS to the referrer with $25 credit note. Delivery rows written to `marketing_deliveries` with `kind="transactional"`, `trigger_entity={kind, id}`, `provider/provider_status/provider_response_id/attempts` populated. Honors new `tenant.allow_transactional_over_suppression` boolean (defaults to True → transactional bypasses `marketing_suppressions`).
+- **Resend From address** — Global default now `cs@plofv.com` across all paths (M5c drip, M6 review, referral conversion, form confirmation). `EMAIL_FROM`/`RESEND_FROM_ADDRESS`/`RESEND_FROM` unified in `.env` + `.env.example`. Per-tenant `from_email` overrides (where existing tenant docs carry one) are PRESERVED — the adapter's global fallback is applied only when the tenant hasn't set an explicit override.
+- **Tech Schedule scroll fix** — `layouts/AppLayout.jsx` `<main>` now carries `min-h-0` to unblock flex-child overflow; `index.css` normalises `html, body, #root { min-height: 100%; }` so the browser scrolls the entire document naturally. No regressions on sticky nav or horizontal schedule-grid scroll.
+
+### Tenant settings added (backward-compatible)
+- `sms_escalation_recipients: string[]` — optional. When absent, escalation SMS falls back to the first admin user's phone. Existing tenants unaffected.
+- `allow_transactional_over_suppression: bool` — defaults to `True`. Existing tenants with this field unset inherit the default; no doc update required.
+
+### Env keys touched
+- `EMAIL_FROM` — value changed from `onboarding@resend.dev` → `cs@plofv.com`
+- `RESEND_FROM` — new alias key added, value `cs@plofv.com`
+- `RESEND_FROM_ADDRESS` — pre-existing, value unchanged (`cs@plofv.com`)
+- All three mirrored in `.env.example` as documentation
+
+### Tests
+- **113/113 pytest green** (108 prior + 5 new Phase-3 tests: from-address assertion, M2 SMS routing guard, widget escalation wiring guard, referral end-to-end delivery-row assertion, delivery-row provider metadata guard). No regressions.
+
+### API contract
+- No new endpoints. Existing `/api/openapi.json` still reachable and unchanged (except for auto-derived tenant-setting fields).
+
+### Deferred (not in this phase)
+- Widget escalation email (only SMS wired). Adapter is production-ready — call one line adds the email fan-out if needed.
+- Portal transactional wiring for `estimate_sent`, `invoice_sent`, `invoice_paid`, `appointment_reminder` is not yet in place; hooks land on their respective controllers when those event paths ship. Referral conversion is the reference implementation.
+- QuickBooks Payments — still awaiting user credentials.
+
