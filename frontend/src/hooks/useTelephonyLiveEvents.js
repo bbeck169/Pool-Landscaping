@@ -27,6 +27,11 @@ export default function useTelephonyLiveEvents() {
   React.useEffect(() => {
     if (!user) return undefined;
     if (!INBOUND_ROLES.has(user.role)) return undefined;
+    // Phase 6B · Feb 2026 — per-user opt-out. Admins/managers can
+    // silence the inbound-call toast via
+    // ``users.settings.suppress_inbound_call_toasts = true`` (surfaced
+    // in Profile → Notifications).
+    if (user?.settings?.suppress_inbound_call_toasts === true) return undefined;
     const base = process.env.REACT_APP_BACKEND_URL;
     if (!base) return undefined;
 

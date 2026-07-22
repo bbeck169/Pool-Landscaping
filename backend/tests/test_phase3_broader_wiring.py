@@ -55,9 +55,9 @@ def test_from_address_is_plofv():
 
 
 # ── M2 SMS dispatch — code-inspection guard ─────────────────────────
-def test_m2_sms_routes_through_twilio_adapter():
+def test_m2_sms_routes_through_rc_adapter():
     src = open("/app/backend/services/marketing_campaigns.py").read()
-    assert "from services.sms.twilio_adapter import send" in src
+    assert "from services.sms.rc_adapter import send" in src
     assert '"m2:' in src or "'m2:" in src  # idempotency key namespace
 
 
@@ -65,7 +65,7 @@ def test_m2_sms_routes_through_twilio_adapter():
 def test_widget_escalation_sms_wiring():
     src = open("/app/backend/routers/widget_chat.py").read()
     assert "sms_escalation_recipients" in src
-    assert "twilio_adapter" in src
+    assert "rc_adapter" in src
 
 
 # ── Referral conversion end-to-end → transactional delivery rows ────
@@ -113,7 +113,7 @@ def test_referral_conversion_records_transactional_deliveries(
         )
         for r in rows:
             assert r["kind"] == "transactional"
-            assert r["provider"] in ("resend", "twilio", "mock")
+            assert r["provider"] in ("resend", "ringcentral", "mock")
             assert r["provider_status"] in (
                 "sent", "mocked", "suppressed", "failed",
             )

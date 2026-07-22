@@ -77,7 +77,7 @@ async def send_invoice_sms(iid: str, body: InvoiceSmsIn,
     ``TWILIO_AUTH_TOKEN`` directly and returned ``twilio-not-configured``
     when it was blank, even though this tenant uses API-key auth
     (``TWILIO_API_KEY_SID`` + ``TWILIO_API_KEY_SECRET``). All SMS traffic
-    now funnels through ``services/sms/twilio_adapter.send`` which
+    now funnels through ``services/sms/rc_adapter.send`` which
     understands both auth modes and never raises.
     """
     inv = await db.quotes.find_one({"id": iid, "tenant_id": tenant["id"]}, {"_id": 0})
@@ -96,7 +96,7 @@ async def send_invoice_sms(iid: str, body: InvoiceSmsIn,
         f"Invoice {iid[:8].upper()} for {inv.get('customer_name', '')}: ${inv.get('total', 0):.2f}. "
         f"Pay online: {inv.get('payment_link') or 'link pending'}"
     )
-    from services.sms.twilio_adapter import send as _sms_send
+    from services.sms.rc_adapter import send as _sms_send
     res = await _sms_send(
         to=to, body=body_txt,
         category="transactional", tenant_id=tenant["id"],

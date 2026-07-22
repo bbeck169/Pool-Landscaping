@@ -1,16 +1,12 @@
-"""Phase 5A hot-fix · Feb 2026 — legacy Stripe/Twilio consolidation.
+"""Phase 5A hot-fix · Feb 2026 — legacy Stripe/RingCentral consolidation.
 
 Guardrails
 ==========
 1. **No direct SDK instantiation outside the shipped adapters.** Any
    ``twilio.rest.Client(`` or ``stripe.PaymentIntent.create`` call
-   outside ``services/sms/twilio_adapter.py`` +
-   ``routers/payments_stripe_live.py`` + ``routers/stripe_webhooks_live.py``
-   + ``routers/stripe_admin.py`` + ``routers/stripe_payments.py`` +
-   ``routers/customer_portal.py`` is a regression. The legacy Phase-53
-   Stripe routers are grandfathered because they still service the
-   admin reconciliation surface and the ACH SetupIntent portal; they
-   are NOT reachable from the invoice Pay Now flow anymore.
+   outside the shipped adapters + Phase 4B routers is a regression.
+   Phase 7B (Feb 2026) fully removed Twilio; any lingering
+   ``import twilio`` is now a regression too.
 2. **The invoice Pay Now button routes through Phase 4B.** Hitting
    ``POST /api/payments/create-payment-intent`` for the seeded Brian
    Beckman invoice must NEVER return ``{reason: "stripe_error"}`` — it
@@ -18,14 +14,11 @@ Guardrails
    Stripe), a 400 "not payable" (draft invoice), or a 502
    AuthenticationError body from the Phase 4B endpoint. Anything else
    means the legacy path re-emerged.
-3. **Twilio invoice-SMS uses the shipped adapter.** Hitting
+3. **Invoice-SMS uses the shipped adapter.** Hitting
    ``POST /api/invoices/{iid}/send-sms`` must funnel through
-   ``services/sms/twilio_adapter.send`` (API-key auth aware) rather
-   than the direct ``twilio.rest.Client(sid, auth_token)`` path that
-   returned ``twilio-not-configured`` when only the API-key pair was
-   set. The pytest asserts by inspecting the response body — the
-   ``twilio-not-configured`` reason is only allowed when the adapter
-   itself is disabled (mock mode), never when API keys ARE set.
+   ``services/sms/rc_adapter.send`` (RingCentral). The
+   ``sms-not-configured`` sentinel is only allowed when the adapter is
+   in mock mode; never when RC env is populated.
 """
 from __future__ import annotations
 
@@ -43,7 +36,7 @@ BACKEND_ROOT = Path("/app/backend")
 
 # ─── Grep-based guardrail #1 — no direct SDK instantiation outside allow-list
 _ADAPTER_ALLOW_LIST = {
-    "services/sms/twilio_adapter.py",       # Twilio API-key / auth-token client
+    "services/sms/rc_adapter.py",            # Phase 7B — RingCentral SMS adapter
     "routers/payments_stripe_live.py",       # Phase 4B PaymentIntent + refund
     "routers/stripe_webhooks_live.py",       # Phase 4B webhook handler
     # Legacy admin surfaces still need direct SDK access — grandfathered:
@@ -52,7 +45,6 @@ _ADAPTER_ALLOW_LIST = {
     "routers/customer_portal.py",            # ACH SetupIntent + Financial Connections
     "routers/dunning.py",                    # Stripe PaymentLink for reminder emails
     "services/stripe_client.py",             # module-level SDK loader
-    "routers/resend_webhooks.py",            # Twilio RequestValidator (webhook sig only)
 }
 
 
@@ -90,10 +82,26 @@ def test_no_direct_sdk_calls_outside_adapters():
     findings = _grep_direct_sdk_calls()
     assert not findings, (
         "Direct Twilio/Stripe SDK calls detected outside the shipped adapters. "
-        "Route through services/sms/twilio_adapter.send or "
+        "Route through services/sms/rc_adapter.send or "
         "routers/payments_stripe_live.py:\n" +
         "\n".join(f"  {p}:{n} → {t}" for p, n, t in findings)
     )
+
+
+def test_twilio_package_fully_removed():
+    """Phase 7B — nothing anywhere in the codebase may import twilio."""
+    r = subprocess.run(
+        ["grep", "-rn", "--include=*.py",
+          "-e", "^import twilio", "-e", "^from twilio",
+          str(BACKEND_ROOT)],
+        capture_output=True, text=True,
+    )
+    # Filter out any leftover comments / doctest strings just in case.
+    real = [
+        line for line in (r.stdout or "").splitlines()
+        if "__pycache__" not in line and "/tests/" not in line
+    ]
+    assert not real, "twilio imports still present:\n" + "\n".join(real)
 
 
 # ─── Guardrail #2 — Pay Now never returns "stripe_error"
@@ -151,18 +159,14 @@ def test_pay_now_endpoint_never_returns_stripe_error():
     assert r.status_code in (200, 400, 502), r.text
 
 
-# ─── Guardrail #3 — Twilio invoice-SMS routes through the adapter
+# ─── Guardrail #3 — Invoice-SMS routes through the RC adapter
 def test_invoice_send_sms_does_not_false_report_not_configured():
-    """Regression guard: with the account using API-key auth (SID +
-    API_KEY_SID + API_KEY_SECRET set, AUTH_TOKEN blank) the invoice
-    SMS endpoint must NOT return ``twilio-not-configured`` — the
-    shipped adapter recognises the API-key pair."""
-    api_key_sid = os.environ.get("TWILIO_API_KEY_SID") or ""
-    api_key_secret = os.environ.get("TWILIO_API_KEY_SECRET") or ""
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID") or ""
-    from_number = os.environ.get("TWILIO_FROM_NUMBER") or ""
-    if not (account_sid and from_number and api_key_sid and api_key_secret):
-        pytest.skip("Adapter is intentionally in mock mode in this env")
+    """Phase 7B regression guard: with RC env populated the invoice
+    SMS endpoint must NOT return an ``sms-not-configured`` sentinel —
+    the shipped RC adapter is now the only SMS path."""
+    if not (os.environ.get("RC_CLIENT_ID") and os.environ.get("RC_JWT")
+            and os.environ.get("RC_SMS_DEFAULT_FROM")):
+        pytest.skip("RC adapter intentionally in mock mode in this env")
 
     inv_id = _brian_invoice_id()
     if not inv_id:
@@ -171,12 +175,14 @@ def test_invoice_send_sms_does_not_false_report_not_configured():
     r = requests.post(
         f"{API}/invoices/{inv_id}/send-sms",
         headers=_hdr(tok),
-        json={"to": "+15005550006", "message": "phase5a probe"},
+        json={"to": "+15005550006", "message": "phase7b probe"},
         timeout=25,
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    # False-negative sentinel must be gone — either sent=True, or a
-    # real Twilio error message (invalid magic testing number, etc.)
-    # but never ``twilio-not-configured`` while API-keys ARE set.
-    assert body.get("reason") != "twilio-not-configured", body
+    # False-negative sentinels must be gone. Real send may fail with
+    # a downstream RC error (invalid destination etc.); that's fine —
+    # we're only guarding against the "adapter not wired" sentinel.
+    assert body.get("reason") not in (
+        "twilio-not-configured", "sms-not-configured",
+    ), body

@@ -6524,3 +6524,30 @@ are stored in `ringcentral_subscriptions` alongside legacy rows.
 - Frontend `<ClickToCallButton>` + `/settings/telephony` admin page — code path is ready via `/api/rc/call` + `/api/rc/log-outbound`; wire-up scoped to next pass.
 - Per-tenant RC credentials (currently env-based; TODO in `services/ringcentral/rc_client.py`).
 - Missed-call SMS fanout: shipped in the new webhook handler in `routers/ringcentral_jwt.py::_upsert_call_log` but the LIVE webhook still routes to Phase-54's `routers/ringcentral.py::/webhook`. Consolidate in next pass so the new missed-call trigger fires on prod traffic.
+
+## 2026-07-22 · Feb 2026 · Session recap
+
+### Ops changes
+- **Twilio → RingCentral cutover** complete (Phase 7B). All SMS traffic goes through `services/sms/rc_adapter.py` targeting RC extension `746987018`, from-number `+16028874400`. `twilio` Python package removed, `TWILIO_*` env vars stripped, `services/sms/twilio_adapter.py` deleted, all previously-Twilio-mocked tests now mock the RC HTTPX path.
+- **Voice caller ID** defaults to `+16028874400` for outbound RingOut. Priority chain: body → user.phone → tenant.rc_voice_caller_id_number → tenant.rc_sms_from_number → env RC_VOICE_DEFAULT_FROM → tenant.support_phone_number.
+- **Stripe key-health alert** SMS path now gated on `RC_CLIENT_ID` + `RC_JWT` (was `TWILIO_ACCOUNT_SID`). Rehearsal proves aquaterra receives RC message id, not Twilio SID.
+- **Pay Now magic link** hotfix — emailed URLs now hit `/pay/invoice/<id>?token=<jwt>` (public magic-link viewer) instead of the base app URL that redirected to login.
+
+### Features shipped
+- **Phase 6B — RingCentral inbound-call auto-toast** — SSE stream at `GET /api/rc/live-events` (admin/manager gated, session-id dedup with 60s TTL), `ClickToCallButton` on Customer/Job/Workstream detail + TelephonyPage, per-user opt-out via `users.settings.suppress_inbound_call_toasts`, rate limit 20/min per user on `POST /api/rc/call`.
+- **Phase 8 — Leads system overhaul** — new statuses (New/Contacted/Quoted/Closed Won/Closed Lost/On Hold), timeline arrays on every mutation, source tagging, filter/search/pagination on `GET /api/leads`, `POST /api/leads/{id}/close-won` with idempotent conversion pipeline (customer merge-or-create + notes/timeline copy + welcome email + welcome SMS + M5c drip enrollment), `POST /api/leads/{id}/close-lost` with mandatory reason, `POST /api/leads/{id}/note`, `POST /api/public/leads` (Origin + Turnstile + per-IP rate limit).
+
+### Frontend routes added
+- `/leads` (Phase 8 dashboard, replaces GapClosures placeholder)
+- `/leads/:id` (Lead detail with 3-column layout + close-won/close-lost dialogs)
+- `/public/leads` (customer-facing quote intake form)
+- `/settings/telephony` (RC admin ping + subscriptions + call log)
+
+### Test count delta
+- +81 targeted tests (all green): 8 phase6 + 12 phase6b + 9 phase7a + 17 phase7b-adapter + 11 phase7b-cutover + 4 slice-5a + 5 phase3-broader-wiring + 5 pay-now + 16 phase8-leads. No prior-green tests regressed.
+
+### Backlog (P0 → P2)
+- P1: Mirror Phase 8 lead intake into `/app/mobile/` (deferred per session rules).
+- P1: Wire `sms_inbound` collection consumers — inbound SMS notifications for admin/manager toasts.
+- P2: Merge preview UI on Close Won (show existing customer before commit).
+- P2: QuickBooks Integration — awaiting user credentials.

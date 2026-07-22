@@ -169,6 +169,8 @@ import { RealtimeProvider } from "@/realtime/NotificationSocket";
 import AnalyticsPage from "@/pages/analytics/AnalyticsPage";
 import OnboardingPage from '@/pages/onboarding/OnboardingPage';
 import LeadRequestPage from "@/pages/leads/LeadRequestPage";
+import LeadDetail from "@/pages/leads/LeadDetail";
+import PublicLeadIntake from "@/pages/public/PublicLeadIntake";
 import PublicLeadRequestPage from "@/pages/public/PublicLeadRequest";
 import WidgetDemoPage from "@/pages/widget/WidgetDemoPage";
 import MarketingFormsPage from "@/pages/marketing/MarketingFormsPage";
@@ -295,6 +297,8 @@ export default function App() {
           <Route path="/portal/sign/:token" element={<PortalSignPage />} />
           {/* Phase 15B slot-in — Lead Request public form (no auth) */}
           <Route path="/lead-request/:token" element={<PublicLeadRequestPage />} />
+          {/* Phase 8 · Feb 2026 — public leads intake (Turnstile-gated) */}
+          <Route path="/public/leads" element={<PublicLeadIntake />} />
 
           {/* Reviews Subsystem · Phase 2 — public flows (no auth) */}
           <Route path="/reviews/r/:token" element={<PublicReviewLanding />} />
@@ -391,6 +395,9 @@ export default function App() {
             <Route path="admin/marketing/suppressions" element={<AdminOnly><MarketingSuppressionsPage /></AdminOnly>} />
             <Route path="admin/marketing/forms" element={<AdminOnly><MarketingFormsPage /></AdminOnly>} />
             <Route path="admin/leads" element={<AdminOnly><LeadsDashboardPage /></AdminOnly>} />
+            {/* Phase 8 · Feb 2026 — Lead detail (admin + manager) */}
+            <Route path="leads/:id" element={<AdminOnly><LeadDetail /></AdminOnly>} />
+            <Route path="admin/leads/:id" element={<AdminOnly><LeadDetail /></AdminOnly>} />
             <Route path="portal/preferences" element={<PortalPreferences />} />
             <Route path="marketing/reviews" element={<AdminOnly><Reviews /></AdminOnly>} />
             <Route path="marketing/sequences" element={<AdminOnly><SequencesList /></AdminOnly>} />
@@ -618,7 +625,9 @@ export default function App() {
             <Route path="avg-job-time" element={<OpsHub />} />
 
             {/* Phase 13 parity-gap closures */}
-            <Route path="leads" element={<AdminOnly><LeadsList /></AdminOnly>} />
+            {/* Phase 8 · Feb 2026 — /leads points at the real dashboard,
+                replacing the pre-Phase-8 GapClosures placeholder. */}
+            <Route path="leads" element={<AdminOnly><LeadsDashboardPage /></AdminOnly>} />
             <Route path="checkins" element={<AdminOnly><CheckinsList /></AdminOnly>} />
 
             {/* Phase 14 additions */}

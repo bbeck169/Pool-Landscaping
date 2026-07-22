@@ -38,6 +38,11 @@ router = APIRouter()
 
 _TELEPHONY_FILTER = "/restapi/v1.0/account/~/telephony/sessions"
 _VOICEMAIL_FILTER = "/restapi/v1.0/account/~/extension/~/message-store"
+# Phase 7B · Feb 2026 — inbound SMS event stream. RingCentral emits
+# message-store `instant` events filtered to ``type=SMS`` when a new
+# SMS arrives on the extension.
+_SMS_FILTER = "/restapi/v1.0/account/~/extension/~/message-store/instant?type=SMS"
+_DEFAULT_EVENT_FILTERS = [_TELEPHONY_FILTER, _VOICEMAIL_FILTER, _SMS_FILTER]
 
 # Phase 6B — roles allowed to subscribe to the inbound-call SSE stream.
 # Coded as a constant so we can add ``dispatcher`` / ``csr`` later with
@@ -198,6 +203,69 @@ async def rc_verify_echo(body: VerifyEchoBody = VerifyEchoBody(),
         "echoed_by_user": user.get("id"),
     }
 
+
+@router.post("/dev/sms-provider-status")
+async def sms_provider_status(user: dict = Depends(get_current_user),
+                                tenant: dict = Depends(get_current_tenant)):
+    """Phase 7B · Feb 2026 — ops sanity check on the SMS provider swap.
+
+    Reports the currently-configured provider, the default from-number,
+    whether the RC extension actually has SMS scope (verified by an
+    online lookup of ``.../phone-number`` filtered to ``SmsSender``),
+    and whether the RC subscription registered for this tenant carries
+    the ``message-store/instant?type=SMS`` filter."""
+    _require_admin(user)
+    # Provider is now hardcoded to RingCentral. The runtime toggle is
+    # deliberately gone — the cutover was definitive.
+    default_from = (
+        os.getenv("RC_SMS_DEFAULT_FROM")
+        or (tenant.get("rc_sms_from_number") or "")
+    )
+    sms_scope_ok = False
+    scope_reason: Optional[str] = None
+    try:
+        pn = await RingCentralService(tenant["id"]).list_extension_phone_numbers()
+        rows = (pn or {}).get("records") or []
+        sms_scope_ok = any(
+            "SmsSender" in (r.get("features") or []) for r in rows
+        )
+        if not sms_scope_ok:
+            scope_reason = "no SmsSender-capable phone on this RC extension"
+    except RingCentralError as e:
+        scope_reason = f"rc {e.status}: {str(e.body)[:200]}"
+    except Exception as e:  # pragma: no cover
+        scope_reason = f"{type(e).__name__}: {e}"
+
+    subscription_includes_sms = False
+    try:
+        sub = await db.ringcentral_subscriptions.find_one(
+            {"tenant_id": tenant["id"]},
+            {"_id": 0, "event_filters": 1, "subscription_id": 1},
+        )
+        if sub:
+            filters = sub.get("event_filters") or []
+            subscription_includes_sms = any(
+                "message-store/instant" in f and "type=SMS" in f
+                for f in filters
+            )
+    except Exception:  # pragma: no cover
+        pass
+
+    return {
+        "provider": "ringcentral",
+        "default_from": default_from,
+        "sms_scope_ok": sms_scope_ok,
+        "sms_scope_reason": scope_reason,
+        "subscription_includes_sms": subscription_includes_sms,
+        "twilio_env_removed": all(
+            not os.getenv(k) for k in (
+                "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
+                "TWILIO_API_KEY_SID", "TWILIO_API_KEY_SECRET",
+                "TWILIO_FROM_NUMBER",
+            )
+        ),
+    }
+
 # Phase 7A · Feb 2026 — RC SMS wiring test. Only registered when
 # ALLOW_TEST_HOOKS=1 so production never exposes it. Never included
 # in real customer-facing surfaces.
@@ -252,7 +320,22 @@ async def rc_call(body: CallBody,
                     tenant: dict = Depends(get_current_tenant)):
     _call_allowed(user)
     await _rate_limit_rc_call(user.get("id") or "anon")
+    # Phase 7A/B · Feb 2026 — resolution priority for outbound caller ID:
+    #   1. Caller-supplied ``body.from_number``
+    #   2. User's own phone (personal DID)
+    #   3. Tenant's configured RC voice caller-ID
+    #      (``tenant.rc_voice_caller_id_number`` → fall back to
+    #      ``tenant.rc_sms_from_number`` for tenants that share one line)
+    #   4. Global env ``RC_VOICE_DEFAULT_FROM``
+    #   5. Legacy ``tenant.support_phone_number``
     from_number = body.from_number or (user.get("phone") or "").strip()
+    if not from_number:
+        from_number = (
+            (tenant.get("rc_voice_caller_id_number") or "").strip()
+            or (tenant.get("rc_sms_from_number") or "").strip()
+        )
+    if not from_number:
+        from_number = (os.getenv("RC_VOICE_DEFAULT_FROM") or "").strip()
     if not from_number:
         from_number = (tenant.get("support_phone_number") or "").strip()
     if not from_number:
@@ -270,6 +353,20 @@ async def rc_call(body: CallBody,
 @router.post("/rc/setup-webhooks")
 async def rc_setup_webhooks(user: dict = Depends(get_current_user),
                              tenant: dict = Depends(get_current_tenant)):
+    """Phase 7B · Feb 2026 — idempotent RC webhook subscription that
+    ALWAYS includes the SMS instant-event filter.
+
+    Behavior:
+    * If a subscription for ``(tenant, url)`` already exists AND its
+      ``event_filters`` set contains every entry in
+      ``_DEFAULT_EVENT_FILTERS``, return early with ``created=False``.
+    * If a subscription exists but is MISSING the SMS filter (legacy
+      Phase-6 subscriptions), CANCEL the stale sub server-side + on
+      RC and CREATE a fresh one with the full filter list. RC's
+      subscription resource does not support atomic filter PATCH for
+      account-scoped subs, so cancel-and-recreate is the cleanest
+      path (documented at platform.ringcentral.com › Subscription API).
+    """
     _require_admin(user)
     url = os.getenv("RC_WEBHOOK_URL") or ""
     vtok = os.getenv("RC_VERIFICATION_TOKEN") or ""
@@ -277,16 +374,32 @@ async def rc_setup_webhooks(user: dict = Depends(get_current_user),
         raise HTTPException(500, "RC_WEBHOOK_URL or RC_VERIFICATION_TOKEN missing")
     existing = await db.ringcentral_subscriptions.find_one(
         {"tenant_id": tenant["id"], "address": url},
-        {"_id": 0, "subscription_id": 1},
+        {"_id": 0, "subscription_id": 1, "event_filters": 1},
     )
     if existing:
-        return {"ok": True, "created": False,
-                 "subscription_id": existing["subscription_id"],
-                 "reason": "already_exists"}
+        current = set(existing.get("event_filters") or [])
+        needed = set(_DEFAULT_EVENT_FILTERS)
+        if needed.issubset(current):
+            return {"ok": True, "created": False,
+                     "subscription_id": existing["subscription_id"],
+                     "reason": "already_exists",
+                     "event_filters": sorted(current)}
+        # Legacy sub — missing SMS filter. Cancel and recreate.
+        stale_sid = existing["subscription_id"]
+        try:
+            await RingCentralService(tenant["id"]).delete_subscription(stale_sid)
+        except RingCentralError as e:
+            # Non-fatal — if RC has already garbage-collected it, just
+            # drop our own row and move on.
+            logger.warning(
+                f"[phase7b] cancel-stale sub {stale_sid} failed: {e.status}"
+            )
+        await db.ringcentral_subscriptions.delete_one(
+            {"tenant_id": tenant["id"], "subscription_id": stale_sid},
+        )
     svc = RingCentralService(tenant["id"])
     try:
-        sub = await svc.create_subscription(url, vtok,
-                                              [_TELEPHONY_FILTER, _VOICEMAIL_FILTER])
+        sub = await svc.create_subscription(url, vtok, _DEFAULT_EVENT_FILTERS)
     except RingCentralError as e:
         raise HTTPException(status_code=502 if e.status >= 500 else e.status,
                              detail=f"RingCentral: {e.body}")
@@ -294,10 +407,11 @@ async def rc_setup_webhooks(user: dict = Depends(get_current_user),
     await db.ringcentral_subscriptions.insert_one({
         "id": new_id(), "tenant_id": tenant["id"],
         "subscription_id": sub_id, "address": url,
-        "event_filters": [_TELEPHONY_FILTER, _VOICEMAIL_FILTER],
+        "event_filters": list(_DEFAULT_EVENT_FILTERS),
         "created_at": now_iso(),
     })
-    return {"ok": True, "created": True, "subscription_id": sub_id}
+    return {"ok": True, "created": True, "subscription_id": sub_id,
+             "event_filters": list(_DEFAULT_EVENT_FILTERS)}
 
 
 @router.get("/rc/subscriptions")

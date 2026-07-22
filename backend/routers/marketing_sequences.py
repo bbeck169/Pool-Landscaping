@@ -391,7 +391,7 @@ async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, i
                 provider_status = "failed"
         elif step["channel"] == "sms":
             try:
-                from services.sms.twilio_adapter import send as _twilio_send
+                from services.sms.rc_adapter import send as _twilio_send
                 res = await _twilio_send(
                     to=(cust.get("phone") or "").strip(),
                     body=body,

@@ -1211,7 +1211,7 @@ async def _send_recap_sms(customer: dict, plain: str) -> dict:
     if not to:
         return {"sent": False, "mocked": True,
                  "reason": "customer has no phone on file"}
-    from services.sms.twilio_adapter import send as _sms_send
+    from services.sms.rc_adapter import send as _sms_send
     res = await _sms_send(
         to=to, body=plain[:1500], category="transactional",
         customer_id=customer.get("id"),

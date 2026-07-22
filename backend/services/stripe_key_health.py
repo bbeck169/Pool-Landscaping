@@ -258,11 +258,18 @@ async def _alert_tenant(tenant: dict, ping: Dict[str, Any], ts_iso: str) -> Dict
             except Exception as exc:  # pragma: no cover
                 logger.warning(f"[stripe-key-alert] email send failed: {exc}")
 
-    twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID") or ""
-    if not twilio_sid:
-        logger.warning("[stripe-key-alert] TWILIO_ACCOUNT_SID missing — SMS fanout skipped")
+    # Phase 7B · Feb 2026 — SMS fanout gate now checks the RingCentral
+    # config (was TWILIO_ACCOUNT_SID pre-cutover). Skip the SMS path
+    # only when RC is genuinely unwired; otherwise let the shipped
+    # adapter decide (mock vs live).
+    rc_client_id = os.environ.get("RC_CLIENT_ID") or ""
+    rc_jwt = os.environ.get("RC_JWT") or ""
+    if not (rc_client_id and rc_jwt):
+        logger.warning(
+            "[stripe-key-alert] RC_CLIENT_ID or RC_JWT missing — SMS fanout skipped"
+        )
     else:
-        from services.sms.twilio_adapter import send as _send_sms
+        from services.sms.rc_adapter import send as _send_sms
         for phone in recipients["sms"]:
             try:
                 res = await _send_sms(

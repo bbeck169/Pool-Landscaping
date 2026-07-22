@@ -134,7 +134,7 @@ def send_sms(to: str, body: str) -> bool:
     """Legacy sync-return SMS helper.
 
     Phase 5A hot-fix · Feb 2026 — delegates to the shipped Twilio
-    adapter (``services.sms.twilio_adapter.send``) so API-key auth
+    adapter (``services.sms.rc_adapter.send``) so API-key auth
     is picked up correctly. The adapter is async; we hop threads via
     ``asyncio.run`` (safe here because this helper is invoked from
     sync fire-and-forget code paths like ``notify_customer``).
@@ -144,7 +144,7 @@ def send_sms(to: str, body: str) -> bool:
         return False
     try:
         import asyncio
-        from services.sms.twilio_adapter import send as _sms_send
+        from services.sms.rc_adapter import send as _sms_send
 
         async def _go():
             return await _sms_send(to=to, body=body, category="transactional")

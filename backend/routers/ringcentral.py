@@ -366,6 +366,22 @@ async def _handle_telephony_event(body: Dict[str, Any]) -> None:
             matched_lead = await match_lead_by_phone(None, from_number or to_number)
         except Exception as _e:
             logger.warning(f"[phase6b] lead lookup skipped: {_e}")
+    # Phase 6B · Feb 2026 — SSE broadcast dedup. RC sometimes emits
+    # ``Proceeding`` + ``Setup`` + ``Answered`` events on the same
+    # session_id within a couple seconds. Toasting three times for a
+    # single call is noisy. Track session_ids we've already announced
+    # for 60 seconds and skip repeat broadcasts.
+    global _recent_broadcast_sessions
+    try:
+        _recent_broadcast_sessions
+    except NameError:
+        _recent_broadcast_sessions = {}
+    import time as _tm
+    _cutoff = _tm.monotonic() - 60.0
+    _recent_broadcast_sessions = {
+        k: v for k, v in _recent_broadcast_sessions.items() if v > _cutoff
+    }
+    already_broadcast = bool(session_id and session_id in _recent_broadcast_sessions)
     doc = {
         "id": new_id(),
         "session_id": session_id,
@@ -395,7 +411,7 @@ async def _handle_telephony_event(body: Dict[str, Any]) -> None:
             )
         except Exception as _e:
             logger.warning(f"[phase6b] open balance calc failed: {_e}")
-    if (direction or "").lower() != "outbound" and tenant_id_for_broadcast:
+    if (direction or "").lower() != "outbound" and tenant_id_for_broadcast and not already_broadcast:
         try:
             from services.sse_broker import publish as _sse_publish
             await _sse_publish(tenant_id_for_broadcast, {
@@ -414,6 +430,8 @@ async def _handle_telephony_event(body: Dict[str, Any]) -> None:
                 "open_invoice_total_usd": open_balance_usd,
                 "started_at": doc["started_at"],
             })
+            if session_id:
+                _recent_broadcast_sessions[session_id] = _tm.monotonic()
         except Exception as _e:
             logger.warning(f"[phase6b] sse publish failed: {_e}")
     # Phase 55 — notify tenant admins on inbound call.
@@ -492,11 +510,26 @@ async def _handle_sms_event(body: Dict[str, Any]) -> None:
     msg = inner.get("subject") or inner.get("text") or inner.get("body") or ""
     rc_id = inner.get("id") or body.get("id")
     direction = "inbound" if from_number and to_number else "unknown"
+    # RC emits both directions on the same event stream. Sniff the
+    # ``direction`` field when it's present so outbound status updates
+    # don't get mislabeled as inbound.
+    rc_direction = (inner.get("direction") or "").lower()
+    if rc_direction in ("outbound", "inbound"):
+        direction = rc_direction
     match = await _match_customer_by_phone(None, from_number if direction == "inbound" else to_number)
+    # Phase 7B · Feb 2026 — fallback lead lookup for unknown senders.
+    matched_lead = None
+    if direction == "inbound" and not match:
+        try:
+            from routers.ringcentral_jwt import match_lead_by_phone
+            matched_lead = await match_lead_by_phone(None, from_number)
+        except Exception as _e:
+            logger.warning(f"[phase7b] SMS lead lookup skipped: {_e}")
     doc = {
         "id": new_id(),
-        "tenant_id": (match or {}).get("tenant_id"),
+        "tenant_id": (match or matched_lead or {}).get("tenant_id"),
         "customer_id": (match or {}).get("id"),
+        "lead_id": (matched_lead or {}).get("id"),
         "direction": direction,
         "from_number": from_number, "to_number": to_number,
         "body": msg,
@@ -505,6 +538,73 @@ async def _handle_sms_event(body: Dict[str, Any]) -> None:
         "sent_at": now_iso(),
     }
     await db.sms_messages.insert_one(doc)
+    # Phase 7B · Feb 2026 — also persist to ``sms_inbound`` per the
+    # RC cutover contract. Kept separate from ``sms_messages`` (which
+    # tracks BOTH directions) so consumers can subscribe to inbound
+    # traffic alone via a simpler collection query.
+    if direction == "inbound":
+        try:
+            await db.sms_inbound.insert_one({
+                "id": new_id(),
+                "tenant_id": doc["tenant_id"],
+                "message_id": rc_id,
+                "from_number": from_number,
+                "to_number": to_number,
+                "text": msg,
+                "received_at": now_iso(),
+                "matched_entity": (
+                    "customer" if match
+                    else ("lead" if matched_lead else "unmatched")
+                ),
+                "matched_customer_id": (match or {}).get("id"),
+                "matched_lead_id": (matched_lead or {}).get("id"),
+                "raw_event": inner,
+            })
+        except Exception as _e:
+            logger.warning(f"[phase7b] sms_inbound insert failed: {_e}")
+        # Phase 7B · STOP-keyword auto-suppress — this replaced the
+        # Twilio ``/webhooks/twilio/inbound`` handler. When a customer
+        # replies STOP / UNSUBSCRIBE / QUIT etc. we materialise a
+        # ``marketing_suppressions`` row so our own campaign + drip
+        # senders honor the opt-out even though RC has already stopped
+        # the delivery on their side.
+        try:
+            keyword = (msg or "").strip().upper().split(None, 1)[0] \
+                if (msg or "").strip() else ""
+            if keyword in {"STOP", "STOPALL", "UNSUBSCRIBE",
+                             "CANCEL", "END", "QUIT"} and from_number:
+                # Resolve which tenant owns the ``to_number`` for cases
+                # where we couldn't match sender to a customer.
+                if not doc["tenant_id"] and to_number:
+                    t_row = await db.tenants.find_one(
+                        {"$or": [
+                            {"rc_sms_from_number": to_number},
+                            {"support_phone_number": to_number},
+                        ]},
+                        {"_id": 0, "id": 1},
+                    )
+                    if t_row:
+                        doc["tenant_id"] = t_row["id"]
+                supp_tenant = doc["tenant_id"]
+                if supp_tenant:
+                    existing = await db.marketing_suppressions.find_one({
+                        "tenant_id": supp_tenant, "channel": "sms",
+                        "address": from_number, "category": "all",
+                        "deleted_at": None,
+                    })
+                    if not existing:
+                        await db.marketing_suppressions.insert_one({
+                            "id": new_id(),
+                            "tenant_id": supp_tenant,
+                            "channel": "sms", "address": from_number,
+                            "reason": "stop_reply", "category": "all",
+                            "customer_id": (match or {}).get("id"),
+                            "created_at": now_iso(),
+                            "created_by": "rc_inbound_sms",
+                            "deleted_at": None,
+                        })
+        except Exception as _e:
+            logger.warning(f"[phase7b] STOP-keyword handling failed: {_e}")
     # Phase 55 — notify admins on inbound SMS only.
     if direction == "inbound" and match:
         await _notify_admins(

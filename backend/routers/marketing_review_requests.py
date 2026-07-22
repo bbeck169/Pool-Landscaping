@@ -628,7 +628,7 @@ async def _deliver(rr: Dict[str, Any], now: datetime) -> None:
             provider_status = "failed"
     elif rr["channel"] == "sms":
         try:
-            from services.sms.twilio_adapter import send as _twilio_send
+            from services.sms.rc_adapter import send as _twilio_send
             res = await _twilio_send(
                 to=(cust.get("phone") or "").strip(),
                 body=body,

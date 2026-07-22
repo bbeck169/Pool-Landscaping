@@ -150,7 +150,7 @@ async def _send_receipts(*, tenant_id: str, invoice_id: str,
 
     if phone:
         try:
-            from services.sms.twilio_adapter import send as _send_sms
+            from services.sms.rc_adapter import send as _send_sms
             res = await _send_sms(
                 to=phone, body=sms_body,
                 category="transactional", tenant_id=tenant_id,
@@ -360,7 +360,7 @@ async def _handle_dispute_created(event: dict) -> dict:
 
     for phone in recips:
         try:
-            from services.sms.twilio_adapter import send as _send_sms
+            from services.sms.rc_adapter import send as _send_sms
             res = await _send_sms(
                 to=phone, body=sms,
                 category="transactional", tenant_id=tenant_id,

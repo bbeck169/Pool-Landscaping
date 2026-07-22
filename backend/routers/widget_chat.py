@@ -427,7 +427,7 @@ async def post_widget_message(
                     tenant["id"],
                 )
             else:
-                from services.sms.twilio_adapter import send as _twilio_send
+                from services.sms.rc_adapter import send as _twilio_send
                 sms_body = (
                     f"{tenant_row.get('name') or 'Widget'} chat lead "
                     f"({cid[:8]}): {who} · {contact_str} — "

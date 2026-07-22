@@ -275,7 +275,7 @@ async def fire_referral_conversion_hook(*, tenant_id: str, lead: Dict[str, Any],
 
         if referrer.get("phone"):
             try:
-                from services.sms.twilio_adapter import send as _sms_send
+                from services.sms.rc_adapter import send as _sms_send
                 res = await _sms_send(
                     to=referrer["phone"], body=sms_body,
                     category=cat, tenant_id=tenant_id,

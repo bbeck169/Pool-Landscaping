@@ -260,11 +260,13 @@ class LeadIn(BaseModel):
     name: str
     phone: Optional[str] = ""
     email: Optional[str] = ""
-    source: Optional[str] = "Website"
-    status: Optional[str] = "new"  # new | contacted | quoted | won | lost
+    source: Optional[str] = "admin_manual"
+    status: Optional[str] = "New"
     notes: Optional[str] = ""
     est_value: Optional[float] = 0.0
     address: Optional[str] = ""
+    service_address: Optional[str] = None
+    service_interest: Optional[str] = None  # Pool | Landscape | Both
     lat: Optional[float] = None
     lng: Optional[float] = None
 
@@ -272,6 +274,29 @@ class LeadIn(BaseModel):
 class LeadUpdate(BaseModel):
     status: Optional[str] = None
     notes: Optional[str] = None
+    service_interest: Optional[str] = None
+    service_address: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+
+
+# Phase 8 · Feb 2026 — request models for the leads overhaul.
+class LeadNoteIn(BaseModel):
+    text: str
+
+
+class LeadCloseLostIn(BaseModel):
+    loss_reason: str
+
+
+class PublicLeadIn(BaseModel):
+    name: str
+    email: Optional[str] = ""
+    phone: Optional[str] = ""
+    service_address: Optional[str] = ""
+    service_interest: Optional[str] = None
+    notes: Optional[str] = ""
+    turnstile_token: Optional[str] = None
 
 
 class ItemIn(BaseModel):

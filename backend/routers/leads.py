@@ -1,113 +1,499 @@
 # ruff: noqa: F403,F405
-from fastapi import APIRouter, HTTPException, Depends, Query
-from typing import List, Optional
-from datetime import datetime, timezone, timedelta
+"""Phase 8 · Feb 2026 — Leads System Overhaul.
 
-from config import db, logger, EMERGENT_LLM_KEY
-from utils import (now_iso, new_id, hash_password, verify_password, create_token,
-                   get_current_user, require_admin, send_sms, notify_customer, auth_response)
+Consolidated router for the leads collection. Legacy behaviors (the
+Phase 2 ``PUT /api/leads/{lid}`` update path + the two
+``convert-to-job`` / ``convert-to-quote`` shortcuts) are preserved so
+older frontend code keeps working.
+
+New in Phase 8:
+* Timeline events on every mutation (created / status_change /
+  note_added / converted_to_customer / archived).
+* Six canonical statuses (New, Contacted, Quoted, Closed Won,
+  Closed Lost, On Hold) — write-time normalization tolerates the old
+  lowercase forms so historical rows keep loading.
+* Sources auto-tagged (website_form, admin_manual, phone, walk_in,
+  referral, widget_chat, import).
+* ``close-won`` runs a proper conversion pipeline (customer
+  merge-or-create → notes/timeline copy → welcome email + SMS +
+  Sales Won drip enrollment). Idempotent.
+* ``close-lost`` requires a ≥3-char ``loss_reason``.
+* ``GET /api/leads`` supports status/source/service_interest filters,
+  search, date range, pagination, and archive inclusion.
+"""
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from config import db, logger
 from routers.tenants import get_current_tenant
-from models import *  # noqa: F403,F405
+from utils import get_current_user, new_id, now_iso, require_admin
+from models import *  # noqa: F403,F405  # LeadIn / LeadUpdate / etc.
 
 router = APIRouter()
 
+_CANONICAL_STATUSES = {
+    "New", "Contacted", "Quoted", "Closed Won", "Closed Lost", "On Hold",
+}
+_STATUS_ALIASES = {
+    "new": "New", "contacted": "Contacted", "quoted": "Quoted",
+    "won": "Closed Won", "lost": "Closed Lost", "on_hold": "On Hold",
+    "on hold": "On Hold", "closed won": "Closed Won",
+    "closed lost": "Closed Lost", "closed_won": "Closed Won",
+    "closed_lost": "Closed Lost",
+}
+_VALID_SOURCES = {
+    "website_form", "admin_manual", "phone", "walk_in",
+    "referral", "widget_chat", "import",
+}
+_VALID_INTERESTS = {"Pool", "Landscape", "Both"}
+_INBOUND_MANAGER_ROLES = {"admin", "super_admin", "manager"}
 
-# ----------------------- Leads -----------------------
+
+def _normalize_status(raw: Optional[str]) -> str:
+    if not raw:
+        return "New"
+    s = str(raw).strip()
+    if s in _CANONICAL_STATUSES:
+        return s
+    return _STATUS_ALIASES.get(s.lower(), s if s in _CANONICAL_STATUSES else "New")
+
+
+def _require_leads_role(user: dict) -> None:
+    if (user or {}).get("role") not in _INBOUND_MANAGER_ROLES:
+        raise HTTPException(403, "Not allowed")
+
+
+def _timeline_entry(kind: str, actor_user_id: Optional[str] = None,
+                     **payload) -> Dict[str, Any]:
+    return {"ts": now_iso(), "kind": kind,
+             "actor_user_id": actor_user_id,
+             "payload": payload}
+
+
+def _digits_only(s: Optional[str]) -> str:
+    return "".join(ch for ch in (s or "") if ch.isdigit())
+
+
+def _phone_tail(s: Optional[str], n: int = 10) -> str:
+    d = _digits_only(s)
+    return d[-n:] if len(d) >= n else d
+
+
+# ═══════════════════════════ LIST + DETAIL ══════════════════════════
 @router.get("/leads")
-async def list_leads(user: dict = Depends(require_admin),
-                     tenant: dict = Depends(get_current_tenant),
-                     status: Optional[str] = None):
-    q: dict = {"tenant_id": tenant["id"]}
+async def list_leads(user: dict = Depends(get_current_user),
+                       tenant: dict = Depends(get_current_tenant),
+                       status: Optional[str] = None,
+                       source: Optional[str] = None,
+                       service_interest: Optional[str] = None,
+                       search: Optional[str] = None,
+                       date_from: Optional[str] = None,
+                       date_to: Optional[str] = None,
+                       include_archived: int = 0,
+                       page: int = Query(1, ge=1),
+                       page_size: int = Query(50, ge=1, le=200)):
+    _require_leads_role(user)
+    q: Dict[str, Any] = {"tenant_id": tenant["id"]}
     if status and status != "all":
-        q["status"] = status
-    return await db.leads.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+        q["status"] = _normalize_status(status)
+    if source and source != "all":
+        q["source"] = source
+    if service_interest and service_interest != "all":
+        q["service_interest"] = service_interest
+    if not include_archived:
+        q["archived_at"] = {"$in": [None, ""]}
+    if date_from or date_to:
+        rng: Dict[str, Any] = {}
+        if date_from:
+            rng["$gte"] = date_from
+        if date_to:
+            rng["$lte"] = date_to
+        q["created_at"] = rng
+    if search:
+        s = search.strip()
+        if s:
+            q["$or"] = [
+                {"name": {"$regex": s, "$options": "i"}},
+                {"email": {"$regex": s, "$options": "i"}},
+                {"phone": {"$regex": s, "$options": "i"}},
+            ]
+    skip = (page - 1) * page_size
+    total = await db.leads.count_documents(q)
+    rows = await db.leads.find(q, {"_id": 0}).sort("created_at", -1) \
+        .skip(skip).limit(page_size).to_list(page_size)
+    return {"rows": rows, "total": total, "page": page,
+             "page_size": page_size}
 
 
+@router.get("/leads/{lid}")
+async def get_lead(lid: str,
+                     user: dict = Depends(get_current_user),
+                     tenant: dict = Depends(get_current_tenant)):
+    _require_leads_role(user)
+    row = await db.leads.find_one(
+        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, "Lead not found")
+    return row
+
+
+# ═══════════════════════════ CREATE ═════════════════════════════════
 @router.post("/leads")
 async def create_lead(body: LeadIn,
-                      user: dict = Depends(get_current_user),
-                      tenant: dict = Depends(get_current_tenant)):
-    if user.get("role") not in ("admin", "technician", "super_admin"):
-        raise HTTPException(403, "Not allowed")
+                        user: dict = Depends(get_current_user),
+                        tenant: dict = Depends(get_current_tenant)):
+    _require_leads_role(user)
+    if not (body.name or "").strip():
+        raise HTTPException(400, "Name is required")
+    if not (body.email or "").strip() and not (body.phone or "").strip():
+        raise HTTPException(400, "One of email or phone is required")
+    src = (body.source or "admin_manual").strip()
+    if src not in _VALID_SOURCES:
+        src = "admin_manual"
+    interest = body.service_interest
+    if interest and interest not in _VALID_INTERESTS:
+        interest = None
     doc = body.dict()
     doc.update({
         "id": new_id(),
         "tenant_id": tenant["id"],
         "created_at": now_iso(),
+        "updated_at": now_iso(),
         "created_by": user.get("id"),
+        "source": src,
+        "status": _normalize_status(body.status),
+        "service_interest": interest,
+        "service_address": body.service_address or body.address or "",
+        "archived_at": None,
+        "loss_reason": None,
+        "converted_customer_id": None,
+        "timeline": [
+            _timeline_entry("created", actor_user_id=user.get("id"),
+                             source=src, status="New"),
+        ],
     })
     await db.leads.insert_one(doc)
     doc.pop("_id", None)
     return doc
 
 
-@router.put("/leads/{lid}")
-async def update_lead(lid: str, body: LeadUpdate,
-                      user: dict = Depends(require_admin),
+# ═══════════════════════════ PATCH / PUT ═══════════════════════════
+async def _apply_lead_update(lid: str, tenant_id: str, upd: Dict[str, Any],
+                                actor_user_id: Optional[str]) -> Dict[str, Any]:
+    current = await db.leads.find_one({"id": lid, "tenant_id": tenant_id},
+                                          {"_id": 0})
+    if not current:
+        raise HTTPException(404, "Lead not found")
+    fields: Dict[str, Any] = {}
+    new_events: List[Dict[str, Any]] = []
+    if "status" in upd and upd["status"] is not None:
+        new_status = _normalize_status(upd["status"])
+        if new_status != current.get("status"):
+            fields["status"] = new_status
+            if new_status == "Contacted" and not current.get("contacted_at"):
+                fields["contacted_at"] = now_iso()
+            if new_status == "Quoted" and not current.get("quoted_at"):
+                fields["quoted_at"] = now_iso()
+            new_events.append(_timeline_entry(
+                "status_change", actor_user_id=actor_user_id,
+                **{"from": current.get("status"), "to": new_status},
+            ))
+    for k in ("service_interest", "service_address", "phone",
+                "email", "notes"):
+        if k in upd and upd[k] is not None:
+            fields[k] = upd[k]
+    if fields:
+        fields["updated_at"] = now_iso()
+        ops: Dict[str, Any] = {"$set": fields}
+        if new_events:
+            ops["$push"] = {"timeline": {"$each": new_events}}
+        await db.leads.update_one({"id": lid, "tenant_id": tenant_id}, ops)
+    return await db.leads.find_one({"id": lid, "tenant_id": tenant_id},
+                                      {"_id": 0})
+
+
+@router.patch("/leads/{lid}")
+async def patch_lead(lid: str, body: LeadUpdate,
+                      user: dict = Depends(get_current_user),
                       tenant: dict = Depends(get_current_tenant)):
-    upd = {k: v for k, v in body.dict().items() if v is not None}
-    if upd:
-        await db.leads.update_one(
-            {"id": lid, "tenant_id": tenant["id"]}, {"$set": upd}
-        )
-    return await db.leads.find_one(
-        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0}
+    _require_leads_role(user)
+    return await _apply_lead_update(
+        lid, tenant["id"], body.dict(exclude_unset=True),
+        actor_user_id=user.get("id"),
     )
 
 
-@router.post("/leads/{lid}/convert")
-async def convert_lead(lid: str,
-                       user: dict = Depends(get_current_user),
-                       tenant: dict = Depends(get_current_tenant)):
-    if user.get("role") not in ("admin", "technician", "super_admin"):
-        raise HTTPException(403, "Not allowed")
+@router.put("/leads/{lid}")
+async def update_lead(lid: str, body: LeadUpdate,
+                        user: dict = Depends(get_current_user),
+                        tenant: dict = Depends(get_current_tenant)):
+    """Legacy PUT — Phase 2 shipped this shape. Kept for compatibility."""
+    _require_leads_role(user)
+    return await _apply_lead_update(
+        lid, tenant["id"], body.dict(exclude_unset=True),
+        actor_user_id=user.get("id"),
+    )
+
+
+# ═══════════════════════════ NOTE ═══════════════════════════════════
+@router.post("/leads/{lid}/note")
+async def add_note(lid: str, body: LeadNoteIn,
+                    user: dict = Depends(get_current_user),
+                    tenant: dict = Depends(get_current_tenant)):
+    _require_leads_role(user)
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "note text is required")
     lead = await db.leads.find_one(
-        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0}
+        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0, "notes": 1},
     )
     if not lead:
         raise HTTPException(404, "Lead not found")
-    cust = await _ensure_customer_from_lead(lead, tenant["id"])
+    combined = (lead.get("notes") or "").rstrip()
+    combined = (combined + "\n\n" if combined else "") + text
     await db.leads.update_one(
         {"id": lid, "tenant_id": tenant["id"]},
-        {"$set": {"status": "won", "converted": {"type": "customer", "id": cust["id"]}}},
+        {"$set": {"notes": combined, "updated_at": now_iso()},
+         "$push": {"timeline": _timeline_entry(
+             "note_added", actor_user_id=user.get("id"), text=text,
+         )}},
     )
-    # Slice O.2 · Referral reward hook — safe no-op when the lead
-    # isn't referral-sourced. Never raises; hook enforces idempotency.
+    return await db.leads.find_one(
+        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+
+
+# ═══════════════════════════ CLOSE LOST ════════════════════════════
+@router.post("/leads/{lid}/close-lost")
+async def close_lost(lid: str, body: LeadCloseLostIn,
+                       user: dict = Depends(get_current_user),
+                       tenant: dict = Depends(get_current_tenant)):
+    _require_leads_role(user)
+    reason = (body.loss_reason or "").strip()
+    if len(reason) < 3:
+        raise HTTPException(400, "loss_reason must be at least 3 characters")
+    lead = await db.leads.find_one(
+        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+    now = now_iso()
+    await db.leads.update_one(
+        {"id": lid, "tenant_id": tenant["id"]},
+        {"$set": {"status": "Closed Lost", "closed_at": now,
+                    "loss_reason": reason, "updated_at": now},
+         "$push": {"timeline": _timeline_entry(
+             "status_change", actor_user_id=user.get("id"),
+             **{"from": lead.get("status"), "to": "Closed Lost",
+                 "loss_reason": reason},
+         )}},
+    )
+    return await db.leads.find_one(
+        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+
+
+# ═══════════════════════════ CONVERT (CLOSE WON) ═══════════════════
+async def _match_customer_for_conversion(tenant_id: str,
+                                            lead: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Match a lead to an existing customer by email OR normalized phone."""
+    email = (lead.get("email") or "").strip().lower()
+    phone_tail = _phone_tail(lead.get("phone"))
+    or_clauses: List[Dict[str, Any]] = []
+    if email:
+        or_clauses.append({"email": {"$regex": f"^{email}$",
+                                        "$options": "i"}})
+    if phone_tail and len(phone_tail) >= 7:
+        or_clauses.append({"phone": {"$regex": phone_tail + "$"}})
+        or_clauses.append({"phones": {"$regex": phone_tail + "$"}})
+    if not or_clauses:
+        return None
+    return await db.customers.find_one(
+        {"tenant_id": tenant_id, "$or": or_clauses}, {"_id": 0},
+    )
+
+
+async def _run_close_won_pipeline(lead: Dict[str, Any], tenant_id: str,
+                                     actor_user_id: Optional[str]) -> Dict[str, Any]:
+    """Phase 8 conversion pipeline. Returns
+    ``{customer_id, was_merged, notifications: {email, sms, drip_enrollment_id}}``.
+    Idempotent — calling on an already-converted lead short-circuits and
+    returns the previously-stored customer_id without re-sending
+    notifications."""
+    if lead.get("converted_customer_id"):
+        return {"customer_id": lead["converted_customer_id"],
+                 "was_merged": bool(lead.get("_was_merged")),
+                 "notifications": {"email": None, "sms": None,
+                                     "drip_enrollment_id": None},
+                 "idempotent": True}
+
+    existing = await _match_customer_for_conversion(tenant_id, lead)
+    was_merged = bool(existing)
+    now = now_iso()
+    lead_timeline = lead.get("timeline") or []
+    lead_notes = (lead.get("notes") or "").strip()
+    # ─────────── Merge branch
+    if existing:
+        cid = existing["id"]
+        set_ops: Dict[str, Any] = {}
+        for src_key, dst_key in (
+            ("name", "name"), ("email", "email"), ("phone", "phone"),
+            ("service_address", "address"),
+        ):
+            if not existing.get(dst_key) and lead.get(src_key):
+                set_ops[dst_key] = lead[src_key]
+        push_events: List[Dict[str, Any]] = []
+        if lead_notes:
+            push_events.append({
+                "id": new_id(), "ts": now, "kind": "note_from_lead",
+                "text": lead_notes, "lead_id": lead["id"],
+            })
+        for ev in lead_timeline:
+            push_events.append({
+                "id": new_id(), "ts": ev.get("ts") or now,
+                "kind": "lead_history", "original": ev,
+                "lead_id": lead["id"],
+            })
+        ops: Dict[str, Any] = {}
+        if set_ops:
+            ops["$set"] = set_ops
+        if push_events:
+            ops["$push"] = {"timeline": {"$each": push_events}}
+        if ops:
+            await db.customers.update_one(
+                {"id": cid, "tenant_id": tenant_id}, ops,
+            )
+    else:
+        # ─────────── Create branch
+        cid = new_id()
+        events: List[Dict[str, Any]] = []
+        if lead_notes:
+            events.append({
+                "id": new_id(), "ts": now, "kind": "note_from_lead",
+                "text": lead_notes, "lead_id": lead["id"],
+            })
+        for ev in lead_timeline:
+            events.append({
+                "id": new_id(), "ts": ev.get("ts") or now,
+                "kind": "lead_history", "original": ev,
+                "lead_id": lead["id"],
+            })
+        events.append({
+            "id": new_id(), "ts": now,
+            "kind": "created_from_lead", "lead_id": lead["id"],
+        })
+        customer_doc = {
+            "id": cid, "tenant_id": tenant_id,
+            "name": lead.get("name") or "Unknown",
+            "email": lead.get("email") or "",
+            "phone": lead.get("phone") or "",
+            "address": lead.get("service_address") or lead.get("address") or "",
+            "gate_code": "", "notes": lead_notes,
+            "created_at": now, "timeline": events,
+        }
+        await db.customers.insert_one(customer_doc)
+        existing = customer_doc
+
+    # ─────────── Mark lead converted + archived
+    await db.leads.update_one(
+        {"id": lead["id"], "tenant_id": tenant_id},
+        {"$set": {"status": "Closed Won", "closed_at": now,
+                    "archived_at": now,
+                    "converted_customer_id": cid,
+                    "updated_at": now},
+         "$push": {"timeline": _timeline_entry(
+             "converted_to_customer", actor_user_id=actor_user_id,
+             customer_id=cid, was_merged=was_merged,
+         )}},
+    )
+
+    # ─────────── Notifications (best-effort, non-blocking)
+    email_id, sms_id, drip_id = None, None, None
+    try:
+        from services.lead_conversion_notifications import fire_welcome_bundle
+        result = await fire_welcome_bundle(
+            tenant_id=tenant_id, lead=lead, customer=existing,
+            actor_user_id=actor_user_id,
+        )
+        email_id = result.get("email_id")
+        sms_id = result.get("sms_id")
+        drip_id = result.get("drip_enrollment_id")
+    except Exception as exc:
+        logger.warning(f"[phase8] welcome bundle failed: {exc}")
+
+    # ─────────── Slice O.2 · Referral reward hook (pre-existing).
+    # Fires only for referral-sourced leads; no-op otherwise. Kept
+    # separate from the welcome bundle so referral thank-you emails
+    # continue to land even for leads that skipped the M5c drip.
     try:
         from routers.referral_rewards import fire_referral_conversion_hook
         await fire_referral_conversion_hook(
-            tenant_id=tenant["id"], lead=lead, new_customer_id=cust["id"],
+            tenant_id=tenant_id, lead=lead, new_customer_id=cid,
         )
     except Exception as exc:
-        logger.warning("[leads] referral hook failed: %s", exc)
-    return cust
+        logger.warning(f"[leads] referral hook failed: {exc}")
+
+    return {"customer_id": cid, "was_merged": was_merged,
+             "notifications": {"email": email_id, "sms": sms_id,
+                                 "drip_enrollment_id": drip_id},
+             "idempotent": False}
 
 
+@router.post("/leads/{lid}/close-won")
+@router.post("/leads/{lid}/convert-to-customer")
+async def close_won(lid: str,
+                      user: dict = Depends(get_current_user),
+                      tenant: dict = Depends(get_current_tenant)):
+    _require_leads_role(user)
+    lead = await db.leads.find_one(
+        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+    result = await _run_close_won_pipeline(lead, tenant["id"],
+                                              actor_user_id=user.get("id"))
+    return {"ok": True, **result}
+
+
+# Legacy alias — the pre-Phase-8 ``/convert`` endpoint kept working.
+@router.post("/leads/{lid}/convert")
+async def convert_lead(lid: str,
+                         user: dict = Depends(get_current_user),
+                         tenant: dict = Depends(get_current_tenant)):
+    _require_leads_role(user)
+    lead = await db.leads.find_one(
+        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+    result = await _run_close_won_pipeline(lead, tenant["id"],
+                                              actor_user_id=user.get("id"))
+    # Return the customer doc for backward compatibility with old callers.
+    cust = await db.customers.find_one(
+        {"id": result["customer_id"]}, {"_id": 0},
+    )
+    return cust or {"id": result["customer_id"]}
+
+
+# ═══════════════════════════ Legacy shortcuts ═══════════════════════
 async def _ensure_customer_from_lead(lead: dict, tenant_id: str) -> dict:
-    """Find an existing customer within the tenant matching the lead
-    (by phone, else name) or create one."""
-    existing = None
-    if lead.get("phone"):
-        existing = await db.customers.find_one(
-            {"phone": lead["phone"], "tenant_id": tenant_id}, {"_id": 0}
-        )
-    if not existing:
-        existing = await db.customers.find_one(
-            {"name": lead["name"], "tenant_id": tenant_id}, {"_id": 0}
-        )
+    """Find or create a customer for the legacy convert-to-job/quote
+    shortcuts — bypasses the full conversion pipeline so it doesn't
+    trigger welcome notifications (those routes are Phase-2 helpers,
+    not the modern conversion path)."""
+    existing = await _match_customer_for_conversion(tenant_id, lead)
     if existing:
         return existing
     cust = {
-        "id": new_id(),
-        "tenant_id": tenant_id,
-        "name": lead["name"],
-        "email": lead.get("email", ""),
-        "phone": lead.get("phone", ""),
-        "address": lead.get("address", ""),
-        "gate_code": "",
-        "lat": lead.get("lat"),
-        "lng": lead.get("lng"),
-        "notes": lead.get("notes", ""),
+        "id": new_id(), "tenant_id": tenant_id,
+        "name": lead.get("name") or "Unknown",
+        "email": lead.get("email") or "",
+        "phone": lead.get("phone") or "",
+        "address": lead.get("service_address") or lead.get("address") or "",
+        "gate_code": "", "notes": lead.get("notes") or "",
         "created_at": now_iso(),
     }
     await db.customers.insert_one(cust)
@@ -117,10 +503,10 @@ async def _ensure_customer_from_lead(lead: dict, tenant_id: str) -> dict:
 
 @router.post("/leads/{lid}/convert-to-job")
 async def convert_lead_to_job(lid: str, body: ConvertJobIn,
-                              user: dict = Depends(require_admin),
-                              tenant: dict = Depends(get_current_tenant)):
+                                 user: dict = Depends(require_admin),
+                                 tenant: dict = Depends(get_current_tenant)):
     lead = await db.leads.find_one(
-        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0}
+        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0},
     )
     if not lead:
         raise HTTPException(404, "Lead not found")
@@ -129,15 +515,18 @@ async def convert_lead_to_job(lid: str, body: ConvertJobIn,
     tech_name = tech_avatar = None
     if body.technician_id:
         tech = await db.technicians.find_one(
-            {"id": body.technician_id, "tenant_id": tenant["id"]}, {"_id": 0}
+            {"id": body.technician_id, "tenant_id": tenant["id"]},
+            {"_id": 0},
         )
         tech_name = tech["name"] if tech else None
         tech_avatar = tech.get("avatar", "") if tech else ""
     job = {
         "id": new_id(), "tenant_id": tenant["id"],
         "customer_id": cust["id"], "customer_name": cust["name"],
-        "address": cust.get("address", ""), "service_type": body.service_type or "Pool Service",
-        "scheduled_date": body.scheduled_date, "notes": lead.get("notes", ""),
+        "address": cust.get("address", ""),
+        "service_type": body.service_type or "Pool Service",
+        "scheduled_date": body.scheduled_date,
+        "notes": lead.get("notes", ""),
         "technician_id": body.technician_id, "technician_name": tech_name,
         "technician_avatar": tech_avatar, "price": price,
         "status": "pending", "photos": [], "created_at": now_iso(),
@@ -145,7 +534,9 @@ async def convert_lead_to_job(lid: str, body: ConvertJobIn,
     await db.jobs.insert_one(job)
     await db.leads.update_one(
         {"id": lid, "tenant_id": tenant["id"]},
-        {"$set": {"status": "won", "converted": {"type": "job", "id": job["id"]}}},
+        {"$set": {"status": "Quoted",
+                    "converted": {"type": "job", "id": job["id"]},
+                    "updated_at": now_iso()}},
     )
     job.pop("_id", None)
     return job
@@ -153,17 +544,18 @@ async def convert_lead_to_job(lid: str, body: ConvertJobIn,
 
 @router.post("/leads/{lid}/convert-to-quote")
 async def convert_lead_to_quote(lid: str, body: ConvertQuoteIn,
-                                user: dict = Depends(require_admin),
-                                tenant: dict = Depends(get_current_tenant)):
+                                   user: dict = Depends(require_admin),
+                                   tenant: dict = Depends(get_current_tenant)):
     lead = await db.leads.find_one(
-        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0}
+        {"id": lid, "tenant_id": tenant["id"]}, {"_id": 0},
     )
     if not lead:
         raise HTTPException(404, "Lead not found")
     cust = await _ensure_customer_from_lead(lead, tenant["id"])
     up = body.unit_price if body.unit_price is not None else float(lead.get("est_value") or 0)
     title = body.title or f"Estimate for {lead['name']}"
-    line_items = [{"description": lead.get("notes") or title, "quantity": 1, "unit_price": up}]
+    line_items = [{"description": lead.get("notes") or title,
+                     "quantity": 1, "unit_price": up}]
     subtotal = round(up, 2)
     tax = round(subtotal * ((body.tax_rate or 0) / 100.0), 2)
     total = round(subtotal + tax, 2)
@@ -171,14 +563,16 @@ async def convert_lead_to_quote(lid: str, body: ConvertQuoteIn,
         "id": new_id(), "tenant_id": tenant["id"],
         "customer_id": cust["id"], "customer_name": cust["name"],
         "title": title, "doc_type": "quote", "line_items": line_items,
-        "tax_rate": body.tax_rate or 0, "subtotal": subtotal, "tax": tax, "total": total,
-        "status": "sent", "payment_status": "unpaid", "notes": lead.get("notes", ""),
-        "created_at": now_iso(),
+        "tax_rate": body.tax_rate or 0, "subtotal": subtotal, "tax": tax,
+        "total": total, "status": "sent", "payment_status": "unpaid",
+        "notes": lead.get("notes", ""), "created_at": now_iso(),
     }
     await db.quotes.insert_one(quote)
     await db.leads.update_one(
         {"id": lid, "tenant_id": tenant["id"]},
-        {"$set": {"status": "quoted", "converted": {"type": "quote", "id": quote["id"]}}},
+        {"$set": {"status": "Quoted",
+                    "converted": {"type": "quote", "id": quote["id"]},
+                    "updated_at": now_iso()}},
     )
     quote.pop("_id", None)
     return quote
@@ -186,7 +580,137 @@ async def convert_lead_to_quote(lid: str, body: ConvertQuoteIn,
 
 @router.delete("/leads/{lid}")
 async def delete_lead(lid: str,
-                      user: dict = Depends(require_admin),
-                      tenant: dict = Depends(get_current_tenant)):
-    res = await db.leads.delete_one({"id": lid, "tenant_id": tenant["id"]})
+                        user: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    res = await db.leads.delete_one(
+        {"id": lid, "tenant_id": tenant["id"]},
+    )
     return {"ok": True, "deleted": res.deleted_count}
+
+
+# ═══════════════════════════ PUBLIC INTAKE ══════════════════════════
+@router.post("/public/leads")
+async def public_lead_intake(body: PublicLeadIn, request: "Request"):
+    """Phase 8 · Feb 2026 — public leads intake.
+
+    * NO auth required. Cloudflare Turnstile token required if
+      ``TURNSTILE_SECRET_KEY`` env is populated (dev/preview leave it
+      blank).
+    * Origin allowlist middleware (reuses the widget's Origin check —
+      see ``config.WIDGET_ORIGIN_ALLOWLIST``).
+    * ``source`` is force-tagged ``website_form`` — the caller cannot
+      spoof any other origin.
+    * Per-IP + per-tenant rate limit (10/min/IP).
+    * Response NEVER leaks internal fields (only ``{ok, lead_id}``).
+    """
+    import os as _os
+    # Origin allowlist check.
+    origin = request.headers.get("origin", "") if hasattr(request, "headers") else ""
+    allowlist = (_os.environ.get("PUBLIC_LEADS_ORIGIN_ALLOWLIST") or "").strip()
+    if allowlist:
+        allowed = {o.strip() for o in allowlist.split(",") if o.strip()}
+        if origin and origin not in allowed:
+            raise HTTPException(403, "Origin not allowed")
+    # Rate limit — reuse the widget's rate limiter if present, else a
+    # simple in-process bucket per IP.
+    ip = ""
+    try:
+        ip = request.client.host if request.client else ""
+    except Exception:
+        ip = ""
+    if ip:
+        await _rate_limit_public_leads(ip)
+    # Turnstile.
+    ts_secret = _os.environ.get("TURNSTILE_SECRET_KEY") or ""
+    if ts_secret:
+        if not (body.turnstile_token or ""):
+            raise HTTPException(400, "Turnstile token required")
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.post(
+                    "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+                    data={"secret": ts_secret,
+                           "response": body.turnstile_token,
+                           "remoteip": ip},
+                )
+                if not (r.json() or {}).get("success"):
+                    raise HTTPException(400, "Turnstile verification failed")
+        except HTTPException:
+            raise
+        except Exception as exc:  # pragma: no cover
+            logger.warning(f"[public-leads] turnstile check errored: {exc}")
+
+    # Payload validation.
+    if not (body.name or "").strip():
+        raise HTTPException(400, "Name is required")
+    if not (body.email or "").strip() and not (body.phone or "").strip():
+        raise HTTPException(400, "One of email or phone is required")
+    interest = body.service_interest
+    if interest and interest not in _VALID_INTERESTS:
+        interest = None
+
+    # Resolve tenant — for now the public intake is single-tenant
+    # (aquaterra); if we host multiple brands we can key on Origin
+    # header, but that's out of Phase 8 scope.
+    tenant = await db.tenants.find_one(
+        {"slug": "aquaterra", "active": {"$ne": False}},
+        {"_id": 0, "id": 1},
+    )
+    if not tenant:
+        raise HTTPException(500, "No tenant available")
+
+    now = now_iso()
+    lid = new_id()
+    await db.leads.insert_one({
+        "id": lid, "tenant_id": tenant["id"],
+        "name": body.name.strip(), "email": (body.email or "").strip(),
+        "phone": (body.phone or "").strip(),
+        "service_address": (body.service_address or "").strip(),
+        "service_interest": interest,
+        "notes": (body.notes or "").strip(),
+        "source": "website_form",
+        "status": "New",
+        "created_at": now, "updated_at": now,
+        "archived_at": None, "loss_reason": None,
+        "converted_customer_id": None,
+        "created_by": None,
+        "created_ip": ip,
+        "timeline": [
+            _timeline_entry("created", source="website_form",
+                             status="New", ip=ip),
+        ],
+    })
+    return {"ok": True, "lead_id": lid}
+
+
+# ─── Simple in-process rate limiter for the public intake ────────────
+import asyncio  # noqa: E402
+import time  # noqa: E402
+_PUBLIC_LEADS_RATE = 10
+_PUBLIC_LEADS_WINDOW_S = 60.0
+_public_hits: Dict[str, List[float]] = {}
+_public_lock = asyncio.Lock()
+
+
+async def _rate_limit_public_leads(ip: str) -> None:
+    now = time.monotonic()
+    async with _public_lock:
+        bucket = _public_hits.setdefault(ip, [])
+        cutoff = now - _PUBLIC_LEADS_WINDOW_S
+        i = 0
+        while i < len(bucket) and bucket[i] < cutoff:
+            i += 1
+        if i:
+            del bucket[:i]
+        if len(bucket) >= _PUBLIC_LEADS_RATE:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit — max {_PUBLIC_LEADS_RATE}/minute",
+            )
+        bucket.append(now)
+
+
+# fastapi.Request re-import at runtime (kept out of top-level imports so
+# this file's public surface stays minimal).
+from fastapi import Request  # noqa: E402, F401

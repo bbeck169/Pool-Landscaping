@@ -44,8 +44,14 @@ export default function LeadsDashboardPage() {
 
   const refresh = () => {
     setLoading(true);
-    api.get("/leads")
-      .then((r) => setRows(Array.isArray(r) ? r : (r?.leads || [])))
+    api.get("/leads?include_archived=1&page_size=200")
+      .then((r) => {
+        // Phase 8 · Feb 2026 — the endpoint now returns
+        // {rows,total,page,page_size}. Legacy callers get an array
+        // fall-through so both shapes render.
+        const arr = Array.isArray(r) ? r : (r?.rows || r?.leads || []);
+        setRows(arr);
+      })
       .catch((e) => setError(e?.message || "Failed to load"))
       .finally(() => setLoading(false));
   };

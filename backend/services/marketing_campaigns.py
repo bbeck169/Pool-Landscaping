@@ -584,7 +584,7 @@ async def dispatch_campaign(tenant_id: str, campaign_id: str) -> Dict[str, Any]:
             # handles E.164, retry, STOP suffix on category=campaign,
             # and a marketing-suppression re-check as belt-and-braces.
             try:
-                from services.sms.twilio_adapter import send as _twilio_send
+                from services.sms.rc_adapter import send as _twilio_send
                 r = await _twilio_send(
                     to=sub["phone"], body=final_sms,
                     category="campaign", tenant_id=tenant_id,
