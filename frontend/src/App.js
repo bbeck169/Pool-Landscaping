@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from "@/auth";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import ScrollToTop from "@/components/ScrollToTop";
+import useTelephonyLiveEvents from "@/hooks/useTelephonyLiveEvents";
 import AppLayout from "@/layouts/AppLayout";
 import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
@@ -204,6 +205,7 @@ import CFOReports from "@/pages/admin/CFOReports";
 import VendorBills from "@/pages/admin/VendorBills";
 import PricingInsights from "@/pages/admin/PricingInsights";
 import RingCentralAdmin from "@/pages/admin/RingCentralAdmin";
+import TelephonyPage from "@/pages/settings/TelephonyPage";
 import TrainingList from "@/pages/training/TrainingList";
 import TrainingModuleDetail from "@/pages/training/TrainingModuleDetail";
 import TrainingQuiz from "@/pages/training/TrainingQuiz";
@@ -280,6 +282,7 @@ export default function App() {
       <ConfirmProvider>
       <BrowserRouter>
         <ScrollToTop />
+        <TelephonyLiveEventsBridge />
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
@@ -476,6 +479,8 @@ export default function App() {
             {/* Phase 54 — RingCentral admin (settings + test + event log) */}
             <Route path="admin/settings/ringcentral" element={<AdminOnly><RingCentralAdmin /></AdminOnly>} />
             <Route path="admin/ringcentral-test" element={<AdminOnly><RingCentralAdmin /></AdminOnly>} />
+            {/* Phase 6B · Feb 2026 — Telephony admin (RingCentral) */}
+            <Route path="settings/telephony" element={<AdminOnly><TelephonyPage /></AdminOnly>} />
             {/* Phase 56.13b — Training web UI */}
             <Route path="tests" element={<TrainingList />} />
             <Route path="training" element={<Navigate to="/tests" replace />} />
@@ -782,4 +787,12 @@ export default function App() {
 function PermissionsBridge({ children }) {
   const { user } = useAuth();
   return <PermissionsProvider user={user}>{children}</PermissionsProvider>;
+}
+
+/** Phase 6B · Feb 2026 — mounts the RingCentral SSE listener at the App
+ *  shell so any admin/manager user gets inbound-call toasts on every
+ *  page. The hook self-gates on role (see useTelephonyLiveEvents.js). */
+function TelephonyLiveEventsBridge() {
+  useTelephonyLiveEvents();
+  return null;
 }

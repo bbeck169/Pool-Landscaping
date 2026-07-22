@@ -35,6 +35,7 @@ import JobCostingPanel from "@/pages/budget/JobCostingPanel";
 import MediaUploader from "@/components/media/MediaUploader";
 import LineItemsSection from "@/pages/jobs/LineItemsSection";
 import TimelineSection from "@/pages/jobs/TimelineSection";
+import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 
 export default function JobDetail() {
   const { id } = useParams();
@@ -212,6 +213,26 @@ export default function JobDetail() {
               <span className="mx-1.5">·</span>
               <MapPin size={12} className="inline" /> {job.address || "—"}
             </p>
+            {/* Phase 6B · Feb 2026 — one-click call to the job's
+                customer. Falls back to tel: for tech mobile-web. */}
+            {(() => {
+              const p =
+                (customer && customer.mobiles && customer.mobiles[0]?.number_e164) ||
+                customer?.phone || job.customer_phone;
+              if (!p) return null;
+              return (
+                <div className="mt-2" data-testid="jd-click-to-call-wrapper">
+                  <ClickToCallButton
+                    phoneNumber={p}
+                    entityKind="job"
+                    entityId={job.id}
+                    label="Call customer"
+                    size="sm"
+                    testIdPrefix="jd-click-to-call"
+                  />
+                </div>
+              );
+            })()}
           </div>
           {isAdmin ? (
             <div className="flex gap-2 flex-wrap">

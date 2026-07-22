@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from '@/theme';
+import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 import {
   PageHeader,
   Button,
@@ -243,6 +244,24 @@ export default function CustomerDetail() {
                 <Trash2 size={14} /> Delete
               </Button>
             </div>
+            {/* Phase 6B · Feb 2026 — one-click RingCentral call */}
+            {(() => {
+              const primary =
+                (customer.mobiles && customer.mobiles[0]?.number_e164) ||
+                customer.phone;
+              if (!primary) return null;
+              return (
+                <div className="mt-1" data-testid="cd-click-to-call-wrapper">
+                  <ClickToCallButton
+                    phoneNumber={primary}
+                    entityKind="customer"
+                    entityId={customer.id}
+                    label={`Call ${customer.name || "customer"}`}
+                    testIdPrefix="cd-click-to-call"
+                  />
+                </div>
+              );
+            })()}
           </div>
         </div>
 

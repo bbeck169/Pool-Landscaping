@@ -31,6 +31,7 @@ import {
 import { api, TOKEN_KEY } from "@/api";
 import { colors } from "@/theme";
 import { toast } from "sonner";
+import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 const BLUE = "#2563EB";
@@ -384,6 +385,20 @@ export default function ServiceLogPage() {
                 </span>
               </div>
             </Row>
+
+            {/* Phase 6B · Feb 2026 — one-click call to service log's customer. */}
+            {d.log_details?.customer_phone ? (
+              <Row style={{ marginBottom: 14 }} data-testid="service-log-click-to-call-wrapper">
+                <ClickToCallButton
+                  phoneNumber={d.log_details.customer_phone}
+                  entityKind="workstream"
+                  entityId={d.log_details?.id || id}
+                  label="Call customer"
+                  size="sm"
+                  testIdPrefix="service-log-click-to-call"
+                />
+              </Row>
+            ) : null}
 
             <Row style={{ marginBottom: 14 }}>
               <CalendarClock size={20} color={BLUE} />

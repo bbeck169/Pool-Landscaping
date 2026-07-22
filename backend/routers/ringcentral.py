@@ -357,6 +357,15 @@ async def _handle_telephony_event(body: Dict[str, Any]) -> None:
     if not (from_number or to_number):
         return
     match = await _match_customer_by_phone(None, from_number or to_number)
+    # Phase 6B — fallback lead lookup when no customer matches. Kept
+    # optional so a bad lookup doesn't drop the call log.
+    matched_lead = None
+    if not match:
+        try:
+            from routers.ringcentral_jwt import match_lead_by_phone
+            matched_lead = await match_lead_by_phone(None, from_number or to_number)
+        except Exception as _e:
+            logger.warning(f"[phase6b] lead lookup skipped: {_e}")
     doc = {
         "id": new_id(),
         "session_id": session_id,
@@ -365,11 +374,48 @@ async def _handle_telephony_event(body: Dict[str, Any]) -> None:
         "direction": direction,
         "customer_id": (match or {}).get("id"),
         "customer_name": (match or {}).get("name"),
-        "tenant_id": (match or {}).get("tenant_id"),
+        "lead_id": (matched_lead or {}).get("id"),
+        "matched_entity": (
+            "customer" if match else ("lead" if matched_lead else "unmatched")
+        ),
+        "tenant_id": (match or matched_lead or {}).get("tenant_id"),
         "started_at": now_iso(),
         "created_at": now_iso(),
     }
     await db.call_logs.insert_one(doc)
+    # Phase 6B — compute open-invoice balance for customer matches and
+    # publish an SSE event so admin/manager clients pop a toast.
+    open_balance_usd = 0.0
+    tenant_id_for_broadcast = (match or matched_lead or {}).get("tenant_id")
+    if match and tenant_id_for_broadcast:
+        try:
+            from routers.ringcentral_jwt import compute_open_invoice_total
+            open_balance_usd = await compute_open_invoice_total(
+                tenant_id_for_broadcast, match["id"],
+            )
+        except Exception as _e:
+            logger.warning(f"[phase6b] open balance calc failed: {_e}")
+    if (direction or "").lower() != "outbound" and tenant_id_for_broadcast:
+        try:
+            from services.sse_broker import publish as _sse_publish
+            await _sse_publish(tenant_id_for_broadcast, {
+                "type": "call.inbound",
+                "call_log_id": doc["id"],
+                "session_id": session_id,
+                "from_number": from_number,
+                "to_number": to_number,
+                "direction": direction,
+                "duration": duration,
+                "matched_entity": doc["matched_entity"],
+                "customer_id": (match or {}).get("id"),
+                "customer_name": (match or {}).get("name"),
+                "lead_id": (matched_lead or {}).get("id"),
+                "lead_name": (matched_lead or {}).get("name"),
+                "open_invoice_total_usd": open_balance_usd,
+                "started_at": doc["started_at"],
+            })
+        except Exception as _e:
+            logger.warning(f"[phase6b] sse publish failed: {_e}")
     # Phase 55 — notify tenant admins on inbound call.
     if match and (direction or "").lower() != "outbound":
         await _notify_admins(
