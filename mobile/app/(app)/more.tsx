@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Switch, Platform } from "react-native";
+import React, { useState } from "react";
+import { View, Text, StyleSheet, ScrollView, Pressable, Switch } from "react-native";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -27,7 +27,6 @@ export default function More() {
   const techLinks = [
     { icon: "apps-outline", label: "All My Tools", onPress: () => router.push("/(app)/tools" as any) },
     { icon: "flask-outline", label: "Pool Calculators", onPress: () => router.push("/(app)/calculators" as any) },
-    { icon: "calculator-outline", label: "Field Estimator", onPress: () => router.push("/(app)/estimator" as any) },
     { icon: "magnet-outline", label: "New Lead", onPress: () => router.push("/leads/new") },
     { icon: "footsteps-outline", label: "Door-to-Door", onPress: () => router.push("/d2d") },
     { icon: "trophy-outline", label: "D2D Leaderboard", onPress: () => router.push("/d2d/leaderboard") },
@@ -52,6 +51,7 @@ export default function More() {
   ];
 
   const adminLinks = [
+    { icon: "pulse-outline", label: "Work Stream", onPress: () => router.push("/workstream") },
     { icon: "calculator-outline", label: "Field Estimator", onPress: () => router.push("/(app)/estimator" as any) },
     { icon: "layers-outline", label: "Inventory", onPress: () => router.push("/(app)/inventory" as any) },
     { icon: "document-text-outline", label: "Check Register", onPress: () => router.push("/(app)/checks/register" as any) },
@@ -70,7 +70,6 @@ export default function More() {
     { icon: "cash-outline", label: "Batch Checks & Payroll CSV", onPress: () => router.push("/(app)/payroll/batch" as any) },
     { icon: "swap-horizontal-outline", label: "Route Coverage", onPress: () => router.push("/coverage") },
     { icon: "time-outline", label: "Timesheets", onPress: () => router.push("/timesheets") },
-    { icon: "pulse-outline", label: "Work Stream", onPress: () => router.push("/workstream") },
     { icon: "bar-chart-outline", label: "Business Reports", onPress: () => router.push("/business-reports") },
     { icon: "bar-chart-outline", label: "Reports", onPress: () => router.push("/reports") },
     { icon: "magnet-outline", label: "Leads", onPress: () => router.push("/leads") },

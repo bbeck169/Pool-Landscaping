@@ -9,8 +9,10 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
+import { useRouter } from "expo-router";
 
 import { api } from "@/src/api";
+import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { ZillowUsageChip, ZillowRateLimitedBanner } from "@/src/components/ZillowUsageChip";
@@ -26,6 +28,11 @@ interface Comp {
 }
 
 export default function PropertyLookup() {
+  const { user } = useAuth();
+  const router = useRouter();
+  // Role gate: techs cannot access Property Lookup (403 from backend anyway)
+  const role = String((user as any)?.role || "");
+
   const [address, setAddress] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -94,6 +101,22 @@ export default function PropertyLookup() {
   const p = result?.property;
   const isMocked = !!result?.mocked;
   const cachedAt = result?.cached_at;
+
+  // Role gate: techs see a "Not available on your role" screen
+  if (role === "technician") {
+    return (
+      <View style={styles.root}>
+        <Header title="Property lookup" />
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }} testID="prop-lookup-role-gate">
+          <Ionicons name="lock-closed" size={36} color={colors.muted} />
+          <Text style={{ fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface, marginTop: 12 }}>Not available on your role</Text>
+          <Pressable onPress={() => router.replace("/(app)")} style={{ marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: radius.md, backgroundColor: colors.brand }}>
+            <Text style={{ fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" }}>Go Home</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.root}>

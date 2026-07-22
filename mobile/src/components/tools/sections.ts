@@ -34,9 +34,7 @@ export const TECH_SECTIONS: ToolSection[] = [
     key: "job",
     title: "On the Job",
     tiles: [
-      { key: "estimator", icon: "calculator-outline", label: "Field Estimator", desc: "Quote on the spot", route: "/(app)/estimator" },
       { key: "calculators", icon: "flask-outline", label: "Pool Calculators", desc: "Dosing · Volume · Salt · LSI", route: "/(app)/calculators" },
-      { key: "property-lookup", icon: "home-outline", label: "Property Lookup", desc: "Owner, lot size, notes (Zillow)", route: "/(app)/property-lookup" },
       { key: "inventory", icon: "layers-outline", label: "Inventory", desc: "Truck stock & re-order alerts", route: "/(app)/inventory" },
       { key: "equipment", icon: "cube-outline", label: "My Equipment", desc: "Assets assigned to me", route: "/(app)/assets" },
       { key: "new-lead", icon: "magnet-outline", label: "New Lead", desc: "Log a walk-in or referral", route: "/(app)/new-lead" },

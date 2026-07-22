@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { View, Text, ScrollView, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { colors } from "@/src/theme";
@@ -10,6 +10,7 @@ import ChecklistSection from "./ChecklistSection";
 import ChemicalReadings from "./ChemicalReadings";
 import ChemicalsAdded from "./ChemicalsAdded";
 import NotesSection from "./NotesSection";
+import { getDailyChecklist } from "@/src/api/serviceLog";
 
 export default function FieldReport({ job, online, onSaved, readOnly }: { job: any; online: boolean; onSaved: (j: any) => void; readOnly: boolean }) {
   const isPool = job.job_type === "pool";
@@ -30,6 +31,38 @@ export default function FieldReport({ job, online, onSaved, readOnly }: { job: a
   });
   const [picker, setPicker] = useState<{ title: string; unit?: string; options: string[]; current: string; onSelect: (v: string) => void } | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Fetch checklist items from backend (source-of-truth).
+  // Merge with per-job completion state from job.checklist.
+  useEffect(() => {
+    const fetchChecklist = async () => {
+      try {
+        const serviceLine = job.service_type || job.job_type || "";
+        const res = await getDailyChecklist(serviceLine || undefined);
+        const backendItems = res.items || [];
+        // Build a map of existing completion state from the job object
+        const doneMap: Record<string, boolean> = {};
+        (job.checklist || []).forEach((c: any) => {
+          const k = c.key || c.label || c.name;
+          doneMap[k] = !!c.done;
+        });
+        // Merge: use backend items as source-of-truth for labels + ordering,
+        // overlay per-job completion state
+        const merged = backendItems.map((item: any) => ({
+          key: item.key,
+          label: item.label,
+          name: item.label,
+          done: doneMap[item.key] || doneMap[item.label] || false,
+        }));
+        setChecklist(merged);
+      } catch {
+        // Fallback to job.checklist if API fails
+        setChecklist(job.checklist || []);
+      }
+    };
+    fetchChecklist();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job.id, job.service_type, job.job_type]);
 
   const save = async (partial: any) => {
     if (!online) {

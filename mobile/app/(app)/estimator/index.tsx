@@ -7,6 +7,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
+import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 
@@ -20,8 +21,12 @@ const STATUS_TONE: Record<string, { bg: string; fg: string }> = {
 
 export default function EstimatorListMobile() {
   const router = useRouter();
+  const { user } = useAuth();
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Role gate: techs see 403 from backend anyway — block here proactively
+  const role = String((user as any)?.role || "");
 
   const load = async () => {
     setLoading(true);
@@ -30,7 +35,23 @@ export default function EstimatorListMobile() {
       setRows(r.items || []);
     } finally { setLoading(false); }
   };
-  useFocusEffect(useCallback(() => { load(); }, []));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useFocusEffect(useCallback(() => { if (role !== "technician") load(); }, []));
+
+  if (role === "technician") {
+    return (
+      <View style={styles.root}>
+        <Header title="Field Estimator" />
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }} testID="estimator-role-gate">
+          <Ionicons name="lock-closed" size={36} color={colors.muted} />
+          <Text style={{ fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface, marginTop: 12 }}>Not available on your role</Text>
+          <Pressable onPress={() => router.replace("/(app)")} style={{ marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: radius.md, backgroundColor: colors.brand }}>
+            <Text style={{ fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" }}>Go Home</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.root}>
