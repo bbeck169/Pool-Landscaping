@@ -6583,3 +6583,38 @@ are stored in `ringcentral_subscriptions` alongside legacy rows.
 - P2: Phase 10 (Promo codes & $25 referral credit).
 - P2: Per-property tracker overrides (currently single-boolean tenant-wide `equipment_service_customer_reminders_enabled`).
 - Deferred flake: `test_heavy_action_debits_more_than_chat` AE credit-debit ratio drift — needs expected-vs-actual verified before adjusting the ratio (not a session unblocker).
+
+## 2026-07-22 · Feb 2026 · Session recap (Verification sweep + Phase 9B Frontend)
+
+### Backend one-line follow-up
+- `POST /api/equipment/trackers` 409 duplicate now returns structured `detail` with `existing_tracker_id` (matches media library 409 shape). +1 pytest updates the shape assertion. All 20 Phase 11 backend tests still green.
+
+### Frontend — Phase 9B rich editor surface (all new files)
+- Components:
+  - `components/marketing/TemplateEditor.jsx` — TipTap email editor (Bold/Italic/Underline/Strike/H1-H3/Bullet/Numbered/Quote/Link/Image/Color+swatches+custom hex/Align/Undo/Redo/Merge-Tag/HTML source `</>`) + SMS mode with GSM-7-aware segment counter (160→70 threshold flip on emoji/Unicode). Exports `computeSmsSegments()` helper.
+  - `components/marketing/MergeTagPalette.jsx` — shadcn Dialog + Command palette, session-cached catalog fetch, collapsible categories, arrow-key nav + Enter to insert, help-icon tooltip per row. `__resetMergeTagCacheForTests()` exported for RTL.
+  - `components/marketing/MediaLibraryPicker.jsx` — Wide grid, drag-drop upload with XHR-tracked progress bar, tag filter chips, right-side detail pane (alt-text editable + chip-tag input + Copy URL + "Use this image").
+- Pages:
+  - `pages/marketing/MarketingTemplatesAdmin.jsx` — Split into `MarketingTemplatesListPage` (default export, table w/ channel/category/active filters + inline active toggle) and `MarketingTemplateDetailPage` (named export, 3-col: meta / editor / preview + test-send + red-chip banner). Debounced preview via `POST /marketing/templates/{id}/preview` on save-with-500ms. Test-send via `POST /marketing/templates/{id}/test-send`; 429 rate-limit surfaced as friendly toast. Body PATCH sends BOTH `body` and `body_html` (server picks the alias whichever is set).
+  - `pages/marketing/MarketingMediaAdmin.jsx` — Bulk-tag / bulk-soft-delete admin page at `/settings/marketing/media` with 409-referenced end-of-run summary.
+- Routes wired in `App.js`:
+  - `/marketing/templates` → new list (was TemplatesHub — moved to `/marketing/templates-hub`)
+  - `/marketing/templates/:id` → new detail
+  - `/settings/marketing/media` → new bulk admin
+- Marketing hub gains a dismissible feature-discovery hint (`localStorage.phase9b_templates_hint_dismissed`) that appears when tenant has ≥5 system templates and 0 custom ones.
+- Zero backend server files touched during the frontend build; only the `existing_tracker_id` one-liner and one pytest edit on the backend.
+
+### Tests
+- Vitest harness bootstrapped (`vitest.config.js`, `src/test/setup.js`). Yarn scripts: `yarn test:unit` / `yarn test:unit:watch`. Deps pinned: `vitest@1.6.1`, `@testing-library/react@16.1.0`, `@testing-library/dom@10.4.0`, `@testing-library/jest-dom@6.6.3`, `@testing-library/user-event@14.5.2`, `jsdom@25.0.1`, `@vitejs/plugin-react@4.3.4`.
+- `src/test/marketing.test.jsx` — 5 focused specs (palette renders categories, insert emits exact `{{TOKEN}}`, GSM-7 vs Unicode segment classification, Unicode threshold flip, unresolved-token strip helper).
+- Total FE tests: **14/14 green** (5 new + 9 pre-existing weather helpers).
+
+### New yarn deps (all pinned)
+Runtime: `@tiptap/react@2.11.5`, `@tiptap/starter-kit@2.11.5`, `@tiptap/extension-image@2.11.5`, `@tiptap/extension-link@2.11.5`, `@tiptap/extension-placeholder@2.11.5`, `@tiptap/extension-color@2.11.5`, `@tiptap/extension-text-align@2.11.5`, `@tiptap/extension-text-style@2.11.5`, `@tiptap/extension-underline@2.11.5`.
+Dev: as listed above.
+
+### Backlog after this session
+- P1: Phase 9 legacy sweep — port M2 campaigns / drips / portal transactional / referrals / review requests to `render_template()` from `services.marketing.merge_tags`.
+- P2: Phase 10 (Promo codes & $25 referral credit).
+- P2: Per-property tracker reminder overrides (single tenant-wide bool for now).
+- Deferred: AE credit-debit ratio flake (`test_heavy_action_debits_more_than_chat`) — needs real expected-vs-actual before we adjust.

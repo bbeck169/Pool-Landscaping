@@ -285,10 +285,18 @@ async def create_tracker(
         "property_id": body.property_id, "tracker_type": body.tracker_type,
     }, {"_id": 0, "id": 1})
     if existing:
+        # Structured detail matches the shape used by the marketing
+        # media library 409s so the frontend can surface a "Jump to
+        # existing tracker" affordance without regex-parsing the msg.
         raise HTTPException(
             409,
-            "A tracker of this type already exists for this customer/property — "
-            "edit the existing one instead.",
+            detail={
+                "message": (
+                    "A tracker of this type already exists for this "
+                    "customer/property — edit the existing one instead."
+                ),
+                "existing_tracker_id": existing["id"],
+            },
         )
 
     last = (body.last_cleaned_at or "").strip() or None

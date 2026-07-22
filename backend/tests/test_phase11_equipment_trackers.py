@@ -133,6 +133,16 @@ def test_create_tracker_duplicate_returns_409():
                                   "last_cleaned_at": date.today().isoformat()},
                            timeout=15)
         assert r.status_code == 409, r.text
+        # Structured 409 detail carries existing_tracker_id so the
+        # frontend can offer a "Jump to existing" affordance without
+        # regex-parsing the human message.
+        body = r.json()
+        detail = body.get("detail")
+        assert isinstance(detail, dict), (
+            f"expected dict detail with existing_tracker_id, got: {body}"
+        )
+        assert detail.get("existing_tracker_id") == t["id"]
+        assert "already exists" in (detail.get("message") or "").lower()
     finally:
         _hard_delete(t["id"])
 

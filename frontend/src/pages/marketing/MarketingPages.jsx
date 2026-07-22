@@ -73,6 +73,7 @@ export function MarketingHub() {
     <div className="p-4 md:p-8 max-w-6xl mx-auto" data-testid="marketing-hub">
       <h1 className="text-3xl md:text-4xl font-bold mb-1" style={{ color: colors.onSurface }}>Marketing Studio</h1>
       <p className="text-sm mb-6" style={{ color: colors.muted }}>AI-powered campaign, post, sequence, and content workflows.</p>
+      <TemplatesFeatureHint />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {tiles.map((t) => (
           <Link key={t.to} to={t.to} className="rounded-2xl p-5 hover:brightness-95 flex items-start gap-3"
@@ -89,6 +90,71 @@ export function MarketingHub() {
           </Link>
         ))}
       </div>
+    </div>
+  );
+}
+
+
+// Phase 9B · Feb 2026 — Feature-discovery hint for the rebuilt Templates
+// admin (TipTap + merge tags). Shows exactly once per user (dismiss
+// stored in localStorage) and ONLY when the tenant has ≥5 system-seeded
+// templates and 0 user-customized ones — i.e. the classic "you have
+// everything defaulted, come try the new editor" scenario.
+function TemplatesFeatureHint() {
+  const [dismissed, setDismissed] = React.useState(
+    typeof window !== "undefined" &&
+      localStorage.getItem("phase9b_templates_hint_dismissed") === "1",
+  );
+  const [shouldShow, setShouldShow] = React.useState(false);
+  React.useEffect(() => {
+    if (dismissed) return;
+    let mounted = true;
+    api.get("/marketing/templates?limit=500").then((res) => {
+      if (!mounted) return;
+      const rows = res.templates || [];
+      const seeded = rows.filter((r) => r.system).length;
+      const custom = rows.filter((r) => !r.system).length;
+      if (seeded >= 5 && custom === 0) setShouldShow(true);
+    }).catch(() => {});
+    return () => { mounted = false; };
+  }, [dismissed]);
+
+  if (dismissed || !shouldShow) return null;
+  return (
+    <div
+      data-testid="templates-feature-hint"
+      className="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 flex items-center gap-3"
+    >
+      <div className="w-9 h-9 rounded-lg bg-blue-100 flex items-center justify-center text-blue-700">
+        <Sparkles size={18} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-semibold text-blue-900">
+          New: rich editor + merge tags
+        </div>
+        <div className="text-xs text-blue-800 mt-0.5">
+          Try editing a welcome email — bold, images, colors, and 60+ merge
+          tags at your fingertips.
+        </div>
+      </div>
+      <Link
+        to="/marketing/templates"
+        className="text-xs font-medium text-blue-700 hover:text-blue-900 underline"
+        data-testid="templates-feature-hint-open"
+      >
+        Open Templates
+      </Link>
+      <button
+        onClick={() => {
+          localStorage.setItem("phase9b_templates_hint_dismissed", "1");
+          setDismissed(true);
+        }}
+        className="text-blue-500 hover:text-blue-900"
+        aria-label="Dismiss hint"
+        data-testid="templates-feature-hint-dismiss"
+      >
+        ✕
+      </button>
     </div>
   );
 }

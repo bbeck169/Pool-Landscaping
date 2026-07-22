@@ -34,6 +34,15 @@
     "@react-google-maps/api": "^2.20.8",
     "@stripe/react-stripe-js": "^6.8.0",
     "@stripe/stripe-js": "^9.10.0",
+    "@tiptap/extension-color": "2.11.5",
+    "@tiptap/extension-image": "2.11.5",
+    "@tiptap/extension-link": "2.11.5",
+    "@tiptap/extension-placeholder": "2.11.5",
+    "@tiptap/extension-text-align": "2.11.5",
+    "@tiptap/extension-text-style": "2.11.5",
+    "@tiptap/extension-underline": "2.11.5",
+    "@tiptap/react": "2.11.5",
+    "@tiptap/starter-kit": "2.11.5",
     "axios": "^1.8.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -66,7 +75,9 @@
   "scripts": {
     "start": "craco start",
     "build": "craco build",
-    "test": "craco test"
+    "test": "craco test",
+    "test:unit": "vitest run --config vitest.config.js",
+    "test:unit:watch": "vitest --config vitest.config.js"
   },
   "browserslist": {
     "production": [
@@ -85,6 +96,11 @@
     "@craco/craco": "^7.1.0",
     "@emergentbase/visual-edits": "https://assets.emergent.sh/npm/emergentbase-visual-edits-1.0.12.tgz",
     "@eslint/js": "9.23.0",
+    "@testing-library/dom": "10.4.0",
+    "@testing-library/jest-dom": "6.6.3",
+    "@testing-library/react": "16.1.0",
+    "@testing-library/user-event": "14.5.2",
+    "@vitejs/plugin-react": "4.3.4",
     "autoprefixer": "^10.4.20",
     "esbuild": "^0.28.1",
     "eslint": "9.23.0",
@@ -93,8 +109,10 @@
     "eslint-plugin-react": "7.37.4",
     "eslint-plugin-react-hooks": "5.2.0",
     "globals": "15.15.0",
+    "jsdom": "25.0.1",
     "postcss": "^8.4.49",
-    "tailwindcss": "^3.4.17"
+    "tailwindcss": "^3.4.17",
+    "vitest": "1.6.1"
   },
   "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }

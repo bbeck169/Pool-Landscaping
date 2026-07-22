@@ -36,6 +36,12 @@ import PortalPhotos from "@/pages/portal/PortalPhotos";
 import PortalReviews from "@/pages/portal/PortalReviews";
 import AdminReviewsPage from "@/pages/admin/AdminReviewsPage";
 import MarketingTemplatesLibraryPage from "@/pages/marketing/MarketingTemplatesLibraryPage";
+// Phase 9B · Feb 2026 — Rebuilt Marketing Templates admin (TipTap +
+// merge-tag palette + media picker + unresolved-token red-chip banner).
+import MarketingTemplatesListPage, {
+  MarketingTemplateDetailPage,
+} from "@/pages/marketing/MarketingTemplatesAdmin";
+import MarketingMediaAdminPage from "@/pages/marketing/MarketingMediaAdmin";
 import MarketingSegmentsPage from "@/pages/marketing/MarketingSegmentsPage";
 import MarketingSequencesPage from "@/pages/marketing/MarketingSequencesPage";
 import MarketingReviewRequestsPage from "@/pages/marketing/MarketingReviewRequestsPage";
@@ -390,8 +396,11 @@ export default function App() {
             <Route path="marketing/calendar" element={<AdminOnly><ContentCalendar /></AdminOnly>} />
             <Route path="marketing/scheduling" element={<AdminOnly><SchedulingConfig /></AdminOnly>} />
             <Route path="marketing/performance" element={<AdminOnly><Performance /></AdminOnly>} />
-            <Route path="marketing/templates" element={<AdminOnly><TemplatesHub /></AdminOnly>} />
+            <Route path="marketing/templates" element={<AdminOnly><MarketingTemplatesListPage /></AdminOnly>} />
+            <Route path="marketing/templates/:id" element={<AdminOnly><MarketingTemplateDetailPage /></AdminOnly>} />
+            <Route path="marketing/templates-hub" element={<AdminOnly><TemplatesHub /></AdminOnly>} />
             <Route path="marketing/template-library" element={<AdminOnly><MarketingTemplatesLibraryPage /></AdminOnly>} />
+            <Route path="settings/marketing/media" element={<AdminOnly><MarketingMediaAdminPage /></AdminOnly>} />
             <Route path="marketing/segments" element={<AdminOnly><MarketingSegmentsPage /></AdminOnly>} />
             <Route path="admin/marketing/sequences" element={<AdminOnly><MarketingSequencesPage /></AdminOnly>} />
             <Route path="admin/marketing/review-requests" element={<AdminOnly><MarketingReviewRequestsPage /></AdminOnly>} />
