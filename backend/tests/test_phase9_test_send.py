@@ -204,6 +204,63 @@ def test_test_send_surfaces_unresolved_tokens_in_response():
         _delete_template(tok, tpl["id"])
 
 
+# ═══════════════════════════ body_html PATCH alias (bug fix) ══════════
+def test_patch_body_html_alias_persists_when_body_missing():
+    """Phase 9 · Feb 2026 — rich-HTML editors on the frontend ship
+    template body under ``body_html``. A stray field name must NEVER
+    silently drop user content. Assert the alias round-trips."""
+    tok = _login("admin@aquaterra.com")
+    tpl = _make_template(tok, channel="email",
+                            subject="Alias test",
+                            body="<p>original</p>")
+    try:
+        new_html = "<h1>Updated via body_html</h1><p>tiptap payload</p>"
+        r = requests.patch(f"{API}/marketing/templates/{tpl['id']}",
+                             headers=_hdr(tok),
+                             json={"body_html": new_html}, timeout=15)
+        assert r.status_code == 200, r.text
+        j = r.json()
+        assert j["body"] == new_html, (
+            f"body_html alias dropped — got {j.get('body')!r}"
+        )
+        # Re-fetch to confirm persistence.
+        g = requests.get(f"{API}/marketing/templates/{tpl['id']}",
+                          headers=_hdr(tok), timeout=15).json()
+        assert g["body"] == new_html
+    finally:
+        _delete_template(tok, tpl["id"])
+
+
+def test_patch_explicit_body_wins_over_body_html_alias():
+    """If a client sends BOTH ``body`` and ``body_html``, the explicit
+    ``body`` must win. Guards against alias-driven data corruption."""
+    tok = _login("admin@aquaterra.com")
+    tpl = _make_template(tok, channel="email",
+                            subject="Precedence test",
+                            body="<p>seed</p>")
+    try:
+        r = requests.patch(f"{API}/marketing/templates/{tpl['id']}",
+                             headers=_hdr(tok),
+                             json={"body": "<p>from body</p>",
+                                    "body_html": "<p>from body_html</p>"},
+                             timeout=15)
+        assert r.status_code == 200, r.text
+        assert r.json()["body"] == "<p>from body</p>"
+    finally:
+        _delete_template(tok, tpl["id"])
+
+
+# ═══════════════════════════ Boot-time import health ══════════════════
+def test_resend_adapter_import_is_at_module_top():
+    """Regression guard — a broken adapter path must fail at BOOT
+    (i.e., FastAPI startup), not silently on the 6th user click.
+    Assert the router module resolves ``_resend_send`` at import
+    time so a rename/move blows up loudly in CI."""
+    from routers import marketing_templates as mt
+    assert hasattr(mt, "_resend_send")
+    assert callable(mt._resend_send)
+
+
 # ═══════════════════════════ Rate limit ═══════════════════════════════
 def test_test_send_rate_limit_kicks_in_at_sixth_call():
     """Runs a fresh admin user in isolation — 5 calls succeed, the

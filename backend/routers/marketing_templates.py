@@ -36,6 +36,10 @@ from services.marketing.merge_tags import (
     catalog_grouped as merge_tags_catalog,
     render_context as build_merge_ctx,
 )
+# Phase 9 · Feb 2026 — canonical outbound email adapter. Imported at
+# module load so a broken path fails FAST at boot instead of only when
+# a user hits the ``test-send`` endpoint.
+from services.email.resend_adapter import send as _resend_send
 
 router = APIRouter()
 
@@ -62,6 +66,12 @@ class TemplatePatch(BaseModel):
     category: Optional[str] = None
     subject: Optional[str] = None
     body: Optional[str] = None
+    # Phase 9 · Feb 2026 — TipTap and other rich-HTML editors on the
+    # frontend send the compiled markup as ``body_html``. Accept it as
+    # a first-class alias for ``body`` so a stray field name never
+    # silently drops user content. If BOTH are supplied, ``body``
+    # wins (explicit trumps alias). See ``patch_template`` below.
+    body_html: Optional[str] = None
     active: Optional[bool] = None
 
 
@@ -210,6 +220,11 @@ async def patch_template(
     if not row:
         raise HTTPException(404, "Template not found")
     patch: Dict[str, Any] = {}
+    # Phase 9 · Feb 2026 — ``body_html`` is a first-class alias for
+    # ``body`` (rich HTML editors ship the payload under that name).
+    # If both are provided, explicit ``body`` wins.
+    if body.body is None and body.body_html is not None:
+        patch["body"] = body.body_html
     for field in ("name", "channel", "category", "subject", "body", "active"):
         val = getattr(body, field)
         if val is not None:
@@ -478,30 +493,30 @@ async def test_send_template(
     # ─── email
     if "@" not in to_field:
         raise HTTPException(400, "Email 'to' must be a valid address")
+    # Phase 9 · Feb 2026 — Resend is the single canonical outbound
+    # email adapter. ``_resend_send`` is imported at module top so a
+    # broken adapter fails at boot, not on the 6th user click. Only
+    # RUNTIME send errors are caught here — never import errors.
     try:
-        # Reuse the transactional emailer used by welcome / invoice paths.
-        try:
-            from emailer import send_transactional_email
-            provider_res = await send_transactional_email(
-                to=to_field,
-                subject=subject_rendered or "(test)",
-                html=body_rendered or "",
-            )
-        except Exception as _e:
-            # Fallback to the Resend adapter directly, if the shim import fails.
-            from services.marketing_email.resend_adapter import send as _resend_send
-            provider_res = await _resend_send(
-                to=to_field, subject=subject_rendered or "(test)",
-                html=body_rendered or "",
-                category="transactional", tenant_id=tenant["id"],
-            )
-    except Exception as exc:  # pragma: no cover
-        provider_res = {"provider": "resend",
-                         "provider_status": "failed",
-                         "provider_response_id": None,
-                         "error": str(exc)}
+        provider_res = await _resend_send(
+            to=to_field, subject=subject_rendered or "(test)",
+            html=body_rendered or "",
+            category="transactional", tenant_id=tenant["id"],
+        )
+    except Exception as exc:
+        logger.exception(
+            "[phase9-test-send] email send raised for template %s to %s",
+            tid, to_field,
+        )
+        provider_res = {
+            "provider": "resend",
+            "provider_status": "failed",
+            "provider_response_id": None,
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+        }
     return {
-        "ok": provider_res.get("provider_status") in ("sent", "queued"),
+        "ok": provider_res.get("provider_status") in ("sent", "queued", "mocked"),
         "channel": "email",
         "recipient": to_field,
         "provider": provider_res.get("provider"),
@@ -511,6 +526,8 @@ async def test_send_template(
         "rendered_body": body_rendered,
         "unresolved_tokens": sorted(set(list(sub_missing) + list(body_missing))),
         "missing_vars": sorted(set(missing)),
+        "error_type": provider_res.get("error_type"),
+        "error_message": provider_res.get("error_message") or provider_res.get("error"),
     }
 
 
