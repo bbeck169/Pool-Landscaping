@@ -104,6 +104,8 @@ export default function More() {
     { icon: "clipboard-outline", label: "My Onboarding", onPress: () => router.push("/(app)/onboarding/mine" as any) },
     { icon: "people-outline", label: "Customers", onPress: () => router.push("/(app)/customers") },
     { icon: "document-text-outline", label: "Quotes & Invoices", onPress: () => router.push("/(app)/quotes") },
+    { icon: "settings-outline", label: "Widget Configs", onPress: () => router.push("/settings/widgets") },
+    { icon: "ban-outline", label: "Suppressions", onPress: () => router.push("/marketing/suppressions") },
   ];
 
   return (

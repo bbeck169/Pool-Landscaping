@@ -26,6 +26,7 @@ const SECTIONS: { key: string; label: string; icon: any; route: string }[] = [
   { key: "documents", label: "Documents", icon: "folder-open-outline", route: "/portal/documents" },
   { key: "request", label: "Work Request", icon: "add-circle-outline", route: "/request-service" },
   { key: "card", label: "Business Card", icon: "id-card-outline", route: "/card" },
+  { key: "referrals", label: "Refer & Earn", icon: "gift-outline", route: "/referrals" },
   { key: "profile", label: "My Profile", icon: "person-outline", route: "/portal/profile" },
 ];
 

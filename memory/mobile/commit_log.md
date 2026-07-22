@@ -156,3 +156,21 @@
   - `mobile/app/(app)/estimator/index.tsx`
   - `mobile/app/(app)/property-lookup.tsx`
 - **Web files referenced**: none (backend API-only integration)
+
+
+## Iteration 9 — Phase 5B: Mobile Parity Tier 2 Backfill
+- **Commit**: fbad81524a3c5b04c7a0ed482bb6bf199dec022a
+- **Date**: 2026-07-22
+- **Changes**:
+  - Wired 9 Tier 2 screens into navigation (referrals, marketing hub, templates, segments, sequences, review-requests, analytics, suppressions, widget configs)
+  - Fixed Expo Router conflict: deleted root `marketing.tsx`, created `marketing/_layout.tsx` Stack layout
+  - Created `settings/_layout.tsx` Stack layout
+  - Added "Refer & Earn" to customer portal SECTIONS
+  - Added "Widget Configs" and "Suppressions" to admin links in `more.tsx`
+  - Fixed Marketing Studio route in `sections.ts` from `/(app)/marketing` to `/marketing`
+  - Verified role gates (tech blocked from marketing with "Not authorized" screen)
+  - All lint clean across all 9 screen files
+  - Deferred "Next Job" card (backend 404 on `GET /api/jobs/next`)
+- **Files modified**: `app/marketing/_layout.tsx` (new), `app/settings/_layout.tsx` (new), `app/portal/home.tsx`, `app/(app)/more.tsx`, `src/components/tools/sections.ts`, `app/settings/widgets.tsx`
+- **Files deleted**: `app/marketing.tsx` (route conflict)
+- **Web files referenced**: None (screens were already built by prior agent)
