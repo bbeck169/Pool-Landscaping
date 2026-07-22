@@ -593,26 +593,24 @@ async def delete_lead(lid: str,
 async def public_lead_intake(body: PublicLeadIn, request: "Request"):
     """Phase 8 · Feb 2026 — public leads intake.
 
-    * NO auth required. Cloudflare Turnstile token required if
-      ``TURNSTILE_SECRET_KEY`` env is populated (dev/preview leave it
-      blank).
-    * Origin allowlist middleware (reuses the widget's Origin check —
-      see ``config.WIDGET_ORIGIN_ALLOWLIST``).
-    * ``source`` is force-tagged ``website_form`` — the caller cannot
-      spoof any other origin.
-    * Per-IP + per-tenant rate limit (10/min/IP).
+    * NO auth required.
+    * Cloudflare Turnstile token required when ``TURNSTILE_SECRET_KEY``
+      is populated (unset in dev/preview).
+    * **Origin allowlist enforced (Phase 9 hotfix).** The request MUST
+      carry an ``Origin`` (or ``Referer`` as fallback) that matches
+      either:
+        · ``tenant.widget_allowed_domains`` (shared with the widget),
+          or
+        · ``$PUBLIC_LEADS_ORIGIN_ALLOWLIST`` env (comma-separated),
+      unioned. Empty allowlist == deny-by-default, matching the widget
+      posture. To bypass in local dev, set ``ALLOW_TEST_HOOKS=1``
+      explicitly (logged as a warning so it's obvious in tenant logs).
+    * ``source`` is force-tagged ``website_form``.
+    * Per-IP rate limit (10/min/IP).
     * Response NEVER leaks internal fields (only ``{ok, lead_id}``).
     """
     import os as _os
-    # Origin allowlist check.
-    origin = request.headers.get("origin", "") if hasattr(request, "headers") else ""
-    allowlist = (_os.environ.get("PUBLIC_LEADS_ORIGIN_ALLOWLIST") or "").strip()
-    if allowlist:
-        allowed = {o.strip() for o in allowlist.split(",") if o.strip()}
-        if origin and origin not in allowed:
-            raise HTTPException(403, "Origin not allowed")
-    # Rate limit — reuse the widget's rate limiter if present, else a
-    # simple in-process bucket per IP.
+    # Rate limit (early — cheap check).
     ip = ""
     try:
         ip = request.client.host if request.client else ""
@@ -620,6 +618,61 @@ async def public_lead_intake(body: PublicLeadIn, request: "Request"):
         ip = ""
     if ip:
         await _rate_limit_public_leads(ip)
+
+    # Resolve tenant now so we can consult widget_allowed_domains.
+    tenant = await db.tenants.find_one(
+        {"slug": "aquaterra", "active": {"$ne": False}},
+        {"_id": 0, "id": 1, "widget_allowed_domains": 1},
+    )
+    if not tenant:
+        raise HTTPException(500, "No tenant available")
+
+    # ─────────── Origin allowlist enforcement
+    origin = (request.headers.get("origin") or "").strip()
+    referer = (request.headers.get("referer") or "").strip()
+    x_fwd_origin = (request.headers.get("x-forwarded-origin") or "").strip()
+    env_allow = {o.strip() for o in
+                    (_os.environ.get("PUBLIC_LEADS_ORIGIN_ALLOWLIST") or "").split(",")
+                    if o.strip()}
+    tenant_allow = {d.strip() for d in
+                       (tenant.get("widget_allowed_domains") or [])
+                       if d and d.strip()}
+    allowed = env_allow | tenant_allow
+    if _os.environ.get("ALLOW_TEST_HOOKS") == "1" and not allowed:
+        logger.warning(
+            "[public-leads] Origin allowlist BYPASSED — ALLOW_TEST_HOOKS=1 "
+            "and no allowlist configured. Configure "
+            "tenant.widget_allowed_domains before going to production."
+        )
+    else:
+        if not allowed:
+            raise HTTPException(
+                status_code=403,
+                detail="Origin allowlist not configured for this tenant",
+            )
+        candidates = [c for c in (origin, x_fwd_origin, referer) if c]
+        if not candidates:
+            raise HTTPException(
+                status_code=403,
+                detail="Missing Origin/Referer header",
+            )
+
+        def _matches(candidate: str) -> bool:
+            candidate = candidate.rstrip("/")
+            for a in allowed:
+                a2 = a.rstrip("/")
+                if candidate == a2:
+                    return True
+                # Referer usually has a path suffix — accept startswith
+                # after normalising trailing slash.
+                if candidate.startswith(a2 + "/"):
+                    return True
+            return False
+        if not any(_matches(c) for c in candidates):
+            raise HTTPException(
+                status_code=403,
+                detail="Origin not allowed",
+            )
     # Turnstile.
     ts_secret = _os.environ.get("TURNSTILE_SECRET_KEY") or ""
     if ts_secret:
@@ -649,16 +702,6 @@ async def public_lead_intake(body: PublicLeadIn, request: "Request"):
     interest = body.service_interest
     if interest and interest not in _VALID_INTERESTS:
         interest = None
-
-    # Resolve tenant — for now the public intake is single-tenant
-    # (aquaterra); if we host multiple brands we can key on Origin
-    # header, but that's out of Phase 8 scope.
-    tenant = await db.tenants.find_one(
-        {"slug": "aquaterra", "active": {"$ne": False}},
-        {"_id": 0, "id": 1},
-    )
-    if not tenant:
-        raise HTTPException(500, "No tenant available")
 
     now = now_iso()
     lid = new_id()

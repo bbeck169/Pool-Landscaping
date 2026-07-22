@@ -30,6 +30,12 @@ from services.marketing.render import (
     DEFAULT_SAMPLE_CONTEXT,
     VARIABLES_REGISTRY,
 )
+# Phase 9 · Feb 2026 — uppercase merge-tag catalog + universal renderer.
+from services.marketing.merge_tags import (
+    render_template as render_uppercase_tags,
+    catalog_grouped as merge_tags_catalog,
+    render_context as build_merge_ctx,
+)
 
 router = APIRouter()
 
@@ -80,6 +86,50 @@ async def list_variables(user: dict = Depends(require_admin)):
     """Return the registry of supported Mustache variables so the UI
     can render an insert-variable dropdown."""
     return {"variables": VARIABLES_REGISTRY}
+
+
+@router.get("/marketing/merge-tags")
+async def list_merge_tags(user: dict = Depends(get_current_user)):
+    """Phase 9 · Feb 2026 — canonical UPPERCASE merge-tag catalog.
+
+    Grouped by category (Customer / Company / Estimate / Invoice /
+    Payment / Portal / Event / Employee / System) for the insert-tag
+    palette. Every send-time template can consume any tag returned
+    here via ``{{TOKEN}}`` — case- and whitespace-tolerant."""
+    if user.get("role") not in ("admin", "super_admin", "manager"):
+        raise HTTPException(403, "Not allowed")
+    return {"categories": merge_tags_catalog()}
+
+
+@router.post("/marketing/templates/{tid}/revert")
+async def revert_template(
+    tid: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase 9 · Feb 2026 — restore a system-seeded template from its
+    ``factory_defaults`` snapshot. Available for both system and user-
+    edited-system templates. Non-system templates return 400."""
+    row = await db.marketing_templates.find_one(
+        {"id": tid, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, "Template not found")
+    fd = row.get("factory_defaults") or {}
+    if not fd:
+        raise HTTPException(400, "No factory defaults snapshot for this template")
+    patch = {
+        "name": fd.get("name") or row.get("name"),
+        "channel": fd.get("channel") or row.get("channel"),
+        "category": fd.get("category") or row.get("category"),
+        "subject": fd.get("subject"),
+        "body": fd.get("body") or "",
+        "active": True,
+        "updated_at": now_iso(),
+    }
+    await db.marketing_templates.update_one({"id": tid}, {"$set": patch})
+    row.update(patch)
+    return row
 
 
 @router.get("/marketing/templates")
@@ -246,10 +296,30 @@ async def preview_template(
             else:
                 ctx[k] = v
 
+    # Phase 9 · Feb 2026 — run the UPPERCASE renderer FIRST so
+    # ``{{CUSTOMER_FIRST_NAME}}`` substitutes before the legacy
+    # Mustache pass has a chance to null it out. The legacy pass
+    # then handles any remaining ``{{customer.first_name}}`` dotted
+    # tokens.
+    demo_ctx = build_merge_ctx(
+        customer={
+            "name": ((ctx.get("customer") or {}).get("first_name", "") + " "
+                     + (ctx.get("customer") or {}).get("last_name", "")).strip(),
+            "first_name": (ctx.get("customer") or {}).get("first_name"),
+            "last_name": (ctx.get("customer") or {}).get("last_name"),
+            "email": (ctx.get("customer") or {}).get("email"),
+            "phone": (ctx.get("customer") or {}).get("phone"),
+            "open_balance": (ctx.get("customer") or {}).get("balance_due", 0),
+        },
+        tenant=ctx.get("tenant") or {},
+        invoice=ctx.get("invoice"),
+    )
+    pre_subject, sub_missing = render_uppercase_tags(row.get("subject") or "", demo_ctx)
+    pre_body, body_missing = render_uppercase_tags(row.get("body") or "", demo_ctx)
+    unresolved_tokens = sorted(set(list(sub_missing) + list(body_missing)))
+
     subject_rendered, body_rendered, missing = render_subject_and_body(
-        row.get("subject") or "",
-        row.get("body") or "",
-        ctx,
+        pre_subject, pre_body, ctx,
     )
     # SMS strips any HTML that leaked in from a copy-paste — email
     # keeps it verbatim (email clients render inline HTML).
@@ -260,6 +330,7 @@ async def preview_template(
         "subject_rendered": subject_rendered if row.get("channel") == "email" else None,
         "body_rendered": body_rendered,
         "missing_vars": sorted(set(missing)),
+        "unresolved_tokens": unresolved_tokens,
     }
 
 
@@ -322,6 +393,14 @@ async def seed_marketing_templates_for_tenant(tenant_id: str) -> int:
             "active": True,
             "system": True,       # ``system=true`` templates can be
                                    # duplicated but not hard-deleted.
+            "is_editable": True,   # Phase 9 · Feb 2026 — every
+                                   # template is editable; the old
+                                   # read-only gate is retired.
+            "factory_defaults": {  # Phase 9 · Feb 2026 — snapshot for
+                                   # "Revert to default".
+                "name": name, "channel": channel, "category": category,
+                "subject": subject, "body": body,
+            },
             "created_at": now,
             "updated_at": now,
             "created_by": None,

@@ -26,6 +26,11 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 load_dotenv("/app/backend/.env")
 API = "http://localhost:8001/api"
+# Phase 9 hotfix — public leads route now enforces an Origin allowlist.
+# Aquaterra's ``widget_allowed_domains`` includes this preview URL, so
+# every public-intake test must send a matching Origin header.
+_OK_ORIGIN = "https://poolscape-audit.preview.emergentagent.com"
+_ORIGIN_HDR = {"Origin": _OK_ORIGIN}
 
 _LOOP = asyncio.new_event_loop()
 asyncio.set_event_loop(_LOOP)
@@ -118,36 +123,63 @@ def test_public_intake_happy_path():
     r = requests.post(f"{API}/public/leads", json={
         "name": "Public Prospect", "email": f"pub-{uuid.uuid4().hex[:6]}@example.com",
         "service_interest": "Landscape", "notes": "from website",
-    }, timeout=15)
+    }, headers=_ORIGIN_HDR, timeout=15)
     assert r.status_code == 200, r.text
     j = r.json()
     assert j["ok"] is True
     assert "lead_id" in j
-    # Verify the persisted row was force-tagged website_form.
     async def _check():
         db = _db()
         row = await db.leads.find_one({"id": j["lead_id"]}, {"_id": 0})
         return row
     row = _run(_check())
     assert row["source"] == "website_form"
-    # Response must NOT leak internal fields.
     assert set(j.keys()) == {"ok", "lead_id"}
     _cleanup(lead_ids=[j["lead_id"]])
 
 
 def test_public_intake_missing_name():
     r = requests.post(f"{API}/public/leads",
-                       json={"email": "x@y.com"}, timeout=15)
-    # Pydantic returns 422 on the missing required ``name`` field;
-    # our custom .strip() check inside the handler would return 400
-    # if the field were present-but-blank. Either is acceptable.
+                       json={"email": "x@y.com"},
+                       headers=_ORIGIN_HDR, timeout=15)
     assert r.status_code in (400, 422)
 
 
 def test_public_intake_missing_email_and_phone():
     r = requests.post(f"{API}/public/leads",
-                       json={"name": "Nobody"}, timeout=15)
+                       json={"name": "Nobody"},
+                       headers=_ORIGIN_HDR, timeout=15)
     assert r.status_code == 400
+
+
+# ═══════════════════════════ Phase 9 hotfix — Origin allowlist ═══════
+def test_public_intake_missing_origin_denied():
+    """Phase 9 hotfix — no Origin header at all → 403."""
+    r = requests.post(f"{API}/public/leads",
+                       json={"name": "Sneaky", "email": "a@b.com"},
+                       timeout=15)
+    assert r.status_code == 403, r.text
+
+
+def test_public_intake_disallowed_origin_denied():
+    r = requests.post(f"{API}/public/leads",
+                       json={"name": "Attacker", "email": "a@b.com"},
+                       headers={"Origin": "https://evil.example.com"},
+                       timeout=15)
+    assert r.status_code == 403
+
+
+def test_public_intake_referer_fallback_accepted():
+    """Ingress that strips Origin but preserves Referer must still let
+    a legitimate request through."""
+    r = requests.post(f"{API}/public/leads",
+                       json={"name": "Referer OK",
+                              "email": f"ref-{uuid.uuid4().hex[:6]}@example.com"},
+                       headers={"Referer": _OK_ORIGIN + "/public/leads"},
+                       timeout=15)
+    assert r.status_code == 200, r.text
+    j = r.json()
+    _cleanup(lead_ids=[j["lead_id"]])
 
 
 # ═══════════════════════════ Close Won — create branch ═══════════════
