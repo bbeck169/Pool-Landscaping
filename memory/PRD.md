@@ -6551,3 +6551,35 @@ are stored in `ringcentral_subscriptions` alongside legacy rows.
 - P1: Wire `sms_inbound` collection consumers — inbound SMS notifications for admin/manager toasts.
 - P2: Merge preview UI on Close Won (show existing customer before commit).
 - P2: QuickBooks Integration — awaiting user credentials.
+
+## 2026-07-22 · Feb 2026 · Session recap (Marketing Templates fix + Phase 11 Equipment Trackers)
+
+### Bug fixes (P0/P1)
+- **`test-send` import bug (P0)** — `backend/routers/marketing_templates.py`: removed phantom `from emailer import send_transactional_email` shim (function never existed) and the wrong fallback path `services.marketing_email.resend_adapter`. `from services.email.resend_adapter import send as _resend_send` now imports at module top so a broken adapter blows up at FastAPI boot, not on the 6th user click. Silent `except Exception` swallow removed; only runtime send errors caught, surfaced as `error_type` + `error_message` fields.
+- **Template PATCH `body_html` alias (P1)** — Added `body_html: Optional[str]` to `TemplatePatch`. Alias applies only when `body` is `None` (explicit `body` wins over alias). Prevents TipTap/rich-HTML editor payload loss.
+
+### Features shipped — Phase 11 Equipment Service Trackers
+- **New collection**: `equipment_service_trackers` (unified for filter + salt-cell; future types drop-in). Fields: `tracker_type`, `interval_months`, `last_cleaned_at`, `due_at`, `history[]`, `is_active`. `status_computed` is NEVER stored — derived at query time from `due_at` + `tenant.equipment_service_coming_due_days` (default 30).
+- **Router**: `backend/routers/equipment_trackers.py` — `GET /api/equipment/trackers` (list with filters + counts_by_status), `GET /api/equipment/trackers/{id}`, `POST` (409 dup-guard per customer+property+type), `PATCH` (interval change recomputes `due_at`), `DELETE` (soft), `POST /{id}/mark-cleaned` (rolls forward + appends history).
+- **Auto-log from jobs**: `routers/equipment_trackers.log_cleaning_from_job()` invoked by `routers/jobs.py` when a Filter Cleaning / Salt Cell Cleaning job completes — idempotent, never breaks job completion.
+- **Cron (per-tenant local time)**: `services/equipment_trackers_cron.hourly_scan()` registered as APScheduler `cron minute=0`; iterates tenants and fires only when local weekday=Mon AND local hour=8. Fallback TZ `America/Phoenix`.
+- **Admin digest**: HTML table via Resend adapter (`transactional`), one-per-tenant-per-week dedup via `outbound_emails.kind='equipment_service_digest'`.
+- **Customer reminders**: OFF by default; opt-in via `tenant.equipment_service_customer_reminders_enabled`. Uses Phase-9 uppercase merge tags via `render_template()` (never inline f-strings). Email path via Resend, SMS via RingCentral (`transactional` category).
+- **4 new merge tags**: `EQUIPMENT_TYPE`, `EQUIPMENT_LAST_CLEANED_DATE`, `EQUIPMENT_DUE_DATE`, `EQUIPMENT_INTERVAL_MONTHS` — resolve against `ctx['equipment_tracker']`, empty (+ unresolved) outside that scope.
+
+### Frontend routes added
+- `/tracking/filter` — Filter list page (green Filter icon, green interval chip, red/orange/green due-date only)
+- `/tracking/filter/manage` — Spreadsheet-style editable grid (inline interval, active toggle, delete)
+- `/tracking/salt-cell` — Salt Cell list page (teal Droplets icon)
+- `/tracking/salt-cell/manage` — Same manage layout for salt cells
+- All AdminOnly; `Add tracker` dialog uses existing POST endpoint.
+
+### Test count delta
+- +23 new tests, all green: +3 marketing_templates (body_html alias + explicit-wins-over-alias + module-top import guard), +20 Phase 11 (CRUD, role gates, status_computed derivation, PATCH recompute, mark-cleaned+history, auto-log from job idempotence + noop for non-maintenance, merge tag catalog + render, cron skip-when-nothing-due + fire-when-past-due + hourly TZ-guard). No prior tests regressed.
+
+### Backlog (P0 → P2)
+- P1: Merge-Templates frontend TipTap rich editor (Phase 9B) — MergeTagPalette dialog, MediaLibraryPicker grid, red "Fix missing merge tags" inline banner.
+- P1: Phase 9 legacy sweep — grep-port M2 campaigns / drips / portal transactional / referrals / review requests to `render_template()`.
+- P2: Phase 10 (Promo codes & $25 referral credit).
+- P2: Per-property tracker overrides (currently single-boolean tenant-wide `equipment_service_customer_reminders_enabled`).
+- Deferred flake: `test_heavy_action_debits_more_than_chat` AE credit-debit ratio drift — needs expected-vs-actual verified before adjusting the ratio (not a session unblocker).

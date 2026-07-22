@@ -99,6 +99,7 @@ from routers import (
     checklists,
     workstream_service_log,
     ringcentral_jwt,
+    equipment_trackers,
     marketing_campaigns as marketing_campaigns_router,
 )
 # Phase 9C · Feb 2026 — QuickBooks retirement helper (idempotent
@@ -208,7 +209,8 @@ for module in [notifications_router,
                stripe_webhooks_live,
                checklists,
                workstream_service_log,
-               ringcentral_jwt]:
+               ringcentral_jwt,
+               equipment_trackers]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -533,6 +535,27 @@ async def _background_seed():
             "cron", day_of_week="mon", hour=8, minute=0,
             id="weekly_digest", replace_existing=True)
         logger.info("scheduler: weekly_digest registered (Mondays 08:00 UTC)")
+
+        # Phase 11 · Feb 2026 — Equipment Service Trackers (Filter &
+        # Salt Cell). Hourly scan performs per-tenant local-time dispatch:
+        # for each tenant, if their local weekday is Monday and local
+        # hour is 08, fire the admin digest + optional customer
+        # reminders (the reminder path is OFF by default; tenants opt
+        # in via ``equipment_service_customer_reminders_enabled``).
+        try:
+            from routers.equipment_trackers import ensure_indexes as _est_indexes
+            from services.equipment_trackers_cron import hourly_scan as _est_hourly
+            await _est_indexes()
+            scheduler.add_job(
+                _est_hourly, "cron", minute=0,
+                id="equipment_service_hourly", replace_existing=True,
+            )
+            logger.info(
+                "scheduler: equipment_service_hourly registered "
+                "(per-tenant Mon 08:00 local dispatch)"
+            )
+        except Exception as _ee:
+            logger.warning(f"equipment_service cron registration crashed: {_ee}")
 
         # Comms Phase 3 · Feb 2026 — automation-engine daily sweeps.
         # invoice.overdue (09:00 UTC), customer.birthday (08:00),

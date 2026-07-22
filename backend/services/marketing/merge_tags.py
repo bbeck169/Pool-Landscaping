@@ -161,6 +161,34 @@ def _estimate_total(ctx: Dict[str, Any]) -> str:
         return "$0.00"
 
 
+# Phase 11 · Feb 2026 — Equipment Service Tracker resolvers. Resolve
+# against ``ctx['equipment_tracker']`` — outside that scope they
+# resolve empty, which lands the token in ``unresolved_tokens`` when
+# ``missing="placeholder"`` mode is used by the frontend banner.
+def _equipment_type(ctx: Dict[str, Any]) -> str:
+    et = ctx.get("equipment_tracker") or {}
+    return _safe_str(et.get("type_label") or "")
+
+
+def _equipment_last_cleaned_date(ctx: Dict[str, Any]) -> str:
+    et = ctx.get("equipment_tracker") or {}
+    return _safe_str(et.get("last_cleaned_at_pretty") or et.get("last_cleaned_at") or "")
+
+
+def _equipment_due_date(ctx: Dict[str, Any]) -> str:
+    et = ctx.get("equipment_tracker") or {}
+    return _safe_str(et.get("due_at_pretty") or et.get("due_at") or "")
+
+
+def _equipment_interval_months(ctx: Dict[str, Any]) -> str:
+    et = ctx.get("equipment_tracker") or {}
+    v = et.get("interval_months")
+    try:
+        return str(int(v)) if v is not None else ""
+    except (TypeError, ValueError):
+        return ""
+
+
 # ═══════════════════════════ Catalogue ═══════════════════════════════
 MERGE_TAGS: List[Dict[str, Any]] = [
     # ─── Customer
@@ -335,6 +363,28 @@ MERGE_TAGS: List[Dict[str, Any]] = [
     {"token": "PROPERTY_NOT_SERVICED_REASON", "label": "Not Serviced Reason",
      "category": "System", "description": "Reason a scheduled service was skipped.",
      "resolver": _res("event", "not_serviced_reason")},
+
+    # ─── Equipment (Phase 11 · Feb 2026)
+    # Resolves against ``ctx['equipment_tracker']``. Empty (and added
+    # to the unresolved-tokens list) when rendered outside a tracker
+    # context — e.g. a generic invoice email that accidentally embeds
+    # ``{{EQUIPMENT_TYPE}}``.
+    {"token": "EQUIPMENT_TYPE", "label": "Equipment Type",
+     "category": "Equipment",
+     "description": 'Human-readable equipment label — "Filter", "Salt Cell", etc.',
+     "resolver": _equipment_type},
+    {"token": "EQUIPMENT_LAST_CLEANED_DATE", "label": "Last Cleaned",
+     "category": "Equipment",
+     "description": "Date the equipment was last cleaned, formatted per tenant.",
+     "resolver": _equipment_last_cleaned_date},
+    {"token": "EQUIPMENT_DUE_DATE", "label": "Due Date",
+     "category": "Equipment",
+     "description": "Next scheduled cleaning date, formatted per tenant.",
+     "resolver": _equipment_due_date},
+    {"token": "EQUIPMENT_INTERVAL_MONTHS", "label": "Interval (months)",
+     "category": "Equipment",
+     "description": "Cadence in whole months (e.g. 3 for filters, 12 for salt cells).",
+     "resolver": _equipment_interval_months},
 ]
 
 _TAG_INDEX: Dict[str, Callable] = {t["token"].upper(): t["resolver"]

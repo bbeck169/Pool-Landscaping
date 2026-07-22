@@ -118,10 +118,14 @@ import {
   SeoHub, ArticlesList, ArticleEditor, KeywordSuggest, SeoAudit, RankGrid,
   WordPressSettings, GbpHub,
 } from "@/pages/seo/SeoPages";
-import {
-  AiEmployeesList, AiEmployeeDetail, TasksPage,
+import { AiEmployeesList, AiEmployeeDetail, TasksPage,
   AccessSettings, AccessHistory, RingCentralSettings, CallLogsPage,
 } from "@/pages/aiops/AiOpsPages";
+// Phase 11 · Feb 2026 — Equipment Service Trackers (Filter & Salt Cell).
+import {
+  FilterTrackerListPage, FilterTrackerManagePage,
+  SaltCellTrackerListPage, SaltCellTrackerManagePage,
+} from "@/pages/tracking/EquipmentTrackerPages";
 import NotificationsPage from "@/pages/notifications/NotificationsPage";
 import NotificationPrefs from "@/pages/settings/NotificationPrefs";
 import StripeReconciliation from "@/pages/finance/StripeReconciliation";
@@ -623,6 +627,14 @@ export default function App() {
             <Route path="log-history" element={<OpsHub />} />
             <Route path="job-timers" element={<OpsHub />} />
             <Route path="avg-job-time" element={<OpsHub />} />
+
+            {/* Phase 11 · Feb 2026 — Equipment Service Trackers.
+                Filter & Salt Cell cleaning trackers with per-tenant
+                local-time weekly digest + optional customer reminders. */}
+            <Route path="tracking/filter" element={<AdminOnly><FilterTrackerListPage /></AdminOnly>} />
+            <Route path="tracking/filter/manage" element={<AdminOnly><FilterTrackerManagePage /></AdminOnly>} />
+            <Route path="tracking/salt-cell" element={<AdminOnly><SaltCellTrackerListPage /></AdminOnly>} />
+            <Route path="tracking/salt-cell/manage" element={<AdminOnly><SaltCellTrackerManagePage /></AdminOnly>} />
 
             {/* Phase 13 parity-gap closures */}
             {/* Phase 8 · Feb 2026 — /leads points at the real dashboard,

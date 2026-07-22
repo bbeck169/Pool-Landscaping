@@ -965,6 +965,14 @@ async def update_job(jid: str, body: JobUpdate,
             # True recurrence: auto-book the next filter/salt-cell cleaning on the cadence.
             from routers.maintenance import create_recurring_maintenance
             await create_recurring_maintenance(fresh)
+            # Phase 11 · Feb 2026 — auto-log the cleaning against the
+            # unified equipment_service_trackers collection. Idempotent
+            # + never raises (see log_cleaning_from_job).
+            try:
+                from routers.equipment_trackers import log_cleaning_from_job
+                await log_cleaning_from_job(fresh)
+            except Exception as _et:
+                logger.warning(f"equipment tracker auto-log failed: {_et}")
             # Phase 15A: schedule a CSAT survey 24h after completion.
             try:
                 from routers.csat import maybe_schedule_survey_for_job
