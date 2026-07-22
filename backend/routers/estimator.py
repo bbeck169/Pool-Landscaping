@@ -52,10 +52,15 @@ router = APIRouter()
 # ═══════════════════════════════════════════════════════════════════════
 
 async def require_admin_or_tech(user: dict = Depends(get_current_user)) -> dict:
+    # Phase 5A · Feb 2026 — Field Estimator is admin/manager only. Techs
+    # (pool_tech / landscape_tech / role=technician) get 403; the tile
+    # is also removed from every tech nav surface (see roleNav.js +
+    # ToolsHub.jsx). Keeping the function name for compat with the
+    # 60+ existing @Depends() decorators below.
     role = user.get("role") or ""
-    if role in {"admin", "super_admin", "technician"}:
+    if role in {"admin", "super_admin", "manager"}:
         return user
-    raise HTTPException(403, "Admins and technicians only")
+    raise HTTPException(403, "Field Estimator is admin/manager only")
 
 
 # ═══════════════════════════════════════════════════════════════════════

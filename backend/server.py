@@ -95,6 +95,8 @@ from routers import (
     referral_rewards,
     payments_stripe_live,
     stripe_webhooks_live,
+    checklists,
+    workstream_service_log,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -196,7 +198,9 @@ for module in [notifications_router,
                estimate_viewer,
                referral_rewards,
                payments_stripe_live,
-               stripe_webhooks_live]:
+               stripe_webhooks_live,
+               checklists,
+               workstream_service_log]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -637,6 +641,15 @@ async def startup():
         await ensure_deployment_indexes()
     except Exception as e:
         logger.warning(f"ensure_deployment_indexes crashed: {e}")
+
+    # Phase 5A · Feb 2026 — seed daily service-line checklists per
+    # tenant. Idempotent, non-destructive; tenants that have already
+    # customised their checklist keep their edits.
+    try:
+        from routers.checklists import seed_service_checklists_for_all_tenants
+        await seed_service_checklists_for_all_tenants()
+    except Exception as e:
+        logger.warning(f"[phase5a] service_checklists seed crashed: {e}")
 
     # Phase 4B · Stripe Live Payments — one-shot startup log with masked
     # key + mode. Never logs the secret value. Boots the Stripe SDK.

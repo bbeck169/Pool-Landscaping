@@ -75,30 +75,17 @@ class TestWorkstreamRBAC:
         assert r.status_code == 403, f"expected 403 for customer, got {r.status_code}: {r.text[:200]}"
 
     def test_tech_workstream_scoped(self, tech_token):
+        # Phase 5A.2 · Feb 2026 — Workstream is admin-only. Techs get
+        # 403 outright now; the "tech-scoped" behaviour has moved to
+        # /schedule + /jobs where techs already have their own view.
         r = requests.get(f"{BASE_URL}/api/workstream/jobs", headers=_headers(tech_token), timeout=30)
-        assert r.status_code == 200, r.text[:300]
-        data = r.json()
-        jobs = data.get("jobs", data) if isinstance(data, dict) else data
-        assert isinstance(jobs, list)
-        # collect tech ids in response
-        tech_ids = set()
-        for j in jobs:
-            tid = j.get("technician_id") or j.get("assigned_to") or j.get("assigned_technician_id")
-            if tid:
-                tech_ids.add(tid)
-        # should all resolve to mike (single tech scope)
-        assert len(tech_ids) <= 1, f"tech saw multiple technician_ids: {tech_ids}"
+        assert r.status_code == 403, r.text[:300]
 
     def test_tech_cannot_override_tech_id(self, tech_token):
-        # Try to spy on another tech via tech_id query param
+        # Phase 5A.2 · Feb 2026 — Same rationale: techs are denied
+        # outright, so overriding tech_id in the URL is moot.
         r = requests.get(f"{BASE_URL}/api/workstream/jobs?tech_id=SOME_OTHER_ID", headers=_headers(tech_token), timeout=30)
-        assert r.status_code == 200
-        data = r.json()
-        jobs = data.get("jobs", data) if isinstance(data, dict) else data
-        # should be filtered to mike, not empty (unless mike has 0), and shouldn't contain other tech
-        tech_ids = {j.get("technician_id") or j.get("assigned_to") or j.get("assigned_technician_id") for j in jobs}
-        tech_ids.discard(None)
-        assert "SOME_OTHER_ID" not in tech_ids
+        assert r.status_code == 403
 
 
 class TestJobDetailPricingLeak:
@@ -112,12 +99,21 @@ class TestJobDetailPricingLeak:
         return jobs[0].get("id") or jobs[0].get("job_id") or jobs[0].get("_id")
 
     @pytest.fixture(scope="class")
-    def tech_job_id(self, tech_token):
-        r = requests.get(f"{BASE_URL}/api/workstream/jobs", headers=_headers(tech_token), timeout=30)
+    def tech_job_id(self, admin_token, tech_token):
+        # Phase 5A.2 · Feb 2026 — Workstream is admin-only. Use the
+        # admin token to look up a completed job that's assigned to
+        # the tech (mike) so the /jobs/{jid}/detail RBAC leak test can
+        # actually run against a job the tech is authorised to read.
+        me = requests.get(f"{BASE_URL}/api/auth/me", headers=_headers(tech_token), timeout=30).json()
+        tech_id = me.get("technician_id") or me.get("id")
+        r = requests.get(
+            f"{BASE_URL}/api/workstream/jobs?tech_id={tech_id}&limit=200",
+            headers=_headers(admin_token), timeout=30,
+        )
         assert r.status_code == 200
         data = r.json()
         jobs = data.get("jobs", data) if isinstance(data, dict) else data
-        assert jobs, "no jobs available for tech"
+        assert jobs, f"no completed jobs for tech {tech_id}"
         return jobs[0].get("id") or jobs[0].get("job_id") or jobs[0].get("_id")
 
     def test_admin_detail_has_pricing(self, admin_token, a_job_id):

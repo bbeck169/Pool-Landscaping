@@ -124,7 +124,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/dispatch",         label: "Auto-Dispatch",      icon: Zap,          feature: "jobs", subsection: "Schedule & Dispatch" },
     { to: "/admin/dispatch/weather", label: "Weather Reschedule", icon: Cloud,        feature: "jobs", subsection: "Schedule & Dispatch" },
     { to: "/routes",                 label: "Routes",             icon: Route,        feature: "jobs", subsection: "Schedule & Dispatch" },
-    { to: "/workstream",             label: "Workstream",         icon: Workflow,     feature: "jobs", subsection: "Schedule & Dispatch" },
+    { to: "/workstream",             label: "Workstream — Completed Jobs", icon: Workflow,     feature: "jobs", subsection: "Service Log" },
     { to: "/admin/appointments",     label: "Appointments",       icon: CalendarDays, feature: "jobs", subsection: "Schedule & Dispatch" },
     // Workforce
     { to: "/team",              label: "Team",             icon: UsersRound,  feature: "jobs", subsection: "Workforce" },

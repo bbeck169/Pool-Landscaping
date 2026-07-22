@@ -305,20 +305,21 @@ export default function WorkstreamPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const role = user?.role || "";
-  const allowed = role === "admin" || role === "super_admin" || role === "technician";
-  const isAdmin = role === "admin" || role === "super_admin";
+  // Phase 5A.2 · Feb 2026 — Workstream is admin-only. Manager, tech,
+  // customer all get 403. Route-level <AdminOnly> catches them too.
+  const allowed = role === "admin" || role === "super_admin";
+  const isAdmin = allowed;
 
   const [jobs, setJobs] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  // Filter state
+  // Filter state — status intentionally omitted (Workstream = completed).
   const [since, setSince] = useState("");
   const [until, setUntil] = useState("");
   const [techId, setTechId] = useState("");
   const [customerId, setCustomerId] = useState("");
-  const [status, setStatus] = useState("");
   const [sort, setSort] = useState("newest");
   const [limit] = useState(100);
 
@@ -347,7 +348,8 @@ export default function WorkstreamPage() {
       if (until) qs.set("until", until);
       if (techId) qs.set("tech_id", techId);
       if (customerId) qs.set("customer_id", customerId);
-      if (status) qs.set("status", status);
+      // Phase 5A.2 — Workstream defaults to completed on the server.
+      // Do not send status here; sending anything else is a 400.
       const data = await api.get(`/workstream/jobs?${qs.toString()}`);
       setJobs(data?.jobs || []);
       setTotal(data?.total || 0);
@@ -357,7 +359,7 @@ export default function WorkstreamPage() {
     } finally {
       setLoading(false);
     }
-  }, [allowed, limit, sort, since, until, techId, customerId, status]);
+  }, [allowed, limit, sort, since, until, techId, customerId]);
 
   useEffect(() => {
     load();
@@ -377,18 +379,17 @@ export default function WorkstreamPage() {
     else if (k === "until") setUntil("");
     else if (k === "tech_id") setTechId("");
     else if (k === "customer_id") setCustomerId("");
-    else if (k === "status") setStatus("");
     else if (k === "sort") setSort("newest");
   };
   const clearAll = () => {
     setSince(""); setUntil(""); setTechId(""); setCustomerId("");
-    setStatus(""); setSort("newest");
+    setSort("newest");
   };
 
-  const openJob = (jid) => navigate(`/jobs/${jid}`);
+  const openJob = (jid) => navigate(`/workstream/${jid}`);
 
   if (!allowed) {
-    return <Forbidden reason="Workstream is staff-only." />;
+    return <Forbidden reason="Workstream is admin-only." />;
   }
 
   return (
@@ -404,10 +405,10 @@ export default function WorkstreamPage() {
             style={{ color: colors.onSurface }}
             data-testid="workstream-title"
           >
-            Workstream
+            Workstream — Completed Jobs
           </div>
           <div className="text-xs" style={{ color: colors.muted }}>
-            Every job across the crew, filtered how you like.
+            Service log of every finished job. Click any card to open the full Service Log.
           </div>
         </div>
         <div style={{ flex: 1 }} />
@@ -509,23 +510,8 @@ export default function WorkstreamPage() {
           </select>
         </div>
         <div className="flex flex-col">
-          <label
-            className="text-[10px] font-bold uppercase mb-0.5"
-            style={{ color: colors.muted }}
-          >
-            Status
-          </label>
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="px-2 py-1 rounded-md text-sm"
-            style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.onSurface, minWidth: 130 }}
-            data-testid="ws-filter-status"
-          >
-            {STATUS_OPTIONS.map((s) => (
-              <option key={s || "all"} value={s}>{s ? s : "All statuses"}</option>
-            ))}
-          </select>
+          {/* Phase 5A.2 · Feb 2026 — status filter removed. Workstream
+              lists ONLY completed jobs (server rejects anything else). */}
         </div>
         <div className="flex flex-col ml-auto">
           <label

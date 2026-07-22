@@ -81,24 +81,30 @@ def _timer_seconds(start_iso: str, stop_iso: str) -> int:
 
 # ----------------------- Jobs -----------------------
 POOL_CHECKLIST = [
-    "Test & balance water chemistry",
-    "Skim surface & empty baskets",
-    "Brush walls, steps & tile line",
-    "Vacuum pool floor",
-    "Empty pump & skimmer baskets",
-    "Check filter pressure / backwash",
-    "Inspect pump & equipment",
-    "Confirm all equipment running",
+    # Phase 5A · Feb 2026 — canonical pool checklist (7 items). Kept in
+    # sync with routers/checklists.py DEFAULT_POOL_ITEMS. Whitespace and
+    # capitalisation are preserved verbatim from the product brief.
+    "Skimmed Pool",
+    "Brush Pool",
+    "Checked Skimmer Basket",
+    "Checked Pump Basket",
+    "Tested Chemicals",
+    "Checked Equipment",
+    "Secured all Gates",
 ]
 LANDSCAPING_CHECKLIST = [
-    "Mow & edge all turf areas",
-    "Trim shrubs & hedges",
-    "Blow clippings off hardscapes",
-    "Weed planting beds",
-    "Check & adjust irrigation",
-    "Inspect for pests / disease",
-    "Haul away all green waste",
-    "Final walkthrough with client",
+    # Phase 5A · Feb 2026 — canonical landscape checklist (10 items).
+    # Kept in sync with routers/checklists.py DEFAULT_LANDSCAPE_ITEMS.
+    "Sprayed or Pulled Weeds",
+    "Checked Irrigation",
+    "Trimmed Bushes",
+    "Mowed Grass",
+    "Edged Grass",
+    "Blow Property",
+    "Raked Rocks",
+    "Locked Gate",
+    "Trimmed Trees",
+    "Irrigation Repair",
 ]
 POOL_READINGS = [
     # Phase 56.3 follow-up — first-five order mirrors POOL_READING_FIELDS_DEFAULT

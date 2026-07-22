@@ -33,9 +33,15 @@ router = APIRouter()
 _WRITER_ROLES = {"admin", "super_admin", "technician"}
 # Roles allowed to LIST events (management surface only).
 _READER_ROLES = {"admin", "super_admin"}
-# Roles allowed to LIST the Slice M jobs aggregator. Techs see their own
-# jobs; admins see everything (tenant-scoped). Customers are forbidden.
-_JOBS_READER_ROLES = {"admin", "super_admin", "technician"}
+# Phase 5A.2 · Feb 2026 — Workstream jobs feed is now admin-only.
+# Techs, managers, and customers all get 403. Techs continue to use
+# their own /schedule + /jobs surfaces; managers use the standard
+# Jobs page. Workstream is the "completed service log" surface.
+_JOBS_READER_ROLES = {"admin", "super_admin"}
+# Phase 5A.2 — the Workstream feed only surfaces completed jobs. When
+# no explicit status is passed we default to this; anything else is
+# rejected with 400 so the feed's meaning stays unambiguous.
+_WORKSTREAM_ONLY_STATUS = "completed"
 
 # ── Slice M pricing invariants ───────────────────────────────────────
 # Fields that MUST NEVER be surfaced to technicians. Applied on every
@@ -273,9 +279,22 @@ async def list_workstream_jobs(
 ):
     role = user.get("role") or ""
     if role not in _JOBS_READER_ROLES:
-        raise HTTPException(status_code=403, detail="Workstream feed is staff-only")
+        raise HTTPException(status_code=403, detail="Workstream is admin-only")
     if sort not in _SORT_OPTIONS:
         raise HTTPException(status_code=400, detail=f"Invalid sort: {sort}")
+
+    # Phase 5A.2 — enforce the completed-jobs-only invariant. When the
+    # caller passes no status, default to 'completed'. Any other status
+    # is rejected outright so the endpoint's meaning stays honest.
+    effective_status = (status or _WORKSTREAM_ONLY_STATUS).strip().lower()
+    if effective_status != _WORKSTREAM_ONLY_STATUS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Workstream lists only completed jobs. "
+                f"Pass status='{_WORKSTREAM_ONLY_STATUS}' or omit."
+            ),
+        )
 
     q: Dict[str, Any] = {"tenant_id": tenant["id"]}
 
@@ -288,8 +307,7 @@ async def list_workstream_jobs(
 
     if customer_id:
         q["customer_id"] = customer_id
-    if status and status != "all":
-        q["status"] = status
+    q["status"] = effective_status
 
     if since or until:
         rng: Dict[str, str] = {}

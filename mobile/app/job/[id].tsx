@@ -61,6 +61,8 @@ export default function JobDetail() {
   const [pendingPhotos, setPendingPhotos] = useState<any[]>([]);
   // Feb-2026 MP2 UI — property info displayed alongside customer.
   const [property, setProperty] = useState<any>(null);
+  const [lineItems, setLineItems] = useState<any[]>([]);
+  const [activeSection, setActiveSection] = useState("overview");
   const online = useOnline();
 
   // Phase 47 follow-up — removed the "tech must be clocked in" redirect
@@ -90,6 +92,11 @@ export default function JobDetail() {
       } else {
         setProperty(null);
       }
+      // Fetch line items
+      try {
+        const li = await api.get(`/jobs/${id}/line-items`);
+        setLineItems(Array.isArray(li) ? li : []);
+      } catch { setLineItems([]); }
       setPendingPhotos(await pendingForJob(id));
     } catch (e) {
       // Offline — use the single-job cache, then fall back to the cached schedule.
@@ -114,7 +121,14 @@ export default function JobDetail() {
 
   const isAdmin = user?.role === "admin";
   const isCustomer = user?.role === "customer";
+  const isTech = user?.role === "technician";
   const canManage = user?.role === "admin" || user?.role === "technician";
+  const MAX_PHOTOS = 10;
+  const MAX_VIDEOS = 3;
+  const photoCount = (job?.photos?.length || 0) + pendingPhotos.length;
+  const videoCount = job?.videos?.length || 0;
+  const photoCapHit = photoCount >= MAX_PHOTOS;
+  const videoCapHit = videoCount >= MAX_VIDEOS;
 
   const pickPhoto = async (source: "camera" | "library") => {
     try {
@@ -284,7 +298,27 @@ export default function JobDetail() {
           <Row icon="pricetag-outline" label="Service Type" value={job.service_type} />
           <Row icon="calendar-outline" label="Scheduled" value={job.scheduled_date || "Unscheduled"} />
           <Row icon="location-outline" label="Address" value={job.address || "—"} />
-          {user?.role !== "technician" ? <Row icon="cash-outline" label="Price" value={money(job.price)} /> : null}
+          {!isTech ? <Row icon="cash-outline" label="Price" value={money(job.price)} /> : null}
+
+          {/* Line Items section — tech pricing guardrail: techs see only qty + description + service line. NO price/subtotal/tax. */}
+          {lineItems.length > 0 ? (
+            <View style={liStyles.section} testID="job-line-items-section">
+              <Text style={liStyles.heading}>Line Items</Text>
+              {lineItems.map((li: any, i: number) => (
+                <View key={li.id || i} style={liStyles.row} testID={`job-line-item-${i}`}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={liStyles.desc}>{li.description || li.name || "Item"}</Text>
+                    <Text style={liStyles.meta}>
+                      Qty: {li.quantity || 1}{li.category ? ` · ${li.category}` : ""}
+                    </Text>
+                  </View>
+                  {!isTech && li.unit_price != null ? (
+                    <Text style={liStyles.price}>{money(li.unit_price * (li.quantity || 1))}</Text>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          ) : null}
 
           <Pressable
             style={styles.techBox}
@@ -357,12 +391,16 @@ export default function JobDetail() {
           ) : null}
 
           <View style={styles.photosHeader}>
-            <Text style={styles.photosTitle}>Service Images ({(job.photos?.length || 0) + pendingPhotos.length})</Text>
-            {canManage ? (
+            <Text style={styles.photosTitle}>Service Images ({photoCount}/{MAX_PHOTOS})</Text>
+            {canManage && !photoCapHit ? (
               <Pressable style={styles.addPhotoBtn} onPress={() => setPhotoSheet(true)} testID="add-photo-button">
                 <Ionicons name="camera" size={16} color={colors.brand} />
                 <Text style={styles.addPhotoText}>Add</Text>
               </Pressable>
+            ) : photoCapHit && canManage ? (
+              <Text style={{ fontSize: 11, color: colors.muted, fontFamily: themeFont.medium }} testID="photo-cap-reached">
+                {MAX_PHOTOS}/{MAX_PHOTOS} limit
+              </Text>
             ) : null}
           </View>
           {(job.photos?.length || pendingPhotos.length) ? (
@@ -395,11 +433,20 @@ export default function JobDetail() {
             <Text style={styles.noPhotos}>{canManage ? "Add photos of this service." : "No photos uploaded yet."}</Text>
           )}
 
-          {/* Videos section – Phase 5B */}
+          {/* Videos section – Phase 5B — 3-video cap */}
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.md, marginBottom: 4 }}>
+            <Text style={styles.photosTitle}>Videos ({videoCount}/{MAX_VIDEOS})</Text>
+            {videoCapHit && canManage ? (
+              <Text style={{ fontSize: 11, color: colors.muted, fontFamily: themeFont.medium }} testID="video-cap-reached">
+                {MAX_VIDEOS}/{MAX_VIDEOS} limit
+              </Text>
+            ) : null}
+          </View>
           <VideoMediaUploader
             entityKind="job"
             entityId={id as string}
             existingVideos={job.videos || []}
+            maxVideos={MAX_VIDEOS}
             onUploaded={(v) => setJob((j: any) => ({ ...j, videos: [...(j.videos || []), v] }))}
             onDeleted={(vid) => setJob((j: any) => ({ ...j, videos: (j.videos || []).filter((vv: any) => vv.id !== vid) }))}
             onPatched={(v) => setJob((j: any) => ({ ...j, videos: (j.videos || []).map((vv: any) => (vv.id === v.id ? v : vv)) }))}
@@ -481,3 +528,13 @@ export default function JobDetail() {
     </View>
   );
 }
+
+
+const liStyles = StyleSheet.create({
+  section: { marginVertical: spacing.md, padding: spacing.md, borderRadius: 12, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  heading: { fontFamily: themeFont.bold, fontSize: 13, color: colors.onSurfaceSecondary, textTransform: "uppercase", letterSpacing: 1, marginBottom: spacing.sm },
+  row: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
+  desc: { fontFamily: themeFont.medium, fontSize: 14, color: colors.onSurface },
+  meta: { fontFamily: themeFont.regular, fontSize: 12, color: colors.muted, marginTop: 2 },
+  price: { fontFamily: themeFont.semibold, fontSize: 14, color: colors.onSurface, marginLeft: 12 },
+});

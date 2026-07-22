@@ -1,5 +1,5 @@
-import React from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
+import React, { useState, useEffect } from "react";
+import { View, Text, StyleSheet, ScrollView, Pressable, Switch, Platform } from "react-native";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -7,10 +7,12 @@ import { useRouter } from "expo-router";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import { registerForPushNotifications, deregisterPushToken } from "@/src/services/pushNotifications";
 
 export default function More() {
   const { user, logout } = useAuth();
   const router = useRouter();
+  const [pushEnabled, setPushEnabled] = useState(true);
   const role = (user?.role as string) || "";
   const isAdmin = role === "admin";
   const isSuperAdmin = role === "super_admin";
@@ -68,7 +70,7 @@ export default function More() {
     { icon: "cash-outline", label: "Batch Checks & Payroll CSV", onPress: () => router.push("/(app)/payroll/batch" as any) },
     { icon: "swap-horizontal-outline", label: "Route Coverage", onPress: () => router.push("/coverage") },
     { icon: "time-outline", label: "Timesheets", onPress: () => router.push("/timesheets") },
-    { icon: "pulse-outline", label: "Work Stream", onPress: () => router.push("/work-stream") },
+    { icon: "pulse-outline", label: "Work Stream", onPress: () => router.push("/workstream") },
     { icon: "bar-chart-outline", label: "Business Reports", onPress: () => router.push("/business-reports") },
     { icon: "bar-chart-outline", label: "Reports", onPress: () => router.push("/reports") },
     { icon: "magnet-outline", label: "Leads", onPress: () => router.push("/leads") },
@@ -170,6 +172,32 @@ export default function More() {
             ))}
           </View>
         ) : null}
+
+        {/* Push notifications toggle */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Notifications</Text>
+          <View style={[styles.link, { justifyContent: "space-between" }]} testID="push-notifications-toggle">
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <View style={styles.linkIcon}>
+                <Ionicons name="notifications-outline" size={20} color={colors.brand} />
+              </View>
+              <Text style={styles.linkLabel}>Push Notifications</Text>
+            </View>
+            <Switch
+              value={pushEnabled}
+              onValueChange={async (val) => {
+                setPushEnabled(val);
+                if (val) {
+                  await registerForPushNotifications().catch(() => {});
+                } else {
+                  await deregisterPushToken().catch(() => {});
+                }
+              }}
+              trackColor={{ false: colors.surfaceTertiary, true: colors.brand }}
+              thumbColor="#fff"
+            />
+          </View>
+        </View>
 
         <Pressable style={styles.logout} onPress={logout} testID="logout-button">
           <Ionicons name="log-out-outline" size={20} color={colors.error} />

@@ -40,9 +40,12 @@ export const TECH_NAV = [
     label: "On the Job",
     icon: Wrench,
     entries: [
-      { to: "/estimator", label: "Field Estimator", icon: Wrench },
+      // Phase 5A · Feb 2026 — Field Estimator + Property Lookup removed
+      // from every tech nav surface (also gated server-side; see
+      // estimator.py + property.py). Techs get the pool calculators,
+      // inventory, and their own equipment; everything price-adjacent
+      // now belongs to admin/manager.
       { to: "/calculators", label: "Pool Calculators", icon: Wrench },
-      { to: "/property-lookup", label: "Property Lookup", icon: Home },
       { to: "/inventory", label: "Inventory", icon: Boxes },
       { to: "/assets", label: "My Equipment", icon: Package },
     ],
@@ -56,7 +59,11 @@ export const TECH_NAV = [
       // tech nav. Techs shouldn't be reading customer billing docs.
       // Routes remain gated at the App.js level for defense-in-depth.
       { to: "/d2d/leaderboard", label: "D2D Leaderboard", icon: Trophy },
-      { to: "/card", label: "Business Card", icon: IdCard },
+      // Phase 5A · Feb 2026 — /card is the admin team-card manager
+      // (AdminOnly), so techs use /tech/card which loads BusinessCard
+      // in company-only mode. Prior nav pointed at /card and bounced
+      // techs to /, giving the impression the feature was broken.
+      { to: "/tech/card", label: "Business Card", icon: IdCard },
       { to: "/tests", label: "Training / Tests", icon: GraduationCap },
     ],
   },

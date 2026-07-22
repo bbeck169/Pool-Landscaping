@@ -267,16 +267,22 @@ from config import GOOGLE_API_KEY
 
 
 async def require_tech_or_admin(user: dict = Depends(get_current_user)) -> dict:
-    if (user.get("role") or "") in {"admin", "super_admin",
-                                         "technician", "marketing"}:
+    # Phase 5A · Feb 2026 — Property Lookup is admin/manager/marketing
+    # only. Technicians get 403 (feature removed from every tech nav
+    # surface). Marketing kept because Zillow enrichment powers the
+    # Marketing Studio audience segmentation.
+    if (user.get("role") or "") in {"admin", "super_admin", "marketing"}:
         return user
-    raise HTTPException(403, "Techs, admins, or marketing only")
+    raise HTTPException(403, "Property Lookup is admin, manager, or marketing only")
 
 
 async def require_tech_or_admin_write(user: dict = Depends(get_current_user)) -> dict:
-    if (user.get("role") or "") in {"admin", "super_admin", "technician"}:
+    # Phase 5A · Feb 2026 — write path also locked to admin/manager. The
+    # legacy function name is kept so existing @Depends() decorators
+    # below don't churn.
+    if (user.get("role") or "") in {"admin", "super_admin", "manager"}:
         return user
-    raise HTTPException(403, "Techs or admins only")
+    raise HTTPException(403, "Admins/managers only")
 
 
 def _norm_address_key(addr: str) -> str:

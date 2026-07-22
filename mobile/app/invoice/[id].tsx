@@ -1,0 +1,365 @@
+/**
+ * Invoice Detail Viewer + Stripe Pay Now.
+ *
+ * Fetches GET /api/invoices/{id}/full (authenticated).
+ * Renders company header, bill-to, line items, totals, notes, payment stub.
+ * Pay Now opens a WebView with Stripe.js PaymentElement.
+ *
+ * pk_live is fetched from GET /api/config/public at runtime — never hardcoded.
+ * Server-authoritative amount — displays amount_cents from create-intent response.
+ */
+import React, { useCallback, useEffect, useState } from "react";
+import {
+  View, Text, ScrollView, StyleSheet, TouchableOpacity,
+  ActivityIndicator, Alert, Linking, Modal, Platform,
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { WebView } from "react-native-webview";
+
+import { useAuth } from "@/src/auth";
+import { useStripeConfig } from "@/src/config/stripe";
+import { getInvoiceFull, type InvoiceFull } from "@/src/api/invoices";
+import { createPaymentIntent } from "@/src/api/payments";
+import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+
+const fmt = (n: number | undefined) => "$" + (n || 0).toFixed(2);
+
+export default function InvoiceDetail() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const stripe = useStripeConfig();
+
+  const [data, setData] = useState<InvoiceFull | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [payOpen, setPayOpen] = useState(false);
+  const [payHtml, setPayHtml] = useState("");
+  const [payLoading, setPayLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!id) return;
+    setLoading(true);
+    setError("");
+    try {
+      const inv = await getInvoiceFull(id);
+      setData(inv);
+    } catch (e: any) {
+      setError(e?.message || "Failed to load invoice");
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const startPayment = async () => {
+    if (!id || !stripe.pk) {
+      Alert.alert("Error", "Payments not configured.");
+      return;
+    }
+    setPayLoading(true);
+    try {
+      const pi = await createPaymentIntent(id, "authenticated");
+      if (!pi.client_secret) throw new Error("Could not create payment intent.");
+      const html = buildStripeHtml(stripe.pk, pi.client_secret, pi.amount_cents, pi.currency);
+      setPayHtml(html);
+      setPayOpen(true);
+    } catch (e: any) {
+      Alert.alert("Payment Error", e?.message || "Failed to start payment.");
+    } finally {
+      setPayLoading(false);
+    }
+  };
+
+  const handlePayMessage = (event: any) => {
+    try {
+      const msg = JSON.parse(event.nativeEvent.data);
+      if (msg.type === "payment_success") {
+        setPayOpen(false);
+        Alert.alert("Payment Received", `A receipt is on the way to ${data?.bill_to?.name || "you"}.`);
+        load();
+      } else if (msg.type === "payment_error") {
+        Alert.alert("Payment Failed", msg.message || "Please try again.");
+      }
+    } catch {}
+  };
+
+  if (loading) {
+    return (
+      <View style={[s.center, { paddingTop: insets.top + 60 }]}>
+        <ActivityIndicator size="large" color={colors.brand} />
+      </View>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <View style={[s.center, { paddingTop: insets.top + 60 }]}>
+        <Ionicons name="alert-circle" size={32} color={colors.error} />
+        <Text style={s.errorText}>{error || "Invoice not found"}</Text>
+        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
+          <Text style={s.backBtnText}>Go Back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const { company, bill_to, property_address, header, line_items, totals, notes, is_due_on_receipt, payment_status } = data;
+  const canPay = (payment_status || "").toLowerCase() !== "paid" && (totals?.total_due || 0) > 0;
+
+  return (
+    <View style={[s.root, { paddingTop: insets.top }]}>
+      {/* Header bar */}
+      <View style={s.navBar}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={12} testID="invoice-back-btn">
+          <Ionicons name="arrow-back" size={22} color={colors.onSurface} />
+        </TouchableOpacity>
+        <Text style={s.navTitle}>Invoice</Text>
+        <View style={{ width: 22 }} />
+      </View>
+
+      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+        {/* Status + amount */}
+        <View style={s.card} testID="invoice-header-card">
+          <View style={s.statusRow}>
+            <View style={[s.statusPill, { backgroundColor: payment_status === "paid" ? "#DCFCE7" : "#FEF9C3" }]}>
+              <Text style={[s.statusText, { color: payment_status === "paid" ? "#166534" : "#A16207" }]}>
+                {(payment_status || "unpaid").toUpperCase()}
+              </Text>
+            </View>
+            {is_due_on_receipt && <Text style={s.duePill}>Due on Receipt</Text>}
+          </View>
+          <Text style={s.invoiceNum} testID="invoice-number">
+            Invoice #{header.invoice_number}
+          </Text>
+          <Text style={s.invoiceDate}>{header.invoice_date}</Text>
+          <View style={s.amountRow}>
+            <Text style={s.totalDue} testID="invoice-total-due">{fmt(totals.total_due)}</Text>
+            <Text style={s.totalLabel}>Balance Due</Text>
+          </View>
+          <View style={s.metaRow}>
+            <View style={s.metaItem}>
+              <Text style={s.metaLabel}>Subtotal</Text>
+              <Text style={s.metaValue}>{fmt(totals.subtotal)}</Text>
+            </View>
+            <View style={s.metaItem}>
+              <Text style={s.metaLabel}>This Invoice</Text>
+              <Text style={s.metaValue}>{fmt(totals.this_invoice)}</Text>
+            </View>
+            <View style={s.metaItem}>
+              <Text style={s.metaLabel}>Paid</Text>
+              <Text style={s.metaValue}>{fmt(totals.amount_paid)}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Pay Now */}
+        {canPay && (
+          <TouchableOpacity
+            style={s.payBtn}
+            onPress={startPayment}
+            disabled={payLoading || stripe.loading}
+            testID="invoice-pay-now-btn"
+          >
+            {payLoading ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="card" size={18} color="#fff" />
+                <Text style={s.payBtnText}>Pay Now — {fmt(totals.total_due)}</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
+
+        {/* Company info */}
+        <View style={s.card}>
+          <Text style={s.sectionLabel}>FROM</Text>
+          <Text style={s.companyName}>{company.name}</Text>
+          {company.address ? <Text style={s.muted}>{company.address}</Text> : null}
+          {company.phone ? (
+            <TouchableOpacity onPress={() => Linking.openURL(`tel:${company.phone}`)}>
+              <Text style={[s.muted, { color: colors.brand }]}>{company.phone}</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        {/* Bill To */}
+        <View style={s.card}>
+          <Text style={s.sectionLabel}>BILL TO</Text>
+          <Text style={s.billName}>{bill_to.name || "—"}</Text>
+          {bill_to.address ? <Text style={s.muted}>{bill_to.address}</Text> : null}
+          {property_address ? (
+            <Text style={[s.muted, { marginTop: 4 }]}>
+              <Text style={{ fontFamily: font.semibold }}>Property: </Text>{property_address}
+            </Text>
+          ) : null}
+        </View>
+
+        {/* Credit info */}
+        {(header.credit_available ?? 0) > 0 && (
+          <View style={s.creditCard}>
+            <Ionicons name="gift" size={16} color="#166534" />
+            <Text style={s.creditText}>Credit Available: {fmt(header.credit_available)}</Text>
+          </View>
+        )}
+
+        {/* Line Items */}
+        <View style={s.card} testID="invoice-line-items">
+          <Text style={s.sectionLabel}>LINE ITEMS</Text>
+          {line_items.length === 0 ? (
+            <Text style={s.muted}>No line items</Text>
+          ) : (
+            line_items.map((li, i) => (
+              <View
+                key={i}
+                style={[s.lineRow, li.is_late_fee && s.lineRowLateFee]}
+                testID={`invoice-line-item-${i}`}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={s.lineDesc}>{li.description}</Text>
+                  {li.is_late_fee && (
+                    <View style={s.lateFeePill}>
+                      <Text style={s.lateFeeText}>LATE FEE</Text>
+                    </View>
+                  )}
+                </View>
+                <View style={s.lineRight}>
+                  <Text style={s.lineQty}>{li.qty_hr || 1} × {fmt(li.cost_rate)}</Text>
+                  <Text style={s.lineTotal}>{fmt(li.total)}</Text>
+                </View>
+              </View>
+            ))
+          )}
+        </View>
+
+        {/* Notes */}
+        {notes ? (
+          <View style={s.card} testID="invoice-notes">
+            <Text style={s.sectionLabel}>NOTES</Text>
+            <Text style={s.notesText}>{notes}</Text>
+          </View>
+        ) : null}
+      </ScrollView>
+
+      {/* Payment WebView Modal */}
+      <Modal visible={payOpen} animationType="slide" testID="invoice-pay-modal">
+        <View style={[s.payModalRoot, { paddingTop: insets.top }]}>
+          <View style={s.payModalHeader}>
+            <TouchableOpacity onPress={() => setPayOpen(false)} testID="invoice-pay-close">
+              <Ionicons name="close" size={24} color={colors.onSurface} />
+            </TouchableOpacity>
+            <Text style={s.payModalTitle}>Pay Invoice</Text>
+            <Ionicons name="shield-checkmark" size={20} color={colors.success} />
+          </View>
+          {payHtml ? (
+            <WebView
+              source={{ html: payHtml }}
+              style={{ flex: 1 }}
+              onMessage={handlePayMessage}
+              javaScriptEnabled
+              domStorageEnabled
+              originWhitelist={["*"]}
+            />
+          ) : (
+            <ActivityIndicator style={{ marginTop: 40 }} color={colors.brand} />
+          )}
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+function buildStripeHtml(pk: string, clientSecret: string, amountCents: number, currency: string) {
+  const amountLabel = (amountCents / 100).toFixed(2);
+  const cur = (currency || "usd").toUpperCase();
+  return `<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://js.stripe.com/v3/"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 20px; margin: 0; background: #fff; }
+  .amount { font-size: 16px; color: #475569; margin-bottom: 16px; }
+  .amount b { color: #0F172A; }
+  #payment-element { min-height: 200px; }
+  .error { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: #FEF3C7; color: #92400E; font-size: 13px; display: none; }
+  button { margin-top: 16px; width: 100%; padding: 14px; border-radius: 10px; background: #0F766E; color: white; font-weight: 600; font-size: 15px; border: none; cursor: pointer; }
+  button:disabled { background: #94A3B8; cursor: wait; }
+  .secured { margin-top: 10px; font-size: 11px; color: #64748B; text-align: center; }
+</style>
+</head><body>
+<div class="amount">Amount due: <b>$${amountLabel} ${cur}</b></div>
+<div id="payment-element"></div>
+<div id="error-msg" class="error"></div>
+<button id="submit-btn" disabled>Pay $${amountLabel}</button>
+<div class="secured">Secured by Stripe. Card & ACH accepted.</div>
+<script>
+  const stripe = Stripe('${pk}');
+  const elements = stripe.elements({ clientSecret: '${clientSecret}', appearance: { theme: 'stripe' } });
+  const pe = elements.create('payment');
+  pe.mount('#payment-element');
+  pe.on('ready', function() { document.getElementById('submit-btn').disabled = false; });
+  document.getElementById('submit-btn').addEventListener('click', async function() {
+    this.disabled = true; this.textContent = 'Processing...';
+    const { error, paymentIntent } = await stripe.confirmPayment({ elements, confirmParams: { return_url: 'https://example.com' }, redirect: 'if_required' });
+    if (error) {
+      document.getElementById('error-msg').style.display = 'block';
+      document.getElementById('error-msg').textContent = error.message;
+      this.disabled = false; this.textContent = 'Pay $${amountLabel}';
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'payment_error', message: error.message }));
+    } else if (paymentIntent && (paymentIntent.status === 'succeeded' || paymentIntent.status === 'processing')) {
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'payment_success' }));
+    }
+  });
+</script>
+</body></html>`;
+}
+
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: colors.surface },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface, padding: 20 },
+  errorText: { fontFamily: font.medium, fontSize: fontSize.base, color: colors.error, marginTop: 8, textAlign: "center" },
+  backBtn: { marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: radius.md, backgroundColor: colors.brand },
+  backBtnText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#fff" },
+  navBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
+  navTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface },
+  scroll: { padding: spacing.lg, paddingBottom: 40 },
+  card: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.border },
+  sectionLabel: { fontFamily: font.bold, fontSize: 10, color: colors.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: spacing.sm },
+  statusRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.sm },
+  statusPill: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 },
+  statusText: { fontFamily: font.bold, fontSize: 10, letterSpacing: 0.5 },
+  duePill: { fontFamily: font.semibold, fontSize: 10, color: "#C2410C", backgroundColor: "#FFEDD5", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 },
+  invoiceNum: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface },
+  invoiceDate: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
+  amountRow: { marginTop: spacing.md, alignItems: "flex-end" },
+  totalDue: { fontFamily: font.bold, fontSize: fontSize["3xl"], color: colors.brand },
+  totalLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
+  metaRow: { flexDirection: "row", justifyContent: "space-between", marginTop: spacing.lg, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border },
+  metaItem: { alignItems: "center" },
+  metaLabel: { fontFamily: font.regular, fontSize: 11, color: colors.muted },
+  metaValue: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 2 },
+  payBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#0F766E", paddingVertical: 16, borderRadius: radius.md, marginBottom: spacing.md },
+  payBtnText: { fontFamily: font.bold, fontSize: fontSize.lg, color: "#fff" },
+  companyName: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
+  billName: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
+  muted: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
+  creditCard: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#DCFCE7", borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md },
+  creditText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: "#166534" },
+  lineRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
+  lineRowLateFee: { backgroundColor: "#FFF7ED" },
+  lineDesc: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, flex: 1 },
+  lateFeePill: { backgroundColor: "#FEE2E2", paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, marginTop: 4, alignSelf: "flex-start" },
+  lateFeeText: { fontFamily: font.bold, fontSize: 9, color: "#B91C1C", letterSpacing: 0.5 },
+  lineRight: { alignItems: "flex-end", marginLeft: 12 },
+  lineQty: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
+  lineTotal: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 2 },
+  notesText: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, lineHeight: 22 },
+  payModalRoot: { flex: 1, backgroundColor: colors.surface },
+  payModalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
+  payModalTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface },
+});

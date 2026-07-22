@@ -10,6 +10,7 @@ import { useFonts } from "expo-font";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider } from "@/src/auth";
 import { ImpersonationBanner } from "@/src/components/ImpersonationBanner";
+import { StripeConfigProvider } from "@/src/config/stripe";
 import { registerOfflineTemplateDraftListeners } from "@/src/utils/offlineTemplateDrafts";
 
 // Disable logbox errors etc so that users can see the app
@@ -54,8 +55,10 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <KeyboardProvider>
           <AuthProvider>
-            <ImpersonationBanner />
-            <Stack screenOptions={{ headerShown: false }} />
+            <StripeConfigProvider>
+              <ImpersonationBanner />
+              <Stack screenOptions={{ headerShown: false }} />
+            </StripeConfigProvider>
           </AuthProvider>
         </KeyboardProvider>
       </SafeAreaProvider>

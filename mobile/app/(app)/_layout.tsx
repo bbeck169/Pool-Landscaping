@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Tabs, Redirect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { View, TouchableOpacity, StyleSheet } from 'react-native';
@@ -8,10 +8,19 @@ import { colors, font } from "@/src/theme";
 import { SyncBanner } from "@/src/components/SyncBanner";
 import { GlobalMenu } from "@/src/components/tools/GlobalMenu";
 import AIDockDrawer from "@/src/components/ai/AIDockDrawer";
+import { registerForPushNotifications } from "@/src/services/pushNotifications";
 
 export default function AppLayout() {
   const { user, loading } = useAuth();
   const [dockOpen, setDockOpen] = useState(false);
+
+  // Register push notifications after successful auth
+  useEffect(() => {
+    if (user) {
+      registerForPushNotifications().catch(() => {});
+    }
+  }, [user]);
+
   if (loading) return null;
   if (!user) return <Redirect href="/login" />;
 

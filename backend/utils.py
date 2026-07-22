@@ -102,10 +102,15 @@ def require_super_admin(user: dict = Depends(get_current_user)) -> dict:
 # rate-limited + budget-guarded via services.zillow_rate_limit. Customers
 # + anonymous callers are still blocked.
 def require_zillow_access(user: dict = Depends(get_current_user)) -> dict:
+    # Phase 5A · Feb 2026 — Property Lookup / Zillow enrichment is now
+    # admin/manager only. Techs get 403 (the tile was also removed from
+    # every tech nav surface, see roleNav.js + ToolsHub.jsx). Marketing
+    # still has a separate audience-segmentation path via
+    # marketing_forms.py; no change there.
     role = (user or {}).get("role")
-    if role in ("super_admin", "admin", "technician"):
+    if role in ("super_admin", "admin", "manager"):
         return user
-    raise HTTPException(status_code=403, detail="Zillow access requires admin or technician role")
+    raise HTTPException(status_code=403, detail="Property Lookup requires admin or manager role")
 
 
 # Feb-2026 · Weather widget on tech dashboard header — techs need

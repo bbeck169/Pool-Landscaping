@@ -18,6 +18,7 @@ import CustomerChemistryHistory from "@/pages/customers/CustomerChemistryHistory
 import { RequestJobPage, AdminJobRequestsPage } from "@/pages/job_requests/JobRequestsPages";
 import CalendarSchedule from "@/pages/schedule/CalendarSchedule";
 import WorkstreamPage from "@/pages/workstream/WorkstreamPage";
+import ServiceLogPage from "@/pages/workstream/ServiceLogPage";
 import CFODashboard from "@/pages/cfo/CFODashboard";
 import JobNew from "@/pages/jobs/JobNew";
 import JobDetail from "@/pages/jobs/JobDetail";
@@ -351,11 +352,11 @@ export default function App() {
             <Route path="invoices/master/:id" element={<NoTech><MasterInvoiceDetail /></NoTech>} />
             <Route path="invoices/:id" element={<NoTech><QuoteInvoiceDetail docType="invoice" /></NoTech>} />
 
-            <Route path="estimator" element={<EstimatesList />} />
-            <Route path="estimator/settings" element={<EstimatorSettings />} />
-            <Route path="estimator/templates" element={<EstimatorTemplates />} />
-            <Route path="estimator/new" element={<EstimatorEditor />} />
-            <Route path="estimator/:id" element={<EstimatorEditor />} />
+            <Route path="estimator" element={<NoTech><EstimatesList /></NoTech>} />
+            <Route path="estimator/settings" element={<NoTech><EstimatorSettings /></NoTech>} />
+            <Route path="estimator/templates" element={<NoTech><EstimatorTemplates /></NoTech>} />
+            <Route path="estimator/new" element={<NoTech><EstimatorEditor /></NoTech>} />
+            <Route path="estimator/:id" element={<NoTech><EstimatorEditor /></NoTech>} />
 
             <Route path="settings/payment-handles" element={<PaymentHandlesSettings />} />
             <Route path="settings/late-fees" element={<AdminOnly><LateFeesSettings /></AdminOnly>} />
@@ -450,8 +451,10 @@ export default function App() {
             <Route path="schedule/today" element={<Navigate to="/schedule" replace />} />
             <Route path="schedule" element={<CalendarSchedule />} />
             <Route path="schedule/legacy-timeline" element={<TodaySchedule />} />
-            {/* Phase 31 · Step 2b — Workstream (tap-job telemetry feed) */}
-            <Route path="workstream" element={<WorkstreamPage />} />
+            {/* Phase 5A.2 · Feb 2026 — Workstream is admin-only,
+                completed-jobs surface. Route + API + nav all gated. */}
+            <Route path="workstream" element={<AdminOnly><WorkstreamPage /></AdminOnly>} />
+            <Route path="workstream/:id" element={<AdminOnly><ServiceLogPage /></AdminOnly>} />
             {/* Phase 32 · Step 2 — AI CFO dashboard (admin only, RBAC in-page) */}
             <Route path="cfo" element={<CFODashboard />} />
             <Route path="tech/huddle" element={<TechHuddlePage />} />
@@ -594,7 +597,8 @@ export default function App() {
             <Route path="schedule" element={<OpsHub />} />
             <Route path="schedule/map" element={<AdminOnly><ScheduleMap /></AdminOnly>} />
             <Route path="routes" element={<OpsHub />} />
-            <Route path="workstream" element={<OpsHub />} />
+            {/* Phase 5A.2 · Feb 2026 — Workstream duplicate removed; the
+                admin-only route defined earlier owns the /workstream URL. */}
             <Route path="crews" element={<OpsHub />} />
             <Route path="team" element={<OpsHub />} />
             <Route path="timesheets" element={<OpsHub />} />
@@ -738,9 +742,10 @@ export default function App() {
             <Route path="admin/checks/payees" element={<AdminOnly><CheckPayees /></AdminOnly>} />
             <Route path="admin/checks/analytics" element={<AdminOnly><CheckAnalytics /></AdminOnly>} />
             <Route path="admin/checks/:id" element={<AdminOnly><CheckDetail /></AdminOnly>} />
-            {/* Phase 25 — Property Lookup (tech + admin) */}
-            <Route path="tech/property-lookup" element={<PropertyLookupPage />} />
-            <Route path="property-lookup" element={<PropertyLookupPage />} />
+            {/* Phase 5A · Feb 2026 — Property Lookup is admin/manager
+                only. Route gates + backend gates both deny techs. */}
+            <Route path="tech/property-lookup" element={<NoTech><PropertyLookupPage /></NoTech>} />
+            <Route path="property-lookup" element={<NoTech><PropertyLookupPage /></NoTech>} />
             {/* Phase 26 Wave A — Dispatch + Batch Checks */}
             <Route path="admin/dispatch" element={<AdminOnly><DispatchBoard /></AdminOnly>} />
             <Route path="admin/dispatch/weather" element={<AdminOnly><WeatherReschedule /></AdminOnly>} />

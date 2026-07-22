@@ -31,9 +31,10 @@ const TECH_SECTIONS = [
     key: "job",
     title: "On the Job",
     tiles: [
-      { key: "estimator", icon: Calculator, label: "Field Estimator", desc: "Quote on the spot", to: "/estimator" },
+      // Phase 5A · Feb 2026 — Field Estimator + Property Lookup removed
+      // from the tech surface (see roleNav.js + backend gates). Techs
+      // get calculators, D2D map, and knock/lead tools only.
       { key: "pool-calculators", icon: FlaskConical, label: "Pool Calculators", desc: "LSI · Volume · Salt · Turnover · Heater size", to: "/tech/tools/calculators" },
-      { key: "property-lookup", icon: HomeIcon, label: "Property Lookup", desc: "Owner, lot size, notes (Zillow)", to: "/tech/property-lookup" },
       { key: "d2d-map", icon: MapPin, label: "D2D Map", desc: "Canvassing map", to: "/d2d/map" },
       { key: "d2d-knocks", icon: DoorOpen, label: "Knocks", desc: "Recent door activity", to: "/d2d/knocks" },
       { key: "d2d-open-leads", icon: Magnet, label: "Open Leads", desc: "Follow-ups in your funnel", to: "/d2d/open-leads" },

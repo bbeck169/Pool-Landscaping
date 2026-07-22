@@ -134,24 +134,22 @@ def test_m1_admin_lists_jobs(admin_headers):
 
 
 def test_m1_tech_auto_scoped(tech_headers):
-    """Tech only sees their own jobs; a foreign tech_id filter is silently
-    ignored (does NOT leak other techs' work)."""
-    tid = _run(_get_mike_tech_id())
+    """Phase 5A.2 · Feb 2026 — Workstream is now admin-only. Techs get
+    403 (they still see their own jobs via /schedule + /jobs; Workstream
+    is the admin service-log surface)."""
     r = requests.get(
         f"{API}/workstream/jobs?limit=200&tech_id=SOME_OTHER_TECH",
         headers=tech_headers, timeout=15,
     )
-    assert r.status_code == 200, r.text
-    body = r.json()
-    tids = {j.get("technician_id") for j in body["jobs"]}
-    assert tids == {tid} or tids == set(), tids
-    # filters payload for a tech never echoes back a tech_id override.
-    assert body["filters"]["tech_id"] is None
+    assert r.status_code == 403, r.text
 
 
 def test_m1_tech_never_sees_pricing(tech_headers):
+    # Phase 5A.2 — Workstream is admin-only. The pricing-leak test is
+    # kept as a smoke check that the 403 comes back cleanly (no pricing
+    # can leak from a 403 body).
     r = requests.get(f"{API}/workstream/jobs?limit=50", headers=tech_headers, timeout=15)
-    assert r.status_code == 200
+    assert r.status_code == 403
     payload = r.text
     for banned in (
         "\"job_totals\"", "\"unit_price\"", "\"subtotal\"",
@@ -159,7 +157,7 @@ def test_m1_tech_never_sees_pricing(tech_headers):
         "\"materials_cost\"", "\"gross_margin\"",
         "\"invoice_total\"", "\"quote_total\"", "\"revenue\"",
     ):
-        assert banned not in payload, f"pricing leak for tech: {banned}"
+        assert banned not in payload, f"pricing leak in 403 body: {banned}"
 
 
 def test_m1_admin_filter_by_tech(admin_headers):

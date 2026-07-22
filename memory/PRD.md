@@ -6426,3 +6426,33 @@ Follow-up
 * Rotate STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET in Stripe Dashboard (keys were pasted in chat).
 * Register webhook endpoint `https://poolscape-audit.preview.emergentagent.com/api/webhooks/stripe` in Stripe Dashboard for events: payment_intent.succeeded, payment_intent.payment_failed, charge.refunded, charge.dispute.created, invoice.paid, invoice.payment_failed, checkout.session.completed, payment_method.attached.
 * Set `ALLOW_TEST_HOOKS=0` in production `.env` (currently `1` so pytest can install SDK stubs).
+
+## Phase 5A + 5A.2 · Feb 2026 (COMPLETE)
+
+### Phase 5A — Tech UX cleanup + checklist correction
+Delivered
+* Backend
+    * `routers/checklists.py` (new) — `GET /api/checklists/daily?service_line=pool|landscape` with tenant-editable `service_checklists` collection; boot-time idempotent seed (`inserted=84 kept=0` on first run across 42 tenants × 2 service lines).
+    * `routers/jobs.py` — `POOL_CHECKLIST` / `LANDSCAPING_CHECKLIST` rewritten to match the exact 7-item / 10-item user brief.
+    * `utils.py` `require_zillow_access` — Property Lookup gates changed from admin+tech → admin+manager only.
+    * `routers/estimator.py` `require_admin_or_tech` — Field Estimator gates changed similarly.
+* Frontend
+    * `nav/roleNav.js` — removed Field Estimator + Property Lookup from `TECH_NAV`; fixed the broken `/card` link to `/tech/card` (this was the root cause of "business card doesn't open for techs").
+    * `pages/tech/ToolsHub.jsx` — same two tiles removed from tech section.
+    * `App.js` — `<NoTech>` wrappers on `/estimator*` + `/property-lookup*` routes.
+
+### Phase 5A.2 — Workstream admin-only + Service Log detail view
+Delivered
+* Backend
+    * `routers/workstream.py` — `_JOBS_READER_ROLES` → admin/super_admin only. Default status=completed. Non-completed status → 400.
+    * `routers/workstream_service_log.py` (new) — `GET /api/jobs/{jid}/service-log` aggregator returning `{log_details, employee, customer, property, checklist_state, water_test, chemicals_used, chemical_cost_usd, service_notes, materials_used, service_images, previous_service}` in one call. Chemical cost priced server-side (2 tabs × $1.20 + 1 gal chlorine × $8 + 1 gal acid × $8 = $18.40).
+    * `POST /api/jobs/{jid}/email-door-hanger` — admin-only. Resend from `cs@plofv.com`. `marketing_deliveries` row with `trigger_entity.kind='job_door_hanger'`. 60-second idempotency cooldown → 429 on double-click.
+* Frontend
+    * `pages/workstream/WorkstreamPage.jsx` — admin-only guard, status filter removed, title "Workstream — Completed Jobs", card click → `/workstream/:id`.
+    * `pages/workstream/ServiceLogPage.jsx` (new) — 3-column desktop layout (Log Details / Water Test + Chemical Used / Service Images carousel). Landscape jobs swap the middle column to "Service Notes" + optional Materials Used list. Media carousel with prev/next chevrons, keyboard nav, dot pagination.
+    * `nav/adminNav.js` — Workstream relabeled to "Workstream — Completed Jobs" under a "Service Log" subsection.
+
+Tests · 135 passed / 0 failed (Feb-2026 slice suites including 22 new tests in `tests/test_slice_5a_5a2.py`).
+
+Follow-up
+* Once mobile is dispatched to `e1_expo_frontend_dev`, the tenant-editable checklist collection lets the mobile app render exactly the same items without a code change.
