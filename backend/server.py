@@ -5,7 +5,7 @@ import os
 import logging
 
 from config import client, db, logger
-from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user, seed_landscape_tech_carlos, auto_heal_demo_passwords_if_needed, seed_prior_readings, seed_phase51k_finance, seed_mike_today_job
+from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user, seed_landscape_tech_carlos, auto_heal_demo_passwords_if_needed, seed_prior_readings, seed_phase51k_finance, seed_mike_today_job, align_demo_tech_departments, seed_manager_user
 from routers import (
     notifications as notifications_router,
     stripe_payments as stripe_payments_router,
@@ -375,6 +375,11 @@ async def _background_seed():
 
     await step("landscaping_user", seed_landscaping_user())
     await step("landscape_tech_carlos", seed_landscape_tech_carlos())
+    # Phase 5A follow-up · Feb 2026 — realign Mike (pool) / Carlos
+    # (landscape) + seed the manager role-gate test account. Both are
+    # idempotent and safe to run on every boot.
+    await step("align_demo_tech_departments", align_demo_tech_departments())
+    await step("seed_manager_user", seed_manager_user())
     await step("auto_heal_demo_passwords", auto_heal_demo_passwords_if_needed())
     try:
         from comms_seed.seed_comms import seed_comms as _seed_comms

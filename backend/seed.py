@@ -187,6 +187,88 @@ async def seed_landscape_tech_carlos():
     })
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Phase 5A follow-up · Feb 2026 — idempotent test-account alignment.
+#
+# `mike@aquaterra.com` is documented in /app/memory/test_credentials.md
+# as the POOL tech, and `carlos@aquaterra.com` as the LANDSCAPE tech.
+# Some deployments drifted (Mike ended up flagged as landscaping when
+# an earlier tenant migration mis-set the department). This function
+# patches only those two users on every boot, non-destructively.
+# ─────────────────────────────────────────────────────────────────────
+async def align_demo_tech_departments():
+    """Idempotent. Ensures ``mike@aquaterra.com`` sits in the ``pool``
+    department and ``carlos@aquaterra.com`` sits in ``landscaping``.
+    No-ops for any other user; safe to call on every boot."""
+    from config import logger as _lg
+    fixes = 0
+    _MIKE_DEPT = "pool"
+    _CARLOS_DEPT = "landscaping"
+
+    async def _fix(email: str, want: str):
+        nonlocal fixes
+        row = await db.users.find_one({"email": email}, {"_id": 0, "id": 1, "department": 1})
+        if not row:
+            return
+        cur = (row.get("department") or "").lower()
+        if cur == want:
+            return
+        await db.users.update_one(
+            {"id": row["id"]},
+            {"$set": {"department": want}},
+        )
+        # Mirror onto the linked technicians doc so schedule / checklist
+        # kind derivation stays consistent (see routers/jobs.py).
+        tech_email = email
+        await db.technicians.update_many(
+            {"email": tech_email},
+            {"$set": {"department": want}},
+        )
+        fixes += 1
+        _lg.info(f"[phase5a] realigned {email}: department {cur or '(unset)'} → {want}")
+
+    await _fix("mike@aquaterra.com",   _MIKE_DEPT)
+    await _fix("carlos@aquaterra.com", _CARLOS_DEPT)
+    return {"fixed": fixes}
+
+
+async def seed_manager_user():
+    """Phase 5A follow-up · Feb 2026 — idempotent seed of the
+    ``manager@aquaterra.com`` role-gate testing account.
+
+    Password: ``password123`` (matches every other demo account; rotated
+    together via scripts/rotate_demo_passwords.py). Only inserts if the
+    email is absent — never overwrites the row. Belongs to the same
+    aquaterra tenant as the other seeded users."""
+    if _os.environ.get("SEED_DEMO_USERS", "0") != "1":
+        from config import logger as _lg
+        _lg.warning("SEED_DEMO_USERS=0 — skipping manager seed. Set the flag to seed dev/preview.")
+        return {"created": False, "reason": "seed_demo_users_disabled"}
+    from utils import hash_password
+    email = "manager@aquaterra.com"
+    existing = await db.users.find_one({"email": email}, {"_id": 0, "id": 1})
+    if existing:
+        return {"created": False, "reason": "already_seeded"}
+    tenant = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0})
+    tenant_id = tenant["id"] if tenant else None
+    doc = {
+        "id": new_id(),
+        "name": "Morgan Manager",
+        "email": email,
+        "password_hash": hash_password("password123"),
+        "role": "manager",
+        "avatar": "",
+        "technician_id": None,
+        "active": True,
+        "created_at": now_iso(),
+    }
+    if tenant_id:
+        doc["tenant_id"] = tenant_id
+    await db.users.insert_one(doc)
+    from config import logger as _lg
+    _lg.info("[phase5a] seeded manager@aquaterra.com (role=manager)")
+    return {"created": True, "email": email}
+
 
 async def seed():
     if await db.users.count_documents({}) > 0:
