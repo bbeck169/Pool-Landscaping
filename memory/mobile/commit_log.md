@@ -174,3 +174,17 @@
 - **Files modified**: `app/marketing/_layout.tsx` (new), `app/settings/_layout.tsx` (new), `app/portal/home.tsx`, `app/(app)/more.tsx`, `src/components/tools/sections.ts`, `app/settings/widgets.tsx`
 - **Files deleted**: `app/marketing.tsx` (route conflict)
 - **Web files referenced**: None (screens were already built by prior agent)
+
+
+## Iteration 10 — Phase 5B Tier 2 Completion Pass
+- **Commit**: fd96aec6ab2e9ec360d1b6834a10cfe62b8012bb
+- **Date**: 2026-07-22
+- **Changes**:
+  - Fixed templates screen: switched from `/comms/email-templates`+`/comms/sms-templates` to canonical `GET /api/marketing/templates`; fixed field mappings (`name` not `code`, `active` not `is_active`); added `category` and `system` badges
+  - Fixed analytics screen: completely rebuilt to match actual API shape (`campaigns.total_sent/active/delivered/opened/clicked/converted`, `sequences.total_enrolments/active/completed/halted`, `review_requests.total/sent/opened/reviewed/review_rate_pct`); was showing all 0s before due to expecting non-existent `totals`/`rates` keys
+  - Fixed review-requests screen: corrected field mappings (`reviewed_at` not `review_left_at`, handle null `customer_name`, display `channel`/`variant`/`source` chips, timestamp display with proper `requested_at` fallback)
+  - Created `ClickToCallButton.tsx` (bonus): mobile parity for Phase 6B telephony — primary native `tel:` dialer via `Linking.openURL`, secondary RC ring-out via `POST /api/rc/call`, intent logging via `POST /api/rc/log-outbound`
+  - All lint clean, all role gates verified, all Tier 1 files intact
+- **Files modified**: `app/marketing/templates.tsx` (rewritten), `app/marketing/analytics.tsx` (rewritten), `app/marketing/review-requests.tsx` (rewritten)
+- **Files created**: `src/components/telephony/ClickToCallButton.tsx`
+- **Endpoints verified**: `/api/marketing/templates` (200), `/api/marketing/analytics/overview` (200), `/api/marketing/review-requests` (200), `/api/marketing/campaigns` (200), `/api/marketing/audience-segments` (200), `/api/marketing/sequences` (200), `/api/marketing/suppressions` (200), `/api/instaquote/configs` (200), `/api/admin/forms` (200), `/api/referrals/me` (200 for customer), `/api/customer-portal/referrals/my` (200 for customer), `/api/jobs/next` (404 — deferred)
