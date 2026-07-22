@@ -196,3 +196,142 @@ async def email_smoke_test(
         tenant_id=tenant["id"],
     )
     return {"result": res}
+
+
+# ══════════════════════════════════════════════════════════════════
+# Slice S · Twilio SMS smoke-test + status callback
+# ══════════════════════════════════════════════════════════════════
+@router.post("/dev/sms-smoke-test")
+async def sms_smoke_test(
+    to: str = Query(..., description="Recipient phone (E.164 or human-formatted)"),
+    body: Optional[str] = Query(None),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Fire a canned SMS through the Twilio adapter for wiring checks.
+    Disabled when ``APP_ENV=production``.  Uses category=transactional
+    so no ``Reply STOP`` suffix is auto-appended."""
+    if os.environ.get("APP_ENV", "").lower() == "production":
+        raise HTTPException(403, "Smoke test disabled in production")
+    from services.sms.twilio_adapter import send as _sms_send
+    text = body or (
+        f"Slice S smoke test from {tenant.get('name') or tenant['id']}. "
+        "Twilio adapter live."
+    )
+    res = await _sms_send(
+        to=to, body=text,
+        category="transactional", tenant_id=tenant["id"],
+    )
+    return {"result": res}
+
+
+@router.post("/webhooks/twilio/status")
+async def twilio_status_callback(request: Request) -> Dict[str, Any]:
+    """Twilio delivery-status callback receiver.
+
+    Twilio POSTs application/x-www-form-urlencoded with
+    ``MessageSid`` + ``MessageStatus`` (``sent`` / ``delivered`` /
+    ``undelivered`` / ``failed``).  We update the matching
+    ``marketing_deliveries`` row + auto-suppress permanently-failed
+    numbers on ``failed`` / ``undelivered`` outcomes.
+
+    Signature verification uses ``TWILIO_AUTH_TOKEN`` when configured;
+    when missing the endpoint returns 401 to avoid trusting unsigned
+    events in production."""
+    form = await request.form()
+    sid = form.get("MessageSid") or form.get("SmsSid")
+    status = form.get("MessageStatus") or form.get("SmsStatus")
+    to_num = form.get("To") or ""
+
+    auth_tok = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+    if not auth_tok:
+        # Deliberate default — refuse unsigned webhooks. Ops needs to
+        # populate TWILIO_AUTH_TOKEN in .env to unlock this path.
+        raise HTTPException(401, "Twilio auth token not configured")
+
+    try:
+        from twilio.request_validator import RequestValidator
+        validator = RequestValidator(auth_tok)
+        sig = request.headers.get("X-Twilio-Signature", "")
+        url = str(request.url)
+        params = dict(form)
+        if not validator.validate(url, params, sig):
+            raise HTTPException(401, "Invalid Twilio signature")
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[twilio-webhook] signature check errored: %s", exc)
+
+    if sid and status:
+        await db.marketing_deliveries.update_one(
+            {"provider_response_id": sid},
+            {"$set": {"provider_status": status,
+                        "provider_last_event_at": now_iso()}},
+        )
+        if status in ("undelivered", "failed") and to_num:
+            row = await db.marketing_deliveries.find_one(
+                {"provider_response_id": sid},
+                {"_id": 0, "tenant_id": 1, "customer_id": 1},
+            )
+            if row and row.get("tenant_id"):
+                existing = await db.marketing_suppressions.find_one({
+                    "tenant_id": row["tenant_id"], "channel": "sms",
+                    "address": to_num, "category": "all",
+                    "deleted_at": None,
+                })
+                if not existing:
+                    await db.marketing_suppressions.insert_one({
+                        "id": new_id(),
+                        "tenant_id": row["tenant_id"],
+                        "channel": "sms",
+                        "address": to_num,
+                        "reason": "undeliverable",
+                        "category": "all",
+                        "customer_id": row.get("customer_id"),
+                        "created_at": now_iso(),
+                        "created_by": "twilio_webhook",
+                        "deleted_at": None,
+                    })
+    return {"ok": True}
+
+
+@router.post("/webhooks/twilio/inbound")
+async def twilio_inbound_sms(request: Request) -> Dict[str, Any]:
+    """Inbound SMS receiver — used to catch STOP/UNSUBSCRIBE/QUIT keywords
+    and materialise a local suppression row.  Twilio already stops
+    delivery on their end for STOP replies; this ensures our own
+    campaign / drip logic respects the opt-out too."""
+    form = await request.form()
+    frm = (form.get("From") or "").strip()
+    body_text = ((form.get("Body") or "").strip()).upper()
+    if not frm:
+        return {"ok": True}
+    if body_text in ("STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"):
+        # Resolve which tenant owns the ``To`` number.
+        to_num = (form.get("To") or "").strip()
+        tenant_row = await db.tenants.find_one(
+            {"twilio_from_number": to_num}, {"_id": 0, "id": 1},
+        )
+        tenant_id = tenant_row["id"] if tenant_row else None
+        if not tenant_id:
+            # Fall back to any tenant with an existing suppression list;
+            # if none, drop silently rather than pollute all tenants.
+            return {"ok": True}
+        existing = await db.marketing_suppressions.find_one({
+            "tenant_id": tenant_id, "channel": "sms",
+            "address": frm, "category": "all", "deleted_at": None,
+        })
+        if not existing:
+            await db.marketing_suppressions.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant_id,
+                "channel": "sms",
+                "address": frm,
+                "reason": "stop_reply",
+                "category": "all",
+                "customer_id": None,
+                "created_at": now_iso(),
+                "created_by": "twilio_inbound",
+                "deleted_at": None,
+            })
+    return {"ok": True}

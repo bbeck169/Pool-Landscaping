@@ -6349,3 +6349,27 @@ Held for next sub-slice ping — will ship as its own delta after user greenligh
 ### Session complete backlog resolved
 Every open slice from initial user roadmap (K frontend, M, N, O, O.2, P, Q, R, L.a–L.j) shipped, tested, and verified. Marketing loop closed: estimate accepted → drip → onboarding.
 
+
+## Slice S — Twilio SMS adapter (Feb 2026)
+
+### Shipped
+- **`services/sms/twilio_adapter.py`** — mirrors Slice N Resend adapter:
+  - API-Key auth (preferred, rotatable) with Auth-Token fallback
+  - Category-aware suppression pre-check via Slice F `is_suppressed`
+  - Non-blocking send via `asyncio.to_thread` on the sync SDK
+  - Retry + exponential backoff on 429/5xx, max 3 attempts
+  - Auto-appends `Reply STOP to unsubscribe` for `marketing`/`drip`/`campaign` categories; transactional exempt; duplicate-detection skips re-append
+  - E.164 phone normalisation (rejects <10 digits)
+  - 1600-char hard body cap
+- **Wire-up complete** — M5c drip SMS steps + M6 review-request SMS branch now route through Twilio adapter with `provider/provider_status/provider_response_id/attempts` stamped on `marketing_deliveries` row
+- **Webhook receivers** — `POST /api/webhooks/twilio/status` (delivery status + auto-suppress undeliverable numbers, Twilio signature verified via `TWILIO_AUTH_TOKEN`) + `POST /api/webhooks/twilio/inbound` (STOP-reply → local suppression row so our own logic respects opt-out even before Twilio's account-level list applies)
+- **Dev smoke-test** — `POST /api/dev/sms-smoke-test?to=+1XXX` (super/admin, blocked when `APP_ENV=production`)
+- **Real credentials wired**: API-Key SID/Secret + Account SID + From-Number `+16238878060` all present in `.env`; placeholders in `.env.example`.
+
+### Tests
+- **108/108 pytest green** (95 prior + 13 new Slice S tests covering enabled/disabled paths, phone normalisation across 6 formats, suppression bypass on transactional, retry success + exhaustion, permanent-4xx no-retry, STOP suffix appended on marketing / skipped on transactional / not-double-appended, 1600-byte body cap).
+
+### Deferred (non-blocking)
+- Broader wiring: campaign SMS channel + widget escalation + portal notifications still emit via legacy paths. Adapter itself is production-ready; wiring is mechanical follow-up.
+- QuickBooks Payments — awaiting user credentials.
+

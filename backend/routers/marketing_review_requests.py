@@ -602,8 +602,7 @@ async def _deliver(rr: Dict[str, Any], now: datetime) -> None:
     if rr["channel"] == "sms":
         body = strip_html(body)
     delivery_id = new_id()
-    # Slice N · Resend adapter for email review-requests. SMS falls
-    # through to the mock path until an SMS adapter lands.
+    # Slice N / S · Resend for email, Twilio for SMS.
     provider_status = None
     provider = "mock"
     provider_response_id = None
@@ -626,6 +625,24 @@ async def _deliver(rr: Dict[str, Any], now: datetime) -> None:
             attempts = res.get("attempts") or 0
         except Exception as exc:  # pragma: no cover
             logger.warning("[m6] resend adapter failed: %s", exc)
+            provider_status = "failed"
+    elif rr["channel"] == "sms":
+        try:
+            from services.sms.twilio_adapter import send as _twilio_send
+            res = await _twilio_send(
+                to=(cust.get("phone") or "").strip(),
+                body=body,
+                category="review_request",
+                tenant_id=rr["tenant_id"],
+                customer_id=rr["customer_id"],
+                idempotency_key=f"m6:{rr['id']}",
+            )
+            provider = res.get("provider") or "mock"
+            provider_status = res.get("provider_status")
+            provider_response_id = res.get("provider_response_id")
+            attempts = res.get("attempts") or 0
+        except Exception as exc:  # pragma: no cover
+            logger.warning("[m6] twilio adapter failed: %s", exc)
             provider_status = "failed"
     await db.marketing_deliveries.insert_one({
         "id": delivery_id,

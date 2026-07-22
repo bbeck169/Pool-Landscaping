@@ -364,8 +364,7 @@ async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, i
         if step["channel"] == "sms":
             body = strip_html(body)
         delivery_id = new_id()
-        # Slice N · route email sends through Resend adapter.  SMS
-        # remains on the legacy mock path until an SMS adapter lands.
+        # Slice N / S · route email through Resend, SMS through Twilio.
         provider_status = None
         provider = "mock"
         provider_response_id = None
@@ -389,6 +388,24 @@ async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, i
                 attempts = res.get("attempts") or 0
             except Exception as exc:  # pragma: no cover
                 logger.warning("[m5c] resend adapter failed: %s", exc)
+                provider_status = "failed"
+        elif step["channel"] == "sms":
+            try:
+                from services.sms.twilio_adapter import send as _twilio_send
+                res = await _twilio_send(
+                    to=(cust.get("phone") or "").strip(),
+                    body=body,
+                    category="drip",
+                    tenant_id=e["tenant_id"],
+                    customer_id=e["customer_id"],
+                    idempotency_key=f"drip:{e['id']}:{step_idx}",
+                )
+                provider = res.get("provider") or "mock"
+                provider_status = res.get("provider_status")
+                provider_response_id = res.get("provider_response_id")
+                attempts = res.get("attempts") or 0
+            except Exception as exc:  # pragma: no cover
+                logger.warning("[m5c] twilio adapter failed: %s", exc)
                 provider_status = "failed"
         await db.marketing_deliveries.insert_one({
             "id": delivery_id,
