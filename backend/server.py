@@ -93,6 +93,8 @@ from routers import (
     invoice_viewer,
     estimate_viewer,
     referral_rewards,
+    payments_stripe_live,
+    stripe_webhooks_live,
     marketing_campaigns as marketing_campaigns_router,
 )
 
@@ -192,7 +194,9 @@ for module in [notifications_router,
                portal_referrals,
                invoice_viewer,
                estimate_viewer,
-               referral_rewards]:
+               referral_rewards,
+               payments_stripe_live,
+               stripe_webhooks_live]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -633,6 +637,25 @@ async def startup():
         await ensure_deployment_indexes()
     except Exception as e:
         logger.warning(f"ensure_deployment_indexes crashed: {e}")
+
+    # Phase 4B · Stripe Live Payments — one-shot startup log with masked
+    # key + mode. Never logs the secret value. Boots the Stripe SDK.
+    try:
+        from services.stripe_client import get_stripe, mode as _stripe_mode
+        _sk = os.getenv("STRIPE_SECRET_KEY") or ""
+        _pk = os.getenv("STRIPE_PUBLISHABLE_KEY") or ""
+        _ws = os.getenv("STRIPE_WEBHOOK_SECRET") or ""
+        _mode_val = _stripe_mode()
+        # Masked prefix — keep 7-char prefix + last 4 (never the middle).
+        _mask = lambda s: (f"{s[:7]}…{s[-4:]}" if s and len(s) > 12 else ("(unset)" if not s else "(short)"))
+        logger.info(
+            f"[phase4b] stripe mode={_mode_val} "
+            f"key={_mask(_sk)} pk={_mask(_pk)} "
+            f"webhook_secret={'set' if _ws else 'unset'}"
+        )
+        get_stripe()  # boot SDK
+    except Exception as e:
+        logger.warning(f"[phase4b] stripe boot log crashed: {e}")
 
     # Phase 56.3.A — idempotent one-shot: back-fill first_name / last_name
     # on any legacy customer doc that only has the combined `name` field.

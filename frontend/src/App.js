@@ -107,6 +107,7 @@ import InstaQuoteAdminPage from "@/pages/marketing/InstaQuoteAdmin";
 import PublicInstaQuotePage from "@/pages/public/PublicInstaQuote";
 import InstaScheduleAdminPage from "@/pages/marketing/InstaScheduleAdmin";
 import PublicInstaSchedulePage from "@/pages/public/PublicInstaSchedule";
+import PublicInvoicePay from "@/pages/public/PublicInvoicePay";
 import TeamChatPage from "@/pages/chat/TeamChatPage";
 import {
   SequencesList, SequenceNew, SequenceDetail,
@@ -309,6 +310,9 @@ export default function App() {
 
           {/* QuoteIQ Q5 · public InstaSchedule portal — no auth. */}
           <Route path="/book/:slug" element={<PublicInstaSchedulePage />} />
+
+          {/* Phase 4B · Feb 2026 — public magic-link invoice payer (no auth). */}
+          <Route path="/pay/invoice/:id" element={<PublicInvoicePay />} />
 
           {/* Everything else lives inside the protected shell (side nav + top bar + bottom tabs). */}
           <Route path="/" element={<AppLayout />}>

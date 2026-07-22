@@ -81,9 +81,30 @@ async def ensure_deployment_indexes() -> None:
          [("tenant_id", ASCENDING), ("deal_id", ASCENDING),
           ("created_at", DESCENDING)],
          {"name": "deal_events_tenant_deal_created", "background": True}),
+        # Phase 4B · Feb 2026 — Stripe webhook idempotency ledger.
+        # Unique on ``event_id`` prevents concurrent-replay double-processing.
+        # TTL 30 days on ``processed_at`` (ISO string) — Mongo TTL requires
+        # a BSON Date field, so we index it as a plain sparse index and
+        # rely on the 30-day TTL enforced by a second Date field written
+        # by the webhook handler (``expires_at``).
+        ("stripe_events_processed",
+         [("event_id", ASCENDING)],
+         {"unique": True, "name": "uniq_stripe_event_id", "background": True}),
     ]
     for coll, keys, opts in plans:
         try:
             await db[coll].create_index(keys, **opts)
         except Exception as e:
             logger.warning(f"index ensure failed on {coll}: {type(e).__name__}: {e}")
+
+    # Phase 4B · Stripe webhook 30-day TTL. The TTL requires a BSON Date
+    # field, so we maintain ``expires_at`` alongside the ISO ``processed_at``.
+    try:
+        await db.stripe_events_processed.create_index(
+            [("expires_at", ASCENDING)],
+            name="ttl_stripe_event_expires_at",
+            expireAfterSeconds=0,
+            background=True,
+        )
+    except Exception as e:
+        logger.warning(f"stripe_events_processed TTL ensure failed: {e}")

@@ -6404,3 +6404,25 @@ Every open slice from initial user roadmap (K frontend, M, N, O, O.2, P, Q, R, L
 - Portal transactional wiring for `estimate_sent`, `invoice_sent`, `invoice_paid`, `appointment_reminder` is not yet in place; hooks land on their respective controllers when those event paths ship. Referral conversion is the reference implementation.
 - QuickBooks Payments — still awaiting user credentials.
 
+
+## Phase 4B · Stripe Live Payments — Feb 2026 (COMPLETE)
+
+Delivered
+---------
+* Backend
+    * `routers/payments_stripe_live.py` — POST /api/payments/create-payment-intent (auth OR portal magic-link, server-resolved amount, integer cents, idempotency-key `pi:{invoice_id}:{attempt_counter}`), POST /api/payments/refund (Admin+Manager, reason required min 3 chars, idempotency-key `rf:{pi}:{amount_cents}`), GET /api/payments/{pi_id}, POST /api/dev/stripe-config-check, GET /api/config/public, GET /api/invoices/{iid}/magic-link, GET /api/invoices/{iid}/full-magic.
+    * `routers/stripe_webhooks_live.py` — POST /api/webhooks/stripe with `construct_event` signature verification, 30-day TTL dedupe via `stripe_events_processed`, handlers for payment_intent.succeeded (marks invoice paid + Resend email + Twilio SMS receipts recorded in marketing_deliveries), payment_intent.payment_failed, charge.refunded, charge.dispute.created (admin fan-out), and delegates for invoice.paid / invoice.payment_failed / checkout.session.completed / payment_method.attached.
+    * `db_indexes.py` — unique index on `stripe_events_processed.event_id` + 30-day TTL on `expires_at`.
+    * `server.py` — masked startup log `[phase4b] stripe mode=live key=sk_live…{last4} pk=pk_live…{last4} webhook_secret=set`.
+    * `.env.example` — placeholders for STRIPE_MODE + STRIPE_ACCOUNT_ID (no real values committed).
+* Frontend
+    * `components/PaymentForm.jsx` — Stripe PaymentElement with `automatic_payment_methods.enabled = true` (Card + ACH + wallets, per-Stripe-account gating). Fetches pk at runtime from `/api/config/public`; never bundled.
+    * `pages/public/PublicInvoicePay.jsx` + `/pay/invoice/:id?token=xxx` public route.
+    * `InvoiceView.jsx` — Pay Now button in toolbar (visible only when invoice has outstanding balance).
+* Tests — `tests/test_stripe_phase4b.py`, 18 new tests, all green. Feb-2026 slice suites: 130 passed / 1 skipped.
+
+Follow-up
+---------
+* Rotate STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET in Stripe Dashboard (keys were pasted in chat).
+* Register webhook endpoint `https://poolscape-audit.preview.emergentagent.com/api/webhooks/stripe` in Stripe Dashboard for events: payment_intent.succeeded, payment_intent.payment_failed, charge.refunded, charge.dispute.created, invoice.paid, invoice.payment_failed, checkout.session.completed, payment_method.attached.
+* Set `ALLOW_TEST_HOOKS=0` in production `.env` (currently `1` so pytest can install SDK stubs).

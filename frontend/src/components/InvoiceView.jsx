@@ -11,8 +11,9 @@
  * the aggregator endpoint (customer 404 for other tenants, tech 403).
  */
 import React, { useEffect, useState } from "react";
-import { Printer, Download, Loader2 } from "lucide-react";
+import { Printer, Download, Loader2, CreditCard } from "lucide-react";
 import { api, TOKEN_KEY } from "@/api";
+import PaymentForm from "@/components/PaymentForm";
 import "./InvoiceView.css";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
@@ -22,16 +23,21 @@ function fmtMoney(n) {
   return v.toFixed(2);
 }
 
-export default function InvoiceView({ invoiceId, printable = false }) {
+export default function InvoiceView({ invoiceId, printable = false, magicToken = "" }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+  const [payOpen, setPayOpen] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     if (!invoiceId) return;
-    api.get(`/invoices/${invoiceId}/full`)
+    const url = magicToken
+      ? `/invoices/${invoiceId}/full-magic?token=${encodeURIComponent(magicToken)}`
+      : `/invoices/${invoiceId}/full`;
+    api.get(url)
       .then(setData)
       .catch((e) => setErr(e?.message || "Failed to load invoice."));
-  }, [invoiceId]);
+  }, [invoiceId, reloadTick, magicToken]);
 
   const openPdf = () => {
     const token = localStorage.getItem(TOKEN_KEY);
@@ -65,13 +71,27 @@ export default function InvoiceView({ invoiceId, printable = false }) {
   }
 
   const { company, bill_to, property_address, header, line_items, totals,
-           notes, is_due_on_receipt } = data;
+           notes, is_due_on_receipt, payment_status } = data;
+  const canPay = (payment_status || "").toLowerCase() !== "paid"
+                  && (totals?.total_due || 0) > 0;
+  const paySource = magicToken ? "portal" : "authenticated";
 
   return (
     <div className={`iv-shell ${printable ? "iv-printable" : ""}`}
           data-testid="invoice-view">
       {!printable ? (
         <div className="iv-toolbar" data-testid="invoice-toolbar">
+          {canPay ? (
+            <button
+              type="button"
+              onClick={() => setPayOpen(true)}
+              className="iv-btn iv-btn-primary"
+              data-testid="invoice-pay-now-btn"
+              style={{ background: "#0F766E", borderColor: "#0F766E" }}
+            >
+              <CreditCard size={14} /> Pay Now
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => window.print()}
@@ -269,6 +289,18 @@ export default function InvoiceView({ invoiceId, printable = false }) {
           </div>
         </div>
       </div>
+      {payOpen ? (
+        <PaymentForm
+          invoiceId={invoiceId}
+          source={paySource}
+          magicToken={magicToken}
+          onClose={() => setPayOpen(false)}
+          onSuccess={() => {
+            setPayOpen(false);
+            setReloadTick((t) => t + 1);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
