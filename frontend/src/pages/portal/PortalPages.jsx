@@ -18,6 +18,9 @@ import { colors, money } from "@/theme";
 import { useAuth } from "@/auth";
 import InvoiceView from "@/components/InvoiceView";
 import EstimateView from "@/components/EstimateView";
+// Phase 5A hot-fix · Feb 2026 — replace the legacy hosted-checkout
+// redirect with the Phase 4B <PaymentForm> modal (Card + ACH + wallets).
+import PaymentForm from "@/components/PaymentForm";
 import {
   PageHeader,
   Button,
@@ -200,22 +203,13 @@ export function PortalInvoiceDetail() {
   const [params] = useSearchParams();
   const printable = params.get("format") === "printable";
   const [doc, setDoc] = useState(null);
-  const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
+  // Phase 5A hot-fix · Feb 2026 — Portal Pay Now now uses the Phase 4B
+  // <PaymentForm> (Card + ACH + wallets). The legacy
+  // /api/payments/checkout/{id} endpoint returned "Stripe not
+  // configured" whenever the older Phase-53 SDK path hit an exception.
+  const [payNowOpen, setPayNowOpen] = useState(false);
   useEffect(() => { api.get(`/quotes/${id}`).then(setDoc).catch(() => {}); }, [id]);
-
-  const pay = async () => {
-    setBusy(true);
-    try {
-      const r = await api.post(`/payments/checkout/${id}`, {
-        return_url: `${window.location.origin}/portal/payment-complete`,
-      });
-      if (r.url) window.location.href = r.url;
-    } catch (e) {
-      setToast({ tone: "error", message: e.message });
-      setBusy(false);
-    }
-  };
 
   const balance = doc
     ? Math.max(0, Number(doc.total || 0) - Number(doc.amount_paid || 0))
@@ -236,13 +230,25 @@ export function PortalInvoiceDetail() {
             <ArrowLeft size={14} /> My invoices
           </button>
           {doc && balance > 0 ? (
-            <Button onClick={pay} disabled={busy} testid="port-pay">
-              <CreditCard size={16} /> {busy ? "Redirecting…" : `Pay ${money(balance)}`}
+            <Button onClick={() => setPayNowOpen(true)} testid="port-pay">
+              <CreditCard size={16} /> {`Pay ${money(balance)}`}
             </Button>
           ) : null}
         </div>
       ) : null}
       <InvoiceView invoiceId={id} printable={printable} />
+      {payNowOpen ? (
+        <PaymentForm
+          invoiceId={id}
+          source="authenticated"
+          onClose={() => setPayNowOpen(false)}
+          onSuccess={() => {
+            setPayNowOpen(false);
+            setToast({ tone: "success", message: "Payment received. Thank you!" });
+            api.get(`/quotes/${id}`).then(setDoc).catch(() => {});
+          }}
+        />
+      ) : null}
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );

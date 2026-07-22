@@ -71,8 +71,15 @@ class InvoiceSmsIn(BaseModel):
 async def send_invoice_sms(iid: str, body: InvoiceSmsIn,
                            user: dict = Depends(require_admin),
                            tenant: dict = Depends(get_current_tenant)):
-    """Text an invoice link via Twilio. Gracefully returns
-    { sent:false, reason:"twilio-not-configured" } when creds are missing."""
+    """Text an invoice link via the shipped Twilio adapter.
+
+    Phase 5A hot-fix · Feb 2026 — the previous implementation read
+    ``TWILIO_AUTH_TOKEN`` directly and returned ``twilio-not-configured``
+    when it was blank, even though this tenant uses API-key auth
+    (``TWILIO_API_KEY_SID`` + ``TWILIO_API_KEY_SECRET``). All SMS traffic
+    now funnels through ``services/sms/twilio_adapter.send`` which
+    understands both auth modes and never raises.
+    """
     inv = await db.quotes.find_one({"id": iid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not inv:
         raise HTTPException(404, "Invoice not found")
@@ -85,26 +92,28 @@ async def send_invoice_sms(iid: str, body: InvoiceSmsIn,
     if not to:
         raise HTTPException(400, "No SMS destination number available")
 
-    sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
-    tok = os.environ.get("TWILIO_AUTH_TOKEN", "")
-    frm = os.environ.get("TWILIO_FROM_NUMBER", "")
-    if not (sid and tok and frm):
-        return {"sent": False, "reason": "twilio-not-configured", "to": to}
-
     body_txt = body.message or (
         f"Invoice {iid[:8].upper()} for {inv.get('customer_name', '')}: ${inv.get('total', 0):.2f}. "
         f"Pay online: {inv.get('payment_link') or 'link pending'}"
     )
-    try:
-        from twilio.rest import Client
-        client = Client(sid, tok)
-        msg = await asyncio.to_thread(
-            client.messages.create, from_=frm, to=to, body=body_txt
-        )
-        return {"sent": True, "to": to, "sid": msg.sid}
-    except Exception as e:
-        logger.warning(f"Invoice SMS failed: {e}")
-        return {"sent": False, "reason": str(e), "to": to}
+    from services.sms.twilio_adapter import send as _sms_send
+    res = await _sms_send(
+        to=to, body=body_txt,
+        category="transactional", tenant_id=tenant["id"],
+        customer_id=inv.get("customer_id"),
+        idempotency_key=f"invoice-sms:{iid}",
+    )
+    provider = res.get("provider")
+    if provider == "twilio" and res.get("provider_status") in ("queued", "sent", "delivered", "accepted"):
+        return {"sent": True, "to": to, "sid": res.get("provider_response_id")}
+    if provider == "mock":
+        # Adapter is disabled at runtime (no API-key pair AND no
+        # auth token). Preserve the historical shape so any existing
+        # UI that keys off ``reason == "twilio-not-configured"`` keeps
+        # working — but the shipped adapter's ``enabled`` gate is now
+        # the single source of truth.
+        return {"sent": False, "reason": "twilio-not-configured", "to": to}
+    return {"sent": False, "reason": res.get("error") or "twilio-send-failed", "to": to}
 
 
 # ─── Convert approved quote → job ───────────────────────────────────────────

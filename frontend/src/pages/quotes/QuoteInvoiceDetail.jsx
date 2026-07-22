@@ -17,6 +17,15 @@ import {
 import { api } from "@/api";
 import { colors, money } from "@/theme";
 import { PayNowButton, StripeCheckoutReturn } from '@/components/stripe/StripePayments';
+// Phase 5A hot-fix · Feb 2026 — Pay Now on the invoice detail page now
+// uses the Phase 4B <PaymentForm> (Card + ACH + wallets via Stripe
+// PaymentElement). The legacy hosted-checkout <PayNowButton> above is
+// kept only for the Portal / Magic-Link viewer where it still ships,
+// but the authenticated invoice screen no longer calls it. The
+// legacy path returned ``stripe_error`` whenever the Phase-53 checkout
+// route hit a Stripe SDK exception, which surfaced to the user as
+// "Stripe not configured".
+import PaymentForm from "@/components/PaymentForm";
 import {
   PageHeader,
   Button,
@@ -44,6 +53,8 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
   const [payOpen, setPayOpen] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Phase 5A hot-fix · Feb 2026 — Phase 4B PaymentForm mount toggle.
+  const [payNowOpen, setPayNowOpen] = useState(false);
   const [termsEditOpen, setTermsEditOpen] = useState(false);
   const [termsDraft, setTermsDraft] = useState("");
   const [termsDefaultForDoc, setTermsDefaultForDoc] = useState("");
@@ -265,7 +276,9 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
                 <DollarSign size={14} /> Record payment
               </Button>
               {balance > 0 ? (
-                <PayNowButton invoice={doc} onError={(m) => window.alert(m)} />
+                <Button onClick={() => setPayNowOpen(true)} testid="id-pay-now-phase4b">
+                  <CreditCard size={14} /> Pay {`$${balance.toFixed(2)}`}
+                </Button>
               ) : null}
             </>
           )}
@@ -489,6 +502,19 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
       </Modal>
 
       <Toast toast={toast} onClose={() => setToast(null)} />
+      {payNowOpen ? (
+        <PaymentForm
+          invoiceId={doc?.id}
+          source="authenticated"
+          onClose={() => setPayNowOpen(false)}
+          onSuccess={() => {
+            setPayNowOpen(false);
+            setToast({ tone: "success", message: "Payment received. Thank you!" });
+            // Refresh invoice so paid/partial reflects immediately.
+            api.get(`/quotes/${id}`).then(setDoc).catch(() => {});
+          }}
+        />
+      ) : null}
     </div>
   );
 }

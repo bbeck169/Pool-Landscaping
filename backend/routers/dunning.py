@@ -347,25 +347,27 @@ async def _send_email(to: str, subject: str, body: str,
         return {"status": "failed", "error": str(e)}
 
 
-async def _send_sms(to: str, body: str) -> Dict[str, Any]:
-    key = os.environ.get("TWILIO_ACCOUNT_SID") or ""
-    tok = os.environ.get("TWILIO_AUTH_TOKEN") or ""
-    frm = os.environ.get("TWILIO_FROM") or ""
-    if not (key and tok and frm):
-        return {"status": "pending_twilio",
-                 "reason": "twilio-not-configured"}
+async def _send_sms(to: str, body: str, *, tenant_id: Optional[str] = None,
+                     customer_id: Optional[str] = None) -> Dict[str, Any]:
+    """Phase 5A hot-fix · Feb 2026 — delegate to the shipped Twilio
+    adapter so API-key auth (SID + API_KEY_SID + API_KEY_SECRET) is
+    recognised. Previously this function required ``TWILIO_AUTH_TOKEN``
+    which is intentionally blank on tenants using API-key auth, causing
+    a false ``twilio-not-configured`` response.
+    """
     if not to:
         return {"status": "failed", "error": "no-recipient"}
-    try:
-        from twilio.rest import Client
-        client = Client(key, tok)
-        await asyncio.to_thread(
-            client.messages.create, body=body, from_=frm, to=to,
-        )
+    from services.sms.twilio_adapter import send as _sms_send
+    res = await _sms_send(to=to, body=body, category="transactional",
+                            tenant_id=tenant_id, customer_id=customer_id)
+    provider = res.get("provider")
+    if provider == "twilio" and res.get("provider_status") in ("queued", "sent", "delivered", "accepted"):
         return {"status": "sent"}
-    except Exception as e:
-        logger.warning(f"dunning sms send failed: {e}")
-        return {"status": "failed", "error": str(e)}
+    if provider == "mock":
+        return {"status": "pending_twilio",
+                 "reason": "twilio-not-configured"}
+    return {"status": "failed",
+             "error": res.get("error") or "twilio-send-failed"}
 
 
 async def _send_reminder(invoice: Dict[str, Any], stage: Dict[str, Any],
@@ -401,7 +403,10 @@ async def _send_reminder(invoice: Dict[str, Any], stage: Dict[str, Any],
             }
         elif ch == "sms":
             result = await _send_sms(
-                ctx.get("customer_phone") or "", sms_text)
+                ctx.get("customer_phone") or "", sms_text,
+                tenant_id=tenant["id"],
+                customer_id=invoice.get("customer_id"),
+            )
             doc = {
                 "id": new_id(), "tenant_id": tenant["id"],
                 "invoice_id": invoice["id"],

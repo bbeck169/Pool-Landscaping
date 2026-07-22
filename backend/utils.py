@@ -131,15 +131,36 @@ def deny_impersonation(user: dict) -> None:
 
 
 def send_sms(to: str, body: str) -> bool:
-    sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    token = os.environ.get("TWILIO_AUTH_TOKEN")
-    frm = os.environ.get("TWILIO_FROM_NUMBER")
-    if not (sid and token and frm and to):
-        return False  # SMS not configured — in-app notification still delivered
+    """Legacy sync-return SMS helper.
+
+    Phase 5A hot-fix · Feb 2026 — delegates to the shipped Twilio
+    adapter (``services.sms.twilio_adapter.send``) so API-key auth
+    is picked up correctly. The adapter is async; we hop threads via
+    ``asyncio.run`` (safe here because this helper is invoked from
+    sync fire-and-forget code paths like ``notify_customer``).
+    Returns True on any successful queue/send, False otherwise —
+    matches the historical return shape callers already handle."""
+    if not to:
+        return False
     try:
-        from twilio.rest import Client
-        Client(sid, token).messages.create(to=to, from_=frm, body=body)
-        return True
+        import asyncio
+        from services.sms.twilio_adapter import send as _sms_send
+
+        async def _go():
+            return await _sms_send(to=to, body=body, category="transactional")
+
+        try:
+            # Running under an existing loop? Delegate to it.
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is None:
+            res = asyncio.run(_go())
+        else:
+            fut = asyncio.run_coroutine_threadsafe(_go(), loop)
+            res = fut.result(timeout=15)
+        return (res.get("provider") == "twilio"
+                and res.get("provider_status") in ("queued", "sent", "delivered", "accepted"))
     except Exception as e:
         logger.warning(f"SMS send failed: {e}")
         return False

@@ -1203,22 +1203,28 @@ def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
 
 
 async def _send_recap_sms(customer: dict, plain: str) -> dict:
-    sid = _os.environ.get("TWILIO_ACCOUNT_SID")
-    tok = _os.environ.get("TWILIO_AUTH_TOKEN")
-    frm = _os.environ.get("TWILIO_FROM_NUMBER")
-    to  = customer.get("alert_phone") or customer.get("phone")
+    """Phase 5A hot-fix · Feb 2026 — route through the shipped Twilio
+    adapter so API-key auth works. Previously required
+    ``TWILIO_AUTH_TOKEN`` which is intentionally blank on API-key
+    tenants."""
+    to = customer.get("alert_phone") or customer.get("phone")
     if not to:
         return {"sent": False, "mocked": True,
                  "reason": "customer has no phone on file"}
-    if not (sid and tok and frm):
+    from services.sms.twilio_adapter import send as _sms_send
+    res = await _sms_send(
+        to=to, body=plain[:1500], category="transactional",
+        customer_id=customer.get("id"),
+    )
+    provider = res.get("provider")
+    if provider == "twilio" and res.get("provider_status") in ("queued", "sent", "delivered", "accepted"):
+        return {"sent": True, "mocked": False,
+                 "twilio_sid": res.get("provider_response_id")}
+    if provider == "mock":
         return {"sent": False, "mocked": True,
-                 "reason": "twilio not configured (TWILIO_ACCOUNT_SID/TOKEN/FROM_NUMBER)"}
-    try:
-        from twilio.rest import Client
-        msg = Client(sid, tok).messages.create(to=to, from_=frm, body=plain[:1500])
-        return {"sent": True, "mocked": False, "twilio_sid": msg.sid}
-    except Exception as e:
-        return {"sent": False, "mocked": True, "reason": f"twilio error: {e}"}
+                 "reason": "twilio not configured"}
+    return {"sent": False, "mocked": True,
+             "reason": f"twilio error: {res.get('error') or 'send_failed'}"}
 
 
 async def _send_recap_email(customer: dict, subject: str, html: str) -> dict:
