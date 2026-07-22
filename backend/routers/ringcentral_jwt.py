@@ -105,6 +105,11 @@ class VerifyEchoBody(BaseModel):
     ping: Optional[str] = None
 
 
+class RcSmsTestBody(BaseModel):
+    to: str
+    body: Optional[str] = None
+
+
 @router.post("/dev/ringcentral-ping")
 async def rc_ping(user: dict = Depends(get_current_user)):
     _require_admin(user)
@@ -192,6 +197,53 @@ async def rc_verify_echo(body: VerifyEchoBody = VerifyEchoBody(),
         ),
         "echoed_by_user": user.get("id"),
     }
+
+# Phase 7A · Feb 2026 — RC SMS wiring test. Only registered when
+# ALLOW_TEST_HOOKS=1 so production never exposes it. Never included
+# in real customer-facing surfaces.
+if os.getenv("ALLOW_TEST_HOOKS") == "1":
+    import time as _time
+
+    @router.post("/dev/rc-sms-test")
+    async def rc_sms_test(body: RcSmsTestBody,
+                            user: dict = Depends(get_current_user)):
+        _require_admin(user)
+        if not body.to:
+            raise HTTPException(400, "Missing 'to' number")
+        default_body = (
+            f"[dev] RingCentral SMS wiring test — {int(_time.time())} — "
+            "please ignore."
+        )
+        text = body.body or default_body
+        svc = RingCentralService()
+        try:
+            res = await svc.send_sms(body.to, text)
+        except RingCentralError as e:
+            # Log a masked recipient; never echo the RC body verbatim
+            # in the log because RC error responses can occasionally
+            # embed the client bundle context.
+            masked = (body.to or "")[-4:].rjust(len(body.to or ""), "*")
+            logger.warning(
+                f"[phase7a] rc-sms-test to=***{masked} status={e.status} "
+                f"scope_missing={getattr(e, 'scope_missing', False)}"
+            )
+            raise HTTPException(
+                status_code=502 if e.status >= 500 else e.status,
+                detail={"provider": "ringcentral",
+                          "status": e.status,
+                          "body": str(e.body)[:400],
+                          "scope_missing": getattr(e, "scope_missing", False)},
+            )
+        return {
+            "ok": True,
+            "provider": res["provider"],
+            "message_id": res["message_id"],
+            "status": res["status"],
+            "from_number": res["from_number"],
+            "to_number": res["to_number"],
+            "raw": res["raw"],
+        }
+
 
 
 @router.post("/rc/call")

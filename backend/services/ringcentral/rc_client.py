@@ -139,6 +139,101 @@ class RingCentralService:
             json=body,
         )
 
+    async def list_extension_phone_numbers(self) -> Dict[str, Any]:
+        """Phase 7A · Feb 2026 — used to resolve an SMS-capable RC number
+        for the extension. Response shape: ``{records: [{phoneNumber,
+        features: [...]}, ...]}``. Filter records whose ``features``
+        contain ``SmsSender`` to find an outbound-SMS-eligible line."""
+        return await self._request(
+            "GET", "/restapi/v1.0/account/~/extension/~/phone-number",
+        )
+
+    async def _resolve_sms_from_number(self,
+                                         override: Optional[str] = None) -> str:
+        """Pick a usable SMS from-number. Priority:
+        1. Caller-provided ``override``.
+        2. ``RC_SMS_DEFAULT_FROM`` env var.
+        3. First extension phone number where ``features`` contains
+           ``SmsSender``.
+
+        Never returns an empty string — raises ``RingCentralError(400)``
+        when no SMS-capable line can be resolved (better than silently
+        letting RC pick an unpredictable number)."""
+        if override:
+            return override
+        env_default = os.getenv("RC_SMS_DEFAULT_FROM")
+        if env_default:
+            return env_default
+        try:
+            pn = await self.list_extension_phone_numbers()
+        except RingCentralError as e:
+            raise RingCentralError(
+                e.status,
+                f"Cannot resolve SMS from-number: {e.body}",
+            )
+        for rec in (pn or {}).get("records") or []:
+            features = rec.get("features") or []
+            if "SmsSender" in features:
+                num = rec.get("phoneNumber")
+                if num:
+                    return num
+        raise RingCentralError(
+            400,
+            "No SmsSender-capable phone number on this RC extension",
+        )
+
+    async def send_sms(self, to: str, body: str,
+                        from_number: Optional[str] = None) -> Dict[str, Any]:
+        """Phase 7A · Feb 2026 — send an SMS via RingCentral.
+
+        Returns the RC response body PLUS a normalized envelope so the
+        adapter layer can key on ``message_id``/``status`` without
+        needing to know RC's response shape:
+
+            {
+              "provider": "ringcentral",
+              "message_id": <RC message id>,
+              "status": <RC status, e.g. "Queued" | "Sent" | "SendingFailed">,
+              "raw": <full RC response>,
+              "from_number": <resolved sender>,
+              "to_number": <recipient>,
+            }
+
+        Reuses the shared token cache + 429/401 retry machinery. Raises
+        ``RingCentralError`` on 4xx/5xx; callers translate to their own
+        exception types as needed. When the RC error mentions "scope"
+        or "Insufficient" the exception carries a ``scope_missing``
+        attribute so higher layers can render a specific remediation
+        message ("enable SMS on the RC extension")."""
+        if not to:
+            raise RingCentralError(400, "SMS to-number is required")
+        if not body:
+            raise RingCentralError(400, "SMS body is required")
+        resolved_from = await self._resolve_sms_from_number(from_number)
+        payload = {
+            "from": {"phoneNumber": resolved_from},
+            "to": [{"phoneNumber": to}],
+            "text": body,
+        }
+        try:
+            raw = await self._request(
+                "POST", "/restapi/v1.0/account/~/extension/~/sms",
+                json=payload,
+            )
+        except RingCentralError as e:
+            body_s = str(e.body or "").lower()
+            if e.status == 403 and ("scope" in body_s or "insufficient" in body_s):
+                setattr(e, "scope_missing", True)
+            raise
+        return {
+            "provider": "ringcentral",
+            "message_id": (raw or {}).get("id"),
+            "status": (raw or {}).get("messageStatus"),
+            "raw": raw,
+            "from_number": resolved_from,
+            "to_number": to,
+        }
+
     async def get_my_extension(self) -> Dict[str, Any]:
         return await self._request("GET", "/restapi/v1.0/account/~/extension/~")
 

@@ -89,7 +89,10 @@ async def send_completion_email(job: dict) -> bool:
 def _reminder_html(inv: dict, name: str) -> str:
     balance = round(float(inv.get("total") or 0) - float(inv.get("amount_paid") or 0), 2)
     due = inv.get("due_date") or "now"
-    pay_link = f"{APP_PUBLIC_URL}" if APP_PUBLIC_URL else ""
+    # Feb 2026 · Pay-Now hotfix — mint a magic-link JWT so the emailed
+    # URL lands on the public payment viewer, not the login page.
+    from services.pay_link_builder import build_pay_now_url
+    pay_link = build_pay_now_url(inv["id"], inv.get("tenant_id") or "")
     link_html = f'<p><a href="{pay_link}" style="background:#0891b2;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block">Pay Now</a></p>' if pay_link else ""
     return (
         f'<div style="font-family:sans-serif;max-width:520px;margin:auto">'

@@ -289,8 +289,13 @@ async def _payment_link_for(invoice: Dict[str, Any],
                     return url
             except Exception as e:
                 logger.warning(f"Stripe PaymentLink failed for {invoice['id']}: {e}")
-    base = APP_PUBLIC_URL or ""
-    return f"{base}/portal/invoices/{invoice['id']}/pay"
+    # Feb 2026 · Pay-Now hotfix — the previous fallback pointed at
+    # ``/portal/invoices/{id}/pay`` which is BEHIND auth; customers
+    # without an active session were bounced to the login page. Use
+    # the public magic-link viewer instead so the fallback still
+    # works for logged-out recipients.
+    from services.pay_link_builder import build_pay_now_url
+    return build_pay_now_url(invoice["id"], invoice.get("tenant_id") or "")
 
 
 async def _build_context(invoice: Dict[str, Any], tenant: Dict[str, Any],
