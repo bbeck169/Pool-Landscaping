@@ -6456,3 +6456,40 @@ Tests · 135 passed / 0 failed (Feb-2026 slice suites including 22 new tests in 
 
 Follow-up
 * Once mobile is dispatched to `e1_expo_frontend_dev`, the tenant-editable checklist collection lets the mobile app render exactly the same items without a code change.
+
+## Ops · Rotating Stripe / Twilio / Resend keys in this pod (Feb 2026)
+
+**How this pod loads secrets.** `/app/backend/config.py` calls
+`load_dotenv(ROOT_DIR / '.env')` on import. FastAPI services then read
+via `os.getenv(...)`. The Emergent secrets/keys manager on this
+particular pod injects only `STRIPE_API_KEY=sk_test_emergent` at the
+pod-env layer — none of the runtime secrets that this app uses
+(`STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`,
+`STRIPE_ACCOUNT_ID`, `STRIPE_MODE`, `TWILIO_*`, `RESEND_API_KEY`) are
+surfaced by the manager. In other words: **`/app/backend/.env` is the
+authoritative runtime source for this pod**, not the Emergent UI.
+
+**Rotation procedure (do this every time a key is rotated at
+Stripe/Twilio/Resend or in the Emergent UI):**
+
+1. Update `/app/backend/.env` with the new value(s). Never place real
+   values in `.env.example`.
+2. `sudo supervisorctl restart backend` — the Python process re-reads
+   `.env` on boot. The masked startup log line
+   `[phase4b] stripe mode=live key=sk_live…<last4> pk=pk_live…<last4>
+   webhook_secret=set` will show the last-4 of the loaded key.
+3. Run `POST /api/dev/stripe-live-ping` (admin) to confirm round-trip
+   auth against real Stripe. Expected on success:
+   `{ok: true, account_id: "acct_…", charges_enabled: true, …}`. On
+   failure the endpoint returns 200 with `{ok: false, error_type: …,
+   error_message: <sanitized>, mode: "live"}`.
+4. Twilio: no dedicated ping endpoint (yet); the adapter's `enabled`
+   flag flips true when API-key auth OR auth-token auth is present.
+
+**If the Emergent UI later starts injecting Stripe secrets at the
+pod-env layer,** `python-dotenv.load_dotenv()` by default does NOT
+override existing env vars — so pod-env would win over `.env` for that
+key. To make `.env` authoritative regardless of what the UI injects,
+call `load_dotenv(..., override=True)` in `backend/config.py`. Not
+required today because the UI only injects a placeholder `STRIPE_API_KEY`
+(which the backend doesn't read).

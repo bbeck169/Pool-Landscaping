@@ -189,6 +189,60 @@ async def stripe_config_check(user: dict = Depends(get_current_user)):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# POST /api/dev/stripe-live-ping — round-trip auth against live Stripe
+# ──────────────────────────────────────────────────────────────────────
+@router.post("/dev/stripe-live-ping")
+async def stripe_live_ping(user: dict = Depends(get_current_user)):
+    """Admin-only Stripe key round-trip health-check.
+
+    Calls ``stripe.Account.retrieve()`` with the loaded ``sk_live`` and
+    returns a sanitized status. Returns HTTP 200 in both success + failure
+    so monitoring tools can diff the ``ok`` field directly. Never echoes
+    ``sk_``, ``whsec_``, or ``rk_`` prefixed values in the response.
+    """
+    if (user or {}).get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin only")
+    if not is_configured():
+        return {
+            "ok": False,
+            "error_type": "not_configured",
+            "error_message": "Stripe SDK is not configured (STRIPE_SECRET_KEY missing).",
+            "mode": _mode(),
+        }
+    stripe = get_stripe()
+    try:
+        acct = stripe.Account.retrieve()
+    except Exception as exc:
+        # Sanitize the message so we never accidentally leak the key
+        # (Stripe's error text sometimes echoes the key prefix + last 4).
+        raw = str(exc)
+        for banned in ("sk_live_", "sk_test_", "rk_live_", "rk_test_", "whsec_"):
+            raw = raw.replace(banned, banned[:3] + "…")
+        etype = type(exc).__name__
+        logger.warning(f"[phase4b] stripe-live-ping failed: {etype}")
+        return {
+            "ok": False,
+            "error_type": etype,
+            "error_message": raw[:400],
+            "mode": _mode(),
+        }
+    # dict-vs-object indirection so unit tests can pass either shape.
+    def _get(o, k, d=None):
+        if isinstance(o, dict):
+            return o.get(k, d)
+        return getattr(o, k, d)
+    return {
+        "ok": True,
+        "account_id": _get(acct, "id"),
+        "account_country": _get(acct, "country"),
+        "charges_enabled": bool(_get(acct, "charges_enabled")),
+        "payouts_enabled": bool(_get(acct, "payouts_enabled")),
+        "details_submitted": bool(_get(acct, "details_submitted")),
+        "mode": _mode(),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────
 # GET /api/invoices/{iid}/magic-link — admin issues portal token
 # ──────────────────────────────────────────────────────────────────────
 @router.get("/invoices/{iid}/magic-link")
@@ -555,6 +609,24 @@ if os.getenv("ALLOW_TEST_HOOKS") == "1":
             payload = payload.decode("utf-8")
         return _json.loads(payload)
 
+    class _FakeAccount(dict):
+        pass
+
+    # Toggle for the live-ping stub — some tests want an auth failure.
+    _ACCT_MODE = {"raise": False, "class_name": "AuthenticationError"}
+
+    def _acct_retrieve(*_args, **_kw):
+        if _ACCT_MODE["raise"]:
+            cls = type(_ACCT_MODE["class_name"], (Exception,), {})
+            raise cls("Invalid API Key provided: sk_live_…test")
+        return _FakeAccount({
+            "id": "acct_test_phase4b_ok",
+            "country": "US",
+            "charges_enabled": True,
+            "payouts_enabled": True,
+            "details_submitted": True,
+        })
+
     @router.post("/dev/_phase4b_stub_stripe")
     async def _phase4b_stub_stripe():
         st = get_stripe()
@@ -562,10 +634,22 @@ if os.getenv("ALLOW_TEST_HOOKS") == "1":
         _ORIGINALS.setdefault("PaymentIntent.retrieve", st.PaymentIntent.retrieve)
         _ORIGINALS.setdefault("Refund.create", st.Refund.create)
         _ORIGINALS.setdefault("Webhook.construct_event", st.Webhook.construct_event)
+        _ORIGINALS.setdefault("Account.retrieve", st.Account.retrieve)
         st.PaymentIntent.create = _pi_create
         st.PaymentIntent.retrieve = _pi_retrieve
         st.Refund.create = _refund_create
         st.Webhook.construct_event = _construct
+        st.Account.retrieve = _acct_retrieve
+        return {"stubbed": True}
+
+    @router.post("/dev/_phase4b_stub_account_raise")
+    async def _phase4b_stub_account_raise():
+        _ACCT_MODE["raise"] = True
+        return {"stubbed": True}
+
+    @router.post("/dev/_phase4b_stub_account_ok")
+    async def _phase4b_stub_account_ok():
+        _ACCT_MODE["raise"] = False
         return {"stubbed": True}
 
     @router.post("/dev/_phase4b_unstub_stripe")
