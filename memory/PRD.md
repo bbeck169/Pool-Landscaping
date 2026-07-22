@@ -6618,3 +6618,51 @@ Dev: as listed above.
 - P2: Phase 10 (Promo codes & $25 referral credit).
 - P2: Per-property tracker reminder overrides (single tenant-wide bool for now).
 - Deferred: AE credit-debit ratio flake (`test_heavy_action_debits_more_than_chat`) — needs real expected-vs-actual before we adjust.
+
+## 2026-07-22 · Feb 2026 · Session recap (Phase 9D — Legacy render-engine sweep)
+
+### Ports (5 files, all delegating to `services.marketing.merge_tags.render_template`)
+- `services/marketing/render.py` — `render_template()` + `render_subject_and_body()` now thin adapters over the canonical engine. Missing-vars list preserves ORIGINAL input casing (intersects `_TAG_RE.findall` on the input with the canonical engine's uppercase `unresolved_tokens`).
+- `services/comm_tokens.py::resolve_tokens()` — delegates to canonical engine; flags unknown-catalog tokens with the same WARN log line pre-9D dashboards rely on.
+- `services/marketing_campaigns.py::render_body()` — single-brace `{token}` normalised → `{{token}}` before delegation; ORIGINAL case preserved in `missing`.
+- `routers/dunning.py::_render()` — Python `.format(**ctx)` → single-brace-normalise then delegate. Documented behavior change: unresolved token now empty (was: `KeyError` swallowed silently).
+- `services/marketing/merge_tags.py::render_template` — cascade reordered so explicit **flat-key** ctx overrides (bare `customer_name` OR flat-dotted `customer.first_name`) win over catalog resolvers that would otherwise mask them with formatted defaults (e.g. `_invoice_total`'s "$0.00"). New cascade: **1) flat-key → 2) nested-dotted → 3) uppercase catalog**.
+
+### Merge tag catalog additions
+None — the existing 60+ Phase 9 catalog plus the flat-key fallback covered every callsite.
+
+### Behavioral divergences (all documented in test assertions)
+- **Unresolved single-brace tokens** in `marketing_campaigns.render_body` and `routers/dunning._render` now render as **empty** (was: left verbatim in output on M2, or crashed `.format(**ctx)` in dunning). The `missing`/`unresolved` return list was already the sole warning channel — this now consistently populates.
+- **Missing-vars list casing** preserved via re-scan of input template (not the canonical uppercase output).
+
+### Verbatim golden-context snapshots (before → after byte identity)
+
+| Feature | Input | Ctx | Rendered output (after) — matches pre-9D verbatim |
+|---|---|---|---|
+| **M2 email** | `Hi {first_name}, thanks for choosing {tenant_name}. See {customer.city} tips at {web_view_url}.` | `{first_name:"Alex", tenant_name:"Aquaterra", customer:{city:"Peoria"}, web_view_url:"https://x.example/w/abc"}` | `Hi Alex, thanks for choosing Aquaterra. See Peoria tips at https://x.example/w/abc.` |
+| **M2 sms unresolved** | `Hi {first_name}, use code {UNKNOWN_TOKEN}.` | `{first_name:"Alex"}` | `Hi Alex, use code .` (behavior change documented) |
+| **M5c drip email** | `Hi {{customer.first_name}}, your next visit is {{next_service_date}} — {{next_service_type}}.` | nested | `Hi Sam, your next visit is 2026-08-05 — Pool Cleaning.` |
+| **M5c drip sms** | `{{tenant.name}}: next visit {{next_service_date}}. Reply STOP to opt out.` | nested | `Aquaterra: next visit Fri Aug 5. Reply STOP to opt out.` |
+| **Portal (comm_tokens) email** | `Hi {{customer.first_name}}, invoice {{invoice.invoice_number}} for {{invoice.amount_due}} is ready. Pay: {{invoice.portal_link}}` | flat-dotted | `Hi Alex, invoice INV-2026-00412 for $135.00 is ready. Pay: https://portal.example.com/i/INV-2026-00412` |
+| **Portal (comm_tokens) sms** | `{{company.name}}: invoice {{invoice.invoice_number}} paid — thanks!` | flat-dotted | `Aquaterra: invoice INV-2026-00412 paid — thanks!` |
+| **Referral welcome email** | subject `{{customer.first_name}}, a friend referred you to {{tenant.name}}` + body `Welcome {{customer.first_name}}! You've been credited $25 towards your first service.` | nested | `Alex, a friend referred you to Aquaterra` / `Welcome Alex! You've been credited $25 towards your first service.` |
+| **Referral credit-earned sms** | `{{tenant.name}}: You earned $25 in credit — thanks for the referral!` | nested | `Aquaterra: You earned $25 in credit — thanks for the referral!` |
+| **Review request (M6) email** | subject `How was your visit with {{tech.first_name}}?` + body w/ `{{tech.full_name}}`, `{{customer.first_name}}`, `{{review_request.public_url}}` | nested | `How was your visit with Mike?` / `Hi Alex — we hope Mike Rivera took great care of you. Please share your feedback: https://portal.example.com/reviews/r/abc123` |
+| **Review request (M6) sms** | `{{tenant.name}}: how was {{tech.first_name}}'s visit? {{review_request.public_url}}` | nested | `Aquaterra: how was Mike's visit? https://x.example/r/abc` |
+| **Dunning pre_due_3d email subject** | `Reminder: invoice {invoice_number} due in 3 days` | flat | `Reminder: invoice abc12345 due in 3 days` |
+| **Dunning pre_due_3d body** | full template w/ `{customer_name}`, `{invoice_number}`, `{invoice_total}`, `{due_date}`, `{payment_link}`, `{tenant_name}` | flat | byte-identical multi-line body ending in `Thanks,\nAquaterra Pools` |
+| **Dunning past_due_60d sms** | `{tenant_name}: your account is flagged for collections. Invoice {invoice_number} 60d+ past due. Call {tenant_phone}.` | flat | `Aquaterra Pools: your account is flagged for collections. Invoice abc12345 60d+ past due. Call (602) 555-0100.` |
+
+### Tests
+- **17 new** — `tests/test_phase9d_render_sweep.py` (goldens per feature area + catalog cascade + lint guard + reintroduction-guard).
+- **10 previously-broken M2 tests re-verified green** after the case-preservation fix on the delegating wrappers.
+- **Backend touched-surface: 61/61 green** (17 new Phase 9D + 44 prior Phase 9/9C/11).
+- **Full marketing/dunning/reviews regression**: 3 failures identified as **pre-existing** (verified against pre-9D commit via `git stash`) — `test_marketing_m3::test_preview_missing_vars`, `test_marketing_m5c::test_registry_no_wiring_gap`, `test_marketing_m6::test_full_lifecycle_via_token`. None are Phase 9D regressions. Additional pre-existing flake: `test_marketing_m2::TestNotifications::test_campaign_send_fires_notification` (pagination cap `100 > 100`).
+
+### Lint guard
+`tests/test_phase9d_render_sweep.py::test_lint_no_stray_format_or_regex_substitution_on_templates` scans all `.py` files under `/app/backend/` (excluding tests, comms_seed, and the 5 files on the ALLOW list — the canonical engine + the 4 delegating adapters). Fails if any new file introduces `.format(**` on `body/subject/text/html/template/content/message/msg` OR a raw `{{...}}` substitution regex. Companion test `test_lint_guard_would_catch_a_reintroduction` writes a synthetic bad file into a tmp dir and confirms the scanner detects the violation.
+
+### Backlog after Phase 9D
+- P1: Phase 10 (promo codes + $25 referral credit + 30-day paid-window watcher + Stripe refund safeguard).
+- P2: Per-property equipment-tracker reminder overrides.
+- Deferred non-9D flakes: `test_heavy_action_debits_more_than_chat`, cross-file loop flake, and the 4 pre-9D marketing/M3/M5c/M6/M2-notif failures above.

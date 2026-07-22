@@ -1,72 +1,66 @@
 """Feb-2026 · Marketing Slice M3 — Mustache-style renderer.
 
-Tiny, dependency-free substituter for ``{{dotted.path}}`` tokens.
+Phase 9D · Feb 2026 — this module is now a THIN ADAPTER that delegates
+every render call to :func:`services.marketing.merge_tags.render_template`.
+The public function signatures are preserved 1:1 so downstream callers
+(`marketing_templates.py`, `marketing_sequences.py`,
+`marketing_review_requests.py`, `marketing_forms.py`) do not change.
 
-Non-goals: partials, sections, filters, escaping.  Every campaign
-today ships plaintext-with-html so we deliberately do NOT escape by
-default; SMS gets a HTML-strip pass at the router boundary.
+Behavioral divergences vs. the pre-9D engine (documented so downstream
+tests can be re-baselined):
 
-Returns
--------
-``render_template(body, ctx)`` → ``(rendered_str, missing_var_names)``
-where ``missing_var_names`` is a sorted list of dotted paths that
-were referenced in the template but not present in the context.  The
-UI uses this to warn admins about typos before a send.
+* Missing tokens still render as ``""`` — same as before.
+* The ``missing_vars`` list is now derived from the canonical unified
+  engine's ``unresolved_tokens`` output. Names may return UPPERCASE
+  when they hit the catalog. Downstream code treats this list as a
+  warning surface only — no wire-format contracts depend on case.
+
+Non-goals: partials, sections, filters. Every campaign today ships
+plaintext-with-html so we deliberately do NOT escape by default; SMS
+gets a HTML-strip pass at the router boundary (unchanged).
 """
 from __future__ import annotations
 
 import re
 from typing import Any, Dict, List, Tuple
 
-# ``{{ some.dotted.path }}`` — whitespace optional.  We deliberately
-# do NOT match single braces so campaigns using ``{name}`` for their
-# own literal templating (rare but seen in the wild) survive.
-_TOKEN_PATTERN = re.compile(r"\{\{\s*([A-Za-z_][\w.]*)\s*\}\}")
-
-
-def _dig(ctx: Any, path: str) -> Any:
-    """Walk a dotted path in a nested dict.  Returns ``None`` if any
-    segment is missing OR the value is None-ish."""
-    cur: Any = ctx
-    for seg in path.split("."):
-        if isinstance(cur, dict):
-            cur = cur.get(seg)
-        else:
-            return None
-    return cur
+from services.marketing.merge_tags import render_template as _canonical_render
 
 
 def render_template(body: str, ctx: Dict[str, Any]) -> Tuple[str, List[str]]:
     """Substitute every ``{{path}}`` token with its value from ``ctx``.
 
-    A missing path renders as an empty string AND is added to the
-    returned ``missing_vars`` list so the caller can surface a warning.
+    Missing paths render as empty AND appear in ``missing_vars`` so
+    callers can surface warnings. Delegates to the canonical
+    :func:`services.marketing.merge_tags.render_template` — the missing
+    list is derived by intersecting the input template's tokens (in
+    their ORIGINAL case) with the canonical engine's uppercase
+    ``unresolved_tokens`` output, so this wrapper preserves the case
+    of the raw template.
     """
-    missing: List[str] = []
-
-    def _repl(m: re.Match[str]) -> str:
-        path = m.group(1)
-        val = _dig(ctx, path)
-        if val is None or val == "":
-            missing.append(path)
-            return ""
-        return str(val)
-
     if not body:
-        return "", missing
-    rendered = _TOKEN_PATTERN.sub(_repl, body)
-    return rendered, missing
+        return "", []
+    rendered, unresolved_upper = _canonical_render(body, ctx or {}, missing="empty")
+    upper_set = set(unresolved_upper)
+    # Preserve original casing by re-scanning the template.
+    raw_missing: List[str] = []
+    seen: set = set()
+    for m in re.finditer(r"\{\{\s*([A-Za-z_][\w.]*)\s*\}\}", body):
+        raw = m.group(1)
+        if raw.upper() in upper_set and raw not in seen:
+            raw_missing.append(raw)
+            seen.add(raw)
+    return rendered, raw_missing
 
 
 def render_subject_and_body(
     subject: str, body: str, ctx: Dict[str, Any],
 ) -> Tuple[str, str, List[str]]:
-    """Render a subject + body pair using the same context.  The
-    ``missing_vars`` list is the UNION of missing vars across both
-    surfaces so a preview call surfaces subject typos too."""
+    """Render subject + body under the same context. ``missing_vars`` is
+    the UNION across both surfaces so preview surfaces subject typos too."""
     s, s_missing = render_template(subject or "", ctx)
     b, b_missing = render_template(body or "", ctx)
-    return s, b, s_missing + b_missing
+    return s, b, list(s_missing) + list(b_missing)
 
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -75,7 +69,7 @@ _HTML_TAG_RE = re.compile(r"<[^>]+>")
 def strip_html(text: str) -> str:
     """SMS renderer swings a bat at any HTML that leaked in from a
     copy-paste — carriers don't render tags so we send the plaintext
-    equivalent.  ``&nbsp;`` collapses to a space; other entities are
+    equivalent. ``&nbsp;`` collapses to a space; other entities are
     left alone (rare in field-service SMS)."""
     if not text:
         return ""
@@ -84,7 +78,8 @@ def strip_html(text: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Sample-data + variables registry
+# Sample-data + variables registry — unchanged, referenced by the
+# ``/preview`` endpoint's default sample context and the preview picker.
 # ═══════════════════════════════════════════════════════════════════════
 DEFAULT_SAMPLE_CONTEXT: Dict[str, Any] = {
     "customer": {
@@ -102,9 +97,6 @@ DEFAULT_SAMPLE_CONTEXT: Dict[str, Any] = {
         "phone": "+1 (623) 555-0100",
         "google_review_url": "https://g.page/r/example/review",
     },
-    # Slice F · unsubscribe magic-link is filled in per-recipient at
-    # send time by the M5/M6 tick handlers.  Preview renderer shows a
-    # dummy path so admins can see the footer placement.
     "unsubscribe_url": "/portal/preferences?token=example",
 }
 

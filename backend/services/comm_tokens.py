@@ -80,25 +80,30 @@ def extract_tokens(text: str) -> List[str]:
 def resolve_tokens(text: str, context: Dict[str, Any]) -> str:
     """Replace every ``{{token.name}}`` in ``text`` with the resolved value.
 
-    Missing tokens render as empty strings and are logged. Tokens not in
-    ``AVAILABLE_TOKENS`` are also logged and rendered empty (never crash).
+    Phase 9D · Feb 2026 — delegates to
+    :func:`services.marketing.merge_tags.render_template` so all
+    substitution flows through the single canonical engine. The
+    behavior contract is preserved:
+
+    * Missing tokens render as empty strings.
+    * Unknown tokens (not in :data:`AVAILABLE_TOKENS`) render as empty
+      + emit a warning log line — mirrors the pre-9D behavior.
+    * Return type is ``str`` (unresolved list is dropped — this path
+      never surfaced it to callers).
     """
     if not text:
         return text or ""
+    from services.marketing.merge_tags import render_template as _canonical
 
-    def _sub(m: re.Match) -> str:
-        raw = m.group(1)
-        key = raw.lower()
-        if key not in AVAILABLE_TOKENS:
+    # Flag tokens that AREN'T in this feature's catalog before we
+    # delegate — mirrors the legacy WARN log so ops dashboards keep
+    # working even after the port.
+    for raw in extract_tokens(text):
+        if raw.lower() not in AVAILABLE_TOKENS:
             logger.warning(f"comm_tokens: unknown token {raw!r} — rendering empty")
-            return ""
-        val = context.get(key)
-        if val is None:
-            logger.info(f"comm_tokens: missing value for {key} — rendering empty")
-            return ""
-        return str(val)
 
-    return _TOKEN_RE.sub(_sub, text)
+    rendered, _unresolved = _canonical(text, context or {}, missing="empty")
+    return rendered
 
 
 def _walk_blocks(blocks: List[Dict[str, Any]], fn):

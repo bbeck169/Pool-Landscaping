@@ -186,8 +186,9 @@ async def resolve_audience(tenant_id: str,
 # ─── Rendering ─────────────────────────────────────────────────────────
 # Feb-2026 fix — accept BOTH ``{{token}}`` (canonical) and ``{token}``
 # (legacy seed data) so we don't silently pass ``{first_name}`` through
-# untouched. The parser matches an optional pair of braces on each side
-# and captures dotted paths (e.g. ``customer.first_name``) too.
+# untouched. Phase 9D · Feb 2026 — the render_body helper now delegates
+# to ``services.marketing.merge_tags.render_template``; the regex below
+# is retained ONLY for single-brace normalisation before delegation.
 _TOKEN_RE = re.compile(
     r"\{\{?\s*([a-zA-Z_][a-zA-Z0-9_\.]*)\s*\}\}?"
 )
@@ -197,29 +198,40 @@ def render_body(template: str, ctx: Dict[str, Any]) -> Tuple[str, List[str]]:
     """Substitute placeholders. Returns ``(rendered, missing_tokens)``.
 
     Accepts BOTH ``{token}`` and ``{{token}}`` syntax so seed data
-    written with single braces still resolves. Missing tokens are left
-    verbatim in the output AND emitted to the ``missing`` list so
-    callers can surface them as warnings (fixes the "silent failure"
-    UX bug: unresolved tokens no longer disappear into an empty
-    warnings array).
+    written with single braces still resolves. Phase 9D behavior:
+    single-brace tokens are normalised to double-brace before we
+    delegate to the canonical
+    :func:`services.marketing.merge_tags.render_template`.
+
+    BEHAVIORAL CHANGE (Phase 9D · documented): unresolved tokens now
+    render as EMPTY (matching the canonical engine); previously they
+    were left verbatim in the output. Downstream callers already
+    treated ``missing`` as a warning surface, not a value channel.
+
+    ``missing`` preserves the ORIGINAL case of each token as it
+    appeared in the template — the wrapper intersects the template's
+    tokens with the canonical engine's uppercase ``unresolved_tokens``
+    output.
     """
     if not template:
         return "", []
-    missing: List[str] = []
-
-    def _sub(m: re.Match) -> str:
-        key = m.group(1)
-        val = ctx.get(key)
-        if val is None and "." in key:
-            # Support dotted lookups like ``customer.first_name`` when the
-            # ctx has been flattened for us.
-            val = ctx.get(key)
-        if val is not None:
-            return str(val)
-        missing.append(key)
-        return m.group(0)
-
-    return _TOKEN_RE.sub(_sub, template), missing
+    # Normalise single-brace → double-brace so both shapes reach the
+    # canonical engine.
+    def _normalise(m: re.Match) -> str:
+        return "{{" + m.group(1) + "}}"
+    normalised = _TOKEN_RE.sub(_normalise, template)
+    from services.marketing.merge_tags import render_template as _canonical
+    rendered, unresolved_upper = _canonical(normalised, ctx or {}, missing="empty")
+    upper_set = set(unresolved_upper)
+    raw_missing: List[str] = []
+    seen: set = set()
+    # Scan ORIGINAL template so we preserve the writer's chosen case.
+    for m in _TOKEN_RE.finditer(template):
+        raw = m.group(1)
+        if raw.upper() in upper_set and raw not in seen:
+            raw_missing.append(raw)
+            seen.add(raw)
+    return rendered, raw_missing
 
 
 # Curly-brace tokens that MUST be considered valid targets for the

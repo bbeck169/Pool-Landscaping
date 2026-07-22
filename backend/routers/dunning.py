@@ -16,6 +16,7 @@ Payment link:
 import asyncio
 import base64
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -242,11 +243,30 @@ async def reset_defaults(user: dict = Depends(require_admin),
 # Send-reminder core (used by manual endpoint + scanner)
 # ═══════════════════════════════════════════════════════════════════════
 
+# Phase 9D · Feb 2026 — dunning templates were the last surviving
+# ``str.format(**ctx)`` callsite. Now every render is unified through
+# the canonical merge-tag engine. Legacy single-brace tokens like
+# ``{invoice_number}`` are normalised in place to ``{{invoice_number}}``
+# before delegation, so the six ``DEFAULT_STAGES`` payloads AND any
+# tenant-customised copies keep rendering byte-identically.
+_DUNNING_SINGLE_BRACE = re.compile(
+    r"(?<!\{)\{([a-zA-Z_][a-zA-Z0-9_.]*)\}(?!\})"
+)
+
+
 def _render(template: str, ctx: Dict[str, Any]) -> str:
-    if not template: return ""
+    if not template:
+        return ""
+    normalised = _DUNNING_SINGLE_BRACE.sub(lambda m: "{{" + m.group(1) + "}}",
+                                              template)
     try:
-        return template.format(**ctx)
+        from services.marketing.merge_tags import render_template as _canonical
+        rendered, _unresolved = _canonical(normalised, ctx or {}, missing="empty")
+        return rendered
     except Exception:
+        # Never break a dunning send because of a template render bug —
+        # fall through with the original template so the operator can
+        # see the raw payload in logs.
         return template
 
 

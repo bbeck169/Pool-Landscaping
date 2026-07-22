@@ -416,21 +416,26 @@ def render_template(body: str, ctx: Optional[Dict[str, Any]] = None,
     def _sub(match: "re.Match[str]") -> str:
         raw = match.group(1)
         upper = raw.upper()
-        # Phase 9 uppercase token match.
-        resolver = _TAG_INDEX.get(upper)
-        if resolver is not None:
-            try:
-                val = resolver(ctx)
-            except Exception:
-                unresolved.append(upper)
-                return "" if missing == "empty" else f"[MISSING: {upper}]"
-            if val is None or val == "":
-                # Resolver returned nothing — treat as unresolved for
-                # UI reporting, but still substitute empty by default.
-                unresolved.append(upper)
-                return "" if missing == "empty" else f"[MISSING: {upper}]"
-            return _safe_str(val)
-        # Legacy dotted-path form ``{{customer.first_name}}``.
+
+        # Phase 9D · Feb 2026 — cascade order (most-specific wins):
+        #   1. Explicit flat-key override in the ctx (bare or flat-dotted).
+        #      This lets legacy callers pass a precomputed value that
+        #      would otherwise be masked by a catalog resolver's default.
+        #   2. Nested-dotted lookup (``{{customer.first_name}}`` →
+        #      ``ctx["customer"]["first_name"]``).
+        #   3. Uppercase catalog resolver (Phase 9 canonical resolvers
+        #      operate on the nested ctx shape).
+        # A resolved value at any level short-circuits the cascade.
+
+        # 1) Explicit flat-key override (bare or dotted string key).
+        if isinstance(ctx, dict):
+            for key in (raw, raw.lower()):
+                if key in ctx:
+                    v = ctx.get(key)
+                    if v not in (None, ""):
+                        return _safe_str(v)
+
+        # 2) Nested-dotted lookup.
         if "." in raw:
             parts = raw.split(".")
             cursor: Any = ctx
@@ -442,7 +447,18 @@ def render_template(body: str, ctx: Optional[Dict[str, Any]] = None,
                     break
             if cursor not in (None, ""):
                 return _safe_str(cursor)
-        # Unknown tag.
+
+        # 3) Uppercase catalog resolver.
+        resolver = _TAG_INDEX.get(upper)
+        if resolver is not None:
+            try:
+                val = resolver(ctx)
+            except Exception:
+                val = None
+            if val not in (None, ""):
+                return _safe_str(val)
+
+        # Unresolved after full cascade.
         unresolved.append(upper)
         return "" if missing == "empty" else f"[MISSING: {upper}]"
 
