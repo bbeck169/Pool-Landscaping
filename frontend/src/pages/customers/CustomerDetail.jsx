@@ -40,6 +40,7 @@ import { ActivationControl } from "@/components/customers/ActivationControl";
 import CustomerEquipmentLibrary from "@/components/customers/CustomerEquipmentLibrary";
 import CustomerActionDropdowns from "@/components/customers/CustomerActionDropdowns";
 import CustomerTagPicker from "@/components/customers/CustomerTagPicker";
+import CustomerCommunicationsTimeline from "@/components/customers/CustomerCommunicationsTimeline";
 import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
 import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel";
 import CustomerServiceNotesCards from "@/components/customers/CustomerServiceNotesCards";
@@ -610,6 +611,14 @@ export default function CustomerDetail() {
         }}
         onError={(msg) => setToast({ tone: "error", message: msg })}
       />
+
+      {/* Phase 16 · Item 4 · Feb-2026 — Communications timeline at
+          the bottom of the customer detail. Admin / super_admin only
+          — technician and customer roles never render this section.
+          Server also enforces the guard on GET /communications-log. */}
+      {(meRole === "admin" || meRole === "super_admin") && customer?.id ? (
+        <CustomerCommunicationsTimeline customerId={customer.id} />
+      ) : null}
 
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>

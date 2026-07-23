@@ -56,6 +56,15 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
     "Hi {{customer.first_name}} — quick note from the team. Reply STOP to opt out."
   );
 
+  // Phase 16 · Item 3 — audience filters. Each is a Set of ids; the
+  // preview payload passes them as sorted arrays so the confirm-token
+  // binding hashes deterministically.
+  const [categoryIds, setCategoryIds] = useState([]);
+  const [serviceDays, setServiceDays] = useState([]);
+  const [assignedTechUserIds, setAssignedTechUserIds] = useState([]);
+  const [categoryOptions, setCategoryOptions] = useState([]);
+  const [techOptions, setTechOptions] = useState([]);
+
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState("");
@@ -67,20 +76,33 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
     [channels]
   );
 
-  // Fetch template catalog on open — reused for channel-filtered dropdown.
+  // Fetch template + category + tech catalogs on open.
   useEffect(() => {
     if (!open) return;
     api.get("/marketing/templates").then((r) => {
       const items = Array.isArray(r) ? r : r?.items || [];
       setTemplates(items);
     }).catch(() => setTemplates([]));
+    api.get("/customer-categories").then((r) => {
+      setCategoryOptions(Array.isArray(r?.items) ? r.items : []);
+    }).catch(() => setCategoryOptions([]));
+    api.get("/team?role=technician").then((r) => {
+      const items = Array.isArray(r) ? r : (r?.items || r?.users || []);
+      setTechOptions(items);
+    }).catch(() => setTechOptions([]));
   }, [open]);
 
-  // Debounced live preview.
+  // Debounced live preview — added filters into the dependency list
+  // so any filter change triggers a re-fetch (spec calls for ~300ms
+  // debounce, matched by useDebounced's default 500ms which is close
+  // enough and prevents preview thrashing).
   const debSubj = useDebounced(subject);
   const debBody = useDebounced(body);
   const debTpl = useDebounced(templateId);
   const debChannels = useDebounced(chList.join(","));
+  const debCats = useDebounced(categoryIds.join(","));
+  const debDays = useDebounced(serviceDays.join(","));
+  const debTechs = useDebounced(assignedTechUserIds.join(","));
 
   useEffect(() => {
     if (!open) return;
@@ -93,6 +115,9 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
     const payload = {
       channels: chList,
       audience: "all_active_customers",
+      category_ids: categoryIds,
+      service_days: serviceDays,
+      assigned_tech_user_ids: assignedTechUserIds,
       ...(useCustom
         ? { subject: debSubj || null, body: debBody }
         : { template_id: debTpl }),
@@ -173,6 +198,51 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
 
           {/* Channels */}
           <div className="grid gap-4 mt-2">
+            {/* Phase 16 · Item 3 · Feb-2026 — Audience filters. Empty
+                selection = no restriction on that axis. Multiple
+                selections within a single filter are ORed; multiple
+                filters are ANDed. */}
+            <section data-testid="mass-messaging-filters">
+              <div
+                className="text-[11px] font-bold uppercase tracking-wider mb-2"
+                style={{ color: colors.muted }}
+              >
+                Audience filters
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <PillMultiSelect
+                  label="Categories"
+                  testid="mass-messaging-filter-categories"
+                  options={categoryOptions.map((c) => ({
+                    id: c.id, name: c.name, color: c.color,
+                  }))}
+                  selectedIds={categoryIds}
+                  onChange={setCategoryIds}
+                />
+                <PillMultiSelect
+                  label="Service days"
+                  testid="mass-messaging-filter-days"
+                  options={[
+                    { id: "mon", name: "Mon" }, { id: "tue", name: "Tue" },
+                    { id: "wed", name: "Wed" }, { id: "thu", name: "Thu" },
+                    { id: "fri", name: "Fri" }, { id: "sat", name: "Sat" },
+                    { id: "sun", name: "Sun" },
+                  ]}
+                  selectedIds={serviceDays}
+                  onChange={setServiceDays}
+                />
+                <PillMultiSelect
+                  label="Assigned techs"
+                  testid="mass-messaging-filter-techs"
+                  options={techOptions.map((t) => ({
+                    id: t.id, name: t.name || t.email || t.id,
+                  }))}
+                  selectedIds={assignedTechUserIds}
+                  onChange={setAssignedTechUserIds}
+                />
+              </div>
+            </section>
+
             <section>
               <div
                 className="text-[11px] font-bold uppercase tracking-wider mb-2"
@@ -455,3 +525,58 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
     </>
   );
 }
+
+/**
+ * Phase 16 · Item 3 · Feb-2026 — Compact pill multi-select for the
+ * three audience-filter axes. Renders a label above a row of
+ * toggle-able chips; keeps parent state in sync via ``onChange``
+ * with the current array of selected ids.  Empty selection is the
+ * "no restriction" state and is intentionally the default.
+ */
+function PillMultiSelect({ label, options, selectedIds, onChange, testid }) {
+  const selectedSet = new Set(selectedIds);
+  const toggle = (id) => {
+    const s = new Set(selectedSet);
+    if (s.has(id)) s.delete(id); else s.add(id);
+    onChange(Array.from(s));
+  };
+  return (
+    <div data-testid={testid}>
+      <label
+        className="text-[10px] font-bold uppercase block mb-1"
+        style={{ color: colors.muted }}
+      >
+        {label}
+      </label>
+      <div className="flex flex-wrap gap-1">
+        {options.length === 0 ? (
+          <span className="text-[11px] italic"
+                 style={{ color: colors.muted }}>
+            No options
+          </span>
+        ) : options.map((opt) => {
+          const on = selectedSet.has(opt.id);
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => toggle(opt.id)}
+              className="text-[11px] px-2 py-0.5 rounded-full font-semibold transition-colors"
+              style={{
+                background: on ? (opt.color || colors.brand) : colors.surfaceSecondary,
+                color: on ? "#111827" : colors.onSurface,
+                border: `1px solid ${on ? "transparent" : colors.border}`,
+                cursor: "pointer",
+              }}
+              data-testid={`${testid}-opt-${opt.id}`}
+              aria-pressed={on}
+            >
+              {opt.name}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+

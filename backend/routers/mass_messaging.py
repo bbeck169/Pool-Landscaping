@@ -52,6 +52,13 @@ class BroadcastBase(BaseModel):
     subject: Optional[str] = None
     body: Optional[str] = None
     audience: str = Field("all_active_customers")
+    # Phase 16 · Item 3 · Feb-2026 — audience filters. All optional
+    # arrays; empty (or absent) means "no restriction on that axis".
+    # Multiple filters are ANDed. Values inside each array are ORed
+    # (any-of semantics).
+    category_ids: List[str] = Field(default_factory=list)
+    service_days: List[str] = Field(default_factory=list)
+    assigned_tech_user_ids: List[str] = Field(default_factory=list)
 
 
 class BroadcastPreviewIn(BroadcastBase):
@@ -90,12 +97,40 @@ def _validate_audience(audience: str) -> str:
     return audience
 
 
+_VALID_DAYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+
+
+def _validate_filters(category_ids: List[str], service_days: List[str],
+                       assigned_tech_user_ids: List[str]) -> Dict[str, List[str]]:
+    """Normalize the three filter arrays. Strips + lowercases days,
+    de-dupes each list, drops empties. Rejects unknown day codes with
+    400 so the UI can't silently miss them."""
+    cats = sorted({(c or "").strip() for c in (category_ids or []) if (c or "").strip()})
+    days_low = [(d or "").strip().lower() for d in (service_days or []) if (d or "").strip()]
+    for d in days_low:
+        if d not in _VALID_DAYS:
+            raise HTTPException(400, f"Unknown service_day: {d}")
+    days = sorted(set(days_low))
+    techs = sorted({(t or "").strip() for t in (assigned_tech_user_ids or []) if (t or "").strip()})
+    return {"category_ids": cats, "service_days": days,
+             "assigned_tech_user_ids": techs}
+
+
 # ── Audience resolver ─────────────────────────────────────────────
-async def _resolve_audience(tenant_id: str) -> List[Dict[str, Any]]:
-    """Return every active customer for a tenant. Filter is deliberately
-    permissive on `is_active` (missing == active) but strict on the
-    tombstone key `is_deleted`. The audience list is the sole input
-    to every downstream stat/pass so the counting stays honest."""
+async def _resolve_audience(tenant_id: str, *,
+                              category_ids: Optional[List[str]] = None,
+                              service_days: Optional[List[str]] = None,
+                              assigned_tech_user_ids: Optional[List[str]] = None,
+                              ) -> List[Dict[str, Any]]:
+    """Return active customers for a tenant, optionally narrowed by
+    the three Phase-16 filters (categories / service days / assigned
+    techs). Each filter uses ``$in`` (any-of); missing/empty arrays
+    mean "no restriction on that axis". Filters are ANDed together.
+
+    Denormalized fields ``customer.category_ids[]`` /
+    ``service_days[]`` / ``assigned_tech_ids[]`` are populated by
+    ``customer_categories.recompute_customer_denorm`` (idempotent
+    boot backfill + on-save hook)."""
     q: Dict[str, Any] = {
         "tenant_id": tenant_id,
         "$and": [
@@ -103,6 +138,12 @@ async def _resolve_audience(tenant_id: str) -> List[Dict[str, Any]]:
             {"$or": [{"is_deleted": {"$ne": True}}, {"is_deleted": {"$exists": False}}]},
         ],
     }
+    if category_ids:
+        q["category_ids"] = {"$in": category_ids}
+    if service_days:
+        q["service_days"] = {"$in": service_days}
+    if assigned_tech_user_ids:
+        q["assigned_tech_ids"] = {"$in": assigned_tech_user_ids}
     return await db.customers.find(q, {"_id": 0}).to_list(_AUDIENCE_CAP + 10)
 
 
@@ -178,7 +219,8 @@ async def _enforce_rate_limit(tenant_id: str) -> None:
 async def _issue_confirm_token(tenant_id: str, user_id: str,
                                 channels: List[str], template_id: Optional[str],
                                 subject: Optional[str], body: Optional[str],
-                                audience: str) -> str:
+                                audience: str,
+                                filters: Dict[str, List[str]]) -> str:
     tok = new_id()
     await db.mass_messaging_confirm_tokens.insert_one({
         "token": tok,
@@ -189,6 +231,10 @@ async def _issue_confirm_token(tenant_id: str, user_id: str,
         "subject": subject,
         "body": body,
         "audience": audience,
+        # Filters bound to the token — a preview issued for filter set A
+        # can't authorize a send for filter set B (same protection
+        # already applied to channels + template_id).
+        "filters": filters,
         "issued_at": now_iso(),
         "expires_at_epoch": int(time.time()) + _CONFIRM_TOKEN_TTL_SEC,
         "consumed": False,
@@ -199,7 +245,8 @@ async def _issue_confirm_token(tenant_id: str, user_id: str,
 async def _consume_confirm_token(tok: str, tenant_id: str,
                                   channels: List[str], template_id: Optional[str],
                                   subject: Optional[str], body: Optional[str],
-                                  audience: str) -> None:
+                                  audience: str,
+                                  filters: Dict[str, List[str]]) -> None:
     """Consume-once semantics via atomic ``find_one_and_update``. The
     stored payload must match the caller's — otherwise a preview for
     audience A can't authorize a send to audience B."""
@@ -218,6 +265,14 @@ async def _consume_confirm_token(tok: str, tenant_id: str,
         raise HTTPException(400, {"code": "CONFIRM_TOKEN_TEMPLATE_MISMATCH"})
     if (row.get("audience") or "") != audience:
         raise HTTPException(400, {"code": "CONFIRM_TOKEN_AUDIENCE_MISMATCH"})
+    # Phase 16 · Item 3 — bound filters must match. This defends
+    # against "preview A → send B" audience swaps just like the
+    # channels + template_id guards above.
+    stored_filters = row.get("filters") or {}
+    for key in ("category_ids", "service_days", "assigned_tech_user_ids"):
+        if sorted(stored_filters.get(key) or []) != sorted(filters.get(key) or []):
+            raise HTTPException(400, {"code": "CONFIRM_TOKEN_FILTERS_MISMATCH",
+                                       "mismatched_field": key})
     # Atomic single-consumer flip.
     upd = await db.mass_messaging_confirm_tokens.find_one_and_update(
         {"token": tok, "consumed": False},
@@ -240,6 +295,8 @@ async def preview_broadcast(
     _require_admin(user)
     channels = _validate_channels(body.channels)
     audience_key = _validate_audience(body.audience)
+    filters = _validate_filters(body.category_ids, body.service_days,
+                                  body.assigned_tech_user_ids)
 
     from services.marketing.render import render_subject_and_body
     from services.marketing.merge_tags import render_context
@@ -266,8 +323,13 @@ async def preview_broadcast(
         raise HTTPException(400,
             "Provide either template_id or subject/body")
 
-    # 2. Resolve audience.
-    customers = await _resolve_audience(tenant["id"])
+    # 2. Resolve audience with the Phase-16 filter set applied.
+    customers = await _resolve_audience(
+        tenant["id"],
+        category_ids=filters["category_ids"],
+        service_days=filters["service_days"],
+        assigned_tech_user_ids=filters["assigned_tech_user_ids"],
+    )
     if len(customers) > _AUDIENCE_CAP:
         raise HTTPException(400, {
             "code": "AUDIENCE_TOO_LARGE",
@@ -344,11 +406,14 @@ async def preview_broadcast(
     if "sms" in channels:
         cost += stats["sms_eligible"] * 0.0075    # ~$0.0075 per SMS
 
-    # 6. Issue confirm token (single-use, 10-min TTL).
+    # 6. Issue confirm token (single-use, 10-min TTL). Filters are
+    #    bound so a preview for filter set A can't authorize a send
+    #    for filter set B.
     tok = await _issue_confirm_token(
         tenant_id=tenant["id"], user_id=user["id"],
         channels=channels, template_id=body.template_id,
         subject=body.subject, body=body.body, audience=audience_key,
+        filters=filters,
     )
 
     return {
@@ -361,6 +426,7 @@ async def preview_broadcast(
         "estimated_cost_hint": round(cost, 4),
         "confirm_token": tok,
         "audience_cap": _AUDIENCE_CAP,
+        "filters_applied": filters,
     }
 
 
@@ -370,7 +436,11 @@ async def preview_broadcast(
 async def _run_broadcast(*, tenant_id: str, batch_id: str,
                           channels: List[str], template_id: Optional[str],
                           subject: Optional[str], body: Optional[str],
-                          initiated_by: str) -> None:
+                          initiated_by: str,
+                          category_ids: Optional[List[str]] = None,
+                          service_days: Optional[List[str]] = None,
+                          assigned_tech_user_ids: Optional[List[str]] = None,
+                          ) -> None:
     """Background fanout: iterate audience, render, hit the adapter,
     persist a `marketing_deliveries` row per (customer, channel).
     Updates the batch's stats + status when done.
@@ -401,7 +471,12 @@ async def _run_broadcast(*, tenant_id: str, batch_id: str,
                 sms_tpl = tpl
 
     tenant = await db.tenants.find_one({"id": tenant_id}, {"_id": 0})
-    customers = await _resolve_audience(tenant_id)
+    customers = await _resolve_audience(
+        tenant_id,
+        category_ids=category_ids,
+        service_days=service_days,
+        assigned_tech_user_ids=assigned_tech_user_ids,
+    )
     logger.info(
         "[mass-messaging] fanout START batch=%s tenant=%s recipients=%d channels=%s",
         batch_id, tenant_id, len(customers), channels,
@@ -560,13 +635,20 @@ async def send_broadcast(
     _require_admin(user)
     channels = _validate_channels(body.channels)
     audience_key = _validate_audience(body.audience)
+    filters = _validate_filters(body.category_ids, body.service_days,
+                                  body.assigned_tech_user_ids)
 
     # Rate limit before we consume the confirm token — a stale token
     # shouldn't be burned on a 429.
     await _enforce_rate_limit(tenant["id"])
 
     # Audience-size guard.
-    customers = await _resolve_audience(tenant["id"])
+    customers = await _resolve_audience(
+        tenant["id"],
+        category_ids=filters["category_ids"],
+        service_days=filters["service_days"],
+        assigned_tech_user_ids=filters["assigned_tech_user_ids"],
+    )
     if len(customers) > _AUDIENCE_CAP:
         raise HTTPException(400, {
             "code": "AUDIENCE_TOO_LARGE",
@@ -581,7 +663,7 @@ async def send_broadcast(
     # Consume confirm token — atomic, single-use, tenant-bound.
     await _consume_confirm_token(
         body.confirm_token, tenant["id"], channels, body.template_id,
-        body.subject, body.body, audience_key,
+        body.subject, body.body, audience_key, filters,
     )
 
     # Estimate queued counts (post-suppression/no-contact).
@@ -606,7 +688,12 @@ async def send_broadcast(
         "custom_subject": body.subject,
         "custom_body": body.body,
         "audience": audience_key,
-        "filters_applied": {"audience": audience_key},
+        "filters_applied": {
+            "audience": audience_key,
+            "category_ids": filters["category_ids"],
+            "service_days": filters["service_days"],
+            "assigned_tech_user_ids": filters["assigned_tech_user_ids"],
+        },
         "started_at": now_iso(),
         "completed_at": None,
         "stats": {"sent": 0, "failed": 0, "suppressed": 0,
@@ -616,12 +703,17 @@ async def send_broadcast(
         "queued_sms": queued_sms,
     })
 
-    # Fanout in background — do not block the HTTP response.
+    # Fanout in background — do not block the HTTP response. Filters
+    # are captured on the batch row so the background task can
+    # re-resolve the audience identically at fanout time.
     background_tasks.add_task(
         _run_broadcast,
         tenant_id=tenant["id"], batch_id=batch_id, channels=channels,
         template_id=body.template_id, subject=body.subject, body=body.body,
         initiated_by=user["id"],
+        category_ids=filters["category_ids"],
+        service_days=filters["service_days"],
+        assigned_tech_user_ids=filters["assigned_tech_user_ids"],
     )
 
     return {

@@ -6901,3 +6901,58 @@ Defensive hardening added:
 * `/admin/communications-log` — KPI cards + filters + table + row detail sheet + CSV export (admin only).
 * `/marketing/broadcasts` — batch history with per-batch drill-in (admin only).
 
+
+## Phase 16 · Items 3 + 4 · Feb-2026 — Audience filters + Customer detail timeline
+
+### Item 3 — Mass Messaging audience filters (backend)
+
+`POST /api/mass-messaging/preview` + `/send` now accept three new
+optional array fields on the request body:
+
+* `category_ids: List[str]`         — matched against `customer.category_ids[]`
+* `service_days: List[str]`         — Mon..Sun, matched against `customer.service_days[]`
+* `assigned_tech_user_ids: List[str]` — matched against `customer.assigned_tech_ids[]`
+
+Empty (or absent) arrays mean "no restriction on that axis". Multiple
+values inside a single array are ORed (any-of `$in`); multiple filters
+are ANDed. Filters are bound to the `confirm_token` — a preview for
+filter set A cannot authorize a send for filter set B (400
+`CONFIRM_TOKEN_FILTERS_MISMATCH`).
+
+Preview response now includes `filters_applied: {category_ids,
+service_days, assigned_tech_user_ids}`; batch documents persist the
+same object under `filters_applied` for audit + replay.
+
+### Item 3 — Compose dialog frontend
+
+`MassMessagingComposeDialog.jsx` renders three `<PillMultiSelect>`
+groups in a new "Audience filters" section above Channels:
+
+* Categories — fetched from `GET /api/customer-categories`, color chip
+  from `category.color`.
+* Service days — static Mon..Sun buttons.
+* Assigned techs — fetched from `GET /api/team?role=technician`.
+
+State propagates through the existing debounced-preview effect, so
+toggling any chip re-fetches `/mass-messaging/preview` after the
+`useDebounced` interval (~500ms) and updates the "Sending to N
+recipients" indicator.
+
+### Item 4 — Customer Detail communications timeline
+
+New component `CustomerCommunicationsTimeline` mounted at the bottom
+of `CustomerDetail.jsx`, gated on `meRole in {admin, super_admin}` so
+technician + customer roles never render it. Fetches `GET
+/api/communications-log?customer_id={id}&page=<n>&page_size=50` with a
+"Load more" button that paginates by adding to the current row list.
+
+Row shape: channel icon (Mail / MessageSquareText), subject or body
+preview, relative sent-at with absolute in tooltip, colored status
+badge with the same tone map used by the standalone Communications
+Log page. Clicking a row opens a right-side sheet with the full
+delivery timeline (Created → Delivered → Opened → Clicked / Bounced /
+SMS-carrier state).
+
+SMS delivered rows surface a gray "Delivered" badge (not blue
+"Opened") because carrier read-receipts don't exist.
+
