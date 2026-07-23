@@ -24,6 +24,13 @@ async def maybe_auto_request_after_job(
     settings = (tenant or {}).get("settings") or {}
     if settings.get("review_auto_request_after_job") is False:
         return None
+    # Feb-2026 (BUG-C+ follow-up) — recurring jobs (weekly service
+    # plans etc.) must NEVER auto-trigger a review request. The
+    # tenant would carpet-bomb their customers every week.
+    if job.get("is_recurring") is True:
+        return None
+    if job.get("recurring_template_id"):
+        return None
     tid = tenant.get("id")
     cid = job.get("customer_id")
     if not tid or not cid:

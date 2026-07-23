@@ -1,5 +1,6 @@
 # ruff: noqa: F403,F405
 from fastapi import APIRouter, HTTPException, Depends, Query
+import os
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, EmailStr
@@ -153,23 +154,20 @@ async def create_team_user(body: NewUserIn,
         "at": now_iso(),
     })
 
-    # MOCKED invite delivery — log to email_delivery_log so it shows up in
-    # the admin's delivery report. Real email lands when Resend is wired.
+    # BUG A fix (Feb-2026) — REAL Resend send. No more mock stub.
+    # If Resend key is missing we STILL log a failed row + surface the
+    # error to the admin UI; we do NOT silently return "mocked" ok.
+    invite_email_status = "skipped"
+    invite_email_error = None
     if body.send_invite_email:
-        try:
-            await db.email_delivery_log.insert_one({
-                "id": new_id(),
-                "tenant_id": tenant["id"],
-                "to": email,
-                "subject": "You have been added to the team",
-                "template": "team_invite",
-                "status": "mocked",
-                "provider": "resend_fallback_mock",
-                "sent_at": now_iso(),
-                "meta": {"user_id": user_id, "role": role, "department": new_dept},
-            })
-        except Exception:
-            pass
+        invite_email_status = await _send_team_invite_email(
+            tenant=tenant, actor=actor, invitee=doc,
+            temp_password=temp_password,
+        )
+        # Read back the last error the adapter logged for this call
+        # so the UI can toast it if the send failed.
+        if invite_email_status not in ("sent", "mocked", "suppressed"):
+            invite_email_error = "Invite email failed to send. Check Resend configuration."
 
     # Phase 55 fan-out.
     try:
@@ -207,8 +205,143 @@ async def create_team_user(body: NewUserIn,
         "department": new_dept,
         # Returned ONCE for the admin to relay — client should not persist.
         "temp_password": temp_password,
-        "invite_email_status": "mocked" if body.send_invite_email else "skipped",
+        "invite_email_status": invite_email_status,
+        "invite_email_error": invite_email_error,
     }
+
+
+# ─────────────────────────────────────────────────────────────
+# BUG A fix (Feb-2026) — real team-invite email via Resend
+# ─────────────────────────────────────────────────────────────
+def _team_invite_html(
+    *, invitee_name: str, inviter_name: str,
+    company_name: str, invite_accept_url: str, temporary_password: str,
+) -> str:
+    """Minimal but branded HTML — same style as the existing
+    ``password_reset`` template so we don't need a third-party template
+    editor. Merge tags: {{invitee_name}}, {{inviter_name}},
+    {{company_name}}, {{invite_accept_url}}, {{temporary_password}}."""
+    return f"""<!doctype html>
+<html><body style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f4f6f8;padding:24px 0;margin:0;color:#111827">
+<div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;padding:28px 30px;box-shadow:0 1px 3px rgba(0,0,0,.06)">
+  <h1 style="margin:0 0 12px 0;font-size:20px">Welcome to {company_name}, {invitee_name} 👋</h1>
+  <p style="margin:0 0 16px 0;line-height:1.55">
+    {inviter_name} added you to the team. You can sign in now with the
+    temporary credentials below — you'll be asked to change your password
+    on first login.
+  </p>
+  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin:0 0 20px 0">
+    <div style="font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Temporary password</div>
+    <div style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px;font-weight:600">{temporary_password}</div>
+  </div>
+  <p style="text-align:center;margin:0 0 22px 0">
+    <a href="{invite_accept_url}" style="background:#0f766e;color:#ffffff;padding:11px 22px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block">Sign in to the platform</a>
+  </p>
+  <p style="font-size:12px;color:#6b7280;margin:0">
+    If you weren't expecting this invite, ignore this email or reply to let us know.
+  </p>
+</div>
+</body></html>"""
+
+
+async def _send_team_invite_email(
+    *, tenant: dict, actor: dict, invitee: dict, temp_password: str,
+) -> str:
+    """Send the invite via Resend. Persists the send to
+    ``communications_log`` (trigger_entity.kind='team_invite') and
+    also mirrors into ``email_delivery_log`` for the admin delivery
+    report. Returns the provider_status string ("sent"|"mocked"|
+    "failed"|"suppressed") the endpoint hands back to the UI.
+
+    NEVER silently succeeds on real errors — a failure returns
+    "failed" and inserts a status="failed" row into both logs."""
+    from services.email.resend_adapter import send as _resend_send
+    from urllib.parse import urljoin
+
+    company = tenant.get("name") or "AquaTerra"
+    settings = tenant.get("settings") or {}
+    card = settings.get("business_card") or {}
+    company_display = card.get("company_name") or company
+    origin = os.environ.get("FRONTEND_BASE_URL") or "https://app.aquaterra.com"
+    accept_url = urljoin(origin.rstrip("/") + "/", "login")
+
+    html = _team_invite_html(
+        invitee_name=invitee.get("first_name") or invitee.get("name") or "there",
+        inviter_name=actor.get("name") or actor.get("email") or "The team",
+        company_name=company_display,
+        invite_accept_url=accept_url,
+        temporary_password=temp_password,
+    )
+    subject = f"Welcome to {company_display} — you've been added to the team"
+
+    result = await _resend_send(
+        to=invitee["email"], subject=subject, html=html,
+        category="transactional",
+        idempotency_key=f"team-invite-{invitee['id']}",
+        tenant_id=tenant["id"],
+    )
+    status = result.get("provider_status") or "failed"
+    provider_id = result.get("provider_response_id")
+
+    # Delivery report row (legacy — kept so existing admin views work).
+    try:
+        await db.email_delivery_log.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "to": invitee["email"],
+            "subject": subject,
+            "template": "team_invite_email",
+            "status": status,
+            "provider": result.get("provider") or "resend",
+            "provider_response_id": provider_id,
+            "error": result.get("error"),
+            "sent_at": now_iso(),
+            "meta": {"user_id": invitee["id"], "role": invitee.get("role"),
+                       "department": invitee.get("department")},
+        })
+    except Exception as e:
+        logger.warning(f"team-invite: email_delivery_log write failed: {e}")
+
+    # Comms log (spec-required: trigger_entity.kind='team_invite').
+    try:
+        await db.communications_log.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "channel": "email",
+            "to": invitee["email"],
+            "subject": subject,
+            "template": "team_invite_email",
+            "status": status,
+            "provider": result.get("provider") or "resend",
+            "provider_response_id": provider_id,
+            "error": result.get("error"),
+            "trigger_entity": {"kind": "team_invite", "id": invitee["id"]},
+            "created_at": now_iso(),
+        })
+    except Exception as e:
+        logger.warning(f"team-invite: communications_log write failed: {e}")
+
+    # BUG A follow-up — the admin ``/api/communications-log`` endpoint
+    # reads from ``marketing_deliveries``. Mirror the send there so
+    # admins actually see the row in the UI.
+    try:
+        await db.marketing_deliveries.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "channel": "email",
+            "recipient_address": invitee["email"],
+            "template_code": "team_invite_email",
+            "subject": subject,
+            "delivery_status": status,
+            "provider_status": status,
+            "trigger_kind": "team_invite",
+            "trigger_entity": {"kind": "team_invite", "id": invitee["id"]},
+            "created_at": now_iso(),
+        })
+    except Exception as e:
+        logger.warning(f"team-invite: marketing_deliveries write failed: {e}")
+
+    return status
 
 
 

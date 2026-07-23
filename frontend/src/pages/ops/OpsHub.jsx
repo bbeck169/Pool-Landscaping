@@ -1000,6 +1000,23 @@ function PriceBook() {
   const [form, setForm] = useState({ name: "", category: "Pool", unit: "each", unit_price: 0 });
   const [toast, setToast] = useState(null);
   const save = async () => { try { await api.post("/items", { ...form, unit_price: Number(form.unit_price) || 0 }); setOpen(false); refresh(); } catch (e) { setToast({ tone: "error", message: e.message }); } };
+  // BUG B fix (Feb-2026) — soft-delete a pricebook row with a
+  // HEAVY (type "DELETE") confirmation.
+  const delRow = async (row) => {
+    const ok = await mustConfirm({
+      title: `Delete "${row.name}"?`,
+      description: `Pricebook item will be archived. Historical invoices/quotes that reference "${row.name}" keep working, but it will no longer appear as an option on new estimates.`,
+      tone: "danger", confirmText: "Delete", requireTypeConfirm: true,
+    });
+    if (!ok) return;
+    try {
+      await api.del(`/pricebook/${row.id}`);
+      refresh();
+      setToast({ tone: "success", message: `${row.name} archived` });
+    } catch (e) {
+      setToast({ tone: "error", message: e.message || "Delete failed" });
+    }
+  };
   return (
     <Card testid="pricebook-page">
       <div className="flex justify-between mb-3">
@@ -1008,7 +1025,21 @@ function PriceBook() {
       </div>
       {rows === null ? <Skeleton style={{ height: 160 }} /> :
        <ul className="divide-y" style={{ borderColor: colors.divider }}>
-         {rows.map((r) => (<li key={r.id} className="py-2 flex items-center gap-3"><div className="flex-1"><div className="text-sm font-semibold">{r.name}</div><div className="text-xs" style={{ color: colors.muted }}>{r.category} · {r.unit}</div></div><div className="font-semibold">{money(r.unit_price)}</div></li>))}
+         {rows.map((r) => (
+           <li key={r.id} className="py-2 flex items-center gap-3" data-testid={`pb-row-${r.id}`}>
+             <div className="flex-1"><div className="text-sm font-semibold">{r.name}</div><div className="text-xs" style={{ color: colors.muted }}>{r.category} · {r.unit}</div></div>
+             <div className="font-semibold">{money(r.unit_price)}</div>
+             <button
+               type="button"
+               onClick={() => delRow(r)}
+               className="p-1.5 rounded-md hover:bg-red-50"
+               title="Delete"
+               data-testid={`pb-delete-${r.id}`}
+             >
+               <Trash2 size={14} style={{ color: "#B91C1C" }} />
+             </button>
+           </li>
+         ))}
        </ul>}
       <Modal open={open} onClose={() => setOpen(false)} title="New item"
         footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save}>Save</Button></>}>

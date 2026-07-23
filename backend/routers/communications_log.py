@@ -182,6 +182,7 @@ async def list_communications(
     tenant: dict = Depends(get_current_tenant),
     customer_id: Optional[str] = Query(None),
     channel: Optional[str] = Query(None, description="email | sms | all"),
+    trigger_kind: Optional[str] = Query(None, description="Filter by trigger_kind, e.g. review_request | team_invite"),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
@@ -200,6 +201,14 @@ async def list_communications(
         channel=channel, date_from=date_from, date_to=date_to,
         status=status,
     )
+    if trigger_kind:
+        # BUG C fix — filter to a specific trigger kind (review_request,
+        # team_invite, etc). Matches either the top-level field OR the
+        # trigger_entity.kind sub-document.
+        q["$or"] = [
+            {"trigger_kind": trigger_kind},
+            {"trigger_entity.kind": trigger_kind},
+        ]
 
     total = await db.marketing_deliveries.count_documents(q)
     skip = (page - 1) * page_size

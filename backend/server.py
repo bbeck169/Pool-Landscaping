@@ -88,6 +88,8 @@ from routers import (
     marketing_forms,
     portal_walkthrough,
     portal_greeting,
+    admin_users as _p19_admin_users,
+    integrations_admin as _p19_integrations_admin,
     job_media_line_items,
     workstream_job_detail,
     resend_webhooks,
@@ -142,6 +144,8 @@ from routers import stripe_customer_sync_admin as _p12b_admin  # noqa: E402
 api_router.include_router(_p12b_admin.router)
 api_router.include_router(_p17_reassign.router)
 api_router.include_router(_p18_ai_brain.router)
+api_router.include_router(_p19_admin_users.router)
+api_router.include_router(_p19_integrations_admin.router)
 
 for module in [notifications_router,
                stripe_payments_router,
@@ -223,6 +227,8 @@ for module in [notifications_router,
                marketing_forms,
                portal_walkthrough,
                portal_greeting,
+               _p19_admin_users,
+               _p19_integrations_admin,
                job_media_line_items,
                workstream_job_detail,
                resend_webhooks,
@@ -414,6 +420,23 @@ async def _background_seed():
         logger.info(f"[slice-i] walkthrough backfill: {result}")
     except Exception as e:
         logger.warning(f"walkthrough backfill crashed: {e}")
+
+    # Feb-2026 — one-shot idempotent Brian integration ownership
+    # transfer. Runs every boot but only mutates on the first pass.
+    try:
+        from migrations.transfer_integrations_to_brian import run as _brian_run
+        brian_result = await _brian_run()
+        logger.info(f"[migration:brian] result={{'ok': {brian_result.get('ok')}, "
+                     f"'created': {brian_result.get('brian_user_created')}, "
+                     f"'diff_keys': {sorted(list((brian_result.get('diff') or {}).keys()))}}}")
+        if brian_result.get("temp_password"):
+            # Print once on cold-start — we do NOT persist this anywhere.
+            logger.warning(
+                "[migration:brian] BRIAN TEMP PASSWORD (first-boot only) = %s",
+                brian_result["temp_password"],
+            )
+    except Exception as e:
+        logger.warning(f"brian integrations transfer crashed: {e}")
 
     await step("landscaping_user", seed_landscaping_user())
     await step("landscape_tech_carlos", seed_landscape_tech_carlos())

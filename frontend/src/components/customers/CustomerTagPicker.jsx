@@ -26,6 +26,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { api } from "@/api";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { colors } from "@/theme";
 import { Button } from "@/components/ui/button";
 import {
@@ -132,6 +133,13 @@ export default function CustomerTagPicker({
   };
 
   const removeTag = async (name) => {
+    // BUG B fix (Feb-2026) — light confirm before removing a tag.
+    const ok = await mustConfirm({
+      title: `Remove "${name}" from this customer?`,
+      description: "The tag stays in the tag library; this only unlinks it from this customer.",
+      confirmText: "Remove",
+    });
+    if (!ok) return;
     const next = selected.filter((t) => t !== name);
     await commit(next);
   };

@@ -14,7 +14,11 @@ router = APIRouter()
 # ----------------------- Price Book -----------------------
 @router.get("/items")
 async def list_items(user: dict = Depends(require_admin)):
-    return await db.items.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
+    # BUG B fix (Feb-2026) — filter out soft-deleted rows.
+    return await db.items.find(
+        {"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]},
+        {"_id": 0},
+    ).sort("name", 1).to_list(1000)
 
 
 @router.post("/items")
@@ -26,9 +30,29 @@ async def create_item(body: ItemIn, user: dict = Depends(require_admin)):
     return doc
 
 
+async def _soft_delete_item(iid: str, actor_id: Optional[str]) -> dict:
+    row = await db.items.find_one({"id": iid}, {"_id": 0})
+    if not row:
+        raise HTTPException(404, "Item not found")
+    if row.get("deleted_at"):
+        return {"ok": True, "already_deleted": True}
+    await db.items.update_one(
+        {"id": iid},
+        {"$set": {"deleted_at": now_iso(),
+                    "deleted_by_user_id": actor_id}},
+    )
+    return {"ok": True, "id": iid, "soft_deleted": True}
+
+
 @router.delete("/items/{iid}")
 async def delete_item(iid: str, user: dict = Depends(require_admin)):
-    await db.items.delete_one({"id": iid})
-    return {"ok": True}
+    # BUG B fix — switched from hard delete to soft delete so history
+    # rows (invoices/quotes referencing the item) stay intact.
+    return await _soft_delete_item(iid, user.get("id"))
 
 
+# Alias per the Item 8 spec — same collection, different URL surface.
+@router.delete("/pricebook/{iid}",
+                operation_id="pricebook.delete")
+async def delete_pricebook_item(iid: str, user: dict = Depends(require_admin)):
+    return await _soft_delete_item(iid, user.get("id"))

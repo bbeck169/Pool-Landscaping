@@ -7637,3 +7637,122 @@ All 12 tour steps have a target element in `/app`:
 - Backend: 12 tests pass (5 new Item 7 + 7 pre-existing Phase 19
   batch). Full sweep not re-run this session — deferred.
 - Frontend: not re-run this session — deferred.
+
+## Phase 19 dispatch batch · Feb 2026 · Session 2026-07 (part 2)
+
+### BUG A · Team invite email real Resend (P0) ✅
+**Root cause:** `routers/team.py` `POST /api/users` at lines 156–172
+inserted a `status="mocked"` row in `email_delivery_log` and never
+called Resend. The response returned `invite_email_status="mocked"`
+for every call regardless of adapter state.
+
+**Fix:** ripped the mock stub. Added `_send_team_invite_email()`
+that calls `services/email/resend_adapter.send()` with
+`category="transactional"`, an idempotency key, and a branded HTML
+template. Writes THREE audit rows: `email_delivery_log`,
+`communications_log` (spec: `trigger_entity.kind="team_invite"`),
+and `marketing_deliveries` (so the row surfaces in the admin
+`/api/communications-log` list). Response now carries the real
+adapter status + a human-readable `invite_email_error` field when
+the send failed. Silent success is no longer possible.
+
+### BUG C · Review-request comms log + `channels` honoring ✅
+- `_send_via_comms` now mirrors every send into `marketing_deliveries`
+  with `trigger_kind="review_request"` + `trigger_entity.kind` so
+  `GET /api/communications-log?trigger_kind=review_request` returns
+  matching rows.
+- `BulkRequestIn` accepts a `channels: List[str]` field (email/sms
+  subset). When provided it overrides `sent_via` — so passing
+  `channels: ["email"]` only sends email and writes `sent_via="email"`
+  to the review row.
+- Added `trigger_kind` filter to `GET /api/communications-log`
+  (matches top-level field OR `trigger_entity.kind` subdoc).
+
+### BUG B · Pricebook delete UI + tag confirm ✅
+- Backend: `routers/items.py` converted to soft-delete (adds
+  `deleted_at`/`deleted_by_user_id`). `GET /api/items` filters out
+  soft-deleted rows. Added alias `DELETE /api/pricebook/{iid}`
+  (operationId `pricebook.delete`) per spec.
+- Frontend `pages/ops/OpsHub.jsx` PriceBook — added trash icon on
+  each row + HEAVY `mustConfirm({requireTypeConfirm:true})` guard.
+- `components/customers/CustomerTagPicker.jsx removeTag` — light
+  `mustConfirm` before unlinking a tag from a customer.
+
+### Password mgmt + team delete tools ✅
+- `POST /api/users/{id}/reset-password` (operationId
+  `adminUsers.resetPassword`) — accepts optional `new_password` (min
+  8 chars) or auto-generates a 16-char mixed alphanumeric+symbol
+  password. Hashes + persists, flips
+  `users.must_change_password_on_next_login=true`, sends a
+  Resend-branded reset email (template
+  `password_reset_by_admin_email`), and logs to both
+  `communications_log` and `marketing_deliveries`.
+- Guards: regular admin cannot reset a super_admin; cross-tenant
+  reset requires super_admin.
+- `DELETE /api/users/{id}` (operationId `adminUsers.delete`) —
+  soft-deletes with cascade: reassigns active jobs owned by the
+  user to a placeholder `unassigned` tech id, cancels active
+  `route_assignment_overrides` involving the user, and audit-logs.
+  Blocks deletion of the last super_admin per tenant + self-delete.
+
+### Brian integration owner transfer ✅
+- One-shot boot migration `migrations/transfer_integrations_to_brian.py`.
+- Creates `brian@plofv.com` as **super_admin** on first boot with
+  `must_change_password_on_next_login=true`. Auto-demotes the
+  legacy `admin@aquaterra.com` (if it was super_admin) to plain
+  admin.
+- Transfers all 7 integration blocks in `tenant.settings.integrations`
+  (stripe, ringcentral, resend, google_maps, openweb_ninja_zillow,
+  cloudflare_turnstile, emergent_llm) to Brian's user id via
+  `owned_by_user_id` / `admin_user_id` / `contact_user_id` fields.
+  Also updates `business_card.email` and
+  `internal_lead_notifications.email_to` → `brian@plofv.com`.
+- Idempotent — second boot is a no-op (created=False, diff={}).
+- Endpoints: `GET /api/admin/integrations/owner-report` (super_admin)
+  + `POST /api/admin/integrations/transfer-to-brian` (super_admin,
+  on-demand re-run).
+- **Brian's first-boot temporary password logged once:**
+  `=JM^7bB9r8BeAfUl` — surfaced to the human via reply.
+
+### Non-recurring gate on auto-review-trigger ✅
+`services/review_auto_request.py::maybe_auto_request_after_job`
+now short-circuits when `job.is_recurring==True` or
+`job.recurring_template_id` is set. Recurring service-plan jobs
+never generate a review request, so the tenant doesn't carpet-bomb
+its recurring customers weekly.
+
+### Daily review digest scaffolding ✅
+`services/daily_review_digest.py` — cron-ready:
+- `send_digest_for_tenant(tenant)` queries reviews received in the
+  last 24h with `followup_status != "resolved"`, generates a
+  suggested reply per row (Phase 20 P2 placeholder — swap out for
+  the real LLM later), persists
+  `suggested_reply_text`/`suggested_reply_generated_at` on the
+  review row (idempotent), then composes an admin digest email.
+  Recipient resolution: Resend integration owner's email (Brian
+  after the transfer) → `internal_lead_notifications.email_to`
+  fallback.
+- `run_daily_review_digest()` — iterates all live tenants.
+- Zero-noise: when a tenant has no qualifying reviews, no email is
+  sent.
+- Opt-out via `settings.daily_review_digest_enabled=False`.
+
+### Tests
+- Backend: `tests/test_phase19_dispatch_batch.py` — 9 passed, 1
+  skipped (dedup guard).
+- Combined with earlier Phase 19 tests: **21 passed / 1 skipped
+  across the full Phase 19 surface.**
+
+### OpenAPI operationIds shipped (this batch)
+- `adminUsers.resetPassword`
+- `adminUsers.delete`
+- `integrations.ownerReport`
+- `integrations.transferToBrian`
+- `pricebook.delete`
+- `communicationsLog.list` (extended with `trigger_kind` filter)
+
+### Still deferred (in priority)
+- **Phase 21 rebrand** — CANCELLED by user.
+- **Item 10** tour engine (12 anchors already laid).
+- **Item 11** referral vesting.
+- **Phase 20** P3 → P4 → P2 → P1 → P5.

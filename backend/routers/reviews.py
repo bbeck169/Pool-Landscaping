@@ -305,6 +305,25 @@ async def _send_via_comms(tenant: dict, request_doc: dict, sent_via: str) -> Lis
             }
             await db.communication_sends.insert_one(send_doc)
             send_ids.append(send_doc["id"])
+            # BUG C fix (Feb-2026) — mirror into marketing_deliveries so
+            # the send is visible via /api/communications-log with the
+            # ``trigger_kind=review_request`` filter.
+            await db.marketing_deliveries.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant["id"],
+                "channel": "email",
+                "customer_id": cust["id"],
+                "recipient_address": recipient,
+                "template_code": template_email,
+                "subject": resolved_subject,
+                "delivery_status": "sent",
+                "provider_status": "sent",
+                "trigger_kind": "review_request",
+                "trigger_entity": {"kind": "review_request",
+                                     "id": request_doc["id"]},
+                "communication_send_id": send_doc["id"],
+                "created_at": now_iso(),
+            })
         else:  # sms
             tpl = await _find_sms_template(tenant["id"], template_sms)
             if not tpl:
@@ -330,6 +349,22 @@ async def _send_via_comms(tenant: dict, request_doc: dict, sent_via: str) -> Lis
             }
             await db.communication_sends.insert_one(send_doc)
             send_ids.append(send_doc["id"])
+            await db.marketing_deliveries.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant["id"],
+                "channel": "sms",
+                "customer_id": cust["id"],
+                "recipient_address": recipient,
+                "template_code": template_sms,
+                "body_text": resolved_body,
+                "delivery_status": "sent",
+                "provider_status": "sent",
+                "trigger_kind": "review_request",
+                "trigger_entity": {"kind": "review_request",
+                                     "id": request_doc["id"]},
+                "communication_send_id": send_doc["id"],
+                "created_at": now_iso(),
+            })
 
     return send_ids
 
@@ -471,6 +506,10 @@ async def resend_request(rid: str,
 class BulkRequestIn(BaseModel):
     customer_ids: List[str] = Field(..., min_length=1, max_length=500)
     sent_via: str = "both"
+    # BUG C fix (Feb-2026) — accept ``channels: ["email"] | ["sms"] |
+    # ["email","sms"]`` as an explicit alternative to ``sent_via``.
+    # When both are provided, ``channels`` wins.
+    channels: Optional[List[str]] = None
     skip_dedup: bool = False
 
     @field_validator("sent_via")
@@ -480,6 +519,33 @@ class BulkRequestIn(BaseModel):
         if v not in _SENT_VIA:
             raise ValueError(f"sent_via must be one of {sorted(_SENT_VIA)}")
         return v
+
+    @field_validator("channels")
+    @classmethod
+    def _chans(cls, v):
+        if v is None:
+            return None
+        if not isinstance(v, list) or not v:
+            raise ValueError("channels must be a non-empty list")
+        allowed = {"email", "sms"}
+        cleaned = []
+        for c in v:
+            c = (c or "").lower().strip()
+            if c not in allowed:
+                raise ValueError(f"channel must be one of {sorted(allowed)}")
+            if c not in cleaned:
+                cleaned.append(c)
+        return cleaned
+
+    def resolved_sent_via(self) -> str:
+        """When ``channels`` is provided, translate it to the canonical
+        ``sent_via`` string that the rest of the code expects."""
+        if self.channels:
+            s = set(self.channels)
+            if s == {"email"}: return "email"
+            if s == {"sms"}:   return "sms"
+            if s == {"email", "sms"}: return "both"
+        return self.sent_via
 
 
 @router.post("/requests/bulk", status_code=201,
@@ -494,6 +560,10 @@ async def bulk_request(body: BulkRequestIn,
     if _role(user) not in ("admin", "super_admin"):
         raise HTTPException(403, "Admin only")
     await _ensure_indexes()
+
+    # BUG C fix — honor ``channels`` when provided; fall back to
+    # ``sent_via`` for backwards compat.
+    resolved_sent_via = body.resolved_sent_via()
 
     results: List[Dict[str, Any]] = []
     for cid in body.customer_ids:
@@ -516,7 +586,7 @@ async def bulk_request(body: BulkRequestIn,
             "customer_id": cid,
             "job_id": None,
             "technician_id": None,
-            "sent_via": body.sent_via,
+            "sent_via": resolved_sent_via,
             "sent_at": now_iso(),
             "communication_send_ids": [],
             "landing_visited_at": None,
@@ -531,7 +601,7 @@ async def bulk_request(body: BulkRequestIn,
             "auto_source": "bulk_admin",
         }
         await db.review_requests.insert_one(request_doc)
-        send_ids = await _send_via_comms(tenant, request_doc, body.sent_via)
+        send_ids = await _send_via_comms(tenant, request_doc, resolved_sent_via)
         if send_ids:
             await db.review_requests.update_one(
                 {"id": request_doc["id"]},
