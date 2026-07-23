@@ -52,6 +52,7 @@ import MarketingSequencesPage from "@/pages/marketing/MarketingSequencesPage";
 import MarketingReviewRequestsPage from "@/pages/marketing/MarketingReviewRequestsPage";
 import MarketingAnalyticsPage from "@/pages/marketing/MarketingAnalyticsPage";
 import MarketingSuppressionsPage from "@/pages/marketing/MarketingSuppressionsPage";
+import BroadcastsPage from "@/pages/marketing/BroadcastsPage";
 import PortalPreferences from "@/pages/portal/PortalPreferences";
 import PortalVideos from "@/pages/portal/PortalVideos";
 import {
@@ -407,6 +408,7 @@ export default function App() {
             <Route path="marketing/scheduling" element={<AdminOnly><SchedulingConfig /></AdminOnly>} />
             <Route path="marketing/performance" element={<AdminOnly><Performance /></AdminOnly>} />
             <Route path="marketing/templates" element={<AdminOnly><MarketingTemplatesListPage /></AdminOnly>} />
+            <Route path="marketing/broadcasts" element={<AdminOnly><BroadcastsPage /></AdminOnly>} />
             <Route path="marketing/templates/:id" element={<AdminOnly><MarketingTemplateDetailPage /></AdminOnly>} />
             <Route path="marketing/templates-hub" element={<AdminOnly><TemplatesHub /></AdminOnly>} />
             <Route path="marketing/template-library" element={<AdminOnly><MarketingTemplatesLibraryPage /></AdminOnly>} />

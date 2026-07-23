@@ -39,6 +39,7 @@ import {
 import { ActivationControl } from "@/components/customers/ActivationControl";
 import CustomerEquipmentLibrary from "@/components/customers/CustomerEquipmentLibrary";
 import CustomerActionDropdowns from "@/components/customers/CustomerActionDropdowns";
+import CustomerTagPicker from "@/components/customers/CustomerTagPicker";
 import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
 import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel";
 import CustomerServiceNotesCards from "@/components/customers/CustomerServiceNotesCards";
@@ -245,9 +246,19 @@ export default function CustomerDetail() {
               />
             </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap">
-              {(customer.tags || []).map((t) => (
-                <TagChip tag={t} key={t} />
-              ))}
+              {/* Phase 15b · Feb-2026 — inline tag picker with a
+                  "+ Add new tag" affordance in the dropdown. Server
+                  RBAC allows admin + manager writes; other roles will
+                  see the trigger but the PATCH will 403 (parent could
+                  hide via readOnly, but leaving the discovery affordance
+                  in place is intentional). */}
+              <CustomerTagPicker
+                customerId={customer.id}
+                value={customer.tags || []}
+                onChange={(nextTags) =>
+                  setCustomer((c) => c ? { ...c, tags: nextTags } : c)
+                }
+              />
               {customer.waitlisted ? <Chip label="Waitlist" tone="warning" /> : null}
               {customer.has_login ? <Chip label="Portal enabled" tone="success" /> : null}
             </div>

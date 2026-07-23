@@ -15,3 +15,16 @@ if (!window.matchMedia) {
     addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
   });
 }
+
+// jsdom stub — cmdk (used by shadcn Command / Combobox) requires
+// ResizeObserver; JSDOM doesn't ship one. Minimal noop implementation
+// keeps the components mountable in tests.
+if (typeof window !== "undefined" && !window.ResizeObserver) {
+  class RO {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  window.ResizeObserver = RO;
+  globalThis.ResizeObserver = RO;
+}

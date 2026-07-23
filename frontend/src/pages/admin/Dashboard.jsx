@@ -27,6 +27,7 @@ import {
 import { api } from "@/api";
 import { brandGradientCss, colors, money } from "@/theme";
 import LiveWeatherWidget from "@/components/Weather/WeatherWidget";
+import MassMessagingCard from "@/components/mass-messaging/MassMessagingCard";
 import TeamCpoReadinessWidget from "@/components/admin/TeamCpoReadinessWidget";
 import RecommendationsQueueWidget from "@/components/admin/RecommendationsQueueWidget";
 import { useAuth } from "@/auth";
@@ -372,6 +373,11 @@ export default function AdminDashboard() {
           {error}
         </div>
       ) : null}
+
+      {/* Phase 15 · Feb-2026 — Mass Messaging top card. Self-guards on
+          role (admin / super_admin only). Renders above the weather
+          widget so it's the first CTA an admin sees on the Dashboard. */}
+      <MassMessagingCard />
 
       {/* Feb-2026 follow-up — 5-day forecast panel unmounted per user
           request. The live now-condition widget stays; the 5-day panel
