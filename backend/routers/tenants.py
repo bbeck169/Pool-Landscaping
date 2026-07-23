@@ -138,6 +138,12 @@ async def current_tenant(request: Request,
         "custom_domain": tenant.get("custom_domain"),
         "plan_tier": tenant.get("plan_tier"),
         "resolved_via": resolved_via,
+        # Phase 12 · Feb 2026 — expose the "require card on file"
+        # tenant default so admin UI can render the toggle w/o an
+        # extra fetch. Field is populated by boot migration on any
+        # tenant that predates the phase.
+        "require_card_on_file_default": bool(
+            tenant.get("require_card_on_file_default", True)),
     }
 
 
@@ -274,6 +280,36 @@ async def patch_own_brand(body: BrandUpdate, user: dict = Depends(get_current_us
     upd["updated_at"] = now_iso()
     await db.tenants.update_one({"id": tid}, {"$set": upd})
     return await db.tenants.find_one({"id": tid}, {"_id": 0})
+
+
+# ─── Phase 12 · Feb 2026 — Tenant Payment Defaults ─────────────────────
+class TenantSettingsUpdate(BaseModel):
+    """Fields settable via ``PATCH /api/tenants/mine/settings``.
+
+    Only ``require_card_on_file_default`` is exposed today. Additional
+    tenant-wide toggles slot in here in future phases (payment window,
+    default payment terms, etc.) rather than growing the brand
+    endpoint's surface area.
+    """
+    require_card_on_file_default: Optional[bool] = None
+
+
+@router.patch("/tenants/mine/settings")
+async def patch_own_settings(body: TenantSettingsUpdate,
+                              user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin access required")
+    tid = user.get("tenant_id")
+    if not tid:
+        raise HTTPException(400, "User has no tenant")
+    upd = {k: v for k, v in body.dict().items() if v is not None}
+    if not upd:
+        raise HTTPException(400, "Nothing to update")
+    upd["settings_updated_at"] = now_iso()
+    upd["settings_updated_by"] = user.get("id")
+    await db.tenants.update_one({"id": tid}, {"$set": upd})
+    doc = await db.tenants.find_one({"id": tid}, {"_id": 0})
+    return doc
 
 
 # ─── Feb-2026 — Tenant HQ geocode ─────────────────────────────────────────

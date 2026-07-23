@@ -32,6 +32,7 @@ import {
   useStripe,
 } from "@stripe/react-stripe-js";
 import { X, Loader2, ShieldCheck, AlertTriangle } from "lucide-react";
+import PromoCodeInput from "@/components/marketing/PromoCodeInput";
 
 const BASE = process.env.REACT_APP_BACKEND_URL;
 const TOKEN_KEY = "token";
@@ -147,41 +148,78 @@ export default function PaymentForm({
   const [error, setError] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [amountCents, setAmountCents] = useState(0);
+  const [baseAmountCents, setBaseAmountCents] = useState(0);
   const [currency, setCurrency] = useState("usd");
   const [stripePromise, setStripePromise] = useState(null);
+  // Phase 10c · Feb 2026 — applied promo state (from <PromoCodeInput>).
+  const [appliedPromo, setAppliedPromo] = useState(null);
+  const [rebuilding, setRebuilding] = useState(false);
   const initedRef = useRef(false);
+
+  const buildIntent = async (promoState) => {
+    const cfg = await apiRaw("/config/public", {}, source === "portal");
+    const pk = cfg?.stripe_publishable_key;
+    if (!pk) throw new Error("Payments unavailable — publishable key not configured.");
+    if (!stripePromise) setStripePromise(loadStripe(pk));
+
+    const body = { invoice_id: invoiceId, source };
+    if (source === "portal") body.magic_token = magicToken;
+    if (promoState?.promo_code_id) body.promo_code_id = promoState.promo_code_id;
+    const overrideAuth = source === "portal" && magicToken;
+    const pi = await apiRaw(
+      "/payments/create-payment-intent",
+      { method: "POST", body: JSON.stringify(body) },
+      overrideAuth,
+    );
+    if (!pi?.client_secret) throw new Error("Could not create payment intent.");
+    setClientSecret(pi.client_secret);
+    setAmountCents(pi.amount_cents || 0);
+    if (!promoState) setBaseAmountCents(pi.amount_cents || 0);
+    setCurrency(pi.currency || "usd");
+    setPhase("ready");
+  };
 
   useEffect(() => {
     if (initedRef.current) return;
     initedRef.current = true;
     (async () => {
       try {
-        // 1. runtime pk
-        const cfg = await apiRaw("/config/public", {}, source === "portal");
-        const pk = cfg?.stripe_publishable_key;
-        if (!pk) throw new Error("Payments unavailable — publishable key not configured.");
-        setStripePromise(loadStripe(pk));
-
-        // 2. create payment intent
-        const body = { invoice_id: invoiceId, source };
-        if (source === "portal") body.magic_token = magicToken;
-        const overrideAuth = source === "portal" && magicToken;
-        const pi = await apiRaw(
-          "/payments/create-payment-intent",
-          { method: "POST", body: JSON.stringify(body) },
-          overrideAuth,
-        );
-        if (!pi?.client_secret) throw new Error("Could not create payment intent.");
-        setClientSecret(pi.client_secret);
-        setAmountCents(pi.amount_cents || 0);
-        setCurrency(pi.currency || "usd");
-        setPhase("ready");
+        await buildIntent(null);
       } catch (e) {
         setError(e?.message || "Failed to start payment.");
         setPhase("error");
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceId, source, magicToken]);
+
+  const onPromoChange = async (state) => {
+    setAppliedPromo(state);
+    // Only rebuild the PaymentIntent when the promo affects the
+    // charged amount — account_credit promos don't change today's
+    // total, so we can keep the current intent + client_secret.
+    if (state && state.apply_to === "next_invoice") {
+      setRebuilding(true);
+      try {
+        await buildIntent(state);
+      } catch (e) {
+        // Surface as a soft error banner and restore base intent.
+        setError(e?.message || "Could not apply promo — please try another code.");
+        setAppliedPromo(null);
+        await buildIntent(null).catch(() => {});
+      } finally {
+        setRebuilding(false);
+      }
+    } else if (state === null && baseAmountCents && amountCents !== baseAmountCents) {
+      // Clear applied promo → restore full amount.
+      setRebuilding(true);
+      try {
+        await buildIntent(null);
+      } finally {
+        setRebuilding(false);
+      }
+    }
+  };
 
   const elementsOptions = useMemo(() => ({
     clientSecret,
@@ -245,14 +283,45 @@ export default function PaymentForm({
         ) : null}
 
         {phase === "ready" && stripePromise && clientSecret ? (
-          <Elements stripe={stripePromise} options={elementsOptions}>
-            <InnerForm
-              amountCents={amountCents}
-              currency={currency}
-              onSuccess={(pi) => { onSuccess && onSuccess(pi); }}
-              onError={() => {}}
-            />
-          </Elements>
+          <>
+            <div style={{ marginBottom: 12 }} data-testid="payment-form-promo-slot">
+              <PromoCodeInput
+                invoiceId={invoiceId}
+                invoiceTotalCents={baseAmountCents || amountCents}
+                magicToken={source === "portal" ? magicToken : ""}
+                onChange={onPromoChange}
+              />
+              {appliedPromo?.apply_to === "account_credit" ? (
+                <div
+                  data-testid="payment-form-account-credit-hint"
+                  style={{
+                    marginTop: 8, padding: "6px 10px", borderRadius: 8,
+                    background: "#ECFDF5", color: "#065F46",
+                    fontSize: 12,
+                  }}
+                >
+                  ${(appliedPromo.discount_cents / 100).toFixed(2)} credit will
+                  be added to your account after payment. Today's total is unchanged.
+                </div>
+              ) : null}
+            </div>
+            {rebuilding ? (
+              <div
+                data-testid="pay-rebuilding"
+                style={{ padding: "6px 0 10px", fontSize: 12, color: "#64748B" }}
+              >
+                <Loader2 size={14} className="animate-spin" /> Recalculating total…
+              </div>
+            ) : null}
+            <Elements key={clientSecret} stripe={stripePromise} options={elementsOptions}>
+              <InnerForm
+                amountCents={amountCents}
+                currency={currency}
+                onSuccess={(pi) => { onSuccess && onSuccess(pi); }}
+                onError={() => {}}
+              />
+            </Elements>
+          </>
         ) : null}
       </div>
     </div>

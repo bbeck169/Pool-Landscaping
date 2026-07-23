@@ -54,6 +54,8 @@ export default function CustomersList() {
   const isAdmin =
     role === "admin" || role === "super_admin" ||
     effectiveRole === "admin" || effectiveRole === "super_admin";
+  const isAdminOrManager =
+    isAdmin || role === "manager" || effectiveRole === "manager";
 
   // Phase 56.2 — active | inactive tabs. `all` retained as a legacy escape
   // hatch (used to be the default) — accessible via `?tab=all` for admins
@@ -74,6 +76,9 @@ export default function CustomersList() {
   const [toast, setToast] = useState(null);
   const [activationConfirm, setActivationConfirm] = useState(null); // {customer, nextActive}
   const [activationBusy, setActivationBusy] = useState(false);
+  // Phase 12 · Feb 2026 — "Missing card" filter chip state must live
+  // ABOVE ``load()`` since it participates in the request query.
+  const [missingCardOnly, setMissingCardOnly] = useState(false);
   const searchDeb = useDebounced(q);
 
   // Non-admin users cannot land on the inactive cohort — redirect to active.
@@ -103,6 +108,7 @@ export default function CustomersList() {
     if (scope === "unscheduled") params.set("unscheduled", "true");
     if (tab === "active") params.set("is_active", "true");
     else if (tab === "inactive") params.set("is_active", "false");
+    if (missingCardOnly) params.set("missing_card", "true");
     try {
       const data = await api.get(`/customers${params.toString() ? "?" + params : ""}`);
       setRows(data || []);
@@ -126,7 +132,7 @@ export default function CustomersList() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchDeb, tag, scope, tab]);
+  }, [searchDeb, tag, scope, tab, missingCardOnly]);
 
   useEffect(() => {
     loadCounts();
@@ -142,11 +148,18 @@ export default function CustomersList() {
   }, [rows]);
 
   const [city, setCity] = useState("");
+  // Phase 12 · Feb 2026 — server-side filter reads ``missingCardOnly``
+  // via the ``missing_card=true`` query param (set inside ``load()``).
+  // The client-side ``filtered`` memo also mirrors the same predicate
+  // so switching cohorts doesn't briefly show stale rows.
   const filtered = useMemo(() => {
     if (!rows) return null;
-    if (!city) return rows;
-    return rows.filter((r) => (r.address || "").includes(city));
-  }, [rows, city]);
+    let out = rows;
+    if (city) out = out.filter((r) => (r.address || "").includes(city));
+    if (missingCardOnly) out = out.filter((r) =>
+      r.effective_require_card_on_file && !r.has_card_on_file);
+    return out;
+  }, [rows, city, missingCardOnly]);
 
   const toggle = (id) => {
     const next = new Set(selected);
@@ -367,6 +380,27 @@ export default function CustomersList() {
             ))}
           </select>
         ) : null}
+        {/* Phase 12 · Feb 2026 — "Missing card" filter chip. Admin +
+            manager only. Server-side filter (requires the
+            missing_card=true query param). */}
+        {isAdminOrManager && (
+          <button
+            onClick={() => setMissingCardOnly((v) => !v)}
+            data-testid="customers-filter-missing-card"
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5"
+            style={{
+              backgroundColor: missingCardOnly ? "#FEF3C7" : colors.surfaceSecondary,
+              color: missingCardOnly ? "#92400E" : colors.onSurfaceSecondary,
+              border: `1px solid ${missingCardOnly ? "#FDE68A" : colors.border}`,
+            }}
+          >
+            <span
+              className="inline-block w-2 h-2 rounded-full"
+              style={{ backgroundColor: missingCardOnly ? "#B45309" : "#94A3B8" }}
+            />
+            Missing card
+          </button>
+        )}
       </div>
 
       {/* Bulk-actions toolbar (visible when selection exists) */}
@@ -477,6 +511,19 @@ export default function CustomersList() {
                   </td>
                   <td className="px-3 py-3">
                     <div className="flex items-center gap-2 flex-wrap">
+                      {/* Phase 12 · Feb 2026 — yellow dot when the row
+                          effectively requires a card AND has none.
+                          Admin-visible only (isAdmin gate). */}
+                      {isAdmin
+                        && c.effective_require_card_on_file
+                        && !c.has_card_on_file ? (
+                        <span
+                          className="inline-block w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: "#F59E0B" }}
+                          data-testid={`row-${c.id}-missing-card-dot`}
+                          title="Card on file required — none saved"
+                        />
+                      ) : null}
                       <span className="font-semibold" style={{ color: colors.onSurface }}>
                         {c.name}
                       </span>

@@ -19,6 +19,7 @@ import {
   ListChecks,
   MessageSquare,
   Home,
+  DollarSign,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from '@/theme';
@@ -43,6 +44,9 @@ import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel"
 import CustomerServiceNotesCards from "@/components/customers/CustomerServiceNotesCards";
 import PropertiesTab from "./PropertiesTab";
 import MasterBillingCard from "./MasterBillingCard";
+import { CustomerCreditsPanel } from "./CustomerCreditsPage";
+import CardOnFileControl from "@/components/customers/CardOnFileControl";
+import CardOnFileWarningBanner from "@/components/customers/CardOnFileWarningBanner";
 
 const TABS = [
   { k: "overview", label: "Overview", icon: MapPin },
@@ -53,6 +57,7 @@ const TABS = [
   { k: "equipment", label: "Equipment", icon: Beaker },
   { k: "tasks", label: "Tasks", icon: ListChecks },
   { k: "notes", label: "Notes", icon: StickyNote },
+  { k: "credits", label: "Credits", icon: DollarSign },
   { k: "portal", label: "Portal Access", icon: KeyRound },
 ];
 
@@ -68,6 +73,27 @@ export default function CustomerDetail() {
   const [vipModal, setVipModal] = useState(false);
   const [sendModal, setSendModal] = useState(null); // { channel, to }
   const [taskQuickAddOpener, setTaskQuickAddOpener] = useState(null);
+  // Phase 12 · Feb 2026 — role + tenant default fetched once for the
+  // card-on-file admin controls. Techs never see the toggle at all.
+  const [meRole, setMeRole] = useState("");
+  const [tenantDefault, setTenantDefault] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [me, t] = await Promise.all([
+          api.get("/auth/me"),
+          api.get("/tenants/current"),
+        ]);
+        setMeRole(me?.role || "");
+        setTenantDefault(
+          t?.require_card_on_file_default !== false,
+        );
+      } catch { /* silent — falls back to hidden UI */ }
+    })();
+  }, []);
+  const canSeeCardControls =
+    meRole === "admin" || meRole === "manager" || meRole === "super_admin";
 
   const load = async () => {
     try {
@@ -148,6 +174,17 @@ export default function CustomerDetail() {
       >
         <ArrowLeft size={14} /> All customers
       </button>
+
+      {/* Phase 12 · Feb 2026 — Card-on-file requirement banner. Only
+          shows when effective_require_card_on_file && !has_card_on_file.
+          Admin + manager only (techs never see this). */}
+      {canSeeCardControls && (
+        <CardOnFileWarningBanner
+          customer={customer}
+          onSent={(msg) => setToast({ tone: "success", message: msg })}
+          onError={(msg) => setToast({ tone: "error", message: msg })}
+        />
+      )}
 
       {/* Header card */}
       <div
@@ -375,6 +412,21 @@ export default function CustomerDetail() {
                 }}
                 onError={(msg) => setToast({ tone: "error", message: msg })}
               />
+              {/* Phase 12 · Feb 2026 — Card-on-file toggle. Admin +
+                  manager only. Tri-state override with a "Reset to
+                  tenant default" ghost button. */}
+              {canSeeCardControls && (
+                <CardOnFileControl
+                  customer={customer}
+                  tenantDefault={tenantDefault}
+                  onSaved={(doc) => {
+                    setCustomer((c) => ({ ...c, ...doc }));
+                    setToast({ tone: "success",
+                                message: "Card requirement updated" });
+                  }}
+                  onError={(msg) => setToast({ tone: "error", message: msg })}
+                />
+              )}
               {/* Feb-2026 service-notes ship — Pool + Landscape long-form
                   notes. Admin-editable; techs see only the note matching
                   their service_type via /jobs?* enrichment. */}
@@ -465,6 +517,10 @@ export default function CustomerDetail() {
 
           {tab === "notes" ? (
             <Info label="Notes" value={customer.notes} preserveNewlines />
+          ) : null}
+
+          {tab === "credits" ? (
+            <CustomerCreditsPanel customerId={id} />
           ) : null}
 
           {tab === "portal" ? (

@@ -241,6 +241,15 @@ async def _handle_payment_intent_succeeded(event: dict) -> dict:
             tenant_id=tenant_id, invoice_id=invoice_id,
             payment_intent_id=pi_id, amount_cents=amount_cents,
         )
+        # Phase 10c · Feb 2026 — redeem promo code if metadata carried one.
+        try:
+            await _phase10_redeem_promo_on_success(
+                obj, tenant_id=tenant_id, invoice_id=invoice_id,
+                pi_id=pi_id,
+                customer_id=(row or {}).get("customer_id") or (obj.get("metadata") or {}).get("customer_id"),
+            )
+        except Exception as exc:
+            logger.warning(f"[phase10c] promo redemption hook failed: {exc}")
     # Fan out to the Phase-53 handler so its invoice-paid automation
     # (bell notifications) keeps firing.
     try:
@@ -279,7 +288,191 @@ async def _handle_payment_intent_failed(event: dict) -> dict:
     return {"handled": True}
 
 
-# ─── Phase 10 · Feb 2026 — Referral safeguard helper ─────────────────
+# ─── Phase 10c · Feb 2026 — Promo redemption on succeeded / refund ────
+async def _phase10_redeem_promo_on_success(obj: dict, *, tenant_id: str,
+                                            invoice_id: str, pi_id: str,
+                                            customer_id: Optional[str]) -> None:
+    """If the PaymentIntent carries ``promo_code_id`` metadata, redeem
+    the promo AFTER the payment settles:
+
+      * ``next_invoice`` path — the invoice already charged the
+        discounted amount. We just increment ``uses_count`` and record
+        the promo on the invoice for auditing.
+      * ``account_credit`` path — the invoice charged the full amount.
+        We add the promo's ``amount_cents`` to the customer's balance
+        via a ``customer_credits`` ledger row + upsert of
+        ``customer_credits_balance``.
+
+    Idempotent — a second call for the same ``pi_id`` is a no-op via
+    the promo_redemptions_live guard collection.
+    """
+    md = obj.get("metadata") or {}
+    promo_code_id = md.get("promo_code_id")
+    if not promo_code_id:
+        return
+
+    # Idempotency guard — record ``pi_id`` and bail if already redeemed.
+    try:
+        await db.promo_redemptions_live.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant_id,
+            "payment_intent_id": pi_id,
+            "promo_code_id": promo_code_id,
+            "invoice_id": invoice_id,
+            "customer_id": customer_id,
+            "kind": "redeemed",
+            "created_at": now_iso(),
+        })
+    except Exception:
+        return  # unique index prevents double-redemption
+
+    promo = await db.promo_codes.find_one(
+        {"id": promo_code_id, "tenant_id": tenant_id}, {"_id": 0},
+    )
+    if not promo:
+        return
+
+    apply_to = md.get("promo_apply_to") or promo.get("apply_to")
+    discount_cents = int(md.get("promo_discount_cents") or 0)
+
+    # Increment uses_count (best-effort; ignore concurrent races).
+    await db.promo_codes.update_one(
+        {"id": promo_code_id, "tenant_id": tenant_id},
+        {"$inc": {"uses_count": 1},
+         "$set": {"updated_at": now_iso()}},
+    )
+    # Record promo on the invoice (audit trail — also blocks re-applying
+    # the same code to the same invoice).
+    for coll in (db.invoices, db.quotes):
+        await coll.update_one(
+            {"id": invoice_id, "tenant_id": tenant_id},
+            {"$addToSet": {"applied_promo_code_ids": promo_code_id},
+             "$push": {"applied_promos": {
+                 "promo_code_id": promo_code_id,
+                 "code": promo.get("code"),
+                 "discount_kind": promo.get("discount_kind"),
+                 "apply_to": apply_to,
+                 "discount_cents": discount_cents,
+                 "payment_intent_id": pi_id,
+                 "applied_at": now_iso(),
+                 "applied_by": "webhook",
+             }}},
+        )
+
+    if apply_to == "account_credit" and discount_cents > 0 and customer_id:
+        # Insert credits ledger row + upsert balance.
+        entry = {
+            "id": new_id(),
+            "tenant_id": tenant_id,
+            "customer_id": customer_id,
+            "delta_cents": discount_cents,
+            "source": "promo_redemption",
+            "promo_code_id": promo_code_id,
+            "promo_code": promo.get("code"),
+            "payment_intent_id": pi_id,
+            "invoice_id": invoice_id,
+            "note": f"Credit from promo {promo.get('code') or ''}".strip(),
+            "reason": f"Credit from promo {promo.get('code') or ''}".strip(),
+            "created_at": now_iso(),
+        }
+        await db.customer_credits.insert_one(entry)
+        bal = await db.customer_credits_balance.find_one(
+            {"tenant_id": tenant_id, "customer_id": customer_id}, {"_id": 0},
+        ) or {}
+        current = int(
+            bal.get("balance_cents")
+            or int(float(bal.get("balance") or 0) * 100)
+        )
+        new_balance = current + discount_cents
+        await db.customer_credits_balance.update_one(
+            {"tenant_id": tenant_id, "customer_id": customer_id},
+            {"$set": {"balance_cents": new_balance,
+                       "balance": new_balance / 100.0,
+                       "updated_at": now_iso()}},
+            upsert=True,
+        )
+
+
+async def _phase10_revert_promo_on_full_refund(row: dict, obj: dict) -> None:
+    """Called from ``_handle_charge_refunded`` when a Stripe charge is
+    fully refunded. If a promo was redeemed against this PaymentIntent,
+    decrement ``uses_count`` and insert a positive-delta revert row on
+    the customer_credits ledger (only meaningful for account_credit
+    apply_to)."""
+    refunded = int(obj.get("amount_refunded") or 0)
+    total = int(row.get("amount_cents") or 0)
+    if total <= 0 or refunded < total:
+        return  # partial refund — leave the promo redemption intact
+    pi_id = row.get("payment_intent_id")
+    tenant_id = row.get("tenant_id")
+    if not pi_id or not tenant_id:
+        return
+    redemption = await db.promo_redemptions_live.find_one(
+        {"payment_intent_id": pi_id, "tenant_id": tenant_id, "kind": "redeemed"},
+        {"_id": 0},
+    )
+    if not redemption:
+        return
+    # Idempotency — record a revert row keyed on pi_id + kind.
+    try:
+        await db.promo_redemptions_live.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant_id,
+            "payment_intent_id": pi_id,
+            "promo_code_id": redemption.get("promo_code_id"),
+            "invoice_id": redemption.get("invoice_id"),
+            "customer_id": redemption.get("customer_id"),
+            "kind": "reverted",
+            "created_at": now_iso(),
+        })
+    except Exception:
+        return
+    promo_code_id = redemption.get("promo_code_id")
+    if promo_code_id:
+        await db.promo_codes.update_one(
+            {"id": promo_code_id, "tenant_id": tenant_id,
+              "uses_count": {"$gt": 0}},
+            {"$inc": {"uses_count": -1},
+             "$set": {"updated_at": now_iso()}},
+        )
+    # Revert credits ledger if this was an account_credit redemption.
+    prior = await db.customer_credits.find_one(
+        {"tenant_id": tenant_id, "payment_intent_id": pi_id,
+          "source": "promo_redemption"}, {"_id": 0},
+    )
+    if prior and prior.get("customer_id"):
+        revert_cents = -int(prior.get("delta_cents") or 0)
+        await db.customer_credits.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant_id,
+            "customer_id": prior["customer_id"],
+            "delta_cents": revert_cents,
+            "source": "revert",
+            "promo_code_id": promo_code_id,
+            "payment_intent_id": pi_id,
+            "reverted_from_entry_id": prior.get("id"),
+            "note": "Refund reverted promo credit",
+            "reason": "Refund reverted promo credit",
+            "created_at": now_iso(),
+        })
+        bal = await db.customer_credits_balance.find_one(
+            {"tenant_id": tenant_id, "customer_id": prior["customer_id"]},
+            {"_id": 0},
+        ) or {}
+        current = int(
+            bal.get("balance_cents")
+            or int(float(bal.get("balance") or 0) * 100)
+        )
+        new_balance = max(0, current + revert_cents)
+        await db.customer_credits_balance.update_one(
+            {"tenant_id": tenant_id, "customer_id": prior["customer_id"]},
+            {"$set": {"balance_cents": new_balance,
+                       "balance": new_balance / 100.0,
+                       "updated_at": now_iso()}},
+            upsert=True,
+        )
+
+
 async def _phase10_void_referrals_on_refund(row: dict, *, kind: str) -> None:
     """Called from ``_handle_charge_refunded`` + ``_handle_dispute_created``.
 
@@ -347,6 +540,13 @@ async def _handle_charge_refunded(event: dict) -> dict:
             await _phase10_void_referrals_on_refund(row, kind="charge.refunded")
         except Exception as exc:
             logger.warning(f"[phase10] refund void hook failed: {exc}")
+        # Phase 10c · Feb 2026 — on FULL refund, revert any promo
+        # redemption that was applied by the succeeded webhook (both
+        # decrements uses_count AND reverses account_credit ledger).
+        try:
+            await _phase10_revert_promo_on_full_refund(row, obj)
+        except Exception as exc:
+            logger.warning(f"[phase10c] promo revert hook failed: {exc}")
     try:
         from routers.stripe_admin import _handle_charge_refunded as _p53
         await _p53(event)
@@ -434,6 +634,127 @@ async def _handle_dispute_created(event: dict) -> dict:
     return {"handled": True}
 
 
+async def _handle_payment_method_attached(event: dict) -> dict:
+    """Phase 12 · Feb 2026 — Real handler for ``payment_method.attached``.
+
+    Updates the customer's ``saved_payment_methods_count`` (source of
+    truth for the ``has_card_on_file`` derived field) by querying
+    Stripe for the current PM list on the attached customer + refreshes
+    the cached display fields (brand / last4 / exp) via
+    :func:`services.stripe_customer_sync.sync_customer_from_stripe`
+    (Phase 12B). Also delegates to the pre-existing Phase-53 handler
+    so any other subscription-side bookkeeping still fires.
+
+    All state changes route through the ``event_id`` dedupe machinery
+    in ``stripe_events_processed`` at the caller level — this handler
+    is idempotent because ``sync_customer_from_stripe`` diffs before
+    writing.
+    """
+    obj = _get(_get(event, "data", {}), "object", {}) or {}
+    stripe_customer_id = obj.get("customer") or ""
+    pm_id = obj.get("id") or ""
+    if stripe_customer_id:
+        try:
+            local = await db.customers.find_one(
+                {"stripe_customer_id": stripe_customer_id},
+                {"_id": 0},
+            )
+            if local:
+                from services.stripe_customer_sync import (
+                    sync_customer_from_stripe,
+                )
+                sync = await sync_customer_from_stripe(
+                    local, stripe_customer_id=stripe_customer_id,
+                )
+                # Phase 12B audit row — brand + last4 only, never PAN.
+                try:
+                    card = (obj.get("card") or {})
+                    await db.payment_methods_events.insert_one({
+                        "id": new_id(),
+                        "tenant_id": local["tenant_id"],
+                        "customer_id": local["id"],
+                        "event_id": event.get("id"),
+                        "action": "attached",
+                        "pm_id": pm_id,
+                        "brand": card.get("brand"),
+                        "last4": card.get("last4"),
+                        "created_at": now_iso(),
+                    })
+                except Exception:  # pragma: no cover — audit best-effort
+                    pass
+                _ = sync
+        except Exception as exc:
+            logger.warning(f"[phase12] pm.attached bookkeeping failed: {exc}")
+    return await _handle_delegate_phase53(event)
+
+
+async def _handle_payment_method_detached(event: dict) -> dict:
+    """Phase 12B · Feb 2026 — On ``payment_method.detached`` refresh
+    the customer's card state. If this was the last PM (or the
+    default PM) the sync helper will null the cached brand/last4/exp
+    and drop ``saved_payment_methods_count`` to whatever Stripe now
+    reports."""
+    obj = _get(_get(event, "data", {}), "object", {}) or {}
+    stripe_customer_id = obj.get("customer") or ""
+    pm_id = obj.get("id") or ""
+    if stripe_customer_id:
+        try:
+            local = await db.customers.find_one(
+                {"stripe_customer_id": stripe_customer_id},
+                {"_id": 0},
+            )
+            if local:
+                from services.stripe_customer_sync import (
+                    sync_customer_from_stripe,
+                )
+                await sync_customer_from_stripe(
+                    local, stripe_customer_id=stripe_customer_id,
+                )
+                try:
+                    card = (obj.get("card") or {})
+                    await db.payment_methods_events.insert_one({
+                        "id": new_id(),
+                        "tenant_id": local["tenant_id"],
+                        "customer_id": local["id"],
+                        "event_id": event.get("id"),
+                        "action": "detached",
+                        "pm_id": pm_id,
+                        "brand": card.get("brand"),
+                        "last4": card.get("last4"),
+                        "created_at": now_iso(),
+                    })
+                except Exception:  # pragma: no cover
+                    pass
+        except Exception as exc:
+            logger.warning(f"[phase12b] pm.detached bookkeeping failed: {exc}")
+    return {"handled": True}
+
+
+async def _handle_customer_updated(event: dict) -> dict:
+    """Phase 12B · Feb 2026 — Mirror Stripe's
+    ``invoice_settings.default_payment_method`` onto our customer
+    record whenever it changes upstream. Refreshes the cached
+    display fields to match the new default."""
+    obj = _get(_get(event, "data", {}), "object", {}) or {}
+    stripe_customer_id = obj.get("id") or ""
+    if stripe_customer_id:
+        try:
+            local = await db.customers.find_one(
+                {"stripe_customer_id": stripe_customer_id},
+                {"_id": 0},
+            )
+            if local:
+                from services.stripe_customer_sync import (
+                    sync_customer_from_stripe,
+                )
+                await sync_customer_from_stripe(
+                    local, stripe_customer_id=stripe_customer_id,
+                )
+        except Exception as exc:
+            logger.warning(f"[phase12b] customer.updated bookkeeping failed: {exc}")
+    return {"handled": True}
+
+
 async def _handle_delegate_phase53(event: dict) -> dict:
     """Delegate to the pre-existing Phase-53 handler so subscription /
     checkout-session flows continue to work when the Stripe Dashboard
@@ -458,7 +779,9 @@ _HANDLERS = {
     "invoice.paid":                   _handle_delegate_phase53,
     "invoice.payment_failed":         _handle_delegate_phase53,
     "checkout.session.completed":     _handle_delegate_phase53,
-    "payment_method.attached":        _handle_delegate_phase53,
+    "payment_method.attached":        _handle_payment_method_attached,
+    "payment_method.detached":        _handle_payment_method_detached,
+    "customer.updated":               _handle_customer_updated,
 }
 
 

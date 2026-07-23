@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -328,6 +328,12 @@ class CreatePIBody(BaseModel):
     # `amount_cents` is intentionally accepted but IGNORED. Present so
     # older clients don't 422. Server resolves amount from the invoice.
     amount_cents: Optional[int] = None
+    # Phase 10 · Feb 2026 — optional promo code redemption at pay time.
+    # Server ALWAYS re-validates + recomputes the discount — the
+    # client-side ``amount_cents_effective`` from /validate is purely
+    # UX. See ``_apply_promo_to_intent`` below.
+    promo_code_id: Optional[str] = None
+    promo_code: Optional[str] = None
 
 
 @router.post("/payments/create-payment-intent")
@@ -401,6 +407,72 @@ async def create_payment_intent(
     if amt_cents <= 0:
         raise HTTPException(400, "Invoice has no outstanding balance")
 
+    # Phase 10 · Feb 2026 — apply optional promo code server-side.
+    # Client discount math is NEVER trusted; we look up the promo in
+    # Mongo, re-run the effective-discount computation, and only THEN
+    # feed the amount to Stripe. Metadata records ``promo_code_id`` so
+    # the webhook + refund handlers can redeem / revert atomically.
+    promo_meta: Dict[str, Any] = {}
+    if body.promo_code or body.promo_code_id:
+        from routers.promo_codes import (
+            _lookup_active as _promo_lookup,
+            _effective_discount_cents as _promo_effective,
+            _now_expired as _promo_expired,
+        )
+        promo = None
+        if body.promo_code_id:
+            promo = await db.promo_codes.find_one({
+                "id": body.promo_code_id, "tenant_id": tenant_id,
+            }, {"_id": 0})
+        if not promo and body.promo_code:
+            promo = await _promo_lookup(tenant_id, body.promo_code)
+        reason = None
+        if not promo:
+            reason = "not_found"
+        elif not promo.get("is_active"):
+            reason = "inactive"
+        elif _promo_expired(promo.get("expires_at")):
+            reason = "expired"
+        elif int(promo.get("uses_count") or 0) >= int(promo.get("max_uses") or 1):
+            reason = "max_uses_reached"
+        else:
+            already = await db.quotes.find_one({
+                "id": inv["id"], "tenant_id": tenant_id,
+                "applied_promo_code_ids": promo["id"],
+            }, {"_id": 0, "id": 1})
+            if already:
+                reason = "already_applied_to_invoice"
+        if reason:
+            raise HTTPException(400, detail={
+                "code": "PROMO_INVALID", "reason": reason,
+            })
+        # Only reduce the Stripe charge when the promo targets the
+        # invoice (not the account_credit path — that adds credit
+        # AFTER payment via the webhook).
+        original_amt_cents = amt_cents
+        discount_cents = 0
+        if promo.get("apply_to") == "next_invoice":
+            discount_cents = _promo_effective(promo, amt_cents)
+            amt_cents = max(0, amt_cents - discount_cents)
+            if amt_cents <= 0:
+                # Fully-discounted invoices can't produce a Stripe
+                # payment intent — surface a clear 400.
+                raise HTTPException(400, detail={
+                    "code": "PROMO_ZEROES_INVOICE",
+                    "reason": "resulting_amount_is_zero",
+                })
+        else:
+            # account_credit path — record the promo's own amount for
+            # the webhook to credit AFTER payment settles.
+            discount_cents = int(promo.get("amount_cents") or 0)
+        promo_meta = {
+            "promo_code_id": promo["id"],
+            "promo_code": promo["code"],
+            "promo_apply_to": promo["apply_to"],
+            "promo_discount_cents": str(discount_cents),
+            "promo_original_amt_cents": str(original_amt_cents),
+        }
+
     currency = (inv.get("currency") or "usd").lower()
 
     # Per-invoice attempt counter for idempotency-key rotation.
@@ -420,6 +492,7 @@ async def create_payment_intent(
                 "invoice_id": inv["id"],
                 "customer_id": inv.get("customer_id") or "",
                 "source": body.source,
+                **promo_meta,
             },
             idempotency_key=idem_key,
         )

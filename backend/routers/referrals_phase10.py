@@ -41,6 +41,11 @@ class VoidBody(BaseModel):
     reason: Optional[str] = "manual"
 
 
+class CreditsAdjustBody(BaseModel):
+    delta_cents: int
+    reason: str
+
+
 # ═══════════════════════════ Summary ══════════════════════════════════
 @router.get("/referrals/summary")
 async def referrals_summary(
@@ -127,6 +132,67 @@ async def void_referral(
         }},
     )
     return {"ok": True, "referral_id": rid, "status": "voided"}
+
+
+@router.post("/customers/{cid}/credits/adjust")
+async def adjust_customer_credits(
+    cid: str, body: CreditsAdjustBody,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Admin-only manual balance adjustment. Positive OR negative
+    delta. Never allows the balance to go below zero — returns 400
+    ``INSUFFICIENT_BALANCE`` if the requested delta would break the
+    floor."""
+    if not (body.reason or "").strip() or len(body.reason.strip()) < 5:
+        raise HTTPException(400, detail={
+            "code": "REASON_REQUIRED",
+            "message": "Reason must be at least 5 characters.",
+        })
+    if body.delta_cents == 0:
+        raise HTTPException(400, "delta_cents must be non-zero")
+
+    balance_row = await db.customer_credits_balance.find_one(
+        {"tenant_id": tenant["id"], "customer_id": cid}, {"_id": 0},
+    ) or {}
+    current = int(
+        balance_row.get("balance_cents")
+        or int(float(balance_row.get("balance") or 0) * 100)
+    )
+    new_balance = current + body.delta_cents
+    if new_balance < 0:
+        raise HTTPException(400, detail={
+            "code": "INSUFFICIENT_BALANCE",
+            "message": f"Cannot decrement below zero (current ${current/100:.2f}).",
+        })
+    from utils import new_id as _new_id
+    entry = {
+        "id": _new_id(),
+        "tenant_id": tenant["id"],
+        "customer_id": cid,
+        "delta_cents": body.delta_cents,
+        "source": "manual",
+        "actor_user_id": user.get("id"),
+        "actor_email": user.get("email"),
+        "reason": body.reason.strip(),
+        "note": body.reason.strip(),
+        "created_at": now_iso(),
+    }
+    await db.customer_credits.insert_one(entry)
+    await db.customer_credits_balance.update_one(
+        {"tenant_id": tenant["id"], "customer_id": cid},
+        {"$set": {"balance_cents": new_balance,
+                   "balance": new_balance / 100.0,
+                   "updated_at": now_iso()}},
+        upsert=True,
+    )
+    return {
+        "ok": True,
+        "customer_id": cid,
+        "balance_cents": new_balance,
+        "balance_formatted": f"${new_balance/100:.2f}",
+        "ledger_entry": {k: v for k, v in entry.items() if k != "_id"},
+    }
 
 
 # ═══════════════════════════ Customer credits view ═════════════════════

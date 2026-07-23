@@ -441,6 +441,16 @@ MERGE_TAGS: List[Dict[str, Any]] = [
      "category": "Referrals",
      "description": "Customer's current account credit balance, formatted.",
      "resolver": _customer_credit_balance},
+
+    # ─── Add-card magic link (Phase 12 · Feb 2026)
+    # Reads ``ctx['add_card_link']`` — populated by the send path in
+    # ``routers.customers.send_card_add_link`` when firing the
+    # transactional email + SMS.
+    {"token": "ADD_CARD_LINK", "label": "Add-Card Link",
+     "category": "Payments",
+     "description": ("Public magic link to the SetupIntent page for "
+                       "saving a card. Expires in 30 days."),
+     "resolver": lambda ctx: _safe_str(ctx.get("add_card_link") or "")},
 ]
 
 _TAG_INDEX: Dict[str, Callable] = {t["token"].upper(): t["resolver"]

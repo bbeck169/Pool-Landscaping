@@ -58,6 +58,29 @@ class CustomerListItem(BaseModel):
     master_billing_mode: Optional[str] = None
     master_billing_contact_email: Optional[str] = None
     master_billing_contact_phone: Optional[str] = None
+    # Phase 12 · Feb 2026 — "Require card on file" toggle. Derived at
+    # read-time from tenant default + per-customer override so tenant
+    # flips propagate without a customer-doc write.
+    require_card_on_file_override: Optional[bool] = None
+    effective_require_card_on_file: Optional[bool] = None
+    has_card_on_file: Optional[bool] = None
+    saved_payment_methods_count: Optional[int] = None
+
+
+def _compute_card_fields(customer: dict, tenant_default: bool) -> dict:
+    """Phase 12 · Feb 2026 — Return the derived ``effective_*`` and
+    ``has_card_on_file`` fields for a customer row. Never mutates
+    ``customer`` — callers spread the result into their response dict."""
+    override = customer.get("require_card_on_file_override")
+    effective = (bool(override) if override is not None
+                    else bool(tenant_default))
+    pm_count = int(customer.get("saved_payment_methods_count") or 0)
+    return {
+        "require_card_on_file_override": override,
+        "effective_require_card_on_file": effective,
+        "has_card_on_file": pm_count > 0,
+        "saved_payment_methods_count": pm_count,
+    }
 
 
 def _sync_customer_names(doc: dict) -> dict:
@@ -207,10 +230,15 @@ async def list_customers(
     waitlisted: Optional[bool] = None,
     unscheduled: Optional[bool] = None,
     is_active: Optional[bool] = None,
+    missing_card: Optional[bool] = None,
     count_only: bool = False,
 ):
     # RBAC: only staff (admin/technician/super_admin) may list customer records. Customers use /me.
     if user.get("role") not in ("admin", "technician", "super_admin"):
+        raise HTTPException(403, "Not allowed")
+    # Phase 12 · Feb 2026 — the ``missing_card`` filter is admin/manager
+    # only. Technicians see the plain list.
+    if missing_card and user.get("role") not in ("admin", "manager", "super_admin"):
         raise HTTPException(403, "Not allowed")
     q: dict = {"tenant_id": tenant["id"]}
     if search:
@@ -258,6 +286,23 @@ async def list_customers(
             counts = {}
         for d in docs:
             d["properties_count"] = counts.get(d["id"], 0)
+
+    # Phase 12 · Feb 2026 — augment each row with the derived card fields.
+    tenant_default_require = bool(tenant.get("require_card_on_file_default", True))
+    for d in docs:
+        d.update(_compute_card_fields(d, tenant_default_require))
+        # Phase 12B · Feb 2026 — techs must never see Stripe identifiers.
+        if user.get("role") == "technician":
+            d.pop("stripe_customer_id", None)
+            d.pop("stripe_default_payment_method_id", None)
+
+    # Phase 12 · Feb 2026 — apply missing_card filter AFTER derived
+    # fields are computed (server-authoritative — the filter never
+    # trusts client-side reasoning about "effective").
+    if missing_card:
+        docs = [d for d in docs
+                if d.get("effective_require_card_on_file")
+                and not d.get("has_card_on_file")]
     return docs
 
 
@@ -364,6 +409,13 @@ async def get_customer(cid: str,
         {"customer_id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
     ).sort("scheduled_date", -1).to_list(200)
     doc["jobs"] = jobs
+    # Phase 12 · Feb 2026 — derive card-on-file fields at read time.
+    doc.update(_compute_card_fields(
+        doc, bool(tenant.get("require_card_on_file_default", True))))
+    # Phase 12B · Feb 2026 — techs never see the Stripe customer id.
+    if user.get("role") == "technician":
+        doc.pop("stripe_customer_id", None)
+        doc.pop("stripe_default_payment_method_id", None)
     return doc
 
 
@@ -875,3 +927,244 @@ async def patch_customer_emails(cid: str, body: _EmailsUpdate,
     return await db.customers.find_one(
         {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
     )
+
+
+# ─── Phase 12 · Feb 2026 — "Require card on file" override ───────────
+class _RequireCardOverridePatch(BaseModel):
+    """Body for ``PATCH /api/customers/{cid}`` used exclusively for the
+    Phase 12 tri-state override.
+
+    Field is Optional[bool] with a sentinel: passing ``None`` clears
+    the override (falls back to the tenant default). Any non-bool /
+    non-null value gets a 422 from FastAPI's type coercion — no extra
+    validation needed here.
+    """
+    model_config = ConfigDict(extra="forbid")
+    require_card_on_file_override: Optional[bool] = None
+
+
+@router.patch("/customers/{cid}",
+    summary="PATCH customer — Phase 12 partial update (card-on-file override)",
+    responses={200: {"description": (
+        "Currently only accepts ``require_card_on_file_override`` "
+        "(``true`` | ``false`` | ``null``). Admin + manager only. "
+        "Returns the freshly-loaded customer with derived "
+        "``effective_require_card_on_file`` + ``has_card_on_file`` "
+        "recomputed against the tenant default."
+    )}})
+async def patch_customer(cid: str,
+                          body: _RequireCardOverridePatch,
+                          user: dict = Depends(get_current_user),
+                          tenant: dict = Depends(get_current_tenant)):
+    if user.get("role") not in ("admin", "manager", "super_admin"):
+        raise HTTPException(403, "Admin or manager access required")
+    existing = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not existing:
+        raise HTTPException(404, "Customer not found")
+    # Distinguish "field present with null value" from "field absent"
+    # — Pydantic collapses both to None; we treat the endpoint as a
+    # dedicated override setter and always write the value verbatim.
+    await db.customers.update_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"$set": {"require_card_on_file_override": body.require_card_on_file_override,
+                    "updated_at": now_iso()}},
+    )
+    doc = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    doc.update(_compute_card_fields(
+        doc, bool(tenant.get("require_card_on_file_default", True))))
+    return doc
+
+
+@router.post("/customers/{cid}/send-card-add-link")
+async def send_card_add_link(cid: str,
+                              user: dict = Depends(get_current_user),
+                              tenant: dict = Depends(get_current_tenant)):
+    """Trigger transactional email + SMS with a 30-day SetupIntent
+    magic link. Admin + manager only. Rate-limited to 1 request per
+    5 minutes per customer."""
+    if user.get("role") not in ("admin", "manager", "super_admin"):
+        raise HTTPException(403, "Admin or manager access required")
+    from services.add_card_links import (
+        build_add_card_link, ensure_rate_limit,
+    )
+    from services.marketing.merge_tags import render_context, render_template
+
+    customer = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+    # 1/5min rate limit (raises 429).
+    ensure_rate_limit(cid)
+
+    # Base URL for the magic link — served from the tenant's public
+    # domain if configured, else the caller's ``x-forwarded-host`` /
+    # env FRONTEND_ORIGIN fallback.
+    base_url = (
+        os.environ.get("PUBLIC_FRONTEND_ORIGIN")
+        or (tenant.get("brand") or {}).get("public_origin")
+        or ""
+    ).strip()
+    if not base_url:
+        # Last-resort fallback — the app's dev preview host. Still
+        # produces a working link when env is unset.
+        base_url = "https://poolscape-audit.preview.emergentagent.com"
+    link = build_add_card_link(base_url, cid, tenant["id"])
+
+    ctx = render_context(customer=customer, tenant=tenant,
+                          add_card_link=link)
+
+    email_tpl = await db.marketing_templates.find_one(
+        {"tenant_id": tenant["id"], "code": "add_card_request_email"},
+        {"_id": 0},
+    )
+    sms_tpl = await db.marketing_templates.find_one(
+        {"tenant_id": tenant["id"], "code": "add_card_request_sms"},
+        {"_id": 0},
+    )
+
+    sent_email = False
+    sent_sms = False
+    trigger_id = f"add_card_request:{cid}:{new_id()[:8]}"
+
+    if email_tpl and customer.get("email"):
+        subject_r, _ = render_template(email_tpl.get("subject") or "", ctx)
+        body_r, _ = render_template(email_tpl.get("body") or "", ctx)
+        try:
+            from services.comms_email_adapter import send_email
+            import asyncio as _asyncio
+            res = await _asyncio.wait_for(send_email(
+                tenant_id=tenant["id"], to_email=customer["email"],
+                subject=subject_r, html=body_r,
+                from_name=(tenant.get("name") or None),
+            ), timeout=8.0)
+            sent_email = (res or {}).get("status") == "sent" or \
+                            (res or {}).get("status") == "sent_no_provider_id"
+        except Exception as exc:
+            logger.warning(f"[phase12] add-card email send failed: {exc}")
+        await db.marketing_deliveries.insert_one({
+            "id": new_id(), "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "channel": "email", "kind": "transactional",
+            "recipient": customer["email"],
+            "subject": subject_r, "body": body_r,
+            "trigger_entity": {"kind": "add_card_request", "id": cid},
+            "trigger_id": trigger_id,
+            "delivered": sent_email,
+            "created_at": now_iso(),
+        })
+
+    if sms_tpl and customer.get("phone"):
+        body_r, _ = render_template(sms_tpl.get("body") or "", ctx)
+        try:
+            import asyncio as _asyncio
+            await _asyncio.wait_for(
+                _asyncio.to_thread(send_sms, customer["phone"], body_r),
+                timeout=8.0,
+            )
+            sent_sms = True
+        except Exception as exc:
+            logger.warning(f"[phase12] add-card sms send failed: {exc}")
+        await db.marketing_deliveries.insert_one({
+            "id": new_id(), "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "channel": "sms", "kind": "transactional",
+            "recipient": customer["phone"],
+            "subject": None, "body": body_r,
+            "trigger_entity": {"kind": "add_card_request", "id": cid},
+            "trigger_id": trigger_id,
+            "delivered": sent_sms,
+            "created_at": now_iso(),
+        })
+
+    return {
+        "ok": True,
+        "sent_email": sent_email,
+        "sent_sms": sent_sms,
+        "email_recipient": customer.get("email"),
+        "sms_recipient": customer.get("phone"),
+    }
+
+
+# ─── Public add-card magic-link endpoints (no auth) ──────────────────
+from fastapi import Body  # noqa: E402
+import os  # noqa: E402
+
+
+@router.get("/customers/add-card/{token}")
+async def public_add_card_context(token: str):
+    """Public: validate a Phase-12 magic link and return the minimum
+    metadata the SetupIntent page needs. NEVER expose full email or
+    phone here — a link leak shouldn't reveal PII."""
+    from services.add_card_links import decode_add_card_token
+    payload = decode_add_card_token(token)
+    customer = await db.customers.find_one(
+        {"id": payload["customer_id"], "tenant_id": payload["tenant_id"]},
+        {"_id": 0, "name": 1, "first_name": 1, "last_name": 1},
+    )
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+    tenant = await db.tenants.find_one(
+        {"id": payload["tenant_id"]},
+        {"_id": 0, "name": 1, "brand": 1, "support_phone": 1, "phone": 1},
+    ) or {}
+    # Mask the customer name — first name + last-initial only.
+    first = (customer.get("first_name")
+              or (customer.get("name") or "").split(" ", 1)[0]
+              or "")
+    last = (customer.get("last_name") or "")
+    masked = first + (f" {last[0]}." if last else "")
+    return {
+        "customer_name_masked": masked or "Customer",
+        "tenant_name": tenant.get("name") or "",
+        "tenant_support_phone": (tenant.get("support_phone")
+                                    or tenant.get("phone") or ""),
+        "stripe_publishable_key": os.environ.get("STRIPE_PUBLISHABLE_KEY", ""),
+    }
+
+
+@router.post("/customers/add-card/{token}/setup-intent")
+async def public_add_card_setup_intent(token: str):
+    """Public: create a Stripe SetupIntent for this customer. Returns
+    ``{client_secret}`` for the SetupElement to mount."""
+    from services.add_card_links import decode_add_card_token
+    from services.stripe_client import get_stripe
+    payload = decode_add_card_token(token)
+    stripe = get_stripe()
+    customer = await db.customers.find_one(
+        {"id": payload["customer_id"], "tenant_id": payload["tenant_id"]},
+        {"_id": 0},
+    )
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+    # Ensure a Stripe customer exists (idempotent).
+    stripe_customer_id = customer.get("stripe_customer_id")
+    if not stripe_customer_id:
+        sc = stripe.Customer.create(
+            email=customer.get("email") or None,
+            phone=customer.get("phone") or None,
+            name=customer.get("name") or None,
+            metadata={"tenant_id": payload["tenant_id"],
+                        "customer_id": payload["customer_id"]},
+        )
+        stripe_customer_id = sc.id
+        await db.customers.update_one(
+            {"id": payload["customer_id"],
+              "tenant_id": payload["tenant_id"]},
+            {"$set": {"stripe_customer_id": stripe_customer_id}},
+        )
+    si = stripe.SetupIntent.create(
+        customer=stripe_customer_id,
+        payment_method_types=["card"],
+        metadata={
+            "tenant_id": payload["tenant_id"],
+            "customer_id": payload["customer_id"],
+            "phase": "phase12_add_card_link",
+        },
+    )
+    return {"client_secret": si.client_secret,
+              "stripe_customer_id": stripe_customer_id}

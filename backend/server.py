@@ -121,6 +121,13 @@ api_router = APIRouter(prefix="/api")
 # ``marketing_studio`` handlers that share the base prefix.
 api_router.include_router(marketing_campaigns_router.router)
 
+# Phase 12B · Feb 2026 — Stripe ↔ Customers cross-reference admin
+# endpoints. Registered here so the ``/admin/stripe-customer-sync/*``
+# routes stay under the ``/api`` prefix and pass through the same
+# tenant-resolution + auth deps as the rest of the app.
+from routers import stripe_customer_sync_admin as _p12b_admin  # noqa: E402
+api_router.include_router(_p12b_admin.router)
+
 for module in [notifications_router,
                stripe_payments_router,
                auth, customers, technicians, jobs, quotes, leads, team, items, payments,
@@ -737,6 +744,24 @@ async def startup():
         await seed_service_checklists_for_all_tenants()
     except Exception as e:
         logger.warning(f"[phase5a] service_checklists seed crashed: {e}")
+
+    # Phase 12 · Feb 2026 — "Require card on file" tenant default +
+    # idempotent template seed for the ``add_card_request_*`` bodies.
+    try:
+        from services.add_card_links import (
+            ensure_require_card_default_on_tenants,
+            seed_add_card_templates_all_tenants,
+        )
+        _p12_n = await ensure_require_card_default_on_tenants()
+        logger.info(
+            f"[phase12] require_card_on_file_default set on {_p12_n} tenant(s)"
+        )
+        _p12_seeded = await seed_add_card_templates_all_tenants()
+        logger.info(
+            f"[phase12] add_card_request_* templates seed — {_p12_seeded}"
+        )
+    except Exception as e:
+        logger.warning(f"[phase12] boot migration crashed: {e}")
 
     # Phase 4B · Stripe Live Payments — one-shot startup log with masked
     # key + mode. Never logs the secret value. Boots the Stripe SDK.

@@ -90,6 +90,14 @@ async def ensure_deployment_indexes() -> None:
         ("stripe_events_processed",
          [("event_id", ASCENDING)],
          {"unique": True, "name": "uniq_stripe_event_id", "background": True}),
+        # Phase 10c · Feb 2026 — promo redemption idempotency guard.
+        # Unique on (tenant_id, payment_intent_id, kind) so a repeated
+        # webhook can never double-redeem or double-revert.
+        ("promo_redemptions_live",
+         [("tenant_id", ASCENDING), ("payment_intent_id", ASCENDING),
+          ("kind", ASCENDING)],
+         {"unique": True, "name": "uniq_promo_redemption_pi_kind",
+          "background": True}),
     ]
     for coll, keys, opts in plans:
         try:

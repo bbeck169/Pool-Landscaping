@@ -46,6 +46,7 @@ import MarketingMediaAdminPage from "@/pages/marketing/MarketingMediaAdmin";
 import PortalReferralsPage from "@/pages/portal/PortalReferralsPage";
 import AdminPromoCodesPage from "@/pages/marketing/AdminPromoCodesPage";
 import AdminReferralsPage from "@/pages/marketing/AdminReferralsPage";
+import CustomerCreditsPage from "@/pages/customers/CustomerCreditsPage";
 import MarketingSegmentsPage from "@/pages/marketing/MarketingSegmentsPage";
 import MarketingSequencesPage from "@/pages/marketing/MarketingSequencesPage";
 import MarketingReviewRequestsPage from "@/pages/marketing/MarketingReviewRequestsPage";
@@ -120,6 +121,7 @@ import PublicInstaQuotePage from "@/pages/public/PublicInstaQuote";
 import InstaScheduleAdminPage from "@/pages/marketing/InstaScheduleAdmin";
 import PublicInstaSchedulePage from "@/pages/public/PublicInstaSchedule";
 import PublicInvoicePay from "@/pages/public/PublicInvoicePay";
+import AddCardPage from "@/pages/portal/AddCardPage";
 import TeamChatPage from "@/pages/chat/TeamChatPage";
 import {
   SequencesList, SequenceNew, SequenceDetail,
@@ -336,6 +338,10 @@ export default function App() {
           {/* Phase 4B · Feb 2026 — public magic-link invoice payer (no auth). */}
           <Route path="/pay/invoice/:id" element={<PublicInvoicePay />} />
 
+          {/* Phase 12 · Feb 2026 — public magic-link "Add card" page (no auth). */}
+          <Route path="/portal/add-card" element={<AddCardPage />} />
+          <Route path="/portal/add-card/success" element={<AddCardPage />} />
+
           {/* Everything else lives inside the protected shell (side nav + top bar + bottom tabs). */}
           <Route path="/" element={<AppLayout />}>
             {/* Root — techs are redirected to their schedule (Dashboard removed for tech role). */}
@@ -409,6 +415,7 @@ export default function App() {
             <Route path="settings/promo-codes" element={<AdminOnly><AdminPromoCodesPage /></AdminOnly>} />
             <Route path="admin/referrals" element={<AdminOnly><AdminReferralsPage /></AdminOnly>} />
             <Route path="portal/referrals" element={<PortalReferralsPage />} />
+            <Route path="customers/:id/credits" element={<NoTech><CustomerCreditsPage /></NoTech>} />
             <Route path="marketing/segments" element={<AdminOnly><MarketingSegmentsPage /></AdminOnly>} />
             <Route path="admin/marketing/sequences" element={<AdminOnly><MarketingSequencesPage /></AdminOnly>} />
             <Route path="admin/marketing/review-requests" element={<AdminOnly><MarketingReviewRequestsPage /></AdminOnly>} />
