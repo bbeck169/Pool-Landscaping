@@ -297,6 +297,10 @@ class PublicLeadIn(BaseModel):
     service_interest: Optional[str] = None
     notes: Optional[str] = ""
     turnstile_token: Optional[str] = None
+    # Phase 10 · Feb 2026 — optional referral capture. Invalid codes
+    # are silently ignored (do NOT 400 — spammy invalid codes must
+    # never block a real inquiry).
+    referral_code: Optional[str] = None
 
 
 class ItemIn(BaseModel):

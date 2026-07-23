@@ -320,6 +320,11 @@ async def run_billing_plan(pid: str,
     # Phase 56.18 — number assignment on autobilling-generated invoices.
     from services.invoice_numbering import assign_invoice_number_if_missing
     await assign_invoice_number_if_missing(invoice, tenant)
+    # Phase 10 · Feb 2026 — auto-apply available credits BEFORE
+    # persisting so the invoice PDF/HTML shows the discount line and
+    # the customer balance decrements atomically.
+    from services.credits_apply import apply_and_persist
+    invoice = await apply_and_persist(db, tenant["id"], invoice)
     await db.quotes.insert_one(invoice)
     new_next = advance_date(plan.get("next_run") or now_iso(), plan.get("frequency", "monthly"))
     await db.billing_plans.update_one(
@@ -829,6 +834,11 @@ async def _fire_billing_plan(plan: dict, tenant: dict, current_month: str,
     # Phase 56.18 — number assignment on autobilling-generated invoices.
     from services.invoice_numbering import assign_invoice_number_if_missing
     await assign_invoice_number_if_missing(invoice, tenant)
+    # Phase 10 · Feb 2026 — auto-apply available credits BEFORE
+    # persisting so the invoice PDF/HTML shows the discount line and
+    # the customer balance decrements atomically.
+    from services.credits_apply import apply_and_persist
+    invoice = await apply_and_persist(db, tenant["id"], invoice)
     await db.quotes.insert_one(invoice)
     await db.billing_plans.update_one(
         {"id": plan["id"], "tenant_id": tenant["id"]},

@@ -705,25 +705,79 @@ async def public_lead_intake(body: PublicLeadIn, request: "Request"):
 
     now = now_iso()
     lid = new_id()
-    await db.leads.insert_one({
+    # Phase 10 · Feb 2026 — referral capture. Accepts either a body
+    # field (``referral_code``) OR a ``?ref=<code>`` query param.
+    # Invalid codes are silently dropped so an inquiry is never
+    # rejected because a customer mistyped a link.
+    referred_by_customer_id: Optional[str] = None
+    ref_code_raw = (body.referral_code or "").strip()
+    if not ref_code_raw:
+        try:
+            ref_code_raw = (request.query_params.get("ref") or "").strip()
+        except Exception:
+            ref_code_raw = ""
+    if ref_code_raw:
+        ref_upper = ref_code_raw.upper()
+        # ``referral_code`` lives on the customer document (see
+        # routers/referrals.py::_get_or_create_code). Lookup is
+        # case-insensitive and tenant-scoped.
+        referrer = await db.customers.find_one(
+            {"tenant_id": tenant["id"], "referral_code": ref_upper},
+            {"_id": 0, "id": 1},
+        )
+        if referrer:
+            referred_by_customer_id = referrer["id"]
+        else:
+            logger.info(
+                f"[phase10] public-leads received unknown referral_code "
+                f"{ref_upper!r} — silently ignoring"
+            )
+
+    lead_doc = {
         "id": lid, "tenant_id": tenant["id"],
         "name": body.name.strip(), "email": (body.email or "").strip(),
         "phone": (body.phone or "").strip(),
         "service_address": (body.service_address or "").strip(),
         "service_interest": interest,
         "notes": (body.notes or "").strip(),
-        "source": "website_form",
+        "source": (
+            f"referral_from_customer:{referred_by_customer_id}"
+            if referred_by_customer_id else "website_form"
+        ),
         "status": "New",
         "created_at": now, "updated_at": now,
         "archived_at": None, "loss_reason": None,
         "converted_customer_id": None,
         "created_by": None,
         "created_ip": ip,
+        "referred_by_customer_id": referred_by_customer_id,
         "timeline": [
-            _timeline_entry("created", source="website_form",
-                             status="New", ip=ip),
+            _timeline_entry("created",
+                              source=("referral_from_customer"
+                                       if referred_by_customer_id
+                                       else "website_form"),
+                              status="New", ip=ip,
+                              referrer_id=referred_by_customer_id),
         ],
-    })
+    }
+    await db.leads.insert_one(lead_doc)
+    # If we captured a referrer, ALSO insert a referrals row in
+    # ``pending_conversion`` so the admin dashboard reflects the
+    # inbound pipeline. The paid-window transition happens on
+    # close-won conversion via the existing hook.
+    if referred_by_customer_id:
+        try:
+            await db.referrals.insert_one({
+                "id": new_id(),
+                "tenant_id": tenant["id"],
+                "referrer_customer_id": referred_by_customer_id,
+                "lead_id": lid,
+                "status": "pending_conversion",
+                "created_at": now,
+                "updated_at": now,
+            })
+        except Exception as exc:
+            logger.warning(f"[phase10] referrals row insert failed: {exc}")
     return {"ok": True, "lead_id": lid}
 
 

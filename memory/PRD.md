@@ -6776,3 +6776,78 @@ Any pre-existing immediate `$25-on-close-won` path is deprecated: the immediate-
 - P1: Phase 10 frontend + auto-apply-on-invoice + `?ref=` capture on public leads.
 - P2: Per-property equipment-tracker reminder overrides.
 - Deferred non-9D flakes: `test_heavy_action_debits_more_than_chat`, cross-file loop flake (partially mitigated by shared loop), pre-existing marketing/M3/M5c/M6/M2-notif failures.
+
+## 2026-07-23 · Feb 2026 · Session recap (Phase 10 FINALE — credits_apply + ?ref= capture + 3 UI surfaces)
+
+### Backend files added / modified
+- **NEW** `backend/services/credits_apply.py` — `apply_credits_to_invoice()` + `revert_credits_from_invoice()` (pure helpers returning composed dicts, caller commits atomically) + `apply_and_persist(db, tenant_id, invoice)` convenience wrapper that reads customer, applies, commits `credits_balance_cents` decrement + `credits_ledger` push in one round-trip.
+- **MODIFIED** `backend/models.py::PublicLeadIn` — added optional `referral_code` field.
+- **MODIFIED** `backend/routers/leads.py::public_lead_intake` — accepts `referral_code` from body OR `?ref=<code>` query param; case-insensitive lookup against `customers.referral_code`; unknown codes silently ignored (never 400s a real inquiry). When a match hits, stamps `lead.referred_by_customer_id` + `source="referral_from_customer:<id>"` + inserts a companion `referrals` row in `status="pending_conversion"`.
+- **MODIFIED** `backend/routers/finances.py::autobilling` — invoice creation now calls `apply_and_persist` before `db.quotes.insert_one(invoice)` (2 callsites).
+
+### Frontend files added / modified
+- **NEW** `frontend/src/pages/portal/PortalReferralsPage.jsx` — big referral code card w/ tap-to-copy + native Share, balance card, referrals list with status pills (Pending / Waiting-30d w/ days-until / Credited / Voided), credit ledger (last 20 + Load-more), blue Call-Now CTA.
+- **NEW** `frontend/src/pages/marketing/AdminPromoCodesPage.jsx` — table + filters + create/edit dialog (referral_reward type + kind/apply_to locked on edit) + soft-delete + inline active toggle.
+- **NEW** `frontend/src/pages/marketing/AdminReferralsPage.jsx` — 5-card summary strip, filter tabs (All/Pending/Credited/Voided), row actions (Void with reason dialog / Re-eligible confirm), `Run watcher now` button.
+- **MODIFIED** `frontend/src/App.js` — 3 new routes: `/settings/promo-codes`, `/admin/referrals`, `/portal/referrals`.
+
+### Tests added / modified
+- **NEW** `backend/tests/test_phase10b_credits_apply_and_ref.py` — **9 tests**:
+  - happy path deduct + writes ledger
+  - caps at invoice total preserving remainder
+  - zero balance no-op
+  - double-apply guard idempotency
+  - revert restores balance + removes credit line
+  - revert refuses paid invoices
+  - public leads `?ref=<valid>` stamps referrer + inserts referrals row
+  - public leads `?ref=<invalid>` silent ignore
+  - `?ref=` query param equivalent to body field
+- **Backend total: 87/87 green** (up from 78 at start of session).
+
+### Verbatim: create-invoice with credits-applied trace
+```
+BEFORE — customer:
+  credits_balance_cents = 3000
+BEFORE — invoice:
+  total = $100.0, credits_applied_cents = 0
+  line_items = [{'description': 'Weekly pool service', 'quantity': 1, 'unit_price': 100.0}]
+
+HOOK RESULT: credits_applied_cents = 3000, reason=applied
+
+AFTER — customer:
+  credits_balance_cents = 0
+AFTER — invoice:
+  total = $70.0, total_cents = 7000, credits_applied_cents = 3000
+  line_items:
+    - {'description': 'Weekly pool service', 'quantity': 1, 'unit_price': 100.0}
+    - {'description': 'Referral credit applied', 'quantity': 1, 'unit_price': -30.0, 'credit_line': True}
+
+AFTER — ledger entry:
+  {id, delta_cents: -3000, source: "redeemed", invoice_id: "inv-p10-demo",
+   note: "Auto-applied to invoice inv-p10-demo", created_at: <iso>}
+```
+
+### Verbatim: public leads ?ref= traces
+```
+Valid ?ref=P10RXXXX → 200 → lead.referred_by_customer_id = <referrer.id>
+                              lead.source = "referral_from_customer:<referrer.id>"
+                              companion referrals row inserted (status=pending_conversion)
+Invalid ?ref=ZZZ99999NOPE → 200 → lead.referred_by_customer_id = null
+                                    lead.source = "website_form"
+                                    NO referrals row inserted (silent ignore, log line only)
+Body {referral_code: ...} and query ?ref=... produce equivalent behavior.
+```
+
+### Deferred to next session (context budget)
+- **Customer detail Credits tab** in admin view — small addition; needs a router route + tab in existing customer detail page.
+- **Invoice viewer promo code input** — collapsible section on payment form + server-side re-validation on `create-payment-intent`; needs a payments.py extension.
+- **Vitest new specs** — the 3 shipped pages compile clean but no new frontend unit tests were added this session.
+
+### Explicit statements (per spec)
+- **No legacy immediate-credit path re-introduced** — `fire_referral_conversion_hook` still gates behind `tenant.legacy_immediate_referral_credit` (default False).
+- **Auto-apply is idempotent** — locked by pytest `test_apply_double_apply_is_noop`.
+- **Magic-link promo code path server-revalidates** — the redeem endpoint (`POST /api/promo-codes/redeem`) is authoritative and atomically CAS-increments `uses_count`; client-side validate is UI-only. Full magic-link + `create-payment-intent` extension deferred to next session per above.
+
+### Backlog remaining
+- P1: Customer detail Credits tab + invoice viewer promo code input + payments create-payment-intent extension.
+- P2: Per-property equipment-tracker reminder overrides.

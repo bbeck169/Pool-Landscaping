@@ -42,6 +42,10 @@ import MarketingTemplatesListPage, {
   MarketingTemplateDetailPage,
 } from "@/pages/marketing/MarketingTemplatesAdmin";
 import MarketingMediaAdminPage from "@/pages/marketing/MarketingMediaAdmin";
+// Phase 10 · Feb 2026 — Referrals + promo codes admin + portal.
+import PortalReferralsPage from "@/pages/portal/PortalReferralsPage";
+import AdminPromoCodesPage from "@/pages/marketing/AdminPromoCodesPage";
+import AdminReferralsPage from "@/pages/marketing/AdminReferralsPage";
 import MarketingSegmentsPage from "@/pages/marketing/MarketingSegmentsPage";
 import MarketingSequencesPage from "@/pages/marketing/MarketingSequencesPage";
 import MarketingReviewRequestsPage from "@/pages/marketing/MarketingReviewRequestsPage";
@@ -401,6 +405,10 @@ export default function App() {
             <Route path="marketing/templates-hub" element={<AdminOnly><TemplatesHub /></AdminOnly>} />
             <Route path="marketing/template-library" element={<AdminOnly><MarketingTemplatesLibraryPage /></AdminOnly>} />
             <Route path="settings/marketing/media" element={<AdminOnly><MarketingMediaAdminPage /></AdminOnly>} />
+            {/* Phase 10 · Feb 2026 — Promo codes + referrals admin + portal. */}
+            <Route path="settings/promo-codes" element={<AdminOnly><AdminPromoCodesPage /></AdminOnly>} />
+            <Route path="admin/referrals" element={<AdminOnly><AdminReferralsPage /></AdminOnly>} />
+            <Route path="portal/referrals" element={<PortalReferralsPage />} />
             <Route path="marketing/segments" element={<AdminOnly><MarketingSegmentsPage /></AdminOnly>} />
             <Route path="admin/marketing/sequences" element={<AdminOnly><MarketingSequencesPage /></AdminOnly>} />
             <Route path="admin/marketing/review-requests" element={<AdminOnly><MarketingReviewRequestsPage /></AdminOnly>} />
