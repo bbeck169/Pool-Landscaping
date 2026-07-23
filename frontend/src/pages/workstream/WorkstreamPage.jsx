@@ -405,7 +405,7 @@ export default function WorkstreamPage() {
             style={{ color: colors.onSurface }}
             data-testid="workstream-title"
           >
-            Workstream — Completed Jobs
+            Work Stream
           </div>
           <div className="text-xs" style={{ color: colors.muted }}>
             Service log of every finished job. Click any card to open the full Service Log.
