@@ -25,7 +25,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from config import db, logger
-from utils import get_current_user, get_current_tenant, new_id, now_iso
+from utils import get_current_user, new_id, now_iso
+from routers.tenants import get_current_tenant
 
 router = APIRouter(tags=["SEO"])
 

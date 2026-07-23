@@ -448,3 +448,41 @@ async def top_questions(
             for r in rows
         ],
     }
+
+
+
+# ══════════════════════════════════════════════════════════════
+# Feb-2026 · Phase 20 P2 — Admin toggle for the daily review digest.
+# Persists to ``tenants.settings.daily_review_digest_enabled``.
+# ══════════════════════════════════════════════════════════════
+class DigestToggleIn(BaseModel):
+    enabled: bool
+
+
+@router.get("/ai/settings/daily-review-digest", tags=["ai"],
+             operation_id="ai.settings.dailyReviewDigest.get")
+async def get_digest_toggle(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    _require_admin(user)
+    settings = (tenant or {}).get("settings") or {}
+    enabled = settings.get("daily_review_digest_enabled")
+    # Default is True — the cron opts you IN unless you explicitly
+    # opt out.
+    return {"enabled": True if enabled is None else bool(enabled)}
+
+
+@router.patch("/ai/settings/daily-review-digest", tags=["ai"],
+               operation_id="ai.settings.dailyReviewDigest.patch")
+async def patch_digest_toggle(
+    body: DigestToggleIn,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    _require_admin(user)
+    await db.tenants.update_one(
+        {"id": tenant["id"]},
+        {"$set": {"settings.daily_review_digest_enabled": bool(body.enabled)}},
+    )
+    return {"ok": True, "enabled": bool(body.enabled)}

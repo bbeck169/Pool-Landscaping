@@ -451,7 +451,9 @@ export default function PortalHome() {
       {/* Feb-2026 · Slice I — First-login walkthrough. Self-gates on
           the server-side ``portal_walkthrough_completed_at`` flag so
           returning customers never see it a second time. */}
-      <PortalWalkthrough />
+      {/* Feb-2026 · Item 10 — Tour engine hoisted to AppLayout above
+          so it survives navigation between portal pages. Remove the
+          embedded copy here to avoid double-mount. */}
     </div>
   );
 }

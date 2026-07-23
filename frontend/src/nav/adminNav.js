@@ -186,6 +186,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/chemicals",  label: "Chemical Products", icon: FlaskConical, feature: "settings", subsection: "Settings" },
     // Feb-2026 · Item 6 — Business Card editor (company-only vCard).
     { to: "/settings/business-card", label: "Business Card", icon: IdCard, feature: "settings", hard_rule: "admin_only", subsection: "Settings" },
+    // Feb-2026 · Phase 20 P3 — Website SEO analyzer.
+    { to: "/settings/website-seo",   label: "Website SEO", icon: SearchIcon, feature: "settings", hard_rule: "admin_only", subsection: "Settings" },
   ]},
 
   { key: "customers", label: "Customers", icon: Users, entries: [

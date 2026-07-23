@@ -69,6 +69,8 @@ import PublicReviewsWidgetPage from "@/pages/reviews/PublicReviewsWidgetPage";
 // QuoteIQ Q1-UI · Feb 2026
 import AICreditsPage from "@/pages/settings/AICreditsPage";
 import ChemicalsPage from "@/pages/settings/ChemicalsPage";
+// Feb-2026 · Phase 20 P3 — Website SEO analyzer.
+import WebsiteSeoPage from "@/pages/settings/WebsiteSeoPage";
 // Feb-2026 · Item 4 — AI Brain + Copilot admin pages.
 import AIBrainPage from "@/pages/settings/AIBrainPage";
 import CopilotPage from "@/pages/admin/CopilotPage";
@@ -765,6 +767,8 @@ export default function App() {
             <Route path="admin/copilot" element={<AdminOnly><CopilotPage /></AdminOnly>} />
             {/* Feb-2026 · Item 6 — Business Card admin editor. */}
             <Route path="settings/business-card" element={<AdminOnly><BusinessCardSettingsPage /></AdminOnly>} />
+            {/* Feb-2026 · Phase 20 P3 — Website SEO analyzer. */}
+            <Route path="settings/website-seo" element={<AdminOnly><WebsiteSeoPage /></AdminOnly>} />
             <Route path="deals" element={<AdminOnly><DealsKanbanPage /></AdminOnly>} />
             <Route path="ai-estimator" element={<AdminOnly><AIEstimatorPage /></AdminOnly>} />
             <Route path="customers/:id/chemistry-history" element={<AdminOnly><CustomerChemistryHistory /></AdminOnly>} />

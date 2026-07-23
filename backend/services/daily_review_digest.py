@@ -56,15 +56,27 @@ def _placeholder_reply(rating: int, author: Optional[str], text: str) -> str:
 
 
 async def generate_suggested_reply_for_review(review: Dict[str, Any]) -> str:
-    """Stub for the Phase 20 P2 AI reply generator. Idempotent — once
-    a ``suggested_reply_text`` is set on the row we return it as-is."""
+    """Phase 20 P2 · LIVE — swapped from the placeholder to the real
+    LLM-backed generator. Idempotent: once ``suggested_reply_text``
+    is set on the row we return it as-is."""
     if review.get("suggested_reply_text"):
         return review["suggested_reply_text"]
-    reply = _placeholder_reply(
-        rating=int(review.get("star_rating") or 0),
-        author=review.get("customer_name") or review.get("author_name"),
-        text=review.get("public_comment") or review.get("private_feedback") or "",
-    )
+    try:
+        from routers.reviews_ai_reply import generate_reply
+        reply = await generate_reply(
+            tenant_id=review.get("tenant_id") or "",
+            rating=int(review.get("star_rating") or 0),
+            review_text=(review.get("public_comment")
+                          or review.get("private_feedback") or ""),
+            review_author=review.get("customer_name") or review.get("author_name"),
+        )
+    except Exception as e:
+        logger.warning(f"[review-digest] LLM path failed: {e}")
+        reply = _placeholder_reply(
+            rating=int(review.get("star_rating") or 0),
+            author=review.get("customer_name") or review.get("author_name"),
+            text=review.get("public_comment") or review.get("private_feedback") or "",
+        )
     try:
         await db.reviews.update_one(
             {"id": review.get("id")},

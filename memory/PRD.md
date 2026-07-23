@@ -7756,3 +7756,101 @@ its recurring customers weekly.
 - **Item 10** tour engine (12 anchors already laid).
 - **Item 11** referral vesting.
 - **Phase 20** P3 → P4 → P2 → P1 → P5.
+
+## Item 10 · 11 + Phase 20 P3/P2 · Feb 2026 · Session 2026-07 (part 3)
+
+### Item 10 · Portal tour engine ✅
+Full rewrite of `pages/portal/PortalWalkthrough.jsx` — zero external
+deps. Reads a 12-step spec (`greeting-tile` → `status-circles` →
+`next-service-visit` → `business-card` → `communications-list` →
+`invoices-list` → `estimates-list` → `service-reports-list` →
+`request-service-form` → `payment-method-panel` → `referrals-panel`
+→ finish). Each step:
+* Navigates via react-router if `location.pathname !== step.route`.
+* Waits 350ms for the transition to settle.
+* Queries the target by `data-tour-id`, calls `scrollIntoView({behavior:"smooth", block:"center"})`.
+* Applies a spotlight ring with pulse animation + dim backdrop.
+* Tooltip auto-positions above/below based on remaining viewport.
+Mounted at `AppLayout` (not `PortalHome`) so it survives all portal
+navigations. Self-gates on `role="customer"` +
+`has_seen_customer_tour`. Skip button on every step also
+mark-seens.
+
+### Item 11 · Referral $25 vesting ✅ (backend)
+New router `routers/referrals_vesting.py`:
+* Adds `vesting_status` field to `referral_conversions` (states:
+  `pending|vesting|vested|credited|forfeited|canceled`).
+* Boot backfill marks existing `approved` rows as
+  `vesting_status="credited"` + `legacy_credited=true` so the cron
+  never re-processes them.
+* `promote_referrals_to_vested()` — nightly promoter, only touches
+  rows with `vesting_status="vesting"` where
+  `now - vesting_started_at >= 30 days` AND at least one PAID
+  invoice was recorded on the referred customer since vesting
+  started. Idempotent.
+* Admin endpoints:
+  * `POST /api/admin/referrals/{rid}/promote` (`referrals.forcePromote`)
+  * `POST /api/admin/referrals/{rid}/forfeit` (`referrals.forceForfeit`)
+  * `GET /api/admin/referrals/vesting` (`referrals.vestingList`) —
+    includes computed `days_vested` + `days_remaining` per row for
+    the portal progress bar.
+Portal UI pills + progress bar deferred to next pass.
+
+### Phase 20 · P3 SEO analyzer ✅
+* Backend `routers/seo_analyzer.py` mounted in `server.py`.
+  Endpoints:
+  * `POST /api/seo/analyze` (`seo.analyze`) — BeautifulSoup-based
+    scorecard /100 with 10+ checks (title, meta desc, h1, canonical,
+    LocalBusiness JSON-LD, Open Graph, image alts, word count,
+    internal links, mobile viewport, HTTPS). Weighted deductions +
+    prioritized `fixes` array with per-miss `fix_hint`.
+    History retention: last 30 scans per tenant in `seo_scans`.
+  * `GET /api/seo/scans` (`seo.list`) — history for the trend chart.
+* Frontend `pages/settings/WebsiteSeoPage.jsx` mounted at
+  `/settings/website-seo` (admin-gated). Sidebar entry under
+  "Settings" section. Live-tested against `https://example.com` →
+  score 60/100 · 10 checks · 7 fixes.
+
+### Phase 20 · P2 AI review reply generator ✅
+* New router `routers/reviews_ai_reply.py`:
+  * `POST /api/reviews/suggest-reply` (`reviews.suggestReply`) —
+    Emergent LLM (Claude sonnet-4.5) with AI Brain system prompt
+    injection. Rating-aware stance ("thank warmly" vs "apologise +
+    soft CTA"). Falls back to a template reply when the LLM key
+    is missing or the call fails.
+  * Async helper `generate_reply()` reused by the daily digest.
+* Daily digest LIVE — `services/daily_review_digest.py`'s
+  `generate_suggested_reply_for_review()` swapped from placeholder
+  to the real LLM path. Cascades to placeholder on error so the
+  digest never fails hard.
+* New AI Brain toggle endpoints:
+  * `GET /api/ai/settings/daily-review-digest` (`ai.settings.dailyReviewDigest.get`)
+  * `PATCH /api/ai/settings/daily-review-digest` (`ai.settings.dailyReviewDigest.patch`)
+* Frontend — `DailyDigestToggle` widget on `/settings/ai-brain`.
+  Reads current setting, toggles on/off, persists via PATCH.
+
+### Verification
+* Backend tests still green: **21 passed / 1 skipped.**
+* All 6+ new operationIds present in `/api/openapi.json`:
+  `seo.analyze`, `seo.list`, `reviews.suggestReply`,
+  `referrals.forcePromote`, `referrals.forceForfeit`,
+  `referrals.vestingList`, `ai.settings.dailyReviewDigest.get`,
+  `ai.settings.dailyReviewDigest.patch`.
+* Live smoke:
+  * `POST /seo/analyze` on `example.com` → 60/100, 10 checks, 7 fixes.
+  * `POST /reviews/suggest-reply` (5★) → returns a warm reply.
+  * `PATCH /ai/settings/daily-review-digest {enabled:false}` → persists; re-GET returns `false`.
+
+### Still deferred (in priority)
+- **Item 11 portal UI** — status pills + progress bar for
+  vesting/vested/forfeited/credited on
+  `pages/portal/PortalReferralsPage.jsx`.
+- **Phase 20 P4** — GBP completeness checklist (backend endpoints +
+  admin page).
+- **Phase 20 P1** — GBP post drafter with nano-banana image gen
+  (largest — dedicated pass).
+- **Phase 20 P5** — NFC review card variant + public tokenized
+  endpoint.
+- **Item 10 vitest** — 12-step advance flow test.
+- **Item 11 pytest** — cron promotion + forfeit-within-window
+  scenarios.

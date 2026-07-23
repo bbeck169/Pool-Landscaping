@@ -9,6 +9,7 @@ import AdminTopBar from "@/layouts/AdminTopBar";
 import UniversalMenu from "@/layouts/UniversalMenu";
 import LandscapingClockWidget from "@/components/LandscapingClockWidget";
 import AIDock from "@/components/AIDock/AIDock";
+import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 import Breadcrumbs from "@/components/breadcrumbs/Breadcrumbs";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
 import { brandGradientCss, colors, font } from "@/theme";
@@ -614,6 +615,12 @@ function AppLayout() {
         <Breadcrumbs />
 
         <Outlet />
+
+        {/* Feb-2026 · Item 10 — Portal tour engine. Self-gates on
+            role="customer" + has_seen_customer_tour so it renders
+            null for everyone else. Mounted here so it survives
+            route changes during the 12-step advance. */}
+        <PortalWalkthrough />
 
         {/* Feb-2026 AE Dock — floating AI Employees drawer. Admin-only
             (self-guards on the ``user.role`` prop; renders null for

@@ -90,6 +90,9 @@ from routers import (
     portal_greeting,
     admin_users as _p19_admin_users,
     integrations_admin as _p19_integrations_admin,
+    seo_analyzer as _p20_seo,
+    reviews_ai_reply as _p20_reviews_ai,
+    referrals_vesting as _p20_referrals_vesting,
     job_media_line_items,
     workstream_job_detail,
     resend_webhooks,
@@ -229,6 +232,9 @@ for module in [notifications_router,
                portal_greeting,
                _p19_admin_users,
                _p19_integrations_admin,
+               _p20_seo,
+               _p20_reviews_ai,
+               _p20_referrals_vesting,
                job_media_line_items,
                workstream_job_detail,
                resend_webhooks,
@@ -420,6 +426,14 @@ async def _background_seed():
         logger.info(f"[slice-i] walkthrough backfill: {result}")
     except Exception as e:
         logger.warning(f"walkthrough backfill crashed: {e}")
+
+    # Feb-2026 · Item 11 — Referral vesting backfill (idempotent).
+    try:
+        from routers.referrals_vesting import run_backfill as _vest_backfill
+        vest_res = await _vest_backfill()
+        logger.info(f"[vesting-backfill] {vest_res}")
+    except Exception as e:
+        logger.warning(f"vesting backfill crashed: {e}")
 
     # Feb-2026 — one-shot idempotent Brian integration ownership
     # transfer. Runs every boot but only mutates on the first pass.

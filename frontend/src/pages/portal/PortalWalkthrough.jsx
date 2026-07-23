@@ -1,258 +1,277 @@
-// Feb-2026 · Slice I + Item 7 — Customer portal first-login walkthrough.
+// Feb-2026 · Item 10 — Portal tour engine.
 //
-// Gates:
-//   * Only renders for role === "customer".
-//   * Reads the user-level ``has_seen_customer_tour`` flag first, then
-//     falls back to the legacy per-customer status endpoint.
-//   * On complete OR skip, POSTs to ``/users/me/mark-tour-seen`` so
-//     it never re-triggers on future logins.
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+// 12-step guided tour that navigates via react-router as it goes,
+// spotlights each anchor with a ring + pulsing overlay, and marks
+// itself seen on complete OR skip. Zero external deps — custom
+// engine keeps the bundle lean.
+//
+// Steps must reference elements tagged with ``data-tour-id`` — the
+// anchors were laid across the customer portal in the earlier pass.
+//
+// Rendered ONLY for role=="customer". Also hard-gates on
+// ``user.has_seen_customer_tour`` so it never replays.
+import React from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { X, ChevronLeft, ChevronRight } from "lucide-react";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
 
-const colors = {
-  brand: "#0EA5E9",
-  onSurface: "#0F172A",
-  muted: "#64748B",
-  border: "#E2E8F0",
-  surface: "#FFFFFF",
-};
-
-// Nine ordered steps referenced by data-testid targets that already
-// exist on the portal (per Slice-I brief).
-export const WALKTHROUGH_STEPS = [
-  {
-    id: "welcome", target: null,
+const STEPS = [
+  { anchor: "greeting-tile",        route: "/portal",
     title: "Welcome to your portal",
-    body: "Here's a 60-second tour of everything you can do here. You can skip anytime.",
-  },
-  {
-    id: "balance", target: "portal-billing-tile",
-    title: "Your balance",
-    body: "Your current balance, past-due amount, and any credit on file live right here.",
-  },
-  {
-    id: "service", target: "portal-service-records-tile",
-    title: "Service records",
-    body: "Every past visit with what was done, water readings, and photos.",
-  },
-  {
-    id: "invoices", target: "portal-invoices-tile",
-    title: "Invoices & payments",
-    body: "Open invoices, pay online, and view receipts.",
-  },
-  {
-    id: "messages", target: "portal-quick-request-btn",
-    title: "Messages & requests",
-    body: "Send us a message or request a service in a couple of clicks.",
-  },
-  {
-    id: "reviews", target: "portal-reviews-tile",
-    title: "Leave a review",
-    body: "Tell us how we're doing after a visit.",
-  },
-  {
-    id: "preferences", target: "portal-preferences-link",
-    title: "Your preferences",
-    body: "Update contact info, notification prefs, and how you want to be reached.",
-  },
-  {
-    id: "ai", target: "portal-ai-section",
-    title: "Ask a concierge",
-    body: "Skedra and Billy are here 24/7 for questions about your account.",
-  },
-  {
-    id: "done", target: null,
-    title: "You're all set",
-    body: "You can replay this tour any time from Preferences.",
-  },
+    body:  "Your personalised home base. Let's take a 30-second tour." },
+  { anchor: "status-circles",       route: "/portal",
+    title: "Quick account status",
+    body:  "Balance, past due, credit, and your next scheduled visit at a glance." },
+  { anchor: "next-service-visit",   route: "/portal",
+    title: "Next service visit",
+    body:  "Here's your upcoming visit. Add to calendar, or reschedule from here." },
+  { anchor: "business-card",        route: "/portal",
+    title: "Our contact card",
+    body:  "Save our contact — tap-to-share via NFC or vCard." },
+  { anchor: "communications-list",  route: "/portal/messages",
+    title: "Communications history",
+    body:  "Every message we send you shows up here." },
+  { anchor: "invoices-list",        route: "/portal/invoices",
+    title: "Invoices",
+    body:  "Pay in one tap. Past invoices are here too." },
+  { anchor: "estimates-list",       route: "/portal/estimates",
+    title: "Estimates",
+    body:  "Approve or decline estimates here — you'll be notified when a new one is ready." },
+  { anchor: "service-reports-list", route: "/portal/service-reports",
+    title: "Service reports",
+    body:  "After every visit we send a service report with photos and readings. Find them all here." },
+  { anchor: "request-service-form", route: "/portal/request-service",
+    title: "Request a one-off visit",
+    body:  "Need something outside your normal schedule? Ask here." },
+  { anchor: "payment-method-panel", route: "/portal/payment-method",
+    title: "Payment method",
+    body:  "Add or update the card we use for automatic billing. Cards are securely stored with Stripe." },
+  { anchor: "referrals-panel",      route: "/portal/referrals",
+    title: "Refer a friend",
+    body:  "Refer a friend and earn $25 — credited after their first paid month." },
 ];
 
+const ROUTE_SETTLE_MS = 350;
 
 export default function PortalWalkthrough({ forceOpen = false, onClose }) {
   const { user, setUser } = useAuth();
-  const [status, setStatus] = useState(null);      // null | "should_show" | "done"
-  const [step, setStep] = useState(0);
-  const [rect, setRect] = useState(null);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [visible, setVisible] = React.useState(false);
+  const [step, setStep] = React.useState(0);
+  const [rect, setRect] = React.useState(null);
+  const [status, setStatus] = React.useState(null);   // null | "should_show" | "done"
 
-  // Item 7 · hard role gate — never render for non-customer users.
   const isCustomer = user?.role === "customer";
-
-  // Item 7 · user-level flag wins. If the auth payload already says
-  // the customer has seen the tour, skip the network call entirely.
   const userSeen = !!user?.has_seen_customer_tour;
 
-  // Load status once. Skipped when the caller forceOpens (replay).
-  useEffect(() => {
+  // ── Decide whether to show ────────────────────────────────────
+  React.useEffect(() => {
     let alive = true;
     if (!isCustomer) { setStatus("done"); return () => { alive = false; }; }
     if (forceOpen) {
-      if (alive) { setStatus("should_show"); setStep(0); }
+      if (alive) { setStatus("should_show"); setStep(0); setVisible(true); }
       return () => { alive = false; };
     }
-    if (userSeen) {
-      if (alive) setStatus("done");
-      return () => { alive = false; };
-    }
+    if (userSeen) { setStatus("done"); return () => { alive = false; }; }
     api.get("/customer-portal/walkthrough/status")
-      .then((r) => { if (alive) setStatus(r.should_show ? "should_show" : "done"); })
+      .then((r) => {
+        if (!alive) return;
+        if (r.should_show) { setStatus("should_show"); setVisible(true); }
+        else               { setStatus("done"); }
+      })
       .catch(() => { if (alive) setStatus("done"); });
     return () => { alive = false; };
   }, [forceOpen, isCustomer, userSeen]);
 
-  const cur = WALKTHROUGH_STEPS[step];
-
-  useLayoutEffect(() => {
-    if (status !== "should_show" || !cur) { setRect(null); return; }
-    if (!cur.target) { setRect(null); return; }
-    const q = () => {
-      const node = document.querySelector(`[data-testid="${cur.target}"]`);
-      if (!node) { setRect(null); return; }
-      const r = node.getBoundingClientRect();
-      setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
-      node.scrollIntoView({ behavior: "smooth", block: "center" });
-    };
-    q();
-    window.addEventListener("resize", q);
-    window.addEventListener("scroll", q, true);
-    return () => {
-      window.removeEventListener("resize", q);
-      window.removeEventListener("scroll", q, true);
-    };
-  }, [step, status, cur]);
-
-  const complete = async () => {
-    // Only mark complete on the SERVER when the tour is running for
-    // the first time (not on the replay from preferences — the flag
-    // never clears).
-    if (!forceOpen) {
-      // Item 7 · new user-level endpoint. Falls back to the legacy
-      // customer-level endpoint if the new one is unavailable.
-      try { await api.post("/users/me/mark-tour-seen", {}); }
-      catch (e) {
-        try { await api.post("/customer-portal/walkthrough/complete", {}); }
-        catch (_) { /* graceful */ }
+  // ── Navigate + spotlight the current step ─────────────────────
+  const cur = STEPS[step];
+  React.useEffect(() => {
+    if (!visible || !cur) return;
+    let cancelled = false;
+    const settle = async () => {
+      if (location.pathname !== cur.route) {
+        navigate(cur.route);
+        await new Promise((r) => setTimeout(r, ROUTE_SETTLE_MS));
+      } else {
+        await new Promise((r) => setTimeout(r, 60));
       }
-      // Optimistically mirror the flag onto the local auth user so
-      // the tour never re-triggers on nav changes in this session.
+      if (cancelled) return;
+      const el = document.querySelector(`[data-tour-id="${cur.anchor}"]`);
+      if (el) {
+        try { el.scrollIntoView({ behavior: "smooth", block: "center" }); }
+        catch (_e) { /* JSDom lacks scrollIntoView — ignore in tests. */ }
+        // Give the smooth scroll a beat to land before measuring.
+        setTimeout(() => {
+          if (cancelled) return;
+          setRect(el.getBoundingClientRect());
+        }, 320);
+      } else {
+        setRect(null);
+      }
+    };
+    settle();
+    return () => { cancelled = true; };
+  }, [visible, step, cur, location.pathname, navigate]);
+
+  // ── Re-measure on resize / scroll so the highlight tracks. ────
+  React.useEffect(() => {
+    if (!visible) return;
+    const onMove = () => {
+      if (!cur) return;
+      const el = document.querySelector(`[data-tour-id="${cur.anchor}"]`);
+      if (el) setRect(el.getBoundingClientRect());
+    };
+    window.addEventListener("resize", onMove);
+    window.addEventListener("scroll", onMove, { passive: true });
+    return () => {
+      window.removeEventListener("resize", onMove);
+      window.removeEventListener("scroll", onMove);
+    };
+  }, [visible, cur]);
+
+  const markSeenAndClose = React.useCallback(async () => {
+    if (!forceOpen) {
+      try { await api.post("/users/me/mark-tour-seen", {}); }
+      catch (_e) {
+        try { await api.post("/customer-portal/walkthrough/complete", {}); }
+        catch (_e2) { /* graceful */ }
+      }
       if (setUser && user) {
         setUser({ ...user, has_seen_customer_tour: true });
       }
     }
+    setVisible(false);
     setStatus("done");
     if (onClose) onClose();
-  };
+  }, [forceOpen, onClose, setUser, user]);
 
   if (!isCustomer) return null;
-  if (status !== "should_show") return null;
+  if (!visible || status !== "should_show") return null;
 
+  const isLast = step === STEPS.length - 1;
   const isFirst = step === 0;
-  const isLast = step === WALKTHROUGH_STEPS.length - 1;
 
-  const tooltipPos = rect
-    ? {
-        top: Math.min(rect.top + rect.height + 12, window.innerHeight - 240),
-        left: Math.min(Math.max(rect.left, 20), window.innerWidth - 340),
-      }
-    : {
-        top: "50%", left: "50%",
-        transform: "translate(-50%, -50%)",
-      };
+  // Spotlight box — 8px padding around the target.
+  const pad = 8;
+  const box = rect ? {
+    top: Math.max(0, rect.top - pad),
+    left: Math.max(0, rect.left - pad),
+    width: rect.width + pad * 2,
+    height: rect.height + pad * 2,
+  } : null;
 
-  const spotlightPad = 6;
+  // Position the tooltip below the box when possible, above when not.
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const spaceBelow = box ? vh - (box.top + box.height) : 0;
+  const showBelow = spaceBelow > 240;
+  const tipStyle = box ? {
+    position: "fixed",
+    left: Math.min(Math.max(box.left, 16), (window.innerWidth || 1024) - 336),
+    top: showBelow ? box.top + box.height + 12 : Math.max(16, box.top - 190),
+    width: 320,
+  } : { position: "fixed", left: 24, bottom: 24, width: 320 };
 
   return (
-    <div data-testid="portal-walkthrough-container"
-         style={{ position: "fixed", inset: 0, zIndex: 9998,
-                  pointerEvents: "auto" }}>
-      {/* Dim backdrop with a spotlight cutout for the current target. */}
-      <div style={{
-        position: "absolute", inset: 0,
-        background: "rgba(15,23,42,.55)",
-        WebkitClipPath: rect ? _spotlight(rect, spotlightPad) : "none",
-        clipPath: rect ? _spotlight(rect, spotlightPad) : "none",
-      }} />
+    <div className="fixed inset-0 z-[9999]"
+         data-testid="portal-tour-engine">
+      {/* Dim backdrop — pointer-events-auto so clicks outside the box
+          don't leak to the app. */}
+      <div className="absolute inset-0"
+           style={{ backgroundColor: "rgba(15, 23, 42, 0.55)",
+                      transition: "opacity .2s" }}
+           data-testid="portal-tour-backdrop" />
 
-      {/* Tooltip card. */}
-      <div style={{
-        position: "absolute",
-        ...tooltipPos,
-        width: 320,
-        background: colors.surface,
-        borderRadius: 14,
-        border: `1px solid ${colors.border}`,
-        boxShadow: "0 24px 60px rgba(0,0,0,.24)",
-        padding: 18,
-        zIndex: 9999,
-      }}
-      data-testid={`portal-walkthrough-step-${step}`}>
-        <div style={{
-          fontSize: 11, fontWeight: 700, textTransform: "uppercase",
-          color: colors.muted, letterSpacing: ".05em", marginBottom: 6,
-        }}>
-          Step {step + 1} of {WALKTHROUGH_STEPS.length}
-        </div>
-        <div style={{
-          fontSize: 16, fontWeight: 700, color: colors.onSurface,
-          marginBottom: 6,
-        }}>{cur.title}</div>
-        <div style={{ fontSize: 14, color: colors.onSurface, marginBottom: 14 }}>
-          {cur.body}
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between",
-                       alignItems: "center", gap: 8 }}>
-          <button onClick={complete}
-                  data-testid="portal-walkthrough-skip-btn"
-                  style={{
-                    background: "transparent", border: "none",
-                    color: colors.muted, fontSize: 12,
-                    fontWeight: 600, cursor: "pointer",
-                  }}>
-            Skip
-          </button>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button disabled={isFirst}
-                    data-testid="portal-walkthrough-prev-btn"
-                    onClick={() => setStep((s) => Math.max(0, s - 1))}
-                    style={{
-                      padding: "8px 14px", borderRadius: 10,
-                      border: `1px solid ${colors.border}`,
-                      background: "#fff", color: colors.onSurface,
-                      fontSize: 13, fontWeight: 600, cursor: "pointer",
-                      opacity: isFirst ? 0.4 : 1,
-                    }}>
-              Back
-            </button>
-            <button onClick={() =>
-              isLast ? complete() : setStep((s) => s + 1)
-            }
-                    data-testid="portal-walkthrough-next-btn"
-                    style={{
-                      padding: "8px 14px", borderRadius: 10,
-                      background: colors.brand, color: "#fff",
-                      fontSize: 13, fontWeight: 700, cursor: "pointer",
-                      border: "none",
-                    }}>
-              {isLast ? "Done" : "Next"}
-            </button>
+      {/* Spotlight cutout — a bright ring drawn over the target rect. */}
+      {box ? (
+        <div
+          className="absolute rounded-xl pointer-events-none"
+          style={{
+            top: box.top, left: box.left,
+            width: box.width, height: box.height,
+            boxShadow: "0 0 0 4px rgba(14,165,233,1), 0 0 0 9999px rgba(0,0,0,0.001)",
+            outline: "3px solid rgba(255,255,255,0.85)",
+            outlineOffset: 2,
+            animation: "portalTourPulse 1.8s ease-in-out infinite",
+          }}
+          data-testid="portal-tour-spotlight"
+        />
+      ) : null}
+
+      {/* Tooltip. */}
+      <div
+        style={tipStyle}
+        className="bg-white rounded-xl shadow-2xl border border-zinc-200"
+        data-testid="portal-tour-tooltip"
+      >
+        <div className="flex items-start p-4 gap-2">
+          <div className="flex-1">
+            <div className="text-[11px] uppercase tracking-wide font-semibold text-zinc-500"
+                 data-testid="portal-tour-step-counter">
+              Step {step + 1} of {STEPS.length}
+            </div>
+            <div className="text-base font-semibold mt-0.5"
+                 data-testid="portal-tour-title">{cur.title}</div>
+            <div className="text-sm text-zinc-600 mt-1.5"
+                 data-testid="portal-tour-body">{cur.body}</div>
           </div>
+          <button
+            type="button"
+            onClick={markSeenAndClose}
+            className="p-1 rounded-md hover:bg-zinc-100"
+            title="Skip tour"
+            data-testid="portal-tour-skip"
+          >
+            <X size={14} className="text-zinc-500" />
+          </button>
+        </div>
+        <div className="flex items-center gap-1 px-4 pb-2">
+          {STEPS.map((_, i) => (
+            <div
+              key={i}
+              className={`h-1 flex-1 rounded-full ${i <= step ? "bg-sky-500" : "bg-zinc-200"}`}
+              data-testid={`portal-tour-dot-${i}`}
+            />
+          ))}
+        </div>
+        <div className="flex items-center justify-between p-3 border-t border-zinc-100">
+          <button
+            type="button"
+            disabled={isFirst}
+            onClick={() => setStep((s) => Math.max(0, s - 1))}
+            className="text-xs font-semibold px-2.5 py-1.5 rounded-md flex items-center gap-1 text-zinc-600 hover:bg-zinc-100 disabled:opacity-40"
+            data-testid="portal-tour-back"
+          >
+            <ChevronLeft size={12} /> Back
+          </button>
+          <button
+            type="button"
+            onClick={markSeenAndClose}
+            className="text-xs text-zinc-500 hover:text-zinc-700"
+            data-testid="portal-tour-skip-text"
+          >Skip tour</button>
+          <button
+            type="button"
+            onClick={() => {
+              if (isLast) { markSeenAndClose(); }
+              else { setStep((s) => Math.min(STEPS.length - 1, s + 1)); }
+            }}
+            className="text-xs font-semibold px-3 py-1.5 rounded-md text-white bg-sky-600 hover:bg-sky-700 flex items-center gap-1"
+            data-testid={isLast ? "portal-tour-finish" : "portal-tour-next"}
+          >
+            {isLast ? "Finish" : "Next"} {!isLast ? <ChevronRight size={12} /> : null}
+          </button>
         </div>
       </div>
+
+      {/* Keyframes lifted inline so we don't have to touch the global css. */}
+      <style>{`
+        @keyframes portalTourPulse {
+          0%, 100% { box-shadow: 0 0 0 4px rgba(14,165,233,1), 0 0 0 9999px rgba(0,0,0,0.001); }
+          50%      { box-shadow: 0 0 0 8px rgba(14,165,233,0.6), 0 0 0 9999px rgba(0,0,0,0.001); }
+        }
+      `}</style>
     </div>
   );
-}
-
-
-function _spotlight(rect, pad) {
-  // CSS clip-path polygon that shows everything OUTSIDE the target
-  // rectangle. Combined with the semi-opaque backdrop it creates the
-  // "spotlight" effect: the target is bright, the rest is dimmed.
-  const x1 = rect.left - pad, y1 = rect.top - pad;
-  const x2 = rect.left + rect.width + pad, y2 = rect.top + rect.height + pad;
-  return `polygon(
-    0 0, 100% 0, 100% 100%, 0 100%, 0 0,
-    ${x1}px ${y1}px, ${x1}px ${y2}px,
-    ${x2}px ${y2}px, ${x2}px ${y1}px,
-    ${x1}px ${y1}px
-  )`;
 }

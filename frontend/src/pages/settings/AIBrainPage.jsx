@@ -6,7 +6,7 @@
 // with a stray click.
 import React from "react";
 import { toast } from "sonner";
-import { Plus, Save, Trash2, Sparkles, TrendingUp, PlusCircle } from "lucide-react";
+import { Plus, Save, Trash2, Sparkles, TrendingUp, PlusCircle, Bell } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
@@ -127,6 +127,8 @@ export default function AIBrainPage() {
           toast.error(`Save failed: ${e.message || e}`);
         }
       }} />
+
+      <DailyDigestToggle />
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
         <div className="lg:col-span-1 rounded-xl p-2 max-h-[70vh] overflow-y-auto"
@@ -347,6 +349,57 @@ function TopQuestionsWidget({ onSaveToKnowledge }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Feb-2026 · Phase 20 P2 — Admin toggle for the daily review digest.
+function DailyDigestToggle() {
+  const [enabled, setEnabled] = React.useState(null);
+  const [saving, setSaving] = React.useState(false);
+  React.useEffect(() => {
+    api.get("/ai/settings/daily-review-digest")
+      .then((r) => setEnabled(!!r?.enabled))
+      .catch(() => setEnabled(true));
+  }, []);
+  const toggle = async () => {
+    if (enabled === null) return;
+    setSaving(true);
+    try {
+      const next = !enabled;
+      await api.patch("/ai/settings/daily-review-digest", { enabled: next });
+      setEnabled(next);
+      toast.success(next ? "Daily review digest enabled" : "Digest disabled");
+    } catch (e) {
+      toast.error(`Toggle failed: ${e.message || e}`);
+    } finally { setSaving(false); }
+  };
+  return (
+    <div className="rounded-xl p-3 flex items-center gap-3"
+         style={{ backgroundColor: colors.surface,
+                    border: `1px solid ${colors.border}` }}
+         data-testid="ai-brain-digest-toggle">
+      <Bell size={14} style={{ color: colors.brand }} />
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>
+          Daily review digest email
+        </div>
+        <div className="text-xs" style={{ color: colors.muted }}>
+          Sends an 8am (Phoenix) summary of yesterday's reviews with an AI-suggested reply per row.
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={toggle}
+        disabled={saving || enabled === null}
+        className="text-xs font-semibold px-3 py-1.5 rounded-md hover:brightness-95 disabled:opacity-60"
+        style={{ backgroundColor: enabled ? colors.brand : colors.surfaceSecondary,
+                   color: enabled ? "#fff" : colors.onSurface,
+                   border: `1px solid ${colors.border}` }}
+        data-testid="ai-brain-digest-toggle-btn"
+      >
+        {enabled === null ? "…" : enabled ? "On" : "Off"}
+      </button>
     </div>
   );
 }
