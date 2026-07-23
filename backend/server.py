@@ -596,6 +596,28 @@ async def _background_seed():
         except Exception as _re:
             logger.warning(f"referral watcher registration crashed: {_re}")
 
+        # Phase 12B · Feb 2026 — Weekly Stripe customer sync cron.
+        # Registered as an hourly tick that dispatches per tenant when
+        # their local time hits Thursday 02:00. Same per-tenant local-
+        # hour pattern as the Phase 10 referral watcher and Phase 11
+        # equipment tracker digest above.
+        try:
+            from services.stripe_customer_sync_cron import (
+                hourly_scan as _p12b_cron_scan,
+            )
+            scheduler.add_job(
+                _p12b_cron_scan, "cron", minute=0,
+                id="stripe_customer_sync_weekly", replace_existing=True,
+            )
+            logger.info(
+                "scheduler: stripe_customer_sync_weekly registered "
+                "(per-tenant Thu 02:00 local dispatch, live mode only)"
+            )
+        except Exception as _p12be:
+            logger.warning(
+                f"stripe customer sync cron registration crashed: {_p12be}"
+            )
+
         # Comms Phase 3 · Feb 2026 — automation-engine daily sweeps.
         # invoice.overdue (09:00 UTC), customer.birthday (08:00),
         # customer.anniversary (08:05). Rule index is warmed up too,
