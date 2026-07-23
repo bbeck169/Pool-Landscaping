@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Linking, TextInput, Platform, Alert, Switch, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Linking, TextInput, Platform, Alert, Switch, TouchableOpacity, Modal, KeyboardAvoidingView } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
@@ -36,6 +36,21 @@ export default function CustomerDetail() {
   // Feb-2026 MP2 UI — read-only property list. Editing lives on
   // web-only (per the ship brief); mobile admins get visibility.
   const [properties, setProperties] = useState<any[]>([]);
+  // Credits state (Phase 13B)
+  const [creditsData, setCreditsData] = useState<any>({ balance_cents: 0, ledger: [] });
+  const [showAllLedger, setShowAllLedger] = useState(false);
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjAmount, setAdjAmount] = useState("");
+  const [adjReason, setAdjReason] = useState("");
+  const [adjError, setAdjError] = useState("");
+  const [adjBusy, setAdjBusy] = useState(false);
+
+  const loadCredits = useCallback(async () => {
+    try {
+      const res = await api.get(`/customers/${id}/credits`);
+      setCreditsData(res || { balance_cents: 0, ledger: [] });
+    } catch {}
+  }, [id]);
 
   const load = useCallback(async () => {
     try {
@@ -46,6 +61,7 @@ export default function CustomerDetail() {
       api.get(`/customers/${id}/properties`)
         .then((rows) => setProperties(rows || []))
         .catch(() => setProperties([]));
+      loadCredits();
     } finally {
       setLoading(false);
     }
@@ -132,12 +148,37 @@ export default function CustomerDetail() {
   const requestCard = async () => {
     setRequesting(true);
     try {
-      await api.post(`/payments/request-method/${id}`, {});
-      Alert.alert("Request sent ✅", `${c.name} was asked to add a card/bank on file.`);
+      await api.post(`/customers/${id}/send-card-add-link`, {});
+      Alert.alert("Link sent ✅", `${c.name} will receive an email + SMS to add a card.`);
     } catch (e: any) {
       Alert.alert("Failed", e.message || "Please try again.");
     } finally {
       setRequesting(false);
+    }
+  };
+
+  const submitAdjust = async () => {
+    setAdjBusy(true);
+    setAdjError("");
+    try {
+      const deltaCents = Math.round(parseFloat(adjAmount) * 100);
+      if (isNaN(deltaCents) || deltaCents === 0) { setAdjError("Enter a valid amount."); setAdjBusy(false); return; }
+      await api.post(`/customers/${id}/credits/adjust`, { delta_cents: deltaCents, reason: adjReason.trim() });
+      setAdjustOpen(false);
+      setAdjAmount("");
+      setAdjReason("");
+      Alert.alert("Adjusted ✅", `Credit balance updated.`);
+      loadCredits();
+      load();
+    } catch (e: any) {
+      const msg = e?.message || "";
+      if (msg.includes("INSUFFICIENT_BALANCE")) {
+        setAdjError("Insufficient balance — cannot go negative.");
+      } else {
+        setAdjError(msg || "Adjustment failed.");
+      }
+    } finally {
+      setAdjBusy(false);
     }
   };
 
@@ -302,13 +343,105 @@ export default function CustomerDetail() {
           </View>
         ) : null}
 
-        {/* Credits balance (Phase 10) */}
-        {isAdmin && c.credits_balance_cents != null && c.credits_balance_cents > 0 ? (
-          <View style={styles.creditsBanner} testID="customer-credits-balance">
-            <Ionicons name="wallet-outline" size={16} color="#166534" />
-            <Text style={styles.creditsText}>Credit balance: ${(c.credits_balance_cents / 100).toFixed(2)}</Text>
+        {/* Credits section (Phase 10 / Phase 13B) */}
+        {isAdmin ? (
+          <View style={styles.creditsSection} testID="customer-credits-section">
+            <View style={styles.creditsSectionHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.creditsLabel}>CREDIT BALANCE</Text>
+                <Text style={styles.creditsAmount} testID="customer-credits-balance">
+                  ${((creditsData?.balance_cents ?? c.credits_balance_cents ?? 0) / 100).toFixed(2)}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.adjustBtn}
+                onPress={() => setAdjustOpen(true)}
+                testID="credits-adjust-btn"
+              >
+                <Ionicons name="add-circle-outline" size={14} color={colors.brand} />
+                <Text style={styles.adjustBtnText}>Adjust</Text>
+              </TouchableOpacity>
+            </View>
+            {(creditsData?.ledger || []).length > 0 ? (
+              <View style={styles.ledgerList}>
+                {creditsData.ledger.slice(0, showAllLedger ? 50 : 5).map((entry: any) => {
+                  const isPositive = entry.delta_cents > 0;
+                  return (
+                    <View key={entry.id} style={styles.ledgerRow} testID={`ledger-${entry.id}`}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.ledgerSource}>
+                          {entry.source === "manual" ? "Manual" : entry.source === "referral" ? "Referral" : entry.source === "redeemed" ? "Redeemed" : entry.source === "revert" ? "Revert" : entry.source || "—"}
+                        </Text>
+                        {entry.reason || entry.note ? <Text style={styles.ledgerNote} numberOfLines={1}>{entry.reason || entry.note}</Text> : null}
+                        {entry.actor_email ? <Text style={styles.ledgerActor}>{entry.actor_email}</Text> : null}
+                      </View>
+                      <View style={{ alignItems: "flex-end" }}>
+                        <Text style={[styles.ledgerDelta, { color: isPositive ? "#166534" : "#DC2626" }]}>
+                          {isPositive ? "+" : ""}${(entry.delta_cents / 100).toFixed(2)}
+                        </Text>
+                        <Text style={styles.ledgerDate}>{new Date(entry.created_at).toLocaleDateString()}</Text>
+                      </View>
+                    </View>
+                  );
+                })}
+                {creditsData.ledger.length > 5 && !showAllLedger && (
+                  <TouchableOpacity onPress={() => setShowAllLedger(true)} testID="ledger-load-more">
+                    <Text style={styles.loadMoreText}>Show all ({creditsData.ledger.length})</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : (
+              <Text style={styles.ledgerEmpty}>No credit transactions yet</Text>
+            )}
           </View>
         ) : null}
+
+        {/* Adjust balance modal */}
+        <Modal visible={adjustOpen} transparent animationType="fade" testID="adjust-credits-modal">
+          <KeyboardAvoidingView style={styles.adjOverlay} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+            <View style={styles.adjCard}>
+              <Text style={styles.adjTitle}>Adjust Credit Balance</Text>
+              <Text style={styles.adjCurrent}>Current: ${((creditsData?.balance_cents ?? c.credits_balance_cents ?? 0) / 100).toFixed(2)}</Text>
+              <TextInput
+                style={styles.adjInput}
+                value={adjAmount}
+                onChangeText={setAdjAmount}
+                placeholder="Amount in dollars (e.g. 25 or -10)"
+                placeholderTextColor={colors.muted}
+                keyboardType="numeric"
+                testID="adjust-amount-input"
+              />
+              <TextInput
+                style={[styles.adjInput, { minHeight: 60 }]}
+                value={adjReason}
+                onChangeText={setAdjReason}
+                placeholder="Reason (min 5 characters)"
+                placeholderTextColor={colors.muted}
+                multiline
+                testID="adjust-reason-input"
+              />
+              {adjAmount && adjReason.length >= 5 ? (
+                <Text style={styles.adjPreview}>
+                  Balance will change from ${((creditsData?.balance_cents ?? 0) / 100).toFixed(2)} to ${(((creditsData?.balance_cents ?? 0) + Math.round(parseFloat(adjAmount || "0") * 100)) / 100).toFixed(2)}
+                </Text>
+              ) : null}
+              {adjError ? <Text style={styles.adjError}>{adjError}</Text> : null}
+              <View style={styles.adjBtns}>
+                <TouchableOpacity style={styles.adjCancel} onPress={() => { setAdjustOpen(false); setAdjAmount(""); setAdjReason(""); setAdjError(""); }} testID="adjust-cancel">
+                  <Text style={styles.adjCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.adjSave, (!adjAmount || adjReason.length < 5) && { opacity: 0.4 }]}
+                  onPress={submitAdjust}
+                  disabled={adjBusy || !adjAmount || adjReason.length < 5}
+                  testID="adjust-save"
+                >
+                  <Text style={styles.adjSaveText}>{adjBusy ? "Saving…" : "Save"}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
 
         {isAdmin ? (
           c.has_login ? (
@@ -540,6 +673,35 @@ const styles = StyleSheet.create({
   resetDefaultText: { fontFamily: font.medium, fontSize: 11, color: colors.brand, textDecorationLine: "underline" },
   creditsBanner: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#DCFCE7", borderRadius: radius.md, padding: spacing.md, marginTop: spacing.sm, borderWidth: 1, borderColor: "#BBF7D0" },
   creditsText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#166534" },
+  // Credits section styles (Phase 13B)
+  creditsSection: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.lg, marginTop: spacing.md, borderWidth: 1, borderColor: colors.border },
+  creditsSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  creditsLabel: { fontFamily: font.bold, fontSize: 10, color: colors.muted, letterSpacing: 1, textTransform: "uppercase" },
+  creditsAmount: { fontFamily: font.bold, fontSize: 28, color: "#166534", marginTop: 2 },
+  adjustBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.md, borderWidth: 1, borderColor: colors.brand },
+  adjustBtnText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand },
+  ledgerList: { marginTop: spacing.md, gap: 1 },
+  ledgerRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.border },
+  ledgerSource: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.onSurface, textTransform: "capitalize" },
+  ledgerNote: { fontFamily: font.regular, fontSize: 11, color: colors.muted, marginTop: 1 },
+  ledgerActor: { fontFamily: font.regular, fontSize: 10, color: colors.muted, fontStyle: "italic" },
+  ledgerDelta: { fontFamily: font.bold, fontSize: fontSize.base },
+  ledgerDate: { fontFamily: font.regular, fontSize: 10, color: colors.muted, marginTop: 1 },
+  ledgerEmpty: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: spacing.sm },
+  loadMoreText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand, textAlign: "center", paddingTop: 8 },
+  // Adjust modal
+  adjOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", padding: 24 },
+  adjCard: { backgroundColor: "#fff", borderRadius: radius.lg, padding: spacing.xl },
+  adjTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface },
+  adjCurrent: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2, marginBottom: spacing.md },
+  adjInput: { backgroundColor: "#F8FAFC", borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, marginBottom: spacing.sm },
+  adjPreview: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.brand, marginBottom: spacing.sm },
+  adjError: { fontFamily: font.medium, fontSize: fontSize.sm, color: "#DC2626", marginBottom: spacing.sm },
+  adjBtns: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm, marginTop: spacing.sm },
+  adjCancel: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
+  adjCancelText: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.onSurface },
+  adjSave: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md, backgroundColor: colors.brand },
+  adjSaveText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: "#fff" },
   vipBadge: {
     flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
     gap: 4, backgroundColor: "#FEF3C7", borderColor: "#F59E0B", borderWidth: 1,

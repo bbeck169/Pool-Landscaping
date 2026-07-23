@@ -39,6 +39,12 @@ export default function InvoiceDetail() {
   const [payOpen, setPayOpen] = useState(false);
   const [payHtml, setPayHtml] = useState("");
   const [payLoading, setPayLoading] = useState(false);
+  // Promo code state (Phase 13B)
+  const [promoExpanded, setPromoExpanded] = useState(false);
+  const [promoCode, setPromoCode] = useState("");
+  const [promoApplied, setPromoApplied] = useState<any>(null);
+  const [promoError, setPromoError] = useState("");
+  const [promoLoading, setPromoLoading] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -63,7 +69,7 @@ export default function InvoiceDetail() {
     }
     setPayLoading(true);
     try {
-      const pi = await createPaymentIntent(id, "authenticated");
+      const pi = await createPaymentIntent(id, "authenticated", undefined, promoApplied?.promo_code_id);
       if (!pi.client_secret) throw new Error("Could not create payment intent.");
       const html = buildStripeHtml(stripe.pk, pi.client_secret, pi.amount_cents, pi.currency);
       setPayHtml(html);
@@ -73,6 +79,33 @@ export default function InvoiceDetail() {
     } finally {
       setPayLoading(false);
     }
+  };
+
+  const applyPromo = async () => {
+    const code = promoCode.trim().toUpperCase();
+    if (!code) return;
+    setPromoLoading(true);
+    setPromoError("");
+    try {
+      const res = await api.post("/promo-codes/validate", { code, invoice_id: id });
+      if (res.valid) {
+        setPromoApplied({ ...res, code });
+        setPromoError("");
+      } else {
+        setPromoError(res.reason === "not_found" ? "Invalid promo code" : res.reason === "expired" ? "This code has expired" : res.reason === "already_used" ? "This code has already been used" : res.reason || "Invalid code");
+        setPromoApplied(null);
+      }
+    } catch (e: any) {
+      setPromoError(e?.message || "Failed to validate code");
+    } finally {
+      setPromoLoading(false);
+    }
+  };
+
+  const removePromo = () => {
+    setPromoApplied(null);
+    setPromoCode("");
+    setPromoError("");
   };
 
   const handlePayMessage = (event: any) => {
@@ -156,6 +189,61 @@ export default function InvoiceDetail() {
             </View>
           </View>
         </View>
+
+        {/* Promo Code Section (Phase 13B) */}
+        {canPay && (
+          <View style={s.promoWrap} testID="promo-code-section">
+            <TouchableOpacity
+              style={s.promoToggle}
+              onPress={() => setPromoExpanded(!promoExpanded)}
+              testID="promo-toggle"
+            >
+              <Ionicons name="pricetag-outline" size={14} color={colors.brand} />
+              <Text style={s.promoToggleText}>Have a promo code?</Text>
+              <Ionicons name={promoExpanded ? "chevron-up" : "chevron-down"} size={16} color={colors.muted} />
+            </TouchableOpacity>
+            {promoExpanded && (
+              <View style={s.promoBody}>
+                {promoApplied ? (
+                  <View style={s.promoAppliedRow}>
+                    <View style={[s.promoAppliedPill, { backgroundColor: promoApplied.apply_to === "account_credit" ? "#DBEAFE" : "#DCFCE7" }]}>
+                      <Ionicons name="checkmark-circle" size={14} color={promoApplied.apply_to === "account_credit" ? "#1D4ED8" : "#166534"} />
+                      <Text style={[s.promoAppliedText, { color: promoApplied.apply_to === "account_credit" ? "#1D4ED8" : "#166534" }]}>
+                        {promoApplied.apply_to === "account_credit"
+                          ? `${promoApplied.code}: +$${((promoApplied.amount_cents || 0) / 100).toFixed(2)} credit after payment`
+                          : `${promoApplied.code}: -$${((promoApplied.discount_cents || promoApplied.amount_cents || 0) / 100).toFixed(2)}`}
+                      </Text>
+                    </View>
+                    <TouchableOpacity onPress={removePromo} testID="promo-remove">
+                      <Ionicons name="close-circle" size={20} color={colors.muted} />
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={s.promoInputRow}>
+                    <TextInput
+                      style={s.promoInput}
+                      value={promoCode}
+                      onChangeText={setPromoCode}
+                      placeholder="Enter code"
+                      placeholderTextColor={colors.muted}
+                      autoCapitalize="characters"
+                      testID="promo-input"
+                    />
+                    <TouchableOpacity
+                      style={[s.promoApplyBtn, (!promoCode.trim() || promoLoading) && { opacity: 0.4 }]}
+                      onPress={applyPromo}
+                      disabled={!promoCode.trim() || promoLoading}
+                      testID="promo-apply"
+                    >
+                      <Text style={s.promoApplyText}>{promoLoading ? "…" : "Apply"}</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+                {promoError ? <Text style={s.promoErrorText} testID="promo-error">{promoError}</Text> : null}
+              </View>
+            )}
+          </View>
+        )}
 
         {/* Pay Now */}
         {canPay && (
@@ -362,4 +450,17 @@ const s = StyleSheet.create({
   payModalRoot: { flex: 1, backgroundColor: colors.surface },
   payModalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
   payModalTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface },
+  // Promo code styles (Phase 13B)
+  promoWrap: { backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md, overflow: "hidden" },
+  promoToggle: { flexDirection: "row", alignItems: "center", gap: 6, padding: spacing.md },
+  promoToggleText: { flex: 1, fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand },
+  promoBody: { paddingHorizontal: spacing.md, paddingBottom: spacing.md },
+  promoInputRow: { flexDirection: "row", gap: 8 },
+  promoInput: { flex: 1, backgroundColor: "#F8FAFC", borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: 12, height: 40, fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface },
+  promoApplyBtn: { paddingHorizontal: 16, height: 40, justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.brand },
+  promoApplyText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: "#fff" },
+  promoAppliedRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  promoAppliedPill: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1, paddingHorizontal: 10, paddingVertical: 8, borderRadius: radius.md },
+  promoAppliedText: { fontFamily: font.semibold, fontSize: fontSize.sm, flex: 1 },
+  promoErrorText: { fontFamily: font.medium, fontSize: fontSize.sm, color: "#DC2626", marginTop: 6 },
 });

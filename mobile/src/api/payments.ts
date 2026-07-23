@@ -19,11 +19,13 @@ export const createPaymentIntent = (
   invoiceId: string,
   source: "authenticated" | "portal",
   magicToken?: string,
+  promoCodeId?: string,
 ): Promise<PaymentIntentResult> =>
   api.post("/payments/create-payment-intent", {
     invoice_id: invoiceId,
     source,
     ...(magicToken ? { magic_token: magicToken } : {}),
+    ...(promoCodeId ? { promo_code_id: promoCodeId } : {}),
   });
 
 export const getPaymentStatus = (paymentIntentId: string) =>

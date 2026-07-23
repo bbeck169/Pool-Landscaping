@@ -109,6 +109,7 @@ export default function More() {
     { icon: "filter-outline", label: "Service Tracking", onPress: () => router.push("/tracking") },
     { icon: "gift-outline", label: "Admin Referrals", onPress: () => router.push("/admin/referrals") },
     { icon: "pricetag-outline", label: "Promo Codes", onPress: () => router.push("/settings/promo-codes") },
+    { icon: "cog-outline", label: "Tenant Settings", onPress: () => router.push("/settings/tenant") },
   ];
 
   return (
