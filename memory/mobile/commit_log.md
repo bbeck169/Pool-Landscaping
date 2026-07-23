@@ -220,3 +220,17 @@
 - **Files modified**: `customer/[id].tsx` (credits section + adjust modal + card link fix), `invoice/[id].tsx` (promo code section), `src/api/payments.ts` (promo_code_id param), `(app)/more.tsx` (tenant settings link)
 - **Files created**: `settings/tenant.tsx`
 - **Endpoints verified**: `GET /api/tenants/mine/settings` 200, `PATCH /api/tenants/mine/settings` 200, `POST /api/customers/{id}/credits/adjust` 200, `GET /api/customers/{id}/credits` 200, `POST /api/promo-codes/validate` 200, `POST /api/customers/{id}/send-card-add-link` 200
+
+## Iteration 12 — Timeclock Admin-Hide Parity
+- **Commit**: a742fea63300f6c70240001042e67068d67f4388
+- **Date**: 2026-07-23
+- **Changes**:
+  - Flipped `isLandscaper` logic in `LandscapingClockWidget.tsx` from `isAdminLike || hasLandscapeDept` to `!isAdminLike && hasLandscapeDept`
+  - Added mount-site guards in both `index.tsx` and `schedule/calendar.tsx` to return null for admin/super_admin roles
+  - Updated comment block to reflect new role gate logic
+- **Files modified**:
+  - `/app/mobile/src/components/LandscapingClockWidget.tsx` (line 54 logic flip + comment update)
+  - `/app/mobile/app/(app)/index.tsx` (line 66 mount-site guard)
+  - `/app/mobile/app/(app)/schedule/calendar.tsx` (line 275 mount-site guard)
+- **Web files referenced**: None (instructions were explicit)
+

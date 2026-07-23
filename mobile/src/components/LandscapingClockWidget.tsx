@@ -44,14 +44,13 @@ async function readGeo() {
 export default function LandscapingClockWidget() {
   const { user } = useAuth();
   const router = useRouter();
-  // Phase 56.3 follow-up — mirror the web gate: admins + super_admins see
-  // the widget regardless of department; techs must have department in
-  // {landscaping, both}. Pool techs / customers / unassigned techs are
-  // hidden. Backend `_require_landscaping` enforces the same rule.
+  // Phase 56.3 follow-up — mirror the web gate: admins + super_admins
+  // should NOT see the timeclock; only landscape/both-dept techs & managers
+  // see it. Pool techs / customers / unassigned techs are also hidden.
   const role = String((user as any)?.role || "").toLowerCase();
   const isAdminLike = role === "admin" || role === "super_admin";
   const hasLandscapeDept = ["landscaping", "both"].includes(String((user as any)?.department || "").toLowerCase());
-  const isLandscaper = isAdminLike || hasLandscapeDept;
+  const isLandscaper = !isAdminLike && hasLandscapeDept;
   const [today, setToday] = useState<any>(null);
   const [week, setWeek] = useState<any>(null);
   const [busy, setBusy] = useState(false);

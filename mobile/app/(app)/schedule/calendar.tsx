@@ -272,7 +272,7 @@ export default function ScheduleCalendar() {
         subtitle={loading ? "Loading…" : `${jobs.length} jobs in window · ${mode}`}
       />
       <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.md }}>
-        <LandscapingClockWidget />
+        {user?.role !== "admin" && user?.role !== "super_admin" && <LandscapingClockWidget />}
         {(isTech || isAdmin) && <WeatherWidget onHourlyLoaded={setHourlyData} />}
       </View>
 

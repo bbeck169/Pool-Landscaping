@@ -103,6 +103,7 @@ from routers import (
     promo_codes,
     referrals_phase10,
     marketing_campaigns as marketing_campaigns_router,
+    mass_messaging,
 )
 # Phase 9C · Feb 2026 — QuickBooks retirement helper (idempotent
 # boot migration + ALLOW_TEST_HOOKS-gated purge endpoint).
@@ -221,7 +222,8 @@ for module in [notifications_router,
                ringcentral_jwt,
                equipment_trackers,
                promo_codes,
-               referrals_phase10]:
+               referrals_phase10,
+               mass_messaging]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue

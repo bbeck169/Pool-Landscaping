@@ -63,7 +63,7 @@ export default function Dashboard() {
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
       >
-        <LandscapingClockWidget />
+        {user?.role !== "admin" && user?.role !== "super_admin" && <LandscapingClockWidget />}
         <BudgetHealthCard />
         <WeatherWidget />
         <View style={styles.hero}>
