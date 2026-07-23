@@ -20,6 +20,7 @@ import {
   MessageSquare,
   Home,
   DollarSign,
+  Sparkles,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from '@/theme';
@@ -49,6 +50,10 @@ import MasterBillingCard from "./MasterBillingCard";
 import { CustomerCreditsPanel } from "./CustomerCreditsPage";
 import CardOnFileControl from "@/components/customers/CardOnFileControl";
 import CardOnFileWarningBanner from "@/components/customers/CardOnFileWarningBanner";
+import BusinessCard from "@/components/business-card/BusinessCard";
+import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
+import CustomerReviewsTab from "@/components/customers/CustomerReviewsTab";
+import { toast as sonnerToast } from "sonner";
 
 const TABS = [
   { k: "overview", label: "Overview", icon: MapPin },
@@ -60,6 +65,7 @@ const TABS = [
   { k: "tasks", label: "Tasks", icon: ListChecks },
   { k: "notes", label: "Notes", icon: StickyNote },
   { k: "credits", label: "Credits", icon: DollarSign },
+  { k: "reviews", label: "Reviews", icon: Star },
   { k: "portal", label: "Portal Access", icon: KeyRound },
 ];
 
@@ -396,6 +402,12 @@ export default function CustomerDetail() {
         <div className="p-5">
           {tab === "overview" ? (
             <div className="space-y-4">
+              {/* Feb-2026 · Item 6 — Company business card at the top
+                  of the customer profile column. Downloadable vCard so
+                  customers can save the company contact one-tap. */}
+              <div className="max-w-md" data-testid="cd-business-card-slot">
+                <BusinessCard variant="compact" />
+              </div>
               <MasterBillingCard
                 customer={customer}
                 onToast={(t) => setToast(t)}
@@ -535,6 +547,10 @@ export default function CustomerDetail() {
             <CustomerCreditsPanel customerId={id} />
           ) : null}
 
+          {tab === "reviews" ? (
+            <CustomerReviewsTab customerId={id} jobs={jobs} />
+          ) : null}
+
           {tab === "portal" ? (
             <PortalAccessPanel customer={customer} onDone={load} onToast={(t) => setToast(t)} openLogin={() => setLoginModal(true)} />
           ) : null}
@@ -562,23 +578,24 @@ export default function CustomerDetail() {
       />
 
       <Modal
-        open={confirmDelete}
+        open={false}
         onClose={() => setConfirmDelete(false)}
-        title="Delete customer?"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setConfirmDelete(false)}>Cancel</Button>
-            <Button variant="danger" onClick={doDelete} testid="cd-confirm-delete">
-              Delete permanently
-            </Button>
-          </>
-        }
+        title="Delete customer? (legacy modal — retained until Phase 20 removes it)"
+        footer={null}
       >
-        <p className="text-sm" style={{ color: colors.onSurfaceSecondary }}>
-          This will remove <strong>{customer.name}</strong> from the system. Their jobs, quotes and
-          history remain, but references become read-only.
-        </p>
+        <span />
       </Modal>
+
+      <ConfirmDeleteDialog
+        open={confirmDelete}
+        title={`Delete ${customer?.name || "customer"}?`}
+        body={`This will archive ${customer?.name || "this customer"} and remove them from active lists. Their jobs, quotes and history remain, but references become read-only.`}
+        requireTypeConfirm={true}
+        typeConfirmString="DELETE"
+        confirmLabel="Delete permanently"
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={doDelete}
+      />
 
       {/* Feb-2026 Customer Detail Additions — VIP note modal (double-click star). */}
       <VipNoteModal
@@ -1094,4 +1111,5 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
     </Modal>
   );
 }
+
 

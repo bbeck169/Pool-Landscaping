@@ -355,6 +355,33 @@ async def download_vcf_v2(
     )
 
 
+# Feb-2026 · Item 8 — lightweight review summary for the BusinessCard
+# rating pill. Aggregates only ``is_public=true`` reviews so pending
+# private feedback never inflates the average.
+@router.get("/tenants/reviews-summary", tags=["tenants"],
+             operation_id="tenants.reviewsSummary")
+async def tenants_reviews_summary(
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Public-ish (still auth-gated) rollup: {avg, count} for a
+    tenant's public reviews. Callers must render conditionally on
+    ``count >= 5`` per Item 8 spec so the pill only shows once
+    there's a meaningful sample."""
+    pipeline = [
+        {"$match": {"tenant_id": tenant["id"], "is_public": True,
+                     "star_rating": {"$gte": 1, "$lte": 5}}},
+        {"$group": {"_id": None,
+                     "count": {"$sum": 1},
+                     "avg": {"$avg": "$star_rating"}}},
+    ]
+    rows = await db.reviews.aggregate(pipeline).to_list(1)
+    if not rows:
+        return {"count": 0, "avg": None}
+    r = rows[0]
+    return {"count": int(r.get("count") or 0),
+             "avg": round(float(r.get("avg") or 0.0), 2)}
+
+
 @router.get("/tenants")
 async def list_tenants(admin: dict = Depends(require_super_admin)):
     rows = await db.tenants.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)

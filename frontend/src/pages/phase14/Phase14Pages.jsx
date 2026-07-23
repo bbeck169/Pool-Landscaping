@@ -6,6 +6,7 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import { useAuth } from "@/auth";
 import TrainingCertsPanel from "@/pages/training/TrainingCertsPanel";
+import BusinessCard from "@/components/business-card/BusinessCard";
 
 /* Phase 14 pages — Communication thread deep view · Technician profile · Form builder. */
 
@@ -210,6 +211,12 @@ export function TechnicianProfile() {
 
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-4" data-testid="technician-profile-page">
+      {/* Feb-2026 · Item 6 — Company business card at the top of the
+          tech profile so field techs can share it with customers on
+          the spot. */}
+      <div className="max-w-md" data-testid="tech-business-card-slot">
+        <BusinessCard variant="compact" />
+      </div>
       <div className="flex items-center gap-4">
         <div className="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-black text-white" style={{ backgroundColor: colors.brand }}>
           {(tech.name || "?").slice(0, 1).toUpperCase()}

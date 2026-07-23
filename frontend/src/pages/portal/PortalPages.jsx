@@ -165,7 +165,7 @@ export function PortalInvoices() {
     0
   );
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-invoices">
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-invoices" data-tour-id="invoices-list">
       <PageHeader title="My Invoices" subtitle="Pay online, download receipts." />
       <div className="rounded-2xl p-5 mb-4" style={{ background: "linear-gradient(90deg, #0284C7, #16A34A)", color: "#fff" }}>
         <div className="text-sm opacity-85">Total outstanding</div>
@@ -260,7 +260,7 @@ export function PortalEstimates() {
   const [rows, setRows] = useState(null);
   useEffect(() => { api.get("/quotes?doc_type=quote").then(setRows).catch(() => setRows([])); }, []);
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-estimates">
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-estimates" data-tour-id="estimates-list">
       <PageHeader title="Estimates" subtitle="Approve or decline proposals." />
       {rows === null ? <Skeleton style={{ height: 180 }} /> :
        rows.length === 0 ? <EmptyState icon={FileText} title="No estimates yet" /> :
@@ -412,7 +412,7 @@ export function PortalPaymentMethod() {
   };
   const stripeReady = ach.configured === true;
   return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-pm">
+    <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-pm" data-tour-id="payment-method-panel">
       <button onClick={() => navigate("/portal/payments")} className="flex items-center gap-1 text-sm font-semibold mb-4" style={{ color: colors.muted }}>
         <ArrowLeft size={14} /> Payments
       </button>
@@ -629,7 +629,7 @@ export function PortalMessages() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-messages">
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-messages" data-tour-id="communications-list">
       <PageHeader title="Messages" subtitle="Talk to your service team." />
       <div className="rounded-2xl overflow-hidden mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}`, minHeight: 320 }}>
         <div className="p-4 space-y-2 max-h-[50vh] overflow-y-auto">
@@ -742,7 +742,7 @@ export function PortalRequestService() {
     finally { setBusy(false); }
   };
   return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-request">
+    <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-request" data-tour-id="request-service-form">
       <PageHeader title="Request Service" subtitle="Tell us what you need." />
       <form onSubmit={submit} className="rounded-2xl p-5 space-y-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
         <div>

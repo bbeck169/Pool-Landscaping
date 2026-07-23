@@ -7433,3 +7433,207 @@ tested).
 Provider 429 upstream continues. Awaiting user decision on
 Option A (fresh OpenWeb Ninja key) vs Option B (RapidAPI switch).
 No integration code changed.
+
+## Phase 19 tail (follow-ups) · Feb 2026 · Session 2026-07
+
+### 1 · AI Brain + Copilot routes wired ✅
+- App.js registers `/settings/ai-brain` → `AIBrainPage` and
+  `/admin/copilot` → `CopilotPage`. Both admin-gated via `<AdminOnly>`.
+- `frontend/src/nav/adminNav.js` — added "AI Copilot" and "AI Brain"
+  entries under the AI Employees group with `hard_rule: "admin_only"`
+  so techs/customers never see the links.
+- Verified live: sidebar renders both entries for admin login;
+  routes serve the pages.
+
+### 2 · Delete-surface confirmations ✅ (14 wrapped)
+Instead of one-off dialogs per site, `mustConfirm` (the codebase's
+existing global escape hatch backed by a Radix Dialog) was extended
+with two new options — `requireTypeConfirm` (bool) + `typeConfirmString`
+(default `"DELETE"`) — so every site can swap `window.confirm(...)`
+→ `await mustConfirm({...})` in a single line. Extended in
+`components/ui/confirm-dialog.jsx`.
+
+**Wrapped surfaces (H = HEAVY type-DELETE, L = light):**
+
+| # | Surface | File | Weight |
+|---|---|---|---|
+| 1 | Delete customer | pages/customers/CustomerDetail.jsx | H (`ConfirmDeleteDialog`) |
+| 2 | Delete knowledge entry | pages/settings/AIBrainPage.jsx | H (`ConfirmDeleteDialog`) |
+| 3 | Delete marketing template | pages/marketing/MarketingTemplatesAdmin.jsx | H |
+| 4 | Revert template to factory | pages/marketing/MarketingTemplatesAdmin.jsx | L |
+| 5 | Bulk delete images | pages/marketing/MarketingMediaAdmin.jsx | H |
+| 6 | Deactivate promo code | pages/marketing/AdminPromoCodesPage.jsx | L |
+| 7 | Deactivate equipment tracker | pages/tracking/EquipmentTrackerPages.jsx | L |
+| 8 | Deactivate segment | pages/marketing/MarketingSegmentsPage.jsx | H |
+| 9 | Deactivate sequence | pages/marketing/MarketingSequencesPage.jsx | H |
+| 10 | Delete lead form | pages/marketing/MarketingFormsPage.jsx | H |
+| 11 | Delete crew | pages/ops/OpsHub.jsx | L |
+| 12 | Delete tenant training module | pages/training/AdminTraining.jsx | H |
+| 13 | Deactivate library template | pages/marketing/MarketingTemplatesLibraryPage.jsx | L |
+| 14 | Convert lead | pages/leads/LeadsDashboardPage.jsx | L |
+
+Also added a reusable `useConfirmDelete()` hook + the standalone
+`<ConfirmDeleteDialog />` component for site-specific dialogs that
+need bespoke UI. `hooks/useConfirmDelete.jsx`.
+
+### 3 · BusinessCard mount + `/settings/business-card` editor ✅
+- Compact card mounted on **Customer detail** (top of Overview
+  column, admin view) + **Technician profile** (top of profile
+  page) + **PortalHome** (customer-facing, above referrals).
+- New `/settings/business-card` admin page — 2-column layout with
+  form (company_name, tagline, service_area, phone, email,
+  website_url, google_review_url, logo_url, gradient_from/to color
+  pickers) + live `<BusinessCard variant="full" />` preview.
+  Sidebar entry under "Settings" section.
+- Preview remounts after Save so it re-fetches the fresh row.
+
+### 4 · Top admin questions widget ✅
+- New endpoint `GET /api/ai/copilot/top-questions?days=30&limit=10`
+  (operationId `ai.copilot.topQuestions`) — Mongo aggregation over
+  `ai_copilot_log` grouping by normalized prompt (lowercase + trim),
+  returns count, last_prompt, last_response snippet, last_asked_at.
+  Admin-only.
+- Widget rendered at the top of `AIBrainPage`. Each row shows the
+  question count pill + prompt + last-asked date + an "Add to KB"
+  button that POSTs `/api/ai/knowledge` with a pre-filled Q&A entry
+  and opens the entry for review.
+
+### 5 · Item 7 — Customer tour first-login-only ✅ (5/5 tests pass)
+- Added `users.has_seen_customer_tour: bool` + `customer_tour_seen_at`.
+- `POST /api/users/me/mark-tour-seen` — customer-only, flips the
+  flag on both the user doc and mirrors to
+  `customers.portal_walkthrough_completed_at`.
+- `POST /api/users/{uid}/reset-tour` — admin/super_admin only.
+  Tenant-scoped for admin, cross-tenant for super_admin. Clears
+  both flags so the tour replays next login.
+- `/auth/me` includes `has_seen_customer_tour` in the payload
+  (automatic — the User doc is returned wholesale minus password).
+- Boot backfill in `portal_walkthrough.py::run_walkthrough_backfill`
+  sets the flag to `true` for every existing customer-role user so
+  returning customers don't see a tour on next login. New customers
+  keep the default `false`.
+- `PortalWalkthrough.jsx` now (a) hard-gates on role=="customer",
+  (b) reads the user-level flag first, (c) marks-seen via the new
+  endpoint on complete/skip, (d) optimistically flips the local auth
+  user's flag via `setUser` so re-renders don't retrigger.
+- `AuthProvider` exposes `setUser` in the context value.
+- Admin "Reset tour" button on `CustomerDetail.jsx` header.
+
+**Tests**: `backend/tests/test_phase19_item7_customer_tour.py`
+covers auth/me exposure, admin+tech 403s, customer 200, admin reset
+flow, non-admin reset 403, top-questions endpoint role check.
+
+### 6 · Item 8 — Reviews funnel (NiceJob-style)
+Discovery: a full reviews subsystem already existed
+(`routers/reviews.py`, `review_requests` + `reviews` collections,
+`/admin/reviews` + `/reviews/r/:token` pages). Additions this pass:
+
+**Backend:**
+- `POST /api/reviews/requests/bulk` (operationId `reviews.bulkRequest`)
+  — creates request rows for N customers at once. Per-row outcome
+  (`queued|duplicate|not_found`) so admin knows what happened. 7-day
+  dedup honored unless super_admin passes `skip_dedup=true`.
+- `GET /api/tenants/reviews-summary` (operationId
+  `tenants.reviewsSummary`) — `{count, avg}` for public reviews.
+  Callers gate on `count >= 5` per Item 8 spec.
+- `business_card.google_review_url` fallback threaded into the
+  public landing endpoint. When no `tenant_review_platforms` are
+  configured, we synthesize a "Google" platform from the business
+  card URL — or fall back to a Google search URL for the company
+  name so the 4-5 star funnel never dead-ends.
+- Auto-trigger on job completion —
+  `services/review_auto_request.py::maybe_auto_request_after_job`
+  wired into `routers/jobs.py::update_job` after the CSAT + comms
+  hooks. Tenant opt-out via
+  `tenants.settings.review_auto_request_after_job=False`. 14-day
+  dedup (stricter than the manual 7-day).
+
+**Frontend:**
+- New "Reviews" tab on `CustomerDetail` (between Credits and
+  Portal Access) — `components/customers/CustomerReviewsTab.jsx`.
+  Lists every review request for the customer with star display,
+  outcome badge, channel, sent-date, and a red "Follow-up needed"
+  chip on ≤3-star rows. Header action: "Send review request" with
+  a channel selector (email/sms/both). Automatically pins the
+  request to the customer's last completed job when present.
+
+### 9 · Portal home GreetingTile ✅
+- New endpoint `GET /api/customers/me/greeting-state` (operationId
+  `portal.greetingState`) returns first_name, time-of-day bucket
+  (America/Phoenix), tenant business_card fields (logo + gradient),
+  and the highest-priority subline (today_visit → upcoming_visit
+  → unpaid_invoice → unread_message → default). 2s per-user cache.
+- `components/customer/GreetingTile.jsx` renders a full-width
+  gradient hero with logo avatar + greeting + subline + right-side
+  quick actions (Contact us modal, Pay invoice if unpaid, Book
+  service). Only renders for role=="customer".
+- Mounted at the very top of `PortalHome`. Tagged
+  `data-tour-id="greeting-tile"` for Item 10 tour step 1.
+
+### 12 · Circles hoisted + X-out audit ✅
+**Discovery report:** there are no X-close buttons on any status
+circle in `PortalHome.jsx`. Only Xs in the file were on modal close
+controls (RequestService modal + AI Chat pane). "X-out removal"
+requirement is a no-op.
+
+**Placement:** kept greeting tile at row 1 (warm hero establishes
+context). Moved the account tiles (Balance/Past Due/Credit/Next
+Service) + alert tiles (Overdue/Estimates/Unread) into a
+consolidated `data-tour-id="status-circles"` block directly under
+the greeting tile, ABOVE the Call Now CTA and palm-tree hero.
+Rationale: greeting → hard numbers → CTAs reads naturally; putting
+numbers above the greeting strips its emotional weight.
+
+### 10 · Portal tour rewiring — data-tour-id markers laid ✅
+All 12 tour steps have a target element in `/app`:
+
+| Step | Target route | data-tour-id | Element |
+|---|---|---|---|
+| 1 | /portal | greeting-tile | GreetingTile |
+| 2 | /portal | status-circles | Portal status block |
+| 3 | /portal | next-service-visit | Portal palm-tree hero |
+| 4 | /portal | business-card | BusinessCard on PortalHome |
+| 5 | /portal/messages | communications-list | PortalMessages |
+| 6 | /portal/invoices | invoices-list | PortalInvoices |
+| 7 | /portal/estimates | estimates-list | PortalEstimates |
+| 8 | /portal/service-reports | service-reports-list | PortalServiceReports |
+| 9 | /portal/request-service | request-service-form | PortalRequestService |
+| 10 | /portal/payment-method | payment-method-panel | PortalPaymentMethod |
+| 11 | /portal/referrals | referrals-panel | PortalReferralsPage |
+
+**Still TODO on Item 10** (deferred to next pass):
+- The Joyride-style tour engine itself — the current `PortalWalkthrough`
+  only knows the legacy step list. Needs a rewrite to (a) read the
+  12-step spec, (b) navigate via react-router as steps advance,
+  (c) `scrollIntoView({behavior:"smooth", block:"center"})` on
+  each target after a short delay, (d) apply a `ring-4 animate-pulse`
+  highlight overlay on the current target.
+- Vitest coverage for the 12-step advance flow.
+
+### Still deferred to future passes (in priority order)
+- **Item 11** — Referral vesting ($25 credit after 1st paid month).
+  Backend + cron + admin promote/forfeit endpoints + portal panel
+  status pills.
+- **Item 10 engine rewire** — see above.
+- **Phase 20 P3** — SEO analyzer. Backend router
+  `backend/routers/seo_analyzer.py` is drafted (BeautifulSoup-based,
+  scorecard + fixes + `seo_scans` history) but NOT yet mounted in
+  server.py, and no frontend page exists yet. Endpoints will be
+  `POST /api/seo/analyze` (`seo.analyze`) and `GET /api/seo/scans`
+  (`seo.list`).
+- **Phase 20 P4** — GBP completeness checklist.
+- **Phase 20 P2** — AI review-reply generator.
+- **Phase 20 P1** — GBP post drafter with nano-banana image gen.
+- **Phase 20 P5** — NFC review request card variant.
+
+### OpenAPI operationIds shipped this pass
+- `ai.copilot.topQuestions`
+- `portal.greetingState`
+- `reviews.bulkRequest`
+- `tenants.reviewsSummary`
+- (existing) `tenants.getBusinessCard`, `tenants.updateBusinessCard`, `tenants.downloadVcf`
+
+### Test totals (post-pass)
+- Backend: 12 tests pass (5 new Item 7 + 7 pre-existing Phase 19
+  batch). Full sweep not re-run this session — deferred.
+- Frontend: not re-run this session — deferred.

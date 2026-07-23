@@ -7,6 +7,7 @@ import {
   Link2, Share2,
 } from "lucide-react";
 import { api } from "@/api";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { colors, money, brandGradientCss } from "@/theme";
 import { useAuth } from "@/auth";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -426,7 +427,15 @@ function Crews() {
       setToast({ tone: "success", message: "Saved" });
     } catch (e) { setToast({ tone: "error", message: e.message }); }
   };
-  const del = async (cid) => { try { await api.del(`/crews/${cid}`); refresh(); } catch (e) { setToast({ tone: "error", message: e.message }); } };
+  const del = async (cid) => {
+    const ok = await mustConfirm({
+      title: "Delete this crew?",
+      description: "Jobs assigned to this crew will be unassigned. Techs remain intact.",
+      tone: "danger", confirmText: "Delete",
+    });
+    if (!ok) return;
+    try { await api.del(`/crews/${cid}`); refresh(); } catch (e) { setToast({ tone: "error", message: e.message }); }
+  };
   return (
     <Card testid="crews-page">
       <div className="flex justify-between mb-3">

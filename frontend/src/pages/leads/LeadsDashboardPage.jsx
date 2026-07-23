@@ -4,6 +4,7 @@
 // action calls existing POST /api/leads/{id}/convert.
 import React, { useEffect, useMemo, useState } from "react";
 import { api } from "@/api";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { Card } from "@/components/ui/card";
 import { Search, Filter, ArrowRight, X } from "lucide-react";
 
@@ -237,7 +238,12 @@ function LeadDetailDrawer({ lead, onClose, onUpdated }) {
   };
 
   const convert = async () => {
-    if (!window.confirm(`Convert "${lead.name || lead.email}" into a customer?`)) return;
+    const ok = await mustConfirm({
+      title: `Convert "${lead.name || lead.email}" into a customer?`,
+      description: "The lead will be closed as converted and a new customer record created.",
+      confirmText: "Convert",
+    });
+    if (!ok) return;
     setBusy(true); setError("");
     try {
       await api.post(`/leads/${lead.id}/convert`, {});

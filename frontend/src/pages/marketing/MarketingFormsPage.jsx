@@ -10,6 +10,7 @@
 // Backend contract lives in /app/backend/routers/marketing_forms.py.
 import React, { useEffect, useMemo, useState } from "react";
 import { api } from "@/api";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { Card } from "@/components/ui/card";
 import { Trash2, Plus, Copy, RefreshCw, Save, ArrowUp, ArrowDown } from "lucide-react";
 
@@ -84,7 +85,12 @@ export default function MarketingFormsPage() {
     } catch (e) { setError(e?.message || "Toggle failed"); }
   };
   const remove = async (form) => {
-    if (!window.confirm(`Delete "${form.name}"?`)) return;
+    const ok = await mustConfirm({
+      title: `Delete "${form.name}"?`,
+      description: "The form URL will stop accepting submissions. Existing submissions stay in the leads log.",
+      tone: "danger", confirmText: "Delete", requireTypeConfirm: true,
+    });
+    if (!ok) return;
     try { await api.delete(`/admin/forms/${form.id}`); refresh(); }
     catch (e) { setError(e?.message || "Delete failed"); }
   };

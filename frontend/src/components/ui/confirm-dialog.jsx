@@ -50,6 +50,12 @@ const defaults = {
   cancelText: "Cancel",
   tone: "default", // "default" | "danger"
   cancelable: true,
+  // Feb-2026 · Item 1 follow-up — HEAVY destructive actions require
+  // the user to type an exact confirmation string before Confirm is
+  // enabled. Pass ``requireTypeConfirm: true`` (default string
+  // "DELETE") to opt-in.
+  requireTypeConfirm: false,
+  typeConfirmString: "DELETE",
 };
 
 export function ConfirmProvider({ children }) {
@@ -96,6 +102,11 @@ export function ConfirmProvider({ children }) {
 
   const opts = state?.opts;
   const isDanger = opts?.tone === "danger";
+  const [typed, setTyped] = useState("");
+  useEffect(() => { setTyped(""); }, [state]);
+  const typeMatch = !opts?.requireTypeConfirm ||
+    typed === (opts?.typeConfirmString || "DELETE");
+  const confirmDisabled = !typeMatch;
 
   return (
     <ConfirmContext.Provider value={value}>
@@ -118,7 +129,7 @@ export function ConfirmProvider({ children }) {
             )}
             data-testid="app-confirm-dialog"
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (e.key === "Enter" && !confirmDisabled) {
                 e.preventDefault();
                 settle(true);
               }
@@ -146,6 +157,22 @@ export function ConfirmProvider({ children }) {
                   {opts?.title}
                 </DialogPrimitive.Description>
               )}
+              {opts?.requireTypeConfirm ? (
+                <div className="mt-2 space-y-1">
+                  <div className="text-xs text-muted-foreground">
+                    Type <strong>{opts?.typeConfirmString || "DELETE"}</strong> to confirm.
+                  </div>
+                  <input
+                    type="text"
+                    value={typed}
+                    onChange={(e) => setTyped(e.target.value)}
+                    autoFocus
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    data-testid="app-confirm-type-input"
+                    placeholder={opts?.typeConfirmString || "DELETE"}
+                  />
+                </div>
+              ) : null}
             </div>
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               {opts?.cancelable ? (
@@ -161,10 +188,11 @@ export function ConfirmProvider({ children }) {
               <button
                 type="button"
                 data-testid="app-confirm-ok"
-                onClick={() => settle(true)}
-                autoFocus
+                onClick={() => { if (!confirmDisabled) settle(true); }}
+                autoFocus={!opts?.requireTypeConfirm}
+                disabled={confirmDisabled}
                 className={cn(
-                  "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-semibold text-white",
+                  "inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed",
                   isDanger ? "bg-red-600 hover:bg-red-700" : "bg-primary hover:bg-primary/90",
                 )}
               >

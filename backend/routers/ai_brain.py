@@ -398,3 +398,53 @@ async def copilot_message(
     log_row.pop("_id", None)
     return {"thread_id": thread_id, "reply": reply_text,
              "tool_calls": tool_calls}
+
+
+# ══════════════════════════════════════════════════════════════
+# Feb-2026 · Item 4 bonus — Top admin questions widget.
+# Groups ai_copilot_log entries by prompt (case-insensitive) over
+# the last N days and returns the most frequently asked questions.
+# Powers the AI Brain page dashboard so admins can quickly promote
+# common Copilot prompts into their knowledge base.
+# ══════════════════════════════════════════════════════════════
+@router.get("/ai/copilot/top-questions", tags=["ai"],
+             operation_id="ai.copilot.topQuestions")
+async def top_questions(
+    days: int = 30,
+    limit: int = 10,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    _require_admin(user)
+    days = max(1, min(int(days or 30), 365))
+    limit = max(1, min(int(limit or 10), 50))
+    from datetime import timedelta
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    pipeline = [
+        {"$match": {"tenant_id": tenant["id"], "created_at": {"$gte": since},
+                     "prompt": {"$exists": True, "$ne": ""}}},
+        # Normalize (lowercase + trim) so "How many customers?" and
+        # "how many customers?  " group together.
+        {"$addFields": {"_norm": {"$toLower": {"$trim": {"input": "$prompt"}}}}},
+        {"$group": {
+            "_id": "$_norm",
+            "count": {"$sum": 1},
+            "last_prompt": {"$last": "$prompt"},
+            "last_response": {"$last": "$response"},
+            "last_asked_at": {"$max": "$created_at"},
+        }},
+        {"$sort": {"count": -1, "last_asked_at": -1}},
+        {"$limit": limit},
+    ]
+    rows = await db.ai_copilot_log.aggregate(pipeline).to_list(limit)
+    return {
+        "days": days,
+        "total": len(rows),
+        "items": [
+            {"prompt": r.get("last_prompt") or r.get("_id"),
+             "count": int(r.get("count") or 0),
+             "last_asked_at": r.get("last_asked_at"),
+             "last_response": (r.get("last_response") or "")[:400]}
+            for r in rows
+        ],
+    }

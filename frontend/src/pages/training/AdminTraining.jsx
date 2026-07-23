@@ -21,6 +21,7 @@ import {
   ArrowUp, ArrowDown, Download,
 } from "lucide-react";
 import { api } from "@/api";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { colors } from "@/theme";
 import { PageHeader } from "@/components/ui-kit";
 
@@ -109,7 +110,11 @@ export default function AdminTraining() {
             department: "pool", lessons: [], quiz: { passing_score: 0.75, questions: [] } })}
           onEdit={setEditing}
           onDelete={async (m) => {
-            if (!window.confirm(`Delete tenant module "${m.title}"?`)) return;
+            if (!(await mustConfirm({
+              title: `Delete tenant module "${m.title}"?`,
+              description: "The module and its quiz will be removed. Existing completions stay.",
+              tone: "danger", confirmText: "Delete", requireTypeConfirm: true,
+            }))) return;
             try {
               await api.del(`/training/modules/${m.code}`);
               showToast(`Deleted "${m.title}"`);

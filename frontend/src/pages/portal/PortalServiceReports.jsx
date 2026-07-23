@@ -108,6 +108,7 @@ export function PortalServiceReports() {
     <div
       className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-6"
       data-testid="portal-service-reports"
+      data-tour-id="service-reports-list"
     >
       <PageHeader
         title="Service Reports"

@@ -466,6 +466,89 @@ async def resend_request(rid: str,
 
 
 # ═════════════════════════════════════════════════════════════════════════
+# Feb-2026 · Item 8 — bulk review-request creation
+# ═════════════════════════════════════════════════════════════════════════
+class BulkRequestIn(BaseModel):
+    customer_ids: List[str] = Field(..., min_length=1, max_length=500)
+    sent_via: str = "both"
+    skip_dedup: bool = False
+
+    @field_validator("sent_via")
+    @classmethod
+    def _sent(cls, v: str) -> str:
+        v = (v or "both").lower()
+        if v not in _SENT_VIA:
+            raise ValueError(f"sent_via must be one of {sorted(_SENT_VIA)}")
+        return v
+
+
+@router.post("/requests/bulk", status_code=201,
+              operation_id="reviews.bulkRequest")
+async def bulk_request(body: BulkRequestIn,
+                        user: dict = Depends(get_current_user),
+                        tenant: dict = Depends(get_current_tenant)):
+    """Feb-2026 · Item 8 — enqueue a review request for every listed
+    customer. Skips customers with a duplicate in the last 7 days
+    unless ``skip_dedup=true`` (super_admin only). Returns per-row
+    outcome for admin display."""
+    if _role(user) not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin only")
+    await _ensure_indexes()
+
+    results: List[Dict[str, Any]] = []
+    for cid in body.customer_ids:
+        cust = await db.customers.find_one(
+            {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0},
+        )
+        if not cust:
+            results.append({"customer_id": cid, "status": "not_found"})
+            continue
+        if not (body.skip_dedup and _role(user) == "super_admin"):
+            dup = await _recent_dup(tenant["id"], cid)
+            if dup:
+                results.append({"customer_id": cid, "status": "duplicate",
+                                  "duplicate_of": dup.get("id")})
+                continue
+        request_doc = {
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "token": _new_token(),
+            "customer_id": cid,
+            "job_id": None,
+            "technician_id": None,
+            "sent_via": body.sent_via,
+            "sent_at": now_iso(),
+            "communication_send_ids": [],
+            "landing_visited_at": None,
+            "star_rating_submitted": None,
+            "star_submitted_at": None,
+            "platform_chosen": None,
+            "platform_clicked_at": None,
+            "outcome": "pending",
+            "expires_at": (_now_dt() + timedelta(days=_DEFAULT_EXPIRY_DAYS)).isoformat(),
+            "created_by_user_id": user.get("id"),
+            "created_at": now_iso(),
+            "auto_source": "bulk_admin",
+        }
+        await db.review_requests.insert_one(request_doc)
+        send_ids = await _send_via_comms(tenant, request_doc, body.sent_via)
+        if send_ids:
+            await db.review_requests.update_one(
+                {"id": request_doc["id"]},
+                {"$set": {"communication_send_ids": send_ids}},
+            )
+        results.append({"customer_id": cid, "status": "queued",
+                          "request_id": request_doc["id"]})
+    return {
+        "total": len(body.customer_ids),
+        "queued": sum(1 for r in results if r["status"] == "queued"),
+        "duplicates": sum(1 for r in results if r["status"] == "duplicate"),
+        "not_found": sum(1 for r in results if r["status"] == "not_found"),
+        "results": results,
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════
 # PUBLIC magic-link endpoints — no auth
 # ═════════════════════════════════════════════════════════════════════════
 
@@ -518,6 +601,28 @@ async def public_landing(token: str):
         {"tenant_id": doc["tenant_id"], "is_active": True},
         {"_id": 0},
     ).sort("sort_order", 1).to_list(20)
+
+    # Feb-2026 · Item 8 fallback — when no platforms are configured
+    # we still want a Google CTA on 4-5 star flow. Read the tenant
+    # business_card.google_review_url; if THAT is empty too, fall
+    # back to a Google search URL for the company name so the funnel
+    # never dead-ends.
+    if not platforms:
+        settings = (tenant or {}).get("settings") or {}
+        card = settings.get("business_card") or {}
+        google_url = card.get("google_review_url")
+        company = card.get("company_name") or (tenant or {}).get("name") or "Business"
+        if not google_url:
+            import urllib.parse as _up
+            google_url = (
+                "https://www.google.com/search?q="
+                + _up.quote_plus(f"{company} reviews")
+            )
+        platforms = [{
+            "platform": "google", "display_name": "Google",
+            "review_url": google_url,
+            "_synthetic_from_business_card": True,
+        }]
 
     # Mark first-hit visit.
     if not doc.get("landing_visited_at"):

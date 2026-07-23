@@ -11,6 +11,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { api } from "@/api";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { colors, brandGradientCss } from "@/theme";
 
 /**
@@ -326,7 +327,11 @@ function TemplateEditor({ initial, onClose, onSaved }) {
 
   const del = async () => {
     if (!initial?.id) return;
-    if (!window.confirm("Deactivate this template?")) return;
+    if (!(await mustConfirm({
+      title: "Deactivate this template?",
+      description: "The template will stop being sent. Existing sends are unaffected.",
+      tone: "danger", confirmText: "Deactivate",
+    }))) return;
     setBusy(true);
     try {
       await api.delete(`/marketing/templates/${initial.id}`);

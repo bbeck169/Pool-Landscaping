@@ -24,6 +24,8 @@ import {
 import { api } from "@/api";
 import { brandGradientCss, colors } from '@/theme';
 import { useAuth } from "@/auth";
+import GreetingTile from "@/components/customer/GreetingTile";
+import BusinessCard from "@/components/business-card/BusinessCard";
 import { Skeleton, StatusPill } from '@/components/ui-kit';
 import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 import CallNowButton from "@/pages/portal/CallNowButton";
@@ -88,6 +90,109 @@ export default function PortalHome() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-home">
+      {/* Feb-2026 · Item 9 — first thing the customer sees. */}
+      <GreetingTile />
+
+      {/* Feb-2026 · Item 12 — status "circles" hoisted directly under
+          the greeting tile. Two rows: primary account tiles
+          (Balance/Past Due/Credit/Next Service) + optional alert
+          tiles (Overdue/Estimates/Unread). No X-close buttons —
+          these are status indicators, never dismissible.
+          Also tags the block with ``data-tour-id="status-circles"``
+          for the Item 10 tour highlight. */}
+      <div data-tour-id="status-circles" data-testid="portal-status-circles">
+        <div
+          className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2"
+          data-testid="portal-account-tiles"
+        >
+          <Tile
+            testid="tile-balance-due"
+            label="Balance Due"
+            icon={DollarSign}
+            value={summary ? money(summary.balance_due) : "—"}
+            tooltip={
+              summary
+                ? `${summary.breakdown?.open_invoice_count || 0} open invoice(s) totaling ${money(summary.balance_due)}`
+                : ""
+            }
+            onClick={() => navigate("/portal/invoices")}
+          />
+          <Tile
+            testid="tile-past-due"
+            label="Past Due"
+            icon={AlertCircle}
+            value={summary ? money(summary.past_due) : "—"}
+            alert={(summary?.past_due || 0) > 0}
+            tooltip={
+              summary
+                ? `${summary.breakdown?.past_due_invoice_count || 0} past-due invoice(s) totaling ${money(summary.past_due)}`
+                : ""
+            }
+            onClick={() => navigate("/portal/invoices")}
+          />
+          <Tile
+            testid="tile-credit"
+            label="Credit"
+            icon={Wallet}
+            value={summary ? money(summary.credit) : "—"}
+            tooltip={
+              summary
+                ? summary.credit > 0
+                  ? `${money(summary.credit)} available credit — will apply to your next invoice.`
+                  : "No prepayment credit on your account."
+                : ""
+            }
+            onClick={() => navigate("/portal/payments")}
+          />
+          <Tile
+            testid="tile-next-service"
+            label="Next Service"
+            icon={CalendarClock}
+            value={
+              summary?.next_service
+                ? fmtServiceDate(summary.next_service.date)
+                : "None scheduled"
+            }
+            sub={summary?.next_service?.service_type || ""}
+            tooltip={
+              summary?.next_service
+                ? `${fmtServiceDate(summary.next_service.date)} · ${summary.next_service.service_type}`
+                : "No upcoming service on the calendar."
+            }
+            onClick={() =>
+              summary?.next_service?.job_id
+                ? navigate(`/portal/services/${summary.next_service.job_id}`)
+                : navigate("/portal/request-service")
+            }
+          />
+        </div>
+        {data ? (
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <AlertTile
+              testid="alert-overdue"
+              label="Overdue"
+              value={data.counts.overdue_invoices || 0}
+              tone={(data.counts.overdue_invoices || 0) > 0 ? colors.error : colors.muted}
+              onClick={() => navigate("/portal/invoices")}
+            />
+            <AlertTile
+              testid="alert-estimates"
+              label="Pending estimates"
+              value={data.counts.pending_estimates || 0}
+              tone={(data.counts.pending_estimates || 0) > 0 ? "#A16207" : colors.muted}
+              onClick={() => navigate("/portal/estimates")}
+            />
+            <AlertTile
+              testid="alert-msgs"
+              label="Unread messages"
+              value={data.counts.unread_messages || 0}
+              tone={(data.counts.unread_messages || 0) > 0 ? colors.brand : colors.muted}
+              onClick={() => navigate("/portal/messages")}
+            />
+          </div>
+        ) : null}
+      </div>
+
       {tosStatus && !tosStatus.acknowledged && tosStatus.current_version ? (
         <div
           className="rounded-2xl p-4 mb-4 flex items-center gap-3 flex-wrap"
@@ -127,75 +232,9 @@ export default function PortalHome() {
         <CallNowButton />
       </div>
 
-      {/* Feb-2026 · Slice 3B — Account tiles: Balance Due · Past Due ·
-          Credit · Next Service. Rendered before the hero so the numbers
-          the customer opened the portal to check are the first thing
-          they see. */}
-      <div
-        className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4"
-        data-testid="portal-account-tiles"
-      >
-        <Tile
-          testid="tile-balance-due"
-          label="Balance Due"
-          icon={DollarSign}
-          value={summary ? money(summary.balance_due) : "—"}
-          tooltip={
-            summary
-              ? `${summary.breakdown?.open_invoice_count || 0} open invoice(s) totaling ${money(summary.balance_due)}`
-              : ""
-          }
-          onClick={() => navigate("/portal/invoices")}
-        />
-        <Tile
-          testid="tile-past-due"
-          label="Past Due"
-          icon={AlertCircle}
-          value={summary ? money(summary.past_due) : "—"}
-          alert={(summary?.past_due || 0) > 0}
-          tooltip={
-            summary
-              ? `${summary.breakdown?.past_due_invoice_count || 0} past-due invoice(s) totaling ${money(summary.past_due)}`
-              : ""
-          }
-          onClick={() => navigate("/portal/invoices")}
-        />
-        <Tile
-          testid="tile-credit"
-          label="Credit"
-          icon={Wallet}
-          value={summary ? money(summary.credit) : "—"}
-          tooltip={
-            summary
-              ? summary.credit > 0
-                ? `${money(summary.credit)} available credit — will apply to your next invoice.`
-                : "No prepayment credit on your account."
-              : ""
-          }
-          onClick={() => navigate("/portal/payments")}
-        />
-        <Tile
-          testid="tile-next-service"
-          label="Next Service"
-          icon={CalendarClock}
-          value={
-            summary?.next_service
-              ? fmtServiceDate(summary.next_service.date)
-              : "None scheduled"
-          }
-          sub={summary?.next_service?.service_type || ""}
-          tooltip={
-            summary?.next_service
-              ? `${fmtServiceDate(summary.next_service.date)} · ${summary.next_service.service_type}`
-              : "No upcoming service on the calendar."
-          }
-          onClick={() =>
-            summary?.next_service?.job_id
-              ? navigate(`/portal/services/${summary.next_service.job_id}`)
-              : navigate("/portal/request-service")
-          }
-        />
-      </div>
+      {/* Feb-2026 · Item 12 — the account tiles block that used to
+          live here has been hoisted to the very top of the page,
+          directly under the greeting tile. */}
 
       {/* Feb-2026 · Slice 3D — Prominent Request Service CTA. Opens a
           modal so the customer never has to leave the landing page. */}
@@ -221,6 +260,7 @@ export default function PortalHome() {
         className="rounded-2xl p-6 md:p-8 mb-4 text-white relative overflow-hidden"
         style={{ background: brandGradientCss, minHeight: 180 }}
         data-testid="portal-hero"
+        data-tour-id="next-service-visit"
       >
         <div
           className="absolute inset-0 opacity-25"
@@ -255,32 +295,10 @@ export default function PortalHome() {
         </div>
       </div>
 
-      {/* Alerts */}
-      {data ? (
-        <div className="grid grid-cols-3 gap-2 mb-4">
-          <AlertTile
-            testid="alert-overdue"
-            label="Overdue"
-            value={data.counts.overdue_invoices || 0}
-            tone={(data.counts.overdue_invoices || 0) > 0 ? colors.error : colors.muted}
-            onClick={() => navigate("/portal/invoices")}
-          />
-          <AlertTile
-            testid="alert-estimates"
-            label="Pending estimates"
-            value={data.counts.pending_estimates || 0}
-            tone={(data.counts.pending_estimates || 0) > 0 ? "#A16207" : colors.muted}
-            onClick={() => navigate("/portal/estimates")}
-          />
-          <AlertTile
-            testid="alert-msgs"
-            label="Unread messages"
-            value={data.counts.unread_messages || 0}
-            tone={(data.counts.unread_messages || 0) > 0 ? colors.brand : colors.muted}
-            onClick={() => navigate("/portal/messages")}
-          />
-        </div>
-      ) : null}
+      {/* Alerts — Feb-2026 · Item 12 · moved into the status-circles
+          block at the top of the page. The old copy here is retained
+          intentionally empty to preserve the surrounding layout. */}
+      {null}
 
       {/* Quick actions */}
       <div
@@ -304,6 +322,13 @@ export default function PortalHome() {
       <ReferralSection />
       {/* Slice O.2 · My Referrals — hides when list is empty. */}
       <MyReferralsSection />
+
+      {/* Feb-2026 · Item 3/10 — Customer-facing business card. Tap
+          to save the company contact / open NFC handoff. Tagged for
+          the portal tour (step 4). */}
+      <div className="mb-4 max-w-md" data-tour-id="business-card">
+        <BusinessCard variant="compact" />
+      </div>
 
       {/* Last visit */}
       {data?.last_visit ? (

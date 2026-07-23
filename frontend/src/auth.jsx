@@ -57,7 +57,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthCtx.Provider
-      value={{ user, role, loading, token, login, signup, me, logout }}
+      value={{ user, role, loading, token, login, signup, me, logout, setUser }}
     >
       {children}
     </AuthCtx.Provider>

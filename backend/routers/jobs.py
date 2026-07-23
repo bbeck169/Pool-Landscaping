@@ -992,6 +992,15 @@ async def update_job(jid: str, body: JobUpdate,
                 )
             except Exception:
                 pass
+            # Feb-2026 · Item 8 · auto-trigger a review request when a
+            # job is marked completed, unless the tenant opted out via
+            # ``settings.review_auto_request_after_job=False``. Own
+            # dedup logic (14 days) inside the helper.
+            try:
+                from services.review_auto_request import maybe_auto_request_after_job
+                await maybe_auto_request_after_job(tenant, fresh)
+            except Exception as _e_r:
+                logger.warning(f"review auto-request skipped: {_e_r}")
 
     # Comms Phase 3 — job.scheduled automation. Fires when the update
     # newly assigns/changes ``scheduled_date`` (transition semantics

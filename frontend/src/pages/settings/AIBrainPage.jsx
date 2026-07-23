@@ -6,7 +6,7 @@
 // with a stray click.
 import React from "react";
 import { toast } from "sonner";
-import { Plus, Save, Trash2, Sparkles } from "lucide-react";
+import { Plus, Save, Trash2, Sparkles, TrendingUp, PlusCircle } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
@@ -111,6 +111,22 @@ export default function AIBrainPage() {
           data-testid="ai-brain-new-btn"
         ><Plus size={14} /> New entry</button>
       </div>
+
+      <TopQuestionsWidget onSaveToKnowledge={async (q) => {
+        try {
+          const row = await api.post("/ai/knowledge", {
+            kind: "faq",
+            title: q.prompt.length > 80 ? `${q.prompt.slice(0, 77)}…` : q.prompt,
+            content_md: `**Q:** ${q.prompt}\n\n**A:** ${q.last_response || ""}`.trim(),
+            is_active: true, tags: ["from_copilot"],
+          });
+          await load();
+          setActiveId(row.id); setDraft(row);
+          toast.success("Added to knowledge base — review before publishing");
+        } catch (e) {
+          toast.error(`Save failed: ${e.message || e}`);
+        }
+      }} />
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
         <div className="lg:col-span-1 rounded-xl p-2 max-h-[70vh] overflow-y-auto"
@@ -252,6 +268,85 @@ export default function AIBrainPage() {
         onCancel={() => setDeleteId(null)}
         onConfirm={confirmDelete}
       />
+    </div>
+  );
+}
+
+// Feb-2026 · Item 4 bonus — "Top admin questions" widget.
+// Reads /api/ai/copilot/top-questions?days=30 and lets admins
+// promote a common question straight into the knowledge base.
+function TopQuestionsWidget({ onSaveToKnowledge }) {
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    let alive = true;
+    api.get("/ai/copilot/top-questions?days=30&limit=10")
+      .then((r) => { if (alive) setItems(r?.items || []); })
+      .catch((e) => { if (alive) setError(e.message || "Failed to load"); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  return (
+    <div className="rounded-xl p-4 space-y-2"
+         style={{ backgroundColor: colors.surface,
+                    border: `1px solid ${colors.border}` }}
+         data-testid="ai-brain-top-questions">
+      <div className="flex items-center gap-2">
+        <TrendingUp size={14} style={{ color: colors.brand }} />
+        <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>
+          Top admin questions (last 30 days)
+        </div>
+      </div>
+      {loading ? (
+        <div className="text-xs" style={{ color: colors.muted }}
+             data-testid="ai-brain-top-questions-loading">Loading…</div>
+      ) : error ? (
+        <div className="text-xs" style={{ color: "#B91C1C" }}
+             data-testid="ai-brain-top-questions-error">{error}</div>
+      ) : items.length === 0 ? (
+        <div className="text-xs" style={{ color: colors.muted }}
+             data-testid="ai-brain-top-questions-empty">
+          No copilot activity yet. Try asking questions in the AI Copilot.
+        </div>
+      ) : (
+        <div className="space-y-1"
+             data-testid="ai-brain-top-questions-list">
+          {items.map((q, idx) => (
+            <div key={idx}
+                 className="flex items-start gap-2 rounded-md p-2"
+                 style={{ backgroundColor: colors.surfaceSecondary,
+                            border: `1px solid ${colors.border}` }}
+                 data-testid={`ai-brain-top-question-${idx}`}>
+              <div className="flex-shrink-0 text-[10px] font-bold uppercase rounded px-1.5 py-0.5"
+                   style={{ backgroundColor: colors.brandTertiary,
+                              color: colors.brand }}>
+                ×{q.count}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-semibold truncate"
+                     style={{ color: colors.onSurface }}>
+                  {q.prompt}
+                </div>
+                <div className="text-[10px]" style={{ color: colors.muted }}>
+                  Last asked {(q.last_asked_at || "").slice(0, 10)}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onSaveToKnowledge(q)}
+                className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md hover:brightness-95"
+                style={{ backgroundColor: colors.brand, color: "#fff" }}
+                data-testid={`ai-brain-top-question-save-${idx}`}
+              >
+                <PlusCircle size={11} /> Add to KB
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

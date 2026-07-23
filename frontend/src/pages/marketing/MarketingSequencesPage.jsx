@@ -12,6 +12,7 @@ import {
   ArrowUp, ArrowDown, Copy, Send, Eye, ChevronRight, Zap,
 } from "lucide-react";
 import { api } from "@/api";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { colors, brandGradientCss } from "@/theme";
 
 const TRIGGER_LABELS = {
@@ -291,7 +292,12 @@ function SequenceEditor({ initial, onClose, onSaved }) {
 
   const del = async () => {
     if (!initial?.id) return;
-    if (!window.confirm("Deactivate this sequence and halt every active enrolment?")) return;
+    const ok = await mustConfirm({
+      title: "Deactivate this sequence?",
+      description: "Every active enrolment is halted immediately. No further steps will fire.",
+      tone: "danger", confirmText: "Deactivate", requireTypeConfirm: true,
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await api.del(`/marketing/sequences/${initial.id}`);

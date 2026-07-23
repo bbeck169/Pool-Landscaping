@@ -25,6 +25,7 @@ import {
   Save,
 } from "lucide-react";
 import { api } from "@/api";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { toast } from "sonner";
 
 // ─── Type theming (semantic per tracker type, NOT status) ───────────
@@ -326,7 +327,12 @@ export function EquipmentTrackerManagePage({ trackerType }) {
   }
 
   async function removeRow(id) {
-    if (!window.confirm("Deactivate this tracker? History is kept for audit.")) return;
+    const ok = await mustConfirm({
+      title: "Deactivate this tracker?",
+      description: "History is kept for audit; only new reminders stop.",
+      tone: "danger", confirmText: "Deactivate",
+    });
+    if (!ok) return;
     try {
       await api.del(`/equipment/trackers/${id}`);
       setRows((prev) => prev.filter((r) => r.id !== id));

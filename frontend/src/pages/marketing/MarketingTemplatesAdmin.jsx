@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { TemplateEditor, computeSmsSegments } from "@/components/marketing/TemplateEditor";
 import { MergeTagPalette } from "@/components/marketing/MergeTagPalette";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
@@ -280,7 +281,12 @@ export function MarketingTemplateDetailPage() {
 
   async function revert() {
     if (!row?.system) return;
-    if (!window.confirm("Revert to factory defaults?")) return;
+    const ok = await mustConfirm({
+      title: "Revert to factory defaults?",
+      description: "Your customisations will be replaced with the current factory version.",
+      tone: "danger", confirmText: "Revert",
+    });
+    if (!ok) return;
     try {
       const res = await api.post(`/marketing/templates/${id}/revert`, {});
       setRow(res);
@@ -293,7 +299,12 @@ export function MarketingTemplateDetailPage() {
 
   async function del() {
     if (!row || row.system) return;
-    if (!window.confirm("Delete this template?")) return;
+    const ok = await mustConfirm({
+      title: "Delete this template?",
+      description: "The template will be removed from the marketing library. History rows already sent stay intact.",
+      tone: "danger", confirmText: "Delete", requireTypeConfirm: true,
+    });
+    if (!ok) return;
     try {
       await api.del(`/marketing/templates/${id}`);
       toast.success("Deleted");

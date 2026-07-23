@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -65,7 +66,12 @@ export default function AdminPromoCodesPage() {
   }
 
   async function del(row) {
-    if (!window.confirm(`Deactivate code ${row.code}?`)) return;
+    const ok = await mustConfirm({
+      title: `Deactivate code ${row.code}?`,
+      description: "The code will stop accepting new redemptions. Existing redemptions stay intact.",
+      tone: "danger", confirmText: "Deactivate",
+    });
+    if (!ok) return;
     try {
       await api.del(`/promo-codes/${row.id}`);
       setRows((prev) => prev.filter((r) => r.id !== row.id));

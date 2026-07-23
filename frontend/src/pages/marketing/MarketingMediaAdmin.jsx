@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Upload, Trash2, Tag as TagIcon, Search, CheckSquare, Square } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 
 const BASE = process.env.REACT_APP_BACKEND_URL;
 
@@ -118,7 +119,12 @@ export default function MarketingMediaAdminPage() {
       toast.error("Select at least one image");
       return;
     }
-    if (!window.confirm(`Delete ${selectedIds.size} image(s)?`)) return;
+    const ok = await mustConfirm({
+      title: `Delete ${selectedIds.size} image(s)?`,
+      description: "Images referenced by templates are protected server-side and will report as still referenced.",
+      tone: "danger", confirmText: "Delete", requireTypeConfirm: true,
+    });
+    if (!ok) return;
     let deleted = 0, blocked = 0, failed = 0;
     for (const id of selectedIds) {
       try {

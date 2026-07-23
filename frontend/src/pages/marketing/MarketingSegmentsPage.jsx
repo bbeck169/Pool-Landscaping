@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Plus, Users, RefreshCcw, Trash2, X as XIcon, Save } from "lucide-react";
 import { api } from "@/api";
+import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { colors, brandGradientCss } from "@/theme";
 
 /**
@@ -185,7 +186,13 @@ function SegmentEditor({ initial, onClose, onSaved }) {
   };
 
   const del = async () => {
-    if (!initial?.id || !window.confirm("Deactivate this segment?")) return;
+    if (!initial?.id) return;
+    const ok = await mustConfirm({
+      title: "Deactivate this segment?",
+      description: "Existing enrolments halt. Sequences using this segment will no-op.",
+      tone: "danger", confirmText: "Deactivate", requireTypeConfirm: true,
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await api.delete(`/marketing/audience-segments/${initial.id}`);

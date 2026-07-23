@@ -55,6 +55,9 @@ export const ADMIN_NAV_V2 = [
 
   { key: "ai_employees", label: "AI Employees", icon: Bot, entries: [
     { to: "/ai-employees",       label: "AI Employees Hub",    icon: Bot,          feature: "ai_employees" },
+    // Feb-2026 · Item 4 — Master AI Copilot + Knowledge Base (admin only).
+    { to: "/admin/copilot",      label: "AI Copilot",          icon: Sparkles,     feature: "settings", hard_rule: "admin_only" },
+    { to: "/settings/ai-brain",  label: "AI Brain",            icon: Sparkles,     feature: "settings", hard_rule: "admin_only" },
     { to: "/os/lana",            label: "Lana AI Assistant",   icon: Sparkles,     feature: "settings" },
     { to: "/admin/seo/atlas",    label: "Atlas SEO Agent",     icon: SearchIcon,   feature: "seo" },
     { to: "/communications",     label: "Communications",      icon: MessageSquare,feature: "marketing" },
@@ -181,6 +184,8 @@ export const ADMIN_NAV_V2 = [
     // QuoteIQ Q1-UI · Feb 2026
     { to: "/admin/ai-credits", label: "AI Credits",     icon: Sparkles,   feature: "settings", subsection: "Settings" },
     { to: "/admin/chemicals",  label: "Chemical Products", icon: FlaskConical, feature: "settings", subsection: "Settings" },
+    // Feb-2026 · Item 6 — Business Card editor (company-only vCard).
+    { to: "/settings/business-card", label: "Business Card", icon: IdCard, feature: "settings", hard_rule: "admin_only", subsection: "Settings" },
   ]},
 
   { key: "customers", label: "Customers", icon: Users, entries: [

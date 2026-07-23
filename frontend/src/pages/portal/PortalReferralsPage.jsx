@@ -101,7 +101,7 @@ export default function PortalReferralsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50 pb-24" data-testid="portal-referrals-page">
+    <div className="min-h-screen bg-zinc-50 pb-24" data-testid="portal-referrals-page" data-tour-id="referrals-panel">
       <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
         <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">
           Refer & earn

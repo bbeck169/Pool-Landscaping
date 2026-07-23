@@ -1,15 +1,14 @@
-// Feb-2026 · Slice I — Customer portal first-login walkthrough.
+// Feb-2026 · Slice I + Item 7 — Customer portal first-login walkthrough.
 //
-// Lightweight custom tour (no external deps). Overlays a dimmed
-// backdrop with a positioned tooltip pointing at each target testid
-// in sequence.
-//
-// Justification for custom vs Shepherd.js/Reactour: adding a 40kb+
-// package for a nine-step self-contained tour that never re-runs on
-// the same customer is overkill. Custom control keeps the bundle
-// small and the tour styleable with our own tokens.
+// Gates:
+//   * Only renders for role === "customer".
+//   * Reads the user-level ``has_seen_customer_tour`` flag first, then
+//     falls back to the legacy per-customer status endpoint.
+//   * On complete OR skip, POSTs to ``/users/me/mark-tour-seen`` so
+//     it never re-triggers on future logins.
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "@/api";
+import { useAuth } from "@/auth";
 
 const colors = {
   brand: "#0EA5E9",
@@ -71,22 +70,35 @@ export const WALKTHROUGH_STEPS = [
 
 
 export default function PortalWalkthrough({ forceOpen = false, onClose }) {
+  const { user, setUser } = useAuth();
   const [status, setStatus] = useState(null);      // null | "should_show" | "done"
   const [step, setStep] = useState(0);
   const [rect, setRect] = useState(null);
 
+  // Item 7 · hard role gate — never render for non-customer users.
+  const isCustomer = user?.role === "customer";
+
+  // Item 7 · user-level flag wins. If the auth payload already says
+  // the customer has seen the tour, skip the network call entirely.
+  const userSeen = !!user?.has_seen_customer_tour;
+
   // Load status once. Skipped when the caller forceOpens (replay).
   useEffect(() => {
     let alive = true;
+    if (!isCustomer) { setStatus("done"); return () => { alive = false; }; }
     if (forceOpen) {
       if (alive) { setStatus("should_show"); setStep(0); }
+      return () => { alive = false; };
+    }
+    if (userSeen) {
+      if (alive) setStatus("done");
       return () => { alive = false; };
     }
     api.get("/customer-portal/walkthrough/status")
       .then((r) => { if (alive) setStatus(r.should_show ? "should_show" : "done"); })
       .catch(() => { if (alive) setStatus("done"); });
     return () => { alive = false; };
-  }, [forceOpen]);
+  }, [forceOpen, isCustomer, userSeen]);
 
   const cur = WALKTHROUGH_STEPS[step];
 
@@ -114,13 +126,24 @@ export default function PortalWalkthrough({ forceOpen = false, onClose }) {
     // the first time (not on the replay from preferences — the flag
     // never clears).
     if (!forceOpen) {
-      try { await api.post("/customer-portal/walkthrough/complete", {}); }
-      catch (e) { /* graceful — user still sees close */ }
+      // Item 7 · new user-level endpoint. Falls back to the legacy
+      // customer-level endpoint if the new one is unavailable.
+      try { await api.post("/users/me/mark-tour-seen", {}); }
+      catch (e) {
+        try { await api.post("/customer-portal/walkthrough/complete", {}); }
+        catch (_) { /* graceful */ }
+      }
+      // Optimistically mirror the flag onto the local auth user so
+      // the tour never re-triggers on nav changes in this session.
+      if (setUser && user) {
+        setUser({ ...user, has_seen_customer_tour: true });
+      }
     }
     setStatus("done");
     if (onClose) onClose();
   };
 
+  if (!isCustomer) return null;
   if (status !== "should_show") return null;
 
   const isFirst = step === 0;

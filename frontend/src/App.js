@@ -69,6 +69,11 @@ import PublicReviewsWidgetPage from "@/pages/reviews/PublicReviewsWidgetPage";
 // QuoteIQ Q1-UI · Feb 2026
 import AICreditsPage from "@/pages/settings/AICreditsPage";
 import ChemicalsPage from "@/pages/settings/ChemicalsPage";
+// Feb-2026 · Item 4 — AI Brain + Copilot admin pages.
+import AIBrainPage from "@/pages/settings/AIBrainPage";
+import CopilotPage from "@/pages/admin/CopilotPage";
+// Feb-2026 · Item 6 — Business Card admin editor.
+import BusinessCardSettingsPage from "@/pages/settings/BusinessCardSettings";
 import DealsKanbanPage from "@/pages/deals/DealsKanbanPage";
 // QuoteIQ Q2-UI · Feb 2026
 import AIEstimatorPage from "@/pages/estimates/AIEstimatorPage";
@@ -755,6 +760,11 @@ export default function App() {
             {/* QuoteIQ Q1-UI · Feb 2026 */}
             <Route path="admin/ai-credits" element={<AdminOnly><AICreditsPage /></AdminOnly>} />
             <Route path="admin/chemicals" element={<AdminOnly><ChemicalsPage /></AdminOnly>} />
+            {/* Feb-2026 · Item 4 — AI Brain (knowledge base) + Copilot chat. */}
+            <Route path="settings/ai-brain" element={<AdminOnly><AIBrainPage /></AdminOnly>} />
+            <Route path="admin/copilot" element={<AdminOnly><CopilotPage /></AdminOnly>} />
+            {/* Feb-2026 · Item 6 — Business Card admin editor. */}
+            <Route path="settings/business-card" element={<AdminOnly><BusinessCardSettingsPage /></AdminOnly>} />
             <Route path="deals" element={<AdminOnly><DealsKanbanPage /></AdminOnly>} />
             <Route path="ai-estimator" element={<AdminOnly><AIEstimatorPage /></AdminOnly>} />
             <Route path="customers/:id/chemistry-history" element={<AdminOnly><CustomerChemistryHistory /></AdminOnly>} />
