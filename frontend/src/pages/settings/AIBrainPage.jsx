@@ -1,0 +1,257 @@
+// Feb-2026 · Item 4 — Admin AI Brain settings page.
+//
+// Lists every ``ai_knowledge_base`` entry (company profile, FAQs,
+// policies, custom) with a Markdown editor on the right. Admin-only.
+// Uses ConfirmDeleteDialog for soft-deletion so nothing goes away
+// with a stray click.
+import React from "react";
+import { toast } from "sonner";
+import { Plus, Save, Trash2, Sparkles } from "lucide-react";
+import { api } from "@/api";
+import { colors } from "@/theme";
+import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
+
+const KIND_OPTIONS = [
+  { key: "company_profile", label: "Company profile" },
+  { key: "faq",             label: "FAQ" },
+  { key: "policy",          label: "Policy" },
+  { key: "custom",          label: "Custom" },
+];
+
+export default function AIBrainPage() {
+  const [items, setItems] = React.useState([]);
+  const [loading, setLoading] = React.useState(true);
+  const [activeId, setActiveId] = React.useState(null);
+  const [draft, setDraft] = React.useState(null);
+  const [saving, setSaving] = React.useState(false);
+  const [deleteId, setDeleteId] = React.useState(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await api.get("/ai/knowledge");
+      setItems(res?.items || []);
+      if (!activeId && (res?.items || []).length) {
+        setActiveId(res.items[0].id);
+        setDraft(res.items[0]);
+      }
+    } catch (e) {
+      toast.error(`Failed to load AI brain: ${e.message || e}`);
+    } finally { setLoading(false); }
+  }, [activeId]);
+  React.useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+
+  const selectItem = (row) => { setActiveId(row.id); setDraft(row); };
+
+  const createNew = async () => {
+    try {
+      const row = await api.post("/ai/knowledge", {
+        kind: "custom", title: "New entry",
+        content_md: "# New entry\n\nWrite about your business here.",
+        is_active: true, tags: [],
+      });
+      await load(); setActiveId(row.id); setDraft(row);
+      toast.success("Entry created");
+    } catch (e) {
+      toast.error(`Create failed: ${e.message || e}`);
+    }
+  };
+
+  const save = async () => {
+    if (!draft?.id) return;
+    setSaving(true);
+    try {
+      const patch = {
+        kind: draft.kind, title: draft.title,
+        content_md: draft.content_md, is_active: draft.is_active,
+        tags: draft.tags || [],
+      };
+      await api.patch(`/ai/knowledge/${draft.id}`, patch);
+      toast.success("Saved");
+      await load();
+    } catch (e) {
+      toast.error(`Save failed: ${e.message || e}`);
+    } finally { setSaving(false); }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteId) return;
+    try {
+      await api.delete(`/ai/knowledge/${deleteId}`);
+      toast.success("Deleted");
+      setActiveId(null); setDraft(null); setDeleteId(null);
+      await load();
+    } catch (e) {
+      toast.error(`Delete failed: ${e.message || e}`);
+      setDeleteId(null);
+    }
+  };
+
+  return (
+    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-4"
+         data-testid="ai-brain-page">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight"
+              style={{ color: colors.onSurface }}
+              data-testid="ai-brain-title">
+            <Sparkles size={20} className="inline mr-2 -mt-0.5"
+                       style={{ color: colors.brand }} />
+            AI Brain
+          </h1>
+          <p className="text-sm" style={{ color: colors.muted }}>
+            Everything the AI Copilot + marketing suggestions know about your company.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={createNew}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold hover:brightness-95"
+          style={{ backgroundColor: colors.brand, color: "#fff" }}
+          data-testid="ai-brain-new-btn"
+        ><Plus size={14} /> New entry</button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
+        <div className="lg:col-span-1 rounded-xl p-2 max-h-[70vh] overflow-y-auto"
+             style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+             data-testid="ai-brain-list">
+          {loading ? (
+            <div className="text-xs p-2" style={{ color: colors.muted }}>Loading…</div>
+          ) : items.length === 0 ? (
+            <div className="text-xs p-2" style={{ color: colors.muted }}>
+              No knowledge yet. Click "New entry".
+            </div>
+          ) : items.map((it) => (
+            <button
+              key={it.id}
+              type="button"
+              onClick={() => selectItem(it)}
+              className="w-full text-left rounded-md px-2 py-2 mb-1 hover:brightness-95"
+              style={{
+                backgroundColor: activeId === it.id ? colors.brandTertiary : "transparent",
+                border: `1px solid ${activeId === it.id ? colors.brand : "transparent"}`,
+              }}
+              data-testid={`ai-brain-item-${it.id}`}
+            >
+              <div className="text-xs font-semibold truncate"
+                   style={{ color: colors.onSurface }}>{it.title}</div>
+              <div className="text-[11px]" style={{ color: colors.muted }}>
+                {it.kind} · {it.is_active ? "active" : "inactive"}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <div className="lg:col-span-3 rounded-xl p-4 space-y-3"
+             style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+             data-testid="ai-brain-editor">
+          {draft ? (
+            <>
+              <div className="grid gap-2 md:grid-cols-2">
+                <div>
+                  <div className="text-[11px] uppercase tracking-wide font-semibold mb-0.5"
+                       style={{ color: colors.muted }}>Title</div>
+                  <input
+                    type="text"
+                    value={draft.title || ""}
+                    onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+                    className="w-full rounded px-2 py-1.5 text-sm focus:outline-none"
+                    style={{
+                      backgroundColor: colors.surfaceSecondary,
+                      color: colors.onSurface,
+                      border: `1px solid ${colors.border}`,
+                    }}
+                    data-testid="ai-brain-title-input"
+                  />
+                </div>
+                <div>
+                  <div className="text-[11px] uppercase tracking-wide font-semibold mb-0.5"
+                       style={{ color: colors.muted }}>Kind</div>
+                  <select
+                    value={draft.kind || "custom"}
+                    onChange={(e) => setDraft({ ...draft, kind: e.target.value })}
+                    className="w-full rounded px-2 py-1.5 text-sm focus:outline-none"
+                    style={{
+                      backgroundColor: colors.surfaceSecondary,
+                      color: colors.onSurface,
+                      border: `1px solid ${colors.border}`,
+                    }}
+                    data-testid="ai-brain-kind-select"
+                  >
+                    {KIND_OPTIONS.map((o) => (
+                      <option key={o.key} value={o.key}>{o.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-wide font-semibold mb-0.5"
+                     style={{ color: colors.muted }}>Content (Markdown)</div>
+                <textarea
+                  value={draft.content_md || ""}
+                  onChange={(e) => setDraft({ ...draft, content_md: e.target.value })}
+                  rows={16}
+                  className="w-full rounded px-3 py-2 text-sm font-mono focus:outline-none"
+                  style={{
+                    backgroundColor: colors.surfaceSecondary,
+                    color: colors.onSurface,
+                    border: `1px solid ${colors.border}`,
+                  }}
+                  data-testid="ai-brain-content-input"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm"
+                     style={{ color: colors.onSurface }}>
+                <input
+                  type="checkbox"
+                  checked={!!draft.is_active}
+                  onChange={(e) => setDraft({ ...draft, is_active: e.target.checked })}
+                  data-testid="ai-brain-active-checkbox"
+                /> Active (included in AI system prompt)
+              </label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={save}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-semibold text-white hover:brightness-95 disabled:opacity-50"
+                  style={{ backgroundColor: colors.brand }}
+                  data-testid="ai-brain-save-btn"
+                >
+                  <Save size={13} /> {saving ? "Saving…" : "Save"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDeleteId(draft.id)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-semibold hover:brightness-95"
+                  style={{
+                    backgroundColor: "#FEF2F2", color: "#991B1B",
+                    border: "1px solid #FECACA",
+                  }}
+                  data-testid="ai-brain-delete-btn"
+                >
+                  <Trash2 size={13} /> Delete
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="text-sm" style={{ color: colors.muted }}>
+              Pick an entry on the left or click "New entry" above.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <ConfirmDeleteDialog
+        open={!!deleteId}
+        title="Delete knowledge entry?"
+        body="This entry will be removed from the AI system prompt. This action can be recovered by an engineer if needed within 30 days."
+        requireTypeConfirm={true}
+        typeConfirmString="DELETE"
+        onCancel={() => setDeleteId(null)}
+        onConfirm={confirmDelete}
+      />
+    </div>
+  );
+}

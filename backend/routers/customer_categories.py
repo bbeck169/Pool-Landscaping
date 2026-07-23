@@ -190,15 +190,32 @@ async def _load_active_categories(tenant_id: str) -> List[Dict[str, Any]]:
 def _match_categories(service_type_strings: List[str],
                        categories: List[Dict[str, Any]]) -> List[str]:
     """Return the category ids whose patterns match any of the input
-    service_type strings (case-insensitive substring)."""
+    service_type strings (case-insensitive substring).
+
+    Post-pass (Feb-2026): if BOTH ``Pool`` and ``Landscaping`` system
+    categories match, additionally include the ``Both`` system
+    category id so ``$in`` queries for the "Both" filter surface these
+    customers with a single-index lookup.
+    """
     lows = [(s or "").strip().lower() for s in service_type_strings if s]
     hits: List[str] = []
+    matched_names: set = set()
+    by_id = {c["id"]: c for c in categories}
     for cat in categories:
+        # Skip the "Both" meta-bucket — it's assigned post-pass.
+        if (cat.get("name") or "").lower() == "both":
+            continue
         for pat in (cat.get("service_type_patterns") or []):
             p = (pat or "").lower()
             if not p:
                 continue
             if any(p in s for s in lows):
+                hits.append(cat["id"])
+                matched_names.add((cat.get("name") or "").lower())
+                break
+    if {"pool", "landscaping"}.issubset(matched_names):
+        for cat in categories:
+            if (cat.get("name") or "").lower() == "both" and cat["id"] not in hits:
                 hits.append(cat["id"])
                 break
     return hits

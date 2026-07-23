@@ -177,13 +177,10 @@ export default function AdminSidebar() {
         </div>
       )}
 
-      {/* Recent */}
-      {recentItems.length > 0 && (
-        <div className="px-2 mb-3" data-testid="nav-recent">
-          <div className="px-2 mb-1 text-[10px] font-bold uppercase tracking-wider" style={{ color: colors.onSurfaceSecondary }}>🕘 Recent</div>
-          <div className="space-y-0.5">{recentItems.map((e) => <Entry key={e.to} e={e} />)}</div>
-        </div>
-      )}
+      {/* Feb-2026 · Item 3 — the "🕘 Recent" widget was removed from
+          the main menu per user request. The nav_recent_v1 tracker
+          still runs so the ⌘K palette can surface recent pages,
+          but the sidebar section is no longer rendered. */}
 
       {/* Main groups */}
       <div className="px-2">

@@ -64,6 +64,10 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
   const [assignedTechUserIds, setAssignedTechUserIds] = useState([]);
   const [categoryOptions, setCategoryOptions] = useState([]);
   const [techOptions, setTechOptions] = useState([]);
+  // Feb-2026 · Item 2 — audience-status segmented control. Resets to
+  // "active" on each fresh dialog open (per PRD: safer default).
+  const [audienceStatus, setAudienceStatus] = useState("active");
+  useEffect(() => { if (open) setAudienceStatus("active"); }, [open]);
 
   const [preview, setPreview] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -118,6 +122,7 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
       category_ids: categoryIds,
       service_days: serviceDays,
       assigned_tech_user_ids: assignedTechUserIds,
+      audience_status: audienceStatus,
       ...(useCustom
         ? { subject: debSubj || null, body: debBody }
         : { template_id: debTpl }),
@@ -134,7 +139,7 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, debChannels, debSubj, debBody, debTpl, useCustom,
-       debCats, debDays, debTechs]);
+       debCats, debDays, debTechs, audienceStatus]);
 
   const total = (preview?.estimated_recipients?.email || 0)
     + (preview?.estimated_recipients?.sms || 0);
@@ -157,6 +162,7 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
         channels: chList,
         audience: "all_active_customers",
         confirm_token: preview.confirm_token,
+        audience_status: audienceStatus,
         ...(useCustom
           ? { subject: subject || null, body }
           : { template_id: templateId }),
@@ -209,6 +215,45 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
                 style={{ color: colors.muted }}
               >
                 Audience filters
+              </div>
+              {/* Feb-2026 · Item 2 — Audience-status segmented control. */}
+              <div className="mb-3">
+                <div className="text-[11px] uppercase tracking-wide font-semibold mb-1"
+                     style={{ color: colors.muted }}>
+                  Audience status
+                </div>
+                <div
+                  className="inline-flex rounded-md p-0.5"
+                  style={{
+                    backgroundColor: colors.surfaceSecondary,
+                    border: `1px solid ${colors.border}`,
+                  }}
+                  role="tablist"
+                  data-testid="mass-messaging-audience-status"
+                >
+                  {[
+                    { key: "active",   label: "Active" },
+                    { key: "inactive", label: "Inactive" },
+                    { key: "both",     label: "Both" },
+                  ].map((o) => {
+                    const active = audienceStatus === o.key;
+                    return (
+                      <button
+                        key={o.key}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setAudienceStatus(o.key)}
+                        className="px-2.5 py-1 rounded text-xs font-semibold transition"
+                        style={{
+                          backgroundColor: active ? colors.brand : "transparent",
+                          color: active ? "#fff" : colors.onSurface,
+                        }}
+                        data-testid={`mass-messaging-audience-status-${o.key}`}
+                      >{o.label}</button>
+                    );
+                  })}
+                </div>
               </div>
               <div className="grid gap-3 md:grid-cols-3">
                 <PillMultiSelect

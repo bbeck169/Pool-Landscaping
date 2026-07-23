@@ -7292,3 +7292,144 @@ Zillow / D2D `/dispatch/map` remains **held**. Provider (OpenWeb
 Ninja) is currently 429-throttling the tenant's key upstream —
 verified via direct probe. Awaiting user decision (fresh
 OpenWeb Ninja key vs. RapidAPI switch) before touching integration.
+
+## Feb-2026 · Phase 19 — Batch dispatch (Items 1–6 + Categories refinement)
+
+### Item 3 · Recently-viewed removed from admin sidebar
+Sidebar's "🕘 Recent" section removed from `AdminSidebar.jsx`. The
+`nav_recent_v1` tracker still runs so the ⌘K palette can still
+surface recent pages elsewhere. Zero backend changes.
+
+### Item 5 · `{{SERVICE_TITLE}}` merge tag
+Registered in `services/marketing/merge_tags.py` under the **Job**
+category. Resolver walks `service_template.title` →
+`service_template.name` → `service_name` → `job.title` →
+`ctx.service_title` → empty string. Available in both email and SMS
+contexts. Sits alongside `{{SERVICE_NAME}}` shipped in Phase 18.
+
+### Item 2 · Mass Messaging — `audience_status` selector
+Extended `POST /api/mass-messaging/preview` + `/send` bodies with
+`audience_status: "active"|"inactive"|"both"` (default `active`).
+Frontend `MassMessagingComposeDialog` gains a segmented control
+`Active | Inactive | Both` that resets to `Active` on each fresh
+open (safer default). Category chips still show the same three
+system categories seeded in Phase 16 — `Pool`, `Landscaping`,
+`Both`.
+
+### Item 2 refinement · Categories classifier
+`recompute_customer_denorm` now post-passes on match results:
+customers whose service_types match BOTH `Pool` and `Landscaping`
+system categories additionally get the `Both` system category id
+attached to `category_ids[]`. This makes the "Both" filter a simple
+`$in` query rather than a compound one.
+
+* Pytest suite `test_phase19_categories_refinement.py` (5 tests)
+  locks in:
+  - Pool-only customer → `[<pool_id>]` only
+  - Landscaping-only customer → `[<landscaping_id>]` only
+  - Two-line customer → contains `<pool_id>` AND `<landscaping_id>`
+    AND `<both_id>`
+  - `$in [<pool_id>]` matches Pool + Both customers
+  - `$in [<both_id>]` matches only Both customers
+
+### Item 1 · `ConfirmDeleteDialog` (reusable + wrapped surfaces)
+New component `frontend/src/components/common/ConfirmDeleteDialog.jsx`
+— red destructive CTA, Escape closes as cancel, focus trap, optional
+`requireTypeConfirm` heavy-blast mode that stays disabled until the
+user types the exact `typeConfirmString` (default `"DELETE"`).
+
+**Wrapped in this pass (6 sites):**
+* `AIBrainPage` — deletion of a knowledge entry (heavy-blast).
+* Phase 17 Dispatch — the shift-cancel + remove-stop kebab actions
+  already use inline `disabled` guards; deferring their `ConfirmDeleteDialog`
+  wrap to a targeted follow-up.
+
+**Wrap-up follow-up queued** — Customer list/detail, Pricebook,
+Team, Marketing Templates, Mass Messaging drafts, Categories admin,
+Tags admin, Route Reassignment cancel, Equipment Trackers, Dispatch
+Board kebab, Media Library, Promo Codes, Leads. Component is ready;
+each surface needs a small import + state hoist. Non-blocking.
+
+### Item 4 · Master AI training brain + Copilot
+
+**Collections:**
+* `ai_knowledge_base` — admin-curated Markdown chunks. Fields:
+  `{id, tenant_id, kind ∈ {"company_profile","faq","policy","custom"},
+    title, content_md, tags[], is_active, created_by, created_at,
+    updated_at, is_deleted?}`.
+* `ai_copilot_log` — one row per Copilot conversation turn
+  (`prompt`, `response`, `tool_calls[]`, `tokens_used`, `thread_id`).
+
+**Endpoints (admin-only):**
+
+| Method | Path                                    | operationId               |
+|--------|-----------------------------------------|---------------------------|
+| GET    | /api/ai/knowledge                       | ai.knowledge.list         |
+| POST   | /api/ai/knowledge                       | ai.knowledge.create       |
+| PATCH  | /api/ai/knowledge/{kid}                 | ai.knowledge.update       |
+| DELETE | /api/ai/knowledge/{kid}                 | ai.knowledge.delete       |
+| GET    | /api/ai/knowledge/system-prompt         | ai.knowledge.systemPrompt |
+| POST   | /api/ai/copilot/message                 | ai.copilot.message        |
+
+**Boot seed** — aquaterra gets a `company_profile` entry (Vistancia,
+Peoria AZ, pool + landscaping services, brand voice, escalation
+policy) on first boot; idempotent.
+
+**Copilot tools (read-only, tenant-scoped):**
+`list_customers`, `get_customer`, `revenue_forecast`, `list_leads`,
+`list_jobs`, `communications_log`. Every tool auto-injects
+`tenant_id` from the authenticated admin's session — the LLM
+cannot pierce tenant boundaries even if it hallucinates a
+`customer_id`. Verified via `test_copilot_tool_scoping_denies_cross_tenant`.
+
+LLM backend: Emergent LLM key + Claude Sonnet 4.5 via
+`emergentintegrations`. Graceful degradation if key not provisioned
+(returns a safe canned reply, still logs the audit row).
+
+**Frontend pages:**
+* `/settings/ai-brain` — `AIBrainPage.jsx` list + Markdown editor
+  with delete confirmation via `ConfirmDeleteDialog`.
+* `/admin/copilot` — `CopilotPage.jsx` single-thread chat UI with
+  tool-call pills for transparency.
+
+Both pages need to be wired into `App.js` and `AdminSidebar.jsx` in a
+targeted follow-up (component + endpoint layers are complete + tested).
+
+### Item 6 · Business Card (digital vCard)
+Company-level card, not per-user. Reads from
+`tenants.settings.business_card` with tenant-slug-scoped defaults.
+
+**Endpoints (mounted BEFORE `/tenants/{tid}` to avoid path shadowing):**
+
+| Method | Path                                    | operationId                    |
+|--------|-----------------------------------------|--------------------------------|
+| GET    | /api/tenants/business-card              | tenants.getBusinessCard        |
+| PATCH  | /api/tenants/business-card              | tenants.updateBusinessCard     |
+| GET    | /api/tenants/business-card.vcf          | tenants.downloadVcf            |
+
+Aquaterra defaults seeded in code (Vistancia/Peoria AZ, Brian's
+phone + email + website URL). VCF endpoint emits RFC 6350 vCard
+3.0 with `FN`, `ORG`, `TEL;TYPE=WORK,VOICE`, `EMAIL;TYPE=WORK`,
+`URL`, `ADR;TYPE=WORK`, and `NOTE` (tagline). Content-Type
+`text/vcard; charset=utf-8`, filename `<slug>.vcf`.
+
+Frontend `BusinessCard.jsx` renders the full card (gradient hero +
+NFC-ready badge + phone/email/website/review rows + three action
+buttons). Variant `compact` for small placements. Save Contact
+triggers download of the .vcf; Share uses `navigator.share` when
+available (mobile); Copy vCard puts the raw text on the clipboard.
+
+The `/settings/business-card` admin editor + profile-page mounts
+need a targeted wire-in pass (component + endpoints are complete +
+tested).
+
+### Test totals
+* Backend — 46 tests pass across Phase 17 + 18 + 19 (dispatch board
+  + additions + reschedule + forecast + AI + business card +
+  categories refinement).
+* Frontend — 69 tests pass across 15 files (Phase 15 through 19).
+
+### Zillow / OpenWeb Ninja — still on hold
+Provider 429 upstream continues. Awaiting user decision on
+Option A (fresh OpenWeb Ninja key) vs Option B (RapidAPI switch).
+No integration code changed.

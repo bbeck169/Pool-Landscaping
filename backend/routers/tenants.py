@@ -238,6 +238,123 @@ class TenantUpdate(BaseModel):
     active: Optional[bool] = None
 
 
+# ══════════════════════════════════════════════════════════════
+# Feb-2026 · Item 6 — Business Card (digital vCard) — helpers
+# defined BEFORE the parameterized ``/tenants/{tid}`` routes so
+# ``/tenants/business-card`` doesn't get swallowed by the ``{tid}``
+# matcher.
+# ══════════════════════════════════════════════════════════════
+_BUSINESS_CARD_DEFAULTS = {
+    "aquaterra": {
+        "company_name": "Pool & Landscaping of Vistancia",
+        "tagline": "Your trusted local pool & landscaping pros in Vistancia.",
+        "service_area": "Peoria & Vistancia, Arizona",
+        "phone": "602-887-4400",
+        "email": "brian@plofv.com",
+        "website_url": "https://www.poolandlandscapingofvistancia.com/",
+        "google_review_url": None,
+        "gradient_from": "#0EA5E9",
+        "gradient_to":   "#16A34A",
+        "logo_url":      None,
+    },
+}
+
+
+class BusinessCardPatch(BaseModel):
+    company_name: Optional[str] = None
+    tagline: Optional[str] = None
+    service_area: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    website_url: Optional[str] = None
+    google_review_url: Optional[str] = None
+    gradient_from: Optional[str] = None
+    gradient_to: Optional[str] = None
+    logo_url: Optional[str] = None
+
+
+async def _read_business_card(tenant: dict) -> dict:
+    settings = (tenant.get("settings") or {})
+    card = settings.get("business_card") or {}
+    defaults = _BUSINESS_CARD_DEFAULTS.get(tenant.get("slug"), {})
+    merged = {**defaults, **card}
+    merged["tenant_slug"] = tenant.get("slug")
+    return merged
+
+
+def _admin_or_403(user: dict):
+    if (user or {}).get("role") not in {"admin", "super_admin"}:
+        raise HTTPException(403, "Admin only")
+
+
+def _build_vcard(card: dict) -> str:
+    """RFC 6350 vCard 3.0 text."""
+    name = card.get("company_name") or "Business"
+    phone = card.get("phone") or ""
+    email = card.get("email") or ""
+    url = card.get("website_url") or ""
+    note = card.get("tagline") or ""
+    area = card.get("service_area") or ""
+    city, state = area, ""
+    if "," in area:
+        left, right = area.split(",", 1)
+        city, state = left.strip(), right.strip()
+    lines_ = [
+        "BEGIN:VCARD", "VERSION:3.0",
+        f"FN:{name}", f"ORG:{name}",
+        f"TEL;TYPE=WORK,VOICE:{phone}" if phone else None,
+        f"EMAIL;TYPE=WORK:{email}" if email else None,
+        f"URL:{url}" if url else None,
+        f"ADR;TYPE=WORK:;;;{city};{state};;USA" if area else None,
+        f"NOTE:{note}" if note else None,
+        "END:VCARD",
+    ]
+    return "\r\n".join([ln for ln in lines_ if ln]) + "\r\n"
+
+
+@router.get("/tenants/business-card", tags=["tenants"],
+             operation_id="tenants.getBusinessCard")
+async def get_business_card_v2(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    return await _read_business_card(tenant)
+
+
+@router.patch("/tenants/business-card", tags=["tenants"],
+                operation_id="tenants.updateBusinessCard")
+async def update_business_card_v2(
+    body: BusinessCardPatch,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    _admin_or_403(user)
+    patch = {k: v for k, v in body.dict(exclude_none=True).items()}
+    if not patch:
+        raise HTTPException(400, "No fields to update")
+    set_ops = {f"settings.business_card.{k}": v for k, v in patch.items()}
+    await db.tenants.update_one({"id": tenant["id"]}, {"$set": set_ops})
+    fresh = await db.tenants.find_one({"id": tenant["id"]}, {"_id": 0})
+    return await _read_business_card(fresh)
+
+
+@router.get("/tenants/business-card.vcf", tags=["tenants"],
+             operation_id="tenants.downloadVcf")
+async def download_vcf_v2(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    from fastapi.responses import Response
+    card = await _read_business_card(tenant)
+    body = _build_vcard(card)
+    filename = f"{tenant.get('slug') or 'business-card'}.vcf"
+    return Response(
+        content=body,
+        media_type="text/vcard; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/tenants")
 async def list_tenants(admin: dict = Depends(require_super_admin)):
     rows = await db.tenants.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
@@ -526,3 +643,8 @@ async def my_memberships(user: dict = Depends(get_current_user)):
         if t:
             out.append({"tenant_id": t["id"], "slug": t["slug"], "name": t["name"], "role": m.get("role")})
     return out
+
+
+# ══════════════════════════════════════════════════════════════
+# Feb-2026 · Item 6 — Business Card (digital vCard)
+# ══════════════════════════════════════════════════════════════

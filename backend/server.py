@@ -117,6 +117,8 @@ from routers import quickbooks_cleanup
 # ``/dispatch/reassign`` and ``/dispatch/assignment-change-log``
 # routes are prefixed identically to the other dispatch surfaces.
 from routers import dispatch_reassign as _p17_reassign  # noqa: E402
+# Feb-2026 · Item 4 — Master AI knowledge base + Copilot.
+from routers import ai_brain as _p18_ai_brain  # noqa: E402
 
 app = FastAPI(
     title="Pool CRM API",
@@ -138,6 +140,7 @@ api_router.include_router(marketing_campaigns_router.router)
 from routers import stripe_customer_sync_admin as _p12b_admin  # noqa: E402
 api_router.include_router(_p12b_admin.router)
 api_router.include_router(_p17_reassign.router)
+api_router.include_router(_p18_ai_brain.router)
 
 for module in [notifications_router,
                stripe_payments_router,
@@ -802,6 +805,42 @@ async def startup():
         logger.info("[phase17] geocode backfill scheduled (fire-and-forget)")
     except Exception as e:
         logger.warning(f"[phase17] geocode backfill schedule crashed: {e}")
+
+    # Feb-2026 · Item 4 — seed the aquaterra AI company profile on
+    # first boot so admins have something to edit rather than an empty
+    # brain. Idempotent: skips if a company_profile row already exists.
+    try:
+        import uuid as _uuid_p18
+        from utils import now_iso as _now_iso_p18
+        aq = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0, "id": 1})
+        if aq:
+            has_profile = await db.ai_knowledge_base.find_one(
+                {"tenant_id": aq["id"], "kind": "company_profile",
+                  "$or": [{"is_deleted": {"$ne": True}}, {"is_deleted": {"$exists": False}}]},
+                {"_id": 0},
+            )
+            if not has_profile:
+                await db.ai_knowledge_base.insert_one({
+                    "id": str(_uuid_p18.uuid4()), "tenant_id": aq["id"],
+                    "kind": "company_profile",
+                    "title": "AquaTerra Pool & Landscaping — Company Profile",
+                    "content_md": (
+                        "# AquaTerra Pool & Landscaping\n\n"
+                        "We service the greater Phoenix, Arizona area only.\n\n"
+                        "**Services:** recurring pool maintenance, salt cell + filter cleaning, "
+                        "one-off repairs, landscaping crews.\n\n"
+                        "**Brand voice:** friendly, direct, no fluff. Never quote prices without "
+                        "admin approval. Techs never see prices.\n\n"
+                        "**Escalation:** for billing questions route to admin; for scheduling "
+                        "changes offer earliest available."
+                    ),
+                    "tags": ["seed"], "is_active": True,
+                    "created_by": "system", "created_at": _now_iso_p18(),
+                    "updated_at": _now_iso_p18(),
+                })
+                logger.info("[item4] seeded aquaterra ai_knowledge_base company_profile")
+    except Exception as exc:
+        logger.warning(f"[item4] ai_knowledge_base seed crashed: {exc}")
 
     # Phase 16 · Feb 2026 — seed 3 default customer categories per
     # tenant (Pool / Landscaping / Both, all is_system=True) and

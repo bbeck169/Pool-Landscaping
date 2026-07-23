@@ -317,6 +317,17 @@ MERGE_TAGS: List[Dict[str, Any]] = [
         or ((ctx or {}).get("job") or {}).get("title")
         or ((ctx or {}).get("service_name") or "")
      )},
+    {"token": "SERVICE_TITLE", "label": "Service Title",
+     "category": "Job",
+     "description": "Title of the service, e.g., 'Weekly Pool Cleaning'. "
+                     "Prefers ``service_template.title`` over ``.name``.",
+     "resolver": lambda ctx: (
+        ((ctx or {}).get("job") or {}).get("service_template", {}).get("title")
+        or ((ctx or {}).get("job") or {}).get("service_template", {}).get("name")
+        or ((ctx or {}).get("job") or {}).get("service_name")
+        or ((ctx or {}).get("job") or {}).get("title")
+        or ((ctx or {}).get("service_title") or "")
+     )},
     {"token": "CUSTOMER_FIRST_NAME", "label": "First Name",
      "category": "Customer", "description": "The recipient customer's first name.",
      "resolver": _customer_first},

@@ -59,6 +59,9 @@ class BroadcastBase(BaseModel):
     category_ids: List[str] = Field(default_factory=list)
     service_days: List[str] = Field(default_factory=list)
     assigned_tech_user_ids: List[str] = Field(default_factory=list)
+    # Feb-2026 · Item 2 — audience-status selector.
+    # ``active`` (default) | ``inactive`` | ``both``.
+    audience_status: str = Field("active", pattern="^(active|inactive|both)$")
 
 
 class BroadcastPreviewIn(BroadcastBase):
@@ -121,23 +124,29 @@ async def _resolve_audience(tenant_id: str, *,
                               category_ids: Optional[List[str]] = None,
                               service_days: Optional[List[str]] = None,
                               assigned_tech_user_ids: Optional[List[str]] = None,
+                              audience_status: str = "active",
                               ) -> List[Dict[str, Any]]:
-    """Return active customers for a tenant, optionally narrowed by
-    the three Phase-16 filters (categories / service days / assigned
-    techs). Each filter uses ``$in`` (any-of); missing/empty arrays
-    mean "no restriction on that axis". Filters are ANDed together.
+    """Return customers for a tenant, optionally narrowed by the three
+    Phase-16 filters (categories / service days / assigned techs) and
+    the Feb-2026 ``audience_status`` selector (``active`` / ``inactive``
+    / ``both``, default ``active``).
 
     Denormalized fields ``customer.category_ids[]`` /
     ``service_days[]`` / ``assigned_tech_ids[]`` are populated by
     ``customer_categories.recompute_customer_denorm`` (idempotent
     boot backfill + on-save hook)."""
-    q: Dict[str, Any] = {
-        "tenant_id": tenant_id,
-        "$and": [
-            {"$or": [{"is_active": True}, {"is_active": {"$exists": False}}]},
-            {"$or": [{"is_deleted": {"$ne": True}}, {"is_deleted": {"$exists": False}}]},
-        ],
-    }
+    status = (audience_status or "active").lower()
+    if status not in ("active", "inactive", "both"):
+        status = "active"
+    ands = [
+        {"$or": [{"is_deleted": {"$ne": True}}, {"is_deleted": {"$exists": False}}]},
+    ]
+    if status == "active":
+        ands.append({"$or": [{"is_active": True}, {"is_active": {"$exists": False}}]})
+    elif status == "inactive":
+        ands.append({"is_active": False})
+    # ``both`` — no status clause. Includes rows with is_active unset.
+    q: Dict[str, Any] = {"tenant_id": tenant_id, "$and": ands}
     if category_ids:
         q["category_ids"] = {"$in": category_ids}
     if service_days:
@@ -329,6 +338,7 @@ async def preview_broadcast(
         category_ids=filters["category_ids"],
         service_days=filters["service_days"],
         assigned_tech_user_ids=filters["assigned_tech_user_ids"],
+        audience_status=getattr(body, "audience_status", "active"),
     )
     if len(customers) > _AUDIENCE_CAP:
         raise HTTPException(400, {
@@ -648,6 +658,7 @@ async def send_broadcast(
         category_ids=filters["category_ids"],
         service_days=filters["service_days"],
         assigned_tech_user_ids=filters["assigned_tech_user_ids"],
+        audience_status=getattr(body, "audience_status", "active"),
     )
     if len(customers) > _AUDIENCE_CAP:
         raise HTTPException(400, {
