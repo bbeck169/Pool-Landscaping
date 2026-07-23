@@ -206,3 +206,17 @@
 - **Files modified**: `leads/index.tsx` (moved + fixed), `referrals.tsx`, `customer/[id].tsx`, `(app)/more.tsx`, `src/components/tools/sections.ts`
 - **Endpoints verified**: `/api/leads` 200, `/api/leads/{id}` 200, `/api/leads/{id}/close-won` 200, `/api/leads/{id}/close-lost` 200, `/api/leads/{id}/note` 200, `/api/equipment/trackers` 200, `/api/admin/referrals` 200, `/api/promo-codes` 200, `/api/customers/{id}/credits` 200, `/api/promo-codes/validate` 200, `PATCH /api/customers/{id}` 200
 - **404 endpoints (deferred)**: `/api/customers/{id}/send-card-link` (all variations), `/api/tenant/settings`, `/api/jobs/next`
+
+
+## Iteration 12 — Phase 13B: 3 Deferred Surfaces Complete
+- **Commit**: 55b90923637c467e17c57c4c55ed9b11caa22993
+- **Date**: 2026-07-23
+- **Changes**:
+  - **Credits tab (customer detail)**: Added full CREDIT BALANCE section to `customer/[id].tsx` — big balance card, paginated ledger (source/delta/date/actor), "Adjust" button → modal with dollar amount input, reason textarea (min 5 chars), live balance preview, INSUFFICIENT_BALANCE error handling. Uses `GET /api/customers/{id}/credits` and `POST /api/customers/{id}/credits/adjust`.
+  - **Tenant Settings**: Created `settings/tenant.tsx` — timezone picker (5 US timezones as chip grid, AZ default), "Require card on file by default" switch, "Auto-send add-card link on creation" switch, "Next scheduled sync: Thu 02:00 · <TZ>" label, "Last changed Xd ago by ..." footer. Uses `GET/PATCH /api/tenants/mine/settings`.
+  - **Invoice promo code**: Added collapsible "Have a promo code?" section to `invoice/[id].tsx` — input + Apply button, green pill for `next_invoice` discounts, blue pill for `account_credit` codes, red inline error for invalid codes, Remove button. `promo_code_id` passed to `createPaymentIntent`. Updated `payments.ts` to accept optional `promoCodeId`.
+  - **Fixed send-card-link typo**: Changed `requestCard` in `customer/[id].tsx` from `/payments/request-method/${id}` to correct `/customers/${id}/send-card-add-link`.
+  - Added "Tenant Settings" nav link to admin more.tsx.
+- **Files modified**: `customer/[id].tsx` (credits section + adjust modal + card link fix), `invoice/[id].tsx` (promo code section), `src/api/payments.ts` (promo_code_id param), `(app)/more.tsx` (tenant settings link)
+- **Files created**: `settings/tenant.tsx`
+- **Endpoints verified**: `GET /api/tenants/mine/settings` 200, `PATCH /api/tenants/mine/settings` 200, `POST /api/customers/{id}/credits/adjust` 200, `GET /api/customers/{id}/credits` 200, `POST /api/promo-codes/validate` 200, `POST /api/customers/{id}/send-card-add-link` 200
