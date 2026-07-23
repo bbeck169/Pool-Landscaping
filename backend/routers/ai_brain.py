@@ -486,3 +486,88 @@ async def patch_digest_toggle(
         {"$set": {"settings.daily_review_digest_enabled": bool(body.enabled)}},
     )
     return {"ok": True, "enabled": bool(body.enabled)}
+
+
+# ═════════════════════════════════════════════════════════════
+# Feb-2026 · smart enhancement — Weekly AI Employees Summary tile.
+# 5-minute per-tenant in-memory cache; bust via ``?refresh=1``.
+# ═════════════════════════════════════════════════════════════
+import time as _time
+from datetime import timedelta as _td
+
+_WEEKLY_CACHE: dict = {}
+_WEEKLY_TTL_S = 300
+
+
+@router.get("/ai/employees/weekly-summary", tags=["ai"],
+             operation_id="ai.employees.weeklySummary")
+async def weekly_ai_employees_summary(
+    refresh: int = 0,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    _require_admin(user)
+    tid = tenant["id"]
+    ck = f"weekly:{tid}"
+    if not refresh:
+        cached = _WEEKLY_CACHE.get(ck)
+        if cached and (_time.time() - cached["_at"]) < _WEEKLY_TTL_S:
+            return cached["payload"]
+
+    now = datetime.now(timezone.utc)
+    week_start = now - _td(days=7)
+    prev_start = now - _td(days=14)
+    prev_end = now - _td(days=7)
+
+    drafts = await db.gbp_post_drafts.count_documents({
+        "tenant_id": tid,
+        "generated_at": {"$gte": week_start.isoformat()},
+    })
+
+    reviews_answered = await db.reviews.count_documents({
+        "tenant_id": tid,
+        "$or": [
+            {"suggested_reply_generated_at": {"$gte": week_start.isoformat()}},
+            {"admin_replied_at": {"$gte": week_start.isoformat()}},
+        ],
+    })
+
+    scan = await db.seo_scans.find_one(
+        {"tenant_id": tid}, {"_id": 0, "score": 1},
+        sort=[("run_at", -1)],
+    )
+    seo_score_latest = int((scan or {}).get("score")) if scan else None
+
+    async def _avg(start_iso, end_iso):
+        pipe = [
+            {"$match": {"tenant_id": tid,
+                         "created_at": {"$gte": start_iso, "$lt": end_iso},
+                         "star_rating": {"$gte": 1, "$lte": 5}}},
+            {"$group": {"_id": None, "count": {"$sum": 1},
+                         "avg": {"$avg": "$star_rating"}}},
+        ]
+        rows = await db.reviews.aggregate(pipe).to_list(1)
+        if not rows:
+            return 0, 0.0
+        return int(rows[0].get("count") or 0), float(rows[0].get("avg") or 0.0)
+
+    this_count, this_avg = await _avg(week_start.isoformat(), now.isoformat())
+    _prev_count, prev_avg = await _avg(prev_start.isoformat(), prev_end.isoformat())
+    if this_count and _prev_count:
+        star_delta = round(this_avg - prev_avg, 2)
+    else:
+        star_delta = None
+
+    payload = {
+        "tenant_id": tid,
+        "week_start_at": week_start.isoformat(),
+        "week_end_at": now.isoformat(),
+        "drafts_generated": int(drafts),
+        "reviews_answered": int(reviews_answered),
+        "seo_score_latest": seo_score_latest,
+        "star_delta": star_delta,
+        "total_reviews_last_week": this_count,
+        "generated_at": now.isoformat(),
+    }
+    _WEEKLY_CACHE[ck] = {"_at": _time.time(), "payload": payload}
+    return payload

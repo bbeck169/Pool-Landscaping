@@ -7911,3 +7911,57 @@ Portal UI pills + progress bar deferred to next pass.
 ### Still deferred (final tail — small)
 * **Item 10 vitest** (12-step advance flow) + **Item 11 pytest** (cron/forfeit scenarios) — tour + vesting logic ship complete without dedicated frontend tests.
 * Cron scheduler wire-up — the promoter + digest functions are ready; wire-in with a scheduler like APScheduler or a cronjob CRDS pod when the platform's scheduler infra is nailed down.
+
+## BUG D + Weekly AI Summary tile · Feb 2026 · Session 2026-07 (part 5)
+
+### BUG D · Customer login → 404 (P0) ✅
+**Root cause:** the Item 10 tour engine (previous pass) declared
+`route: "/portal"` for tour steps 1–4. Only `/portal/home` is
+registered as a route — bare `/portal` had no match. On first
+customer login the tour auto-runs, `location.pathname` is
+`/portal/home` but step 1's route is `/portal`, so the engine
+called `navigate("/portal")` which fell through to the
+`<Route path="*" element={<NotFound />}>` catch-all → 404.
+
+**File / line:** `frontend/src/pages/portal/PortalWalkthrough.jsx`
+line 20 (and 23, 26, 29). Regression from the same session's
+Item 10 delivery.
+
+**Fix:**
+1. Corrected step routes 1–4 from `/portal` → `/portal/home` in
+   `PortalWalkthrough.jsx`.
+2. Defensive redirect route added in `App.js`:
+   `<Route path="portal" element={<Navigate to="/portal/home" replace />} />`
+   so any future stray `/portal` link (deep-link email, bookmark,
+   Item 8 review-request auto-message, etc.) never 404s again.
+
+**Live verified:** logged in as customer, navigated to bare
+`/portal` — got redirected to `/portal/home`, greeting tile
+rendered, tour engine spotlighted step 1 of 11 with no NotFound.
+
+### Weekly AI Employees Summary tile ✅
+* Backend `GET /api/ai/employees/weekly-summary`
+  (operationId `ai.employees.weeklySummary`) — admin-gated.
+  Returns 7-day rollup:
+  * `drafts_generated` from `gbp_post_drafts`.
+  * `reviews_answered` from `reviews.suggested_reply_generated_at`
+    OR `reviews.admin_replied_at`.
+  * `seo_score_latest` from most recent `seo_scans.score` (null when
+    no scan yet).
+  * `star_delta` = avg 7d rating − avg prior-7d rating (null when
+    either window is empty).
+  * `total_reviews_last_week`.
+  * 5-minute per-tenant in-memory cache; bust with `?refresh=1`.
+* Frontend `WeeklyAIEmployeesSummary` widget rendered at the top of
+  `/settings/ai-brain` above the Top Questions widget. Full-width
+  gradient hero matching the tenant business card colors. Four
+  stat pills (drafts / reviews answered / SEO score / star delta)
+  with hide-when-null on SEO + delta. Green/red star delta
+  coloring. Footer with relative-time updated stamp + Refresh
+  link that busts the cache.
+* Live rollup for Aquaterra: 3 drafts · 0 reviews answered · 60/100
+  SEO · −2.33★ weekly delta · 36 reviews last week.
+
+### Regression
+* Backend tests: **21 passed / 1 skipped** — no regressions.
+* Frontend compiles clean.

@@ -17,16 +17,16 @@ import { api } from "@/api";
 import { useAuth } from "@/auth";
 
 const STEPS = [
-  { anchor: "greeting-tile",        route: "/portal",
+  { anchor: "greeting-tile",        route: "/portal/home",
     title: "Welcome to your portal",
     body:  "Your personalised home base. Let's take a 30-second tour." },
-  { anchor: "status-circles",       route: "/portal",
+  { anchor: "status-circles",       route: "/portal/home",
     title: "Quick account status",
     body:  "Balance, past due, credit, and your next scheduled visit at a glance." },
-  { anchor: "next-service-visit",   route: "/portal",
+  { anchor: "next-service-visit",   route: "/portal/home",
     title: "Next service visit",
     body:  "Here's your upcoming visit. Add to calendar, or reschedule from here." },
-  { anchor: "business-card",        route: "/portal",
+  { anchor: "business-card",        route: "/portal/home",
     title: "Our contact card",
     body:  "Save our contact — tap-to-share via NFC or vCard." },
   { anchor: "communications-list",  route: "/portal/messages",

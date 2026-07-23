@@ -6,7 +6,8 @@
 // with a stray click.
 import React from "react";
 import { toast } from "sonner";
-import { Plus, Save, Trash2, Sparkles, TrendingUp, PlusCircle, Bell } from "lucide-react";
+import { Plus, Save, Trash2, Sparkles, TrendingUp, PlusCircle, Bell,
+          Image as ImageIcon, MessageSquare, Gauge, Star, RefreshCw } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
@@ -111,6 +112,8 @@ export default function AIBrainPage() {
           data-testid="ai-brain-new-btn"
         ><Plus size={14} /> New entry</button>
       </div>
+
+      <WeeklyAIEmployeesSummary />
 
       <TopQuestionsWidget onSaveToKnowledge={async (q) => {
         try {
@@ -349,6 +352,99 @@ function TopQuestionsWidget({ onSaveToKnowledge }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Feb-2026 · smart enhancement — Weekly AI Employees summary tile.
+// Full-width gradient hero showing what the AI has done in the
+// last 7 days: drafts generated, reviews answered, latest SEO
+// score, weekly star delta.
+function WeeklyAIEmployeesSummary() {
+  const [data, setData] = React.useState(null);
+  const [card, setCard] = React.useState(null);
+  const [refreshing, setRefreshing] = React.useState(false);
+
+  const load = React.useCallback(async (bust = false) => {
+    setRefreshing(true);
+    try {
+      const [r, c] = await Promise.all([
+        api.get(`/ai/employees/weekly-summary${bust ? "?refresh=1" : ""}`),
+        card ? Promise.resolve(card) : api.get("/tenants/business-card").catch(() => null),
+      ]);
+      setData(r);
+      if (!card && c) setCard(c);
+    } catch (_e) { /* graceful */ }
+    finally { setRefreshing(false); }
+  }, [card]);
+  React.useEffect(() => { load(false); }, [load]);
+
+  if (!data) return null;
+
+  const from = card?.gradient_from || "#0EA5E9";
+  const to = card?.gradient_to || "#16A34A";
+  const grad = `linear-gradient(135deg, ${from} 0%, ${to} 100%)`;
+  const rel = (iso) => {
+    if (!iso) return "";
+    const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 60)  return `${s}s ago`;
+    if (s < 3600) return `${Math.round(s / 60)}m ago`;
+    return `${Math.round(s / 3600)}h ago`;
+  };
+  const showSeo   = data.seo_score_latest != null;
+  const showDelta = data.star_delta != null;
+  const deltaPositive = (data.star_delta || 0) >= 0;
+
+  const Pill = ({ icon: Icon, label, testid }) => (
+    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-xs font-semibold"
+         style={{ backgroundColor: "rgba(255,255,255,0.22)",
+                    border: "1px solid rgba(255,255,255,0.32)" }}
+         data-testid={testid}>
+      <Icon size={13} /> {label}
+    </div>
+  );
+
+  return (
+    <div className="rounded-2xl p-4 sm:p-5 relative overflow-hidden"
+         style={{ background: grad, color: "rgba(255,255,255,0.95)" }}
+         data-testid="ai-employees-weekly-summary">
+      <div className="text-sm font-semibold mb-2">
+        This week your AI employees did:
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Pill icon={ImageIcon}
+               label={`${data.drafts_generated} draft${data.drafts_generated === 1 ? "" : "s"} generated`}
+               testid="ai-week-drafts" />
+        <Pill icon={MessageSquare}
+               label={`${data.reviews_answered} review${data.reviews_answered === 1 ? "" : "s"} answered`}
+               testid="ai-week-reviews" />
+        {showSeo ? (
+          <Pill icon={Gauge}
+                 label={`${data.seo_score_latest}/100 SEO score`}
+                 testid="ai-week-seo" />
+        ) : null}
+        {showDelta ? (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold"
+               style={{ backgroundColor: deltaPositive ? "#DCFCE7" : "#FEE2E2",
+                          color: deltaPositive ? "#166534" : "#991B1B" }}
+               data-testid="ai-week-star-delta">
+            <Star size={13} fill={deltaPositive ? "#16A34A" : "#B91C1C"} />
+            {deltaPositive ? "+" : ""}{data.star_delta}★ weekly delta
+          </div>
+        ) : null}
+      </div>
+      <div className="flex items-center gap-3 mt-3 text-[11px] opacity-90">
+        <span data-testid="ai-week-updated">Updated {rel(data.generated_at)}.</span>
+        <button
+          type="button"
+          onClick={() => load(true)}
+          disabled={refreshing}
+          className="underline flex items-center gap-1"
+          data-testid="ai-week-refresh"
+        >
+          <RefreshCw size={10} className={refreshing ? "animate-spin" : ""} /> Refresh
+        </button>
+      </div>
     </div>
   );
 }

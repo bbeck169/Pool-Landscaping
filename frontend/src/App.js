@@ -732,6 +732,10 @@ export default function App() {
 
             {/* Customer portal (Phase 4) */}
             <Route path="portal/home" element={<PortalHome />} />
+            {/* BUG D fix (Feb-2026) — defensive redirect so any
+                stray link to bare ``/portal`` lands on the home page
+                instead of NotFound. */}
+            <Route path="portal" element={<Navigate to="/portal/home" replace />} />
             <Route path="portal/services" element={<PortalServices />} />
             <Route path="portal/services/:id" element={<PortalServiceDetail />} />
             <Route path="portal/service-reports" element={<PortalServiceReports />} />
