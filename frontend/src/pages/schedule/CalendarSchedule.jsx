@@ -20,6 +20,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Calendar as RBCCalendar, dateFnsLocalizer } from "react-big-calendar";
+import withDragAndDrop from "react-big-calendar/lib/addons/dragAndDrop";
+import "react-big-calendar/lib/addons/dragAndDrop/styles.css";
 import { format, parse, startOfWeek, getDay, addDays, startOfDay, endOfDay,
          startOfMonth, startOfQuarter, endOfMonth } from "date-fns";
 import { enUS } from "date-fns/locale";
@@ -75,6 +77,10 @@ const locales = { "en-US": enUS };
 const localizer = dateFnsLocalizer({
   format, parse, startOfWeek: (d) => startOfWeek(d, { weekStartsOn: 0 }), getDay, locales,
 });
+// Feb-2026 · Enhancement 1 — wrap the calendar with drag-and-drop.
+// Admin drags an event card to a new slot → onEventDrop fires and we
+// stage the reschedule in a confirmation modal before committing.
+const DnDCalendar = withDragAndDrop(RBCCalendar);
 
 // Status → dot colour. Mirrors the old JobsList status pill palette so
 // techs & dispatchers see the same signal on both screens.
@@ -292,6 +298,71 @@ export default function CalendarSchedule() {
     // techs / customers are all bypassed inside the hook.
     clockGate.openJob(ev.id, () => setChecklistJobId(ev.id));
   };
+
+  // Feb-2026 · Enhancement 1 — drag-drop reschedule state + handlers.
+  const isAdminRole = (user?.role === "admin" || user?.role === "super_admin"
+                      || user?.role === "manager");
+  const [rescheduleDraft, setRescheduleDraft] = React.useState(null);
+  const [reschedulePreview, setReschedulePreview] = React.useState(null);
+  const [rescheduleBusy, setRescheduleBusy] = React.useState(false);
+  const isDraggable = React.useCallback(() => isAdminRole, [isAdminRole]);
+
+  const onEventDrop = React.useCallback(async ({ event, start, end }) => {
+    if (!isAdminRole) return;
+    const iso = new Date(start).toISOString();
+    const endIso = end ? new Date(end).toISOString() : undefined;
+    setRescheduleBusy(true);
+    setRescheduleDraft({ event, start, end });
+    try {
+      // Dry-run first so the confirmation modal can preview the
+      // notification text before we actually persist + notify.
+      const preview = await api.post("/schedule/reschedule", {
+        job_id: event.id,
+        new_start_at: iso, new_end_at: endIso,
+        dry_run: true,
+      });
+      setReschedulePreview(preview.preview || null);
+    } catch (e) {
+      toast_(`Reschedule preview failed: ${e.message || e}`, "err");
+      setRescheduleDraft(null);
+    } finally {
+      setRescheduleBusy(false);
+    }
+  }, [isAdminRole]);
+
+  const confirmReschedule = React.useCallback(async () => {
+    if (!rescheduleDraft) return;
+    setRescheduleBusy(true);
+    try {
+      const iso = new Date(rescheduleDraft.start).toISOString();
+      const endIso = rescheduleDraft.end
+        ? new Date(rescheduleDraft.end).toISOString() : undefined;
+      const res = await api.post("/schedule/reschedule", {
+        job_id: rescheduleDraft.event.id,
+        new_start_at: iso, new_end_at: endIso,
+        dry_run: false,
+      });
+      const parts = [];
+      if (res.sent_email) parts.push("email sent");
+      if (res.sent_sms) parts.push("SMS sent");
+      toast_(
+        `Rescheduled${parts.length ? " — " + parts.join(" + ") : ""}.`,
+        parts.length ? "info" : "err",
+      );
+      setRescheduleDraft(null);
+      setReschedulePreview(null);
+      await load();
+    } catch (e) {
+      toast_(`Reschedule failed: ${e.message || e}`, "err");
+    } finally {
+      setRescheduleBusy(false);
+    }
+  }, [rescheduleDraft]);
+
+  const cancelReschedule = React.useCallback(() => {
+    setRescheduleDraft(null);
+    setReschedulePreview(null);
+  }, []);
 
   const eventPropGetter = (ev) => ({
     style: {
@@ -613,7 +684,7 @@ export default function CalendarSchedule() {
                  borderRadius: 12, padding: 8, minHeight: 640 }}
         data-testid="calendar-view"
       >
-        <RBCCalendar
+        <DnDCalendar
           localizer={localizer}
           events={events}
           view={view}
@@ -628,6 +699,9 @@ export default function CalendarSchedule() {
           selectable
           onSelectSlot={onSelectSlot}
           onSelectEvent={onSelectEvent}
+          onEventDrop={onEventDrop}
+          draggableAccessor={isDraggable}
+          resizable={false}
           popup
           formats={{
             timeGutterFormat: () => "",
@@ -666,6 +740,79 @@ export default function CalendarSchedule() {
 
       {/* Phase 56.3 follow-up — clock-in gate dialog for landscape techs. */}
       <ClockInGateDialog gate={clockGate} />
+
+      {/* Feb-2026 · Enhancement 1 — Reschedule confirmation modal. */}
+      {rescheduleDraft ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: "rgba(15,23,42,0.55)" }}
+          role="dialog" aria-modal="true"
+          data-testid="reschedule-confirm-modal"
+          onClick={(e) => { if (e.target === e.currentTarget) cancelReschedule(); }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl shadow-2xl"
+            style={{ backgroundColor: colors.surface }}
+          >
+            <div className="p-5 space-y-3">
+              <div className="text-base font-bold"
+                   style={{ color: colors.onSurface }}
+                   data-testid="reschedule-confirm-title">
+                Confirm reschedule
+              </div>
+              {reschedulePreview ? (
+                <div className="text-sm space-y-1"
+                     style={{ color: colors.onSurface }}
+                     data-testid="reschedule-confirm-preview">
+                  <div>
+                    Reschedule <strong>{reschedulePreview.customer_name || "customer"}</strong>{" "}
+                    from <strong>{reschedulePreview.old_datetime}</strong>{" "}
+                    → <strong>{reschedulePreview.new_datetime}</strong>.
+                  </div>
+                  <div className="text-xs" style={{ color: colors.muted }}>
+                    This will send an{" "}
+                    {reschedulePreview.customer_email ? "email" : ""}
+                    {reschedulePreview.customer_email && reschedulePreview.customer_phone ? " + " : ""}
+                    {reschedulePreview.customer_phone ? "SMS" : ""}
+                    {(!reschedulePreview.customer_email && !reschedulePreview.customer_phone)
+                       ? "no notification (no contact on file)" : " notification"} to the customer.
+                  </div>
+                  {reschedulePreview.tech_name ? (
+                    <div className="text-xs" style={{ color: colors.muted }}>
+                      Tech: <strong>{reschedulePreview.tech_name}</strong>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="text-sm" style={{ color: colors.muted }}>Loading preview…</div>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-3"
+                 style={{ borderTop: `1px solid ${colors.border}` }}>
+              <button
+                type="button"
+                onClick={cancelReschedule}
+                disabled={rescheduleBusy}
+                className="px-3 py-1.5 rounded-lg text-sm font-semibold hover:brightness-95 disabled:opacity-50"
+                style={{
+                  backgroundColor: colors.surfaceSecondary,
+                  color: colors.onSurface,
+                  border: `1px solid ${colors.border}`,
+                }}
+                data-testid="reschedule-confirm-cancel-btn"
+              >Cancel</button>
+              <button
+                type="button"
+                onClick={confirmReschedule}
+                disabled={rescheduleBusy || !reschedulePreview}
+                className="px-3 py-1.5 rounded-lg text-sm font-semibold text-white hover:brightness-95 disabled:opacity-50"
+                style={{ backgroundColor: colors.brand }}
+                data-testid="reschedule-confirm-btn"
+              >{rescheduleBusy ? "…" : "Confirm & notify"}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Status legend — calendar mode only. */}
       {mode === "calendar" ? (

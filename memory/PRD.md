@@ -7184,3 +7184,111 @@ to free the canonical path for the new whole-route endpoint.
   service-day color mode (currently uses first day only).
 * Optional Sunday 03:00 cleanup cron that stamps `expired_at` on
   ended overrides for audit tidiness.
+
+## Feb-2026 · Phase 18 — Schedule DnD reschedule + Forecast filters + Phase 17 reconcile
+
+### Enhancement 1 — Schedule drag-and-drop reschedule (Feb-2026)
+
+Admin drags a scheduled visit on `/schedule` (react-big-calendar with
+`withDragAndDrop` HOC). On drop we fire a **dry-run** to `POST
+/api/schedule/reschedule` (`operationId=schedule.reschedule`) to
+build a merge-tag-rendered notification preview, then a confirmation
+modal previews:
+
+> Reschedule <customer_name> from <old_datetime> → <new_datetime>.
+> This will send an email + SMS notification to the customer.
+> Tech: <tech_name>.
+
+Confirm → same endpoint with `dry_run:false` commits. Persistence:
+
+* `jobs.scheduled_start_at`, `.scheduled_end_at`, and the legacy
+  `.scheduled_date` (YYYY-MM-DD prefix) are updated in a single
+  `$set`.
+* `jobs.job_history[]` appended with
+  `{event:"rescheduled", from:{scheduled_start_at,scheduled_end_at,technician_id},
+    to:{…}, by:user.id, at:now_iso}`.
+* Best-effort email via Resend + SMS via RingCentral. Both writes
+  land in `marketing_deliveries` with
+  `trigger_entity.kind == "job_rescheduled"` so the Communications
+  Log timeline surfaces them for the customer.
+* SMS body:
+  `"Hi {{customer_first_name}}, your {{service_name}} has been
+   rescheduled from {{old_datetime}} to {{new_datetime}}. Reply
+   STOP to opt out."`
+
+Datetime rendering — always tenant tz (`tenants.timezone`, default
+`America/Phoenix`).
+
+### New merge tag — `{{SERVICE_NAME}}`
+
+Registered in `services/marketing/merge_tags.py` under the new
+**Job** category. Resolver reads (in order):
+1. `job.service_template.name`
+2. `job.service_name`
+3. `job.service_type`
+4. `job.title`
+5. Bare `ctx.service_name`
+
+Empty string fallback — rendered templates keep working even when
+none resolve.
+
+### Enhancement 2 — Revenue Forecast preset filters (Feb-2026)
+
+`GET /api/reports/forecast` accepts:
+
+* `range=today|tomorrow|week|month|custom` (new)
+* `date_from` + `date_to` (required when `range=custom`, YYYY-MM-DD)
+* `days=N` (legacy — still honored when `range` is absent)
+
+All date math is done in the tenant tz (`America/Phoenix` default,
+no DST). `week` uses Mon–Sun containing today. Response for the new
+flow carries `{series, total, range, date_from, date_to}` — the
+legacy `days=` flow keeps the pre-existing `{series, total}` shape
+unchanged.
+
+Frontend `/reports/forecast` (`pages/reports/Forecast.jsx`) surfaces
+the presets as chips + a custom date-range picker. Last-chosen preset
+persists in `localStorage.revenueForecast.range`.
+
+### Phase 17 reconcile — Optimize response contract
+
+The shipped `POST /api/dispatch/board/optimize` response contract is
+authoritative and looks like:
+
+```json
+{
+  "ordered_customer_ids": ["c-a", "c-b", …],
+  "polyline":            "abc_polyline_encoded_string",
+  "total_distance_mi":   39.81,
+  "total_duration_min":  67.2,
+  "savings_min":          3.5,
+  "savings_pct":         16.1
+}
+```
+
+An earlier brief mentioned `seconds/meters/waypoint_indices/polyline-array`
+— that shape was **not shipped**. Current consumer
+(`DispatchBoardPage.jsx`) already reads `total_distance_mi` /
+`total_duration_min` / `ordered_customer_ids` / encoded `polyline`
+string. Distance is miles, duration is minutes, polyline is a
+Google-encoded string decoded client-side. No deprecated aliases are
+being added because no known consumer expects the older names.
+
+### Tests
+
+* Backend — `tests/test_phase18_reschedule.py` (4 tests) +
+  `tests/test_phase18_forecast_range.py` (9 tests) — **13 passing**.
+* Frontend — `src/test/slice-p18-reschedule.test.jsx` (3) +
+  `src/test/slice-p18-forecast-filters.test.jsx` (3) — **6 passing**.
+
+### Endpoints touched
+
+| Method | Path                          | operationId          |
+|--------|-------------------------------|----------------------|
+| POST   | /api/schedule/reschedule      | schedule.reschedule  |
+| GET    | /api/reports/forecast (extended) | revenue_forecast |
+
+Zillow / D2D `/dispatch/map` remains **held**. Provider (OpenWeb
+Ninja) is currently 429-throttling the tenant's key upstream —
+verified via direct probe. Awaiting user decision (fresh
+OpenWeb Ninja key vs. RapidAPI switch) before touching integration.

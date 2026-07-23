@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 
 from config import db, logger
 from utils import now_iso, new_id, require_admin, notify_customer
+from routers.tenants import get_current_tenant
 
 router = APIRouter()
 
@@ -229,6 +230,59 @@ async def _forecast_series(days_ahead: int = 90) -> list:
     """Return weekly buckets of projected revenue from active billing plans + weighted quotes."""
     today = datetime.now(timezone.utc).date()
     horizon = today + timedelta(days=days_ahead)
+    return await _forecast_series_between(today, horizon)
+
+
+async def _forecast_series_between(start_date, end_date) -> list:
+    """Feb-2026 · daily buckets between an inclusive [start_date, end_date]
+    window. Reuses the same billing-plan + weighted-quote projection but
+    keys each row by ISO date rather than week-start so short windows
+    (today / tomorrow) still render meaningful bars.
+    """
+    plans = await db.billing_plans.find({"active": {"$ne": False}}, {"_id": 0}).to_list(2000)
+    buckets: dict = {}
+    for p in plans:
+        try:
+            nr = datetime.fromisoformat((p.get("next_run") or "")[:10]).date()
+        except Exception:
+            continue
+        step = _FREQ_DAYS.get(p.get("frequency", "monthly"), 30)
+        amt = float(p.get("amount") or 0) * 1.08
+        while nr <= end_date:
+            if start_date <= nr <= end_date:
+                key = nr.isoformat()
+                buckets[key] = buckets.get(key, 0.0) + amt
+            nr = nr + timedelta(days=step)
+    # Weighted open quotes — land 14 days out.
+    quotes = await db.quotes.find({"doc_type": "quote"}, {"_id": 0}).to_list(3000)
+    today = datetime.now(timezone.utc).date()
+    for q in quotes:
+        w = _quote_weight(q)
+        if w <= 0:
+            continue
+        landing = today + timedelta(days=14)
+        if not (start_date <= landing <= end_date):
+            continue
+        key = landing.isoformat()
+        buckets[key] = buckets.get(key, 0.0) + float(q.get("total") or 0) * w
+    out = []
+    cur = start_date
+    while cur <= end_date:
+        key = cur.isoformat()
+        out.append({"week": key, "date": key,
+                    "amount": round(buckets.get(key, 0.0), 2)})
+        cur += timedelta(days=1)
+    return out
+
+
+async def _forecast_series_weekly_wrapper(days_ahead: int = 90) -> list:
+    """Legacy weekly bucketing kept for the days= flow.
+
+    Older callers may still expect week-start iso keys, so we build
+    the same aggregate but rounded to Mon-anchored buckets.
+    """
+    today = datetime.now(timezone.utc).date()
+    horizon = today + timedelta(days=days_ahead)
     plans = await db.billing_plans.find({"active": {"$ne": False}}, {"_id": 0}).to_list(2000)
     weekly: dict = {}  # week_start iso → amount
     for p in plans:
@@ -265,7 +319,63 @@ async def _forecast_series(days_ahead: int = 90) -> list:
 
 
 @router.get("/reports/forecast")
-async def revenue_forecast(user: dict = Depends(require_admin), days: int = Query(90, ge=7, le=365)):
+async def revenue_forecast(
+    user: dict = Depends(require_admin),
+    days: int = Query(90, ge=7, le=365),
+    range: Optional[str] = Query(None,
+        description="Feb-2026 · preset window: today|tomorrow|week|month|custom"),
+    date_from: Optional[str] = Query(None, description="YYYY-MM-DD (custom range)"),
+    date_to: Optional[str] = Query(None, description="YYYY-MM-DD (custom range)"),
+    tenant: dict = Depends(get_current_tenant),
+):
+    # Feb-2026 · Enhancement 2 — preset ranges honored in tenant tz.
+    if range:
+        preset = (range or "").lower()
+        tz_name = (tenant or {}).get("timezone") or "America/Phoenix"
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = timezone.utc
+        now_local = datetime.now(tz)
+        today_local = now_local.date()
+        if preset == "today":
+            start_local = today_local
+            end_local = today_local
+        elif preset == "tomorrow":
+            start_local = today_local + timedelta(days=1)
+            end_local = start_local
+        elif preset == "week":
+            # Mon–Sun window containing today.
+            start_local = today_local - timedelta(days=today_local.weekday())
+            end_local = start_local + timedelta(days=6)
+        elif preset == "month":
+            start_local = today_local.replace(day=1)
+            # Last day of the month.
+            if start_local.month == 12:
+                next_month = start_local.replace(year=start_local.year + 1, month=1)
+            else:
+                next_month = start_local.replace(month=start_local.month + 1)
+            end_local = next_month - timedelta(days=1)
+        elif preset == "custom":
+            if not (date_from and date_to):
+                raise HTTPException(400, "custom range requires date_from + date_to")
+            try:
+                start_local = datetime.fromisoformat(date_from).date()
+                end_local = datetime.fromisoformat(date_to).date()
+            except ValueError:
+                raise HTTPException(400, "invalid date format")
+            if end_local < start_local:
+                raise HTTPException(400, "date_to must be >= date_from")
+        else:
+            raise HTTPException(400,
+                "range must be one of today|tomorrow|week|month|custom")
+        series = await _forecast_series_between(start_local, end_local)
+        total = round(sum(x["amount"] for x in series), 2)
+        return {"series": series, "total": total,
+                "range": preset,
+                "date_from": start_local.isoformat(),
+                "date_to": end_local.isoformat()}
     series = await _forecast_series(days)
     total = round(sum(x["amount"] for x in series), 2)
     return {"days": days, "series": series, "total": total}

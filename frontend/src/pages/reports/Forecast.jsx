@@ -1,11 +1,31 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
 } from "recharts";
-import { ArrowLeft, TrendingUp, Layers, RefreshCw, AlertTriangle } from "lucide-react";
+import { ArrowLeft, TrendingUp, Layers, RefreshCw, AlertTriangle, Calendar as CalIcon } from "lucide-react";
 import { api } from "@/api";
 import { colors, money, brandGradient } from "@/theme";
+
+const RANGE_PRESETS = [
+  { key: "today",    label: "Today" },
+  { key: "tomorrow", label: "Tomorrow" },
+  { key: "week",     label: "This week" },
+  { key: "month",    label: "This month" },
+  { key: "custom",   label: "Custom" },
+];
+const STORAGE_KEY = "revenueForecast.range";
+
+function loadStoredRange() {
+  try {
+    const v = localStorage.getItem(STORAGE_KEY);
+    if (v && ["today", "tomorrow", "week", "month", "custom", "default"].includes(v)) return v;
+  } catch { /* jsdom */ }
+  return "default";
+}
+function saveStoredRange(v) {
+  try { localStorage.setItem(STORAGE_KEY, v); } catch { /* jsdom */ }
+}
 
 function Card({ children, className = "", testId }) {
   return (
@@ -26,12 +46,25 @@ export default function Forecast() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(90);
+  // Feb-2026 · Enhancement 2 — preset window + custom date pickers.
+  const [preset, setPreset] = useState(loadStoredRange());
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+
+  const isCustomReady = preset !== "custom" || (customFrom && customTo);
 
   useEffect(() => {
     let live = true;
+    if (!isCustomReady) return; // wait for both custom dates
+    saveStoredRange(preset);
     setLoading(true);
+    const forecastUrl = preset === "default"
+      ? `/reports/forecast?days=${days}`
+      : preset === "custom"
+      ? `/reports/forecast?range=custom&date_from=${customFrom}&date_to=${customTo}`
+      : `/reports/forecast?range=${preset}`;
     Promise.all([
-      api.get(`/reports/forecast?days=${days}`),
+      api.get(forecastUrl),
       api.get(`/reports/forecast-cards`),
     ]).then(([f, c]) => {
       if (!live) return;
@@ -41,7 +74,7 @@ export default function Forecast() {
       setLoading(false);
     }).catch(() => live && setLoading(false));
     return () => { live = false; };
-  }, [days]);
+  }, [days, preset, customFrom, customTo, isCustomReady]);
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto" data-testid="forecast-page">
@@ -60,19 +93,80 @@ export default function Forecast() {
             </p>
           </div>
         </div>
-        <div className="flex gap-2">
-          {[30, 60, 90].map((d) => (
-            <button key={d} onClick={() => setDays(d)}
-                    className="px-3 py-1.5 rounded-lg text-xs font-semibold transition"
-                    style={{
-                      backgroundColor: days === d ? colors.brand : colors.surface,
-                      color: days === d ? "#fff" : colors.onSurface,
-                      border: `1px solid ${days === d ? colors.brand : colors.border}`,
-                    }}
-                    data-testid={`forecast-days-${d}`}>
-              {d}d
-            </button>
-          ))}
+        <div className="flex flex-col gap-2 items-end">
+          {/* Feb-2026 · Enhancement 2 — preset chips + custom range picker */}
+          <div className="flex flex-wrap gap-1.5" data-testid="forecast-range-chips">
+            {RANGE_PRESETS.map((r) => (
+              <button
+                key={r.key}
+                type="button"
+                onClick={() => setPreset(r.key)}
+                className="px-2.5 py-1 rounded-full text-xs font-semibold transition hover:brightness-95"
+                style={{
+                  backgroundColor: preset === r.key ? colors.brand : colors.surface,
+                  color: preset === r.key ? "#fff" : colors.onSurface,
+                  border: `1px solid ${preset === r.key ? colors.brand : colors.border}`,
+                }}
+                data-testid={`forecast-range-${r.key}`}
+              >{r.label}</button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setPreset("default")}
+              className="px-2.5 py-1 rounded-full text-xs font-semibold transition hover:brightness-95"
+              style={{
+                backgroundColor: preset === "default" ? colors.brand : colors.surface,
+                color: preset === "default" ? "#fff" : colors.onSurface,
+                border: `1px solid ${preset === "default" ? colors.brand : colors.border}`,
+              }}
+              data-testid="forecast-range-default"
+            >{days}d</button>
+          </div>
+          {preset === "custom" ? (
+            <div className="flex items-center gap-1.5 text-xs"
+                 data-testid="forecast-custom-range">
+              <CalIcon size={12} style={{ color: colors.muted }} />
+              <input
+                type="date" value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                className="rounded px-1.5 py-1 text-xs focus:outline-none"
+                style={{
+                  backgroundColor: colors.surface,
+                  color: colors.onSurface,
+                  border: `1px solid ${colors.border}`,
+                }}
+                data-testid="forecast-custom-from"
+              />
+              <span style={{ color: colors.muted }}>→</span>
+              <input
+                type="date" value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+                className="rounded px-1.5 py-1 text-xs focus:outline-none"
+                style={{
+                  backgroundColor: colors.surface,
+                  color: colors.onSurface,
+                  border: `1px solid ${colors.border}`,
+                }}
+                data-testid="forecast-custom-to"
+              />
+            </div>
+          ) : null}
+          {preset === "default" ? (
+            <div className="flex gap-2" data-testid="forecast-days-chips">
+              {[30, 60, 90].map((d) => (
+                <button key={d} onClick={() => setDays(d)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+                        style={{
+                          backgroundColor: days === d ? colors.brand : colors.surface,
+                          color: days === d ? "#fff" : colors.onSurface,
+                          border: `1px solid ${days === d ? colors.brand : colors.border}`,
+                        }}
+                        data-testid={`forecast-days-${d}`}>
+                  {d}d
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
 

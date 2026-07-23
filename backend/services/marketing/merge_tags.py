@@ -304,7 +304,19 @@ def _customer_credit_balance(ctx: Dict[str, Any]) -> str:
 
 # ═══════════════════════════ Catalogue ═══════════════════════════════
 MERGE_TAGS: List[Dict[str, Any]] = [
-    # ─── Customer
+    # ─── Job / Service
+    {"token": "SERVICE_NAME", "label": "Service Name",
+     "category": "Job",
+     "description": "The service being performed — pulled from the job's "
+                     "service_template.name (or recurring template name), "
+                     "falling back to service_type / job title.",
+     "resolver": lambda ctx: (
+        ((ctx or {}).get("job") or {}).get("service_template", {}).get("name")
+        or ((ctx or {}).get("job") or {}).get("service_name")
+        or ((ctx or {}).get("job") or {}).get("service_type")
+        or ((ctx or {}).get("job") or {}).get("title")
+        or ((ctx or {}).get("service_name") or "")
+     )},
     {"token": "CUSTOMER_FIRST_NAME", "label": "First Name",
      "category": "Customer", "description": "The recipient customer's first name.",
      "resolver": _customer_first},

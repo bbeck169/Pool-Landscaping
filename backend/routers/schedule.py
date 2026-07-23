@@ -14,15 +14,16 @@ Endpoints (all tenant-scoped)
 -----------------------------
 * GET  /api/schedule/today
 * POST /api/schedule/route-leg    (client-provided distance/duration cache write)
+* POST /api/schedule/reschedule   (Feb-2026 · admin drag-and-drop reschedule)
 """
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from config import db
-from utils import now_iso, get_current_user
+from config import db, logger
+from utils import now_iso, get_current_user, new_id
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
@@ -267,4 +268,234 @@ async def schedule_day(date: Optional[str] = None,
                         tenant: dict = Depends(get_current_tenant)):
     """Alias for `/schedule/today?date=…` — cleaner URL when browsing history."""
     return await schedule_today(date=date, user=user, tenant=tenant)
+
+
+# ══════════════════════════════════════════════════════════════════
+# Feb-2026 · Enhancement 1 — Drag-and-drop reschedule + auto-notify
+# ══════════════════════════════════════════════════════════════════
+class RescheduleRequest(BaseModel):
+    job_id: str
+    new_start_at: str       # ISO datetime OR YYYY-MM-DD
+    new_end_at: Optional[str] = None
+    new_tech_user_id: Optional[str] = None
+    dry_run: bool = False   # if true, don't persist — just return the
+                              # notification preview so the confirmation
+                              # modal can render it before commit.
+
+
+def _tenant_tz(tenant: dict) -> str:
+    return (tenant or {}).get("timezone") or DEFAULT_TZ
+
+
+def _format_local(iso_or_date: str, tz_name: str) -> str:
+    """Render an ISO datetime OR YYYY-MM-DD string in the tenant tz."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(tz_name or "America/Phoenix")
+    except Exception:
+        tz = timezone.utc
+    s = (iso_or_date or "").strip()
+    if not s:
+        return ""
+    try:
+        # Date-only rows land as "YYYY-MM-DD"; give them the noon
+        # anchor so the label reads sanely.
+        if len(s) == 10 and s.count("-") == 2:
+            dt = datetime.fromisoformat(s + "T12:00:00+00:00")
+        else:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return s
+    local = dt.astimezone(tz)
+    return local.strftime("%a %b %-d, %Y %-I:%M %p")
+
+
+async def _resolve_service_name(job: dict) -> str:
+    """Merge tag `{{SERVICE_NAME}}` resolver — pulls from the job's
+    service_template.name (or the recurring template name) with a
+    friendly fallback."""
+    st = job.get("service_template") or {}
+    if isinstance(st, dict) and st.get("name"):
+        return st["name"]
+    tpl_id = job.get("recurring_template_id") or job.get("template_id")
+    if tpl_id:
+        try:
+            row = await db.recurring_job_templates.find_one(
+                {"id": tpl_id}, {"_id": 0, "service_type": 1, "name": 1},
+            )
+            if row and (row.get("name") or row.get("service_type")):
+                return row.get("name") or row["service_type"]
+        except Exception:
+            pass
+    return (job.get("service_type") or job.get("title") or "your service")
+
+
+@router.post("/schedule/reschedule",
+              operation_id="schedule.reschedule")
+async def reschedule_job(body: RescheduleRequest,
+                           user: dict = Depends(get_current_user),
+                           tenant: dict = Depends(get_current_tenant)):
+    """Admin drag-and-drop reschedule.
+
+    Updates the ``jobs`` doc (``scheduled_start_at``, ``scheduled_end_at``,
+    optionally ``technician_id``), appends a ``job_history`` entry, then
+    fires — best-effort, wrapped in try/except so the reschedule never
+    rolls back — an email via Resend + SMS via RingCentral to the
+    customer. Both writes land in ``marketing_deliveries`` with
+    ``trigger_entity.kind == "job_rescheduled"`` so the Communications
+    Log timeline surfaces them.
+    """
+    if (user or {}).get("role") not in {"admin", "super_admin", "manager"}:
+        raise HTTPException(403, "Admin/manager only")
+    job = await db.jobs.find_one(
+        {"id": body.job_id, "tenant_id": tenant["id"]}, {"_id": 0},
+    )
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    old_start = job.get("scheduled_start_at") or job.get("scheduled_date")
+    old_end = job.get("scheduled_end_at")
+    old_tech = job.get("technician_id")
+
+    tz = _tenant_tz(tenant)
+    customer = None
+    cid = job.get("customer_id")
+    if cid:
+        customer = await db.customers.find_one(
+            {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0},
+        )
+    service_name = await _resolve_service_name(job)
+    old_dt_label = _format_local(old_start, tz)
+    new_dt_label = _format_local(body.new_start_at, tz)
+
+    preview = {
+        "job_id": job["id"],
+        "customer_id": cid,
+        "customer_name": (customer or {}).get("name") or "",
+        "customer_first_name": (customer or {}).get("first_name") or "",
+        "customer_email": (customer or {}).get("email"),
+        "customer_phone": (customer or {}).get("phone"),
+        "service_name": service_name,
+        "old_datetime": old_dt_label,
+        "new_datetime": new_dt_label,
+        "tech_name": None,
+    }
+    tech_id = body.new_tech_user_id or old_tech
+    if tech_id:
+        t = await db.users.find_one({"id": tech_id}, {"_id": 0, "name": 1})
+        if t:
+            preview["tech_name"] = t.get("name") or tech_id
+
+    if body.dry_run:
+        return {"ok": True, "dry_run": True, "preview": preview}
+
+    # ── Persist reschedule ──────────────────────────────────
+    update = {
+        "scheduled_start_at": body.new_start_at,
+    }
+    # Keep the legacy YYYY-MM-DD field in sync so list filters still work.
+    date_prefix = body.new_start_at[:10] if body.new_start_at else None
+    if date_prefix and len(date_prefix) == 10:
+        update["scheduled_date"] = date_prefix
+    if body.new_end_at:
+        update["scheduled_end_at"] = body.new_end_at
+    if body.new_tech_user_id:
+        update["technician_id"] = body.new_tech_user_id
+
+    history_entry = {
+        "event": "rescheduled",
+        "from": {"scheduled_start_at": old_start,
+                  "scheduled_end_at": old_end,
+                  "technician_id": old_tech},
+        "to": {"scheduled_start_at": body.new_start_at,
+                "scheduled_end_at": body.new_end_at,
+                "technician_id": body.new_tech_user_id or old_tech},
+        "by": user.get("id"),
+        "at": now_iso(),
+    }
+    await db.jobs.update_one(
+        {"id": job["id"], "tenant_id": tenant["id"]},
+        {"$set": update, "$push": {"job_history": history_entry}},
+    )
+
+    # ── Best-effort customer notifications ───────────────────
+    sent_email = False; sent_sms = False
+    trigger_id = new_id()
+    company_name = (tenant.get("name") or "your service team")
+    email_ctx = {
+        "customer_first_name": preview["customer_first_name"],
+        "service_name": service_name,
+        "old_datetime": old_dt_label,
+        "new_datetime": new_dt_label,
+        "tech_name": preview["tech_name"] or "your tech",
+        "company_name": company_name,
+    }
+    sms_body = (
+        f"Hi {preview['customer_first_name'] or 'there'}, your "
+        f"{service_name} has been rescheduled from {old_dt_label} to "
+        f"{new_dt_label}. Reply STOP to opt out."
+    )
+
+    if customer and customer.get("email"):
+        try:
+            from services.comms_email_adapter import send_email
+            subject = f"Your {service_name} has been rescheduled"
+            html = (
+                f"<p>Hi {email_ctx['customer_first_name'] or 'there'},</p>"
+                f"<p>Your <strong>{service_name}</strong> has been "
+                f"rescheduled from <strong>{old_dt_label}</strong> to "
+                f"<strong>{new_dt_label}</strong>.</p>"
+                f"<p>Assigned tech: {email_ctx['tech_name']}.</p>"
+                f"<p>— {company_name}</p>"
+            )
+            import asyncio as _a
+            res = await _a.wait_for(send_email(
+                tenant_id=tenant["id"], to_email=customer["email"],
+                subject=subject, html=html, from_name=company_name,
+            ), timeout=8.0)
+            sent_email = (res or {}).get("status") in ("sent", "sent_no_provider_id")
+        except Exception as exc:
+            logger.warning(f"[reschedule] email failed: {exc}")
+        await db.marketing_deliveries.insert_one({
+            "id": new_id(), "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "channel": "email", "kind": "transactional",
+            "recipient": customer["email"],
+            "subject": f"Your {service_name} has been rescheduled",
+            "body": None,
+            "trigger_entity": {"kind": "job_rescheduled",
+                                "id": job["id"], "job_id": job["id"]},
+            "trigger_id": trigger_id,
+            "delivered": sent_email,
+            "created_at": now_iso(),
+        })
+
+    if customer and customer.get("phone"):
+        try:
+            from services.comms_sms_adapter import send_sms
+            import asyncio as _a
+            res = await _a.wait_for(send_sms(
+                tenant_id=tenant["id"], to_phone=customer["phone"],
+                body=sms_body,
+            ), timeout=8.0)
+            sent_sms = bool(res and (res.get("status") in ("sent", "queued")))
+        except Exception as exc:
+            logger.warning(f"[reschedule] sms failed: {exc}")
+        await db.marketing_deliveries.insert_one({
+            "id": new_id(), "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "channel": "sms", "kind": "transactional",
+            "recipient": customer["phone"],
+            "subject": None, "body": sms_body,
+            "trigger_entity": {"kind": "job_rescheduled",
+                                "id": job["id"], "job_id": job["id"]},
+            "trigger_id": trigger_id,
+            "delivered": sent_sms,
+            "created_at": now_iso(),
+        })
+
+    return {"ok": True, "preview": preview,
+             "sent_email": sent_email, "sent_sms": sent_sms,
+             "job_id": job["id"]}
+
 
