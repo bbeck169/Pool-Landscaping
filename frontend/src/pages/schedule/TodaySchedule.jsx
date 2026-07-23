@@ -9,7 +9,9 @@ import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 import { useJsApiLoader } from "@react-google-maps/api";
 import { useAuth } from "@/auth";
-import WeatherWidget5Day from "@/pages/aitools/WeatherWidget5Day";
+// Phase 16C `<WeatherWidget5Day>` removed from tech home 2026-07 per
+// user request. File still exists at ``pages/aitools/`` — imported
+// by the admin Dashboard.
 import ServiceNotePill from "@/components/schedule/ServiceNotePill";
 import {
   Clock, MapPin, Navigation, Car, Coffee, PlayCircle, StopCircle,
@@ -470,12 +472,12 @@ export default function TodaySchedule() {
         </div>
       )}
 
-      {/* Phase 16C add-on — 5-day forecast on tech landing */}
-      {isTech && (
-        <div className="mb-4" data-testid="schedule-weather-widget">
-          <WeatherWidget5Day role="technician" />
-        </div>
-      )}
+      {/* Phase 16C 5-day forecast — removed from tech home 2026-07 per
+          user request. The `<WeatherWidget5Day>` component still lives
+          at `/pages/aitools/WeatherWidget5Day.jsx` and is imported by
+          the admin Dashboard in case anyone re-enables it here later.
+          The current-conditions card + small mini-forecast strip
+          (rendered elsewhere via `<WeatherWidget>`) stay in place. */}
 
       {/* Summary bar */}
       <div className="rounded-2xl p-4 mb-6 flex items-center gap-6 flex-wrap"

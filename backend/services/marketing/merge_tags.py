@@ -83,6 +83,84 @@ def _customer_full(ctx: Dict[str, Any]) -> str:
     return _safe_str((ctx.get("customer") or {}).get("name"))
 
 
+# ─── Batch 12D · Feb 2026 — missing-tag polish additions ──────────────
+def _customer_id(ctx: Dict[str, Any]) -> str:
+    return _safe_str((ctx.get("customer") or {}).get("id"))
+
+
+def _customer_street(ctx: Dict[str, Any]) -> str:
+    """Alias for ``CUSTOMER_ADDRESS`` — reads either
+    ``customer.address_line_1`` (Phase 8+ contact schema) or
+    ``customer.address`` (legacy single-string field)."""
+    c = ctx.get("customer") or {}
+    return _safe_str(c.get("address_line_1") or c.get("address") or "")
+
+
+def _tenant_timezone(ctx: Dict[str, Any]) -> str:
+    t = ctx.get("tenant") or {}
+    return _safe_str(t.get("timezone") or "America/Phoenix")
+
+
+def _tenant_next_business_day(ctx: Dict[str, Any]) -> str:
+    """Formatted next business day in the tenant's timezone. Skips
+    Saturday + Sunday. Custom holidays live on
+    ``tenant.business_holidays`` as a list of ``"YYYY-MM-DD"`` strings.
+    Returned as ``"Mon, Feb 09"`` — the same format as ``TODAY``."""
+    from zoneinfo import ZoneInfo
+    from datetime import timedelta, datetime as _dt
+    tz_name = _tenant_timezone(ctx) or "America/Phoenix"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("America/Phoenix")
+    today_local = _dt.now(tz).date()
+    holidays = set((ctx.get("tenant") or {}).get("business_holidays") or [])
+    d = today_local + timedelta(days=1)
+    for _ in range(14):   # cap the search — 2-week runway is generous
+        if d.weekday() < 5 and d.isoformat() not in holidays:
+            return d.strftime("%a, %b %d")
+        d += timedelta(days=1)
+    return d.strftime("%a, %b %d")
+
+
+def _invoice_pay_url(ctx: Dict[str, Any]) -> str:
+    """Portal-authenticated pay URL — customer signs in, then lands on
+    the invoice detail with the Pay Now modal available. Never
+    embeds a token; safe to include in emails that also mention
+    login credentials."""
+    inv = ctx.get("invoice") or {}
+    inv_id = _safe_str(inv.get("id") or inv.get("invoice_id"))
+    if not inv_id:
+        return ""
+    base = (os.environ.get("APP_PUBLIC_URL")
+             or os.environ.get("PUBLIC_FRONTEND_ORIGIN")
+             or "").rstrip("/")
+    if not base:
+        return ""
+    return f"{base}/portal/invoices/{inv_id}"
+
+
+def _invoice_pay_magic_url(ctx: Dict[str, Any]) -> str:
+    """Public magic-link pay URL — no login required. Uses whatever
+    ``ctx['invoice_pay_link']`` the caller (e.g. the invoice send
+    path) already built via
+    ``services.pay_link_builder.build_invoice_pay_link``. Falls back
+    to the portal URL if no magic link was provided."""
+    return (_safe_str(ctx.get("invoice_pay_link"))
+             or _invoice_pay_url(ctx))
+
+
+def _estimate_accept_url(ctx: Dict[str, Any]) -> str:
+    """Public magic-link accept URL for the estimate viewer. Reads
+    ``ctx['estimate_accept_link']`` when populated by the estimate
+    send path; falls back to the (already-registered)
+    ``ESTIMATE_LINK`` value on ``ctx['estimate']['view_url']``."""
+    if ctx.get("estimate_accept_link"):
+        return _safe_str(ctx.get("estimate_accept_link"))
+    est = ctx.get("estimate") or {}
+    return _safe_str(est.get("view_url") or est.get("public_url") or "")
+
+
 def _customer_balance(ctx: Dict[str, Any]) -> str:
     return _open_balance(ctx.get("customer") or {})
 
@@ -260,6 +338,19 @@ MERGE_TAGS: List[Dict[str, Any]] = [
     {"token": "CUSTOMER_ZIP", "label": "ZIP", "category": "Customer",
      "description": "ZIP code parsed from the customer's address.",
      "resolver": _res("customer", "zip")},
+    # Batch 12D · Feb 2026 — polish additions.
+    {"token": "CUSTOMER_STREET", "label": "Street (alias)",
+     "category": "Customer",
+     "description": ("Alias for CUSTOMER_ADDRESS. Reads "
+                       "``address_line_1`` (Phase 8+ contact schema) "
+                       "or falls back to the legacy ``address`` field."),
+     "resolver": _customer_street},
+    {"token": "CUSTOMER_ID", "label": "Customer ID",
+     "category": "Customer",
+     "description": ("Raw customer record id — useful for admin-facing "
+                       "templates and internal audit tools. Not for "
+                       "customer-facing bodies."),
+     "resolver": _customer_id},
 
     # ─── Company
     {"token": "COMPANY_NAME", "label": "Company Name",
@@ -280,6 +371,20 @@ MERGE_TAGS: List[Dict[str, Any]] = [
     {"token": "COMPANY_WEBSITE", "label": "Company Website",
      "category": "Company", "description": "Company website URL.",
      "resolver": _res("tenant", "website")},
+    # Batch 12D · Feb 2026 — expose tenant timezone + next business day
+    # to send-time templates (used by scheduling + reminder bodies).
+    {"token": "TENANT_TIMEZONE", "label": "Tenant Timezone",
+     "category": "Company",
+     "description": ("IANA timezone name for the tenant, fallback "
+                       "``America/Phoenix``. Useful when signing off "
+                       "an email with a time-of-day hint."),
+     "resolver": _tenant_timezone},
+    {"token": "TENANT_NEXT_BUSINESS_DAY", "label": "Next Business Day",
+     "category": "Company",
+     "description": ("Formatted next business day in the tenant's "
+                       "timezone. Skips Sat/Sun and any dates listed "
+                       "on ``tenant.business_holidays``."),
+     "resolver": _tenant_next_business_day},
 
     # ─── Estimate
     {"token": "ESTIMATE_TOTAL", "label": "Estimate Total",
@@ -314,6 +419,29 @@ MERGE_TAGS: List[Dict[str, Any]] = [
     {"token": "INVOICES_LINKS", "label": "All Invoice Links",
      "category": "Invoice", "description": "Bullet list of pay links.",
      "resolver": lambda c: _safe_str((c.get("invoice") or {}).get("all_links_html"))},
+    # Batch 12D · Feb 2026 — canonical single-invoice pay URLs.
+    {"token": "INVOICE_PAY_URL", "label": "Pay URL (portal)",
+     "category": "Invoice",
+     "description": ("Portal-authenticated URL to the invoice detail "
+                       "page. Requires the customer to log in — safe "
+                       "to reuse in emails that also mention creds."),
+     "resolver": _invoice_pay_url},
+    {"token": "INVOICE_PAY_MAGIC_URL", "label": "Pay URL (magic link)",
+     "category": "Invoice",
+     "description": ("Public magic-link pay URL — no login required. "
+                       "Requires the send path to have populated "
+                       "``ctx['invoice_pay_link']`` via the pay-link "
+                       "builder; falls back to the portal URL when "
+                       "unavailable."),
+     "resolver": _invoice_pay_magic_url},
+
+    {"token": "ESTIMATE_ACCEPT_URL", "label": "Estimate Accept URL",
+     "category": "Estimate",
+     "description": ("Public magic-link accept URL for the estimate "
+                       "viewer. Populated by the estimate send path "
+                       "via ``ctx['estimate_accept_link']``; falls "
+                       "back to ESTIMATE_LINK when absent."),
+     "resolver": _estimate_accept_url},
 
     # ─── Payment
     {"token": "PAYMENT_AMOUNT", "label": "Payment Amount",
