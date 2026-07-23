@@ -167,7 +167,203 @@ async def run_weekly_for_tenant(tenant: dict) -> Dict[str, Any]:
         f"ambiguous={len(summary.get('ambiguous_matches') or [])} "
         f"skipped={summary.get('skipped_no_contact')}"
     )
+    # Batch 12C · Feb 2026 — ambiguous-match digest (email + SMS,
+    # 24h cooldown). Silent when the count is 0.
+    try:
+        await _fire_ambiguous_alert(tenant, summary)
+    except Exception as exc:  # pragma: no cover — defensive, never
+                                # crashes the tenant loop.
+        logger.warning(
+            f"[stripe-sync-ambiguous] tenant={tid} fanout failed: {exc}"
+        )
     return summary
+
+
+# ─── Batch 12C · Feb 2026 — Ambiguous-match digest fanout ─────────────
+AMBIG_KIND = "stripe_sync_ambiguous"
+AMBIG_COOLDOWN_HOURS = 24
+
+
+async def _ambig_recently_alerted(tenant_id: str) -> bool:
+    state = await db.ops_alerts_state.find_one(
+        {"tenant_id": tenant_id, "kind": AMBIG_KIND},
+        {"_id": 0, "last_ran_at": 1},
+    )
+    if not state or not state.get("last_ran_at"):
+        return False
+    try:
+        dt = datetime.fromisoformat(str(state["last_ran_at"])
+                                       .replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return False
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        hours=AMBIG_COOLDOWN_HOURS)
+    return dt >= cutoff
+
+
+async def _resolve_ambig_recipients(tenant: dict) -> Dict[str, List[str]]:
+    """Mirrors the Stripe key-health alert fanout logic: emails go to
+    every admin/super_admin user on the tenant; SMS uses the tenant's
+    escalation list falling back to the first admin's phone."""
+    tid = tenant["id"]
+    users = await db.users.find(
+        {"tenant_id": tid,
+          "role": {"$in": ["admin", "super_admin"]},
+          "active": {"$ne": False}},
+        {"_id": 0, "email": 1, "phone": 1},
+    ).to_list(50)
+    emails = [u["email"] for u in users if u.get("email")]
+    sms = list(tenant.get("sms_escalation_recipients") or [])
+    if not sms:
+        for u in users:
+            if u.get("phone"):
+                sms = [u["phone"]]
+                break
+    return {"emails": emails, "sms": sms}
+
+
+async def _fire_ambiguous_alert(tenant: dict, summary: Dict[str, Any]) -> None:
+    """Fan-out email + SMS when ``ambiguous_matches`` is non-empty.
+
+    * Renders bodies via ``render_template()`` — never inline-
+      substitutes. Uses the ``stripe_sync_ambiguous_matches`` +
+      ``stripe_sync_ambiguous_matches_sms`` templates seeded by
+      ``services.add_card_links.seed_add_card_templates_for_tenant``.
+    * Records ``marketing_deliveries`` rows keyed on
+      ``trigger_entity.kind="stripe_sync_ambiguous"``.
+    * 24-hour cooldown via ``ops_alerts_state{kind=AMBIG_KIND}`` — a
+      subsequent scheduled run with ambiguous > 0 stays silent until
+      the window elapses.
+    * NEVER fires when ambiguous count is 0.
+    """
+    matches = summary.get("ambiguous_matches") or []
+    if not matches:
+        return
+    tid = tenant["id"]
+    if await _ambig_recently_alerted(tid):
+        logger.info(
+            f"[stripe-sync-ambiguous] tenant={tid} skipped=cooldown "
+            f"(within {AMBIG_COOLDOWN_HOURS}h)"
+        )
+        return
+
+    from services.marketing.merge_tags import render_context, render_template
+
+    email_tpl = await db.marketing_templates.find_one(
+        {"tenant_id": tid, "code": "stripe_sync_ambiguous_matches"},
+        {"_id": 0},
+    )
+    sms_tpl = await db.marketing_templates.find_one(
+        {"tenant_id": tid, "code": "stripe_sync_ambiguous_matches_sms"},
+        {"_id": 0},
+    )
+
+    sample = ", ".join(
+        (m.get("customer_name") or m.get("email") or m.get("customer_id") or "?")
+        for m in matches[:3]
+    ) + (f" (+{len(matches) - 3} more)" if len(matches) > 3 else "")
+
+    base_url = (
+        os.environ.get("PUBLIC_FRONTEND_ORIGIN")
+        or (tenant.get("brand") or {}).get("public_origin")
+        or "https://poolscape-audit.preview.emergentagent.com"
+    )
+    resolver_url = f"{base_url.rstrip('/')}/settings/billing#stripe-sync-section"
+
+    ctx = render_context(
+        tenant=tenant,
+        ambiguous_match_count=len(matches),
+        ambiguous_match_sample=sample,
+        add_card_link=resolver_url,  # reused as the "Review" deep link
+    )
+    trigger_id = f"stripe_sync_ambig:{tid}:{now_iso()[:13]}"
+    recipients = await _resolve_ambig_recipients(tenant)
+    sent_email = 0
+    sent_sms = 0
+
+    if email_tpl:
+        subject_r, _ = render_template(email_tpl.get("subject") or "", ctx)
+        body_r, _ = render_template(email_tpl.get("body") or "", ctx)
+        try:
+            from services.comms_email_adapter import send_email
+            import asyncio as _asyncio
+            for em in recipients["emails"]:
+                try:
+                    res = await _asyncio.wait_for(send_email(
+                        tenant_id=tid, to_email=em,
+                        subject=subject_r, html=body_r,
+                        from_name=(tenant.get("name") or None),
+                    ), timeout=8.0)
+                    await db.marketing_deliveries.insert_one({
+                        "id": new_id(), "tenant_id": tid,
+                        "customer_id": None,
+                        "channel": "email", "kind": "transactional",
+                        "recipient": em, "recipient_email": em,
+                        "subject": subject_r, "body": body_r,
+                        "subject_rendered": subject_r,
+                        "body_rendered": body_r,
+                        "trigger_entity": {"kind": AMBIG_KIND, "id": tid},
+                        "trigger_id": trigger_id,
+                        "provider": (res or {}).get("provider"),
+                        "provider_status": (res or {}).get("status"),
+                        "delivered": (res or {}).get("status", "").startswith("sent"),
+                        "created_at": now_iso(), "sent_at": now_iso(),
+                    })
+                    sent_email += 1
+                except Exception as exc:  # pragma: no cover
+                    logger.warning(
+                        f"[stripe-sync-ambiguous] email send to {em} failed: {exc}"
+                    )
+        except Exception as exc:  # pragma: no cover
+            logger.warning(f"[stripe-sync-ambiguous] email path failed: {exc}")
+
+    if sms_tpl:
+        sms_body_r, _ = render_template(sms_tpl.get("body") or "", ctx)
+        try:
+            from utils import send_sms
+            import asyncio as _asyncio
+            for phone in recipients["sms"]:
+                try:
+                    await _asyncio.wait_for(
+                        _asyncio.to_thread(send_sms, phone, sms_body_r),
+                        timeout=8.0,
+                    )
+                    await db.marketing_deliveries.insert_one({
+                        "id": new_id(), "tenant_id": tid,
+                        "customer_id": None,
+                        "channel": "sms", "kind": "transactional",
+                        "recipient": phone, "recipient_phone": phone,
+                        "subject": None, "body": sms_body_r,
+                        "body_rendered": sms_body_r,
+                        "trigger_entity": {"kind": AMBIG_KIND, "id": tid},
+                        "trigger_id": trigger_id,
+                        "delivered": True,
+                        "created_at": now_iso(), "sent_at": now_iso(),
+                    })
+                    sent_sms += 1
+                except Exception as exc:  # pragma: no cover
+                    logger.warning(
+                        f"[stripe-sync-ambiguous] sms send to {phone} failed: {exc}"
+                    )
+        except Exception as exc:  # pragma: no cover
+            logger.warning(f"[stripe-sync-ambiguous] sms path failed: {exc}")
+
+    # Cooldown state stamp — set even when fanout was 0/0 to avoid
+    # retrying every cron tick for the same 24h window.
+    await db.ops_alerts_state.update_one(
+        {"tenant_id": tid, "kind": AMBIG_KIND},
+        {"$set": {"tenant_id": tid, "kind": AMBIG_KIND,
+                    "last_ran_at": now_iso(),
+                    "last_ambiguous_count": len(matches)},
+          "$setOnInsert": {"id": new_id(), "created_at": now_iso()}},
+        upsert=True,
+    )
+    logger.info(
+        f"[stripe-sync-ambiguous] tenant={tid} "
+        f"ambiguous={len(matches)} email={sent_email} sms={sent_sms}"
+    )
 
 
 async def hourly_scan() -> Dict[str, Any]:

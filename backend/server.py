@@ -772,6 +772,7 @@ async def startup():
     try:
         from services.add_card_links import (
             ensure_require_card_default_on_tenants,
+            ensure_tenants_timezone_backfill,
             seed_add_card_templates_all_tenants,
         )
         _p12_n = await ensure_require_card_default_on_tenants()
@@ -782,6 +783,8 @@ async def startup():
         logger.info(
             f"[phase12] add_card_request_* templates seed — {_p12_seeded}"
         )
+        # Batch 12C · Feb 2026 — timezone audit + backfill.
+        await ensure_tenants_timezone_backfill()
     except Exception as e:
         logger.warning(f"[phase12] boot migration crashed: {e}")
 

@@ -451,6 +451,21 @@ MERGE_TAGS: List[Dict[str, Any]] = [
      "description": ("Public magic link to the SetupIntent page for "
                        "saving a card. Expires in 30 days."),
      "resolver": lambda ctx: _safe_str(ctx.get("add_card_link") or "")},
+
+    # ─── Batch 12C · Feb 2026 — Ambiguous Stripe-match digest tags.
+    # Populated by ``services.stripe_customer_sync_cron._fire_ambiguous_alert``
+    # when a scheduled sync surfaces > 0 rows admins need to resolve.
+    {"token": "AMBIGUOUS_MATCH_COUNT", "label": "Ambiguous Match Count",
+     "category": "Payments",
+     "description": ("Number of CRM customers whose Stripe cross-"
+                       "reference produced multiple candidates."),
+     "resolver": lambda ctx: _safe_str(ctx.get("ambiguous_match_count") or 0)},
+    {"token": "AMBIGUOUS_MATCH_SAMPLE", "label": "Ambiguous Match Sample",
+     "category": "Payments",
+     "description": ("Comma-joined preview of the first 3 ambiguous "
+                       "customer names, for the digest email/SMS body."),
+     "resolver": lambda ctx: _safe_str(
+         ctx.get("ambiguous_match_sample") or "")},
 ]
 
 _TAG_INDEX: Dict[str, Callable] = {t["token"].upper(): t["resolver"]

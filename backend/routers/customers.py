@@ -367,6 +367,40 @@ async def create_customer(body: CustomerIn,
         await mirror_customer_created(tenant["id"], doc)
     except Exception:
         pass
+
+    # Batch 12C · Feb 2026 — add-card-on-create hook. Fires only if
+    # ALL of the following are true:
+    #   * ``tenant.auto_send_card_add_on_create == True`` (default OFF).
+    #   * Effective card-on-file requirement is on for this customer.
+    #   * The customer has no saved PMs yet (brand new → always true).
+    #   * The customer has EITHER an email OR a phone.
+    # Respects the existing 1/5-min per-customer rate limit inside
+    # ``send_card_add_link`` — brand-new customers pass trivially.
+    try:
+        if bool(tenant.get("auto_send_card_add_on_create", False)):
+            card_fields = _compute_card_fields(
+                doc, bool(tenant.get("require_card_on_file_default", True)),
+            )
+            has_contact = bool(doc.get("email") or doc.get("phone"))
+            if (card_fields["effective_require_card_on_file"]
+                    and not card_fields["has_card_on_file"]
+                    and has_contact):
+                await send_card_add_link(doc["id"], user=user, tenant=tenant)
+            elif not has_contact and card_fields["effective_require_card_on_file"]:
+                logger.warning(
+                    f"[phase12c-auto-send] tenant={tenant['id']} "
+                    f"customer={doc['id']} skipped=no_contact_info"
+                )
+    except HTTPException:
+        # send_card_add_link raises 429 on repeat sends; a brand-new
+        # customer can't trip it. Any other HTTPException is not
+        # worth blowing up customer creation for.
+        pass
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning(
+            f"[phase12c-auto-send] tenant={tenant['id']} "
+            f"customer={doc['id']} error={exc}"
+        )
     return doc
 
 

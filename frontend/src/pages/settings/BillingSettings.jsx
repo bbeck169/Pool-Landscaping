@@ -162,6 +162,95 @@ export default function BillingSettings() {
             </button>
           </label>
 
+          {/* Batch 12C · Feb 2026 — Timezone picker. Stored as an IANA
+              name; the picker limits choices to the US zones the
+              cron dispatch cares about but the backend accepts any
+              IANA identifier. */}
+          <div className="mt-4 pt-4 flex items-center justify-between"
+                style={{ borderTop: "1px solid #E5E7EB" }}>
+            <div className="flex-1 min-w-0 pr-4">
+              <div className="text-sm font-medium" style={{ color: colors.onSurface }}>
+                Tenant timezone
+              </div>
+              <div className="text-xs mt-0.5" style={{ color: colors.muted }}>
+                Used to dispatch the weekly Stripe sync + other per-tenant crons.
+              </div>
+            </div>
+            <select
+              data-testid="tenant-timezone-picker"
+              value={tenantSettings.timezone || "America/Phoenix"}
+              onChange={async (e) => {
+                const nextTz = e.target.value;
+                if (savingTenant) return;
+                setSavingTenant(true);
+                try {
+                  const doc = await api.patch("/tenants/mine/settings", {
+                    timezone: nextTz,
+                  });
+                  setTenantSettings((s) => ({ ...s, ...doc, timezone: doc.timezone || nextTz }));
+                  setToast("Timezone updated");
+                } catch (err) {
+                  setToast(err.message || "Save failed");
+                } finally {
+                  setSavingTenant(false);
+                }
+              }}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg"
+              style={{ border: `1px solid ${colors.border}`,
+                        backgroundColor: colors.surfaceSecondary,
+                        color: colors.onSurfaceSecondary,
+                        opacity: savingTenant ? 0.6 : 1 }}
+            >
+              <option value="America/Phoenix">America/Phoenix (AZ)</option>
+              <option value="America/Los_Angeles">America/Los_Angeles (PT)</option>
+              <option value="America/Denver">America/Denver (MT)</option>
+              <option value="America/Chicago">America/Chicago (CT)</option>
+              <option value="America/New_York">America/New_York (ET)</option>
+            </select>
+          </div>
+
+          {/* Batch 12C · Feb 2026 — Auto-send add-card link on new
+              customer creation. Default OFF. */}
+          <label className="mt-4 pt-4 flex items-center justify-between"
+                  style={{ borderTop: "1px solid #E5E7EB" }}>
+            <div className="flex-1 min-w-0 pr-4">
+              <div className="text-sm font-medium" style={{ color: colors.onSurface }}>
+                Auto-send add-card link on new customer
+              </div>
+              <div className="text-xs mt-0.5" style={{ color: colors.muted }}>
+                Automatically email + SMS a card-add link when a new customer
+                is created and no card is on file.
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                if (savingTenant) return;
+                setSavingTenant(true);
+                try {
+                  const next = !tenantSettings.auto_send_card_add_on_create;
+                  const doc = await api.patch("/tenants/mine/settings", {
+                    auto_send_card_add_on_create: next,
+                  });
+                  setTenantSettings((s) => ({ ...s, ...doc }));
+                  setToast("Auto-send preference saved");
+                } catch (err) {
+                  setToast(err.message || "Save failed");
+                } finally {
+                  setSavingTenant(false);
+                }
+              }}
+              className="w-11 h-6 rounded-full relative transition ml-3 shrink-0"
+              style={{
+                backgroundColor: tenantSettings.auto_send_card_add_on_create
+                  ? colors.brand : colors.surfaceTertiary,
+                opacity: savingTenant ? 0.6 : 1,
+              }}
+              data-testid="tenant-auto-send-card-toggle">
+              <span className="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all shadow"
+                    style={{ left: tenantSettings.auto_send_card_add_on_create ? 22 : 2 }} />
+            </button>
+          </label>
+
           {/* Phase 12B · Feb 2026 — Stripe cross-reference sync. */}
           <StripeSyncSection tenantSettings={tenantSettings}
                               onToast={setToast} />
@@ -252,6 +341,14 @@ function StripeSyncSection({ tenantSettings, onToast }) {
                 {new Date(tenantSettings.stripe_sync_last_run_at).toLocaleString()}
               </span></>
             ) : null}
+          </div>
+          {/* Batch 12C · Feb 2026 — "Next scheduled sync" line.
+              Format `Thu 02:00 · <TZ>` using the tenant's configured
+              timezone (fallback America/Phoenix). Static — the cron
+              dispatch is per-tenant Thu 02:00 local. */}
+          <div className="text-[11px] text-zinc-400 mt-0.5"
+                data-testid="stripe-sync-next-scheduled">
+            Next scheduled sync: Thu 02:00 · {tenantSettings.timezone || "America/Phoenix"}
           </div>
         </div>
         <div className="flex items-center gap-2">

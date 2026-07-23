@@ -144,6 +144,14 @@ async def current_tenant(request: Request,
         # tenant that predates the phase.
         "require_card_on_file_default": bool(
             tenant.get("require_card_on_file_default", True)),
+        # Batch 12C · Feb 2026 — tenant timezone + add-card-on-create
+        # exposure so the settings UI can render the picker and toggle
+        # without an extra fetch.
+        "timezone": tenant.get("timezone") or "America/Phoenix",
+        "auto_send_card_add_on_create": bool(
+            tenant.get("auto_send_card_add_on_create", False)),
+        "stripe_sync_last_run_at": tenant.get("stripe_sync_last_run_at"),
+        "last_stripe_customer_sync_at": tenant.get("last_stripe_customer_sync_at"),
     }
 
 
@@ -286,12 +294,16 @@ async def patch_own_brand(body: BrandUpdate, user: dict = Depends(get_current_us
 class TenantSettingsUpdate(BaseModel):
     """Fields settable via ``PATCH /api/tenants/mine/settings``.
 
-    Only ``require_card_on_file_default`` is exposed today. Additional
-    tenant-wide toggles slot in here in future phases (payment window,
-    default payment terms, etc.) rather than growing the brand
-    endpoint's surface area.
+    Phase 12 exposed ``require_card_on_file_default``. Batch 12C adds:
+
+      * ``timezone`` — IANA name, validated against
+        ``zoneinfo.available_timezones()`` (400 on invalid).
+      * ``auto_send_card_add_on_create`` — opt-in toggle for the
+        Phase 12 add-card-on-create hook (default false).
     """
     require_card_on_file_default: Optional[bool] = None
+    timezone: Optional[str] = None
+    auto_send_card_add_on_create: Optional[bool] = None
 
 
 @router.patch("/tenants/mine/settings")
@@ -302,9 +314,17 @@ async def patch_own_settings(body: TenantSettingsUpdate,
     tid = user.get("tenant_id")
     if not tid:
         raise HTTPException(400, "User has no tenant")
-    upd = {k: v for k, v in body.dict().items() if v is not None}
+    upd = {k: v for k, v in body.dict(exclude_unset=True).items() if v is not None}
     if not upd:
         raise HTTPException(400, "Nothing to update")
+    # Batch 12C · Feb 2026 — validate IANA timezone if provided.
+    if "timezone" in upd:
+        from zoneinfo import available_timezones
+        if upd["timezone"] not in available_timezones():
+            raise HTTPException(400, detail={
+                "code": "INVALID_TIMEZONE",
+                "value": upd["timezone"],
+            })
     upd["settings_updated_at"] = now_iso()
     upd["settings_updated_by"] = user.get("id")
     await db.tenants.update_one({"id": tid}, {"$set": upd})

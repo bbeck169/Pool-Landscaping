@@ -110,10 +110,36 @@ _SMS_BODY = (
     "file for your account. Add it here: {{ADD_CARD_LINK}}"
 )
 
+# ─── Batch 12C · Feb 2026 — ambiguous-match digest templates ─────────
+_AMBIG_EMAIL_SUBJECT = (
+    "[{{COMPANY_NAME}}] {{AMBIGUOUS_MATCH_COUNT}} Stripe customer "
+    "matches need review"
+)
+_AMBIG_EMAIL_BODY = (
+    "<p>The weekly Stripe cross-reference sync for "
+    "<b>{{COMPANY_NAME}}</b> surfaced "
+    "<b>{{AMBIGUOUS_MATCH_COUNT}}</b> ambiguous customer match(es) — "
+    "each one has multiple Stripe customer records with the same "
+    "email.</p>"
+    "<p>Sample: {{AMBIGUOUS_MATCH_SAMPLE}}</p>"
+    "<p>Open the resolver in the CRM to pick the correct Stripe "
+    "record for each:</p>"
+    "<p><a href=\"{{ADD_CARD_LINK}}\">Review ambiguous matches</a></p>"
+    "<p style=\"color:#64748B;font-size:12px;margin-top:16px;\">"
+    "This alert only fires when the count is greater than zero. "
+    "Silent syncs stay silent.</p>"
+)
+_AMBIG_SMS_BODY = (
+    "{{COMPANY_NAME}}: Stripe sync flagged {{AMBIGUOUS_MATCH_COUNT}} "
+    "ambiguous customer match(es). Review: {{ADD_CARD_LINK}}"
+)
+
 
 async def seed_add_card_templates_for_tenant(tenant_id: str) -> int:
     """Insert the two ``add_card_request_*`` templates for ``tenant_id``
-    if they don't already exist. Returns count of rows inserted."""
+    if they don't already exist. Batch 12C also seeds the
+    ``stripe_sync_ambiguous_matches`` digest template. Returns count
+    of rows inserted."""
     inserted = 0
     common = {
         "tenant_id": tenant_id,
@@ -142,6 +168,31 @@ async def seed_add_card_templates_for_tenant(tenant_id: str) -> int:
             "subject": None, "body": _SMS_BODY,
         })
         inserted += 1
+    # Batch 12C · Feb 2026 — ambiguous-match digest templates.
+    if not await db.marketing_templates.find_one(
+        {"tenant_id": tenant_id, "code": "stripe_sync_ambiguous_matches"},
+        {"_id": 0},
+    ):
+        await db.marketing_templates.insert_one({
+            **common,
+            "id": new_id(), "code": "stripe_sync_ambiguous_matches",
+            "channel": "email",
+            "name": "Stripe Sync — Ambiguous Matches Digest",
+            "subject": _AMBIG_EMAIL_SUBJECT, "body": _AMBIG_EMAIL_BODY,
+        })
+        inserted += 1
+    if not await db.marketing_templates.find_one(
+        {"tenant_id": tenant_id, "code": "stripe_sync_ambiguous_matches_sms"},
+        {"_id": 0},
+    ):
+        await db.marketing_templates.insert_one({
+            **common,
+            "id": new_id(), "code": "stripe_sync_ambiguous_matches_sms",
+            "channel": "sms",
+            "name": "Stripe Sync — Ambiguous Matches SMS",
+            "subject": None, "body": _AMBIG_SMS_BODY,
+        })
+        inserted += 1
     return inserted
 
 
@@ -165,3 +216,30 @@ async def ensure_require_card_default_on_tenants() -> int:
         {"$set": {"require_card_on_file_default": True}},
     )
     return int(res.modified_count or 0)
+
+
+async def ensure_tenants_timezone_backfill() -> dict:
+    """Batch 12C · Feb 2026 — idempotent timezone audit.
+
+    Iterates every tenant. For each with ``timezone`` missing OR empty,
+    sets ``timezone="America/Phoenix"`` (the pod-wide fallback used by
+    the Phase 12B weekly cron + Phase 11 tracker digest).
+
+    Returns ``{"audited": N, "filled": M}`` for the boot summary log.
+    """
+    audited = 0
+    filled = 0
+    async for t in db.tenants.find(
+        {}, {"_id": 0, "id": 1, "timezone": 1},
+    ):
+        audited += 1
+        current = (t.get("timezone") or "").strip()
+        if not current:
+            await db.tenants.update_one(
+                {"id": t["id"]},
+                {"$set": {"timezone": "America/Phoenix",
+                            "updated_at": now_iso()}},
+            )
+            filled += 1
+    logger.info(f"[phase12c-tz] audited={audited} filled={filled}")
+    return {"audited": audited, "filled": filled}
