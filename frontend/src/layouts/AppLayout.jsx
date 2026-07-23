@@ -584,11 +584,16 @@ function AppLayout() {
         {(effectiveRole || user.role) !== "admin" && <UniversalMenu />}
 
         {/* Phase 49.3 · Landscape Time Clock widget — auto-hides for
-            non-landscaping users. Mounted here so it appears at the top
-            of every landing / content page. */}
-        <div className="px-4 md:px-8 pt-4">
-          <LandscapingClockWidget />
-        </div>
+            non-landscaping users. Mount-site gate: admin / super_admin
+            never see it (Feb-2026 follow-up — the bar is pure noise on
+            the admin dashboard). Widget also self-guards, so both
+            layers agree. */}
+        {(effectiveRole || user.role) !== "admin"
+          && (effectiveRole || user.role) !== "super_admin" && (
+          <div className="px-4 md:px-8 pt-4">
+            <LandscapingClockWidget />
+          </div>
+        )}
 
         {/* Slice P · Breadcrumb navigation — auto-derives from route
             metadata. Component hides itself on landing/auth pages. */}

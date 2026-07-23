@@ -56,16 +56,19 @@ async function readGeo() {
 
 export default function LandscapingClockWidget() {
   const { user } = useAuth();
-  // Phase 56.3 follow-up — widget visibility rules:
-  //   • Landscape tech (department "landscaping" or "both") — always visible.
-  //   • Admin / super_admin — visible regardless of department (so they
-  //     can supervise / clock in on-site if they're pitching in). Backend
-  //     `_require_landscaping` mirrors this gate.
-  //   • Everyone else (pool tech, customer, unassigned tech) — hidden.
+  // Feb-2026 follow-up — widget visibility rules (was Phase 56.3):
+  //   • Admin / super_admin — HIDDEN. They don't punch a clock; the bar
+  //     is pure noise on the admin dashboard. (Previously force-shown so
+  //     admins could supervise / punch in on-site — reversed per product
+  //     ask.)
+  //   • Landscape tech / manager (department "landscaping" or "both") —
+  //     visible.
+  //   • Everyone else (pool tech w/o landscape dept, customer,
+  //     unassigned tech) — hidden.
   const role = (user?.role || "").toLowerCase();
   const isAdminLike = role === "admin" || role === "super_admin";
   const hasLandscapeDept = ["landscaping", "both"].includes((user?.department || "").toLowerCase());
-  const isLandscaper = isAdminLike || hasLandscapeDept;
+  const isLandscaper = !isAdminLike && hasLandscapeDept;
   const [today, setToday] = useState(null);
   const [week, setWeek] = useState(null);
   const [busy, setBusy] = useState(false);
