@@ -313,7 +313,7 @@ async def _save_pm_from_setup(session) -> bool:
     return True
 
 
-@router.post("/payments/setup-session")
+@router.post("/payments/setup-session", operation_id="payments.createSetupSession")
 async def create_setup_session(body: SetupSessionReq, user: dict = Depends(get_current_user)):
     """Hosted Stripe Checkout in setup mode to save a card or bank (ACH) on file."""
     deny_impersonation(user)
@@ -448,7 +448,7 @@ async def charge_invoice_on_file(qid: str) -> dict:
     return {"status": pi.status}
 
 
-@router.post("/payments/charge-on-file/{qid}")
+@router.post("/payments/charge-on-file/{qid}", operation_id="payments.chargeOnFile")
 async def charge_on_file(qid: str, user: dict = Depends(require_admin)):
     """Admin charges the customer's saved card/ACH off-session for the invoice balance."""
     if not stripe.api_key:

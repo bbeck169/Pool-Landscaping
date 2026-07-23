@@ -152,7 +152,31 @@ async def current_tenant(request: Request,
             tenant.get("auto_send_card_add_on_create", False)),
         "stripe_sync_last_run_at": tenant.get("stripe_sync_last_run_at"),
         "last_stripe_customer_sync_at": tenant.get("last_stripe_customer_sync_at"),
+        # Feb-2026 follow-up — audit stamps so the settings UI can
+        # render a "Last changed <relative> by <actor>" banner without
+        # a second round-trip. ``settings_updated_by_name`` is best-
+        # effort resolved from the users collection; missing/deleted
+        # actor falls through as null so the UI degrades gracefully.
+        "settings_updated_at": tenant.get("settings_updated_at"),
+        "settings_updated_by": tenant.get("settings_updated_by"),
+        "settings_updated_by_name": await _resolve_actor_name(
+            tenant.get("settings_updated_by")),
     }
+
+
+async def _resolve_actor_name(uid):
+    """Best-effort lookup of the display name for a user id used by
+    the ``settings_updated_by`` audit stamp. Returns the user's name
+    (fallback: email, then id) or ``None`` when unresolvable."""
+    if not uid:
+        return None
+    try:
+        u = await db.users.find_one({"id": uid}, {"_id": 0, "name": 1, "email": 1})
+    except Exception:
+        return None
+    if not u:
+        return None
+    return u.get("name") or u.get("email") or uid
 
 
 # ─── Stage 2 — Super-admin role ────────────────────────────────────────────
@@ -309,6 +333,7 @@ class TenantSettingsUpdate(BaseModel):
 @router.get(
     "/tenants/mine/settings",
     tags=["tenants"],
+    operation_id="tenants.readSettings",
     summary="Read tenant-wide settings (admin/manager only)",
     responses={200: {"description": (
         "Canonical READ counterpart to ``PATCH /api/tenants/mine/settings`` "
@@ -350,10 +375,13 @@ async def get_own_settings(user: dict = Depends(get_current_user),
         # Audit stamps from PATCH
         "settings_updated_at": tenant.get("settings_updated_at"),
         "settings_updated_by": tenant.get("settings_updated_by"),
+        "settings_updated_by_name": await _resolve_actor_name(
+            tenant.get("settings_updated_by")),
     }
 
 
-@router.patch("/tenants/mine/settings", tags=["tenants"])
+@router.patch("/tenants/mine/settings", tags=["tenants"],
+                operation_id="tenants.updateSettings")
 async def patch_own_settings(body: TenantSettingsUpdate,
                               user: dict = Depends(get_current_user)):
     if user.get("role") not in ("admin", "super_admin"):

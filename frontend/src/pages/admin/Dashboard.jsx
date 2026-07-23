@@ -26,7 +26,6 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { brandGradientCss, colors, money } from "@/theme";
-import WeatherWidget5Day from "@/pages/aitools/WeatherWidget5Day";
 import LiveWeatherWidget from "@/components/Weather/WeatherWidget";
 import TeamCpoReadinessWidget from "@/components/admin/TeamCpoReadinessWidget";
 import RecommendationsQueueWidget from "@/components/admin/RecommendationsQueueWidget";
@@ -374,10 +373,14 @@ export default function AdminDashboard() {
         </div>
       ) : null}
 
+      {/* Feb-2026 follow-up — 5-day forecast panel unmounted per user
+          request. The live now-condition widget stays; the 5-day panel
+          added noise to the admin dashboard.  `<WeatherWidget5Day>`
+          still lives at `/pages/aitools/WeatherWidget5Day.jsx` and is
+          reachable from AI Tools when needed. */}
       {user?.role === "admin" && (
         <div className="mb-6">
           <LiveWeatherWidget user={user} />
-          <WeatherWidget5Day role="admin" />
         </div>
       )}
 

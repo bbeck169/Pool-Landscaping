@@ -254,6 +254,13 @@ export default function BillingSettings() {
           {/* Phase 12B · Feb 2026 — Stripe cross-reference sync. */}
           <StripeSyncSection tenantSettings={tenantSettings}
                               onToast={setToast} />
+
+          {/* Feb-2026 follow-up — audit banner. Shows a muted
+              "Last changed <relative> by <actor>" footer sourced from
+              the ``settings_updated_at`` / ``settings_updated_by_name``
+              stamps written by ``PATCH /api/tenants/mine/settings``.
+              Silent when no PATCH has happened yet on this tenant. */}
+          <SettingsAuditBanner tenantSettings={tenantSettings} />
         </div>
       )}
 
@@ -475,6 +482,57 @@ function SyncStat({ label, value, muted }) {
       <div className={`text-lg font-semibold ${muted ? "text-zinc-400" : "text-zinc-900"}`}>
         {value ?? 0}
       </div>
+    </div>
+  );
+}
+
+
+/**
+ * Feb-2026 follow-up — audit banner rendered under Payment Defaults.
+ * Reads ``tenantSettings.settings_updated_at`` +
+ * ``settings_updated_by_name`` (populated by GET /api/tenants/current).
+ * Silent when the tenant has never been PATCHed.
+ */
+function settingsRelTime(iso) {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return String(iso);
+  const s = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+function SettingsAuditBanner({ tenantSettings }) {
+  const at = tenantSettings?.settings_updated_at;
+  if (!at) return null;
+  const actor = tenantSettings.settings_updated_by_name
+    || tenantSettings.settings_updated_by
+    || "someone";
+  return (
+    <div
+      className="mt-4 pt-3 text-[11px]"
+      style={{
+        color: colors.muted,
+        borderTop: `1px solid ${colors.border}`,
+      }}
+      title={at}
+      data-testid="tenant-settings-audit-banner"
+    >
+      Last changed{" "}
+      <span data-testid="tenant-settings-audit-when">{settingsRelTime(at)}</span>
+      {" by "}
+      <span
+        style={{ color: colors.onSurface, fontWeight: 600 }}
+        data-testid="tenant-settings-audit-actor"
+      >
+        {actor}
+      </span>
     </div>
   );
 }
