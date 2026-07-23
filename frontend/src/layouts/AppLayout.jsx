@@ -1,5 +1,6 @@
 import React from "react";
 import { NavLink, Outlet, useNavigate, Navigate, useLocation } from "react-router-dom";
+import { APIProvider } from "@vis.gl/react-google-maps";
 import { useAuth } from "@/auth";
 import { usePermissions } from "@/hooks/usePermissions";
 import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
@@ -252,6 +253,19 @@ function ProtectedShell() {
   }
   if (!user) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+  }
+  // Phase 17 · Feb 2026 — mount the Google Maps <APIProvider> once
+  // at the shell so the JS API script only loads a single time and
+  // is available to every admin-facing page (dispatch board today;
+  // schedule + workforce heat-maps later). Non-admin roles never
+  // trigger a load because AdminOnly gates the map-consuming routes.
+  const mapsKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || "";
+  if (mapsKey) {
+    return (
+      <APIProvider apiKey={mapsKey} libraries={["marker"]}>
+        <AppLayout />
+      </APIProvider>
+    );
   }
   return <AppLayout />;
 }

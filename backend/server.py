@@ -107,10 +107,16 @@ from routers import (
     customer_tags,
     communications_log,
     customer_categories,
+    dispatch_board,
 )
 # Phase 9C · Feb 2026 — QuickBooks retirement helper (idempotent
 # boot migration + ALLOW_TEST_HOOKS-gated purge endpoint).
 from routers import quickbooks_cleanup
+# Phase 17 · Feb 2026 — Route Assignment Overrides + permanent moves.
+# Registered separately from the main include loop below so the
+# ``/dispatch/reassign`` and ``/dispatch/assignment-change-log``
+# routes are prefixed identically to the other dispatch surfaces.
+from routers import dispatch_reassign as _p17_reassign  # noqa: E402
 
 app = FastAPI(
     title="Pool CRM API",
@@ -131,6 +137,7 @@ api_router.include_router(marketing_campaigns_router.router)
 # tenant-resolution + auth deps as the rest of the app.
 from routers import stripe_customer_sync_admin as _p12b_admin  # noqa: E402
 api_router.include_router(_p12b_admin.router)
+api_router.include_router(_p17_reassign.router)
 
 for module in [notifications_router,
                stripe_payments_router,
@@ -229,7 +236,8 @@ for module in [notifications_router,
                mass_messaging,
                customer_tags,
                communications_log,
-               customer_categories]:
+               customer_categories,
+               dispatch_board]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -774,6 +782,26 @@ async def startup():
         await seed_service_checklists_for_all_tenants()
     except Exception as e:
         logger.warning(f"[phase5a] service_checklists seed crashed: {e}")
+
+    # Phase 17 · Feb 2026 — 2dsphere index on customer service_location
+    # + kick off a fire-and-forget geocode backfill so /dispatch has
+    # pins to render on first admin visit. The backfill sleeps between
+    # calls so it never bursts through Google's per-second quota.
+    try:
+        from pymongo import GEOSPHERE
+        await db.customers.create_index(
+            [("service_location", GEOSPHERE)],
+            name="cust_service_location_2dsphere",
+            sparse=True,
+        )
+    except Exception as e:
+        logger.warning(f"[phase17] service_location 2dsphere index crashed: {e}")
+    try:
+        from routers.dispatch_board import geocode_backfill_all_tenants_boot
+        asyncio.create_task(geocode_backfill_all_tenants_boot())
+        logger.info("[phase17] geocode backfill scheduled (fire-and-forget)")
+    except Exception as e:
+        logger.warning(f"[phase17] geocode backfill schedule crashed: {e}")
 
     # Phase 16 · Feb 2026 — seed 3 default customer categories per
     # tenant (Pool / Landscaping / Both, all is_system=True) and

@@ -1,0 +1,793 @@
+// Phase 17 · Feb-2026 — Dispatch Board page.
+//
+// Replaces the previous OpsHub-hosted dispatch tab with a Google
+// Maps + Directions API powered layout that matches the two
+// reference screenshots the user provided:
+//
+//   • Top: day-of-week tabs (Mon-Sun + All) + Global toggle
+//   • Left column: route-type chips, tech dropdown, "Select
+//     Customer" side panel
+//   • Center: <Map> with color-coded pins + polyline overlay +
+//     marker clustering for >30 pins
+//   • Right column: Tech Load strip, Route Details drag-reorder
+//     list, Optimize button + savings banner
+//
+// Full-page scroll — the outermost container has NO overflow rule
+// so window scrolling stays intact per Phase 17 message 752.
+// Only the map has a bounded height (min(72vh, 720px)).
+//
+// Techs never see this page — the route is wrapped in <AdminOnly>
+// in App.js and the endpoints re-enforce role.
+import React from "react";
+import { toast } from "sonner";
+import {
+  CalendarDays, Globe, Zap, MapPin, X, Users, ChevronDown,
+  Sparkles, PlusCircle, Loader2,
+} from "lucide-react";
+import { api } from "@/api";
+import { colors } from "@/theme";
+import {
+  fetchBoard, optimizeBoard, applyBoardOrder,
+} from "@/pages/dispatch/dispatchBoardApi";
+import DispatchMapView from "@/pages/dispatch/DispatchMapView";
+import RouteDetailsList from "@/pages/dispatch/RouteDetailsList";
+import TechLoadStrip from "@/pages/dispatch/TechLoadStrip";
+import ShiftRouteDialog from "@/pages/dispatch/ShiftRouteDialog";
+import ActiveShiftsSidebar from "@/pages/dispatch/ActiveShiftsSidebar";
+import UnroutedPanel from "@/pages/dispatch/UnroutedPanel";
+import {
+  PIN_COLOR_MODES, PIN_COLOR_BY_DAY, CREW_LEGEND,
+  loadPinColorMode, savePinColorMode, colorForPin,
+} from "@/pages/dispatch/dispatchColors";
+
+const DAYS = [
+  { key: "mon", label: "Mon" },
+  { key: "tue", label: "Tue" },
+  { key: "wed", label: "Wed" },
+  { key: "thu", label: "Thu" },
+  { key: "fri", label: "Fri" },
+  { key: "sat", label: "Sat" },
+  { key: "sun", label: "Sun" },
+  { key: "all", label: "All" },
+];
+
+const ROUTE_TYPE_OPTIONS = [
+  { key: "all", label: "All routes" },
+  { key: "pool", label: "Pool" },
+  { key: "landscaping", label: "Landscaping" },
+  { key: "vip", label: "VIP" },
+];
+
+function todayKey() {
+  const map = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  return map[new Date().getDay()];
+}
+
+export default function DispatchBoardPage() {
+  const [day, setDay] = React.useState(todayKey());
+  const [techId, setTechId] = React.useState(null);
+  const [routeType, setRouteType] = React.useState("all");
+  const [globalView, setGlobalView] = React.useState(false);
+  const [board, setBoard] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [selectedCustomerId, setSelectedCustomerId] = React.useState(null);
+  const [polyline, setPolyline] = React.useState(null);
+  const [savings, setSavings] = React.useState(null); // {min, pct, distance_mi, duration_min}
+  const [optimizing, setOptimizing] = React.useState(false);
+  const [applying, setApplying] = React.useState(false);
+  const [techs, setTechs] = React.useState([]); // {id, name, display_color_hex}
+  // Phase 17 additions ── pin color mode + shift dialog + active shifts.
+  const [pinColorMode, setPinColorMode] = React.useState(loadPinColorMode());
+  const [shiftDialogOpen, setShiftDialogOpen] = React.useState(false);
+  const [shiftScope, setShiftScope] = React.useState("whole_route");
+  const [selectedStopIds, setSelectedStopIds] = React.useState([]);
+  const [activeShifts, setActiveShifts] = React.useState([]);
+  const setPinColorModePersistent = (m) => { setPinColorMode(m); savePinColorMode(m); };
+
+  // Load the tech directory once so the dropdown is populated even
+  // when the current filter returns no pins for a tech (offline day).
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await api.get("/users?role=technician");
+        if (!cancelled) {
+          setTechs((rows || []).map((u) => ({
+            id: u.id, name: u.name || u.email || u.id,
+            display_color_hex: u.display_color_hex || null,
+          })));
+        }
+      } catch (e) {
+        // Non-fatal — dropdown still works with the tech_load fallback.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await fetchBoard({
+        day, tech_user_id: techId,
+        route_type: routeType, global_view: globalView,
+      });
+      setBoard(data);
+      // Reset optimizer state whenever filters change.
+      setPolyline(null);
+      setSavings(null);
+    } catch (e) {
+      toast.error(`Failed to load dispatch board: ${e.message || e}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [day, techId, routeType, globalView]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  // Phase 17 · pull active shifts on mount + on reload for the sidebar.
+  const loadActiveShifts = React.useCallback(async () => {
+    try {
+      const res = await api.get("/dispatch/reassign?active=true");
+      setActiveShifts(res?.items || []);
+    } catch {
+      /* non-fatal — sidebar just stays quiet */
+    }
+  }, []);
+  React.useEffect(() => { loadActiveShifts(); }, [loadActiveShifts]);
+
+  const techColorById = React.useMemo(() => {
+    const map = {};
+    (board?.tech_load || []).forEach((t) => {
+      map[t.tech_user_id] = t.color_hex;
+    });
+    techs.forEach((t) => {
+      if (!map[t.id] && t.display_color_hex) map[t.id] = t.display_color_hex;
+    });
+    return map;
+  }, [board, techs]);
+
+  const activeStops = board?.route_stops || [];
+
+  const onOptimize = async () => {
+    if (!techId || day === "all") {
+      toast.error("Pick a specific day + tech before optimizing.");
+      return;
+    }
+    if (activeStops.length < 2) {
+      toast.error("Need at least 2 geocoded stops to optimize.");
+      return;
+    }
+    setOptimizing(true);
+    try {
+      const res = await optimizeBoard({
+        day, tech_user_id: techId,
+        stop_customer_ids: activeStops.map((s) => s.customer_id),
+      });
+      // Reorder locally without a round-trip.
+      const byId = Object.fromEntries(activeStops.map((s) => [s.customer_id, s]));
+      const newStops = (res.ordered_customer_ids || [])
+        .map((cid) => byId[cid]).filter(Boolean);
+      setBoard((prev) => prev ? { ...prev, route_stops: newStops } : prev);
+      setPolyline(res.polyline || null);
+      setSavings({
+        min: res.savings_min, pct: res.savings_pct,
+        distance_mi: res.total_distance_mi,
+        duration_min: res.total_duration_min,
+      });
+      toast.success(
+        res.savings_min > 0
+          ? `Optimized — saves ${res.savings_min} min (${res.savings_pct}%)`
+          : `Optimized route (${res.total_distance_mi} mi · ${res.total_duration_min} min)`,
+      );
+    } catch (e) {
+      toast.error(`Optimize failed: ${e.message || e}`);
+    } finally {
+      setOptimizing(false);
+    }
+  };
+
+  const onReorder = async (orderedIds) => {
+    // Optimistic local update.
+    const byId = Object.fromEntries(activeStops.map((s) => [s.customer_id, s]));
+    const newStops = orderedIds.map((cid) => byId[cid]).filter(Boolean);
+    setBoard((prev) => prev ? { ...prev, route_stops: newStops } : prev);
+    setPolyline(null); // route changed — polyline stale
+    setSavings(null);
+  };
+
+  const onRemoveStop = (cid) => {
+    const next = activeStops.filter((s) => s.customer_id !== cid);
+    setBoard((prev) => prev ? { ...prev, route_stops: next } : prev);
+    setPolyline(null);
+    setSavings(null);
+  };
+
+  const onSave = async () => {
+    if (!techId || day === "all") {
+      toast.error("Pick a specific day + tech before saving.");
+      return;
+    }
+    setApplying(true);
+    try {
+      await applyBoardOrder({
+        day, tech_user_id: techId,
+        ordered_customer_ids: activeStops.map((s) => s.customer_id),
+      });
+      toast.success(`Saved route order (${activeStops.length} stops).`);
+    } catch (e) {
+      toast.error(`Save failed: ${e.message || e}`);
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const pins = board?.pins || [];
+  const techLoad = board?.tech_load || [];
+  const unrouted = board?.unrouted_customers || [];
+
+  // Phase 17 · derive banners for shift-in / shift-away when a
+  // specific tech is selected.
+  const shiftInCount = React.useMemo(() => {
+    if (!techId) return 0;
+    return pins.filter((p) => p.override_source_tech_id
+        && p.assigned_tech_ids?.includes(techId)).length;
+  }, [pins, techId]);
+  const shiftAwayCount = React.useMemo(() => {
+    if (!techId) return 0;
+    return activeShifts.filter((s) => s.source_tech_user_id === techId)
+      .reduce((a, s) => a + (s.stop_count || 0), 0);
+  }, [activeShifts, techId]);
+  const shiftInSourceLabel = React.useMemo(() => {
+    if (!techId) return null;
+    const shifted = pins.find((p) => p.override_source_tech_id
+        && p.assigned_tech_ids?.includes(techId));
+    if (!shifted) return null;
+    const src = techs.find((t) => t.id === shifted.override_source_tech_id);
+    return src?.name || shifted.override_source_tech_id;
+  }, [pins, techId, techs]);
+
+  return (
+    // NO overflow style here — page scrolls naturally.
+    <div className="px-4 md:px-8 pt-4 pb-24 space-y-4"
+         data-testid="dispatch-board-page">
+      {/* ─────────── Header + Day tabs ─────────── */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight"
+              style={{ color: colors.onSurface }}
+              data-testid="dispatch-board-title">
+            Dispatch Board
+          </h1>
+          <p className="text-sm" style={{ color: colors.muted }}>
+            Route optimization powered by Google Directions.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => { setShiftScope("whole_route"); setSelectedStopIds([]); setShiftDialogOpen(true); }}
+            disabled={!techId}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              backgroundColor: colors.surface,
+              color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+            }}
+            data-testid="dispatch-shift-route-btn"
+            title={techId ? "Shift the current tech's route to another tech" : "Pick a tech first"}
+          >
+            <Zap size={14} />
+            Shift route
+          </button>
+          <button
+            type="button"
+            onClick={() => setGlobalView((v) => !v)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition hover:brightness-95"
+            style={{
+              backgroundColor: globalView ? colors.brand : colors.surface,
+              color: globalView ? "#fff" : colors.onSurface,
+              border: `1px solid ${globalView ? colors.brand : colors.border}`,
+            }}
+            data-testid="dispatch-global-toggle"
+            aria-pressed={globalView}
+          >
+            <Globe size={14} />
+            Global map
+          </button>
+          <button
+            type="button"
+            onClick={load}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition hover:brightness-95"
+            style={{
+              backgroundColor: colors.surface,
+              color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+            }}
+            data-testid="dispatch-refresh"
+          >
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div
+        className="flex flex-wrap gap-1 p-1 rounded-xl"
+        style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+        role="tablist"
+        aria-label="Day of week"
+        data-testid="dispatch-day-tabs"
+      >
+        {DAYS.map((d) => {
+          const active = day === d.key;
+          return (
+            <button
+              key={d.key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setDay(d.key)}
+              className="flex-1 min-w-[64px] px-3 py-2 rounded-lg text-sm font-semibold transition"
+              style={{
+                backgroundColor: active ? colors.brand : "transparent",
+                color: active ? "#fff" : colors.onSurfaceSecondary,
+              }}
+              data-testid={`dispatch-day-tab-${d.key}`}
+            >
+              <CalendarDays size={13} className="inline mr-1 -mt-0.5" />
+              {d.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ─── Pin-color mode selector + legend ─── */}
+      <div
+        className="flex items-center justify-between flex-wrap gap-2 p-2 rounded-xl"
+        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+        data-testid="dispatch-pin-color-bar"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] uppercase tracking-wide font-semibold"
+                style={{ color: colors.muted }}>Color pins by</span>
+          <div
+            className="flex gap-0.5 p-0.5 rounded-md"
+            style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+            role="tablist"
+            data-testid="dispatch-pin-color-modes"
+          >
+            {PIN_COLOR_MODES.map((m) => {
+              const active = pinColorMode === m.key;
+              return (
+                <button
+                  key={m.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setPinColorModePersistent(m.key)}
+                  className="px-2 py-1 rounded text-xs font-semibold transition"
+                  style={{
+                    backgroundColor: active ? colors.brand : "transparent",
+                    color: active ? "#fff" : colors.onSurface,
+                  }}
+                  data-testid={`dispatch-pin-color-mode-${m.key}`}
+                >{m.label}</button>
+              );
+            })}
+          </div>
+        </div>
+        <ColorLegend mode={pinColorMode} techLoad={techLoad} />
+      </div>
+
+      {/* ─────────── 3-column grid: left filters / map / right sidebar ─────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        {/* Left column ── filters + select customer panel */}
+        <aside className="lg:col-span-3 space-y-3" data-testid="dispatch-left-col">
+          <div
+            className="rounded-xl p-3 space-y-3"
+            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+          >
+            <div>
+              <label
+                className="text-xs uppercase tracking-wide font-semibold"
+                style={{ color: colors.muted }}
+              >
+                Tech
+              </label>
+              <div className="relative mt-1">
+                <select
+                  value={techId || ""}
+                  onChange={(e) => setTechId(e.target.value || null)}
+                  className="w-full appearance-none rounded-lg px-3 py-2 pr-8 text-sm font-semibold focus:outline-none"
+                  style={{
+                    backgroundColor: colors.surfaceSecondary,
+                    color: colors.onSurface,
+                    border: `1px solid ${colors.border}`,
+                  }}
+                  data-testid="dispatch-tech-select"
+                >
+                  <option value="">All techs</option>
+                  {techs.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+                <ChevronDown
+                  size={14}
+                  className="absolute right-2 top-1/2 -translate-y-1/2"
+                  style={{ color: colors.muted, pointerEvents: "none" }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label
+                className="text-xs uppercase tracking-wide font-semibold"
+                style={{ color: colors.muted }}
+              >
+                Route type
+              </label>
+              <div className="flex flex-wrap gap-1.5 mt-1"
+                   data-testid="dispatch-route-type-chips">
+                {ROUTE_TYPE_OPTIONS.map((r) => {
+                  const active = routeType === r.key;
+                  return (
+                    <button
+                      key={r.key}
+                      type="button"
+                      onClick={() => setRouteType(r.key)}
+                      className="px-2.5 py-1 rounded-full text-xs font-semibold transition hover:brightness-95"
+                      style={{
+                        backgroundColor: active ? colors.brand : colors.surfaceSecondary,
+                        color: active ? "#fff" : colors.onSurface,
+                        border: `1px solid ${active ? colors.brand : colors.border}`,
+                      }}
+                      data-testid={`dispatch-route-type-${r.key}`}
+                      aria-pressed={active}
+                    >
+                      {r.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <SelectCustomerPanel
+            pins={pins}
+            selectedCustomerId={selectedCustomerId}
+            onSelect={setSelectedCustomerId}
+          />
+        </aside>
+
+        {/* Center ── Map */}
+        <section className="lg:col-span-6 space-y-3" data-testid="dispatch-center-col">
+          {shiftInCount > 0 && shiftInSourceLabel ? (
+            <div
+              className="px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2"
+              style={{ backgroundColor: "#EFF6FF", color: "#1E3A8A", border: "1px solid #BFDBFE" }}
+              data-testid="dispatch-shift-in-banner"
+            >
+              <Users size={12} />
+              {shiftInCount} stop(s) shifted here from {shiftInSourceLabel} until Sat 11:59 PM.
+            </div>
+          ) : null}
+          {shiftAwayCount > 0 ? (
+            <div
+              className="px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2"
+              style={{ backgroundColor: "#FEF3C7", color: "#92400E", border: "1px solid #FDE68A" }}
+              data-testid="dispatch-shift-away-banner"
+            >
+              <Users size={12} />
+              {shiftAwayCount} stop(s) shifted away this week.
+            </div>
+          ) : null}
+          {savings ? (
+            <div
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold"
+              style={{
+                backgroundColor: "#ECFDF5",
+                color: "#065F46",
+                border: "1px solid #A7F3D0",
+              }}
+              data-testid="dispatch-savings-banner"
+            >
+              <Sparkles size={14} />
+              {savings.min > 0
+                ? `Optimized route saves ${savings.min} min (${savings.pct}%)`
+                : `Optimized route`}
+              <span style={{ color: "#047857", fontWeight: 500 }}>
+                · {savings.distance_mi} mi · {savings.duration_min} min total
+              </span>
+            </div>
+          ) : null}
+          <DispatchMapView
+            pins={pins}
+            unroutedPins={(unrouted || []).filter((u) => u.lat != null && u.lng != null)}
+            polyline={polyline}
+            techColorById={techColorById}
+            activeCustomerId={selectedCustomerId}
+            onSelectCustomer={setSelectedCustomerId}
+            pinColorMode={pinColorMode}
+          />
+        </section>
+
+        {/* Right column ── Tech load + Route Details */}
+        <aside className="lg:col-span-3 space-y-3" data-testid="dispatch-right-col">
+          <div
+            className="rounded-xl p-3"
+            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div
+                className="text-xs uppercase tracking-wide font-semibold flex items-center gap-1"
+                style={{ color: colors.muted }}
+              >
+                <Users size={12} /> Tech load
+              </div>
+              <span
+                className="text-xs font-semibold px-1.5 py-0.5 rounded-full"
+                style={{
+                  backgroundColor: colors.surfaceSecondary, color: colors.onSurface,
+                }}
+                data-testid="dispatch-tech-load-total"
+              >
+                {techLoad.reduce((a, t) => a + (t.count || 0), 0)} pins
+              </span>
+            </div>
+            <TechLoadStrip
+              loads={techLoad}
+              selectedTechId={techId}
+              onSelect={setTechId}
+            />
+          </div>
+
+          <div
+            className="rounded-xl p-3 space-y-3"
+            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+          >
+            <div className="flex items-center justify-between">
+              <div
+                className="text-xs uppercase tracking-wide font-semibold flex items-center gap-1"
+                style={{ color: colors.muted }}
+              >
+                <MapPin size={12} /> Route details
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={onOptimize}
+                  disabled={optimizing || activeStops.length < 2 || !techId || day === "all"}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{
+                    backgroundColor: colors.brand,
+                    color: "#fff",
+                  }}
+                  data-testid="dispatch-optimize-btn"
+                >
+                  {optimizing ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                  Optimize
+                </button>
+                <button
+                  type="button"
+                  onClick={onSave}
+                  disabled={applying || activeStops.length === 0 || !techId || day === "all"}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{
+                    backgroundColor: colors.surfaceSecondary,
+                    color: colors.onSurface,
+                    border: `1px solid ${colors.border}`,
+                  }}
+                  data-testid="dispatch-save-order-btn"
+                >
+                  {applying ? <Loader2 size={12} className="animate-spin" /> : <PlusCircle size={12} />}
+                  Save
+                </button>
+              </div>
+            </div>
+            <RouteDetailsList
+              stops={activeStops}
+              onReorder={onReorder}
+              onRemove={onRemoveStop}
+              onSelect={setSelectedCustomerId}
+              activeCustomerId={selectedCustomerId}
+            />
+            {!techId || day === "all" ? (
+              <div
+                className="text-[11px] leading-relaxed rounded-md p-2"
+                style={{
+                  backgroundColor: "#FEF3C7",
+                  color: "#92400E",
+                  border: "1px solid #FDE68A",
+                }}
+                data-testid="dispatch-route-details-hint"
+              >
+                Pick a specific day + tech to unlock route optimization + save.
+              </div>
+            ) : null}
+          </div>
+
+          <ActiveShiftsSidebar
+            items={activeShifts}
+            onRefresh={() => { loadActiveShifts(); load(); }}
+          />
+
+          <UnroutedPanel
+            items={unrouted}
+            onSelect={setSelectedCustomerId}
+            onApply={({ customer_id, suggestion }) => {
+              // v1: fold the suggestion into the current view by
+              // reloading with the suggestion's tech + day. Full
+              // assignment persistence is left to a follow-up
+              // (the existing add-to-route flow lives in Ops → Schedule).
+              if (suggestion) {
+                setDay(suggestion.service_day);
+                setTechId(suggestion.tech_user_id);
+                toast.success(
+                  `Switched view to ${suggestion.tech_name}'s ${suggestion.day_label} — add ${customer_id} in Schedule.`,
+                );
+              } else {
+                toast.info(`Open Customer ${customer_id} in Schedule to assign.`);
+              }
+            }}
+          />
+        </aside>
+      </div>
+
+      <ShiftRouteDialog
+        open={shiftDialogOpen}
+        onClose={() => setShiftDialogOpen(false)}
+        sourceTech={techs.find((t) => t.id === techId) || null}
+        techs={techs}
+        customerIds={selectedStopIds}
+        scope={shiftScope}
+        day={day}
+        onSuccess={() => { loadActiveShifts(); load(); }}
+      />
+    </div>
+  );
+}
+
+// ─── Color legend ────────────────────────────────────────────
+function ColorLegend({ mode, techLoad = [] }) {
+  if (mode === "tech") {
+    if (!techLoad.length) return null;
+    return (
+      <div className="flex items-center gap-2 text-xs flex-wrap"
+           data-testid="dispatch-color-legend-tech">
+        {techLoad.slice(0, 5).map((t) => (
+          <span key={t.tech_user_id} className="flex items-center gap-1"
+                style={{ color: colors.onSurface }}>
+            <span
+              aria-hidden
+              style={{
+                width: 10, height: 10, borderRadius: 999,
+                backgroundColor: t.color_hex,
+                border: "1px solid #fff",
+                boxShadow: "0 0 0 1px rgba(0,0,0,0.1)",
+              }}
+            />
+            {t.name}
+          </span>
+        ))}
+      </div>
+    );
+  }
+  if (mode === "crew") {
+    return (
+      <div className="flex items-center gap-2 text-xs flex-wrap"
+           data-testid="dispatch-color-legend-crew">
+        {CREW_LEGEND.map((c) => (
+          <span key={c.label} className="flex items-center gap-1"
+                style={{ color: colors.onSurface }}>
+            <span aria-hidden style={{
+              width: 10, height: 10, borderRadius: 999,
+              backgroundColor: c.color, border: "1px solid #fff",
+              boxShadow: "0 0 0 1px rgba(0,0,0,0.1)",
+            }} />
+            {c.label}
+          </span>
+        ))}
+      </div>
+    );
+  }
+  // service_day
+  return (
+    <div className="flex items-center gap-2 text-xs flex-wrap"
+         data-testid="dispatch-color-legend-day">
+      {Object.entries(PIN_COLOR_BY_DAY).map(([d, hex]) => (
+        <span key={d} className="flex items-center gap-1"
+              style={{ color: colors.onSurface, textTransform: "capitalize" }}>
+          <span aria-hidden style={{
+            width: 10, height: 10, borderRadius: 999,
+            backgroundColor: hex, border: "1px solid #fff",
+            boxShadow: "0 0 0 1px rgba(0,0,0,0.1)",
+          }} />
+          {d}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ─── Side panel ────────────────────────────────────────────────
+function SelectCustomerPanel({ pins, selectedCustomerId, onSelect }) {
+  const [query, setQuery] = React.useState("");
+  const filtered = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const rows = q
+      ? pins.filter((p) => (p.name || "").toLowerCase().includes(q)
+          || (p.address || "").toLowerCase().includes(q))
+      : pins;
+    return rows.slice(0, 40);
+  }, [pins, query]);
+
+  return (
+    <div
+      className="rounded-xl p-3"
+      style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+      data-testid="dispatch-select-customer-panel"
+    >
+      <div
+        className="text-xs uppercase tracking-wide font-semibold mb-1"
+        style={{ color: colors.muted }}
+      >
+        Select customer
+      </div>
+      <input
+        type="search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search name or address…"
+        className="w-full rounded-lg px-2.5 py-1.5 text-sm mb-2 focus:outline-none"
+        style={{
+          backgroundColor: colors.surfaceSecondary,
+          color: colors.onSurface,
+          border: `1px solid ${colors.border}`,
+        }}
+        data-testid="dispatch-select-customer-search"
+      />
+      <div
+        className="text-[11px] mb-1"
+        style={{ color: colors.muted }}
+        data-testid="dispatch-select-customer-count"
+      >
+        {filtered.length} of {pins.length}
+      </div>
+      <ul className="space-y-1 max-h-72 overflow-y-auto"
+          data-testid="dispatch-select-customer-list">
+        {filtered.map((p) => {
+          const active = p.customer_id === selectedCustomerId;
+          return (
+            <li key={p.customer_id}>
+              <button
+                type="button"
+                onClick={() => onSelect(active ? null : p.customer_id)}
+                className="w-full text-left px-2 py-1.5 rounded-md text-xs transition hover:brightness-95"
+                style={{
+                  backgroundColor: active ? colors.brandTertiary : "transparent",
+                  color: active ? colors.onBrandTertiary : colors.onSurface,
+                  border: `1px solid ${active ? colors.brand : "transparent"}`,
+                }}
+                data-testid={`dispatch-select-customer-${p.customer_id}`}
+              >
+                <div className="font-semibold truncate">{p.name || "(unnamed)"}</div>
+                <div className="text-[11px] truncate" style={{ color: colors.muted }}>
+                  {p.address || "No address"}
+                </div>
+              </button>
+            </li>
+          );
+        })}
+        {filtered.length === 0 && (
+          <li
+            className="text-[11px] italic px-2 py-2"
+            style={{ color: colors.muted }}
+            data-testid="dispatch-select-customer-empty"
+          >
+            No matches.
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+}

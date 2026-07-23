@@ -136,7 +136,7 @@ def test_preview_does_not_assign(admin_h, three_techs_scenario, dbc):
 def test_reassign_writes_audit(admin_h, three_techs_scenario, dbc):
     s = three_techs_scenario
     target = f"{s['tag']}-user-b"
-    r = requests.post(f"{API}/dispatch/reassign", headers=admin_h,
+    r = requests.post(f"{API}/dispatch/reassign-job", headers=admin_h,
                         json={"job_id": s["new_job_id"],
                                 "user_id": target},
                         timeout=15).json()

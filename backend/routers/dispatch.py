@@ -288,7 +288,8 @@ class ReassignIn(BaseModel):
     user_id: str
 
 
-@router.post("/dispatch/reassign")
+@router.post("/dispatch/reassign-job",
+              operation_id="dispatch.reassignJob")
 async def dispatch_reassign(body: ReassignIn,
                                  user: dict = Depends(require_admin),
                                  tenant: dict = Depends(get_current_tenant)):

@@ -7043,3 +7043,144 @@ tenant=...` × 21 tenants).
 * `POST /api/public/leads`      (public form) — invokes helper post-insert.
 * `GET /api/leads`              — default excludes rejected; `?status=rejected` filter now honored.
 
+
+## Phase 17 · Feb-2026 — Dispatch Board (Google Maps + Directions + follow-ons)
+
+### Scope shipped this pass
+* Base redesign — day-of-week tabs + tech/route filters + tech load
+  strip + interactive Google Map (`@vis.gl/react-google-maps`) with
+  marker clustering + polyline overlay + drag-reorder Route Details.
+* Backend geocoding foundation — `services/google_maps/geocoding.py`
+  (30-day cache), `customers.service_location` GeoJSON + `2dsphere`
+  index, boot-time backfill for all tenants.
+* Directions optimizer — migrated from the legacy Directions API to
+  the **Routes API v2** (`routes.googleapis.com/directions/v2:computeRoutes`)
+  because Google disables the legacy API on new projects. Returns
+  reordered customer ids + encoded polyline + savings-vs-baseline.
+* Auto-geocode-on-address-change — `POST /customers` +
+  `PUT /customers/{id}` fire-and-forget the geocoder when service
+  address changes; ~150 ms delay per call keeps us under Google's
+  50-QPS burst ceiling.
+* **Cooperative gestures + full-page scroll** enforced —
+  Vitest guard verifies no `overflow-hidden/overflow-y-*` on the
+  outermost container and the map has `gestureHandling="cooperative"`.
+
+### Route Assignment Overrides (temporary + permanent)
+Two modes on a single `POST /api/dispatch/reassign` endpoint:
+
+* **Temporary (`duration=week`)** — writes an additive
+  `route_assignment_overrides` row. `end_at` = Saturday 23:59:59 in
+  the tenant timezone (default `America/Phoenix`). Auto-reverts on
+  Sunday 00:00 — no cron; the assignment resolver simply filters
+  `end_at < now`. Same-day-Saturday shifts return `same_day_warning`
+  so the UI surfaces the "no effect after 11:59 PM" callout.
+* **Permanent (`duration=permanent`)** — mutates the master:
+  `recurring_job_templates.assigned_tech_id`, this-week's already-
+  scheduled `jobs.technician_id`, and `customers.assigned_tech_ids`
+  denorm. Cancels overlapping temporary overrides. Writes one
+  `assignment_change_log` row per customer for audit
+  (`GET /api/dispatch/assignment-change-log`).
+
+Conflict handling — the API returns `warning=existing_override_conflict`
+without creating a duplicate on the first call. UI shows the warning
+banner; a second submit with `force: true` commits.
+
+Cancel — `POST /api/dispatch/reassign/{id}/cancel` soft-cancels via
+`canceled_at`; effect is immediate on the next board load.
+
+Board integration — `GET /api/dispatch/board` applies active
+overrides BEFORE building pins so shifted stops move to the target
+tech and disappear from the source tech. Each shifted pin carries
+`override_source_tech_id` so the frontend renders the
+"Shifted from Brian B. (until Sat)" badge.
+
+### Pin Color Modes
+Three admin-selectable modes on the map (`localStorage: dispatch.pin_color_mode`,
+default `tech`):
+
+* **Tech** — pin = tech's `display_color_hex` (or hashed fallback).
+* **Crew** — pin = tech's `department` mapped to a fixed palette
+  (Pool `#0ea5e9`, Landscaping `#16a34a`, Repairs `#f59e0b`,
+  Other `#64748b`). No `crews` collection created — department is
+  the grouping key.
+* **Service day** — pin = day-of-week color (Mon `#3b82f6`,
+  Tue `#8b5cf6`, Wed `#22c55e`, Thu `#f97316`, Fri `#ef4444`,
+  Sat `#14b8a6`, Sun `#a855f7`). Multi-day customers use the first
+  scheduled day (half-pin/gradient not shipped v1).
+
+Board response carries `tech_color_hex`, `crew_label`,
+`crew_color_hex`, `service_day` on every pin + every route stop so
+the mode-flip is a pure frontend re-render.
+
+Unrouted pins always render gray hollow regardless of mode.
+
+### Unrouted Customers
+`GET /api/dispatch/board` returns `unrouted_customers[]` with:
+* `reason ∈ {no_service_day, no_tech_assigned, not_on_this_day}`
+* `lat/lng` when geocoded (rendered as gray hollow map pins),
+  otherwise sidebar-only.
+* In `global=true` view, `unrouted_customers` is restricted to
+  customers with no recurring `service_days` at all (the truly
+  unassigned).
+
+Frontend: collapsible "Unrouted customers (N)" panel with per-row
+`Suggest` + `Assign` actions + bulk `Suggest all` and
+`Apply high` bulk buttons.
+
+### Smart Route Suggestions
+`POST /api/dispatch/suggest-route`
+(`operationId=dispatchBoard.suggestRoute`) — cheapest-insertion
+heuristic over haversine distance:
+1. Build every candidate (tech, day) route from
+   `dispatch_route_orders` (explicit sequence) or the denormalized
+   `assigned_tech_ids` + `service_days` (fallback).
+2. For each candidate, compute the minimum added meters over all
+   possible insertion positions.
+3. Score by added_seconds; return top 1 as `suggestion` + up to 2
+   `alternatives`.
+4. **Confidence tiers**: `high` < 600 s AND ≥4 existing stops;
+   `medium` < 1200 s OR 2–3 stops; else `low`.
+5. Fallback when no nearby route exists — recommend a tech whose
+   `department` matches one of the customer's categories on that
+   tech's least-loaded day, `confidence: "low"`.
+6. **NO Directions API call** — pure haversine keeps API cost
+   bounded. The admin can hit the existing `optimize` endpoint on
+   the target route after applying the suggestion for accurate
+   ordering.
+
+Constraints accepted: `allowed_days[]`, `preferred_tech_user_ids[]`,
+`max_added_minutes` (default 25).
+
+### Endpoints registered
+
+| Method | Path                                        | operationId                        |
+|--------|---------------------------------------------|------------------------------------|
+| GET    | /api/dispatch/board                         | dispatchBoard.get                  |
+| POST   | /api/dispatch/board/optimize                | dispatchBoard.optimize             |
+| POST   | /api/dispatch/board/apply-order             | dispatchBoard.applyOrder           |
+| POST   | /api/dispatch/suggest-route                 | dispatchBoard.suggestRoute         |
+| POST   | /api/admin/customers/geocode-backfill       | admin.customersGeocodeBackfill     |
+| POST   | /api/dispatch/reassign                      | dispatchReassign.create            |
+| GET    | /api/dispatch/reassign                      | dispatchReassign.list              |
+| POST   | /api/dispatch/reassign/{id}/cancel          | dispatchReassign.cancel            |
+| GET    | /api/dispatch/assignment-change-log         | dispatchReassign.auditLog          |
+
+The legacy per-job reassign endpoint moved from `POST /dispatch/reassign`
+to `POST /dispatch/reassign-job` (operationId `dispatch.reassignJob`)
+to free the canonical path for the new whole-route endpoint.
+
+### Tests
+* Backend — `tests/test_phase17_dispatch_board.py` (9 tests) +
+  `tests/test_phase17_additions.py` (12 tests) — 21 passing.
+* Frontend — `src/test/slice-p17-dispatch-board.test.jsx` (4) +
+  `src/test/slice-p17-additions.test.jsx` (7) — 11 passing.
+
+### Known follow-ups (deferred, not blocking Phase 17)
+* Rich implementation of `Assign` action inside the Unrouted panel
+  (currently switches the view to the suggested tech/day and lets
+  the admin add via the existing Schedule flow). Ship a full
+  in-place assign+persist mutation in Phase 17.1.
+* Half-pin/gradient rendering for multi-day customers in
+  service-day color mode (currently uses first day only).
+* Optional Sunday 03:00 cleanup cron that stamps `expired_at` on
+  ended overrides for audit tidiness.

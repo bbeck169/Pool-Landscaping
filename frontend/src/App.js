@@ -95,6 +95,8 @@ import InventoryList, { InventoryDetail, InventoryPOs, InventoryAlerts, Inventor
 import CheckRegister, { CheckNew, CheckDetail, CheckBanks, CheckPayees, CheckAnalytics } from "@/pages/checks/ChecksPages";
 import PropertyLookupPage from "@/pages/property-lookup/PropertyLookupPage";
 import DispatchBoard, { WeatherReschedule } from "@/pages/dispatch/DispatchPages";
+// Phase 17 · Feb 2026 — Google Maps + Directions redesigned dispatch board.
+import DispatchBoardPage from "@/pages/dispatch/DispatchBoardPage";
 import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
 import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPages";
 import WarrantyPlans, { WarrantyContracts, WarrantyClaims, PortalWarranties } from "@/pages/warranties/WarrantyPages";
@@ -636,7 +638,11 @@ export default function App() {
 
             {/* Ops hub (Phase 5) — all 16 sub-pages route into one tabbed shell */}
             <Route path="ops" element={<OpsHub />} />
-            <Route path="dispatch" element={<OpsHub />} />
+            {/* Phase 17 · Feb 2026 — /dispatch now renders the Google Maps
+                + Directions redesigned board. Admin-only; techs never
+                see pricing/routing. Legacy path preserved at /ops/dispatch. */}
+            <Route path="dispatch" element={<AdminOnly><DispatchBoardPage /></AdminOnly>} />
+            <Route path="ops/dispatch" element={<OpsHub />} />
             <Route path="dispatch/map" element={<AdminOnly><DispatchMap /></AdminOnly>} />
             <Route path="schedule" element={<OpsHub />} />
             <Route path="schedule/map" element={<AdminOnly><ScheduleMap /></AdminOnly>} />

@@ -342,6 +342,16 @@ async def create_customer(body: CustomerIn,
     doc.update({"id": new_id(), "tenant_id": tenant["id"], "created_at": now_iso()})
     await db.customers.insert_one(doc)
     doc.pop("_id", None)
+    # Phase 17 · Feb 2026 — fire-and-forget geocode of the new
+    # customer's address so it lands on the Dispatch Board without
+    # waiting for the next boot backfill pass. Non-blocking — the
+    # helper silently no-ops when the API key isn't configured.
+    try:
+        import asyncio as _a17
+        from services.google_maps.geocoding import geocode_and_persist_customer as _gp17
+        _a17.create_task(_gp17(doc["id"], tenant["id"]))
+    except Exception:
+        pass
     # Comms Phase 3 — fire customer.created automation. Never blocks.
     try:
         from services.automation_engine import emit as _emit
@@ -598,6 +608,33 @@ async def update_customer(cid: str, body: CustomerIn,
     await db.customers.update_one(
         {"id": cid, "tenant_id": tenant["id"]}, {"$set": payload}
     )
+
+    # Phase 17 · Feb 2026 — re-geocode if the service address (either
+    # free-form or any structured field) actually changed. Clears the
+    # ``geocoded_at`` stamp so the helper doesn't short-circuit on the
+    # cache and picks up new coordinates immediately.
+    _addr_keys = (
+        "service_address", "service_street", "street",
+        "service_city", "city", "service_state", "state",
+        "service_zip", "zip",
+    )
+    _addr_changed = any(
+        (payload.get(k) or "") != (existing.get(k) or "")
+        for k in _addr_keys
+    )
+    if _addr_changed:
+        try:
+            import asyncio as _a17
+            from services.google_maps.geocoding import (
+                geocode_and_persist_customer as _gp17,
+            )
+            await db.customers.update_one(
+                {"id": cid, "tenant_id": tenant["id"]},
+                {"$unset": {"geocoded_at": ""}},
+            )
+            _a17.create_task(_gp17(cid, tenant["id"]))
+        except Exception:
+            pass
 
     cancelled_job_count, deactivated_recurring_count = await _apply_activation_cascade(
         cid, tenant["id"], user, was_active, now_active, existing.get("name")
