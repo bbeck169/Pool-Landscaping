@@ -775,6 +775,34 @@ async def startup():
     except Exception as e:
         logger.warning(f"[phase5a] service_checklists seed crashed: {e}")
 
+    # Phase 16 · Feb 2026 — seed 3 default customer categories per
+    # tenant (Pool / Landscaping / Both, all is_system=True) and
+    # backfill customer.category_ids / service_days / assigned_tech_ids
+    # so mass-messaging filters work on an existing dataset. Both
+    # calls are idempotent — safe to run on every restart.
+    try:
+        from routers.customer_categories import (
+            seed_default_categories_for_all_tenants,
+            recompute_customer_denorm,
+        )
+        _p16_seeded = await seed_default_categories_for_all_tenants()
+        logger.info(
+            f"[phase16] customer_categories seeded {_p16_seeded} default row(s)"
+        )
+        async for _t in db.tenants.find({}, {"_id": 0, "id": 1}):
+            try:
+                _n = await recompute_customer_denorm(_t["id"])
+                if _n:
+                    logger.info(
+                        f"[phase16] customer denorm updated {_n} for tenant={_t['id']}"
+                    )
+            except Exception as _e:  # pragma: no cover
+                logger.warning(
+                    f"[phase16] denorm crashed for tenant={_t.get('id')}: {_e}"
+                )
+    except Exception as e:
+        logger.warning(f"[phase16] customer_categories boot crashed: {e}")
+
     # Phase 12 · Feb 2026 — "Require card on file" tenant default +
     # idempotent template seed for the ``add_card_request_*`` bodies.
     try:

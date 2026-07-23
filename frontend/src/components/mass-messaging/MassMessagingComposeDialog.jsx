@@ -133,7 +133,8 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, debChannels, debSubj, debBody, debTpl, useCustom]);
+  }, [open, debChannels, debSubj, debBody, debTpl, useCustom,
+       debCats, debDays, debTechs]);
 
   const total = (preview?.estimated_recipients?.email || 0)
     + (preview?.estimated_recipients?.sms || 0);
@@ -384,7 +385,14 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
               >
                 Live preview
                 {previewLoading ? (
-                  <Loader2 size={11} className="inline animate-spin ml-2" />
+                  <span
+                    className="inline-flex items-center gap-1 ml-2 text-[10px] normal-case"
+                    style={{ color: colors.brand }}
+                    data-testid="mass-messaging-preview-refreshing"
+                  >
+                    <Loader2 size={11} className="animate-spin" />
+                    Refreshing…
+                  </span>
                 ) : null}
               </div>
               {previewError ? (

@@ -6956,3 +6956,36 @@ SMS-carrier state).
 SMS delivered rows surface a gray "Delivered" badge (not blue
 "Opened") because carrier read-receipts don't exist.
 
+
+## Phase 16 · FIX 0 · Feb-2026 — Mass Messaging chip-toggle recount regression
+
+**Root cause:** the debounced-preview `useEffect` in
+`MassMessagingComposeDialog.jsx` had a dependency array missing three
+values: `debCats`, `debDays`, `debTechs`. Every filter chip toggle
+correctly updated the underlying state (categoryIds / serviceDays /
+assignedTechUserIds) and their debounced mirrors, but React had no
+signal to re-run the preview effect, so `/mass-messaging/preview`
+was never re-called and the "Sending to N" indicator stayed frozen.
+
+**Fix:** appended the three debounced values to the effect dep array
+(one line). Toggling any category / day / tech chip now re-fires the
+preview after ~500ms.
+
+**Regression guard:** new deterministic vitest
+`FIX 0 regression guard` in `phase16-items3-4.test.jsx` — waits for
+the initial preview call to settle, records the call count, toggles
+a category chip, and asserts the mock's call count strictly
+increased AND the latest payload carries the toggled `category_ids`.
+Any future dep-array regression flips this test red immediately.
+
+**Bonus UX:** added a visible "Refreshing…" spinner+label next to
+the "Live preview" heading while a preview request is in flight
+(`data-testid="mass-messaging-preview-refreshing"`).
+
+**Aquaterra category seed:** boot hook in `server.py` now calls
+`seed_default_categories_for_all_tenants()` + iterates every tenant
+to run `recompute_customer_denorm`, both idempotent. Result on the
+first live run: 3 default categories (Pool / Landscaping / Both,
+`is_system=true`) present on every tenant; customer denorm ran
+across the entire fleet (`[phase16] customer denorm updated 1 for
+tenant=...` × 21 tenants).

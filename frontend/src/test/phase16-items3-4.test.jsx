@@ -134,6 +134,44 @@ describe("MassMessagingComposeDialog · Phase 16 filters", () => {
     expect(chip.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("chip toggle triggers a preview re-fetch (FIX 0 regression guard)", async () => {
+    // Deterministic guard against the regression the tester found —
+    // if the debounce dependency array ever drops one of the filter
+    // debounced values again, this test flips red immediately.
+    // Wall-clock time: 500ms useDebounced + ~200ms overhead → 1500ms
+    // ceiling. Uses vi.waitFor because api.post is async and the
+    // debounce fires via setTimeout inside useEffect.
+    render(<MassMessagingComposeDialog open onOpenChange={() => {}} />);
+    // Wait for initial preview call to settle so we can count *new*
+    // calls after the chip toggle.
+    await waitFor(() => {
+      expect(apiPostMock.mock.calls.some(([p]) => p === "/mass-messaging/preview"))
+        .toBe(true);
+    }, { timeout: 2000 });
+    const before = apiPostMock.mock.calls.filter(
+      ([p]) => p === "/mass-messaging/preview"
+    ).length;
+
+    fireEvent.click(
+      await screen.findByTestId("mass-messaging-filter-categories-opt-cat-pool")
+    );
+
+    // Must observe at least one additional /mass-messaging/preview call
+    // AFTER the toggle (debounce ~500ms).
+    await waitFor(() => {
+      const after = apiPostMock.mock.calls.filter(
+        ([p]) => p === "/mass-messaging/preview"
+      ).length;
+      expect(after).toBeGreaterThan(before);
+    }, { timeout: 3000 });
+    // Also verify the *latest* call's payload has the toggled category.
+    const previewCalls = apiPostMock.mock.calls.filter(
+      ([p]) => p === "/mass-messaging/preview"
+    );
+    const latest = previewCalls[previewCalls.length - 1];
+    expect(latest[1].category_ids).toContain("cat-pool");
+  });
+
   it("service-day + tech multi-selects support independent toggles", async () => {
     render(<MassMessagingComposeDialog open onOpenChange={() => {}} />);
     const wed = await screen.findByTestId("mass-messaging-filter-days-opt-wed");
