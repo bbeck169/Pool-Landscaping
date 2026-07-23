@@ -183,17 +183,31 @@ function MobileMenu({ visible }) {
  *  `effectiveRole` semantics as the category dropdowns. Renders as
  *  filled pills so they're visually distinct from the outlined
  *  category dropdowns. If a role has zero visible items, the entire
- *  strip is suppressed (no empty container). */
+ *  strip is suppressed (no empty container).
+ *
+ *  Deprecated Feb-2026 for admin / super_admin per user request —
+ *  the strip duplicated the 6-category dropdowns and cluttered the
+ *  top of every admin page. Non-admin roles (technician, customer)
+ *  still see it if any of their entries remain, so the component
+ *  is kept intact rather than deleted. Safe to remove entirely if
+ *  no future consumer resurrects it.
+ */
 function QuickAccessRow() {
   const { effectiveRole } = usePermissions();
+  // Feb-2026 · Admin / super_admin no longer see the pinned Quick
+  // Access strip. The 6-category dropdowns below cover the same
+  // navigation surface without the duplicate row.
+  if (effectiveRole === "admin" || effectiveRole === "super_admin") {
+    return null;
+  }
   const items = [
-    { to: "/customers",                     label: "Customers",   icon: Users,        roles: ["admin", "super_admin"] },
-    { to: "/invoices",                       label: "Invoices",    icon: FileText,     roles: ["admin", "super_admin"] },
-    { to: "/quotes",                         label: "Estimates",   icon: ClipboardList, roles: ["admin", "super_admin"] },
-    { to: "/schedule/calendar",              label: "Schedule",    icon: CalendarDays, roles: ["admin", "super_admin", "technician"] },
-    { to: "/tests",                            label: "Tests",       icon: GraduationCap, roles: ["admin", "super_admin", "technician"] },
-    { to: "/jobs",                            label: "Workstream",  icon: ListChecks,   roles: ["admin", "super_admin", "technician", "customer"] },
-    { to: "/admin/settings/ringcentral",      label: "RingCentral", icon: Phone,        roles: ["admin", "super_admin"] },
+    { to: "/customers",                     label: "Customers",   icon: Users,        roles: [] },
+    { to: "/invoices",                       label: "Invoices",    icon: FileText,     roles: [] },
+    { to: "/quotes",                         label: "Estimates",   icon: ClipboardList, roles: [] },
+    { to: "/schedule/calendar",              label: "Schedule",    icon: CalendarDays, roles: ["technician"] },
+    { to: "/tests",                            label: "Tests",       icon: GraduationCap, roles: ["technician"] },
+    { to: "/jobs",                            label: "Workstream",  icon: ListChecks,   roles: ["technician", "customer"] },
+    { to: "/admin/settings/ringcentral",      label: "RingCentral", icon: Phone,        roles: [] },
   ];
   const visible = items.filter((it) => it.roles.includes(effectiveRole));
   if (visible.length === 0) return null;
