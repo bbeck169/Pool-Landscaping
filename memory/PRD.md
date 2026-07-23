@@ -6851,3 +6851,53 @@ Body {referral_code: ...} and query ?ref=... produce equivalent behavior.
 ### Backlog remaining
 - P1: Customer detail Credits tab + invoice viewer promo code input + payments create-payment-intent extension.
 - P2: Per-property equipment-tracker reminder overrides.
+
+## Phase 16 · Feb-2026 — Communications Log + Customer Categories + Mass Messaging hardening
+
+### Endpoints added
+
+| Method | Path | operationId | RBAC |
+|---|---|---|---|
+| GET   | /api/communications-log                        | communicationsLog.list       | admin |
+| GET   | /api/communications-log/summary                | communicationsLog.summary    | admin |
+| GET   | /api/customer-categories                       | customerCategories.list      | admin+manager |
+| POST  | /api/customer-categories                       | customerCategories.create    | admin |
+| PATCH | /api/customer-categories/{id}                  | customerCategories.update    | admin |
+| DELETE| /api/customer-categories/{id}                  | customerCategories.delete    | admin |
+| POST  | /api/customer-categories/recompute             | customerCategories.recompute | admin |
+| GET   | /api/customer-tags                             | customerTags.list            | admin+manager |
+| POST  | /api/customer-tags                             | customerTags.create          | admin+manager |
+| PATCH | /api/customers/{cid}/tags                      | customers.setTags            | admin+manager |
+| POST  | /api/mass-messaging/preview                    | massMessaging.preview        | admin |
+| POST  | /api/mass-messaging/send                       | massMessaging.send           | admin |
+| GET   | /api/mass-messaging/batches                    | massMessaging.listBatches    | admin |
+| GET   | /api/mass-messaging/batches/{batch_id}         | massMessaging.readBatch      | admin |
+
+### Storage decisions
+
+* **`marketing_deliveries`** is the canonical write path for every email + SMS (mass broadcast, transactional, dunning, alerts, magic links, referrals). The Communications Log API queries this collection — no new `communications_log` collection was introduced to avoid a cascade rename across ~15 producers.
+* **`mass_messaging_batches`** — one row per broadcast, stats + status + queued counts.
+* **`mass_messaging_confirm_tokens`** — single-use, 10-min TTL guard against accidental double-send.
+* **`customer_categories`** — tenant-scoped, admin-managed taxonomy. Boot-seeds Pool / Landscaping / Both with `is_system=true` (undeletable). `customer.category_ids[]` denormalized via `recompute_customer_denorm`; also populates `customer.service_days[]` (Mon-Sun) + `customer.assigned_tech_ids[]` from `recurring_job_templates`.
+
+### Mass Messaging hardening (Item 5 — bug report)
+
+Root cause of "not sending / not showing in log" report: **tenant had zero active customers** (data reset earlier this session wiped them). Preview correctly returned 0 recipients → send correctly rejected with `AUDIENCE_EMPTY`. Confirmed end-to-end with a re-seeded 2-customer set: 4 delivery rows persisted, all visible via `GET /communications-log` and the frontend page at `/admin/communications-log`.
+
+Defensive hardening added:
+* Structured start + end log lines in `_run_broadcast` (`[mass-messaging] fanout START/END batch=<id> recipients=N stats=...`).
+* Adapter calls now wrapped in try/except — a raised exception no longer aborts the loop; the row is written with `delivery_status="failed"` and the exception message in a new `error` field.
+* Pytest `test_phase16_item5_mass_messaging_bug` (2 cases) — calls `_run_broadcast` in-process with a patched adapter so exceptions are asserted; also asserts end-to-end via HTTP.
+
+### Communications Log field additions
+
+`marketing_deliveries` documents now carry (populated by webhook handlers):
+* `opened_at` / `clicked_at` / `bounced_at` / `delivered_at` / `complained_at` — from Resend webhook.
+* `sms_status_final` / `sms_status_raw` / `sms_status_at` — from RC outbound-status handler.
+* `error` — captured on any adapter exception.
+
+### Frontend routes added
+
+* `/admin/communications-log` — KPI cards + filters + table + row detail sheet + CSV export (admin only).
+* `/marketing/broadcasts` — batch history with per-batch drill-in (admin only).
+

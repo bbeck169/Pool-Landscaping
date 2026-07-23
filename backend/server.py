@@ -105,6 +105,8 @@ from routers import (
     marketing_campaigns as marketing_campaigns_router,
     mass_messaging,
     customer_tags,
+    communications_log,
+    customer_categories,
 )
 # Phase 9C · Feb 2026 — QuickBooks retirement helper (idempotent
 # boot migration + ALLOW_TEST_HOOKS-gated purge endpoint).
@@ -225,7 +227,9 @@ for module in [notifications_router,
                promo_codes,
                referrals_phase10,
                mass_messaging,
-               customer_tags]:
+               customer_tags,
+               communications_log,
+               customer_categories]:
         if module is reviews:
             api_router.include_router(module.router, prefix="/reviews")
             continue
@@ -866,6 +870,7 @@ async def startup():
     # Feb-2026 M2 fix — idempotent single-brace → double-brace migration
     # on stored campaign templates. The render engine now accepts both
     # shapes; this migration just normalises DB snapshots so admins
+    # editing an M2 template see the canonical form.
     # reading the raw doc see the canonical form.
     try:
         from services.marketing_campaigns import migrate_campaign_templates_to_double_brace

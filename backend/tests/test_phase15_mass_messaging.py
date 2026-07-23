@@ -159,10 +159,18 @@ def test_preview_returns_recipients_sample_and_confirm_token(admin_headers,
     assert d["estimated_recipients"]["email"] >= 1, \
         "at least one scratch customer with email must be counted"
     assert d["estimated_recipients"]["sms"] >= 1
-    # Merge-tag substitution — Ada's first name should be present.
-    assert "Ada" in d["sample_render"]["email_subject"] \
-        or "Ada" in d["sample_render"]["email_body_html"] \
-        or "Ada" in d["sample_render"]["sms_body"]
+    # Merge-tag substitution — the sample_customer's first name must
+    # appear in the rendered subject/body/sms. Which customer gets
+    # picked for the sample depends on ordering + who else is active
+    # on the tenant at test time; we assert against the actual
+    # sample_customer.id so the test is robust to that.
+    sample_cust_id = d["sample_render"]["sample_customer"]["id"]
+    sample_cust = _sync.customers.find_one({"id": sample_cust_id}, {"_id": 0})
+    first = (sample_cust or {}).get("first_name") or ""
+    assert first, "sample customer must have a first_name"
+    assert (first in d["sample_render"]["email_subject"]
+             or first in d["sample_render"]["email_body_html"]
+             or first in d["sample_render"]["sms_body"])
     assert d["confirm_token"], "preview must issue a confirm_token"
     assert d["stats"]["no_contact_email"] >= 1  # Bob has no email
 

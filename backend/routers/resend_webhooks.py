@@ -114,20 +114,31 @@ async def resend_webhook(request: Request) -> Dict[str, Any]:
 
     # Update the delivery row (best-effort match by provider_response_id).
     if email_id:
-        upd_status = {
-            "email.delivered": "delivered",
-            "email.bounced": "bounced",
-            "email.complained": "complained",
-            "email.opened": "opened",
-            "email.clicked": "clicked",
-        }.get(event_type)
-        if upd_status:
+        # Map event → (provider_status label, per-event timestamp field).
+        # Feb-2026 · Slice O — added distinct timestamp columns so the
+        # communications-log detail sheet can render a full timeline
+        # (created → sent → delivered → opened → clicked / bounced),
+        # not just the most-recent transition. Also keep
+        # ``provider_last_event_at`` as the wall-clock cursor for
+        # sorting the most-recent event across all types.
+        _MAP = {
+            "email.delivered":  ("delivered",  "delivered_at"),
+            "email.bounced":    ("bounced",    "bounced_at"),
+            "email.complained": ("complained", "complained_at"),
+            "email.opened":     ("opened",     "opened_at"),
+            "email.clicked":    ("clicked",    "clicked_at"),
+        }
+        entry = _MAP.get(event_type)
+        if entry:
+            upd_status, ts_field = entry
+            set_doc = {
+                "provider_status": upd_status,
+                "provider_last_event_at": now_iso(),
+                ts_field: now_iso(),
+            }
             await db.marketing_deliveries.update_one(
                 {"provider_response_id": email_id},
-                {"$set": {
-                    "provider_status": upd_status,
-                    "provider_last_event_at": now_iso(),
-                }},
+                {"$set": set_doc},
             )
 
     # Auto-suppress bounces + complaints so we never send to them again.

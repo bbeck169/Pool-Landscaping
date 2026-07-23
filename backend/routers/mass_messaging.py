@@ -373,7 +373,13 @@ async def _run_broadcast(*, tenant_id: str, batch_id: str,
                           initiated_by: str) -> None:
     """Background fanout: iterate audience, render, hit the adapter,
     persist a `marketing_deliveries` row per (customer, channel).
-    Updates the batch's stats + status when done."""
+    Updates the batch's stats + status when done.
+
+    Structured logging: emits a start line with the resolved recipient
+    count and an end line with terminal stats so ops can trace a
+    broadcast in server logs even if the caller never polls the
+    batch. Every adapter failure is captured into the delivery row's
+    `error` field — no silent drops."""
     from services.marketing.render import render_subject_and_body, strip_html
     from services.marketing.merge_tags import render_context
     from services.email.resend_adapter import send as _send_email
@@ -396,6 +402,10 @@ async def _run_broadcast(*, tenant_id: str, batch_id: str,
 
     tenant = await db.tenants.find_one({"id": tenant_id}, {"_id": 0})
     customers = await _resolve_audience(tenant_id)
+    logger.info(
+        "[mass-messaging] fanout START batch=%s tenant=%s recipients=%d channels=%s",
+        batch_id, tenant_id, len(customers), channels,
+    )
 
     for c in customers:
         ctx = render_context(customer=c, tenant=tenant or {})
@@ -412,20 +422,31 @@ async def _run_broadcast(*, tenant_id: str, batch_id: str,
             else:
                 subj_tpl, body_tpl = _pick_subject_body(email_tpl, subject, body)
                 s_out, b_out, _ = render_subject_and_body(subj_tpl, body_tpl, ctx)
-                res = await _send_email(
-                    to=addr, subject=s_out, html=b_out,
-                    category="marketing",
-                    tenant_id=tenant_id, customer_id=c.get("id"),
-                    idempotency_key=f"mb:{batch_id}:{c.get('id')}:email",
-                )
-                status = _classify_provider_status(res)
+                try:
+                    res = await _send_email(
+                        to=addr, subject=s_out, html=b_out,
+                        category="marketing",
+                        tenant_id=tenant_id, customer_id=c.get("id"),
+                        idempotency_key=f"mb:{batch_id}:{c.get('id')}:email",
+                    )
+                    status = _classify_provider_status(res)
+                    err = None if status == "sent" else (res or {}).get("error")
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning(
+                        "[mass-messaging] email adapter raised batch=%s cust=%s: %s",
+                        batch_id, c.get("id"), exc,
+                    )
+                    res = {}
+                    status = "failed"
+                    err = str(exc)
                 stats[status] = stats.get(status, 0) + 1
                 await _log_delivery(
                     tenant_id=tenant_id, batch_id=batch_id, customer=c,
                     channel="email", subject=s_out, body=b_out,
                     status=status,
-                    provider=(res or {}).get("provider") or "unknown",
+                    provider=(res or {}).get("provider") or "resend",
                     provider_response_id=(res or {}).get("provider_response_id"),
+                    error=err,
                 )
         # ── sms ───────────────────────────────────────────────
         if "sms" in channels:
@@ -441,20 +462,31 @@ async def _run_broadcast(*, tenant_id: str, batch_id: str,
                 _s, body_tpl = _pick_subject_body(sms_tpl, None, body)
                 _s_out, b_out, _ = render_subject_and_body("", body_tpl, ctx)
                 sms_body = strip_html(b_out)
-                res = await _send_sms(
-                    to=phone, body=sms_body,
-                    category="marketing",
-                    tenant_id=tenant_id, customer_id=c.get("id"),
-                    idempotency_key=f"mb:{batch_id}:{c.get('id')}:sms",
-                )
-                status = _classify_provider_status(res)
+                try:
+                    res = await _send_sms(
+                        to=phone, body=sms_body,
+                        category="marketing",
+                        tenant_id=tenant_id, customer_id=c.get("id"),
+                        idempotency_key=f"mb:{batch_id}:{c.get('id')}:sms",
+                    )
+                    status = _classify_provider_status(res)
+                    err = None if status == "sent" else (res or {}).get("error")
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning(
+                        "[mass-messaging] sms adapter raised batch=%s cust=%s: %s",
+                        batch_id, c.get("id"), exc,
+                    )
+                    res = {}
+                    status = "failed"
+                    err = str(exc)
                 stats[status] = stats.get(status, 0) + 1
                 await _log_delivery(
                     tenant_id=tenant_id, batch_id=batch_id, customer=c,
                     channel="sms", subject=None, body=sms_body,
                     status=status,
-                    provider=(res or {}).get("provider") or "unknown",
+                    provider=(res or {}).get("provider") or "ringcentral",
                     provider_response_id=(res or {}).get("provider_response_id"),
+                    error=err,
                 )
 
     await db.mass_messaging_batches.update_one(
@@ -464,6 +496,10 @@ async def _run_broadcast(*, tenant_id: str, batch_id: str,
             "status": "completed",
             "completed_at": now_iso(),
         }},
+    )
+    logger.info(
+        "[mass-messaging] fanout END batch=%s stats=%s",
+        batch_id, stats,
     )
 
 
@@ -484,9 +520,12 @@ async def _log_delivery(*, tenant_id: str, batch_id: str,
                          customer: Dict[str, Any], channel: str,
                          subject: Optional[str], body: str,
                          status: str, provider: str,
-                         provider_response_id: Optional[str] = None) -> None:
+                         provider_response_id: Optional[str] = None,
+                         error: Optional[str] = None) -> None:
     """One row per (customer, channel) attempt, matching the
-    schema every other feature writes (see customers.py:1084)."""
+    schema every other feature writes (see customers.py:1084).
+    Failed sends carry the provider's error message in ``error`` so
+    the communications log detail sheet can surface it."""
     recipient = (customer.get("email") if channel == "email"
                   else customer.get("phone")) or ""
     await db.marketing_deliveries.insert_one({
@@ -505,6 +544,7 @@ async def _log_delivery(*, tenant_id: str, batch_id: str,
         "delivery_status": status,
         "provider": provider,
         "provider_response_id": provider_response_id,
+        "error": error,
         "created_at": now_iso(),
     })
 

@@ -538,6 +538,39 @@ async def _handle_sms_event(body: Dict[str, Any]) -> None:
         "sent_at": now_iso(),
     }
     await db.sms_messages.insert_one(doc)
+
+    # Feb-2026 · Slice O — mirror outbound SMS status onto the
+    # matching ``marketing_deliveries`` row so the communications-log
+    # UI can show carrier delivery confirmation (SMS "read" isn't
+    # achievable; only Delivered / Failed / Undelivered are surfaced).
+    # We match by ``provider_response_id == rc_message_id`` — the
+    # id we captured at send time.
+    if direction == "outbound" and rc_id:
+        raw_status = (inner.get("messageStatus")
+                       or inner.get("message_status") or "").strip()
+        # RC returns strings like "Delivered", "SendingFailed",
+        # "DeliveryFailed", "Sent", "Queued". Normalize to a small
+        # closed set the UI can pill-color.
+        final_map = {
+            "delivered": "delivered",
+            "sendingfailed": "failed",
+            "deliveryfailed": "failed",
+            "failed": "failed",
+            "undelivered": "undelivered",
+        }
+        s_low = raw_status.lower()
+        sms_final = final_map.get(s_low)
+        if sms_final:
+            await db.marketing_deliveries.update_one(
+                {"provider_response_id": rc_id, "channel": "sms"},
+                {"$set": {
+                    "sms_status_final": sms_final,
+                    "sms_status_raw": raw_status,
+                    "sms_status_at": now_iso(),
+                    "provider_last_event_at": now_iso(),
+                    "provider_status": sms_final,
+                }},
+            )
     # Phase 7B · Feb 2026 — also persist to ``sms_inbound`` per the
     # RC cutover contract. Kept separate from ``sms_messages`` (which
     # tracks BOTH directions) so consumers can subscribe to inbound
