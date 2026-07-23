@@ -188,3 +188,21 @@
 - **Files modified**: `app/marketing/templates.tsx` (rewritten), `app/marketing/analytics.tsx` (rewritten), `app/marketing/review-requests.tsx` (rewritten)
 - **Files created**: `src/components/telephony/ClickToCallButton.tsx`
 - **Endpoints verified**: `/api/marketing/templates` (200), `/api/marketing/analytics/overview` (200), `/api/marketing/review-requests` (200), `/api/marketing/campaigns` (200), `/api/marketing/audience-segments` (200), `/api/marketing/sequences` (200), `/api/marketing/suppressions` (200), `/api/instaquote/configs` (200), `/api/admin/forms` (200), `/api/referrals/me` (200 for customer), `/api/customer-portal/referrals/my` (200 for customer), `/api/jobs/next` (404 — deferred)
+
+
+## Iteration 11 — Phase 13: Mobile Parity (Leads/Card-on-file/Trackers/Referrals/Promo)
+- **Commit**: 64ce7a1cf1a4d2096a8cdf54355cdeee793fe528
+- **Date**: 2026-07-23
+- **Changes**:
+  - **Leads (Tier A1)**: Fixed `leads/index.tsx` API parsing (`{rows: [...]}` format, capitalized statuses); moved `leads.tsx` → `leads/index.tsx` to resolve Expo Router conflict; created `leads/[id].tsx` full Phase 8 detail (contact card, status, source badge, action buttons — Close Won convert, Close Lost with reason modal, Mark Contacted/Quoted, On Hold, Archive, notes editor, timeline); added `leads/_layout.tsx`
+  - **Card-on-file (Tier A3)**: Enhanced `customer/[id].tsx` — green "Card on file (Visa •••• last4)" status, yellow "No card — required" warning, tri-state Switch + "Reset to tenant default" ghost button, credits balance banner when > 0
+  - **Portal add-card (Tier A4)**: Created `portal/add-card.tsx` WebView wrapper for the already mobile-responsive web Stripe SetupIntent form
+  - **Referrals (Tier A2)**: Updated `referrals.tsx` with Phase 10 status pills (Pending / Waiting Xd / Credited / Voided)
+  - **Trackers (Tier B5)**: Created `tracking/index.tsx` — type tabs (All/Filter/Salt Cell), status tabs (All/Past Due/Coming Due/Current with counts), search, row cards with type icon + customer + address + interval + dates
+  - **Admin Referrals (Tier B6)**: Created `admin/referrals.tsx` — summary card + list with status pills
+  - **Promo Codes (Tier B6)**: Created `settings/promo-codes.tsx` — code list + type badge + amount + uses + active toggle
+  - **Navigation**: Added Leads + Service Tracking to admin global menu tiles; added Tracking/Admin Referrals/Promo Codes to admin more.tsx links; added Service Tracking to tech nav
+- **Files created**: `leads/[id].tsx`, `leads/_layout.tsx`, `tracking/index.tsx`, `tracking/_layout.tsx`, `admin/referrals.tsx`, `admin/_layout.tsx`, `settings/promo-codes.tsx`, `portal/add-card.tsx`
+- **Files modified**: `leads/index.tsx` (moved + fixed), `referrals.tsx`, `customer/[id].tsx`, `(app)/more.tsx`, `src/components/tools/sections.ts`
+- **Endpoints verified**: `/api/leads` 200, `/api/leads/{id}` 200, `/api/leads/{id}/close-won` 200, `/api/leads/{id}/close-lost` 200, `/api/leads/{id}/note` 200, `/api/equipment/trackers` 200, `/api/admin/referrals` 200, `/api/promo-codes` 200, `/api/customers/{id}/credits` 200, `/api/promo-codes/validate` 200, `PATCH /api/customers/{id}` 200
+- **404 endpoints (deferred)**: `/api/customers/{id}/send-card-link` (all variations), `/api/tenant/settings`, `/api/jobs/next`
