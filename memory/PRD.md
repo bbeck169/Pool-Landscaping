@@ -6989,3 +6989,57 @@ first live run: 3 default categories (Pool / Landscaping / Both,
 `is_system=true`) present on every tenant; customer denorm ran
 across the entire fleet (`[phase16] customer denorm updated 1 for
 tenant=...` × 21 tenants).
+
+## Phase 16 · Additions E + F · Feb-2026 — Out-of-state auto-reject + Brian's internal notification
+
+### Backend
+
+* New helper `backend/services/leads_side_effects.py` — single entry point
+  `apply_lead_post_create(lead_doc)` called from every lead-create path
+  (admin manual `POST /api/leads` + public `POST /api/public/leads`).
+  Runs two concerns in order:
+    1. **Internal notification (F)** — email to
+       ``tenant.internal_lead_notifications.email`` (default
+       ``brian@plofv.com``) + SMS to ``.sms`` (default ``+16028874400``).
+       Contents: name, phone, email, address, message, source, PHX-local
+       timestamp, direct admin URL to `/leads/<id>`. Prefix
+       `STATUS: REJECTED — out of state (XX)` if the address is
+       non-AZ. Best-effort — a Resend/RC failure is logged with
+       ``status=failed`` + ``error`` on ``marketing_deliveries`` and
+       never blocks lead creation.
+    2. **Out-of-state auto-reject (E)** — parses state from the
+       lead's ``state`` field or the tail of ``service_address``.
+       If NOT in ``tenant.serviced_states`` (default ``["AZ"]``),
+       marks ``status="rejected"``, ``rejected_reason="out_of_state"``,
+       ``rejected_state=<XX>``, ``rejected_at=<utc>`` and fires a
+       transactional auto-reply email to the submitter's address.
+* `GET /api/leads` — default view now excludes ``status=rejected``.
+  Callers pass ``?status=rejected`` to see the rejected tab.
+  ``_CANONICAL_STATUSES`` extended with ``"rejected"``.
+* Every notification lands one row in ``marketing_deliveries`` with
+  ``trigger_entity.kind`` = ``lead_created_internal_notification`` /
+  ``lead_out_of_state_auto_reply`` so the Communications Log page
+  surfaces them cleanly.
+* Tenant settings honored at runtime:
+  ``tenant.internal_lead_notifications = {email, sms, enabled}``
+  and ``tenant.serviced_states = [str]``. Both fall back to
+  hard-coded defaults (Brian's contact + Arizona-only) if absent.
+  No UI required this pass — settings API can PATCH them today.
+
+### Live verification (aquaterra tenant)
+
+* **AZ lead** → status=New; 2 notification rows (email→brian@plofv.com sent
+  via resend, SMS→+16028874400 sent via ringcentral). Default inbox
+  shows it, rejected tab does not.
+* **TX lead** → status=rejected, rejected_state=TX; 3 total rows
+  (2 internal + 1 customer auto-reply). Default inbox hides it,
+  `?status=rejected` returns it.
+* **Provider failure** — best-effort try/except captures each channel
+  independently; lead insert never rolls back on a Resend/RC error.
+
+### Endpoints touched (no new operationIds — additive filter + side-effects only)
+
+* `POST /api/leads`             (admin manual) — invokes helper post-insert.
+* `POST /api/public/leads`      (public form) — invokes helper post-insert.
+* `GET /api/leads`              — default excludes rejected; `?status=rejected` filter now honored.
+

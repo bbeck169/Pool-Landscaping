@@ -35,6 +35,7 @@ router = APIRouter()
 
 _CANONICAL_STATUSES = {
     "New", "Contacted", "Quoted", "Closed Won", "Closed Lost", "On Hold",
+    "rejected",  # Phase 16 · Addition E · Feb-2026 — out-of-state auto-reject
 }
 _STATUS_ALIASES = {
     "new": "New", "contacted": "Contacted", "quoted": "Quoted",
@@ -42,6 +43,7 @@ _STATUS_ALIASES = {
     "on hold": "On Hold", "closed won": "Closed Won",
     "closed lost": "Closed Lost", "closed_won": "Closed Won",
     "closed_lost": "Closed Lost",
+    "rejected": "rejected",
 }
 _VALID_SOURCES = {
     "website_form", "admin_manual", "phone", "walk_in",
@@ -98,6 +100,11 @@ async def list_leads(user: dict = Depends(get_current_user),
     q: Dict[str, Any] = {"tenant_id": tenant["id"]}
     if status and status != "all":
         q["status"] = _normalize_status(status)
+    elif not status:
+        # Phase 16 · Addition E · Feb-2026 — exclude rejected leads
+        # from the default inbox view. Callers who want the reject
+        # tab pass ?status=rejected explicitly.
+        q["status"] = {"$ne": "rejected"}
     if source and source != "all":
         q["source"] = source
     if service_interest and service_interest != "all":
@@ -176,6 +183,16 @@ async def create_lead(body: LeadIn,
         ],
     })
     await db.leads.insert_one(doc)
+    # Phase 16 · Additions E + F · Feb-2026 — internal notification
+    # to Brian + auto-reject out-of-state. Best-effort; a failure
+    # never blocks lead creation.
+    try:
+        from services.leads_side_effects import apply_lead_post_create
+        updates = await apply_lead_post_create(doc)
+        if updates:
+            doc.update(updates)
+    except Exception as _e:  # pragma: no cover - defensive
+        logger.warning(f"[leads] post-create side effects crashed: {_e}")
     doc.pop("_id", None)
     return doc
 
@@ -761,6 +778,17 @@ async def public_lead_intake(body: PublicLeadIn, request: "Request"):
         ],
     }
     await db.leads.insert_one(lead_doc)
+    # Phase 16 · Additions E + F · Feb-2026 — same side-effect
+    # pipeline the admin create path uses. Runs BEFORE the referral
+    # bookkeeping so a rejected out-of-state referral still notifies
+    # Brian AND creates the referral pending-conversion row (the
+    # referrer earns credit only on close-won, which won't happen
+    # for a rejected lead, but the audit trail is clean).
+    try:
+        from services.leads_side_effects import apply_lead_post_create
+        await apply_lead_post_create(lead_doc)
+    except Exception as _e:  # pragma: no cover
+        logger.warning(f"[public-leads] post-create side effects crashed: {_e}")
     # If we captured a referrer, ALSO insert a referrals row in
     # ``pending_conversion`` so the admin dashboard reflects the
     # inbound pipeline. The paid-window transition happens on
