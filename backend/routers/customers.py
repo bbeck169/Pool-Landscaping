@@ -1013,7 +1013,7 @@ async def patch_customer(cid: str,
     return doc
 
 
-@router.post("/customers/{cid}/send-card-add-link")
+@router.post("/customers/{cid}/send-card-add-link", tags=["customers"])
 async def send_card_add_link(cid: str,
                               user: dict = Depends(get_current_user),
                               tenant: dict = Depends(get_current_tenant)):

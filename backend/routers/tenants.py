@@ -306,7 +306,54 @@ class TenantSettingsUpdate(BaseModel):
     auto_send_card_add_on_create: Optional[bool] = None
 
 
-@router.patch("/tenants/mine/settings")
+@router.get(
+    "/tenants/mine/settings",
+    tags=["tenants"],
+    summary="Read tenant-wide settings (admin/manager only)",
+    responses={200: {"description": (
+        "Canonical READ counterpart to ``PATCH /api/tenants/mine/settings`` "
+        "(Phase 12 / 12B / 12C). Returns every settings field the mobile + "
+        "web admin UIs read on load: card-on-file default, timezone, "
+        "auto-send-card-add-on-create, equipment-service tracker toggles, "
+        "SMS escalation list, and the most recent Stripe cross-reference "
+        "sync stamps. Techs and customers see 403."
+    )}},
+)
+async def get_own_settings(user: dict = Depends(get_current_user),
+                            tenant: dict = Depends(get_current_tenant)):
+    if user.get("role") not in ("admin", "manager", "super_admin"):
+        raise HTTPException(403, "Admin or manager access required")
+    return {
+        "id": tenant["id"],
+        "name": tenant.get("name"),
+        # Phase 12 · Feb 2026
+        "require_card_on_file_default": bool(
+            tenant.get("require_card_on_file_default", True)),
+        # Batch 12C · Feb 2026
+        "timezone": tenant.get("timezone") or "America/Phoenix",
+        "auto_send_card_add_on_create": bool(
+            tenant.get("auto_send_card_add_on_create", False)),
+        # Phase 11 · equipment tracker digest
+        "equipment_service_customer_reminders_enabled": bool(
+            tenant.get("equipment_service_customer_reminders_enabled", False)),
+        "equipment_service_coming_due_days":
+            tenant.get("equipment_service_coming_due_days"),
+        # Stripe key-health + ambiguous-digest fanout list
+        "sms_escalation_recipients": list(
+            tenant.get("sms_escalation_recipients") or []),
+        # Phase 12B stamps
+        "stripe_sync_last_run_at": tenant.get("stripe_sync_last_run_at"),
+        "last_stripe_customer_sync_at":
+            tenant.get("last_stripe_customer_sync_at"),
+        "last_stripe_customer_sync_summary":
+            tenant.get("last_stripe_customer_sync_summary"),
+        # Audit stamps from PATCH
+        "settings_updated_at": tenant.get("settings_updated_at"),
+        "settings_updated_by": tenant.get("settings_updated_by"),
+    }
+
+
+@router.patch("/tenants/mine/settings", tags=["tenants"])
 async def patch_own_settings(body: TenantSettingsUpdate,
                               user: dict = Depends(get_current_user)):
     if user.get("role") not in ("admin", "super_admin"):
