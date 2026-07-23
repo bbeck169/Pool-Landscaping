@@ -106,6 +106,9 @@ export default function More() {
     { icon: "document-text-outline", label: "Quotes & Invoices", onPress: () => router.push("/(app)/quotes") },
     { icon: "settings-outline", label: "Widget Configs", onPress: () => router.push("/settings/widgets") },
     { icon: "ban-outline", label: "Suppressions", onPress: () => router.push("/marketing/suppressions") },
+    { icon: "filter-outline", label: "Service Tracking", onPress: () => router.push("/tracking") },
+    { icon: "gift-outline", label: "Admin Referrals", onPress: () => router.push("/admin/referrals") },
+    { icon: "pricetag-outline", label: "Promo Codes", onPress: () => router.push("/settings/promo-codes") },
   ];
 
   return (

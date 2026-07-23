@@ -10,21 +10,24 @@ import { Header, FilterRow, IconButton } from "@/src/components/widgets";
 
 const FILTERS = [
   { key: "all", label: "All" },
-  { key: "new", label: "New" },
-  { key: "contacted", label: "Contacted" },
-  { key: "quoted", label: "Quoted" },
-  { key: "won", label: "Won" },
-  { key: "lost", label: "Lost" },
+  { key: "New", label: "New" },
+  { key: "Contacted", label: "Contacted" },
+  { key: "Quoted", label: "Quoted" },
+  { key: "Closed Won", label: "Won" },
+  { key: "Closed Lost", label: "Lost" },
+  { key: "On Hold", label: "On Hold" },
 ];
-const STATUSES = ["new", "contacted", "quoted", "won", "lost"];
+const STATUSES = ["New", "Contacted", "Quoted", "Closed Won", "Closed Lost", "On Hold"];
 
-// Extend status meta labels for leads
+// Extend status meta labels for leads (Phase 8 uses capitalized statuses)
 Object.assign(statusMeta, {
-  new: { label: "New", bg: "#E0F2FE", fg: "#0369A1" },
-  contacted: { label: "Contacted", bg: "#FEF9C3", fg: "#A16207" },
-  quoted: { label: "Quoted", bg: "#FFEDD5", fg: "#C2410C" },
-  won: { label: "Won", bg: "#DCFCE7", fg: "#16A34A" },
-  lost: { label: "Lost", bg: "#FEE2E2", fg: "#DC2626" },
+  "New": { label: "New", bg: "#DBEAFE", fg: "#1E3A8A" },
+  "Contacted": { label: "Contacted", bg: "#FEF3C7", fg: "#854D0E" },
+  "Quoted": { label: "Quoted", bg: "#E0E7FF", fg: "#3730A3" },
+  "Closed Won": { label: "Won", bg: "#DCFCE7", fg: "#166534" },
+  "Closed Lost": { label: "Lost", bg: "#FEE2E2", fg: "#991B1B" },
+  "On Hold": { label: "On Hold", bg: "#F1F5F9", fg: "#475569" },
+  "Archived": { label: "Archived", bg: "#E5E7EB", fg: "#374151" },
 });
 
 export default function Leads() {
@@ -47,8 +50,11 @@ export default function Leads() {
 
   const load = useCallback(async (f: string) => {
     try {
-      const q = f === "all" ? "" : `?status=${f}`;
-      setItems(await api.get(`/leads${q}`));
+      const q = f === "all" ? "?include_archived=1&page_size=200" : `?status=${encodeURIComponent(f)}&page_size=200`;
+      const res = await api.get(`/leads${q}`);
+      // Phase 8: API returns {rows, total, page, page_size}
+      const arr = Array.isArray(res) ? res : (res?.rows || res?.leads || []);
+      setItems(arr);
     } catch {
       setItems([]);
     } finally {
@@ -141,7 +147,7 @@ export default function Leads() {
           contentContainerStyle={{ padding: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing["3xl"] }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(filter); }} />}
           renderItem={({ item }) => (
-            <Pressable style={styles.card} onPress={() => setSel(item)} testID={`lead-${item.id}`}>
+            <Pressable style={styles.card} onPress={() => router.push(`/leads/${item.id}`)} testID={`lead-${item.id}`}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                 <Text style={styles.name}>{item.name}</Text>
                 <StatusChip status={item.status} />

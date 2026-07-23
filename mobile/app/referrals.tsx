@@ -40,6 +40,16 @@ type ReferralHistory = {
 
 const TENANT_PHONE = "(602) 555-1234"; // fallback; actual comes from config
 
+const referralStatusColor = (status: string) => {
+  switch (status) {
+    case "credited": return { bg: "#DCFCE7", fg: "#166534" };
+    case "voided": return { bg: "#FEE2E2", fg: "#991B1B" };
+    case "pending_paid_window": return { bg: "#DBEAFE", fg: "#1D4ED8" };
+    case "converted": return { bg: "#DCFCE7", fg: "#166534" };
+    default: return { bg: "#FEF3C7", fg: "#A16207" };
+  }
+};
+
 export default function ReferralsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -178,23 +188,32 @@ export default function ReferralsScreen() {
               <Text style={s.emptyText}>No referrals yet — share your code above to earn credits.</Text>
             </View>
           ) : (
-            referrals.map((r: any) => (
+            referrals.map((r: any) => {
+              const sc = referralStatusColor(r.status);
+              const daysLeft = r.status === "pending_paid_window" && r.paid_window_ends_at
+                ? Math.max(0, Math.ceil((new Date(r.paid_window_ends_at).getTime() - Date.now()) / 86400000))
+                : null;
+              return (
               <View key={r.id} style={s.historyRow} testID={`referral-row-${r.id}`}>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.histName}>{r.converted_customer_name || r.referee_name || r.name || "Friend"}</Text>
+                  <Text style={s.histName}>{r.friend_name || r.converted_customer_name || r.referee_name || "Friend"}</Text>
                   <Text style={s.histDate}>
                     {r.converted_at || r.created_at
                       ? new Date(r.converted_at || r.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
                       : ""}
                   </Text>
                 </View>
-                <View style={[s.histPill, r.status === "converted" ? s.histConverted : s.histPending]}>
-                  <Text style={[s.histPillText, { color: r.status === "converted" ? "#166534" : "#A16207" }]}>
-                    {r.status === "converted" ? "Converted" : r.status || "Pending"}
+                <View style={[s.histPill, { backgroundColor: sc.bg }]}>
+                  <Text style={[s.histPillText, { color: sc.fg }]}>
+                    {r.status === "pending_paid_window" ? `Waiting${daysLeft != null ? ` ${daysLeft}d` : ""}` :
+                     r.status === "credited" ? "Credited" :
+                     r.status === "voided" ? "Voided" :
+                     r.status === "converted" ? "Converted" : "Pending"}
                   </Text>
                 </View>
               </View>
-            ))
+              );
+            })
           )}
         </View>
 

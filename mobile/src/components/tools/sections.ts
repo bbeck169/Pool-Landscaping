@@ -51,6 +51,7 @@ export const TECH_SECTIONS: ToolSection[] = [
       { key: "templates", icon: "library-outline", label: "Templates", desc: "Fill-in-the-blank forms & docs", route: "/(app)/templates" },
       { key: "d2d-leaderboard", icon: "trophy-outline", label: "D2D Leaderboard", desc: "See where your knocks rank", route: "/d2d/leaderboard" },
       { key: "card", icon: "id-card-outline", label: "Business Card", desc: "Share your digital card", route: "/card" },
+      { key: "service-tracking", icon: "filter-outline", label: "Service Tracking", desc: "Filter & salt cell trackers", route: "/tracking" as any },
     ],
   },
   {
@@ -114,9 +115,11 @@ export const ADMIN_SECTIONS: ToolSection[] = [
     title: "Customers",
     tiles: [
       { key: "customers", icon: "people-outline", label: "Customers", desc: "Full customer directory", route: "/(app)/customers" },
+      { key: "leads", icon: "magnet-outline", label: "Leads", desc: "Lead pipeline · convert · close", route: "/leads" as any },
       { key: "quotes", icon: "document-text-outline", label: "Quotes & Invoices", desc: "Send, sign, collect", route: "/(app)/quotes" },
       { key: "property-lookup", icon: "home-outline", label: "Property Lookup", desc: "Owner + lot size search", route: "/(app)/property-lookup" },
       { key: "business-card", icon: "id-card-outline", label: "Business Card", desc: "NFC-ready digital card & .vcf", route: "/card" },
+      { key: "service-tracking", icon: "filter-outline", label: "Service Tracking", desc: "Filter & salt cell trackers", route: "/tracking" as any },
     ],
   },
   {

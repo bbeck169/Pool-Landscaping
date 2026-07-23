@@ -240,23 +240,73 @@ export default function CustomerDetail() {
         {isAdmin ? (
           <View style={styles.pmCard} testID="customer-payment-method">
             <View style={styles.pmIcon}>
-              <Ionicons name={c.default_payment_method_id ? "card" : "card-outline"} size={18} color={colors.brand} />
+              <Ionicons name={c.has_card_on_file ? "card" : "card-outline"} size={18} color={colors.brand} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.pmLabel}>Payment method on file</Text>
-              <Text style={styles.pmValue}>
-                {c.default_payment_method_id
-                  ? `${c.pm_brand || "Card"} ••${c.pm_last4 || "----"}`
-                  : "No card or bank on file"}
-              </Text>
+              <Text style={styles.pmLabel}>Card on file</Text>
+              {c.has_card_on_file ? (
+                <Text style={[styles.pmValue, { color: "#166534" }]}>
+                  {c.card_brand || c.pm_brand || "Card"} •••• {c.card_last4 || c.pm_last4 || "----"}
+                  {c.card_exp_month && c.card_exp_year ? ` (${c.card_exp_month}/${String(c.card_exp_year).slice(-2)})` : ""}
+                </Text>
+              ) : c.effective_require_card_on_file ? (
+                <Text style={[styles.pmValue, { color: "#A16207" }]}>No card — required</Text>
+              ) : (
+                <Text style={[styles.pmValue, { color: colors.muted }]}>No card — not required</Text>
+              )}
             </View>
-            {!c.default_payment_method_id ? (
-              <Pressable style={styles.pmRequest} onPress={requestCard} disabled={requesting} testID="request-card-button">
-                <Text style={styles.pmRequestText}>{requesting ? "…" : "Request"}</Text>
-              </Pressable>
-            ) : (
+            {c.has_card_on_file ? (
               <Ionicons name="checkmark-circle" size={20} color={colors.success} />
+            ) : c.effective_require_card_on_file ? (
+              <Pressable style={styles.pmRequest} onPress={requestCard} disabled={requesting} testID="request-card-button">
+                <Text style={styles.pmRequestText}>{requesting ? "…" : "Send Link"}</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+
+        {/* Card required override (Phase 12 tri-state) */}
+        {isAdmin ? (
+          <View style={styles.cardRequiredCard} testID="card-required-override">
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <Text style={styles.pmLabel}>Card on file required?</Text>
+              <Switch
+                testID="card-required-toggle"
+                value={c.require_card_on_file_override === true || (c.require_card_on_file_override === null && c.effective_require_card_on_file)}
+                onValueChange={async (val) => {
+                  try {
+                    const updated = await api.patch(`/customers/${id}`, { require_card_on_file_override: val });
+                    setC(updated);
+                  } catch (e: any) { Alert.alert("Failed", e.message || "Update failed"); }
+                }}
+                trackColor={{ false: "#9CA3AF", true: "#16A34A" }}
+                thumbColor="#ffffff"
+                ios_backgroundColor="#9CA3AF"
+                style={{ transform: [{ scaleX: 0.85 }, { scaleY: 0.85 }] }}
+              />
+            </View>
+            {c.require_card_on_file_override != null && (
+              <Pressable
+                style={styles.resetDefaultBtn}
+                onPress={async () => {
+                  try {
+                    const updated = await api.patch(`/customers/${id}`, { require_card_on_file_override: null });
+                    setC(updated);
+                  } catch (e: any) { Alert.alert("Failed", e.message || "Update failed"); }
+                }}
+                testID="reset-card-default"
+              >
+                <Text style={styles.resetDefaultText}>Reset to tenant default</Text>
+              </Pressable>
             )}
+          </View>
+        ) : null}
+
+        {/* Credits balance (Phase 10) */}
+        {isAdmin && c.credits_balance_cents != null && c.credits_balance_cents > 0 ? (
+          <View style={styles.creditsBanner} testID="customer-credits-balance">
+            <Ionicons name="wallet-outline" size={16} color="#166534" />
+            <Text style={styles.creditsText}>Credit balance: ${(c.credits_balance_cents / 100).toFixed(2)}</Text>
           </View>
         ) : null}
 
@@ -485,6 +535,11 @@ const styles = StyleSheet.create({
   pmValue: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 1 },
   pmRequest: { backgroundColor: colors.brandTertiary, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill },
   pmRequestText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand },
+  cardRequiredCard: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginTop: spacing.sm },
+  resetDefaultBtn: { marginTop: 6 },
+  resetDefaultText: { fontFamily: font.medium, fontSize: 11, color: colors.brand, textDecorationLine: "underline" },
+  creditsBanner: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#DCFCE7", borderRadius: radius.md, padding: spacing.md, marginTop: spacing.sm, borderWidth: 1, borderColor: "#BBF7D0" },
+  creditsText: { fontFamily: font.semibold, fontSize: fontSize.base, color: "#166534" },
   vipBadge: {
     flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
     gap: 4, backgroundColor: "#FEF3C7", borderColor: "#F59E0B", borderWidth: 1,
