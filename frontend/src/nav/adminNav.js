@@ -62,6 +62,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/seo/atlas",    label: "Atlas SEO Agent",     icon: SearchIcon,   feature: "seo" },
     { to: "/communications",     label: "Communications",      icon: MessageSquare,feature: "marketing" },
     { to: "/admin/portal-inbox", label: "Portal Inbox",        icon: MessageSquare,feature: "marketing" },
+    { to: "/marketing/gbp-posts",label: "GBP Post Drafter",     icon: Sparkles,     feature: "marketing", hard_rule: "admin_only" },
   ]},
 
   { key: "marketing", label: "Marketing", icon: Megaphone, entries: [
@@ -188,6 +189,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/settings/business-card", label: "Business Card", icon: IdCard, feature: "settings", hard_rule: "admin_only", subsection: "Settings" },
     // Feb-2026 · Phase 20 P3 — Website SEO analyzer.
     { to: "/settings/website-seo",   label: "Website SEO", icon: SearchIcon, feature: "settings", hard_rule: "admin_only", subsection: "Settings" },
+    // Feb-2026 · Phase 20 P4 — Local SEO checklist.
+    { to: "/settings/local-seo",     label: "Local SEO",   icon: SearchIcon, feature: "settings", hard_rule: "admin_only", subsection: "Settings" },
   ]},
 
   { key: "customers", label: "Customers", icon: Users, entries: [

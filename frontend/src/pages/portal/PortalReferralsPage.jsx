@@ -12,11 +12,21 @@ import {
 import { toast } from "sonner";
 import { api } from "@/api";
 
+// Feb-2026 · Item 11 — extend pill map with vesting-status labels
+// so the panel renders friendly copy for the new state machine.
+// Backend still reports ``status`` (legacy) + ``vesting_status``
+// (new); prefer vesting_status when present.
 const STATUS_PILL = {
   pending_conversion: { label: "Waiting for signup", bg: "#F4F4F5", fg: "#52525B" },
   pending_paid_window: { label: "Paid — waiting", bg: "#FFEDD5", fg: "#9A3412" },
   credited: { label: "Credited", bg: "#DCFCE7", fg: "#166534" },
   voided: { label: "Voided", bg: "#F4F4F5", fg: "#71717A" },
+  // Item 11 · vesting-status labels.
+  pending:    { label: "Pending",             bg: "#F4F4F5", fg: "#52525B" },
+  vesting:    { label: "Working on it",       bg: "#FEF3C7", fg: "#92400E" },
+  vested:     { label: "Vested",              bg: "#DCFCE7", fg: "#166534" },
+  forfeited:  { label: "Sorry, didn't stick", bg: "#FEE2E2", fg: "#991B1B" },
+  canceled:   { label: "Cancelled",           bg: "#F4F4F5", fg: "#71717A" },
 };
 
 function fmtDollars(cents) {
@@ -161,38 +171,62 @@ export default function PortalReferralsPage() {
           )}
           <div className="space-y-2">
             {referrals.map((r) => {
-              const pill = STATUS_PILL[r.status] || STATUS_PILL.pending_conversion;
-              const daysLeft = r.status === "pending_paid_window"
+              // Item 11 · prefer vesting_status when present.
+              const status = r.vesting_status || r.status;
+              const pill = STATUS_PILL[status] || STATUS_PILL.pending_conversion;
+              const daysLeft = status === "pending_paid_window"
                 ? daysUntil(r.eligible_at) : null;
               const label = (r.friend_first_name || "").trim()
                 ? `${r.friend_first_name} ${(r.friend_last_initial || "").toUpperCase()}.`
                 : "New friend";
+              const isVesting = status === "vesting";
+              const daysVested = Number(r.days_vested || 0);
               return (
                 <div key={r.id}
                      data-testid={`portal-ref-row-${r.id}`}
-                     className={`flex items-center justify-between rounded-lg border border-zinc-100 px-3 py-2 ${
-                       r.status === "voided" ? "opacity-60" : ""
+                     className={`rounded-lg border border-zinc-100 px-3 py-2 ${
+                       status === "voided" || status === "forfeited" || status === "canceled"
+                         ? "opacity-70" : ""
                      }`}>
-                  <div>
-                    <div className={`text-sm font-medium text-zinc-900 ${
-                                       r.status === "voided" ? "line-through" : ""}`}>
-                      {label}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className={`text-sm font-medium text-zinc-900 ${
+                                         status === "voided" ? "line-through" : ""}`}>
+                        {label}
+                      </div>
+                      <div className="text-xs text-zinc-500">
+                        {status === "credited" && `Credited ${fmtDate(r.credited_at)}`}
+                        {status === "vesting" && "Working through their first paid month"}
+                        {status === "vested" && "Vested — credit incoming"}
+                        {status === "forfeited" && "The referral didn't complete the paid month"}
+                        {status === "pending_paid_window" && (daysLeft != null
+                          ? `Paid — ${daysLeft} day${daysLeft === 1 ? "" : "s"} until eligible`
+                          : "Paid — waiting for the 30-day window")}
+                        {status === "pending_conversion" && "Signed up — waiting for first paid invoice"}
+                        {status === "voided" && (r.voided_reason
+                          ? `Voided (${r.voided_reason})` : "Voided")}
+                      </div>
                     </div>
-                    <div className="text-xs text-zinc-500">
-                      {r.status === "credited" && `Credited ${fmtDate(r.credited_at)}`}
-                      {r.status === "pending_paid_window" && (daysLeft != null
-                        ? `Paid — ${daysLeft} day${daysLeft === 1 ? "" : "s"} until eligible`
-                        : "Paid — waiting for the 30-day window")}
-                      {r.status === "pending_conversion" && "Signed up — waiting for first paid invoice"}
-                      {r.status === "voided" && (r.voided_reason
-                        ? `Voided (${r.voided_reason})` : "Voided")}
-                    </div>
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
+                          style={{ background: pill.bg, color: pill.fg }}
+                          title={r.voided_reason || ""}
+                          data-testid={`portal-ref-pill-${r.id}`}>
+                      {pill.label}
+                    </span>
                   </div>
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
-                        style={{ background: pill.bg, color: pill.fg }}
-                        title={r.voided_reason || ""}>
-                    {pill.label}
-                  </span>
+                  {isVesting ? (
+                    <div className="mt-2" data-testid={`portal-ref-vesting-progress-${r.id}`}>
+                      <div className="flex items-center justify-between text-[10px] text-zinc-500 mb-0.5">
+                        <span>{daysVested} of 30 days</span>
+                        <span>{Math.max(0, 30 - daysVested)} to go</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-zinc-200 overflow-hidden">
+                        <div className="h-1.5 rounded-full"
+                             style={{ width: `${Math.min(100, Math.round((daysVested / 30) * 100))}%`,
+                                        backgroundColor: "#F59E0B" }} />
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               );
             })}

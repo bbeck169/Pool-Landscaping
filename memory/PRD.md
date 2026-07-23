@@ -7854,3 +7854,60 @@ Portal UI pills + progress bar deferred to next pass.
 - **Item 10 vitest** — 12-step advance flow test.
 - **Item 11 pytest** — cron promotion + forfeit-within-window
   scenarios.
+
+## Final push · Feb 2026 · Session 2026-07 (part 4) — Phase 20 P1/P4/P5 + Item 11 UI + weekly digest
+
+### Phase 20 · P1 GBP post drafter ✅
+* Backend `routers/gbp_posts.py`:
+  * `POST /api/marketing/gbp-posts/generate` (`gbpPosts.generate`) — LLM (Claude via Emergent) with AI Brain system prompt + season awareness. Best-effort nano-banana image gen (returns URL when available; None otherwise). Persists to `gbp_post_drafts` collection.
+  * `GET /api/marketing/gbp-posts` (`gbpPosts.list`)
+  * `PATCH /api/marketing/gbp-posts/{pid}` (`gbpPosts.update`) — supports `status: draft|posted|archived`.
+  * `DELETE /api/marketing/gbp-posts/{pid}` (`gbpPosts.delete`)
+  * `POST /api/marketing/gbp-posts/{pid}/schedule` (`gbpPosts.schedule`)
+  * `GET /api/marketing/gbp-posts/scheduled-today` (`gbpPosts.scheduledToday`)
+* Frontend `pages/marketing/GbpPostsPage.jsx` at `/marketing/gbp-posts`:
+  * Generate dialog inline (Purpose / Tone / CTA / Topic hint).
+  * Drafts grid with image thumbnail + headline + body + Copy / Download image / Mark posted / Delete (HEAVY confirm).
+* Sidebar entry "GBP Post Drafter" under AI Employees group.
+* Live-tested: generate returned draft `id + headline + cta` correctly.
+
+### Phase 20 · P4 Local SEO checklist ✅
+* Backend `routers/local_seo_checklist.py`:
+  * `GET /api/local-seo/checklist` (`localSeoChecklist.get`) — 17 items across auto (business_card fields), derived (reviews-summary avg/count, latest seo scan checks, recent GBP posted count), and admin-attested toggles. Returns per-item state + progress %.
+  * `PATCH /api/local-seo/checklist` (`localSeoChecklist.patch`) — persists toggles only for keys tagged `kind="toggle"`.
+* Frontend `pages/settings/LocalSeoPage.jsx` at `/settings/local-seo`:
+  * Progress bar + per-item state (auto / derived / toggle).
+  * "Open in GBP" deep link on every unchecked item.
+* Sidebar entry "Local SEO" under Settings.
+
+**Note on the URL:** the checklist lives under `/api/local-seo/checklist` — NOT `/api/tenants/local-seo-checklist` — because the tenants router owns the wildcard `/tenants/{tenant_id}` pattern which was swallowing the checklist path as a tenant ID.
+
+### Phase 20 · P5 NFC review-request card ✅
+* Backend `routers/nfc_review_card.py`:
+  * `GET /api/public/nfc-review-card/{tenant_slug}` (`nfcReviewCard.get`) — public / no auth. Rate limited to 1 token per IP per 15 minutes. Issues a fresh `nfc_review_token` and creates a `review_requests` row with fallback identity `"Recent visitor · IP-<masked>"`. Returns business card block + `review_link`.
+* Frontend `pages/public/NfcReviewCardPage.jsx` at `/nfc/:slug` (unauthenticated). Gradient hero from the tenant business card + "Leave us a review" button.
+
+### Item 11 · Portal referrals UI ✅
+`pages/portal/PortalReferralsPage.jsx` extended:
+* `STATUS_PILL` map gains labels for `pending`, `vesting` (label: "Working on it"), `vested`, `forfeited` ("Sorry, didn't stick"), `canceled`.
+* Rows prefer `r.vesting_status` when present, fall back to `r.status` for legacy rows.
+* Vesting rows render a 30-day progress bar with computed `days_vested` / `days_remaining` from the backend.
+
+### Smart enhancement · Weekly reputation trend digest ✅
+* `services/weekly_reputation_digest.py`:
+  * `compose_summary(tenant)` — pure-compute path (dry-run friendly): 7-day count + avg, delta vs prior 7 days, top 5★ quote, top 1-3★ quote, one SEO recommendation from the latest `seo_scans.fixes[0]`.
+  * `send_weekly_for_tenant(tenant)` — composes + sends via Resend, logs to `communications_log` with `trigger_entity.kind="weekly_reputation_digest"`.
+  * `run_weekly_reputation_trend_digest()` — cron entrypoint iterating live tenants.
+* Opt-out via `settings.weekly_reputation_digest_enabled=False`. Skips send if zero reviews in the last 7 days.
+* Live dry-run against Aquaterra: 36 reviews last 7d, avg 2.17★, delta −2.33 vs prior week.
+
+### Regression
+* Backend tests: **21 passed / 1 skipped** — no regressions.
+* Frontend compiles clean (only pre-existing warnings from other files).
+
+### OpenAPI operationIds shipped this pass
+`gbpPosts.generate|list|update|delete|schedule|scheduledToday`, `localSeoChecklist.get|patch`, `nfcReviewCard.get`.
+
+### Still deferred (final tail — small)
+* **Item 10 vitest** (12-step advance flow) + **Item 11 pytest** (cron/forfeit scenarios) — tour + vesting logic ship complete without dedicated frontend tests.
+* Cron scheduler wire-up — the promoter + digest functions are ready; wire-in with a scheduler like APScheduler or a cronjob CRDS pod when the platform's scheduler infra is nailed down.
