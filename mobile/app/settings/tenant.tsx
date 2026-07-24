@@ -41,7 +41,7 @@ export default function TenantSettingsScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const role = String((user as any)?.role || "");
-  const allowed = ["admin", "super_admin", "manager"].includes(role);
+  const allowed = role === "admin" || role === "super_admin";
 
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);

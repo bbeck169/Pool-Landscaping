@@ -50,11 +50,11 @@ async function _defineTask(): Promise<boolean> {
 }
 
 export async function isAutoClockinEnabled(): Promise<boolean> {
-  return (await storage.get<boolean>(AUTO_CLOCKIN_ENABLED_KEY, false)) === true;
+  return (await storage.getItem<boolean>(AUTO_CLOCKIN_ENABLED_KEY, false)) === true;
 }
 
 export async function setAutoClockinEnabled(enabled: boolean): Promise<void> {
-  await storage.set(AUTO_CLOCKIN_ENABLED_KEY, enabled);
+  await storage.setItem(AUTO_CLOCKIN_ENABLED_KEY, enabled);
 }
 
 export async function startBackgroundAutoClockin(): Promise<{

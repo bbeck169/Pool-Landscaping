@@ -234,3 +234,27 @@
   - `/app/mobile/app/(app)/schedule/calendar.tsx` (line 275 mount-site guard)
 - **Web files referenced**: None (instructions were explicit)
 
+
+
+## Iteration 13 — BUG H + BUG I Fix (Auto Clock-In error + Settings admin-only)
+- **Commit**: 5501bd867bccdc2a9b4abadaed799f9c07d83f6e
+- **Date**: 2026-07-24
+- **Changes**:
+  - **BUG H**: Fixed `storage.get is not a function` crash in Auto Clock-In screen.
+    - Root cause: `src/background/autoClockin.ts` called `storage.get()` / `storage.set()` but the storage module exports `getItem()` / `setItem()`.
+    - Fix: `storage.get` → `storage.getItem`, `storage.set` → `storage.setItem` (lines 53, 57)
+    - Added missing `Tabs.Screen` registrations for `settings/auto-clockin` and `settings/lidar` in `(app)/_layout.tsx`
+  - **BUG I**: Made Settings routes admin-only.
+    - Root cause: `settings/_layout.tsx` had no role guard — any user could navigate to `/settings/*`.
+    - Fix: Rewrote `settings/_layout.tsx` with role guard (admin/super_admin only); non-authorized users see "Not authorized" screen.
+    - Also removed `manager` from `tenant.tsx` allowed list (was `admin|super_admin|manager`, now `admin|super_admin` only).
+  - **LandscapingClockWidget**: Verified `isLandscaper = !isAdminLike && hasLandscapeDept` already correct ✅
+- **Files modified**:
+  - `/app/mobile/src/background/autoClockin.ts` (storage method names fix)
+  - `/app/mobile/app/settings/_layout.tsx` (rewritten with admin role guard)
+  - `/app/mobile/app/settings/tenant.tsx` (removed manager from allowed list)
+  - `/app/mobile/app/(app)/_layout.tsx` (added Tabs.Screen for settings/auto-clockin and settings/lidar)
+- **Verified via screenshots**:
+  - Tech → Auto Clock-In: renders correctly, no error ✅
+  - Tech → /settings/widgets: shows "Not authorized" gate ✅
+  - Admin → /settings/tenant: shows full Tenant Settings ✅

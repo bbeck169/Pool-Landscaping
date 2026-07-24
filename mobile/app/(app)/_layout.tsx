@@ -276,6 +276,9 @@ export default function AppLayout() {
           ),
         }}
       />
+      {/* Settings screens (hidden from tab bar, reachable via More menu) */}
+      <Tabs.Screen name="settings/auto-clockin" options={{ title: "Auto Clock-In", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="location-outline" size={size} color={color} /> }} />
+      <Tabs.Screen name="settings/lidar" options={{ title: "LiDAR", href: null, tabBarIcon: ({ color, size }) => <Ionicons name="cube-outline" size={size} color={color} /> }} />
     </Tabs>
       </View>
       {/* Phase 43 · Global dropdown menu — trigger renders absolute-
