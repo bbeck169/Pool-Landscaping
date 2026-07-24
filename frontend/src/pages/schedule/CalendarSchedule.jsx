@@ -526,8 +526,16 @@ export default function CalendarSchedule() {
   });
 
   return (
+    // BUG · Feb-2026 — full-page scroll. Outer container carries NO
+    // ``overflow`` / ``height: 100vh`` / ``max-height`` rules so the
+    // whole document scrolls naturally when the tech legend + weather
+    // widget + calendar body + day-summary cards exceed the viewport
+    // height. The RBC calendar keeps its own internal wheel-scroll
+    // for the time-of-day grid (correct); the trap only happens when
+    // the OUTER page also clamps its height, which we no longer do.
+    // Mirrors the DispatchBoardPage fix pattern.
     <div
-      className="p-4 md:p-6"
+      className="p-4 md:p-6 pb-24"
       style={{ fontFamily: font.family }}
       data-testid="calendar-schedule"
     >

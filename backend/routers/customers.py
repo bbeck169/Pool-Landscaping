@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, ConfigDict
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime, timezone, timedelta
+import uuid
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
@@ -735,6 +736,15 @@ class _SendEmailBody(BaseModel):
     customer_id: Optional[str] = None
 
 
+# BUG F · Feb 2026 — customer-direct SMS body. Mirrors the email
+# payload so the frontend composer can flip channels without a body
+# schema change.
+class _SendSmsBody(BaseModel):
+    to: str
+    body: str
+    customer_id: Optional[str] = None
+
+
 # ─── Feb-2026 service-notes ship ──────────────────────────────────────
 class _ServiceNotesPatch(BaseModel):
     """Partial update — omit a key to leave that side untouched. Send
@@ -845,7 +855,14 @@ async def customer_send_email(cid: str, body: _SendEmailBody,
     passthrough into the existing ``send_email`` adapter so the
     Customer detail Send ▼ Email option can compose freely without a
     template. Validates that the target address is one of the
-    customer's mirrored emails so we don't accidentally leak."""
+    customer's mirrored emails so we don't accidentally leak.
+
+    BUG F · Feb 2026 — persist a ``communications_log`` row with
+    ``trigger_entity.kind="customer_direct_message"`` so the customer's
+    activity timeline surfaces the send. Raises the underlying adapter
+    error status on failure so the frontend can render a red toast
+    instead of pretending we sent.
+    """
     doc = await db.customers.find_one(
         {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
     )
@@ -861,11 +878,119 @@ async def customer_send_email(cid: str, body: _SendEmailBody,
     if not body.body.strip():
         raise HTTPException(422, "empty message")
     from services.comms_email_adapter import send_email
-    return await send_email(
+    res = await send_email(
         tenant["id"], to,
         subject=body.subject.strip() or "Message",
         html=f"<pre style=\"font-family:inherit;white-space:pre-wrap\">{body.body}</pre>",
     )
+
+    # BUG F — persist the send so it shows on the customer activity
+    # timeline + downstream analytics. Best-effort: a failure here
+    # never masks the send outcome.
+    try:
+        await db.communications_log.insert_one({
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "channel": "email",
+            "direction": "outbound",
+            "recipient": to,
+            "subject": body.subject.strip() or "Message",
+            "body": body.body,
+            "delivery_status": res.get("status") or "unknown",
+            "provider": "resend",
+            "provider_response_id": res.get("provider_id"),
+            "trigger_entity": {"kind": "customer_direct_message",
+                                "customer_id": cid,
+                                "sent_by": user.get("id")},
+            "created_at": now_iso(),
+        })
+    except Exception as e:
+        logger.warning(f"[bug-f] failed to persist customer email comms_log row: {e}")
+
+    if res.get("status") not in ("sent", "queued", "mocked", "skipped_opted_out"):
+        raise HTTPException(
+            502,
+            f"send failed: {res.get('error') or res.get('status') or 'unknown'}",
+        )
+    return {"ok": True, **res}
+
+
+# BUG F · Feb 2026 — customer-direct SMS. Thin wrapper over the
+# RingCentral adapter so the Customer Contact composer's SMS button
+# stops 404-ing on the retired ``POST /api/sms/send`` path. Validates
+# that the target phone matches one of the customer's mirrored
+# numbers so we never leak an SMS to an arbitrary recipient.
+@router.post("/customers/{cid}/send-sms",
+              operation_id="customers.sendSms")
+async def customer_send_sms(cid: str, body: _SendSmsBody,
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    doc = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not doc:
+        raise HTTPException(404, "Customer not found")
+
+    # Recipient allow-list — normalise to digits so "(602) 555-1234"
+    # matches "+16025551234" on the customer record.
+    def _digits(s: str) -> str:
+        return "".join(ch for ch in (s or "") if ch.isdigit())
+    to_raw = (body.to or "").strip()
+    to_digits = _digits(to_raw)
+    allowed_digits = set()
+    for p in (doc.get("phones") or []):
+        n = _digits(p.get("number") or "")
+        if n:
+            allowed_digits.add(n)
+    for k in ("phone", "mobile_phone", "phone_number"):
+        n = _digits(doc.get(k) or "")
+        if n:
+            allowed_digits.add(n)
+
+    def _norm(d: str) -> str:
+        return d[-10:] if len(d) > 10 else d
+    if _norm(to_digits) not in {_norm(a) for a in allowed_digits}:
+        raise HTTPException(400, "recipient not among the customer's phone numbers")
+    if not (body.body or "").strip():
+        raise HTTPException(422, "empty message")
+
+    from services.sms.rc_adapter import send as _sms_send
+    res = await _sms_send(
+        to=to_raw,
+        body=body.body,
+        category="transactional",
+        tenant_id=tenant["id"],
+        customer_id=cid,
+    )
+
+    try:
+        await db.communications_log.insert_one({
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "channel": "sms",
+            "direction": "outbound",
+            "recipient": to_raw,
+            "body": body.body,
+            "delivery_status": res.get("provider_status") or "unknown",
+            "provider": res.get("provider") or "ringcentral",
+            "provider_response_id": res.get("provider_response_id"),
+            "trigger_entity": {"kind": "customer_direct_message",
+                                "customer_id": cid,
+                                "sent_by": user.get("id")},
+            "created_at": now_iso(),
+        })
+    except Exception as e:
+        logger.warning(f"[bug-f] failed to persist customer sms comms_log row: {e}")
+
+    status = res.get("provider_status")
+    if status not in ("sent", "queued", "mocked", "suppressed"):
+        raise HTTPException(
+            502,
+            f"send failed: {res.get('error') or status or 'unknown'}",
+        )
+    return {"ok": True, **res}
 
 
 

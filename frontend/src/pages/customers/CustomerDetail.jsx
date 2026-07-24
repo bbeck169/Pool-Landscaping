@@ -1055,9 +1055,14 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
           customer_id: customer?.id,
         });
       } else {
-        await api.post("/sms/send", {
-          phone_number: payload.to,
-          message,
+        // BUG F · Feb 2026 — POST to the customer-scoped SMS endpoint
+        // (was hitting the non-existent ``/sms/send`` which 404'd with
+        // "not found"). New wrapper mirrors ``send-email`` — validates
+        // the recipient against the customer's mirrored phones and
+        // persists a ``customer_direct_message`` comms_log row.
+        await api.post(`/customers/${customer.id}/send-sms`, {
+          to: payload.to,
+          body: message,
           customer_id: customer?.id,
         });
       }

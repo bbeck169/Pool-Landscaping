@@ -8295,3 +8295,43 @@ No other schema drift.
 * **Schedule color legend placement**: chose **top-of-view** (horizontal scroll strip immediately above the RBC calendar). Rationale: matches the pin-color legend pattern already established by the Dispatch Board; horizontally scrolls when the tenant grows past ~10 active techs; doesn't consume left-column real estate reserved for filters.
 * **Reserved-slug list mirrored client-side**: added `RESERVED` Set in `VanitySlugsPage.jsx` matching the backend `_RESERVED_SLUG_ALIASES`. Prevents a needless roundtrip for the obvious cases and gives instant feedback. Backend is still the source of truth.
 * **`Primary URL` on the vanity-slug page (not `BusinessCardSettings`)**: both settings are super_admin-scoped and both live under `tenant.settings.*`. Colocating them in one super_admin surface keeps the business-card page admin-accessible (business-card fields are edited daily by admins; primary URL is set once at cutover).
+
+---
+
+## Feb 2026 · BUG F + BUG G + Tech Schedule scroll — SHIPPED
+
+### BUG F · Customer Contact page "not found" (P0)
+* **Root cause**: `frontend/src/pages/customers/CustomerDetail.jsx` line 1058 (pre-fix) POSTed SMS to `/api/sms/send` — a route that never existed. Backend returned **404 "not found"** which the frontend surfaced literally.
+* **Fix — backend**:
+  * `backend/routers/customers.py` — added `POST /api/customers/{cid}/send-sms` (`operationId customers.sendSms`). Thin wrapper over `services/sms/rc_adapter::send()`. Allow-list validates the recipient against the customer's mirrored phones (digits-normalised, last-10 match so `(602) 887-4400` matches `+16028874400`). Persists `communications_log` row with `trigger_entity.kind="customer_direct_message"`. Returns 502 on adapter failure so the UI never green-toasts a fake success.
+  * Same file — enhanced the existing `POST /api/customers/{cid}/send-email` to also persist a `communications_log` row with the same trigger kind so the customer activity timeline surfaces both channels consistently.
+* **Fix — frontend**: `CustomerDetail.jsx` line 1058 — POST SMS to `/customers/${customer.id}/send-sms` (was `/sms/send`).
+* **Live delivery proof**:
+  * Email → `brian@plofv.com` — Resend `9669d6c5-b040-4145-815f-dec528ece41f`.
+  * SMS → `+16028874400` — RingCentral `3030304067018`.
+  * Both `communications_log` rows persisted with `trigger_entity.kind="customer_direct_message"`.
+* **Also updated**: `RESEND_FROM=noreply@plofv.com` in `backend/.env` so the legacy `services/comms_email_adapter.py` sender matches the current adapter path.
+* **Tests**: `backend/tests/test_bug_f_customer_send.py` — **10/10 pass** (OpenAPI registration, send-email happy-path + 400/403/404, send-sms happy-path + 400/403/404 + phone-format normalisation).
+
+### BUG G · Mass messaging silent-fail on any filter (P0)
+* **Root cause**: `frontend/src/components/mass-messaging/MassMessagingComposeDialog.jsx::handleSend` (pre-fix line 161) omitted `category_ids` / `service_days` / `assigned_tech_user_ids` from the send payload while the preview payload included them. The backend `routers/mass_messaging.py::_consume_confirm_token` guard (line 281-284) enforces filter-signature parity between preview and send — any drift returns **400 CONFIRM_TOKEN_FILTERS_MISMATCH**. Result: the moment an admin applied ANY filter, mass-messaging failed silently.
+* **Fix — frontend**: `MassMessagingComposeDialog.jsx::handleSend` — include the three filter arrays in the send payload, mirroring the preview payload verbatim.
+* **Fix — backend hardening**: `routers/mass_messaging.py::_run_broadcast` — added `audience_status` parameter that the send handler now threads through so the background fanout uses the SAME audience the preview counted. Previously `_run_broadcast` fell back to `active` regardless of the request's `audience_status`, so a preview with `audience_status="inactive"` could resolve to a different set at fanout time.
+* **Live delivery proof (filtered flow)**: seeded a `bug-g-live-target` category on `brian@plofv.com` customer → filtered preview counted 1 email + 1 SMS → filtered send accepted → batch `16803902-7b18-4b18-aa1a-607b4fd8036b` completed with 2/2 sent (email via Resend `9669d6c5-…`; SMS via RC `3030305578018`). Pre-fix this send would have 400'd on the mismatch guard.
+* **Tests**:
+  * `backend/tests/test_bug_g_mass_messaging_filters.py` — **4/4 pass** (filter-signature mismatch reproduces the exact 400, filtered preview→send roundtrip works, no-filter regression guard, background fanout writes marketing_deliveries).
+  * `frontend/src/test/bug-g-mass-messaging.test.jsx` — **1/1 pass** (compose dialog send payload includes `category_ids` / `service_days` / `assigned_tech_user_ids` + `confirm_token` + `audience_status`).
+
+### Tech Schedule full-page scroll (mirror Dispatch Board pattern)
+* **File**: `frontend/src/pages/schedule/CalendarSchedule.jsx` — outermost `<div>` at line 529.
+* **Change**: added `pb-24` to give the last card breathing room, kept NO `overflow` / `height: 100vh` / `max-height` rules. Explanatory comment references the Dispatch Board fix pattern so the next agent knows why the outer container is style-thin. The RBC calendar retains its own internal wheel-scroll for the time-of-day grid — that's expected + correct.
+* **Test**: `frontend/src/test/schedule-full-page-scroll.test.jsx` — **1/1 pass**. Guards against a future regression that re-adds `overflow: hidden` / `max-h-*` / `h-screen` to the outer container.
+* **Note**: BUG H (Auto Clock-In error) + BUG I (Settings admin-only) — cancelled by user, delegated to `e1_expo_frontend_dev` (mobile-only).
+
+### Full session regression sweep
+* **Backend pytest** (`test_bug_e_tos_gate` + `test_bug_f_customer_send` + `test_bug_g_mass_messaging_filters` + `test_phase21_rebrand` + `test_phase21_additions` + `test_phase21_primary_domain`): **70 pass / 1 skipped / 0 failures**.
+* **Frontend vitest** (all 8 phase-21 / BUG suites + schedule scroll guard): **33 pass / 0 failures / 8 files**.
+* **Services**: backend + frontend both `RUNNING`; SPA `HTTP 200`; `/api/legal/tos` `HTTP 200`.
+
+### OpenAPI additions this session (final)
+`GET /api/legal/tos`, `POST /api/users/me/accept-tos`, `POST /api/admin/users/{uid}/reset-tos`, `GET/POST /api/tenants/current/slug-aliases`, `DELETE /api/tenants/current/slug-aliases/{alias}`, `GET/PATCH /api/tenants/current/primary-app-domain`, `POST /api/customers/{cid}/send-sms`.

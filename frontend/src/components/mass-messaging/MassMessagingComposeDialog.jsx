@@ -158,11 +158,21 @@ export default function MassMessagingComposeDialog({ open, onOpenChange }) {
     if (!canSend) return;
     setSending(true);
     try {
+      // BUG G · Feb 2026 — the send payload MUST carry the same
+      // ``category_ids`` / ``service_days`` / ``assigned_tech_user_ids``
+      // the preview issued the confirm-token against; the backend's
+      // ``_consume_confirm_token`` guard rejects a filter-signature
+      // drift with 400 CONFIRM_TOKEN_FILTERS_MISMATCH, which made
+      // mass-messaging silently fail the moment an admin applied ANY
+      // filter. See ``routers/mass_messaging.py::_consume_confirm_token``.
       const payload = {
         channels: chList,
         audience: "all_active_customers",
         confirm_token: preview.confirm_token,
         audience_status: audienceStatus,
+        category_ids: categoryIds,
+        service_days: serviceDays,
+        assigned_tech_user_ids: assignedTechUserIds,
         ...(useCustom
           ? { subject: subject || null, body }
           : { template_id: templateId }),

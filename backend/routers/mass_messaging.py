@@ -450,6 +450,7 @@ async def _run_broadcast(*, tenant_id: str, batch_id: str,
                           category_ids: Optional[List[str]] = None,
                           service_days: Optional[List[str]] = None,
                           assigned_tech_user_ids: Optional[List[str]] = None,
+                          audience_status: str = "active",
                           ) -> None:
     """Background fanout: iterate audience, render, hit the adapter,
     persist a `marketing_deliveries` row per (customer, channel).
@@ -486,6 +487,7 @@ async def _run_broadcast(*, tenant_id: str, batch_id: str,
         category_ids=category_ids,
         service_days=service_days,
         assigned_tech_user_ids=assigned_tech_user_ids,
+        audience_status=audience_status,
     )
     logger.info(
         "[mass-messaging] fanout START batch=%s tenant=%s recipients=%d channels=%s",
@@ -725,6 +727,7 @@ async def send_broadcast(
         category_ids=filters["category_ids"],
         service_days=filters["service_days"],
         assigned_tech_user_ids=filters["assigned_tech_user_ids"],
+        audience_status=getattr(body, "audience_status", "active"),
     )
 
     return {
