@@ -15,6 +15,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import BreadcrumbBar from "@/src/components/nav/BreadcrumbBar";
 
 type WidgetConfig = { id: string; slug?: string; headline?: string; subheadline?: string; brand_color?: string; collect_fields?: any[]; services?: any[] };
 type FormConfig = { id: string; name?: string; fields?: any[]; active?: boolean; created_at?: string };
@@ -65,6 +66,7 @@ export default function WidgetsScreen() {
         <Text style={s.navTitle}>Widget Configs</Text>
         <View style={{ width: 22 }} />
       </View>
+      <BreadcrumbBar title="Widget Configs" />
       <ScrollView
         contentContainerStyle={s.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.brand} />}

@@ -14,6 +14,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import BreadcrumbBar from "@/src/components/nav/BreadcrumbBar";
 
 export default function PromoCodesScreen() {
   const insets = useSafeAreaInsets();
@@ -64,6 +65,7 @@ export default function PromoCodesScreen() {
         <Text style={s.navTitle}>Promo Codes</Text>
         <View style={{ width: 22 }} />
       </View>
+      <BreadcrumbBar title="Promo Codes" />
 
       {loading ? (
         <View style={s.center}><ActivityIndicator size="large" color={colors.brand} /></View>

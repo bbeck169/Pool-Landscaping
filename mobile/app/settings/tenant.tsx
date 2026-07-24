@@ -15,6 +15,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import BreadcrumbBar from "@/src/components/nav/BreadcrumbBar";
 
 const TIMEZONES = [
   { value: "America/New_York", label: "Eastern", short: "ET" },
@@ -101,6 +102,7 @@ export default function TenantSettingsScreen() {
         <Text style={s.navTitle}>Tenant Settings</Text>
         <View style={{ width: 22 }} />
       </View>
+      <BreadcrumbBar title="Tenant Settings" />
 
       <ScrollView
         contentContainerStyle={s.scroll}

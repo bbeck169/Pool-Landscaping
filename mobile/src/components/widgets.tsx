@@ -9,6 +9,8 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { StatusChip } from "@/src/components/ui";
+import Breadcrumbs from "@/src/components/nav/Breadcrumbs";
+import { useBreadcrumbs } from "@/src/hooks/useBreadcrumbs";
 
 export function OfflineBanner({ testID }: { testID?: string }) {
   return (
@@ -52,14 +54,17 @@ export function Header({
   subtitle,
   right,
   back,
+  breadcrumbLabel,
 }: {
   title: string;
   subtitle?: string;
   right?: React.ReactNode;
   back?: boolean;
+  breadcrumbLabel?: string;
 }) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const crumbs = useBreadcrumbs(breadcrumbLabel || title);
   return (
     <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
       <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
@@ -76,6 +81,7 @@ export function Header({
         </View>
       </View>
       {right}
+      {crumbs.length > 0 && <Breadcrumbs items={crumbs} />}
     </View>
   );
 }

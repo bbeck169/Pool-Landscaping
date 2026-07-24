@@ -297,3 +297,31 @@
   - Standard phone (390×844) Calendar: weather below week columns ✅
   - Tablet (768×1024) Grid: weather at bottom, clean layout ✅
 
+
+## Iteration 16 — Breadcrumb Navigation for All Roles
+- **Commit**: 34da0757101dd28bf259898fde08875323e3f788
+- **Date**: 2026-07-24
+- **Changes**:
+  - Created shared `Breadcrumbs` component (`src/components/nav/Breadcrumbs.tsx`) — tappable segments, chevron separators, ellipsis collapse on narrow screens with popover modal
+  - Created `useBreadcrumbs` hook (`src/hooks/useBreadcrumbs.ts`) — auto-derives breadcrumbs from `usePathname()` + user role. Tech root = "Schedule", Admin root = "Dashboard", Customer root = "Home". Root screens return empty (no breadcrumbs). 150+ segment labels mapped.
+  - Created `BreadcrumbBar` wrapper (`src/components/nav/BreadcrumbBar.tsx`) — for screens with custom headers
+  - Integrated into shared `Header` (`src/components/widgets.tsx`) — covers 120+ screens automatically
+  - Added `BreadcrumbBar` to key custom-header screens: time-clock.tsx, marketing/index.tsx, marketing/templates.tsx, settings/widgets.tsx, settings/tenant.tsx, settings/promo-codes.tsx
+- **Files created**:
+  - `/app/mobile/src/components/nav/Breadcrumbs.tsx`
+  - `/app/mobile/src/components/nav/BreadcrumbBar.tsx`
+  - `/app/mobile/src/hooks/useBreadcrumbs.ts`
+- **Files modified**:
+  - `/app/mobile/src/components/widgets.tsx` (Header — auto breadcrumbs)
+  - `/app/mobile/app/time-clock.tsx` (BreadcrumbBar)
+  - `/app/mobile/app/marketing/index.tsx` (BreadcrumbBar)
+  - `/app/mobile/app/marketing/templates.tsx` (BreadcrumbBar)
+  - `/app/mobile/app/settings/widgets.tsx` (BreadcrumbBar)
+  - `/app/mobile/app/settings/tenant.tsx` (BreadcrumbBar)
+  - `/app/mobile/app/settings/promo-codes.tsx` (BreadcrumbBar)
+- **Verified via screenshots**:
+  - Admin: Dashboard (root, no BC) ✅, Dispatch Board (L3) ✅, Comms (L2) ✅, Marketing (L2) ✅, Templates (L3) ✅, Settings > Widgets (L3) ✅, Tenant (L3) ✅, Team (L2) ✅
+  - Tech: Schedule (root, no BC) ✅, Time Clock (L2) ✅, Handbook (L2) ✅
+  - Customer: Portal Home (root, no BC) ✅, Invoices (L2) ✅, Messages (L2) ✅
+  - Sizes: iPhone SE (375x667) ✅, iPhone 13 (390x844) ✅, iPad (768x1024) ✅
+

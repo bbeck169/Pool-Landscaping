@@ -14,6 +14,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import BreadcrumbBar from "@/src/components/nav/BreadcrumbBar";
 
 type Template = {
   id?: string;
@@ -81,6 +82,7 @@ export default function TemplatesScreen() {
         <Text style={s.navTitle}>Templates</Text>
         <View style={{ width: 22 }} />
       </View>
+      <BreadcrumbBar title="Templates" />
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filterRow}>
         {CHANNELS.map((ch) => (

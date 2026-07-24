@@ -18,6 +18,7 @@ import NetInfo from "@react-native-community/netinfo";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+import BreadcrumbBar from "@/src/components/nav/BreadcrumbBar";
 
 const QUEUE_KEY = "workforce_ping_queue_v1";
 const PING_MS = 30_000;
@@ -193,6 +194,7 @@ export default function TimeClockScreen() {
     <ScrollView style={styles.root} contentContainerStyle={{ padding: spacing.lg, paddingBottom: 120 }}
                 testID="time-clock-screen">
       <Text style={styles.h1}>Time Clock</Text>
+      <BreadcrumbBar title="Time Clock" />
       <Text style={styles.hint}>
         Clock into a job to start GPS tracking. Foreground pings only —
         background pings require a native build.

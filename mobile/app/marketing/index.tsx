@@ -10,6 +10,7 @@ import { useRouter } from "expo-router";
 
 import { useAuth } from "@/src/auth";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import BreadcrumbBar from "@/src/components/nav/BreadcrumbBar";
 
 const ITEMS = [
   { icon: "document-text-outline" as const, label: "Templates", desc: "Email & SMS templates", route: "/marketing/templates" },
@@ -50,6 +51,7 @@ export default function MarketingHub() {
         <Text style={s.navTitle}>Marketing</Text>
         <View style={{ width: 22 }} />
       </View>
+      <BreadcrumbBar title="Marketing" />
       <ScrollView contentContainerStyle={s.scroll}>
         {ITEMS.map((item) => (
           <TouchableOpacity
