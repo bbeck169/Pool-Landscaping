@@ -7965,3 +7965,77 @@ rendered, tour engine spotlighted step 1 of 11 with no NotFound.
 ### Regression
 * Backend tests: **21 passed / 1 skipped** — no regressions.
 * Frontend compiles clean.
+
+---
+
+## Feb 2026 · BUG E — Terms of Service gate (P0)
+
+**Problem reported**: "Terms of Service click to agree button not working."
+
+### Root cause (two-layer)
+1. **`/app/frontend/src/pages/portal/PortalTerms.jsx` (pre-fix line 25-36)**
+   — The `agree()` handler wrapped the POST in a `try/catch` that swallowed
+   every server error with the comment `// Best-effort; the button just
+   re-enables.` Any 4xx (401 token expired, 403 non-customer role, 400 when
+   the user had no linked `customer_id`) resulted in the button flashing
+   "Recording…" → "I have read and agree" with **zero user feedback**,
+   which read as "click does nothing".
+2. **Missing global ToS gate infrastructure** — there was no
+   server-authoritative `must_accept_tos` flag on `/auth/me`, no
+   `POST /api/users/me/accept-tos` endpoint, and no cross-role blocking
+   modal. The pre-existing `/portal/terms` page was customer-only and
+   required manual navigation; users who never opened it were never
+   gated.
+
+### Ship
+* `backend/config_tos.py` — `CURRENT_TOS_VERSION = "1.0.0"`,
+  `CURRENT_TOS_EFFECTIVE_DATE = "2026-02-15"`, `TOS_MARKDOWN`,
+  `compute_must_accept_tos(user)` helper. (Uses
+  `config_tos.py` file naming instead of `config/tos.py` package path
+  because `config.py` already exists as a module — following the
+  existing `config_chemicals.py` / `config_chlorine_targets.py`
+  convention avoids a risky 150-file refactor.)
+* `backend/routers/tos.py` — three surfaces:
+  * `GET /api/legal/tos` (public) — returns `{version, effective_date, markdown}`.
+    Registered BEFORE the legacy `legal` router so the specific path
+    wins the match over `/legal/{slug}`.
+  * `POST /api/users/me/accept-tos` (auth) — body `{version}`. Rejects
+    version mismatch with **409**. Super_admin returns an exempt sentinel
+    with `must_accept_tos=false` (no DB write). All others get
+    `tos_accepted_at` + `tos_version_accepted` stamped; idempotent.
+  * `run_tos_backfill()` — idempotent boot migration. Grandfathers
+    every non-super_admin user missing both fields to
+    `CURRENT_TOS_VERSION`. Explicitly clears super_admin gate fields.
+    First-run stats: **46 users grandfathered · 2 super_admins cleared**.
+* `backend/utils.py::auth_response()` — adds `must_accept_tos`,
+  `tos_version_accepted`, `tos_accepted_at` to the login user payload.
+* `backend/routers/auth.py::me()` — decorates `/auth/me` with the
+  server-authoritative `must_accept_tos` flag.
+* `frontend/src/components/legal/TosGate.jsx` — full-viewport blocking
+  modal (`fixed inset-0 z-[80]`, `role="dialog"`, no ESC / no backdrop
+  close). Self-gates on `user.must_accept_tos`. Fetches `/api/legal/tos`,
+  renders scrollable markdown, checkbox, "I Agree" (`disabled={!checked}`).
+  On success: patches auth-context user + `localStorage`, navigates to
+  role-appropriate landing (customer→`/portal/home`, tech→`/schedule`,
+  else→`/`). On 409: shows inline error + Reload button. On generic
+  failure: shows inline error, keeps button clickable.
+* `frontend/src/layouts/AppLayout.jsx` — mounts `<TosGate />` at the
+  shell so it survives every route change.
+* `frontend/src/pages/portal/PortalTerms.jsx` — pre-existing swallowed
+  `catch` now shows an inline error banner via new `data-testid="tos-agree-error"`.
+
+### Coverage
+* Backend pytest (`tests/test_bug_e_tos_gate.py`): **12/12 pass**.
+  Covers public GET, login payload, `/auth/me` decoration, super_admin
+  exemption end-to-end, customer/admin/technician gate + accept flows,
+  idempotency, 409 mismatch, auth required, `compute_must_accept_tos`
+  helper unit-tests.
+* Frontend vitest (`src/test/tos-gate.test.jsx`): **8/8 pass**. Covers
+  no-render when already accepted / for super_admin / when signed out;
+  disabled-until-checked; POST + close + role-based routing; 409
+  inline error + Reload; generic failure keeps modal open + button
+  clickable; no auth-state mutation on failure.
+* Regression sweep: `test_bug_e_tos_gate.py` + `test_phase19_dispatch_batch.py`
+  → **21 pass / 1 skipped, 0 failures**.
+* Cold boot to `/api/legal/tos` first 200: **≈4s** (unchanged; the
+  two `update_many`s are indexed and effectively instant).

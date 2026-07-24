@@ -145,7 +145,11 @@ async def signup(request: Request, body: SignupRequest):
 
 @router.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
-    return user
+    # BUG E — decorate the raw user doc with the server-authoritative
+    # ToS gate flag so the frontend gate can read a single source of
+    # truth without duplicating the role/version logic client-side.
+    from config_tos import compute_must_accept_tos
+    return {**user, "must_accept_tos": compute_must_accept_tos(user)}
 
 
 @router.post("/admin/impersonate/{customer_id}")

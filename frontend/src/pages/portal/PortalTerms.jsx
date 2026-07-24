@@ -16,6 +16,9 @@ export default function PortalTerms() {
   const [doc, setDoc] = useState(null);
   const [ack, setAck] = useState({ acknowledged: false, current_version: null });
   const [saving, setSaving] = useState(false);
+  // BUG E · Feb 2026 — surface the failure so the click no longer
+  // appears to "do nothing" when the server rejects the ack.
+  const [error, setError] = useState("");
 
   useEffect(() => {
     api.get(`/legal/${SLUG}`).then(setDoc).catch(() => setDoc(null));
@@ -24,12 +27,13 @@ export default function PortalTerms() {
 
   const agree = async () => {
     setSaving(true);
+    setError("");
     try {
       await api.post("/portal/terms/acknowledge", { slug: SLUG, version: doc.version });
       const s = await api.get(`/portal/terms/status?slug=${SLUG}`);
       setAck(s);
     } catch (e) {
-      // Best-effort; the button just re-enables.
+      setError(e?.message || "Could not record your acknowledgement. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -129,6 +133,19 @@ export default function PortalTerms() {
             </button>
           </div>
         )}
+        {error ? (
+          <div
+            className="mt-3 text-sm rounded-lg px-3 py-2"
+            style={{
+              backgroundColor: "#FEF3C7",
+              color: "#92400E",
+              border: "1px solid #FDE68A",
+            }}
+            data-testid="tos-agree-error"
+          >
+            {error}
+          </div>
+        ) : null}
       </div>
     </div>
   );

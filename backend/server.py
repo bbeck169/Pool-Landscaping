@@ -148,6 +148,12 @@ api_router.include_router(marketing_campaigns_router.router)
 # tenant-resolution + auth deps as the rest of the app.
 from routers import stripe_customer_sync_admin as _p12b_admin  # noqa: E402
 api_router.include_router(_p12b_admin.router)
+
+# Feb-2026 · BUG E — global Terms of Service gate. Registered BEFORE
+# the generic router loop so that ``GET /api/legal/tos`` wins the path
+# match over the legacy legal-CMS ``GET /api/legal/{slug}`` handler.
+from routers import tos as _tos_router  # noqa: E402
+api_router.include_router(_tos_router.router)
 api_router.include_router(_p17_reassign.router)
 api_router.include_router(_p18_ai_brain.router)
 api_router.include_router(_p19_admin_users.router)
@@ -432,6 +438,17 @@ async def _background_seed():
         logger.info(f"[slice-i] walkthrough backfill: {result}")
     except Exception as e:
         logger.warning(f"walkthrough backfill crashed: {e}")
+
+    # Feb-2026 · BUG E — Terms of Service gate backfill (idempotent).
+    # Grandfathers existing non-super_admin users to CURRENT_TOS_VERSION
+    # so this fix does not wall out the preview accounts. Super admins
+    # get gate fields explicitly cleared (they are exempt).
+    try:
+        from routers.tos import run_tos_backfill as _tos_backfill
+        tos_res = await _tos_backfill()
+        logger.info(f"[bug-e] tos backfill: {tos_res}")
+    except Exception as e:
+        logger.warning(f"tos backfill crashed: {e}")
 
     # Feb-2026 · Item 11 — Referral vesting backfill (idempotent).
     try:

@@ -263,6 +263,10 @@ async def _push_notification(notif: dict) -> None:
 
 def auth_response(user: dict, impersonator_id: str = None, impersonator_name: str = None):
     token = create_token(user, impersonator_id=impersonator_id)
+    # BUG E — expose the server-authoritative ToS gate flag so the
+    # frontend gate can render immediately after login without an extra
+    # /auth/me roundtrip. Import inline to avoid a boot-time cycle.
+    from config_tos import compute_must_accept_tos
     resp = {
         "access_token": token,
         "token_type": "bearer",
@@ -275,6 +279,12 @@ def auth_response(user: dict, impersonator_id: str = None, impersonator_name: st
             # LandscapingClockWidget can self-hide for non-landscaping users
             # without an extra /auth/me roundtrip.
             "department": user.get("department"),
+            # BUG E — ToS gate fields. ``must_accept_tos`` is the ONLY
+            # value the frontend should key off; the other two are for
+            # display / debugging only.
+            "must_accept_tos": compute_must_accept_tos(user),
+            "tos_version_accepted": user.get("tos_version_accepted"),
+            "tos_accepted_at": user.get("tos_accepted_at"),
         },
     }
     if impersonator_id:

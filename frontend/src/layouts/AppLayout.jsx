@@ -10,6 +10,7 @@ import UniversalMenu from "@/layouts/UniversalMenu";
 import LandscapingClockWidget from "@/components/LandscapingClockWidget";
 import AIDock from "@/components/AIDock/AIDock";
 import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
+import TosGate from "@/components/legal/TosGate";
 import Breadcrumbs from "@/components/breadcrumbs/Breadcrumbs";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
 import { brandGradientCss, colors, font } from "@/theme";
@@ -324,6 +325,12 @@ function AppLayout() {
       style={{ fontFamily: font.family, backgroundColor: colors.surfaceSecondary }}
       data-testid="app-shell"
     >
+      {/* Feb-2026 · BUG E — global Terms of Service gate. Self-gates
+          on the server-authoritative ``user.must_accept_tos`` flag so
+          it renders null for super_admin and for anyone whose
+          ``tos_version_accepted`` already matches CURRENT_TOS_VERSION.
+          Mounted at the shell so it survives every route change. */}
+      <TosGate />
       {/* Impersonation banner (Phase 4 partial fold-in) */}
       {/* Phase 15B — first-login onboarding modal (admin only, sessionStorage-guarded) */}
       {(effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin" ? <OnboardingLoginModal /> : null}
