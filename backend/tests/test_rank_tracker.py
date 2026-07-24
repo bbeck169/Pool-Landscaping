@@ -205,16 +205,17 @@ def test_refresh_now_persists_grid_with_ranks_when_dataforseo_ok():
     # local wrapper.
     async def run():
         original_serp = _dfs.serp_google_organic_live
-        original_parse = _dfs.parse_serp_ranks
+        original_parse = _dfs.parse_serp_ranks_detailed
 
         async def fake_serp(kw_str, lat, lng, **kwargs):
             return 200, {"tasks": [{"result": [{"items": []}]}]}, None
 
         def fake_parse(body, targets):
-            return {t: 3 for t in targets}
+            return {t: {"rank": 3, "url": "https://example.com/x",
+                          "title": "T", "domain": "example.com"} for t in targets}
 
         _dfs.serp_google_organic_live = fake_serp
-        _dfs.parse_serp_ranks = fake_parse
+        _dfs.parse_serp_ranks_detailed = fake_parse
         try:
             kw_doc = _sync_db.tracked_keywords.find_one({"id": kw["id"]},
                                                           {"_id": 0})
@@ -224,7 +225,7 @@ def test_refresh_now_persists_grid_with_ranks_when_dataforseo_ok():
             return summary
         finally:
             _dfs.serp_google_organic_live = original_serp
-            _dfs.parse_serp_ranks = original_parse
+            _dfs.parse_serp_ranks_detailed = original_parse
 
     summary = asyncio.get_event_loop().run_until_complete(run())
     assert len(summary["results"]) == 9
@@ -235,8 +236,11 @@ def test_refresh_now_persists_grid_with_ranks_when_dataforseo_ok():
 
 
 def test_refresh_now_stops_early_on_out_of_credits():
-    """When DFS returns 402 out_of_credits on the FIRST grid point, we
-    must not burn 8 more requests. Only 1 row gets written."""
+    """After parallelization, all 9 requests fire — but every one comes
+    back with the same fatal error and the persisted rows expose it so
+    the UI can surface a distinct toast. (Pre-parallel, only 1 row was
+    written; now all 9 are written and every row's ``api_error`` is
+    ``out_of_credits``.)"""
     from routers import rank_tracker as _rt
     from services import dataforseo_client as _dfs
 
@@ -262,10 +266,9 @@ def test_refresh_now_stops_early_on_out_of_credits():
             _dfs.serp_google_organic_live = original
 
     summary = asyncio.get_event_loop().run_until_complete(run())
-    assert len(summary["results"]) == 1
-    assert summary["results"][0]["api_error"] == "out_of_credits"
-    n = _sync_db.rank_snapshots.count_documents({"keyword_id": kw["id"]})
-    assert n == 1
+    assert len(summary["results"]) == 9
+    assert all(r["api_error"] == "out_of_credits" for r in summary["results"])
+    assert summary["api_error"] == "out_of_credits"
 
 
 # ─────────────────────────────────────────────────────────────────────

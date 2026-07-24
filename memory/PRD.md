@@ -8540,3 +8540,49 @@ Extracted spreadsheet contents (verified against `Copy of Sample Repair Pricing 
 - **E26** = `=1-(E24/E18)` (Profit Margin — floor 30%, adjust markup if under)
 Endpoints: `POST /api/ops/repair-calculator/quote`, `GET/PATCH /api/ops/repair-calculator/config`, `POST /api/ops/repair-calculator/email` (Resend template `repair_quote_email`). Location: `/ops/repair-calculator`. Admin+super_admin only. Emailable quote (not auto-draft). Save history in `repair_calculator_quotes`. Fold in **after** Phase 23-B..F.
 
+
+---
+
+## Feb-2026 · DataForSEO Rank Tracker — LIVE SMOKE SUCCESSFUL
+
+- Verified fix (lowercase `brian@plofv.com`) + account verification: SERP calls now succeed.
+- Parallelised `_snapshot_keyword` with `asyncio.gather` (9 concurrent SERP requests → ~25s wall-clock vs ~60s+ sequential, well within ingress timeout).
+- **Full 9-cell grid for "pool cleaning peoria az"** (Peoria/Vistancia AZ center, 2km radius, admin@aquaterra.com tenant):
+
+| idx | grid position | rank | url_found |
+|-----|---------------|------|-----------|
+| 0 | NW (SW-corner grid) | 21 | poolandlandscapingofvistancia.com/top_rated_pool_service_peoria_arizona/ |
+| 1 | N mid-S row | 25 | ↑ |
+| 2 | NE (SE-corner grid) | **null** (not in top 100) | — |
+| 3 | W mid-row | **14** (best) | ↑ |
+| 4 | Center | 28 | ↑ |
+| 5 | E mid-row | 27 | ↑ |
+| 6 | SW (NW-corner grid) | 30 | ↑ |
+| 7 | S mid-N row | 17 | ↑ |
+| 8 | SE (NE-corner grid) | 24 | ↑ |
+
+Mean rank: **23.2** across 8/9 cells that landed in top 100. Best cell: idx 3 (rank 14). Worst cell: idx 2 (not in top 100).
+
+- **Credit consumption:** balance $1.00 → $0.738 = **~$0.26 spent** across both full-grid smokes (first partial 7/9 landed = $0.09, second full 9/9 = $0.17). Roughly **$0.019 per SERP live-regular request** for this location depth.
+- `RANK_TRACKER_CRON_ENABLED` stays `false`. Weekly cron never auto-scheduled.
+
+### Deferred to next session (both user-greenlit this session)
+
+**Greenlight 1 — Pool Repair Pricing Calculator** (defaults verified against extracted .xlsx):
+- Defaults: merchant fees 3%, customer labor rate $175/hr, internal cost basis $75/hr, sales tax 7% AZ, parts markup 50%, profit margin floor 30% (yellow 20-29, red <20).
+- Backend: `POST /api/ops/repair-calculator/quote`, `GET/PATCH /api/ops/repair-calculator/config`, `POST /api/ops/repair-calculator/email` (Resend template `repair_quote_email`, log to `communications_log` with `trigger_entity.kind="repair_quote"`). Save history in `repair_calculator_quotes`. Config persisted at `tenant.settings.repair_calculator_defaults`. OperationIds `ops.repairCalculator.*`.
+- Frontend: `/ops/repair-calculator` (admin+super_admin, techs hidden). Left = repeatable parts rows + labor hours + overrides for markup/tax/merchant/rate + customer selector; Right = live quote with line-by-line breakdown + color-coded profit margin indicator. Actions: Copy / Print / Email.
+- Formulas (verified from .xlsx cells E3..E26): `PARTS_TOTAL = sum(parts) * (1 + tax_pct)`; `MARKUP = sum(parts) * markup_pct`; `LABOR = labor_hours * customer_labor_rate`; `MERCHANT_FEES = (PARTS_TOTAL + MARKUP + LABOR) * merchant_pct`; `ESTIMATE_TOTAL = sum(parts) + tax + MARKUP + LABOR + MERCHANT_FEES`; `COMPANY_COST = PARTS_TOTAL + MERCHANT_FEES + (labor_hours * internal_cost_rate)`; `PROFIT_MARGIN = 1 - COMPANY_COST / ESTIMATE_TOTAL`.
+- Tests: pytest math against 3 .xlsx scenarios (247/1.5h/50% → 669.7987 total, 40.83% margin). Vitest for form + email confirm modal + margin color thresholds.
+
+**Greenlight 2 — Low-rank cell → GBP post CTA** (small, self-contained):
+- On the RankTrackerPage heatmap, identify worst-ranking cell per keyword (highest rank number OR `null`).
+- Render "Boost this area" button on that cell (or on keyword detail card).
+- Click → opens existing GBP Post Drafter dialog (Phase 20 P1) pre-filled with:
+  - `topic_hint = keyword + " in " + reverseGeocode(cell.lat, cell.lng)` (city / ZIP via Google Maps API, key already in env)
+  - `purpose = "seasonal_tip"` default (admin editable)
+- Vitest: worst-cell button renders; click opens drafter with pre-filled topic hint containing keyword + reverse-geocoded city.
+
+### Honest session status
+This session shipped: Phase 22 closure (25 vitest), Phase 23-A rank tracker (13 pytest, real DataForSEO data), DataForSEO client + `account_unverified` handling, parallelisation. Two greenlit items (Repair Calculator + Low-rank CTA) intentionally not started this session — context budget too tight to ship them properly. Both fully specced above for next session pickup.
+

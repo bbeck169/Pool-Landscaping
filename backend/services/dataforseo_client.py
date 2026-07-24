@@ -138,7 +138,19 @@ def parse_serp_ranks(
     matching the surfaced SERP position, ``None`` if the domain is
     absent from the returned items.
     """
-    out: Dict[str, Optional[int]] = {d: None for d in target_domains}
+    detailed = parse_serp_ranks_detailed(body, target_domains)
+    return {d: (detailed[d] or {}).get("rank") for d in target_domains}
+
+
+def parse_serp_ranks_detailed(
+    body: Optional[Dict[str, Any]],
+    target_domains: list[str],
+) -> Dict[str, Optional[Dict[str, Any]]]:
+    """Same as ``parse_serp_ranks`` but also returns ``url`` and ``title``
+    of the matched SERP item so callers can persist ``url_found`` for
+    audit / debugging.
+    """
+    out: Dict[str, Optional[Dict[str, Any]]] = {d: None for d in target_domains}
     if not body:
         return out
     tasks = body.get("tasks") or []
@@ -157,5 +169,10 @@ def parse_serp_ranks(
         for target in target_domains:
             t = target.lower().replace("https://", "").replace("http://", "").rstrip("/")
             if t and (t in domain or t in url) and out.get(target) is None:
-                out[target] = int(rank)
+                out[target] = {
+                    "rank": int(rank),
+                    "url": item.get("url"),
+                    "title": item.get("title"),
+                    "domain": item.get("domain"),
+                }
     return out
