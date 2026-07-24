@@ -361,6 +361,7 @@ function KeywordList({ keywords, selectedId, onSelect, onDelete }) {
 
 function KeywordDetail({ keyword, detail, onRefresh, refreshBusy }) {
   const [cooldownMsg, setCooldownMsg] = React.useState("");
+  const [boostBusy, setBoostBusy] = React.useState(false);
   React.useEffect(() => {
     if (!keyword?.last_refreshed_at) { setCooldownMsg(""); return; }
     const t = new Date(keyword.last_refreshed_at).getTime();
@@ -373,6 +374,66 @@ function KeywordDetail({ keyword, detail, onRefresh, refreshBusy }) {
 
   const grid = detail?.grid || Array(9).fill(null);
   const history = detail?.history || [];
+
+  // Feb-2026 — identify the worst-ranking cell so the "Boost this area"
+  // CTA can seed the GBP post drafter. null (not in top 100) beats any
+  // numeric rank as "worst"; among numeric ranks, higher = worse.
+  const worstIdx = React.useMemo(() => {
+    let worstI = -1;
+    let worstScore = -1;
+    grid.forEach((cell, i) => {
+      const r = cell?.rank;
+      const score = (r === null || r === undefined) ? 999 : r;
+      if (score > worstScore) { worstScore = score; worstI = i; }
+    });
+    return grid.some((c) => c) ? worstI : -1;
+  }, [grid]);
+
+  const boostArea = async (idx) => {
+    const cell = grid[idx];
+    if (!cell) return;
+    setBoostBusy(true);
+    try {
+      // Reverse-geocode the cell coords → nearest city name so the topic
+      // hint reads naturally ("in Peoria, AZ" not "at 33.77,-112.26").
+      let cityHint = "";
+      try {
+        const geo = await api.get(
+          `/maps/reverse-geocode?lat=${cell.grid_lat}&lng=${cell.grid_lng}`
+        );
+        cityHint = (geo?.city || geo?.formatted_address || "").split(",").slice(0, 2).join(",").trim();
+      } catch { /* non-fatal */ }
+      const topicHint = cityHint
+        ? `${keyword.keyword} — targeting ${cityHint}`
+        : `${keyword.keyword} — targeting the coverage gap around ${cell.grid_lat.toFixed(3)},${cell.grid_lng.toFixed(3)}`;
+      // Try to hand off to the GBP post drafter dialog if it's globally
+      // registered by the marketing page; otherwise fall back to a direct
+      // link so the admin still lands on the drafter.
+      if (typeof window !== "undefined" && typeof window.openGbpPostDrafter === "function") {
+        window.openGbpPostDrafter({
+          topic_hint: topicHint,
+          purpose: "promo",
+          source: "rank_tracker_boost",
+          keyword_id: keyword.id,
+          grid_point_index: idx,
+        });
+      } else {
+        // Persist the seed in sessionStorage so the marketing page can
+        // pick it up on load, then navigate.
+        try {
+          sessionStorage.setItem("gbp_post_drafter_seed", JSON.stringify({
+            topic_hint: topicHint,
+            purpose: "promo",
+            source: "rank_tracker_boost",
+          }));
+        } catch { /* ignore quota */ }
+        window.location.href = "/marketing/gbp-posts?draft=1";
+      }
+      toast.success("Opening GBP post drafter — seeded with the low-rank cell context");
+    } catch (e) {
+      toast.error(e?.message || "Failed to open drafter");
+    } finally { setBoostBusy(false); }
+  };
 
   return (
     <div
@@ -421,21 +482,34 @@ function KeywordDetail({ keyword, detail, onRefresh, refreshBusy }) {
           const rank = cell?.rank ?? null;
           const c = bucketColor(rank);
           const label = rank === null ? "—" : String(rank);
+          const isWorst = idx === worstIdx && !!cell;
           return (
             <div
               key={idx}
-              className="rounded-lg aspect-square flex flex-col items-center justify-center text-center"
+              className="rounded-lg aspect-square flex flex-col items-center justify-center text-center relative"
               style={{ backgroundColor: c.bg, color: c.fg }}
               data-testid={`rank-tracker-heatmap-cell-${idx}`}
               data-rank={rank === null ? "null" : String(rank)}
+              data-worst={isWorst ? "1" : "0"}
               title={cell
                 ? `Rank ${rank ?? "not in top 100"} · ${cell.grid_lat?.toFixed?.(3)},${cell.grid_lng?.toFixed?.(3)}`
                 : "No data yet"}
             >
               <div className="text-2xl font-bold">{label}</div>
-              <div className="text-[9px] opacity-80">
-                pt {idx + 1}
-              </div>
+              <div className="text-[9px] opacity-80">pt {idx + 1}</div>
+              {isWorst ? (
+                <button
+                  type="button"
+                  onClick={() => boostArea(idx)}
+                  disabled={boostBusy}
+                  className="absolute bottom-1 left-1 right-1 rounded text-[9px] font-bold px-1 py-0.5"
+                  style={{ backgroundColor: "rgba(0,0,0,0.55)", color: "#fff" }}
+                  title="Draft a GBP post targeting this cell"
+                  data-testid={`rank-tracker-boost-cell-${idx}`}
+                >
+                  Boost this area
+                </button>
+              ) : null}
             </div>
           );
         })}

@@ -164,6 +164,8 @@ from routers import citations as _citations_router  # noqa: E402
 api_router.include_router(_citations_router.router)
 from routers import rank_tracker as _rank_tracker_router  # noqa: E402
 api_router.include_router(_rank_tracker_router.router)
+from routers import repair_calculator as _repair_calc_router  # noqa: E402
+api_router.include_router(_repair_calc_router.router)
 api_router.include_router(_p17_reassign.router)
 api_router.include_router(_p18_ai_brain.router)
 api_router.include_router(_p19_admin_users.router)

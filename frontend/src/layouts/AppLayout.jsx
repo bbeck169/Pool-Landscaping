@@ -59,6 +59,7 @@ const ADMIN_NAV = [
   { to: "/estimator", label: "Estimator", icon: Calculator },
   { to: "/customers", label: "Customers", icon: Users },
   { to: "/ops", label: "Ops", icon: Wrench },
+  { to: "/ops/repair-calculator", label: "Repair Calculator" },
   {
     group: "Reports", icon: BarChart3,
     children: [

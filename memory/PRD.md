@@ -8586,3 +8586,78 @@ Mean rank: **23.2** across 8/9 cells that landed in top 100. Best cell: idx 3 (r
 ### Honest session status
 This session shipped: Phase 22 closure (25 vitest), Phase 23-A rank tracker (13 pytest, real DataForSEO data), DataForSEO client + `account_unverified` handling, parallelisation. Two greenlit items (Repair Calculator + Low-rank CTA) intentionally not started this session — context budget too tight to ship them properly. Both fully specced above for next session pickup.
 
+
+---
+
+## Feb-2026 · Pool Repair Pricing Calculator — SHIPPED
+
+### Backend (`routers/repair_calculator.py`)
+- `POST /api/ops/repair-calculator/quote` (`ops.repairCalculator.quote`) — pure computation.
+- `GET  /api/ops/repair-calculator/config` (`ops.repairCalculator.getConfig`).
+- `PATCH /api/ops/repair-calculator/config` (`ops.repairCalculator.patchConfig`) — bound-checked ranges.
+- `POST /api/ops/repair-calculator/email` (`ops.repairCalculator.email`) — renders HTML, sends via existing Resend wrapper w/ template `repair_quote_email`, writes to `communications_log` with `trigger_entity.kind="repair_quote"`, persists to new `repair_calculator_quotes` collection.
+- Config persisted at `tenant.settings.repair_calculator_defaults`.
+- **Defaults verified against xlsx**: sales_tax 7%, parts_markup 50%, merchant_fees 3%, customer_labor $175/hr, internal_labor $75/hr, margin_floor 30%.
+
+### Formulas (mirror xlsx cells E3..E26)
+```
+PARTS_SUBTOTAL     = SUM(parts)                        (E8)
+SALES_TAX          = PARTS_SUBTOTAL * tax              (E10 — tax on parts ONLY)
+PARTS_TOTAL        = PARTS_SUBTOTAL + tax              (E11)
+MARKUP             = PARTS_SUBTOTAL * markup           (E13 — markup on parts ONLY)
+LABOR              = hours * customer_rate             (E15)
+MERCHANT_FEES      = (PARTS_TOTAL + MARKUP + LABOR) * merchant_pct   (E17)
+ESTIMATE_TOTAL     = SUBTOTAL + TAX + MARKUP + LABOR + MERCHANT_FEES (E18)
+COMPANY_COST       = PARTS_TOTAL + MERCHANT_FEES + hours * internal_rate (E24)
+PROFIT_MARGIN      = 1 - COMPANY_COST / ESTIMATE_TOTAL                (E26)
+```
+Verified: 247 parts / 1.5h → **estimate $669.7987, margin 40.83%** — matches xlsx to 4 decimal places.
+
+### Frontend (`pages/ops/RepairCalculatorPage.jsx`)
+- `/ops/repair-calculator`, admin+super_admin only (`AdminOnly` route guard; techs hidden).
+- Left column: repeatable "Add part" rows, labor hours, tenant-defaults display, per-quote overrides (markup / tax / merchant / rate).
+- Right column: live-computed quote preview posting to `/quote` on every input change; line-by-line breakdown; profit-margin tier tag color-coded (green ≥30, yellow 20-29, red <20).
+- Actions: **Copy** (plaintext to clipboard), **Print** (opens formatted window), **Email quote** (confirmation modal with customer picker + ad-hoc email fallback).
+- Config editor (collapsible) for admin tenant-wide defaults.
+- Sidebar entry "Repair Calculator" under Ops group.
+
+### Tests
+- **Pytest** (`backend/tests/test_repair_calculator.py`) — **10/10 pass**. Covers xlsx-exact math, tier boundaries (green/yellow/red), zero-input safety, admin gate (tech 403), config GET+PATCH+bounds, email endpoint recipient validation, and the persist-to-communications_log + repair_calculator_quotes verification with cleanup.
+
+---
+
+## Feb-2026 · Low-rank cell → GBP post CTA — SHIPPED
+
+### Frontend
+- `RankTrackerPage.jsx · KeywordDetail` — identifies the WORST-ranking cell per keyword (highest rank number OR `null` = not in top 100). Renders "Boost this area" button (`data-testid="rank-tracker-boost-cell-{idx}"`, `data-worst="1"`) inside that cell only.
+- Click flow:
+  1. Reverse-geocode the cell's lat/lng via new `GET /api/maps/reverse-geocode` (see below).
+  2. Compose topic hint: `"{keyword} — targeting {city}, {state}"` (falls back to lat/lng if geocode fails).
+  3. Hand off to global `window.openGbpPostDrafter` if registered, otherwise stash the seed in sessionStorage (`gbp_post_drafter_seed`) and navigate to `/marketing/gbp-posts?draft=1`.
+
+### Backend
+- `GET /api/maps/reverse-geocode?lat=..&lng=..` (`maps.reverseGeocode`) — lightweight helper. Returns `{formatted_address, city, state, zip, available}`. Graceful degradation: returns `available:false` w/ reason if `GOOGLE_API_KEY` missing (never 4xx) so the CTA falls back cleanly.
+- Verified: `lat=33.7695, lng=-112.2569` → `city: "Peoria", state: "AZ"`.
+
+---
+
+## Deferred to next session
+
+### Rank-drop alerts (BONUS, not shipped this session)
+Not started — session budget tight and shipped items are higher-value. Full spec still in prior brief; key elements:
+- Compare current snapshot's mean rank vs prior week's for same keyword; if drop ≥5, fire:
+  - Admin email via Resend `rank_drop_alert_email` template
+  - Red badge on keyword in list
+  - Row on AI Brain Weekly Summary tile
+- Endpoint `GET /api/rank-tracker/alerts`
+- Pytest for delta computation; vitest for red-badge render.
+
+### Not yet started (all prior specs still valid, stashed above)
+- Phase 23-B competitor tracker
+- Phase 23-C keyword research
+- Phase 23-D review reply templates library
+- Phase 23-E deep SEO audit
+- Phase 23-F GBP scheduler
+- Vitest for Repair Calculator (only pytest shipped this session)
+- Vitest for Low-rank CTA
+

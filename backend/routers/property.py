@@ -510,6 +510,47 @@ async def property_search(address: str = Query(..., min_length=5),
              "cached_at": datetime.now(timezone.utc).isoformat()}
 
 
+@router.get("/maps/reverse-geocode",
+             operation_id="maps.reverseGeocode")
+async def maps_reverse_geocode(
+    lat: float = Query(...), lng: float = Query(...),
+    user: dict = Depends(require_tech_or_admin),
+):
+    """Feb-2026 · Lightweight reverse-geocode helper used by the Rank
+    Tracker "Boost this area" CTA. Returns just ``{formatted_address,
+    city, state, zip}`` — no property search, no persistence. Returns
+    a fallback payload (not a 4xx) when the Google API key isn't
+    configured so callers can degrade gracefully."""
+    if not GOOGLE_API_KEY:
+        return {"formatted_address": "", "city": "", "state": "", "zip": "",
+                 "available": False, "reason": "GOOGLE_API_KEY not configured"}
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                "https://maps.googleapis.com/maps/api/geocode/json",
+                params={"latlng": f"{lat},{lng}", "key": GOOGLE_API_KEY},
+            )
+        gj = r.json() or {}
+        results = gj.get("results") or []
+        if not results:
+            return {"formatted_address": "", "city": "", "state": "", "zip": "",
+                     "available": True, "reason": "no_results"}
+        r0 = results[0]
+        formatted = r0.get("formatted_address") or ""
+        city = state = zipc = ""
+        for comp in (r0.get("address_components") or []):
+            types = comp.get("types") or []
+            if "locality" in types: city = comp.get("long_name") or city
+            elif "administrative_area_level_1" in types: state = comp.get("short_name") or state
+            elif "postal_code" in types: zipc = comp.get("long_name") or zipc
+        return {"formatted_address": formatted, "city": city, "state": state,
+                 "zip": zipc, "available": True}
+    except Exception as e:
+        logger.warning(f"[maps.reverseGeocode] failed: {e}")
+        return {"formatted_address": "", "city": "", "state": "", "zip": "",
+                 "available": False, "reason": str(e)}
+
+
 @router.get("/property/search-by-coords")
 async def property_search_by_coords(
     lat: float = Query(...), lng: float = Query(...),

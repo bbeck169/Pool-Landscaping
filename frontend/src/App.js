@@ -176,6 +176,7 @@ import {
 } from "@/pages/aitools/AiToolsPages";
 import { EstimatesList, EstimatorSettings, EstimatorTemplates, EstimatorEditor } from "@/pages/estimator/Estimator";
 import OpsHub from "@/pages/ops/OpsHub";
+import RepairCalculatorPage from "@/pages/ops/RepairCalculatorPage";
 import ReportsHub from "@/pages/reports/ReportsHub";
 import BusinessSummary from "@/pages/reports/BusinessSummary";
 import Forecast from "@/pages/reports/Forecast";
@@ -677,6 +678,8 @@ export default function App() {
 
             {/* Ops hub (Phase 5) — all 16 sub-pages route into one tabbed shell */}
             <Route path="ops" element={<OpsHub />} />
+            {/* Feb-2026 · Pool Repair Pricing Calculator (admin+super_admin, techs hidden). */}
+            <Route path="ops/repair-calculator" element={<AdminOnly><RepairCalculatorPage /></AdminOnly>} />
             {/* Phase 17 · Feb 2026 — /dispatch now renders the Google Maps
                 + Directions redesigned board. Admin-only; techs never
                 see pricing/routing. Legacy path preserved at /ops/dispatch. */}
