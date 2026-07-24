@@ -118,6 +118,8 @@ export default function RankTrackerPage() {
         toast.error("DataForSEO account has run out of credits — top up at dataforseo.com to resume rank tracking");
       } else if (res?.api_error === "auth_failed") {
         toast.error("DataForSEO auth failed — check DATAFORSEO_* env vars");
+      } else if (res?.api_error === "account_unverified") {
+        toast.error("DataForSEO account not verified — complete verification at https://app.dataforseo.com/");
       } else if (res?.api_error) {
         toast.error(`Rank check failed: ${res.api_error}`);
       } else {

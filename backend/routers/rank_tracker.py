@@ -286,8 +286,10 @@ async def _snapshot_keyword(kw: Dict[str, Any], tenant_id: str,
         await db.rank_snapshots.insert_one(row)
         row.pop("_id", None)
         results.append(row)
-        # If credits are gone or auth is broken, don't burn 9 requests.
-        if err in ("out_of_credits", "auth_failed", "no_credentials"):
+        # If credits are gone / auth is broken / account unverified,
+        # don't burn 8 more requests.
+        if err in ("out_of_credits", "auth_failed", "no_credentials",
+                    "account_unverified"):
             break
     await db.tracked_keywords.update_one(
         {"id": kw["id"]}, {"$set": {"last_refreshed_at": now}},

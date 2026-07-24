@@ -71,9 +71,16 @@ async def _post(path: str, tasks: list[Dict[str, Any]]) -> Tuple[int, Optional[D
         return r.status_code, None, f"non_json_body: {r.text[:200]}"
     # DataForSEO returns a top-level 20000 status_code for full success on
     # the outer envelope even when individual task rows fail. We surface
-    # anything else as an error string.
-    if body.get("status_code") not in (20000, 20100):
-        return r.status_code, body, f"api_status_code={body.get('status_code')}: {body.get('status_message')}"
+    # anything else as an error string. 40104 = unverified account —
+    # bucket it into a distinct short string so callers can short-circuit
+    # (retrying won't help until the admin verifies the account).
+    api_sc = body.get("status_code")
+    if api_sc == 40104:
+        return r.status_code, body, "account_unverified"
+    if api_sc == 40100:
+        return r.status_code, body, "auth_failed"
+    if api_sc not in (20000, 20100):
+        return r.status_code, body, f"api_status_code={api_sc}: {body.get('status_message')}"
     return r.status_code, body, None
 
 
