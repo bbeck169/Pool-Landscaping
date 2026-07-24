@@ -8427,3 +8427,116 @@ Ships the three web-side UI surfaces that were waiting on the mobile-agent backe
 - **P2:** Move Orphan Users sidebar link out of the collapsed "Finance" group into a dedicated "Administration" or "System" group so super_admins find it without hunting (flagged by testing_agent iteration_17).
 - **P2:** Extract a pytest teardown helper that always re-orphans `customer@aquaterra.com` at the end of tests that submit the profile-completion form (currently done ad-hoc).
 
+
+---
+
+## Feb-2026 · Phase 22 — Citation Builder (Yext-parity) — CLOSED
+
+Native BrightLocal-style tracker with Yext-inspired extensions.
+
+### Backend (`/app/backend/routers/citations.py`)
+- **11 endpoints:** `GET /citations/directories`, `GET/PATCH /citations/tenant`, `GET /citations/tenant/summary`, `POST /citations/tenant/{id}/mark-verified`, `POST /citations/tenant/bulk-mark-verified`, `POST /citations/tenant/{id}/analytics`, `GET /citations/tenant/{id}/analytics-history`, `GET /citations/tenant/voice-score`, `PATCH /citations/tenant/{id}/duplicates`, `GET /citations/tenant/nap-drift-preview`.
+- Master directory seed: **51 directories** across search / maps / social / local / industry / reviews. Seeded idempotently on boot (`run_citations_seed_and_drift`). Unique compound index on `(tenant_id, directory_id)`.
+- **NAP drift sweep** runs on every boot — compares each `tenant_citations.data_snapshot` (name/service_area/phone/website_url) vs the current business_card. Flips `nap_drift_detected=True` and demotes `live` → `needs_update`. Reverses when snapshot matches again.
+- **Analytics snapshots** (`citation_analytics_snapshots` collection) with newest-first history + trend arrow (up/down/flat).
+- **Voice-score rules**: GBP+desc≥200 (30), Apple Maps (20), Bing (15), Yelp (10), Facebook (10), Nextdoor (10), NAP consistency (5). Total = 100.
+- **Duplicate URL manager** with statuses: reported / pending / suppressed / confirmed. Only reported+pending count as "open" in summary KPI.
+
+### Frontend
+- `/settings/citations` page — 5-tile KPI strip (donut, live, drift, duplicates, impressions30d), voice-score card w/ expandable breakdown, filter chips (drift-only + problems + high-weight-not-started) + status/sort dropdowns + search, row list with drift/dup badges + weight stars, edit sheet with **General / Analytics / Duplicates** tabs.
+- `NapDriftPreviewModal` component wired into `BusinessCardSettings` — gates save when a NAP field changes, calls `GET /citations/tenant/nap-drift-preview`, shows every live listing that will flip to `needs_update`.
+- Sidebar entry "Citation Builder" under Settings for admin + super_admin.
+
+### Tests
+- **Pytest** (`backend/tests/test_citations.py`) — 19/19 pass. Covers seed idempotency, PATCH validation, mark-verified snapshot, weighted completeness math, bulk verify, NAP drift detection + demotion, analytics record+history, voice-score full + partial breakdown, duplicate URL de-dup + open-count, drift-preview affected listing, tech-role 403.
+- **Vitest** — 4 files, **25/25 pass**:
+  - `citation-builder-page.test.jsx` (10) — base render + filters + sort + bulk + search
+  - `citation-voice-score.test.jsx` (3) — voice card + expand/collapse
+  - `citation-edit-tabs.test.jsx` (6) — Analytics tab POST + refresh, Duplicates tab add/remove/patch/status
+  - `nap-drift-preview-modal.test.jsx` (6) — open/close, list render, no-changes banner, confirm/cancel wiring, error surface
+
+### Files added / modified
+- `backend/routers/citations.py` (new)
+- `backend/server.py` — registers router + wires boot seed
+- `backend/tests/test_citations.py` (new)
+- `frontend/src/pages/settings/CitationBuilderPage.jsx` (new)
+- `frontend/src/components/citations/NapDriftPreviewModal.jsx` (new)
+- `frontend/src/pages/settings/BusinessCardSettings.jsx` — hooks the drift modal into the save flow
+- `frontend/src/App.js` — new `/settings/citations` route (AdminOnly)
+- `frontend/src/layouts/AppLayout.jsx` — sidebar entry
+- `frontend/src/test/citation-builder-page.test.jsx`, `citation-voice-score.test.jsx`, `citation-edit-tabs.test.jsx`, `nap-drift-preview-modal.test.jsx` (all new)
+
+---
+
+## Feb-2026 · Phase 23-A — Local Rank Tracker + Geo-Grid heatmap (SHIPPED)
+
+### Backend
+- **DataForSEO client** (`services/dataforseo_client.py`): HTTP-Basic auth wrapper for `serp/google/organic/live/regular` + `appendix/user_data`. Distinguishes `no_credentials` / `auth_failed` / `out_of_credits` / transport errors so the UI can surface the right toast.
+- **Router** (`routers/rank_tracker.py`) — 5 endpoints:
+  - `GET  /rank-tracker/keywords` (list active keywords)
+  - `POST /rank-tracker/keywords` (cap 50/tenant, dedupe case-insensitive)
+  - `DELETE /rank-tracker/keywords/{kid}` (soft-delete)
+  - `GET  /rank-tracker/keywords/{kid}/heatmap` (9 latest grid points + 12-batch mean-rank history)
+  - `POST /rank-tracker/keywords/{kid}/refresh-now` (**6h cooldown**, aborts early on `out_of_credits` / `auth_failed` to conserve credits)
+  - `GET  /rank-tracker/dataforseo-credits` (surfaces auth failures cleanly to the UI banner)
+- **Geo grid** — 3×3 lat/lng grid around service address, default radius 2km, configurable per keyword (0.5-50km).
+- **Weekly cron** (`run_weekly_rank_tracker`) — feature-flagged behind `RANK_TRACKER_CRON_ENABLED=true` in env. Boot **never** schedules it. Ships the code path for a future scheduler.
+- **Env additions**: `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD`, `RANK_TRACKER_CRON_ENABLED=false`. Boot log emits `[dataforseo] auth configured — login=Brian@plofv.com` when creds are present.
+
+### Frontend
+- `/settings/rank-tracker` page — two-column: left has "Add keyword" form + tracked-keyword list; right shows selected-keyword 3×3 heatmap grid (color-coded by rank bucket 1-3 dark green, 4-10 green, 11-20 yellow, 21-50 orange, 51+ / not found red), a 12-snapshot mean-rank trend chart, a Refresh-now button that respects the 6h cooldown, and a legend bar. Top-of-page credits banner switches between green (available + balance) and red (auth failed / no credits).
+- Sidebar entry "Rank Tracker" under Settings for admin + super_admin.
+
+### Tests
+- **Pytest** (`backend/tests/test_rank_tracker.py`) — 13/13 pass. Covers geo-grid utility (3×3, ~2km spacing), CRUD (add/list/dedupe/cap-50/delete), tech-role 403, refresh cooldown 429, refresh-without-website 400, refresh-writes-9-rows (with monkey-patched DFS), refresh aborts on out_of_credits (only 1 row written), heatmap endpoint shape (9 slots + history), cron flag skips when disabled, credits endpoint shape.
+- **Live smoke result — DataForSEO auth is FAILING at the vendor side:**
+  - Boot log: ✅ `[dataforseo] auth configured — login=Brian@plofv.com`
+  - Raw curl → `40100 "You are not authorized to access this resource"`
+  - `GET /rank-tracker/dataforseo-credits` → `{"available": false, "reason": "Auth failed — check DATAFORSEO_* env vars", "status": 401}`
+  - `POST /rank-tracker/keywords` for "pool cleaning peoria az" → **worked** (added, listed, deletable).
+  - `POST /rank-tracker/keywords/{id}/refresh-now` → **worked** but returned `api_error: auth_failed` and correctly aborted after the FIRST grid point (1 snapshot row written instead of 9 — credit-conservation path validated). No credits were consumed because DataForSEO rejected the request before doing any work.
+  - **Action required from user:** verify the creds at https://app.dataforseo.com/api-access. Either the login `Brian@plofv.com` is not registered or the password `731e6e4ccd7ea567` has been rotated. Once fixed, the exact same flow will paint a real 9-point rank grid.
+
+### Files added / modified
+- `backend/services/dataforseo_client.py` (new)
+- `backend/routers/rank_tracker.py` (new)
+- `backend/server.py` — registers router + logs DFS auth config on boot
+- `backend/.env` — appended `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD`, `RANK_TRACKER_CRON_ENABLED=false`
+- `backend/tests/test_rank_tracker.py` (new)
+- `frontend/src/pages/settings/RankTrackerPage.jsx` (new)
+- `frontend/src/App.js` — new `/settings/rank-tracker` route (AdminOnly)
+- `frontend/src/layouts/AppLayout.jsx` — sidebar entry
+
+---
+
+## Deferred to Phase 23 continuation (specs stashed here)
+
+### Phase 23-B — Competitor tracker
+`tracked_competitors` collection (cap 10). Weekly rank snapshot also parses SERP for each competitor's domain into `competitor_rank_snapshots`. Endpoints `GET/POST/DELETE /api/rank-tracker/competitors` + `GET /api/rank-tracker/keywords/{id}/competitor-overlay`. Frontend: "Add competitor" input under heatmap + overlay chart "You vs [C1] vs [C2]" across last 12 weeks.
+
+### Phase 23-C — Keyword research
+`POST /api/rank-tracker/keyword-suggestions` calling DataForSEO `POST /keywords_data/google/related_keywords/live` — up to 100 suggestions with search_volume, cpc, competition, difficulty. Cache 7 days in `keyword_suggestion_cache`. Frontend: seed input + sortable table + "Track this" quick-action.
+
+### Phase 23-D — Review response templates library
+System-seeded `review_reply_templates` (30+ variants covering 5★/4★/3★/2★/1★ + billing/appointment/tech-behavior/quality/comms). Endpoints `GET/POST/PATCH/DELETE /api/reviews/reply-templates`. Frontend: dropdown on `/reviews` "Suggest reply" button — AI generate OR pick template (rating-filtered) → template feeds AI as starting point for refined output.
+
+### Phase 23-E — Deep site audit
+Extend `services/seo_analyzer.py` with: LocalBusiness JSON-LD validation (name/address/telephone/url/openingHours), NAP consistency crawl across up to 5 own-site pages, robots.txt + sitemap.xml existence + sanity, page speed proxy (response time + payload + external requests), duplicate title/meta detection across 20 internal pages. New sub-sections in `/api/seo/analyze` response: Schema Health / NAP Consistency / Crawlability / Performance / Duplicate Content.
+
+### Phase 23-F — GBP scheduler
+Extend `gbp_post_drafts` with `scheduled_for`, `reminder_sent_at`. Endpoints `PATCH /api/marketing/gbp-posts/{id}/schedule`, `POST /api/marketing/gbp-posts/generate-weekly-set` (Mon/Wed/Fri/Sun rotating purpose), `POST /api/marketing/gbp-posts/{id}/mark-posted-signed?token=...`. Daily 08:00 Phoenix cron for reminders. Frontend: Schedule tab with mini-calendar + drag-to-reschedule.
+
+### Pool Repair Pricing Calculator (queued after 23-B..F, spreadsheet extracted)
+Extracted spreadsheet contents (verified against `Copy of Sample Repair Pricing Calculator.xlsx`):
+- **Cells E3-E7**: 5 part cost inputs
+- **E8** = `=SUM(E3:E7)` (SUBTOTAL PARTS)
+- **D10** = 0.07 (Sales Tax %, **7%** AZ); **E10** = `=E8*D10` (tax on parts only)
+- **E11** = `=E8+E10` (PARTS TOTAL)
+- **D13** = 0.50 (% Mark-up); **E13** = `=E8*D13` (markup on parts only)
+- **C15** = **$175/hr** (CUSTOMER labor rate); **D15** = labor hours; **E15** = `=C15*D15`
+- **D17** = 0.03 (Merchant Fees %, **3% — NOT the 0.5% in the brief**); **E17** = `=(E11+E13+E15)*D17`
+- **E18** = `=E8+E10+E13+E15+E17` (ESTIMATE TOTAL)
+- **E24** = `=E11+E17+(D15*75)` (Company's Cost — **$75/hr internal tech rate hardcoded**)
+- **E26** = `=1-(E24/E18)` (Profit Margin — floor 30%, adjust markup if under)
+Endpoints: `POST /api/ops/repair-calculator/quote`, `GET/PATCH /api/ops/repair-calculator/config`, `POST /api/ops/repair-calculator/email` (Resend template `repair_quote_email`). Location: `/ops/repair-calculator`. Admin+super_admin only. Emailable quote (not auto-draft). Save history in `repair_calculator_quotes`. Fold in **after** Phase 23-B..F.
+

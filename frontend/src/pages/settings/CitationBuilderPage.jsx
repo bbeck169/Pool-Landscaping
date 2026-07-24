@@ -4,17 +4,25 @@ import {
   RefreshCw, Search, ExternalLink, Pencil, Save, X, AlertTriangle,
   CheckCircle2, MapPin, Globe, Users, Share2, Award, Star,
   TrendingUp, TrendingDown, ArrowRight, Mic, Copy, Info, ChevronDown,
+  BarChart3, Plus, Trash2,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 
 /**
- * Feb-2026 · Phase 22 — Citation Builder.
+ * Feb-2026 · Phase 22 — Citation Builder (Yext-parity extension).
  *
- * Native BrightLocal-style tracker for the tenant's presence across
- * ~50 directories.  Backed by /api/citations/* endpoints.  Admin-only
- * per the route guard in ``App.js``.
+ * Full listings tracker across ~50 directories with:
+ *   • Weighted completeness donut
+ *   • Voice-search readiness score (0-100 with 7-item breakdown)
+ *   • NAP drift sweep + red-badged rows
+ *   • Duplicate URL manager (Reported / Suppressed / Confirmed)
+ *   • Per-directory analytics snapshots (impressions/clicks/actions)
+ *     with historical trend arrows
+ *   • Filter chips + Sort dropdown + bulk verify
+ *
+ * Backed by /api/citations/*.  Admin-only via App.js route guard.
  */
 
 const CATEGORY_META = {
@@ -37,6 +45,13 @@ const STATUS_META = {
   "n/a":        { label: "N/A",          bg: "#F1F5F9", fg: "#64748B" },
 };
 
+const DUP_STATUS_META = {
+  reported:   { label: "Reported",       bg: "#FEE2E2", fg: "#991B1B" },
+  pending:    { label: "Pending",        bg: "#FEF3C7", fg: "#92400E" },
+  suppressed: { label: "Suppressed",     bg: "#DCFCE7", fg: "#166534" },
+  confirmed:  { label: "Confirmed live", bg: "#F1F5F9", fg: "#475569" },
+};
+
 const CATEGORY_ORDER = ["all", "search", "maps", "social", "local", "industry", "reviews"];
 const STATUS_ORDER = ["all", "not_started", "in_progress", "submitted", "live", "needs_update", "rejected"];
 
@@ -56,18 +71,24 @@ function relativeAge(iso) {
   return `${months} months ago`;
 }
 
+function fmtInt(n) {
+  const v = Number(n) || 0;
+  if (v >= 1000) return `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k`;
+  return String(v);
+}
+
 
 export default function CitationBuilderPage() {
-  const [rows, setRows] = React.useState(null); // null=loading, [] loaded
+  const [rows, setRows] = React.useState(null);
   const [summary, setSummary] = React.useState(null);
   const [voiceScore, setVoiceScore] = React.useState(null);
   const [category, setCategory] = React.useState("all");
   const [status, setStatus] = React.useState("all");
   const [search, setSearch] = React.useState("");
   const [driftOnly, setDriftOnly] = React.useState(false);
-  const [problemsOnly, setProblemsOnly] = React.useState(false); // drift + duplicates
+  const [problemsOnly, setProblemsOnly] = React.useState(false);
   const [highWeightNotStartedOnly, setHwNotStartedOnly] = React.useState(false);
-  const [sortBy, setSortBy] = React.useState("weight"); // weight | verified | impressions
+  const [sortBy, setSortBy] = React.useState("weight");
   const [selected, setSelected] = React.useState(() => new Set());
   const [editingDirId, setEditingDirId] = React.useState(null);
   const [bulkBusy, setBulkBusy] = React.useState(false);
@@ -158,7 +179,6 @@ export default function CitationBuilderPage() {
     try {
       await api.patch(`/citations/tenant/${directoryId}`, patch);
       toast.success("Saved");
-      setEditingDirId(null);
       load();
     } catch (e) {
       toast.error(e?.message || "Save failed");
@@ -170,10 +190,33 @@ export default function CitationBuilderPage() {
     try {
       await api.post(`/citations/tenant/${directoryId}/mark-verified`);
       toast.success("Marked verified");
-      setEditingDirId(null);
       load();
     } catch (e) {
       toast.error(e?.message || "Verify failed");
+    }
+  };
+
+  const saveAnalytics = async (directoryId, payload) => {
+    try {
+      await api.post(`/citations/tenant/${directoryId}/analytics`, payload);
+      toast.success("Analytics recorded");
+      load();
+    } catch (e) {
+      toast.error(e?.message || "Failed to save analytics");
+      throw e;
+    }
+  };
+
+  const saveDuplicates = async (directoryId, duplicates) => {
+    try {
+      await api.patch(`/citations/tenant/${directoryId}/duplicates`, {
+        duplicate_urls: duplicates,
+      });
+      toast.success("Duplicates updated");
+      load();
+    } catch (e) {
+      toast.error(e?.message || "Failed to save duplicates");
+      throw e;
     }
   };
 
@@ -184,12 +227,17 @@ export default function CitationBuilderPage() {
     >
       <Header />
       <KpiStrip summary={summary} />
+      <VoiceScoreCard voice={voiceScore} />
 
       <FilterBar
         category={category} onCategory={setCategory}
         status={status} onStatus={setStatus}
         search={search} onSearch={setSearch}
         driftOnly={driftOnly} onDriftOnly={setDriftOnly}
+        problemsOnly={problemsOnly} onProblemsOnly={setProblemsOnly}
+        highWeightNotStartedOnly={highWeightNotStartedOnly}
+        onHwNotStartedOnly={setHwNotStartedOnly}
+        sortBy={sortBy} onSortBy={setSortBy}
         selectedCount={selected.size}
         onBulkVerify={runBulkVerify}
         onRefresh={load}
@@ -217,10 +265,7 @@ export default function CitationBuilderPage() {
           No directories match your filters.
         </div>
       ) : (
-        <ul
-          className="space-y-2"
-          data-testid="citation-builder-list"
-        >
+        <ul className="space-y-2" data-testid="citation-builder-list">
           {filtered.map((row) => (
             <CitationRow
               key={row.directory_id}
@@ -240,6 +285,8 @@ export default function CitationBuilderPage() {
           onClose={() => setEditingDirId(null)}
           onSave={(patch) => saveEdit(editing.directory_id, patch)}
           onVerify={() => verifyOne(editing.directory_id)}
+          onSaveAnalytics={(payload) => saveAnalytics(editing.directory_id, payload)}
+          onSaveDuplicates={(dups) => saveDuplicates(editing.directory_id, dups)}
         />
       ) : null}
     </SafeScrollContainer>
@@ -269,35 +316,19 @@ function KpiStrip({ summary }) {
   const score = summary?.weighted_completeness_score ?? 0;
   const live = summary?.live_count ?? 0;
   const drift = summary?.nap_drift_count ?? 0;
-  const oldest = summary?.oldest_last_verified_at;
+  const dupOpen = summary?.duplicates_open_count ?? 0;
+  const impressions = summary?.total_impressions_last_30d ?? 0;
 
   return (
     <div
-      className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4"
+      className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3"
       data-testid="citation-builder-kpis"
     >
       <ScoreDonut score={score} />
-      <KpiTile
-        testid="citation-kpi-live"
-        label="Live listings"
-        value={live}
-        Icon={CheckCircle2}
-        tint="#16A34A"
-      />
-      <KpiTile
-        testid="citation-kpi-drift"
-        label="NAP drift"
-        value={drift}
-        Icon={AlertTriangle}
-        tint={drift > 0 ? "#DC2626" : "#64748B"}
-      />
-      <KpiTile
-        testid="citation-kpi-oldest"
-        label="Oldest verification"
-        value={relativeAge(oldest)}
-        Icon={RefreshCw}
-        tint="#0284C7"
-      />
+      <KpiTile testid="citation-kpi-live"       label="Live listings"       value={live}       Icon={CheckCircle2} tint="#16A34A" />
+      <KpiTile testid="citation-kpi-drift"      label="NAP drift"           value={drift}      Icon={AlertTriangle} tint={drift > 0 ? "#DC2626" : "#64748B"} />
+      <KpiTile testid="citation-kpi-duplicates" label="Duplicates open"     value={dupOpen}    Icon={Copy}         tint={dupOpen > 0 ? "#DC2626" : "#64748B"} />
+      <KpiTile testid="citation-kpi-impressions" label="Impressions (30d)"  value={fmtInt(impressions)} Icon={BarChart3} tint="#0284C7" />
     </div>
   );
 }
@@ -317,7 +348,7 @@ function ScoreDonut({ score }) {
       }}
       data-testid="citation-kpi-score"
     >
-      <svg width="80" height="80" viewBox="0 0 80 80">
+      <svg width="72" height="72" viewBox="0 0 80 80">
         <circle cx="40" cy="40" r={R} stroke="#E2E8F0" strokeWidth="10" fill="none" />
         <circle
           cx="40" cy="40" r={R}
@@ -328,10 +359,7 @@ function ScoreDonut({ score }) {
           transform="rotate(-90 40 40)"
         />
         <text
-          x="40" y="45"
-          textAnchor="middle"
-          fontSize="16"
-          fontWeight="700"
+          x="40" y="46" textAnchor="middle" fontSize="16" fontWeight="700"
           fill={colors.onSurface}
           data-testid="citation-kpi-score-value"
         >
@@ -340,15 +368,12 @@ function ScoreDonut({ score }) {
       </svg>
       <div>
         <div
-          className="text-[11px] font-semibold uppercase tracking-wider"
+          className="text-[10px] font-semibold uppercase tracking-wider"
           style={{ color: colors.muted }}
         >
           Completeness
         </div>
-        <div
-          className="text-lg font-bold"
-          style={{ color: colors.onSurface }}
-        >
+        <div className="text-base font-bold" style={{ color: colors.onSurface }}>
           {pct.toFixed(0)} / 100
         </div>
       </div>
@@ -369,23 +394,20 @@ function KpiTile({ testid, label, value, Icon, tint }) {
     >
       <div className="flex items-center gap-2 mb-1">
         <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center"
+          className="w-7 h-7 rounded-lg flex items-center justify-center"
           style={{ backgroundColor: `${tint}22`, color: tint }}
           aria-hidden="true"
         >
-          <Icon size={16} />
+          <Icon size={14} />
         </div>
         <div
-          className="text-[11px] font-semibold uppercase tracking-wider"
+          className="text-[10px] font-semibold uppercase tracking-wider"
           style={{ color: colors.muted }}
         >
           {label}
         </div>
       </div>
-      <div
-        className="text-2xl font-bold"
-        style={{ color: colors.onSurface }}
-      >
+      <div className="text-xl font-bold" style={{ color: colors.onSurface }}>
         {value}
       </div>
     </div>
@@ -393,9 +415,125 @@ function KpiTile({ testid, label, value, Icon, tint }) {
 }
 
 
+function VoiceScoreCard({ voice }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const score = voice?.score ?? 0;
+  const max = voice?.max_score ?? 100;
+  const breakdown = voice?.breakdown || [];
+  const tint = score >= 70 ? "#16A34A" : score >= 40 ? "#CA8A04" : "#DC2626";
+
+  return (
+    <div
+      className="rounded-xl p-4 mb-3"
+      style={{
+        backgroundColor: colors.surface,
+        border: `1px solid ${colors.border}`,
+      }}
+      data-testid="citation-voice-score-card"
+    >
+      <div className="flex items-center gap-3">
+        <div
+          className="w-11 h-11 rounded-xl flex items-center justify-center"
+          style={{ backgroundColor: `${tint}22`, color: tint }}
+          aria-hidden="true"
+        >
+          <Mic size={20} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <div
+              className="text-[10px] font-semibold uppercase tracking-wider"
+              style={{ color: colors.muted }}
+            >
+              Voice search readiness
+            </div>
+            <span
+              className="cursor-help"
+              title="Voice assistants (Siri, Google Assistant, Alexa) source local answers from a handful of high-weight directories. Higher score = more likely you'll be spoken back to a shopper who asks for your service."
+            >
+              <Info size={11} color={colors.muted} />
+            </span>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <div
+              className="text-2xl font-bold"
+              style={{ color: colors.onSurface }}
+              data-testid="citation-voice-score-value"
+            >
+              {score}
+            </div>
+            <div className="text-xs" style={{ color: colors.muted }}>
+              / {max}
+            </div>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold"
+          style={{
+            backgroundColor: colors.surfaceSecondary,
+            color: colors.onSurface,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="citation-voice-score-toggle"
+          aria-expanded={expanded}
+        >
+          {expanded ? "Hide" : "How this is calculated"}
+          <ChevronDown
+            size={12}
+            style={{
+              transform: expanded ? "rotate(180deg)" : "rotate(0)",
+              transition: "transform 150ms ease",
+            }}
+          />
+        </button>
+      </div>
+
+      {expanded ? (
+        <ul
+          className="mt-3 space-y-1"
+          data-testid="citation-voice-score-breakdown"
+        >
+          {breakdown.map((b) => (
+            <li
+              key={b.slug}
+              className="flex items-start gap-2 text-sm"
+              data-testid={`citation-voice-rule-${b.slug}`}
+            >
+              {b.passed ? (
+                <CheckCircle2 size={16} color="#16A34A" className="shrink-0 mt-0.5" />
+              ) : (
+                <AlertTriangle size={16} color="#CA8A04" className="shrink-0 mt-0.5" />
+              )}
+              <div className="flex-1 min-w-0">
+                <div style={{ color: colors.onSurface }}>{b.label}</div>
+                {b.reason ? (
+                  <div className="text-[11px]" style={{ color: colors.muted }}>
+                    {b.reason}
+                  </div>
+                ) : null}
+              </div>
+              <div
+                className="text-[10px] font-bold uppercase tracking-wider whitespace-nowrap"
+                style={{ color: b.passed ? "#16A34A" : colors.muted }}
+              >
+                +{b.weight}
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+
 function FilterBar({
   category, onCategory, status, onStatus, search, onSearch,
-  driftOnly, onDriftOnly, selectedCount, onBulkVerify, onRefresh, bulkBusy,
+  driftOnly, onDriftOnly, problemsOnly, onProblemsOnly,
+  highWeightNotStartedOnly, onHwNotStartedOnly, sortBy, onSortBy,
+  selectedCount, onBulkVerify, onRefresh, bulkBusy,
 }) {
   return (
     <div
@@ -425,6 +563,35 @@ function FilterBar({
         ))}
       </div>
 
+      <div className="flex flex-wrap gap-2 items-center mb-2">
+        <ChipButton
+          testid="citation-filter-problems-only"
+          active={problemsOnly}
+          onClick={() => onProblemsOnly(!problemsOnly)}
+          Icon={AlertTriangle}
+          label="Drift + duplicates"
+        />
+        <ChipButton
+          testid="citation-filter-hw-notstarted"
+          active={highWeightNotStartedOnly}
+          onClick={() => onHwNotStartedOnly(!highWeightNotStartedOnly)}
+          Icon={Star}
+          label="High-weight not started"
+        />
+        <label
+          className="inline-flex items-center gap-2 text-sm select-none ml-1"
+          style={{ color: colors.onSurface }}
+        >
+          <input
+            type="checkbox"
+            checked={driftOnly}
+            onChange={(e) => onDriftOnly(e.target.checked)}
+            data-testid="citation-filter-drift-only"
+          />
+          NAP drift only
+        </label>
+      </div>
+
       <div className="flex flex-wrap gap-2 items-center">
         <select
           value={status}
@@ -442,6 +609,22 @@ function FilterBar({
               {s === "all" ? "All statuses" : (STATUS_META[s]?.label || s)}
             </option>
           ))}
+        </select>
+
+        <select
+          value={sortBy}
+          onChange={(e) => onSortBy(e.target.value)}
+          className="px-2 py-1.5 rounded-lg border text-sm"
+          style={{
+            borderColor: colors.border,
+            backgroundColor: colors.surface,
+            color: colors.onSurface,
+          }}
+          data-testid="citation-filter-sort"
+        >
+          <option value="weight">Sort by weight</option>
+          <option value="verified">Sort by verified age</option>
+          <option value="impressions">Sort by impressions</option>
         </select>
 
         <div className="relative flex-1 min-w-[160px]">
@@ -463,19 +646,6 @@ function FilterBar({
             style={{ position: "absolute", left: 8, top: 10, color: colors.muted }}
           />
         </div>
-
-        <label
-          className="inline-flex items-center gap-2 text-sm select-none"
-          style={{ color: colors.onSurface }}
-        >
-          <input
-            type="checkbox"
-            checked={driftOnly}
-            onChange={(e) => onDriftOnly(e.target.checked)}
-            data-testid="citation-filter-drift-only"
-          />
-          NAP drift only
-        </label>
 
         <button
           type="button"
@@ -508,12 +678,36 @@ function FilterBar({
 }
 
 
+function ChipButton({ testid, active, onClick, Icon, label }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold transition"
+      style={{
+        backgroundColor: active ? "#0F172A" : colors.surfaceSecondary,
+        color: active ? "#fff" : colors.onSurface,
+        border: `1px solid ${active ? "#0F172A" : colors.border}`,
+      }}
+      data-testid={testid}
+      aria-pressed={active}
+    >
+      <Icon size={12} /> {label}
+    </button>
+  );
+}
+
+
 function CitationRow({ row, selected, onToggle, onEdit }) {
   const d = row.directory || {};
   const meta = CATEGORY_META[d.category] || CATEGORY_META.other;
   const sMeta = STATUS_META[row.status] || STATUS_META.not_started;
   const weight = Math.max(1, Math.min(5, Math.round((d.weight || 1) / 2)));
   const stars = "★".repeat(weight) + "☆".repeat(5 - weight);
+  const impressions = row.impressions_last_30d;
+  const openDupes = (row.duplicate_urls || []).filter(
+    (u) => !["suppressed", "confirmed"].includes((u.status || "").toLowerCase())
+  ).length;
   return (
     <li
       className="rounded-xl p-3 flex items-center gap-3 flex-wrap sm:flex-nowrap"
@@ -586,6 +780,15 @@ function CitationRow({ row, selected, onToggle, onEdit }) {
               Listing <ExternalLink size={11} />
             </a>
           ) : null}
+          {impressions !== undefined && impressions !== null ? (
+            <span
+              className="inline-flex items-center gap-1"
+              data-testid={`citation-row-impressions-${d.slug}`}
+              title={`${impressions} impressions in the last 30d`}
+            >
+              <BarChart3 size={11} /> {fmtInt(impressions)}
+            </span>
+          ) : null}
         </div>
       </div>
 
@@ -605,6 +808,17 @@ function CitationRow({ row, selected, onToggle, onEdit }) {
           title="NAP drift detected — your business info changed since last verification"
         >
           ⚠ Drift
+        </span>
+      ) : null}
+
+      {openDupes > 0 ? (
+        <span
+          className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded whitespace-nowrap inline-flex items-center gap-1"
+          style={{ backgroundColor: "#FEE2E2", color: "#991B1B" }}
+          data-testid={`citation-row-dupes-${d.slug}`}
+          title={`${openDupes} duplicate URL(s) need attention`}
+        >
+          <Copy size={10} /> {openDupes} dup{openDupes === 1 ? "" : "es"}
         </span>
       ) : null}
 
@@ -640,21 +854,8 @@ function CitationRow({ row, selected, onToggle, onEdit }) {
 }
 
 
-function EditSheet({ row, onClose, onSave, onVerify }) {
-  const [status, setStatus] = React.useState(row.status || "not_started");
-  const [listingUrl, setListingUrl] = React.useState(row.listing_url || "");
-  const [notes, setNotes] = React.useState(row.notes || "");
-  const [saving, setSaving] = React.useState(false);
-
-  const submit = async (e) => {
-    e?.preventDefault?.();
-    setSaving(true);
-    try {
-      await onSave({ status, listing_url: listingUrl, notes });
-    } catch { /* toast already shown */ }
-    finally { setSaving(false); }
-  };
-
+function EditSheet({ row, onClose, onSave, onVerify, onSaveAnalytics, onSaveDuplicates }) {
+  const [tab, setTab] = React.useState("general");
   const d = row.directory || {};
   return (
     <div
@@ -663,9 +864,8 @@ function EditSheet({ row, onClose, onSave, onVerify }) {
       onMouseDown={onClose}
       data-testid="citation-edit-sheet"
     >
-      <form
+      <div
         onMouseDown={(e) => e.stopPropagation()}
-        onSubmit={submit}
         className="w-full max-w-md h-full flex flex-col shadow-2xl"
         style={{ backgroundColor: colors.surface }}
       >
@@ -697,142 +897,433 @@ function EditSheet({ row, onClose, onSave, onVerify }) {
             <X size={16} />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-          <div>
-            <label
-              htmlFor="citation-edit-status"
-              className="text-xs font-semibold block mb-1"
-              style={{ color: colors.onSurface }}
-            >
-              Status
-            </label>
-            <select
-              id="citation-edit-status"
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border text-sm"
-              style={{
-                borderColor: colors.border,
-                backgroundColor: colors.surface,
-                color: colors.onSurface,
-              }}
-              data-testid="citation-edit-status"
-            >
-              {STATUS_ORDER.filter((s) => s !== "all").map((s) => (
-                <option key={s} value={s}>{STATUS_META[s].label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label
-              htmlFor="citation-edit-listing-url"
-              className="text-xs font-semibold block mb-1"
-              style={{ color: colors.onSurface }}
-            >
-              Listing URL
-            </label>
-            <input
-              id="citation-edit-listing-url"
-              type="url"
-              value={listingUrl}
-              onChange={(e) => setListingUrl(e.target.value)}
-              placeholder="https://…"
-              className="w-full px-3 py-2 rounded-lg border text-sm"
-              style={{
-                borderColor: colors.border,
-                backgroundColor: colors.surface,
-                color: colors.onSurface,
-              }}
-              data-testid="citation-edit-listing-url"
-            />
-          </div>
-          <div>
-            <label
-              htmlFor="citation-edit-notes"
-              className="text-xs font-semibold block mb-1"
-              style={{ color: colors.onSurface }}
-            >
-              Notes
-            </label>
-            <textarea
-              id="citation-edit-notes"
-              rows={4}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border text-sm"
-              style={{
-                borderColor: colors.border,
-                backgroundColor: colors.surface,
-                color: colors.onSurface,
-              }}
-              data-testid="citation-edit-notes"
-            />
-          </div>
-          {row.nap_drift_detected ? (
-            <div
-              className="rounded-lg p-2 text-sm flex items-start gap-2"
-              style={{
-                backgroundColor: "#FEE2E2",
-                color: "#991B1B",
-                border: "1px solid #FCA5A5",
-              }}
-            >
-              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-              <div>
-                <b>NAP drift detected.</b> Your business info changed since
-                the last verification. Update the listing to match, then
-                click "Mark verified" to snapshot the new NAP.
-              </div>
-            </div>
-          ) : null}
-        </div>
+
         <div
-          className="px-5 py-3 flex items-center justify-between gap-2"
-          style={{
-            borderTop: `1px solid ${colors.border}`,
-            backgroundColor: colors.surfaceSecondary,
-          }}
+          className="flex items-center gap-1 px-3 py-2"
+          style={{ borderBottom: `1px solid ${colors.border}`, backgroundColor: colors.surfaceSecondary }}
         >
+          {[
+            { k: "general",    label: "General"    },
+            { k: "analytics",  label: "Analytics"  },
+            { k: "duplicates", label: "Duplicates" },
+          ].map((t) => (
+            <button
+              key={t.k}
+              type="button"
+              onClick={() => setTab(t.k)}
+              className="px-3 py-1.5 rounded-lg text-sm font-semibold"
+              style={{
+                backgroundColor: tab === t.k ? colors.surface : "transparent",
+                color: tab === t.k ? colors.onSurface : colors.muted,
+                border: tab === t.k ? `1px solid ${colors.border}` : "1px solid transparent",
+              }}
+              data-testid={`citation-edit-tab-${t.k}`}
+              aria-selected={tab === t.k}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "general" ? (
+          <GeneralTab row={row} onClose={onClose} onSave={onSave} onVerify={onVerify} />
+        ) : tab === "analytics" ? (
+          <AnalyticsTab row={row} onSaveAnalytics={onSaveAnalytics} />
+        ) : (
+          <DuplicatesTab row={row} onSaveDuplicates={onSaveDuplicates} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+function GeneralTab({ row, onClose, onSave, onVerify }) {
+  const [status, setStatus] = React.useState(row.status || "not_started");
+  const [listingUrl, setListingUrl] = React.useState(row.listing_url || "");
+  const [notes, setNotes] = React.useState(row.notes || "");
+  const [saving, setSaving] = React.useState(false);
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    setSaving(true);
+    try { await onSave({ status, listing_url: listingUrl, notes }); onClose(); }
+    catch { /* toast already shown */ } finally { setSaving(false); }
+  };
+  return (
+    <form onSubmit={submit} className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+        <div>
+          <label htmlFor="citation-edit-status" className="text-xs font-semibold block mb-1"
+                 style={{ color: colors.onSurface }}>Status</label>
+          <select
+            id="citation-edit-status"
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border text-sm"
+            style={{ borderColor: colors.border, backgroundColor: colors.surface, color: colors.onSurface }}
+            data-testid="citation-edit-status"
+          >
+            {STATUS_ORDER.filter((s) => s !== "all").map((s) => (
+              <option key={s} value={s}>{STATUS_META[s].label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="citation-edit-listing-url" className="text-xs font-semibold block mb-1"
+                 style={{ color: colors.onSurface }}>Listing URL</label>
+          <input
+            id="citation-edit-listing-url" type="url" value={listingUrl}
+            onChange={(e) => setListingUrl(e.target.value)} placeholder="https://…"
+            className="w-full px-3 py-2 rounded-lg border text-sm"
+            style={{ borderColor: colors.border, backgroundColor: colors.surface, color: colors.onSurface }}
+            data-testid="citation-edit-listing-url"
+          />
+        </div>
+        <div>
+          <label htmlFor="citation-edit-notes" className="text-xs font-semibold block mb-1"
+                 style={{ color: colors.onSurface }}>Notes</label>
+          <textarea
+            id="citation-edit-notes" rows={4} value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border text-sm"
+            style={{ borderColor: colors.border, backgroundColor: colors.surface, color: colors.onSurface }}
+            data-testid="citation-edit-notes"
+          />
+        </div>
+        {row.nap_drift_detected ? (
+          <div
+            className="rounded-lg p-2 text-sm flex items-start gap-2"
+            style={{ backgroundColor: "#FEE2E2", color: "#991B1B", border: "1px solid #FCA5A5" }}
+          >
+            <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+            <div>
+              <b>NAP drift detected.</b> Update the listing to match your current
+              business info, then click "Mark verified" to snapshot the new NAP.
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <div
+        className="px-5 py-3 flex items-center justify-between gap-2"
+        style={{ borderTop: `1px solid ${colors.border}`, backgroundColor: colors.surfaceSecondary }}
+      >
+        <button
+          type="button" onClick={onVerify}
+          className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-semibold"
+          style={{ backgroundColor: "#DCFCE7", color: "#166534", border: "1px solid #86EFAC" }}
+          data-testid="citation-edit-verify"
+        >
+          <CheckCircle2 size={14} /> Mark verified
+        </button>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={onClose}
+            className="px-3 py-2 rounded-lg text-sm font-semibold"
+            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}`, color: colors.onSurface }}
+            data-testid="citation-edit-cancel"
+          >Cancel</button>
+          <button type="submit" disabled={saving}
+            className="inline-flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-60 disabled:cursor-not-allowed"
+            style={{ backgroundColor: colors.brand }}
+            data-testid="citation-edit-save"
+          ><Save size={14} /> {saving ? "Saving…" : "Save"}</button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+
+function AnalyticsTab({ row, onSaveAnalytics }) {
+  const [impressions, setImpressions] = React.useState(row.impressions_last_30d ?? 0);
+  const [clicks, setClicks] = React.useState(row.clicks_last_30d ?? 0);
+  const [actions, setActions] = React.useState(row.actions_last_30d ?? 0);
+  const [periodStart, setPeriodStart] = React.useState("");
+  const [periodEnd, setPeriodEnd] = React.useState("");
+  const [history, setHistory] = React.useState(null);
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    let alive = true;
+    api.get(`/citations/tenant/${row.directory_id}/analytics-history`)
+       .then((r) => { if (alive) setHistory(r); })
+       .catch(() => { if (alive) setHistory({ snapshots: [], trend: "flat" }); });
+    return () => { alive = false; };
+  }, [row.directory_id]);
+
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    setSaving(true);
+    try {
+      await onSaveAnalytics({
+        impressions: Number(impressions) || 0,
+        clicks: Number(clicks) || 0,
+        actions: Number(actions) || 0,
+        period_start: periodStart || null,
+        period_end: periodEnd || null,
+      });
+      const fresh = await api.get(`/citations/tenant/${row.directory_id}/analytics-history`);
+      setHistory(fresh);
+    } catch { /* toast already shown */ } finally { setSaving(false); }
+  };
+
+  const trend = history?.trend || "flat";
+  const TrendIcon = trend === "up" ? TrendingUp : trend === "down" ? TrendingDown : ArrowRight;
+  const trendColor = trend === "up" ? "#16A34A" : trend === "down" ? "#DC2626" : colors.muted;
+
+  return (
+    <form onSubmit={submit} className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+        <div className="text-xs" style={{ color: colors.muted }}>
+          Paste in the numbers you pull from this directory's own dashboard —
+          impressions, clicks, and actions (calls / directions / website clicks)
+          over the last 30 days. Snapshots are stored so we can show the trend
+          over time.
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <NumField label="Impressions" testid="citation-edit-analytics-impressions" value={impressions} onChange={setImpressions} />
+          <NumField label="Clicks" testid="citation-edit-analytics-clicks" value={clicks} onChange={setClicks} />
+          <NumField label="Actions" testid="citation-edit-analytics-actions" value={actions} onChange={setActions} />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <DateField label="Period start" testid="citation-edit-analytics-period-start" value={periodStart} onChange={setPeriodStart} />
+          <DateField label="Period end"   testid="citation-edit-analytics-period-end"   value={periodEnd}   onChange={setPeriodEnd} />
+        </div>
+
+        <div
+          className="rounded-lg p-3 mt-3"
+          style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+          data-testid="citation-edit-analytics-history"
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <div
+              className="text-[10px] font-semibold uppercase tracking-wider"
+              style={{ color: colors.muted }}
+            >
+              History
+            </div>
+            <span
+              className="inline-flex items-center gap-1 text-[11px] font-semibold"
+              style={{ color: trendColor }}
+              data-testid="citation-edit-analytics-trend"
+            >
+              <TrendIcon size={12} /> {trend}
+            </span>
+          </div>
+          {history === null ? (
+            <div className="text-xs" style={{ color: colors.muted }}>Loading…</div>
+          ) : history.snapshots?.length ? (
+            <MiniLineChart data={history.snapshots.slice().reverse()} />
+          ) : (
+            <div className="text-xs" style={{ color: colors.muted }}>
+              No snapshots yet. Save one to start tracking the trend.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div
+        className="px-5 py-3 flex items-center justify-end gap-2"
+        style={{ borderTop: `1px solid ${colors.border}`, backgroundColor: colors.surfaceSecondary }}
+      >
+        <button
+          type="submit" disabled={saving}
+          className="inline-flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-60 disabled:cursor-not-allowed"
+          style={{ backgroundColor: colors.brand }}
+          data-testid="citation-edit-analytics-save"
+        >
+          <Save size={14} /> {saving ? "Saving…" : "Save snapshot"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+
+function NumField({ label, testid, value, onChange }) {
+  const id = `${testid}-input`;
+  return (
+    <div>
+      <label htmlFor={id} className="text-[10px] uppercase tracking-wider font-semibold block mb-1"
+             style={{ color: colors.muted }}>{label}</label>
+      <input
+        id={id} type="number" min={0} value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full px-2 py-1.5 rounded-lg border text-sm"
+        style={{ borderColor: colors.border, backgroundColor: colors.surface, color: colors.onSurface }}
+        data-testid={testid}
+      />
+    </div>
+  );
+}
+
+
+function DateField({ label, testid, value, onChange }) {
+  const id = `${testid}-input`;
+  return (
+    <div>
+      <label htmlFor={id} className="text-[10px] uppercase tracking-wider font-semibold block mb-1"
+             style={{ color: colors.muted }}>{label}</label>
+      <input
+        id={id} type="date" value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full px-2 py-1.5 rounded-lg border text-sm"
+        style={{ borderColor: colors.border, backgroundColor: colors.surface, color: colors.onSurface }}
+        data-testid={testid}
+      />
+    </div>
+  );
+}
+
+
+function MiniLineChart({ data }) {
+  const w = 300, h = 60, pad = 4;
+  const impressions = data.map((s) => Number(s.impressions) || 0);
+  const max = Math.max(1, ...impressions);
+  const points = impressions.map((v, i) => {
+    const x = pad + (i / Math.max(1, impressions.length - 1)) * (w - 2 * pad);
+    const y = h - pad - (v / max) * (h - 2 * pad);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return (
+    <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
+         data-testid="citation-edit-analytics-chart">
+      <polyline
+        fill="none" stroke="#0284C7" strokeWidth="2" points={points}
+      />
+    </svg>
+  );
+}
+
+
+function DuplicatesTab({ row, onSaveDuplicates }) {
+  const [items, setItems] = React.useState(() => (row.duplicate_urls || []).map((u) => ({ ...u })));
+  const [newUrl, setNewUrl] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+
+  const addItem = () => {
+    const url = newUrl.trim();
+    if (!url) return;
+    if (items.some((it) => it.url === url)) {
+      toast.message("URL already in the list");
+      return;
+    }
+    setItems((prev) => [...prev, { url, status: "reported", note: "" }]);
+    setNewUrl("");
+  };
+
+  const remove = (i) => setItems((prev) => prev.filter((_, idx) => idx !== i));
+  const setStatus = (i, st) => setItems((prev) => prev.map((it, idx) => idx === i ? { ...it, status: st } : it));
+  const setNote = (i, note) => setItems((prev) => prev.map((it, idx) => idx === i ? { ...it, note } : it));
+
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    setSaving(true);
+    try { await onSaveDuplicates(items); }
+    catch { /* toast already shown */ } finally { setSaving(false); }
+  };
+
+  return (
+    <form onSubmit={submit} className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+        <div className="text-xs" style={{ color: colors.muted }}>
+          Add every suspected duplicate listing URL on this directory. Mark each
+          as <b>Reported</b> once you've asked the directory to remove it,
+          <b> Suppressed</b> once it's gone, or <b>Confirmed live</b> if it turns
+          out to be a legitimate second location.
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="url" value={newUrl}
+            onChange={(e) => setNewUrl(e.target.value)}
+            placeholder="https://directory.example.com/duplicate-listing"
+            className="flex-1 px-3 py-2 rounded-lg border text-sm"
+            style={{ borderColor: colors.border, backgroundColor: colors.surface, color: colors.onSurface }}
+            data-testid="citation-edit-dup-new-url"
+          />
           <button
             type="button"
-            onClick={onVerify}
-            className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-semibold"
-            style={{
-              backgroundColor: "#DCFCE7",
-              color: "#166534",
-              border: "1px solid #86EFAC",
-            }}
-            data-testid="citation-edit-verify"
+            onClick={addItem}
+            className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm font-semibold text-white"
+            style={{ backgroundColor: colors.brand }}
+            data-testid="citation-edit-dup-add"
           >
-            <CheckCircle2 size={14} /> Mark verified
+            <Plus size={14} /> Add
           </button>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3 py-2 rounded-lg text-sm font-semibold"
-              style={{
-                backgroundColor: colors.surface,
-                border: `1px solid ${colors.border}`,
-                color: colors.onSurface,
-              }}
-              data-testid="citation-edit-cancel"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-60 disabled:cursor-not-allowed"
-              style={{ backgroundColor: colors.brand }}
-              data-testid="citation-edit-save"
-            >
-              <Save size={14} /> {saving ? "Saving…" : "Save"}
-            </button>
-          </div>
         </div>
-      </form>
-    </div>
+
+        <ul className="space-y-2" data-testid="citation-edit-dup-list">
+          {items.length === 0 ? (
+            <li
+              className="rounded-lg p-3 text-sm text-center"
+              style={{ backgroundColor: colors.surfaceSecondary, color: colors.muted, border: `1px dashed ${colors.border}` }}
+              data-testid="citation-edit-dup-empty"
+            >
+              No duplicates flagged yet.
+            </li>
+          ) : items.map((it, i) => (
+            <li
+              key={`${it.url}-${i}`}
+              className="rounded-lg p-3 space-y-2"
+              style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
+              data-testid={`citation-edit-dup-item-${i}`}
+            >
+              <div className="flex items-center gap-2">
+                <a
+                  href={it.url} target="_blank" rel="noreferrer noopener"
+                  className="flex-1 truncate text-sm underline"
+                  style={{ color: colors.brand }}
+                >
+                  {it.url}
+                </a>
+                <button
+                  type="button" onClick={() => remove(i)}
+                  className="text-xs" style={{ color: "#991B1B" }}
+                  data-testid={`citation-edit-dup-remove-${i}`}
+                  aria-label="Remove duplicate"
+                ><Trash2 size={14} /></button>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={it.status || "reported"}
+                  onChange={(e) => setStatus(i, e.target.value)}
+                  className="px-2 py-1 rounded border text-xs"
+                  style={{ borderColor: colors.border, backgroundColor: colors.surface, color: colors.onSurface }}
+                  data-testid={`citation-edit-dup-status-${i}`}
+                >
+                  {Object.keys(DUP_STATUS_META).map((k) => (
+                    <option key={k} value={k}>{DUP_STATUS_META[k].label}</option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={it.note || ""}
+                  onChange={(e) => setNote(i, e.target.value)}
+                  placeholder="Optional note"
+                  className="flex-1 px-2 py-1 rounded border text-xs"
+                  style={{ borderColor: colors.border, backgroundColor: colors.surface, color: colors.onSurface }}
+                  data-testid={`citation-edit-dup-note-${i}`}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div
+        className="px-5 py-3 flex items-center justify-end gap-2"
+        style={{ borderTop: `1px solid ${colors.border}`, backgroundColor: colors.surfaceSecondary }}
+      >
+        <button
+          type="submit" disabled={saving}
+          className="inline-flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-60 disabled:cursor-not-allowed"
+          style={{ backgroundColor: colors.brand }}
+          data-testid="citation-edit-dup-save"
+        >
+          <Save size={14} /> {saving ? "Saving…" : "Save duplicates"}
+        </button>
+      </div>
+    </form>
   );
 }
 

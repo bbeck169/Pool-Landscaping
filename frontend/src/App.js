@@ -85,6 +85,7 @@ import BusinessCardSettingsPage from "@/pages/settings/BusinessCardSettings";
 import VanitySlugsPage from "@/pages/settings/VanitySlugsPage";
 import OrphanUsersPage from "@/pages/settings/OrphanUsersPage";
 import CitationBuilderPage from "@/pages/settings/CitationBuilderPage";
+import RankTrackerPage from "@/pages/settings/RankTrackerPage";
 import DealsKanbanPage from "@/pages/deals/DealsKanbanPage";
 // QuoteIQ Q2-UI · Feb 2026
 import AIEstimatorPage from "@/pages/estimates/AIEstimatorPage";
@@ -431,6 +432,8 @@ export default function App() {
             <Route path="settings/orphan-users" element={<SuperAdminOnly><OrphanUsersPage /></SuperAdminOnly>} />
             {/* Feb-2026 · Phase 22 — Citation Builder (admin + super_admin). */}
             <Route path="settings/citations" element={<AdminOnly><CitationBuilderPage /></AdminOnly>} />
+            {/* Feb-2026 · Phase 23-A — Local Rank Tracker (admin + super_admin). */}
+            <Route path="settings/rank-tracker" element={<AdminOnly><RankTrackerPage /></AdminOnly>} />
             <Route path="settings/maps" element={<AdminOnly><MapSettings /></AdminOnly>} />
             <Route path="settings/legal/:slug" element={<AdminOnly><LegalDocEditor /></AdminOnly>} />
             <Route path="portal/terms" element={<PortalTerms />} />

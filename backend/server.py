@@ -162,6 +162,8 @@ from routers import auto_clockin as _auto_clockin_router  # noqa: E402
 api_router.include_router(_auto_clockin_router.router)
 from routers import citations as _citations_router  # noqa: E402
 api_router.include_router(_citations_router.router)
+from routers import rank_tracker as _rank_tracker_router  # noqa: E402
+api_router.include_router(_rank_tracker_router.router)
 api_router.include_router(_p17_reassign.router)
 api_router.include_router(_p18_ai_brain.router)
 api_router.include_router(_p19_admin_users.router)
@@ -506,6 +508,16 @@ async def _background_seed():
         logger.info(f"[citations-seed] {_c_res}")
     except Exception as e:
         logger.warning(f"citations seed crashed: {e}")
+
+    # Feb-2026 · Phase 23-A — DataForSEO auth log line. Weekly rank
+    # tracker cron is INTENTIONALLY not scheduled here; boot only
+    # verifies credentials. Flip RANK_TRACKER_CRON_ENABLED=true and
+    # invoke ``run_weekly_rank_tracker`` from a scheduler to activate.
+    try:
+        from services import dataforseo_client as _dfs
+        _dfs.log_auth_config()
+    except Exception as e:
+        logger.warning(f"[dataforseo] boot log skipped: {e}")
 
     # Feb-2026 — one-shot idempotent Brian integration ownership
     # transfer. Runs every boot but only mutates on the first pass.

@@ -8,6 +8,7 @@ import { Save, IdCard } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import BusinessCard from "@/components/business-card/BusinessCard";
+import NapDriftPreviewModal from "@/components/citations/NapDriftPreviewModal";
 
 const FIELDS = [
   { key: "company_name",       label: "Company name",       type: "text" },
@@ -26,6 +27,10 @@ export default function BusinessCardSettingsPage() {
   const [draft, setDraft] = React.useState(null);
   const [saving, setSaving] = React.useState(false);
   const [previewKey, setPreviewKey] = React.useState(0);
+  // Feb-2026 · Phase 22 — Drift-preview modal state. Only opens when the
+  // admin touches a NAP field (company_name / service_area / phone /
+  // website_url) so a colour-picker tweak doesn't nag them.
+  const [driftPreviewOpen, setDriftPreviewOpen] = React.useState(false);
 
   const load = React.useCallback(async () => {
     try {
@@ -37,7 +42,21 @@ export default function BusinessCardSettingsPage() {
 
   const onField = (k, v) => setDraft((d) => ({ ...(d || {}), [k]: v }));
 
-  const save = async () => {
+  const NAP_KEYS = ["company_name", "service_area", "phone", "website_url"];
+  const anyNapChanged = () =>
+    !!card && NAP_KEYS.some((k) => (draft?.[k] || "") !== (card?.[k] || ""));
+
+  const napProposed = React.useMemo(() => {
+    if (!draft) return {};
+    return {
+      company_name: draft.company_name || "",
+      service_area: draft.service_area || "",
+      phone: draft.phone || "",
+      website_url: draft.website_url || "",
+    };
+  }, [draft]);
+
+  const doSave = async () => {
     if (!draft) return;
     setSaving(true);
     try {
@@ -51,7 +70,18 @@ export default function BusinessCardSettingsPage() {
       toast.success("Business card saved");
     } catch (e) {
       toast.error(`Save failed: ${e.message || e}`);
-    } finally { setSaving(false); }
+    } finally { setSaving(false); setDriftPreviewOpen(false); }
+  };
+
+  const save = async () => {
+    if (!draft) return;
+    // If a NAP field changed, gate save behind the drift-preview modal
+    // so the admin can see which live citations will be flagged.
+    if (anyNapChanged()) {
+      setDriftPreviewOpen(true);
+      return;
+    }
+    await doSave();
   };
 
   if (!draft) {
@@ -150,6 +180,14 @@ export default function BusinessCardSettingsPage() {
           <BusinessCard key={previewKey} variant="full" />
         </div>
       </div>
+
+      <NapDriftPreviewModal
+        open={driftPreviewOpen}
+        proposed={napProposed}
+        onCancel={() => setDriftPreviewOpen(false)}
+        onConfirm={doSave}
+        confirmLabel={saving ? "Saving…" : "Save anyway"}
+      />
     </div>
   );
 }
