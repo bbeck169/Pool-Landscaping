@@ -233,6 +233,7 @@ function ComposeSheet({
         .finally(() => setPreviewLoading(false));
     }, 600);
     return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, emailOn, smsOn, subject, body]);
 
   const total =
@@ -421,7 +422,7 @@ function ComposeSheet({
               <Text style={s.confirmTitle}>Confirm broadcast</Text>
               <Text style={s.confirmDesc}>
                 You are about to send to {total} customer{total === 1 ? "" : "s"}.
-                This can't be undone.
+                This can{"\u0027"}t be undone.
               </Text>
               <View style={s.confirmBtns}>
                 <Pressable
@@ -521,7 +522,7 @@ export default function BroadcastsPage() {
         <EmptyState
           icon="megaphone-outline"
           title="No broadcasts yet"
-          subtitle='Use the "Compose" button to send your first broadcast.'
+          subtitle={'Use the "Compose" button to send your first broadcast.'}
           testID="broadcasts-empty"
         />
       ) : (

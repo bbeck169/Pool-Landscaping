@@ -92,6 +92,7 @@ export default function More() {
     { icon: "leaf-outline", label: "Landscape AI", onPress: () => router.push("/landscape") },
     { icon: "grid-outline", label: "Design Studio (CAD)", onPress: () => router.push("/cad") },
     { icon: "megaphone-outline", label: "Marketing", onPress: () => router.push("/marketing") },
+    { icon: "megaphone-outline", label: "Broadcasts", onPress: () => router.push("/marketing/broadcasts" as any) },
     { icon: "share-social-outline", label: "Social Media", onPress: () => router.push("/social") },
     { icon: "chatbubbles-outline", label: "Communication", onPress: () => router.push("/communications") },
     { icon: "sparkles-outline", label: "AI Employees", onPress: () => router.push("/ai-employees") },
