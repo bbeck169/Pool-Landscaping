@@ -1,0 +1,29 @@
+{
+  "summary": "Iteration 17 verification of three UX surfaces + backend wiring for Auto Clock-In toggle, Orphan Users admin page, and Customer profile-completion gate. Backend pytest test_auto_clockin_and_orphan.py: 14/14 pass. New public-URL smoke suite test_iteration17_public_smoke.py: 7/7 pass through the /api ingress. Full browser flow tested via Playwright — all three features work end-to-end.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auto_clockin_and_orphan.py",
+    "/app/backend/tests/test_iteration17_public_smoke.py",
+    "/app/test_reports/pytest/iteration_17_auto_clockin_orphan.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Orphan Users sidebar link lives inside the collapsed 'Finance' accordion (AppLayout.jsx line 142). Functionally correct (superOnly filter verified: admin sees 0 orphan links; DB config has entry with superOnly:true) but discovery is buried — consider moving to a dedicated 'Settings' or 'Administration' group so super_admins can find it without expanding Finance.",
+    "Backend test_auto_clockin_and_orphan.py:test_complete_profile_creates_customer_and_clears_flag mutates the real seed customer@aquaterra.com back to non-orphan state. Playwright suite depends on the customer being orphaned. Added a re-orphan step after tests; consider making the pytest use a TEST_-prefixed user or a teardown that restores the original customer_id automatically."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration17_public_smoke.py (new — 7 public-URL smoke tests)"
+  ],
+  "success_rate": { "backend": "100% (14/14 local + 7/7 public smoke)", "frontend": "100% (all 5 UI scenarios pass)" },
+  "test_credentials": "super@aquaterra.com/password123 (super_admin per /app/memory/test_credentials.md — the review request mentioned brian@plofv.com but that account isn't in demo seed; used super@aquaterra.com which is the seeded super_admin), admin@aquaterra.com/password123, mike@aquaterra.com/password123, customer@aquaterra.com/password123",
+  "seed_data_creation": "Re-orphaned customer@aquaterra.com after ProfileCompletionGate submission test (ran python one-liner to restore customer_id e36bce2c-7ea6-4b99-876c-05225aeb352f).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All three UX surfaces verified end-to-end via Playwright on the preview URL: (1) Team roster /tools?t=team → 40 rows, 4 tech switches (role=switch, data-testid team-row-autoclockin-toggle-{uid}) + 36 unavailable dashes, admin's own row shows an inert red element not a switch. Click flipped aria-checked true→false, data-value on→off, PATCH /api/users/{id} succeeded. (2) /settings/orphan-users as super@aquaterra.com renders orphan-users-page with 2 rows (littleflisser@gmail.com + customer@aquaterra.com, both 'Stale customer_id'), each with orphan-users-row-{uid}, orphan-users-reason-{uid}, orphan-users-repair-{uid} testids. admin@aquaterra.com hitting the URL redirects to '/' and no sidebar orphan link is rendered — SuperAdminOnly guard + superOnly filter both work. (3) ProfileCompletionGate for customer@aquaterra.com appears immediately at z-70 with all 7 required testids, empty submit shows inline error 'Please add the service address for your property.', Skip button routes to /portal/home and sets sessionStorage profile_completion_skipped=1, full submit closes gate and routes to /portal/home. TosGate banner also rendered on portal home (regression: co-exists fine, no z-index collision).",
+  "rca of the issue": "N/A — no bugs found this iteration."
+}

@@ -202,6 +202,7 @@ class CompleteProfileBody(BaseModel):
               operation_id="portal.completeProfile")
 async def portal_complete_profile(
     body: CompleteProfileBody,
+    skip: int = 0,
     user: Dict[str, Any] = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Customer self-serve repair for their own orphaned auth account.
@@ -212,10 +213,34 @@ async def portal_complete_profile(
     second call short-circuits with ``was_already_linked=True`` and
     returns the existing ``customer_id``.
 
+    ``?skip=1`` is a lightweight audit path — the customer clicked
+    "Skip for now" from the gateway. We log a note and return a
+    ``skipped: True`` payload without creating any customer record.
+    The next ``/auth/me`` refresh will still surface
+    ``customer_record_missing=true`` so the gate re-fires on the next
+    login. Idempotent — repeatable skips just append notes.
+
     Only customers can hit this endpoint (any other role → 403).
     """
     if user.get("role") != "customer":
         raise HTTPException(403, "Customers only")
+
+    # Skip path — audit only, no record creation.
+    if skip:
+        note = {
+            "id": new_id(),
+            "kind": "profile_incomplete_reminder",
+            "user_id": user.get("id"),
+            "tenant_id": user.get("tenant_id"),
+            "email": user.get("email"),
+            "created_at": now_iso(),
+        }
+        try:
+            await db.audit_events.insert_one(note)
+        except Exception as _e:  # pragma: no cover — audit failures are non-fatal
+            logger.warning("[portal-complete-profile] audit insert failed: %s", _e)
+        return {"ok": True, "skipped": True,
+                "customer_record_missing": True}
 
     # Idempotent short-circuit — if the link is already valid, no-op.
     existing_cid = user.get("customer_id")

@@ -11,6 +11,7 @@ import LandscapingClockWidget from "@/components/LandscapingClockWidget";
 import AIDock from "@/components/AIDock/AIDock";
 import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 import TosGate from "@/components/legal/TosGate";
+import ProfileCompletionGate from "@/components/portal/ProfileCompletionGate";
 import Breadcrumbs from "@/components/breadcrumbs/Breadcrumbs";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
 import { brandGradientCss, colors, font } from "@/theme";
@@ -138,6 +139,7 @@ const ADMIN_NAV = [
       { to: "/settings/integrations", label: "Integrations" },
       { to: "/settings/maps", label: "Map & Autocomplete" },
       { to: "/settings/ringcentral", label: "RingCentral" },
+      { to: "/settings/orphan-users", label: "Orphan Users", superOnly: true },
       { to: "/access-settings", label: "Access Settings" },
       { to: "/access-history", label: "Access History" },
       { to: "/impexp", label: "Import / Export" },
@@ -308,7 +310,17 @@ function AppLayout() {
   const { previewRole, setPreviewRole, isPreviewing, effectiveRole } = usePermissions();
   const nav = (() => {
     const r = effectiveRole || user.role;
-    if (r === "admin" || r === "super_admin") return ADMIN_NAV;
+    // Feb-2026 · sidebar items may carry ``superOnly: true`` to be
+    // hidden from regular admins (still route-guarded by SuperAdminOnly).
+    const isSuper = user.role === "super_admin";
+    const filterSuper = (items) =>
+      (items || []).map((it) => {
+        if (it.children) {
+          return { ...it, children: it.children.filter((c) => !c.superOnly || isSuper) };
+        }
+        return it;
+      }).filter((it) => !it.superOnly || isSuper);
+    if (r === "admin" || r === "super_admin") return filterSuper(ADMIN_NAV);
     if (r === "technician") return TECH_NAV;
     return CUSTOMER_NAV;
   })();
@@ -331,6 +343,11 @@ function AppLayout() {
           ``tos_version_accepted`` already matches CURRENT_TOS_VERSION.
           Mounted at the shell so it survives every route change. */}
       <TosGate />
+      {/* Feb-2026 · Customer self-serve profile-completion gate.
+          Sits at z-[70] so the ToS gate (z-[80]) always wins if both
+          fire. Renders null unless ``user.customer_record_missing`` is
+          true — see the gate for details. */}
+      <ProfileCompletionGate />
       {/* Impersonation banner (Phase 4 partial fold-in) */}
       {/* Phase 15B — first-login onboarding modal (admin only, sessionStorage-guarded) */}
       {(effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin" ? <OnboardingLoginModal /> : null}

@@ -83,6 +83,7 @@ import CopilotPage from "@/pages/admin/CopilotPage";
 // Feb-2026 · Item 6 — Business Card admin editor.
 import BusinessCardSettingsPage from "@/pages/settings/BusinessCardSettings";
 import VanitySlugsPage from "@/pages/settings/VanitySlugsPage";
+import OrphanUsersPage from "@/pages/settings/OrphanUsersPage";
 import DealsKanbanPage from "@/pages/deals/DealsKanbanPage";
 // QuoteIQ Q2-UI · Feb 2026
 import AIEstimatorPage from "@/pages/estimates/AIEstimatorPage";
@@ -425,6 +426,8 @@ export default function App() {
             <Route path="settings/integrations" element={<AdminOnly><IntegrationsHub /></AdminOnly>} />
             {/* Phase 21 · Feb 2026 — Vanity slug editor (super_admin only). */}
             <Route path="settings/vanity-slugs" element={<SuperAdminOnly><VanitySlugsPage /></SuperAdminOnly>} />
+            {/* Feb-2026 — Orphan customer auth users admin (super_admin only). */}
+            <Route path="settings/orphan-users" element={<SuperAdminOnly><OrphanUsersPage /></SuperAdminOnly>} />
             <Route path="settings/maps" element={<AdminOnly><MapSettings /></AdminOnly>} />
             <Route path="settings/legal/:slug" element={<AdminOnly><LegalDocEditor /></AdminOnly>} />
             <Route path="portal/terms" element={<PortalTerms />} />

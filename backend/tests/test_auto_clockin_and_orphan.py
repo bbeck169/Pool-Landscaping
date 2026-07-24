@@ -163,3 +163,179 @@ def test_orphan_repair_admin_forbidden():
         headers={"Authorization": f"Bearer {adm}"}, timeout=15,
     )
     assert r.status_code == 403
+
+
+# ── NEW · Feb-2026 · GET /admin/orphan-customer-users ─────────────
+def test_orphan_list_super_admin_returns_orphans():
+    """Super-admin lists orphan customer auth users."""
+    sup = _login("super@aquaterra.com")
+    # Seed a throwaway orphan.
+    orphan_id = f"orphlist-{uuid.uuid4().hex[:8]}"
+    tenant = _sync_db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0, "id": 1})
+    _sync_db.users.insert_one({
+        "id": orphan_id,
+        "tenant_id": tenant["id"],
+        "email": f"{orphan_id}@example.local",
+        "role": "customer",
+        "name": "Orphan List Test",
+        "password_hash": "unused",
+    })
+    try:
+        r = requests.get(
+            f"{API}/admin/orphan-customer-users",
+            headers={"Authorization": f"Bearer {sup}"}, timeout=15,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert isinstance(body.get("users"), list)
+        found = [u for u in body["users"] if u["id"] == orphan_id]
+        assert len(found) == 1
+        assert found[0]["reason"] == "missing_customer_id"
+        assert found[0]["email"] == f"{orphan_id}@example.local"
+    finally:
+        _sync_db.users.delete_one({"id": orphan_id})
+
+
+def test_orphan_list_admin_forbidden():
+    adm = _login("admin@aquaterra.com")
+    r = requests.get(
+        f"{API}/admin/orphan-customer-users",
+        headers={"Authorization": f"Bearer {adm}"}, timeout=15,
+    )
+    assert r.status_code == 403
+
+
+# ── NEW · Feb-2026 · POST /portal/complete-profile ────────────────
+def test_complete_profile_customer_only():
+    """Non-customers cannot hit the endpoint (403)."""
+    adm = _login("admin@aquaterra.com")
+    r = requests.post(
+        f"{API}/portal/complete-profile",
+        json={"first_name": "X", "last_name": "Y", "phone": "5551234",
+              "service_address": "1 Test St", "preferred_contact": "email"},
+        headers={"Authorization": f"Bearer {adm}"}, timeout=15,
+    )
+    assert r.status_code == 403
+
+
+def test_complete_profile_creates_customer_and_clears_flag():
+    """First submission creates customer + clears the orphan flag.
+    Second submission is idempotent (was_already_linked=True)."""
+    # Seed an orphan customer auth user with a login we control.
+    orphan_id = f"cp-{uuid.uuid4().hex[:8]}"
+    orphan_email = f"{orphan_id}@example.com"
+    tenant = _sync_db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0, "id": 1})
+
+    # Real bcrypt hash for the password 'password123' via the app's own
+    # helper so we can log in via the API.
+    from utils import hash_password
+    _sync_db.users.insert_one({
+        "id": orphan_id,
+        "tenant_id": tenant["id"],
+        "email": orphan_email,
+        "role": "customer",
+        "name": "",
+        "password_hash": hash_password("password123"),
+    })
+    new_cid = None
+    try:
+        tok = _login(orphan_email)
+
+        # /auth/me should report orphan.
+        me = requests.get(f"{API}/auth/me",
+                           headers={"Authorization": f"Bearer {tok}"}, timeout=15).json()
+        assert me.get("customer_record_missing") is True
+
+        r = requests.post(
+            f"{API}/portal/complete-profile",
+            json={
+                "first_name": "Jane",
+                "last_name": "Doe",
+                "phone": "5555550100",
+                "service_address": "42 Vistancia Blvd",
+                "preferred_contact": "sms",
+            },
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["ok"] is True
+        assert body["was_already_linked"] is False
+        assert body["customer_record_missing"] is False
+        new_cid = body["customer_id"]
+
+        # DB reflects: customer doc exists + auth-user relinked.
+        cust = _sync_db.customers.find_one({"id": new_cid}, {"_id": 0})
+        assert cust is not None
+        assert cust["email"] == orphan_email
+        assert cust["preferred_contact"] == "sms"
+        assert cust["address"] == "42 Vistancia Blvd"
+        assert cust["created_via"] == "customer_self_serve"
+        u2 = _sync_db.users.find_one({"id": orphan_id},
+                                       {"_id": 0, "customer_id": 1})
+        assert u2["customer_id"] == new_cid
+
+        # /auth/me now reports NOT orphan.
+        me2 = requests.get(f"{API}/auth/me",
+                            headers={"Authorization": f"Bearer {tok}"}, timeout=15).json()
+        assert me2.get("customer_record_missing") is False
+
+        # Idempotent — second call returns was_already_linked.
+        r2 = requests.post(
+            f"{API}/portal/complete-profile",
+            json={
+                "first_name": "Jane",
+                "last_name": "Doe",
+                "phone": "5555550100",
+                "service_address": "42 Vistancia Blvd",
+                "preferred_contact": "sms",
+            },
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        )
+        assert r2.status_code == 200
+        assert r2.json()["was_already_linked"] is True
+    finally:
+        _sync_db.users.delete_one({"id": orphan_id})
+        if new_cid:
+            _sync_db.customers.delete_one({"id": new_cid})
+
+
+def test_complete_profile_skip_audits_and_leaves_orphan():
+    """?skip=1 writes an audit event and leaves the flag intact."""
+    orphan_id = f"cpskip-{uuid.uuid4().hex[:8]}"
+    orphan_email = f"{orphan_id}@example.com"
+    tenant = _sync_db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0, "id": 1})
+
+    from utils import hash_password
+    _sync_db.users.insert_one({
+        "id": orphan_id,
+        "tenant_id": tenant["id"],
+        "email": orphan_email,
+        "role": "customer",
+        "name": "",
+        "password_hash": hash_password("password123"),
+    })
+    try:
+        tok = _login(orphan_email)
+        r = requests.post(
+            f"{API}/portal/complete-profile?skip=1",
+            json={},
+            headers={"Authorization": f"Bearer {tok}"}, timeout=15,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["skipped"] is True
+        assert body["customer_record_missing"] is True
+        # Still orphan on the auth side.
+        u = _sync_db.users.find_one({"id": orphan_id},
+                                      {"_id": 0, "customer_id": 1})
+        assert not u.get("customer_id")
+        # Audit note written.
+        note = _sync_db.audit_events.find_one({
+            "kind": "profile_incomplete_reminder",
+            "user_id": orphan_id,
+        }, {"_id": 0})
+        assert note is not None
+    finally:
+        _sync_db.users.delete_one({"id": orphan_id})
+        _sync_db.audit_events.delete_many({"user_id": orphan_id})

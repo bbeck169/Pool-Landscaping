@@ -53,7 +53,7 @@ export default function PortalEstimates() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
           renderItem={({ item }) => (
             <View style={styles.card} testID={`portal-estimate-${item.id}`}>
-              <Pressable onPress={() => router.push(`/quote/${item.id}`)}>
+              <Pressable onPress={() => router.push(`/estimate-view/${item.id}`)}>
                 <View style={styles.topRow}>
                   <View style={styles.typeBadge}>
                     <Ionicons name="document-text-outline" size={16} color={colors.brand} />

@@ -40,7 +40,7 @@ export default function PortalInvoices() {
           contentContainerStyle={{ padding: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing["3xl"] }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
           renderItem={({ item }) => (
-            <Pressable style={styles.card} onPress={() => router.push(`/quote/${item.id}`)} testID={`portal-invoice-${item.id}`}>
+            <Pressable style={styles.card} onPress={() => router.push(`/invoice/${item.id}`)} testID={`portal-invoice-${item.id}`}>
               <View style={styles.topRow}>
                 <View style={styles.typeBadge}>
                   <Ionicons name="receipt-outline" size={16} color={colors.brand} />

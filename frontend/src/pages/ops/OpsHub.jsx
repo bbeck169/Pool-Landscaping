@@ -949,8 +949,11 @@ export function TechColorSwatch({ user, editable, onChange }) {
  * Optimistic — flips the local ``val`` immediately on click, then
  * awaits the parent's ``onChange`` (which owns the toast + refresh
  * cycle). On rejection the local state reverts.
+ *
+ * Exported for the unit test suite in
+ * ``src/test/team-autoclockin-toggle.test.jsx``.
  */
-function TechAutoClockinToggle({ user, editable, onChange }) {
+export function TechAutoClockinToggle({ user, editable, onChange }) {
   const isTech = (user?.role || "").toLowerCase() === "technician";
   const initialVal = user?.auto_clockin_enabled === true;
   const [val, setVal] = React.useState(initialVal);
