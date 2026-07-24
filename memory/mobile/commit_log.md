@@ -280,3 +280,20 @@
   - Fresh tech login → Auto Clock-In ON by default ✅
   - Toggle to OFF → Red banner "Auto Clock-In is OFF", Status: Stopped ✅
   - No errors after Metro cache clear ✅
+
+## Iteration 15 — Move Weather Widget to Bottom of Schedule Page
+- **Commit**: 9b1bfad97faa9c73cf4fe1f5477274a520c5539b
+- **Date**: 2026-07-24
+- **Changes**:
+  - Removed `<WeatherWidget>` from the top wrapper (line 276) in `schedule/calendar.tsx`
+  - Passed `weatherWidget` as a React element prop to both `GridView` and `CalendarView`
+  - Grid view: Renders weather at bottom of existing ScrollView content
+  - Calendar view: Converted root from `<View>` to `<ScrollView>` with weather at bottom, added `nestedScrollEnabled` for horizontal calendar scroll
+  - Both modes scroll as one continuous page with weather at the end
+- **Files modified**:
+  - `/app/mobile/app/(app)/schedule/calendar.tsx` (weather position + scroll structure)
+- **Verified via screenshots**:
+  - Standard phone (390×844) Grid: weather below job list ✅
+  - Standard phone (390×844) Calendar: weather below week columns ✅
+  - Tablet (768×1024) Grid: weather at bottom, clean layout ✅
+

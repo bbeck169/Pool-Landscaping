@@ -273,7 +273,6 @@ export default function ScheduleCalendar() {
       />
       <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.md }}>
         {user?.role !== "admin" && user?.role !== "super_admin" && <LandscapingClockWidget />}
-        {(isTech || isAdmin) && <WeatherWidget onHourlyLoaded={setHourlyData} />}
       </View>
 
       {/* Top-level Grid ↔ Calendar toggle. */}
@@ -327,6 +326,7 @@ export default function ScheduleCalendar() {
           onNewJob={() => router.push(`/job/new?date=${focusISO}` as any)}
           isAdmin={isAdmin}
           hourlyData={hourlyData}
+          weatherWidget={(isTech || isAdmin) ? <WeatherWidget onHourlyLoaded={setHourlyData} /> : null}
         />
       ) : (
         <CalendarView
@@ -338,6 +338,7 @@ export default function ScheduleCalendar() {
           onPrev={() => setFocus((d) => addDays(d, -7))}
           onNext={() => setFocus((d) => addDays(d, 7))}
           onOpenJob={(id) => router.push(`/job/${id}/checklist` as any)}
+          weatherWidget={(isTech || isAdmin) ? <WeatherWidget onHourlyLoaded={setHourlyData} /> : null}
         />
       )}
     </View>
@@ -351,6 +352,7 @@ function GridView(props: any) {
     rearrangeMode, onToggleRearrange, onSaveReorder, onShift,
     onBulkComplete, onOpenMove, moveOpen, setMoveOpen, moveDate, setMoveDate,
     onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, hourlyData,
+    weatherWidget,
   } = props;
   const focusISO = iso(focus);
   const isToday = focusISO === iso(new Date());
@@ -466,6 +468,11 @@ function GridView(props: any) {
           hourlyData={hourlyData}
         />
       ))}
+      {weatherWidget ? (
+        <View style={{ paddingHorizontal: spacing.xs, paddingTop: spacing.lg }} testID="schedule-weather-bottom">
+          {weatherWidget}
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -589,9 +596,10 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
 /* ═══ Calendar view ══════════════════════════════════════════════════ */
 function CalendarView({
   weekDays, weekTitle, jobsByDay, showBH, onToggleBH, onPrev, onNext, onOpenJob,
+  weatherWidget,
 }: any) {
   return (
-    <View style={{ flex: 1 }}>
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
       <View style={cStyles.head}>
         <Pressable onPress={onPrev} style={cStyles.navBtn} testID="calendar-prev-week">
           <Ionicons name="chevron-back" size={18} color={colors.onSurface} />
@@ -611,12 +619,11 @@ function CalendarView({
         </Pressable>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} nestedScrollEnabled>
         <View style={{ flexDirection: "row" }}>
           {weekDays.map((d: Date) => {
             const key = iso(d);
             const dayJ: Job[] = (jobsByDay[key] || []).slice();
-            // Phase 30X · date-only. Stable original-order (no time sort).
             const isToday = key === iso(new Date());
             return (
               <View key={key} style={cStyles.col} testID={`calendar-col-${key}`}>
@@ -626,38 +633,42 @@ function CalendarView({
                   </Text>
                   <Text style={[cStyles.colDay, isToday && { color: "#fff" }]}>{d.getDate()}</Text>
                 </View>
-                <ScrollView contentContainerStyle={{ paddingBottom: spacing.md }}>
-                  {dayJ.length === 0 ? (
-                    <Text style={cStyles.colEmpty}>—</Text>
-                  ) : dayJ.map((j) => {
-                    const svc = SERVICE_COLOR(j.service_type);
-                    return (
-                      <Pressable
-                        key={j.id}
-                        onPress={() => onOpenJob(j.id)}
-                        style={[cStyles.eventCard, { backgroundColor: svc.bg, borderLeftColor: svc.tag }]}
-                        testID={`calendar-event-${j.id}`}
-                      >
-                        <Text style={[cStyles.eventTitle, { color: svc.fg }]} numberOfLines={2}>
-                          {isRecurring(j) ? "🔁 " : ""}
-                          {j.service_type || j.title || "Job"}
-                        </Text>
-                        <Text style={[cStyles.eventCust, { color: svc.fg }]} numberOfLines={1}>
-                          {j.customer_is_vip ? "★ " : ""}{j.customer_name || "—"}
-                        </Text>
-                        {showBH ? (
-                          <Text style={[cStyles.eventBH, { color: svc.fg }]}>{jobHours(j)}</Text>
-                        ) : null}
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
+                {dayJ.length === 0 ? (
+                  <Text style={cStyles.colEmpty}>—</Text>
+                ) : dayJ.map((j) => {
+                  const svc = SERVICE_COLOR(j.service_type);
+                  return (
+                    <Pressable
+                      key={j.id}
+                      onPress={() => onOpenJob(j.id)}
+                      style={[cStyles.eventCard, { backgroundColor: svc.bg, borderLeftColor: svc.tag }]}
+                      testID={`calendar-event-${j.id}`}
+                    >
+                      <Text style={[cStyles.eventTitle, { color: svc.fg }]} numberOfLines={2}>
+                        {isRecurring(j) ? "🔁 " : ""}
+                        {j.service_type || j.title || "Job"}
+                      </Text>
+                      <Text style={[cStyles.eventCust, { color: svc.fg }]} numberOfLines={1}>
+                        {j.customer_is_vip ? "★ " : ""}{j.customer_name || "—"}
+                      </Text>
+                      {showBH ? (
+                        <Text style={[cStyles.eventBH, { color: svc.fg }]}>{jobHours(j)}</Text>
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
               </View>
             );
           })}
         </View>
       </ScrollView>
-    </View>
+
+      {weatherWidget ? (
+        <View style={{ paddingHorizontal: spacing.md, paddingTop: spacing.lg, paddingBottom: spacing["3xl"] }} testID="calendar-weather-bottom">
+          {weatherWidget}
+        </View>
+      ) : null}
+    </ScrollView>
   );
 }
 
