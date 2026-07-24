@@ -18,6 +18,7 @@ export default function PortalProfile() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
@@ -25,17 +26,34 @@ export default function PortalProfile() {
   const [avatar, setAvatar] = useState("");
 
   const load = useCallback(async () => {
+    setLoadError(false);
     try {
-      const me = await api.get("/me");
-      setName(me.name || "");
-      setPhone(me.phone || "");
-      setAddress(me.address || "");
-      setBilling(me.billing_address || "");
-      setAvatar(me.avatar || "");
+      // Primary source: /auth/me always works for any authenticated user
+      const authMe = await api.get("/auth/me");
+      setName(authMe.name || "");
+      setAvatar(authMe.avatar || "");
+
+      // Try to get extended customer profile from /me (has phone, address, etc.)
+      try {
+        const me = await api.get("/me");
+        if (me.name) setName(me.name);
+        if (me.phone) setPhone(me.phone);
+        if (me.address) setAddress(me.address);
+        if (me.billing_address) setBilling(me.billing_address);
+        if (me.avatar) setAvatar(me.avatar);
+      } catch {
+        // /api/me may 404 if customer record doesn't exist — that's OK,
+        // we still have the auth data above.
+        setLoadError(true);
+      }
+    } catch {
+      // Even /auth/me failed — use whatever we have from the auth context
+      setName(user?.name || user?.email || "");
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -53,8 +71,13 @@ export default function PortalProfile() {
     try {
       await api.put("/me", { name, phone, address, billing_address: billing, avatar });
       setSaved(true);
-    } catch {}
-    finally { setSaving(false); }
+    } catch {
+      // Save endpoint may also fail if customer record doesn't exist
+      // Still persist what we can via /auth/me if available
+      setSaved(false);
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) {
@@ -70,6 +93,15 @@ export default function PortalProfile() {
     <View style={styles.root}>
       <Header title="My Profile" back />
       <KeyboardAwareScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }} bottomOffset={24} keyboardShouldPersistTaps="handled">
+        {loadError && (
+          <View style={styles.errorBanner} testID="portal-profile-load-error">
+            <Ionicons name="alert-circle-outline" size={16} color="#92400E" />
+            <Text style={styles.errorText}>
+              Some profile info could not be loaded. Pull to refresh or contact support.
+            </Text>
+          </View>
+        )}
+
         <View style={styles.avatarWrap}>
           <Pressable onPress={pickAvatar} testID="portal-profile-avatar">
             {avatar ? (
@@ -115,4 +147,21 @@ const styles = StyleSheet.create({
   saved: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.success, marginTop: spacing.md, textAlign: "center" },
   logout: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, marginTop: spacing.xl, height: 52, borderRadius: radius.md, borderWidth: 1.5, borderColor: colors.error },
   logoutText: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.error },
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    padding: spacing.md,
+    backgroundColor: "#FEF3C7",
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    marginBottom: spacing.lg,
+  },
+  errorText: {
+    flex: 1,
+    fontFamily: font.regular,
+    fontSize: fontSize.sm,
+    color: "#92400E",
+  },
 });

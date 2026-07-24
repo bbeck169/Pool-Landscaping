@@ -154,6 +154,12 @@ api_router.include_router(_p12b_admin.router)
 # match over the legacy legal-CMS ``GET /api/legal/{slug}`` handler.
 from routers import tos as _tos_router  # noqa: E402
 api_router.include_router(_tos_router.router)
+
+# Feb-2026 · mobile-flagged gaps — Auto Clock-In field + user self-PATCH
+# + orphan-customer repair. Registered alongside the ToS router since
+# they share the /users/me + /admin/users/{id} URL space.
+from routers import auto_clockin as _auto_clockin_router  # noqa: E402
+api_router.include_router(_auto_clockin_router.router)
 api_router.include_router(_p17_reassign.router)
 api_router.include_router(_p18_ai_brain.router)
 api_router.include_router(_p19_admin_users.router)
@@ -470,6 +476,16 @@ async def _background_seed():
         logger.info(f"[phase21] rebrand migration: {rb_res}")
     except Exception as e:
         logger.warning(f"[phase21] rebrand migration crashed: {e}")
+
+    # Feb-2026 · mobile-flagged gap — Auto Clock-In field backfill
+    # (idempotent). Stamps role-appropriate defaults on existing users
+    # without the field so mobile / web can key off a single flag.
+    try:
+        from routers.auto_clockin import run_auto_clockin_backfill
+        ac_res = await run_auto_clockin_backfill()
+        logger.info(f"[auto-clockin] backfill: {ac_res}")
+    except Exception as e:
+        logger.warning(f"[auto-clockin] backfill crashed: {e}")
 
     # Feb-2026 · Item 11 — Referral vesting backfill (idempotent).
     try:

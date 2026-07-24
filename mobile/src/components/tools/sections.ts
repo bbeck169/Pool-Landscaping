@@ -38,8 +38,6 @@ export const TECH_SECTIONS: ToolSection[] = [
       { key: "inventory", icon: "layers-outline", label: "Inventory", desc: "Truck stock & re-order alerts", route: "/(app)/inventory" },
       { key: "equipment", icon: "cube-outline", label: "My Equipment", desc: "Assets assigned to me", route: "/(app)/assets" },
       { key: "new-lead", icon: "magnet-outline", label: "New Lead", desc: "Log a walk-in or referral", route: "/(app)/new-lead" },
-      { key: "before-after", icon: "images-outline", label: "Before / After", desc: "Share the wow shot", route: "/(app)/before-after" as any },
-      { key: "chat", icon: "chatbubbles-outline", label: "Team Chat", desc: "DMs + channels", route: "/(app)/chat" as any },
     ],
   },
   {

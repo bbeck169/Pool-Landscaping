@@ -13,6 +13,7 @@ import { Header, NotificationBell } from "@/src/components/widgets";
 
 const SECTIONS: { key: string; label: string; icon: any; route: string }[] = [
   { key: "services", label: "Service Records", icon: "clipboard-outline", route: "/portal/services" },
+  { key: "service-reports", label: "Service Reports", icon: "document-text-outline", route: "/portal/service-reports" },
   { key: "book",     label: "Book Service",    icon: "calendar-outline", route: "/portal/book" },
   { key: "appts",    label: "Appointments",    icon: "checkmark-done-outline", route: "/portal/appointments" },
   { key: "photos",   label: "Photos",          icon: "images-outline", route: "/portal/photos" },

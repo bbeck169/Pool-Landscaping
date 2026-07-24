@@ -429,13 +429,25 @@ async def update_user(user_id: str, body: dict,
     if (target.get("role") or "").lower() == "super_admin":
         raise HTTPException(403, "super_admin accounts cannot be modified from the roster widget.")
 
-    allowed_fields = {"department", "role", "display_color_hex"}
+    allowed_fields = {"department", "role", "display_color_hex", "auto_clockin_enabled"}
     unknown = set(body.keys()) - allowed_fields
     if unknown:
         raise HTTPException(400, f"unsupported fields: {sorted(unknown)}")
 
     updates: dict = {}
     audit_changes: dict = {}
+
+    # Feb-2026 · mobile-flagged gap — per-user Auto Clock-In enable flag.
+    # Admin (and super_admin) can toggle for any technician; a self-PATCH
+    # variant lives at ``PATCH /users/me`` for the user's own account.
+    if "auto_clockin_enabled" in body:
+        val = body["auto_clockin_enabled"]
+        if not isinstance(val, bool):
+            raise HTTPException(400, "auto_clockin_enabled must be a boolean")
+        old_val = target.get("auto_clockin_enabled")
+        if val != old_val:
+            updates["auto_clockin_enabled"] = val
+            audit_changes["auto_clockin_enabled"] = {"old": old_val, "new": val}
 
     # Phase 21 · Feb 2026 · Addition B — per-user display color for the
     # Schedule / dispatch calendar. Validated as `#RRGGBB`; null clears

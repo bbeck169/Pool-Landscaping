@@ -32,6 +32,7 @@ import { Plus, Search, X as XIcon, Filter, ChevronLeft, ChevronRight,
 
 import { api } from "@/api";
 import { colors, font } from "@/theme";
+import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 import { useAuth } from "@/auth";
 import { Gate, useCan } from "@/hooks/usePermissions";
 import { useClockInGate, ClockInGateDialog } from "@/hooks/useClockInGate";
@@ -526,16 +527,13 @@ export default function CalendarSchedule() {
   });
 
   return (
-    // BUG · Feb-2026 — full-page scroll. Outer container carries NO
-    // ``overflow`` / ``height: 100vh`` / ``max-height`` rules so the
-    // whole document scrolls naturally when the tech legend + weather
-    // widget + calendar body + day-summary cards exceed the viewport
-    // height. The RBC calendar keeps its own internal wheel-scroll
-    // for the time-of-day grid (correct); the trap only happens when
-    // the OUTER page also clamps its height, which we no longer do.
-    // Mirrors the DispatchBoardPage fix pattern.
-    <div
-      className="p-4 md:p-6 pb-24"
+    // Feb-2026 · scroll-trap prevention convention — the outer
+    // ``<SafeScrollContainer>`` guarantees the whole document scrolls
+    // naturally. The RBC calendar keeps its own internal wheel-scroll
+    // for the time-of-day grid — that's expected + correct. See
+    // ``components/layout/SafeScrollContainer.jsx`` for rationale.
+    <SafeScrollContainer
+      className="p-4 md:p-6"
       style={{ fontFamily: font.family }}
       data-testid="calendar-schedule"
     >
@@ -918,7 +916,7 @@ export default function CalendarSchedule() {
         onClose={() => setChecklistJobId(null)}
         onSubmitted={() => { load(); }}
       />
-    </div>
+    </SafeScrollContainer>
   );
 }
 

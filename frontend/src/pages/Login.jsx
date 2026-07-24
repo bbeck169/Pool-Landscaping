@@ -90,13 +90,12 @@ export default function Login() {
             />
           </div>
           <div>
-            <h1 className="text-4xl lg:text-5xl font-bold leading-tight mb-4">
-              Run your crew like clockwork.
+            <h1
+              className="text-4xl lg:text-5xl font-bold leading-tight"
+              data-testid="login-welcome-headline"
+            >
+              Welcome to Pool &amp; Landscaping of Vistancia LLC
             </h1>
-            <p className="text-base opacity-90 max-w-md">
-              Schedule jobs, dispatch technicians, send quotes, and collect
-              payments — all in one control room.
-            </p>
           </div>
         </div>
       </aside>

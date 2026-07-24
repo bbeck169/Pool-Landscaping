@@ -154,7 +154,30 @@ async def me(user: dict = Depends(get_current_user)):
     # ToS gate flag so the frontend gate can read a single source of
     # truth without duplicating the role/version logic client-side.
     from config_tos import compute_must_accept_tos
-    return {**user, "must_accept_tos": compute_must_accept_tos(user)}
+    payload = {**user, "must_accept_tos": compute_must_accept_tos(user)}
+
+    # Feb-2026 · mobile-flagged gap — detect orphan customer auth users
+    # (role=customer but no linked customer record) so the frontend can
+    # render a "complete your profile" prompt instead of 500-ing on a
+    # missing customer_id downstream. We NEVER silently create records
+    # here; a super_admin repair endpoint exists for that
+    # (``POST /api/admin/users/{id}/create-customer-record``).
+    if user.get("role") == "customer":
+        cid = user.get("customer_id")
+        cust = None
+        if cid:
+            cust = await db.customers.find_one(
+                {"id": cid, "tenant_id": user.get("tenant_id")},
+                {"_id": 0, "id": 1},
+            )
+        payload["customer_record_missing"] = cust is None
+
+    # Feb-2026 · surface ``auto_clockin_enabled`` in the me payload so
+    # the mobile Clock-In screen + web Team page can key off the same
+    # authoritative flag. Defaults: True for tech, False otherwise.
+    if "auto_clockin_enabled" not in payload:
+        payload["auto_clockin_enabled"] = (user.get("role") == "technician")
+    return payload
 
 
 @router.post("/admin/impersonate/{customer_id}")

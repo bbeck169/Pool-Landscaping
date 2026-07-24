@@ -15,6 +15,7 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { assertNoScrollTrap } from "@/test/helpers/assertNoScrollTrap";
 
 
 // Stub heavy dependencies so the mount only exercises the outer
@@ -57,22 +58,17 @@ beforeEach(() => {
 
 
 describe("CalendarSchedule — full-page scroll (outer container)", () => {
-  it("outermost container does NOT have overflow: hidden / scroll or height: 100vh", () => {
+  it("outermost container passes the shared scroll-trap guard", () => {
     render(
       <MemoryRouter initialEntries={["/schedule"]}>
         <CalendarSchedule />
       </MemoryRouter>,
     );
     const root = screen.getByTestId("calendar-schedule");
-    const styles = window.getComputedStyle(root);
-    // The trap symptoms.
-    expect(styles.overflow).not.toBe("hidden");
-    expect(styles.overflowY).not.toBe("scroll");
-    expect(styles.overflowY).not.toBe("hidden");
-    expect(styles.height).not.toBe("100vh");
-    // The tailwind classes on the outer div — assertion-friendly.
-    expect(root.className).toMatch(/pb-24/);
-    expect(root.className).not.toMatch(/\bh-screen\b/);
-    expect(root.className).not.toMatch(/\bmax-h-\[?/);
+    // Now uses <SafeScrollContainer> — the shared helper enforces
+    // the same guarantees as the pre-refactor hand-rolled assertions.
+    assertNoScrollTrap(root);
+    // Sanity: SafeScrollContainer's `pb-24` base still applies.
+    expect(root.className).toMatch(/\bpb-24\b/);
   });
 });

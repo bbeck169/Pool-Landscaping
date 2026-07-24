@@ -8335,3 +8335,55 @@ No other schema drift.
 
 ### OpenAPI additions this session (final)
 `GET /api/legal/tos`, `POST /api/users/me/accept-tos`, `POST /api/admin/users/{uid}/reset-tos`, `GET/POST /api/tenants/current/slug-aliases`, `DELETE /api/tenants/current/slug-aliases/{alias}`, `GET/PATCH /api/tenants/current/primary-app-domain`, `POST /api/customers/{cid}/send-sms`.
+
+---
+
+## Feb 2026 · Login caption + SafeScrollContainer + mobile-gap backend
+
+### 1. Login welcome caption
+* `frontend/src/pages/Login.jsx` — replaced the "Run your crew like clockwork" split copy with a single primary headline `Welcome to Pool & Landscaping of Vistancia LLC` (data-testid `login-welcome-headline`). Subline removed for a cleaner visual.
+* Vitest `src/test/login-welcome.test.jsx` — 2/2 pass (asserts new headline present + old copy fully removed).
+
+### 2. Scroll-trap prevention convention (SafeScrollContainer)
+* New component `frontend/src/components/layout/SafeScrollContainer.jsx` — semantic wrapper enforcing `min-h-screen w-full pb-24` with NO overflow / height / max-height rules. Callers add their own padding/spacing/grid via `className`; the base guarantees are appended-first so they can't be accidentally removed.
+* Reusable helper `frontend/src/test/helpers/assertNoScrollTrap.js` — pins the guarantees in vitest via computed styles + class-list checks. Regex distinguishes `min-h-screen` (safe) from `h-screen` (trap).
+* Refactored pages to adopt the wrapper:
+  * `DispatchBoardPage.jsx` — outermost `<div>` → `<SafeScrollContainer className="px-4 md:px-8 pt-4 space-y-4">`.
+  * `CalendarSchedule.jsx` — outermost `<div>` → `<SafeScrollContainer className="p-4 md:p-6">`.
+* New vitest `src/test/safe-scroll-container.test.jsx` — 4/4 pass (defaults, `as` prop, className merge, negative helper test).
+* Existing `src/test/schedule-full-page-scroll.test.jsx` refactored to import + use the shared helper. Locked in as the reusable convention for every future page.
+
+### 3. Mobile-flagged backend gaps
+* **`users.auto_clockin_enabled`** — new boolean field. Default `true` for `role=technician`, `false` for every other role.
+  * Exposed on `GET /api/auth/me` payload (line 151 in `routers/auth.py`).
+  * Admin PATCH via `PATCH /api/users/{id}` — new allowed field in `routers/team.py`; type-checked as bool with 400 on non-bool.
+  * Self-PATCH via `PATCH /api/users/me` (new endpoint, `operationId users.selfPatch`) — deliberately narrow so a user cannot escalate their own role/department.
+  * Boot backfill `run_auto_clockin_backfill()` — first-run stamped **5 tech users → True** + **43 non-tech users → False**. Idempotent (subsequent runs are 0/0).
+* **`/auth/me` orphan flag** — when `user.role == "customer"` and the linked `customer_id` doesn't resolve to a customer doc in the tenant's `customers` collection, the payload now carries `customer_record_missing: true`. Verified live: `customer@aquaterra.com` returns `True` (their auth user carries a `customer_id` that has no matching customer record).
+* **`POST /api/admin/users/{uid}/create-customer-record`** — new super_admin repair endpoint (`admin.repairOrphanCustomer`). Creates a minimal customer doc from the auth user's fields + links the user via `customer_id`. Idempotent — a second call returns `was_already_linked: true` when the link already resolves. **Admin (non-super) is 403**.
+* **NOT delivered this pass**: Team page toggle column UI for `auto_clockin_enabled`. Deferred to next pass. Backend contract is fully in place — the column is a small OpsHub row extension + a PATCH.
+
+### Tests
+* Backend pytest `tests/test_auto_clockin_and_orphan.py` — **9/9 pass**. Covers `/auth/me` field exposure per role, self-PATCH flip, admin PATCH type validation, backfill idempotency, orphan-repair happy-path + idempotency + admin-403.
+* Vitest (this pass): 4 (`safe-scroll-container`) + 2 (`login-welcome`) = **6/6 pass**.
+* Full regression sweep: **79 pytest / 1 skipped / 0 failures** across 7 files, **39 vitest / 0 failures** across 10 files. Grand total **118 tests, 0 failures**.
+
+### OpenAPI additions this pass
+* `PATCH /api/users/me` — `users.selfPatch`
+* `POST /api/admin/users/{uid}/create-customer-record` — `admin.repairOrphanCustomer`
+
+### Files touched
+* `frontend/src/pages/Login.jsx`
+* `frontend/src/components/layout/SafeScrollContainer.jsx` (new)
+* `frontend/src/test/helpers/assertNoScrollTrap.js` (new)
+* `frontend/src/pages/dispatch/DispatchBoardPage.jsx`
+* `frontend/src/pages/schedule/CalendarSchedule.jsx`
+* `frontend/src/test/safe-scroll-container.test.jsx` (new)
+* `frontend/src/test/login-welcome.test.jsx` (new)
+* `frontend/src/test/schedule-full-page-scroll.test.jsx` (helper adoption)
+* `backend/routers/auto_clockin.py` (new — self-PATCH + orphan repair + backfill)
+* `backend/routers/auth.py` (`/auth/me` decorated with `auto_clockin_enabled` + `customer_record_missing`)
+* `backend/routers/team.py` (PATCH accepts `auto_clockin_enabled`)
+* `backend/server.py` (registers new router + wires backfill into boot pipeline)
+* `backend/tests/test_auto_clockin_and_orphan.py` (new)
+* `/app/memory/PRD.md`

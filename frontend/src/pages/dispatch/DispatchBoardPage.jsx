@@ -21,6 +21,7 @@
 import React from "react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
+import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 import {
   CalendarDays, Globe, Zap, MapPin, X, Users, ChevronDown,
   Sparkles, PlusCircle, Loader2, ArrowRight,
@@ -249,9 +250,13 @@ export default function DispatchBoardPage() {
   }, [pins, techId, techs]);
 
   return (
-    // NO overflow style here — page scrolls naturally.
-    <div className="px-4 md:px-8 pt-4 pb-24 space-y-4"
-         data-testid="dispatch-board-page">
+    // Feb-2026 · scroll-trap prevention convention — <SafeScrollContainer>
+    // enforces "no overflow-hidden / no h-screen / no max-h on the outer
+    // container + pb-24 bottom breathing room". See
+    // ``components/layout/SafeScrollContainer.jsx`` + the
+    // ``assertNoScrollTrap`` vitest helper.
+    <SafeScrollContainer className="px-4 md:px-8 pt-4 space-y-4"
+                          data-testid="dispatch-board-page">
       {/* ─────────── Header + Day tabs ─────────── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
@@ -665,7 +670,7 @@ export default function DispatchBoardPage() {
         day={day}
         onSuccess={() => { loadActiveShifts(); load(); }}
       />
-    </div>
+    </SafeScrollContainer>
   );
 }
 

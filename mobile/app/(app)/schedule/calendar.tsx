@@ -33,7 +33,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { storage } from "@/src/utils/storage";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
-import { Header } from "@/src/components/widgets";
+import { Header, NotificationBell } from "@/src/components/widgets";
 import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
 import WeatherWidget from "@/src/components/weather/WeatherWidget";
 import RainFlag from "@/src/components/weather/RainFlag";
@@ -270,6 +270,7 @@ export default function ScheduleCalendar() {
       <Header
         title="Schedule"
         subtitle={loading ? "Loading…" : `${jobs.length} jobs in window · ${mode}`}
+        right={isTech ? <NotificationBell /> : undefined}
       />
       <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.md }}>
         {user?.role !== "admin" && user?.role !== "super_admin" && <LandscapingClockWidget />}
