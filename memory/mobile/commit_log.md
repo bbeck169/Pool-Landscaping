@@ -356,3 +356,25 @@
 - **Lint**: All 7 files clean ✅
 - **Build**: Metro bundled 1897 modules successfully ✅
 - **Note**: Mobile tunnel CDN serving cached "Preview Unavailable" page — platform-level issue, not code. Local service responds 200 on port 3001.
+
+
+## Iteration 18 — MEDIUM-Priority Parity Gap Documentation & Cleanup
+- **Commit**: 7d4e358 (docs), b9415c5 (code), 63025b2 (portal nav)
+- **Date**: 2026-07-24
+- **Changes**:
+  - **Documentation only** — all code was already auto-committed in prior session
+  - Updated `MOBILE_PARITY_GAP.md`: marked 9 MEDIUM-priority items as completed
+    - Portal Invoice detail nav wiring ✅
+    - Portal Estimate detail nav wiring ✅
+    - Settings: Business Card, AI Brain, Local SEO, Website SEO, Vanity Slugs ✅
+    - Customer Chemistry (tech route + admin route) ✅
+  - Updated summary counts: MEDIUM reduced from ~25 to ~16
+  - Added `.pytest_cache/`, `.ruff_cache/`, `backend.template.bak/` to `.gitignore`
+  - Cleaned git staging area of cache file noise
+- **Files modified**:
+  - `memory/MOBILE_PARITY_GAP.md` (9 line items updated + summary section)
+  - `memory/mobile/commit_log.md` (appended this entry)
+  - `memory/mobile/iteration_18.md` (created)
+  - `.gitignore` (cache directories added)
+- **Web files referenced**: None
+

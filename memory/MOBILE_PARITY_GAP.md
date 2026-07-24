@@ -13,9 +13,9 @@
 | `/portal/service-reports` | `portal/service-reports.tsx` | ✅ Y | — | — |
 | `/portal/service-reports/:id` | `portal/service-report/[id].tsx` | ✅ Y | — | — |
 | `/portal/invoices` | `portal/invoices.tsx` | ✅ Y | — | — |
-| `/portal/invoices/:id` | `invoice/[id].tsx` | ⚠️ Partial | Admin invoice detail exists but not portal-scoped | MEDIUM |
+| `/portal/invoices/:id` | `portal/invoices.tsx` → `invoice/[id].tsx` | ✅ Y | Portal nav wired (Iter 18) | — |
 | `/portal/estimates` | `portal/estimates.tsx` | ✅ Y | — | — |
-| `/portal/estimates/:id` | `estimate-view/[id].tsx` | ⚠️ Partial | Exists outside portal — verify role gating | MEDIUM |
+| `/portal/estimates/:id` | `portal/estimates.tsx` → `estimate-view/[id].tsx` | ✅ Y | Portal nav wired (Iter 18) | — |
 | `/portal/payments` | `portal/payments.tsx` | ✅ Y | — | — |
 | `/portal/payment-method` | `portal/payment-method.tsx` | ✅ Y | — | — |
 | `/portal/documents` | `portal/documents.tsx` | ✅ Y | — | — |
@@ -66,7 +66,7 @@
 | `/request-job` | — | ❌ N | Tech job request form | MEDIUM |
 | `/notifications` | `notifications.tsx` | ✅ Y | — | — |
 | `/chat` | `(app)/chat.tsx` | ✅ Y | File exists (removed from tech nav per cleanup) | — |
-| `/customers/:id/chemistry` | — | ❌ N | Pool chemistry readings per customer (tech use) | MEDIUM |
+| `/customers/:id/chemistry` | `customer/chemistry/[id].tsx` | ✅ Y | Built (Iter 18) | — |
 
 ## Admin Routes
 
@@ -79,7 +79,7 @@
 | `/customers/new` | `customer/new.tsx` | ✅ Y | — | — |
 | `/customers/:id` | `customer/[id].tsx` | ✅ Y | — | — |
 | `/customers/:id/edit` | — | ❌ N | Customer edit form (currently inline in web) | MEDIUM |
-| `/customers/:id/chemistry` | — | ❌ N | Pool chemistry dashboard per customer | MEDIUM |
+| `/customers/:id/chemistry` | `customer/chemistry/[id].tsx` | ✅ Y | Built (Iter 18) | — |
 | `/customers/:id/chemistry-history` | — | ❌ N | Chemistry readings history | LOW |
 | `/customers/:id/credits` | `(app)/credits/index.tsx` | ✅ Y | — | — |
 | `/jobs/new` | `job/new.tsx` | ✅ Y | — | — |
@@ -239,12 +239,12 @@
 | `/settings/legal/:slug` | — | ❌ N | Legal doc editor | N/A |
 | `/settings/integrations` | — | ❌ N | Integrations hub | LOW |
 | `/settings/maps` | — | ❌ N | Map settings | LOW |
-| `/settings/vanity-slugs` | — | ❌ N | Vanity slug editor (super_admin) | N/A |
+| `/settings/vanity-slugs` | `settings/vanity-slugs.tsx` | ✅ Y | Built (Iter 18) | — |
 | `/settings/marketing/media` | — | ❌ N | Marketing media library | LOW |
-| `/settings/business-card` | — | ❌ N | Business card editor | LOW |
-| `/settings/website-seo` | — | ❌ N | Website SEO analyzer | LOW |
+| `/settings/business-card` | `settings/business-card.tsx` | ✅ Y | Built (Iter 18) | — |
+| `/settings/website-seo` | `settings/website-seo.tsx` | ✅ Y | Built (Iter 18) | — |
 | `/settings/local-seo` | — | ❌ N | Local SEO checklist | LOW |
-| `/settings/ai-brain` | — | ❌ N | AI knowledge base | LOW |
+| `/settings/ai-brain` | `settings/ai-brain.tsx` | ✅ Y | Built (Iter 18) | — |
 | `/settings/notifications` | — | ❌ N | Notification preferences | MEDIUM |
 | `/settings/telephony` | — | ❌ N | RingCentral telephony | N/A |
 | `/settings/onboarding` | — | ❌ N | Onboarding setup | LOW |
@@ -400,13 +400,22 @@
 | Priority | Count | Description |
 |----------|-------|-------------|
 | **HIGH** | 0 | ✅ All resolved (service reports list/detail, service detail, broadcasts) |
-| **MEDIUM** | ~25 | D2D sub-pages, admin sub-features, settings, campaign CRUD |
-| **LOW** | ~55 | Admin settings, reports slices, social suite, warranties, Business OS |
-| **N/A** | ~18 | Public web pages, super-admin-only, desktop-only editors |
+| **MEDIUM** | ~16 | D2D sub-pages, admin sub-features, remaining settings, campaign CRUD (9 resolved in Iter 18) |
+| **LOW** | ~50 | Admin settings, reports slices, social suite, warranties, Business OS |
+| **N/A** | ~17 | Public web pages, super-admin-only, desktop-only editors |
 
 ### HIGH Priority Gaps (Build First)
 
-1. **`/portal/service-reports`** — Customer service reports list
-2. **`/portal/service-reports/:id`** — Customer service report detail with photos
-3. **`/portal/services/:id`** — Customer service detail view
-4. **`/marketing/broadcasts`** — Admin mass messaging broadcasts
+All 4 HIGH-priority gaps resolved ✅
+
+### MEDIUM Priority Gaps Resolved in Iteration 18
+
+1. **`/portal/invoices/:id`** — Portal invoice navigation wired
+2. **`/portal/estimates/:id`** — Portal estimate navigation wired
+3. **`/settings/business-card`** — Business card editor
+4. **`/settings/ai-brain`** — AI knowledge base
+5. **`/settings/local-seo`** — Local SEO checklist
+6. **`/settings/website-seo`** — Website SEO analyzer
+7. **`/settings/vanity-slugs`** — Vanity slug editor
+8. **`/customers/:id/chemistry`** — Pool chemistry dashboard (tech + admin)
+9. **`/customers/:id/chemistry`** — Pool chemistry readings (tech route)

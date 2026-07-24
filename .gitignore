@@ -163,3 +163,9 @@ frontend/node_modules/.cache/default-development/81.pack
 frontend/node_modules/.cache/default-development/94.pack
 frontend/node_modules/.cache/default-development/108.pack
 frontend/node_modules/.cache/default-development/29.pack
+
+# Cache directories (prevent agent confusion)
+.pytest_cache/
+.ruff_cache/
+backend/__pycache__/
+backend.template.bak/
