@@ -72,15 +72,45 @@ def _res(ctx_key: str, sub_key: str, transform: Optional[Callable] = None):
 
 
 def _customer_first(ctx: Dict[str, Any]) -> str:
-    return _customer_name_parts(ctx.get("customer") or {})[0]
+    """First name, or salutation fallback ``"there"`` per Phase 21
+    Addition · Feb 2026 spec so customer-facing bodies never render an
+    empty greeting when the customer record is missing a name."""
+    c = ctx.get("customer") or {}
+    first_field = _safe_str(c.get("first_name")).strip()
+    if first_field:
+        return first_field
+    from_name = _customer_name_parts(c)[0]
+    if from_name:
+        return from_name
+    return "there"
 
 
 def _customer_last(ctx: Dict[str, Any]) -> str:
-    return _customer_name_parts(ctx.get("customer") or {})[1]
+    c = ctx.get("customer") or {}
+    last_field = _safe_str(c.get("last_name")).strip()
+    if last_field:
+        return last_field
+    return _customer_name_parts(c)[1]
 
 
 def _customer_full(ctx: Dict[str, Any]) -> str:
-    return _safe_str((ctx.get("customer") or {}).get("name"))
+    """Full name — prefers ``first_name + " " + last_name`` when both
+    exist, then the stored ``name`` field, then the first-name fallback,
+    finally the email local-part (Phase 21 Addition spec)."""
+    c = ctx.get("customer") or {}
+    first = _safe_str(c.get("first_name")).strip()
+    last = _safe_str(c.get("last_name")).strip()
+    if first and last:
+        return f"{first} {last}"
+    if first:
+        return first
+    stored = _safe_str(c.get("name")).strip()
+    if stored:
+        return stored
+    email = _safe_str(c.get("email"))
+    if email and "@" in email:
+        return email.split("@", 1)[0]
+    return ""
 
 
 # ─── Batch 12D · Feb 2026 — missing-tag polish additions ──────────────
@@ -127,14 +157,24 @@ def _invoice_pay_url(ctx: Dict[str, Any]) -> str:
     """Portal-authenticated pay URL — customer signs in, then lands on
     the invoice detail with the Pay Now modal available. Never
     embeds a token; safe to include in emails that also mention
-    login credentials."""
+    login credentials.
+
+    Phase 21 · Feb 2026 — base URL is resolved via
+    ``services.tenant_urls.resolve_primary_app_domain`` so a
+    per-tenant ``settings.primary_app_domain`` overrides the env
+    default (e.g. once ``app.plofv.com`` is live).
+    """
     inv = ctx.get("invoice") or {}
     inv_id = _safe_str(inv.get("id") or inv.get("invoice_id"))
     if not inv_id:
         return ""
-    base = (os.environ.get("APP_PUBLIC_URL")
-             or os.environ.get("PUBLIC_FRONTEND_ORIGIN")
-             or "").rstrip("/")
+    try:
+        from services.tenant_urls import resolve_primary_app_domain
+        base = resolve_primary_app_domain(ctx.get("tenant") or {})
+    except Exception:
+        base = (os.environ.get("APP_PUBLIC_URL")
+                 or os.environ.get("PUBLIC_FRONTEND_ORIGIN")
+                 or "").rstrip("/")
     if not base:
         return ""
     return f"{base}/portal/invoices/{inv_id}"
@@ -166,7 +206,111 @@ def _customer_balance(ctx: Dict[str, Any]) -> str:
 
 
 def _company_name(ctx: Dict[str, Any]) -> str:
-    return _safe_str((ctx.get("tenant") or {}).get("name"))
+    """Company display name. Phase 21 · Feb 2026 — prefers
+    ``tenant.settings.business_card.company_name`` (the source of truth
+    for the admin-editable brand) and falls back to legacy
+    ``tenant.name`` so pre-rebrand tenants keep working."""
+    t = ctx.get("tenant") or {}
+    settings = t.get("settings") or {}
+    card = settings.get("business_card") or {}
+    return _safe_str(card.get("company_name") or t.get("name") or "")
+
+
+def _invoice_amount(ctx: Dict[str, Any]) -> str:
+    """Phase 21 · Feb 2026 · Addition — INVOICE_AMOUNT resolves the
+    target invoice's ``total_cents`` to a formatted ``$X.YY`` string.
+    Empty string when no invoice is in context (or the field is
+    missing)."""
+    inv = ctx.get("invoice") or {}
+    cents = inv.get("total_cents")
+    if cents is None:
+        return ""
+    try:
+        return f"${float(cents) / 100.0:,.2f}"
+    except (TypeError, ValueError):
+        return ""
+
+
+def _job_date(ctx: Dict[str, Any]) -> str:
+    """Phase 21 · Feb 2026 · Addition — JOB_DATE formats the job's
+    ``scheduled_date`` in the tenant's timezone as ``"Mon, Feb 24"``.
+    Returns empty string when no job / no date."""
+    from zoneinfo import ZoneInfo
+    from datetime import datetime as _dt
+    job = ctx.get("job") or {}
+    raw = job.get("scheduled_date") or job.get("date") or ""
+    if not raw:
+        return ""
+    tz_name = _tenant_timezone(ctx) or "America/Phoenix"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("America/Phoenix")
+    try:
+        s = str(raw)
+        if len(s) == 10:  # YYYY-MM-DD
+            dt = _dt.strptime(s, "%Y-%m-%d")
+        else:
+            dt = _dt.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            return dt.strftime("%a, %b %d")
+        return dt.astimezone(tz).strftime("%a, %b %d")
+    except Exception:
+        return ""
+
+
+def _job_time(ctx: Dict[str, Any]) -> str:
+    """Phase 21 · Feb 2026 · Addition — JOB_TIME formats the job's
+    ``scheduled_time`` (or the time portion of ``scheduled_at``) as
+    ``"2:00 PM"`` in the tenant's timezone."""
+    from zoneinfo import ZoneInfo
+    from datetime import datetime as _dt
+    job = ctx.get("job") or {}
+    tz_name = _tenant_timezone(ctx) or "America/Phoenix"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("America/Phoenix")
+    # Prefer scheduled_at (has tz); fall back to scheduled_time HH:MM.
+    at = job.get("scheduled_at") or job.get("start_at") or ""
+    if at:
+        try:
+            dt = _dt.fromisoformat(str(at).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                return dt.strftime("%-I:%M %p") if hasattr(dt, "strftime") else ""
+            return dt.astimezone(tz).strftime("%-I:%M %p")
+        except Exception:
+            pass
+    t_only = job.get("scheduled_time") or job.get("time")
+    if t_only:
+        try:
+            parts = str(t_only).split(":")
+            hh = int(parts[0])
+            mm = int(parts[1]) if len(parts) > 1 else 0
+            suffix = "AM" if hh < 12 else "PM"
+            h12 = ((hh + 11) % 12) + 1
+            return f"{h12}:{mm:02d} {suffix}"
+        except Exception:
+            return ""
+    return ""
+
+
+def _tech_name(ctx: Dict[str, Any]) -> str:
+    """Phase 21 · Feb 2026 · Addition — TECH_NAME resolves the assigned
+    tech's display name. Cascades: ``ctx['tech']['name'] →
+    ctx['technician']['name'] → ctx['job']['technician_name'] →
+    ctx['employee']['name'] → """""" (empty)``."""
+    for key in ("tech", "technician"):
+        obj = ctx.get(key) or {}
+        n = _safe_str(obj.get("name") or obj.get("display_name") or "")
+        if n:
+            return n
+    job = ctx.get("job") or {}
+    n = _safe_str(job.get("technician_name") or job.get("tech_name") or "")
+    if n:
+        return n
+    emp = ctx.get("employee") or {}
+    return _safe_str(emp.get("name") or "")
 
 
 def _company_email(ctx: Dict[str, Any]) -> str:
@@ -617,6 +761,36 @@ MERGE_TAGS: List[Dict[str, Any]] = [
                        "customer names, for the digest email/SMS body."),
      "resolver": lambda ctx: _safe_str(
          ctx.get("ambiguous_match_sample") or "")},
+
+    # ─── Phase 21 · Feb 2026 · Addition — merge-tag parity fills.
+    # Populated at send time by the caller when a job / invoice /
+    # technician is in scope. Missing context → empty string (never
+    # the raw ``{{TOKEN}}`` literal).
+    {"token": "INVOICE_AMOUNT", "label": "Invoice Amount",
+     "category": "Invoice",
+     "description": ("Formatted invoice amount derived from "
+                       "``invoice.total_cents`` (e.g. ``$135.00``). "
+                       "Empty when no invoice is in context."),
+     "resolver": _invoice_amount},
+    {"token": "JOB_DATE", "label": "Job Date",
+     "category": "Job",
+     "description": ("Scheduled job date formatted in the tenant's "
+                       "timezone as ``Mon, Feb 24``. Empty when no "
+                       "job / date is in context."),
+     "resolver": _job_date},
+    {"token": "JOB_TIME", "label": "Job Time",
+     "category": "Job",
+     "description": ("Scheduled job time in the tenant's timezone "
+                       "as ``2:00 PM``. Empty when no job / time is "
+                       "in context."),
+     "resolver": _job_time},
+    {"token": "TECH_NAME", "label": "Technician Name",
+     "category": "Employee",
+     "description": ("Assigned technician's display name — reads "
+                       "``ctx['tech']``, ``ctx['technician']``, "
+                       "``job.technician_name``, or ``ctx['employee']`` "
+                       "in that order."),
+     "resolver": _tech_name},
 ]
 
 _TAG_INDEX: Dict[str, Callable] = {t["token"].upper(): t["resolver"]

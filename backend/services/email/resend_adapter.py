@@ -71,6 +71,10 @@ class ResendEmailAdapter:
         self.verified_domains = {
             d.strip().lower() for d in raw.split(",") if d.strip()
         }
+        logger.info(
+            "[resend] verified domains: %s",
+            ", ".join(sorted(self.verified_domains)) or "(none)",
+        )
 
     # ── Suppression ────────────────────────────────────────────────
     async def _suppressed(

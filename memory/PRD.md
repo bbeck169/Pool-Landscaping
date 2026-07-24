@@ -8144,3 +8144,98 @@ Non-cosmetic, non-demo-email, non-slug-lookup hits remaining in backend after au
   * `CORS allow_origins = [preview, 'https://app.plofv.com', 'https://plofv.com']`.
 * Frontend hot-reload with no compile errors (vitest suite runs successfully → import graph is intact).
 * OpenAPI — 2 endpoints added by BUG E + Phase 21 combined: `POST /api/users/me/accept-tos` and `POST /api/admin/users/{uid}/reset-tos`. Plus the public `GET /api/legal/tos` from BUG E. No other schema drift.
+
+---
+
+## Feb 2026 · Phase 21 · DNS activation + additions D / (A) / (B backend) / merge-tag parity / vanity slugs
+
+### DNS activation — SHIPPED
+
+* `RESEND_VERIFIED_DOMAINS=plofv.com,resend.dev` written to `backend/.env`.
+* Boot log confirms: `[resend] verified domains: plofv.com, resend.dev`.
+* Migration `rebrand_aquaterra_to_plofv.py` now sets
+  `settings.primary_app_domain = "https://app.plofv.com"` when unset
+  (idempotent — never overwrites admin edits).
+* `resolve_primary_app_domain(aquaterra)` returns `https://app.plofv.com`
+  (verified via direct call + INVOICE_PAY_URL pytest).
+* **Delivery test — email**: real Resend send to `brian@plofv.com` via
+  `POST /api/marketing/templates/{tid}/test-send`. Resend accepted;
+  **Message-ID: `6f3464d5-f32a-4cda-a7fd-ee31373d1c30`**. `COMPANY_NAME`
+  merge-tag rendered `"Pool & Landscaping of Vistancia"`. `From:` header
+  built by adapter: `Pool & Landscaping of Vistancia <cs@plofv.com>`
+  (env `RESEND_FROM_ADDRESS=cs@plofv.com` — both `cs@` and `noreply@`
+  are on the verified `plofv.com` domain).
+* **Delivery test — SMS**: real RingCentral send to `+16028874400`.
+  RC accepted; **message id: `3030294838018`**. Delivery status: `sent`.
+
+### Addition D — "+ Add Customer" quick-action — SHIPPED
+
+* `AdminTopBar` mounts new `<AddCustomerButton />` in BOTH narrow (mobile) and wide (desktop) branches. Renders for `admin` + `super_admin` only; hidden for `technician` / `customer`.
+* Click → `useNavigate("/customers/new")` → reuses the existing
+  `<CustomerForm />` at that route (no validation duplication).
+* Data-testid: `topbar-add-customer-btn`.
+
+### Addition A — Dispatch Board "Workstream" tab route push — DEFERRED
+
+* **Finding**: `frontend/src/pages/dispatch/DispatchBoardPage.jsx` has NO
+  "Workstream" tab. Only day-of-week tabs (Mon-Sun+All) exist. There is
+  no placeholder tab to convert to a `/workstream` route push. Nothing
+  to ship — the referenced UI does not exist.
+* Handoff: if a "Workstream" tab is desired, it should be added as a
+  new nav entry alongside the day-of-week filter, wired to
+  `<Link to="/workstream">Workstream</Link>`. Small follow-up.
+
+### Addition B — display_color_hex (BACKEND SHIPPED) / Team page + Schedule UI (FRONTEND DEFERRED)
+
+* Backend: `PATCH /api/users/{uid}` now accepts `display_color_hex`.
+  Regex validated `^#[0-9A-Fa-f]{6}$`; uppercased on write; `null` /
+  `""` clears the field. Non-hex values return **400** with a clear
+  message. All existing PATCH audit trail behavior preserved.
+* Frontend Team page picker + Schedule legend + colored event cards
+  deferred — the schedule surface is large and touches Motion/DnD
+  logic. Handoff spec:
+  - Team page: add a `<input type="color" value={user.display_color_hex} onChange={patch}>` column bound to `PATCH /api/users/{id}`.
+  - Schedule (day/week): resolve each event's tech color via
+    `techMap[job.technician_id]?.display_color_hex ||
+    hashColor(job.technician_id)`; apply as background tint (~15% alpha)
+    + solid left border in the tech's color.
+  - Legend: filter `techs.filter(t => t.active)`, dedupe, render
+    `<span> · [color chip] {name}</span>` at the top of the calendar.
+
+### Merge-tag parity — SHIPPED (all 8 tags)
+
+* `CUSTOMER_FIRST_NAME` — first name; salutation fallback `"there"`.
+* `CUSTOMER_FULL_NAME` — `first_name + last_name` → `first_name` → legacy `name` → email local-part → `""`.
+* `INVOICE_AMOUNT` — `f"${total_cents/100:,.2f}"` from the invoice context; `""` when missing.
+* `INVOICE_PAY_URL` — now uses `services.tenant_urls.resolve_primary_app_domain(tenant)` so live `app.plofv.com` is picked up automatically; `""` when no invoice in context.
+* `JOB_DATE` — `datetime.strftime("%a, %b %d")` in the tenant's timezone.
+* `JOB_TIME` — `%-I:%M %p` from `scheduled_at` (tz-aware) or `scheduled_time` `HH:MM`.
+* `TECH_NAME` — cascades `ctx.tech.name → ctx.technician.name → ctx.job.technician_name → ctx.employee.name → ""`.
+* `COMPANY_NAME` — prefers `tenant.settings.business_card.company_name` (Phase 21 rebrand source of truth), falls back to legacy `tenant.name`.
+* Unresolved tokens NEVER leak `{{TOKEN}}` — always empty string.
+* All 8 tokens registered in the catalog and returned by `GET /api/marketing/merge-tags`.
+
+### Vanity slug editor — BACKEND SHIPPED (frontend deferred)
+
+* `GET  /api/tenants/current/slug-aliases` — `tenants.slugAliases.list`.
+* `POST /api/tenants/current/slug-aliases` — `tenants.slugAliases.add`. Regex `^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$` (3-32 chars, alphanumeric endpoints, hyphens allowed in middle). Reserved-word list rejects `admin/api/public/app/static/assets/login/logout/signup/signin/auth/www/portal/webhooks/resend/stripe/docs/openapi/health`. Global uniqueness check across ALL tenants → 409 on collision. Idempotent on re-add.
+* `DELETE /api/tenants/current/slug-aliases/{alias}` — `tenants.slugAliases.remove`. Canonical slug rejected (400). Missing alias returns 200 with `was_already_absent: true`.
+* All three endpoints super_admin only (403 for admin).
+* Frontend `/settings/vanity-slugs` page deferred — handoff spec: list current aliases from GET, form input using the same regex + reserved list for client-side validation, ConfirmDeleteDialog on the remove action, refetch on mutation.
+
+### Tests
+
+* Pytest `tests/test_phase21_additions.py`: **21/21 pass** (8 merge-tag resolvers × context/empty variants, catalog membership check, `/api/marketing/merge-tags` endpoint, `display_color_hex` PATCH roundtrip + invalid-hex 400, vanity slug list/add/remove/collision/reserved/regex/canonical-protected/admin-403/idempotent-remove, activation state — verified domains + primary_app_domain).
+* Vitest `src/test/phase21-add-customer-btn.test.jsx`: **4/4 pass**.
+* Regression sweep (`test_phase21_additions.py` + `test_phase21_rebrand.py` + `test_bug_e_tos_gate.py`): **49 pass / 1 skipped / 0 failures**.
+
+### OpenAPI diff since Phase 21 start
+
+* `GET  /api/legal/tos`
+* `POST /api/users/me/accept-tos`
+* `POST /api/admin/users/{uid}/reset-tos`
+* `GET  /api/tenants/current/slug-aliases` (operationId `tenants.slugAliases.list`)
+* `POST /api/tenants/current/slug-aliases` (operationId `tenants.slugAliases.add`)
+* `DELETE /api/tenants/current/slug-aliases/{alias}` (operationId `tenants.slugAliases.remove`)
+
+No other schema drift.

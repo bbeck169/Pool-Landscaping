@@ -429,13 +429,35 @@ async def update_user(user_id: str, body: dict,
     if (target.get("role") or "").lower() == "super_admin":
         raise HTTPException(403, "super_admin accounts cannot be modified from the roster widget.")
 
-    allowed_fields = {"department", "role"}
+    allowed_fields = {"department", "role", "display_color_hex"}
     unknown = set(body.keys()) - allowed_fields
     if unknown:
         raise HTTPException(400, f"unsupported fields: {sorted(unknown)}")
 
     updates: dict = {}
     audit_changes: dict = {}
+
+    # Phase 21 · Feb 2026 · Addition B — per-user display color for the
+    # Schedule / dispatch calendar. Validated as `#RRGGBB`; null clears
+    # the field and reverts to the deterministic hashed fallback.
+    if "display_color_hex" in body:
+        raw = body["display_color_hex"]
+        if raw is None or raw == "":
+            new_color = None
+        else:
+            import re as _color_re
+            if not isinstance(raw, str) or not _color_re.fullmatch(
+                r"#[0-9A-Fa-f]{6}", raw,
+            ):
+                raise HTTPException(
+                    400,
+                    "display_color_hex must be a '#RRGGBB' string (e.g. #0EA5E9)",
+                )
+            new_color = raw.upper()
+        old_color = target.get("display_color_hex")
+        if new_color != old_color:
+            updates["display_color_hex"] = new_color
+            audit_changes["display_color_hex"] = {"old": old_color, "new": new_color}
 
     # Compute the *new* role first — department validation depends on it.
     new_role = None

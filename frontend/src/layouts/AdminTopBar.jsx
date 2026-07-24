@@ -19,10 +19,12 @@
  *     category, giving mobile web the same 100% coverage.
  */
 import React, { useMemo } from "react";
-import { Link, useLocation } from "react-router-dom";
-import { ChevronDown, MenuIcon, Users, FileText, ClipboardList, CalendarDays, ListChecks, Phone, GraduationCap } from "lucide-react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { ChevronDown, MenuIcon, Users, FileText, ClipboardList, CalendarDays, ListChecks, Phone, GraduationCap, Plus as PlusIcon } from "lucide-react";
 import { ADMIN_NAV_V2 } from "@/nav/adminNav";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useAuth } from "@/auth";
+import { brandGradientCss } from "@/theme";
 import NotificationBell from "@/components/NotificationBell";
 import CreditsBudgetChip from "@/components/AIDock/CreditsBudgetChip";
 import {
@@ -306,6 +308,7 @@ export default function AdminTopBar() {
         >
           <MobileMenu visible={visible} />
           <div className="flex items-center gap-2">
+            <AddCustomerButton />
             <CreditsBudgetChip />
             <NotificationBell variant="inline" />
           </div>
@@ -319,11 +322,35 @@ export default function AdminTopBar() {
             <CategoryDropdown key={g.key} group={g} />
           ))}
           <div className="ml-auto shrink-0 flex items-center gap-2">
+            <AddCustomerButton />
             <CreditsBudgetChip />
             <NotificationBell variant="inline" />
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+// Phase 21 · Feb 2026 · Addition D — "+ Add Customer" quick-action in
+// the admin top bar. Admin + super_admin only. Routes to the existing
+// customers-list new-customer surface (`/customers/new`) which reuses
+// the shipped ``CustomerForm`` — no duplicated validation.
+function AddCustomerButton() {
+  const auth = useAuth();
+  const navigate = useNavigate();
+  const role = auth?.user?.role;
+  if (role !== "admin" && role !== "super_admin") return null;
+  return (
+    <button
+      type="button"
+      onClick={() => navigate("/customers/new")}
+      className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-xs font-semibold text-white shadow-sm hover:brightness-95"
+      style={{ background: brandGradientCss }}
+      data-testid="topbar-add-customer-btn"
+      aria-label="Add customer"
+    >
+      <PlusIcon size={14} /> Add Customer
+    </button>
   );
 }

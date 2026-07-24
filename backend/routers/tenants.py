@@ -693,5 +693,110 @@ async def my_memberships(user: dict = Depends(get_current_user)):
 
 
 # ══════════════════════════════════════════════════════════════
+# Phase 21 · Feb 2026 · Enhancement — Vanity slug editor
+# Super-admin self-serve editor for ``tenant.slug_aliases``.
+# ══════════════════════════════════════════════════════════════
+import re as _slug_re
+
+_SLUG_ALIAS_RE = _slug_re.compile(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$")
+_RESERVED_SLUG_ALIASES = {
+    "admin", "api", "public", "app", "static", "assets", "login",
+    "logout", "signup", "signin", "auth", "www", "portal", "webhooks",
+    "resend", "stripe", "docs", "openapi", "health",
+}
+
+
+class SlugAliasIn(BaseModel):
+    alias: str
+
+
+def _validate_alias_or_raise(alias: str) -> str:
+    a = (alias or "").strip().lower()
+    if not _SLUG_ALIAS_RE.match(a):
+        raise HTTPException(
+            400, "alias must match ^[a-z0-9-]{3,32}$ (lowercase, digits, hyphen; 3–32 chars)",
+        )
+    if a in _RESERVED_SLUG_ALIASES:
+        raise HTTPException(400, f"'{a}' is a reserved word and cannot be used as a tenant alias")
+    return a
+
+
+@router.get("/tenants/current/slug-aliases",
+             operation_id="tenants.slugAliases.list")
+async def list_slug_aliases(actor: dict = Depends(require_super_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    """List canonical slug + every alias for the caller's tenant."""
+    return {
+        "tenant_id": tenant["id"],
+        "canonical_slug": tenant.get("slug"),
+        "slug_aliases": list(tenant.get("slug_aliases") or []),
+    }
+
+
+@router.post("/tenants/current/slug-aliases",
+              operation_id="tenants.slugAliases.add")
+async def add_slug_alias(body: SlugAliasIn,
+                          actor: dict = Depends(require_super_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    """Add a new alias. Rejects invalid regex, reserved words, and
+    collisions with ANY existing tenant's slug or slug_aliases (409)."""
+    alias = _validate_alias_or_raise(body.alias)
+
+    # Same tenant no-op — return current state.
+    if alias == (tenant.get("slug") or "").lower():
+        return {"ok": True, "was_canonical": True,
+                "slug_aliases": list(tenant.get("slug_aliases") or [])}
+    if alias in [a.lower() for a in (tenant.get("slug_aliases") or [])]:
+        return {"ok": True, "was_already_alias": True,
+                "slug_aliases": list(tenant.get("slug_aliases") or [])}
+
+    # Global uniqueness — cannot collide with ANOTHER tenant's slug/alias.
+    collision = await db.tenants.find_one(
+        {"$or": [{"slug": alias}, {"slug_aliases": alias}],
+         "id": {"$ne": tenant["id"]}},
+        {"_id": 0, "id": 1, "slug": 1},
+    )
+    if collision:
+        raise HTTPException(
+            409,
+            f"alias '{alias}' is already in use by tenant '{collision.get('slug')}'",
+        )
+
+    aliases = list(tenant.get("slug_aliases") or []) + [alias]
+    await db.tenants.update_one(
+        {"id": tenant["id"]},
+        {"$set": {"slug_aliases": aliases, "updated_at": now_iso()}},
+    )
+    logger.info("[vanity-slug] tenant=%s added alias=%r by actor=%s",
+                tenant["id"], alias, actor.get("email"))
+    return {"ok": True, "slug_aliases": aliases}
+
+
+@router.delete("/tenants/current/slug-aliases/{alias}",
+                operation_id="tenants.slugAliases.remove")
+async def remove_slug_alias(alias: str,
+                              actor: dict = Depends(require_super_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    """Remove an alias. Idempotent — removing a non-existent alias
+    returns ok with was_already_absent=True. Removing the canonical
+    slug is forbidden (400)."""
+    a = (alias or "").strip().lower()
+    if a == (tenant.get("slug") or "").lower():
+        raise HTTPException(400, "canonical slug cannot be removed")
+    current = list(tenant.get("slug_aliases") or [])
+    if a not in [x.lower() for x in current]:
+        return {"ok": True, "was_already_absent": True,
+                "slug_aliases": current}
+    new_aliases = [x for x in current if x.lower() != a]
+    await db.tenants.update_one(
+        {"id": tenant["id"]},
+        {"$set": {"slug_aliases": new_aliases, "updated_at": now_iso()}},
+    )
+    logger.info("[vanity-slug] tenant=%s removed alias=%r by actor=%s",
+                tenant["id"], a, actor.get("email"))
+    return {"ok": True, "slug_aliases": new_aliases}
+
+
+# ══════════════════════════════════════════════════════════════
 # Feb-2026 · Item 6 — Business Card (digital vCard)
 # ══════════════════════════════════════════════════════════════

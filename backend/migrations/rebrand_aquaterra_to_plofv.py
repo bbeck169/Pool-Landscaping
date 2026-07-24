@@ -41,6 +41,8 @@ from utils import now_iso
 NEW_TENANT_NAME = "Pool & Landscaping of Vistancia"
 SLUG_ALIAS = "plofv"
 
+PRIMARY_APP_DOMAIN = "https://app.plofv.com"  # Phase 21 · activation — live once DNS is up
+
 BUSINESS_CARD = {
     "company_name": NEW_TENANT_NAME,
     "tagline": "Your trusted local pool & landscaping pros in Vistancia.",
@@ -118,11 +120,13 @@ async def run() -> Dict[str, Any]:
         sets["settings.internal_lead_notifications.email_to"] = INTERNAL_LEAD_EMAIL
         report["internal_lead_email_set"] = True
 
-    # 6. Primary app domain — introduce the field with None default
-    #    so the URL builder helper can distinguish "unset" (fall back
-    #    to request.base_url) from "set to empty" (also fallback).
-    if "primary_app_domain" not in settings:
-        sets["settings.primary_app_domain"] = None
+    # 6. Primary app domain — Phase 21 activation. Sets the tenant's
+    #    ``primary_app_domain`` to ``https://app.plofv.com`` ONLY when
+    #    it is currently unset (either missing or explicitly None).
+    #    Idempotent: once an admin overrides the value in the UI, we
+    #    never overwrite it.
+    if "primary_app_domain" not in settings or settings.get("primary_app_domain") is None:
+        sets["settings.primary_app_domain"] = PRIMARY_APP_DOMAIN
         report["primary_app_domain_field_added"] = True
 
     if sets:
