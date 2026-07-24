@@ -8,6 +8,10 @@
  * Safe in Expo Go: the task registers as a no-op if the native modules
  * aren't available. The user must cut an EAS native build to see it fire
  * in the background.
+ *
+ * Default-ON for techs: on first visit the pref key doesn't exist so
+ * `isAutoClockinEnabled` returns `true` for tech-role callers. The
+ * sentinel `_EXPLICIT` key tracks whether the user has ever toggled.
  */
 import { Platform } from "react-native";
 import { storage } from "@/src/utils/storage";
@@ -15,6 +19,7 @@ import { TOKEN_KEY } from "@/src/api";
 
 export const BACKGROUND_AUTOCLOCK_TASK = "BACKGROUND_AUTOCLOCK_TASK";
 const AUTO_CLOCKIN_ENABLED_KEY = "auto_clockin_enabled";
+const AUTO_CLOCKIN_EXPLICIT_KEY = "auto_clockin_explicit";
 
 let taskDefined = false;
 
@@ -49,12 +54,19 @@ async function _defineTask(): Promise<boolean> {
   }
 }
 
-export async function isAutoClockinEnabled(): Promise<boolean> {
-  return (await storage.getItem<boolean>(AUTO_CLOCKIN_ENABLED_KEY, false)) === true;
+export async function isAutoClockinEnabled(role?: string): Promise<boolean> {
+  const explicit = await storage.getItem<boolean>(AUTO_CLOCKIN_EXPLICIT_KEY, false);
+  if (explicit) {
+    // User has toggled at least once — use their saved preference.
+    return (await storage.getItem<boolean>(AUTO_CLOCKIN_ENABLED_KEY, false)) === true;
+  }
+  // First visit: default ON for techs, OFF for everyone else.
+  return role === "technician";
 }
 
 export async function setAutoClockinEnabled(enabled: boolean): Promise<void> {
   await storage.setItem(AUTO_CLOCKIN_ENABLED_KEY, enabled);
+  await storage.setItem(AUTO_CLOCKIN_EXPLICIT_KEY, true);
 }
 
 export async function startBackgroundAutoClockin(): Promise<{

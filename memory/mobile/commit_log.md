@@ -258,3 +258,25 @@
   - Tech → Auto Clock-In: renders correctly, no error ✅
   - Tech → /settings/widgets: shows "Not authorized" gate ✅
   - Admin → /settings/tenant: shows full Tenant Settings ✅
+
+
+## Iteration 14 — BUG H Regression Fix + Auto Clock-In Default-ON Feature
+- **Commit**: d9c5d58c505885ffc4183363593c5b52a4090692
+- **Date**: 2026-07-24
+- **Changes**:
+  - **BUG H Regression**: Previous fix was correct on disk but Metro bundler cache served old code.
+    - Cleared `.metro-cache`, `node_modules/.cache`, `/tmp/metro-*`, `/tmp/haste-map-*`
+    - Restarted mobile service. Verified error is gone.
+    - Grepped all `storage.get`/`storage.set` calls — zero bad callsites remain.
+  - **Feature: Auto Clock-In default ON**:
+    - `src/background/autoClockin.ts`: Added `AUTO_CLOCKIN_EXPLICIT_KEY` sentinel. `isAutoClockinEnabled(role)` now accepts role param — returns `true` for techs on first visit (no explicit pref set), `false` for others.
+    - `app/(app)/settings/auto-clockin.tsx`: Full rewrite with green/red ON/OFF status banner, role guard for non-techs, status text, info note about default-ON.
+    - Toggle persistence: `setAutoClockinEnabled` writes both the pref and the explicit-flag so subsequent reads use the saved value.
+  - **Backend gap flagged**: `PATCH /api/users/{id}` does NOT support `auto_clockin_enabled`. Pref is local-storage-only for now. Backend + web agent need to add the field.
+- **Files modified**:
+  - `/app/mobile/src/background/autoClockin.ts` (default-ON logic with explicit sentinel)
+  - `/app/mobile/app/(app)/settings/auto-clockin.tsx` (full rewrite with ON/OFF banner)
+- **Verified via screenshots**:
+  - Fresh tech login → Auto Clock-In ON by default ✅
+  - Toggle to OFF → Red banner "Auto Clock-In is OFF", Status: Stopped ✅
+  - No errors after Metro cache clear ✅
