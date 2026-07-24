@@ -24,7 +24,8 @@ from utils import now_iso, new_id, get_current_user, hash_password
 
 router = APIRouter()
 
-DEFAULT_TENANT_SLUG = "aquaterra"
+DEFAULT_TENANT_SLUG = "aquaterra"  # canonical slug — kept for backward compat with existing FKs / links / NFC URLs
+DEFAULT_TENANT_SLUG_ALIASES = ["plofv"]  # Phase 21 · Feb 2026 — new brand aliases resolve to same tenant
 
 # Every collection that stores tenant-owned entities. Additive-only — new
 # collections should be added here as they land.
@@ -99,17 +100,22 @@ async def get_current_tenant(
       3. `X-Tenant-Slug` header (for anonymous / non-super callers)
       4. Custom domain matching `Host` header
       5. Fallback → default tenant
+
+    Phase 21 · Feb 2026 — slug lookups also honour ``slug_aliases`` so
+    the Vistancia rebrand can accept ``plofv`` in addition to the
+    canonical ``aquaterra`` slug without a data migration on foreign
+    keys.
     """
     tenant = None
     # 1. Super admin explicit cross-tenant override.
     if x_tenant_slug and user.get("role") == "super_admin":
-        tenant = await db.tenants.find_one({"slug": x_tenant_slug, "active": True}, {"_id": 0})
+        tenant = await _find_tenant_by_slug_or_alias(x_tenant_slug, active_only=True)
     # 2. User's own tenant.
     if not tenant and user.get("tenant_id"):
         tenant = await db.tenants.find_one({"id": user["tenant_id"], "active": True}, {"_id": 0})
     # 3. Anonymous header fallback.
     if not tenant and x_tenant_slug:
-        tenant = await db.tenants.find_one({"slug": x_tenant_slug, "active": True}, {"_id": 0})
+        tenant = await _find_tenant_by_slug_or_alias(x_tenant_slug, active_only=True)
     # 4. Custom domain.
     if not tenant:
         host = (request.headers.get("host") or "").split(":")[0].lower()
@@ -119,6 +125,20 @@ async def get_current_tenant(
     if not tenant:
         tenant = await _ensure_default_tenant()
     return tenant
+
+
+async def _find_tenant_by_slug_or_alias(slug: str, active_only: bool = True) -> Optional[dict]:
+    """Phase 21 — tenant lookup that tolerates ``slug_aliases``.
+
+    Prefers the canonical ``slug`` match; falls back to ``slug_aliases``
+    array membership. Returns ``None`` when nothing matches.
+    """
+    if not slug:
+        return None
+    q: dict = {"$or": [{"slug": slug}, {"slug_aliases": slug}]}
+    if active_only:
+        q["active"] = True
+    return await db.tenants.find_one(q, {"_id": 0})
 
 
 # ─── Endpoints ───────────────────────────────────────────────────────────────

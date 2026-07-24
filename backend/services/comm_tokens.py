@@ -50,18 +50,18 @@ AVAILABLE_TOKENS: Dict[str, Dict[str, str]] = {
     "invoice.portal_link":      {"label": "Invoice portal link",       "sample": "https://portal.example.com/invoices/INV-2026-00412"},
     "invoice.status":           {"label": "Invoice status",            "sample": "Open"},
     # --- company.* ------------------------------------------------------
-    "company.name":             {"label": "Company display name",      "sample": "Aquaterra Pools & Landscape"},
+    "company.name":             {"label": "Company display name",      "sample": "Pool & Landscaping of Vistancia"},
     "company.phone":            {"label": "Company phone",             "sample": "(602) 555-0100"},
-    "company.email":            {"label": "Company reply-to email",    "sample": "hello@aquaterra.example.com"},
-    "company.website":          {"label": "Company website URL",       "sample": "https://aquaterra.example.com"},
-    "company.logo_url":         {"label": "Company logo URL",          "sample": "https://cdn.example.com/aquaterra-logo.png"},
+    "company.email":            {"label": "Company reply-to email",    "sample": "hello@plofv.com"},
+    "company.website":          {"label": "Company website URL",       "sample": "https://www.poolandlandscapingofvistancia.com"},
+    "company.logo_url":         {"label": "Company logo URL",          "sample": "https://cdn.example.com/plofv-logo.png"},
     "company.portal_link":      {"label": "Customer portal home link", "sample": "https://portal.example.com"},
     "company.address":          {"label": "Company address block",     "sample": "18040 N. 27th Dr. Ste 200, Phoenix, AZ 85023"},
     # --- system --------------------------------------------------------
     "unsubscribe_url":          {"label": "Unsubscribe link (auto)",   "sample": "https://portal.example.com/unsubscribe/<signed>"},
     # --- review_request.* + tech.* — Reviews Phase 1 (Feb 2026) --------
     "review_request.public_url":                {"label": "Review-request landing URL", "sample": "https://portal.example.com/reviews/r/abc123"},
-    "review_request.tenant_public_reviews_url": {"label": "Public reviews page URL",    "sample": "https://portal.example.com/reviews/aquaterra"},
+    "review_request.tenant_public_reviews_url": {"label": "Public reviews page URL",    "sample": "https://portal.example.com/reviews/plofv"},
     "tech.first_name":                          {"label": "Assigned technician first name", "sample": "Mike"},
     "tech.full_name":                           {"label": "Assigned technician full name",  "sample": "Mike Rivera"},
     "tech.avatar_url":                          {"label": "Assigned technician headshot URL", "sample": "https://cdn.example.com/techs/mike.jpg"},

@@ -542,7 +542,7 @@ export function BrandKitPage() {
                    style={{ color: colors.muted }}>Logo URL</label>
             <input value={kit.logo_url || ""}
                    onChange={(e) => setKit({ ...kit, logo_url: e.target.value })}
-                   placeholder="https://cdn.aquaterra.com/logo.png"
+                   placeholder="https://cdn.plofv.com/logo.png"
                    className="w-full px-3 py-2 rounded-lg text-sm"
                    style={{ border: `1px solid ${colors.border}` }}
                    data-testid="brand-logo-url"/>

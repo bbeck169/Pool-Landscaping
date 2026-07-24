@@ -258,11 +258,11 @@ async def _send_team_invite_email(
     from services.email.resend_adapter import send as _resend_send
     from urllib.parse import urljoin
 
-    company = tenant.get("name") or "AquaTerra"
+    company = tenant.get("name") or "Pool & Landscaping of Vistancia"
     settings = tenant.get("settings") or {}
     card = settings.get("business_card") or {}
     company_display = card.get("company_name") or company
-    origin = os.environ.get("FRONTEND_BASE_URL") or "https://app.aquaterra.com"
+    origin = os.environ.get("FRONTEND_BASE_URL") or "https://app.plofv.com"
     accept_url = urljoin(origin.rstrip("/") + "/", "login")
 
     html = _team_invite_html(

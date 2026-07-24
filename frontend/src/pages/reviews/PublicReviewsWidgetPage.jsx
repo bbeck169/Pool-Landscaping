@@ -121,7 +121,7 @@ export default function PublicReviewsWidgetPage() {
 
             <div style={{ marginTop: 32, textAlign: "center", fontSize: 11,
                            color: "#94A3B8" }}>
-              Powered by AquaTerra CRM
+              Powered by Pool & Landscaping of Vistancia
             </div>
           </>
         )}

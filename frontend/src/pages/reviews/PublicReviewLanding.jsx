@@ -273,7 +273,7 @@ function Footer({ landing }) {
     <div style={{ marginTop: 32, borderTop: "1px solid #E2E8F0",
                    paddingTop: 12, textAlign: "center",
                    fontSize: 11, color: "#94A3B8" }}>
-      Powered by AquaTerra CRM · {landing?.tenant_name || ""}
+      Powered by Pool & Landscaping of Vistancia · {landing?.tenant_name || ""}
     </div>
   );
 }

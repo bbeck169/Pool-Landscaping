@@ -300,6 +300,15 @@ _app_public = os.environ.get("APP_PUBLIC_URL", "").strip()
 _origins = [o.strip() for o in _allowed_raw.split(",") if o.strip()]
 if _app_public and _app_public not in _origins:
     _origins.append(_app_public)
+
+# Phase 21 · Feb 2026 — always-on Vistancia rebrand origins. Appended
+# (never replacing) so existing preview + emergent.host allowlists
+# stay intact. Safe to keep even before DNS is set up — CORS just
+# ignores an unreachable origin.
+for _rebrand_origin in ("https://app.plofv.com", "https://plofv.com"):
+    if _rebrand_origin not in _origins:
+        _origins.append(_rebrand_origin)
+
 if not _origins:
     if _APP_ENV_MW == "production":
         logging.getLogger("pool_crm").error(
@@ -449,6 +458,18 @@ async def _background_seed():
         logger.info(f"[bug-e] tos backfill: {tos_res}")
     except Exception as e:
         logger.warning(f"tos backfill crashed: {e}")
+
+    # Feb-2026 · Phase 21 — Rebrand AquaTerra → Pool & Landscaping of
+    # Vistancia. Idempotent one-shot migration that updates the tenant
+    # name + adds `plofv` slug alias + fills in business_card /
+    # email_sender / primary_app_domain settings. Second run is a
+    # no-op. Never crashes boot on failure.
+    try:
+        from migrations import rebrand_aquaterra_to_plofv as _rebrand_p21
+        rb_res = await _rebrand_p21.run()
+        logger.info(f"[phase21] rebrand migration: {rb_res}")
+    except Exception as e:
+        logger.warning(f"[phase21] rebrand migration crashed: {e}")
 
     # Feb-2026 · Item 11 — Referral vesting backfill (idempotent).
     try:
@@ -885,10 +906,10 @@ async def startup():
                 await db.ai_knowledge_base.insert_one({
                     "id": str(_uuid_p18.uuid4()), "tenant_id": aq["id"],
                     "kind": "company_profile",
-                    "title": "AquaTerra Pool & Landscaping — Company Profile",
+                    "title": "Pool & Landscaping of Vistancia — Company Profile",
                     "content_md": (
-                        "# AquaTerra Pool & Landscaping\n\n"
-                        "We service the greater Phoenix, Arizona area only.\n\n"
+                        "# Pool & Landscaping of Vistancia\n\n"
+                        "We service the greater Peoria & Vistancia, Arizona area.\n\n"
                         "**Services:** recurring pool maintenance, salt cell + filter cleaning, "
                         "one-off repairs, landscaping crews.\n\n"
                         "**Brand voice:** friendly, direct, no fluff. Never quote prices without "

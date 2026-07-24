@@ -62,6 +62,15 @@ class ResendEmailAdapter:
         self.from_name = os.environ.get(
             "RESEND_FROM_NAME", "Pool & Landscaping of Vistancia",
         ).strip('"').strip("'")
+        # Phase 21 · Feb 2026 — comma-separated list of Resend-verified
+        # sender domains. Used to decide whether a tenant-overridden
+        # ``from_email`` can be used or must fall back to the app default.
+        # Always include resend.dev (the sandbox sender) so the mocked
+        # onboarding address never trips the check.
+        raw = os.environ.get("RESEND_VERIFIED_DOMAINS", "resend.dev").strip()
+        self.verified_domains = {
+            d.strip().lower() for d in raw.split(",") if d.strip()
+        }
 
     # ── Suppression ────────────────────────────────────────────────
     async def _suppressed(
@@ -105,9 +114,19 @@ class ResendEmailAdapter:
         customer_id: Optional[str] = None,
         text: Optional[str] = None,
         reply_to: Optional[str] = None,
+        from_name: Optional[str] = None,
+        from_email: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send an email through Resend.  Never raises; every failure
-        path yields a status string the caller can persist verbatim."""
+        path yields a status string the caller can persist verbatim.
+
+        Phase 21 · Feb 2026 — ``from_name`` / ``from_email`` are
+        optional per-call overrides (typically resolved from
+        ``tenant.settings.email_sender``). When the override's domain
+        is NOT in ``RESEND_VERIFIED_DOMAINS`` we log a WARNING and
+        fall back to the environment default so delivery is not
+        blocked while DNS verification is still pending.
+        """
         addr = (to or "").strip()
         if not addr:
             return {"provider": "resend", "provider_status": "failed",
@@ -131,9 +150,26 @@ class ResendEmailAdapter:
                     "provider_response_id": None, "attempts": 0,
                     "error": None}
 
+        # Phase 21 — resolve sender identity with verified-domain
+        # fallback. Overrides are honored only when their domain is
+        # verified; otherwise fall back and log a WARNING (once per
+        # send is acceptable — a re-verified domain flip is rare).
+        eff_from_email = from_email or self.from_addr
+        eff_from_name = from_name or self.from_name
+        if from_email and not self._is_verified(from_email):
+            logger.warning(
+                "[resend] %r not verified — falling back to %r for tenant=%s",
+                from_email, self.from_addr, tenant_id,
+            )
+            eff_from_email = self.from_addr
+            # Keep the tenant name in the From line for brand fidelity
+            # even when the address falls back — Resend allows any
+            # display name.
+            eff_from_name = from_name or self.from_name
+
         # 3. Build params — resend expects a plain dict, sync SDK.
         params: Dict[str, Any] = {
-            "from": f"{self.from_name} <{self.from_addr}>",
+            "from": f"{eff_from_name} <{eff_from_email}>",
             "to": [addr],
             "subject": subject or "",
             "html": html or "",
@@ -190,6 +226,37 @@ def _extract_status(exc: Any) -> Optional[int]:
         if isinstance(rc, int):
             return rc
     return None
+
+
+# Phase 21 · Feb 2026 — verified-domain check attached to
+# ResendEmailAdapter so ``send()`` can consult it via ``self.``.
+def _adapter_is_verified(self: "ResendEmailAdapter", addr: str) -> bool:
+    """True when the from-address's domain is in
+    ``RESEND_VERIFIED_DOMAINS``. Never raises — malformed addresses
+    are treated as unverified so they trigger the fallback path."""
+    if not addr or "@" not in addr:
+        return False
+    domain = addr.rsplit("@", 1)[1].strip().lower()
+    return domain in self.verified_domains
+
+
+ResendEmailAdapter._is_verified = _adapter_is_verified  # type: ignore[attr-defined]
+
+
+async def resolve_email_sender_for_tenant(tenant: Optional[Dict[str, Any]]) -> Dict[str, Optional[str]]:
+    """Phase 21 — read the per-tenant transactional sender identity.
+
+    Returns ``{from_name, from_email, reply_to}`` — each may be
+    ``None`` when the tenant hasn't opted into an override, in which
+    case the adapter's env defaults apply.
+    """
+    settings = ((tenant or {}).get("settings") or {})
+    sender = settings.get("email_sender") or {}
+    return {
+        "from_name": sender.get("from_name"),
+        "from_email": sender.get("from_email"),
+        "reply_to": sender.get("reply_to"),
+    }
 
 
 # Module-level singleton — every callsite gets the same instance so

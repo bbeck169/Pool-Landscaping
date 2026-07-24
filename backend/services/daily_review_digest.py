@@ -135,7 +135,7 @@ async def send_digest_for_tenant(tenant: Dict[str, Any]) -> Dict[str, Any]:
     for r in rows:
         r["suggested_reply_text"] = await generate_suggested_reply_for_review(r)
 
-    company = (settings.get("business_card") or {}).get("company_name") or tenant.get("name") or "AquaTerra"
+    company = (settings.get("business_card") or {}).get("company_name") or tenant.get("name") or "Pool & Landscaping of Vistancia"
     ratings = [int(r.get("star_rating") or 0) for r in rows if r.get("star_rating")]
     avg = round(sum(ratings) / max(1, len(ratings)), 1) if ratings else 0
     low = sum(1 for r in ratings if 1 <= r <= 3)

@@ -142,7 +142,7 @@ def _stub_note() -> str:
 def _stub_variant(channel: str, topic: str, brand: dict) -> dict:
     limit = CHANNEL_LIMITS.get(channel, 500)
     tag_count = CHANNEL_HASHTAGS.get(channel, 0)
-    tags = " ".join(["#poolcare", "#peoriaAZ", "#vistancia", "#poollife", "#aquaterra",
+    tags = " ".join(["#poolcare", "#peoriaAZ", "#vistancia", "#poollife", "#plofv",
                      "#backyard", "#summer", "#servicematters"][:tag_count])
     base = f"[{brand.get('tone')}] {topic} — {_stub_note()}"
     body = (base + " " + tags).strip()
@@ -730,7 +730,11 @@ async def portal_widget_js():
   box.innerHTML = '<h3 style="margin:0 0 8px;color:#0284C7">Pool & Landscaping Customer Portal</h3>'
     + '<p style="margin:0 0 12px;font-size:14px;color:#71717A">Sign in to view invoices, estimates, and service history.</p>'
     + '<a href="'+host+'/login" style="display:inline-block;background:#0284C7;color:#fff;padding:8px 14px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">Sign in</a>';
-  var target = document.getElementById('aquaterra-portal') || document.body;
+  // Phase 21 · Feb 2026 — accept both the new brand id and the legacy
+  // one so existing customer embeds keep working during the rebrand.
+  var target = document.getElementById('plofv-portal')
+    || document.getElementById('aquaterra-portal')
+    || document.body;
   target.appendChild(box);
 })();
     """.strip()

@@ -212,7 +212,7 @@ async def _fire_customer_reject_reply(lead: Dict[str, Any],
         f"Hi {(lead.get('first_name') or lead.get('name') or 'there').split()[0]},\n\n"
         "Thanks for reaching out — unfortunately we don't currently service "
         f"your area ({reject_state}). We'll keep your info on file if that "
-        "changes.\n\n— AquaTerra Team"
+        "changes.\n\n— Pool & Landscaping of Vistancia Team"
     )
     lid = lead.get("id") or ""
     try:

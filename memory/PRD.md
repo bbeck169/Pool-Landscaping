@@ -8039,3 +8039,108 @@ rendered, tour engine spotlighted step 1 of 11 with no NotFound.
   → **21 pass / 1 skipped, 0 failures**.
 * Cold boot to `/api/legal/tos` first 200: **≈4s** (unchanged; the
   two `update_many`s are indexed and effectively instant).
+
+---
+
+## Feb 2026 · Phase 21 — Vistancia rebrand (in-app only)
+
+**Scope**: convert AquaTerra branding to Pool & Landscaping of Vistancia
+across the app data + copy. Custom-domain (`app.plofv.com`) DNS wiring
+is human-operator work — captured separately in `/app/memory/DNS_SETUP.md`.
+
+### Ship
+
+* **Migration** — `backend/migrations/rebrand_aquaterra_to_plofv.py`
+  runs on every cold boot from `_background_seed`. Idempotent — second
+  boot is a no-op. First-run diff on the aquaterra tenant:
+  * `name`: `"AquaTerra"` → `"Pool & Landscaping of Vistancia"`
+  * `slug_aliases`: `["plofv"]` added (canonical `slug=aquaterra` preserved for FK stability)
+  * `settings.business_card`: filled `company_name / phone / service_area / website_url` (existing fields never overwritten)
+  * `settings.email_sender`: `{from_name, from_email, reply_to}` set to Vistancia identity
+  * `settings.internal_lead_notifications.email_to`: verified `brian@plofv.com`
+  * `settings.primary_app_domain`: field introduced with `None` default
+  * `ai_knowledge_base` `company_profile` (seeded, unedited-by-admin): rebranded to Vistancia copy (1 row)
+* **Slug alias resolver** — `routers/tenants::get_current_tenant` +
+  `_find_tenant_by_slug_or_alias`; signup path also matches
+  `slug_aliases`. Verified: `POST /api/auth/signup` with header
+  `X-Tenant-Slug: plofv` creates a user on the canonical aquaterra tenant.
+* **Email sender identity** — `services/email/resend_adapter`
+  `send()` now accepts optional `from_name`/`from_email` overrides
+  (typically from `tenant.settings.email_sender` via new helper
+  `resolve_email_sender_for_tenant`). When the override's domain is not
+  in `RESEND_VERIFIED_DOMAINS` env (default: `"resend.dev"`), the
+  adapter logs a WARN and falls back to the env-default address —
+  emails still deliver.
+* **CORS** — `server.py::_origins` block appends
+  `https://app.plofv.com` and `https://plofv.com` at boot without
+  removing any existing origins. Runtime log confirmed:
+  `CORS allow_origins = [..., 'https://app.plofv.com', 'https://plofv.com']`.
+* **URL builder helper** — `services/tenant_urls.py::resolve_primary_app_domain(tenant, request_base_url)`
+  reads `tenant.settings.primary_app_domain` first, falls back to
+  request base URL, then `APP_PUBLIC_URL` env, then empty string.
+  Ready for adoption by future URL builders (pay link, magic login,
+  review request, unsubscribe) without a big-bang refactor.
+* **Super-admin ToS reset tool** —
+  `POST /api/admin/users/{uid}/reset-tos`. Clears
+  `tos_accepted_at` + `tos_version_accepted`. Super-admin only (403 for
+  admin). Cannot target super_admin (409). Idempotent (200 with
+  `was_already_clear: true`). Closes the automation gap the tester
+  flagged when all users were grandfathered to `1.0.0` at boot.
+
+### Frontend rebrand
+
+* `frontend/public/index.html` — `<title>Pool &amp; Landscaping of Vistancia</title>` (already in place).
+* `frontend/public/manifest.json` — created with `name: "Pool & Landscaping of Vistancia"`, `short_name: "PLoV"`.
+* `frontend/src/pages/reviews/PublicReviewLanding.jsx:276` — "Powered by Pool & Landscaping of Vistancia · <tenant>".
+* `frontend/src/pages/reviews/PublicReviewsWidgetPage.jsx:124` — same footer.
+* `frontend/src/pages/marketing/InstaQuoteAdmin.jsx:222` — placeholder `plofv-pools`.
+* `frontend/src/pages/social/SocialExtras.jsx:545` — placeholder `https://cdn.plofv.com/logo.png`.
+
+### Backend copy rebrand
+
+* `backend/services/daily_review_digest.py` — final fallback string.
+* `backend/services/leads_side_effects.py` — "— Pool & Landscaping of Vistancia Team" email footer.
+* `backend/services/comm_tokens.py` — merge-tag catalog sample values.
+* `backend/services/review_auto_request.py` — module docstring.
+* `backend/routers/team.py` — invite email fallback + `FRONTEND_BASE_URL` fallback URL.
+* `backend/routers/seo_analyzer.py` — user-agent string.
+* `backend/routers/marketing_studio.py` — hashtag stub + widget target id (kept legacy `aquaterra-portal` id as fallback for backward-compat with existing customer embeds).
+* `backend/server.py` — seeded `ai_knowledge_base` company_profile title + body.
+
+### Judgement calls
+
+* `backend/routers/tenants.py::DEFAULT_TENANT_SLUG = "aquaterra"` — **kept** as-is. Changing the canonical slug would invalidate ~150 hard-coded references in `_seed_super_admin`, `run_tenant_backfill`, seed scripts, tests, and widget domain seeders. Alias resolution is the safer path.
+* `backend/routers/marketing_studio.py::getElementById('aquaterra-portal')` — **added `plofv-portal` as the primary id but kept `aquaterra-portal` as fallback** so any customer already embedding the widget with the legacy id keeps working. Cutover is safe: net-new embeds use the new id, old embeds keep resolving.
+* `backend/reviews_seed/seed_reviews.py` — **left as-is**. It's a demo review seed for the reviews module test harness; the URLs like `https://search.google.com/local/writereview?placeid=demo-aquaterra` are dummy fixtures never shown to users.
+* `backend/.env::DB_NAME="aquaterra"` — **not touched**. Renaming the MongoDB database would require a full dump + restore + downtime. `DB_NAME` is a config constant per spec.
+* `frontend/src/pages/widget/WidgetDemoPage.jsx` line 3 (code comment) — **not touched**. Code comment, not user-visible.
+
+### Grep counts (case-insensitive `aquaterra`)
+
+| Location            | Files (before → after) | Occurrences (before → after) |
+| ------------------- | ---------------------- | ---------------------------- |
+| `backend/`          | 257 → 255              | 1263 → 1283 *                |
+| `frontend/src/`     | 7 → 4                  | 9 → 13 **                    |
+
+*Backend occurrence delta positive because of new migration + test files that reference the word intentionally.
+**Frontend delta positive because the phase21 vitest file contains regex assertions that mention "AquaTerra CRM".
+
+Non-cosmetic, non-demo-email, non-slug-lookup hits remaining in backend after audit:
+* Comments explaining the rebrand or the canonical slug (`routers/tenants.py`, `server.py`, `services/review_auto_request.py`).
+* `getElementById('aquaterra-portal')` — intentional backward-compat fallback.
+* `.env.bak.phase7b` — historical backup file, not loaded.
+
+### Test counts
+
+* Backend pytest — `tests/test_phase21_rebrand.py`: **17/17 pass** (migration idempotency, tenant doc final state, `/api/tenants/business-card`, `/api/tenants/current`, slug-alias signup, alias resolver helper, email sender resolution, adapter verified-domain check, adapter fallback WARN, CORS allowlist, URL builder priority order, `reset-tos` super_admin success + idempotency + 403 for admin + 409 for super_admin target + 404 for unknown user).
+* Backend regression (`test_phase21_rebrand.py` + `test_bug_e_tos_gate.py` + `test_phase19_dispatch_batch.py`): **38 pass / 1 skipped / 0 failures**.
+* Frontend vitest — `src/test/phase21-rebrand.test.jsx`: **5/5 pass** (rebrand footer render + source-string audits on 4 files including `index.html` + `manifest.json`). Combined with `tos-gate.test.jsx`: **13/13 pass**.
+
+### Compile + boot health
+
+* Backend restart clean; boot log shows:
+  * `[phase21] rebrand migration: {..., 'ai_knowledge_base_profiles_rebranded': 1}` on first run of this refresh,
+  * `[phase21] rebrand already applied — no changes` on subsequent runs,
+  * `CORS allow_origins = [preview, 'https://app.plofv.com', 'https://plofv.com']`.
+* Frontend hot-reload with no compile errors (vitest suite runs successfully → import graph is intact).
+* OpenAPI — 2 endpoints added by BUG E + Phase 21 combined: `POST /api/users/me/accept-tos` and `POST /api/admin/users/{uid}/reset-tos`. Plus the public `GET /api/legal/tos` from BUG E. No other schema drift.

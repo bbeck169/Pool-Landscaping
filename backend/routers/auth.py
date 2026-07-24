@@ -117,7 +117,12 @@ async def signup(request: Request, body: SignupRequest):
     tenant = None
     slug = request.headers.get("x-tenant-slug")
     if slug:
-        tenant = await db.tenants.find_one({"slug": slug, "active": True}, {"_id": 0})
+        # Phase 21 · Feb 2026 — tolerate ``slug_aliases`` (e.g. "plofv"
+        # resolves to the same tenant as canonical "aquaterra").
+        tenant = await db.tenants.find_one(
+            {"$or": [{"slug": slug}, {"slug_aliases": slug}], "active": True},
+            {"_id": 0},
+        )
     if not tenant:
         host = (request.headers.get("host") or "").split(":")[0].lower()
         if host:

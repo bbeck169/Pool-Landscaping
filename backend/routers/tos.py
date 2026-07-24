@@ -112,6 +112,68 @@ async def accept_tos(
     }
 
 
+# ── Admin support tool — reset ToS gate for a specific user ─────────
+@router.post("/admin/users/{uid}/reset-tos")
+async def admin_reset_tos_for_user(
+    uid: str,
+    actor: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Super-admin support tool. Clears ``tos_accepted_at`` +
+    ``tos_version_accepted`` on a target user so the ToS gate re-fires
+    on their next request.
+
+    Guards:
+      * Only ``super_admin`` may call this — everyone else gets 403.
+      * Cannot target a ``super_admin`` (they're exempt from the gate
+        so a reset is a no-op AND could lock the owner out of setup
+        if verification breaks). Returns **409** with a clear error.
+      * Idempotent — calling on a user already missing both fields
+        returns ``ok`` without a DB write.
+    """
+    if actor.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Super-admin only")
+
+    target = await db.users.find_one(
+        {"id": uid},
+        {"_id": 0, "id": 1, "email": 1, "role": 1,
+         "tos_accepted_at": 1, "tos_version_accepted": 1},
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.get("role") == "super_admin":
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot reset ToS gate on a super_admin (they are exempt).",
+        )
+
+    already_clear = (
+        target.get("tos_accepted_at") in (None,)
+        and target.get("tos_version_accepted") in (None,)
+    )
+    if already_clear:
+        return {
+            "ok": True,
+            "user_id": uid,
+            "email": target.get("email"),
+            "was_already_clear": True,
+        }
+
+    await db.users.update_one(
+        {"id": uid},
+        {"$unset": {"tos_accepted_at": "", "tos_version_accepted": ""}},
+    )
+    logger.info(
+        "[tos-reset] super_admin=%s cleared gate for user=%s (%s)",
+        actor.get("email"), uid, target.get("email"),
+    )
+    return {
+        "ok": True,
+        "user_id": uid,
+        "email": target.get("email"),
+        "was_already_clear": False,
+    }
+
+
 # ── boot migration ──────────────────────────────────────────────────
 async def run_tos_backfill() -> Dict[str, int]:
     """Idempotent grandfathering migration.

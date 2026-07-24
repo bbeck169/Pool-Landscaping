@@ -219,7 +219,7 @@ function Builder({ cfg, onChange, onSave }) {
           <Input value={cfg.slug || ""}
                   onChange={(e) => set({ slug: e.target.value })}
                   disabled={!!cfg.id}
-                  placeholder="e.g. aquaterra-pools"
+                  placeholder="e.g. plofv-pools"
                   data-testid="iq-slug" />
         </div>
         <div>

@@ -2,7 +2,7 @@
 marked completed.
 
 Tenant opt-out via ``tenants.settings.review_auto_request_after_job``
-(default: True — Aquaterra + all new tenants get it on by default).
+(default: True — Pool & Landscaping of Vistancia + all new tenants get it on by default).
 
 Dedup: never fires if a review_request already exists for this
 customer within the last 14 days. This is stricter than the manual

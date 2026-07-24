@@ -30,7 +30,7 @@ from routers.tenants import get_current_tenant
 
 router = APIRouter(tags=["SEO"])
 
-USER_AGENT = "AquaTerraPlatform-SEOAudit/1.0 (+https://aquaterra.com/bot)"
+USER_AGENT = "PoolLandscapingVistanciaPlatform-SEOAudit/1.0 (+https://plofv.com/bot)"
 FETCH_TIMEOUT_S = 12.0
 
 
