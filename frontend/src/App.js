@@ -82,6 +82,7 @@ import AIBrainPage from "@/pages/settings/AIBrainPage";
 import CopilotPage from "@/pages/admin/CopilotPage";
 // Feb-2026 · Item 6 — Business Card admin editor.
 import BusinessCardSettingsPage from "@/pages/settings/BusinessCardSettings";
+import VanitySlugsPage from "@/pages/settings/VanitySlugsPage";
 import DealsKanbanPage from "@/pages/deals/DealsKanbanPage";
 // QuoteIQ Q2-UI · Feb 2026
 import AIEstimatorPage from "@/pages/estimates/AIEstimatorPage";
@@ -288,6 +289,18 @@ function AdminOnly({ children }) {
   return children;
 }
 
+
+// Phase 21 · Feb 2026 · Vanity slug editor — super_admin gated.
+// Anyone else lands on `/` (unauthorized surface for this app).
+function SuperAdminOnly({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user || user.role !== "super_admin") {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
 // Phase 49.4 + 49.5 — Block technicians from customer + billing routes.
 // Admins/super/customer still allowed (customer for their portal, admin
 // for management). Tech → back to /.
@@ -410,6 +423,8 @@ export default function App() {
             <Route path="settings/terms" element={<AdminOnly><TermsSettings /></AdminOnly>} />
             <Route path="settings/legal" element={<AdminOnly><LegalDocsList /></AdminOnly>} />
             <Route path="settings/integrations" element={<AdminOnly><IntegrationsHub /></AdminOnly>} />
+            {/* Phase 21 · Feb 2026 — Vanity slug editor (super_admin only). */}
+            <Route path="settings/vanity-slugs" element={<SuperAdminOnly><VanitySlugsPage /></SuperAdminOnly>} />
             <Route path="settings/maps" element={<AdminOnly><MapSettings /></AdminOnly>} />
             <Route path="settings/legal/:slug" element={<AdminOnly><LegalDocEditor /></AdminOnly>} />
             <Route path="portal/terms" element={<PortalTerms />} />

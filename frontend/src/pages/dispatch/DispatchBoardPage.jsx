@@ -20,9 +20,10 @@
 // in App.js and the endpoints re-enforce role.
 import React from "react";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 import {
   CalendarDays, Globe, Zap, MapPin, X, Users, ChevronDown,
-  Sparkles, PlusCircle, Loader2,
+  Sparkles, PlusCircle, Loader2, ArrowRight,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -64,6 +65,7 @@ function todayKey() {
 }
 
 export default function DispatchBoardPage() {
+  const navigate = useNavigate();
   const [day, setDay] = React.useState(todayKey());
   const [techId, setTechId] = React.useState(null);
   const [routeType, setRouteType] = React.useState("all");
@@ -339,6 +341,26 @@ export default function DispatchBoardPage() {
             </button>
           );
         })}
+        {/* Phase 21 · Feb 2026 · Addition A recovered — Workstream tab
+            at the end of the day-tabs strip. Route-push (not a filter
+            swap) so back-button behaviour is clean. Visually distinct
+            (dashed left divider + outlined variant) to hint the
+            route push. */}
+        <button
+          type="button"
+          role="tab"
+          onClick={() => navigate("/workstream")}
+          className="ml-2 min-w-[112px] px-3 py-2 rounded-lg text-sm font-semibold transition inline-flex items-center gap-1 justify-center"
+          style={{
+            backgroundColor: "transparent",
+            color: colors.brand,
+            border: `1.5px dashed ${colors.brand}`,
+          }}
+          data-testid="dispatch-tab-workstream"
+          title="Open the Workstream page (completed jobs)"
+        >
+          Workstream <ArrowRight size={12} />
+        </button>
       </div>
 
       {/* ─── Pin-color mode selector + legend ─── */}

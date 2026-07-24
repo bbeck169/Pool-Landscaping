@@ -102,7 +102,7 @@ const RANGE_PRESETS = [
   { key: "q",    label: "This quarter", isQuarter: true },
 ];
 
-function jobToEvent(job) {
+function jobToEvent(job, techColorMap) {
   // Phase 30X · schedule is date-only. All events are all-day; landscaping /
   // pool service is booked by day, not by hour.
   const dateStr = job.scheduled_date;
@@ -114,6 +114,12 @@ function jobToEvent(job) {
   // Phase 34d-follow — prepend a gold star to the title for VIP customers
   // so the RBC event tile carries the same visual weight as grid cards.
   const vipPrefix = job.customer_is_vip ? "★ " : "";
+  // Phase 21 · Feb 2026 · Addition B — resolve the assigned tech's
+  // display color. Falls through to the deterministic hashed fallback
+  // when the tech has no ``display_color_hex`` set (or is unassigned).
+  const techColor = techColorMap && job.technician_id
+    ? (techColorMap.get(job.technician_id) || hashedTechColor(job.technician_id))
+    : (job.technician_id ? hashedTechColor(job.technician_id) : null);
   return {
     id: job.id,
     title: `${vipPrefix}${job.customer_name || "Job"}${job.service_type ? ` · ${job.service_type}` : ""}`,
@@ -122,8 +128,40 @@ function jobToEvent(job) {
       job,
       status,
       colour: STATUS_COLORS[status] || colors.brand,
+      techColor,
     },
   };
+}
+
+
+// Phase 21 · Feb 2026 · Addition B — deterministic hashed color for
+// techs without an explicit ``display_color_hex``. Same algorithm as
+// the pre-existing dispatch fallback so we don't visually re-key the
+// board when this migration lands.
+function hashedTechColor(seed) {
+  if (!seed) return null;
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) {
+    h = ((h << 5) - h) + seed.charCodeAt(i);
+    h |= 0;
+  }
+  const palette = [
+    "#0EA5E9", "#22C55E", "#F97316", "#8B5CF6", "#EF4444",
+    "#EAB308", "#14B8A6", "#EC4899", "#6366F1", "#F43F5E",
+  ];
+  return palette[Math.abs(h) % palette.length];
+}
+
+
+// Phase 21 · Feb 2026 · Addition B — apply a 15% alpha tint over a hex.
+// Used for RBC event background so the tech color is visible without
+// drowning the text.
+function tintHex(hex, alpha = 0.15) {
+  if (!hex || typeof hex !== "string" || !/^#[0-9A-Fa-f]{6}$/.test(hex)) return "transparent";
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 export default function CalendarSchedule() {
@@ -233,6 +271,20 @@ export default function CalendarSchedule() {
     });
   }, [rawJobs, q, techId, status, service]);
 
+  // Phase 21 · Feb 2026 · Addition B — build the tech-id → color map
+  // from the techs list. Techs without a ``display_color_hex`` get
+  // the deterministic hash-based fallback so every event carries a
+  // stable color even when no admin picks one.
+  const techColorMap = useMemo(() => {
+    const m = new Map();
+    for (const t of techs) {
+      const id = t.id || t.user_id;
+      if (!id) continue;
+      m.set(id, t.display_color_hex || hashedTechColor(id));
+    }
+    return m;
+  }, [techs]);
+
   const events = useMemo(
     () => {
       // Phase 34a fix — dedup by job.id BEFORE handing to react-big-calendar.
@@ -243,7 +295,7 @@ export default function CalendarSchedule() {
       const seen = new Set();
       const out = [];
       for (const j of filteredJobs) {
-        const ev = jobToEvent(j);
+        const ev = jobToEvent(j, techColorMap);
         if (!ev) continue;
         if (seen.has(ev.id)) continue;
         seen.add(ev.id);
@@ -251,7 +303,7 @@ export default function CalendarSchedule() {
       }
       return out;
     },
-    [filteredJobs],
+    [filteredJobs, techColorMap],
   );
 
   const serviceTypes = useMemo(() => {
@@ -364,16 +416,37 @@ export default function CalendarSchedule() {
     setReschedulePreview(null);
   }, []);
 
-  const eventPropGetter = (ev) => ({
-    style: {
-      backgroundColor: ev.resource?.colour || colors.brand,
-      borderRadius: 6,
-      border: 0,
-      color: "#fff",
-      fontSize: 12,
-      padding: "2px 4px",
-    },
-  });
+  const eventPropGetter = (ev) => {
+    // Phase 21 · Feb 2026 · Addition B — the RBC event card is tinted
+    // in the tech's color and gets a 4px solid left border so the tech
+    // assignment reads from across the room. When no tech color exists
+    // we fall back to the pre-existing status-based background so the
+    // Schedule keeps its original palette for unassigned jobs.
+    const tech = ev.resource?.techColor;
+    if (tech) {
+      return {
+        style: {
+          backgroundColor: tintHex(tech, 0.18),
+          borderLeft: `4px solid ${tech}`,
+          borderTop: 0, borderRight: 0, borderBottom: 0,
+          borderRadius: 6,
+          color: colors.onSurface,
+          fontSize: 12,
+          padding: "2px 4px 2px 6px",
+        },
+      };
+    }
+    return {
+      style: {
+        backgroundColor: ev.resource?.colour || colors.brand,
+        borderRadius: 6,
+        border: 0,
+        color: "#fff",
+        fontSize: 12,
+        padding: "2px 4px",
+      },
+    };
+  };
 
   /* ─── Phase 30W · Grid-view derived state + actions ────────────── */
   const focusISO = format(date, "yyyy-MM-dd");
@@ -684,6 +757,10 @@ export default function CalendarSchedule() {
                  borderRadius: 12, padding: 8, minHeight: 640 }}
         data-testid="calendar-view"
       >
+        {/* Phase 21 · Feb 2026 · Addition B — tech color legend.
+            Scrollable when many techs. Only rendered when at least
+            one active tech has a color (explicit or hashed fallback). */}
+        <TechColorLegend techs={techs} techColorMap={techColorMap} />
         <DnDCalendar
           localizer={localizer}
           events={events}
@@ -1143,3 +1220,62 @@ function GridPanel({
     </div>
   );
 }
+
+
+/**
+ * Phase 21 · Feb 2026 · Addition B — Tech color legend.
+ *
+ * Renders a horizontal scroll strip above the calendar mapping each
+ * active tech to their display color. Only shows techs with any
+ * indication of activity so it doesn't clutter with archived users.
+ */
+function TechColorLegend({ techs, techColorMap }) {
+  const active = React.useMemo(() => {
+    return (techs || [])
+      .filter((t) => t?.name && (t.active !== false))
+      .map((t) => {
+        const id = t.id || t.user_id;
+        return {
+          id,
+          name: t.name,
+          color: techColorMap.get(id) || hashedTechColor(id),
+          isExplicit: !!t.display_color_hex,
+        };
+      });
+  }, [techs, techColorMap]);
+  if (active.length === 0) return null;
+  return (
+    <div
+      className="flex items-center gap-3 overflow-x-auto pb-2 mb-2"
+      style={{ borderBottom: `1px solid ${colors.border}` }}
+      data-testid="calendar-tech-legend"
+    >
+      <span
+        className="text-[10px] font-bold uppercase tracking-wider shrink-0"
+        style={{ color: colors.muted }}
+      >
+        Techs
+      </span>
+      {active.map((t) => (
+        <span
+          key={t.id}
+          className="inline-flex items-center gap-1.5 shrink-0"
+          data-testid={`calendar-tech-legend-item-${t.id}`}
+          data-color={t.color}
+          data-explicit={t.isExplicit ? "1" : "0"}
+          title={t.isExplicit ? `${t.name} (${t.color})` : `${t.name} (fallback color)`}
+        >
+          <span
+            className="w-3 h-3 rounded-sm"
+            style={{
+              backgroundColor: t.color,
+              border: t.isExplicit ? "none" : `1px dashed ${colors.border}`,
+            }}
+          />
+          <span className="text-xs" style={{ color: colors.onSurface }}>{t.name}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+

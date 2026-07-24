@@ -798,5 +798,64 @@ async def remove_slug_alias(alias: str,
 
 
 # ══════════════════════════════════════════════════════════════
+# Phase 21 · Feb 2026 · Smart enhancement — Primary customer-facing URL
+# ``tenant.settings.primary_app_domain`` — read by every outbound
+# absolute-URL builder (invoice pay link, review request, magic
+# login, unsubscribe). Super-admin only.
+# ══════════════════════════════════════════════════════════════
+_HTTPS_URL_RE = _slug_re.compile(
+    r"^https://[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?)+(/[^\s]*)?$",
+    _slug_re.IGNORECASE,
+)
+
+
+class PrimaryAppDomainIn(BaseModel):
+    primary_app_domain: Optional[str] = None
+
+
+@router.get("/tenants/current/primary-app-domain",
+             operation_id="tenants.primaryAppDomain.get")
+async def get_primary_app_domain(actor: dict = Depends(require_super_admin),
+                                   tenant: dict = Depends(get_current_tenant)):
+    settings = tenant.get("settings") or {}
+    return {
+        "primary_app_domain": settings.get("primary_app_domain"),
+        "default": "https://app.plofv.com",
+    }
+
+
+@router.patch("/tenants/current/primary-app-domain",
+                operation_id="tenants.primaryAppDomain.update")
+async def patch_primary_app_domain(body: PrimaryAppDomainIn,
+                                     actor: dict = Depends(require_super_admin),
+                                     tenant: dict = Depends(get_current_tenant)):
+    """Set / clear the tenant-scoped customer-facing URL. Value must
+    be an HTTPS URL; ``None`` / empty string clears the override so
+    the URL builder falls back to ``request.base_url`` or the
+    ``APP_PUBLIC_URL`` env.
+    """
+    raw = body.primary_app_domain
+    if raw is None or raw == "":
+        new_value = None
+    else:
+        val = raw.strip().rstrip("/")
+        if not val.lower().startswith("https://"):
+            raise HTTPException(400, "primary_app_domain must start with 'https://'")
+        if not _HTTPS_URL_RE.match(val):
+            raise HTTPException(400, "primary_app_domain is not a valid HTTPS URL")
+        new_value = val
+    await db.tenants.update_one(
+        {"id": tenant["id"]},
+        {"$set": {"settings.primary_app_domain": new_value,
+                  "updated_at": now_iso()}},
+    )
+    logger.info(
+        "[primary-app-domain] tenant=%s -> %r by actor=%s",
+        tenant["id"], new_value, actor.get("email"),
+    )
+    return {"ok": True, "primary_app_domain": new_value}
+
+
+# ══════════════════════════════════════════════════════════════
 # Feb-2026 · Item 6 — Business Card (digital vCard)
 # ══════════════════════════════════════════════════════════════

@@ -15,10 +15,24 @@ router = APIRouter()
 @router.get("/technicians")
 async def list_technicians(user: dict = Depends(get_current_user)):
     docs = await db.technicians.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
+    # Phase 21 · Feb 2026 · Addition B — enrich each technician with the
+    # linked user's ``display_color_hex`` so the Schedule / dispatch UIs
+    # can tint event cards without a second roundtrip. Cheap: one bulk
+    # ``$in`` lookup regardless of tech count.
+    tech_user_ids = [t.get("user_id") for t in docs if t.get("user_id")]
+    color_by_uid: dict = {}
+    if tech_user_ids:
+        async for u in db.users.find(
+            {"id": {"$in": tech_user_ids}},
+            {"_id": 0, "id": 1, "display_color_hex": 1},
+        ):
+            if u.get("display_color_hex"):
+                color_by_uid[u["id"]] = u["display_color_hex"]
     for t in docs:
         t["active_jobs"] = await db.jobs.count_documents(
             {"technician_id": t["id"], "status": {"$in": ["pending", "active"]}}
         )
+        t["display_color_hex"] = color_by_uid.get(t.get("user_id"))
     return docs
 
 

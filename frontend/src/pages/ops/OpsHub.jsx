@@ -546,6 +546,23 @@ function TeamRoster() {
     }
   };
 
+  // Phase 21 · Feb 2026 · Addition B — display color PATCH. Optimistic
+  // in the picker component; this handler is the source of truth for
+  // the toast + refresh cycle.
+  const applyColor = async (u, hex) => {
+    try {
+      await api.patch(`/users/${u.id}`, { display_color_hex: hex });
+      setToast({
+        tone: "success",
+        message: hex ? `Color set for ${u.name || u.email}` : `Color cleared for ${u.name || u.email}`,
+      });
+      refresh();
+    } catch (e) {
+      setToast({ tone: "error", message: e?.message || "Failed to update color" });
+      throw e; // let the popover know to revert its optimistic state
+    }
+  };
+
   const CHIPS = [
     { key: "all",            label: "All roles" },
     { key: "pool_tech",      label: "Pool Tech" },
@@ -644,6 +661,16 @@ function TeamRoster() {
                     </div>
                     <div className="text-xs" style={{ color: colors.muted }}>{r.email || ""}</div>
                   </div>
+
+                  {/* Phase 21 · Feb 2026 · Addition B — display color swatch.
+                      Admin can click to open a compact popover, pick a
+                      hex, and PATCH `users.display_color_hex`. Non-admin
+                      viewers see the swatch read-only. */}
+                  <TechColorSwatch
+                    user={r}
+                    editable={isAdmin && !isSuper}
+                    onChange={(hex) => applyColor(r, hex)}
+                  />
 
                   {/* Colored role badge (always visible). */}
                   {opt ? (
@@ -747,6 +774,132 @@ function TeamRoster() {
 
       <Toast toast={toast} onClose={() => setToast(null)} />
     </Card>
+  );
+}
+
+
+/**
+ * Phase 21 · Feb 2026 · Addition B — Compact color swatch + inline
+ * picker popover for the Team roster row.
+ *
+ * Reads / writes ``users.display_color_hex`` via ``onChange`` (bound
+ * to ``applyColor`` in ``TeamRoster``). Optimistic — the swatch flips
+ * to the new color the moment the user clicks Save; if the PATCH
+ * throws, the parent's promise rejects and we revert.
+ */
+export function TechColorSwatch({ user, editable, onChange }) {
+  const [open, setOpen] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const [draft, setDraft] = React.useState(
+    (user.display_color_hex || "#0EA5E9").toUpperCase(),
+  );
+  React.useEffect(() => {
+    setDraft((user.display_color_hex || "#0EA5E9").toUpperCase());
+  }, [user.display_color_hex]);
+
+  const currentColor = user.display_color_hex || null;
+
+  const save = async (hex) => {
+    setSaving(true);
+    try {
+      await onChange(hex);
+      setOpen(false);
+    } catch {
+      /* parent toasted; keep popover open so user can retry */
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => editable && setOpen((v) => !v)}
+        title={editable ? "Set display color" : "Display color"}
+        aria-label={editable ? "Set display color" : "Display color"}
+        className="w-6 h-6 rounded-md border shrink-0"
+        style={{
+          backgroundColor: currentColor || "transparent",
+          borderColor: colors.border,
+          borderStyle: currentColor ? "solid" : "dashed",
+          cursor: editable ? "pointer" : "default",
+        }}
+        data-testid={`team-row-color-swatch-${user.id}`}
+        data-color={currentColor || "unset"}
+      >
+        {!currentColor ? (
+          <span className="text-[10px]" style={{ color: colors.muted }}>—</span>
+        ) : null}
+      </button>
+      {open && editable ? (
+        <div
+          className="absolute z-50 mt-1 right-0 rounded-xl shadow-lg p-3 w-56"
+          style={{
+            backgroundColor: colors.surface,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid={`team-color-picker-popover-${user.id}`}
+        >
+          <div className="text-xs font-semibold mb-2" style={{ color: colors.onSurface }}>
+            Display color
+          </div>
+          <div className="flex items-center gap-2 mb-3">
+            <input
+              type="color"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value.toUpperCase())}
+              className="w-10 h-10 rounded cursor-pointer"
+              data-testid={`team-color-picker-input-${user.id}`}
+            />
+            <code
+              className="text-xs px-2 py-1 rounded"
+              style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
+            >
+              {draft}
+            </code>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => save(null)}
+              disabled={saving || !currentColor}
+              className="text-xs px-2 py-1 rounded font-semibold"
+              style={{
+                backgroundColor: colors.surfaceSecondary,
+                color: currentColor ? colors.onSurface : colors.muted,
+                opacity: !currentColor ? 0.5 : 1,
+              }}
+              data-testid={`team-color-picker-clear-${user.id}`}
+            >
+              Clear
+            </button>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                disabled={saving}
+                className="text-xs px-2 py-1 rounded"
+                style={{ color: colors.muted }}
+                data-testid={`team-color-picker-cancel-${user.id}`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => save(draft)}
+                disabled={saving}
+                className="text-xs px-3 py-1 rounded font-bold text-white"
+                style={{ backgroundColor: colors.brand }}
+                data-testid={`team-color-picker-save-${user.id}`}
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

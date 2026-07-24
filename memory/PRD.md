@@ -8239,3 +8239,59 @@ Non-cosmetic, non-demo-email, non-slug-lookup hits remaining in backend after au
 * `DELETE /api/tenants/current/slug-aliases/{alias}` (operationId `tenants.slugAliases.remove`)
 
 No other schema drift.
+
+---
+
+## Feb 2026 · Phase 21 · Final frontend batch + noreply activation
+
+### 1. `noreply@plofv.com` activation
+* `backend/.env`: `RESEND_FROM_ADDRESS=noreply@plofv.com` (was `cs@plofv.com`).
+* Backend restart clean; boot log confirms `[resend] verified domains: plofv.com, resend.dev`.
+* Confirmation email to `brian@plofv.com` accepted — **Message-ID `44b7a003-b54a-4718-b661-dfb89541a91a`**. Adapter builds `From: Pool & Landscaping of Vistancia <noreply@plofv.com>`.
+
+### 2. Addition A recovered — Dispatch Board Workstream tab
+* `DispatchBoardPage.jsx` now renders a `<button data-testid="dispatch-tab-workstream">` at the end of the day-tabs strip. Visually distinct (dashed outline in brand color + `ArrowRight` icon) to hint the route push. Click → `useNavigate("/workstream")` — no inline panel swap.
+
+### 3. Addition B UI — Team page + Schedule
+* **Team page (`OpsHub::TeamRoster` + `TechColorSwatch`)**: new color swatch column, editable for admin/super_admin. Click opens a compact popover with native `<input type="color">` + Clear + Cancel + Save. Optimistic (parent's `applyColor` PATCHes `display_color_hex`; on error the popover stays open + parent toasts). data-testids: `team-row-color-swatch-<uid>`, `team-color-picker-popover-<uid>`, `team-color-picker-input-<uid>`, `team-color-picker-clear-<uid>`, `team-color-picker-save-<uid>`, `team-color-picker-cancel-<uid>`.
+* **Schedule (`CalendarSchedule`)**:
+  * `jobToEvent(job, techColorMap)` now attaches `resource.techColor`.
+  * `eventPropGetter` — when a tech color exists, RBC event card renders with `backgroundColor: rgba(color, 0.18)` + `borderLeft: 4px solid <color>`. Fallback to the pre-existing status palette when unassigned.
+  * `hashedTechColor(seed)` — deterministic 10-color palette fallback for techs without an explicit `display_color_hex`.
+  * `<TechColorLegend>` — horizontal scroll strip above the calendar. Only rendered when there is ≥1 active tech. Each item carries `data-color` + `data-explicit` for QA drivers. data-testids: `calendar-tech-legend`, `calendar-tech-legend-item-<techId>`.
+* **Backend enrichment**: `GET /api/technicians` now joins `technicians.user_id → users` and returns `display_color_hex` on each row. Single bulk `$in` lookup regardless of tech count.
+
+### 4. Vanity slug editor UI + Primary customer URL
+* New page `/settings/vanity-slugs` at `frontend/src/pages/settings/VanitySlugsPage.jsx`. Gated by new `<SuperAdminOnly>` route wrapper in `App.js`.
+* Renders canonical slug as locked chip; alias list with trash + `ConfirmDeleteDialog`; add-form with client-side regex + reserved-word rejection (helper text explains the format).
+* Same page hosts the **Primary customer-facing URL** widget (`tenant.settings.primary_app_domain`). Backend `GET/PATCH /api/tenants/current/primary-app-domain` — super_admin only. Regex-validated https URL, `null`/empty clears the override. Test-URL button opens the value in a new tab.
+* data-testids: `vanity-slugs-page`, `vanity-slug-canonical`, `vanity-slug-item-<alias>`, `vanity-slug-delete-<alias>`, `vanity-slug-add-input`, `vanity-slug-add-helper`, `vanity-slug-add-submit`, `vanity-slug-confirm-delete`, `primary-domain-input`, `primary-domain-save-btn`, `primary-domain-test-btn`, `primary-domain-error`.
+
+### Tests
+* **Frontend vitest (Phase 21 total)**: **31 tests / 6 files pass**:
+  * `phase21-team-color-swatch.test.jsx` — 6
+  * `phase21-vanity-slugs.test.jsx` — 7
+  * `phase21-workstream-tab.test.jsx` — 1
+  * `phase21-add-customer-btn.test.jsx` — 4
+  * `phase21-rebrand.test.jsx` — 5
+  * `tos-gate.test.jsx` — 8
+* **Backend pytest (Phase 21 total)**: **56 pass / 1 skipped / 0 failures**:
+  * `test_phase21_primary_domain.py` — 7
+  * `test_phase21_additions.py` — 21
+  * `test_phase21_rebrand.py` — 17
+  * `test_bug_e_tos_gate.py` — 12 (BUG E, still green)
+
+### OpenAPI (Phase 21 total)
+* `GET /api/legal/tos`
+* `POST /api/users/me/accept-tos`
+* `POST /api/admin/users/{uid}/reset-tos`
+* `GET /api/tenants/current/slug-aliases` (`tenants.slugAliases.list`)
+* `POST /api/tenants/current/slug-aliases` (`tenants.slugAliases.add`)
+* `DELETE /api/tenants/current/slug-aliases/{alias}` (`tenants.slugAliases.remove`)
+* `GET /api/tenants/current/primary-app-domain` (`tenants.primaryAppDomain.get`)
+* `PATCH /api/tenants/current/primary-app-domain` (`tenants.primaryAppDomain.update`)
+
+### Decisions
+* **Schedule color legend placement**: chose **top-of-view** (horizontal scroll strip immediately above the RBC calendar). Rationale: matches the pin-color legend pattern already established by the Dispatch Board; horizontally scrolls when the tenant grows past ~10 active techs; doesn't consume left-column real estate reserved for filters.
+* **Reserved-slug list mirrored client-side**: added `RESERVED` Set in `VanitySlugsPage.jsx` matching the backend `_RESERVED_SLUG_ALIASES`. Prevents a needless roundtrip for the obvious cases and gives instant feedback. Backend is still the source of truth.
+* **`Primary URL` on the vanity-slug page (not `BusinessCardSettings`)**: both settings are super_admin-scoped and both live under `tenant.settings.*`. Colocating them in one super_admin surface keeps the business-card page admin-accessible (business-card fields are edited daily by admins; primary URL is set once at cutover).
