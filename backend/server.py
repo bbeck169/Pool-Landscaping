@@ -160,6 +160,8 @@ api_router.include_router(_tos_router.router)
 # they share the /users/me + /admin/users/{id} URL space.
 from routers import auto_clockin as _auto_clockin_router  # noqa: E402
 api_router.include_router(_auto_clockin_router.router)
+from routers import citations as _citations_router  # noqa: E402
+api_router.include_router(_citations_router.router)
 api_router.include_router(_p17_reassign.router)
 api_router.include_router(_p18_ai_brain.router)
 api_router.include_router(_p19_admin_users.router)
@@ -494,6 +496,16 @@ async def _background_seed():
         logger.info(f"[vesting-backfill] {vest_res}")
     except Exception as e:
         logger.warning(f"vesting backfill crashed: {e}")
+
+    # Feb-2026 · Phase 22 — Citation Builder seed + NAP drift sweep.
+    # Idempotent: upserts the master directory list by slug, then
+    # recomputes ``nap_drift_detected`` for every tenant's citations.
+    try:
+        from routers.citations import run_citations_seed_and_drift
+        _c_res = await run_citations_seed_and_drift()
+        logger.info(f"[citations-seed] {_c_res}")
+    except Exception as e:
+        logger.warning(f"citations seed crashed: {e}")
 
     # Feb-2026 — one-shot idempotent Brian integration ownership
     # transfer. Runs every boot but only mutates on the first pass.

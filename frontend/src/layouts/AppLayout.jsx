@@ -139,6 +139,7 @@ const ADMIN_NAV = [
       { to: "/settings/integrations", label: "Integrations" },
       { to: "/settings/maps", label: "Map & Autocomplete" },
       { to: "/settings/ringcentral", label: "RingCentral" },
+      { to: "/settings/citations", label: "Citation Builder" },
       { to: "/settings/orphan-users", label: "Orphan Users", superOnly: true },
       { to: "/access-settings", label: "Access Settings" },
       { to: "/access-history", label: "Access History" },
