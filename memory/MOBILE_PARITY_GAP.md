@@ -9,9 +9,9 @@
 |-----------|--------------|--------|-----|----------|
 | `/portal/home` | `portal/home.tsx` | ✅ Y | — | — |
 | `/portal/services` | `portal/services.tsx` | ✅ Y | — | — |
-| `/portal/services/:id` | — | ❌ N | Service detail view (pool/landscape job detail from customer perspective) | HIGH |
-| `/portal/service-reports` | — | ❌ N | Service reports list for customer | HIGH |
-| `/portal/service-reports/:id` | — | ❌ N | Service report detail with photos | HIGH |
+| `/portal/services/:id` | `portal/service/[id].tsx` | ✅ Y | — | — |
+| `/portal/service-reports` | `portal/service-reports.tsx` | ✅ Y | — | — |
+| `/portal/service-reports/:id` | `portal/service-report/[id].tsx` | ✅ Y | — | — |
 | `/portal/invoices` | `portal/invoices.tsx` | ✅ Y | — | — |
 | `/portal/invoices/:id` | `invoice/[id].tsx` | ⚠️ Partial | Admin invoice detail exists but not portal-scoped | MEDIUM |
 | `/portal/estimates` | `portal/estimates.tsx` | ✅ Y | — | — |
@@ -129,7 +129,7 @@
 | `/marketing/posts` | — | ❌ N | Social posts | LOW |
 | `/marketing/queue` | — | ❌ N | Approval queue | LOW |
 | `/marketing/calendar` | — | ❌ N | Content calendar | LOW |
-| `/marketing/broadcasts` | — | ❌ N | Mass messaging broadcasts | HIGH |
+| `/marketing/broadcasts` | `marketing/broadcasts.tsx` | ✅ Y | — | — |
 | `/marketing/segments` | `marketing/segments.tsx` | ✅ Y | — | — |
 | `/marketing/sequences` | `marketing/sequences.tsx` | ✅ Y | — | — |
 | `/marketing/sequences/new` | — | ❌ N | New sequence | MEDIUM |
@@ -399,7 +399,7 @@
 
 | Priority | Count | Description |
 |----------|-------|-------------|
-| **HIGH** | 4 | Customer: service reports list/detail, service detail; Admin: broadcasts |
+| **HIGH** | 0 | ✅ All resolved (service reports list/detail, service detail, broadcasts) |
 | **MEDIUM** | ~25 | D2D sub-pages, admin sub-features, settings, campaign CRUD |
 | **LOW** | ~55 | Admin settings, reports slices, social suite, warranties, Business OS |
 | **N/A** | ~18 | Public web pages, super-admin-only, desktop-only editors |

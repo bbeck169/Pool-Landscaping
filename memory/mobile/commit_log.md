@@ -325,3 +325,34 @@
   - Customer: Portal Home (root, no BC) ✅, Invoices (L2) ✅, Messages (L2) ✅
   - Sizes: iPhone SE (375x667) ✅, iPhone 13 (390x844) ✅, iPad (768x1024) ✅
 
+
+
+
+## Iteration 17 — HIGH-Priority Parity Gap Build (STEP 2)
+- **Commit**: cef1e0420c3dc55cbb2d207307bb6717b93a8273
+- **Date**: 2026-07-24
+- **Changes**:
+  - **Customer Service Reports List** (`portal/service-reports.tsx`): Full list screen with kind chips (Pool/Landscape/Service), date formatting, tech name, loading skeleton, empty state, pull-to-refresh, navigation to detail. API: `GET /api/customers/me/service-reports`.
+  - **Customer Service Report Detail** (`portal/service-report/[id].tsx`): Rich detail screen with header card (kind icon, chips, status), algae observation banner, water chemistry readings with qualitative band chips (Below/Average/Above Avg/Elevated), chemicals added list, service checklist with check/uncheck indicators, customer notes section, visit photos grid, all with pull-to-refresh. API: `GET /api/customers/me/service-reports/{id}`.
+  - **Customer Service Detail** (`portal/service/[id].tsx`): Customer-facing job detail with status pill, title, date, tech, address, service checklist (done/undone with icons), water reading chips, photos grid, notes section, pull-to-refresh. API: `GET /api/jobs/{id}`.
+  - **Admin Broadcasts** (`marketing/broadcasts.tsx`): Full broadcasts page with batch list (expandable rows showing recipients), stat pills (sent/failed/suppressed/no-contact), relative time display, compose bottom sheet with channel selection (Email/SMS toggles), subject/body inputs, live preview with estimated recipient counts & cost, send confirmation modal, role gate (admin/super_admin only), loading skeletons, empty state, pull-to-refresh. API: `GET /api/mass-messaging/batches`, `GET /api/mass-messaging/batches/{id}`, `POST /api/mass-messaging/preview`, `POST /api/mass-messaging/send`.
+  - **Navigation wiring**: Added "Service Reports" card to customer portal home grid. Updated portal/services.tsx to navigate to customer-scoped `/portal/service/{id}` (was navigating to full admin `/job/{id}`). Added "Broadcasts" link to admin More screen.
+- **Files created**:
+  - `mobile/app/portal/service-reports.tsx`
+  - `mobile/app/portal/service-report/[id].tsx`
+  - `mobile/app/portal/service/[id].tsx`
+  - `mobile/app/marketing/broadcasts.tsx`
+- **Files modified**:
+  - `mobile/app/portal/home.tsx` (added Service Reports to SECTIONS)
+  - `mobile/app/portal/services.tsx` (rewrote to use inline card instead of JobCard, navigate to portal-scoped detail)
+  - `mobile/app/(app)/more.tsx` (added Broadcasts admin link)
+- **Web files referenced**:
+  - `frontend/src/pages/portal/PortalServiceReports.jsx` (service reports list+detail)
+  - `frontend/src/pages/portal/PortalPages.jsx` (PortalServiceDetail, PortalServices)
+  - `frontend/src/pages/marketing/BroadcastsPage.jsx` (broadcasts list)
+  - `frontend/src/components/mass-messaging/MassMessagingComposeDialog.jsx` (compose flow)
+  - `frontend/src/components/mass-messaging/MassMessagingCard.jsx` (compose CTA)
+- **Endpoints used**: `/api/customers/me/service-reports`, `/api/customers/me/service-reports/{id}`, `/api/jobs/{id}`, `/api/mass-messaging/batches`, `/api/mass-messaging/batches/{id}`, `/api/mass-messaging/preview`, `/api/mass-messaging/send`
+- **Lint**: All 7 files clean ✅
+- **Build**: Metro bundled 1897 modules successfully ✅
+- **Note**: Mobile tunnel CDN serving cached "Preview Unavailable" page — platform-level issue, not code. Local service responds 200 on port 3001.

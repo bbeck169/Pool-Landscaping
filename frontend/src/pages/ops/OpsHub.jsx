@@ -563,6 +563,27 @@ function TeamRoster() {
     }
   };
 
+  // Feb-2026 · web-side companion to the mobile Clock-In screen. Admin
+  // toggles ``users.auto_clockin_enabled`` on any technician row. The
+  // switch renders read-only on non-technician rows (there's nothing to
+  // clock into) but stays visible for parity so the UI never surprises
+  // an admin looking for the control. Optimistic — the parent list is
+  // refreshed on success and a toast surfaces failures without rolling
+  // back the row visually (rare, and refresh will re-sync anyway).
+  const applyAutoClockin = async (u, nextVal) => {
+    try {
+      await api.patch(`/users/${u.id}`, { auto_clockin_enabled: !!nextVal });
+      setToast({
+        tone: "success",
+        message: `Auto clock-in ${nextVal ? "on" : "off"} for ${u.name || u.email}`,
+      });
+      refresh();
+    } catch (e) {
+      setToast({ tone: "error", message: e?.message || "Failed to update auto clock-in" });
+      throw e;
+    }
+  };
+
   const CHIPS = [
     { key: "all",            label: "All roles" },
     { key: "pool_tech",      label: "Pool Tech" },
@@ -670,6 +691,18 @@ function TeamRoster() {
                     user={r}
                     editable={isAdmin && !isSuper}
                     onChange={(hex) => applyColor(r, hex)}
+                  />
+
+                  {/* Feb-2026 · Team page Auto Clock-In toggle. Admin flips
+                      ``users.auto_clockin_enabled`` for technician rows;
+                      non-tech rows render an inert dash so the column
+                      still aligns across the roster. Hidden entirely on
+                      the caller's own row so admins toggle their prefs
+                      via the mobile Clock-In screen instead. */}
+                  <TechAutoClockinToggle
+                    user={r}
+                    editable={isAdmin && !isSuper && !isSelf}
+                    onChange={(nextVal) => applyAutoClockin(r, nextVal)}
                   />
 
                   {/* Colored role badge (always visible). */}
@@ -900,6 +933,102 @@ export function TechColorSwatch({ user, editable, onChange }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+
+/**
+ * Feb-2026 · Team page Auto Clock-In toggle.
+ *
+ * Renders a compact switch that PATCHes ``users.auto_clockin_enabled``
+ * for the row's user. On non-technician rows the switch is inert (no
+ * onClick, dimmed, `aria-disabled`) because the field is only
+ * meaningful for techs — but the column stays visible so the roster's
+ * columns align across role types.
+ *
+ * Optimistic — flips the local ``val`` immediately on click, then
+ * awaits the parent's ``onChange`` (which owns the toast + refresh
+ * cycle). On rejection the local state reverts.
+ */
+function TechAutoClockinToggle({ user, editable, onChange }) {
+  const isTech = (user?.role || "").toLowerCase() === "technician";
+  const initialVal = user?.auto_clockin_enabled === true;
+  const [val, setVal] = React.useState(initialVal);
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    setVal(user?.auto_clockin_enabled === true);
+  }, [user?.auto_clockin_enabled]);
+
+  // Non-tech rows: render an inert dash so the column aligns but the
+  // switch cannot be flipped. Admins who want to see auto-clockin on
+  // an admin/unassigned row need to first set the role to technician.
+  if (!isTech) {
+    return (
+      <span
+        className="text-[10px] font-semibold px-2 py-0.5 rounded"
+        style={{
+          backgroundColor: colors.surfaceSecondary,
+          color: colors.muted,
+          minWidth: 44,
+          textAlign: "center",
+        }}
+        aria-label="Auto clock-in unavailable — not a technician"
+        data-testid={`team-row-autoclockin-toggle-${user.id}`}
+        data-value="unavailable"
+      >
+        —
+      </span>
+    );
+  }
+
+  const disabled = !editable || saving;
+
+  const toggle = async () => {
+    if (disabled) return;
+    const next = !val;
+    setVal(next); // optimistic
+    setSaving(true);
+    try {
+      await onChange(next);
+    } catch {
+      setVal((cur) => !cur); // revert on failure
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      role="switch"
+      aria-checked={val}
+      aria-label={`Auto clock-in ${val ? "on" : "off"} for ${user.name || user.email}`}
+      title={editable ? "Toggle auto clock-in" : "Auto clock-in (read-only)"}
+      className="relative inline-flex items-center rounded-full transition"
+      style={{
+        width: 40,
+        height: 22,
+        backgroundColor: val ? colors.brand : "#CBD5E1",
+        opacity: disabled ? 0.6 : 1,
+        cursor: disabled ? "not-allowed" : "pointer",
+      }}
+      data-testid={`team-row-autoclockin-toggle-${user.id}`}
+      data-value={val ? "on" : "off"}
+      data-saving={saving ? "1" : "0"}
+      disabled={disabled}
+    >
+      <span
+        className="inline-block rounded-full bg-white shadow"
+        style={{
+          width: 18,
+          height: 18,
+          transform: val ? "translateX(20px)" : "translateX(2px)",
+          transition: "transform 120ms ease",
+        }}
+      />
+    </button>
   );
 }
 
