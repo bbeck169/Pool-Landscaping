@@ -8387,3 +8387,43 @@ No other schema drift.
 * `backend/server.py` (registers new router + wires backfill into boot pipeline)
 * `backend/tests/test_auto_clockin_and_orphan.py` (new)
 * `/app/memory/PRD.md`
+
+---
+
+## Feb-2026 · Iteration 17 — Web UI closure for Auto Clock-In + Orphans + Customer profile completion
+
+Ships the three web-side UI surfaces that were waiting on the mobile-agent backend gaps to land.
+
+### Backend
+- `GET /api/admin/orphan-customer-users` — super_admin only. Lists every `role=customer` auth user whose `customer_id` is missing OR points at a non-existent customer record. Returns `{users:[{id,tenant_id,name,email,phone,created_at,customer_id,reason}]}` where `reason` is `missing_customer_id` | `stale_customer_id`.
+- `POST /api/portal/complete-profile` — customer role only. Body `{first_name,last_name,phone,service_address,preferred_contact}`. Creates the missing linked customer document + relinks `users.customer_id`. Idempotent (`was_already_linked=true`). `?skip=1` writes a `profile_incomplete_reminder` audit event and returns `{skipped:true}` without creating a record.
+
+### Frontend
+- **Team page Auto Clock-In toggle** (`OpsHub.jsx` · `TechAutoClockinToggle` component) — per-row switch with `data-testid="team-row-autoclockin-toggle-{uid}"`, `role="switch"`, `aria-checked` bound to the current value. Renders as inert dash for non-tech rows so the column stays aligned. Optimistic flip with revert on error. Hidden as editable on the caller's own row.
+- **Orphan Users admin page** (`/settings/orphan-users`, super_admin only) — list + per-row "Repair" button, empty state, error banner, refresh button. Sidebar entry marked `superOnly:true` and filtered out for regular admins by `AppLayout` nav filter.
+- **ProfileCompletionGate** (`components/portal/ProfileCompletionGate.jsx`) — z-[70] modal that gates the shell when `user.customer_record_missing===true` and `user.role==='customer'`. Prefills first/last/phone from `user.name`/`user.phone`. Client-side validation of first, last, phone, service_address before POST. Skip button writes sessionStorage `profile_completion_skipped=1` (session-scoped) and fires audit-only endpoint.
+
+### Tests
+- `backend/tests/test_auto_clockin_and_orphan.py` extended: +6 tests (list orphans, admin forbid, complete-profile RBAC + creation + idempotent + skip audit). **14/14 pytest pass.**
+- `frontend/src/test/team-autoclockin-toggle.test.jsx` (4/4 pass)
+- `frontend/src/test/orphan-users-page.test.jsx` (5/5 pass)
+- `frontend/src/test/profile-completion-gate.test.jsx` (7/7 pass)
+- `testing_agent_v3` (iteration_17) — all three UX flows verified end-to-end via Playwright + a 7/7 public-URL smoke suite. Zero bugs.
+
+### Files
+- `backend/routers/auto_clockin.py` — 2 new endpoints appended (orphan list + portal complete-profile + skip audit path)
+- `backend/tests/test_auto_clockin_and_orphan.py` — 6 new tests
+- `backend/tests/test_iteration17_public_smoke.py` (new — via testing_agent)
+- `frontend/src/pages/ops/OpsHub.jsx` — `applyAutoClockin` handler + `<TechAutoClockinToggle>` render + component export
+- `frontend/src/pages/settings/OrphanUsersPage.jsx` (new)
+- `frontend/src/components/portal/ProfileCompletionGate.jsx` (new)
+- `frontend/src/layouts/AppLayout.jsx` — mounts `<ProfileCompletionGate />` next to `<TosGate />`, adds `superOnly` sidebar filter + link, superOnly-filtered `Orphan Users` entry
+- `frontend/src/App.js` — new `/settings/orphan-users` route (SuperAdminOnly guard)
+- `frontend/src/test/team-autoclockin-toggle.test.jsx` (new)
+- `frontend/src/test/orphan-users-page.test.jsx` (new)
+- `frontend/src/test/profile-completion-gate.test.jsx` (new)
+
+### Follow-ups (deferred — not blocking)
+- **P2:** Move Orphan Users sidebar link out of the collapsed "Finance" group into a dedicated "Administration" or "System" group so super_admins find it without hunting (flagged by testing_agent iteration_17).
+- **P2:** Extract a pytest teardown helper that always re-orphans `customer@aquaterra.com` at the end of tests that submit the profile-completion form (currently done ad-hoc).
+

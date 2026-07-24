@@ -111,6 +111,11 @@ export default function More() {
     { icon: "gift-outline", label: "Admin Referrals", onPress: () => router.push("/admin/referrals") },
     { icon: "pricetag-outline", label: "Promo Codes", onPress: () => router.push("/settings/promo-codes") },
     { icon: "cog-outline", label: "Tenant Settings", onPress: () => router.push("/settings/tenant") },
+    { icon: "id-card-outline", label: "Business Card Settings", onPress: () => router.push("/settings/business-card" as any) },
+    { icon: "bulb-outline", label: "AI Brain", onPress: () => router.push("/settings/ai-brain" as any) },
+    { icon: "checkmark-done-outline", label: "Local SEO Checklist", onPress: () => router.push("/settings/local-seo" as any) },
+    { icon: "globe-outline", label: "Website SEO", onPress: () => router.push("/settings/website-seo" as any) },
+    { icon: "link-outline", label: "Vanity Slugs", onPress: () => router.push("/settings/vanity-slugs" as any) },
   ];
 
   return (
