@@ -168,6 +168,8 @@ from routers import repair_calculator as _repair_calc_router  # noqa: E402
 api_router.include_router(_repair_calc_router.router)
 from routers import ai_visibility as _aiv_router  # noqa: E402
 api_router.include_router(_aiv_router.router)
+from routers import ai_media_estimator as _p25_ai_media_router  # noqa: E402
+api_router.include_router(_p25_ai_media_router.router)
 api_router.include_router(_p17_reassign.router)
 api_router.include_router(_p18_ai_brain.router)
 api_router.include_router(_p19_admin_users.router)

@@ -2,8 +2,10 @@ import React from "react";
 import { toast } from "sonner";
 import {
   Plus, Trash2, Copy as CopyIcon, Printer, Send, X, Info, Save,
+  Camera, Mic, Square, Sparkles, AlertTriangle,
 } from "lucide-react";
-import { api } from "@/api";
+import { api, api_base } from "@/api";
+import { TOKEN_KEY } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 
@@ -38,6 +40,10 @@ export default function RepairCalculatorPage() {
   const [emailBusy, setEmailBusy] = React.useState(false);
   const [showEmailConfirm, setShowEmailConfirm] = React.useState(false);
   const [showConfigEditor, setShowConfigEditor] = React.useState(false);
+  // Phase 25 · AI Photo/Voice → repair estimate.
+  const [aiResult, setAiResult] = React.useState(null);
+  const [aiBusy, setAiBusy] = React.useState(null);       // "photo" | "voice" | null
+  const [aiError, setAiError] = React.useState(null);
 
   React.useEffect(() => {
     api.get("/ops/repair-calculator/config").then(setConfig).catch(() => {});
@@ -120,6 +126,76 @@ export default function RepairCalculatorPage() {
     : quote.profit_margin_tier === "yellow" ? "#CA8A04" : "#DC2626"
     : colors.muted;
 
+  // Phase 25 — hydrate the parts + labor hours field from an AI result.
+  // Existing user-typed rows are preserved when they already have a cost;
+  // empty rows get overwritten and new AI-suggested parts are appended.
+  const hydrateFromAi = React.useCallback((result) => {
+    if (!result) return;
+    const aiParts = (result.parts || []).filter(
+      (p) => Number(p?.cost) > 0 || (p?.name || "").trim(),
+    );
+    setParts((prev) => {
+      const kept = prev.filter((p) => Number.parseFloat(p.cost) > 0);
+      const merged = [
+        ...kept,
+        ...aiParts.map((p) => ({
+          name: p.name || "",
+          cost: Number(p.cost) > 0 ? String(p.cost) : "",
+        })),
+      ];
+      // Always leave a trailing blank row so admins can add more.
+      if (merged.length === 0 || (merged[merged.length - 1].name || merged[merged.length - 1].cost)) {
+        merged.push({ name: "", cost: "" });
+      }
+      return merged;
+    });
+    if (Number(result.labor_hours_estimated) > 0) {
+      setLaborHours(String(result.labor_hours_estimated));
+    }
+  }, []);
+
+  const runAiEstimate = React.useCallback(async (endpoint, formData) => {
+    setAiBusy(endpoint);
+    setAiError(null);
+    try {
+      const token = localStorage.getItem(TOKEN_KEY) || "";
+      const res = await fetch(`${api_base()}/ai/estimate-from-${endpoint}`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = data?.detail || `Request failed (${res.status})`;
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      }
+      if (data?.error === "voice_provider_disabled") {
+        toast.error("Voice memo is disabled — the OpenAI Whisper key isn't configured yet.");
+        setAiError({ code: "voice_provider_disabled",
+                       message: data.reason || "OPENAI_API_KEY not configured." });
+        return;
+      }
+      if (data?.error) {
+        toast.error(`AI estimate failed: ${data.reason || data.error}`);
+        setAiError({ code: data.error, message: data.reason || "" });
+        return;
+      }
+      setAiResult(data);
+      hydrateFromAi(data);
+      toast.success(
+        endpoint === "photo"
+          ? "Photo analyzed — parts hydrated."
+          : "Voice memo analyzed — parts hydrated.",
+      );
+    } catch (e) {
+      const msg = e?.message || "AI estimate failed";
+      toast.error(msg);
+      setAiError({ code: "network_error", message: msg });
+    } finally {
+      setAiBusy(null);
+    }
+  }, [hydrateFromAi]);
+
   return (
     <SafeScrollContainer
       className="p-6 max-w-6xl mx-auto"
@@ -165,6 +241,34 @@ export default function RepairCalculatorPage() {
         />
       ) : null}
 
+      <AiCtaBar
+        busy={aiBusy}
+        onPhoto={(fd) => runAiEstimate("photo", fd)}
+        onVoice={(fd) => runAiEstimate("voice", fd)}
+      />
+
+      {aiResult ? (
+        <AiResultBanner
+          result={aiResult}
+          onDismiss={() => setAiResult(null)}
+        />
+      ) : null}
+
+      {aiError && aiError.code === "voice_provider_disabled" ? (
+        <div
+          className="rounded-xl p-3 mb-3 flex items-start gap-2"
+          style={{ backgroundColor: "#FEF3C7", border: "1px solid #FCD34D", color: "#92400E" }}
+          data-testid="repair-calc-ai-voice-disabled"
+        >
+          <AlertTriangle size={16} />
+          <div className="text-sm">
+            <b>Voice memo is disabled</b> — the OpenAI Whisper API key isn't configured
+            on this pod. Add <code>OPENAI_API_KEY</code> in the backend env and the button
+            will flip live automatically. Photo analysis still works.
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <InputColumn
           parts={parts}
@@ -201,6 +305,197 @@ export default function RepairCalculatorPage() {
         />
       ) : null}
     </SafeScrollContainer>
+  );
+}
+
+
+function AiCtaBar({ busy, onPhoto, onVoice }) {
+  const fileInputRef = React.useRef(null);
+  const [recording, setRecording] = React.useState(false);
+  const mediaRecorderRef = React.useRef(null);
+  const audioChunksRef = React.useRef([]);
+  const streamRef = React.useRef(null);
+
+  const handlePhotoPicked = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024) {
+      toast.error("Image is larger than 10 MB. Please choose a smaller file.");
+      return;
+    }
+    const fd = new FormData();
+    fd.append("file", f, f.name || "photo.jpg");
+    onPhoto(fd);
+  };
+
+  const startRecording = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast.error("Microphone recording isn't supported in this browser.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const mr = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      mr.ondataavailable = (evt) => {
+        if (evt.data && evt.data.size > 0) audioChunksRef.current.push(evt.data);
+      };
+      mr.onstop = () => {
+        const mime = mr.mimeType || "audio/webm";
+        const blob = new Blob(audioChunksRef.current, { type: mime });
+        streamRef.current?.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        if (blob.size === 0) {
+          toast.error("No audio captured — try again.");
+          return;
+        }
+        if (blob.size > 10 * 1024 * 1024) {
+          toast.error("Recording is larger than 10 MB. Keep it under 60 seconds.");
+          return;
+        }
+        const ext = mime.includes("ogg") ? "ogg" : mime.includes("mp4") ? "mp4" : "webm";
+        const fd = new FormData();
+        fd.append("file", blob, `memo.${ext}`);
+        onVoice(fd);
+      };
+      mediaRecorderRef.current = mr;
+      mr.start();
+      setRecording(true);
+    } catch (e) {
+      toast.error("Couldn't access the microphone — check browser permissions.");
+    }
+  };
+
+  const stopRecording = () => {
+    const mr = mediaRecorderRef.current;
+    if (mr && mr.state !== "inactive") {
+      mr.stop();
+    }
+    setRecording(false);
+  };
+
+  return (
+    <div
+      className="rounded-xl p-3 mb-3 flex flex-wrap items-center gap-2"
+      style={{
+        background: brandGradientCss,
+        color: "#fff",
+      }}
+      data-testid="repair-calc-ai-cta-bar"
+    >
+      <Sparkles size={16} />
+      <div className="text-xs sm:text-sm mr-2 font-semibold">
+        Skip the typing — hand the parts list to the AI:
+      </div>
+      <button
+        type="button"
+        onClick={() => fileInputRef.current?.click()}
+        disabled={busy === "photo" || recording}
+        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-bold disabled:opacity-60"
+        style={{ backgroundColor: "rgba(255,255,255,0.18)", color: "#fff" }}
+        data-testid="repair-calc-ai-photo-btn"
+      >
+        <Camera size={14} />
+        {busy === "photo" ? "Analyzing…" : "📷 Snap a photo"}
+      </button>
+      <input
+        ref={fileInputRef} type="file"
+        accept="image/jpeg,image/png,image/heic,image/heif,image/webp"
+        onChange={handlePhotoPicked} className="hidden"
+        data-testid="repair-calc-ai-photo-input"
+      />
+      {recording ? (
+        <button
+          type="button" onClick={stopRecording}
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-bold"
+          style={{ backgroundColor: "#DC2626", color: "#fff" }}
+          data-testid="repair-calc-ai-voice-stop"
+        >
+          <Square size={14} /> Stop recording
+        </button>
+      ) : (
+        <button
+          type="button" onClick={startRecording}
+          disabled={busy === "voice"}
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-bold disabled:opacity-60"
+          style={{ backgroundColor: "rgba(255,255,255,0.18)", color: "#fff" }}
+          data-testid="repair-calc-ai-voice-btn"
+        >
+          <Mic size={14} />
+          {busy === "voice" ? "Transcribing…" : "🎙️ Voice memo"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+
+function AiResultBanner({ result, onDismiss }) {
+  const conf = Number(result?.confidence) || 0;
+  const tone =
+    conf >= 70 ? { bg: "#DCFCE7", border: "#86EFAC", ink: "#166534" }
+    : conf >= 40 ? { bg: "#FEF9C3", border: "#FDE68A", ink: "#854D0E" }
+    : { bg: "#FEE2E2", border: "#FCA5A5", ink: "#7F1D1D" };
+  const matched = (result?.parts || []).filter((p) => p.source === "pricebook_match").length;
+  const total = (result?.parts || []).length;
+  return (
+    <div
+      className="rounded-xl p-3 mb-3 flex items-start gap-2"
+      style={{ backgroundColor: tone.bg, border: `1px solid ${tone.border}`, color: tone.ink }}
+      data-testid="repair-calc-ai-result-banner"
+    >
+      <Sparkles size={16} />
+      <div className="text-sm flex-1">
+        <div className="font-semibold flex flex-wrap items-center gap-2">
+          <span data-testid="repair-calc-ai-result-title">
+            AI estimate hydrated
+            {result?.input_kind === "voice" ? " from voice memo" : " from photo"}
+          </span>
+          <span
+            className="text-[11px] px-2 py-0.5 rounded-full"
+            style={{ backgroundColor: `${tone.ink}22`, color: tone.ink }}
+            data-testid="repair-calc-ai-result-confidence"
+          >
+            Confidence: {conf}%
+          </span>
+          {total > 0 ? (
+            <span className="text-[11px] px-2 py-0.5 rounded-full"
+                    style={{ backgroundColor: `${tone.ink}14`, color: tone.ink }}
+                    data-testid="repair-calc-ai-result-match-count">
+              {matched}/{total} parts matched pricebook
+            </span>
+          ) : null}
+        </div>
+        {result?.raw_analysis ? (
+          <div className="mt-1 text-[13px]" data-testid="repair-calc-ai-result-analysis">
+            {result.raw_analysis}
+          </div>
+        ) : null}
+        {(result?.concerns || []).length ? (
+          <ul className="mt-1 text-[12px] list-disc pl-4"
+              data-testid="repair-calc-ai-result-concerns">
+            {result.concerns.map((c, i) => <li key={i}>{c}</li>)}
+          </ul>
+        ) : null}
+        {result?.transcript ? (
+          <div className="mt-2 text-[12px] italic opacity-80"
+                data-testid="repair-calc-ai-result-transcript">
+            “{result.transcript}”
+          </div>
+        ) : null}
+      </div>
+      <button
+        type="button" onClick={onDismiss}
+        className="w-6 h-6 rounded-lg flex items-center justify-center"
+        style={{ backgroundColor: `${tone.ink}22`, color: tone.ink }}
+        aria-label="Dismiss AI banner"
+        data-testid="repair-calc-ai-result-dismiss"
+      >
+        <X size={12} />
+      </button>
+    </div>
   );
 }
 

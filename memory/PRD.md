@@ -8733,3 +8733,104 @@ Total API cost this smoke: ~$0.025 (Claude ~$0.005 + DFS AIO ~$0.02).
 
 User needs to drop `PERPLEXITY_API_KEY` and `GEMINI_API_KEY` in `/app/backend/.env` to activate those providers — no code change needed on our side, boot-time provider_status flips automatically.
 
+
+
+---
+
+## Phase 25 · Feb-2026 — AI Photo + Voice → Repair Estimate (Winpal-inspired) — LIVE
+
+Ships two admin-only endpoints that turn a photo (or voice memo) of pool/landscape
+equipment into a hydrated Repair Calculator estimate. Winpal parity for the pool
+& landscaping vertical, built on top of the existing Repair Pricing Calculator.
+
+### Backend
+- new: `backend/services/ai/__init__.py`
+- new: `backend/services/ai/estimate_from_media.py` — Claude Sonnet 4.5 (vision)
+  via `EMERGENT_LLM_KEY`, OpenAI Whisper via `OPENAI_API_KEY` (graceful degrade
+  when unset), `SequenceMatcher` fuzzy match against `db.items` (this repo's
+  `pricebook_items`) at threshold 0.80.
+- new: `backend/routers/ai_media_estimator.py` — 2 endpoints, admin/super_admin
+  only (techs 403'd), 20-req/hour sliding window per (user, endpoint) rate limit
+  via `ai_estimate_generations`, 12 MB upload cap, MIME whitelist.
+- mod: `backend/server.py` — registers the new router right after `ai_visibility`.
+
+### Endpoints
+| method | path | operationId | rbac |
+|---|---|---|---|
+| POST | `/api/ai/estimate-from-photo` | `ai.estimateFromPhoto` | admin + super_admin |
+| POST | `/api/ai/estimate-from-voice` | `ai.estimateFromVoice` | admin + super_admin |
+
+Both accept `multipart/form-data` with `file` (image or audio) + optional
+`context_hint` (form field). Response schema:
+
+```
+{
+  "parts": [{"name": str, "cost": float, "source": "pricebook_match"|"ai_inferred",
+              "matched_pricebook_id": str|null, "confidence": int, "match_ratio"?: float}],
+  "labor_hours_estimated": float,
+  "concerns": [str],
+  "confidence": int (0..100),
+  "raw_analysis": str,
+  "transcript": str|null,          // populated only on voice
+  "provider": "claude"|"claude+whisper",
+  "input_kind": "photo"|"voice",
+  "generation_id": str,
+  "handoff_url": "/ops/repair-calculator"
+}
+```
+
+On any provider failure the endpoint returns **HTTP 200** with an `error` code
++ empty/zeroed `parts`/`labor_hours_estimated`/`concerns`/`confidence` so the
+frontend can render a specific banner instead of a top-level toast.
+`error="voice_provider_disabled"` fires when `OPENAI_API_KEY` is missing.
+
+### Frontend
+- mod: `frontend/src/pages/ops/RepairCalculatorPage.jsx` — two primary CTAs
+  rendered in a full-width brand-gradient bar above the parts input:
+  - **📷 Snap a photo** — hidden `<input type="file">` (JPEG/PNG/HEIC/WebP, 10 MB
+    max) → multipart POST → hydrates parts rows + labor hours + result banner.
+  - **🎙️ Voice memo** — `MediaRecorder` capture → stop → multipart POST → same
+    hydration path with the transcript displayed in the banner.
+- Result banner surfaces confidence tag, pricebook-match ratio (N/M matched),
+  raw_analysis paragraph, concerns list, and transcript (voice only).
+- Voice CTA gracefully degrades: when the backend returns
+  `voice_provider_disabled`, a soft-yellow banner explains the OpenAI key gap
+  and points to the env var; the button stays visible for retry once the key
+  lands.
+
+### Tests
+- **pytest** `backend/tests/test_ai_estimate_from_media.py` — **10/10 pass**.
+  Covers: normalized-schema shape via `TEST_LLM_MOCK`, HTTP round-trip contract,
+  tech RBAC 403 on both endpoints, wrong-MIME 415, empty-upload 422, generation
+  row persistence, `voice_provider_disabled` degrade, fuzzy match swap +
+  no-match preservation, 20/hr rate-limit 429.
+- **vitest** `frontend/src/test/phase25-repair-media.test.jsx` — **4/4 pass**.
+  Covers: both CTAs rendered, photo POST multipart shape + hydration + banner
+  fields (confidence, match count, analysis), photo error toast without
+  hydration, voice provider-disabled degrade banner.
+
+### Live smoke (aquaterra admin, real Claude via EMERGENT_LLM_KEY)
+Uploaded synthetic pool-pump image with hint "Pump humming loudly, motor
+housing looks corroded" → Claude returned:
+- 4 parts (shaft seal kit $25, capacitor $18, motor $285, gasket $12)
+- 2.5 labor hours
+- 3 concerns (capacitor failure, seal failure, shutdown recommendation)
+- Overall confidence 75, per-part confidences 60–95
+- Full raw_analysis paragraph
+
+Voice endpoint returned `voice_provider_disabled` with the exact reason
+message the frontend banner keys off.
+
+### Guardrails respected
+- `/app` only. No touching `/app/mobile/`. Zillow untouched.
+- Techs blocked (`admin` + `super_admin` only) on both endpoints.
+- `EMERGENT_LLM_KEY` reused — no new keys for photo.
+- Voice path scaffolded and graceful-degrades until `OPENAI_API_KEY` is added.
+- Rate limit + audit log land every call in `ai_estimate_generations`.
+
+### Deferred (standing queue after Phase 25)
+1. Phase 24 frontend `/settings/ai-visibility` (backend live).
+2. Rank-drop alerts (Phase 23-A follow-on).
+3. Weekly digest crons (AI visibility + reputation).
+4. Phase 23-B..F (competitor tracker, keyword research, review templates,
+   deep site audit, GBP scheduler).
