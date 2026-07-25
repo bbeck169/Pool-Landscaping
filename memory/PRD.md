@@ -8661,3 +8661,75 @@ Not started — session budget tight and shipped items are higher-value. Full sp
 - Vitest for Repair Calculator (only pytest shipped this session)
 - Vitest for Low-rank CTA
 
+
+---
+
+## Feb-2026 · Phase 24 — AI Search Visibility Tracker (v1 · backend SHIPPED)
+
+Tracks brand mentions across AI-answer engines (Perplexity, Claude, Gemini, DataForSEO AI Overviews) with graceful degradation when provider keys are missing.
+
+### Providers (all 4 wired · graceful degrade)
+| provider | key env var | status this env |
+|---|---|---|
+| Claude | `EMERGENT_LLM_KEY` | ✅ enabled |
+| Perplexity | `PERPLEXITY_API_KEY` | ❌ disabled (user hasn't dropped key) |
+| Gemini | `GEMINI_API_KEY` | ❌ disabled (user hasn't dropped key) |
+| DataForSEO AI Overviews | existing `DATAFORSEO_*` | ✅ enabled |
+
+Each provider client returns `{response_text, sources, raw, api_cost_usd}` on success, or `{error, reason}` on failure. Disabled providers return `error="provider_disabled"` so the row still lands with the reason surfaced to the UI.
+
+### Collections
+- `ai_prompts` — CRUD, cap 20/tenant, case-insensitive dedupe, soft delete (`is_active=false`).
+- `ai_prompt_runs` — one row per (prompt, provider, run) with mention flag + context snippet + competitors_detected + api_cost_usd + error.
+- `ai_visibility_snapshots` — weekly aggregates (schema in place; populated by cron once enabled).
+
+### Endpoints (all admin+super_admin)
+| operationId | path |
+|---|---|
+| `aiVisibility.prompts.list` | `GET  /api/ai-visibility/prompts` |
+| `aiVisibility.prompts.add`  | `POST /api/ai-visibility/prompts` |
+| `aiVisibility.prompts.delete` | `DELETE /api/ai-visibility/prompts/{pid}` |
+| `aiVisibility.runNow` | `POST /api/ai-visibility/prompts/{pid}/run-now` |
+| `aiVisibility.latest` | `GET /api/ai-visibility/latest` |
+| `aiVisibility.history` | `GET /api/ai-visibility/history` |
+| `aiVisibility.settings.get` | `GET /api/ai-visibility/settings` |
+| `aiVisibility.settings.patch` | `PATCH /api/ai-visibility/settings` |
+
+### Guardrails
+- Run-now cooldown: 6h/prompt (429 on retry).
+- Daily cost cap: **$5/day/tenant** tracked via `api_cost_usd` sum across `ai_prompt_runs` in the last 24h. Fires 429 when exceeded.
+- Weekly cron `weekly_ai_visibility_tracker` gated behind **`AI_VISIBILITY_CRON_ENABLED=false`** in env (unchanged this session, stays disabled).
+- Boot seed idempotent: 7 default prompts inserted per tenant only if their prompt list is empty. This session seeded 44 tenants (all existing).
+
+### Mention detection
+- Case-insensitive substring match against: `business_card.company_name`, `business_card.website_url` (domain-only), and `tenant.settings.ai_visibility.brand_aliases`.
+- Competitor detection against `tenant.settings.ai_visibility.competitor_names` (admin-editable, cap 15).
+- Captures ±60-char surrounding context of the first hit for `brand_mention_context`.
+
+### Live smoke result (aquaterra tenant, prompt "best pool cleaning company peoria az")
+| provider | state | notes |
+|---|---|---|
+| claude | ✗ not mentioned | Returned a "# Best Pool Cleaning Companies in Peoria, AZ" list; brand not in top picks |
+| perplexity | ERR: provider_disabled | Waiting on `PERPLEXITY_API_KEY` |
+| gemini | ERR: provider_disabled | Waiting on `GEMINI_API_KEY` |
+| dataforseo_aio | ✗ not mentioned | Google did not surface an AI Overview for this query |
+
+Total API cost this smoke: ~$0.025 (Claude ~$0.005 + DFS AIO ~$0.02).
+
+### Tests
+**pytest** (`backend/tests/test_ai_visibility.py`) — **9/9 pass**. Covers boot-seed (7 prompts), CRUD dedupe + soft delete, admin-only guard, mention detection (name + domain + alias), competitor detection, settings patch persistence, provider_status endpoint shape, run-now returning 4 provider rows with graceful degradation, and 6h cooldown 429.
+
+### Files added / modified
+- new: `backend/routers/ai_visibility.py`
+- new: `backend/tests/test_ai_visibility.py`
+- mod: `backend/server.py` — registers router + wires `run_ai_visibility_seed` on boot
+- mod: `backend/.env` — added `AI_VISIBILITY_CRON_ENABLED=false`
+
+### Deferred to next session (v1 completion)
+- **Frontend** `/settings/ai-visibility` — KPI strip + prompt list + provider matrix + history chart + settings drawer (~500-800 lines JSX).
+- **Vitest** for the page.
+- **Weekly digest email** — Resend `weekly_ai_visibility_digest_email` template + cron body.
+- **AI-generated "recommended action"** in the digest (currently hardcoded nudge planned).
+
+User needs to drop `PERPLEXITY_API_KEY` and `GEMINI_API_KEY` in `/app/backend/.env` to activate those providers — no code change needed on our side, boot-time provider_status flips automatically.
+

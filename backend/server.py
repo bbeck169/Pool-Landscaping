@@ -166,6 +166,8 @@ from routers import rank_tracker as _rank_tracker_router  # noqa: E402
 api_router.include_router(_rank_tracker_router.router)
 from routers import repair_calculator as _repair_calc_router  # noqa: E402
 api_router.include_router(_repair_calc_router.router)
+from routers import ai_visibility as _aiv_router  # noqa: E402
+api_router.include_router(_aiv_router.router)
 api_router.include_router(_p17_reassign.router)
 api_router.include_router(_p18_ai_brain.router)
 api_router.include_router(_p19_admin_users.router)
@@ -520,6 +522,15 @@ async def _background_seed():
         _dfs.log_auth_config()
     except Exception as e:
         logger.warning(f"[dataforseo] boot log skipped: {e}")
+
+    # Feb-2026 · Phase 24 — seed the 7 default AI visibility prompts
+    # for any tenant with an empty prompt list. Idempotent.
+    try:
+        from routers.ai_visibility import run_ai_visibility_seed
+        _s = await run_ai_visibility_seed()
+        logger.info(f"[aiv-seed] {_s}")
+    except Exception as e:
+        logger.warning(f"aiv seed crashed: {e}")
 
     # Feb-2026 — one-shot idempotent Brian integration ownership
     # transfer. Runs every boot but only mutates on the first pass.
