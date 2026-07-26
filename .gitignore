@@ -169,3 +169,4 @@ frontend/node_modules/.cache/default-development/29.pack
 .ruff_cache/
 backend/__pycache__/
 backend.template.bak/
+frontend/node_modules/.cache/default-development/21.pack_

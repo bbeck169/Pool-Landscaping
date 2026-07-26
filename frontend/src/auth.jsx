@@ -17,6 +17,21 @@ export function AuthProvider({ children }) {
       } catch {
         localStorage.removeItem(USER_KEY);
       }
+      // Feb-2026 · self-heal against a stale localStorage user object
+      // (e.g., when a user's role is promoted server-side while their
+      // session is still live). Fires ``/auth/me`` in the background —
+      // if the response comes back with a fresher record we swap it in.
+      // On any failure we leave the cached copy in place so we don't
+      // flap the guards during a transient blip.
+      (async () => {
+        try {
+          const fresh = await api.get("/auth/me");
+          if (fresh && fresh.id) {
+            localStorage.setItem(USER_KEY, JSON.stringify(fresh));
+            setUser(fresh);
+          }
+        } catch { /* keep cached copy */ }
+      })();
     }
     setLoading(false);
   }, []);
