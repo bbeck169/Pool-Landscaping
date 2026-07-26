@@ -8968,3 +8968,80 @@ Ran pytest across `test_ai_visibility`, `test_repair_calculator`,
 - Rebrand (Pool & Landscaping of Vistancia LLC, app.plofv.com,
   noreply@plofv.com) preserved.
 - Cron flags stay off.
+
+
+---
+
+## Phase 26 Path B · Feb-2026 — super_admin ops endpoints (`unlock` + `promote`)
+
+Fills two gaps that surfaced during the Supercool integration rollout:
+after a super-admin-driven password reset the target user could still be
+locked out for up to 15 minutes, and there was no supported way to
+promote/demote a user's role — including no way to grant `super_admin`.
+
+### Backend
+- mod: `backend/routers/admin_users.py`
+  - new: `POST /api/users/{uid}/unlock` — clears `failed_login_attempts` +
+    `lockout_until` on the target's Mongo doc; returns `{ok, user_id,
+    was_locked, cleared_at}`. Idempotent (returns `was_locked=false` when
+    the account was already clean). Writes an audit-log row only when the
+    account was actually locked (skip noise on no-op calls). Super_admin
+    only, 400 for unknown user, 400 for the target-does-not-exist case.
+  - new: `POST /api/users/{uid}/promote` — body: `{role}`. Accepted roles:
+    `super_admin | admin | manager | technician | customer`. Guardrails:
+    (1) callers cannot change their own role (400 "your own role");
+    (2) cannot demote the LAST remaining `super_admin` in the target's
+    tenant (400 "last remaining super_admin"). Same audit-log pattern as
+    the existing delete + reset flows. Super_admin only, 400 for unknown
+    user, 400 for unknown role.
+  - Both endpoints leave the existing `reset-password` behavior untouched;
+    `must_change_password_on_next_login=true` remains the intentional UX
+    for super-admin-initiated resets.
+
+### Endpoints
+| method | path | operationId | rbac |
+|---|---|---|---|
+| POST | `/api/users/{uid}/unlock` | `adminUsers.unlock` | super_admin |
+| POST | `/api/users/{uid}/promote` | `adminUsers.promote` | super_admin |
+
+### Tests
+- **pytest** `backend/tests/test_admin_users_unlock_promote.py` — **10/10 pass**:
+  - Auth gate: non-super_admin → 403 on both endpoints.
+  - Unlock: seeded lockout is cleared; returns `was_locked=true`.
+  - Unlock: idempotent — `was_locked=false` on already-unlocked user.
+  - Unlock: 400 for unknown user.
+  - Promote: happy path admin → super_admin.
+  - Promote: self-role change refused (400).
+  - Promote: last remaining super_admin in the target's tenant cannot
+    be demoted (400 "last").
+  - Promote: invalid role rejected (400 "invalid role").
+  - Promote: 400 for unknown user.
+
+### Live smoke (preview)
+- `POST /api/users/{admin_id}/unlock` (plain admin) → 403.
+- `POST /api/users/{admin_id}/unlock` (super_admin) → 200,
+  `was_locked=false, cleared_at=…`.
+- `POST /api/users/{admin_id}/promote` `{role:"manager"}` → 200,
+  `old_role=admin, new_role=manager`.
+- Restore → 200, `old_role=manager, new_role=admin`.
+
+### Regression sweep
+`pytest`: 76/76 pass across Phase 22–26 + Path B (`test_admin_users_unlock_promote`,
+`test_ai_visibility`, `test_repair_calculator`, `test_ai_estimate_from_media`,
+`test_mcp_oauth_supercool`, `test_citations`).
+`vitest`: 16/16 pass across the touched frontend suites (no frontend
+changes in Path B — regression check only).
+
+### Production deployment
+Path B code is on preview only. Awaiting the user's explicit "redeploy prod"
+signal. After redeploy, the sequence to unblock brian on `app.plofv.com`:
+1. `POST /api/users/057722a2-…/unlock` (as super_admin) — clears the
+   14-min lockout so `Phase26Reset!2026` is accepted.
+2. `POST /api/users/057722a2-…/promote` `{role:"super_admin"}` — flips
+   his role to match preview so the Supercool tile renders.
+
+### Guardrails respected
+- No changes to `reset-password`, `auth.py` login/lockout logic, Supercool
+  code, or Phase A code.
+- `/app` only; no external repos.
+- Path B endpoints are super_admin only — plain admins get 403.

@@ -298,3 +298,168 @@ async def delete_user(
         "ok": True, "user_id": uid,
         "reassigned_jobs": len(reassigned_jobs),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Feb-2026 · Phase 26 Path B · super_admin ops endpoints
+# ─────────────────────────────────────────────────────────────────────
+# `POST /api/users/{uid}/unlock`   — clear a locked-out account so the
+#     user can log in without waiting the 15-min lockout window. Fills
+#     the gap between the admin password reset flow and the login-side
+#     lockout enforcement (which the ``reset-password`` endpoint does
+#     NOT auto-clear).
+# `POST /api/users/{uid}/promote`  — change a user's role. Includes two
+#     guardrails: no self-role-change and no demoting the last remaining
+#     super_admin.
+# Both endpoints are super_admin only.
+
+
+_ASSIGNABLE_ROLE_SET = {"super_admin", "admin", "manager", "technician",
+                          "customer"}
+
+
+def _require_super_admin(user: Dict[str, Any]) -> None:
+    if user.get("role") != "super_admin":
+        raise HTTPException(403, "super_admin only")
+
+
+@router.post("/users/{uid}/unlock",
+              operation_id="adminUsers.unlock")
+async def unlock_user(
+    uid: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Clear ``failed_login_attempts`` + ``lockout_until`` on the target
+    user's record so they can log in without waiting the auto-expiry.
+    Idempotent — safe to call on an already-unlocked user.
+    """
+    _require_super_admin(user)
+    target = await db.users.find_one({"id": uid}, {"_id": 0})
+    if not target:
+        raise HTTPException(400, "User not found")
+
+    was_locked = bool(target.get("lockout_until")) or bool(
+        target.get("failed_login_attempts"))
+
+    cleared_at = now_iso()
+    await db.users.update_one(
+        {"id": uid},
+        {"$set": {"failed_login_attempts": 0,
+                    "lockout_until": None,
+                    "unlocked_at": cleared_at,
+                    "unlocked_by_user_id": user.get("id")}},
+    )
+
+    if was_locked:
+        try:
+            await db.audit_log.insert_one({
+                "id": new_id(),
+                "tenant_id": target.get("tenant_id"),
+                "actor_user_id": user.get("id"),
+                "actor_email": user.get("email"),
+                "action": "user.unlock",
+                "target_user_id": uid,
+                "changes": {
+                    "failed_login_attempts": {
+                        "old": int(target.get("failed_login_attempts") or 0),
+                        "new": 0,
+                    },
+                    "lockout_until": {
+                        "old": target.get("lockout_until"),
+                        "new": None,
+                    },
+                },
+                "at": cleared_at,
+            })
+        except Exception as e:  # pragma: no cover — audit is best-effort
+            logger.warning(f"unlock_user audit failed: {e}")
+
+    return {
+        "ok": True,
+        "user_id": uid,
+        "was_locked": was_locked,
+        "cleared_at": cleared_at,
+    }
+
+
+class PromoteIn(BaseModel):
+    role: str = Field(..., description="One of: super_admin, admin, manager, technician, customer")
+
+
+@router.post("/users/{uid}/promote",
+              operation_id="adminUsers.promote")
+async def promote_user(
+    uid: str,
+    body: PromoteIn,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Change the target user's ``role`` field. super_admin only.
+
+    Guardrails:
+      * Callers cannot change their own role.
+      * The last remaining ``super_admin`` in a tenant cannot be
+        demoted (would lock the tenant out of super-admin-only
+        surfaces).
+      * Role must be one of the codebase's recognized roles.
+    """
+    _require_super_admin(user)
+    new_role = (body.role or "").strip().lower()
+    if new_role not in _ASSIGNABLE_ROLE_SET:
+        raise HTTPException(400,
+            f"Invalid role '{body.role}'. Allowed: "
+            f"{sorted(_ASSIGNABLE_ROLE_SET)}")
+
+    target = await db.users.find_one({"id": uid}, {"_id": 0})
+    if not target:
+        raise HTTPException(400, "User not found")
+
+    if uid == user.get("id"):
+        raise HTTPException(400, "You cannot change your own role")
+
+    old_role = target.get("role")
+    if old_role == new_role:
+        return {"ok": True, "user_id": uid,
+                "old_role": old_role, "new_role": new_role,
+                "no_change": True}
+
+    # Guardrail: refuse to demote the last remaining super_admin in the tenant.
+    if old_role == "super_admin" and new_role != "super_admin":
+        other_supers = await db.users.count_documents({
+            "tenant_id": target.get("tenant_id"),
+            "role": "super_admin",
+            "id": {"$ne": uid},
+            "$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}],
+        })
+        if other_supers <= 0:
+            raise HTTPException(400,
+                "Cannot demote the last remaining super_admin in this tenant")
+
+    changed_at = now_iso()
+    await db.users.update_one(
+        {"id": uid},
+        {"$set": {"role": new_role,
+                    "role_changed_at": changed_at,
+                    "role_changed_by_user_id": user.get("id")}},
+    )
+
+    try:
+        await db.audit_log.insert_one({
+            "id": new_id(),
+            "tenant_id": target.get("tenant_id"),
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "action": "user.role_change",
+            "target_user_id": uid,
+            "changes": {"role": {"old": old_role, "new": new_role}},
+            "at": changed_at,
+        })
+    except Exception as e:  # pragma: no cover — audit is best-effort
+        logger.warning(f"promote_user audit failed: {e}")
+
+    return {
+        "ok": True,
+        "user_id": uid,
+        "old_role": old_role,
+        "new_role": new_role,
+    }
+
