@@ -42,6 +42,8 @@ import MarketingTemplatesListPage, {
   MarketingTemplateDetailPage,
 } from "@/pages/marketing/MarketingTemplatesAdmin";
 import MarketingMediaAdminPage from "@/pages/marketing/MarketingMediaAdmin";
+// Feb-2026 · Phase B · Marketing Content Studio (Supercool image gen).
+import ContentStudioPage from "@/pages/marketing/ContentStudioPage";
 // Phase 10 · Feb 2026 — Referrals + promo codes admin + portal.
 import PortalReferralsPage from "@/pages/portal/PortalReferralsPage";
 import AdminPromoCodesPage from "@/pages/marketing/AdminPromoCodesPage";
@@ -467,6 +469,8 @@ export default function App() {
             <Route path="portal/referrals" element={<PortalReferralsPage />} />
             <Route path="customers/:id/credits" element={<NoTech><CustomerCreditsPage /></NoTech>} />
             <Route path="marketing/segments" element={<AdminOnly><MarketingSegmentsPage /></AdminOnly>} />
+            {/* Feb-2026 · Phase B · Marketing Content Studio. */}
+            <Route path="marketing/content-studio" element={<AdminOnly><ContentStudioPage /></AdminOnly>} />
             <Route path="admin/marketing/sequences" element={<AdminOnly><MarketingSequencesPage /></AdminOnly>} />
             <Route path="admin/marketing/review-requests" element={<AdminOnly><MarketingReviewRequestsPage /></AdminOnly>} />
             <Route path="admin/marketing/analytics" element={<AdminOnly><MarketingAnalyticsPage /></AdminOnly>} />

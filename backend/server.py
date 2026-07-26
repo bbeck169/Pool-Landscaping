@@ -172,6 +172,8 @@ from routers import ai_media_estimator as _p25_ai_media_router  # noqa: E402
 api_router.include_router(_p25_ai_media_router.router)
 from routers import integrations_supercool as _p26_supercool_router  # noqa: E402
 api_router.include_router(_p26_supercool_router.router)
+from routers import media_gen as _phaseb_media_router  # noqa: E402
+api_router.include_router(_phaseb_media_router.router)
 api_router.include_router(_p17_reassign.router)
 api_router.include_router(_p18_ai_brain.router)
 api_router.include_router(_p19_admin_users.router)
@@ -543,6 +545,13 @@ async def _background_seed():
         await _mcp.ensure_indexes()
     except Exception as e:
         logger.warning(f"mcp_oauth ensure_indexes crashed: {e}")
+
+    # Feb-2026 · Phase B — image generation indexes.
+    try:
+        from routers import media_gen as _phaseb_media
+        await _phaseb_media.ensure_indexes()
+    except Exception as e:
+        logger.warning(f"media_gen ensure_indexes crashed: {e}")
 
     # Feb-2026 — one-shot idempotent Brian integration ownership
     # transfer. Runs every boot but only mutates on the first pass.
