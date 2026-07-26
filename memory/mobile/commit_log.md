@@ -377,6 +377,20 @@
   - `memory/mobile/iteration_18.md` (created)
   - `.gitignore` (cache directories added)
 
+## Iteration 20 — WeekStrip Daily Job Count Badges
+- **Commit**: e03929b
+- **Date**: 2026-07-26
+- **Changes**:
+  - WeekStrip: added `counts` prop (Record<string, number>), renders small text badge below each day when count > 0
+  - calendar.tsx: added `weekCounts` useMemo computing per-date job counts from the fetched `jobs` array (normalized `scheduled_date` to first 10 chars for mixed-format dates)
+  - Badge styling: muted gray default, brand color when selected
+- **Files modified**:
+  - `mobile/src/components/schedule/WeekStrip.tsx` (counts prop + badge rendering + styles)
+  - `mobile/app/(app)/schedule/calendar.tsx` (weekCounts useMemo + counts prop pass-through)
+- **Web files referenced**:
+  - `frontend/src/components/schedule/WeekStrip.jsx` (behavior reference)
+
+
 
 ## Iteration 19 — WeekStrip + Colored Left-Border (Schedule Page Parity)
 - **Commit**: a95c658
