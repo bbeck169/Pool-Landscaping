@@ -9247,3 +9247,70 @@ Login page's demo-account block.
   mike, customer) remain fully functional for manual login on prod;
   only the visual affordance is hidden.
 - `/app`-only work.
+
+
+## Schedule page · WeekStrip + status color indicators (SHIPPED · Feb-2026 · WEB)
+
+Additive UI to the `/schedule` route (`pages/schedule/CalendarSchedule.jsx`).
+Backend untouched — Phase 17 dispatch logic, Phase 18 forecast filters,
+DnD reschedule flow, and the shared `/jobs` fetch window are all
+preserved.
+
+### 1. `<WeekStrip>` component (new)
+- Path: `frontend/src/components/schedule/WeekStrip.jsx`.
+- Compact 7-day (Mon–Sun) toggle strip that renders above the mode
+  segmented control on the Schedule page.
+- Left / right chevrons shift the visible week by ±7 days.
+- Selected day → filled brand-blue circle + white number.
+- "Today" (system clock) always shows a small brand-blue dot below
+  its number (suppressed when today IS the selected day, since the
+  filled circle already carries that meaning).
+- Auto-selects today on mount when the parent doesn't seed a date.
+- Emits `onSelectDate(iso)` with a `yyyy-mm-dd` string; re-anchors
+  when the parent changes `selectedDate` into a different week.
+
+### 2. Wire into `CalendarSchedule.jsx`
+- Rendered at the top of the page (below the tech-only weather
+  header, above the mode switch).
+- `selectedDate` = `focusISO` (existing state derived from the
+  page-level `date`).
+- `onSelectDate(iso)` → `setDate(new Date(iso))` + updates the
+  `?date=` URL param. That single mutation drives:
+    - the ±90-day `/jobs?start=&end=` fetch window,
+    - the grid-mode `dayJobs` filter (already keyed on `focusISO`),
+    - the RBC calendar `date` prop in calendar-mode.
+- No new API call — the strip is purely client-side.
+
+### 3. Colored status border on grid job cards
+- New exported helper `getStatusBorderColor(status)` — pure function:
+    - `completed`  → red   (`#DC2626`)
+    - anything else (`scheduled`, `active`, `pending`, `requested`,
+      `on_hold`, unknown) → blue  (`#2563EB`)
+- Grid card gets `borderLeftWidth: 4`, `borderLeftColor: <hex>` on
+  top of the pre-existing 1px full border. Also stamps
+  `data-status-color=<hex>` for reliable test assertion.
+
+### Tests
+- `test/schedule-week-strip.test.jsx` — **7 tests**: 7-day render,
+  today-dot marker, prev/next chevrons, click callback, mount
+  auto-select, external re-anchor on selectedDate change.
+- `test/schedule-status-border.test.jsx` — **4 tests**:
+  `getStatusBorderColor` matrix, day-of-week filter narrows the
+  visible cards, blue border on scheduled, red border on completed.
+- Full frontend sweep: **41 files / 195 tests** all pass.
+- Backend untouched — no pytest re-run needed for this task.
+
+### Deployment
+Prod redeploy required (frontend bundle change only — no backend
+env or endpoint additions).
+
+### Mobile parity
+Out of scope for this ticket. To delegate to `e1_expo_frontend_dev`
+as a follow-up.
+
+### Guardrails honored
+- Additive UI only — no changes to the schedule backend, DnD
+  reschedule, Phase 17 dispatch, Phase 18 forecast filters,
+  Phase A OAuth, Path B, WordPress activation, Phase B media_gen,
+  Phase 25, or `/app/mobile/`.
+- `/app`-only work.

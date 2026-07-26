@@ -40,6 +40,21 @@ import ChecklistModal from "@/components/checklist/ChecklistModal";
 import ServiceNotePill from "@/components/schedule/ServiceNotePill";
 import TechWeatherWidget from "@/components/Weather/WeatherWidget";
 import JobRainFlag from "@/components/Weather/JobRainFlag";
+import WeekStrip from "@/components/schedule/WeekStrip";
+
+
+// Feb-2026 · Schedule-UI · left-border indicator for status.
+//   completed → red (#DC2626)
+//   everything else (scheduled / active / pending / requested / …) → blue (#2563EB)
+// The exact hex mirrors the ``STATUS_COLORS`` table above so future
+// palette shifts keep the two in sync; this helper is intentionally
+// narrower — a big colored bar is a coarser affordance than the
+// existing status pill.
+export function getStatusBorderColor(status) {
+  const s = (status || "").toLowerCase();
+  if (s === "completed") return "#DC2626";
+  return "#2563EB";
+}
 
 /** Phase 30W · service-type → card palette. Mirrors the mobile fix-pass. */
 const SERVICE_PALETTE = (raw) => {
@@ -541,6 +556,21 @@ export default function CalendarSchedule() {
           self-gates on ``user.role === "technician"``, so admins and
           impersonated views render nothing here. */}
       <TechWeatherWidget user={user} />
+
+      {/* Feb-2026 · Schedule-UI · 7-day toggle strip.
+          The strip drives the shared ``date`` state which also feeds
+          the RBC calendar's ``date`` prop + the grid-view focus day.
+          When a user picks Wed from the strip we hydrate ``date``
+          which triggers the existing ±90-day fetch window logic. */}
+      <WeekStrip
+        selectedDate={focusISO}
+        onSelectDate={(iso) => {
+          const [y, m, d] = iso.split("-").map(Number);
+          const next = new Date(y, m - 1, d);
+          setDate(next);
+          setParam("date", iso);
+        }}
+      />
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: colors.onSurface }} data-testid="calendar-title">
@@ -1096,12 +1126,20 @@ function GridPanel({
             const pill = STATUS_PILL[(j.status || "scheduled").toLowerCase()] || STATUS_PILL.scheduled;
             const svc = SERVICE_PALETTE(j.service_type);
             const isChecked = checked.has(j.id);
+            // Feb-2026 · Schedule-UI · colored left border.
+            const statusBorderColor = getStatusBorderColor(j.status);
             return (
               <div
                 key={j.id}
                 className="flex items-center gap-3 px-3 py-3 rounded-xl cursor-pointer"
-                style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+                style={{
+                  background: colors.surface,
+                  border: `1px solid ${colors.border}`,
+                  borderLeftWidth: 4,
+                  borderLeftColor: statusBorderColor,
+                }}
                 data-testid={`grid-job-${j.id}`}
+                data-status-color={statusBorderColor}
                 onClick={() => { if (!rearrangeMode) onOpenJob(j.id); }}
                 role="button"
               >
