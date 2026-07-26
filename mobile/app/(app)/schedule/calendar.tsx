@@ -37,6 +37,8 @@ import { Header, NotificationBell } from "@/src/components/widgets";
 import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
 import WeatherWidget from "@/src/components/weather/WeatherWidget";
 import RainFlag from "@/src/components/weather/RainFlag";
+import WeekStrip from "@/src/components/schedule/WeekStrip";
+import { getStatusBorderColor } from "@/src/utils/scheduleStatus";
 import type { HourlyEntry } from "@/src/api/weather";
 
 type Job = {
@@ -276,6 +278,17 @@ export default function ScheduleCalendar() {
         {user?.role !== "admin" && user?.role !== "super_admin" && <LandscapingClockWidget />}
       </View>
 
+      {/* Feb-2026 · Schedule-UI · 7-day toggle strip.
+          The strip drives the shared `focus` state — tapping a day
+          updates focus which triggers the existing ±14/+60 fetch window. */}
+      <WeekStrip
+        selectedDate={focusISO}
+        onSelectDate={(dateIso) => {
+          const [y, m, d] = dateIso.split("-").map(Number);
+          setFocus(new Date(y, m - 1, d));
+        }}
+      />
+
       {/* Top-level Grid ↔ Calendar toggle. */}
       <View style={styles.modeSwitch} testID="schedule-mode-switch">
         {(["calendar", "grid"] as const).map((m) => {
@@ -481,6 +494,8 @@ function GridView(props: any) {
 function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, first, last, hourlyData }: any) {
   const pill = STATUS_PILL[(job.status || "scheduled").toLowerCase()] || STATUS_PILL.scheduled;
   const svc = SERVICE_COLOR(job.service_type);
+  // Feb-2026 · Schedule-UI · colored left border.
+  const statusBorder = getStatusBorderColor(job.status);
   // Phase 31 · Step 2a hotfix — the entire row body is now the primary
   // tap target and routes to /job/{id}/checklist. Previously only the
   // right-edge chevron was pressable, leaving 90% of the visible card
@@ -493,7 +508,7 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
   // remain the only interactive elements.
   return (
     <Pressable
-      style={gStyles.card}
+      style={[gStyles.card, { borderLeftWidth: 4, borderLeftColor: statusBorder }]}
       onPress={rearrangeMode ? undefined : onOpen}
       testID={`grid-job-${job.id}`}
       hitSlop={4}
