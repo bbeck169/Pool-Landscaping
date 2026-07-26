@@ -170,6 +170,8 @@ from routers import ai_visibility as _aiv_router  # noqa: E402
 api_router.include_router(_aiv_router.router)
 from routers import ai_media_estimator as _p25_ai_media_router  # noqa: E402
 api_router.include_router(_p25_ai_media_router.router)
+from routers import integrations_supercool as _p26_supercool_router  # noqa: E402
+api_router.include_router(_p26_supercool_router.router)
 api_router.include_router(_p17_reassign.router)
 api_router.include_router(_p18_ai_brain.router)
 api_router.include_router(_p19_admin_users.router)
@@ -533,6 +535,14 @@ async def _background_seed():
         logger.info(f"[aiv-seed] {_s}")
     except Exception as e:
         logger.warning(f"aiv seed crashed: {e}")
+
+    # Feb-2026 · Phase 26 — MCP OAuth 2.1 client indexes (Supercool).
+    # Creates the state TTL index + unique connection/tool_catalog keys.
+    try:
+        from services import mcp_oauth_client as _mcp
+        await _mcp.ensure_indexes()
+    except Exception as e:
+        logger.warning(f"mcp_oauth ensure_indexes crashed: {e}")
 
     # Feb-2026 — one-shot idempotent Brian integration ownership
     # transfer. Runs every boot but only mutates on the first pass.

@@ -8834,3 +8834,137 @@ message the frontend banner keys off.
 3. Weekly digest crons (AI visibility + reputation).
 4. Phase 23-B..F (competitor tracker, keyword research, review templates,
    deep site audit, GBP scheduler).
+
+
+---
+
+## Phase 26 · Feb-2026 — Supercool MCP OAuth 2.1 (Image + Video generation) — Phase A shipped
+
+Ships the OAuth 2.1 + PKCE + Dynamic Client Registration client for
+Supercool's model-agnostic MCP endpoint (`https://mcp.supercool.com/mcp`)
+and a `/settings/integrations/supercool` admin surface with
+Connect/Disconnect/Refresh-catalog controls. Image + video generation
+UI surfaces land in Phase B once the user verifies the OAuth handshake
+in a real browser session.
+
+### Backend
+- new: `backend/services/mcp_oauth_client.py` — generic MCP OAuth 2.1
+  client, reusable across future MCP servers. Handles RFC 8414
+  discovery, RFC 7591 dynamic client registration, PKCE S256, state
+  CSRF binding with 10-minute TTL, Fernet-encrypted tokens at rest
+  (`MCP_TOKEN_ENCRYPTION_KEY` with auto-generated file fallback for
+  dev), automatic refresh (60s skew before expiry), and JSON-RPC 2.0
+  transport supporting both `application/json` and `text/event-stream`
+  responses per MCP spec.
+- new: `backend/routers/integrations_supercool.py` — 6 endpoints
+  wrapping the client for the Supercool server URL. Admin gate on
+  read paths (`status`, `catalog`), super_admin gate on
+  state-changing paths (`connect`, `disconnect`, `refresh-catalog`).
+- mod: `backend/server.py` — registers the router, calls
+  `ensure_indexes()` on startup to create the state TTL index +
+  unique keys on connections + catalog.
+- mod: `backend/.env` + `.env.example` — adds `APP_BASE_URL`,
+  `SUPERCOOL_MCP_URL`, `MCP_TOKEN_ENCRYPTION_KEY` (with a valid Fernet
+  key auto-provisioned; `APP_BASE_URL` empty in preview so it falls
+  through to `APP_PUBLIC_URL`).
+
+### Endpoints
+| method | path | operationId | rbac |
+|---|---|---|---|
+| GET | `/api/integrations/supercool/status` | `integrations.supercool.status` | admin + super_admin |
+| POST | `/api/integrations/supercool/connect` | `integrations.supercool.connect` | super_admin |
+| GET | `/api/integrations/supercool/callback` | `integrations.supercool.callback` | public (state-validated) |
+| POST | `/api/integrations/supercool/disconnect` | `integrations.supercool.disconnect` | super_admin |
+| POST | `/api/integrations/supercool/refresh-catalog` | `integrations.supercool.refreshCatalog` | super_admin |
+| GET | `/api/integrations/supercool/catalog` | `integrations.supercool.getCatalog` | admin + super_admin |
+
+### Mongo collections
+- `mcp_connections` — one doc per (tenant_id, server_url). Fields:
+  `client_id`, `client_secret_enc`, `access_token_enc`,
+  `refresh_token_enc`, `expires_at`, `scope`, `token_type`,
+  `connected_by_user_id`, `connected_at`, `last_error`. Unique
+  compound index on `(tenant_id, server_url)`.
+- `mcp_tool_catalog` — cached `tools/list` response. Fields:
+  `tenant_id`, `server_url`, `tools[]`, `fetched_at`. Unique compound
+  index on `(tenant_id, server_url)`.
+- `mcp_oauth_states` — CSRF binding for in-flight authorize codes.
+  Fields: `state`, `tenant_id`, `user_id`, `server_url`,
+  `code_verifier`, `client_id`, `created_at`. TTL index on
+  `created_at` expiring after 600s (10 min per spec).
+
+### Frontend
+- new: `frontend/src/pages/settings/integrations/SupercoolIntegrationPage.jsx`
+  — status card, gradient Connect CTA, Refresh + Disconnect controls,
+  info banner explaining the OAuth handshake and token safety,
+  collapsible cached-tool-catalog list with per-tool description +
+  truncated `input_schema` in a dark JSON pane. Reads `?connected=1`
+  / `?error=...` query params on mount, surfaces the right toast, and
+  strips them from the URL.
+- mod: `frontend/src/App.js` — imports the page + adds
+  `/settings/integrations/supercool` under `SuperAdminOnly`.
+- mod: `frontend/src/pages/settings/IntegrationsPages.jsx` — adds a
+  "Supercool AI (Image + Video)" tile to the IntegrationsHub that
+  links to the new page. Only rendered for super_admin (read from
+  `localStorage.user`).
+
+### Tests
+- **pytest** `backend/tests/test_mcp_oauth_supercool.py` — **18/18 pass**.
+  Covers PKCE code_verifier + S256 challenge shape, verifier length
+  bounds, Fernet encryption round-trip + wire-format check
+  (no plaintext, `gAAAAA` prefix), RFC 8414 discovery fallback on
+  404, RFC 7591 DCR payload shape, state CSRF binding
+  (single-use + expired), token exchange persists encrypted tokens,
+  catalog cache read/write, status endpoint disconnected default,
+  connect RBAC (super_admin only), refresh-catalog 400 when not
+  connected, disconnect clears tokens but preserves DCR, callback
+  redirects with `?connected=1` / `?error=...` in all failure
+  modes.
+- **vitest** `frontend/src/test/phase26-supercool-integration.test.jsx`
+  — **6/6 pass**. Covers disconnected render, connect POST + browser
+  redirect to authorize_url, connected render with tool count,
+  refresh catalog + tool list expansion, disconnect confirm modal,
+  `?connected=1` query param success toast.
+
+### Live smoke (preview pod)
+- `GET /api/integrations/supercool/status` (admin) →
+  `{connected: false, tool_count: 0, ...}` 200 OK.
+- `POST /api/integrations/supercool/refresh-catalog` (admin, not
+  super_admin) → 403.
+- `GET /api/integrations/supercool/callback` (no code) → 302 to
+  `https://poolscape-audit.preview.emergentagent.com/settings/integrations/supercool?error=missing_code_or_state`.
+- Fernet round-trip verified — ciphertext starts with `gAAAAA`,
+  plaintext never leaks into Mongo.
+- Screenshot: gradient Supercool card renders, "Not connected" chip,
+  Connect CTA, info banner, catalog collapsible all present.
+
+### Regression sweep
+Ran pytest across `test_ai_visibility`, `test_repair_calculator`,
+`test_ai_estimate_from_media`, `test_mcp_oauth_supercool`,
+`test_citations` → **66/66 pass**. Vitest across `phase26`, `phase25`,
+`slice-p19-ai-copilot`, `safe-scroll-container` → **16/16 pass**.
+
+### Human-required (Phase A closing gate)
+1. Log in to preview as super_admin (`brian@plofv.com` / prod pw) or
+   the test super_admin (`super@aquaterra.com` / `password123`).
+2. Open `/settings/integrations/supercool` → click **Connect Supercool**.
+3. Complete the browser handshake at Supercool.
+4. Verify the page flips to "Connected", click **Refresh Tool Catalog**,
+   confirm the tool list renders.
+5. Report the browser session outcome so we can green-light Phase B.
+
+### Deferred (Phase B and beyond)
+- Image + video generation surfaces (marketing studio + AI ops) that
+  actually invoke `tools/call` via `services.mcp_oauth_client.call_mcp_tool`.
+- Mobile parity (delegated to Expo agent when Phase B is greenlit).
+- Multi-server MCP registry — right now Supercool is the only
+  configured server; the client is designed to support N servers with
+  minimal glue.
+
+### Guardrails respected
+- `/app` only. No external repo cloned.
+- `/app/mobile/` untouched (Expo web parity will be delegated to
+  mobile agent post-verification).
+- Zillow untouched.
+- Rebrand (Pool & Landscaping of Vistancia LLC, app.plofv.com,
+  noreply@plofv.com) preserved.
+- Cron flags stay off.

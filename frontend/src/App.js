@@ -120,6 +120,8 @@ import WarrantyPlans, { WarrantyContracts, WarrantyClaims, PortalWarranties } fr
 import TermsSettings from "@/pages/settings/Terms";
 import { LegalDocsList, LegalDocEditor } from "@/pages/settings/LegalDocs";
 import { IntegrationsHub, MapSettings } from "@/pages/settings/IntegrationsPages";
+// Phase 26 · Feb 2026 · Supercool MCP OAuth integration (super_admin only).
+import SupercoolIntegrationPage from "@/pages/settings/integrations/SupercoolIntegrationPage";
 import PortalTerms from "@/pages/portal/PortalTerms";
 import {
   MarketingHub, BrandMemory,
@@ -427,6 +429,8 @@ export default function App() {
             <Route path="settings/terms" element={<AdminOnly><TermsSettings /></AdminOnly>} />
             <Route path="settings/legal" element={<AdminOnly><LegalDocsList /></AdminOnly>} />
             <Route path="settings/integrations" element={<AdminOnly><IntegrationsHub /></AdminOnly>} />
+            {/* Phase 26 · Feb 2026 — Supercool MCP OAuth 2.1 (super_admin only). */}
+            <Route path="settings/integrations/supercool" element={<SuperAdminOnly><SupercoolIntegrationPage /></SuperAdminOnly>} />
             {/* Phase 21 · Feb 2026 — Vanity slug editor (super_admin only). */}
             <Route path="settings/vanity-slugs" element={<SuperAdminOnly><VanitySlugsPage /></SuperAdminOnly>} />
             {/* Feb-2026 — Orphan customer auth users admin (super_admin only). */}

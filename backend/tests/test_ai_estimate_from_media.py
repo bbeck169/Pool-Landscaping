@@ -33,9 +33,15 @@ _sync = MongoClient(_MONGO_URL)[_DB_NAME]
 def _run_async(coro):
     """Run an async coroutine on a fresh event loop, rebinding the
     Motor client to that loop so ``db.items`` calls don't hit a closed
-    IOLoop between successive tests."""
+    IOLoop between successive tests. Restores a usable default loop
+    afterward so later tests that use the deprecated
+    ``asyncio.get_event_loop()`` pattern continue to work."""
     from motor.motor_asyncio import AsyncIOMotorClient
     import config
+    try:
+        prev_loop = asyncio.get_event_loop()
+    except RuntimeError:
+        prev_loop = None
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
@@ -52,6 +58,11 @@ def _run_async(coro):
             client.close()
     finally:
         loop.close()
+        try:
+            asyncio.set_event_loop(prev_loop if prev_loop and not prev_loop.is_closed()
+                                     else asyncio.new_event_loop())
+        except Exception:
+            asyncio.set_event_loop(asyncio.new_event_loop())
 
 _REACT_ENV = Path(__file__).resolve().parents[2] / "frontend" / ".env"
 _REACT = dotenv_values(_REACT_ENV) if _REACT_ENV.is_file() else {}
