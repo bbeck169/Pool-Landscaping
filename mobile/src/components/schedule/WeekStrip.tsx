@@ -129,13 +129,26 @@ export default function WeekStrip({ selectedDate, onSelectDate, counts }: Props)
                   {d.num}
                 </Text>
               </View>
-              <View
-                style={[
-                  s.todayDot,
-                  isToday && !isSelected && s.todayDotVisible,
-                ]}
-                testID={isToday ? `week-strip-today-dot-${d.iso}` : undefined}
-              />
+              {/* Job count badge — only when count > 0 */}
+              {(counts?.[d.iso] ?? 0) > 0 ? (
+                <Text
+                  style={[
+                    s.countBadge,
+                    isSelected && s.countBadgeSelected,
+                  ]}
+                  testID={`week-strip-count-${d.iso}`}
+                >
+                  {counts![d.iso]}
+                </Text>
+              ) : (
+                <View
+                  style={[
+                    s.todayDot,
+                    isToday && !isSelected && s.todayDotVisible,
+                  ]}
+                  testID={isToday ? `week-strip-today-dot-${d.iso}` : undefined}
+                />
+              )}
             </TouchableOpacity>
           );
         })}

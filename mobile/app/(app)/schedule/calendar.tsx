@@ -169,7 +169,7 @@ export default function ScheduleCalendar() {
   const weekCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const j of jobs) {
-      const d = j.scheduled_date;
+      const d = j.scheduled_date?.slice(0, 10);
       if (d) counts[d] = (counts[d] || 0) + 1;
     }
     return counts;
