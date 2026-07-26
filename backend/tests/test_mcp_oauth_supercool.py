@@ -196,6 +196,94 @@ def test_discovery_falls_back_when_no_well_known(monkeypatch):
     assert meta["_discovery_source"] == "defaults"
 
 
+def test_discovery_rfc9728_protected_resource_two_hop(monkeypatch):
+    """Feb-2026 · MCP 2025-06-18 spec compliance.
+
+    Mirrors the Supercool topology exactly:
+      * GET https://mcp.example.com/mcp → 401 with
+        ``WWW-Authenticate: Bearer resource_metadata="…"``
+      * GET the pointed-to protected-resource metadata → 200 with
+        ``authorization_servers=["https://as.example.com"]`` and
+        ``scopes_supported=["mcp"]``
+      * GET https://as.example.com/.well-known/oauth-authorization-server
+        → 200 with the actual authorize/token/register endpoints on the
+        AS's OWN host (different from the MCP host).
+
+    Assertions: our discover_metadata unwraps all three hops, picks up
+    the cross-host authorize/token/register endpoints, and bubbles
+    ``scopes_supported`` up so ``build_authorize_url`` includes
+    ``scope=mcp`` on the URL by default.
+    """
+    import services.mcp_oauth_client as mcp
+
+    responses = {
+        "https://mcp.example.com/mcp": {
+            "status": 401,
+            "headers": {
+                "content-type": "application/json",
+                "www-authenticate":
+                    'Bearer realm="MCP", '
+                    'resource_metadata='
+                    '"https://mcp.example.com/.well-known/oauth-protected-resource"',
+            },
+            "json": {"error": "unauthenticated"},
+        },
+        "https://mcp.example.com/.well-known/oauth-protected-resource": {
+            "status": 200,
+            "headers": {"content-type": "application/json"},
+            "json": {
+                "resource": "https://mcp.example.com/mcp",
+                "authorization_servers": ["https://as.example.com"],
+                "scopes_supported": ["mcp"],
+            },
+        },
+        "https://as.example.com/.well-known/oauth-authorization-server": {
+            "status": 200,
+            "headers": {"content-type": "application/json"},
+            "json": {
+                "issuer": "https://as.example.com",
+                "authorization_endpoint": "https://as.example.com/oauth/authorize",
+                "token_endpoint": "https://as.example.com/oauth/token",
+                "registration_endpoint": "https://as.example.com/oauth/register",
+            },
+        },
+    }
+
+    class _Resp:
+        def __init__(self, cfg):
+            self.status_code = cfg["status"]
+            self.headers = cfg["headers"]
+            self._body = cfg["json"]
+            self.text = ""
+        def json(self):
+            return self._body
+
+    class _FakeClient:
+        def __init__(self, *a, **kw): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url):
+            cfg = responses.get(url)
+            if cfg is None:
+                r = _Resp({"status": 404,
+                              "headers": {"content-type": "text/plain"},
+                              "json": {}})
+                r.text = ""
+                return r
+            return _Resp(cfg)
+
+    monkeypatch.setattr(mcp.httpx, "AsyncClient", _FakeClient)
+    meta = _run_async(mcp.discover_metadata("https://mcp.example.com/mcp"))
+    assert meta["authorization_endpoint"] == "https://as.example.com/oauth/authorize"
+    assert meta["token_endpoint"] == "https://as.example.com/oauth/token"
+    assert meta["registration_endpoint"] == "https://as.example.com/oauth/register"
+    assert meta["_discovery_source"] == \
+        "https://as.example.com/.well-known/oauth-authorization-server"
+    assert meta["_protected_resource_source"] == \
+        "https://mcp.example.com/.well-known/oauth-protected-resource"
+    assert meta.get("scopes_supported") == ["mcp"]
+
+
 def test_dcr_request_payload_shape(monkeypatch):
     """RFC 7591 — payload must carry client_name, redirect_uris (with our
     callback), grant_types both authorization_code + refresh_token, and

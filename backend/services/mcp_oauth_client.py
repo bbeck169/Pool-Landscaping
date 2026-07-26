@@ -197,34 +197,150 @@ def _default_endpoints(server_url: str) -> Dict[str, str]:
     }
 
 
-async def discover_metadata(server_url: str) -> Dict[str, Any]:
-    """RFC 8414 — try `<origin>/.well-known/oauth-authorization-server`
-    then `<origin>/.well-known/openid-configuration`. Merges the response
-    over sensible defaults so callers always get a usable metadata dict.
+async def _discover_protected_resource(server_url: str
+                                          ) -> Dict[str, Any]:
+    """RFC 9728 · OAuth Protected Resource Metadata.
+
+    MCP 2025-06-18+ servers advertise their authorization server via a
+    ``WWW-Authenticate: Bearer resource_metadata="…"`` header on
+    unauthenticated requests, AND/OR at
+    ``<origin>/.well-known/oauth-protected-resource``. Returns the raw
+    metadata dict (with keys like ``authorization_servers``,
+    ``scopes_supported``, ``resource``) or ``{}`` when the server does
+    not expose it.
     """
-    defaults = _default_endpoints(server_url)
     origin = _authorization_server_origin(server_url)
-    urls = [
-        f"{origin}/.well-known/oauth-authorization-server",
-        f"{origin}/.well-known/openid-configuration",
-    ]
-    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as c:
-        for url in urls:
+    resource_metadata_url: Optional[str] = None
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT,
+                                    follow_redirects=True) as c:
+        # 1. Hit the MCP endpoint unauthenticated. MCP spec says a
+        #    resource-metadata URL will be advertised via
+        #    ``WWW-Authenticate``. This is the authoritative hint.
+        try:
+            r = await c.get(server_url)
+            www = r.headers.get("www-authenticate", "") or ""
+            for part in www.split(","):
+                part = part.strip()
+                if part.lower().startswith("resource_metadata="):
+                    resource_metadata_url = part.split("=", 1)[1].strip().strip('"')
+                    break
+        except Exception as e:
+            logger.info("[mcp_oauth] WWW-Authenticate probe failed: %s", e)
+
+        # 2. Fall back to the well-known origin path.
+        candidates: List[str] = []
+        if resource_metadata_url:
+            candidates.append(resource_metadata_url)
+        candidates.append(f"{origin}/.well-known/oauth-protected-resource")
+
+        for url in candidates:
             try:
                 r = await c.get(url)
             except Exception as e:
-                logger.info("[mcp_oauth] discovery %s failed: %s", url, e)
+                logger.info("[mcp_oauth] PR metadata GET %s failed: %s", url, e)
                 continue
-            if r.status_code == 200 and "application/json" in (
+            if r.status_code == 200 and "json" in (
                 r.headers.get("content-type") or ""
             ).lower():
                 try:
-                    body = r.json()
-                    return {**defaults, **(body or {}),
-                            "_discovery_source": url}
+                    body = r.json() or {}
+                    body["_source"] = url
+                    return body
                 except Exception:
                     continue
-    return {**defaults, "_discovery_source": "defaults"}
+    return {}
+
+
+async def discover_metadata(server_url: str) -> Dict[str, Any]:
+    """RFC 9728 + RFC 8414 hybrid discovery for MCP servers.
+
+    Flow (matches the MCP 2025-06-18 auth spec):
+
+      1. Fetch RFC 9728 protected-resource metadata from the MCP host
+         (via ``WWW-Authenticate`` hint or the origin's well-known).
+      2. For each ``authorization_servers`` entry, try that AS's RFC 8414
+         metadata (``/.well-known/oauth-authorization-server``). Return
+         the first that works.
+      3. Fall back to the MCP host's own RFC 8414 well-known (some
+         servers co-locate AS + resource). Path-based well-known is also
+         tried per RFC 8414 §3.1.
+      4. Last-ditch: defaults built off the MCP host's origin.
+
+    The returned dict is enriched with ``scopes_supported`` (bubbled up
+    from the protected-resource metadata when present) so callers can
+    include the required OAuth scope in the authorize URL.
+    """
+    defaults = _default_endpoints(server_url)
+    scopes_from_pr: Optional[List[str]] = None
+    pr_source: Optional[str] = None
+
+    # Step 1 — RFC 9728.
+    pr = await _discover_protected_resource(server_url)
+    as_urls: List[str] = list(pr.get("authorization_servers") or [])
+    if pr.get("scopes_supported"):
+        scopes_from_pr = list(pr["scopes_supported"])
+    if pr.get("_source"):
+        pr_source = pr["_source"]
+
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT,
+                                    follow_redirects=True) as c:
+        # Step 2 — each advertised AS.
+        for as_url in as_urls:
+            as_origin = as_url.rstrip("/")
+            for wk in [
+                f"{as_origin}/.well-known/oauth-authorization-server",
+                f"{as_origin}/.well-known/openid-configuration",
+            ]:
+                try:
+                    r = await c.get(wk)
+                except Exception as e:
+                    logger.info("[mcp_oauth] AS discovery %s failed: %s", wk, e)
+                    continue
+                if r.status_code == 200 and "json" in (
+                    r.headers.get("content-type") or ""
+                ).lower():
+                    try:
+                        body = r.json() or {}
+                    except Exception:
+                        continue
+                    merged = {**defaults, **body,
+                                "_discovery_source": wk,
+                                "_protected_resource_source": pr_source}
+                    if scopes_from_pr and not merged.get("scopes_supported"):
+                        merged["scopes_supported"] = scopes_from_pr
+                    return merged
+
+        # Step 3 — the MCP host's own well-known (origin + path-based).
+        origin = _authorization_server_origin(server_url)
+        mcp_path = urlparse(server_url).path or ""
+        candidate_wks = [
+            f"{origin}/.well-known/oauth-authorization-server",
+            f"{origin}/.well-known/oauth-authorization-server{mcp_path}",
+            f"{origin}/.well-known/openid-configuration",
+        ]
+        for wk in candidate_wks:
+            try:
+                r = await c.get(wk)
+            except Exception:
+                continue
+            if r.status_code == 200 and "json" in (
+                r.headers.get("content-type") or ""
+            ).lower():
+                try:
+                    body = r.json() or {}
+                    merged = {**defaults, **body,
+                                "_discovery_source": wk,
+                                "_protected_resource_source": pr_source}
+                    if scopes_from_pr and not merged.get("scopes_supported"):
+                        merged["scopes_supported"] = scopes_from_pr
+                    return merged
+                except Exception:
+                    continue
+
+    # Step 4 — last-ditch defaults.
+    return {**defaults, "_discovery_source": "defaults",
+            "_protected_resource_source": pr_source,
+            "scopes_supported": scopes_from_pr or []}
 
 
 async def register_client(server_url: str,
@@ -346,6 +462,12 @@ async def build_authorize_url(tenant_id: str, user_id: str,
         "state": state,
     }
     scope = scope or DEFAULT_SCOPE
+    if not scope:
+        # If the AS advertises required scopes (e.g. Supercool → ``mcp``)
+        # and the caller didn't override, use them.
+        adv = metadata.get("scopes_supported") or []
+        if adv:
+            scope = " ".join(adv)
     if scope:
         params["scope"] = scope
     authorize_url = f"{metadata['authorization_endpoint']}?{urlencode(params)}"
