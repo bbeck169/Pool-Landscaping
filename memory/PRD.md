@@ -9194,3 +9194,56 @@ is auto-hot-reloaded.
 - `/app`-only work; no external repos.
 - Every test seed is a throwaway row cleaned up in the fixture
   teardown — no real users mutated.
+
+
+## Team page follow-ups — JWT soft-delete gate + demo-login flag (SHIPPED · Feb-2026)
+
+Two small additive follow-ups completing the Team page admin actions
+work: hard-401 for soft-deleted JWTs, and a prod switch to hide the
+Login page's demo-account block.
+
+### Task 1 · JWT `deleted_at` enforcement
+- `backend/utils.py::get_current_user` — one-conditional gate: after
+  the standard lookup, if `user.get("deleted_at")` is truthy, raise
+  401 with `detail="account_deleted"`.
+- Existing sessions for a soft-deleted user stop working on the very
+  next request (no wait for JWT expiry). Undelete restores access to
+  the same token — no re-issue needed.
+- Test coverage in `tests/test_soft_delete_jwt_gate.py` (3 tests):
+  live user JWT accepted, soft-deleted JWT 401'd, undelete restores.
+
+### Task 2 · `SHOW_DEMO_LOGINS` env var
+- `backend/routers/payments_stripe_live.py::config_public` — extended
+  to return `show_demo_logins: bool` (from `SHOW_DEMO_LOGINS` env,
+  defaults `true` for backward compat) and `brand_name: str`.
+- `frontend/src/pages/Login.jsx` — reads the flag on mount and toggles
+  the entire demo-accounts section via inline `display:none`. Defaults
+  to visible on network failure so QA never gets locked out.
+- `backend/.env` — set `SHOW_DEMO_LOGINS=true` explicitly.
+- `backend/.env.example` — added with the comment
+  `# Set to false in production. Preview should keep true for QA.`
+- Test coverage in `test/login-demo-flag.test.jsx` (4 tests): flag
+  true shows, flag false hides, network failure defaults on, missing
+  field defaults on.
+
+### Test totals for this fork
+- Backend pytest across touched surfaces (unlock/promote + soft-delete
+  + JWT gate + config): **30 passed**.
+- Frontend vitest full sweep: **39 files / 184 tests** pass.
+
+### Production redeploy checklist
+1. Redeploy the backend (new endpoints from the previous ticket
+   already noted).
+2. **Set `SHOW_DEMO_LOGINS=false` on the prod env before or
+   simultaneously with redeploy.** Preview stays `true` — the value
+   is already baked into `/app/backend/.env`.
+3. No frontend env var needed — the flag flows through
+   `/api/config/public`.
+
+### Guardrails honored
+- Additive only — no changes to Phase A OAuth, Path B, WordPress
+  activation, Phase B `media_gen`, Phase 25, `/app/mobile/`, or the
+  login POST endpoint itself. The demo-accounts _seed_ users (admin,
+  mike, customer) remain fully functional for manual login on prod;
+  only the visual affordance is hidden.
+- `/app`-only work.

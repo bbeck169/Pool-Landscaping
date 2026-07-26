@@ -55,6 +55,13 @@ async def get_current_user(creds: HTTPAuthorizationCredentials = Depends(securit
     user = await db.users.find_one({"id": payload.get("sub")}, {"_id": 0, "password_hash": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    # Feb-2026 · Team page admin actions — hard-401 any request from a
+    # soft-deleted user. This gives real "kick them out now" semantics
+    # for the ``POST /users/{uid}/soft-delete`` endpoint: existing JWTs
+    # stop working on the very next request rather than waiting for
+    # natural token expiry.
+    if user.get("deleted_at"):
+        raise HTTPException(status_code=401, detail="account_deleted")
     # SEC-004 hotfix — cached (30s TTL) active-state check. Existing tokens
     # for a deactivated user stop working within one cache window.
     if _active_is_false(user):

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/auth";
 import { brandGradientCss, colors, font } from "@/theme";
@@ -26,6 +26,23 @@ export default function Login() {
   const [showPw, setShowPw] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // Feb-2026 — gate the demo-accounts affordance on the public runtime
+  // config flag. Defaults to ``true`` so preview keeps its QA
+  // convenience; prod must set ``SHOW_DEMO_LOGINS=false`` to hide.
+  const [showDemoLogins, setShowDemoLogins] = useState(true);
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const { api } = await import("@/api");
+        const cfg = await api.get("/config/public");
+        if (live && typeof cfg?.show_demo_logins === "boolean") {
+          setShowDemoLogins(cfg.show_demo_logins);
+        }
+      } catch { /* keep default */ }
+    })();
+    return () => { live = false; };
+  }, []);
 
   const forced = location.state?.from;
 
@@ -216,7 +233,9 @@ export default function Login() {
             </Link>
           </p>
 
-          <div className="mt-10">
+          <div className="mt-10" data-testid="login-demo-section" style={{
+            display: showDemoLogins ? undefined : "none",
+          }}>
             <p
               className="text-xs tracking-widest font-semibold mb-3"
               style={{ color: colors.muted }}

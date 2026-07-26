@@ -154,12 +154,22 @@ def _require_admin_or_manager(user: dict) -> None:
 # ──────────────────────────────────────────────────────────────────────
 @router.get("/config/public")
 async def config_public():
-    """Publicly-consumable runtime config. NEVER echoes secret keys."""
+    """Publicly-consumable runtime config. NEVER echoes secret keys.
+
+    Feb-2026 addition — ``show_demo_logins`` gates the Login page's
+    "Quick login as…" demo-account buttons + credential-hint text.
+    Defaults to ``true`` so preview / dev keep the affordance; prod
+    must set ``SHOW_DEMO_LOGINS=false`` to hide it.
+    """
     pk = os.getenv("STRIPE_PUBLISHABLE_KEY") or ""
+    _show_demo_raw = (os.getenv("SHOW_DEMO_LOGINS") or "true").strip().lower()
+    show_demo_logins = _show_demo_raw not in ("false", "0", "no", "off")
     return {
         "stripe_publishable_key": pk,
         "stripe_mode": _mode() if pk else "none",
         "app_public_url": os.getenv("APP_PUBLIC_URL") or "",
+        "show_demo_logins": show_demo_logins,
+        "brand_name": os.getenv("BRAND_NAME") or "Pool & Landscaping of Vistancia",
     }
 
 
