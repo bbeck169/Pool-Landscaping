@@ -377,6 +377,22 @@
   - `memory/mobile/iteration_18.md` (created)
   - `.gitignore` (cache directories added)
 
+## Iteration 21 — Full Parity Audit + Patch (8 Web Changes)
+- **Commit**: 8c6677d
+- **Date**: 2026-07-26
+- **Changes**:
+  - Item 2: Team page — bottom sheet action menu (Reset Password + Delete + Undelete), permission matrix
+  - Item 3: Supercool integration settings page (new screen)
+  - Item 4: Content Studio MVP (new screen — prompt + aspect + generate + library)
+  - Item 6: GBP "Generate branded image" per-draft button + sheet
+  - Item 7: Login demo gating on `show_demo_logins` from `/api/config/public`
+  - Item 8: 401 handler in api.ts + AuthProvider logout callback
+  - Item 1: Confirmed WeekStrip already at parity ✅
+  - Item 5: Deferred — RepairCalculatorPage has no mobile equivalent
+- **Files created**: settings/integrations/_layout.tsx, settings/integrations/supercool.tsx, marketing/content-studio.tsx
+- **Files modified**: team.tsx (overwrite), login.tsx, gbp/index.tsx, src/api.ts, src/auth.tsx
+
+
 ## Iteration 20 — WeekStrip Daily Job Count Badges
 - **Commit**: e03929b
 - **Date**: 2026-07-26
