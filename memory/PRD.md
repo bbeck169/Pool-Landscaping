@@ -9045,3 +9045,69 @@ signal. After redeploy, the sequence to unblock brian on `app.plofv.com`:
   code, or Phase A code.
 - `/app` only; no external repos.
 - Path B endpoints are super_admin only — plain admins get 403.
+
+
+## Phase B follow-ups — GBP composer + AI Photo-to-Estimate before/after (SHIPPED · Feb-2026)
+
+Frontend-only completion of the two deferred Phase B tasks. No new backend
+endpoints; a single additive backend field (see below).
+
+### 1. GBP composer modal
+- `/marketing/gbp-posts` → each draft card now has a **"✨ Generate
+  branded image"** button next to Copy/Mark posted/Delete.
+- Feature-flagged on `GET /api/integrations/supercool/status` → disabled
+  with a "Connect Supercool" tooltip when `connected=false`.
+- Click opens a shadcn `<Dialog>` composer with:
+  * Prompt textarea pre-filled from the draft's `image_prompt`
+    (falls back to `body_150w` / `headline`).
+  * Aspect ratio selector (default **4:5**, plus 1:1 / 16:9 / 9:16).
+  * "Add brand elements" checkbox (ON by default; when ON appends a
+    photorealistic, on-brand phrase to the outgoing prompt).
+- POSTs `/api/media/image/generate` with `surface: "gbp"`; on success
+  PATCHes the draft with `{ image_url }` so the card re-renders with the
+  attached image immediately.
+
+### 2. Repair Calculator · AI Photo-to-Estimate before/after
+- After the Phase 25 AI photo hydrate, a new **BEFORE | AFTER** tile
+  appears on `/ops/repair-calculator`. The BEFORE side is the customer
+  photo rendered from the browser's data URI; the AFTER side is empty
+  until the admin clicks "🎨 Generate 'after' concept render".
+- The Generate button is disabled with a tooltip when
+  `supercool.connected=false` OR no photo has been uploaded.
+- On click, builds a prompt from `raw_analysis` + top 5 matched-parts
+  names + a fixed photorealistic on-brand suffix, then POSTs
+  `/api/media/image/edit` with:
+  * `source_image_url` = customer photo as `data:image/…;base64,…`
+  * `aspect_ratio` = "4:5"
+  * `surface` = "estimate"
+- Renders the returned URL side-by-side with the BEFORE image, plus a
+  strict legal caption (verbatim): **"AI-generated concept render —
+  actual results may vary."**
+- **"Attach to quote email"** button flips the render into the email
+  payload — when the admin then clicks Send, the render URL + the legal
+  caption are prepended to the `note` field, and the URL is denormalized
+  onto `quote_snapshot.ai_after_render_url` for audit. A green
+  "attached" chip is displayed in the email confirm modal.
+
+### Backend touches (additive; NO new endpoints)
+- `routers/gbp_posts.py::UpdateIn` gained an optional `image_url: str`
+  field so the composer modal can persist its output onto an existing
+  draft via `PATCH /api/marketing/gbp-posts/{id}`.
+
+### Test coverage
+- **`src/test/phaseb-followups.test.jsx`** — 7 vitest tests covering:
+  disabled-when-disconnected tooltip on both surfaces, composer POST
+  payload correctness (`surface=gbp`, default `4:5`, brand suffix), PATCH
+  wiring after Generate, BEFORE/AFTER grid + legal caption, image edit
+  POST payload (`surface=estimate`, `source_image_url` data URI,
+  raw_analysis + matched parts in prompt), and email attach chip flow.
+- All 7 new tests + 9 regression tests (Phase 25 + Phase B core) green.
+- Full frontend sweep: **37/37 files · 171/171 tests** pass.
+- Backend gbp + phaseb pytest: **9 passed** (rest skipped by CI mock guard).
+
+### Guardrails honored
+- Additive UI only — no changes to Phase A OAuth, Path B admin endpoints,
+  WordPress activation, `/app/mobile/`, or Phase 25 backend.
+- Supercool MCP calls are mocked at the `@/api` boundary in every test;
+  zero real credits burned.
+- Legal caption text is verified byte-for-byte in the test suite.

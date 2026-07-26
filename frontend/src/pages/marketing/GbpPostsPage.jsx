@@ -1,15 +1,32 @@
-// Feb-2026 · Phase 20 P1 — GBP post drafter admin page.
+// Feb-2026 · Phase 20 P1 + Phase B follow-up — GBP post drafter.
 //
 // Generate, list, edit, copy, schedule, and mark-as-posted drafts.
 // No auto-publish to Google — GBP API is gated.
+//
+// Phase B follow-up (Feb-2026): a per-draft "✨ Generate branded image"
+// button opens a composer modal that hits POST /api/media/image/generate
+// with surface="gbp", then PATCHes the draft with the new image_url so
+// the card refreshes with the branded image. Feature-flagged on the
+// Supercool MCP connection status — button is disabled with a tooltip
+// when Supercool is disconnected (the composer would still work through
+// the Emergent nano-banana fallback, but the brief scopes this to the
+// Supercool-connected experience).
 import React from "react";
 import { toast } from "sonner";
 import {
-  Wand2, Copy, Trash2, RefreshCw, Calendar, CheckCircle, Download,
+  Wand2, Copy, Trash2, Calendar, CheckCircle, Download,
+  Sparkles, Loader2, X,
 } from "lucide-react";
-import { api } from "@/api";
-import { colors } from "@/theme";
+import { api, api_base } from "@/api";
+import { colors, brandGradientCss } from "@/theme";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 
 const PURPOSES = [
   ["update", "Update"], ["promo", "Promo"], ["event", "Event"],
@@ -19,6 +36,22 @@ const PURPOSES = [
 const TONES = [["friendly","Friendly"],["professional","Professional"],["promotional","Promotional"]];
 const CTAS  = ["Call now","Book","Learn more","Get offer","None"];
 
+const ASPECT_OPTIONS = [
+  { v: "4:5",  label: "Portrait (4:5)" },
+  { v: "1:1",  label: "Square (1:1)" },
+  { v: "16:9", label: "Wide (16:9)" },
+  { v: "9:16", label: "Story (9:16)" },
+];
+
+
+function absoluteMediaUrl(u) {
+  if (!u) return "";
+  if (u.startsWith("http") || u.startsWith("data:")) return u;
+  const base = api_base().replace(/\/api\/?$/, "");
+  return base + u;
+}
+
+
 export default function GbpPostsPage() {
   const [rows, setRows] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
@@ -26,6 +59,9 @@ export default function GbpPostsPage() {
     purpose: "update", tone: "friendly", topic_hint: "", cta_type: "Call now",
   });
   const [busy, setBusy] = React.useState(false);
+  // Phase B follow-up — Supercool connection + composer modal state.
+  const [supercoolConnected, setSupercoolConnected] = React.useState(null);
+  const [composer, setComposer] = React.useState(null);  // { draft }
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -37,6 +73,14 @@ export default function GbpPostsPage() {
     } finally { setLoading(false); }
   }, []);
   React.useEffect(() => { load(); }, [load]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    api.get("/integrations/supercool/status").then((s) => {
+      if (!cancelled) setSupercoolConnected(!!s?.connected);
+    }).catch(() => { if (!cancelled) setSupercoolConnected(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   const generate = async () => {
     setBusy(true);
@@ -76,6 +120,14 @@ export default function GbpPostsPage() {
       await api.del(`/marketing/gbp-posts/${r.id}`);
       setRows((prev) => prev.filter((x) => x.id !== r.id));
     } catch (e) { toast.error(`Delete failed: ${e.message || e}`); }
+  };
+
+  // Called by the composer modal after a successful PATCH. Replaces the
+  // draft in-place so React re-renders the card with the new image.
+  const onImageAttached = (updatedDraft) => {
+    setRows((prev) => prev.map((x) => x.id === updatedDraft.id ? updatedDraft : x));
+    setComposer(null);
+    toast.success("Branded image attached to draft");
   };
 
   return (
@@ -178,7 +230,7 @@ export default function GbpPostsPage() {
                 style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
                 data-testid={`gbp-draft-${r.id}`}>
               {r.image_url ? (
-                <img src={r.image_url} alt=""
+                <img src={absoluteMediaUrl(r.image_url)} alt=""
                        className="w-full aspect-square object-cover" />
               ) : (
                 <div className="w-full aspect-square flex items-center justify-center text-xs"
@@ -203,8 +255,28 @@ export default function GbpPostsPage() {
                           data-testid={`gbp-copy-${r.id}`}>
                     <Copy size={11} /> Copy
                   </button>
+
+                  {/* Phase B follow-up — Generate branded image */}
+                  <button
+                    type="button"
+                    onClick={() => supercoolConnected ? setComposer({ draft: r }) : null}
+                    disabled={!supercoolConnected}
+                    title={supercoolConnected
+                      ? "Generate a branded image for this post"
+                      : "Connect Supercool to enable AI image generation"}
+                    className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={supercoolConnected
+                      ? { background: brandGradientCss, color: "#fff" }
+                      : { backgroundColor: colors.surfaceSecondary,
+                            color: colors.muted,
+                            border: `1px solid ${colors.border}` }}
+                    data-testid={`gbp-gen-image-btn-${r.id}`}
+                  >
+                    <Sparkles size={11} /> Generate branded image
+                  </button>
+
                   {r.image_url ? (
-                    <a href={r.image_url} download
+                    <a href={absoluteMediaUrl(r.image_url)} download
                        className="flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md hover:brightness-95"
                        style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface, border: `1px solid ${colors.border}` }}
                        data-testid={`gbp-download-${r.id}`}>
@@ -235,6 +307,216 @@ export default function GbpPostsPage() {
           ))}
         </ul>
       )}
+
+      <GbpImageComposerModal
+        composer={composer}
+        onClose={() => setComposer(null)}
+        onAttached={onImageAttached}
+      />
     </div>
+  );
+}
+
+
+/**
+ * Phase B follow-up — composer modal.
+ *
+ * Renders when ``composer.draft`` is truthy. Pre-fills the prompt from
+ * the draft's ``image_prompt`` (or body copy as fallback), lets the
+ * admin pick an aspect ratio + toggle a "Add brand elements" flag,
+ * then POSTs to ``/media/image/generate`` with ``surface="gbp"``.
+ *
+ * On success PATCHes the draft with ``image_url`` so the parent card
+ * refreshes with the new image. Closes on outside click / Cancel /
+ * successful attach.
+ */
+function GbpImageComposerModal({ composer, onClose, onAttached }) {
+  const draft = composer?.draft;
+  const [prompt, setPrompt] = React.useState("");
+  const [aspect, setAspect] = React.useState("4:5");
+  const [brand, setBrand] = React.useState(true);
+  const [busy, setBusy] = React.useState(false);
+  const [preview, setPreview] = React.useState(null);
+
+  React.useEffect(() => {
+    if (!draft) return;
+    // Reset every time the modal opens for a fresh draft.
+    const seed = (draft.image_prompt || draft.body_150w || draft.headline || "").slice(0, 500);
+    setPrompt(seed);
+    setAspect("4:5");
+    setBrand(true);
+    setPreview(null);
+    setBusy(false);
+  }, [draft?.id]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!draft) return null;
+
+  const buildFinalPrompt = () => {
+    const base = prompt.trim();
+    if (!brand) return base;
+    const suffix = " Photorealistic, warm natural light, on-brand for a pool & landscaping service company. High-end residential setting, no logos or watermarks, no text overlays.";
+    return base + suffix;
+  };
+
+  const doGenerate = async () => {
+    if (prompt.trim().length < 3) {
+      toast.error("Prompt is too short.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await api.post("/media/image/generate", {
+        prompt: buildFinalPrompt(),
+        aspect_ratio: aspect,
+        surface: "gbp",
+      });
+      setPreview(r);
+      toast.success(`Image ready · ${r.provider}`);
+    } catch (e) {
+      const msg = e?.message || "Generation failed";
+      if (/daily_limit_reached/i.test(msg)) {
+        toast.error("Daily image-generation limit reached. Resets at 00:00 UTC.");
+      } else {
+        toast.error(msg);
+      }
+    } finally { setBusy(false); }
+  };
+
+  const doAttach = async () => {
+    if (!preview?.url) return;
+    setBusy(true);
+    try {
+      const updated = await api.patch(`/marketing/gbp-posts/${draft.id}`, {
+        image_url: preview.url,
+      });
+      onAttached(updated);
+    } catch (e) {
+      toast.error(`Attach failed: ${e?.message || e}`);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Dialog open={!!draft} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent
+        className="max-w-2xl"
+        data-testid="gbp-image-composer-modal"
+      >
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Sparkles size={16} style={{ color: colors.brand }} />
+            Generate branded image
+          </DialogTitle>
+          <DialogDescription>
+            AI-generated visual for this Google Business Profile post.
+            The image saves into your Content Studio library and attaches
+            to this draft when you click "Attach to draft".
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div>
+            <Label htmlFor="gbp-composer-prompt"
+                   className="text-[11px] font-semibold uppercase tracking-wider"
+                   style={{ color: colors.muted }}>Prompt</Label>
+            <textarea
+              id="gbp-composer-prompt"
+              rows={4}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-lg text-sm"
+              style={{ backgroundColor: colors.surfaceSecondary,
+                          border: `1px solid ${colors.border}`,
+                          color: colors.onSurface }}
+              data-testid="gbp-composer-prompt-input"
+            />
+            <p className="text-[11px] mt-1" style={{ color: colors.muted }}>
+              Pre-filled from the draft's image prompt — tweak freely.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-[11px] font-semibold uppercase tracking-wider"
+                     style={{ color: colors.muted }}>Aspect ratio</Label>
+              <div className="mt-1 grid grid-cols-2 gap-1.5">
+                {ASPECT_OPTIONS.map((o) => (
+                  <button
+                    key={o.v} type="button" onClick={() => setAspect(o.v)}
+                    className="px-2 py-1.5 rounded-md text-[11px] font-semibold"
+                    style={{
+                      backgroundColor: aspect === o.v ? colors.onSurface : colors.surfaceSecondary,
+                      color: aspect === o.v ? colors.surface : colors.onSurface,
+                      border: `1px solid ${colors.border}`,
+                    }}
+                    data-testid={`gbp-composer-aspect-${o.v.replace(":", "x")}`}
+                  >{o.label}</button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <Label className="text-[11px] font-semibold uppercase tracking-wider"
+                     style={{ color: colors.muted }}>Options</Label>
+              <label className="flex items-center gap-2 mt-2 text-sm select-none cursor-pointer"
+                     style={{ color: colors.onSurface }}
+                     data-testid="gbp-composer-brand-label">
+                <Checkbox
+                  checked={brand}
+                  onCheckedChange={(v) => setBrand(!!v)}
+                  data-testid="gbp-composer-brand-checkbox"
+                />
+                Add brand elements
+              </label>
+              <p className="text-[11px] mt-1" style={{ color: colors.muted }}>
+                Appends photorealistic, on-brand phrasing to the prompt.
+              </p>
+            </div>
+          </div>
+
+          {preview?.url ? (
+            <div className="rounded-lg overflow-hidden"
+                 style={{ border: `1px solid ${colors.border}` }}
+                 data-testid="gbp-composer-preview">
+              <img src={absoluteMediaUrl(preview.url)} alt="Preview"
+                   className="w-full max-h-[360px] object-contain"
+                   style={{ backgroundColor: "#0F172A" }} />
+              <div className="p-2 text-[11px]"
+                   style={{ color: colors.muted, backgroundColor: colors.surfaceSecondary }}>
+                Provider · <b>{preview.provider}</b>
+                {preview.aspect_ratio ? ` · ${preview.aspect_ratio}` : ""}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <DialogFooter>
+          <Button
+            type="button" variant="outline" onClick={onClose}
+            data-testid="gbp-composer-cancel"
+          >
+            <X size={13} /> Cancel
+          </Button>
+          {preview?.url ? (
+            <Button
+              type="button" onClick={doAttach} disabled={busy}
+              style={{ background: brandGradientCss, color: "#fff" }}
+              data-testid="gbp-composer-attach-btn"
+            >
+              {busy ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
+              Attach to draft
+            </Button>
+          ) : (
+            <Button
+              type="button" onClick={doGenerate} disabled={busy}
+              style={{ background: brandGradientCss, color: "#fff" }}
+              data-testid="gbp-composer-generate-btn"
+            >
+              {busy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+              {busy ? "Generating…" : "Generate"}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -197,6 +197,12 @@ class UpdateIn(BaseModel):
     body_150w: Optional[str] = None
     cta_text: Optional[str] = None
     status: Optional[str] = None
+    # Feb-2026 · Phase B follow-up — allow the "Generate branded image"
+    # composer modal to attach a freshly generated image to an existing
+    # draft. The Content Studio route already writes the image to
+    # ``generated_media``; we just persist its public URL here so the
+    # draft card and any downstream GBP copy-paste flow picks it up.
+    image_url: Optional[str] = None
 
 
 @router.patch("/marketing/gbp-posts/{pid}", operation_id="gbpPosts.update")

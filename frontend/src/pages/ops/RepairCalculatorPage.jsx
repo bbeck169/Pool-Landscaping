@@ -2,7 +2,8 @@ import React from "react";
 import { toast } from "sonner";
 import {
   Plus, Trash2, Copy as CopyIcon, Printer, Send, X, Info, Save,
-  Camera, Mic, Square, Sparkles, AlertTriangle,
+  Camera, Mic, Square, Sparkles, AlertTriangle, Paintbrush, Paperclip,
+  Loader2, CheckCircle2,
 } from "lucide-react";
 import { api, api_base } from "@/api";
 import { TOKEN_KEY } from "@/api";
@@ -44,6 +45,14 @@ export default function RepairCalculatorPage() {
   const [aiResult, setAiResult] = React.useState(null);
   const [aiBusy, setAiBusy] = React.useState(null);       // "photo" | "voice" | null
   const [aiError, setAiError] = React.useState(null);
+  // Phase B follow-up — Supercool connection + before/after concept
+  // render state. `photoDataUrl` is the last uploaded pool photo
+  // encoded as a data URI; used both as the BEFORE preview and as
+  // the ``source_image_url`` payload for /api/media/image/edit.
+  const [supercoolConnected, setSupercoolConnected] = React.useState(null);
+  const [photoDataUrl, setPhotoDataUrl] = React.useState(null);
+  const [afterRender, setAfterRender] = React.useState(null);   // {url, prompt, provider, attached}
+  const [renderBusy, setRenderBusy] = React.useState(false);
 
   React.useEffect(() => {
     api.get("/ops/repair-calculator/config").then(setConfig).catch(() => {});
@@ -51,6 +60,12 @@ export default function RepairCalculatorPage() {
       const list = Array.isArray(r) ? r : (r?.customers || r?.items || []);
       setCustomers(list.slice(0, 500));
     }).catch(() => {});
+    // Phase B follow-up — supercool connection status. Buttons that
+    // hit the Supercool MCP are disabled with a tooltip when this
+    // flag is false.
+    api.get("/integrations/supercool/status")
+      .then((s) => setSupercoolConnected(!!s?.connected))
+      .catch(() => setSupercoolConnected(false));
   }, []);
 
   // Live-recompute quote whenever any input changes.
@@ -104,11 +119,23 @@ export default function RepairCalculatorPage() {
     }
     setEmailBusy(true);
     try {
+      // Phase B follow-up — when a concept render is attached, prepend
+      // a note that surfaces the AI image URL + the legal caption so
+      // the customer sees it inline in the email body. Snapshot also
+      // includes the URL so admins can audit later.
+      const attachedNote = afterRender?.attached && afterRender?.url
+        ? `AI-generated concept render — actual results may vary.\n${afterRender.url}\n\n`
+        : "";
+      const enrichedSnapshot = afterRender?.attached && afterRender?.url
+        ? { ...quote, ai_after_render_url: afterRender.url,
+              ai_after_render_prompt: afterRender.prompt }
+        : quote;
       const res = await api.post("/ops/repair-calculator/email", {
         customer_id: customerId || null,
         ad_hoc_email: adHocEmail.trim() || null,
         subject: "Your repair estimate",
-        quote_snapshot: quote,
+        note: attachedNote || undefined,
+        quote_snapshot: enrichedSnapshot,
       });
       if (res?.delivered) {
         toast.success("Quote emailed");
@@ -157,6 +184,9 @@ export default function RepairCalculatorPage() {
   const runAiEstimate = React.useCallback(async (endpoint, formData) => {
     setAiBusy(endpoint);
     setAiError(null);
+    // Every new AI run invalidates the previous after-render — the
+    // photo (and therefore the BEFORE image) has changed.
+    setAfterRender(null);
     try {
       const token = localStorage.getItem(TOKEN_KEY) || "";
       const res = await fetch(`${api_base()}/ai/estimate-from-${endpoint}`, {
@@ -195,6 +225,67 @@ export default function RepairCalculatorPage() {
       setAiBusy(null);
     }
   }, [hydrateFromAi]);
+
+  // Phase B follow-up · AI Photo-to-Estimate before/after ————————————
+  //
+  // Builds a prompt from the AI ``raw_analysis`` + top matched parts
+  // and hits ``POST /api/media/image/edit`` with the customer's photo
+  // (data URI) as ``source_image_url``. Result is rendered next to the
+  // BEFORE image with a strict legal caption.
+  const buildAfterPrompt = React.useCallback((result) => {
+    const rawAnalysis = (result?.raw_analysis || "").trim();
+    const matched = (result?.parts || [])
+      .filter((p) => p?.source === "pricebook_match" && p?.name)
+      .slice(0, 5)
+      .map((p) => p.name);
+    const partsLine = matched.length
+      ? `Simulate the same pool/landscape after these repairs are complete: ${matched.join(", ")}.`
+      : "Simulate the same pool/landscape after all obvious repairs are complete.";
+    const brand = " Photorealistic concept render, natural daylight, restored equipment in clean working order, tidy surrounding area, no logos or watermarks, no text overlays.";
+    const contextLine = rawAnalysis
+      ? ` Original technician analysis: ${rawAnalysis}`
+      : "";
+    return `${partsLine}${contextLine}${brand}`.slice(0, 1800);
+  }, []);
+
+  const generateAfterRender = React.useCallback(async () => {
+    if (!aiResult || !photoDataUrl) return;
+    if (!supercoolConnected) {
+      toast.error("Connect Supercool first to enable AI concept renders.");
+      return;
+    }
+    setRenderBusy(true);
+    try {
+      const prompt = buildAfterPrompt(aiResult);
+      const r = await api.post("/media/image/edit", {
+        prompt,
+        source_image_url: photoDataUrl,
+        aspect_ratio: "4:5",
+        surface: "estimate",
+      });
+      setAfterRender({
+        url: r?.url || null,
+        prompt,
+        provider: r?.provider,
+        image_id: r?.image_id,
+        attached: false,
+      });
+      toast.success(`Concept render ready · ${r?.provider || "supercool"}`);
+    } catch (e) {
+      const msg = e?.message || "Render failed";
+      if (/daily_limit_reached/i.test(msg)) {
+        toast.error("Daily image-generation limit reached. Resets at 00:00 UTC.");
+      } else {
+        toast.error(msg);
+      }
+    } finally { setRenderBusy(false); }
+  }, [aiResult, photoDataUrl, supercoolConnected, buildAfterPrompt]);
+
+  const attachRenderToEmail = React.useCallback(() => {
+    if (!afterRender?.url) return;
+    setAfterRender((prev) => prev ? { ...prev, attached: true } : prev);
+    toast.success("Concept render will be attached to the next email.");
+  }, [afterRender]);
 
   return (
     <SafeScrollContainer
@@ -245,12 +336,24 @@ export default function RepairCalculatorPage() {
         busy={aiBusy}
         onPhoto={(fd) => runAiEstimate("photo", fd)}
         onVoice={(fd) => runAiEstimate("voice", fd)}
+        onPhotoDataUrl={setPhotoDataUrl}
       />
 
       {aiResult ? (
         <AiResultBanner
           result={aiResult}
-          onDismiss={() => setAiResult(null)}
+          onDismiss={() => { setAiResult(null); setAfterRender(null); }}
+        />
+      ) : null}
+
+      {aiResult && photoDataUrl ? (
+        <BeforeAfterRender
+          photoDataUrl={photoDataUrl}
+          afterRender={afterRender}
+          renderBusy={renderBusy}
+          supercoolConnected={supercoolConnected}
+          onGenerate={generateAfterRender}
+          onAttachToEmail={attachRenderToEmail}
         />
       ) : null}
 
@@ -302,6 +405,7 @@ export default function RepairCalculatorPage() {
           busy={emailBusy}
           onClose={() => setShowEmailConfirm(false)}
           onSend={doEmail}
+          afterRender={afterRender}
         />
       ) : null}
     </SafeScrollContainer>
@@ -309,7 +413,7 @@ export default function RepairCalculatorPage() {
 }
 
 
-function AiCtaBar({ busy, onPhoto, onVoice }) {
+function AiCtaBar({ busy, onPhoto, onVoice, onPhotoDataUrl }) {
   const fileInputRef = React.useRef(null);
   const [recording, setRecording] = React.useState(false);
   const mediaRecorderRef = React.useRef(null);
@@ -326,6 +430,16 @@ function AiCtaBar({ busy, onPhoto, onVoice }) {
     }
     const fd = new FormData();
     fd.append("file", f, f.name || "photo.jpg");
+    // Phase B follow-up — expose the raw photo as a data URL so the
+    // parent can pass it to /api/media/image/edit as source_image_url.
+    // FileReader failures fall through silently — the AI photo estimate
+    // still runs, only the after-render feature is affected.
+    if (onPhotoDataUrl) {
+      const reader = new FileReader();
+      reader.onload = () => onPhotoDataUrl(String(reader.result || "") || null);
+      reader.onerror = () => onPhotoDataUrl(null);
+      reader.readAsDataURL(f);
+    }
     onPhoto(fd);
   };
 
@@ -768,7 +882,8 @@ function PreviewColumn({ quote, tierColor, onCopy, onPrint, onEmail, canEmail })
 
 
 function EmailConfirmModal({ quote, customers, customerId, setCustomerId,
-                              adHocEmail, setAdHocEmail, busy, onClose, onSend }) {
+                              adHocEmail, setAdHocEmail, busy, onClose, onSend,
+                              afterRender }) {
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center p-4"
@@ -793,6 +908,17 @@ function EmailConfirmModal({ quote, customers, customerId, setCustomerId,
           ><X size={16} /></button>
         </div>
         <div className="p-5 space-y-3">
+          {afterRender?.attached && afterRender?.url ? (
+            <div
+              className="rounded-lg p-2.5 flex items-center gap-2 text-xs"
+              style={{ backgroundColor: "#ECFDF5", border: "1px solid #A7F3D0", color: "#065F46" }}
+              data-testid="rc-email-render-attached-chip"
+            >
+              <Paperclip size={13} />
+              <span className="font-semibold">AI concept render will be attached.</span>
+              <span className="opacity-80">Actual results may vary.</span>
+            </div>
+          ) : null}
           <div>
             <label htmlFor="rc-email-cust"
               className="text-[10px] font-semibold uppercase tracking-wider block mb-1"
@@ -847,6 +973,153 @@ function EmailConfirmModal({ quote, customers, customerId, setCustomerId,
       </div>
     </div>
   );
+}
+
+
+// Phase B follow-up · Feb-2026 — AI Photo-to-Estimate before/after.
+//
+// Renders a side-by-side BEFORE|AFTER grid + the mandatory legal
+// caption. The "Generate 'after' concept render" button is disabled
+// with a tooltip when Supercool is not connected — the concept-render
+// flow is scoped to the primary Supercool image-gen provider per the
+// Phase B follow-up brief.
+function BeforeAfterRender({ photoDataUrl, afterRender, renderBusy,
+                              supercoolConnected, onGenerate, onAttachToEmail }) {
+  const canGenerate = !!supercoolConnected && !!photoDataUrl && !renderBusy;
+  const tooltip = !supercoolConnected
+    ? "Connect Supercool to enable AI concept renders."
+    : !photoDataUrl
+      ? "Upload a photo via 📷 Snap a photo first."
+      : "Generate an AI concept render of the finished repair.";
+  return (
+    <div
+      className="rounded-xl p-4 mb-3"
+      style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+      data-testid="repair-calc-before-after"
+    >
+      <div className="flex items-start gap-2 mb-3 flex-wrap">
+        <Paintbrush size={16} style={{ color: colors.brand, marginTop: 4 }} />
+        <div className="flex-1 min-w-[180px]">
+          <div className="text-sm font-bold" style={{ color: colors.onSurface }}>
+            AI concept render
+          </div>
+          <div className="text-xs" style={{ color: colors.muted }}>
+            Show the customer what the finished repair could look like — using
+            their own pool photo as the base image.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={canGenerate ? onGenerate : undefined}
+          disabled={!canGenerate}
+          title={tooltip}
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs sm:text-sm font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{ background: brandGradientCss }}
+          data-testid="repair-calc-generate-after-btn"
+        >
+          {renderBusy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+          {renderBusy
+            ? "Rendering…"
+            : afterRender?.url ? "🎨 Regenerate" : "🎨 Generate 'after' concept render"}
+        </button>
+      </div>
+
+      {!supercoolConnected ? (
+        <div
+          className="text-[11px] mb-2 rounded-md p-2"
+          style={{ backgroundColor: "#FEF9C3", border: "1px solid #FDE68A", color: "#854D0E" }}
+          data-testid="repair-calc-before-after-supercool-hint"
+        >
+          Supercool isn't connected — concept renders are disabled. Connect
+          it under <b>Settings → Integrations → Supercool</b> to enable this
+          feature.
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"
+           data-testid="repair-calc-before-after-grid">
+        <figure
+          className="rounded-lg overflow-hidden flex flex-col"
+          style={{ border: `1px solid ${colors.border}`,
+                     backgroundColor: colors.surfaceSecondary }}
+          data-testid="repair-calc-before-tile"
+        >
+          <div className="text-[10px] font-bold uppercase tracking-wider px-2 py-1"
+               style={{ backgroundColor: "#111827", color: "#FFFFFF" }}>
+            Before
+          </div>
+          <img src={photoDataUrl} alt="Original pool photo"
+               className="w-full aspect-[4/5] object-cover"
+               data-testid="repair-calc-before-image" />
+        </figure>
+        <figure
+          className="rounded-lg overflow-hidden flex flex-col"
+          style={{ border: `1px solid ${colors.border}`,
+                     backgroundColor: colors.surfaceSecondary }}
+          data-testid="repair-calc-after-tile"
+        >
+          <div className="text-[10px] font-bold uppercase tracking-wider px-2 py-1"
+               style={{ backgroundColor: "#065F46", color: "#FFFFFF" }}>
+            After · AI concept
+          </div>
+          {afterRender?.url ? (
+            <img src={_absoluteMediaUrl(afterRender.url)} alt="AI-generated concept render"
+                 className="w-full aspect-[4/5] object-cover"
+                 data-testid="repair-calc-after-image" />
+          ) : (
+            <div className="w-full aspect-[4/5] flex items-center justify-center text-xs px-3 text-center"
+                 style={{ color: colors.muted }}
+                 data-testid="repair-calc-after-placeholder">
+              {renderBusy
+                ? "Rendering AI concept…"
+                : "No concept render yet. Click Generate above."}
+            </div>
+          )}
+        </figure>
+      </div>
+
+      {/* Strict legal caption — required by the Phase B follow-up brief. */}
+      <div
+        className="mt-3 text-[11px] italic px-2 py-1.5 rounded-md"
+        style={{ backgroundColor: colors.surfaceSecondary, color: colors.muted,
+                    border: `1px solid ${colors.border}` }}
+        data-testid="repair-calc-after-legal-caption"
+      >
+        AI-generated concept render — actual results may vary.
+      </div>
+
+      {afterRender?.url ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={onAttachToEmail}
+            disabled={afterRender.attached}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-60"
+            style={{ backgroundColor: afterRender.attached ? "#DCFCE7" : colors.brand,
+                       color: afterRender.attached ? "#166534" : "#FFFFFF" }}
+            data-testid="repair-calc-attach-render-btn"
+          >
+            {afterRender.attached
+              ? <><CheckCircle2 size={12} /> Attached to email</>
+              : <><Paperclip size={12} /> Attach to quote email</>}
+          </button>
+          <span className="text-[11px]" style={{ color: colors.muted }}>
+            Provider · <b>{afterRender.provider || "supercool"}</b>
+          </span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+// Local helper — mirrors ContentStudioPage's absoluteMediaUrl but scoped
+// to this file so we don't leak a shared helper for one call site.
+function _absoluteMediaUrl(u) {
+  if (!u) return "";
+  if (u.startsWith("http") || u.startsWith("data:")) return u;
+  const base = api_base().replace(/\/api\/?$/, "");
+  return base + u;
 }
 
 
