@@ -376,5 +376,29 @@
   - `memory/mobile/commit_log.md` (appended this entry)
   - `memory/mobile/iteration_18.md` (created)
   - `.gitignore` (cache directories added)
+
+
+## Iteration 19 — WeekStrip + Colored Left-Border (Schedule Page Parity)
+- **Commit**: a95c658
+- **Date**: 2026-07-26
+- **Changes**:
+  - **WeekStrip component** (`src/components/schedule/WeekStrip.tsx`): 7-day Mon–Sun strip with left/right chevron week navigation, selected-day filled circle, today-dot marker, auto-selects today on mount. Port of `frontend/src/components/schedule/WeekStrip.jsx`.
+  - **getStatusBorderColor helper** (`src/utils/scheduleStatus.ts`): `completed` → red `#DC2626`, everything else → blue `#2563EB`. Port of `frontend/src/pages/schedule/CalendarSchedule.jsx` export.
+  - **Schedule screen integration** (`app/(app)/schedule/calendar.tsx`): WeekStrip placed between LandscapingClockWidget and mode switch. `onSelectDate` drives existing `focus` state. JobRow cards get 4px left border colored by status.
+- **Files created**:
+  - `mobile/src/components/schedule/WeekStrip.tsx`
+  - `mobile/src/utils/scheduleStatus.ts`
+- **Files modified**:
+  - `mobile/app/(app)/schedule/calendar.tsx` (imports + WeekStrip insertion + border style on JobRow)
+- **Web files referenced**:
+  - `frontend/src/components/schedule/WeekStrip.jsx`
+  - `frontend/src/pages/schedule/CalendarSchedule.jsx` (getStatusBorderColor)
+- **Verified via screenshots**:
+  - WeekStrip renders with 7 days, chevrons, selected circle ✅
+  - Today dot visible when navigating other weeks ✅
+  - Blue left-border on Open/Scheduled jobs ✅
+  - Red left-border on Closed/Completed jobs ✅
+  - WeekStrip syncs with grid day-nav buttons ✅
+
 - **Web files referenced**: None
 
