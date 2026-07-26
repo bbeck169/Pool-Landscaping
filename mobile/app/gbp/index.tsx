@@ -38,6 +38,13 @@ export default function Gbp() {
   const [autopost, setAutopost] = useState(true);
   const [calendar, setCalendar] = useState<any[]>([]);
 
+  // Phase B: branded image generation per-draft
+  const [genImgSheet, setGenImgSheet] = useState(false);
+  const [genImgPrompt, setGenImgPrompt] = useState("");
+  const [genImgAspect, setGenImgAspect] = useState("4:5");
+  const [genImgBusy, setGenImgBusy] = useState(false);
+  const [genImgCalId, setGenImgCalId] = useState<string | null>(null);
+
   // reviews
   const [reviews, setReviews] = useState<any[]>([]);
   const [replyFor, setReplyFor] = useState<string | null>(null);
@@ -189,6 +196,37 @@ export default function Gbp() {
       setCalendar((c) => c.filter((x) => x.id !== pid));
     } catch (e: any) {
       Alert.alert("Failed", e.message);
+    }
+  };
+
+  const openGenImage = (calItem: any) => {
+    setGenImgCalId(calItem.id);
+    setGenImgPrompt(calItem.summary || summary || "");
+    setGenImgAspect("4:5");
+    setGenImgSheet(true);
+  };
+
+  const generateBrandedImage = async () => {
+    if (!genImgPrompt.trim()) { Alert.alert("Prompt required"); return; }
+    setGenImgBusy(true);
+    try {
+      const r = await api.post("/media/image/generate", {
+        prompt: genImgPrompt.trim(),
+        aspect_ratio: genImgAspect,
+        surface: "gbp",
+      });
+      if (r?.url && genImgCalId) {
+        await api.patch(`/gbp/calendar/${genImgCalId}`, { image_url: r.url });
+        setCalendar((c) =>
+          c.map((x) => (x.id === genImgCalId ? { ...x, image_url: r.url } : x))
+        );
+      }
+      setGenImgSheet(false);
+      Alert.alert("Image generated", "Branded image attached to the draft.");
+    } catch (e: any) {
+      Alert.alert("Generation failed", e.message || "Unknown error");
+    } finally {
+      setGenImgBusy(false);
     }
   };
 
@@ -349,6 +387,10 @@ export default function Gbp() {
                             <Ionicons name="create-outline" size={16} color={colors.brand} />
                             <Text style={styles.calBtnText}>Edit</Text>
                           </Pressable>
+                          <Pressable style={styles.calBtn} onPress={() => openGenImage(it)} testID={`gbp-cal-genimg-${it.id}`}>
+                            <Ionicons name="sparkles" size={16} color={colors.brand} />
+                            <Text style={styles.calBtnText}>Image</Text>
+                          </Pressable>
                           <Pressable style={styles.calBtn} onPress={() => publishCalendarItem(it.id)} testID={`gbp-cal-publish-${it.id}`}>
                             <Ionicons name="cloud-upload-outline" size={16} color={colors.brand} />
                             <Text style={styles.calBtnText}>Publish</Text>
@@ -493,6 +535,41 @@ export default function Gbp() {
             </Pressable>
           ))
         )}
+      </Sheet>
+
+      {/* Phase B: Generate branded image sheet */}
+      <Sheet visible={genImgSheet} onClose={() => setGenImgSheet(false)} title="Generate branded image" testID="gbp-genimg-sheet">
+        <Text style={styles.label}>Image prompt</Text>
+        <TextInput
+          style={[styles.input, styles.textArea]}
+          value={genImgPrompt}
+          onChangeText={setGenImgPrompt}
+          multiline
+          placeholder="Describe the branded image..."
+          placeholderTextColor={colors.muted}
+          testID="gbp-genimg-prompt"
+        />
+        <Text style={styles.label}>Aspect ratio</Text>
+        <View style={{ flexDirection: "row", gap: 8, marginBottom: spacing.md }}>
+          {[{ v: "1:1", l: "Square" }, { v: "4:5", l: "Portrait" }, { v: "16:9", l: "Wide" }].map((o) => (
+            <Pressable
+              key={o.v}
+              onPress={() => setGenImgAspect(o.v)}
+              style={[styles.locChip, genImgAspect === o.v && styles.locChipActive]}
+              testID={`gbp-genimg-aspect-${o.v}`}
+            >
+              <Text style={[styles.locChipText, { color: genImgAspect === o.v ? "#fff" : colors.onSurfaceSecondary }]}>{o.l}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <PrimaryButton
+          title={genImgBusy ? "Generating..." : "Generate branded image"}
+          icon="sparkles"
+          loading={genImgBusy}
+          onPress={generateBrandedImage}
+          disabled={genImgBusy || !genImgPrompt.trim()}
+          testID="gbp-genimg-submit"
+        />
       </Sheet>
     </View>
   );

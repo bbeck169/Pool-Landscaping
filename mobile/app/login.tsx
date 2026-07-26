@@ -7,6 +7,7 @@ import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useRouter } from "expo-router";
 
 import { useAuth } from "@/src/auth";
+import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, IMAGES } from "@/src/theme";
 import { PrimaryButton } from "@/src/components/ui";
 
@@ -18,6 +19,21 @@ export default function Login() {
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showDemoLogins, setShowDemoLogins] = useState(true);
+
+  // Gate demo logins on /api/config/public flag (mirrors web Login.jsx)
+  React.useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const cfg = await api.get("/config/public");
+        if (live && typeof cfg?.show_demo_logins === "boolean") {
+          setShowDemoLogins(cfg.show_demo_logins);
+        }
+      } catch { /* default: show */ }
+    })();
+    return () => { live = false; };
+  }, []);
 
   const submit = async (e?: string, p?: string) => {
     const em = (e ?? email).trim().toLowerCase();
@@ -127,6 +143,7 @@ export default function Login() {
         </Pressable>
 
         <Text style={[styles.eyebrow, { marginTop: spacing.xl }]}>DEMO ACCOUNTS</Text>
+        {showDemoLogins ? (
         <View style={styles.demoList}>
           {DEMOS.map((d, i) => (
             <Pressable
@@ -140,6 +157,11 @@ export default function Login() {
             </Pressable>
           ))}
         </View>
+        ) : (
+          <Text style={{ fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: spacing.xs }}>
+            Demo logins are disabled on this environment.
+          </Text>
+        )}
       </KeyboardAwareScrollView>
     </View>
   );

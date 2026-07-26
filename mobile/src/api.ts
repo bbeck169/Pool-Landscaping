@@ -29,6 +29,14 @@ export class ApiNetworkError extends Error {
   constructor(msg: string) { super(msg); this.name = "ApiNetworkError"; }
 }
 
+/**
+ * JWT soft-delete enforcement — register a callback that fires on 401.
+ * The AuthProvider calls this on mount so the API layer can trigger logout
+ * when the backend rejects a soft-deleted user's token.
+ */
+let _logoutOn401: (() => void) | null = null;
+export function registerLogoutOn401(fn: () => void) { _logoutOn401 = fn; }
+
 async function request(path: string, options: RequestInit = {}, timeoutMs = 30000) {
   const headers = await authHeaders();
   const controller = new AbortController();
@@ -56,6 +64,11 @@ async function request(path: string, options: RequestInit = {}, timeoutMs = 3000
     }
   }
   if (!res.ok) {
+    // JWT soft-delete enforcement: 401 → clear token + logout callback.
+    if (res.status === 401) {
+      storage.secureRemove(TOKEN_KEY).catch(() => {});
+      _logoutOn401?.();
+    }
     let msg: any = data?.detail;
     if (Array.isArray(msg)) {
       msg = msg.map((e: any) => (e?.msg || "").replace(/^Value error,\s*/i, "")).filter(Boolean).join(" ");

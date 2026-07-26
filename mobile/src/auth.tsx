@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { storage } from "@/src/utils/storage";
-import { api, TOKEN_KEY } from "@/src/api";
+import { api, TOKEN_KEY, registerLogoutOn401 } from "@/src/api";
 
 export type User = {
   id: string;
@@ -53,6 +53,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       setLoading(false);
     })();
+  }, []);
+
+  // JWT soft-delete enforcement: register the 401 logout callback so
+  // the API layer can kick the user out when the backend rejects a
+  // soft-deleted user's token.
+  useEffect(() => {
+    registerLogoutOn401(() => {
+      storage.secureRemove(TOKEN_KEY).catch(() => {});
+      storage.removeItem(USER_KEY).catch(() => {});
+      setUser(null);
+    });
   }, []);
 
   const clearImpersonation = async () => {
