@@ -34,6 +34,19 @@ router = APIRouter(tags=["Admin Users"])
 _ADMIN_ROLES = {"admin", "super_admin"}
 _STRONG_ALPHA = string.ascii_letters + string.digits + "!@#$%^*+-="
 
+# Feb-2026 · Team page admin actions — permission matrix.
+# A regular ``admin`` can only reset / delete "tech" targets. The brief
+# lists ``pool_tech``/``landscape_tech``/``technician`` — this codebase
+# models pool_tech and landscape_tech as ``role="technician"`` with
+# ``department in {pool, landscaping}``, so treating any ``technician``
+# row as a valid admin target matches the intent (and the visible
+# labels on the Team page).
+_TECH_ROLES = {"technician", "pool_tech", "landscape_tech"}
+
+
+def _is_tech_target(target: Dict[str, Any]) -> bool:
+    return (target or {}).get("role", "").lower() in _TECH_ROLES
+
 
 def _strong_password(n: int = 16) -> str:
     """16-char cryptographically random password with mixed alphanum
@@ -142,6 +155,13 @@ async def _send_password_reset_email(
 
 class ResetPasswordIn(BaseModel):
     new_password: Optional[str] = None
+    # Feb-2026 · Team page admin actions — explicit auto-gen switch so
+    # the frontend "Auto-generate temporary password" tab is
+    # unambiguous in the request. When ``True`` any provided
+    # ``new_password`` is IGNORED and the backend mints a 16-char
+    # strong password. When ``False`` / ``None`` the existing behavior
+    # is preserved (use ``new_password`` if provided, else auto-gen).
+    auto_generate: Optional[bool] = None
 
 
 @router.post("/users/{uid}/reset-password",
@@ -156,8 +176,20 @@ async def reset_password(
     if not target:
         raise HTTPException(404, "User not found")
 
+    # Feb-2026 · Team page brief — admins may only reset TECH passwords.
+    # Reset your own via profile settings, not this endpoint.
+    caller_role = (user.get("role") or "").lower()
+    if caller_role == "admin":
+        if uid == user.get("id"):
+            raise HTTPException(400,
+                "Use profile settings to change your own password")
+        if not _is_tech_target(target):
+            raise HTTPException(403,
+                "Admins can only reset passwords for technicians")
+
     # A regular admin cannot reset a super_admin. Only another
-    # super_admin can.
+    # super_admin can. (Kept as-is for defense-in-depth even though the
+    # tech-only rule above already blocks this case for admins.)
     if target.get("role") == "super_admin" and user.get("role") != "super_admin":
         raise HTTPException(403, "Only a super_admin can reset another super_admin's password")
 
@@ -166,12 +198,14 @@ async def reset_password(
         if target.get("tenant_id") != user.get("tenant_id"):
             raise HTTPException(403, "Cross-tenant password reset requires super_admin")
 
-    if body.new_password:
+    # Auto-generate branch — either explicit flag OR the caller left
+    # ``new_password`` empty (backward compat).
+    if body.auto_generate or not body.new_password:
+        new_pw = _strong_password()
+    else:
         new_pw = str(body.new_password)
         if len(new_pw) < 8:
             raise HTTPException(400, "new_password must be at least 8 chars")
-    else:
-        new_pw = _strong_password()
 
     await db.users.update_one(
         {"id": uid},
@@ -214,6 +248,98 @@ async def delete_user(
     uid: str,
     user: Dict[str, Any] = Depends(get_current_user),
 ):
+    """Legacy soft-delete via HTTP DELETE. Kept for backwards compatibility
+    with anything still hitting the DELETE verb (mobile, older clients).
+    New clients should use ``POST /api/users/{uid}/soft-delete`` — same
+    RBAC + same result payload."""
+    return await _perform_soft_delete(uid, user)
+
+
+@router.post("/users/{uid}/soft-delete",
+              operation_id="adminUsers.softDelete")
+async def soft_delete_user(
+    uid: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Feb-2026 · Team page admin actions — POST-style soft delete.
+
+    Mirrors ``DELETE /users/{uid}`` but under a distinct URL so the
+    Team page RBAC + audit trail can key off a single verb-agnostic
+    endpoint. Sets ``deleted_at``, ``deleted_by_user_id``,
+    ``roster_hidden=true``, and stamps ``sessions_revoked_at`` so any
+    downstream session-invalidation logic (when a session store lands)
+    has an atomic pivot to key off. JWTs in this codebase are stateless
+    — we cannot forcibly log the user out mid-session, but the
+    permission checks on subsequent requests will refuse them once
+    ``deleted_at`` is set (see ``utils.get_current_user``)."""
+    return await _perform_soft_delete(uid, user)
+
+
+@router.post("/users/{uid}/undelete",
+              operation_id="adminUsers.undelete")
+async def undelete_user(
+    uid: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """Feb-2026 · Team page admin actions — restore a soft-deleted user.
+
+    super_admin only. Clears ``deleted_at``, ``deleted_by_user_id``,
+    ``roster_hidden``. Idempotent — returns ``already_active=true`` if
+    the row was never deleted. Audit row written on every actual
+    restore."""
+    _require_super_admin(user)
+    target = await db.users.find_one({"id": uid}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "User not found")
+    if not target.get("deleted_at"):
+        return {"ok": True, "user_id": uid, "already_active": True}
+
+    await db.users.update_one(
+        {"id": uid},
+        {"$set": {"deleted_at": None,
+                    "deleted_by_user_id": None,
+                    "roster_hidden": False,
+                    "undeleted_at": now_iso(),
+                    "undeleted_by_user_id": user.get("id")}},
+    )
+    try:
+        await db.audit_log.insert_one({
+            "id": new_id(),
+            "tenant_id": target.get("tenant_id"),
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "action": "user.undelete",
+            "target_user_id": uid,
+            "changes": {"deleted_at": {"old": target.get("deleted_at"), "new": None}},
+            "at": now_iso(),
+        })
+    except Exception as e:  # pragma: no cover — audit best-effort
+        logger.warning(f"undelete_user audit failed: {e}")
+    return {"ok": True, "user_id": uid, "restored_at": now_iso()}
+
+
+async def _perform_soft_delete(uid: str, user: Dict[str, Any]) -> Dict[str, Any]:
+    """Shared soft-delete implementation used by BOTH the legacy DELETE
+    handler and the new POST /soft-delete endpoint. Enforces the full
+    permission matrix from the Feb-2026 Team page brief:
+
+    * Caller must be ``admin`` or ``super_admin``.
+    * Caller cannot delete themselves → 400.
+    * Regular ``admin`` can only delete tech targets → 403 otherwise.
+    * Only a ``super_admin`` may delete another ``super_admin``.
+    * The last remaining live ``super_admin`` in a tenant cannot be
+      deleted (would lock the tenant out of super-only surfaces) → 409.
+    * Cross-tenant deletes require ``super_admin`` → 403.
+
+    Cascade behavior (unchanged from the legacy handler):
+      * Any scheduled/active/in-progress job assigned to the target is
+        reassigned to an ``"unassigned"`` placeholder tech id.
+      * Any active/scheduled ``route_assignment_overrides`` involving
+        the target are canceled with ``reason=owner_deleted``.
+
+    Sets ``deleted_at``, ``deleted_by_user_id``, ``roster_hidden=true``,
+    ``sessions_revoked_at`` on the target and writes an audit row.
+    """
     _require_admin(user)
     if uid == user.get("id"):
         raise HTTPException(400, "You cannot delete your own user")
@@ -222,7 +348,15 @@ async def delete_user(
     if not target:
         raise HTTPException(404, "User not found")
     if target.get("deleted_at"):
-        return {"ok": True, "already_deleted": True}
+        return {"ok": True, "user_id": uid, "already_deleted": True}
+
+    caller_role = (user.get("role") or "").lower()
+
+    # Regular admin can only delete tech rows.
+    if caller_role == "admin" and not _is_tech_target(target):
+        raise HTTPException(403,
+            "Admins can only delete technicians. Ask a super_admin "
+            "to remove admins or managers.")
 
     # Guardrail: block deletion of the last super_admin in a tenant.
     if target.get("role") == "super_admin":
@@ -276,10 +410,13 @@ async def delete_user(
     except Exception as e:
         logger.warning(f"delete_user override cancel failed: {e}")
 
+    deleted_at = now_iso()
     await db.users.update_one(
         {"id": uid},
-        {"$set": {"deleted_at": now_iso(),
-                    "deleted_by_user_id": user.get("id")}},
+        {"$set": {"deleted_at": deleted_at,
+                    "deleted_by_user_id": user.get("id"),
+                    "roster_hidden": True,
+                    "sessions_revoked_at": deleted_at}},
     )
 
     await db.audit_log.insert_one({
@@ -291,11 +428,13 @@ async def delete_user(
         "target_user_id": uid,
         "changes": {"deleted_at": {"old": None, "new": True}},
         "notes": f"reassigned {len(reassigned_jobs)} job(s)",
-        "at": now_iso(),
+        "at": deleted_at,
     })
 
     return {
         "ok": True, "user_id": uid,
+        "deleted_at": deleted_at,
+        "deleted_by_user_id": user.get("id"),
         "reassigned_jobs": len(reassigned_jobs),
     }
 

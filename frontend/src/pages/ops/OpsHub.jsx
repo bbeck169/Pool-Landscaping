@@ -4,7 +4,8 @@ import {
   Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar,
   Activity, DollarSign, Waves, Package, History, BarChart3, Layers, PlayCircle,
   ArrowLeft, Plus, Check, X, Trash2, RefreshCw, MapPin, ChevronRight,
-  Link2, Share2,
+  Link2, Share2, MoreVertical, KeyRound, Eye, EyeOff, Copy as CopyIcon,
+  Undo2, ShieldAlert, Loader2,
 } from "lucide-react";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
@@ -509,16 +510,25 @@ function _roleKey(user) {
 
 function TeamRoster() {
   const { user: me } = useAuth();
-  const [rows, refresh] = useList("/team");
+  // Phase-Team · Feb-2026 — super_admin-only "Show deleted" toggle that
+  // flips the roster query to include soft-deleted rows.
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [rows, refresh] = useList(
+    showDeleted ? "/team?include_deleted=true" : "/team",
+    [showDeleted],
+  );
   const [filter, setFilter] = useState("all");
   const [savingId, setSavingId] = useState(null);
   const [toast, setToast] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
   const [tempPasswordShown, setTempPasswordShown] = useState(null); // { email, password }
+  // Phase-Team · Feb-2026 — kebab-menu dialog targets.
+  const [resetTarget, setResetTarget] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
-  const isAdmin =
-    (me?.role || "").toLowerCase() === "admin" ||
-    (me?.role || "").toLowerCase() === "super_admin";
+  const myRole = (me?.role || "").toLowerCase();
+  const isAdmin = myRole === "admin" || myRole === "super_admin";
+  const isSuperAdmin = myRole === "super_admin";
 
   const filtered = useMemo(() => {
     if (!rows) return null;
@@ -638,9 +648,26 @@ function TeamRoster() {
           })}
         </div>
         {isAdmin ? (
-          <Button onClick={() => setAddOpen(true)} testid="team-add-btn">
-            <Plus size={14} /> Add Team Member
-          </Button>
+          <div className="flex items-center gap-2">
+            {isSuperAdmin ? (
+              <label
+                className="flex items-center gap-1.5 text-xs font-semibold cursor-pointer select-none"
+                style={{ color: colors.onSurface }}
+                data-testid="team-show-deleted-label"
+              >
+                <input
+                  type="checkbox"
+                  checked={showDeleted}
+                  onChange={(e) => setShowDeleted(e.target.checked)}
+                  data-testid="team-show-deleted-toggle"
+                />
+                Show deleted
+              </label>
+            ) : null}
+            <Button onClick={() => setAddOpen(true)} testid="team-add-btn">
+              <Plus size={14} /> Add Team Member
+            </Button>
+          </div>
         ) : null}
       </div>
 
@@ -662,11 +689,30 @@ function TeamRoster() {
               const isSuper = key === "super_admin";
               // Self-demotion protection — hide the dropdown on the caller's row.
               const isSelf = r.id === me?.id;
+              const isDeleted = !!r.deleted_at;
+              const targetRole = (r.role || "").toLowerCase();
+              const targetIsTech = targetRole === "technician";
+              // Phase-Team · Feb-2026 — kebab-menu permission matrix.
+              // Frontend hides items the caller can't act on; the backend
+              // re-enforces every check so a hand-crafted request still 403s.
+              const canReset = !isSelf && !isDeleted && (
+                isSuperAdmin ? true
+                : myRole === "admin" ? targetIsTech
+                : false);
+              const canDelete = !isSelf && !isDeleted && (
+                isSuperAdmin ? true
+                : myRole === "admin" ? targetIsTech
+                : false);
+              const canUndelete = isSuperAdmin && isDeleted;
+              const anyKebab = canReset || canDelete || canUndelete;
               return (
                 <li
                   key={r.id}
                   className="flex items-center gap-3 p-3 rounded-xl"
-                  style={{ backgroundColor: colors.surfaceSecondary }}
+                  style={{
+                    backgroundColor: colors.surfaceSecondary,
+                    opacity: isDeleted ? 0.55 : 1,
+                  }}
                   data-testid={`team-row-${r.id}`}
                 >
                   <div
@@ -679,6 +725,15 @@ function TeamRoster() {
                     <div className="font-semibold truncate">
                       {r.name || r.email || "—"}
                       {isSelf ? <span className="text-xs ml-1" style={{ color: colors.muted }}>(you)</span> : null}
+                      {isDeleted ? (
+                        <span
+                          className="text-[9px] ml-2 uppercase font-bold px-1.5 py-0.5 rounded"
+                          style={{ backgroundColor: "#FEE2E2", color: "#991B1B" }}
+                          data-testid={`team-row-deleted-badge-${r.id}`}
+                        >
+                          Deleted
+                        </span>
+                      ) : null}
                     </div>
                     <div className="text-xs" style={{ color: colors.muted }}>{r.email || ""}</div>
                   </div>
@@ -733,7 +788,7 @@ function TeamRoster() {
                   )}
 
                   {/* Role dropdown — hidden for super_admin and self. */}
-                  {isAdmin && !isSuper && !isSelf ? (
+                  {isAdmin && !isSuper && !isSelf && !isDeleted ? (
                     <select
                       value={opt?.value || ""}
                       onChange={(e) => applyRole(r, e.target.value)}
@@ -753,11 +808,59 @@ function TeamRoster() {
                       ))}
                     </select>
                   ) : null}
+
+                  {/* Phase-Team · Feb-2026 — kebab menu for admin actions.
+                      Rendered only when the caller can act on this row
+                      per the permission matrix. Undelete is super_admin only
+                      and only surfaces on soft-deleted rows. */}
+                  {anyKebab ? (
+                    <TeamRowKebab
+                      row={r}
+                      canReset={canReset}
+                      canDelete={canDelete}
+                      canUndelete={canUndelete}
+                      onReset={() => setResetTarget(r)}
+                      onDelete={() => setDeleteTarget(r)}
+                      onUndelete={async () => {
+                        try {
+                          await api.post(`/users/${r.id}/undelete`, {});
+                          setToast({ tone: "success",
+                                       message: `Restored ${r.name || r.email}` });
+                          refresh();
+                        } catch (e) {
+                          setToast({ tone: "error",
+                                       message: e?.message || "Undelete failed" });
+                        }
+                      }}
+                    />
+                  ) : null}
                 </li>
               );
             })}
         </ul>
       )}
+
+      {/* Phase-Team · Feb-2026 — reset password + delete confirm dialogs. */}
+      <ResetPasswordDialog
+        target={resetTarget}
+        onClose={() => setResetTarget(null)}
+        onDone={(msg) => {
+          setResetTarget(null);
+          setToast({ tone: "success", message: msg });
+          refresh();
+        }}
+        onError={(msg) => setToast({ tone: "error", message: msg })}
+      />
+      <DeleteTeamMemberDialog
+        target={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDone={(name) => {
+          setDeleteTarget(null);
+          setToast({ tone: "success", message: `Removed ${name}` });
+          refresh();
+        }}
+        onError={(msg) => setToast({ tone: "error", message: msg })}
+      />
 
       <AddTeamMemberModal
         open={addOpen}
@@ -809,6 +912,338 @@ function TeamRoster() {
     </Card>
   );
 }
+
+
+/**
+ * Phase-Team · Feb-2026 — kebab menu (⋮) for admin actions on a team row.
+ *
+ * The parent (``TeamRoster``) computes ``canReset``, ``canDelete`` and
+ * ``canUndelete`` from the caller's role vs the target's role +
+ * ``deleted_at``. The kebab is only rendered when at least one action
+ * is available — the roster mount decides visibility per-row.
+ */
+function TeamRowKebab({ row, canReset, canDelete, canUndelete,
+                          onReset, onDelete, onUndelete }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = React.useRef(null);
+  const menuRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => {
+      if (menuRef.current?.contains(e.target)) return;
+      if (btnRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  return (
+    <div className="relative">
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label="Team row actions"
+        onClick={() => setOpen((v) => !v)}
+        className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-black/5"
+        style={{ color: colors.onSurface }}
+        data-testid={`team-row-kebab-${row.id}`}
+      >
+        <MoreVertical size={16} />
+      </button>
+      {open ? (
+        <div
+          ref={menuRef}
+          className="absolute right-0 top-9 z-30 min-w-[210px] rounded-lg shadow-lg py-1"
+          style={{ backgroundColor: "#FFFFFF",
+                     border: `1px solid ${colors.border}` }}
+          data-testid={`team-row-kebab-menu-${row.id}`}
+          role="menu"
+        >
+          {canReset ? (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onReset(); }}
+              className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-black/5"
+              style={{ color: colors.onSurface }}
+              data-testid={`team-row-reset-btn-${row.id}`}
+            >
+              <KeyRound size={13} /> Reset password
+            </button>
+          ) : null}
+          {canDelete ? (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onDelete(); }}
+              className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-red-50"
+              style={{ color: "#B91C1C" }}
+              data-testid={`team-row-delete-btn-${row.id}`}
+            >
+              <Trash2 size={13} /> Delete team member
+            </button>
+          ) : null}
+          {canUndelete ? (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onUndelete(); }}
+              className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-black/5"
+              style={{ color: "#166534" }}
+              data-testid={`team-row-undelete-btn-${row.id}`}
+            >
+              <Undo2 size={13} /> Undelete
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+/**
+ * Phase-Team · Feb-2026 — Reset Password dialog with two modes:
+ *  1. "Set custom password" — admin types a password (≥ 8 chars, at least
+ *     one letter + one digit) with a show/hide toggle.
+ *  2. "Auto-generate temporary password" — backend mints a 16-char strong
+ *     password, returns it once for the admin to copy + share.
+ *
+ * The endpoint (``POST /users/{id}/reset-password``) always flips
+ * ``must_change_password_on_next_login=true`` so the user is forced
+ * to pick their own password on next login regardless of mode.
+ */
+function ResetPasswordDialog({ target, onClose, onDone, onError }) {
+  const [mode, setMode] = useState("custom");   // "custom" | "auto"
+  const [pw, setPw] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [tempResult, setTempResult] = useState(null);   // { pw }
+  React.useEffect(() => {
+    if (!target) return;
+    setMode("custom"); setPw(""); setShowPw(false);
+    setBusy(false); setTempResult(null);
+  }, [target?.id]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!target) return null;
+
+  const customValid = pw.length >= 8 && /[A-Za-z]/.test(pw) && /\d/.test(pw);
+
+  const submit = async () => {
+    if (mode === "custom" && !customValid) {
+      onError?.("Password must be at least 8 chars with 1 letter and 1 digit.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const body = mode === "auto"
+        ? { auto_generate: true }
+        : { new_password: pw };
+      const r = await api.post(`/users/${target.id}/reset-password`, body);
+      if (mode === "auto") {
+        setTempResult({ pw: r?.temporary_password || "" });
+      } else {
+        onDone?.(`Password reset for ${target.name || target.email}`);
+      }
+    } catch (e) {
+      onError?.(e?.message || "Reset failed");
+    } finally { setBusy(false); }
+  };
+
+  const copyTemp = async () => {
+    try {
+      await navigator.clipboard.writeText(tempResult.pw);
+      onDone?.("Temporary password copied to clipboard");
+    } catch { onError?.("Clipboard blocked"); }
+  };
+
+  const footer = tempResult ? (
+    <>
+      <Button variant="ghost" onClick={onClose} testid="team-reset-close">Done</Button>
+      <Button onClick={copyTemp} testid="team-reset-copy-temp">
+        <CopyIcon size={13} /> Copy
+      </Button>
+    </>
+  ) : (
+    <>
+      <Button variant="ghost" onClick={onClose} disabled={busy} testid="team-reset-cancel">
+        Cancel
+      </Button>
+      <Button onClick={submit} disabled={busy} testid="team-reset-submit">
+        {busy ? <><Loader2 size={13} className="animate-spin" /> Working…</>
+          : <><KeyRound size={13} /> Reset password</>}
+      </Button>
+    </>
+  );
+
+  return (
+    <Modal
+      open={!!target}
+      onClose={busy ? undefined : onClose}
+      title={`Reset password · ${target.name || target.email}`}
+      testid="team-reset-modal"
+      footer={footer}
+    >
+      {tempResult ? (
+        <div className="space-y-3 text-sm" style={{ color: colors.onSurface }}>
+          <div
+            className="rounded-lg p-3"
+            style={{ backgroundColor: "#FEF3C7",
+                       border: "1px solid #FDE68A", color: "#854D0E" }}
+            data-testid="team-reset-temp-warning"
+          >
+            <ShieldAlert size={14} className="inline mr-1" />
+            This password is shown once and cannot be retrieved later. Copy
+            + share it with {target.name || target.email} now.
+          </div>
+          <div
+            className="rounded-lg p-3 font-mono text-sm break-all"
+            style={{ backgroundColor: colors.surfaceSecondary,
+                       border: `1px solid ${colors.border}` }}
+          >
+            <code data-testid="team-reset-temp-value">{tempResult.pw}</code>
+          </div>
+          <div className="text-xs" style={{ color: colors.muted }}>
+            The user must choose a new password on next login.
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3 text-sm" style={{ color: colors.onSurface }}>
+          <div className="flex rounded-lg overflow-hidden"
+               style={{ border: `1px solid ${colors.border}` }}
+               data-testid="team-reset-mode-toggle">
+            {[
+              { k: "custom", label: "Set custom password" },
+              { k: "auto",   label: "Auto-generate temp" },
+            ].map((o) => (
+              <button
+                key={o.k}
+                type="button"
+                onClick={() => setMode(o.k)}
+                className="flex-1 px-3 py-1.5 text-xs font-semibold"
+                style={{
+                  backgroundColor: mode === o.k ? colors.brand : "transparent",
+                  color: mode === o.k ? "#fff" : colors.onSurface,
+                }}
+                data-testid={`team-reset-mode-${o.k}`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+
+          {mode === "custom" ? (
+            <div className="space-y-1">
+              <label
+                htmlFor="team-reset-pw"
+                className="text-[10px] font-semibold uppercase tracking-wider"
+                style={{ color: colors.muted }}
+              >
+                New password
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="team-reset-pw"
+                  type={showPw ? "text" : "password"}
+                  value={pw}
+                  onChange={(e) => setPw(e.target.value)}
+                  className="flex-1 px-3 py-2 rounded-lg border text-sm"
+                  style={{ borderColor: colors.border,
+                              backgroundColor: colors.surface,
+                              color: colors.onSurface }}
+                  data-testid="team-reset-pw-input"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPw((v) => !v)}
+                  className="px-2 rounded-lg"
+                  style={{ backgroundColor: colors.surfaceSecondary,
+                              border: `1px solid ${colors.border}`,
+                              color: colors.onSurface }}
+                  data-testid="team-reset-pw-visibility"
+                  aria-label={showPw ? "Hide password" : "Show password"}
+                >
+                  {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
+              <div className="text-[11px]"
+                   style={{ color: customValid ? "#166534" : colors.muted }}
+                   data-testid="team-reset-pw-hint">
+                Minimum 8 chars, at least 1 letter and 1 digit.
+              </div>
+            </div>
+          ) : (
+            <div
+              className="rounded-lg p-3 text-xs"
+              style={{ backgroundColor: colors.surfaceSecondary,
+                          border: `1px dashed ${colors.border}`,
+                          color: colors.onSurfaceSecondary }}
+              data-testid="team-reset-auto-hint"
+            >
+              A 16-char secure temporary password will be generated. The
+              user will be forced to choose a new password on next login.
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+
+/**
+ * Phase-Team · Feb-2026 — soft-delete confirm dialog.
+ *
+ * Explicit destructive variant, red primary. Calls
+ * ``POST /users/{id}/soft-delete`` — the backend soft-deletes the
+ * user, reassigns scheduled jobs to the "unassigned" placeholder,
+ * and cancels active route overrides.
+ */
+function DeleteTeamMemberDialog({ target, onClose, onDone, onError }) {
+  const [busy, setBusy] = useState(false);
+  React.useEffect(() => { if (target) setBusy(false); }, [target?.id]);   // eslint-disable-line react-hooks/exhaustive-deps
+  if (!target) return null;
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/users/${target.id}/soft-delete`, {});
+      onDone?.(target.name || target.email);
+    } catch (e) {
+      onError?.(e?.message || "Delete failed");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal
+      open={!!target}
+      onClose={busy ? undefined : onClose}
+      title={`Delete team member?`}
+      testid="team-delete-modal"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}
+                  testid="team-delete-cancel">Cancel</Button>
+          <Button variant="danger" onClick={submit} disabled={busy}
+                  testid="team-delete-submit">
+            {busy ? <><Loader2 size={13} className="animate-spin" /> Deleting…</>
+              : <><Trash2 size={13} /> Delete team member</>}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-2 text-sm" style={{ color: colors.onSurface }}>
+        <p>
+          Are you sure you want to delete{" "}
+          <b>{target.name || target.email || target.id}</b>?
+        </p>
+        <p style={{ color: colors.onSurfaceSecondary }}>
+          They will be hidden from all rosters and their active jobs will
+          be reassigned to the "Unassigned" placeholder. This can be
+          undone by a super_admin.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
 
 
 /**

@@ -9111,3 +9111,86 @@ endpoints; a single additive backend field (see below).
 - Supercool MCP calls are mocked at the `@/api` boundary in every test;
   zero real credits burned.
 - Legal caption text is verified byte-for-byte in the test suite.
+
+
+## Team page admin actions — kebab menu + reset password + soft delete (SHIPPED · Feb-2026)
+
+Per-row admin actions on the Operations → Team tab. Two new backend
+endpoints, two modified endpoints, one new frontend kebab column + two
+dialogs, plus a super_admin-only "Show deleted" toggle.
+
+### Backend
+
+**New endpoints** (both admin+/super_admin, RBAC enforced inline):
+- `POST /api/users/{uid}/soft-delete` — mirrors the legacy
+  `DELETE /api/users/{uid}` semantics under a POST verb for
+  RBAC-driven form-style callers. Sets `deleted_at`,
+  `deleted_by_user_id`, `roster_hidden=true`, `sessions_revoked_at`.
+  Reassigns scheduled/active/in-progress jobs to the "unassigned"
+  placeholder and cancels active `route_assignment_overrides`.
+- `POST /api/users/{uid}/undelete` — **super_admin only**. Clears the
+  deletion pivot flags and writes an audit row. Idempotent (returns
+  `already_active=true` for a row that isn't deleted).
+
+**Modified endpoints** (additive; existing behavior preserved for
+backward compat):
+- `GET /api/team` — now filters out rows with `deleted_at != null` by
+  default. Accepts `?include_deleted=true` — honored **only for
+  super_admin**; other roles silently get the default (filtered) list.
+- `POST /api/users/{uid}/reset-password`:
+  - New optional `auto_generate: bool` body field — when `true` the
+    backend mints a 16-char strong password regardless of any provided
+    `new_password`.
+  - Tightened RBAC — a regular `admin` can now only reset passwords
+    for **tech** targets (`role="technician"`); admin targets require
+    a `super_admin`. Admins can't reset their own password via this
+    endpoint (400 → use profile settings instead).
+- Legacy `DELETE /api/users/{uid}` still works — inherits the same
+  tightened RBAC via the shared `_perform_soft_delete()` helper.
+
+### Frontend
+
+**Team page (`pages/ops/OpsHub.jsx::TeamRoster`)**:
+- Per-row **kebab menu** (⋮) on the far right of each row. Rendered
+  only when the caller has at least one available action.
+  - **Reset password** → opens `ResetPasswordDialog`.
+  - **Delete team member** → opens `DeleteTeamMemberDialog`.
+  - **Undelete** → super_admin-only, on soft-deleted rows.
+- Permission matrix (client-side hide + server-side re-enforce):
+  - `admin` sees actions only on `technician` rows (never on other
+    admins/managers/supers/themselves).
+  - `super_admin` sees actions on everyone **except themselves**.
+- `ResetPasswordDialog` (new): two-tab mode picker (Custom / Auto),
+  password input with show/hide toggle, 8-char + 1-letter + 1-digit
+  validation, "shown once" temp password chip + copy-to-clipboard.
+- `DeleteTeamMemberDialog` (new): destructive-red confirm modal with
+  explanatory copy about job reassignment.
+- super_admin-only **"Show deleted"** header checkbox. When on, the
+  roster query switches to `/team?include_deleted=true` and deleted
+  rows render at 55% opacity with a red "Deleted" badge; the kebab
+  offers **Undelete** (super_admin only).
+
+### Tests
+- Backend (`tests/test_admin_users_soft_delete.py`) — **15/15 pass**:
+  admin/super soft-delete matrix, undelete RBAC, `/team` filter +
+  include_deleted gate, reset-password admin-only-techs + self-reset
+  refusal, auto_generate flag, custom password validation.
+- Frontend (`test/team-admin-actions.test.jsx`) — **9/9 pass**:
+  kebab visibility matrix, delete flow POST, custom + auto reset
+  flows, password validation gate, "Show deleted" URL flip
+  (super_admin only, hidden for admin).
+- Full frontend sweep **38 files / 180 tests** pass.
+- Full backend sweep of touched surfaces **44 tests** pass.
+
+### Deployment
+This ADDS **2 new endpoints** and MODIFIES **2 existing ones** — a
+prod redeploy is required for the new URLs to be reachable. Preview
+is auto-hot-reloaded.
+
+### Guardrails honored
+- No changes to Phase A OAuth, Path B `unlock`/`promote`,
+  WordPress activation, Phase 25 backend, Phase B `media_gen` router,
+  or `/app/mobile/`.
+- `/app`-only work; no external repos.
+- Every test seed is a throwaway row cleaned up in the fixture
+  teardown — no real users mutated.

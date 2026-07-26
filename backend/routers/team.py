@@ -362,11 +362,22 @@ async def team_role_options(user: dict = Depends(require_admin)):
 # ----------------------- Team -----------------------
 @router.get("/team")
 async def list_team(user: dict = Depends(require_admin),
-                     tenant: dict = Depends(get_current_tenant)):
-    users = await db.users.find(
-        {"role": {"$in": ["admin", "technician"]}, "tenant_id": tenant["id"]},
-        {"_id": 0, "password_hash": 0},
-    ).to_list(1000)
+                     tenant: dict = Depends(get_current_tenant),
+                     include_deleted: bool = False):
+    """Feb-2026 · Team page admin actions — soft-delete filter.
+
+    By default the roster hides users with ``deleted_at`` set. A
+    ``super_admin`` may pass ``?include_deleted=true`` to view (and
+    later undelete) previously-removed rows. Regular admins that pass
+    the flag are silently ignored (defense in depth) — the response
+    still hides deleted rows for them.
+    """
+    q: dict = {"role": {"$in": ["admin", "technician"]},
+                "tenant_id": tenant["id"]}
+    is_super = (user.get("role") or "").lower() == "super_admin"
+    if not (include_deleted and is_super):
+        q["$or"] = [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]
+    users = await db.users.find(q, {"_id": 0, "password_hash": 0}).to_list(1000)
     for u in users:
         if u.get("technician_id"):
             u["active_jobs"] = await db.jobs.count_documents({
