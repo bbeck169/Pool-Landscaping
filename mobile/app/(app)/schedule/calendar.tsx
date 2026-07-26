@@ -165,6 +165,16 @@ export default function ScheduleCalendar() {
     return list;
   }, [jobs, focusISO]);
 
+  /** Job-count map for the 7 visible WeekStrip days (client-side). */
+  const weekCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const j of jobs) {
+      const d = j.scheduled_date;
+      if (d) counts[d] = (counts[d] || 0) + 1;
+    }
+    return counts;
+  }, [jobs]);
+
   const [reorderList, setReorderList] = useState<Job[]>([]);
   useEffect(() => { setReorderList(dayJobs); }, [dayJobs]);
 
@@ -287,6 +297,7 @@ export default function ScheduleCalendar() {
           const [y, m, d] = dateIso.split("-").map(Number);
           setFocus(new Date(y, m - 1, d));
         }}
+        counts={weekCounts}
       />
 
       {/* Top-level Grid ↔ Calendar toggle. */}

@@ -473,6 +473,19 @@ export default function CalendarSchedule() {
     list.sort((a, b) => (a.route_order ?? 999) - (b.route_order ?? 999));
     return list;
   }, [filteredJobs, focusISO]);
+  // Feb-2026 · Schedule-UI · per-day count map for the WeekStrip badges.
+  // {iso: count} across every currently-visible job (post-filter).
+  // Purely derived — no extra fetch, no backend touch. Recalculates
+  // whenever the filtered job list changes.
+  const weekCounts = useMemo(() => {
+    const m = {};
+    for (const j of filteredJobs) {
+      const iso = (j.scheduled_date || "").slice(0, 10);
+      if (!iso) continue;
+      m[iso] = (m[iso] || 0) + 1;
+    }
+    return m;
+  }, [filteredJobs]);
   useEffect(() => { setReorderList(dayJobs); }, [dayJobs]);
   const gridList = rearrangeMode ? reorderList : dayJobs;
 
@@ -561,9 +574,13 @@ export default function CalendarSchedule() {
           The strip drives the shared ``date`` state which also feeds
           the RBC calendar's ``date`` prop + the grid-view focus day.
           When a user picks Wed from the strip we hydrate ``date``
-          which triggers the existing ±90-day fetch window logic. */}
+          which triggers the existing ±90-day fetch window logic.
+          ``weekCounts`` is a derived memo — {iso: count} across
+          every currently-visible job — so the strip can paint a
+          per-day badge without an extra HTTP round-trip. */}
       <WeekStrip
         selectedDate={focusISO}
+        counts={weekCounts}
         onSelectDate={(iso) => {
           const [y, m, d] = iso.split("-").map(Number);
           const next = new Date(y, m - 1, d);

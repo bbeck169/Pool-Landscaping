@@ -44,9 +44,11 @@ function startOfWeekMonday(d: Date): Date {
 type Props = {
   selectedDate?: string;
   onSelectDate?: (iso: string) => void;
+  /** Map of ISO date → job count for the visible week. */
+  counts?: Record<string, number>;
 };
 
-export default function WeekStrip({ selectedDate, onSelectDate }: Props) {
+export default function WeekStrip({ selectedDate, onSelectDate, counts }: Props) {
   const [anchor, setAnchor] = useState(() =>
     startOfWeekMonday(isoToDate(selectedDate || todayIso()))
   );
@@ -230,5 +232,15 @@ const s = StyleSheet.create({
   },
   todayDotVisible: {
     backgroundColor: colors.brand,
+  },
+  countBadge: {
+    fontFamily: font.bold,
+    fontSize: 9,
+    color: colors.muted,
+    marginTop: 1,
+    textAlign: "center",
+  },
+  countBadgeSelected: {
+    color: colors.brand,
   },
 });

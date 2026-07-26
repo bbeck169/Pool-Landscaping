@@ -62,6 +62,7 @@ function _startOfWeekMonday(d) {
 export default function WeekStrip({
   selectedDate,
   onSelectDate,
+  counts,                                   // { "yyyy-mm-dd": number }
 }) {
   const [anchor, setAnchor] = React.useState(() =>
     _startOfWeekMonday(_isoToDate(selectedDate || _todayIso())));
@@ -176,6 +177,25 @@ export default function WeekStrip({
                 }}
                 data-testid={isToday ? `week-strip-today-dot-${d.iso}` : undefined}
               />
+              {/* Feb-2026 · Schedule-UI · per-day job-count badge.
+                  Muted gray by default, brand color when the day is
+                  selected. Hidden entirely when zero so admins don't
+                  see a wall of "0"s across empty weeks. */}
+              {(counts?.[d.iso] || 0) > 0 ? (
+                <span
+                  className="mt-0.5 inline-flex items-center justify-center rounded-full text-[10px] font-bold"
+                  style={{
+                    minWidth: 18, height: 16,
+                    padding: "0 5px",
+                    backgroundColor: isSelected ? colors.brand : colors.surfaceSecondary,
+                    color: isSelected ? "#FFFFFF" : colors.muted,
+                    border: isSelected ? "none" : `1px solid ${colors.border}`,
+                  }}
+                  data-testid={`week-strip-count-${d.iso}`}
+                >
+                  {counts[d.iso]}
+                </span>
+              ) : null}
             </button>
           );
         })}

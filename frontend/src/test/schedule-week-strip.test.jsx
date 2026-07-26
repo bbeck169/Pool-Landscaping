@@ -110,3 +110,64 @@ describe("WeekStrip · navigation", () => {
     expect(screen.getByTestId("week-strip-day-2026-03-08")).toBeInTheDocument();
   });
 });
+
+
+// ─── 3. Per-day count badges ─────────────────────────────────────────
+describe("WeekStrip · per-day count badges", () => {
+  it("renders a badge on every day that has counts > 0", () => {
+    const counts = {
+      "2026-02-09": 2,
+      "2026-02-11": 4,
+      "2026-02-13": 1,
+    };
+    render(
+      <WeekStrip selectedDate="2026-02-11" counts={counts}
+                    onSelectDate={() => {}} />,
+    );
+    expect(screen.getByTestId("week-strip-count-2026-02-09"))
+      .toHaveTextContent("2");
+    expect(screen.getByTestId("week-strip-count-2026-02-11"))
+      .toHaveTextContent("4");
+    expect(screen.getByTestId("week-strip-count-2026-02-13"))
+      .toHaveTextContent("1");
+  });
+
+  it("hides the badge entirely on zero-count days", () => {
+    const counts = { "2026-02-11": 4 };   // only Wed has jobs
+    render(
+      <WeekStrip selectedDate="2026-02-11" counts={counts}
+                    onSelectDate={() => {}} />,
+    );
+    // Wed shows.
+    expect(screen.getByTestId("week-strip-count-2026-02-11"))
+      .toBeInTheDocument();
+    // Every other day in the week — no badge node.
+    for (const iso of [
+      "2026-02-09", "2026-02-10", "2026-02-12",
+      "2026-02-13", "2026-02-14", "2026-02-15",
+    ]) {
+      expect(screen.queryByTestId(`week-strip-count-${iso}`)).toBeNull();
+    }
+  });
+
+  it("also hides the badge when the day is explicitly 0 in the counts map", () => {
+    const counts = { "2026-02-11": 0, "2026-02-13": 3 };
+    render(
+      <WeekStrip selectedDate="2026-02-11" counts={counts}
+                    onSelectDate={() => {}} />,
+    );
+    expect(screen.queryByTestId("week-strip-count-2026-02-11")).toBeNull();
+    expect(screen.getByTestId("week-strip-count-2026-02-13"))
+      .toHaveTextContent("3");
+  });
+
+  it("renders no badges at all when counts prop is undefined (backwards compat)", () => {
+    render(<WeekStrip selectedDate="2026-02-11" onSelectDate={() => {}} />);
+    for (const iso of [
+      "2026-02-09", "2026-02-10", "2026-02-11", "2026-02-12",
+      "2026-02-13", "2026-02-14", "2026-02-15",
+    ]) {
+      expect(screen.queryByTestId(`week-strip-count-${iso}`)).toBeNull();
+    }
+  });
+});
