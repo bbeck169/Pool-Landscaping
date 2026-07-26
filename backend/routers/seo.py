@@ -243,10 +243,36 @@ async def audit_content(body: SeoAuditReq,
 
 # ----------------------- WordPress connection settings -----------------------
 async def _get_wp_settings(tenant_id: str | None = None) -> dict | None:
+    """Load per-tenant WP settings from Mongo, with a global env-var
+    fallback so a single ``WORDPRESS_URL`` / ``WORDPRESS_USERNAME`` /
+    ``WORDPRESS_APP_PASSWORD`` env config activates the integration for
+    every tenant without requiring the Studio → Connect click. The
+    per-tenant Mongo doc still wins when present."""
     q = {"id": WP_SETTINGS_ID}
     if tenant_id:
         q["tenant_id"] = tenant_id
-    return await db.seo_settings.find_one(q, {"_id": 0})
+    doc = await db.seo_settings.find_one(q, {"_id": 0})
+    if doc and doc.get("url") and doc.get("username") and doc.get("app_password"):
+        return doc
+    # Env fallback.
+    import os as _os
+    url = (_os.environ.get("WORDPRESS_URL") or "").strip().rstrip("/")
+    user = ((_os.environ.get("WORDPRESS_USERNAME")
+              or _os.environ.get("WORDPRESS_USER")) or "").strip()
+    app_pw = (_os.environ.get("WORDPRESS_APP_PASSWORD") or "").strip()
+    if url and user and app_pw:
+        return {"id": WP_SETTINGS_ID, "tenant_id": tenant_id,
+                "url": url, "username": user, "app_password": app_pw,
+                "_source": "env"}
+    return doc  # may be None or partial
+
+
+def _wp_auto_publish_allowed() -> bool:
+    """When ``WORDPRESS_AUTO_PUBLISH`` is anything other than a truthy
+    value, the SEO scheduler is force-clamped to ``draft`` mode
+    regardless of the tenant's ``publish_as`` setting."""
+    import os as _os
+    return (_os.environ.get("WORDPRESS_AUTO_PUBLISH") or "").strip().lower() in ("1", "true", "yes")
 
 
 @router.get("/seo/wp-settings")
@@ -498,7 +524,9 @@ async def run_due_publishes():
                 sched = await _get_schedule(art.get("tenant_id"))
                 if sched.get("paused") or not sched.get("enabled"):
                     continue
-                res = await _publish_to_wp(art, sched.get("publish_as", "draft"))
+                res = await _publish_to_wp(art,
+                    sched.get("publish_as", "draft")
+                    if _wp_auto_publish_allowed() else "draft")
                 await create_staff_notification(
                     "SEO article published",
                     f"'{art.get('title','')}' was auto-published to WordPress ({res['wp_status']}).",

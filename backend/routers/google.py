@@ -227,7 +227,51 @@ async def integration_health(integration: str, admin: dict = Depends(require_adm
             return {"ok": r.status_code == 200, "message": f"HTTP {r.status_code}"}
         if integration == "emergent_llm":
             return {"ok": bool(EMERGENT_LLM_KEY), "message": "Key present" if EMERGENT_LLM_KEY else "unset"}
-        if integration in {"twilio", "gbp", "wordpress", "ringcentral", "stripe_webhook"}:
+        if integration == "wordpress":
+            # Feb-2026 · real reachability probe against
+            # ``/wp-json/wp/v2/users/me`` using Basic Auth with the
+            # Application Password. Returns:
+            #   * ok=true, HTTP 200 + user name — fully wired
+            #   * ok=false, HTTP 401 — creds wrong
+            #   * ok=false, HTTP 202 + text/html — WAF interstitial
+            #     (SiteGround SG-Optimizer, Cloudflare bot manager,
+            #     etc.) — user must whitelist our egress IP
+            #   * ok=false, unset — no env config
+            wp_url = os.environ.get("WORDPRESS_URL", "").strip().rstrip("/")
+            wp_user = (os.environ.get("WORDPRESS_USERNAME")
+                         or os.environ.get("WORDPRESS_USER") or "").strip()
+            wp_pw = os.environ.get("WORDPRESS_APP_PASSWORD", "").strip()
+            if not (wp_url and wp_user and wp_pw):
+                return {"ok": False,
+                          "message": "WORDPRESS_URL / WORDPRESS_USERNAME / WORDPRESS_APP_PASSWORD unset"}
+            try:
+                async with httpx.AsyncClient(timeout=10) as c:
+                    r = await c.get(
+                        f"{wp_url}/wp-json/wp/v2/users/me",
+                        auth=(wp_user, wp_pw),
+                        headers={"Accept": "application/json",
+                                   "User-Agent": "PlofvCRM/1.0 (+wp-health-check)"},
+                    )
+            except Exception as e:
+                return {"ok": False, "message": f"unreachable: {e}"[:200]}
+            ct = (r.headers.get("content-type") or "").lower()
+            if r.status_code == 200 and "json" in ct:
+                try:
+                    name = (r.json() or {}).get("name") or wp_user
+                except Exception:
+                    name = wp_user
+                return {"ok": True, "message": f"HTTP 200 · authed as {name}"}
+            if r.status_code == 401:
+                return {"ok": False,
+                          "message": "HTTP 401 — Application Password rejected"}
+            if r.status_code == 202 or ("html" in ct and "sgcaptcha" in r.text.lower()):
+                return {"ok": False,
+                          "message": "Blocked by SiteGround SG-Optimizer WAF — "
+                                       "whitelist the pod egress IP or disable "
+                                       "SG bot protection for /wp-json/*"}
+            return {"ok": False,
+                      "message": f"HTTP {r.status_code} ({ct[:40] or 'unknown ct'})"}
+        if integration in {"twilio", "gbp", "ringcentral", "stripe_webhook"}:
             # Not enough config wired yet to actually ping — report presence only.
             keymap = {
                 "twilio": "TWILIO_ACCOUNT_SID", "gbp": "GBP_CLIENT_ID",
