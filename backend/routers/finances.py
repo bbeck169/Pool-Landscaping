@@ -254,9 +254,14 @@ async def compute_income_by_category(tenant_id: str,
 
 @router.get("/billing-plans")
 async def list_billing_plans(user: dict = Depends(require_admin),
-                             tenant: dict = Depends(get_current_tenant)):
+                             tenant: dict = Depends(get_current_tenant),
+                             include_deleted: bool = False):
+    q: dict = {"tenant_id": tenant["id"]}
+    # Phase 34 · Task II · Feb 2026 — hide soft-deleted plans by default.
+    if not (include_deleted and (user.get("role") or "").lower() == "super_admin"):
+        q["$or"] = [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]
     return await db.billing_plans.find(
-        {"tenant_id": tenant["id"]}, {"_id": 0}
+        q, {"_id": 0}
     ).sort("next_run", 1).to_list(1000)
 
 
@@ -1012,4 +1017,128 @@ async def patch_tenant_settings(
     await db.tenants.update_one({"id": tenant["id"]}, {"$set": upd})
     doc = await db.tenants.find_one({"id": tenant["id"]}, {"_id": 0})
     return doc
+
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase 34 · Task II · Feb 2026 — Autobilling (billing_plans) bulk-delete.
+# Soft-delete pattern matching Task BB. Locked states:
+#   * plans with a Stripe subscription id → reversal must run through the
+#     Stripe dashboard.
+#   * plans with a `next_run` inside the next 24h → cancel the imminent
+#     charge manually first so admins don't accidentally miss a
+#     scheduled billing.
+# Every bulk-delete row still writes an audit log entry so the archive
+# view can attribute the delete back to its actor.
+# ═════════════════════════════════════════════════════════════════════════
+from pydantic import BaseModel as _AutobillingBulkBase
+
+
+class _AutobillingBulkDeleteIn(_AutobillingBulkBase):
+    ids: Optional[List[str]] = None
+    # Task EE compatibility hooks — accepted but not yet resolved
+    # server-side on this endpoint (leads is the only surface that
+    # ships selector resolution today).
+    query_selector: Optional[Dict[str, Any]] = None
+    exclude_ids: Optional[List[str]] = None
+
+
+_AUTOBILLING_BULK_DELETE_CAP = 400
+
+
+def _plan_locked_reason(plan: dict) -> Optional[str]:
+    if plan.get("stripe_subscription_id"):
+        return "Linked Stripe Subscription must be cancelled via Stripe dashboard"
+    next_run = plan.get("next_run")
+    if next_run:
+        try:
+            # ``next_run`` is stored as an ISO date string in this codebase.
+            from datetime import datetime, timezone, timedelta
+            when = datetime.fromisoformat(str(next_run).replace("Z", "+00:00"))
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            if when - datetime.now(timezone.utc) < timedelta(hours=24):
+                return "Charge scheduled within 24h — cancel manually first"
+        except Exception:                                       # noqa: BLE001
+            pass
+    return None
+
+
+async def _perform_soft_delete_plan(pid: str, user: dict, tenant: dict) -> dict:
+    plan = await db.billing_plans.find_one(
+        {"id": pid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "deleted_at": 1, "stripe_subscription_id": 1,
+         "next_run": 1},
+    )
+    if not plan:
+        raise HTTPException(404, "Autobilling plan not found")
+    if plan.get("deleted_at"):
+        return {"ok": True, "id": pid, "already_deleted": True}
+    lock_reason = _plan_locked_reason(plan)
+    if lock_reason:
+        raise HTTPException(409, lock_reason)
+    deleted_at = now_iso()
+    await db.billing_plans.update_one(
+        {"id": pid, "tenant_id": tenant["id"]},
+        {"$set": {"deleted_at": deleted_at,
+                    "deleted_by_user_id": user.get("id"),
+                    "active": False}},
+    )
+    try:
+        await db.audit_log.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "action": "autobilling.soft_delete",
+            "target_id": pid,
+            "at": deleted_at,
+        })
+    except Exception as e:                                       # noqa: BLE001
+        logger.warning(f"autobilling.soft_delete audit failed: {e}")
+    return {"ok": True, "id": pid, "deleted_at": deleted_at}
+
+
+@router.post("/billing-plans/{pid}/soft-delete",
+              operation_id="billingPlans.softDelete")
+async def soft_delete_billing_plan(pid: str,
+                                    user: dict = Depends(require_admin),
+                                    tenant: dict = Depends(get_current_tenant)):
+    return await _perform_soft_delete_plan(pid, user, tenant)
+
+
+@router.post("/billing-plans/bulk-delete",
+              operation_id="billingPlans.bulkDelete")
+async def bulk_delete_billing_plans(body: _AutobillingBulkDeleteIn,
+                                       user: dict = Depends(require_admin),
+                                       tenant: dict = Depends(get_current_tenant)):
+    ids = list(body.ids or [])
+    if not ids:
+        raise HTTPException(400, "ids is empty")
+    if len(ids) > _AUTOBILLING_BULK_DELETE_CAP:
+        raise HTTPException(400, f"bulk-delete capped at {_AUTOBILLING_BULK_DELETE_CAP} rows per call")
+    deleted: List[str] = []
+    failed: List[dict] = []
+    for pid in ids:
+        try:
+            r = await _perform_soft_delete_plan(pid, user, tenant)
+            deleted.append(r["id"])
+        except HTTPException as e:
+            failed.append({"id": pid, "reason": str(e.detail),
+                              "status_code": e.status_code})
+        except Exception as e:                                       # noqa: BLE001
+            failed.append({"id": pid, "reason": str(e), "status_code": 500})
+    return {"ok": True, "deleted_count": len(deleted),
+              "deleted": deleted, "failed": failed}
+
+
+# Alias route under /autobilling/bulk-delete for consistency with the
+# admin nav (both /billing-plans and /autobilling refer to the same
+# resource — the frontend calls whichever it happens to use).
+@router.post("/autobilling/bulk-delete",
+              operation_id="autobilling.bulkDelete")
+async def bulk_delete_autobilling_alias(body: _AutobillingBulkDeleteIn,
+                                            user: dict = Depends(require_admin),
+                                            tenant: dict = Depends(get_current_tenant)):
+    return await bulk_delete_billing_plans(body, user, tenant)
 

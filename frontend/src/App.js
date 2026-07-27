@@ -89,6 +89,7 @@ import AIBrainPage from "@/pages/settings/AIBrainPage";
 import CopilotPage from "@/pages/admin/CopilotPage";
 // Feb-2026 · Item 6 — Business Card admin editor.
 import BusinessCardSettingsPage from "@/pages/settings/BusinessCardSettings";
+import GoogleReviewSettings from "@/pages/settings/GoogleReviewSettings";
 import VanitySlugsPage from "@/pages/settings/VanitySlugsPage";
 import OrphanUsersPage from "@/pages/settings/OrphanUsersPage";
 import CitationBuilderPage from "@/pages/settings/CitationBuilderPage";
@@ -302,6 +303,13 @@ function MasterInvoicesRedirect() {
   return <Navigate to={`/invoices/master/${id}`} replace />;
 }
 
+// Phase 34 · Fix 2 · Feb 2026 — /estimates/:id → /estimator/:id
+// alias so the new user-friendly URL preserves the row id.
+function EstimateAliasRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/estimator/${id}`} replace />;
+}
+
 function AdminOnly({ children }) {
   const { user, loading } = useAuth();
   if (loading) return null;
@@ -443,6 +451,14 @@ export default function App() {
             <Route path="invoices/:id" element={<NoTech><QuoteInvoiceDetail docType="invoice" /></NoTech>} />
 
             <Route path="estimator" element={<NoTech><EstimatesList /></NoTech>} />
+            {/* Phase 34 · Fix 2 · Feb 2026 — /estimates alias route.
+                Ships the same EstimatesList (which shipped the Task BB
+                bulk-select UI). The nav config already points at
+                /estimator; the alias exists so tester bookmarks + the
+                URL a customer might guess both resolve without a 404. */}
+            <Route path="estimates" element={<NoTech><EstimatesList /></NoTech>} />
+            <Route path="estimates/new" element={<Navigate to="/estimator/new" replace />} />
+            <Route path="estimates/:id" element={<EstimateAliasRedirect />} />
             <Route path="estimator/settings" element={<NoTech><EstimatorSettings /></NoTech>} />
             <Route path="estimator/templates" element={<NoTech><EstimatorTemplates /></NoTech>} />
             <Route path="estimator/new" element={<NoTech><EstimatorEditor /></NoTech>} />
@@ -842,6 +858,11 @@ export default function App() {
             <Route path="admin/copilot" element={<AdminOnly><CopilotPage /></AdminOnly>} />
             {/* Feb-2026 · Item 6 — Business Card admin editor. */}
             <Route path="settings/business-card" element={<AdminOnly><BusinessCardSettingsPage /></AdminOnly>} />
+            {/* Phase 34 · Task GG · Feb 2026 — Google Business Profile
+                review URL admin settings screen. Uses AdminOnly so
+                admin + super_admin can edit; add ``owner`` role to
+                AdminOnly if that role needs access (matches Task X). */}
+            <Route path="settings/reviews" element={<AdminOnly><GoogleReviewSettings /></AdminOnly>} />
             {/* Feb-2026 · Phase 20 P3 — Website SEO analyzer. */}
             <Route path="settings/website-seo" element={<AdminOnly><WebsiteSeoPage /></AdminOnly>} />
             {/* Feb-2026 · Phase 20 P4 — Local SEO checklist. */}

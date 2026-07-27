@@ -352,6 +352,35 @@ async def update_business_card_v2(
     patch = {k: v for k, v in body.dict(exclude_none=True).items()}
     if not patch:
         raise HTTPException(400, "No fields to update")
+
+    # Phase 34 · Task GG · Feb 2026 — server-side validation of the
+    # Google review URL. Must be https and look like a Google Business
+    # review link. We intentionally accept both the ``g.page/r/XYZ/review``
+    # short-code form AND the longer ``google.com/maps/…/review``
+    # canonical form since tenants copy whichever their GBP dashboard
+    # gives them.
+    google_url = patch.get("google_review_url")
+    if google_url is not None and google_url != "":
+        gu = str(google_url).strip()
+        if not gu.startswith("https://"):
+            raise HTTPException(422, "google_review_url must start with https://")
+        lower = gu.lower()
+        allowed_hosts = (
+            "https://g.page/r/",
+            "https://www.google.com/maps",
+            "https://google.com/maps",
+            "https://maps.app.goo.gl/",
+            "https://search.google.com/local/writereview",
+        )
+        if not any(lower.startswith(prefix) for prefix in allowed_hosts):
+            raise HTTPException(
+                422,
+                "google_review_url must be a Google Business Profile review link "
+                "(g.page/r/…/review, google.com/maps/…/review, "
+                "search.google.com/local/writereview, or maps.app.goo.gl/…)",
+            )
+        patch["google_review_url"] = gu
+
     set_ops = {f"settings.business_card.{k}": v for k, v in patch.items()}
     await db.tenants.update_one({"id": tenant["id"]}, {"$set": set_ops})
     fresh = await db.tenants.find_one({"id": tenant["id"]}, {"_id": 0})

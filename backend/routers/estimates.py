@@ -322,7 +322,7 @@ class _EstimateBulkDeleteIn(_BulkBaseModel):
     ids: List[str]
 
 
-_ESTIMATE_BULK_DELETE_CAP = 100
+_ESTIMATE_BULK_DELETE_CAP = 400  # Phase 34 · Task DD · raised 100 → 400
 
 
 async def _perform_soft_delete_estimate(eid: str, user: dict, tenant: dict) -> dict:

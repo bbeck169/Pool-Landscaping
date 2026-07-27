@@ -175,7 +175,9 @@ export function EstimatesList() {
                   Delete {selectedCount} estimate{selectedCount === 1 ? "" : "s"}?
                 </h2>
                 <p className="text-sm mt-1" style={{ color: colors.muted }}>
-                  This can be restored from the archive.
+                  {selectedCount > 100
+                    ? "This is a large batch — please confirm. It can be restored from the archive."
+                    : "This can be restored from the archive."}
                 </p>
               </div>
               <button type="button" onClick={() => setConfirmOpen(false)} className="p-1"

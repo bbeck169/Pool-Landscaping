@@ -7,7 +7,7 @@ import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
-import { Search, Filter, ArrowRight, X, Trash2 } from "lucide-react";
+import { Search, Filter, ArrowRight, X, Trash2, ChevronDown } from "lucide-react";
 
 const colors = {
   brand: "#0EA5E9",
@@ -63,6 +63,9 @@ export default function LeadsDashboardPage() {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Phase 34 · Task HH · Feb 2026 — bulk-status-change state.
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+  const [statusConfirmTarget, setStatusConfirmTarget] = useState(null);
 
   const refresh = () => {
     setLoading(true);
@@ -136,6 +139,36 @@ export default function LeadsDashboardPage() {
       });
     } catch (e) {
       toast.error(e?.message || "Bulk delete failed");
+    } finally { setBusy(false); }
+  };
+
+  // Phase 34 · Task HH · Feb 2026 — bulk status change handler. The
+  // `LEAD_STATUS_OPTIONS` array (see top of file) drives the dropdown,
+  // so any future enum change picks up automatically.
+  const doBulkStatusChange = async () => {
+    if (!statusConfirmTarget) return;
+    setBusy(true);
+    try {
+      const res = await api.post("/leads/bulk-update-status", {
+        ids: Array.from(selectedIds),
+        new_status: statusConfirmTarget.value,
+      });
+      const ok = res.updated_count || 0;
+      const failCount = (res.failed || []).length;
+      setRows((prev) => prev.map((r) => (
+        res.updated.includes(r.id) ? { ...r, status: statusConfirmTarget.value } : r
+      )));
+      clearSelection();
+      setStatusConfirmTarget(null);
+      if (failCount === 0) {
+        toast.success(`${ok} lead${ok === 1 ? "" : "s"} updated to ${statusConfirmTarget.label}`);
+      } else {
+        toast(`${ok} updated · ${failCount} skipped`, {
+          description: (res.failed || []).slice(0, 3).map((f) => f.reason).join(" · "),
+        });
+      }
+    } catch (e) {
+      toast.error(e?.message || "Bulk status update failed");
     } finally { setBusy(false); }
   };
 
@@ -299,6 +332,155 @@ export default function LeadsDashboardPage() {
           onUpdated={() => { setSelected(null); refresh(); }}
         />
       )}
+
+      {/* Phase 34 · Task BB · Feb 2026 — floating bulk-action bar. */}
+      {selectedCount > 0 ? (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 rounded-2xl shadow-2xl flex items-center gap-3 px-4 py-3 z-40"
+          style={{ backgroundColor: colors.onSurface, color: "#FFFFFF",
+                    border: "1px solid rgba(255,255,255,0.08)" }}
+          data-testid="bulk-action-bar"
+        >
+          <div className="text-sm font-semibold" data-testid="bulk-action-bar-count">
+            {selectedCount} selected
+          </div>
+
+          {/* Phase 34 · Task HH · bulk status-change dropdown. */}
+          <div className="relative">
+            <button type="button"
+                      onClick={() => setStatusMenuOpen((v) => !v)}
+                      disabled={busy}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
+                      style={{ backgroundColor: "#1D4ED8", color: "#FFFFFF" }}
+                      data-testid="bulk-status-change-button">
+              Change status <ChevronDown size={12} />
+            </button>
+            {statusMenuOpen ? (
+              <div
+                className="absolute bottom-full mb-2 left-0 w-56 rounded-xl shadow-2xl overflow-hidden"
+                style={{ backgroundColor: colors.surface,
+                          border: `1px solid ${colors.border}` }}
+                data-testid="bulk-status-menu"
+              >
+                {LEAD_STATUS_OPTIONS.map((o) => (
+                  <button
+                    key={o.value}
+                    type="button"
+                    onClick={() => { setStatusMenuOpen(false); setStatusConfirmTarget(o); }}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                    style={{ color: colors.onSurface }}
+                    data-testid={`bulk-status-option-${o.value}`}
+                  >
+                    <span
+                      className="inline-block w-2.5 h-2.5 rounded-full mr-2 align-middle"
+                      style={{ background: (STATUS_COLORS[o.value] || STATUS_COLORS.new).bg,
+                                border: `1px solid ${(STATUS_COLORS[o.value] || STATUS_COLORS.new).fg}` }}
+                    />
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <button type="button" onClick={() => setConfirmOpen(true)} disabled={busy}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
+                    style={{ backgroundColor: "#DC2626", color: "#FFFFFF" }}
+                    data-testid="bulk-delete-button">
+            <Trash2 size={12} /> Delete selected
+          </button>
+          <button type="button" onClick={clearSelection}
+                    className="text-xs font-semibold underline"
+                    style={{ color: "rgba(255,255,255,0.85)" }}
+                    data-testid="bulk-clear-selection">
+            Clear selection
+          </button>
+        </div>
+      ) : null}
+
+      {/* Phase 34 · Task HH · confirmation modal for bulk status change. */}
+      {statusConfirmTarget ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
+              style={{ background: "rgba(15,23,42,0.55)" }}
+              onMouseDown={(e) => { if (e.target === e.currentTarget) setStatusConfirmTarget(null); }}
+              data-testid="bulk-status-confirm-modal">
+          <div className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+                style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+                onMouseDown={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
+                  Change {selectedCount} lead{selectedCount === 1 ? "" : "s"} to "{statusConfirmTarget.label}"?
+                </h2>
+                <p className="text-sm mt-1" style={{ color: colors.muted }}>
+                  This will overwrite existing statuses. Leads already at
+                  "{statusConfirmTarget.label}" will be skipped.
+                </p>
+              </div>
+              <button type="button" onClick={() => setStatusConfirmTarget(null)}
+                        className="p-1" style={{ color: colors.muted }} aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setStatusConfirmTarget(null)}
+                        className="px-4 py-2 rounded-xl text-sm font-semibold"
+                        style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
+                        data-testid="bulk-status-confirm-cancel">
+                Cancel
+              </button>
+              <button type="button" onClick={doBulkStatusChange} disabled={busy}
+                        className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
+                        style={{ backgroundColor: "#1D4ED8" }}
+                        data-testid="bulk-status-confirm-btn">
+                {busy ? "Updating…" : `Change ${selectedCount}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {confirmOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
+              style={{ background: "rgba(15,23,42,0.55)" }}
+              onMouseDown={(e) => { if (e.target === e.currentTarget) setConfirmOpen(false); }}
+              data-testid="bulk-delete-confirm">
+          <div className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+                style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+                onMouseDown={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
+                  Delete {selectedCount} lead{selectedCount === 1 ? "" : "s"}?
+                </h2>
+                <p className="text-sm mt-1" style={{ color: colors.muted }}>
+                  {selectedCount > 100
+                    ? "This is a large batch — please confirm. Closed–Won leads with linked customers/jobs are protected and will show up as \"locked\" in the result."
+                    : "This can be restored from the archive. Closed–Won leads with linked customers/jobs are protected."}
+                </p>
+              </div>
+              <button type="button" onClick={() => setConfirmOpen(false)} className="p-1"
+                        style={{ color: colors.muted }} aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setConfirmOpen(false)}
+                        className="px-4 py-2 rounded-xl text-sm font-semibold"
+                        style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
+                        data-testid="bulk-delete-cancel">
+                Cancel
+              </button>
+              <button type="button" onClick={doBulkDelete} disabled={busy}
+                        className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
+                        style={{ backgroundColor: "#DC2626" }}
+                        data-testid="bulk-delete-confirm-btn">
+                {busy ? "Deleting…" : `Delete ${selectedCount}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -410,8 +592,11 @@ function LeadDetailDrawer({ lead, onClose, onUpdated }) {
                   className="w-full px-3 py-2 rounded-lg text-sm outline-none mb-3"
                   style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
                   data-testid="lead-status-select">
-            {["new", "contacted", "qualified", "converted", "closed"].map((s) => (
-              <option key={s} value={s}>{s}</option>
+            {LEAD_STATUS_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}
+                        data-testid={`lead-status-edit-option-${o.value}`}>
+                {o.label}
+              </option>
             ))}
           </select>
 

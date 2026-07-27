@@ -690,10 +690,13 @@ from pydantic import BaseModel as _LeadBulkBase
 
 
 class _LeadBulkDeleteIn(_LeadBulkBase):
-    ids: List[str]
+    # Phase 34 · Task EE — either explicit ``ids`` OR the filter shape.
+    ids: Optional[List[str]] = None
+    query_selector: Optional[Dict[str, Any]] = None
+    exclude_ids: Optional[List[str]] = None
 
 
-_LEAD_BULK_DELETE_CAP = 100
+_LEAD_BULK_DELETE_CAP = 400  # Phase 34 · Task DD · raised 100 → 400
 
 
 async def _perform_soft_delete_lead(lid: str, user: dict, tenant: dict) -> dict:
@@ -760,7 +763,16 @@ async def soft_delete_lead(lid: str,
 async def bulk_delete_leads(body: _LeadBulkDeleteIn,
                               user: dict = Depends(require_admin),
                               tenant: dict = Depends(get_current_tenant)):
-    ids = list(body.ids or [])
+    # Phase 34 · Task EE — accept either explicit ``ids`` OR the
+    # ``query_selector`` shape. ``_resolve_ids_from_selector`` is defined
+    # further down in this module (bulk-update-status uses the same
+    # helper).
+    if body.query_selector is not None:
+        ids = await _resolve_ids_from_selector(
+            body.query_selector, body.exclude_ids or [], tenant["id"],
+        )
+    else:
+        ids = list(body.ids or [])
     if not ids:
         raise HTTPException(400, "ids is empty")
     if len(ids) > _LEAD_BULK_DELETE_CAP:
@@ -778,6 +790,163 @@ async def bulk_delete_leads(body: _LeadBulkDeleteIn,
             failed.append({"id": lid, "reason": str(e), "status_code": 500})
     return {"ok": True, "deleted_count": len(deleted),
               "deleted": deleted, "failed": failed}
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase 34 · Task HH · Feb 2026 — Leads bulk status change.
+# Change many leads to a canonical status in one call. Same role gate /
+# tenant scope / cap / audit-log as the bulk-delete endpoints. Uses the
+# canonical enum from Task CC — anything outside the five values 422s.
+#
+# Task EE · Feb 2026 — this endpoint also accepts the filter-selector
+# shape ``{query_selector, exclude_ids, new_status}`` so the "Select all
+# N matching this filter" UX can operate without listing every id. The
+# selector is sanitised server-side — only whitelisted keys pass through
+# (status, source_kind, search, has_email, has_phone) — and the resolved
+# set is capped at 400 rows to match Task DD.
+# ═════════════════════════════════════════════════════════════════════════
+
+
+class _LeadBulkStatusIn(_LeadBulkBase):
+    ids: Optional[List[str]] = None
+    query_selector: Optional[Dict[str, Any]] = None
+    exclude_ids: Optional[List[str]] = None
+    new_status: str
+
+
+_QUERY_SELECTOR_ALLOWED_KEYS = {"status", "source_kind", "search",
+                                 "has_email", "has_phone"}
+
+
+async def _resolve_ids_from_selector(selector: Dict[str, Any],
+                                       exclude_ids: List[str],
+                                       tenant_id: str) -> List[str]:
+    """Task EE — safely translate the frontend's filter shape into a
+    concrete list of lead ids. Only whitelisted keys are honoured; the
+    query is always tenant-scoped and always skips soft-deleted rows."""
+    q: Dict[str, Any] = {"tenant_id": tenant_id,
+                            "$and": [{"$or": [{"deleted_at": None},
+                                                  {"deleted_at": {"$exists": False}}]}]}
+    clean: Dict[str, Any] = {}
+    for k, v in (selector or {}).items():
+        if k not in _QUERY_SELECTOR_ALLOWED_KEYS:
+            continue
+        clean[k] = v
+    if clean.get("status") and clean["status"] != "all":
+        q["status"] = _normalize_status(clean["status"])
+    if clean.get("source_kind"):
+        q["source_kind"] = clean["source_kind"]
+    if clean.get("has_email"):
+        q["email"] = {"$nin": [None, ""]}
+    if clean.get("has_phone"):
+        q["phone"] = {"$nin": [None, ""]}
+    if clean.get("search"):
+        s = str(clean["search"]).strip()
+        if s:
+            q.setdefault("$and", []).append({
+                "$or": [
+                    {"name": {"$regex": s, "$options": "i"}},
+                    {"email": {"$regex": s, "$options": "i"}},
+                    {"phone": {"$regex": s, "$options": "i"}},
+                ]
+            })
+    ids: List[str] = []
+    excl = set(exclude_ids or [])
+    async for row in db.leads.find(q, {"_id": 0, "id": 1}).limit(_LEAD_BULK_DELETE_CAP + 1):
+        rid = row.get("id")
+        if rid and rid not in excl:
+            ids.append(rid)
+    return ids
+
+
+@router.post("/leads/bulk-update-status",
+              operation_id="leads.bulkUpdateStatus")
+async def bulk_update_lead_status(body: _LeadBulkStatusIn,
+                                       user: dict = Depends(require_admin),
+                                       tenant: dict = Depends(get_current_tenant)):
+    """Bulk-set the status on many leads. Accepts either an explicit
+    ``ids`` list OR the Task EE ``query_selector`` shape.
+
+    * ``new_status`` must be one of the canonical five values (Task CC).
+    * Cap enforced at 400 (Task DD).
+    * Leads already at ``new_status`` are surfaced in ``failed[]`` with
+      a friendly reason so the UI can toast "3 already at Closed–Won"
+      without treating them as errors.
+    """
+    # Validate canonical status FIRST — cheap check, fail fast.
+    if body.new_status not in _CANONICAL_STATUSES:
+        raise HTTPException(
+            422,
+            f"new_status must be one of {sorted(_CANONICAL_STATUSES)}",
+        )
+
+    # Resolve the target id list — either explicit OR via selector.
+    if body.query_selector is not None:
+        ids = await _resolve_ids_from_selector(
+            body.query_selector, body.exclude_ids or [], tenant["id"],
+        )
+    else:
+        ids = list(body.ids or [])
+    if not ids:
+        raise HTTPException(400, "ids is empty")
+    if len(ids) > _LEAD_BULK_DELETE_CAP:
+        raise HTTPException(
+            400,
+            f"bulk-update-status capped at {_LEAD_BULK_DELETE_CAP} rows per call",
+        )
+
+    updated: List[str] = []
+    failed: List[dict] = []
+    for lid in ids:
+        try:
+            doc = await db.leads.find_one(
+                {"id": lid, "tenant_id": tenant["id"]},
+                {"_id": 0, "id": 1, "status": 1, "deleted_at": 1},
+            )
+            if not doc:
+                failed.append({"id": lid, "reason": "Lead not found",
+                                  "status_code": 404})
+                continue
+            if doc.get("deleted_at"):
+                failed.append({"id": lid, "reason": "Lead is soft-deleted",
+                                  "status_code": 409})
+                continue
+            current = doc.get("status")
+            if current == body.new_status:
+                failed.append({"id": lid,
+                                  "reason": f"already {body.new_status}",
+                                  "status_code": 200})
+                continue
+            update_ts = now_iso()
+            await db.leads.update_one(
+                {"id": lid, "tenant_id": tenant["id"]},
+                {"$set": {"status": body.new_status,
+                            "status_updated_at": update_ts,
+                            "status_updated_by_user_id": user.get("id")}},
+            )
+            try:
+                await db.audit_log.insert_one({
+                    "id": new_id(),
+                    "tenant_id": tenant["id"],
+                    "actor_user_id": user.get("id"),
+                    "actor_email": user.get("email"),
+                    "action": "lead.bulk_status_change",
+                    "target_id": lid,
+                    "from_status": current,
+                    "to_status": body.new_status,
+                    "at": update_ts,
+                })
+            except Exception as ae:
+                logger.warning(f"lead.bulk_status_change audit failed: {ae}")
+            updated.append(lid)
+        except HTTPException as e:
+            failed.append({"id": lid, "reason": str(e.detail),
+                              "status_code": e.status_code})
+        except Exception as e:                                # noqa: BLE001
+            failed.append({"id": lid, "reason": str(e), "status_code": 500})
+    return {"ok": True, "updated_count": len(updated),
+              "updated": updated, "failed": failed,
+              "new_status": body.new_status}
 
 
 

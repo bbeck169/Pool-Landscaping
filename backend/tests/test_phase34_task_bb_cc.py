@@ -252,6 +252,51 @@ def test_leads_bulk_delete_closed_won_protected(db, super_headers, aq_tenant_id)
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Task DD — bulk-delete cap raised 100 → 400
+# ═══════════════════════════════════════════════════════════════════════
+@pytest.mark.parametrize("path", [
+    "/invoices/bulk-delete",
+    "/estimates/bulk-delete",
+    "/payments/bulk-delete",
+    "/leads/bulk-delete",
+])
+def test_bulk_delete_cap_rejects_over_400(super_headers, path):
+    """Post 401 ids → 400 error with capped message. The 400 boundary is
+    the smallest count that must succeed; 401 is the smallest count that
+    must fail. We don't need real ids — the cap check runs first."""
+    ids = [f"fake-{i}" for i in range(401)]
+    r = requests.post(
+        f"{API}{path}",
+        headers={**super_headers, "Content-Type": "application/json"},
+        json={"ids": ids}, timeout=30,
+    )
+    assert r.status_code == 400, f"{path} => {r.status_code} {r.text}"
+    detail = (r.json().get("detail") or "").lower()
+    assert "400" in detail and "cap" in detail, f"{path} detail={detail!r}"
+
+
+@pytest.mark.parametrize("path", [
+    "/invoices/bulk-delete",
+    "/estimates/bulk-delete",
+    "/payments/bulk-delete",
+    "/leads/bulk-delete",
+])
+def test_bulk_delete_cap_accepts_400(super_headers, path):
+    """Post exactly 400 fake ids → 200 with 0 deletions + 400 failures.
+    The cap check must pass at 400."""
+    ids = [f"boundary-{i}-{uuid.uuid4().hex[:8]}" for i in range(400)]
+    r = requests.post(
+        f"{API}{path}",
+        headers={**super_headers, "Content-Type": "application/json"},
+        json={"ids": ids}, timeout=30,
+    )
+    assert r.status_code == 200, f"{path} => {r.status_code} {r.text}"
+    body = r.json()
+    assert body["deleted_count"] == 0
+    assert len(body["failed"]) == 400
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Task CC — status enum normalization + migration
 # ═══════════════════════════════════════════════════════════════════════
 def test_normalize_status_maps_legacy_values():

@@ -627,7 +627,11 @@ class _InvoiceBulkDeleteIn(_BaseModelBB):
     ids: List[str]
 
 
-_BULK_DELETE_CAP = 100
+# Phase 34 · Task DD · Feb 2026 — cap raised 100 → 400 across all four
+# bulk-delete surfaces (invoices, estimates, payments, leads). Kept as
+# a local constant per router so a bad import can't accidentally drop
+# the guard entirely.
+_BULK_DELETE_CAP = 400
 
 
 async def _perform_soft_delete_quote(qid: str, user: dict, tenant: dict) -> dict:

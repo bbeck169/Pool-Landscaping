@@ -365,8 +365,9 @@ export function PaymentsLedger() {
                   Delete {selectedCount} payment{selectedCount === 1 ? "" : "s"}?
                 </h2>
                 <p className="text-sm mt-1" style={{ color: colors.muted }}>
-                  This can be restored from the archive. Card/Stripe payments cannot
-                  be bulk-deleted — those show up as "locked" in the result.
+                  {selectedCount > 100
+                    ? "This is a large batch — please confirm. It can be restored from the archive. Card/Stripe payments cannot be bulk-deleted — those show up as \"locked\" in the result."
+                    : "This can be restored from the archive. Card/Stripe payments cannot be bulk-deleted — those show up as \"locked\" in the result."}
                 </p>
               </div>
               <button type="button" onClick={() => setConfirmOpen(false)} className="p-1"
@@ -407,6 +408,13 @@ export function AutoBilling() {
   const [showNew, setShowNew] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [newPlan, setNewPlan] = useState({ customer_id: "", service: "Monthly Pool Service", frequency: "monthly", amount: 150, next_run: "", run_schedule: "first_of_month" });
+  // Phase 34 · Task II · Feb 2026 — bulk-select state for the
+  // Autobilling admin surface. Same UX pattern as Invoices / Estimates /
+  // Payments / Leads. Locked-state (Stripe subs, imminent charges) is
+  // enforced server-side; the failed[] entries are shown in the toast.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [confirmDelOpen, setConfirmDelOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -464,6 +472,42 @@ export function AutoBilling() {
       setToast("Plan created");
       load();
     } catch (e) { setToast(e.message); }
+  };
+
+  // Phase 34 · Task II · bulk-select helpers.
+  const visibleIds = plans.map((p) => p.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+  const someVisibleSelected = visibleIds.some((id) => selectedIds.has(id));
+  const indeterminate = someVisibleSelected && !allVisibleSelected;
+  const selectedCount = selectedIds.size;
+  const toggleAll = () => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (allVisibleSelected) visibleIds.forEach((id) => next.delete(id));
+    else visibleIds.forEach((id) => next.add(id));
+    return next;
+  });
+  const toggleOne = (id) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const clearSelection = () => setSelectedIds(new Set());
+  const doBulkDelete = async () => {
+    setBulkBusy(true);
+    try {
+      const res = await api.post("/autobilling/bulk-delete", { ids: Array.from(selectedIds) });
+      const ok = res.deleted_count || 0;
+      const failCount = (res.failed || []).length;
+      setPlans((prev) => prev.filter((p) => !res.deleted.includes(p.id)));
+      clearSelection();
+      setConfirmDelOpen(false);
+      if (failCount === 0) sonnerToast.success(`${ok} autobilling entr${ok === 1 ? "y" : "ies"} deleted`);
+      else sonnerToast(`${ok} deleted · ${failCount} locked`, {
+        description: (res.failed || []).slice(0, 3).map((f) => f.reason).join(" · "),
+      });
+    } catch (e) {
+      sonnerToast.error(e?.message || "Bulk delete failed");
+    } finally { setBulkBusy(false); }
   };
 
   // Phase 56.17 — client-side preview of the next fire anchor for the
@@ -532,9 +576,20 @@ export function AutoBilling() {
 
       <Card>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm" data-testid="autobilling-table">
             <thead>
               <tr style={{ backgroundColor: colors.surfaceSecondary }}>
+                <th className="px-4 py-2.5 w-8">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    ref={(el) => { if (el) el.indeterminate = indeterminate; }}
+                    onChange={toggleAll}
+                    aria-label="Select all autobilling plans"
+                    data-testid="bulk-select-all"
+                    className="cursor-pointer"
+                  />
+                </th>
                 {["Customer", "Service", "Cadence", "Amount", "Last run", "Next run", "Active", ""].map((h) => (
                   <th key={h} className="text-left px-4 py-2.5 font-semibold text-xs uppercase tracking-wide"
                       style={{ color: colors.muted }}>{h}</th>
@@ -543,13 +598,28 @@ export function AutoBilling() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} className="py-10 text-center text-sm" style={{ color: colors.muted }}>Loading…</td></tr>
+                <tr><td colSpan={9} className="py-10 text-center text-sm" style={{ color: colors.muted }}>Loading…</td></tr>
               ) : plans.length === 0 ? (
-                <tr><td colSpan={8} className="py-10 text-center text-sm" style={{ color: colors.muted }}>No plans yet</td></tr>
+                <tr><td colSpan={9} className="py-10 text-center text-sm" style={{ color: colors.muted }}>No plans yet</td></tr>
               ) : plans.map((p) => {
                 const active = p.active !== false;
                 return (
-                  <tr key={p.id} style={{ borderTop: `1px solid ${colors.border}` }}>
+                  <tr key={p.id}
+                      style={{
+                        borderTop: `1px solid ${colors.border}`,
+                        backgroundColor: selectedIds.has(p.id) ? "#EFF6FF" : "transparent",
+                      }}
+                      data-testid={`autobilling-row-${p.id}`}>
+                    <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(p.id)}
+                        onChange={() => toggleOne(p.id)}
+                        aria-label={`Select plan for ${p.customer_name || p.id}`}
+                        data-testid={`bulk-select-row-${p.id}`}
+                        className="cursor-pointer"
+                      />
+                    </td>
                     <td className="px-4 py-2.5" style={{ color: colors.onSurface }}>{p.customer_name || "—"}</td>
                     <td className="px-4 py-2.5" style={{ color: colors.onSurface }}>{p.service}</td>
                     <td className="px-4 py-2.5" style={{ color: colors.onSurface }}>{p.frequency}</td>
@@ -703,6 +773,74 @@ export function AutoBilling() {
       )}
 
       <Toast msg={toast} onDone={() => setToast("")} />
+
+      {/* Phase 34 · Task II · bulk-select action bar for Autobilling. */}
+      {selectedCount > 0 ? (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 rounded-2xl shadow-2xl flex items-center gap-3 px-4 py-3 z-40"
+          style={{ backgroundColor: colors.onSurface, color: "#FFFFFF",
+                    border: "1px solid rgba(255,255,255,0.08)" }}
+          data-testid="bulk-action-bar"
+        >
+          <div className="text-sm font-semibold" data-testid="bulk-action-bar-count">
+            {selectedCount} selected
+          </div>
+          <button type="button" onClick={() => setConfirmDelOpen(true)} disabled={bulkBusy}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
+                    style={{ backgroundColor: "#DC2626", color: "#FFFFFF" }}
+                    data-testid="bulk-delete-button">
+            <Trash2 size={12} /> Delete selected
+          </button>
+          <button type="button" onClick={clearSelection}
+                    className="text-xs font-semibold underline"
+                    style={{ color: "rgba(255,255,255,0.85)" }}
+                    data-testid="bulk-clear-selection">
+            Clear selection
+          </button>
+        </div>
+      ) : null}
+
+      {confirmDelOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
+              style={{ background: "rgba(15,23,42,0.55)" }}
+              onMouseDown={(e) => { if (e.target === e.currentTarget) setConfirmDelOpen(false); }}
+              data-testid="bulk-delete-confirm">
+          <div className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+                style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+                onMouseDown={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
+                  Delete {selectedCount} autobilling entr{selectedCount === 1 ? "y" : "ies"}?
+                </h2>
+                <p className="text-sm mt-1" style={{ color: colors.muted }}>
+                  {selectedCount > 100
+                    ? "This is a large batch — please confirm. It can be restored from the archive. Stripe-subscription plans and imminent (within 24h) charges will show as \"locked\" in the result."
+                    : "This can be restored from the archive. Stripe-subscription plans and imminent (within 24h) charges will show as \"locked\" in the result."}
+                </p>
+              </div>
+              <button type="button" onClick={() => setConfirmDelOpen(false)} className="p-1"
+                        style={{ color: colors.muted }} aria-label="Close">
+                <XIcon size={18} />
+              </button>
+            </div>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setConfirmDelOpen(false)}
+                        className="px-4 py-2 rounded-xl text-sm font-semibold"
+                        style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
+                        data-testid="bulk-delete-cancel">
+                Cancel
+              </button>
+              <button type="button" onClick={doBulkDelete} disabled={bulkBusy}
+                        className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
+                        style={{ backgroundColor: "#DC2626" }}
+                        data-testid="bulk-delete-confirm-btn">
+                {bulkBusy ? "Deleting…" : `Delete ${selectedCount}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
