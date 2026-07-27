@@ -404,6 +404,73 @@ def build_context_for_customer(customer: Dict[str, Any],
         "company.address":     co.get("address") or "",
         "unsubscribe_url":     unsubscribe_url or "",
     }
+
+    # Phase 34 · Task M · Feb-2026 — Nested-shape overlay so the
+    # SCREAMING_SNAKE resolvers registered in
+    # ``services.marketing.merge_tags`` (EVENT_TITLE, CUSTOMER_ADDRESS,
+    # JOB_DATE, JOB_TIME, EVENT_NOTES, CUSTOMER_PORTAL_LINK,
+    # SERVICE_RECORD_IMAGES, etc.) can walk the ctx and find their
+    # data. Without this, those resolvers see only flat dotted keys
+    # and return empty strings — which used to leak literal
+    # ``{{EVENT_TITLE}}`` markers in the email body.
+    # Nested keys DO NOT replace the flat entries above — both
+    # coexist so callers depending on either shape keep working.
+    ctx["customer"] = {
+        "first_name": fn or "",
+        "last_name": ln or "",
+        "full_name": c.get("name") or f"{fn} {ln}".strip(),
+        "name": c.get("name") or f"{fn} {ln}".strip(),
+        "email": c.get("email") or "",
+        "phone": c.get("phone") or "",
+        "address": c.get("address_line1") or c.get("address") or "",
+        "address_line_1": c.get("address_line1") or c.get("address") or "",
+        "city": c.get("city") or "",
+        "state": c.get("state") or "",
+        "zip": c.get("zip") or c.get("postal_code") or "",
+    }
+    ctx["job"] = {
+        "id": j.get("id") or "",
+        "title": j.get("title") or j.get("service_type") or "",
+        "service_type": j.get("service_type") or "",
+        "tech_name": j.get("tech_name") or "",
+        "route_name": j.get("route_name") or "",
+        "scheduled_at": j.get("scheduled_at") or "",
+        "scheduled_date": j.get("scheduled_date") or (j.get("scheduled_at") or "")[:10],
+        "scheduled_start": j.get("scheduled_start") or j.get("scheduled_at") or "",
+        "notes": j.get("notes") or j.get("description") or "",
+        "completed_at": j.get("completed_at") or "",
+    }
+    # ``event`` is an alias — the canonical resolvers for EVENT_TITLE
+    # / EVENT_NOTES look under ``ctx["event"]`` first.
+    ctx["event"] = {
+        "title": j.get("title") or j.get("service_type") or "",
+        "date": (j.get("scheduled_date")
+                 or (j.get("scheduled_at") or "")[:10] or ""),
+        "time": (j.get("scheduled_start") or j.get("scheduled_at") or ""),
+        "notes": j.get("notes") or j.get("description") or "",
+        "property_address": c.get("address_line1") or c.get("address") or "",
+    }
+    ctx["invoice"] = {
+        "amount_due": inv.get("amount_due") or "",
+        "due_date": inv.get("due_date") or "",
+        "invoice_number": inv.get("invoice_number") or inv.get("number") or "",
+        "portal_link": inv.get("portal_link") or "",
+        "status": inv.get("status") or "",
+    }
+    ctx["company"] = {
+        "name": co.get("name") or "",
+        "phone": co.get("phone") or "",
+        "email": co.get("email") or "",
+        "website": co.get("website") or "",
+        "logo_url": co.get("logo_url") or "",
+        "portal_link": co.get("portal_link") or "",
+        "address": co.get("address") or "",
+    }
+    # ``tenant`` alias so templates using ``{{tenant.name}}`` /
+    # ``{{tenant.phone}}`` — the older Handlebars convention — keep
+    # rendering. Mirrors ``company.*`` verbatim.
+    ctx["tenant"] = dict(ctx["company"])
+
     if extras:
         for k, v in extras.items():
             if v is None:

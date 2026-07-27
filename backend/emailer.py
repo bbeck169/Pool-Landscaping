@@ -72,6 +72,17 @@ async def send_completion_email(job: dict) -> bool:
     if not to_email:
         logger.info("No customer email — skipping completion email.")
         return False
+    # Phase 34 · Task L · Feb-2026 — outbound safety guard. Same rule
+    # as the shared resend adapter: block live sends in non-prod
+    # unless the recipient is on the allow-list.
+    from services.comms_env_guard import guard_outbound
+    verdict = guard_outbound(kind="email", to=to_email)
+    if verdict.blocked:
+        logger.info(
+            "[DRY-RUN] emailer.send_completion_email SKIPPED to=%s job=%s",
+            to_email, job.get("id"),
+        )
+        return False
     try:
         resend.api_key = RESEND_API_KEY
         resend.Emails.send({
@@ -118,6 +129,15 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
         to_email = user.get("email") if user else None
     if not to_email:
         logger.info("No customer email — skipping reminder email.")
+        return False
+    # Phase 34 · Task L · Feb-2026 — outbound safety guard.
+    from services.comms_env_guard import guard_outbound
+    verdict = guard_outbound(kind="email", to=to_email)
+    if verdict.blocked:
+        logger.info(
+            "[DRY-RUN] emailer.send_invoice_reminder_email SKIPPED to=%s inv=%s",
+            to_email, inv.get("id"),
+        )
         return False
     try:
         resend.api_key = RESEND_API_KEY

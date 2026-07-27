@@ -149,6 +149,19 @@ class RingCentralSMSAdapter:
             return {"provider": "ringcentral", "provider_status": "suppressed",
                     "provider_response_id": None, "attempts": 0, "error": None}
 
+        # Phase 34 · Task L · Feb-2026 — outbound safety guard.
+        # ``APP_ENV != production`` (or non-allow-listed number) blocks
+        # the send. Prevents preview / dev / staging from firing SMS
+        # at real customer phone numbers.
+        from services.comms_env_guard import guard_outbound
+        verdict = guard_outbound(kind="sms", to=addr_e164)
+        if verdict.blocked:
+            logger.info(
+                "[DRY-RUN] rc-sms send SKIPPED to=%s cat=%s len=%d tenant=%s",
+                addr_e164, category, len(body or ""), tenant_id,
+            )
+            return verdict.dry_run_response(provider="ringcentral")
+
         # 2. Graceful mocked mode when RC not configured.
         if not self.enabled:
             logger.info(

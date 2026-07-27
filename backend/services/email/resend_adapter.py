@@ -34,13 +34,58 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Any, Dict, Optional
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 from config import logger
 
 # Known Resend error codes / status codes for retry classification.
 _TRANSIENT_STATUS = {429, 500, 502, 503, 504}
 _MAX_ATTEMPTS = 3
+
+# Phase 34 · Task M — belt-and-braces regex used to catch any
+# ``{{TAG}}`` markers that make it past the earlier renderer stages.
+_LEFTOVER_TAG_RE = re.compile(r"\{\{\s*([A-Za-z_][\w.]*)\s*\}\}")
+
+
+def _scrub_leftover_tags(subject: str, html: str) -> Tuple[str, str, List[str]]:
+    """Final-scrub pass right before we hand a payload to Resend.
+
+    Runs the canonical merge-tag renderer once more with an empty
+    context — any tag whose resolver can produce a value from an
+    empty context (currently none) would substitute; everything else
+    is deliberately replaced with an empty string. Then a defensive
+    regex strips ANY leftover ``{{...}}`` markers so mis-typed /
+    unknown tags cannot leak literal to a real inbox.
+
+    Returns ``(safe_subject, safe_html, [stripped_token_names])``.
+    """
+    stripped: List[str] = []
+    try:
+        # Local import — avoids a circular dep at module load and lets
+        # test suites monkey-patch the renderer if they need to.
+        from services.marketing.merge_tags import render_template as _rt
+
+        s_rendered, s_missing = _rt(subject or "", {}, missing="empty")
+        h_rendered, h_missing = _rt(html or "", {}, missing="empty")
+    except Exception:  # pragma: no cover — renderer must never crash send
+        s_rendered, h_rendered = subject or "", html or ""
+        s_missing, h_missing = [], []
+
+    # Defensive strip in case the renderer's token grammar doesn't
+    # catch something (e.g. a tag with spaces, hyphens, or a raw
+    # backtick — anything the strict regex rejects).
+    def _strip(x: str) -> str:
+        def _sub(m: "re.Match[str]") -> str:
+            stripped.append(m.group(1))
+            return ""
+        return _LEFTOVER_TAG_RE.sub(_sub, x or "")
+
+    safe_subject = _strip(s_rendered)
+    safe_html = _strip(h_rendered)
+    # Include the renderer's declared missing tokens for accurate logs.
+    all_missing: List[str] = sorted(set(list(s_missing) + list(h_missing) + stripped))
+    return safe_subject, safe_html, all_missing
 
 
 class ResendEmailAdapter:
@@ -144,6 +189,22 @@ class ResendEmailAdapter:
                     "provider_response_id": None, "attempts": 0,
                     "error": None}
 
+        # Phase 34 · Task L · Feb-2026 — outbound safety guard.
+        # When ``APP_ENV != production`` (or when the recipient is not
+        # explicitly allow-listed via ``COMMS_TEST_ALLOWLIST_EMAILS``),
+        # short-circuit to a dry-run response so we never accidentally
+        # email a real customer from preview / dev / staging. The
+        # returned envelope keeps ``provider_status="dry_run"`` distinct
+        # from ``"mocked"`` (no API key) and ``"sent"`` (live delivery).
+        from services.comms_env_guard import guard_outbound
+        verdict = guard_outbound(kind="email", to=addr)
+        if verdict.blocked:
+            logger.info(
+                "[DRY-RUN] resend send SKIPPED to=%s subject=%r cat=%s tenant=%s",
+                addr, subject, category, tenant_id,
+            )
+            return verdict.dry_run_response(provider="resend")
+
         # 2. Graceful mocked mode — no API key set. Log + return.
         if not self.enabled:
             logger.info(
@@ -172,11 +233,34 @@ class ResendEmailAdapter:
             eff_from_name = from_name or self.from_name
 
         # 3. Build params — resend expects a plain dict, sync SDK.
+        # Phase 34 · Task M · Feb-2026 — belt-and-braces final scrub.
+        # Even though every registered send path in the codebase runs
+        # merge-tag rendering before we get here, a single missed
+        # code path used to leak literal ``{{TAG}}`` markers into a
+        # customer's inbox. This safety net looks at the SUBJECT +
+        # HTML about to leave the process and:
+        #   1. Runs one final render pass with an empty ctx so any
+        #      tag that has a catalog resolver keying off ``ctx`` will
+        #      still return "" (never leave the raw marker).
+        #   2. Aggressively strips ANY remaining ``{{...}}`` markers
+        #      (unknown / typo tags) so they cannot reach a real
+        #      recipient.
+        #   3. Logs a WARN listing the stripped tokens so the source
+        #      template can be corrected.
+        safe_subject, safe_html, stripped = _scrub_leftover_tags(
+            subject or "", html or ""
+        )
+        if stripped:
+            logger.warning(
+                "[resend] final-scrub stripped %s leftover tag(s) from "
+                "email to %s tenant=%s subj=%r tags=%s",
+                len(stripped), addr, tenant_id, safe_subject[:60], stripped,
+            )
         params: Dict[str, Any] = {
             "from": f"{eff_from_name} <{eff_from_email}>",
             "to": [addr],
-            "subject": subject or "",
-            "html": html or "",
+            "subject": safe_subject,
+            "html": safe_html,
         }
         if text:
             params["text"] = text

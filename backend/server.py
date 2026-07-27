@@ -938,6 +938,14 @@ async def startup():
         logger.info("MongoDB ping OK")
     except Exception as e:
         logger.error(f"MongoDB ping FAILED at startup: {e}")
+    # Phase 34 · Task L · Feb-2026 — one-line audit banner so it's
+    # unmistakable from the boot logs whether outbound comms are
+    # LIVE or DRY-RUN in the current environment.
+    try:
+        from services.comms_env_guard import startup_banner
+        logger.info(startup_banner())
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"comms_env_guard startup_banner failed: {e}")
     await seed()  # idempotent, ~ms after first run; creates demo admin.
     SEEDS_STARTED_AT = datetime.now(_tz.utc).isoformat()
     # Deployment audit (Phase 58.a) — ensure the deploy-blocker indexes

@@ -382,14 +382,66 @@ export function PortalPaymentMethod() {
       .catch(() => setAch((s) => ({ ...s, configured: false })));
   }, []);
   const addCard = async () => {
+    // Phase 34 · Feb-2026 · Task J — hardened Stripe "Add card" flow.
+    //
+    // The previous handler had three defensive gaps that could
+    // manifest as "button does nothing" for the user:
+    //   1. If ``r.url`` was falsy for any reason (backend hiccup,
+    //      Stripe not configured surfacing as a soft failure, etc.)
+    //      we neither navigated nor toasted — the button stayed
+    //      stuck on "Redirecting…" forever with no feedback.
+    //   2. ``setBusy(false)`` never fired on the success path either
+    //      (relying on the redirect leaving the page), so any race
+    //      that stopped the nav left the UI locked.
+    //   3. ``window.location.href = url`` from deep inside an async
+    //      handler can occasionally be dropped by strict popup /
+    //      cross-origin policies. We now use ``.assign()`` (which
+    //      is treated as an explicit navigation) and fall back to
+    //      opening the checkout in a new tab if the top-level nav
+    //      is blocked.
+    if (busy) return;
     setBusy(true);
+    setToast(null);
+    let didNavigate = false;
     try {
       const r = await api.post("/payments/setup-session", {
         customer_id: user.customer_id,
         return_url: `${window.location.origin}/portal/payment-method?setup=1`,
       });
-      if (r.url) window.location.href = r.url;
-    } catch (e) { setToast({ tone: "error", message: e.message }); setBusy(false); }
+      const url = r?.url;
+      if (typeof url === "string" && url.startsWith("http")) {
+        didNavigate = true;
+        // Primary: top-level nav to the Stripe Checkout page.
+        try {
+          window.location.assign(url);
+        } catch (_) {
+          // Fallback: some browsers deprioritize async-triggered
+          // top-level navigation; opening the URL in a new tab keeps
+          // the flow usable even in those cases.
+          const opened = window.open(url, "_self");
+          if (!opened) window.open(url, "_blank", "noopener,noreferrer");
+        }
+      } else {
+        setToast({
+          tone: "error",
+          message:
+            "Could not open the payment form. Please try again, or contact support if this keeps happening.",
+        });
+      }
+    } catch (e) {
+      setToast({
+        tone: "error",
+        message:
+          e?.message ||
+          "Could not open the payment form. Please try again, or contact support if this keeps happening.",
+      });
+    } finally {
+      // Only reset busy when we did NOT hand off to Stripe — if we
+      // did, the browser is on its way to checkout.stripe.com and
+      // resetting the state would just cause a UI flicker before the
+      // navigation completes.
+      if (!didNavigate) setBusy(false);
+    }
   };
   const connectBank = async () => {
     setAch((s) => ({ ...s, busy: true }));
@@ -450,14 +502,14 @@ export function PortalPaymentMethod() {
               {pm.brand} · •••• {pm.last4}
             </div>
             <div className="text-sm mt-1" style={{ color: colors.muted }}>Saved · expires {pm.exp_month}/{pm.exp_year}</div>
-            <Button variant="ghost" onClick={addCard} disabled={busy} className="mt-3">
-              <CreditCard size={16} /> {busy ? "…" : "Replace card"}
+            <Button variant="ghost" onClick={addCard} disabled={busy} type="button" className="mt-3" testid="pm-replace">
+              <CreditCard size={16} /> {busy ? "Redirecting…" : "Replace card"}
             </Button>
           </div>
         ) : (
           <div>
             <p className="text-sm mb-3" style={{ color: colors.onSurfaceSecondary }}>No card on file yet.</p>
-            <Button onClick={addCard} disabled={busy} testid="pm-add">
+            <Button onClick={addCard} disabled={busy} type="button" testid="pm-add">
               <CreditCard size={16} /> {busy ? "Redirecting…" : "Add card"}
             </Button>
           </div>

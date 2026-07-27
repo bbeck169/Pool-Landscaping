@@ -204,11 +204,43 @@ class RingCentralService:
         exception types as needed. When the RC error mentions "scope"
         or "Insufficient" the exception carries a ``scope_missing``
         attribute so higher layers can render a specific remediation
-        message ("enable SMS on the RC extension")."""
+        message ("enable SMS on the RC extension").
+
+        Phase 34 · Task L · Feb-2026 — belt-and-braces guard: even
+        callers that bypass the ``rc_adapter`` layer must not send
+        live SMS in non-production. If the destination isn't on the
+        ``COMMS_TEST_ALLOWLIST_PHONES`` list AND we're not in
+        production, we short-circuit to a synthetic response with
+        ``status="DryRun"`` and log the intent."""
         if not to:
             raise RingCentralError(400, "SMS to-number is required")
         if not body:
             raise RingCentralError(400, "SMS body is required")
+
+        # Env guard — see services/comms_env_guard.py.
+        try:
+            from services.comms_env_guard import guard_outbound
+
+            verdict = guard_outbound(kind="sms", to=to)
+        except Exception:  # pragma: no cover — never crash the sender
+            verdict = None
+        if verdict is not None and verdict.blocked:
+            import logging
+            logging.getLogger("pool_crm").info(
+                "[DRY-RUN] RingCentralService.send_sms SKIPPED to=%s len=%d",
+                to, len(body or ""),
+            )
+            return {
+                "provider": "ringcentral",
+                "message_id": None,
+                "status": "DryRun",
+                "raw": None,
+                "from_number": from_number,
+                "to_number": to,
+                "dry_run": True,
+                "dry_run_reason": verdict.reason,
+            }
+
         resolved_from = await self._resolve_sms_from_number(from_number)
         payload = {
             "from": {"phoneNumber": resolved_from},

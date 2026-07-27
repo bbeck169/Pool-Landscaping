@@ -99,6 +99,31 @@ export default function PortalHome() {
           the JSX render call was deleted from PortalHome. */}
       {/* <GreetingTile /> */}
 
+      {/* Phase 34 · Feb 2026 · Task K — top CTA row. Call Now + Request
+          Service now sit as the FIRST row of the content area, above the
+          hero card. Side-by-side on ≥sm, stacked full-width on narrow
+          mobile. Same click handlers as before — the two buttons were
+          previously scattered further down the page (Call Now above the
+          quick actions, Request Service after the ToS banner). We render
+          them here now and remove those old inline instances below so
+          they're not duplicated. */}
+      <div
+        className="mb-4 flex flex-col sm:flex-row gap-3 md:gap-4"
+        data-testid="portal-cta-row"
+      >
+        <div className="flex-1 min-w-0" data-testid="portal-cta-call">
+          <CallNowButton />
+        </div>
+        <button
+          onClick={() => setRequestOpen(true)}
+          className="inline-flex items-center justify-center gap-2 flex-1 min-w-0 px-4 py-3 rounded-xl text-sm font-bold text-white shadow-sm hover:brightness-95"
+          style={{ background: brandGradientCss, minHeight: 48 }}
+          data-testid="portal-request-service-btn"
+        >
+          <Plus size={16} /> Request Service
+        </button>
+      </div>
+
       {/* Phase 34 · Feb 2026 — hero card relocated to the TOP of the
           Portal Home content area per user directive. It used to sit
           below the stat/alert cards + ToS banner + Call/Request
