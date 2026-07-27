@@ -1,10 +1,18 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Plus, Send } from 'lucide-react';
+import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useRealtime } from "@/realtime/NotificationSocket";
+import {
+  useBulkSelect,
+  BulkSelectAll,
+  BulkSelectRow,
+  BulkActionBar,
+  BulkConfirmModal,
+} from "@/components/bulk-select/BulkSelectToolkit";
 
 function Card({ children, className = "", testId }) {
   return <div className={`rounded-2xl ${className}`}
@@ -121,6 +129,8 @@ export function TasksPage() {
   const [status, setStatus] = useState("");
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ title: "", priority: "med" });
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
   const load = () => api.get(`/tasks${status ? `?status=${status}` : ""}`).then((r) => setRows(r || []));
   useEffect(() => { load(); }, [status]); // eslint-disable-line
   const create = async () => {
@@ -128,6 +138,28 @@ export function TasksPage() {
     await api.post("/tasks", form); setForm({ title: "", priority: "med" }); setCreating(false); load();
   };
   const complete = async (t) => { await api.post(`/tasks/${t.id}/complete`, {}); load(); };
+  // Phase 34 · Task LL Phase 2 UI wrap-up · Feb 2026 — bulk-select toolkit.
+  const visibleIds = useMemo(() => rows.map((r) => r.id), [rows]);
+  const { selected, selectedCount, allVisibleSelected, indeterminate,
+             toggleAll, toggleOne, clear } = useBulkSelect(visibleIds);
+  const doBulkDelete = async () => {
+    setBusy(true);
+    try {
+      const res = await api.post("/tasks/bulk-delete", { ids: Array.from(selected) });
+      sonnerToast.success(`${res.deleted_count || 0} task${(res.deleted_count || 0) === 1 ? "" : "s"} deleted`);
+      clear(); setConfirmOpen(false); load();
+    } catch (e) { sonnerToast.error(e?.message || "Bulk delete failed"); }
+    finally { setBusy(false); }
+  };
+  const doBulkStatus = async (nextStatus) => {
+    try {
+      const res = await api.post("/tasks/bulk-update", {
+        ids: Array.from(selected), patch: { status: nextStatus },
+      });
+      sonnerToast.success(`${res.updated_count || 0} task${(res.updated_count || 0) === 1 ? "" : "s"} → ${nextStatus}`);
+      clear(); load();
+    } catch (e) { sonnerToast.error(e?.message || "Bulk update failed"); }
+  };
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto" data-testid="tasks-page">
       <H title="Tasks" subtitle="Manual + system-created (sequence escalations)"
@@ -135,7 +167,7 @@ export function TasksPage() {
                         style={{ backgroundColor: colors.brand, color: "#fff" }} data-testid="task-new">
                   <Plus size={14} className="inline mr-1" /> New task
                 </button>} />
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2 mb-4 items-center">
         {["", "open", "in_progress", "done"].map((s) => (
           <button key={s || "all"} onClick={() => setStatus(s)}
                   className="px-3 py-1.5 rounded-lg text-xs font-semibold"
@@ -146,6 +178,14 @@ export function TasksPage() {
             {s || "all"}
           </button>
         ))}
+        {rows.length > 0 ? (
+          <div className="ml-4 inline-flex items-center gap-2 text-xs" style={{ color: colors.muted }}>
+            <BulkSelectAll checked={allVisibleSelected}
+                             indeterminate={indeterminate}
+                             onChange={toggleAll} />
+            <span>Select all</span>
+          </div>
+        ) : null}
       </div>
       {creating && (
         <Card className="p-4 mb-3">
@@ -167,6 +207,8 @@ export function TasksPage() {
       )}
       {rows.map((t) => (
         <Card key={t.id} className="p-3 mb-2 flex items-center gap-3" testId={`task-row-${t.id}`}>
+          <BulkSelectRow id={t.id} checked={selected.has(t.id)}
+                            onChange={() => toggleOne(t.id)} />
           <input type="checkbox" checked={t.status === "done"}
                  onChange={() => t.status !== "done" && complete(t)}
                  data-testid={`task-complete-${t.id}`} />
@@ -182,6 +224,30 @@ export function TasksPage() {
       {rows.length === 0 && <Card className="p-8 text-center text-sm" testId="tasks-empty">
         <div style={{ color: colors.muted }}>No tasks match.</div>
       </Card>}
+      <BulkActionBar
+        selectedCount={selectedCount}
+        onClear={clear}
+        actions={[
+          { key: "status", label: "Change status",
+            dropdown: [
+              { value: "open", label: "Open" },
+              { value: "in_progress", label: "In progress" },
+              { value: "done", label: "Done" },
+            ],
+            onClick: (v) => doBulkStatus(v) },
+          { key: "delete", label: "Delete selected", tone: "danger",
+            onClick: () => setConfirmOpen(true) },
+        ]}
+      />
+      <BulkConfirmModal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={doBulkDelete}
+        title={`Delete ${selectedCount} task${selectedCount === 1 ? "" : "s"}?`}
+        description="Deleted tasks can be restored from the archive."
+        confirmLabel={busy ? "Deleting…" : `Delete ${selectedCount}`}
+        busy={busy}
+      />
     </div>
   );
 }

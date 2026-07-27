@@ -28,6 +28,7 @@ import ServiceLogPage from "@/pages/workstream/ServiceLogPage";
 import CFODashboard from "@/pages/cfo/CFODashboard";
 import JobNew from "@/pages/jobs/JobNew";
 import JobDetail from "@/pages/jobs/JobDetail";
+import JobsList from "@/pages/jobs/JobsList";
 import QuotesList from "@/pages/quotes/QuotesList";
 import QuoteInvoiceNew from "@/pages/quotes/QuoteInvoiceNew";
 import QuoteInvoiceDetail from "@/pages/quotes/QuoteInvoiceDetail";
@@ -436,6 +437,9 @@ export default function App() {
             {/* Phase 30 · Jobs list retired — techs & admins land on the unified calendar. */}
             <Route path="jobs" element={<Navigate to="/schedule" replace />} />
             <Route path="jobs/new" element={<JobNew />} />
+            {/* Phase 34 · Task LL Phase 2 UI wrap-up · Feb 2026 — admin-only
+                jobs list surfacing /jobs/bulk-delete + bulk-update. */}
+            <Route path="admin/jobs" element={<AdminOnly><JobsList /></AdminOnly>} />
             <Route path="jobs/:id" element={<JobDetail />} />
 
             {/* Quotes / Invoices / Master / Estimator / Settings (Phase 3) */}

@@ -1,5 +1,31 @@
 # Phase 34 · Task LL Phase 2 UI wrap-up — Frontend wire-up brief (Web)
 
+## ✅ SHIPPED IN THIS BATCH (Feb 2026)
+
+The shared `BulkSelectToolkit` has been wired into all 5 admin pages
+below. No further web work is required from this brief.
+
+| # | Surface | File | Bulk actions live |
+|---|---------|------|-------------------|
+| 1 | Customers | `pages/customers/CustomersList.jsx` | Reassign owner · Delete |
+| 2 | Jobs (admin) | `pages/jobs/JobsList.jsx` (new page at `/admin/jobs`) | Change status · Delete |
+| 3 | Tasks | `pages/aiops/AiOpsPages.jsx::TasksPage` | Change status · Delete |
+| 4 | Communications log | `pages/marketing/CommunicationsLogPage.jsx` | Mark read · Archive |
+| 5 | Email + SMS templates | `pages/comms/CommsPages.jsx::CommsTemplatesLibrary` | Change category · Delete (with live-drip locked pill) |
+
+Testids match the shared toolkit contract (`bulk-select-all`,
+`bulk-select-row-{id}`, `bulk-action-bar`, `bulk-delete-button`,
+`bulk-archive-button`, `bulk-mark-read-button`, etc.). Jest suite
+still green (66/66).
+
+**Do not re-execute this brief.** The reference below is retained
+only for the mobile companion agents and for any future 7th/8th
+surface that adopts the same pattern.
+
+---
+
+## Original brief (reference only — DO NOT re-run)
+
 > Web-side follow-up. Backend endpoints for all 6 surfaces are fully
 > shipped, tested (25 pytests), and role-gated. The shared React
 > toolkit is ready at

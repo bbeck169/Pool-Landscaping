@@ -9457,3 +9457,28 @@ needed.
   media_gen, Phase 25, or `/app/mobile/`.
 - Mobile piece delegated (not implemented in `/app/mobile/`).
 - Guardrail Option A honored — no external repo clone attempted.
+
+---
+
+## Task LL Phase 2 UI wrap-up — shipped Feb 2026
+
+Wired the shared `BulkSelectToolkit` into all 5 admin list surfaces
+using the exact test-id contract enforced by
+`/app/frontend/src/test/phase34-bulk-select-shared.test.jsx` (66/66
+still green).
+
+| # | Surface | File | Bulk actions |
+|---|---------|------|--------------|
+| 1 | Customers | `pages/customers/CustomersList.jsx` | Reassign owner · Delete (with locked-invoice pill) |
+| 2 | Jobs (admin) | `pages/jobs/JobsList.jsx` (new · `/admin/jobs`) | Change status · Delete (with active-timer + completed-with-invoice locks) |
+| 3 | Tasks | `pages/aiops/AiOpsPages.jsx::TasksPage` | Change status · Delete |
+| 4 | Communications log | `pages/marketing/CommunicationsLogPage.jsx` | Mark read · Archive (NO delete per spec) |
+| 5 | Email + SMS templates | `pages/comms/CommsPages.jsx::CommsTemplatesLibrary` | Change category · Delete (with live-drip lock) |
+
+Live preview verified via Playwright at
+`https://poolscape-audit.preview.emergentagent.com` — all 5 pages
+render the `bulk-select-all` header, populate the floating
+`bulk-action-bar` on selection, and expose the toolkit's testids
+(`bulk-delete-button`, `bulk-owner-button`, `bulk-status-button`,
+`bulk-archive-button`, `bulk-mark-read-button`, `bulk-category-button`,
+`bulk-clear-selection`).

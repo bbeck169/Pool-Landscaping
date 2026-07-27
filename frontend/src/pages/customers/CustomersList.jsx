@@ -15,6 +15,7 @@ import {
   UserX,
   Star,
 } from "lucide-react";
+import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Gate, usePermissions } from "@/hooks/usePermissions";
@@ -29,6 +30,11 @@ import {
   TextInput,
   Toast,
 } from "@/components/ui-kit";
+import {
+  BulkActionBar,
+  BulkConfirmModal,
+  LockedPill,
+} from "@/components/bulk-select/BulkSelectToolkit";
 
 const TAG_PRESETS = ["VIP", "Specialty"];
 
@@ -168,6 +174,12 @@ export default function CustomersList() {
     setSelected(next);
   };
 
+  // Phase 34 · Task LL Phase 2 UI wrap-up · Feb 2026 — bulk-delete via
+  // the new /customers/bulk-delete endpoint + locked-state pill.
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [lockedFailures, setLockedFailures] = useState({});
+
   const bulk = async (action, extra = {}) => {
     if (!selected.size) return;
     try {
@@ -186,6 +198,49 @@ export default function CustomersList() {
     } catch (e) {
       setToast({ tone: "error", message: e.message });
     }
+  };
+
+  const doBulkDelete = async () => {
+    setBulkBusy(true);
+    try {
+      const res = await api.post("/customers/bulk-delete", {
+        ids: Array.from(selected),
+      });
+      const okC = res.deleted_count || 0;
+      const failed = res.failed || [];
+      if (failed.length) {
+        const map = {};
+        failed.forEach((f) => { map[f.id] = f.reason; });
+        setLockedFailures(map);
+        setTimeout(() => setLockedFailures({}), 10000);
+      }
+      // Optimistic — hide the deleted rows locally.
+      setRows((prev) => (prev || []).filter((r) => !(res.deleted || []).includes(r.id)));
+      setSelected(new Set());
+      setConfirmDeleteOpen(false);
+      if (failed.length === 0) {
+        sonnerToast.success(`${okC} customer${okC === 1 ? "" : "s"} deleted`);
+      } else {
+        sonnerToast(`${okC} deleted · ${failed.length} locked`, {
+          description: failed.slice(0, 3).map((f) => f.reason).join(" · "),
+        });
+      }
+      loadCounts();
+    } catch (e) {
+      sonnerToast.error(e?.message || "Bulk delete failed");
+    } finally { setBulkBusy(false); }
+  };
+
+  const doBulkOwner = async (nextOwnerId) => {
+    try {
+      const res = await api.post("/customers/bulk-update", {
+        ids: Array.from(selected),
+        patch: { assigned_owner_id: nextOwnerId },
+      });
+      sonnerToast.success(`${res.updated_count || 0} customer${(res.updated_count || 0) === 1 ? "" : "s"} reassigned`);
+      setSelected(new Set());
+      load();
+    } catch (e) { sonnerToast.error(e?.message || "Reassign failed"); }
   };
 
   const doExport = async () => {
@@ -438,11 +493,6 @@ export default function CustomersList() {
           <Button variant="ghost" onClick={() => bulk("remove_waitlist")}>
             Remove from waitlist
           </Button>
-          <Gate perm="Customers" action="write">
-            <Button variant="danger" onClick={() => bulk("delete")} testid="bulk-delete">
-              <Trash2 size={14} /> Delete
-            </Button>
-          </Gate>
         </div>
       ) : null}
 
@@ -470,11 +520,18 @@ export default function CustomersList() {
                 <th className="text-left px-3 py-2 w-8">
                   <input
                     type="checkbox"
+                    checked={filtered.length > 0 && filtered.every((r) => selected.has(r.id))}
+                    ref={(el) => {
+                      if (el) el.indeterminate = filtered.some((r) => selected.has(r.id))
+                        && !filtered.every((r) => selected.has(r.id));
+                    }}
                     onChange={(e) => {
                       if (e.target.checked) setSelected(new Set(filtered.map((r) => r.id)));
                       else setSelected(new Set());
                     }}
-                    data-testid="select-all"
+                    aria-label="Select all customers on this page"
+                    data-testid="bulk-select-all"
+                    className="cursor-pointer"
                   />
                 </th>
                 <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>
@@ -506,7 +563,9 @@ export default function CustomersList() {
                       type="checkbox"
                       checked={selected.has(c.id)}
                       onChange={() => toggle(c.id)}
-                      data-testid={`customer-select-${c.id}`}
+                      aria-label={`Select customer ${c.name}`}
+                      data-testid={`bulk-select-row-${c.id}`}
+                      className="cursor-pointer"
                     />
                   </td>
                   <td className="px-3 py-3">
@@ -527,6 +586,10 @@ export default function CustomersList() {
                       <span className="font-semibold" style={{ color: colors.onSurface }}>
                         {c.name}
                       </span>
+                      {lockedFailures[c.id] ? (
+                        <LockedPill reason={lockedFailures[c.id]}
+                                     testid={`bulk-locked-pill-${c.id}`} />
+                      ) : null}
                       {c.is_vip ? (
                         <span
                           className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider"
@@ -667,6 +730,33 @@ export default function CustomersList() {
       </Modal>
 
       <Toast toast={toast} onClose={() => setToast(null)} />
+
+      {/* Phase 34 · Task LL Phase 2 UI wrap-up · Feb 2026 — shared
+          bulk-action bar (delete + reassign owner). The legacy
+          add/remove tag + waitlist toolbar above is retained until
+          the /customers/bulk endpoint is fully deprecated. */}
+      <BulkActionBar
+        selectedCount={selected.size}
+        onClear={() => setSelected(new Set())}
+        actions={[
+          ...(isAdmin ? [{
+            key: "owner", label: "Reassign owner",
+            dropdown: [{ value: "", label: "Unassigned" }],
+            onClick: (v) => doBulkOwner(v || null),
+          }] : []),
+          { key: "delete", label: "Delete selected", tone: "danger",
+            onClick: () => setConfirmDeleteOpen(true) },
+        ]}
+      />
+      <BulkConfirmModal
+        open={confirmDeleteOpen}
+        onClose={() => setConfirmDeleteOpen(false)}
+        onConfirm={doBulkDelete}
+        title={`Delete ${selected.size} customer${selected.size === 1 ? "" : "s"}?`}
+        description="Customers with active invoices will show as locked and be skipped."
+        confirmLabel={bulkBusy ? "Deleting…" : `Delete ${selected.size}`}
+        busy={bulkBusy}
+      />
     </div>
   );
 }

@@ -26,6 +26,7 @@ import {
   Film, ShoppingBag, Layers, ChevronUp, ChevronDown, Play, Search,
   X as XIcon,
 } from "lucide-react";
+import { toast as sonnerToast } from "sonner";
 import { colors } from "@/theme";
 import { api } from "@/api";
 import {
@@ -41,6 +42,14 @@ import {
 } from "@/api/comms";
 import TokenPickerModal from "@/components/comms/TokenPickerModal";
 import SendStatusPill from "@/components/comms/SendStatusPill";
+import {
+  useBulkSelect,
+  BulkSelectAll,
+  BulkSelectRow,
+  BulkActionBar,
+  BulkConfirmModal,
+  LockedPill,
+} from "@/components/bulk-select/BulkSelectToolkit";
 
 // ═════════════════════════════════════════════════════════════════════
 // Shared bits
@@ -131,6 +140,9 @@ export function CommsTemplatesLibrary() {
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [lockedFailures, setLockedFailures] = useState({});
   const navigate = useNavigate();
 
   const reload = () => {
@@ -148,6 +160,46 @@ export function CommsTemplatesLibrary() {
     return rows.filter((r) =>
       (r.code || "").toLowerCase().includes(s) || (r.name || "").toLowerCase().includes(s));
   }, [rows, q]);
+
+  // Phase 34 · Task LL Phase 2 UI wrap-up · Feb 2026 — bulk-select.
+  const visibleIds = useMemo(() => filtered.map((r) => r.id || r.code), [filtered]);
+  const { selected, selectedCount, allVisibleSelected, indeterminate,
+             toggleAll, toggleOne, clear } = useBulkSelect(visibleIds);
+  const bulkEndpoint = tab === "email" ? "/email-templates" : "/sms-templates";
+  const applyFailures = (failed) => {
+    if (!failed?.length) return;
+    const map = {};
+    failed.forEach((f) => { map[f.id] = f.reason; });
+    setLockedFailures(map);
+    setTimeout(() => setLockedFailures({}), 10000);
+  };
+  const doBulkDelete = async () => {
+    setBusy(true);
+    try {
+      const res = await api.post(`${bulkEndpoint}/bulk-delete`, {
+        ids: Array.from(selected),
+      });
+      applyFailures(res.failed);
+      const okC = res.deleted_count || 0;
+      const failC = (res.failed || []).length;
+      if (failC === 0) sonnerToast.success(`${okC} template${okC === 1 ? "" : "s"} deleted`);
+      else sonnerToast(`${okC} deleted · ${failC} locked`, {
+        description: (res.failed || []).slice(0, 3).map((f) => f.reason).join(" · "),
+      });
+      clear(); setConfirmOpen(false); reload();
+    } catch (e) { sonnerToast.error(e?.message || "Bulk delete failed"); }
+    finally { setBusy(false); }
+  };
+  const doBulkCategory = async (nextCategory) => {
+    try {
+      const res = await api.post(`${bulkEndpoint}/bulk-update`, {
+        ids: Array.from(selected), patch: { category: nextCategory },
+      });
+      applyFailures(res.failed);
+      sonnerToast.success(`${res.updated_count || 0} → ${nextCategory}`);
+      clear(); reload();
+    } catch (e) { sonnerToast.error(e?.message || "Category update failed"); }
+  };
 
   const onDuplicate = async (code) => {
     try {
@@ -220,6 +272,11 @@ export function CommsTemplatesLibrary() {
           <table className="w-full text-sm">
             <thead>
               <tr style={{ background: colors.surfaceSecondary }}>
+                <th className="text-left px-3 py-2 w-8">
+                  <BulkSelectAll checked={allVisibleSelected}
+                                   indeterminate={indeterminate}
+                                   onChange={toggleAll} />
+                </th>
                 <th className="text-left px-4 py-2 font-semibold" style={{ color: colors.muted }}>Name</th>
                 <th className="text-left px-4 py-2 font-semibold" style={{ color: colors.muted }}>Code</th>
                 <th className="text-left px-4 py-2 font-semibold" style={{ color: colors.muted }}>Type</th>
@@ -228,10 +285,22 @@ export function CommsTemplatesLibrary() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => (
+              {filtered.map((r) => {
+                const rowId = r.id || r.code;
+                return (
                 <tr key={r.code} style={{ borderTop: `1px solid ${colors.border}` }}
                     data-testid={`comms-template-row-${r.code}`}>
-                  <td className="px-4 py-2.5 font-semibold" style={{ color: colors.onSurface }}>{r.name || r.code}</td>
+                  <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                    <BulkSelectRow id={rowId} checked={selected.has(rowId)}
+                                      onChange={() => toggleOne(rowId)} />
+                  </td>
+                  <td className="px-4 py-2.5 font-semibold" style={{ color: colors.onSurface }}>
+                    {r.name || r.code}
+                    {lockedFailures[rowId] ? (
+                      <LockedPill reason={lockedFailures[rowId]}
+                                    testid={`bulk-locked-pill-${rowId}`} />
+                    ) : null}
+                  </td>
                   <td className="px-4 py-2.5 font-mono text-xs" style={{ color: colors.muted }}>{r.code}</td>
                   <td className="px-4 py-2.5">
                     {r.is_system ? (
@@ -260,12 +329,36 @@ export function CommsTemplatesLibrary() {
                     ) : null}
                   </td>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
         </Card>
       )}
       <Toast toast={toast} onClose={() => setToast(null)} />
+      <BulkActionBar
+        selectedCount={selectedCount}
+        onClear={clear}
+        actions={[
+          { key: "category", label: "Change category",
+            dropdown: [
+              { value: "transactional", label: "Transactional" },
+              { value: "marketing", label: "Marketing" },
+              { value: "notification", label: "Notification" },
+            ],
+            onClick: (v) => doBulkCategory(v) },
+          { key: "delete", label: "Delete selected", tone: "danger",
+            onClick: () => setConfirmOpen(true) },
+        ]}
+      />
+      <BulkConfirmModal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={doBulkDelete}
+        title={`Delete ${selectedCount} template${selectedCount === 1 ? "" : "s"}?`}
+        description="Templates used by an active drip sequence will be locked and skipped — archive them from the drip instead."
+        confirmLabel={busy ? "Deleting…" : `Delete ${selectedCount}`}
+        busy={busy}
+      />
     </div>
   );
 }

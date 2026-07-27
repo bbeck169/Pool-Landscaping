@@ -23,11 +23,18 @@ import {
   Mail, MessageSquareText, Loader2, RefreshCw, Download,
   X, ChevronRight,
 } from "lucide-react";
+import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { useAuth } from "@/auth";
 import { Forbidden } from "@/hooks/usePermissions";
 import { Button } from "@/components/ui/button";
+import {
+  useBulkSelect,
+  BulkSelectAll,
+  BulkSelectRow,
+  BulkActionBar,
+} from "@/components/bulk-select/BulkSelectToolkit";
 import { Input } from "@/components/ui/input";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle,
@@ -151,6 +158,29 @@ export default function CommunicationsLogPage() {
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState(null);
+  // Phase 34 · Task LL Phase 2 UI wrap-up · Feb 2026 — comms bulk-select.
+  const visibleIds = useMemo(() => rows.map((r) => r.id), [rows]);
+  const {
+    selected: bulkSelected,
+    selectedCount, allVisibleSelected, indeterminate,
+    toggleAll, toggleOne, clear,
+  } = useBulkSelect(visibleIds);
+  const doBulkArchive = async () => {
+    try {
+      const res = await api.post("/communications/bulk-archive",
+                                    { ids: Array.from(bulkSelected) });
+      sonnerToast.success(`${res.archived_count || 0} archived`);
+      clear(); load();
+    } catch (e) { sonnerToast.error(e?.message || "Bulk archive failed"); }
+  };
+  const doBulkMarkRead = async () => {
+    try {
+      const res = await api.post("/communications/bulk-mark-read",
+                                    { ids: Array.from(bulkSelected) });
+      sonnerToast.success(`${res.updated_count || 0} marked read`);
+      clear(); load();
+    } catch (e) { sonnerToast.error(e?.message || "Mark-read failed"); }
+  };
 
   const params = useMemo(() => {
     const p = new URLSearchParams();
@@ -371,13 +401,18 @@ export default function CommunicationsLogPage() {
         data-testid="comm-log-table"
       >
         <div
-          className="grid grid-cols-[110px_36px_1fr_1fr_100px_36px] gap-2 px-3 py-2 text-[11px] font-bold uppercase"
+          className="grid grid-cols-[36px_110px_36px_1fr_1fr_100px_36px] gap-2 px-3 py-2 text-[11px] font-bold uppercase"
           style={{
             background: colors.surfaceSecondary,
             color: colors.muted,
             borderBottom: `1px solid ${colors.border}`,
           }}
         >
+          <div>
+            <BulkSelectAll checked={allVisibleSelected}
+                             indeterminate={indeterminate}
+                             onChange={toggleAll} />
+          </div>
           <div>Sent</div>
           <div>Ch</div>
           <div>Customer</div>
@@ -401,33 +436,39 @@ export default function CommunicationsLogPage() {
           </div>
         ) : (
           rows.map((r) => (
-            <button
+            <div
               key={r.id}
-              type="button"
-              onClick={() => setSelected(r)}
-              className="w-full grid grid-cols-[110px_36px_1fr_1fr_100px_36px] gap-2 px-3 py-2 text-left text-sm hover:bg-black/[0.02] transition-colors"
+              className="w-full grid grid-cols-[36px_110px_36px_1fr_1fr_100px_36px] gap-2 px-3 py-2 text-left text-sm hover:bg-black/[0.02] transition-colors"
               style={{
                 borderBottom: `1px solid ${colors.border}`,
-                cursor: "pointer",
                 background: colors.surface,
               }}
               data-testid={`comm-log-row-${r.id}`}
             >
-              <div className="text-xs" style={{ color: colors.muted }}
-                   title={r.created_at}>
+              <div onClick={(e) => e.stopPropagation()} className="flex items-center">
+                <BulkSelectRow id={r.id} checked={bulkSelected.has(r.id)}
+                                  onChange={() => toggleOne(r.id)} />
+              </div>
+              <button type="button" onClick={() => setSelected(r)}
+                      className="text-xs text-left" style={{ color: colors.muted, cursor: "pointer" }}
+                      title={r.created_at}>
                 {relTime(r.created_at)} ago
-              </div>
-              <div className="flex items-center"
-                   style={{ color: colors.brand }}>
+              </button>
+              <button type="button" onClick={() => setSelected(r)}
+                      className="flex items-center text-left"
+                      style={{ color: colors.brand, cursor: "pointer" }}>
                 {r.channel === "email" ? <Mail size={14} /> : <MessageSquareText size={14} />}
-              </div>
-              <div className="truncate" style={{ color: colors.onSurface }}>
+              </button>
+              <button type="button" onClick={() => setSelected(r)}
+                      className="truncate text-left"
+                      style={{ color: colors.onSurface, cursor: "pointer" }}>
                 {r.customer_name || <span style={{ color: colors.muted }}>—</span>}
                 <div className="text-[11px]" style={{ color: colors.muted }}>
                   {r.recipient_email || r.recipient_phone || ""}
                 </div>
-              </div>
-              <div className="truncate">
+              </button>
+              <button type="button" onClick={() => setSelected(r)}
+                      className="truncate text-left" style={{ cursor: "pointer" }}>
                 {r.subject ? (
                   <div style={{ color: colors.onSurface }}>{r.subject}</div>
                 ) : null}
@@ -435,19 +476,21 @@ export default function CommunicationsLogPage() {
                      style={{ color: colors.muted }}>
                   {r.body_preview}
                 </div>
-              </div>
-              <div>
+              </button>
+              <button type="button" onClick={() => setSelected(r)}
+                      className="text-left" style={{ cursor: "pointer" }}>
                 <StatusPill
                   status={r.status_derived}
                   channel={r.channel}
                   smsFinal={r.sms_status_final}
                 />
-              </div>
-              <div className="flex items-center justify-end"
-                   style={{ color: colors.muted }}>
+              </button>
+              <button type="button" onClick={() => setSelected(r)}
+                      className="flex items-center justify-end"
+                      style={{ color: colors.muted, cursor: "pointer" }}>
                 <ChevronRight size={14} />
-              </div>
-            </button>
+              </button>
+            </div>
           ))
         )}
 
@@ -586,6 +629,18 @@ export default function CommunicationsLogPage() {
           ) : null}
         </SheetContent>
       </Sheet>
+
+      {/* Phase 34 · Task LL Phase 2 UI wrap-up · Feb 2026 — comms bulk-action bar.
+          No delete (per spec) — archive + mark-read only. */}
+      <BulkActionBar
+        selectedCount={selectedCount}
+        onClear={clear}
+        actions={[
+          { key: "mark-read", label: "Mark read", onClick: doBulkMarkRead },
+          { key: "archive", label: "Archive selected", tone: "danger",
+            onClick: doBulkArchive },
+        ]}
+      />
     </div>
   );
 }
