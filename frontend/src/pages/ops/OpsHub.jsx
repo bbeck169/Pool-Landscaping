@@ -42,7 +42,23 @@ const SECTIONS = [
 export default function OpsHub() {
   const { user } = useAuth();
   const [params, setParams] = useSearchParams();
-  const tab = params.get("t") || "dispatch";
+  // Phase 22 · Feb 2026 — Menu Route fallback. When the caller lands
+  // on a dedicated path like ``/team`` or ``/crews`` without an
+  // explicit ``?t=…`` query, fall back to a tab derived from the
+  // pathname's first segment. Keeps external / bookmarked links honest
+  // and matches the sidebar semantics (``/team?t=team`` etc).
+  const pathTab = (() => {
+    const seg = (typeof window !== "undefined" && window.location.pathname
+                    ? window.location.pathname.split("/").filter(Boolean)[0]
+                    : "") || "";
+    const KNOWN = new Set([
+      "dispatch", "schedule", "routes", "workstream", "crews", "team",
+      "timesheets", "timeclock", "coverage", "maintenance",
+      "equipment", "pricebook", "loghistory", "timers", "avgtime",
+    ]);
+    return KNOWN.has(seg) ? seg : "";
+  })();
+  const tab = params.get("t") || pathTab || "dispatch";
   const setTab = (k) => { const s = new URLSearchParams(params); s.set("t", k); setParams(s, { replace: true }); };
 
   const isTech = user?.role === "technician";

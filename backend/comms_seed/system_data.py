@@ -93,6 +93,13 @@ def _visit_summary_blocks() -> list:
             "We've attached a full report — chemistry readings, work performed, and "
             "any recommendations — to your customer portal.</p>"
         ), "padding": "8px 24px"}),
+        # Phase 22 · Feb 2026 — Service Record Images. Renders a
+        # 200x200 thumbnail gallery when the visit has photos (and the
+        # service report has a public_uuid). Substitutes to empty
+        # string on visits without photos so the block collapses
+        # cleanly — no orphan "Photos" heading in that case.
+        _block("text", {"html": "{{SERVICE_RECORD_IMAGES}}",
+                          "padding": "0 24px"}),
         _block("button", {"label": "View report", "link_url": "{{company.portal_link}}",
                             "alignment": "left", "background_color": "#0f6ed1",
                             "text_color": "#ffffff", "border_radius": "6px",

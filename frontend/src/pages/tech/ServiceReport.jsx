@@ -11,6 +11,7 @@ import { colors, brandGradientCss } from "@/theme";
 import {
   Camera, X, Save, ShieldCheck, ChevronLeft, CheckSquare, Square,
   MapPin, Key, ClipboardCheck, FlaskConical, Beaker, Plus, Trash2, Timer,
+  Share2, Copy,
 } from "lucide-react";
 
 const AUTOSAVE_MS = 5000;
@@ -42,6 +43,9 @@ export default function ServiceReport() {
   const [saveState, setSaveState] = useState("idle"); // idle | saving | saved | error
   const [submitting, setSubmitting] = useState(false);
   const [postSubmitToast, setPostSubmitToast] = useState("");
+  // Phase 22 · Feb 2026 — Share-visit clipboard state. Populated once
+  // the report is submitted AND carries a ``public_uuid``.
+  const [shareToast, setShareToast] = useState("");
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
 
@@ -231,6 +235,37 @@ export default function ServiceReport() {
   const uncheckedCount = (report.checklist_items || []).filter((c) => !c.checked).length;
   const locked = !!report.submitted_at;
 
+  // Phase 22 · Feb 2026 — Share visit link. Builds the public portal
+  // URL and copies it to the OS clipboard. Only rendered when the
+  // report is submitted AND carries a ``public_uuid`` (backend guarantees
+  // both on submit — legacy reports get backfilled).
+  const publicUuid = report?.public_uuid;
+  const shareUrl = publicUuid
+    ? `${(typeof window !== "undefined" ? window.location.origin : (process.env.REACT_APP_BACKEND_URL || "")).replace(/\/$/, "")}/portal/service/${publicUuid}`
+    : "";
+  const copyShareLink = async () => {
+    if (!shareUrl) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else {
+        // Fallback for older browsers / non-secure contexts.
+        const ta = document.createElement("textarea");
+        ta.value = shareUrl;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); } finally { document.body.removeChild(ta); }
+      }
+      setShareToast("Link copied — you can text this to the customer.");
+      setTimeout(() => setShareToast(""), 3000);
+    } catch (e) {
+      setShareToast("Copy failed — long-press to copy manually.");
+      setTimeout(() => setShareToast(""), 3000);
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-6" data-testid="svc-report-page">
       {postSubmitToast && (
@@ -241,6 +276,16 @@ export default function ServiceReport() {
             ✓ Auto-invoiced
           </div>
           <div className="text-sm font-bold mt-1">{postSubmitToast}</div>
+        </div>
+      )}
+      {shareToast && (
+        <div className="fixed top-4 right-4 z-50 rounded-xl shadow-xl p-4 max-w-sm"
+             style={{ background: "#2563eb", color: "#fff", marginTop: postSubmitToast ? 96 : 0 }}
+             data-testid="svc-report-share-toast">
+          <div className="text-xs uppercase font-bold tracking-wider opacity-80">
+            ✓ Copied
+          </div>
+          <div className="text-sm font-bold mt-1">{shareToast}</div>
         </div>
       )}
       <button onClick={() => navigate(-1)} className="flex items-center gap-1 text-sm mb-3"
@@ -281,6 +326,16 @@ export default function ServiceReport() {
             {saveState === "error" && "Save failed — retrying"}
             {saveState === "idle" && (dirty ? "Unsaved changes" : "All changes saved")}
           </div>
+          {locked && publicUuid && (
+            <button onClick={copyShareLink}
+                    className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition"
+                    style={{ background: "rgba(255,255,255,0.15)",
+                             color: "#fff",
+                             border: "1px solid rgba(255,255,255,0.35)" }}
+                    data-testid="svc-report-share-visit">
+              <Share2 size={12} /> Share visit
+            </button>
+          )}
         </div>
       </div>
 

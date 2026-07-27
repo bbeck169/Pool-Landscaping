@@ -9381,3 +9381,79 @@ new DB index; frontend adds a new public route.
   BLOCKED awaiting user confirmation on the affected surface.
 - Mobile parity for schedule multi-select — delegate to
   `e1_expo_frontend_dev`.
+
+## Phase 22.b · Feb-2026 — Share visit + auto-inject SERVICE_RECORD_IMAGES + menu routes + dispatch check (SHIPPED)
+
+### 1. "Share visit" quick action (web)
+- `pages/tech/ServiceReport.jsx` — renders a pill button in the report
+  header when `submitted_at` AND `public_uuid` are set. Copies
+  `${origin}/portal/service/{public_uuid}` to clipboard via
+  `navigator.clipboard.writeText` (execCommand fallback for old
+  browsers). Shows a 3s blue toast: "Link copied — you can text this
+  to the customer."
+- data-testid: `svc-report-share-visit`, `svc-report-share-toast`.
+- Mobile delegation brief written at
+  `/app/memory/delegations/phase22_share_visit_mobile.md` for
+  `e1_expo_frontend_dev`. Same spec + same test IDs.
+
+### 2. Auto-add {{SERVICE_RECORD_IMAGES}} to default visit-summary email
+- `comms_seed/system_data.py::_visit_summary_blocks` — new text block
+  containing `{{SERVICE_RECORD_IMAGES}}` inserted between the intro
+  paragraph and the "View report" CTA. Empty-string when no photos,
+  so the layout collapses cleanly.
+- Seed helper `_upsert_email_template` filters on
+  `tenant_id: None, is_system: True` — tenant clones stay untouched.
+- Seed runs idempotently on every backend startup.
+
+### 3. Menu route updates
+- `nav/adminNav.js` — link paths updated:
+  * Team `/team?t=team`
+  * Crews `/crews?t=crews`
+  * Timesheets `/timesheets?t=timesheets`
+  * Timeclock `/timesheets?t=timeclock` (was `/timeclock/today`)
+- `pages/ops/OpsHub.jsx` — added pathname-based tab fallback so
+  direct visits to `/team`, `/crews`, `/timesheets`, `/timeclock`
+  land on the correct tab even without `?t=…`.
+- Verified in preview — `/team` (no query) opens OpsHub with the
+  Team roster active.
+
+### 4. `/dispatch` page not loading — NOT REPRODUCED
+- Loaded `/dispatch` on preview as `super_admin` in browser
+  automation. Page renders correctly: Dispatch Board with Mon-Sun
+  tabs, Google Map, Tech Load strip, Unrouted Customers panel.
+- Onboarding modal ("Welcome to Pool & Landscaping") is displayed
+  by default on tenants that haven't dismissed it — may be what
+  the original report saw. Not a bug; expected onboarding flow.
+- Console logs show two 405 responses (endpoint likely to unrelated
+  wrong HTTP method somewhere) — logged for follow-up but not
+  blocking dispatch itself.
+
+### 5. Schedule multi-select — already shipped in a prior session
+- Verified `pages/schedule/CalendarSchedule.jsx` still contains
+  `selectedJobIds` state (line 232+) + `/jobs/bulk-soft-delete`
+  call at line 252 + confirm dialog at line 913. No re-work
+  needed.
+
+### Tests
+- `tests/test_visit_summary_merge_tag_seed.py` — 3 tests, all green.
+  Covers: source-of-truth carries merge tag; Mongo row carries it
+  after boot; tenant clones stay untouched.
+- `tests/test_service_record_images_merge_tag.py` — 12 tests (from
+  Phase 22a), still green.
+- **Backend total: 15 / 15 passing.**
+- Frontend vitest: `share-visit-button.test.jsx` — 3 tests, all
+  green. Covers: button hidden pre-submit, hidden without
+  public_uuid, clicks copy the correct portal URL + fire toast.
+- **Frontend total: 3 / 3 passing.**
+
+### Deployment
+Prod redeploy REQUIRED. Backend seed will upsert the merged
+visit-summary template body on next boot. No manual migration
+needed.
+
+### Guardrails honored
+- Additive only — no tenant customizations overwritten.
+- No touch to Phase A OAuth, Path B, WordPress activation, Phase B
+  media_gen, Phase 25, or `/app/mobile/`.
+- Mobile piece delegated (not implemented in `/app/mobile/`).
+- Guardrail Option A honored — no external repo clone attempted.
