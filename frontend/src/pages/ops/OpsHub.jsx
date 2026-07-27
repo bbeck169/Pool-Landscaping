@@ -1733,7 +1733,7 @@ function Equipment() {
 function PriceBook() {
   const [rows, refresh] = useList("/items");
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", category: "Pool", unit: "each", unit_price: 0 });
+  const [form, setForm] = useState({ name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0, tax_rate: 0 });
   const [toast, setToast] = useState(null);
   // Phase 34 · Task LL Phase 2 · Feb 2026 — Pricebook frontend polish.
   // Bulk-select state + inline row edit state.
@@ -1780,12 +1780,26 @@ function PriceBook() {
     });
   };
   const saveEdit = async (rowId) => {
+    // Phase 34 · Task LL follow-up · Feb 2026 — client-side validation
+    // mirrors the backend's PATCH /api/items/{iid} guards. Keeps error
+    // toast copy identical to the server so QA regressions surface
+    // the same message regardless of where the check fires.
+    const costN = Number(editDraft.cost);
+    const taxN = Number(editDraft.tax_rate);
+    if (Number.isNaN(costN) || costN < 0) {
+      setToast({ tone: "error", message: "Cost must be a number ≥ 0" });
+      return;
+    }
+    if (Number.isNaN(taxN) || taxN < 0 || taxN > 100) {
+      setToast({ tone: "error", message: "Tax rate must be between 0 and 100" });
+      return;
+    }
     try {
       await api.patch(`/items/${rowId}`, {
         ...editDraft,
         unit_price: Number(editDraft.unit_price) || 0,
-        cost: Number(editDraft.cost) || 0,
-        tax_rate: Number(editDraft.tax_rate) || 0,
+        cost: costN,
+        tax_rate: taxN,
       });
       setEditingId(null); setEditDraft({}); refresh();
       setToast({ tone: "success", message: "Item updated" });
@@ -1794,7 +1808,29 @@ function PriceBook() {
     }
   };
   const cancelEdit = () => { setEditingId(null); setEditDraft({}); };
-  const save = async () => { try { await api.post("/items", { ...form, unit_price: Number(form.unit_price) || 0 }); setOpen(false); refresh(); } catch (e) { setToast({ tone: "error", message: e.message }); } };
+  const save = async () => {
+    const costN = Number(form.cost);
+    const taxN = Number(form.tax_rate);
+    if (Number.isNaN(costN) || costN < 0) {
+      setToast({ tone: "error", message: "Cost must be a number ≥ 0" });
+      return;
+    }
+    if (Number.isNaN(taxN) || taxN < 0 || taxN > 100) {
+      setToast({ tone: "error", message: "Tax rate must be between 0 and 100" });
+      return;
+    }
+    try {
+      await api.post("/items", {
+        ...form,
+        unit_price: Number(form.unit_price) || 0,
+        cost: costN,
+        tax_rate: taxN,
+      });
+      setOpen(false);
+      setForm({ name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0, tax_rate: 0 });
+      refresh();
+    } catch (e) { setToast({ tone: "error", message: e.message }); }
+  };
   // BUG B fix (Feb-2026) — soft-delete a pricebook row with a
   // HEAVY (type "DELETE") confirmation.
   const delRow = async (row) => {
@@ -1855,10 +1891,26 @@ function PriceBook() {
                           onChange={(e) => setEditDraft({ ...editDraft, category: e.target.value })}
                           className="w-24 border px-2 py-1 text-sm rounded"
                           data-testid={`pb-edit-category-${r.id}`} />
-                 <input value={editDraft.unit_price} type="number" step="0.01"
+                 <input value={editDraft.unit_price} type="number" step="0.01" min="0"
                           onChange={(e) => setEditDraft({ ...editDraft, unit_price: e.target.value })}
+                          className="w-24 border pl-5 pr-2 py-1 text-sm rounded text-right"
+                          data-testid={`pb-edit-price-${r.id}`}
+                          aria-label="Unit price ($)"
+                          title="Unit price ($)" />
+                 <input value={editDraft.cost} type="number" step="0.01" min="0"
+                          onChange={(e) => setEditDraft({ ...editDraft, cost: e.target.value })}
+                          className="w-24 border pl-5 pr-2 py-1 text-sm rounded text-right"
+                          data-testid={`pb-edit-cost-${r.id}`}
+                          placeholder="cost"
+                          aria-label="Cost ($)"
+                          title="Cost ($)" />
+                 <input value={editDraft.tax_rate} type="number" step="0.01" min="0" max="100"
+                          onChange={(e) => setEditDraft({ ...editDraft, tax_rate: e.target.value })}
                           className="w-20 border px-2 py-1 text-sm rounded text-right"
-                          data-testid={`pb-edit-price-${r.id}`} />
+                          data-testid={`pb-edit-tax-${r.id}`}
+                          placeholder="tax %"
+                          aria-label="Tax rate (%)"
+                          title="Tax rate (%)" />
                  <button onClick={() => saveEdit(r.id)}
                           className="text-xs font-bold text-white px-2 py-1 rounded"
                           style={{ backgroundColor: "#16A34A" }}
@@ -1946,12 +1998,14 @@ function PriceBook() {
         </div>
       ) : null}
       <Modal open={open} onClose={() => setOpen(false)} title="New item"
-        footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save}>Save</Button></>}>
+        footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save} testid="pb-new-save">Save</Button></>}>
         <div className="space-y-2">
-          <TextInput label="NAME" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          <TextInput label="CATEGORY" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
-          <TextInput label="UNIT" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} />
-          <TextInput label="UNIT PRICE" type="number" step="0.01" value={form.unit_price} onChange={(e) => setForm({ ...form, unit_price: e.target.value })} />
+          <TextInput label="NAME" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} testid="pb-new-name" />
+          <TextInput label="CATEGORY" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} testid="pb-new-category" />
+          <TextInput label="UNIT" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} testid="pb-new-unit" />
+          <TextInput label="UNIT PRICE ($)" type="number" step="0.01" min="0" value={form.unit_price} onChange={(e) => setForm({ ...form, unit_price: e.target.value })} testid="pb-new-price" />
+          <TextInput label="COST ($)" type="number" step="0.01" min="0" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} testid="pb-new-cost" />
+          <TextInput label="TAX RATE (%)" type="number" step="0.01" min="0" max="100" value={form.tax_rate} onChange={(e) => setForm({ ...form, tax_rate: e.target.value })} testid="pb-new-tax" />
         </div>
       </Modal>
       <Toast toast={toast} onClose={() => setToast(null)} />

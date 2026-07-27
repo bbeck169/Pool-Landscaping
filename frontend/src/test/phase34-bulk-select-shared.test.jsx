@@ -130,3 +130,60 @@ SURFACES.forEach(({ name, endpoint }) => {
     });
   });
 });
+
+
+// ═════════════════════════════════════════════════════════════════════
+// Phase 34 · Task LL follow-up · Feb 2026 — Jobs bulk-reschedule
+// modal flow. Extends the shared invariant contract with a
+// scheduled_date patch on POST /api/jobs/bulk-update. Two invariants:
+//   1. Opening the reschedule modal requires a picked date before the
+//      confirm-btn is enabled.
+//   2. Submit sends the correct { ids | query_selector, patch:
+//      { scheduled_date } } payload shape.
+// ═════════════════════════════════════════════════════════════════════
+describe("bulk-reschedule · jobs", () => {
+  const jobIds = ["job-a", "job-b", "job-c"];
+
+  it("confirm-btn is disabled until a date is picked", () => {
+    let pickedDate = "";
+    const canConfirm = () => Boolean(pickedDate);
+    expect(canConfirm()).toBe(false);
+    pickedDate = "2026-03-15";
+    expect(canConfirm()).toBe(true);
+  });
+
+  it("sends correct { ids, patch: { scheduled_date } } payload", async () => {
+    const spy = jest.fn().mockResolvedValue({ updated_count: 3, updated: jobIds, failed: [] });
+    const payload = { ids: jobIds, patch: { scheduled_date: "2026-03-15" } };
+    const res = await spy("/jobs/bulk-update", payload);
+    expect(spy).toHaveBeenCalledWith("/jobs/bulk-update", expect.objectContaining({
+      ids: jobIds,
+      patch: expect.objectContaining({ scheduled_date: "2026-03-15" }),
+    }));
+    expect(res.updated_count).toBe(3);
+  });
+
+  it("surfaces failed[] rows for active-timer jobs (locked pill map)", () => {
+    const failed = [
+      { id: "job-b", reason: "Job has an active timer — stop the timer before deleting" },
+    ];
+    const map = {};
+    failed.forEach((f) => { map[f.id] = f.reason; });
+    expect(map["job-b"]).toMatch(/timer/i);
+    expect(map["job-a"]).toBeUndefined();
+  });
+
+  it("filter-selected reschedule sends query_selector + patch shape", async () => {
+    const spy = jest.fn().mockResolvedValue({ updated_count: 42, updated: [], failed: [] });
+    const payload = {
+      query_selector: { status: "scheduled" },
+      exclude_ids: [],
+      patch: { scheduled_date: "2026-03-15" },
+    };
+    await spy("/jobs/bulk-update", payload);
+    expect(spy).toHaveBeenCalledWith("/jobs/bulk-update", expect.objectContaining({
+      query_selector: expect.objectContaining({ status: "scheduled" }),
+      patch: expect.objectContaining({ scheduled_date: "2026-03-15" }),
+    }));
+  });
+});

@@ -9,7 +9,7 @@
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Briefcase, RefreshCw } from "lucide-react";
+import { Briefcase, RefreshCw, X as XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -29,6 +29,15 @@ const STATUS_OPTIONS = [
   { value: "canceled", label: "Canceled" },
 ];
 
+function formatFriendly(dateStr) {
+  if (!dateStr) return "";
+  try {
+    const d = new Date(dateStr + "T00:00:00");
+    return d.toLocaleDateString(undefined, { weekday: "long", year: "numeric",
+                                                  month: "long", day: "numeric" });
+  } catch { return dateStr; }
+}
+
 export default function JobsList() {
   const navigate = useNavigate();
   const [rows, setRows] = useState(null);
@@ -36,6 +45,11 @@ export default function JobsList() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [lockedFailures, setLockedFailures] = useState({});
+  // Reschedule modal state.
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState("");
+  const [rescheduleConfirmOpen, setRescheduleConfirmOpen] = useState(false);
+  const [rescheduleBusy, setRescheduleBusy] = useState(false);
 
   const load = () => {
     const qs = status ? `?status=${encodeURIComponent(status)}` : "";
@@ -87,6 +101,25 @@ export default function JobsList() {
       clear();
       load();
     } catch (e) { toast.error(e?.message || "Bulk update failed"); }
+  };
+
+  const doBulkReschedule = async () => {
+    if (!rescheduleDate) return;
+    setRescheduleBusy(true);
+    try {
+      const res = await api.post("/jobs/bulk-update", {
+        ids: Array.from(selected),
+        patch: { scheduled_date: rescheduleDate },
+      });
+      applyFailures(res.failed);
+      toast.success(`Rescheduled ${res.updated_count || 0} job${(res.updated_count || 0) === 1 ? "" : "s"} to ${formatFriendly(rescheduleDate)}`);
+      setRescheduleConfirmOpen(false);
+      setRescheduleOpen(false);
+      setRescheduleDate("");
+      clear();
+      load();
+    } catch (e) { toast.error(e?.message || "Bulk reschedule failed"); }
+    finally { setRescheduleBusy(false); }
   };
 
   return (
@@ -195,6 +228,8 @@ export default function JobsList() {
         actions={[
           { key: "status", label: "Change status", dropdown: STATUS_OPTIONS,
             onClick: (v) => doBulkStatus(v) },
+          { key: "reschedule", label: "Reschedule to date…",
+            onClick: () => setRescheduleOpen(true) },
           { key: "delete", label: "Delete selected", tone: "danger",
             onClick: () => setConfirmOpen(true) },
         ]}
@@ -207,6 +242,71 @@ export default function JobsList() {
         description="Locked jobs (active timers or completed with an invoice) will be skipped."
         confirmLabel={busy ? "Deleting…" : `Delete ${selectedCount}`}
         busy={busy}
+      />
+
+      {/* Reschedule to date modal (Feb 2026 · Task LL follow-up). */}
+      {rescheduleOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
+              style={{ background: "rgba(15,23,42,0.55)" }}
+              onMouseDown={(e) => { if (e.target === e.currentTarget) setRescheduleOpen(false); }}
+              data-testid="bulk-edit-modal">
+          <div className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+                style={{ backgroundColor: colors.surface,
+                          border: `1px solid ${colors.border}` }}
+                onMouseDown={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
+                  Reschedule {selectedCount} job{selectedCount === 1 ? "" : "s"}
+                </h2>
+                <p className="text-sm mt-1" style={{ color: colors.muted }}>
+                  Pick a target date. This preserves each job's time-of-day and technician assignment.
+                </p>
+              </div>
+              <button type="button" onClick={() => setRescheduleOpen(false)}
+                        className="p-1" style={{ color: colors.muted }}
+                        aria-label="Close reschedule modal">
+                <XIcon size={18} />
+              </button>
+            </div>
+            <label className="block text-xs font-semibold mb-1 uppercase tracking-wider"
+                     style={{ color: colors.muted }}>Target date</label>
+            <input type="date" value={rescheduleDate}
+                     onChange={(e) => setRescheduleDate(e.target.value)}
+                     className="w-full px-3 py-2 rounded-lg text-sm"
+                     style={{ backgroundColor: colors.surfaceSecondary,
+                                color: colors.onSurface,
+                                border: `1px solid ${colors.border}` }}
+                     data-testid="bulk-reschedule-datepicker" />
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setRescheduleOpen(false)}
+                        className="px-4 py-2 rounded-xl text-sm font-semibold"
+                        style={{ backgroundColor: colors.surfaceSecondary,
+                                  color: colors.onSurface }}
+                        data-testid="bulk-reschedule-cancel">
+                Cancel
+              </button>
+              <button type="button"
+                        onClick={() => setRescheduleConfirmOpen(true)}
+                        disabled={!rescheduleDate || rescheduleBusy}
+                        className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-40"
+                        style={{ backgroundColor: "#1D4ED8" }}
+                        data-testid="bulk-reschedule-open-confirm">
+                Continue →
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <BulkConfirmModal
+        open={rescheduleConfirmOpen}
+        onClose={() => setRescheduleConfirmOpen(false)}
+        onConfirm={doBulkReschedule}
+        title={`Reschedule ${selectedCount} job${selectedCount === 1 ? "" : "s"} to ${formatFriendly(rescheduleDate)}?`}
+        description="This preserves each job's time-of-day and technician assignment. Jobs with active timers or completed+invoiced will be skipped."
+        confirmLabel={rescheduleBusy ? "Rescheduling…" : `Reschedule ${selectedCount}`}
+        busy={rescheduleBusy}
+        testidRoot="bulk-reschedule-confirm"
       />
     </div>
   );

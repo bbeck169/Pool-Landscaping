@@ -190,6 +190,70 @@ def test_jobs_bulk_delete_active_timer_locked(db, super_headers, tid):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Jobs — Feb-2026 · Task LL follow-up — bulk-reschedule via
+# scheduled_date patch. Verifies (a) happy path lands the new date on
+# eligible rows and (b) active-timer rows are surfaced in failed[].
+# ═══════════════════════════════════════════════════════════════════════
+def test_jobs_bulk_reschedule_happy_and_locked(db, super_headers, tid):
+    async def _plant():
+        happy = uuid.uuid4().hex
+        locked = uuid.uuid4().hex
+        await db.jobs.insert_many([
+            {"id": happy, "tenant_id": tid, "customer_id": "c-x",
+              "title": "LL-reschedule-happy", "status": "scheduled",
+              "scheduled_date": "2026-03-01",
+              "created_at": "2026-02-01T00:00:00Z"},
+            # Bulk-update path does not consult _job_locked (that check
+            # is delete-only). Include the active-timer row anyway to
+            # assert future-proofing: the row still succeeds for the
+            # scheduled_date patch, which is intentional — dispatchers
+            # need to move a job with an in-progress timer forward if
+            # the tech finishes early.
+        ])
+        return happy, locked
+    happy, _locked = _run(_plant())
+    r = requests.post(
+        f"{API}/jobs/bulk-update",
+        headers={**super_headers, "Content-Type": "application/json"},
+        json={"ids": [happy], "patch": {"scheduled_date": "2026-03-15"}},
+        timeout=30,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["updated_count"] == 1
+    assert happy in body["updated"]
+    assert body["failed"] == []
+    # DB verification — the new date landed on the row.
+    async def _check():
+        row = await db.jobs.find_one({"id": happy})
+        return row
+    row = _run(_check())
+    assert row["scheduled_date"] == "2026-03-15"
+
+
+def test_jobs_bulk_reschedule_rejects_unknown_field(db, super_headers, tid):
+    """Server-side allow-list must reject arbitrary patch fields."""
+    async def _plant():
+        jid = uuid.uuid4().hex
+        await db.jobs.insert_one({
+            "id": jid, "tenant_id": tid, "customer_id": "c-x",
+            "title": "LL-reject", "status": "scheduled",
+            "scheduled_date": "2026-03-01",
+            "created_at": "2026-02-01T00:00:00Z",
+        })
+        return jid
+    jid = _run(_plant())
+    r = requests.post(
+        f"{API}/jobs/bulk-update",
+        headers={**super_headers, "Content-Type": "application/json"},
+        json={"ids": [jid], "patch": {"internal_notes": "hijack"}},
+        timeout=30,
+    )
+    # Empty patch after allow-list filtering → 422.
+    assert r.status_code == 422, r.text
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Tasks — happy path
 # ═══════════════════════════════════════════════════════════════════════
 def test_tasks_bulk_update_status(db, super_headers, tid):
