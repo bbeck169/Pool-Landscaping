@@ -58,8 +58,11 @@ export default function Login() {
           </Text>
         </View>
         <View style={styles.heroBottom}>
-          <Text style={styles.heroTitle}>Run your pool & landscape crew like clockwork.</Text>
-          <Text style={styles.heroSub}>Schedule jobs, dispatch technicians, send quotes, and collect payments — all in one control room.</Text>
+          {/* Phase 31 · Feb 2026 — marketing tagline removed. The
+              two-line brand header at the top carries the entire
+              top-of-screen message now. ``heroBottom`` is kept as an
+              empty flex row so the hero column's ``space-between``
+              layout still pushes the brand header to the top. */}
         </View>
       </View>
 
@@ -70,7 +73,16 @@ export default function Login() {
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.eyebrow}>WELCOME BACK</Text>
-        <Text style={styles.heading}>Sign in to your console</Text>
+        {/* Phase 31 · Feb 2026 — heading font size halved from the
+            theme's ``fontSize["2xl"]`` (24pt) to 12pt inline. Same
+            treatment as the Line-2 brand tweak: keep the shared style
+            for family/color/weight/spacing but override just the size
+            so downstream refactors of ``styles.heading`` don't
+            undo this. */}
+        <Text style={[styles.heading, { fontSize: 12 }]}
+              testID="login-heading">
+          Sign in to your console
+        </Text>
 
         <Text style={styles.label}>EMAIL</Text>
         <View style={styles.inputRow}>
