@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from config import db
 from utils import require_admin
@@ -223,6 +223,48 @@ async def _time_entry_locked(row: dict) -> Optional[str]:
     if row.get("payroll_run_id") and row.get("payroll_paid_at"):
         return "Time entry is on a paid payroll run — archive instead"
     return None
+
+
+@router.get("/time-entries", operation_id="timeEntries.list")
+async def list_time_entries(
+    is_approved: Optional[bool] = Query(None),
+    user_id: Optional[str] = Query(None),
+    assigned_job_id: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    include_deleted: bool = Query(False),
+    limit: int = Query(500, ge=1, le=2000),
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Task NN follow-up · Feb 2026 — canonical admin list endpoint
+    aligned with the bulk-delete + bulk-update namespace on
+    ``/time-entries``. Tenant-scoped, admin-gated. Soft-delete filter
+    on by default; super_admin can opt-in via ``?include_deleted=1``.
+
+    NOTE: this is intentionally simpler than ``/workforce/timesheets``
+    (no overtime computation, no daily grouping) — that endpoint
+    remains the source of truth for payroll UX. This one exists so
+    the admin bulk list can operate on the same collection the bulk
+    endpoints target with Task-EE `{query_selector}` parity.
+    """
+    q: dict = {"tenant_id": tenant["id"]}
+    if not include_deleted or user.get("role") != "super_admin":
+        q["$or"] = [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]
+    if is_approved is not None:
+        q["is_approved"] = is_approved
+    if user_id:
+        q["user_id"] = user_id
+    if assigned_job_id:
+        q["assigned_job_id"] = assigned_job_id
+    if search:
+        q["$and"] = q.get("$and", []) + [{"$or": [
+            {"user_name": {"$regex": search, "$options": "i"}},
+            {"assigned_job_id": {"$regex": search, "$options": "i"}},
+        ]}]
+    rows = await db.time_entries.find(
+        q, {"_id": 0},
+    ).sort("date", -1).to_list(length=limit)
+    return rows
 
 
 @router.post("/time-entries/bulk-delete",

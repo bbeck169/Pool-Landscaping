@@ -783,7 +783,10 @@ async def _perform_delete_payment(pid: str, user: dict, tenant: dict) -> dict:
         {"id": pid, "tenant_id": tenant["id"]},
         {"_id": 0, "id": 1, "payment_status": 1, "amount_paid": 1,
          "payment_intent_id": 1, "payment_method": 1,
-         "payment_deleted_at": 1},
+         "payment_deleted_at": 1,
+         # Task QQ · Feb 2026 — Lumino counterparts (dual-run window).
+         "lumino_transaction_id": 1, "lumino_payment_session_id": 1,
+         "lumino_subscription_id": 1},
     )
     if not doc:
         raise HTTPException(404, "Payment not found")
@@ -792,6 +795,13 @@ async def _perform_delete_payment(pid: str, user: dict, tenant: dict) -> dict:
     if doc.get("payment_intent_id"):
         raise HTTPException(
             409, "Payment is linked to a cleared Stripe charge — reverse via Stripe dashboard",
+        )
+    # Task QQ locked-state — Lumino equivalents on the same row.
+    if (doc.get("lumino_transaction_id")
+            or doc.get("lumino_payment_session_id")
+            or doc.get("lumino_subscription_id")):
+        raise HTTPException(
+            409, "Payment is linked to a Lumino transaction — reverse via the Lumino dashboard",
         )
     method = (doc.get("payment_method") or "").lower()
     if method in _STRIPE_LOCKED_METHODS and (doc.get("payment_status") or "").lower() == "paid":

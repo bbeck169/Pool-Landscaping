@@ -191,6 +191,8 @@ from routers import bulk_crm_p1 as _p34_bulk_crm_p1  # noqa: E402
 api_router.include_router(_p34_bulk_crm_p1.router)
 from routers import reflow_history as _p34_reflow_history  # noqa: E402
 api_router.include_router(_p34_reflow_history.router)
+from routers import lumino_webhook as _qq_lumino_webhook  # noqa: E402
+api_router.include_router(_qq_lumino_webhook.router)
 # Phase 32 · Feb 2026 — Mobile offline sync backend (batch op replay
 # + offline-bundle prefetch). Idempotent per ``client_op_id``;
 # conflicts resolve mobile-wins with an audit-logged snapshot.

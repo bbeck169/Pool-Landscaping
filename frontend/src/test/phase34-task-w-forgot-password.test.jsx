@@ -10,30 +10,43 @@
  *   - after submit, a neutral confirmation renders
  *     (`data-testid="forgot-password-confirmation"`) with "if an
  *     account exists…" copy so the endpoint remains enum-safe.
+ *
+ * Feb 2026 update — converted from vitest ➔ Jest so it runs under
+ * the same runner as the rest of the phase34 suite (was blocking
+ * `yarn test` exit-code 0 with a SyntaxError on the vitest import).
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import "@testing-library/jest-dom";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+
+// react-router-dom v7 ships ESM and Jest can't resolve it under CJS
+// transform without extra config — mock the two hooks the page uses.
+jest.mock("react-router-dom", () => ({
+  useNavigate: () => jest.fn(),
+  Link: ({ children, ...rest }) => {
+    const React = require("react");
+    return React.createElement("a", rest, children);
+  },
+}), { virtual: true });
 
 // api.post is mocked so the test never hits the network — we only
 // care about the surface behaviour.
-vi.mock("@/api", () => ({
-  api: { post: vi.fn().mockResolvedValue({ ok: true }) },
+jest.mock("@/api", () => ({
+  api: { post: jest.fn().mockResolvedValue({ ok: true }) },
 }));
 
+// eslint-disable-next-line import/first
 import ForgotPassword from "@/pages/ForgotPassword";
+// eslint-disable-next-line import/first
 import { api } from "@/api";
 
-const renderPage = () =>
-  render(
-    <MemoryRouter>
-      <ForgotPassword />
-    </MemoryRouter>
-  );
+const renderPage = () => render(<ForgotPassword />);
 
 describe("/forgot-password — real form (Task O)", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    jest.clearAllMocks();
+    // Re-arm the default resolved mock after clearAllMocks wiped
+    // the mockResolvedValue configured at module top.
+    api.post.mockResolvedValue({ ok: true });
   });
 
   it("renders the real email input + submit button (no honest-stub copy)", () => {
