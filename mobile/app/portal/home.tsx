@@ -13,6 +13,24 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, money, IMAGES } from "@/src/theme";
 import { Loading, StatusChip } from "@/src/components/ui";
 import { Header, NotificationBell } from "@/src/components/widgets";
+import Tour, { TourStep } from "@/src/components/Tour";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+const TOUR_KEY = "portal_tour_v2_done";
+const TOUR_STEPS: TourStep[] = [
+  { targetTestID: "portal-cta-call", title: "Call Us Anytime", body: "Tap here to instantly dial our office.", icon: "call" },
+  { targetTestID: "portal-request-service-btn", title: "Request a Service", body: "Need a repair or one-off visit? Tell us here.", icon: "add-circle-outline" },
+  { targetTestID: "portal-hero", title: "Your Dashboard", body: "Balance due, upcoming & completed jobs at a glance.", icon: "stats-chart-outline" },
+  { targetTestID: "portal-card-services", title: "Service Records", body: "View all past and upcoming service visits.", icon: "clipboard-outline" },
+  { targetTestID: "portal-card-photos", title: "Service Photos", body: "Browse photos taken during each visit.", icon: "images-outline" },
+  { targetTestID: "portal-card-invoices", title: "Invoices & Billing", body: "View, pay, and download invoices.", icon: "receipt-outline" },
+  { targetTestID: "portal-card-paymethod", title: "Payment Methods", body: "Manage your saved payment methods.", icon: "wallet-outline" },
+  { targetTestID: "portal-card-messages", title: "AI Chat", body: "Ask questions and get instant answers.", icon: "chatbubble-outline" },
+  { targetTestID: "portal-ai-section", title: "Concierge Service", body: "Our AI concierges are ready to help 24/7.", icon: "sparkles" },
+  { targetTestID: "portal-referral-section", title: "Refer a Friend", body: "Earn $55 credit for every friend who signs up.", icon: "gift" },
+  { targetTestID: "portal-card-profile", title: "Your Profile", body: "View and manage your account details.", icon: "person-outline" },
+  { targetTestID: "portal-card-business", title: "Business Card", body: "Share our contact info or scan the QR code.", icon: "id-card-outline" },
+];
 
 const SCREEN_W = Dimensions.get("window").width;
 const IS_NARROW = SCREEN_W < 480;
@@ -41,6 +59,7 @@ export default function PortalHome() {
   const [refreshing, setRefreshing] = useState(false);
   const [aiEmployees, setAiEmployees] = useState<any[]>([]);
   const [tenantPhone, setTenantPhone] = useState("(602) 887-4400");
+  const [showTour, setShowTour] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -52,6 +71,10 @@ export default function PortalHome() {
       setData(dashboard);
       setAiEmployees(aiRes?.employees || aiRes || []);
       if (cfg?.tenant_phone) setTenantPhone(cfg.tenant_phone);
+
+      // Check if tour has been shown
+      const tourDone = await AsyncStorage.getItem(TOUR_KEY).catch(() => null);
+      if (!tourDone) setShowTour(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -233,7 +256,7 @@ export default function PortalHome() {
             <Ionicons name="gift" size={28} color="#fff" />
             <Text style={s.referralTitle}>Refer a Friend — earn $55 credit</Text>
             <Text style={s.referralBody}>
-              You'll get $55 in credit after their first paid month.
+              You&apos;ll get $55 in credit after their first paid month.
             </Text>
             <Pressable
               style={s.referralBtn}
@@ -261,6 +284,15 @@ export default function PortalHome() {
           </Pressable>
         </ScrollView>
       )}
+
+      <Tour
+        steps={TOUR_STEPS}
+        visible={showTour}
+        onFinish={() => {
+          setShowTour(false);
+          AsyncStorage.setItem(TOUR_KEY, "1").catch(() => {});
+        }}
+      />
     </View>
   );
 }

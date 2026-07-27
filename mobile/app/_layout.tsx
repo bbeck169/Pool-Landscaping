@@ -12,6 +12,7 @@ import { AuthProvider } from "@/src/auth";
 import { ImpersonationBanner } from "@/src/components/ImpersonationBanner";
 import { StripeConfigProvider } from "@/src/config/stripe";
 import { registerOfflineTemplateDraftListeners } from "@/src/utils/offlineTemplateDrafts";
+import { SyncManagerProvider } from "@/src/services/SyncManager";
 
 // Disable logbox errors etc so that users can see the app
 // and agent works as expected.
@@ -55,10 +56,12 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <KeyboardProvider>
           <AuthProvider>
-            <StripeConfigProvider>
-              <ImpersonationBanner />
-              <Stack screenOptions={{ headerShown: false }} />
-            </StripeConfigProvider>
+            <SyncManagerProvider>
+              <StripeConfigProvider>
+                <ImpersonationBanner />
+                <Stack screenOptions={{ headerShown: false }} />
+              </StripeConfigProvider>
+            </SyncManagerProvider>
           </AuthProvider>
         </KeyboardProvider>
       </SafeAreaProvider>

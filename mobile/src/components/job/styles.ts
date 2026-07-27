@@ -205,6 +205,8 @@ export const styles = StyleSheet.create({
   },
   completedBanner: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, height: 52 },
   completedText: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.success },
+  autoNotifyBanner: { flexDirection: "row", alignItems: "center", gap: 6, justifyContent: "center", marginTop: spacing.sm, paddingHorizontal: spacing.md },
+  autoNotifyText: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
   techRow: {
     flexDirection: "row",
     alignItems: "center",

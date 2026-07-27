@@ -10,6 +10,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, money, IMAGES } from "@/src/theme";
 import { Loading, StatusChip, Sheet, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import SyncStatusPill from "@/src/components/SyncStatusPill";
 import BudgetHealthCard from "@/src/components/BudgetHealthCard";
 import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
 import WeatherWidget from "@/src/components/weather/WeatherWidget";
@@ -56,7 +57,7 @@ export default function Dashboard() {
   return (
     <View style={styles.root}>
       <Header title="Dashboard" subtitle={`Hi, ${user?.name?.split(" ")[0] || ""}`}
-        right={<CreditsBudgetChip />}
+        right={<View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}><SyncStatusPill /><CreditsBudgetChip /></View>}
       />
       <ScrollView
         testID="dashboard-scroll"

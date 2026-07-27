@@ -1,7 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Star, RefreshCcw, ExternalLink, X as XIcon } from "lucide-react";
+import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import {
+  useBulkSelect,
+  BulkSelectAll,
+  BulkSelectRow,
+  BulkActionBar,
+  BulkConfirmModal,
+  LockedPill,
+} from "@/components/bulk-select/BulkSelectToolkit";
 
 /**
  * Feb-2026 · Slice 6 — Admin Reviews Dashboard.
@@ -22,6 +31,10 @@ export default function AdminReviewsPage() {
     max_rating: "",
   });
   const [selected, setSelected] = useState(null);
+  // Task OO · Feb 2026 — bulk-select toolkit state.
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [lockedFailures, setLockedFailures] = useState({});
 
   const load = () => {
     const params = new URLSearchParams();
@@ -44,6 +57,54 @@ export default function AdminReviewsPage() {
       .finally(() => setLoading(false));
   };
   useEffect(load, [filters]);
+
+  // Task OO · Feb 2026 — bulk-select hooks.
+  const visibleIds = useMemo(() => rows.map((r) => r.id), [rows]);
+  const { selected: bulkSelected, selectedCount, allVisibleSelected,
+             indeterminate, toggleAll, toggleOne, clear } = useBulkSelect(visibleIds);
+  const applyFailures = (failed) => {
+    if (!failed?.length) return;
+    const map = {};
+    failed.forEach((f) => { map[f.id] = f.reason; });
+    setLockedFailures(map);
+    setTimeout(() => setLockedFailures({}), 10000);
+  };
+  const doBulkDelete = async () => {
+    setBusy(true);
+    try {
+      const res = await api.post("/reviews/bulk-delete",
+                                    { ids: Array.from(bulkSelected) });
+      applyFailures(res.failed);
+      const okC = res.deleted_count || 0;
+      const failC = (res.failed || []).length;
+      if (failC === 0) sonnerToast.success(`${okC} review${okC === 1 ? "" : "s"} deleted`);
+      else sonnerToast(`${okC} deleted · ${failC} locked`, {
+        description: (res.failed || []).slice(0, 3).map((f) => f.reason).join(" · "),
+      });
+      clear(); setConfirmOpen(false); load();
+    } catch (e) { sonnerToast.error(e?.message || "Bulk delete failed"); }
+    finally { setBusy(false); }
+  };
+  const doBulkStatus = async (nextStatus) => {
+    try {
+      const res = await api.post("/reviews/bulk-update", {
+        ids: Array.from(bulkSelected), patch: { status: nextStatus },
+      });
+      applyFailures(res.failed);
+      sonnerToast.success(`${res.updated_count || 0} → ${nextStatus}`);
+      clear(); load();
+    } catch (e) { sonnerToast.error(e?.message || "Status update failed"); }
+  };
+  const doBulkVisibility = async (isPublic) => {
+    try {
+      const res = await api.post("/reviews/bulk-update", {
+        ids: Array.from(bulkSelected), patch: { is_public: isPublic === "public" },
+      });
+      applyFailures(res.failed);
+      sonnerToast.success(`${res.updated_count || 0} → ${isPublic}`);
+      clear(); load();
+    } catch (e) { sonnerToast.error(e?.message || "Visibility update failed"); }
+  };
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="admin-reviews-page">
@@ -146,6 +207,11 @@ export default function AdminReviewsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr style={{ borderBottom: `1px solid ${colors.divider}` }}>
+                <th className="text-left py-2 px-3 w-8">
+                  <BulkSelectAll checked={allVisibleSelected}
+                                    indeterminate={indeterminate}
+                                    onChange={toggleAll} />
+                </th>
                 {["Date", "Customer", "Rating", "Comment", "Public", "Status"].map((h) => (
                   <th
                     key={h}
@@ -178,9 +244,18 @@ export default function AdminReviewsPage() {
                   key={r.id}
                   onClick={() => setSelected(r)}
                   className="cursor-pointer hover:brightness-95"
-                  style={{ borderBottom: `1px solid ${colors.divider}` }}
+                  style={{ borderBottom: `1px solid ${colors.divider}`,
+                            backgroundColor: bulkSelected.has(r.id) ? "#EFF6FF" : "transparent" }}
                   data-testid={`admin-review-row-${r.id}`}
                 >
+                  <td className="py-3 px-3" onClick={(e) => e.stopPropagation()}>
+                    <BulkSelectRow id={r.id} checked={bulkSelected.has(r.id)}
+                                      onChange={() => toggleOne(r.id)} />
+                    {lockedFailures[r.id] ? (
+                      <LockedPill reason={lockedFailures[r.id]}
+                                    testid={`bulk-locked-pill-${r.id}`} />
+                    ) : null}
+                  </td>
                   <td className="py-3 px-3" style={{ color: colors.muted }}>
                     {String(r.created_at || "").slice(0, 10)}
                   </td>
@@ -248,6 +323,36 @@ export default function AdminReviewsPage() {
           }}
         />
       ) : null}
+      <BulkActionBar
+        selectedCount={selectedCount}
+        onClear={clear}
+        actions={[
+          { key: "status", label: "Change status",
+            dropdown: [
+              { value: "needs-response", label: "Needs response" },
+              { value: "resolved", label: "Resolved" },
+              { value: "archived", label: "Archived" },
+            ],
+            onClick: (v) => doBulkStatus(v) },
+          { key: "visibility", label: "Change visibility",
+            dropdown: [
+              { value: "public", label: "Public" },
+              { value: "private", label: "Private" },
+            ],
+            onClick: (v) => doBulkVisibility(v) },
+          { key: "delete", label: "Delete selected", tone: "danger",
+            onClick: () => setConfirmOpen(true) },
+        ]}
+      />
+      <BulkConfirmModal
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={doBulkDelete}
+        title={`Delete ${selectedCount} review${selectedCount === 1 ? "" : "s"}?`}
+        description="Reviews already clicked through to Google will show as locked and be skipped — archive them instead."
+        confirmLabel={busy ? "Deleting…" : `Delete ${selectedCount}`}
+        busy={busy}
+      />
     </div>
   );
 }

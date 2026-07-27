@@ -125,6 +125,7 @@ export const ADMIN_NAV_V2 = [
     // Schedule & dispatch
     { to: "/schedule",               label: "Schedule",           icon: CalendarDays, feature: "jobs", subsection: "Schedule & Dispatch" },
     { to: "/admin/jobs",             label: "Jobs (admin)",       icon: ListChecks,   feature: "jobs", subsection: "Schedule & Dispatch" },
+    { to: "/admin/reflow-history",   label: "Reflow History",     icon: History,      feature: "jobs", subsection: "Schedule & Dispatch" },
     { to: "/dispatch",               label: "Dispatch Board",     icon: Truck,        feature: "jobs", subsection: "Schedule & Dispatch" },
     { to: "/admin/dispatch",         label: "Auto-Dispatch",      icon: Zap,          feature: "jobs", subsection: "Schedule & Dispatch" },
     { to: "/admin/dispatch/weather", label: "Weather Reschedule", icon: Cloud,        feature: "jobs", subsection: "Schedule & Dispatch" },
@@ -133,6 +134,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/appointments",     label: "Appointments",       icon: CalendarDays, feature: "jobs", subsection: "Schedule & Dispatch" },
     // Workforce
     { to: "/team?t=team",              label: "Team",             icon: UsersRound,  feature: "jobs", subsection: "Workforce" },
+    { to: "/admin/users",              label: "Team (admin)",     icon: UserCog,     feature: "settings", subsection: "Workforce" },
+    { to: "/admin/time-entries",       label: "Time Entries",     icon: Clock,       feature: "jobs", subsection: "Workforce" },
     { to: "/crews?t=crews",             label: "Crews",            icon: UserCog,     feature: "jobs", subsection: "Workforce" },
     { to: "/timesheets?t=timesheets",   label: "Timesheets",       icon: Clock,       feature: "jobs", subsection: "Workforce" },
     { to: "/timesheets?t=timeclock",    label: "Timeclock",        icon: Timer,       feature: "jobs", subsection: "Workforce" },
@@ -196,6 +199,8 @@ export const ADMIN_NAV_V2 = [
 
   { key: "customers", label: "Customers", icon: Users, entries: [
     { to: "/customers",             label: "Customers",        icon: Users,      feature: "customers", subsection: "Directory" },
+    { to: "/admin/tags",            label: "Customer Tags",    icon: BadgeCheck, feature: "customers", subsection: "Directory" },
+    { to: "/admin/service-reports", label: "Service Reports",  icon: ClipboardListIcon2, feature: "jobs",  subsection: "Directory" },
     { to: "/leads",                 label: "Leads",            icon: UserPlus,   feature: "customers", subsection: "Directory" },
     { to: "/leads/request",         label: "Lead Requests",    icon: Send,       feature: "customers", subsection: "Directory" },
     { to: "/tech/property-lookup",  label: "Property Lookup",  icon: HomeIcon,   feature: "customers", subsection: "Directory" },

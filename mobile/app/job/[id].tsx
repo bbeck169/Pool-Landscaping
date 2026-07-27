@@ -470,7 +470,15 @@ export default function JobDetail() {
         ) : job.status === "pending" ? (
           <PrimaryButton title="Start Job" icon="play" onPress={() => setStatus("active")} loading={busy} testID="job-start-button" />
         ) : job.status === "active" ? (
-          <PrimaryButton title="Mark Complete" icon="checkmark-done" variant="success" onPress={() => setStatus("completed")} loading={busy} testID="job-complete-button" />
+          <View>
+            <PrimaryButton title="Mark Complete" icon="checkmark-done" variant="success" onPress={() => setStatus("completed")} loading={busy} testID="job-complete-button" />
+            <View style={styles.autoNotifyBanner} testID="auto-send-completion-banner">
+              <Ionicons name="mail-outline" size={14} color={colors.muted} />
+              <Text style={styles.autoNotifyText}>
+                A completion summary will be sent to the customer automatically.
+              </Text>
+            </View>
+          </View>
         ) : (
           <View style={styles.completedBanner}>
             <Ionicons name="checkmark-circle" size={20} color={colors.success} />

@@ -210,6 +210,18 @@ export default function More() {
           </View>
         </View>
 
+        {/* Security section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Security</Text>
+          <Pressable style={styles.link} onPress={() => router.push("/settings/change-password")} testID="change-password-link">
+            <View style={styles.linkIcon}>
+              <Ionicons name="lock-closed-outline" size={20} color={colors.brand} />
+            </View>
+            <Text style={styles.linkLabel}>Change Password</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+          </Pressable>
+        </View>
+
         <Pressable style={styles.logout} onPress={logout} testID="logout-button">
           <Ionicons name="log-out-outline" size={20} color={colors.error} />
           <Text style={styles.logoutText}>Sign out</Text>

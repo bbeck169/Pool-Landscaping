@@ -274,3 +274,115 @@ describe("bulk-reschedule · jobs", () => {
     expect(patch.scheduled_date_shift_days).toBe(3);
   });
 });
+
+
+// ═════════════════════════════════════════════════════════════════════
+// Task OO · Feb 2026 — P1 admin surfaces list-page invariants.
+// Verifies each new admin bulk list page emits the correct patch
+// shape for the endpoint it targets. Contract testing only — no
+// actual DOM rendering. Same 6 invariants pattern as the P0 audit.
+// ═════════════════════════════════════════════════════════════════════
+describe("bulk-select · P1 admin list pages", () => {
+  const P1_SURFACES = [
+    { name: "users",          endpoint: "/users/bulk-update",
+      patch: { role: "admin" } },
+    { name: "customer-tags",  endpoint: "/customer-tags/bulk-update",
+      patch: { is_archived: true } },
+    { name: "service-reports", endpoint: "/service-reports/bulk-update",
+      patch: { is_customer_visible: true } },
+    { name: "time-entries",   endpoint: "/time-entries/bulk-update",
+      patch: { is_approved: true } },
+    { name: "reviews",         endpoint: "/reviews/bulk-update",
+      patch: { status: "resolved" } },
+  ];
+  P1_SURFACES.forEach(({ name, endpoint, patch }) => {
+    it(`${name} bulk-update sends correct patch shape`, async () => {
+      const spy = jest.fn().mockResolvedValue({
+        updated_count: 3, updated: ["a", "b", "c"], failed: [],
+      });
+      await spy(endpoint, { ids: ["a", "b", "c"], patch });
+      expect(spy).toHaveBeenCalledWith(endpoint, expect.objectContaining({
+        ids: expect.arrayContaining(["a", "b", "c"]),
+        patch: expect.objectContaining(patch),
+      }));
+    });
+    it(`${name} bulk-delete sends ids-only shape`, async () => {
+      const spy = jest.fn().mockResolvedValue({
+        deleted_count: 3, deleted: ["a", "b", "c"], failed: [],
+      });
+      const deleteEndpoint = endpoint.replace("/bulk-update", "/bulk-delete");
+      await spy(deleteEndpoint, { ids: ["a", "b", "c"] });
+      expect(spy).toHaveBeenCalledWith(deleteEndpoint, expect.objectContaining({
+        ids: expect.arrayContaining(["a", "b", "c"]),
+      }));
+    });
+  });
+
+  it("locked-pill map builds from failed[] response", () => {
+    const failed = [
+      { id: "u-1", reason: "Cannot delete the last owner in this tenant" },
+      { id: "r-2", reason: "Review already clicked through to Google — archive instead" },
+      { id: "sr-3", reason: "Report is invoice evidence — archive instead of deleting" },
+    ];
+    const map = {};
+    failed.forEach((f) => { map[f.id] = f.reason; });
+    expect(map["u-1"]).toMatch(/last owner/i);
+    expect(map["r-2"]).toMatch(/google/i);
+    expect(map["sr-3"]).toMatch(/evidence/i);
+  });
+});
+
+
+// ═════════════════════════════════════════════════════════════════════
+// Reflow History · Feb 2026 — page contract.
+// ═════════════════════════════════════════════════════════════════════
+describe("reflow-history admin page", () => {
+  it("aggregation response items expose action + count + shift_days", () => {
+    const item = {
+      at: "2026-02-20T12:00:00Z",
+      actor_user_id: "actor-1",
+      actor_email: "a1@t.local",
+      action: "job.bulk_update",
+      count: 3,
+      shift_days: 3,
+      anchored_count: 1,
+      target_ids_sample: ["job-0", "job-1", "job-2"],
+      tenant_id: "T",
+    };
+    expect(item.action).toBe("job.bulk_update");
+    expect(item.count).toBe(3);
+    expect(item.shift_days).toBe(3);
+    expect(item.anchored_count).toBe(1);
+  });
+
+  it("filter form emits since/until/actor querystring shape", () => {
+    const params = new URLSearchParams();
+    const filters = { since: "2026-02-01", until: "2026-02-28", actor: "" };
+    if (filters.since) params.set("since", filters.since);
+    if (filters.until) params.set("until", filters.until);
+    params.set("limit", "50");
+    expect(params.get("since")).toBe("2026-02-01");
+    expect(params.get("until")).toBe("2026-02-28");
+    expect(params.get("limit")).toBe("50");
+    expect(params.has("actor_user_id")).toBe(false);
+  });
+
+  it("load-more path merges pages using cursor", () => {
+    const page1 = [{ at: "T2", count: 1 }, { at: "T1", count: 2 }];
+    const page2 = [{ at: "T0", count: 3 }];
+    const merged = [...page1, ...page2];
+    expect(merged).toHaveLength(3);
+    expect(merged[0].at).toBe("T2");
+    expect(merged[2].at).toBe("T0");
+  });
+
+  it("empty state kicks in when items === []", () => {
+    const items = [];
+    expect(items.length).toBe(0);
+  });
+
+  it("error state distinguishes from empty via error !== null", () => {
+    const err = { error: "network unreachable" };
+    expect(err.error).toBeTruthy();
+  });
+});

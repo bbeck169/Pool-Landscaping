@@ -29,6 +29,11 @@ import CFODashboard from "@/pages/cfo/CFODashboard";
 import JobNew from "@/pages/jobs/JobNew";
 import JobDetail from "@/pages/jobs/JobDetail";
 import JobsList from "@/pages/jobs/JobsList";
+import AdminUsersList from "@/pages/admin/AdminUsersList";
+import AdminTagsList from "@/pages/admin/AdminTagsList";
+import AdminServiceReportsList from "@/pages/admin/AdminServiceReportsList";
+import AdminTimeEntriesList from "@/pages/admin/AdminTimeEntriesList";
+import ReflowHistoryPage from "@/pages/admin/ReflowHistoryPage";
 import QuotesList from "@/pages/quotes/QuotesList";
 import QuoteInvoiceNew from "@/pages/quotes/QuoteInvoiceNew";
 import QuoteInvoiceDetail from "@/pages/quotes/QuoteInvoiceDetail";
@@ -440,6 +445,12 @@ export default function App() {
             {/* Phase 34 · Task LL Phase 2 UI wrap-up · Feb 2026 — admin-only
                 jobs list surfacing /jobs/bulk-delete + bulk-update. */}
             <Route path="admin/jobs" element={<AdminOnly><JobsList /></AdminOnly>} />
+            {/* Task OO · Feb 2026 — P1 bulk-select admin surfaces. */}
+            <Route path="admin/users" element={<AdminOnly><AdminUsersList /></AdminOnly>} />
+            <Route path="admin/tags" element={<AdminOnly><AdminTagsList /></AdminOnly>} />
+            <Route path="admin/service-reports" element={<AdminOnly><AdminServiceReportsList /></AdminOnly>} />
+            <Route path="admin/time-entries" element={<AdminOnly><AdminTimeEntriesList /></AdminOnly>} />
+            <Route path="admin/reflow-history" element={<AdminOnly><ReflowHistoryPage /></AdminOnly>} />
             <Route path="jobs/:id" element={<JobDetail />} />
 
             {/* Quotes / Invoices / Master / Estimator / Settings (Phase 3) */}

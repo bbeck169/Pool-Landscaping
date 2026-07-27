@@ -20,6 +20,13 @@ import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 
 const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
+  // Phase 34: 5 canonical snake_case statuses
+  "new": { bg: "#DBEAFE", fg: "#1E3A8A" },
+  "contacted": { bg: "#FEF3C7", fg: "#854D0E" },
+  "qualified": { bg: "#E0E7FF", fg: "#3730A3" },
+  "won": { bg: "#DCFCE7", fg: "#166534" },
+  "lost": { bg: "#FEE2E2", fg: "#991B1B" },
+  // Legacy backwards-compat
   "New": { bg: "#DBEAFE", fg: "#1E3A8A" },
   "Contacted": { bg: "#FEF3C7", fg: "#854D0E" },
   "Quoted": { bg: "#E0E7FF", fg: "#3730A3" },
@@ -27,12 +34,6 @@ const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
   "Closed Lost": { bg: "#FEE2E2", fg: "#991B1B" },
   "On Hold": { bg: "#F1F5F9", fg: "#475569" },
   "Archived": { bg: "#E5E7EB", fg: "#374151" },
-  // lowercase variants from API
-  "new": { bg: "#DBEAFE", fg: "#1E3A8A" },
-  "contacted": { bg: "#FEF3C7", fg: "#854D0E" },
-  "quoted": { bg: "#E0E7FF", fg: "#3730A3" },
-  "closed_won": { bg: "#DCFCE7", fg: "#166534" },
-  "closed_lost": { bg: "#FEE2E2", fg: "#991B1B" },
   "on_hold": { bg: "#F1F5F9", fg: "#475569" },
   "archived": { bg: "#E5E7EB", fg: "#374151" },
 };
@@ -193,7 +194,7 @@ export default function LeadDetailScreen() {
     lead.source?.startsWith("form:") ? `Form · ${lead.source.slice(5)}` :
     SOURCE_LABELS[lead.source] || lead.source || "—";
 
-  const canAct = !["Closed Won", "Closed Lost", "Archived", "closed_won", "closed_lost", "archived"].includes(lead.status);
+  const canAct = !["won", "lost", "archived", "Closed Won", "Closed Lost", "Archived", "closed_won", "closed_lost"].includes(lead.status);
 
   return (
     <View style={[st.root, { paddingTop: insets.top }]}>

@@ -94,7 +94,7 @@ export default function ReferralsScreen() {
     if (!me) return;
     try {
       await Share.share({
-        message: `Hey — I use Pool & Landscaping of Vistancia for my pool/yard. Use my code ${me.referral_code} and we both get ${me.reward_description || "$25 off"}. Book here: ${me.referral_link}`,
+        message: `Hey — I use Pool & Landscaping of Vistancia for my pool/yard. Use my code ${me.referral_code} and we both get ${me.reward_description || "$55 credit"}. Book here: ${me.referral_link}`,
       });
     } catch {}
   };
@@ -145,7 +145,7 @@ export default function ReferralsScreen() {
             <Ionicons name={copied ? "checkmark-circle" : "copy"} size={20} color={copied ? colors.success : colors.brand} />
           </TouchableOpacity>
           {copied && <Text style={s.copiedToast}>Copied to clipboard!</Text>}
-          <Text style={s.rewardDesc}>{me?.reward_description || "Earn $25 off for each friend who signs up"}</Text>
+          <Text style={s.rewardDesc}>{me?.reward_description || "Earn $55 credit for each friend who signs up"}</Text>
         </View>
 
         {/* Share button */}

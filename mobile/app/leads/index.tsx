@@ -10,20 +10,25 @@ import { Header, FilterRow, IconButton } from "@/src/components/widgets";
 
 const FILTERS = [
   { key: "all", label: "All" },
-  { key: "New", label: "New" },
-  { key: "Contacted", label: "Contacted" },
-  { key: "Quoted", label: "Quoted" },
-  { key: "Closed Won", label: "Won" },
-  { key: "Closed Lost", label: "Lost" },
-  { key: "On Hold", label: "On Hold" },
+  { key: "new", label: "New" },
+  { key: "contacted", label: "Contacted" },
+  { key: "qualified", label: "Qualified" },
+  { key: "won", label: "Won" },
+  { key: "lost", label: "Lost" },
 ];
-const STATUSES = ["New", "Contacted", "Quoted", "Closed Won", "Closed Lost", "On Hold"];
+const STATUSES = ["new", "contacted", "qualified", "won", "lost"];
 
-// Extend status meta labels for leads (Phase 8 uses capitalized statuses)
+// Phase 34: 5 canonical snake_case lead statuses
 Object.assign(statusMeta, {
+  "new": { label: "New", bg: "#DBEAFE", fg: "#1E3A8A" },
+  "contacted": { label: "Contacted", bg: "#FEF3C7", fg: "#854D0E" },
+  "qualified": { label: "Qualified", bg: "#E0E7FF", fg: "#3730A3" },
+  "won": { label: "Won", bg: "#DCFCE7", fg: "#166534" },
+  "lost": { label: "Lost", bg: "#FEE2E2", fg: "#991B1B" },
+  // Legacy backwards-compat
   "New": { label: "New", bg: "#DBEAFE", fg: "#1E3A8A" },
   "Contacted": { label: "Contacted", bg: "#FEF3C7", fg: "#854D0E" },
-  "Quoted": { label: "Quoted", bg: "#E0E7FF", fg: "#3730A3" },
+  "Quoted": { label: "Qualified", bg: "#E0E7FF", fg: "#3730A3" },
   "Closed Won": { label: "Won", bg: "#DCFCE7", fg: "#166534" },
   "Closed Lost": { label: "Lost", bg: "#FEE2E2", fg: "#991B1B" },
   "On Hold": { label: "On Hold", bg: "#F1F5F9", fg: "#475569" },

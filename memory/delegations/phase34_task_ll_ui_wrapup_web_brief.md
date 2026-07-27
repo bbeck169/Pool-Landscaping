@@ -2,25 +2,34 @@
 
 ## ✅ SHIPPED IN THIS BATCH (Feb 2026)
 
-The shared `BulkSelectToolkit` has been wired into all 5 admin pages
-below. No further web work is required from this brief.
+The shared `BulkSelectToolkit` has been wired into ALL admin pages
+listed below — both the original 5 P0 surfaces and the 5 P1 surfaces
+added by Task OO. No further web work is required from this brief.
 
+### P0 (Task LL Phase 2)
 | # | Surface | File | Bulk actions live |
 |---|---------|------|-------------------|
 | 1 | Customers | `pages/customers/CustomersList.jsx` | Reassign owner · Delete |
-| 2 | Jobs (admin) | `pages/jobs/JobsList.jsx` (new page at `/admin/jobs`) | Change status · Delete |
+| 2 | Jobs (admin) | `pages/jobs/JobsList.jsx` (`/admin/jobs`) | Change status · Reschedule (absolute + relative + anchor) · Delete |
 | 3 | Tasks | `pages/aiops/AiOpsPages.jsx::TasksPage` | Change status · Delete |
 | 4 | Communications log | `pages/marketing/CommunicationsLogPage.jsx` | Mark read · Archive |
-| 5 | Email + SMS templates | `pages/comms/CommsPages.jsx::CommsTemplatesLibrary` | Change category · Delete (with live-drip locked pill) |
+| 5 | Email + SMS templates | `pages/comms/CommsPages.jsx::CommsTemplatesLibrary` | Change category · Delete (live-drip lock) |
 
-Testids match the shared toolkit contract (`bulk-select-all`,
-`bulk-select-row-{id}`, `bulk-action-bar`, `bulk-delete-button`,
-`bulk-archive-button`, `bulk-mark-read-button`, etc.). Jest suite
-still green (66/66).
+### P1 (Task OO)
+| # | Surface | File | Bulk actions live |
+|---|---------|------|-------------------|
+| 6 | Reviews (admin) | `pages/admin/AdminReviewsPage.jsx` | Change status · Change visibility · Delete (google-click lock) |
+| 7 | Team (admin) | `pages/admin/AdminUsersList.jsx` (`/admin/users`) | Change role · Set active · Delete (self / last-owner locks) |
+| 8 | Customer Tags | `pages/admin/AdminTagsList.jsx` (`/admin/tags`) | Set archive · Delete |
+| 9 | Service Reports | `pages/admin/AdminServiceReportsList.jsx` (`/admin/service-reports`) | Change visibility · Delete (invoice-evidence lock) |
+| 10 | Time Entries | `pages/admin/AdminTimeEntriesList.jsx` (`/admin/time-entries`) | Set approval · Delete (paid-payroll lock) |
+
+Testids match the shared toolkit contract exactly. Jest suite still
+green (122/122).
 
 **Do not re-execute this brief.** The reference below is retained
-only for the mobile companion agents and for any future 7th/8th
-surface that adopts the same pattern.
+only for the mobile companion agents and for any future 11th surface
+that adopts the same pattern.
 
 ---
 

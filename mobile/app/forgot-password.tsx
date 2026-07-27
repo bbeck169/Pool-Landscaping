@@ -64,7 +64,7 @@ export default function ForgotPassword() {
         ) : (
           <View testID="forgot-password-form">
             <Text style={styles.intro}>
-              Enter the email address associated with your account and we'll send you a link to reset your password.
+              Enter the email address associated with your account and we&apos;ll send you a link to reset your password.
             </Text>
 
             <Text style={styles.label}>EMAIL</Text>

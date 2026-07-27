@@ -185,6 +185,21 @@ export default function BusinessCard() {
               ))}
             </View>
 
+            {/* Phase 34: Website row */}
+            {company.website ? (
+              <Pressable
+                style={styles.websiteRow}
+                onPress={() => Linking.openURL(company.website)}
+                testID="card-website-row"
+              >
+                <Ionicons name="globe-outline" size={18} color={colors.brand} />
+                <Text style={styles.websiteUrl} numberOfLines={1}>
+                  {company.website.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")}
+                </Text>
+                <Ionicons name="open-outline" size={14} color={colors.muted} />
+              </Pressable>
+            ) : null}
+
             <Pressable style={styles.saveBtn} onPress={saveContact} testID="card-save">
               <Ionicons name="person-add-outline" size={20} color="#fff" />
               <Text style={styles.saveText}>Save to Contacts</Text>
@@ -269,6 +284,13 @@ const styles = StyleSheet.create({
   editText: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.brand },
   qrWrap: { alignItems: "center", marginTop: spacing.xl },
   qr: { width: 200, height: 200, borderRadius: radius.md },
+  websiteRow: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    paddingVertical: 12, paddingHorizontal: spacing.md,
+    backgroundColor: colors.surfaceSecondary, borderRadius: radius.md,
+    marginTop: spacing.md, borderWidth: 1, borderColor: colors.border,
+  },
+  websiteUrl: { flex: 1, fontFamily: font.medium, fontSize: fontSize.base, color: colors.brand },
   qrHint: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: spacing.md, textAlign: "center" },
   inputLabel: { fontFamily: font.semibold, fontSize: 11, letterSpacing: 0.8, color: colors.onSurfaceSecondary, marginBottom: spacing.xs, textTransform: "uppercase" },
   input: { backgroundColor: colors.surfaceSecondary, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 48, fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}) },
