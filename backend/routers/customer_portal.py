@@ -374,6 +374,34 @@ class ServiceRequestIn(BaseModel):
     service_type: Optional[str] = None
     preferred_date: Optional[str] = None
     notes: Optional[str] = None
+    # Phase 34 · Feb-2026 · Task I — customer-portal service requests
+    # now capture a single free-text field instead of a Service Type
+    # dropdown. ``request_details`` supersedes ``notes`` when both are
+    # supplied; ``notes`` is preserved so mobile clients still on the
+    # old schema keep working during the rollout window.
+    request_details: Optional[str] = None
+
+
+# Phase 34 · Feb-2026 · Task I — where staff notifications land when a
+# customer submits a service request. Values here are the PLOFV tenant
+# defaults; production should lift these to tenant settings under
+# ``settings.notifications.service_request_email/sms`` so multi-tenant
+# operators can point them at their own dispatchers.
+# TODO — Phase 35 · promote these to per-tenant settings + admin UI.
+_SERVICE_REQUEST_EMAIL_FALLBACK = "brian@plofv.com"
+_SERVICE_REQUEST_SMS_FALLBACK = "+16028874400"
+
+
+def _resolve_service_request_email(tenant: Dict[str, Any]) -> str:
+    notif = ((tenant or {}).get("settings") or {}).get("notifications") or {}
+    return (notif.get("service_request_email")
+            or _SERVICE_REQUEST_EMAIL_FALLBACK)
+
+
+def _resolve_service_request_sms(tenant: Dict[str, Any]) -> str:
+    notif = ((tenant or {}).get("settings") or {}).get("notifications") or {}
+    return (notif.get("service_request_sms")
+            or _SERVICE_REQUEST_SMS_FALLBACK)
 
 
 def _fmt_service_request_body(
@@ -409,23 +437,19 @@ async def create_service_request(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ) -> Dict[str, Any]:
-    """Customer taps "Request Service" → three effects fire atomically:
+    """Customer taps "Request Service" → four effects fire:
 
-    1. **Internal direct message** inserted into ``db.messages`` (the
-       same collection the admin inbox reads from). The message body
-       is server-composed from the customer's identity + address plus
-       the submitted ``service_type / preferred_date / notes``.
-    2. **Bell notifications** enqueued for every ``admin`` /
-       ``super_admin`` in the tenant via
-       ``services.notifications.enqueue_for_tenant_admins`` (kind =
-       ``inbound_customer_message``). Bell + realtime WS/SSE fan-out
-       are honoured by the shared notification engine.
-    3. **Expo push** best-effort to every admin device via
-       ``routers.mobile_push.send_push_to_user``. Silent no-op when
-       ``EXPO_PUSH_ACCESS_TOKEN`` is unset (or no devices registered).
+    1. **Internal direct message** inserted into ``db.messages``.
+    2. **Bell notifications** enqueued for every admin/super_admin.
+    3. **Expo push** best-effort to every admin device.
+    4. **Email to Brian + SMS to the operations line** (Phase 34 ·
+       Task I). Both are wrapped in try/except so a failed email
+       does not block the SMS and vice versa. Destinations resolve
+       from ``tenant.settings.notifications.service_request_email
+       / _sms`` with a hardcoded PLOFV fallback.
 
-    Effects 2 + 3 are best-effort — a transport failure never blocks
-    the write. Effect 1 is authoritative: without the message doc the
+    Effects 2–4 are best-effort — transport failures never block the
+    write. Effect 1 is authoritative: without the message doc the
     admin has nothing to open, so a persistence failure returns 500.
     """
     cid = _require_customer(user)
@@ -434,6 +458,17 @@ async def create_service_request(
         {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0},
     ) or {}
     customer_name = user.get("name") or cust.get("name") or "Customer"
+    customer_phone = (
+        cust.get("phone")
+        or cust.get("primary_phone")
+        or user.get("phone")
+        or ""
+    )
+    customer_email = (
+        cust.get("email")
+        or user.get("email")
+        or ""
+    )
     address = (
         cust.get("address")
         or cust.get("street_address")
@@ -441,9 +476,20 @@ async def create_service_request(
         or ""
     )
 
-    service_type = (body.service_type or "").strip() or None
+    # Phase 34 · Task I — ``request_details`` is the new free-text
+    # payload. Fall back to legacy ``notes`` when older clients still
+    # POST that field so we don't break in-flight mobile builds.
+    request_details = (
+        (body.request_details or "").strip()
+        or (body.notes or "").strip()
+        or None
+    )
+    # ``service_type`` is now optional. Default to ``general_request``
+    # server-side so downstream dashboards + auto-assign rules never
+    # crash on a missing category.
+    service_type = (body.service_type or "").strip() or "general_request"
     preferred_date = (body.preferred_date or "").strip() or None
-    notes = (body.notes or "").strip() or None
+    notes = request_details  # kept for backwards-compat consumers
 
     text = _fmt_service_request_body(
         customer_name=customer_name,
@@ -466,6 +512,7 @@ async def create_service_request(
             "service_type": service_type,
             "preferred_date": preferred_date,
             "notes": notes,
+            "request_details": request_details,
             "address": address,
         },
         "read_by_customer": True,
@@ -478,6 +525,8 @@ async def create_service_request(
     # ─── Bell + realtime + Expo push ─── best-effort, never raise.
     push_results: List[Dict[str, Any]] = []
     bell_ids: List[str] = []
+    email_result: Dict[str, Any] = {"provider_status": "skipped"}
+    sms_result: Dict[str, Any] = {"provider_status": "skipped"}
     try:
         from services.notifications import enqueue_for_tenant_admins
 
@@ -485,14 +534,6 @@ async def create_service_request(
         summary = (service_type or "Service request") + (
             f" · {preferred_date}" if preferred_date else ""
         )
-        # Feb-2026 fix — the previous ``/messages?customer_id={cid}``
-        # href pointed at a route that doesn't exist in the admin
-        # web app, so tapping the bell entry 404'd. The admin thread
-        # view lives at ``/communication/:customer_id`` (see
-        # frontend/src/pages/phase14/Phase14Pages.jsx —
-        # ``CommunicationThread``) which reads from
-        # ``GET /api/communications/{customer_id}`` returning every
-        # message in ``db.messages`` for that customer.
         href = f"/communication/{cid}"
         bell_ids = await enqueue_for_tenant_admins(
             tenant["id"],
@@ -511,8 +552,7 @@ async def create_service_request(
         logger.warning("service_request bell enqueue failed: %s", exc)
 
     # Realtime broadcast so any admin with the inbox open sees the row
-    # arrive without polling. Best-effort — same pattern as
-    # ``send_my_message`` in ``routers/portal.py``.
+    # arrive without polling.
     try:
         from routers.realtime import bus
 
@@ -577,10 +617,119 @@ async def create_service_request(
     except Exception as exc:
         logger.warning("service_request push fan-out failed: %s", exc)
 
+    # ─── Phase 34 · Task I — Email + SMS notifications ───────────
+    # Isolated try/except per channel so one transport failure never
+    # blocks the other AND never masks the customer's success ack.
+    to_email = _resolve_service_request_email(tenant)
+    to_sms = _resolve_service_request_sms(tenant)
+    request_short = (request_details or "").strip()[:140]
+    deep_link = f"/communication/{cid}"
+
+    try:
+        from services.email.resend_adapter import send as _send_email
+
+        subject = f"New Service Request from {customer_name}"
+        html_parts = [
+            "<div style=\"font-family:-apple-system,'Inter',sans-serif;"
+            "color:#0F172A;max-width:640px;margin:0 auto;padding:24px;\">",
+            f"<h2 style=\"margin:0 0 12px;\">New Service Request</h2>",
+            f"<p style=\"margin:0 0 4px;\"><b>Customer:</b> {customer_name}</p>",
+        ]
+        if customer_email:
+            html_parts.append(
+                f"<p style=\"margin:0 0 4px;\"><b>Email:</b> "
+                f"<a href=\"mailto:{customer_email}\">{customer_email}</a></p>"
+            )
+        if customer_phone:
+            html_parts.append(
+                f"<p style=\"margin:0 0 4px;\"><b>Phone:</b> "
+                f"<a href=\"tel:{customer_phone}\">{customer_phone}</a></p>"
+            )
+        if address:
+            html_parts.append(
+                f"<p style=\"margin:0 0 4px;\"><b>Address:</b> {address}</p>"
+            )
+        if preferred_date:
+            html_parts.append(
+                f"<p style=\"margin:0 0 4px;\"><b>Preferred date:</b> "
+                f"{preferred_date}</p>"
+            )
+        html_parts.append(
+            "<hr style=\"border:none;border-top:1px solid #E2E8F0;"
+            "margin:16px 0;\"/>"
+        )
+        html_parts.append(
+            f"<div style=\"white-space:pre-wrap;font-size:15px;"
+            f"line-height:1.5;\">{(request_details or 'No details provided').strip()}</div>"
+        )
+        app_url = os.environ.get("APP_PUBLIC_URL", "").rstrip("/")
+        if app_url:
+            full_link = f"{app_url}{deep_link}"
+            html_parts.append(
+                f"<p style=\"margin:20px 0 0;\">"
+                f"<a href=\"{full_link}\" style=\"display:inline-block;"
+                f"background:#0284C7;color:#fff;padding:10px 16px;"
+                f"border-radius:8px;text-decoration:none;font-weight:600;\">"
+                f"View request</a></p>"
+            )
+        html_parts.append("</div>")
+        email_result = await _send_email(
+            to=to_email,
+            subject=subject,
+            html="".join(html_parts),
+            category="transactional",
+            tenant_id=tenant["id"],
+            customer_id=cid,
+        )
+        logger.info(
+            "service_request email_sent to=%s status=%s attempts=%s",
+            to_email,
+            email_result.get("provider_status"),
+            email_result.get("attempts"),
+        )
+    except Exception as exc:  # pragma: no cover — never blocks the ack
+        logger.warning("service_request email send failed: %s", exc)
+        email_result = {"provider_status": "failed", "error": str(exc)[:200]}
+
+    try:
+        from services.sms.rc_adapter import send as _send_sms
+
+        sms_short = request_short + ("…" if request_details and len(request_details) > 140 else "")
+        sms_body = (
+            f"New service request from {customer_name}"
+            + (f" ({customer_phone})" if customer_phone else "")
+            + f": {sms_short}"
+            + (f" View: {deep_link}" if deep_link else "")
+        )
+        sms_result = await _send_sms(
+            to=to_sms,
+            body=sms_body,
+            category="transactional",
+            tenant_id=tenant["id"],
+            customer_id=cid,
+        )
+        logger.info(
+            "service_request sms_sent to=%s status=%s attempts=%s",
+            to_sms,
+            sms_result.get("provider_status"),
+            sms_result.get("attempts"),
+        )
+    except Exception as exc:  # pragma: no cover — never blocks the ack
+        logger.warning("service_request sms send failed: %s", exc)
+        sms_result = {"provider_status": "failed", "error": str(exc)[:200]}
+
     return {
         "ok": True,
         "message_id": msg_id,
         "message": msg_doc,
         "notified_admins": len(bell_ids),
         "push_results": push_results,
+        "email_notification": {
+            "to": to_email,
+            "status": email_result.get("provider_status"),
+        },
+        "sms_notification": {
+            "to": to_sms,
+            "status": sms_result.get("provider_status"),
+        },
     }

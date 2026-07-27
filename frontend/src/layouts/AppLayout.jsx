@@ -171,7 +171,6 @@ const TECH_NAV = [
 const CUSTOMER_NAV = [
   { to: "/portal/home", label: "Home", icon: HomeIcon, end: true },
   { to: "/portal/services", label: "Services", icon: Waves },
-  { to: "/portal/book", label: "Book", icon: CalendarDays },
   { to: "/portal/request-service", label: "Request", icon: Magnet },
   { to: "/portal/invoices", label: "Invoices", icon: Receipt },
   { to: "/portal/estimates", label: "Estimates", icon: FileText },

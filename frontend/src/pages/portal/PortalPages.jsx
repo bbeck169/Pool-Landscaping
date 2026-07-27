@@ -306,7 +306,18 @@ export function PortalPayments() {
   const [payments, setPayments] = useState(null);
   const [pm, setPm] = useState(null);
   useEffect(() => {
-    api.get("/me/payments").then(setPayments).catch(() => setPayments([]));
+    // Phase 34 · Feb-2026 · bug-fix — the ``/me/payments`` endpoint returns
+    // ``{total_paid, count, payments: [...]}`` (an aggregation envelope),
+    // NOT a bare array. The previous code called ``.map()`` on the whole
+    // response and crashed with "payments.map is not a function". We now
+    // normalize to an array so we're tolerant to either shape (bare array
+    // OR any of the common envelope keys).
+    api.get("/me/payments").then((resp) => {
+      const list = Array.isArray(resp)
+        ? resp
+        : (resp?.payments || resp?.items || resp?.data || resp?.rows || []);
+      setPayments(list);
+    }).catch(() => setPayments([]));
     api.get("/payments/method").then(setPm).catch(() => setPm(null));
   }, []);
   return (
@@ -328,10 +339,18 @@ export function PortalPayments() {
         </div>
       </div>
       {payments === null ? <Skeleton style={{ height: 200 }} /> :
-       payments.length === 0 ? <EmptyState icon={CreditCard} title="No payments yet" /> :
-       <ul className="space-y-2">
+       !Array.isArray(payments) || payments.length === 0 ? (
+         <EmptyState
+           icon={CreditCard}
+           title="No payments yet"
+           message="Once you make a payment, your history will appear here."
+           data-testid="portal-payments-empty"
+         />
+       ) :
+       <ul className="space-y-2" data-testid="portal-payments-list">
          {payments.map((p, i) => (
-           <li key={i} className="flex items-center gap-3 p-3 rounded-xl" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
+           <li key={p.id || i} className="flex items-center gap-3 p-3 rounded-xl" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+                data-testid={`portal-payment-row-${i}`}>
              <div className="flex-1">
                <div className="text-sm font-semibold">{money(p.amount)}</div>
                <div className="text-xs" style={{ color: colors.muted }}>{p.paid_at || p.created_at}</div>
@@ -723,18 +742,28 @@ function ReadOnly({ label, value }) {
 export function PortalRequestService() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [form, setForm] = useState({ service_type: "Pool Cleaning", preferred_date: "", notes: "" });
+  // Phase 34 · Feb-2026 — Task I. The Service Type dropdown has been
+  // removed. Customers now describe what they need in a free-text
+  // paragraph; the backend defaults ``service_type`` to
+  // ``"general_request"`` server-side so downstream dashboards keep
+  // rendering. Preferred date + attachments (unchanged surface here)
+  // remain intact.
+  const MIN_LEN = 10;
+  const MAX_LEN = 2000;
+  const [form, setForm] = useState({ request_details: "", preferred_date: "" });
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const detailsLen = form.request_details.trim().length;
+  const canSubmit = detailsLen >= MIN_LEN && detailsLen <= MAX_LEN && !busy;
   const submit = async (e) => {
     e.preventDefault();
+    if (!canSubmit) return;
     setBusy(true);
     try {
       await api.post("/customer-portal/service-requests", {
-        service_type: form.service_type,
+        request_details: form.request_details.trim(),
         preferred_date: form.preferred_date || undefined,
-        notes: form.notes || undefined,
       });
       setToast({ tone: "success", message: "Request sent — we'll be in touch shortly." });
       setTimeout(() => navigate("/portal/home"), 800);
@@ -746,28 +775,35 @@ export function PortalRequestService() {
       <PageHeader title="Request Service" subtitle="Tell us what you need." />
       <form onSubmit={submit} className="rounded-2xl p-5 space-y-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
         <div>
-          <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>SERVICE TYPE</label>
-          <select value={form.service_type} onChange={set("service_type")}
-            className="w-full px-3.5 py-2.5 rounded-lg outline-none text-sm focus:ring-2"
-            style={{ backgroundColor: colors.surface, color: colors.onSurface, border: `1px solid ${colors.border}` }}
-            data-testid="rs-type">
-            <option>Pool Cleaning</option>
-            <option>Chemical Rebalance</option>
-            <option>Equipment Repair</option>
-            <option>Landscape</option>
-            <option>Other</option>
-          </select>
-        </div>
-        <TextInput label="PREFERRED DATE" type="date" value={form.preferred_date} onChange={set("preferred_date")} testid="rs-date" />
-        <div>
-          <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>DETAILS</label>
-          <textarea value={form.notes} onChange={set("notes")} rows={4} placeholder="Anything we should know?"
+          <label className="text-xs font-semibold tracking-wide mb-1 block" style={{ color: colors.onSurfaceSecondary }}>
+            WHAT SERVICE DO YOU NEED?
+          </label>
+          <textarea
+            value={form.request_details}
+            onChange={set("request_details")}
+            rows={6}
+            required
+            minLength={MIN_LEN}
+            maxLength={MAX_LEN}
+            placeholder="Describe what you need — e.g., green pool, broken sprinkler, tree trim, etc."
             className="w-full px-3 py-2 text-sm rounded-lg outline-none focus:ring-2"
             style={{ backgroundColor: colors.surface, color: colors.onSurface, border: `1px solid ${colors.border}` }}
-            data-testid="rs-notes" />
+            data-testid="rs-details"
+          />
+          <div className="flex items-center justify-between mt-1 text-xs" style={{ color: colors.muted }}>
+            <span data-testid="rs-details-hint">
+              {detailsLen < MIN_LEN
+                ? `A little more detail helps us prep the right crew (min ${MIN_LEN} characters).`
+                : "Thanks — that's plenty to get us started."}
+            </span>
+            <span data-testid="rs-details-count">{detailsLen}/{MAX_LEN}</span>
+          </div>
         </div>
+        <TextInput label="PREFERRED DATE (OPTIONAL)" type="date" value={form.preferred_date} onChange={set("preferred_date")} testid="rs-date" />
         <div className="flex justify-end pt-2">
-          <Button type="submit" disabled={busy} testid="rs-submit"><Plus size={14} /> {busy ? "Sending…" : "Send request"}</Button>
+          <Button type="submit" disabled={!canSubmit} testid="rs-submit">
+            <Plus size={14} /> {busy ? "Sending…" : "Send request"}
+          </Button>
         </div>
       </form>
       <Toast toast={toast} onClose={() => setToast(null)} />

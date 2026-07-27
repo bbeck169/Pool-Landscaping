@@ -94,7 +94,14 @@ import RankTrackerPage from "@/pages/settings/RankTrackerPage";
 import DealsKanbanPage from "@/pages/deals/DealsKanbanPage";
 // QuoteIQ Q2-UI · Feb 2026
 import AIEstimatorPage from "@/pages/estimates/AIEstimatorPage";
-import PortalBook from "@/pages/portal/PortalBook";
+// Phase 34 · Feb-2026 · Task H — the customer-facing Book Service
+// surface has been retired. The route ``/portal/book`` now redirects
+// to ``/portal/request-service`` (see below). The ``PortalBook`` page
+// component is intentionally NOT imported so the redirect is a pure
+// react-router shim. The source file at
+// ``src/pages/portal/PortalBook.jsx`` is kept on disk for legacy
+// reference but is no longer wired into the router.
+// import PortalBook from "@/pages/portal/PortalBook";
 import PortalChatsPage from "@/pages/portal/PortalChatsPage";
 import AppointmentsQueue from "@/pages/admin/AppointmentsQueue";
 import AdminAssets from "@/pages/admin/AdminAssets";
@@ -798,7 +805,12 @@ export default function App() {
             <Route path="portal/documents" element={<PortalDocuments />} />
             <Route path="portal/messages" element={<PortalMessages />} />
             <Route path="portal/chats" element={<PortalChatsPage />} />
-            <Route path="portal/book" element={<PortalBook />} />
+            {/* Phase 34 · Feb-2026 · Task H — the ``/portal/book`` route
+                has been removed from the customer portal. The Request
+                Service flow (below) supersedes it. Redirect any bookmark
+                traffic to ``/portal/request-service`` so we don't leave
+                a 404 landmine. */}
+            <Route path="portal/book" element={<Navigate to="/portal/request-service" replace />} />
             <Route path="portal/photos" element={<PortalPhotos />} />
             <Route path="portal/videos" element={<PortalVideos />} />
             <Route path="admin/comms/templates"       element={<AdminOnly><CommsTemplatesLibrary /></AdminOnly>} />

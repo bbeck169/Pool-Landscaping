@@ -107,7 +107,6 @@ export const CUSTOMER_NAV = [
     icon: Home,
     entries: [
       { to: "/portal/home", label: "Dashboard", icon: LayoutDashboard },
-      { to: "/portal/book", label: "Book Service", icon: CalendarDays },
       { to: "/portal/request-service", label: "Request Service", icon: MessageSquare },
     ],
   },
