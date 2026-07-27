@@ -162,8 +162,12 @@ async def config_public():
     must set ``SHOW_DEMO_LOGINS=false`` to hide it.
     """
     pk = os.getenv("STRIPE_PUBLISHABLE_KEY") or ""
-    _show_demo_raw = (os.getenv("SHOW_DEMO_LOGINS") or "true").strip().lower()
-    show_demo_logins = _show_demo_raw not in ("false", "0", "no", "off")
+    # Feb-2026 · default flipped from ``true`` → ``false`` so production
+    # (which sets no env var by default) hides the demo-account block
+    # out of the box. Preview / dev explicitly set ``SHOW_DEMO_LOGINS=true``
+    # in ``backend/.env`` to keep the QA shortcut visible.
+    _show_demo_raw = (os.getenv("SHOW_DEMO_LOGINS") or "false").strip().lower()
+    show_demo_logins = _show_demo_raw in ("true", "1", "yes", "on")
     return {
         "stripe_publishable_key": pk,
         "stripe_mode": _mode() if pk else "none",
