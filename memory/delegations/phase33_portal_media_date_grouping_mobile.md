@@ -9,7 +9,31 @@
 
 ---
 
-### What changed on the web
+### Task PP addendum (Feb 2026 · Portal Service Reports click hint)
+
+The web `PortalServiceReports.jsx` now renders a subtle instructional
+line **just above the first date-group header** (only when at least
+one visit row exists — the empty-state EmptyState already handles
+the zero-row case):
+
+> Click any visit below to open its full details, photos, and chemicals.
+
+- Typography: `text-sm`, italic, muted secondary color (matches other
+  helper text on the page — no full alert banner).
+- Testid on the mobile screen: **`service-reports-click-hint`** (same
+  as web so the shared QA regression net picks it up on both).
+- Only visible when `rows.length > 0`.
+- Row hover / press state already indicates tappability on web — the
+  mobile screen must ensure the equivalent (native ripple / opacity)
+  is already in place before the hint is added; the copy is only
+  helpful if the row LOOKS tappable.
+
+No other changes to mobile beyond adding this one instructional line
+in the same visual slot.
+
+---
+
+### What changed on the web (original brief)
 
 Three portal surfaces now group their contents under a **date header**
 that reads e.g. `Tuesday, February 10, 2026` (localized long form, no

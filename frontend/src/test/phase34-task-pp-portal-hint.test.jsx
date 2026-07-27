@@ -1,0 +1,95 @@
+/**
+ * Task PP · Feb 2026 — regression test for the Portal Service Reports
+ * "Click any visit to open details" instructional hint.
+ *
+ * Verifies:
+ *   1. Hint renders (with testid `service-reports-click-hint`) when
+ *      the fetch returns at least one report.
+ *   2. Hint is absent when the fetch returns an empty list — the
+ *      empty-state EmptyState component handles that case instead.
+ */
+import React from "react";
+import { render, cleanup, waitFor, screen } from "@testing-library/react";
+
+// Same mocking playbook as the mount-safety suite.
+jest.mock("react-router-dom", () => ({
+  useNavigate: () => jest.fn(),
+  useLocation: () => ({ pathname: "/", search: "", hash: "" }),
+  useParams: () => ({}),
+  useSearchParams: () => [new URLSearchParams(), jest.fn()],
+  Link: ({ children, ...rest }) => {
+    const React = require("react");
+    return React.createElement("a", rest, children);
+  },
+  Navigate: () => null,
+}), { virtual: true });
+
+jest.mock("lucide-react", () => {
+  const React = require("react");
+  return new Proxy({}, {
+    get: () => (props) => React.createElement("span", props),
+  });
+});
+
+jest.mock("@/theme", () => ({
+  colors: new Proxy({}, { get: () => "#000" }),
+}));
+
+// Mutable holder — swap the fetch response between tests.
+const apiState = { rows: [] };
+jest.mock("@/api", () => ({
+  api: {
+    get: (path) => {
+      if (path && path.includes("service-reports")) {
+        return Promise.resolve(apiState.rows);
+      }
+      return Promise.resolve([]);
+    },
+  },
+}));
+
+// Portal page also uses the shared portal auth hook. Mock it so
+// authenticated-state assumptions don't blow up the render.
+jest.mock("@/auth", () => ({
+  useAuth: () => ({ user: { id: "u1", role: "customer" }, loading: false }),
+}), { virtual: true });
+
+describe("Task PP · portal service-reports click hint", () => {
+  afterEach(() => { cleanup(); apiState.rows = []; });
+
+  it("renders the click hint when at least one visit is returned", async () => {
+    apiState.rows = [{
+      id: "r1",
+      job_id: "j1",
+      job_title: "Weekly service",
+      submitted_at: "2026-02-27T10:00:00Z",
+      scheduled_start: "2026-02-27T09:00:00Z",
+      chemicals: {},
+      photos: [],
+    }];
+    const { PortalServiceReports } =
+      require("@/pages/portal/PortalServiceReports");
+    render(<PortalServiceReports />);
+    const hint = await screen.findByTestId("service-reports-click-hint",
+                                                    {}, { timeout: 3000 });
+    expect(hint).toBeTruthy();
+    expect(hint.textContent).toMatch(/click any visit/i);
+  });
+
+  it("does NOT render the click hint when the list is empty", async () => {
+    apiState.rows = [];
+    const { PortalServiceReports } =
+      require("@/pages/portal/PortalServiceReports");
+    render(<PortalServiceReports />);
+    // Wait a tick so the effect resolves and swaps to empty-state.
+    await waitFor(() => {
+      // grouped container is only rendered when rows.length > 0
+      expect(
+        screen.queryByTestId("portal-service-reports-grouped")
+      ).toBeNull();
+    });
+    expect(
+      screen.queryByTestId("service-reports-click-hint")
+    ).toBeNull();
+  });
+});

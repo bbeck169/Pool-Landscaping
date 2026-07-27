@@ -35,9 +35,9 @@ export default function AdminUsersList() {
   const [lockedFailures, setLockedFailures] = useState({});
 
   const load = () => api.get("/team")
-    .then((r) => setRows(Array.isArray(r) ? r : (r?.members || [])))
+    .then((r) => setRows(Array.isArray(r) ? r : (r?.members || r?.items || [])))
     .catch(() => setRows([]));
-  useEffect(load, []);
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtered = useMemo(() => {
     if (!rows) return [];

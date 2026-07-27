@@ -160,6 +160,14 @@ export function PortalServiceReports() {
           };
           return (
             <div data-testid="portal-service-reports-grouped">
+              {/* Task PP · Feb 2026 — subtle instructional hint. Only
+                   surfaces when at least one visit row exists (the
+                   grouped block is only rendered in that case). */}
+              <p className="text-sm italic mb-4"
+                  style={{ color: colors.muted }}
+                  data-testid="service-reports-click-hint">
+                Click any visit below to open its full details, photos, and chemicals.
+              </p>
               {dayKeys.map((day, gi) => (
                 <div key={day} data-testid={`portal-service-reports-date-group-${day}`}
                      className={gi > 0 ? "pt-6 mt-6" : ""}

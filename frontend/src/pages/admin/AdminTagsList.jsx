@@ -23,7 +23,7 @@ export default function AdminTagsList() {
         : (r?.items || r?.tags || [])
     ))
     .catch(() => setRows([]));
-  useEffect(load, []);
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const visibleIds = useMemo(() => (rows || []).map((r) => r.id), [rows]);
   const { selected, selectedCount, allVisibleSelected, indeterminate,
              toggleAll, toggleOne, clear } = useBulkSelect(visibleIds);

@@ -19,9 +19,9 @@ export default function AdminServiceReportsList() {
   const [busy, setBusy] = useState(false);
   const [lockedFailures, setLockedFailures] = useState({});
   const load = () => api.get("/service-reports")
-    .then((r) => setRows(Array.isArray(r) ? r : (r?.reports || [])))
+    .then((r) => setRows(Array.isArray(r) ? r : (r?.reports || r?.items || [])))
     .catch(() => setRows([]));
-  useEffect(load, []);
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const visibleIds = useMemo(() => (rows || []).map((r) => r.id), [rows]);
   const { selected, selectedCount, allVisibleSelected, indeterminate,
              toggleAll, toggleOne, clear } = useBulkSelect(visibleIds);
