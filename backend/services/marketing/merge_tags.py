@@ -232,13 +232,16 @@ def _invoice_amount(ctx: Dict[str, Any]) -> str:
 
 
 def _job_date(ctx: Dict[str, Any]) -> str:
-    """Phase 21 · Feb 2026 · Addition — JOB_DATE formats the job's
-    ``scheduled_date`` in the tenant's timezone as ``"Mon, Feb 24"``.
+    """JOB_DATE formats the job's ``scheduled_date`` in the tenant's
+    timezone. Phase 27 · Feb 2026 — updated format to
+    ``"Mon, Jan 15, 2026"`` (adds explicit year) so recipients don't
+    have to guess the year on visits scheduled across a year boundary.
     Returns empty string when no job / no date."""
     from zoneinfo import ZoneInfo
     from datetime import datetime as _dt
     job = ctx.get("job") or {}
-    raw = job.get("scheduled_date") or job.get("date") or ""
+    raw = (job.get("scheduled_date") or job.get("scheduled_at")
+           or job.get("scheduled_start") or job.get("date") or "")
     if not raw:
         return ""
     tz_name = _tenant_timezone(ctx) or "America/Phoenix"
@@ -253,34 +256,57 @@ def _job_date(ctx: Dict[str, Any]) -> str:
         else:
             dt = _dt.fromisoformat(s.replace("Z", "+00:00"))
         if dt.tzinfo is None:
-            return dt.strftime("%a, %b %d")
-        return dt.astimezone(tz).strftime("%a, %b %d")
+            return dt.strftime("%a, %b %d, %Y")
+        return dt.astimezone(tz).strftime("%a, %b %d, %Y")
     except Exception:
         return ""
 
 
 def _job_time(ctx: Dict[str, Any]) -> str:
-    """Phase 21 · Feb 2026 · Addition — JOB_TIME formats the job's
-    ``scheduled_time`` (or the time portion of ``scheduled_at``) as
-    ``"2:00 PM"`` in the tenant's timezone."""
+    """JOB_TIME formats the job's scheduled time. Phase 27 · Feb 2026
+    — updated to render a time window ``"9:00 AM – 11:00 AM"`` when
+    both a start and end are available. Falls back to the single
+    start time when only one is present."""
     from zoneinfo import ZoneInfo
-    from datetime import datetime as _dt
+    from datetime import datetime as _dt, timedelta as _td
     job = ctx.get("job") or {}
     tz_name = _tenant_timezone(ctx) or "America/Phoenix"
     try:
         tz = ZoneInfo(tz_name)
     except Exception:
         tz = ZoneInfo("America/Phoenix")
-    # Prefer scheduled_at (has tz); fall back to scheduled_time HH:MM.
-    at = job.get("scheduled_at") or job.get("start_at") or ""
-    if at:
+
+    def _fmt(dt_val: "_dt") -> str:
+        # ``%-I`` is POSIX-only; fall back to stripping a leading zero.
         try:
-            dt = _dt.fromisoformat(str(at).replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                return dt.strftime("%-I:%M %p") if hasattr(dt, "strftime") else ""
-            return dt.astimezone(tz).strftime("%-I:%M %p")
+            return dt_val.strftime("%-I:%M %p")
+        except (ValueError, AttributeError):
+            return dt_val.strftime("%I:%M %p").lstrip("0")
+
+    def _parse(x: Any) -> Optional["_dt"]:
+        if not x:
+            return None
+        try:
+            dt = _dt.fromisoformat(str(x).replace("Z", "+00:00"))
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(tz)
+            return dt
         except Exception:
-            pass
+            return None
+
+    start = _parse(job.get("scheduled_at") or job.get("start_at")
+                   or job.get("scheduled_start"))
+    end = _parse(job.get("scheduled_end") or job.get("end_at"))
+    if not end and start:
+        dur = job.get("duration_minutes") or job.get("duration_mins")
+        if isinstance(dur, (int, float)) and dur > 0:
+            end = start + _td(minutes=int(dur))
+    if start and end and end > start:
+        return f"{_fmt(start)} – {_fmt(end)}"
+    if start:
+        return _fmt(start)
+
+    # Fallback — HH:MM string on scheduled_time.
     t_only = job.get("scheduled_time") or job.get("time")
     if t_only:
         try:
@@ -293,6 +319,124 @@ def _job_time(ctx: Dict[str, Any]) -> str:
         except Exception:
             return ""
     return ""
+
+
+# ─── Phase 27 · Feb 2026 — CUSTOMER_ADDRESS full-line resolver ──────────
+def _customer_address_full(ctx: Dict[str, Any]) -> str:
+    """CUSTOMER_ADDRESS renders the customer's service address as a
+    single line ``"street, city, state zip"``. Falls back to any
+    individual component present. Reads Phase 8+ ``address_line_1``
+    first, then the legacy single-string ``address`` field. Empty
+    when the customer has no address stored."""
+    c = ctx.get("customer") or {}
+    street = _safe_str(c.get("address_line_1") or c.get("address") or "").strip()
+    city = _safe_str(c.get("city") or "").strip()
+    state = _safe_str(c.get("state") or "").strip()
+    zip_code = _safe_str(c.get("zip") or c.get("postal_code") or "").strip()
+    # If ``address`` is already a full formatted line and no split
+    # parts are available, use it verbatim so we don't double-append.
+    if street and not any([city, state, zip_code]) and "," in street:
+        return street
+    tail_parts: List[str] = []
+    if city:
+        tail_parts.append(city)
+    if state and zip_code:
+        tail_parts.append(f"{state} {zip_code}")
+    elif state:
+        tail_parts.append(state)
+    elif zip_code:
+        tail_parts.append(zip_code)
+    tail = ", ".join(tail_parts)
+    if street and tail:
+        return f"{street}, {tail}"
+    return street or tail
+
+
+# ─── Phase 27 · Feb 2026 — Service Report content resolvers ─────────────
+def _service_report_chemicals_added(ctx: Dict[str, Any]) -> str:
+    """CHEMICALS_ADDED — HTML unordered list of chemicals the tech
+    added on the visit (name + quantity + unit). Empty string when
+    no service_report in scope or no chemicals were logged."""
+    sr = ctx.get("service_report") or {}
+    if not isinstance(sr, dict):
+        return ""
+    rows = sr.get("chemicals_added") or []
+    lines: List[str] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        name = _safe_str(r.get("chemical") or r.get("name") or "").strip()
+        qty = r.get("quantity") if r.get("quantity") is not None else r.get("amount")
+        unit = _safe_str(r.get("unit") or "").strip()
+        raw_label = _safe_str(r.get("raw_label") or "").strip()
+        if raw_label and (name or True):
+            label = f"{raw_label} of {name}".strip() if name else raw_label
+        elif name and qty not in (None, "", 0):
+            label = f"{qty} {unit} of {name}".strip() if unit else f"{qty} {name}".strip()
+        elif name:
+            label = name
+        else:
+            continue
+        lines.append(f"<li>{label}</li>")
+    if not lines:
+        return ""
+    return ('<ul style="margin:8px 0;padding-left:20px;line-height:1.6;">'
+            + "".join(lines) + "</ul>")
+
+
+def _service_report_chemical_readings(ctx: Dict[str, Any]) -> str:
+    """CHEMICAL_READINGS — HTML table of chemistry readings the tech
+    recorded (pH, chlorine, alkalinity, calcium, cyanuric acid …).
+    Empty string when no service_report in scope or all readings
+    are null/blank."""
+    sr = ctx.get("service_report") or {}
+    if not isinstance(sr, dict):
+        return ""
+    readings = sr.get("chemical_readings") or []
+    rows: List[str] = []
+    for r in readings:
+        if not isinstance(r, dict):
+            continue
+        val = r.get("value")
+        if val in (None, ""):
+            continue
+        name = _safe_str(r.get("name") or r.get("key") or "").strip()
+        if not name:
+            continue
+        unit = _safe_str(r.get("unit") or "").strip()
+        display = f"{val} {unit}".strip() if unit else f"{val}"
+        rows.append(
+            f'<tr><td style="padding:4px 12px 4px 0;color:#555">{name}</td>'
+            f'<td style="padding:4px 0;font-weight:600">{display}</td></tr>'
+        )
+    if not rows:
+        return ""
+    return ('<table cellspacing="0" style="margin:8px 0;border-collapse:collapse;">'
+            + "".join(rows) + "</table>")
+
+
+def _service_report_checklist(ctx: Dict[str, Any]) -> str:
+    """CHECKLIST — HTML unordered list of checklist items the tech
+    marked complete. Empty string when no service_report in scope or
+    the checklist is empty / all-unchecked."""
+    sr = ctx.get("service_report") or {}
+    if not isinstance(sr, dict):
+        return ""
+    items = sr.get("checklist_items") or []
+    lines: List[str] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        if not it.get("checked"):
+            continue
+        label = _safe_str(it.get("label") or "").strip()
+        if not label:
+            continue
+        lines.append(f'<li style="list-style:none;">✓ {label}</li>')
+    if not lines:
+        return ""
+    return ('<ul style="margin:8px 0;padding-left:0;line-height:1.6;">'
+            + "".join(lines) + "</ul>")
 
 
 # ─── Phase 22 · Feb 2026 · Addition — SERVICE_RECORD_IMAGES ─────────────
