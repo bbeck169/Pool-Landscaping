@@ -952,8 +952,7 @@ async def customer_preview_message(cid: str, body: _PreviewMessageBody,
         render_template as render_uppercase_tags,
         render_context as build_merge_ctx,
     )
-    from services.marketing.render import render_subject_and_body
-    from services.marketing.strip_html import strip_html
+    from services.marketing.render import render_subject_and_body, strip_html
 
     first_name = doc.get("first_name") or (doc.get("name") or "").split(" ")[0]
     last_name = doc.get("last_name") or " ".join((doc.get("name") or "").split(" ")[1:])
