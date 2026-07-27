@@ -18,7 +18,10 @@ export default function AdminTagsList() {
   const [busy, setBusy] = useState(false);
   const [lockedFailures, setLockedFailures] = useState({});
   const load = () => api.get("/customer-tags")
-    .then((r) => setRows(Array.isArray(r) ? r : (r?.tags || [])))
+    .then((r) => setRows(
+      Array.isArray(r) ? r
+        : (r?.items || r?.tags || [])
+    ))
     .catch(() => setRows([]));
   useEffect(load, []);
   const visibleIds = useMemo(() => (rows || []).map((r) => r.id), [rows]);

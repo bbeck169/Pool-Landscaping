@@ -72,7 +72,7 @@ export default function RequestService() {
         keyboardShouldPersistTaps="handled"
       >
         <Text style={s.intro}>
-          Tell us what you need and we'll schedule it for you.
+          Tell us what you need and we&apos;ll schedule it for you.
         </Text>
 
         <Text style={s.label}>WHAT SERVICE DO YOU NEED?</Text>

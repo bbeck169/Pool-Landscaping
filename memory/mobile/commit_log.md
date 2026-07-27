@@ -1,3 +1,17 @@
+## Iteration 24 — Phase 33 + 34 + 32 (Portal Parity + Offline Foundation)
+- **Commit**: 6722a503f6c39e4a75b6285a944a5af6aaae8808
+- **Date**: 2026-07-27
+- **Changes**:
+  - Phase 33: BrandLogo, forgot-password, portal home rewrite (CTA row, hero, concierge gradient, referral $55 gradient, last visit, media date grouping, request service simplify, Book Service deprecated)
+  - Phase 34: Business card website row, referral $55, tour v2, auto-send completion banner, password reset/change flows, leads status enum (5 canonical), AI employee dedupe
+  - Phase 32: offlineStore.ts, SyncManager.tsx, SyncStatusPill.tsx, root layout integration
+- **Files modified**:
+  - NEW: `src/components/BrandLogo.tsx`, `app/forgot-password.tsx`, `app/reset-password.tsx`, `app/settings/change-password.tsx`, `src/components/Tour.tsx`, `src/services/offlineStore.ts`, `src/services/SyncManager.tsx`, `src/components/SyncStatusPill.tsx`
+  - REWRITTEN: `app/portal/home.tsx`, `app/portal/photos.tsx`, `app/portal/videos.tsx`, `app/portal/service-reports.tsx`, `app/request-service.tsx`, `app/portal/book.tsx`
+  - EDITED: `app/login.tsx`, `app/card.tsx`, `app/referrals.tsx`, `app/job/[id].tsx`, `app/leads/index.tsx`, `app/leads/[id].tsx`, `app/(app)/more.tsx`, `app/(app)/index.tsx`, `app/_layout.tsx`, `src/components/job/styles.ts`
+- **Web files referenced**: Phase 32/33/34 delegation briefs in `/app/memory/delegations/`
+
+
 # Mobile Commit Log
 
 ## Iteration 1 — Templates Library Phase 3 (Mobile UI)
