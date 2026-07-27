@@ -269,39 +269,12 @@ export default function PortalHome() {
         ) : null}
       </div>
 
-      {tosStatus && !tosStatus.acknowledged && tosStatus.current_version ? (
-        <div
-          className="rounded-2xl p-4 mb-4 flex items-center gap-3 flex-wrap"
-          style={{
-            backgroundColor: "#FEF3C7",
-            border: "1px solid #FCD34D",
-          }}
-          data-testid="tos-nudge-banner"
-        >
-          <div
-            className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
-            style={{ backgroundColor: "#FDE68A", color: "#92400E" }}
-          >
-            <Shield size={18} />
-          </div>
-          <div className="flex-1 min-w-[200px]">
-            <div className="text-sm font-semibold" style={{ color: "#92400E" }}>
-              Please review our updated Terms of Service
-            </div>
-            <div className="text-xs mt-0.5" style={{ color: "#92400E", opacity: 0.85 }}>
-              Version {tosStatus.current_version} · A quick read and acknowledgement keeps your service active.
-            </div>
-          </div>
-          <button
-            onClick={() => navigate("/portal/terms")}
-            className="px-3 py-2 text-xs font-semibold rounded-lg hover:brightness-95"
-            style={{ backgroundColor: "#B45309", color: "#fff" }}
-            data-testid="tos-nudge-view"
-          >
-            View
-          </button>
-        </div>
-      ) : null}
+      {/* Phase 34 · Feb 2026 · Task S′ — the yellow "Please review our
+          updated Terms of Service" nudge banner has been physically
+          removed from the customer portal home per product request.
+          Customers can still open the ToS page from the sidebar
+          link (/portal/terms); admin-side ToS management is
+          unchanged. */}
 
       {/* Phase 34 · Feb 2026 · Task K — the standalone Call Now button
           and Request Service CTA that used to live in this region have
@@ -397,22 +370,14 @@ export default function PortalHome() {
         </div>
       ) : null}
 
-      {/* Slice O2 · Refer a Friend section. */}
-      <ReferralSection />
-      {/* Slice O.2 · My Referrals — hides when list is empty. */}
-      <MyReferralsSection />
-
-      {/* Feb-2026 · Item 3/10 — Customer-facing business card. Tap
-          to save the company contact / open NFC handoff. Tagged for
-          the portal tour (step 4). */}
-      <div className="mb-4 max-w-md" data-tour-id="business-card">
-        <BusinessCard variant="compact" />
-      </div>
-
-      {/* Last visit */}
+      {/* Phase 34 · Feb 2026 · Task R — Last Visit relocated. This
+          card used to render at the bottom of the page (below
+          Business Card). It now sits directly under the Ask Concierge
+          block and above the Refer a Friend section per product
+          request. Testid preserved (`last-visit-card`). */}
       {data?.last_visit ? (
         <div
-          className="rounded-2xl p-5"
+          className="rounded-2xl p-5 mb-4"
           style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
           data-testid="last-visit-card"
         >
@@ -439,6 +404,23 @@ export default function PortalHome() {
           </div>
         </div>
       ) : null}
+
+      {/* Slice O2 · Refer a Friend section. */}
+      <ReferralSection />
+      {/* Slice O.2 · My Referrals — hides when list is empty. */}
+      <MyReferralsSection />
+
+      {/* Feb-2026 · Item 3/10 — Customer-facing business card. Tap
+          to save the company contact / open NFC handoff. Tagged for
+          the portal tour (step 4). */}
+      <div className="mb-4 max-w-md" data-tour-id="business-card">
+        <BusinessCard variant="compact" />
+      </div>
+
+      {/* Phase 34 · Feb 2026 · Task R — the Last Visit block used to
+          render here at the bottom. It has been moved up to sit
+          directly under Ask Concierge and above Refer a Friend.
+          Intentionally blank so nothing below shifts. */}
 
       {/* Feb-2026 · Slice J1 — the "Ask a concierge" AI Employees
           block used to render here at the bottom of the page.
