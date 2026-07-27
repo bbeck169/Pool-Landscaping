@@ -254,6 +254,152 @@ def test_jobs_bulk_reschedule_rejects_unknown_field(db, super_headers, tid):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Jobs — Feb 2026 · Task LL follow-up — RELATIVE-SHIFT bulk reschedule.
+# Server-computed scheduled_date_shift_days field on the jobs patch
+# allow-list. Verifies (a) forward shift, (b) backward shift, (c)
+# mutually-exclusive rejection when combined with scheduled_date, and
+# (d) rows with no existing scheduled_date land in failed[].
+# ═══════════════════════════════════════════════════════════════════════
+def test_jobs_bulk_reschedule_shift_forward(db, super_headers, tid):
+    async def _plant():
+        a = uuid.uuid4().hex
+        b = uuid.uuid4().hex
+        await db.jobs.insert_many([
+            {"id": a, "tenant_id": tid, "customer_id": "c-x",
+              "title": "LL-shift-a", "status": "scheduled",
+              "scheduled_date": "2026-03-01",
+              "created_at": "2026-02-01T00:00:00Z"},
+            {"id": b, "tenant_id": tid, "customer_id": "c-x",
+              "title": "LL-shift-b", "status": "scheduled",
+              "scheduled_date": "2026-03-15",
+              "created_at": "2026-02-01T00:00:00Z"},
+        ])
+        return a, b
+    a, b = _run(_plant())
+    r = requests.post(
+        f"{API}/jobs/bulk-update",
+        headers={**super_headers, "Content-Type": "application/json"},
+        json={"ids": [a, b], "patch": {"scheduled_date_shift_days": 3}},
+        timeout=30,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["updated_count"] == 2
+    assert sorted(body["updated"]) == sorted([a, b])
+    assert body["failed"] == []
+    async def _check():
+        return (await db.jobs.find_one({"id": a}))["scheduled_date"], \
+                 (await db.jobs.find_one({"id": b}))["scheduled_date"]
+    da, dbb = _run(_check())
+    assert da == "2026-03-04"
+    assert dbb == "2026-03-18"
+
+
+def test_jobs_bulk_reschedule_shift_backward(db, super_headers, tid):
+    async def _plant():
+        jid = uuid.uuid4().hex
+        await db.jobs.insert_one({
+            "id": jid, "tenant_id": tid, "customer_id": "c-x",
+            "title": "LL-shift-back", "status": "scheduled",
+            "scheduled_date": "2026-03-15",
+            "created_at": "2026-02-01T00:00:00Z",
+        })
+        return jid
+    jid = _run(_plant())
+    r = requests.post(
+        f"{API}/jobs/bulk-update",
+        headers={**super_headers, "Content-Type": "application/json"},
+        json={"ids": [jid], "patch": {"scheduled_date_shift_days": -7}},
+        timeout=30,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["updated_count"] == 1
+    async def _check():
+        return (await db.jobs.find_one({"id": jid}))["scheduled_date"]
+    assert _run(_check()) == "2026-03-08"
+
+
+def test_jobs_bulk_reschedule_shift_and_absolute_are_mutually_exclusive(
+        db, super_headers, tid):
+    async def _plant():
+        jid = uuid.uuid4().hex
+        await db.jobs.insert_one({
+            "id": jid, "tenant_id": tid, "customer_id": "c-x",
+            "title": "LL-shift-mutex", "status": "scheduled",
+            "scheduled_date": "2026-03-01",
+            "created_at": "2026-02-01T00:00:00Z",
+        })
+        return jid
+    jid = _run(_plant())
+    r = requests.post(
+        f"{API}/jobs/bulk-update",
+        headers={**super_headers, "Content-Type": "application/json"},
+        json={"ids": [jid], "patch": {
+            "scheduled_date": "2026-04-01",
+            "scheduled_date_shift_days": 3,
+        }},
+        timeout=30,
+    )
+    assert r.status_code == 422, r.text
+    assert "scheduled_date_shift_days" in r.text
+
+
+def test_jobs_bulk_reschedule_shift_missing_date_lands_in_failed(
+        db, super_headers, tid):
+    async def _plant():
+        happy = uuid.uuid4().hex
+        no_date = uuid.uuid4().hex
+        await db.jobs.insert_many([
+            {"id": happy, "tenant_id": tid, "customer_id": "c-x",
+              "title": "LL-shift-happy", "status": "scheduled",
+              "scheduled_date": "2026-03-01",
+              "created_at": "2026-02-01T00:00:00Z"},
+            {"id": no_date, "tenant_id": tid, "customer_id": "c-x",
+              "title": "LL-shift-nodate", "status": "scheduled",
+              # No scheduled_date at all.
+              "created_at": "2026-02-01T00:00:00Z"},
+        ])
+        return happy, no_date
+    happy, no_date = _run(_plant())
+    r = requests.post(
+        f"{API}/jobs/bulk-update",
+        headers={**super_headers, "Content-Type": "application/json"},
+        json={"ids": [happy, no_date],
+                "patch": {"scheduled_date_shift_days": 3}},
+        timeout=30,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["updated_count"] == 1
+    assert body["updated"] == [happy]
+    assert len(body["failed"]) == 1
+    assert body["failed"][0]["id"] == no_date
+    assert "scheduled_date" in body["failed"][0]["reason"].lower()
+
+
+def test_jobs_bulk_reschedule_shift_non_integer_rejected(
+        db, super_headers, tid):
+    async def _plant():
+        jid = uuid.uuid4().hex
+        await db.jobs.insert_one({
+            "id": jid, "tenant_id": tid, "customer_id": "c-x",
+            "title": "LL-shift-badval", "status": "scheduled",
+            "scheduled_date": "2026-03-01",
+            "created_at": "2026-02-01T00:00:00Z",
+        })
+        return jid
+    jid = _run(_plant())
+    r = requests.post(
+        f"{API}/jobs/bulk-update",
+        headers={**super_headers, "Content-Type": "application/json"},
+        json={"ids": [jid],
+                "patch": {"scheduled_date_shift_days": "three"}},
+        timeout=30,
+    )
+    assert r.status_code == 422, r.text
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Tasks — happy path
 # ═══════════════════════════════════════════════════════════════════════
 def test_tasks_bulk_update_status(db, super_headers, tid):

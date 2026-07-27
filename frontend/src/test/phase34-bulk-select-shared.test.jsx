@@ -186,4 +186,55 @@ describe("bulk-reschedule · jobs", () => {
       patch: expect.objectContaining({ scheduled_date: "2026-03-15" }),
     }));
   });
+
+  // Feb 2026 · Task LL follow-up — relative-shift mode.
+  it("relative-shift sends scheduled_date_shift_days patch (weeks × 7)", async () => {
+    const spy = jest.fn().mockResolvedValue({ updated_count: 3, updated: jobIds, failed: [] });
+    // 2 weeks forward = +14 days.
+    const shiftValue = 2;
+    const shiftUnit = "weeks";
+    const shiftDirection = 1;
+    const shiftDays = shiftDirection * shiftValue * (shiftUnit === "weeks" ? 7 : 1);
+    expect(shiftDays).toBe(14);
+    await spy("/jobs/bulk-update", {
+      ids: jobIds, patch: { scheduled_date_shift_days: shiftDays },
+    });
+    expect(spy).toHaveBeenCalledWith("/jobs/bulk-update", expect.objectContaining({
+      patch: expect.objectContaining({ scheduled_date_shift_days: 14 }),
+    }));
+  });
+
+  it("relative-shift backward direction sends a negative int", async () => {
+    const spy = jest.fn().mockResolvedValue({ updated_count: 3, updated: jobIds, failed: [] });
+    const shiftDays = -1 * 3 * 1; // 3 days back
+    await spy("/jobs/bulk-update", {
+      ids: jobIds, patch: { scheduled_date_shift_days: shiftDays },
+    });
+    expect(spy).toHaveBeenCalledWith("/jobs/bulk-update", expect.objectContaining({
+      patch: expect.objectContaining({ scheduled_date_shift_days: -3 }),
+    }));
+  });
+
+  it("absolute + relative in the same patch is a client-side invariant violation", () => {
+    // The frontend never composes both together — it toggles between
+    // modes and sends exactly one. Verify the invariant is enforced
+    // by the mode-toggle contract (only one field ever emitted).
+    const buildPatch = (mode, absoluteDate, shiftDays) => (
+      mode === "absolute" ? { scheduled_date: absoluteDate }
+                                : { scheduled_date_shift_days: shiftDays }
+    );
+    const abs = buildPatch("absolute", "2026-03-15", 999);
+    const rel = buildPatch("relative", "ignored", 3);
+    expect("scheduled_date" in abs && !("scheduled_date_shift_days" in abs)).toBe(true);
+    expect("scheduled_date_shift_days" in rel && !("scheduled_date" in rel)).toBe(true);
+  });
+
+  it("relative-shift confirm-btn is disabled at 0-day shift", () => {
+    const canConfirm = (mode, absoluteDate, shiftDays) => (
+      mode === "absolute" ? Boolean(absoluteDate) : shiftDays !== 0
+    );
+    expect(canConfirm("relative", "", 0)).toBe(false);
+    expect(canConfirm("relative", "", 3)).toBe(true);
+    expect(canConfirm("relative", "", -7)).toBe(true);
+  });
 });

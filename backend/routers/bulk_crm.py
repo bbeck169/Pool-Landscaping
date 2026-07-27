@@ -23,6 +23,7 @@ arbitrary keys):
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -196,6 +197,50 @@ async def customers_bulk_update(body: _BulkUpdateIn,
 # ──── Jobs ──────────────────────────────────────────────────────────────
 _JOB_SELECTOR = {"search", "status", "technician_id", "customer_id"}
 _JOB_PATCH_ALLOWED = {"technician_id", "status", "scheduled_date"}
+# Special server-computed patch field (Feb 2026 · Task LL follow-up).
+_JOB_SPECIAL_PATCH = {"scheduled_date_shift_days"}
+
+
+async def _jobs_bulk_shift(ids: List[str], shift_days: int,
+                              user: dict, tenant: dict) -> dict:
+    """Per-row scheduled_date shift. Uses each job's existing
+    ``scheduled_date`` as the anchor and adds/subtracts N days. Jobs
+    without a ``scheduled_date`` land in ``failed[]``."""
+    updated: List[str] = []
+    failed: List[dict] = []
+    stamp = now_iso()
+    for _id in ids:
+        row = await db.jobs.find_one(
+            {"id": _id, "tenant_id": tenant["id"]},
+            {"_id": 0, "scheduled_date": 1},
+        )
+        if row is None:
+            failed.append({"id": _id, "reason": "Not found", "status_code": 404})
+            continue
+        cur = row.get("scheduled_date")
+        if not cur:
+            failed.append({"id": _id, "reason": "Job has no scheduled_date to shift",
+                              "status_code": 409})
+            continue
+        try:
+            base = date.fromisoformat(cur[:10])
+        except ValueError:
+            failed.append({"id": _id, "reason": "Existing scheduled_date is unparseable",
+                              "status_code": 409})
+            continue
+        new_date = (base + timedelta(days=shift_days)).isoformat()
+        await db.jobs.update_one(
+            {"id": _id, "tenant_id": tenant["id"]},
+            {"$set": {"scheduled_date": new_date,
+                        "updated_at": stamp,
+                        "updated_by_user_id": user.get("id")}},
+        )
+        await _write_audit("job.bulk_update", user, tenant["id"], _id,
+                              patch_fields=["scheduled_date"],
+                              shift_days=shift_days)
+        updated.append(_id)
+    return {"ok": True, "updated_count": len(updated),
+              "updated": updated, "failed": failed}
 
 
 async def _job_locked(row: dict) -> Optional[str]:
@@ -224,8 +269,29 @@ async def jobs_bulk_update(body: _BulkUpdateIn,
     ids = (await _resolve_ids("jobs", tenant["id"], body.query_selector or {},
                                     body.exclude_ids or [], _JOB_SELECTOR)
               if body.query_selector else list(body.ids or []))
+    # Feb 2026 · Task LL follow-up — relative-shift branch. Mutually
+    # exclusive with a static ``scheduled_date`` in the same patch.
+    patch = body.patch or {}
+    if "scheduled_date_shift_days" in patch:
+        if "scheduled_date" in patch:
+            raise HTTPException(
+                422,
+                "patch cannot contain both scheduled_date and "
+                "scheduled_date_shift_days — pick one",
+            )
+        try:
+            shift_days = int(patch["scheduled_date_shift_days"])
+        except (TypeError, ValueError):
+            raise HTTPException(422, "scheduled_date_shift_days must be an integer")
+        # De-dup + cap parity with _generic_bulk_update.
+        ids = list(dict.fromkeys(ids or []))
+        if not ids:
+            raise HTTPException(400, "ids is empty")
+        if len(ids) > _CAP:
+            raise HTTPException(400, f"bulk-update capped at {_CAP} rows per call")
+        return await _jobs_bulk_shift(ids, shift_days, user, tenant)
     return await _generic_bulk_update("jobs", "job.bulk_update", ids,
-                                          body.patch, _JOB_PATCH_ALLOWED,
+                                          patch, _JOB_PATCH_ALLOWED,
                                           user, tenant)
 
 

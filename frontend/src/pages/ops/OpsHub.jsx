@@ -1891,6 +1891,13 @@ function PriceBook() {
                           onChange={(e) => setEditDraft({ ...editDraft, category: e.target.value })}
                           className="w-24 border px-2 py-1 text-sm rounded"
                           data-testid={`pb-edit-category-${r.id}`} />
+                 <input value={editDraft.unit}
+                          onChange={(e) => setEditDraft({ ...editDraft, unit: e.target.value })}
+                          className="w-20 border px-2 py-1 text-sm rounded"
+                          data-testid={`pb-edit-unit-${r.id}`}
+                          placeholder="unit"
+                          aria-label="Unit"
+                          title="Unit" />
                  <input value={editDraft.unit_price} type="number" step="0.01" min="0"
                           onChange={(e) => setEditDraft({ ...editDraft, unit_price: e.target.value })}
                           className="w-24 border pl-5 pr-2 py-1 text-sm rounded text-right"

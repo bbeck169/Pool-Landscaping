@@ -47,9 +47,23 @@ export default function JobsList() {
   const [lockedFailures, setLockedFailures] = useState({});
   // Reschedule modal state.
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [rescheduleMode, setRescheduleMode] = useState("absolute"); // absolute | relative
   const [rescheduleDate, setRescheduleDate] = useState("");
+  const [shiftValue, setShiftValue] = useState(1);
+  const [shiftUnit, setShiftUnit] = useState("days"); // days | weeks
+  const [shiftDirection, setShiftDirection] = useState(1); // 1 | -1
   const [rescheduleConfirmOpen, setRescheduleConfirmOpen] = useState(false);
   const [rescheduleBusy, setRescheduleBusy] = useState(false);
+
+  const shiftDays = useMemo(() => {
+    const magnitude = Math.max(0, parseInt(shiftValue, 10) || 0);
+    const perUnit = shiftUnit === "weeks" ? 7 : 1;
+    return shiftDirection * magnitude * perUnit;
+  }, [shiftValue, shiftUnit, shiftDirection]);
+
+  const canConfirmReschedule = rescheduleMode === "absolute"
+    ? Boolean(rescheduleDate)
+    : shiftDays !== 0;
 
   const load = () => {
     const qs = status ? `?status=${encodeURIComponent(status)}` : "";
@@ -104,15 +118,25 @@ export default function JobsList() {
   };
 
   const doBulkReschedule = async () => {
-    if (!rescheduleDate) return;
+    if (!canConfirmReschedule) return;
     setRescheduleBusy(true);
     try {
+      const patch = rescheduleMode === "absolute"
+        ? { scheduled_date: rescheduleDate }
+        : { scheduled_date_shift_days: shiftDays };
       const res = await api.post("/jobs/bulk-update", {
-        ids: Array.from(selected),
-        patch: { scheduled_date: rescheduleDate },
+        ids: Array.from(selected), patch,
       });
       applyFailures(res.failed);
-      toast.success(`Rescheduled ${res.updated_count || 0} job${(res.updated_count || 0) === 1 ? "" : "s"} to ${formatFriendly(rescheduleDate)}`);
+      const okC = res.updated_count || 0;
+      const failC = (res.failed || []).length;
+      const msg = rescheduleMode === "absolute"
+        ? `Rescheduled ${okC} job${okC === 1 ? "" : "s"} to ${formatFriendly(rescheduleDate)}`
+        : `Shifted ${okC} job${okC === 1 ? "" : "s"} by ${shiftDays > 0 ? "+" : ""}${shiftDays} day${Math.abs(shiftDays) === 1 ? "" : "s"}`;
+      if (failC === 0) toast.success(msg);
+      else toast(`${msg} · ${failC} locked`, {
+        description: (res.failed || []).slice(0, 3).map((f) => f.reason).join(" · "),
+      });
       setRescheduleConfirmOpen(false);
       setRescheduleOpen(false);
       setRescheduleDate("");
@@ -259,9 +283,6 @@ export default function JobsList() {
                 <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
                   Reschedule {selectedCount} job{selectedCount === 1 ? "" : "s"}
                 </h2>
-                <p className="text-sm mt-1" style={{ color: colors.muted }}>
-                  Pick a target date. This preserves each job's time-of-day and technician assignment.
-                </p>
               </div>
               <button type="button" onClick={() => setRescheduleOpen(false)}
                         className="p-1" style={{ color: colors.muted }}
@@ -269,15 +290,113 @@ export default function JobsList() {
                 <XIcon size={18} />
               </button>
             </div>
-            <label className="block text-xs font-semibold mb-1 uppercase tracking-wider"
-                     style={{ color: colors.muted }}>Target date</label>
-            <input type="date" value={rescheduleDate}
-                     onChange={(e) => setRescheduleDate(e.target.value)}
-                     className="w-full px-3 py-2 rounded-lg text-sm"
-                     style={{ backgroundColor: colors.surfaceSecondary,
-                                color: colors.onSurface,
-                                border: `1px solid ${colors.border}` }}
-                     data-testid="bulk-reschedule-datepicker" />
+
+            {/* Mode toggle */}
+            <div className="flex gap-1 mb-4 p-1 rounded-xl"
+                  style={{ backgroundColor: colors.surfaceSecondary,
+                            border: `1px solid ${colors.border}` }}>
+              <button type="button"
+                        onClick={() => setRescheduleMode("absolute")}
+                        className="flex-1 text-xs font-bold uppercase tracking-wider px-3 py-2 rounded-lg transition"
+                        style={{
+                          backgroundColor: rescheduleMode === "absolute" ? colors.brandTertiary : "transparent",
+                          color: rescheduleMode === "absolute" ? colors.onBrandTertiary : colors.muted,
+                        }}
+                        data-testid="bulk-reschedule-mode-absolute">
+                Absolute date
+              </button>
+              <button type="button"
+                        onClick={() => setRescheduleMode("relative")}
+                        className="flex-1 text-xs font-bold uppercase tracking-wider px-3 py-2 rounded-lg transition"
+                        style={{
+                          backgroundColor: rescheduleMode === "relative" ? colors.brandTertiary : "transparent",
+                          color: rescheduleMode === "relative" ? colors.onBrandTertiary : colors.muted,
+                        }}
+                        data-testid="bulk-reschedule-mode-relative">
+                Relative shift
+              </button>
+            </div>
+
+            {rescheduleMode === "absolute" ? (
+              <>
+                <p className="text-sm mb-2" style={{ color: colors.muted }}>
+                  Reschedule all selected to this date. Preserves each job's
+                  time-of-day and technician assignment.
+                </p>
+                <label className="block text-xs font-semibold mb-1 uppercase tracking-wider"
+                         style={{ color: colors.muted }}>Target date</label>
+                <input type="date" value={rescheduleDate}
+                         onChange={(e) => setRescheduleDate(e.target.value)}
+                         className="w-full px-3 py-2 rounded-lg text-sm"
+                         style={{ backgroundColor: colors.surfaceSecondary,
+                                    color: colors.onSurface,
+                                    border: `1px solid ${colors.border}` }}
+                         data-testid="bulk-reschedule-datepicker" />
+              </>
+            ) : (
+              <>
+                <p className="text-sm mb-2" style={{ color: colors.muted }}>
+                  Shift all selected by a relative amount. Each job's new date
+                  is computed individually from its current schedule.
+                </p>
+                <div className="flex items-stretch gap-2">
+                  <div className="flex rounded-lg overflow-hidden"
+                        style={{ border: `1px solid ${colors.border}` }}>
+                    <button type="button"
+                              onClick={() => setShiftDirection(-1)}
+                              className="w-9 text-sm font-bold"
+                              style={{
+                                backgroundColor: shiftDirection === -1 ? "#DC2626" : colors.surfaceSecondary,
+                                color: shiftDirection === -1 ? "#FFFFFF" : colors.onSurface,
+                              }}
+                              data-testid="bulk-reschedule-shift-direction-minus"
+                              aria-label="Shift backward">
+                      −
+                    </button>
+                    <button type="button"
+                              onClick={() => setShiftDirection(1)}
+                              className="w-9 text-sm font-bold"
+                              style={{
+                                backgroundColor: shiftDirection === 1 ? "#1D4ED8" : colors.surfaceSecondary,
+                                color: shiftDirection === 1 ? "#FFFFFF" : colors.onSurface,
+                              }}
+                              data-testid="bulk-reschedule-shift-direction-plus"
+                              aria-label="Shift forward">
+                      +
+                    </button>
+                  </div>
+                  {/* Hidden signed input exposes the same intent for
+                       tools that prefer a single testid. Value = signed magnitude. */}
+                  <input type="hidden"
+                            value={String(shiftDirection * (parseInt(shiftValue, 10) || 0))}
+                            data-testid="bulk-reschedule-shift-direction"
+                            readOnly />
+                  <input type="number" min="0" step="1"
+                            value={shiftValue}
+                            onChange={(e) => setShiftValue(e.target.value)}
+                            className="flex-1 px-3 py-2 rounded-lg text-sm"
+                            style={{ backgroundColor: colors.surfaceSecondary,
+                                        color: colors.onSurface,
+                                        border: `1px solid ${colors.border}` }}
+                            data-testid="bulk-reschedule-shift-value"
+                            aria-label="Shift magnitude" />
+                  <select value={shiftUnit}
+                            onChange={(e) => setShiftUnit(e.target.value)}
+                            className="px-3 py-2 rounded-lg text-sm"
+                            style={{ backgroundColor: colors.surfaceSecondary,
+                                        color: colors.onSurface,
+                                        border: `1px solid ${colors.border}` }}
+                            data-testid="bulk-reschedule-shift-unit">
+                    <option value="days">Days</option>
+                    <option value="weeks">Weeks</option>
+                  </select>
+                </div>
+                <div className="mt-2 text-xs" style={{ color: colors.muted }}>
+                  Effective shift: <b>{shiftDays > 0 ? "+" : ""}{shiftDays} day{Math.abs(shiftDays) === 1 ? "" : "s"}</b>
+                </div>
+              </>
+            )}
+
             <div className="mt-5 flex items-center justify-end gap-2">
               <button type="button" onClick={() => setRescheduleOpen(false)}
                         className="px-4 py-2 rounded-xl text-sm font-semibold"
@@ -288,7 +407,7 @@ export default function JobsList() {
               </button>
               <button type="button"
                         onClick={() => setRescheduleConfirmOpen(true)}
-                        disabled={!rescheduleDate || rescheduleBusy}
+                        disabled={!canConfirmReschedule || rescheduleBusy}
                         className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-40"
                         style={{ backgroundColor: "#1D4ED8" }}
                         data-testid="bulk-reschedule-open-confirm">
@@ -302,9 +421,15 @@ export default function JobsList() {
         open={rescheduleConfirmOpen}
         onClose={() => setRescheduleConfirmOpen(false)}
         onConfirm={doBulkReschedule}
-        title={`Reschedule ${selectedCount} job${selectedCount === 1 ? "" : "s"} to ${formatFriendly(rescheduleDate)}?`}
-        description="This preserves each job's time-of-day and technician assignment. Jobs with active timers or completed+invoiced will be skipped."
-        confirmLabel={rescheduleBusy ? "Rescheduling…" : `Reschedule ${selectedCount}`}
+        title={rescheduleMode === "absolute"
+          ? `Reschedule ${selectedCount} job${selectedCount === 1 ? "" : "s"} to ${formatFriendly(rescheduleDate)}?`
+          : `Shift ${selectedCount} job${selectedCount === 1 ? "" : "s"} by ${shiftDays > 0 ? "+" : ""}${shiftDays} day${Math.abs(shiftDays) === 1 ? "" : "s"}?`}
+        description={rescheduleMode === "absolute"
+          ? "This preserves each job's time-of-day and technician assignment. Jobs with active timers or completed+invoiced will be skipped."
+          : "Each job's new date is computed individually from its existing schedule. Jobs without a scheduled date will be skipped."}
+        confirmLabel={rescheduleBusy
+          ? "Rescheduling…"
+          : (rescheduleMode === "absolute" ? `Reschedule ${selectedCount}` : `Shift ${selectedCount}`)}
         busy={rescheduleBusy}
         testidRoot="bulk-reschedule-confirm"
       />
