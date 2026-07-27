@@ -306,6 +306,40 @@ export default function PortalHome() {
         </div>
       </div>
 
+      {/* Phase 34 · Feb 2026 · Task R (revised) — Last Visit card now
+          sits immediately ABOVE the Ask a Concierge section (was
+          previously above Refer a Friend). Testid preserved
+          (`last-visit-card`). */}
+      {data?.last_visit ? (
+        <div
+          className="rounded-2xl p-5 mb-4"
+          style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+          data-testid="last-visit-card"
+        >
+          <div className="text-xs uppercase font-semibold mb-2" style={{ color: colors.muted }}>
+            Last visit
+          </div>
+          <div className="flex items-start gap-3">
+            <div
+              className="w-11 h-11 rounded-xl flex items-center justify-center"
+              style={{ backgroundColor: colors.brandTertiary, color: colors.brand }}
+            >
+              <Waves size={18} />
+            </div>
+            <div className="flex-1">
+              <div className="text-base font-semibold" style={{ color: colors.onSurface }}>{data.last_visit.title}</div>
+              <div className="text-sm" style={{ color: colors.muted }}>
+                {data.last_visit.scheduled_date} · {data.last_visit.technician_name || "—"}
+              </div>
+              <div className="mt-2"><StatusPill status={data.last_visit.status} /></div>
+            </div>
+            <button onClick={() => navigate(`/portal/services/${data.last_visit.id}`)}>
+              <ChevronRight size={18} color={colors.muted} />
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {/* Phase 34 · Feb 2026 · reorder — "Ask a concierge" moved
           from bottom-of-page to sit directly ABOVE the "Refer a
           Friend" section per product request. Testids preserved
@@ -370,49 +404,12 @@ export default function PortalHome() {
         </div>
       ) : null}
 
-      {/* Phase 34 · Feb 2026 · Task R — Last Visit relocated. This
-          card used to render at the bottom of the page (below
-          Business Card). It now sits directly under the Ask Concierge
-          block and above the Refer a Friend section per product
-          request. Testid preserved (`last-visit-card`). */}
-      {data?.last_visit ? (
-        <div
-          className="rounded-2xl p-5 mb-4"
-          style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-          data-testid="last-visit-card"
-        >
-          <div className="text-xs uppercase font-semibold mb-2" style={{ color: colors.muted }}>
-            Last visit
-          </div>
-          <div className="flex items-start gap-3">
-            <div
-              className="w-11 h-11 rounded-xl flex items-center justify-center"
-              style={{ backgroundColor: colors.brandTertiary, color: colors.brand }}
-            >
-              <Waves size={18} />
-            </div>
-            <div className="flex-1">
-              <div className="text-base font-semibold" style={{ color: colors.onSurface }}>{data.last_visit.title}</div>
-              <div className="text-sm" style={{ color: colors.muted }}>
-                {data.last_visit.scheduled_date} · {data.last_visit.technician_name || "—"}
-              </div>
-              <div className="mt-2"><StatusPill status={data.last_visit.status} /></div>
-            </div>
-            <button onClick={() => navigate(`/portal/services/${data.last_visit.id}`)}>
-              <ChevronRight size={18} color={colors.muted} />
-            </button>
-          </div>
-        </div>
-      ) : null}
-
       {/* Slice O2 · Refer a Friend section. */}
       <ReferralSection />
       {/* Slice O.2 · My Referrals — hides when list is empty. */}
       <MyReferralsSection />
 
-      {/* Feb-2026 · Item 3/10 — Customer-facing business card. Tap
-          to save the company contact / open NFC handoff. Tagged for
-          the portal tour (step 4). */}
+      {/* Feb-2026 · Item 3/10 — Customer-facing business card. */}
       <div className="mb-4 max-w-md" data-tour-id="business-card">
         <BusinessCard variant="compact" />
       </div>
