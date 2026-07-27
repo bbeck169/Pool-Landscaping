@@ -62,6 +62,13 @@ const SURFACES = [
   { name: "payments", endpoint: "/payments/bulk-delete" },
   { name: "leads", endpoint: "/leads/bulk-delete" },
   { name: "autobilling", endpoint: "/autobilling/bulk-delete" },
+  // Task LL Phase 2 UI wrap-up · Feb 2026 — 6 additional admin surfaces.
+  { name: "customers", endpoint: "/customers/bulk-delete" },
+  { name: "jobs", endpoint: "/jobs/bulk-delete" },
+  { name: "tasks", endpoint: "/tasks/bulk-delete" },
+  { name: "communications", endpoint: "/communications/bulk-archive" },
+  { name: "email-templates", endpoint: "/email-templates/bulk-delete" },
+  { name: "sms-templates", endpoint: "/sms-templates/bulk-delete" },
 ];
 
 SURFACES.forEach(({ name, endpoint }) => {

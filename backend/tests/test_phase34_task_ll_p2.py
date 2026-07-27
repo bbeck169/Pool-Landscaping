@@ -304,6 +304,38 @@ def test_sms_templates_bulk_delete(db, super_headers, tid):
     assert r.json()["deleted_count"] == 1
 
 
+def test_email_template_live_drip_locked(db, super_headers, tid):
+    """Task LL follow-up · live-drip lock — an email template referenced
+    by any active (non-archived) sequence step must refuse hard delete."""
+    async def _plant():
+        eid = uuid.uuid4().hex
+        await db.email_templates.insert_one({
+            "id": eid, "tenant_id": tid, "name": "LL-live-drip",
+            "code": f"ll-drip-{eid[:8]}",
+            "category": "outbound", "subject": "t", "html": "t",
+            "created_at": "2026-02-01T00:00:00Z",
+        })
+        await db.sequences.insert_one({
+            "id": uuid.uuid4().hex, "tenant_id": tid,
+            "name": "Live drip", "is_archived": False,
+            "steps": [{"delay_days": 1, "email_template_id": eid}],
+            "created_at": "2026-02-01T00:00:00Z",
+        })
+        return eid
+    eid = _run(_plant())
+    r = requests.post(
+        f"{API}/email-templates/bulk-delete",
+        headers={**super_headers, "Content-Type": "application/json"},
+        json={"ids": [eid]}, timeout=30,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["deleted_count"] == 0
+    assert len(body["failed"]) == 1
+    assert body["failed"][0]["status_code"] == 409
+    assert "drip sequence" in body["failed"][0]["reason"]
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Digest engagement KPIs
 # ═══════════════════════════════════════════════════════════════════════

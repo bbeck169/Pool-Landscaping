@@ -336,7 +336,23 @@ async def email_templates_bulk_delete(body: _BulkIdsIn,
               if body.query_selector else list(body.ids or []))
     return await _generic_bulk_delete("email_templates",
                                           "email_template.soft_delete",
-                                          ids, user, tenant)
+                                          ids, user, tenant,
+                                          locked_check=_email_tpl_locked)
+
+
+async def _email_tpl_locked(row: dict) -> Optional[str]:
+    """Task LL follow-up · Feb 2026 — refuse hard delete of any template
+    referenced by an active (non-archived) drip sequence. Preserves
+    the audit trail on live campaigns and keeps drips from breaking
+    when a step target vanishes."""
+    tid = row.get("id")
+    n = await db.sequences.count_documents({
+        "steps.email_template_id": tid,
+        "$or": [{"is_archived": {"$ne": True}}, {"is_archived": {"$exists": False}}],
+    })
+    if n:
+        return f"Template used by {n} active drip sequence(s) — archive instead"
+    return None
 
 
 @router.post("/email-templates/bulk-update",
@@ -366,7 +382,20 @@ async def sms_templates_bulk_delete(body: _BulkIdsIn,
               if body.query_selector else list(body.ids or []))
     return await _generic_bulk_delete("sms_templates",
                                           "sms_template.soft_delete",
-                                          ids, user, tenant)
+                                          ids, user, tenant,
+                                          locked_check=_sms_tpl_locked)
+
+
+async def _sms_tpl_locked(row: dict) -> Optional[str]:
+    """Task LL follow-up · Feb 2026 — SMS template live-drip lock."""
+    tid = row.get("id")
+    n = await db.sequences.count_documents({
+        "steps.sms_template_id": tid,
+        "$or": [{"is_archived": {"$ne": True}}, {"is_archived": {"$exists": False}}],
+    })
+    if n:
+        return f"Template used by {n} active drip sequence(s) — archive instead"
+    return None
 
 
 @router.post("/sms-templates/bulk-update",
