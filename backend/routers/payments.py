@@ -264,8 +264,115 @@ async def admin_generate_payment_link(qid: str,
 
 
 # ----------------------- Card / ACH on file (setup + off-session charge) -----------------------
-async def _get_or_create_stripe_customer(app_customer_id: str):
-    cust = await db.customers.find_one({"id": app_customer_id}, {"_id": 0})
+async def _auto_provision_customer_for_user(user: dict) -> dict:
+    """Phase 34 · Task Q · Feb-2026 — self-heal for portal users who
+    hit ``/payments/setup-session`` before any ``customers`` doc has
+    been linked to their auth record.
+
+    This used to raise ``404 Customer not found`` and hard-block the
+    user (that's exactly the bug Brian hit on ``/portal/payment-method``).
+    Now, if we can identify the acting user + tenant, we create the
+    missing customer row on the fly from the auth-user fields, back-link
+    it (``users.customer_id``) so subsequent lookups short-circuit, and
+    return the freshly-created doc.
+
+    We prefer to REUSE an existing row that matches the auth-user email
+    within the same tenant before creating a new one — that's the case
+    for Brian, whose ``customers`` doc was created by the migration
+    (``migration.transfer_integrations_to_brian``) but never linked
+    back to the auth-user via ``user_id`` / ``customer_id``.
+    """
+    from utils import new_id
+
+    tenant_id = user.get("tenant_id")
+    if not tenant_id:
+        return None
+    uid = user.get("id")
+    email = (user.get("email") or "").strip().lower()
+    if not (uid or email):
+        return None
+
+    # 1. Try to reuse a customer row already in this tenant that
+    #    matches on user_id or email (case-insensitive).
+    query = {"tenant_id": tenant_id, "$or": []}
+    if uid:
+        query["$or"].append({"user_id": uid})
+    if email:
+        query["$or"].append({"email": {"$regex": f"^{email}$", "$options": "i"}})
+    cust = await db.customers.find_one(query, {"_id": 0})
+
+    if not cust:
+        # 2. Nothing to reuse — mint a fresh doc from the auth-user.
+        new_customer_id = new_id()
+        now = now_iso()
+        cust = {
+            "id": new_customer_id,
+            "tenant_id": tenant_id,
+            "user_id": uid,
+            "name": user.get("name") or (email.split("@")[0] if email else "Customer"),
+            "first_name": user.get("first_name") or "",
+            "last_name": user.get("last_name") or "",
+            "email": email or "",
+            "phone": user.get("phone") or "",
+            "address": "",
+            "billing_address": "",
+            "notes": "",
+            "tags": [],
+            "secondary_addresses": [],
+            "waitlisted": False,
+            "is_vip": False,
+            "created_at": now,
+            "updated_at": now,
+            "created_by": "task_q_auto_provision",
+            "source": "portal_self_serve_auto_provision",
+        }
+        await db.customers.insert_one(dict(cust))
+        logger.info(
+            "[task-q] auto-provisioned customer id=%s tenant=%s email=%s "
+            "for user=%s (no existing row matched)",
+            new_customer_id, tenant_id, email, uid,
+        )
+    else:
+        # Fold missing ``user_id`` back onto the found row so future
+        # lookups by user_id succeed immediately.
+        set_patch = {}
+        if uid and not cust.get("user_id"):
+            set_patch["user_id"] = uid
+        if set_patch:
+            await db.customers.update_one({"id": cust["id"]}, {"$set": set_patch})
+            cust.update(set_patch)
+            logger.info(
+                "[task-q] linked existing customer id=%s to user=%s (email=%s)",
+                cust["id"], uid, email,
+            )
+
+    # 3. Back-link the auth-user record so subsequent portal calls
+    #    that resolve ``user.customer_id`` succeed immediately.
+    if uid and cust.get("id") and user.get("customer_id") != cust["id"]:
+        try:
+            await db.users.update_one(
+                {"id": uid}, {"$set": {"customer_id": cust["id"]}}
+            )
+            user["customer_id"] = cust["id"]  # in-memory so caller sees it
+        except Exception as exc:  # pragma: no cover — best-effort back-link
+            logger.warning("[task-q] user back-link failed: %s", exc)
+
+    return cust
+
+
+async def _get_or_create_stripe_customer(app_customer_id: str,
+                                          fallback_user: dict | None = None):
+    cust = None
+    if app_customer_id:
+        cust = await db.customers.find_one({"id": app_customer_id}, {"_id": 0})
+    # Phase 34 · Task Q — self-heal fallback. When we get here with a
+    # missing ``app_customer_id`` OR the id doesn't resolve to a doc,
+    # we auto-provision from the acting user rather than 404'ing the
+    # portal. Only used by callers that pass ``fallback_user``.
+    if not cust and fallback_user is not None:
+        cust = await _auto_provision_customer_for_user(fallback_user)
+        if cust:
+            app_customer_id = cust["id"]
     if not cust:
         raise HTTPException(404, "Customer not found")
     scid = cust.get("stripe_customer_id")
@@ -315,19 +422,39 @@ async def _save_pm_from_setup(session) -> bool:
 
 @router.post("/payments/setup-session", operation_id="payments.createSetupSession")
 async def create_setup_session(body: SetupSessionReq, user: dict = Depends(get_current_user)):
-    """Hosted Stripe Checkout in setup mode to save a card or bank (ACH) on file."""
+    """Hosted Stripe Checkout in setup mode to save a card or bank (ACH) on file.
+
+    Phase 34 · Task Q · Feb-2026 — this endpoint used to hard-fail with
+    ``404 Customer not found`` for any portal user whose ``users.customer_id``
+    wasn't set (e.g. Brian, whose auth-user was created by a migration
+    that didn't back-link the customer row). We now:
+
+      1. Accept ``customer`` (super-admin / owner acting on any customer)
+         AND ``customer_id`` from ``users`` for the customer role AND
+         a **fallback** ``fallback_user=user`` to
+         :func:`_get_or_create_stripe_customer`. If the resolved id
+         doesn't map to a customer row, the helper self-heals by either
+         reusing an existing row that matches the user's email or
+         minting a new one — and back-links it onto ``users.customer_id``
+         so subsequent calls short-circuit.
+      2. Only raise 404 if we truly cannot identify the acting user
+         at all (which is impossible in a JWT-protected route today).
+    """
     deny_impersonation(user)
     if not stripe.api_key:
         raise HTTPException(503, "Payments are not configured")
     if user.get("role") == "customer":
         cid = user.get("customer_id")
-    elif user.get("role") == "admin":
-        cid = body.customer_id
+    elif user.get("role") in ("admin", "super_admin", "owner"):
+        # Super-admins / owners hitting this from their own portal
+        # (like Brian) act AS a customer. Prefer the explicit body
+        # value; fall back to the linked ``users.customer_id`` if
+        # already set; otherwise let ``_get_or_create_stripe_customer``
+        # self-heal from ``fallback_user``.
+        cid = body.customer_id or user.get("customer_id")
     else:
         raise HTTPException(403, "Not allowed")
-    if not cid:
-        raise HTTPException(400, "Customer required")
-    scid, _ = await _get_or_create_stripe_customer(cid)
+    scid, _ = await _get_or_create_stripe_customer(cid, fallback_user=user)
     try:
         session = await asyncio.to_thread(
             stripe.checkout.Session.create,

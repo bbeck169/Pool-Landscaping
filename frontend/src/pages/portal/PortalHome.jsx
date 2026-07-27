@@ -303,39 +303,11 @@ export default function PortalHome() {
         </div>
       ) : null}
 
-      {/* Slice O1 · Call Now CTA — prominent above the balance tiles. */}
-      <div className="mb-4 flex justify-center sm:justify-start">
-        <CallNowButton />
-      </div>
-
-      {/* Feb-2026 · Item 12 — the account tiles block that used to
-          live here has been hoisted to the very top of the page,
-          directly under the greeting tile. */}
-
-      {/* Feb-2026 · Slice 3D — Prominent Request Service CTA. Opens a
-          modal so the customer never has to leave the landing page. */}
-      <div className="mb-4 flex justify-end">
-        <button
-          onClick={() => setRequestOpen(true)}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-white shadow-sm hover:brightness-95"
-          style={{ background: brandGradientCss }}
-          data-testid="portal-request-service-btn"
-        >
-          <Plus size={16} /> Request Service
-        </button>
-      </div>
-
-      {/* Feb-2026 · Slice J1 — the "Ask a concierge" AI section
-          used to render right after the CTA. It's been moved to the
-          BOTTOM of the page (see below, after the Last-visit card)
-          so the primary landing surface shows service + billing tiles
-          first. Testids preserved. */}
-
-      {/* Phase 34 · Feb 2026 — original hero card location. Moved to
-          the top of the page (see the block right after the stat
-          circles comment). This slot is intentionally blank so the
-          content below (Terms of Service banner, Call Now, Quick
-          Actions) shifts up by one card slot. */}
+      {/* Phase 34 · Feb 2026 · Task K — the standalone Call Now button
+          and Request Service CTA that used to live in this region have
+          been moved to the top CTA row at the top of the page (see
+          `data-testid="portal-cta-row"`). Physically deleted here to
+          eliminate the duplicates the tester reported. */}
 
       {/* Alerts — Feb-2026 · Item 12 · moved into the status-circles
           block at the top of the page. The old copy here is retained
@@ -351,7 +323,8 @@ export default function PortalHome() {
           Quick actions
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <ActionTile icon={Plus} label="Request Service" tone={colors.brand} onClick={() => setRequestOpen(true)} testid="qa-request" />
+          {/* Phase 34 · Task K de-dup — the "Request Service" tile that
+              used to live here duplicated the top-row CTA. Removed. */}
           <ActionTile icon={ClipboardCheck} label="Service Reports" tone="#0891B2" onClick={() => navigate("/portal/service-reports")} testid="qa-service-reports" />
           <ActionTile icon={Receipt} label="Invoices" tone="#A16207" onClick={() => navigate("/portal/invoices")} testid="qa-invoices" />
           <ActionTile icon={FileText} label="Estimates" tone="#4338CA" onClick={() => navigate("/portal/estimates")} testid="qa-estimates" />
