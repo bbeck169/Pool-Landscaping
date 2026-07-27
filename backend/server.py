@@ -179,6 +179,10 @@ api_router.include_router(_phaseb_media_router.router)
 # rate-limited internally (60 req/min per IP). No auth.
 from routers import public_service_images as _p22_public_svc_images  # noqa: E402
 api_router.include_router(_p22_public_svc_images.router)
+# Phase 27 · Feb 2026 — Service Report media (photos + videos) upload
+# + reorder + public streaming. Mounts under /api via api_router.
+from routers import service_report_media as _p27_svc_media  # noqa: E402
+api_router.include_router(_p27_svc_media.router)
 api_router.include_router(_p17_reassign.router)
 api_router.include_router(_p18_ai_brain.router)
 api_router.include_router(_p19_admin_users.router)

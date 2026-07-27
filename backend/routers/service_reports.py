@@ -238,6 +238,10 @@ async def _bootstrap_report(tenant_id: str, job: dict, tech_id: str) -> dict:
         # has one; kept independent from the internal ``id`` so we can
         # rotate it without touching primary keys.
         "public_uuid": new_id(),
+        # Phase 27 · Feb 2026 — service-report media pool. Photos
+        # already mirror ``job.photos``; ``videos`` is new (max 3 per
+        # report, 60s each, 100MB each — enforced by the media router).
+        "videos": [],
         "template": kind,
         "chemical_readings": [
             {"key": f.get("key") or f["name"], "name": f["name"],

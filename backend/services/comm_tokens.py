@@ -65,6 +65,20 @@ AVAILABLE_TOKENS: Dict[str, Dict[str, str]] = {
     "tech.first_name":                          {"label": "Assigned technician first name", "sample": "Mike"},
     "tech.full_name":                           {"label": "Assigned technician full name",  "sample": "Mike Rivera"},
     "tech.avatar_url":                          {"label": "Assigned technician headshot URL", "sample": "https://cdn.example.com/techs/mike.jpg"},
+    # ─── Phase 27 · Feb 2026 — Uppercase-snake aliases for the tags
+    # that resolve out of the ``merge_tags.py`` catalog. Registered
+    # here (lowercase-keyed at lookup time) so the template-builder
+    # validator stops flagging them as "unknown" and the composer's
+    # token picker can surface them alongside the dotted tokens.
+    "customer_address":     {"label": "Customer address (single line)", "sample": "18420 W. Cactus Bloom Ln., Peoria, AZ 85383"},
+    "event_notes":          {"label": "Job / event notes",               "sample": "Gate code changed to 4520; skim heavy today."},
+    "event_title":          {"label": "Job / event title",                "sample": "Weekly Pool Service"},
+    "job_date":             {"label": "Job date (Mon, Jan 15, 2026)",     "sample": "Mon, Jan 15, 2026"},
+    "job_time":             {"label": "Job time window",                    "sample": "9:00 AM – 11:00 AM"},
+    "chemicals_added":      {"label": "Chemicals added on the visit",       "sample": "1 gal of Liquid Chlorine · 8 oz of Muriatic Acid"},
+    "chemical_readings":    {"label": "Chemistry readings recorded",        "sample": "pH 7.5 · Free Chlorine 2.1 ppm · Alkalinity 100 ppm"},
+    "checklist":            {"label": "Service checklist (completed items)","sample": "✓ Skim surface · ✓ Vacuum floor · ✓ Empty pump basket"},
+    "service_record_images":{"label": "Service-record photo + video gallery","sample": "<200x200 thumbnails linked to the public portal>"},
 }
 
 _TOKEN_RE = re.compile(r"\{\{\s*([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)\s*\}\}", re.IGNORECASE)

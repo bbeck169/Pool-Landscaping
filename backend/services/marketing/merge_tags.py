@@ -474,6 +474,28 @@ def _service_record_public_photos(sr: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
+def _service_record_public_videos(sr: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Phase 27 · Feb 2026 — same shape as ``_service_record_public_photos``
+    but for the ``videos`` list. Skips private/issue-tagged entries and
+    drops rows without a poster (nothing to embed in an email)."""
+    out: List[Dict[str, Any]] = []
+    for v in (sr.get("videos") or []):
+        if not isinstance(v, dict):
+            continue
+        tags = v.get("tags") or []
+        if isinstance(tags, list) and any(
+                str(t).lower() in _SERVICE_IMAGE_PRIVATE_TAGS for t in tags):
+            continue
+        url = str(v.get("url") or v.get("public_url") or "")
+        poster = str(v.get("poster_url") or v.get("thumbnail_url") or "")
+        if not url or not poster:
+            # Email HTML cannot render a video inline; the poster
+            # thumbnail IS the click target, so skip poster-less rows.
+            continue
+        out.append({"url": url, "poster_url": poster})
+    return out
+
+
 def _service_record_images(ctx: Dict[str, Any]) -> str:
     sr = ctx.get("service_report") or {}
     if not isinstance(sr, dict):
@@ -487,7 +509,8 @@ def _service_record_images(ctx: Dict[str, Any]) -> str:
     if not (isinstance(job, dict) and job.get("id")):
         return ""
     photos = _service_record_public_photos(sr)
-    if not photos:
+    videos = _service_record_public_videos(sr)
+    if not photos and not videos:
         return ""
     # Resolve public base URL — prefers tenant override, then env fallback.
     try:
@@ -513,6 +536,27 @@ def _service_record_images(ctx: Dict[str, Any]) -> str:
             f'width="{size}" height="{size}" '
             f'style="width:{size}px;height:{size}px;object-fit:cover;'
             f'border-radius:6px;border:1px solid #e5e7eb;"/>'
+            f'</a>'
+        )
+    # Phase 27 · Feb 2026 — Videos rendered as poster + centered "▶"
+    # play-icon overlay. Same 200x200 footprint as photos so the row
+    # stays visually uniform.
+    for v in videos:
+        poster = v["poster_url"]
+        parts.append(
+            f'<a href="{link}" target="_blank" rel="noopener" '
+            f'style="display:inline-block;position:relative;'
+            f'line-height:0;width:{size}px;height:{size}px;">'
+            f'<img src="{poster}" alt="Service video" '
+            f'width="{size}" height="{size}" '
+            f'style="width:{size}px;height:{size}px;object-fit:cover;'
+            f'border-radius:6px;border:1px solid #e5e7eb;"/>'
+            f'<span style="position:absolute;top:50%;left:50%;'
+            f'transform:translate(-50%,-50%);width:44px;height:44px;'
+            f'border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;'
+            f'display:inline-block;text-align:center;'
+            f'line-height:44px;font-size:20px;'
+            f'font-family:system-ui,-apple-system,sans-serif;">&#9654;</span>'
             f'</a>'
         )
     parts.append("</div>")
@@ -718,8 +762,13 @@ MERGE_TAGS: List[Dict[str, Any]] = [
      "category": "Customer", "description": "Formatted open balance in USD.",
      "resolver": _customer_balance},
     {"token": "CUSTOMER_ADDRESS", "label": "Street Address",
-     "category": "Customer", "description": "Customer's primary street address.",
-     "resolver": _res("customer", "address")},
+     "category": "Customer",
+     "description": ("Customer's service address as a single line — "
+                       "``street, city, state zip``. Phase 27 · Feb "
+                       "2026 upgrade concatenates the split components "
+                       "so recipients get the complete mailing address "
+                       "on one line."),
+     "resolver": _customer_address_full},
     {"token": "CUSTOMER_CITY", "label": "City", "category": "Customer",
      "description": "City parsed from the customer's address.",
      "resolver": _res("customer", "city")},
@@ -1029,6 +1078,31 @@ MERGE_TAGS: List[Dict[str, Any]] = [
                        "photos on the visit, or the report is missing a "
                        "public UUID."),
      "resolver": _service_record_images},
+
+    # ─── Phase 27 · Feb 2026 · Addition — service-report content tags.
+    # Pull directly from ``ctx['service_report']``. Empty string when
+    # no service_report in scope OR no data recorded, so callers can
+    # embed the tags in templates that fire for both pool + landscape
+    # visits without emitting orphan headings on empty visits.
+    {"token": "CHEMICALS_ADDED", "label": "Chemicals Added",
+     "category": "Job",
+     "description": ("HTML list of chemicals the tech added on the "
+                       "visit (name + quantity + unit). Empty when no "
+                       "chemicals were logged."),
+     "resolver": _service_report_chemicals_added},
+    {"token": "CHEMICAL_READINGS", "label": "Chemical Readings",
+     "category": "Job",
+     "description": ("HTML table of chemistry readings recorded on "
+                       "the visit (pH, chlorine, alkalinity, calcium, "
+                       "cyanuric acid, etc.). Empty when nothing was "
+                       "tested."),
+     "resolver": _service_report_chemical_readings},
+    {"token": "CHECKLIST", "label": "Service Checklist",
+     "category": "Job",
+     "description": ("HTML list of checklist items the tech marked "
+                       "complete on the visit. Empty when the "
+                       "checklist has nothing checked."),
+     "resolver": _service_report_checklist},
 ]
 
 _TAG_INDEX: Dict[str, Callable] = {t["token"].upper(): t["resolver"]

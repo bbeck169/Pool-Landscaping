@@ -58,11 +58,13 @@ export default function ServiceImagesPortalPage() {
 
   useEffect(() => {
     if (lightboxIndex === null) return;
+    const total = ((state.data?.images?.length || 0)
+                    + (state.data?.videos?.length || 0));
     function onKey(e) {
       if (e.key === "Escape") closeLightbox();
       else if (e.key === "ArrowRight") {
         setLightboxIndex((i) =>
-          i === null ? null : Math.min(i + 1, (state.data?.images?.length || 1) - 1));
+          i === null ? null : Math.min(i + 1, total - 1));
       } else if (e.key === "ArrowLeft") {
         setLightboxIndex((i) => (i === null ? null : Math.max(i - 1, 0)));
       }
@@ -105,6 +107,14 @@ export default function ServiceImagesPortalPage() {
 
   const data = state.data || {};
   const images = data.images || [];
+  const videos = data.videos || [];
+  const chemicalsAdded = data.chemicals_added || [];
+  const chemicalReadings = data.chemical_readings || [];
+  const checklist = data.checklist || [];
+  const media = [
+    ...images.map((i) => ({ ...i, __kind: "photo" })),
+    ...videos.map((v) => ({ ...v, __kind: "video" })),
+  ];
 
   return (
     <div data-testid="service-portal-root" style={rootStyle}>
@@ -159,20 +169,70 @@ export default function ServiceImagesPortalPage() {
           ) : null}
         </section>
 
+        {chemicalReadings.length > 0 ? (
+          <PortalSection title="Chemical Readings" testid="service-portal-readings-section">
+            <table cellSpacing="0" style={{ borderCollapse: "collapse" }}
+                   data-testid="service-portal-readings-table">
+              <tbody>
+                {chemicalReadings.map((r, i) => (
+                  <tr key={i}>
+                    <td style={{ padding: "6px 16px 6px 0", color: "#555" }}>
+                      {r.name}
+                    </td>
+                    <td style={{ padding: "6px 0", fontWeight: 600 }}
+                        data-testid={`service-portal-reading-${r.key || i}`}>
+                      {r.value}{r.unit ? ` ${r.unit}` : ""}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </PortalSection>
+        ) : null}
+
+        {chemicalsAdded.length > 0 ? (
+          <PortalSection title="Chemicals Added" testid="service-portal-chemicals-section">
+            <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.6 }}
+                data-testid="service-portal-chemicals-list">
+              {chemicalsAdded.map((c, i) => {
+                const label = c.raw_label
+                  ? `${c.raw_label}${c.name ? ` of ${c.name}` : ""}`
+                  : [c.quantity, c.unit, c.name && `of ${c.name}`]
+                      .filter(Boolean).join(" ");
+                return <li key={i}>{label}</li>;
+              })}
+            </ul>
+          </PortalSection>
+        ) : null}
+
+        {checklist.length > 0 ? (
+          <PortalSection title="Completed Checklist" testid="service-portal-checklist-section">
+            <ul style={{ margin: 0, paddingLeft: 0, listStyle: "none", lineHeight: 1.7 }}
+                data-testid="service-portal-checklist-list">
+              {checklist.map((it, i) => (
+                <li key={i} style={{ color: "#333" }}>
+                  <span style={{ color: "#059669", fontWeight: 700, marginRight: 6 }}>✓</span>
+                  {it.label}
+                </li>
+              ))}
+            </ul>
+          </PortalSection>
+        ) : null}
+
         <h2
           style={{
             fontSize: 15, fontWeight: 600, marginBottom: 12,
             color: "#333", textTransform: "uppercase", letterSpacing: 0.6,
           }}
         >
-          Photos
+          Photos & Videos
         </h2>
-        {images.length === 0 ? (
+        {media.length === 0 ? (
           <div
             data-testid="service-portal-empty"
             style={{ padding: 32, textAlign: "center", color: "#888", fontSize: 14 }}
           >
-            No photos were shared for this visit.
+            No photos or videos were shared for this visit.
           </div>
         ) : (
           <div
@@ -183,11 +243,13 @@ export default function ServiceImagesPortalPage() {
               gap: 10,
             }}
           >
-            {images.map((img, idx) => (
+            {media.map((m, idx) => (
               <button
                 type="button"
                 key={idx}
-                data-testid={`service-portal-thumb-${idx}`}
+                data-testid={m.__kind === "video"
+                  ? `service-portal-video-${idx}`
+                  : `service-portal-thumb-${idx}`}
                 onClick={() => setLightboxIndex(idx)}
                 style={{
                   padding: 0, border: 0, background: "transparent",
@@ -196,16 +258,33 @@ export default function ServiceImagesPortalPage() {
                 }}
               >
                 <img
-                  src={img.thumbnail_url || img.url}
-                  alt={`Service photo ${idx + 1}`}
+                  src={m.__kind === "video"
+                    ? (m.poster_url || m.thumbnail_url || "")
+                    : (m.thumbnail_url || m.url)}
+                  alt={m.__kind === "video"
+                    ? `Service video ${idx + 1}`
+                    : `Service photo ${idx + 1}`}
                   style={{
                     width: "100%", height: "100%", objectFit: "cover",
-                    display: "block", background: "#f2f2f2",
+                    display: "block", background: "#3a3a3a",
                     transition: "transform 200ms ease",
                   }}
                   onMouseEnter={(e) => { e.currentTarget.style.transform = "scale(1.02)"; }}
                   onMouseLeave={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
                 />
+                {m.__kind === "video" ? (
+                  <span
+                    data-testid={`service-portal-video-play-${idx}`}
+                    style={{
+                      position: "absolute", top: "50%", left: "50%",
+                      transform: "translate(-50%,-50%)",
+                      width: 48, height: 48, borderRadius: "50%",
+                      background: "rgba(0,0,0,.65)", color: "#fff",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 22, pointerEvents: "none",
+                    }}
+                  >▶</span>
+                ) : null}
               </button>
             ))}
           </div>
@@ -216,7 +295,7 @@ export default function ServiceImagesPortalPage() {
         </footer>
       </div>
 
-      {lightboxIndex !== null && images[lightboxIndex] ? (
+      {lightboxIndex !== null && media[lightboxIndex] ? (
         <div
           data-testid="service-portal-lightbox"
           onClick={closeLightbox}
@@ -239,19 +318,46 @@ export default function ServiceImagesPortalPage() {
           >
             ×
           </button>
-          <img
-            src={images[lightboxIndex].url}
-            alt={`Service photo ${lightboxIndex + 1}`}
-            data-testid="service-portal-lightbox-image"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              maxHeight: "90vh", maxWidth: "90vw", objectFit: "contain",
-              borderRadius: 4,
-            }}
-          />
+          {media[lightboxIndex].__kind === "video" ? (
+            <video
+              src={media[lightboxIndex].url}
+              controls
+              autoPlay
+              playsInline
+              data-testid="service-portal-lightbox-video"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                maxHeight: "90vh", maxWidth: "90vw", borderRadius: 4,
+                background: "#000",
+              }}
+            />
+          ) : (
+            <img
+              src={media[lightboxIndex].url}
+              alt={`Service photo ${lightboxIndex + 1}`}
+              data-testid="service-portal-lightbox-image"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                maxHeight: "90vh", maxWidth: "90vw", objectFit: "contain",
+                borderRadius: 4,
+              }}
+            />
+          )}
         </div>
       ) : null}
     </div>
+  );
+}
+
+function PortalSection({ title, testid, children }) {
+  return (
+    <section data-testid={testid} style={{ marginBottom: 24 }}>
+      <h3 style={{
+        fontSize: 13, fontWeight: 700, marginBottom: 10, color: "#333",
+        textTransform: "uppercase", letterSpacing: 0.6,
+      }}>{title}</h3>
+      {children}
+    </section>
   );
 }
 

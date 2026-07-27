@@ -208,6 +208,34 @@ async def get_public_service_images(uuid: str, request: Request):
             "thumbnail_url": p.get("thumbnail_url") or p.get("thumb_url"),
         })
 
+    # Phase 27 · Feb 2026 — Videos (max 3 per report). Same private-tag
+    # filter as photos; deduped by URL. Each entry emits a poster
+    # thumbnail (or empty) so the portal can render a play-icon
+    # overlay.
+    videos: List[Dict[str, Any]] = []
+    v_seen: set = set()
+    for v in (report.get("videos") or []):
+        if not _is_public_photo(v):  # same tag-based filter shape
+            continue
+        vurl = str(v.get("url") or v.get("public_url") or "")
+        if not vurl or vurl in v_seen:
+            continue
+        v_seen.add(vurl)
+        videos.append({
+            "url": vurl,
+            "poster_url": v.get("poster_url") or v.get("thumbnail_url") or "",
+            "duration_seconds": v.get("duration_seconds"),
+            "content_type": v.get("content_type") or "video/mp4",
+        })
+
+    # Phase 27 · Feb 2026 — Service-report content sections. PII-safe:
+    # chemicals + readings + completed checklist items are service
+    # data, never identity fields. Redaction mirrors the existing
+    # customer-portal helper so private/issue notes never leak.
+    chemicals_added = _public_chemicals_added(report)
+    chemical_readings = _public_chemical_readings(report)
+    checklist = _public_checklist(report)
+
     return {
         "business_name": business_name,
         "logo_url": logo_url,
@@ -215,4 +243,60 @@ async def get_public_service_images(uuid: str, request: Request):
         "service_date": service_date,
         "service_type": service_type,
         "images": images,
+        "videos": videos,
+        "chemicals_added": chemicals_added,
+        "chemical_readings": chemical_readings,
+        "checklist": checklist,
     }
+
+
+# ─── Phase 27 · Feb 2026 — PII-safe extractors for the public portal.
+def _public_chemicals_added(report: Dict[str, Any]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for r in (report.get("chemicals_added") or []):
+        if not isinstance(r, dict):
+            continue
+        name = str(r.get("chemical") or r.get("name") or "").strip()
+        qty = r.get("quantity") if r.get("quantity") is not None else r.get("amount")
+        unit = str(r.get("unit") or "").strip()
+        raw_label = str(r.get("raw_label") or "").strip()
+        if raw_label or name:
+            out.append({"name": name or None,
+                        "quantity": qty if qty not in (None, "") else None,
+                        "unit": unit or None,
+                        "raw_label": raw_label or None})
+    return out
+
+
+def _public_chemical_readings(report: Dict[str, Any]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for r in (report.get("chemical_readings") or []):
+        if not isinstance(r, dict):
+            continue
+        val = r.get("value")
+        if val in (None, ""):
+            continue
+        name = str(r.get("name") or r.get("key") or "").strip()
+        if not name:
+            continue
+        out.append({
+            "name": name,
+            "key": r.get("key"),
+            "value": val,
+            "unit": r.get("unit"),
+        })
+    return out
+
+
+def _public_checklist(report: Dict[str, Any]) -> List[Dict[str, str]]:
+    out: List[Dict[str, str]] = []
+    for it in (report.get("checklist_items") or []):
+        if not isinstance(it, dict):
+            continue
+        if not it.get("checked"):
+            continue
+        label = str(it.get("label") or "").strip()
+        if not label:
+            continue
+        out.append({"label": label})
+    return out
