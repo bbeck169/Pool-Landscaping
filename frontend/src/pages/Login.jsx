@@ -1,13 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/auth";
 import { brandGradientCss, colors, font } from "@/theme";
-
-const DEMO_ACCOUNTS = [
-  { role: "Admin", email: "admin@aquaterra.com" },
-  { role: "Technician", email: "mike@aquaterra.com" },
-  { role: "Customer", email: "customer@aquaterra.com" },
-];
 
 // Role -> home landing (mirrors the Expo app's tab targeting).
 function landingFor(role) {
@@ -26,23 +20,14 @@ export default function Login() {
   const [showPw, setShowPw] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  // Feb-2026 — gate the demo-accounts affordance on the public runtime
-  // config flag. Defaults to ``true`` so preview keeps its QA
-  // convenience; prod must set ``SHOW_DEMO_LOGINS=false`` to hide.
-  const [showDemoLogins, setShowDemoLogins] = useState(true);
-  useEffect(() => {
-    let live = true;
-    (async () => {
-      try {
-        const { api } = await import("@/api");
-        const cfg = await api.get("/config/public");
-        if (live && typeof cfg?.show_demo_logins === "boolean") {
-          setShowDemoLogins(cfg.show_demo_logins);
-        }
-      } catch { /* keep default */ }
-    })();
-    return () => { live = false; };
-  }, []);
+  // Phase 30 · Feb 2026 — the DEMO ACCOUNTS block has been removed from
+  // the login UI unconditionally. Manual login with the seed emails
+  // (admin@aquaterra.com / mike@aquaterra.com / customer@aquaterra.com)
+  // still works — backend auth unchanged — but the visual list is gone.
+  // The ``SHOW_DEMO_LOGINS`` env flag + ``/config/public.show_demo_logins``
+  // field are intentionally left in place on the backend to avoid
+  // breaking any other consumer that reads them; the frontend simply
+  // ignores the value.
 
   const forced = location.state?.from;
 
@@ -107,11 +92,28 @@ export default function Login() {
             />
           </div>
           <div>
+            {/* Phase 30 · Feb 2026 — two-line brand header. Line 2 is
+                exactly half of Line 1's font size (48px → 24px on
+                large; 36px → 18px on small). ``leading-none`` prevents
+                extra whitespace between the two lines beyond the
+                natural line-height inherited from the parent. */}
             <h1
-              className="text-4xl lg:text-5xl font-bold leading-tight"
+              className="font-bold leading-none"
               data-testid="login-welcome-headline"
+              style={{ fontSize: "3rem" }}
             >
-              Welcome to Pool &amp; Landscaping of Vistancia LLC
+              <span
+                data-testid="login-welcome-line1"
+                style={{ fontSize: "3rem", display: "block", lineHeight: 1.05 }}
+              >
+                Welcome to
+              </span>
+              <span
+                data-testid="login-welcome-line2"
+                style={{ fontSize: "1.5rem", display: "block", lineHeight: 1.15 }}
+              >
+                Pool &amp; Landscaping of Vistancia LLC
+              </span>
             </h1>
           </div>
         </div>
@@ -233,48 +235,11 @@ export default function Login() {
             </Link>
           </p>
 
-          <div className="mt-10" data-testid="login-demo-section" style={{
-            display: showDemoLogins ? undefined : "none",
-          }}>
-            <p
-              className="text-xs tracking-widest font-semibold mb-3"
-              style={{ color: colors.muted }}
-            >
-              DEMO ACCOUNTS
-            </p>
-            <ul className="space-y-2" data-testid="login-demo-accounts">
-              {DEMO_ACCOUNTS.map((a) => (
-                <li key={a.email}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEmail(a.email);
-                      setPassword("password123");
-                    }}
-                    className="w-full flex items-center justify-between px-4 py-3 rounded-xl text-left transition hover:brightness-95"
-                    style={{
-                      backgroundColor: colors.surfaceSecondary,
-                      border: `1px solid ${colors.border}`,
-                    }}
-                    data-testid={`login-demo-${a.role.toLowerCase()}`}
-                  >
-                    <span
-                      className="font-semibold"
-                      style={{ color: colors.onSurface }}
-                    >
-                      {a.role}
-                    </span>
-                    <span
-                      className="text-xs font-mono"
-                      style={{ color: colors.muted }}
-                    >
-                      {a.email}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
+          {/* Phase 30 · Feb 2026 — DEMO ACCOUNTS block removed
+              unconditionally. Manual sign-in above still authenticates
+              admin@aquaterra.com / mike@aquaterra.com /
+              customer@aquaterra.com — backend auth unchanged; only the
+              visual shortcut buttons are gone from the UI. */}
         </div>
       </main>
     </div>

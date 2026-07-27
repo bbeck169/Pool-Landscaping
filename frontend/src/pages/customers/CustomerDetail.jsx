@@ -1032,14 +1032,59 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  // Phase 29 · Feb 2026 — template picker + preview state. Template list
+  // is fetched once when the modal opens; ``pickedId`` = "" ("Custom
+  // message") by default so operators can compose from scratch without
+  // a template. Selecting a template populates ``subject`` + ``message``
+  // and the operator can edit before sending.
+  const [templates, setTemplates] = useState([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [pickedId, setPickedId] = useState("");
+  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const isEmail = payload?.channel === "email";
   useEffect(() => {
     if (payload) {
       setSubject("");
       setMessage("");
+      setPickedId("");
+      setPreview(null);
+      setTemplatesLoading(true);
+      api.get(`/marketing/templates?channel=${isEmail ? "email" : "sms"}&active=true`)
+        .then((r) => setTemplates(r?.templates || []))
+        .catch(() => setTemplates([]))
+        .finally(() => setTemplatesLoading(false));
     }
-  }, [payload]);
+  }, [payload, isEmail]);
+  const pickTemplate = (t) => {
+    setPickedId(t?.id || "");
+    if (!t) {
+      // Reset to "Custom message" — blank fields.
+      setSubject("");
+      setMessage("");
+      return;
+    }
+    setSubject(t.subject || "");
+    setMessage(t.body || "");
+  };
+  const runPreview = async () => {
+    if (!message.trim()) {
+      onError("Nothing to preview");
+      return;
+    }
+    setPreviewing(true);
+    try {
+      const r = await api.post(`/customers/${customer.id}/preview-message`, {
+        channel: isEmail ? "email" : "sms",
+        subject: subject || "",
+        body: message || "",
+      });
+      setPreview(r);
+    } catch (e) {
+      onError(e?.message || "Preview failed");
+    } finally { setPreviewing(false); }
+  };
   if (!payload) return null;
-  const isEmail = payload.channel === "email";
   const submit = async () => {
     if (!message.trim()) {
       onError("Message body required");
@@ -1081,36 +1126,130 @@ function SendComposeModal({ payload, customer, onClose, onSent, onError }) {
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="ghost" onClick={runPreview} disabled={busy || previewing}
+                  testid="cd-send-preview">
+            {previewing ? "Previewing…" : "Preview"}
+          </Button>
           <Button onClick={submit} disabled={busy} testid="cd-send-submit">
             {busy ? "Sending…" : "Send"}
           </Button>
         </>
       }
     >
-      <div className="space-y-3">
-        {isEmail ? (
-          <TextInput
-            label="SUBJECT"
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            testid="cd-send-subject"
-          />
-        ) : null}
-        <div>
-          <div className="text-xs font-semibold mb-1" style={{ color: colors.muted }}>
-            MESSAGE
+      <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 16 }}>
+        {/* Template picker */}
+        <aside data-testid="cd-send-templates"
+                style={{ borderRight: `1px solid ${colors.border}`,
+                            paddingRight: 12, maxHeight: 380, overflowY: "auto" }}>
+          <div className="text-xs font-semibold mb-2" style={{ color: colors.muted }}>
+            TEMPLATE
           </div>
-          <textarea
-            className="w-full min-h-[140px] px-3 py-2 rounded-lg text-sm"
-            style={{
-              backgroundColor: colors.surface,
-              color: colors.onSurface,
-              border: `1px solid ${colors.border}`,
-            }}
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            data-testid="cd-send-message"
-          />
+          <button type="button"
+                   onClick={() => pickTemplate(null)}
+                   className="w-full text-left rounded-md px-2 py-1.5 mb-1 text-sm"
+                   style={{
+                     background: pickedId === "" ? colors.surfaceSecondary : "transparent",
+                     border: pickedId === "" ? `1px solid ${colors.border}` : "1px solid transparent",
+                     color: colors.onSurface,
+                   }}
+                   data-testid="cd-send-template-custom">
+            <div className="font-semibold">Custom message</div>
+            <div className="text-xs" style={{ color: colors.muted }}>
+              Write from scratch
+            </div>
+          </button>
+          {templatesLoading ? (
+            <div className="text-xs" style={{ color: colors.muted }}
+                 data-testid="cd-send-templates-loading">Loading…</div>
+          ) : templates.length === 0 ? (
+            <div className="text-xs" style={{ color: colors.muted }}
+                 data-testid="cd-send-templates-empty">
+              No saved {isEmail ? "email" : "SMS"} templates.
+            </div>
+          ) : templates.map((t) => (
+            <button key={t.id}
+                     type="button"
+                     onClick={() => pickTemplate(t)}
+                     className="w-full text-left rounded-md px-2 py-1.5 mb-1 text-sm"
+                     style={{
+                       background: pickedId === t.id ? colors.surfaceSecondary : "transparent",
+                       border: pickedId === t.id ? `1px solid ${colors.border}` : "1px solid transparent",
+                       color: colors.onSurface,
+                     }}
+                     data-testid={`cd-send-template-${t.id}`}>
+              <div className="font-semibold">{t.name}</div>
+              {t.category ? (
+                <div className="text-xs" style={{ color: colors.muted }}>{t.category}</div>
+              ) : null}
+            </button>
+          ))}
+        </aside>
+        {/* Editor */}
+        <div className="space-y-3">
+          {isEmail ? (
+            <TextInput
+              label="SUBJECT"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              testid="cd-send-subject"
+            />
+          ) : null}
+          <div>
+            <div className="text-xs font-semibold mb-1 flex items-center justify-between"
+                  style={{ color: colors.muted }}>
+              <span>MESSAGE</span>
+              {!isEmail ? (
+                <span data-testid="cd-send-char-count">
+                  {message.length} chars
+                </span>
+              ) : null}
+            </div>
+            <textarea
+              className="w-full min-h-[220px] px-3 py-2 rounded-lg text-sm"
+              style={{
+                backgroundColor: colors.surface,
+                color: colors.onSurface,
+                border: `1px solid ${colors.border}`,
+              }}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              data-testid="cd-send-message"
+            />
+          </div>
+          {preview ? (
+            <div className="rounded-lg p-3 text-sm"
+                 style={{ background: colors.surfaceSecondary,
+                            border: `1px solid ${colors.border}` }}
+                 data-testid="cd-send-preview-panel">
+              <div className="text-xs font-semibold mb-1"
+                    style={{ color: colors.muted }}>
+                PREVIEW — merge tags resolved for {customer?.name || "this customer"}
+              </div>
+              {preview.subject_rendered ? (
+                <div className="text-sm font-semibold mb-1"
+                      data-testid="cd-send-preview-subject">
+                  {preview.subject_rendered}
+                </div>
+              ) : null}
+              {isEmail ? (
+                <div dangerouslySetInnerHTML={{ __html: preview.body_rendered || "" }}
+                     data-testid="cd-send-preview-body-html"
+                     style={{ color: colors.onSurface }} />
+              ) : (
+                <pre style={{ whiteSpace: "pre-wrap", color: colors.onSurface,
+                               fontFamily: "inherit", margin: 0 }}
+                      data-testid="cd-send-preview-body-text">
+                  {preview.body_rendered}
+                </pre>
+              )}
+              {preview.unresolved_tokens && preview.unresolved_tokens.length > 0 ? (
+                <div className="text-xs mt-2" style={{ color: "#B45309" }}
+                      data-testid="cd-send-preview-unresolved">
+                  Unresolved: {preview.unresolved_tokens.join(", ")}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
     </Modal>

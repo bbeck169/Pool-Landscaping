@@ -139,7 +139,9 @@ def api_base():
 def seeded(request):
     """Seed a tenant + admin + 2 techs + 2 jobs assigned to old_tech."""
     tid = _mk("tenant")
-    _sync.tenants.insert_one({"id": tid, "name": "TEST_ Tenant"})
+    _sync.tenants.insert_one({"id": tid, "name": "TEST_ Tenant",
+                                 "active": True,
+                                 "slug": f"testtenant{uuid.uuid4().hex[:6]}"})
 
     def _hash(pw: str) -> str:
         import bcrypt

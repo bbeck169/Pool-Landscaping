@@ -745,6 +745,13 @@ class _SendSmsBody(BaseModel):
     customer_id: Optional[str] = None
 
 
+# Phase 29 · Feb 2026 — customer contact composer preview body.
+class _PreviewMessageBody(BaseModel):
+    channel: str                     # "email" | "sms"
+    subject: Optional[str] = ""
+    body: str = ""
+
+
 # ─── Feb-2026 service-notes ship ──────────────────────────────────────
 class _ServiceNotesPatch(BaseModel):
     """Partial update — omit a key to leave that side untouched. Send
@@ -914,6 +921,91 @@ async def customer_send_email(cid: str, body: _SendEmailBody,
             f"send failed: {res.get('error') or res.get('status') or 'unknown'}",
         )
     return {"ok": True, **res}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 29 · Feb 2026 · Customer contact composer — preview endpoint.
+# Renders a subject + body pair against THIS customer's merge context so
+# the composer can show "what will actually go out" before the operator
+# hits Send. Reuses the exact same UPPERCASE + legacy Mustache passes the
+# marketing templates preview endpoint uses, so behaviour is identical to
+# the send path. No PII is leaked — only the caller's own tenant scope is
+# queried and the response is returned to that same caller.
+# ═══════════════════════════════════════════════════════════════════════════
+@router.post("/customers/{cid}/preview-message",
+              operation_id="customers.previewMessage")
+async def customer_preview_message(cid: str, body: _PreviewMessageBody,
+                                        user: dict = Depends(require_admin),
+                                        tenant: dict = Depends(get_current_tenant)):
+    doc = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    )
+    if not doc:
+        raise HTTPException(404, "Customer not found")
+    channel = (body.channel or "email").lower()
+    if channel not in ("email", "sms"):
+        raise HTTPException(422, "channel must be 'email' or 'sms'")
+
+    # Reuse the marketing renderer stack so ``{{CUSTOMER_FIRST_NAME}}``
+    # etc. resolve identically in the composer preview and at send time.
+    from services.marketing.merge_tags import (
+        render_template as render_uppercase_tags,
+        render_context as build_merge_ctx,
+    )
+    from services.marketing.render import render_subject_and_body
+    from services.marketing.strip_html import strip_html
+
+    first_name = doc.get("first_name") or (doc.get("name") or "").split(" ")[0]
+    last_name = doc.get("last_name") or " ".join((doc.get("name") or "").split(" ")[1:])
+    customer_ctx = {
+        "name": doc.get("name") or "",
+        "first_name": first_name or "",
+        "last_name": last_name or "",
+        "email": (doc.get("emails") or [{}])[0].get("address")
+                    if doc.get("emails") else doc.get("email"),
+        "phone": (doc.get("phones") or [{}])[0].get("number")
+                    if doc.get("phones") else doc.get("phone"),
+        "address": doc.get("address") or doc.get("address_line_1") or "",
+        "address_line_1": doc.get("address_line_1") or doc.get("address") or "",
+        "city": doc.get("city") or "",
+        "state": doc.get("state") or "",
+        "zip": doc.get("zip") or doc.get("postal_code") or "",
+        "open_balance": doc.get("balance_due", 0),
+    }
+    demo_ctx = build_merge_ctx(
+        customer=customer_ctx,
+        tenant={"name": tenant.get("name"),
+                  "phone": tenant.get("phone"),
+                  "email": tenant.get("email")},
+    )
+    pre_subject, sub_missing = render_uppercase_tags(body.subject or "", demo_ctx)
+    pre_body, body_missing = render_uppercase_tags(body.body or "", demo_ctx)
+    unresolved = sorted(set(list(sub_missing) + list(body_missing)))
+
+    # Legacy dotted-token render pass — same pipeline the send code uses.
+    ctx_dotted = {"customer": customer_ctx,
+                    "tenant": {"name": tenant.get("name") or "",
+                                 "phone": tenant.get("phone") or "",
+                                 "email": tenant.get("email") or ""}}
+    try:
+        subject_rendered, body_rendered, _missing = render_subject_and_body(
+            pre_subject, pre_body, ctx_dotted,
+        )
+    except Exception:                                    # noqa: BLE001
+        # Second pass is best-effort — fall back to the uppercase-only
+        # render so the preview always returns something usable.
+        subject_rendered, body_rendered = pre_subject, pre_body
+
+    if channel == "sms":
+        body_rendered = strip_html(body_rendered or "")
+        subject_rendered = None                          # SMS has no subject
+
+    return {
+        "channel": channel,
+        "subject_rendered": subject_rendered,
+        "body_rendered": body_rendered,
+        "unresolved_tokens": unresolved,
+    }
 
 
 # BUG F · Feb 2026 — customer-direct SMS. Thin wrapper over the

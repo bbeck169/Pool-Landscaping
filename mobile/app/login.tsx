@@ -19,21 +19,10 @@ export default function Login() {
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [showDemoLogins, setShowDemoLogins] = useState(true);
-
-  // Gate demo logins on /api/config/public flag (mirrors web Login.jsx)
-  React.useEffect(() => {
-    let live = true;
-    (async () => {
-      try {
-        const cfg = await api.get("/config/public");
-        if (live && typeof cfg?.show_demo_logins === "boolean") {
-          setShowDemoLogins(cfg.show_demo_logins);
-        }
-      } catch { /* default: show */ }
-    })();
-    return () => { live = false; };
-  }, []);
+  // Phase 30 · Feb 2026 — demo-accounts UI removed unconditionally. Manual
+  // sign-in still works for the seed accounts; the ``SHOW_DEMO_LOGINS``
+  // env flag + ``/config/public`` field are intentionally left alone so
+  // nothing else in the codebase breaks.
 
   const submit = async (e?: string, p?: string) => {
     const em = (e ?? email).trim().toLowerCase();
@@ -54,20 +43,6 @@ export default function Login() {
     }
   };
 
-  const demo = (role: "admin" | "technician" | "customer") => {
-    const em =
-      role === "admin" ? "admin@aquaterra.com" : role === "technician" ? "mike@aquaterra.com" : "customer@aquaterra.com";
-    setEmail(em);
-    setPassword("password123");
-    submit(em, "password123");
-  };
-
-  const DEMOS: { role: "admin" | "technician" | "customer"; label: string; email: string }[] = [
-    { role: "admin", label: "Admin", email: "admin@aquaterra.com" },
-    { role: "technician", label: "Technician", email: "mike@aquaterra.com" },
-    { role: "customer", label: "Customer", email: "customer@aquaterra.com" },
-  ];
-
   return (
     <View style={styles.root}>
       <View style={styles.hero}>
@@ -77,7 +52,10 @@ export default function Login() {
           <View style={styles.logoBadge}>
             <Ionicons name="water" size={22} color={colors.brand} />
           </View>
-          <Text style={styles.brand}>Pool & Landscaping{"\n"}of Vistancia</Text>
+          <Text style={styles.brand}>
+            <Text style={styles.brandLine1}>Welcome to{"\n"}</Text>
+            <Text style={styles.brandLine2}>Pool & Landscaping of Vistancia LLC</Text>
+          </Text>
         </View>
         <View style={styles.heroBottom}>
           <Text style={styles.heroTitle}>Run your pool & landscape crew like clockwork.</Text>
@@ -142,26 +120,9 @@ export default function Login() {
           </Text>
         </Pressable>
 
-        <Text style={[styles.eyebrow, { marginTop: spacing.xl }]}>DEMO ACCOUNTS</Text>
-        {showDemoLogins ? (
-        <View style={styles.demoList}>
-          {DEMOS.map((d, i) => (
-            <Pressable
-              key={d.role}
-              style={[styles.demoRow, i < DEMOS.length - 1 && styles.demoRowBorder]}
-              onPress={() => demo(d.role)}
-              testID={`demo-${d.role}-button`}
-            >
-              <Text style={styles.demoLabel}>{d.label}</Text>
-              <Text style={styles.demoEmail}>{d.email}</Text>
-            </Pressable>
-          ))}
-        </View>
-        ) : (
-          <Text style={{ fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: spacing.xs }}>
-            Demo logins are disabled on this environment.
-          </Text>
-        )}
+        {/* Phase 30 · Feb 2026 — DEMO ACCOUNTS block removed
+            unconditionally. Manual sign-in above still authenticates the
+            three seed accounts — only the visual shortcuts are gone. */}
       </KeyboardAwareScrollView>
     </View>
   );
@@ -180,6 +141,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   brand: { fontFamily: font.bold, fontSize: fontSize.lg, color: "#fff", lineHeight: 20 },
+  // Phase 30 · Feb 2026 — two-line brand header. Line 2 is exactly half
+  // the size of Line 1 (28 → 14) per the spec. ``lineHeight`` on Line 1
+  // is tightened so Line 2 sits directly below with only natural
+  // line-height as separation.
+  brandLine1: { fontFamily: font.bold, fontSize: 28, color: "#fff", lineHeight: 30 },
+  brandLine2: { fontFamily: font.bold, fontSize: 14, color: "#fff", lineHeight: 18 },
   heroBottom: { padding: spacing.xl, paddingBottom: spacing.xl },
   heroTitle: { fontFamily: font.bold, fontSize: 26, color: "#fff", lineHeight: 30 },
   heroSub: { fontFamily: font.regular, fontSize: fontSize.base, color: "rgba(255,255,255,0.9)", marginTop: spacing.sm, lineHeight: 19 },
