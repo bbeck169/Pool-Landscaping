@@ -34,6 +34,7 @@ import AdminTagsList from "@/pages/admin/AdminTagsList";
 import AdminServiceReportsList from "@/pages/admin/AdminServiceReportsList";
 import AdminTimeEntriesList from "@/pages/admin/AdminTimeEntriesList";
 import ReflowHistoryPage from "@/pages/admin/ReflowHistoryPage";
+import PortalPaymentReturn from "@/pages/portal/PortalPaymentReturn";
 import QuotesList from "@/pages/quotes/QuotesList";
 import QuoteInvoiceNew from "@/pages/quotes/QuoteInvoiceNew";
 import QuoteInvoiceDetail from "@/pages/quotes/QuoteInvoiceDetail";
@@ -821,6 +822,8 @@ export default function App() {
 
             {/* Customer portal (Phase 4) */}
             <Route path="portal/home" element={<PortalHome />} />
+            {/* Task QQ Phase 2 · Feb 2026 — Lumino hosted-checkout return. */}
+            <Route path="portal/payment-method/return" element={<PortalPaymentReturn />} />
             {/* BUG D fix (Feb-2026) — defensive redirect so any
                 stray link to bare ``/portal`` lands on the home page
                 instead of NotFound. */}

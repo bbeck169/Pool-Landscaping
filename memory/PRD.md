@@ -9482,3 +9482,82 @@ render the `bulk-select-all` header, populate the floating
 (`bulk-delete-button`, `bulk-owner-button`, `bulk-status-button`,
 `bulk-archive-button`, `bulk-mark-read-button`, `bulk-category-button`,
 `bulk-clear-selection`).
+
+---
+
+## Task QQ Phase 2 — completion pass (Feb 2026)
+
+The initial Phase 2 pass shipped the return-URL endpoint, Zapier
+bridge, deprecated native webhook, `PortalPaymentReturn.jsx`,
+runbook, and mobile delegation. This follow-up closed the 3
+remaining gaps.
+
+**Added**
+
+1. **Nightly polling reconciler** — new module
+   `services/lumino_reconciler.py`. Polls both `payments` +
+   `subscriptions` collections for docs > 1h old still in a
+   pending state that carry a `lumino_*_id`. Terminal provider
+   statuses normalise to local statuses (`succeeded` → `paid`,
+   `canceled` → `cancelled`) and mirror onto the underlying
+   invoice when applicable. APScheduler cron installed at 03:00
+   UTC via `register_lumino_reconciler_job()`, wired in
+   `server.py` boot next to the existing RingCentral pull-sync.
+   `routers/lumino_return.py::reconcile_once` now re-exports the
+   new service function so existing pytests continue to pass.
+
+2. **Provider-aware `POST /api/payments/setup-session`** —
+   `routers/payments.py` now dispatches on `PAYMENT_PROVIDER`.
+   Stripe branch is unchanged (still the preview default). Lumino
+   branch delegates to `LuminoProvider.create_setup_session` via
+   the provider factory, forces the return URL onto
+   `/portal/payment-method/return`, forwards an idempotency key,
+   and maps `PaymentProviderDryRun` / `PaymentTestScopeViolation`
+   / `PaymentProviderNotConfigured` to the expected HTTP surfaces.
+   Frontend Add-a-Card (`PortalPages.jsx::PortalPaymentMethod`)
+   needs no change — it already POSTs to the same endpoint and
+   uses `window.location.assign` on the returned url.
+
+3. **Migration script Phase 2 hydrate** —
+   `scripts/migrate_stripe_to_lumino.py` now actually invokes
+   `LuminoProvider.create_customer` under `--live`, persists the
+   returned `lumino_customer_id` onto the doc, and adds a new
+   `--dry-run-report-only` flag for aggregate-only output. In
+   preview the provider short-circuits every call via
+   `PaymentProviderDryRun`, so `--live` in preview is safe (no
+   HTTP fires). Payment-methods hydration is deliberately deferred
+   to Phase 3 because it's customer-scoped and depends on the
+   customer pass completing first. Safety rails unchanged:
+   synthetic-only tenants by default, typed `YES` gate under
+   `--i-know-this-is-production`.
+
+**Tests**
+
+- `backend/tests/test_task_qq_p2_lumino.py` — 8 tests + 1 skipped
+  (kept from prior pass, all still green).
+- `backend/tests/test_task_qq_p2_hydrate.py` — 5 new tests
+  covering: reconciler subscriptions branch, reconciler stats
+  shape (legacy flat keys + nested breakdown), migration
+  dry-run-report-only, migration live-preview dry-run path,
+  setup-session Stripe API-shape back-compat.
+- `backend/tests/test_task_qq_payment_provider.py` — kept green
+  (28 total in this suite, includes Phase 1 provider tests).
+- Boot verified: `INFO:lumino_reconciler:lumino_reconciler:
+  nightly cron registered (03:00 UTC)` in supervisor logs.
+
+**Guardrails held**
+
+- `PAYMENT_PROVIDER=stripe` in preview `.env` — never flipped.
+- `PAYMENTS_TEST_ALLOWLIST_CUSTOMERS` — still empty.
+- `_enforce_test_scope` still refuses non-synthetic customer refs
+  in non-production.
+- Zero real HTTP calls to any Lumino endpoint during pytest.
+
+**Deferred to Phase 3 (post-cutover)**
+
+- Actual PM/subscription hydrate in the migration script (needs
+  live Lumino creds to design correctly).
+- Zapier event dispatch state transitions
+  (`_dispatch` in `lumino_zapier_bridge.py`) — currently
+  logging-only stubs.
+- Removal of Stripe code paths.

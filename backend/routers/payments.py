@@ -422,7 +422,20 @@ async def _save_pm_from_setup(session) -> bool:
 
 @router.post("/payments/setup-session", operation_id="payments.createSetupSession")
 async def create_setup_session(body: SetupSessionReq, user: dict = Depends(get_current_user)):
-    """Hosted Stripe Checkout in setup mode to save a card or bank (ACH) on file.
+    """Hosted Checkout in setup mode to save a card / bank (ACH) on file.
+
+    Task QQ Phase 2 · Feb 2026 — this endpoint is now
+    **provider-aware**. When ``PAYMENT_PROVIDER=lumino`` the request
+    is delegated to ``LuminoProvider.create_setup_session`` via the
+    payment-provider factory (which returns a hosted-checkout URL
+    plus a ``session_id`` the frontend can pass to
+    ``/portal/payment-method/return`` on completion). Preview safety
+    is still enforced by ``LuminoProvider._enforce_test_scope`` —
+    synthetic customers get a mock session id (``prev_…``); real
+    customer refs raise ``PaymentTestScopeViolation`` and surface
+    a 403. In preview the ``PAYMENT_PROVIDER`` env stays ``stripe``
+    (per user directive: prod cutover is manual), so the Lumino
+    branch is dead code until flipped in prod.
 
     Phase 34 · Task Q · Feb-2026 — this endpoint used to hard-fail with
     ``404 Customer not found`` for any portal user whose ``users.customer_id``
@@ -441,8 +454,6 @@ async def create_setup_session(body: SetupSessionReq, user: dict = Depends(get_c
          at all (which is impossible in a JWT-protected route today).
     """
     deny_impersonation(user)
-    if not stripe.api_key:
-        raise HTTPException(503, "Payments are not configured")
     if user.get("role") == "customer":
         cid = user.get("customer_id")
     elif user.get("role") in ("admin", "super_admin", "owner"):
@@ -454,6 +465,63 @@ async def create_setup_session(body: SetupSessionReq, user: dict = Depends(get_c
         cid = body.customer_id or user.get("customer_id")
     else:
         raise HTTPException(403, "Not allowed")
+
+    # Task QQ Phase 2 · provider-aware dispatch. Lumino branch first;
+    # Stripe branch is the legacy default and remains unchanged.
+    _provider_name = (os.environ.get("PAYMENT_PROVIDER") or "stripe").strip().lower()
+    if _provider_name == "lumino":
+        from services.payments import (
+            get_payment_provider,
+            PaymentProviderDryRun,
+            PaymentProviderNotConfigured,
+            PaymentTestScopeViolation,
+        )
+        provider = get_payment_provider()
+        # LuminoProvider expects a customer-ref that _is_synthetic_fixture
+        # can validate (i.e. an email in @aquaterra.com / @plofv.com
+        # or a value on PAYMENTS_TEST_ALLOWLIST_CUSTOMERS). We hand
+        # over the user's own email as the customer_ref — synthetic
+        # tenants use synthetic emails, so preview naturally short-
+        # circuits to a mock session.
+        customer_ref = user.get("email") or cid or ""
+        # Force the return URL to the Lumino-flavoured page. The
+        # frontend `PortalPaymentReturn.jsx` parses ?session_id=...
+        # and POSTs back to /payments/lumino/return.
+        return_url = body.return_url
+        if return_url and "/portal/payment-method" in return_url and "/return" not in return_url:
+            base = return_url.split("?")[0].rstrip("/")
+            return_url = f"{base}/return"
+        try:
+            resp = await provider.create_setup_session(
+                customer_ref=customer_ref,
+                return_url=return_url,
+                idempotency_key=f"setup-{cid or user.get('id')}-{int(datetime.now(timezone.utc).timestamp())}",
+            )
+            return {
+                "url": (resp or {}).get("url") or "",
+                "session_id": ((resp or {}).get("session_id")
+                                     or (resp or {}).get("id") or ""),
+                "provider": "lumino",
+            }
+        except PaymentProviderDryRun as ex:
+            # Preview: no real Lumino call was made. Return the
+            # synthetic session id so the frontend can walk through
+            # the /portal/payment-method/return flow with a mock.
+            payload = ex.payload or {}
+            return {
+                "url": return_url or "",
+                "session_id": payload.get("session_id") or "",
+                "provider": "lumino",
+                "dry_run": True,
+            }
+        except PaymentTestScopeViolation as ex:
+            raise HTTPException(403, str(ex))
+        except PaymentProviderNotConfigured as ex:
+            raise HTTPException(503, str(ex))
+
+    # ── Stripe (legacy default) ──────────────────────────────────
+    if not stripe.api_key:
+        raise HTTPException(503, "Payments are not configured")
     scid, _ = await _get_or_create_stripe_customer(cid, fallback_user=user)
     try:
         session = await asyncio.to_thread(
@@ -468,7 +536,7 @@ async def create_setup_session(body: SetupSessionReq, user: dict = Depends(get_c
     except Exception as e:
         logger.warning(f"Stripe setup session failed: {e}")
         raise HTTPException(502, "Could not start payment setup")
-    return {"url": session.url, "session_id": session.id}
+    return {"url": session.url, "session_id": session.id, "provider": "stripe"}
 
 
 @router.get("/payments/setup-status/{session_id}")

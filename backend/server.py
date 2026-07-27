@@ -193,6 +193,10 @@ from routers import reflow_history as _p34_reflow_history  # noqa: E402
 api_router.include_router(_p34_reflow_history.router)
 from routers import lumino_webhook as _qq_lumino_webhook  # noqa: E402
 api_router.include_router(_qq_lumino_webhook.router)
+from routers import lumino_zapier_bridge as _qq_lumino_zapier  # noqa: E402
+api_router.include_router(_qq_lumino_zapier.router)
+from routers import lumino_return as _qq_lumino_return  # noqa: E402
+api_router.include_router(_qq_lumino_return.router)
 # Phase 32 · Feb 2026 — Mobile offline sync backend (batch op replay
 # + offline-bundle prefetch). Idempotent per ``client_op_id``;
 # conflicts resolve mobile-wins with an audit-logged snapshot.
@@ -744,6 +748,18 @@ async def _background_seed():
             _rc_nightly_pull,
             "cron", hour=3, minute=0,
             id="rc_contact_pull_sync", replace_existing=True)
+        # Task QQ Phase 2 · Feb 2026 — nightly Lumino reconciler
+        # (03:00 UTC). Polls pending payments/subscriptions to close
+        # any gap left by the return-URL / Zapier bridge paths.
+        # Safe in preview: the provider returns a mock for
+        # ``mock_``/``prev_`` session ids and dry-runs everything
+        # else, so the cron is a no-op unless real Lumino creds are
+        # populated in production.
+        try:
+            from services.lumino_reconciler import register_lumino_reconciler_job
+            register_lumino_reconciler_job(scheduler)
+        except Exception as e:                                    # noqa: BLE001
+            logger.warning(f"[task-qq] lumino reconciler cron install failed: {e}")
         # Phase 52.A — monthly pricing insights digest (1st @ 09:00 UTC).
         from services.monthly_pricing_digest import run_monthly_pricing_digest
         scheduler.add_job(

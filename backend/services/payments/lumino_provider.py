@@ -129,20 +129,23 @@ class LuminoProvider(PaymentProvider):
     # ── Provider methods ──────────────────────────────────────────
     async def create_customer(self, *, email, name=None, metadata=None,
                                      idempotency_key=None):
-        # Preview short-circuit uses email as the customer_ref proxy
-        # (Lumino customers don't exist yet at this point).
         self._dry_run_or_die(kind="create_customer", customer_ref=email)
         self._require_configured()
-        # TODO(phase2): POST {api_url}/v1/customers with Idempotency-Key.
-        raise PaymentProviderNotConfigured("phase2: not implemented yet")
+        return await self._post("/customers",
+                                     {"email": email, "name": name,
+                                      "metadata": metadata or {}},
+                                     idempotency_key)
 
     async def create_setup_session(self, *, customer_ref, return_url,
                                          idempotency_key=None):
         self._dry_run_or_die(kind="setup_session", customer_ref=customer_ref,
                                  return_url=return_url)
         self._require_configured()
-        # TODO(phase2): POST {api_url}/v1/vaulting/sessions
-        raise PaymentProviderNotConfigured("phase2: not implemented yet")
+        return await self._post("/payments/sessions",
+                                     {"mode": "setup",
+                                      "customer_id": customer_ref,
+                                      "return_url": return_url or self.return_url},
+                                     idempotency_key)
 
     async def list_vaulted_methods(self, *, customer_ref):
         if not _is_production() and customer_ref not in _allowlist():
@@ -150,7 +153,7 @@ class LuminoProvider(PaymentProvider):
                 "list_vaulted_methods", customer_ref=customer_ref, methods=[],
             ))
         self._require_configured()
-        raise PaymentProviderNotConfigured("phase2: not implemented yet")
+        return await self._get(f"/customers/{customer_ref}/payment-methods")
 
     async def create_payment_session(self, *, customer_ref, amount_cents,
                                           currency, description=None,
@@ -161,24 +164,37 @@ class LuminoProvider(PaymentProvider):
                                  amount_cents=amount_cents,
                                  currency=currency)
         self._require_configured()
-        raise PaymentProviderNotConfigured("phase2: not implemented yet")
+        return await self._post("/payments/sessions",
+                                     {"customer_id": customer_ref,
+                                      "amount_cents": amount_cents,
+                                      "currency": currency,
+                                      "description": description,
+                                      "metadata": metadata or {},
+                                      "off_session": off_session,
+                                      "payment_method_id": method_ref,
+                                      "return_url": self.return_url},
+                                     idempotency_key)
 
     async def create_subscription(self, *, customer_ref, plan_ref,
                                         metadata=None, idempotency_key=None):
         self._dry_run_or_die(kind="subscription",
                                  customer_ref=customer_ref, plan_ref=plan_ref)
         self._require_configured()
-        raise PaymentProviderNotConfigured("phase2: not implemented yet")
+        return await self._post("/subscriptions",
+                                     {"customer_id": customer_ref,
+                                      "plan_id": plan_ref,
+                                      "metadata": metadata or {}},
+                                     idempotency_key)
 
     async def cancel_subscription(self, *, subscription_ref,
                                         idempotency_key=None):
-        # No customer_ref here — dry-run always in non-prod.
         if not _is_production():
             raise PaymentProviderDryRun(_dry_run_response(
                 "cancel_subscription", subscription_ref=subscription_ref,
             ))
         self._require_configured()
-        raise PaymentProviderNotConfigured("phase2: not implemented yet")
+        return await self._post(f"/subscriptions/{subscription_ref}/cancel",
+                                     {}, idempotency_key)
 
     async def create_refund(self, *, transaction_ref, amount_cents=None,
                                  reason=None, idempotency_key=None):
@@ -188,7 +204,56 @@ class LuminoProvider(PaymentProvider):
                 amount_cents=amount_cents,
             ))
         self._require_configured()
-        raise PaymentProviderNotConfigured("phase2: not implemented yet")
+        return await self._post("/refunds",
+                                     {"payment_id": transaction_ref,
+                                      "amount_cents": amount_cents,
+                                      "reason": reason},
+                                     idempotency_key)
+
+    async def get_payment_status(self, *, session_id):
+        # In preview, always return a mock "paid" so return-URL flow
+        # can be exercised without hitting real API. Scope safety
+        # still applies via the id prefix guard.
+        if not _is_production():
+            if session_id.startswith("prev_") or session_id.startswith("mock_"):
+                return {"provider_status": "paid",
+                          "session_id": session_id,
+                          "provider": "lumino",
+                          "raw": {"mock": True}}
+            # Non-synthetic session id in preview → dry-run safe.
+            raise PaymentProviderDryRun(_dry_run_response(
+                "get_payment_status", session_id=session_id,
+            ))
+        self._require_configured()
+        return await self._get(f"/payments/{session_id}")
+
+    # ── HTTP plumbing (real API calls fire only when configured) ──
+    async def _post(self, path, body, idempotency_key=None):
+        return await self._request("POST", path, body, idempotency_key)
+
+    async def _get(self, path):
+        return await self._request("GET", path, None, None)
+
+    async def _request(self, method, path, body, idempotency_key):
+        import httpx
+        url = f"{self.api_url.rstrip('/')}{path}"
+        headers = {"Authorization": f"Bearer {self.token}",
+                     "Content-Type": "application/json"}
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+        for attempt in (1, 2):
+            try:
+                async with httpx.AsyncClient(timeout=30) as cx:
+                    r = await cx.request(method, url, headers=headers, json=body)
+                if 500 <= r.status_code < 600 and attempt == 1:
+                    continue                                            # retry once on 5xx
+                r.raise_for_status()
+                return r.json()
+            except httpx.HTTPError as exc:
+                if attempt == 2:
+                    log.error("Lumino %s %s failed: %s", method, path, exc)
+                    raise
+        return {}
 
     # ── Webhooks ──────────────────────────────────────────────────
     def verify_webhook(self, *, raw_body: bytes,

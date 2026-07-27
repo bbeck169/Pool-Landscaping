@@ -107,3 +107,9 @@ class PaymentProvider(ABC):
     @abstractmethod
     def parse_webhook_event(self, *, raw_body: bytes) -> Dict[str, Any]:
         raise NotImplementedError
+
+    async def get_payment_status(self, *, session_id: str) -> Dict[str, Any]:
+        """Task QQ Phase 2 · Feb 2026 — payment status probe used by
+        the return-URL endpoint + nightly reconciler. Default
+        implementation raises; providers that support it override."""
+        raise NotImplementedError
