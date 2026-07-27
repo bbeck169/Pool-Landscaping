@@ -152,6 +152,51 @@ describe("Team page kebab visibility matrix", () => {
     // Self row → no kebab.
     expect(screen.queryByTestId(`team-row-kebab-${rowSuper.id}`)).toBeNull();
   });
+
+  // Feb-2026 follow-up · self-visibility fix — the caller's own row
+  // is now returned by ``/api/team`` and rendered by the roster with
+  // the kebab suppressed + a small "(you)" hint next to their name.
+  it("renders the caller's own row with the (you) label and no kebab", async () => {
+    meAsSuper();
+    apiGetMock.mockImplementation((path) => {
+      if (path === "/team") return Promise.resolve([rowSuper, rowTech]);
+      return Promise.resolve([]);
+    });
+    await renderTeamRoster();
+
+    // Row for the current user is present.
+    const selfRow = await screen.findByTestId(`team-row-${rowSuper.id}`);
+    expect(selfRow).toBeInTheDocument();
+    // "(you)" courtesy label is on the self row.
+    expect(selfRow.textContent).toMatch(/\(you\)/);
+    // Kebab is suppressed on the self row.
+    expect(screen.queryByTestId(`team-row-kebab-${rowSuper.id}`)).toBeNull();
+    // Other rows keep their kebab.
+    expect(screen.getByTestId(`team-row-kebab-${rowTech.id}`)).toBeInTheDocument();
+  });
+
+  it("admin caller's own row is also visible with kebab hidden", async () => {
+    // Seed the roster with a synthetic 'me' admin row + one tech.
+    const meAdminRow = {
+      id: "u-me-admin", name: "Me Admin",
+      email: "me@t.local", role: "admin", department: null,
+    };
+    useAuthMock.mockReturnValue({
+      user: { id: meAdminRow.id, role: "admin",
+                name: meAdminRow.name, email: meAdminRow.email },
+    });
+    apiGetMock.mockImplementation((path) => {
+      if (path === "/team") return Promise.resolve([meAdminRow, rowTech]);
+      return Promise.resolve([]);
+    });
+    await renderTeamRoster();
+
+    const selfRow = await screen.findByTestId(`team-row-${meAdminRow.id}`);
+    expect(selfRow.textContent).toMatch(/\(you\)/);
+    expect(screen.queryByTestId(`team-row-kebab-${meAdminRow.id}`)).toBeNull();
+    // Admin's kebab-visibility on tech unchanged.
+    expect(screen.getByTestId(`team-row-kebab-${rowTech.id}`)).toBeInTheDocument();
+  });
 });
 
 

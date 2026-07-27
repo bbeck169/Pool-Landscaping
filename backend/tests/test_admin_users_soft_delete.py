@@ -265,3 +265,22 @@ def test_reset_password_short_password_rejected(tech_row):
                         json={"new_password": "short"},
                         headers=_plain_admin_headers(), timeout=15)
     assert r.status_code == 400, r.text
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Self-visibility · Feb-2026 follow-up — the caller's own row must
+# appear in /api/team so the UI can render the row (with kebab hidden)
+# rather than making super_admins invisible to themselves.
+# ─────────────────────────────────────────────────────────────────────
+def test_team_includes_super_admin_caller_own_row():
+    r = requests.get(f"{API}/team", headers=_super_admin_headers(), timeout=15)
+    assert r.status_code == 200, r.text
+    ids = [u["id"] for u in r.json()]
+    assert _super_admin_id() in ids
+
+
+def test_team_includes_admin_caller_own_row():
+    r = requests.get(f"{API}/team", headers=_plain_admin_headers(), timeout=15)
+    assert r.status_code == 200, r.text
+    ids = [u["id"] for u in r.json()]
+    assert _admin_id() in ids

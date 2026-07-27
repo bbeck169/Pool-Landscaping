@@ -371,8 +371,15 @@ async def list_team(user: dict = Depends(require_admin),
     later undelete) previously-removed rows. Regular admins that pass
     the flag are silently ignored (defense in depth) — the response
     still hides deleted rows for them.
+
+    Feb-2026 self-visibility fix — the role filter now includes
+    ``super_admin`` and ``manager`` so the caller's own row is
+    returned rather than silently filtered out. The frontend renders
+    it with the kebab suppressed (per the permission matrix — no
+    self-serve reset/delete) plus a small "(you)" label.
     """
-    q: dict = {"role": {"$in": ["admin", "technician"]},
+    q: dict = {"role": {"$in": ["admin", "technician",
+                                    "super_admin", "manager"]},
                 "tenant_id": tenant["id"]}
     is_super = (user.get("role") or "").lower() == "super_admin"
     if not (include_deleted and is_super):
