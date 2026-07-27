@@ -624,7 +624,11 @@ from pydantic import BaseModel as _BaseModelBB  # local alias — avoid model.py
 
 
 class _InvoiceBulkDeleteIn(_BaseModelBB):
-    ids: List[str]
+    # Phase 34 · Task EE (extension) — invoices/payments accept
+    # either explicit ``ids`` or the filter-selector shape.
+    ids: Optional[List[str]] = None
+    query_selector: Optional[Dict[str, Any]] = None
+    exclude_ids: Optional[List[str]] = None
 
 
 # Phase 34 · Task DD · Feb 2026 — cap raised 100 → 400 across all four
@@ -632,6 +636,43 @@ class _InvoiceBulkDeleteIn(_BaseModelBB):
 # a local constant per router so a bad import can't accidentally drop
 # the guard entirely.
 _BULK_DELETE_CAP = 400
+
+_INVOICE_SELECTOR_KEYS = {"status", "search", "customer_id", "has_late_fee"}
+
+
+async def _resolve_invoice_ids(selector: Dict[str, Any],
+                                 exclude: List[str],
+                                 tenant_id: str,
+                                 doc_type: str = "invoice") -> List[str]:
+    """Task EE — safely translate the invoices/payments frontend filter
+    shape into a concrete list of quote ids. Whitelist-only. Always
+    tenant-scoped, always excludes soft-deleted rows."""
+    q: Dict[str, Any] = {"tenant_id": tenant_id, "doc_type": doc_type,
+                            "$or": [{"deleted_at": None},
+                                        {"deleted_at": {"$exists": False}}]}
+    clean = {k: v for k, v in (selector or {}).items()
+              if k in _INVOICE_SELECTOR_KEYS}
+    if clean.get("status") and clean["status"] != "all":
+        q["payment_status"] = clean["status"]
+    if clean.get("customer_id"):
+        q["customer_id"] = clean["customer_id"]
+    if clean.get("has_late_fee"):
+        q["line_items.is_late_fee"] = True
+    if clean.get("search"):
+        s = str(clean["search"]).strip()
+        if s:
+            q["$and"] = [{"$or": [
+                {"title": {"$regex": s, "$options": "i"}},
+                {"customer_name": {"$regex": s, "$options": "i"}},
+                {"invoice_number": {"$regex": s, "$options": "i"}},
+            ]}]
+    excl = set(exclude or [])
+    ids: List[str] = []
+    async for row in db.quotes.find(q, {"_id": 0, "id": 1}).limit(_BULK_DELETE_CAP + 1):
+        rid = row.get("id")
+        if rid and rid not in excl:
+            ids.append(rid)
+    return ids
 
 
 async def _perform_soft_delete_quote(qid: str, user: dict, tenant: dict) -> dict:
@@ -687,16 +728,20 @@ async def soft_delete_invoice(qid: str,
 async def bulk_delete_invoices(body: _InvoiceBulkDeleteIn,
                                  user: dict = Depends(require_admin),
                                  tenant: dict = Depends(get_current_tenant)):
-    """Bulk soft-delete invoices. Iterates the shared helper so per-row
-    guardrails still apply. Caps at 100 rows per call. Response surfaces
-    both successes and failures so the UI can toast a summary like
-    "Deleted 8 of 10 (2 failed)". Mixed-tenant ids are rejected via
-    the 404 path (tenant_id filter in the helper)."""
-    ids = list(body.ids or [])
+    """Bulk soft-delete invoices. See Task EE (extension) for the
+    ``query_selector`` shape."""
+    if body.query_selector is not None:
+        ids = await _resolve_invoice_ids(
+            body.query_selector, body.exclude_ids or [],
+            tenant["id"], doc_type="invoice",
+        )
+    else:
+        ids = list(body.ids or [])
     if not ids:
         raise HTTPException(400, "ids is empty")
     if len(ids) > _BULK_DELETE_CAP:
         raise HTTPException(400, f"bulk-delete capped at {_BULK_DELETE_CAP} rows per call")
+    ids = list(dict.fromkeys(ids))  # idempotency — de-dupe payload
     deleted: List[str] = []
     failed: List[dict] = []
     for qid in ids:
@@ -795,11 +840,18 @@ async def bulk_delete_payments(body: _InvoiceBulkDeleteIn,
     payments refuse; the failures are surfaced in ``failed[]`` so
     admins see the count of "locked" rows without the whole batch
     aborting."""
-    ids = list(body.ids or [])
+    if body.query_selector is not None:
+        ids = await _resolve_invoice_ids(
+            body.query_selector, body.exclude_ids or [],
+            tenant["id"], doc_type="invoice",
+        )
+    else:
+        ids = list(body.ids or [])
     if not ids:
         raise HTTPException(400, "ids is empty")
     if len(ids) > _BULK_DELETE_CAP:
         raise HTTPException(400, f"bulk-delete capped at {_BULK_DELETE_CAP} rows per call")
+    ids = list(dict.fromkeys(ids))  # idempotency
     deleted: List[str] = []
     failed: List[dict] = []
     for pid in ids:

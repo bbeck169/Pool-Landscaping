@@ -149,6 +149,21 @@ export default function GoogleReviewSettings() {
               <ExternalLink size={13} /> Test link
             </a>
           ) : null}
+          {/* Phase 34 · Task GG follow-up · Feb 2026 — preview flow
+              link. Opens the customer-side submit page in a new tab
+              with a demo token pre-populated to 5★, so the tenant
+              sees the exact modal a happy customer will see. */}
+          <a
+            href="/portal/review/submit?token=demo-preview&preview=1"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold"
+            style={{ border: `1px solid ${colors.border}`,
+                      color: colors.onSurface, background: "#fff" }}
+            data-testid="google-review-preview-link"
+          >
+            <ExternalLink size={13} /> Preview review flow
+          </a>
         </div>
       </div>
 

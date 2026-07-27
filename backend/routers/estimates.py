@@ -319,10 +319,34 @@ from config import logger as _bulk_logger
 
 
 class _EstimateBulkDeleteIn(_BulkBaseModel):
-    ids: List[str]
+    ids: Optional[List[str]] = None
+    query_selector: Optional[dict] = None
+    exclude_ids: Optional[List[str]] = None
 
 
 _ESTIMATE_BULK_DELETE_CAP = 400  # Phase 34 · Task DD · raised 100 → 400
+_ESTIMATE_SELECTOR_KEYS = {"search", "customer_id"}
+
+
+async def _resolve_estimate_ids(selector: dict, exclude: List[str], tenant_id: str) -> List[str]:
+    q: dict = {"tenant_id": tenant_id,
+                "$or": [{"deleted_at": None},
+                            {"deleted_at": {"$exists": False}}]}
+    clean = {k: v for k, v in (selector or {}).items()
+              if k in _ESTIMATE_SELECTOR_KEYS}
+    if clean.get("customer_id"):
+        q["customer_id"] = clean["customer_id"]
+    if clean.get("search"):
+        s = str(clean["search"]).strip()
+        if s:
+            q["title"] = {"$regex": s, "$options": "i"}
+    excl = set(exclude or [])
+    ids: List[str] = []
+    async for row in db.estimates.find(q, {"_id": 0, "id": 1}).limit(_ESTIMATE_BULK_DELETE_CAP + 1):
+        rid = row.get("id")
+        if rid and rid not in excl:
+            ids.append(rid)
+    return ids
 
 
 async def _perform_soft_delete_estimate(eid: str, user: dict, tenant: dict) -> dict:
@@ -368,11 +392,17 @@ async def soft_delete_estimate(eid: str,
 async def bulk_delete_estimates(body: _EstimateBulkDeleteIn,
                                    user: dict = Depends(require_admin),
                                    tenant: dict = Depends(get_current_tenant)):
-    ids = list(body.ids or [])
+    if body.query_selector is not None:
+        ids = await _resolve_estimate_ids(
+            body.query_selector, body.exclude_ids or [], tenant["id"],
+        )
+    else:
+        ids = list(body.ids or [])
     if not ids:
         raise HTTPException(400, "ids is empty")
     if len(ids) > _ESTIMATE_BULK_DELETE_CAP:
         raise HTTPException(400, f"bulk-delete capped at {_ESTIMATE_BULK_DELETE_CAP} rows per call")
+    ids = list(dict.fromkeys(ids))  # idempotency
     deleted: List[str] = []
     failed: List[dict] = []
     for eid in ids:

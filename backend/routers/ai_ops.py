@@ -49,12 +49,21 @@ SEEDED_EMPLOYEES = [
 
 
 async def ensure_ai_employees_seeded():
-    for emp in SEEDED_EMPLOYEES:
-        existing = await db.ai_employees.find_one({"slug": emp["slug"]}, {"_id": 0})
-        if not existing:
-            doc = {"id": new_id(), **emp, "created_at": now_iso()}
-            await db.ai_employees.insert_one(doc)
-    logger.info(f"AI Employees seeded ({len(SEEDED_EMPLOYEES)} personas).")
+    """Phase 34 · Task JJ · Feb 2026 — deprecated legacy seed.
+
+    Historically this inserted a shared set of AI employees with
+    ``tenant_id=None`` — those rows leaked into every tenant's admin
+    AI Hub via ``GET /ai-ops/employees`` (which pre-Task-JJ had no
+    tenant filter). The tenant-scoped seed
+    (`routers.ai_employees.seed_ai_employees_all_tenants`) fully
+    replaces this — each tenant now gets its own copy in
+    ``db.ai_employees`` keyed by ``(tenant_id, key)``.
+
+    We keep the function as a no-op to preserve import stability for
+    older callers, but no rows are inserted anymore. The Task JJ
+    dedupe migration deletes the null-tenant legacy rows on boot.
+    """
+    return None
 
 
 # ─── AI Employees CRUD ─────────────────────────────────────────────────────
@@ -84,20 +93,49 @@ class ChatIn(BaseModel):
 
 
 @router.get("/ai-ops/employees")
-async def list_employees(admin: dict = Depends(require_admin)):
-    return await db.ai_employees.find({}, {"_id": 0}).sort("name", 1).to_list(200)
+async def list_employees(admin: dict = Depends(require_admin),
+                         tenant: dict = Depends(get_current_tenant)):
+    # Phase 34 · Task JJ · Feb 2026 — tenant-scope the AI Hub list.
+    # Pre-Task-JJ this returned every row across every tenant plus 9
+    # legacy null-tenant rows, so admins saw dozens of "duplicate"
+    # employees on `/ai-employees`. The tenant-scoped seed
+    # (`seed_ai_employees_for_tenant`) already guarantees each tenant
+    # has one copy of every DEFAULT_EMPLOYEES row.
+    return await db.ai_employees.find(
+        {"tenant_id": tenant["id"]}, {"_id": 0}
+    ).sort("name", 1).to_list(200)
 
 
 @router.post("/ai-ops/employees")
-async def create_employee(body: EmployeeIn, admin: dict = Depends(require_admin)):
+async def create_employee(body: EmployeeIn,
+                          admin: dict = Depends(require_admin),
+                          tenant: dict = Depends(get_current_tenant)):
+    # Phase 34 · Task JJ — creates now stamp tenant_id so newly-added
+    # personas don't recreate the null-tenant leakage bug.
     doc = {"id": new_id(), "slug": body.name.lower().replace(" ", "-"),
+           "tenant_id": tenant["id"],
            **body.dict(), "created_at": now_iso()}
     await db.ai_employees.insert_one(doc); doc.pop("_id", None); return doc
 
 
 @router.get("/ai-ops/employees/{eid}")
-async def get_employee(eid: str, admin: dict = Depends(require_admin)):
-    d = await db.ai_employees.find_one({"$or": [{"id": eid}, {"slug": eid}]}, {"_id": 0})
+async def get_employee(eid: str,
+                        admin: dict = Depends(require_admin),
+                        tenant: dict = Depends(get_current_tenant)):
+    # Phase 34 · Task JJ · Feb 2026 — tenant-scope the single-employee
+    # read so an admin can only see their own tenant's persona.
+    d = await db.ai_employees.find_one(
+        {"tenant_id": tenant["id"], "$or": [{"id": eid}, {"slug": eid}]},
+        {"_id": 0},
+    )
+    if not d:
+        # Fallback for legacy links that used a global slug — still
+        # tenant-scope the lookup, but check by `key` field too since
+        # the newer seed uses ``key`` not ``slug``.
+        d = await db.ai_employees.find_one(
+            {"tenant_id": tenant["id"], "$or": [{"key": eid}]},
+            {"_id": 0},
+        )
     if not d: raise HTTPException(404, "Not found")
     return d
 

@@ -647,6 +647,20 @@ async def _background_seed():
         scheduler.add_job(dunning.run_dunning_scan, "interval",
                             minutes=60, id="dunning_scan",
                             replace_existing=True)
+        # Phase 34 · Feb 2026 — Weekly Bulk Actions Digest.
+        # Monday 08:00 UTC. See services/weekly_bulk_actions_digest.py
+        # for the rollup logic. Tenants with zero bulk actions in the
+        # past 7 days are silently skipped. Delivery routes through
+        # the Task-L guarded resend adapter so preview stays dry-run.
+        try:
+            from services.weekly_bulk_actions_digest import send_weekly_digest_all_tenants
+            scheduler.add_job(
+                send_weekly_digest_all_tenants, "cron",
+                day_of_week="mon", hour=8, minute=0,
+                id="weekly_bulk_digest", replace_existing=True,
+            )
+        except Exception as e:
+            logger.warning(f"[phase34-digest] cron install failed: {e}")
         # Phase 26.2 — daily weather scan across every tenant (05:00 UTC).
         scheduler.add_job(dispatch.scheduled_weather_scan_all, "cron",
                             hour=5, minute=0, id="weather_scan",
@@ -1209,6 +1223,17 @@ async def startup():
         logger.info(f"[ae1] ai_employees seed — {counts}")
     except Exception as e:
         logger.warning(f"ae1 ai_employees seed crashed: {e}")
+
+    # Phase 34 · Task JJ · Feb 2026 — AI Employees dedupe + unique
+    # index. Removes legacy null-tenant rows that leaked into every
+    # tenant's admin AI Hub via ``GET /ai-ops/employees`` (see
+    # ``migrations/task_jj_dedupe_ai_employees.py`` for full RCA).
+    try:
+        from migrations.task_jj_dedupe_ai_employees import dedupe_ai_employees
+        _jj = await dedupe_ai_employees()
+        logger.info(f"[phase34-task-jj] {_jj}")
+    except Exception as e:
+        logger.warning(f"[phase34-task-jj] dedupe migration crashed: {e}")
 
     # Phase 34 · Task CC · Feb 2026 — Leads status enum migration.
     # Idempotent boot-time sweep that normalises every ``leads.status``
