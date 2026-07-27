@@ -14,6 +14,7 @@ import React, { useEffect, useState } from "react";
 import { Printer, Download, Loader2, CreditCard } from "lucide-react";
 import { api, TOKEN_KEY } from "@/api";
 import PaymentForm from "@/components/PaymentForm";
+import InvoiceCreditApplied from "@/components/InvoiceCreditApplied";
 import "./InvoiceView.css";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
@@ -72,6 +73,18 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
 
   const { company, bill_to, property_address, header, line_items, totals,
            notes, is_due_on_receipt, payment_status } = data;
+  // Task SS Phase 2 · Feb 2026 — pluck the credit-applied summary
+  // fields off ``data`` so the shared annotation can render on both
+  // portal + admin invoice views. Fields optional; component
+  // renders nothing when credits_applied_cents == 0.
+  const creditSummary = {
+    credits_applied_cents: data.credits_applied_cents
+      || (totals && totals.credits_applied_cents) || 0,
+    total: totals?.this_invoice ?? data.total,
+    amount_paid: totals?.amount_paid ?? data.amount_paid,
+    payment_status: payment_status,
+    paid_method: data.paid_method || (totals && totals.paid_method),
+  };
   const canPay = (payment_status || "").toLowerCase() !== "paid"
                   && (totals?.total_due || 0) > 0;
   const paySource = magicToken ? "portal" : "authenticated";
@@ -261,6 +274,7 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
               </tr>
             </tbody>
           </table>
+          <InvoiceCreditApplied invoice={creditSummary} />
         </div>
 
         {is_due_on_receipt ? (

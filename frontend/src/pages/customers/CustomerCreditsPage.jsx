@@ -112,10 +112,10 @@ export function CustomerCreditsPanel({ customerId }) {
         </div>
         {canAdjust && (
           <button onClick={() => setAdjusting(true)}
-                  data-testid="customer-credits-adjust-btn"
+                  data-testid="customer-credits-issue-btn"
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-zinc-900 text-white text-sm hover:bg-zinc-800">
             <Plus className="w-4 h-4" />
-            Adjust balance
+            Issue credit
           </button>
         )}
       </div>
@@ -140,7 +140,7 @@ export function CustomerCreditsPanel({ customerId }) {
           const positive = delta >= 0;
           return (
             <div key={l.id || l.created_at}
-                  data-testid={`customer-credits-row-${l.id}`}
+                  data-testid={`customer-credits-history-row-${l.id || l.created_at}`}
                   className="grid grid-cols-12 gap-2 px-4 py-3 border-b border-zinc-100 items-center">
               <div className="col-span-3 text-sm text-zinc-500">
                 {fmtDate(l.created_at)}
@@ -214,7 +214,7 @@ export function AdjustDialog({ currentBalanceCents, customerId, onClose, onSaved
   return (
     <Dialog open onOpenChange={(o) => (!o && onClose())}>
       <DialogContent className="max-w-md"
-                     data-testid="customer-credits-adjust-dialog">
+                     data-testid="customer-credits-issue-modal">
         <DialogHeader><DialogTitle>Adjust balance</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <label className="block">
@@ -224,7 +224,7 @@ export function AdjustDialog({ currentBalanceCents, customerId, onClose, onSaved
             <input type="number" step="0.01"
                     value={dollars}
                     onChange={(e) => setDollars(e.target.value)}
-                    data-testid="customer-credits-adjust-amount"
+                    data-testid="customer-credits-issue-amount"
                     placeholder="e.g. 10 or -5"
                     className="w-full px-3 py-2 rounded-lg border border-zinc-200 text-sm" />
           </label>
@@ -238,7 +238,7 @@ export function AdjustDialog({ currentBalanceCents, customerId, onClose, onSaved
             <textarea rows={3}
                        value={reason}
                        onChange={(e) => setReason(e.target.value)}
-                       data-testid="customer-credits-adjust-reason"
+                       data-testid="customer-credits-issue-note"
                        placeholder="Why is this adjustment being made?"
                        className="w-full px-3 py-2 rounded-lg border border-zinc-200 text-sm" />
           </label>
@@ -258,7 +258,7 @@ export function AdjustDialog({ currentBalanceCents, customerId, onClose, onSaved
                   className="px-4 py-2 rounded-lg text-sm text-zinc-700 hover:bg-zinc-100">Cancel</button>
           <button onClick={submit}
                   disabled={!canSubmit}
-                  data-testid="customer-credits-adjust-submit"
+                  data-testid="customer-credits-issue-submit"
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-zinc-900 text-white text-sm hover:bg-zinc-800 disabled:opacity-50">
             <Save className="w-4 h-4" />
             {saving ? "Saving…" : "Adjust"}

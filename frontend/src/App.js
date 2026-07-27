@@ -34,6 +34,9 @@ import AdminTagsList from "@/pages/admin/AdminTagsList";
 import AdminServiceReportsList from "@/pages/admin/AdminServiceReportsList";
 import AdminTimeEntriesList from "@/pages/admin/AdminTimeEntriesList";
 import ReflowHistoryPage from "@/pages/admin/ReflowHistoryPage";
+// Task RR/SS Phase 2 · Feb 2026 — AI Employee scope toggle + tool audit.
+import AiPersonasScopePage from "@/pages/admin/AiPersonasScopePage";
+import AiToolAuditPage from "@/pages/admin/AiToolAuditPage";
 import PortalPaymentReturn from "@/pages/portal/PortalPaymentReturn";
 import QuotesList from "@/pages/quotes/QuotesList";
 import QuoteInvoiceNew from "@/pages/quotes/QuoteInvoiceNew";
@@ -452,6 +455,9 @@ export default function App() {
             <Route path="admin/service-reports" element={<AdminOnly><AdminServiceReportsList /></AdminOnly>} />
             <Route path="admin/time-entries" element={<AdminOnly><AdminTimeEntriesList /></AdminOnly>} />
             <Route path="admin/reflow-history" element={<AdminOnly><ReflowHistoryPage /></AdminOnly>} />
+            {/* Task RR/SS Phase 2 · Feb 2026 */}
+            <Route path="admin/ai-personas-scope" element={<AdminOnly><AiPersonasScopePage /></AdminOnly>} />
+            <Route path="admin/ai-tool-audit" element={<AdminOnly><AiToolAuditPage /></AdminOnly>} />
             <Route path="jobs/:id" element={<JobDetail />} />
 
             {/* Quotes / Invoices / Master / Estimator / Settings (Phase 3) */}

@@ -56,6 +56,12 @@ export default function PortalHome() {
   const [data, setData] = useState(null);
   const [tosStatus, setTosStatus] = useState(null);
   const [summary, setSummary] = useState(null);
+  // Task RR/SS Phase 2 · Feb 2026 — live credit balance via the new
+  // customer-portal endpoint. Runs in parallel with /summary so the
+  // tile flips from stale (from /summary payload) → live once the
+  // dedicated read resolves. Falls back to whatever /summary
+  // reported if the new endpoint 404s (deploy race).
+  const [creditBalanceDollars, setCreditBalanceDollars] = useState(null);
   // Feb-2026 · Slice 3D — Quick service-request modal.
   const [requestOpen, setRequestOpen] = useState(false);
   // Feb-2026 · Slice 5 — customer AI carve-out (Skedra + Billy).
@@ -64,6 +70,13 @@ export default function PortalHome() {
 
   const loadSummary = () =>
     api.get("/customer-portal/summary").then(setSummary).catch(() => setSummary(null));
+    api.get("/customer-portal/credits/balance")
+      .then((r) => {
+        if (r && typeof r.balance_dollars === "number") {
+          setCreditBalanceDollars(r.balance_dollars);
+        }
+      })
+      .catch(() => {});
 
   useEffect(() => {
     api.get("/portal/home").then(setData).catch(() => setData({ counts: {} }));
@@ -211,15 +224,24 @@ export default function PortalHome() {
             testid="tile-credit"
             label="Credit"
             icon={Wallet}
-            value={summary ? money(summary.credit) : "—"}
+            value={
+              creditBalanceDollars !== null
+                ? money(creditBalanceDollars)
+                : (summary ? money(summary.credit) : "—")
+            }
             tooltip={
-              summary
-                ? summary.credit > 0
-                  ? `${money(summary.credit)} available credit — will apply to your next invoice.`
-                  : "No prepayment credit on your account."
-                : ""
+              (() => {
+                const live = creditBalanceDollars !== null
+                  ? creditBalanceDollars
+                  : summary?.credit;
+                if (live == null) return "";
+                return live > 0
+                  ? `${money(live)} available credit — will apply to your next invoice.`
+                  : "No prepayment credit on your account.";
+              })()
             }
             onClick={() => navigate("/portal/payments")}
+            testidLive="portal-stat-credit-balance"
           />
           <Tile
             testid="tile-next-service"
@@ -518,7 +540,7 @@ function ActionTile({ icon: Icon, label, tone, onClick, testid }) {
 // Feb-2026 · Slice 3B · Portal account tile.  Compact, single-row-of-4
 // on md+, 2×2 on mobile.  ``alert=true`` swaps the border + label
 // colour red (used by Past Due when > 0).
-function Tile({ label, value, sub, icon: Icon, tone, alert, tooltip, onClick, testid }) {
+function Tile({ label, value, sub, icon: Icon, tone, alert, tooltip, onClick, testid, testidLive }) {
   const borderColor = alert ? colors.error : colors.border;
   const labelColor = alert ? colors.error : colors.muted;
   return (
@@ -539,6 +561,7 @@ function Tile({ label, value, sub, icon: Icon, tone, alert, tooltip, onClick, te
       <div
         className="text-xl md:text-2xl font-bold mt-1 truncate"
         style={{ color: alert ? colors.error : colors.onSurface }}
+        data-testid={testidLive || undefined}
       >
         {value}
       </div>

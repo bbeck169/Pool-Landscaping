@@ -236,7 +236,14 @@ async def _build_viewer_payload(iid: str, tenant: dict, user: dict) -> Dict[str,
             "amount_paid": round(amount_paid, 2),
             "total_due": total_due,
             "tax": round(tax, 2),
+            # Task SS Phase 2 · Feb 2026 — surface the credit-applied
+            # summary so the InvoiceView annotation can render on both
+            # portal + admin views without a second fetch.
+            "credits_applied_cents": int(inv.get("credits_applied_cents") or 0),
+            "paid_method": inv.get("paid_method"),
         },
+        "credits_applied_cents": int(inv.get("credits_applied_cents") or 0),
+        "paid_method": inv.get("paid_method"),
         "title": inv.get("title") or "",
     }
 
