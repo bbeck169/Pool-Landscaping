@@ -3948,6 +3948,11 @@ expo-task-manager@~14.0.9:
   dependencies:
     unimodules-app-loader "~6.0.8"
 
+expo-video-thumbnails@57.0.1:
+  version "57.0.1"
+  resolved "https://registry.yarnpkg.com/expo-video-thumbnails/-/expo-video-thumbnails-57.0.1.tgz#fb9f6546b75eaf6fe59e3afd909d08a0252c29a7"
+  integrity sha512-AO06Oz1OXTtk69ajF9Lv8Y4tNTeCMPXpxN9imi3faCfdI7GbpYbQlQJTifbQfkmVcZPC9WoKS+gXE2gbumNKCw==
+
 expo-video@~3.0.16:
   version "3.0.16"
   resolved "https://registry.yarnpkg.com/expo-video/-/expo-video-3.0.16.tgz#8160bd33fe2e898519d3c18a404567a30d81d4f2"

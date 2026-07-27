@@ -34,6 +34,8 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { getChecklistType, ChecklistType } from "@/src/utils/checklistType";
+import ServiceReportMediaUploader from "@/src/components/checklist/ServiceReportMediaUploader";
+import type { SRMedia } from "@/src/api/serviceReportMedia";
 import PhotoUploader from "@/src/components/checklist/PhotoUploader";
 import PoolChecklistForm from "@/src/components/checklist/PoolChecklistForm";
 import LandscapingChecklistForm from "@/src/components/checklist/LandscapingChecklistForm";
@@ -114,6 +116,10 @@ export default function JobChecklistScreen() {
   // the offline cache so the tech sees an honest "Offline mode" banner.
   const [offlineMode, setOfflineMode] = useState(false);
 
+  // Phase 27 · Service-report media state (photos + videos via /api/service-reports/{id}/media)
+  const [srPhotos, setSrPhotos] = useState<SRMedia[]>([]);
+  const [srVideos, setSrVideos] = useState<SRMedia[]>([]);
+
   // Phase 40 · Step 2 — live write-queue + connectivity state. Drives the
   // expanded checklist-network-pill (Online / Syncing… / Offline+N / Sync
   // error). `useOnline` subscribes to `@react-native-community/netinfo`.
@@ -169,6 +175,14 @@ export default function JobChecklistScreen() {
     }
   }, [id]);
   useEffect(() => { load(); }, [load]);
+
+  // Phase 27 — seed service-report media from loaded report.
+  useEffect(() => {
+    if (!report) return;
+    const media: any[] = report.media || [];
+    setSrPhotos(media.filter((m: any) => m.kind === "photo"));
+    setSrVideos(media.filter((m: any) => m.kind === "video"));
+  }, [report?.id]);
 
   // ─── Autosave (debounced) ────────────────────────────────────────────
   const flushSave = useCallback(async () => {
@@ -547,6 +561,21 @@ export default function JobChecklistScreen() {
             readonly={locked}
           />
         </View>
+
+        {/* Phase 27 — Unified service-report media (photos + videos via /api/service-reports/{id}/media) */}
+        {report?.id && (
+          <View style={styles.card} testID="checklist-sr-media-card">
+            <Text style={styles.cardTitle}>Visit Media</Text>
+            <ServiceReportMediaUploader
+              reportId={report.id}
+              photos={srPhotos}
+              videos={srVideos}
+              onPhotosChange={setSrPhotos}
+              onVideosChange={setSrVideos}
+              readonly={locked}
+            />
+          </View>
+        )}
 
         {/* Template-specific form */}
         <View style={styles.card} testID={`checklist-form-${clientType}`}>
