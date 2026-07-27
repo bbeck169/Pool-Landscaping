@@ -59,11 +59,25 @@ async def get_walkthrough_status(user: Dict[str, Any] = Depends(get_current_user
     # Item 7 · user-level flag wins if either source says "seen".
     user_seen = await _user_seen(user.get("id") or "")
     is_completed = bool(completed_at) or user_seen
+    # Phase 34 · Task V — v2 flag. When we bumped the tour step list
+    # to include Task-K/R/34 anchors we need v1-completers to see the
+    # extended flow once. The v2 flag lives in a NEW field so v1
+    # cohort discovery is trivial (v1 flag true + v2 flag false or
+    # missing = show once).
+    u2 = await db.users.find_one(
+        {"id": user.get("id") or ""},
+        {"_id": 0, "portal_tour_completed_v2": 1},
+    ) or {}
+    v2_completed = bool(u2.get("portal_tour_completed_v2"))
     return {
         "completed": is_completed,
         "has_completed": is_completed,
         "completed_at": completed_at,
         "should_show": not is_completed,
+        # v2 keys — new consumers should read these.
+        "portal_tour_completed_v2": v2_completed,
+        "should_show_v2": not v2_completed,
+        "version": 2,
     }
 
 
@@ -83,8 +97,14 @@ async def mark_walkthrough_complete(
     if user.get("id"):
         await db.users.update_one(
             {"id": user["id"]},
-            {"$set": {"has_seen_customer_tour": True,
-                        "customer_tour_seen_at": ts}},
+            {"$set": {
+                "has_seen_customer_tour": True,
+                "customer_tour_seen_at": ts,
+                # Phase 34 · Task V — completing the tour NOW counts
+                # as completing v2 (since the step list is v2).
+                "portal_tour_completed_v2": True,
+                "portal_tour_completed_v2_at": ts,
+            }},
         )
     return {"ok": True, "completed_at": ts}
 
@@ -158,6 +178,10 @@ async def run_walkthrough_backfill() -> Dict[str, int]:
       already know the app don't get a tour on next login. New
       customers created after boot keep the default ``false`` (no
       backfill for docs created after ``now``).
+    * Phase 34 · Task V · v2 backfill — every existing customer user
+      gets ``portal_tour_completed_v2=false`` so v1-completers see
+      the extended tour once. Idempotent: only writes the field when
+      it's missing.
     """
     ts_now = now_iso()
     res_customers = await db.customers.update_many(
@@ -174,8 +198,23 @@ async def run_walkthrough_backfill() -> Dict[str, int]:
                     "customer_tour_seen_at": "grandfathered"}},
     )
     n_users = int(getattr(res_users, "modified_count", 0) or 0)
-    if n_cust or n_users:
+
+    # v2 backfill — write ``false`` where the field is missing so the
+    # v2 flow can prompt each existing customer user once.
+    res_v2 = await db.users.update_many(
+        {"role": "customer",
+         "portal_tour_completed_v2": {"$exists": False}},
+        {"$set": {"portal_tour_completed_v2": False}},
+    )
+    n_v2 = int(getattr(res_v2, "modified_count", 0) or 0)
+
+    if n_cust or n_users or n_v2:
         logger.info(
-            "[tour-backfill] customers=%s users=%s", n_cust, n_users
+            "[tour-backfill] customers=%s users=%s v2=%s",
+            n_cust, n_users, n_v2,
         )
-    return {"grandfathered": n_cust, "grandfathered_users": n_users}
+    return {
+        "grandfathered": n_cust,
+        "grandfathered_users": n_users,
+        "v2_flagged_users": n_v2,
+    }

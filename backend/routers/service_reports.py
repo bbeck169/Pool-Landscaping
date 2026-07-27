@@ -606,14 +606,114 @@ async def submit_service_report(jid: str,
         pass
     # Phase 56.20 — Auto End-of-Visit Customer Email.
     # Non-blocking: any exception is caught + logged inside the service.
+    # Phase 34 · Task U · Feb 2026 — this is now ALWAYS fired on job
+    # completion (no "Do you want to send?" prompt / opt-in checkbox).
+    # Idempotent: if a prior submit already stamped
+    # ``customer_notified.email_sent_at`` we skip. Tenant opt-out via
+    # ``settings.notifications.auto_send_completion`` (default TRUE).
+    tenant_notify = ((tenant.get("settings") or {}).get("notifications") or {})
+    auto_send_completion = tenant_notify.get("auto_send_completion")
+    if auto_send_completion is None:
+        auto_send_completion = True
+    already_notified = (out or rep or {}).get("customer_notified") or {}
+
+    # Belt-and-braces: legacy clients may still send
+    # ``also_notify_customer=false`` in the request body. Task U
+    # removed the opt-out UI — the tech can no longer skip the send.
+    # Log a WARN so ops can spot stale mobile builds.
     try:
-        from services.auto_visit_email import send_visit_summary_email
-        email_row = await send_visit_summary_email(tenant, job, out or rep)
-        if email_row and email_row.get("id"):
-            out["visit_summary_email_id"] = email_row["id"]
-            out["visit_summary_email_status"] = email_row.get("status")
-    except Exception as e:
-        logger.warning(f"auto visit-summary email failed: {e}")
+        legacy_opt_out = False
+        # ``body`` isn't in scope for every submit path; guard.
+        if "body" in locals():
+            _b = locals().get("body")
+            if _b and (
+                getattr(_b, "also_notify_customer", None) is False
+                or getattr(_b, "send_email", None) is False
+                or getattr(_b, "send_sms", None) is False
+            ):
+                legacy_opt_out = True
+        if legacy_opt_out:
+            logger.warning(
+                "[task-u] legacy opt-out flag ignored on job=%s tenant=%s — "
+                "notifications will still fire", jid, tenant["id"],
+            )
+    except Exception:  # pragma: no cover
+        pass
+
+    email_result_status = None
+    sms_result_status = None
+    if auto_send_completion and not already_notified.get("email_sent_at"):
+        try:
+            from services.auto_visit_email import send_visit_summary_email
+            email_row = await send_visit_summary_email(tenant, job, out or rep)
+            if email_row and email_row.get("id"):
+                out["visit_summary_email_id"] = email_row["id"]
+                out["visit_summary_email_status"] = email_row.get("status")
+                email_result_status = email_row.get("status") or "sent"
+        except Exception as e:
+            logger.warning(f"auto visit-summary email failed: {e}")
+            email_result_status = "failed"
+    else:
+        email_result_status = "skipped_idempotent" if already_notified.get("email_sent_at") else "tenant_disabled"
+
+    # Phase 34 · Task U — companion SMS. Uses the tenant setting SMS
+    # template if present; otherwise a sensible default. Runs through
+    # the guarded RC adapter so preview only sends live to allow-
+    # listed recipients.
+    if auto_send_completion and not already_notified.get("sms_sent_at"):
+        try:
+            customer = await db.customers.find_one(
+                {"id": job.get("customer_id"), "tenant_id": tenant["id"]},
+                {"_id": 0, "phone": 1, "name": 1},
+            ) or {}
+            phone = customer.get("phone") or ""
+            if phone:
+                tname = tenant.get("name") or "Your service"
+                import os as _os_task_u
+                app_url = _os_task_u.environ.get("APP_PUBLIC_URL", "").rstrip("/")
+                portal_link = f"{app_url}/portal/service-reports"
+                sms_body = (
+                    f"Your {tname} service is complete. "
+                    f"View your report: {portal_link}"
+                )
+                from services.sms.rc_adapter import send as _send_sms
+                sms_res = await _send_sms(
+                    to=phone, body=sms_body,
+                    category="transactional",
+                    tenant_id=tenant["id"],
+                    customer_id=job.get("customer_id"),
+                )
+                sms_result_status = sms_res.get("provider_status") or "sent"
+                logger.info(
+                    "[task-u] completion sms to=%s status=%s job=%s",
+                    phone, sms_result_status, jid,
+                )
+            else:
+                sms_result_status = "no_phone"
+        except Exception as e:
+            logger.warning(f"[task-u] completion SMS failed: {e}")
+            sms_result_status = "failed"
+    else:
+        sms_result_status = "skipped_idempotent" if already_notified.get("sms_sent_at") else "tenant_disabled"
+
+    # Audit record on the service report so ops + tests can inspect
+    # what path was hit for this completion.
+    try:
+        cn_patch = {"customer_notified": {
+            "email_status": email_result_status,
+            "email_sent_at": now if email_result_status in ("sent", "queued", "dry_run", "mocked") else None,
+            "sms_status": sms_result_status,
+            "sms_sent_at": now if sms_result_status in ("sent", "queued", "dry_run", "mocked") else None,
+            "auto_send_completion_setting": auto_send_completion,
+        }}
+        await db.service_reports.update_one(
+            {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id},
+            {"$set": cn_patch},
+        )
+        out["customer_notified"] = cn_patch["customer_notified"]
+    except Exception as e:  # pragma: no cover — audit is best-effort
+        logger.warning(f"[task-u] customer_notified audit write failed: {e}")
+
     if clock_out_summary:
         out["clock_out_summary"] = {
             "entry_id": clock_out_summary.get("id"),
