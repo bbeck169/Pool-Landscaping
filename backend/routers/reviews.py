@@ -725,7 +725,14 @@ async def public_landing(token: str):
 
 
 class RatingIn(BaseModel):
-    star_rating: int = Field(..., ge=1, le=5)
+    # Phase 34 · Task T · Feb 2026 — the customer-facing
+    # /portal/review/submit page posts ``rating`` (matching the
+    # /api/customer-portal/reviews shape) while the original
+    # public review-request landing posts ``star_rating``. Accept
+    # both — resolve to a canonical star_rating below.
+    star_rating: Optional[int] = Field(None, ge=1, le=5)
+    rating: Optional[int] = Field(None, ge=1, le=5)
+    comment: Optional[str] = None
 
 
 @router.post("/public/r/{token}/rating")
@@ -737,13 +744,54 @@ async def submit_rating(token: str, body: RatingIn):
     if doc.get("star_rating_submitted") is not None:
         raise HTTPException(409, "This link has already been submitted")
 
-    star = body.star_rating
+    star = body.star_rating if body.star_rating is not None else body.rating
+    if star is None:
+        raise HTTPException(422, "Missing rating")
     next_step = "choose_platform" if star >= 4 else "private_feedback"
     updates = {
         "star_rating_submitted": star,
         "star_submitted_at": now_iso(),
     }
+    if body.comment:
+        updates["comment"] = (body.comment or "").strip()[:2000]
     await db.review_requests.update_one({"id": doc["id"]}, {"$set": updates})
+
+    # Phase 34 · Task T · Feb 2026 — for a happy-path 4-5 star
+    # rating the client needs the Google review URL so it can render
+    # the "Post on Google" CTA immediately (no second landing round-
+    # trip). Compose ``choose_platform`` from the tenant's configured
+    # platforms, with a safe fallback to the tenant's business-card
+    # google_review_url when none is configured yet.
+    choose_platform: List[Dict[str, Any]] = []
+    google_review_url: Optional[str] = None
+    if star >= 4:
+        plats = await db.tenant_review_platforms.find(
+            {"tenant_id": doc["tenant_id"], "is_active": True},
+            {"_id": 0, "platform": 1, "display_name": 1, "review_url": 1},
+        ).sort("sort_order", 1).to_list(20)
+        if plats:
+            for p in plats:
+                choose_platform.append({
+                    "platform": p["platform"],
+                    "display_name": p["display_name"],
+                    "url": p["review_url"],
+                })
+                if p["platform"] == "google" and not google_review_url:
+                    google_review_url = p["review_url"]
+        if not google_review_url:
+            tenant = await db.tenants.find_one({"id": doc["tenant_id"]}, {"_id": 0}) or {}
+            settings = (tenant.get("settings") or {})
+            card = settings.get("business_card") or {}
+            google_review_url = (
+                card.get("google_review_url")
+                or tenant.get("google_review_url")
+            )
+            if google_review_url:
+                choose_platform.append({
+                    "platform": "google",
+                    "display_name": "Google",
+                    "url": google_review_url,
+                })
 
     # Unified notifications — always fire ``review_received``. If the
     # star rating trips the low-star threshold (≤3) we ALSO fire
@@ -776,7 +824,58 @@ async def submit_rating(token: str, body: RatingIn):
     except Exception as _e:
         logger.warning(f"[reviews] unified notify failed: {_e}")
 
-    return {"next_step": next_step, "star_rating": star}
+    return {
+        "next_step": next_step,
+        "star_rating": star,
+        "choose_platform": choose_platform,
+        "google_review_url": google_review_url,
+    }
+
+
+class GoogleClickedIn(BaseModel):
+    """Phase 34 · Task T · Feb 2026 — payload is intentionally empty.
+    The client hits this endpoint immediately before opening the
+    Google review URL so we can tag the review-request row with
+    ``google_click_at`` for reporting. Errors are best-effort and
+    swallowed by the frontend — we never want a slow analytics ping
+    to block the customer's redirect."""
+    pass
+
+
+@router.post("/public/r/{token}/google-clicked")
+async def google_clicked(token: str, body: Optional[GoogleClickedIn] = None):
+    """Log that the customer clicked through to Google after a 4-5
+    star rating. Idempotent — the first click wins; subsequent
+    clicks are no-ops so analytics don't overcount.
+
+    Returns 200 with the recorded timestamp (or the existing one on
+    a repeat click) so the frontend can render "Posted to Google"
+    without a follow-up read.
+    """
+    await _throttle_public(token, "google_clicked")
+    doc = await _resolve_public_request(token)
+    if doc["outcome"] == "expired":
+        raise HTTPException(410, "This link has expired")
+    star = doc.get("star_rating_submitted")
+    if star is None or star < 4:
+        raise HTTPException(
+            400,
+            "Google click-through is only available after a 4-5 star rating",
+        )
+    existing = doc.get("google_click_at")
+    if existing:
+        return {"ok": True, "google_click_at": existing, "already": True}
+    click_ts = now_iso()
+    await db.review_requests.update_one(
+        {"id": doc["id"]},
+        {"$set": {
+            "google_click_at": click_ts,
+            "platform_chosen": "google",
+            "platform_clicked_at": click_ts,
+            "outcome": "public_posted_intent",
+        }},
+    )
+    return {"ok": True, "google_click_at": click_ts, "already": False}
 
 
 class PlatformClickedIn(BaseModel):

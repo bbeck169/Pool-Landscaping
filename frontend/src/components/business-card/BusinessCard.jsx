@@ -143,7 +143,14 @@ export default function BusinessCard({ variant = "full" }) {
           <Row href={`mailto:${card.email}`} icon={<Mail size={14} />}
                label={card.email} testId="business-card-email" />
         ) : null}
-        {!compact && card.website_url ? (
+        {/* Phase 34 · Feb 2026 · Task Z — show the website row in the
+            compact portal-home variant too, so customers can jump to
+            plofv.com without opening the full card. Falls back to the
+            PLOFV default via the /tenants/business-card backend merge
+            (defaults live in routers/tenants.py::_BUSINESS_CARD_DEFAULTS).
+            TODO(multi-tenant): once non-aquaterra tenants ship, expose
+            `settings.business_card.website_url` in the admin UI. */}
+        {card.website_url ? (
           <Row href={card.website_url} icon={<Globe size={14} />}
                label={card.website_url.replace(/^https?:\/\//, "")}
                testId="business-card-website" newTab />

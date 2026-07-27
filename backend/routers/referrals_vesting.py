@@ -53,16 +53,40 @@ async def _referrer_has_paid_invoice_since(
 
 
 async def _issue_referrer_credit(row: Dict[str, Any]) -> str:
-    """Issues the $25 flat credit on the referrer's account. Uses the
+    """Issues the referrer credit on the referrer's account. Uses the
     same ``service_credits`` collection as the existing referral
-    approve path. Returns the new credit id."""
+    approve path. Returns the new credit id.
+
+    Phase 34 · Task AA · Feb 2026 — the amount is no longer hardcoded.
+    It reads ``tenant.referral_reward_amount_cents`` (falling back to
+    ``tenant.settings.referrals.reward_amount_cents`` and finally to
+    the $25 legacy default) so tenants can bump the reward without a
+    code change. Existing already-issued credits stay at their
+    original values — this only affects credits minted from now on.
+    """
+    tenant_id = row.get("tenant_id")
+    reward_cents = 2500
+    if tenant_id:
+        try:
+            t = await db.tenants.find_one(
+                {"id": tenant_id},
+                {"_id": 0, "referral_reward_amount_cents": 1, "settings": 1},
+            ) or {}
+            settings = (t.get("settings") or {}).get("referrals") or {}
+            reward_cents = int(
+                t.get("referral_reward_amount_cents")
+                or settings.get("reward_amount_cents")
+                or 2500
+            )
+        except Exception as _e:
+            logger.warning(f"[vesting] tenant reward lookup failed: {_e}")
     credit_id = new_id()
     await db.service_credits.insert_one({
         "id": credit_id,
-        "tenant_id": row["tenant_id"],
+        "tenant_id": tenant_id,
         "customer_id": row["referrer_customer_id"],
         "kind": "flat_dollars",
-        "amount_cents": 2500,
+        "amount_cents": reward_cents,
         "source": "referral_vesting",
         "source_conversion_id": row["id"],
         "granted_at": now_iso(),

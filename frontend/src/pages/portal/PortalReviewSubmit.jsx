@@ -3,11 +3,11 @@
  *
  * Reads a magic-link token from the URL (``?token=…``), collects a
  * 1-5 star rating + optional comment, POSTs to
- * ``/api/public/r/{token}/rating`` (existing gated backend endpoint
- * — no bearer required, token IS the auth), then branches:
+ * ``/api/reviews/public/r/{token}/rating`` (existing gated backend
+ * endpoint — no bearer required, token IS the auth), then branches:
  *
  *   * 4-5 stars → Google modal with the tenant's seeded review URL.
- *     Firing a lightweight ``POST /api/public/r/{token}/google-clicked``
+ *     Firing a lightweight ``POST /api/reviews/public/r/{token}/google-clicked``
  *     when the customer taps through so we populate
  *     ``google_click_at`` for analytics.
  *   * 1-3 stars → private-feedback thank-you screen (no Google CTA).
@@ -24,10 +24,10 @@ import { brandGradientCss, colors } from "@/theme";
 import { Star, ExternalLink } from "lucide-react";
 
 async function _postRating(token, rating, comment) {
-  return api.post(`/public/r/${encodeURIComponent(token)}/rating`, { rating, comment });
+  return api.post(`/reviews/public/r/${encodeURIComponent(token)}/rating`, { rating, comment });
 }
 async function _logGoogleClicked(token) {
-  try { await api.post(`/public/r/${encodeURIComponent(token)}/google-clicked`, {}); }
+  try { await api.post(`/reviews/public/r/${encodeURIComponent(token)}/google-clicked`, {}); }
   catch (_) { /* best-effort analytics */ }
 }
 

@@ -553,7 +553,14 @@ async def build_context_for_review_request(tenant: Dict[str, Any],
     origin = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
     token = review_request_doc.get("token") or ""
     slug = (tenant or {}).get("slug") or ""
-    ctx["review_request.public_url"] = f"{origin}/reviews/r/{token}" if (origin and token) else ""
+    # Phase 34 · Task T · Feb 2026 — the review request landing has
+    # moved to the customer-facing submit page. The magic-link
+    # token flows through the URL exactly as before; the new page
+    # gates the review (4-5 star → Google modal, 1-3 star → private
+    # feedback) and calls back into /api/public/r/{token}/rating +
+    # /api/public/r/{token}/google-clicked. Templates that reference
+    # ``{{review_request.public_url}}`` auto-pick up the new URL.
+    ctx["review_request.public_url"] = f"{origin}/portal/review/submit?token={token}" if (origin and token) else ""
     ctx["review_request.tenant_public_reviews_url"] = (
         f"{origin}/reviews/{slug}" if (origin and slug) else ""
     )

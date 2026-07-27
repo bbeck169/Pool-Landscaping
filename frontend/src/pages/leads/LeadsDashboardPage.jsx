@@ -5,8 +5,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
+import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
-import { Search, Filter, ArrowRight, X } from "lucide-react";
+import { Search, Filter, ArrowRight, X, Trash2 } from "lucide-react";
 
 const colors = {
   brand: "#0EA5E9",
@@ -17,12 +18,28 @@ const colors = {
   surfaceSecondary: "#F8FAFC",
 };
 
+// Phase 34 · Task CC · Feb 2026 — canonical status enum (must match
+// backend `_CANONICAL_STATUSES` in routers/leads.py). Order matters —
+// the dropdown renders in this order everywhere the enum is exposed.
+const LEAD_STATUS_OPTIONS = [
+  { value: "new",           label: "New" },
+  { value: "contacted",     label: "Contacted" },
+  { value: "quoted",        label: "Quoted" },
+  { value: "closed_won",    label: "Closed – Won" },
+  { value: "closed_lost",   label: "Closed – Lost" },
+];
+
 const STATUS_COLORS = {
-  new: { bg: "#DBEAFE", fg: "#1E3A8A" },
-  contacted: { bg: "#FEF3C7", fg: "#854D0E" },
-  converted: { bg: "#DCFCE7", fg: "#166534" },
-  closed: { bg: "#F3F4F6", fg: "#374151" },
-  qualified: { bg: "#E0E7FF", fg: "#3730A3" },
+  new:          { bg: "#DBEAFE", fg: "#1E3A8A" },
+  contacted:    { bg: "#FEF3C7", fg: "#854D0E" },
+  quoted:       { bg: "#EDE9FE", fg: "#6D28D9" },
+  closed_won:   { bg: "#DCFCE7", fg: "#166534" },
+  closed_lost:  { bg: "#F3F4F6", fg: "#374151" },
+};
+
+const STATUS_LABEL = (v) => {
+  const found = LEAD_STATUS_OPTIONS.find((o) => o.value === v);
+  return found ? found.label : (v || "new");
 };
 
 const SOURCE_LABEL = (src) => {
@@ -42,6 +59,10 @@ export default function LeadsDashboardPage() {
   const [error, setError] = useState("");
   const [filters, setFilters] = useState({ source: "", status: "", search: "" });
   const [selected, setSelected] = useState(null);
+  // Phase 34 · Task BB · Feb 2026 — bulk-select state.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const refresh = () => {
     setLoading(true);
@@ -82,6 +103,41 @@ export default function LeadsDashboardPage() {
     rows.forEach((l) => l.source && s.add(l.source.startsWith("form:") ? "form" : l.source));
     return Array.from(s);
   }, [rows]);
+
+  // Phase 34 · Task BB — visible-page selection helpers.
+  const visibleIds = visible.map((l) => l.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+  const indeterminate = visibleIds.some((id) => selectedIds.has(id)) && !allVisibleSelected;
+  const selectedCount = selectedIds.size;
+  const toggleAll = () => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (allVisibleSelected) visibleIds.forEach((id) => next.delete(id));
+    else visibleIds.forEach((id) => next.add(id));
+    return next;
+  });
+  const toggleOne = (id) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const clearSelection = () => setSelectedIds(new Set());
+  const doBulkDelete = async () => {
+    setBusy(true);
+    try {
+      const res = await api.post("/leads/bulk-delete", { ids: Array.from(selectedIds) });
+      const ok = res.deleted_count || 0;
+      const failCount = (res.failed || []).length;
+      setRows((prev) => prev.filter((r) => !res.deleted.includes(r.id)));
+      clearSelection();
+      setConfirmOpen(false);
+      if (failCount === 0) toast.success(`${ok} lead${ok === 1 ? "" : "s"} deleted`);
+      else toast(`${ok} deleted · ${failCount} locked`, {
+        description: (res.failed || []).slice(0, 3).map((f) => f.reason).join(" · "),
+      });
+    } catch (e) {
+      toast.error(e?.message || "Bulk delete failed");
+    } finally { setBusy(false); }
+  };
 
   return (
     <div className="p-6 max-w-6xl mx-auto" data-testid="admin-leads-page">
@@ -125,8 +181,10 @@ export default function LeadsDashboardPage() {
                 style={{ border: `1px solid ${colors.border}`, background: "#fff" }}
                 data-testid="lead-filter-status-select">
           <option value="">All statuses</option>
-          {["new", "contacted", "qualified", "converted", "closed"].map((s) => (
-            <option key={s} value={s}>{s}</option>
+          {LEAD_STATUS_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value} data-testid={`lead-status-option-${o.value}`}>
+              {o.label}
+            </option>
           ))}
         </select>
         <div className="ml-auto text-xs" style={{ color: colors.muted }}>
@@ -138,12 +196,23 @@ export default function LeadsDashboardPage() {
                      style={{ color: "#991B1B", background: "#FEE2E2" }}>{error}</div>}
 
       <Card className="p-0 overflow-hidden">
-        <div className="grid grid-cols-12 gap-2 px-4 py-2 text-[11px] uppercase font-semibold"
+        <div className="grid grid-cols-12 gap-2 px-4 py-2 text-[11px] uppercase font-semibold items-center"
              style={{ color: colors.muted, background: colors.surfaceSecondary,
                       borderBottom: `1px solid ${colors.border}` }}>
+          <div className="col-span-1 flex items-center">
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              ref={(el) => { if (el) el.indeterminate = indeterminate; }}
+              onChange={toggleAll}
+              aria-label="Select all leads on this page"
+              data-testid="bulk-select-all"
+              className="cursor-pointer"
+            />
+          </div>
           <div className="col-span-2">Date</div>
           <div className="col-span-3">Name</div>
-          <div className="col-span-3">Contact</div>
+          <div className="col-span-2">Contact</div>
           <div className="col-span-2">Source</div>
           <div className="col-span-2">Status</div>
         </div>
@@ -158,15 +227,28 @@ export default function LeadsDashboardPage() {
           <div key={l.id}
                data-testid={`lead-row-${l.id}`}
                className="grid grid-cols-12 gap-2 px-4 py-3 items-center text-sm hover:bg-slate-50 cursor-pointer"
-               style={{ borderBottom: `1px solid ${colors.border}` }}
+               style={{
+                 borderBottom: `1px solid ${colors.border}`,
+                 backgroundColor: selectedIds.has(l.id) ? "#EFF6FF" : "transparent",
+               }}
                onClick={() => setSelected(l)}>
+            <div className="col-span-1" onClick={(e) => e.stopPropagation()}>
+              <input
+                type="checkbox"
+                checked={selectedIds.has(l.id)}
+                onChange={() => toggleOne(l.id)}
+                aria-label={`Select lead ${l.name || l.id}`}
+                data-testid={`bulk-select-row-${l.id}`}
+                className="cursor-pointer"
+              />
+            </div>
             <div className="col-span-2 text-xs" style={{ color: colors.muted }}>
               {(l.created_at || "").slice(0, 10)}
             </div>
             <div className="col-span-3 font-semibold" style={{ color: colors.onSurface }}>
               {l.name || "—"}
             </div>
-            <div className="col-span-3 text-xs" style={{ color: colors.muted }}>
+            <div className="col-span-2 text-xs" style={{ color: colors.muted }}>
               {l.email && <div>{l.email}</div>}
               {l.phone && <div>{l.phone}</div>}
             </div>
@@ -203,7 +285,7 @@ export default function LeadsDashboardPage() {
                       background: (STATUS_COLORS[l.status] || STATUS_COLORS.new).bg,
                       color: (STATUS_COLORS[l.status] || STATUS_COLORS.new).fg,
                     }}>
-                {l.status || "new"}
+                {STATUS_LABEL(l.status)}
               </span>
             </div>
           </div>

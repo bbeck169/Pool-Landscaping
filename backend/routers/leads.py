@@ -34,16 +34,35 @@ from models import *  # noqa: F403,F405  # LeadIn / LeadUpdate / etc.
 router = APIRouter()
 
 _CANONICAL_STATUSES = {
-    "New", "Contacted", "Quoted", "Closed Won", "Closed Lost", "On Hold",
-    "rejected",  # Phase 16 · Addition E · Feb-2026 — out-of-state auto-reject
+    # Phase 34 · Task CC · Feb 2026 — status enum standardization.
+    # The five values below are the ONLY values accepted going forward.
+    # Anything else is mapped via ``_STATUS_ALIASES`` on write and by the
+    # boot-time ``migrate_lead_statuses()`` sweep on read.
+    "new", "contacted", "quoted", "closed_won", "closed_lost",
 }
 _STATUS_ALIASES = {
-    "new": "New", "contacted": "Contacted", "quoted": "Quoted",
-    "won": "Closed Won", "lost": "Closed Lost", "on_hold": "On Hold",
-    "on hold": "On Hold", "closed won": "Closed Won",
-    "closed lost": "Closed Lost", "closed_won": "Closed Won",
-    "closed_lost": "Closed Lost",
-    "rejected": "rejected",
+    # New → new
+    "new": "new", "new_lead": "new", "open": "new", "untouched": "new",
+    "fresh": "new", "New": "new",
+    # Contacted → contacted
+    "contacted": "contacted", "contact_made": "contacted",
+    "follow_up": "contacted", "attempted": "contacted",
+    "Contacted": "contacted",
+    # Quoted → quoted
+    "quoted": "quoted", "estimate_sent": "quoted",
+    "proposal_sent": "quoted", "estimated": "quoted",
+    "Quoted": "quoted",
+    # Closed Won → closed_won
+    "won": "closed_won", "closed_won": "closed_won",
+    "converted": "closed_won", "accepted": "closed_won",
+    "Closed Won": "closed_won", "closed won": "closed_won",
+    # Closed Lost → closed_lost
+    "lost": "closed_lost", "closed_lost": "closed_lost",
+    "rejected": "closed_lost", "declined": "closed_lost",
+    "disqualified": "closed_lost", "Closed Lost": "closed_lost",
+    "closed lost": "closed_lost",
+    # Legacy "On Hold" → contacted (still actively working the deal).
+    "on_hold": "contacted", "on hold": "contacted", "On Hold": "contacted",
 }
 _VALID_SOURCES = {
     "website_form", "admin_manual", "phone", "walk_in",
@@ -54,12 +73,63 @@ _INBOUND_MANAGER_ROLES = {"admin", "super_admin", "manager"}
 
 
 def _normalize_status(raw: Optional[str]) -> str:
+    """Phase 34 · Task CC — every lead-status write funnels through here.
+    Unknown values fall back to ``"new"`` and the caller SHOULD log the
+    original value if it wants an audit trail (the migration function
+    below does exactly that on the boot-time sweep)."""
     if not raw:
-        return "New"
+        return "new"
     s = str(raw).strip()
     if s in _CANONICAL_STATUSES:
         return s
-    return _STATUS_ALIASES.get(s.lower(), s if s in _CANONICAL_STATUSES else "New")
+    mapped = _STATUS_ALIASES.get(s) or _STATUS_ALIASES.get(s.lower())
+    return mapped or "new"
+
+
+async def migrate_lead_statuses() -> Dict[str, Any]:
+    """Phase 34 · Task CC · Feb 2026 — idempotent status enum migration.
+    Rewrites every ``leads.status`` value to the canonical snake_case
+    set. Returns per-bucket counts + a list of unrecognised legacy
+    values so an admin can audit them from the boot log.
+    """
+    per_bucket: Dict[str, int] = {k: 0 for k in _CANONICAL_STATUSES}
+    unknown: List[Dict[str, str]] = []
+    total = 0
+    async for row in db.leads.find(
+        {}, {"_id": 0, "id": 1, "status": 1, "tenant_id": 1},
+    ):
+        total += 1
+        current = row.get("status")
+        canonical = _normalize_status(current)
+        if not current or (
+            str(current) not in _CANONICAL_STATUSES
+            and str(current).lower() not in _STATUS_ALIASES
+            and str(current) not in _STATUS_ALIASES
+        ):
+            unknown.append({"lead_id": row.get("id") or "",
+                              "tenant_id": row.get("tenant_id") or "",
+                              "original": str(current)})
+        if current != canonical:
+            await db.leads.update_one(
+                {"id": row["id"]},
+                {"$set": {"status": canonical}},
+            )
+        per_bucket[canonical] = per_bucket.get(canonical, 0) + 1
+    logger.info(
+        f"[phase34-task-cc] lead status migration total={total} "
+        f"buckets={per_bucket} unknown={len(unknown)}"
+    )
+    for u in unknown[:20]:
+        logger.warning(
+            f"[phase34-task-cc] lead {u['lead_id']} had unknown "
+            f"status={u['original']!r} → mapped to 'new'"
+        )
+    return {
+        "total": total,
+        "per_bucket": per_bucket,
+        "unknown_count": len(unknown),
+        "unknown_samples": unknown[:20],
+    }
 
 
 def _require_leads_role(user: dict) -> None:
@@ -98,6 +168,8 @@ async def list_leads(user: dict = Depends(get_current_user),
                        page_size: int = Query(50, ge=1, le=200)):
     _require_leads_role(user)
     q: Dict[str, Any] = {"tenant_id": tenant["id"]}
+    # Phase 34 · Task BB · Feb 2026 — hide soft-deleted leads by default.
+    q["$and"] = [{"$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]}]
     if status and status != "all":
         q["status"] = _normalize_status(status)
     elif not status:
@@ -603,6 +675,111 @@ async def delete_lead(lid: str,
         {"id": lid, "tenant_id": tenant["id"]},
     )
     return {"ok": True, "deleted": res.deleted_count}
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase 34 · Task BB · Feb 2026 — Leads bulk-select soft-delete.
+# Mirrors the shared pattern in routers/quotes.py + routers/estimates.py.
+# Guardrails:
+#   * Refuse leads that have already been converted (converted_customer_id
+#     is set) — deleting them would orphan the downstream customer/job.
+#     Admins wanting to clean up should archive instead.
+#   * Refuse leads with converted_job_id, converted_quote_id or an active
+#     follow-up task (open_task_ids non-empty) for the same reason.
+# ═════════════════════════════════════════════════════════════════════════
+from pydantic import BaseModel as _LeadBulkBase
+
+
+class _LeadBulkDeleteIn(_LeadBulkBase):
+    ids: List[str]
+
+
+_LEAD_BULK_DELETE_CAP = 100
+
+
+async def _perform_soft_delete_lead(lid: str, user: dict, tenant: dict) -> dict:
+    doc = await db.leads.find_one(
+        {"id": lid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "deleted_at": 1, "status": 1,
+         "converted_customer_id": 1, "converted_job_id": 1,
+         "converted_quote_id": 1, "open_task_ids": 1},
+    )
+    if not doc:
+        raise HTTPException(404, "Lead not found")
+    if doc.get("deleted_at"):
+        return {"ok": True, "id": lid, "already_deleted": True}
+    # Converted-lead protection — do not orphan downstream records.
+    # Phase 34 · Task CC · Feb 2026 — status enum standardization.
+    # ``closed_won`` leads with linked jobs/customers are protected;
+    # ``closed_lost`` can be freely bulk-deleted (no downstream state
+    # to preserve).
+    if (doc.get("converted_customer_id")
+        or doc.get("converted_job_id")
+        or doc.get("converted_quote_id")
+        or (doc.get("status") or "").lower() == "closed_won"):
+        raise HTTPException(
+            409,
+            "Closed–Won leads (with linked jobs/customers) cannot be bulk-deleted — archive instead to preserve the audit trail",
+        )
+    open_tasks = doc.get("open_task_ids") or []
+    if isinstance(open_tasks, list) and open_tasks:
+        raise HTTPException(
+            409,
+            f"Lead has {len(open_tasks)} open follow-up task(s) — close or reassign them first",
+        )
+    deleted_at = now_iso()
+    await db.leads.update_one(
+        {"id": lid, "tenant_id": tenant["id"]},
+        {"$set": {"deleted_at": deleted_at,
+                    "deleted_by_user_id": user.get("id")}},
+    )
+    try:
+        await db.audit_log.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "action": "lead.soft_delete",
+            "target_id": lid,
+            "at": deleted_at,
+        })
+    except Exception as e:
+        logger.warning(f"lead.soft_delete audit failed: {e}")
+    return {"ok": True, "id": lid, "deleted_at": deleted_at}
+
+
+@router.post("/leads/{lid}/soft-delete",
+              operation_id="leads.softDelete")
+async def soft_delete_lead(lid: str,
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    return await _perform_soft_delete_lead(lid, user, tenant)
+
+
+@router.post("/leads/bulk-delete",
+              operation_id="leads.bulkDelete")
+async def bulk_delete_leads(body: _LeadBulkDeleteIn,
+                              user: dict = Depends(require_admin),
+                              tenant: dict = Depends(get_current_tenant)):
+    ids = list(body.ids or [])
+    if not ids:
+        raise HTTPException(400, "ids is empty")
+    if len(ids) > _LEAD_BULK_DELETE_CAP:
+        raise HTTPException(400, f"bulk-delete capped at {_LEAD_BULK_DELETE_CAP} rows per call")
+    deleted: List[str] = []
+    failed: List[dict] = []
+    for lid in ids:
+        try:
+            r = await _perform_soft_delete_lead(lid, user, tenant)
+            deleted.append(r["id"])
+        except HTTPException as e:
+            failed.append({"id": lid, "reason": str(e.detail),
+                              "status_code": e.status_code})
+        except Exception as e:                                # noqa: BLE001
+            failed.append({"id": lid, "reason": str(e), "status_code": 500})
+    return {"ok": True, "deleted_count": len(deleted),
+              "deleted": deleted, "failed": failed}
+
+
 
 
 # ═══════════════════════════ PUBLIC INTAKE ══════════════════════════

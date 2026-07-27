@@ -76,7 +76,7 @@ async def _send_welcome_email(*, tenant_id: str, customer: Dict[str, Any],
         f"<ul>"
         f"<li>We'll call or text you within one business day to confirm a start date.</li>"
         f"<li>You'll receive service reports, invoices, and appointment reminders here.</li>"
-        f"<li>Refer a neighbor and you both save $25 on your next service.</li>"
+        f"<li>Refer a neighbor and you both save $55 on your next service.</li>"
         f"</ul>"
         + (f'<p><a href="{portal_link}" style="background:#0891b2;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block">Open your customer portal</a></p>' if portal_link else "")
         + f'<p style="color:#666;font-size:12px">You are receiving this because you '
@@ -178,7 +178,7 @@ async def _ensure_m5c_drip(tenant_id: str) -> Optional[str]:
              "body": "Day-3 nudge — login link + service catalog.",
              "category": "marketing"},
             {"day": 10, "channel": "email",
-             "subject": "Refer a neighbor and save $25",
+             "subject": "Refer a neighbor and save $55",
              "body": "Day-10 referral reminder with promo code.",
              "category": "marketing"},
         ],

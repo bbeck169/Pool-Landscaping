@@ -254,7 +254,7 @@ function VoidDialog({ row, onClose, onDone }) {
         <DialogHeader><DialogTitle>Void referral</DialogTitle></DialogHeader>
         <p className="text-sm text-zinc-500 mb-3">
           Void a pending referral. This is a manual action — the customer
-          will not receive their $25 credit.
+          will not receive their $55 credit.
         </p>
         <label className="block text-xs uppercase tracking-wide text-zinc-500 mb-1">
           Reason

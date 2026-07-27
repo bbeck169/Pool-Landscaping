@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Search, FileText, Layers, Clock, TrendingUp, AlertCircle } from "lucide-react";
+import { Plus, Search, FileText, Layers, Clock, TrendingUp, AlertCircle, Trash2, X as XIcon } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
 import {
@@ -19,6 +20,10 @@ export default function InvoicesList() {
   const [q, setQ] = useState(params.get("q") || "");
   const status = params.get("status") || "";
   const hasLateFee = params.get("late_fee") === "1";
+  // Phase 34 · Task BB · Feb 2026 — bulk-select state.
+  const [selected, setSelected] = useState(() => new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const setStatus = (v) => {
     const s = new URLSearchParams(params);
@@ -68,6 +73,54 @@ export default function InvoicesList() {
         ? [r.title, r.customer_name].filter(Boolean).some((s) => s.toLowerCase().includes(q.toLowerCase()))
         : true
     );
+
+  // Phase 34 · Task BB · Feb 2026 — visible-page selection helpers.
+  const visibleIds = filtered.map((r) => r.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+  const someVisibleSelected = visibleIds.some((id) => selected.has(id));
+  const indeterminate = someVisibleSelected && !allVisibleSelected;
+  const selectedCount = selected.size;
+
+  const toggleAll = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visibleIds.forEach((id) => next.delete(id));
+      else visibleIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+  const toggleOne = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelected(new Set());
+
+  const doBulkDelete = async () => {
+    setBusy(true);
+    const ids = Array.from(selected);
+    try {
+      const res = await api.post("/invoices/bulk-delete", { ids });
+      const okCount = res.deleted_count || 0;
+      const failCount = (res.failed || []).length;
+      // Optimistic remove from the visible list.
+      setRows((prev) => (prev || []).filter((r) => !res.deleted.includes(r.id)));
+      clearSelection();
+      setConfirmOpen(false);
+      if (failCount === 0) {
+        toast.success(`${okCount} invoice${okCount === 1 ? "" : "s"} deleted`);
+      } else {
+        toast(`${okCount} deleted · ${failCount} failed`, {
+          description: (res.failed || []).slice(0, 3).map((f) => f.reason).join(" · "),
+        });
+      }
+    } catch (e) {
+      toast.error(e?.message || "Bulk delete failed");
+    } finally { setBusy(false); }
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="invoices-page">
@@ -166,6 +219,18 @@ export default function InvoicesList() {
           <table className="w-full text-sm" data-testid="invoices-table">
             <thead>
               <tr style={{ backgroundColor: colors.surfaceSecondary }}>
+                {/* Phase 34 · Task BB · leftmost checkbox column. */}
+                <th className="px-3 py-2 w-8" style={{ color: colors.onSurfaceSecondary }}>
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    ref={(el) => { if (el) el.indeterminate = indeterminate; }}
+                    onChange={toggleAll}
+                    aria-label="Select all invoices on this page"
+                    data-testid="bulk-select-all"
+                    className="cursor-pointer"
+                  />
+                </th>
                 <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Invoice #</th>
                 <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Invoice</th>
                 <th className="text-left px-3 py-2 font-semibold hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>Customer</th>
@@ -178,17 +243,29 @@ export default function InvoicesList() {
               {filtered.map((r) => (
                 <tr
                   key={r.id}
-                  onClick={() => navigate(`/invoices/${r.id}`)}
                   className="cursor-pointer hover:bg-zinc-50"
-                  style={{ borderTop: `1px solid ${colors.divider}` }}
+                  style={{
+                    borderTop: `1px solid ${colors.divider}`,
+                    backgroundColor: selected.has(r.id) ? "#EFF6FF" : "transparent",
+                  }}
                   data-testid={`invoice-row-${r.id}`}
                 >
-                  <td className="px-3 py-3 font-mono text-xs" style={{ color: colors.onSurface }} data-testid={`invoice-number-${r.id}`}>{r.invoice_number || "—"}</td>
-                  <td className="px-3 py-3 font-semibold" style={{ color: colors.onSurface }}>{r.title}</td>
-                  <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>{r.customer_name}</td>
-                  <td className="px-3 py-3 hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }}>{r.due_date || "—"}</td>
-                  <td className="px-3 py-3 text-right font-semibold" style={{ color: colors.onSurface }}>{money(r.total)}</td>
-                  <td className="px-3 py-3 text-right">
+                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(r.id)}
+                      onChange={() => toggleOne(r.id)}
+                      aria-label={`Select invoice ${r.invoice_number || r.id}`}
+                      data-testid={`bulk-select-row-${r.id}`}
+                      className="cursor-pointer"
+                    />
+                  </td>
+                  <td className="px-3 py-3 font-mono text-xs" style={{ color: colors.onSurface }} data-testid={`invoice-number-${r.id}`} onClick={() => navigate(`/invoices/${r.id}`)}>{r.invoice_number || "—"}</td>
+                  <td className="px-3 py-3 font-semibold" style={{ color: colors.onSurface }} onClick={() => navigate(`/invoices/${r.id}`)}>{r.title}</td>
+                  <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)}>{r.customer_name}</td>
+                  <td className="px-3 py-3 hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)}>{r.due_date || "—"}</td>
+                  <td className="px-3 py-3 text-right font-semibold" style={{ color: colors.onSurface }} onClick={() => navigate(`/invoices/${r.id}`)}>{money(r.total)}</td>
+                  <td className="px-3 py-3 text-right" onClick={() => navigate(`/invoices/${r.id}`)}>
                     <Chip
                       label={r.payment_status || "unpaid"}
                       tone={r.payment_status === "paid" ? "success" : r.payment_status === "partial" ? "warning" : "danger"}
@@ -200,6 +277,102 @@ export default function InvoicesList() {
           </table>
         </div>
       )}
+
+      {/* Phase 34 · Task BB · Feb 2026 — floating bulk-action bar.
+          Sticky at the bottom-center once ≥1 row is selected. Actions:
+          count · Delete selected · Clear selection. Reuses the shared
+          soft-delete pattern from Schedule Phase 28. */}
+      {selectedCount > 0 ? (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 rounded-2xl shadow-2xl flex items-center gap-3 px-4 py-3 z-40"
+          style={{
+            backgroundColor: colors.onSurface,
+            color: "#FFFFFF",
+            border: "1px solid rgba(255,255,255,0.08)",
+          }}
+          data-testid="bulk-action-bar"
+        >
+          <div className="text-sm font-semibold" data-testid="bulk-action-bar-count">
+            {selectedCount} selected
+          </div>
+          <button
+            type="button"
+            onClick={() => setConfirmOpen(true)}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
+            style={{ backgroundColor: "#DC2626", color: "#FFFFFF" }}
+            data-testid="bulk-delete-button"
+          >
+            <Trash2 size={12} /> Delete selected
+          </button>
+          <button
+            type="button"
+            onClick={clearSelection}
+            className="text-xs font-semibold underline"
+            style={{ color: "rgba(255,255,255,0.85)" }}
+            data-testid="bulk-clear-selection"
+          >
+            Clear selection
+          </button>
+        </div>
+      ) : null}
+
+      {/* Confirmation modal. */}
+      {confirmOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(15,23,42,0.55)" }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setConfirmOpen(false); }}
+          data-testid="bulk-delete-confirm"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
+                  Delete {selectedCount} invoice{selectedCount === 1 ? "" : "s"}?
+                </h2>
+                <p className="text-sm mt-1" style={{ color: colors.muted }}>
+                  This can be restored from the archive.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                className="p-1"
+                style={{ color: colors.muted }}
+                aria-label="Close"
+              >
+                <XIcon size={18} />
+              </button>
+            </div>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                className="px-4 py-2 rounded-xl text-sm font-semibold"
+                style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
+                data-testid="bulk-delete-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={doBulkDelete}
+                disabled={busy}
+                className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
+                style={{ backgroundColor: "#DC2626" }}
+                data-testid="bulk-delete-confirm-btn"
+              >
+                {busy ? "Deleting…" : `Delete ${selectedCount}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -18,14 +18,22 @@ import {
   Pause, MessageSquarePlus, AlertTriangle, ChevronLeft, RefreshCw,
 } from "lucide-react";
 
-const STATUS_ORDER = ["New", "Contacted", "Quoted", "Closed Won", "Closed Lost", "On Hold"];
+// Phase 34 · Task CC · Feb 2026 — canonical snake_case status enum.
+// Values MUST match backend `_CANONICAL_STATUSES` in routers/leads.py.
+const STATUS_ORDER = ["new", "contacted", "quoted", "closed_won", "closed_lost"];
+const STATUS_LABEL = {
+  "new": "New",
+  "contacted": "Contacted",
+  "quoted": "Quoted",
+  "closed_won": "Closed – Won",
+  "closed_lost": "Closed – Lost",
+};
 const STATUS_COLORS = {
-  "New": "bg-sky-100 text-sky-800",
-  "Contacted": "bg-amber-100 text-amber-800",
-  "Quoted": "bg-indigo-100 text-indigo-800",
-  "Closed Won": "bg-emerald-100 text-emerald-800",
-  "Closed Lost": "bg-rose-100 text-rose-800",
-  "On Hold": "bg-slate-200 text-slate-700",
+  "new": "bg-sky-100 text-sky-800",
+  "contacted": "bg-amber-100 text-amber-800",
+  "quoted": "bg-violet-100 text-violet-800",
+  "closed_won": "bg-emerald-100 text-emerald-800",
+  "closed_lost": "bg-slate-200 text-slate-700",
 };
 const SOURCE_LABEL = {
   website_form: "Website form",
@@ -42,7 +50,7 @@ function StatusPill({ status }) {
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}
             data-testid="lead-status-pill">
-      {status || "—"}
+      {STATUS_LABEL[status] || status || "—"}
     </span>
   );
 }
@@ -137,7 +145,7 @@ export default function LeadDetail() {
     try {
       const updated = await api.patch(`/leads/${id}`, { status });
       setLead(updated);
-      toast.success(`Marked ${status}`);
+      toast.success(`Marked ${STATUS_LABEL[status] || status}`);
     } catch (e) {
       toast.error("Update failed", { description: e?.message || "" });
     } finally {
@@ -336,26 +344,26 @@ export default function LeadDetail() {
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="text-sm font-semibold mb-3">Actions</div>
             <button onClick={closeWon}
-                      disabled={busy || lead.status === "Closed Won"}
+                      disabled={busy || lead.status === "closed_won"}
                       className="w-full mb-2 px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium disabled:opacity-50"
                       data-testid="lead-close-won">
               <CheckCircle2 size={14} className="inline mr-1" />
               Close Won → Convert
             </button>
             <button onClick={() => setLostOpen(true)}
-                      disabled={busy || lead.status === "Closed Lost"}
+                      disabled={busy || lead.status === "closed_lost"}
                       className="w-full mb-2 px-3 py-2 rounded bg-rose-600 hover:bg-rose-700 text-white text-sm font-medium disabled:opacity-50"
                       data-testid="lead-close-lost">
               <XCircle size={14} className="inline mr-1" />
               Close Lost
             </button>
             <div className="grid grid-cols-2 gap-2 mt-3">
-              {STATUS_ORDER.filter((s) => !s.startsWith("Closed")).map((s) => (
+              {STATUS_ORDER.filter((s) => !s.startsWith("closed_")).map((s) => (
                 <button key={s} onClick={() => setStatus(s)}
                           disabled={busy || lead.status === s}
                           className="px-2 py-1.5 rounded border border-slate-300 text-xs hover:bg-slate-50 disabled:opacity-50"
-                          data-testid={`lead-status-${s.replace(/\s+/g, "-").toLowerCase()}`}>
-                  {s === "On Hold" ? <><Pause size={10} className="inline" /> On Hold</> : s}
+                          data-testid={`lead-status-${s.replace(/_/g, "-")}`}>
+                  {STATUS_LABEL[s] || s}
                 </button>
               ))}
             </div>

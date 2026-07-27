@@ -85,7 +85,11 @@ async def run_referral_watcher(tenant: dict) -> Dict[str, Any]:
     """Public helper — also called by manual admin trigger + pytest."""
     if tenant.get("referral_reward_enabled") is False:
         return {"skipped": True, "reason": "reward_disabled"}
-    credit_cents = int(tenant.get("referral_reward_amount_cents") or DEFAULT_CREDIT_CENTS)
+    credit_cents = int(
+        tenant.get("referral_reward_amount_cents")
+        or ((tenant.get("settings") or {}).get("referrals") or {}).get("reward_amount_cents")
+        or DEFAULT_CREDIT_CENTS
+    )
     tenant_id = tenant["id"]
 
     pending = await db.referrals.find({

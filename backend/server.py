@@ -993,6 +993,25 @@ async def startup():
         from utils import now_iso as _now_iso_p18
         aq = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0, "id": 1})
         if aq:
+            # Phase 34 · Task AA · Feb 2026 — PLOFV referral reward.
+            # Idempotent seed so PLOFV mints $55 credit for every
+            # referral going forward. Historical credits are NOT
+            # retroactively adjusted (they live in ``service_credits``
+            # with their original ``amount_cents``). We stamp both
+            # the legacy top-level field the referral_watcher reads
+            # AND the new nested ``settings.referrals.reward_amount_cents``
+            # location for future normalisation.
+            try:
+                await db.tenants.update_one(
+                    {"id": aq["id"]},
+                    {"$set": {
+                        "referral_reward_amount_cents": 5500,
+                        "settings.referrals.reward_amount_cents": 5500,
+                    }},
+                )
+            except Exception as _e_reward:
+                logger.warning(f"[phase34-task-aa] PLOFV reward seed failed: {_e_reward}")
+
             has_profile = await db.ai_knowledge_base.find_one(
                 {"tenant_id": aq["id"], "kind": "company_profile",
                   "$or": [{"is_deleted": {"$ne": True}}, {"is_deleted": {"$exists": False}}]},
@@ -1190,6 +1209,20 @@ async def startup():
         logger.info(f"[ae1] ai_employees seed — {counts}")
     except Exception as e:
         logger.warning(f"ae1 ai_employees seed crashed: {e}")
+
+    # Phase 34 · Task CC · Feb 2026 — Leads status enum migration.
+    # Idempotent boot-time sweep that normalises every ``leads.status``
+    # value to the five canonical snake_case buckets
+    # (new, contacted, quoted, closed_won, closed_lost). Unrecognised
+    # legacy values are mapped to ``"new"`` and each occurrence is
+    # logged so an admin can audit them from the boot log.
+    try:
+        from routers.leads import migrate_lead_statuses as _mig_lead_status
+        _lead_status_result = await _mig_lead_status()
+        logger.info(f"[phase34-task-cc] lead status migration — {_lead_status_result['per_bucket']}")
+    except Exception as e:
+        logger.warning(f"[phase34-task-cc] lead status migration crashed: {e}")
+
 
     # Feb-2026 · Slice L.c — ensure the widget_denied_requests TTL +
     # tenant-time indexes exist. Idempotent; failures are logged.

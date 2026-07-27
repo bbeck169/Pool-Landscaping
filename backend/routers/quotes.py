@@ -23,7 +23,8 @@ def compute_totals(line_items: List[dict], tax_rate: float):
 @router.get("/quotes")
 async def list_quotes(user: dict = Depends(get_current_user),
                       tenant: dict = Depends(get_current_tenant),
-                      doc_type: Optional[str] = None):
+                      doc_type: Optional[str] = None,
+                      include_deleted: bool = False):
     if user.get("role") == "technician":
         raise HTTPException(403, "Not allowed")
     q: dict = {"tenant_id": tenant["id"]}
@@ -31,6 +32,11 @@ async def list_quotes(user: dict = Depends(get_current_user),
         q["customer_id"] = user.get("customer_id")
     if doc_type:
         q["doc_type"] = doc_type
+    # Phase 34 · Task BB · Feb 2026 — bulk-select soft-delete.
+    # Hide soft-deleted rows by default (`deleted_at` is None or
+    # missing). Only super_admins can opt-in with ``include_deleted=1``.
+    if not (include_deleted and (user.get("role") or "").lower() == "super_admin"):
+        q["$or"] = [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]
     docs = await db.quotes.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
 
@@ -606,3 +612,200 @@ async def quote_or_invoice_pdf(qid: str,
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase 34 · Task BB · Feb 2026 — Invoice/Quote bulk-select soft-delete.
+# Mirrors the Phase 28 `_perform_soft_delete_job` pattern in routers/jobs.py.
+# The invoice list page + Estimator list page + Payments ledger all gained
+# checkbox-select + mass-delete UX; each surface hits its own bulk endpoint.
+# ═════════════════════════════════════════════════════════════════════════
+from pydantic import BaseModel as _BaseModelBB  # local alias — avoid model.py * import shadow
+
+
+class _InvoiceBulkDeleteIn(_BaseModelBB):
+    ids: List[str]
+
+
+_BULK_DELETE_CAP = 100
+
+
+async def _perform_soft_delete_quote(qid: str, user: dict, tenant: dict) -> dict:
+    """Shared soft-delete helper for quotes/invoices. Enforces:
+    * tenant scoping (row must belong to caller's tenant).
+    * no re-delete (already soft-deleted rows return ``already_deleted=True``
+      instead of raising).
+    * audit row written best-effort.
+    Called by both the single-invoice soft-delete + the bulk endpoint so
+    behavior is identical.
+    """
+    doc = await db.quotes.find_one(
+        {"id": qid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "deleted_at": 1, "doc_type": 1,
+         "payment_status": 1, "amount_paid": 1},
+    )
+    if not doc:
+        raise HTTPException(404, "Invoice not found")
+    if doc.get("deleted_at"):
+        return {"ok": True, "id": qid, "already_deleted": True}
+    deleted_at = now_iso()
+    await db.quotes.update_one(
+        {"id": qid, "tenant_id": tenant["id"]},
+        {"$set": {"deleted_at": deleted_at,
+                    "deleted_by_user_id": user.get("id")}},
+    )
+    try:
+        await db.audit_log.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "action": "invoice.soft_delete",
+            "target_id": qid,
+            "target_doc_type": doc.get("doc_type") or "invoice",
+            "at": deleted_at,
+        })
+    except Exception as e:
+        logger.warning(f"invoice.soft_delete audit failed: {e}")
+    return {"ok": True, "id": qid, "deleted_at": deleted_at}
+
+
+@router.post("/invoices/{qid}/soft-delete",
+              operation_id="invoices.softDelete")
+async def soft_delete_invoice(qid: str,
+                                user: dict = Depends(require_admin),
+                                tenant: dict = Depends(get_current_tenant)):
+    return await _perform_soft_delete_quote(qid, user, tenant)
+
+
+@router.post("/invoices/bulk-delete",
+              operation_id="invoices.bulkDelete")
+async def bulk_delete_invoices(body: _InvoiceBulkDeleteIn,
+                                 user: dict = Depends(require_admin),
+                                 tenant: dict = Depends(get_current_tenant)):
+    """Bulk soft-delete invoices. Iterates the shared helper so per-row
+    guardrails still apply. Caps at 100 rows per call. Response surfaces
+    both successes and failures so the UI can toast a summary like
+    "Deleted 8 of 10 (2 failed)". Mixed-tenant ids are rejected via
+    the 404 path (tenant_id filter in the helper)."""
+    ids = list(body.ids or [])
+    if not ids:
+        raise HTTPException(400, "ids is empty")
+    if len(ids) > _BULK_DELETE_CAP:
+        raise HTTPException(400, f"bulk-delete capped at {_BULK_DELETE_CAP} rows per call")
+    deleted: List[str] = []
+    failed: List[dict] = []
+    for qid in ids:
+        try:
+            r = await _perform_soft_delete_quote(qid, user, tenant)
+            deleted.append(r["id"])
+        except HTTPException as e:
+            failed.append({"id": qid, "reason": str(e.detail),
+                              "status_code": e.status_code})
+        except Exception as e:                                # noqa: BLE001
+            failed.append({"id": qid, "reason": str(e), "status_code": 500})
+    return {"ok": True, "deleted_count": len(deleted),
+              "deleted": deleted, "failed": failed}
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase 34 · Task BB · Feb 2026 — Payments bulk-select soft-delete.
+# Payments are stored as quotes with ``payment_status in {paid, partial,
+# processing}`` — there is no separate collection. "Deleting" a payment
+# reverts the row back to ``unpaid`` and zeroes ``amount_paid``, while
+# tagging ``payment_deleted_at`` for the archive view. Stripe-linked
+# rows (``payment_intent_id`` set) refuse deletion — those payouts
+# have already cleared to the bank and reversing them is a Stripe
+# operation the admin must run through the dashboard.
+# ═════════════════════════════════════════════════════════════════════════
+_STRIPE_LOCKED_METHODS = {"stripe", "card"}
+
+
+async def _perform_delete_payment(pid: str, user: dict, tenant: dict) -> dict:
+    """Revert a paid invoice back to ``unpaid`` — the "delete a payment"
+    semantics on this platform. Refuses if:
+    * the row is not found in this tenant.
+    * the row has a Stripe payment_intent_id (cleared to bank; reversal
+      belongs in the Stripe dashboard, not here).
+    * the row's payment method is a card/Stripe charge that has already
+      succeeded (defense in depth for rows missing the PI id).
+    """
+    doc = await db.quotes.find_one(
+        {"id": pid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "payment_status": 1, "amount_paid": 1,
+         "payment_intent_id": 1, "payment_method": 1,
+         "payment_deleted_at": 1},
+    )
+    if not doc:
+        raise HTTPException(404, "Payment not found")
+    if doc.get("payment_deleted_at"):
+        return {"ok": True, "id": pid, "already_deleted": True}
+    if doc.get("payment_intent_id"):
+        raise HTTPException(
+            409, "Payment is linked to a cleared Stripe charge — reverse via Stripe dashboard",
+        )
+    method = (doc.get("payment_method") or "").lower()
+    if method in _STRIPE_LOCKED_METHODS and (doc.get("payment_status") or "").lower() == "paid":
+        raise HTTPException(
+            409, "Card/Stripe payments cannot be bulk-deleted — refund via the invoice detail page",
+        )
+    if (doc.get("payment_status") or "").lower() == "unpaid":
+        raise HTTPException(400, "Nothing to delete — this invoice has no recorded payment")
+    deleted_at = now_iso()
+    await db.quotes.update_one(
+        {"id": pid, "tenant_id": tenant["id"]},
+        {"$set": {
+            "payment_status": "unpaid",
+            "amount_paid": 0.0,
+            "paid_at": None,
+            "payment_deleted_at": deleted_at,
+            "payment_deleted_by_user_id": user.get("id"),
+            "payment_deleted_prior_status": doc.get("payment_status"),
+            "payment_deleted_prior_amount_paid": doc.get("amount_paid") or 0.0,
+        }},
+    )
+    try:
+        await db.audit_log.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "action": "payment.soft_delete",
+            "target_id": pid,
+            "prior_status": doc.get("payment_status"),
+            "prior_amount_paid": doc.get("amount_paid") or 0.0,
+            "at": deleted_at,
+        })
+    except Exception as e:
+        logger.warning(f"payment.soft_delete audit failed: {e}")
+    return {"ok": True, "id": pid, "deleted_at": deleted_at}
+
+
+@router.post("/payments/bulk-delete",
+              operation_id="payments.bulkDelete")
+async def bulk_delete_payments(body: _InvoiceBulkDeleteIn,
+                                 user: dict = Depends(require_admin),
+                                 tenant: dict = Depends(get_current_tenant)):
+    """Bulk-revert payment status on paid invoices. Financial-state
+    guardrails match the single-record semantics — Stripe-linked
+    payments refuse; the failures are surfaced in ``failed[]`` so
+    admins see the count of "locked" rows without the whole batch
+    aborting."""
+    ids = list(body.ids or [])
+    if not ids:
+        raise HTTPException(400, "ids is empty")
+    if len(ids) > _BULK_DELETE_CAP:
+        raise HTTPException(400, f"bulk-delete capped at {_BULK_DELETE_CAP} rows per call")
+    deleted: List[str] = []
+    failed: List[dict] = []
+    for pid in ids:
+        try:
+            r = await _perform_delete_payment(pid, user, tenant)
+            deleted.append(r["id"])
+        except HTTPException as e:
+            failed.append({"id": pid, "reason": str(e.detail),
+                              "status_code": e.status_code})
+        except Exception as e:                                # noqa: BLE001
+            failed.append({"id": pid, "reason": str(e), "status_code": 500})
+    return {"ok": True, "deleted_count": len(deleted),
+              "deleted": deleted, "failed": failed}

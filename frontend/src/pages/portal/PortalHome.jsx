@@ -425,8 +425,14 @@ export default function PortalHome() {
       {/* Slice O.2 · My Referrals — hides when list is empty. */}
       <MyReferralsSection />
 
-      {/* Feb-2026 · Item 3/10 — Customer-facing business card. */}
-      <div className="mb-4 max-w-md" data-tour-id="business-card">
+      {/* Feb-2026 · Item 3/10 — Customer-facing business card.
+          Phase 34 · Feb 2026 · Task Z — width parity: the wrapper
+          drops the ``max-w-md`` cap so the compact business card now
+          spans the same width as ReferralSection / MyReferralsSection
+          (both are un-capped within the ``max-w-4xl`` portal frame).
+          Card testid preserved. */}
+      <div className="mb-4" data-tour-id="business-card"
+           data-testid="business-card-wrap">
         <BusinessCard variant="compact" />
       </div>
 

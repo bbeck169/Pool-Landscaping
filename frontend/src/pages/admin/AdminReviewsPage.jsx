@@ -158,7 +158,22 @@ export default function AdminReviewsPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {rows.map((r) => {
+                // Phase 34 · Task T · Feb 2026 — surface two operational
+                // signals inline on the row:
+                //  * red "needs response" dot for any low-rating review
+                //    (≤3★) that still sits in ``new`` — those are the
+                //    tickets we want to intervene on before the customer
+                //    escalates elsewhere.
+                //  * "Posted to Google" pill for public 4-5★ reviews
+                //    where the tenant's Google CTA was rendered
+                //    (``google_redirect=true`` on the portal row, or
+                //    ``google_click_at`` for magic-link Task T rows).
+                const rating = r.rating || r.star_rating || 0;
+                const status = (r.status || "").toLowerCase();
+                const needsResponse = rating > 0 && rating <= 3 && status !== "resolved";
+                const postedToGoogle = !!(r.google_click_at || r.google_redirect);
+                return (
                 <tr
                   key={r.id}
                   onClick={() => setSelected(r)}
@@ -170,23 +185,52 @@ export default function AdminReviewsPage() {
                     {String(r.created_at || "").slice(0, 10)}
                   </td>
                   <td className="py-3 px-3" style={{ color: colors.onSurface }}>
-                    {r.customer_name || "—"}
+                    <span className="inline-flex items-center gap-1.5">
+                      {needsResponse ? (
+                        <span
+                          className="inline-block rounded-full"
+                          style={{
+                            width: 8,
+                            height: 8,
+                            backgroundColor: "#DC2626",
+                            boxShadow: "0 0 0 2px rgba(220,38,38,0.15)",
+                          }}
+                          title="Low-rating review needs a response"
+                          aria-label="Needs response"
+                          data-testid={`admin-review-needs-response-${r.id}`}
+                        />
+                      ) : null}
+                      {r.customer_name || "—"}
+                    </span>
                   </td>
                   <td className="py-3 px-3">
-                    <StarsInline value={r.rating || 0} />
+                    <StarsInline value={rating} />
                   </td>
                   <td className="py-3 px-3 max-w-[300px] truncate"
                        style={{ color: colors.onSurfaceSecondary }}>
                     {r.comment || <span style={{ color: colors.muted }}>(no comment)</span>}
                   </td>
                   <td className="py-3 px-3">
-                    <PublicBadge on={!!r.is_public} />
+                    <div className="inline-flex items-center gap-1">
+                      <PublicBadge on={!!r.is_public} />
+                      {postedToGoogle ? (
+                        <span
+                          className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-flex items-center gap-1"
+                          style={{ backgroundColor: "#DBEAFE", color: "#1E3A8A" }}
+                          title="Customer was routed to Google to leave a public review"
+                          data-testid={`admin-review-posted-google-${r.id}`}
+                        >
+                          <ExternalLink size={9} /> GOOGLE
+                        </span>
+                      ) : null}
+                    </div>
                   </td>
                   <td className="py-3 px-3">
                     <StatusBadge status={r.status} />
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}

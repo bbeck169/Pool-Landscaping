@@ -139,9 +139,14 @@ async def delete_template(tid: str,
 # ----------------------- Estimates -----------------------
 @router.get("/estimates")
 async def list_estimates(user: dict = Depends(require_admin),
-                         tenant: dict = Depends(get_current_tenant)):
+                         tenant: dict = Depends(get_current_tenant),
+                         include_deleted: bool = False):
+    q: dict = {"tenant_id": tenant["id"]}
+    # Phase 34 · Task BB — hide soft-deleted rows unless super_admin opts in.
+    if not (include_deleted and (user.get("role") or "").lower() == "super_admin"):
+        q["$or"] = [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]
     return await db.estimates.find(
-        {"tenant_id": tenant["id"]}, {"_id": 0}
+        q, {"_id": 0}
     ).sort("created_at", -1).to_list(1000)
 
 
@@ -301,3 +306,83 @@ async def convert_estimate_to_quote(eid: str,
         {"$set": {"converted_quote_id": quote["id"], "status": "converted"}},
     )
     return quote
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase 34 · Task BB · Feb 2026 — Estimates bulk-select soft-delete.
+# Mirrors the invoice bulk-delete helper in routers/quotes.py. Keeps the
+# existing hard-delete route intact for backward compat (some scripts
+# and older admin tools still call DELETE /api/estimates/{eid}).
+# ═════════════════════════════════════════════════════════════════════════
+from pydantic import BaseModel as _BulkBaseModel
+from config import logger as _bulk_logger
+
+
+class _EstimateBulkDeleteIn(_BulkBaseModel):
+    ids: List[str]
+
+
+_ESTIMATE_BULK_DELETE_CAP = 100
+
+
+async def _perform_soft_delete_estimate(eid: str, user: dict, tenant: dict) -> dict:
+    doc = await db.estimates.find_one(
+        {"id": eid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "deleted_at": 1},
+    )
+    if not doc:
+        raise HTTPException(404, "Estimate not found")
+    if doc.get("deleted_at"):
+        return {"ok": True, "id": eid, "already_deleted": True}
+    deleted_at = now_iso()
+    await db.estimates.update_one(
+        {"id": eid, "tenant_id": tenant["id"]},
+        {"$set": {"deleted_at": deleted_at,
+                    "deleted_by_user_id": user.get("id")}},
+    )
+    try:
+        await db.audit_log.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "action": "estimate.soft_delete",
+            "target_id": eid,
+            "at": deleted_at,
+        })
+    except Exception as e:
+        _bulk_logger.warning(f"estimate.soft_delete audit failed: {e}")
+    return {"ok": True, "id": eid, "deleted_at": deleted_at}
+
+
+@router.post("/estimates/{eid}/soft-delete",
+              operation_id="estimates.softDelete")
+async def soft_delete_estimate(eid: str,
+                                  user: dict = Depends(require_admin),
+                                  tenant: dict = Depends(get_current_tenant)):
+    return await _perform_soft_delete_estimate(eid, user, tenant)
+
+
+@router.post("/estimates/bulk-delete",
+              operation_id="estimates.bulkDelete")
+async def bulk_delete_estimates(body: _EstimateBulkDeleteIn,
+                                   user: dict = Depends(require_admin),
+                                   tenant: dict = Depends(get_current_tenant)):
+    ids = list(body.ids or [])
+    if not ids:
+        raise HTTPException(400, "ids is empty")
+    if len(ids) > _ESTIMATE_BULK_DELETE_CAP:
+        raise HTTPException(400, f"bulk-delete capped at {_ESTIMATE_BULK_DELETE_CAP} rows per call")
+    deleted: List[str] = []
+    failed: List[dict] = []
+    for eid in ids:
+        try:
+            r = await _perform_soft_delete_estimate(eid, user, tenant)
+            deleted.append(r["id"])
+        except HTTPException as e:
+            failed.append({"id": eid, "reason": str(e.detail),
+                              "status_code": e.status_code})
+        except Exception as e:                                # noqa: BLE001
+            failed.append({"id": eid, "reason": str(e), "status_code": 500})
+    return {"ok": True, "deleted_count": len(deleted),
+              "deleted": deleted, "failed": failed}

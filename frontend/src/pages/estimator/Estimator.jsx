@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Plus, FileText, Settings, Copy, Trash2 } from "lucide-react";
+import { ArrowLeft, Plus, FileText, Settings, Copy, Trash2, X as XIcon } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
 import {
@@ -19,10 +20,49 @@ export function EstimatesList() {
   const navigate = useNavigate();
   const [rows, setRows] = useState(null);
   const [settings, setSettings] = useState(null);
+  // Phase 34 · Task BB · Feb 2026 — bulk-select state.
+  const [selected, setSelected] = useState(() => new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     api.get("/estimates").then(setRows).catch(() => setRows([]));
     api.get("/estimates/settings").then(setSettings).catch(() => setSettings({}));
   }, []);
+
+  const filtered = rows || [];
+  const visibleIds = filtered.map((r) => r.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+  const indeterminate = visibleIds.some((id) => selected.has(id)) && !allVisibleSelected;
+  const selectedCount = selected.size;
+  const toggleAll = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visibleIds.forEach((id) => next.delete(id));
+      else visibleIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+  const toggleOne = (id) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const clearSelection = () => setSelected(new Set());
+  const doBulkDelete = async () => {
+    setBusy(true);
+    try {
+      const res = await api.post("/estimates/bulk-delete", { ids: Array.from(selected) });
+      const ok = res.deleted_count || 0;
+      const failCount = (res.failed || []).length;
+      setRows((prev) => (prev || []).filter((r) => !res.deleted.includes(r.id)));
+      clearSelection();
+      setConfirmOpen(false);
+      if (failCount === 0) toast.success(`${ok} estimate${ok === 1 ? "" : "s"} deleted`);
+      else toast(`${ok} deleted · ${failCount} failed`);
+    } catch (e) { toast.error(e?.message || "Bulk delete failed"); }
+    finally { setBusy(false); }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="estimator-list">
       <PageHeader
@@ -51,6 +91,17 @@ export function EstimatesList() {
           <table className="w-full text-sm">
             <thead>
               <tr style={{ backgroundColor: colors.surfaceSecondary }}>
+                <th className="px-3 py-2 w-8">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    ref={(el) => { if (el) el.indeterminate = indeterminate; }}
+                    onChange={toggleAll}
+                    aria-label="Select all estimates on this page"
+                    data-testid="bulk-select-all"
+                    className="cursor-pointer"
+                  />
+                </th>
                 <th className="text-left px-3 py-2 font-semibold">Title</th>
                 <th className="text-left px-3 py-2 font-semibold hidden md:table-cell">Customer</th>
                 <th className="text-right px-3 py-2 font-semibold">Total</th>
@@ -58,16 +109,97 @@ export function EstimatesList() {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} onClick={() => navigate(`/estimator/${r.id}`)} className="cursor-pointer hover:bg-zinc-50" style={{ borderTop: `1px solid ${colors.divider}` }} data-testid={`est-row-${r.id}`}>
-                  <td className="px-3 py-3 font-semibold">{r.title}</td>
-                  <td className="px-3 py-3 hidden md:table-cell text-sm" style={{ color: colors.onSurfaceSecondary }}>{r.customer_name || "—"}</td>
-                  <td className="px-3 py-3 text-right font-semibold">{money(r.total)}</td>
+                <tr key={r.id}
+                    className="cursor-pointer hover:bg-zinc-50"
+                    style={{
+                      borderTop: `1px solid ${colors.divider}`,
+                      backgroundColor: selected.has(r.id) ? "#EFF6FF" : "transparent",
+                    }}
+                    data-testid={`est-row-${r.id}`}>
+                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(r.id)}
+                      onChange={() => toggleOne(r.id)}
+                      aria-label={`Select estimate ${r.title || r.id}`}
+                      data-testid={`bulk-select-row-${r.id}`}
+                      className="cursor-pointer"
+                    />
+                  </td>
+                  <td className="px-3 py-3 font-semibold" onClick={() => navigate(`/estimator/${r.id}`)}>{r.title}</td>
+                  <td className="px-3 py-3 hidden md:table-cell text-sm" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/estimator/${r.id}`)}>{r.customer_name || "—"}</td>
+                  <td className="px-3 py-3 text-right font-semibold" onClick={() => navigate(`/estimator/${r.id}`)}>{money(r.total)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+
+      {selectedCount > 0 ? (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 rounded-2xl shadow-2xl flex items-center gap-3 px-4 py-3 z-40"
+          style={{ backgroundColor: colors.onSurface, color: "#FFFFFF",
+                    border: "1px solid rgba(255,255,255,0.08)" }}
+          data-testid="bulk-action-bar"
+        >
+          <div className="text-sm font-semibold" data-testid="bulk-action-bar-count">
+            {selectedCount} selected
+          </div>
+          <button type="button" onClick={() => setConfirmOpen(true)} disabled={busy}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
+                    style={{ backgroundColor: "#DC2626", color: "#FFFFFF" }}
+                    data-testid="bulk-delete-button">
+            <Trash2 size={12} /> Delete selected
+          </button>
+          <button type="button" onClick={clearSelection}
+                    className="text-xs font-semibold underline"
+                    style={{ color: "rgba(255,255,255,0.85)" }}
+                    data-testid="bulk-clear-selection">
+            Clear selection
+          </button>
+        </div>
+      ) : null}
+
+      {confirmOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
+              style={{ background: "rgba(15,23,42,0.55)" }}
+              onMouseDown={(e) => { if (e.target === e.currentTarget) setConfirmOpen(false); }}
+              data-testid="bulk-delete-confirm">
+          <div className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+                style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+                onMouseDown={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
+                  Delete {selectedCount} estimate{selectedCount === 1 ? "" : "s"}?
+                </h2>
+                <p className="text-sm mt-1" style={{ color: colors.muted }}>
+                  This can be restored from the archive.
+                </p>
+              </div>
+              <button type="button" onClick={() => setConfirmOpen(false)} className="p-1"
+                        style={{ color: colors.muted }} aria-label="Close">
+                <XIcon size={18} />
+              </button>
+            </div>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setConfirmOpen(false)}
+                        className="px-4 py-2 rounded-xl text-sm font-semibold"
+                        style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
+                        data-testid="bulk-delete-cancel">
+                Cancel
+              </button>
+              <button type="button" onClick={doBulkDelete} disabled={busy}
+                        className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
+                        style={{ backgroundColor: "#DC2626" }}
+                        data-testid="bulk-delete-confirm-btn">
+                {busy ? "Deleting…" : `Delete ${selectedCount}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

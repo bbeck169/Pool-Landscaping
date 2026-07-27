@@ -100,17 +100,17 @@ export default function ReferralSection() {
       <div className="flex items-center gap-2 mb-1">
         <UserPlus size={20} color="#FFFFFF" />
         <h3 className="text-xl font-black" style={{ color: "#FFFFFF" }}>
-          Refer a Friend — earn $25
+          Refer a Friend — earn $55 credit
         </h3>
       </div>
       <p className="text-sm mb-4" style={{ color: "rgba(255,255,255,0.92)" }}>
         Know someone who could use pool or landscape care? Send us their info
-        and we'll reach out. You'll get $25 in credit after their first paid month.
+        and we'll reach out. You'll get $55 in credit after their first paid month.
       </p>
 
       <form onSubmit={submit} className="space-y-3">
         <div>
-          <label className="text-[11px] font-bold uppercase" style={{ color: colors.muted }}>
+          <label className="text-[11px] font-bold uppercase text-white" style={{ color: "#FFFFFF" }}>
             Friend's name
           </label>
           <input
@@ -129,7 +129,7 @@ export default function ReferralSection() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="text-[11px] font-bold uppercase" style={{ color: colors.muted }}>
+            <label className="text-[11px] font-bold uppercase text-white" style={{ color: "#FFFFFF" }}>
               Phone
             </label>
             <input
@@ -147,7 +147,7 @@ export default function ReferralSection() {
             />
           </div>
           <div>
-            <label className="text-[11px] font-bold uppercase" style={{ color: colors.muted }}>
+            <label className="text-[11px] font-bold uppercase text-white" style={{ color: "#FFFFFF" }}>
               Email
             </label>
             <input
@@ -167,7 +167,7 @@ export default function ReferralSection() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="text-[11px] font-bold uppercase" style={{ color: colors.muted }}>
+            <label className="text-[11px] font-bold uppercase text-white" style={{ color: "#FFFFFF" }}>
               Address / City (optional)
             </label>
             <input
@@ -184,7 +184,7 @@ export default function ReferralSection() {
             />
           </div>
           <div>
-            <label className="text-[11px] font-bold uppercase" style={{ color: colors.muted }}>
+            <label className="text-[11px] font-bold uppercase text-white" style={{ color: "#FFFFFF" }}>
               Interested in
             </label>
             <select
@@ -209,7 +209,7 @@ export default function ReferralSection() {
           </div>
         </div>
         <div>
-          <label className="text-[11px] font-bold uppercase" style={{ color: colors.muted }}>
+          <label className="text-[11px] font-bold uppercase text-white" style={{ color: "#FFFFFF" }}>
             Anything else we should know?
           </label>
           <textarea

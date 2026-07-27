@@ -94,8 +94,8 @@ export default function PortalReferralsPage() {
 
   async function share() {
     const shareData = {
-      title: "Get $25 off your first pool service",
-      text: `Sign up using my referral code ${code} for $25 off!`,
+      title: "Get $55 off your first pool service",
+      text: `Sign up using my referral code ${code} for $55 off!`,
       url: shareUrl,
     };
     if (navigator.share) {
@@ -117,7 +117,7 @@ export default function PortalReferralsPage() {
           Refer & earn
         </h1>
         <p className="text-sm text-zinc-500 -mt-2">
-          Refer & Earn $25 — after your friend pays for 30 days.
+          Refer & Earn $55 credit — after your friend pays for 30 days.
         </p>
 
         {/* Referral code card */}
