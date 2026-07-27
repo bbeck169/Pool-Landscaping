@@ -71,27 +71,59 @@ export default function PortalPhotos() {
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3"
-             data-testid="portal-photos-grid">
-          {data.photos.map((p, i) => (
-            <button key={i} onClick={() => setZoom(p)}
-                    className="group relative overflow-hidden rounded-xl aspect-square hover:scale-[1.02] transition"
-                    style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-                    data-testid={`portal-photo-${i}`}>
-              <img src={p.thumb || p.url} alt={p.caption || "Service photo"}
-                   className="w-full h-full object-cover" loading="lazy" />
-              <div className="absolute bottom-0 left-0 right-0 p-2 text-left opacity-0 group-hover:opacity-100 transition"
-                   style={{ background: "linear-gradient(0deg, rgba(0,0,0,.75), transparent)" }}>
-                <div className="text-[10px] text-white font-semibold truncate">
-                  {p.job_title}
+        (() => {
+          // Phase 34 · Feb 2026 — group photos by date, newest first,
+          // with a section header + horizontal divider between groups.
+          // Groups key on the submitted_at YYYY-MM-DD; items keep their
+          // existing intra-group order.
+          const byDate = new Map();
+          for (const p of data.photos) {
+            const day = (p.submitted_at || p.uploaded_at || p.created_at || "").slice(0, 10) || "Unknown date";
+            if (!byDate.has(day)) byDate.set(day, []);
+            byDate.get(day).push(p);
+          }
+          const dayKeys = Array.from(byDate.keys()).sort((a, b) => b.localeCompare(a));
+          const fmtHeader = (d) => {
+            if (d === "Unknown date") return d;
+            try {
+              return new Date(d + "T00:00:00").toLocaleDateString(undefined,
+                { weekday: "long", month: "short", day: "numeric", year: "numeric" });
+            } catch { return d; }
+          };
+          return (
+            <div data-testid="portal-photos-grouped">
+              {dayKeys.map((day, gi) => (
+                <div key={day} data-testid={`portal-photos-date-group-${day}`}
+                     className={gi > 0 ? "pt-6 mt-6" : ""}
+                     style={gi > 0 ? { borderTop: `1px solid ${colors.border}` } : {}}>
+                  <h2 className="text-sm font-bold mb-3"
+                      style={{ color: colors.onSurface }}
+                      data-testid={`portal-photos-date-header-${day}`}>
+                    {fmtHeader(day)}
+                  </h2>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3"
+                       data-testid="portal-photos-grid">
+                    {byDate.get(day).map((p, i) => (
+                      <button key={`${day}:${i}`} onClick={() => setZoom(p)}
+                              className="group relative overflow-hidden rounded-xl aspect-square hover:scale-[1.02] transition"
+                              style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+                              data-testid={`portal-photo-${day}-${i}`}>
+                        <img src={p.thumb || p.url} alt={p.caption || "Service photo"}
+                             className="w-full h-full object-cover" loading="lazy" />
+                        <div className="absolute bottom-0 left-0 right-0 p-2 text-left opacity-0 group-hover:opacity-100 transition"
+                             style={{ background: "linear-gradient(0deg, rgba(0,0,0,.75), transparent)" }}>
+                          <div className="text-[10px] text-white font-semibold truncate">
+                            {p.job_title}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="text-[9px] text-white/80">
-                  {(p.submitted_at || "").slice(0, 10)}
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
+              ))}
+            </div>
+          );
+        })()
       )}
 
       {zoom && (

@@ -7,6 +7,9 @@ import ScrollToTop from "@/components/ScrollToTop";
 import useTelephonyLiveEvents from "@/hooks/useTelephonyLiveEvents";
 import AppLayout from "@/layouts/AppLayout";
 import Login from "@/pages/Login";
+// Phase 34 · Feb 2026 — self-serve password reset landing (stub UI).
+// Backend endpoint tracked in /app/memory/todo_password_reset.md.
+import ForgotPassword from "@/pages/ForgotPassword";
 import Signup from "@/pages/Signup";
 import TenantPicker from "@/pages/TenantPicker";
 import AdminDashboard from "@/pages/admin/Dashboard";
@@ -343,6 +346,7 @@ export default function App() {
         <TelephonyLiveEventsBridge />
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/tenant-picker" element={<TenantPicker />} />
           <Route path="/public/card/:slug" element={<PublicCard />} />

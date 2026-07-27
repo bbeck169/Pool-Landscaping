@@ -189,6 +189,22 @@ export default function Login() {
                   {showPw ? "HIDE" : "SHOW"}
                 </button>
               </div>
+              {/* Phase 34 · Feb 2026 — self-serve "Forgot password?"
+                  link. Routes to /forgot-password (currently a stub;
+                  backend endpoint is tracked in
+                  /app/memory/todo_password_reset.md). Right-aligned,
+                  subtle, matches the existing SHOW/HIDE + brand link
+                  styling on this page. */}
+              <div className="text-right mt-2">
+                <Link
+                  to="/forgot-password"
+                  className="text-xs font-semibold hover:underline"
+                  style={{ color: colors.brand }}
+                  data-testid="login-forgot-password-link"
+                >
+                  Forgot password?
+                </Link>
+              </div>
             </div>
 
             {error && (

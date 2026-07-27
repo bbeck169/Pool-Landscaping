@@ -101,35 +101,78 @@ export default function PortalVideos() {
           </div>
         </div>
       ) : (
-        <div className="space-y-6" data-testid="portal-videos-groups">
-          {groups.map((g) => (
-            <section key={`${g.kind}:${g.entity_id}`}
-                     className="rounded-2xl p-5"
-                     style={{ backgroundColor: colors.surface,
-                              border: `1px solid ${colors.border}` }}
-                     data-testid={`portal-video-group-${g.entity_id}`}>
-              <div className="flex items-baseline gap-2 mb-3">
-                <h2 className="text-base font-bold" style={{ color: colors.onSurface }}>
-                  {g.entity_title}
-                </h2>
-                <span className="text-[11px] uppercase tracking-wider font-semibold"
-                      style={{ color: colors.muted }}>
-                  {g.kind === "estimate" ? "Estimate" : "Job"}
-                  {g.job_scheduled_date ? ` · ${g.job_scheduled_date.slice(0, 10)}` : ""}
-                </span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {g.videos.map((v) => (
-                  <PortalVideoTile
-                    key={v.video_id}
-                    video={v}
-                    onPlay={() => setLightboxSrc(tokenizedSrc(v.storage_path))}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
+        (() => {
+          // Phase 34 · Feb 2026 — additional grouping by date on top of
+          // the existing entity-groups. Each date header + horizontal
+          // divider separates entity-groups whose ``job_scheduled_date``
+          // (fall back: earliest video ``uploaded_at``) falls on a
+          // different day. Newest date first; original per-entity
+          // rendering unchanged.
+          const dayOf = (g) => {
+            const d = g.job_scheduled_date
+              || (g.videos && g.videos[0] && g.videos[0].uploaded_at)
+              || "";
+            return d.slice(0, 10) || "Unknown date";
+          };
+          const byDay = new Map();
+          for (const g of groups) {
+            const d = dayOf(g);
+            if (!byDay.has(d)) byDay.set(d, []);
+            byDay.get(d).push(g);
+          }
+          const dayKeys = Array.from(byDay.keys()).sort((a, b) => b.localeCompare(a));
+          const fmtHeader = (d) => {
+            if (d === "Unknown date") return d;
+            try {
+              return new Date(d + "T00:00:00").toLocaleDateString(undefined,
+                { weekday: "long", month: "short", day: "numeric", year: "numeric" });
+            } catch { return d; }
+          };
+          return (
+            <div data-testid="portal-videos-grouped">
+              {dayKeys.map((day, di) => (
+                <div key={day} data-testid={`portal-videos-date-group-${day}`}
+                     className={di > 0 ? "pt-6 mt-6" : ""}
+                     style={di > 0 ? { borderTop: `1px solid ${colors.border}` } : {}}>
+                  <h2 className="text-sm font-bold mb-3"
+                      style={{ color: colors.onSurface }}
+                      data-testid={`portal-videos-date-header-${day}`}>
+                    {fmtHeader(day)}
+                  </h2>
+                  <div className="space-y-6" data-testid="portal-videos-groups">
+                    {byDay.get(day).map((g) => (
+                      <section key={`${g.kind}:${g.entity_id}`}
+                               className="rounded-2xl p-5"
+                               style={{ backgroundColor: colors.surface,
+                                        border: `1px solid ${colors.border}` }}
+                               data-testid={`portal-video-group-${g.entity_id}`}>
+                        <div className="flex items-baseline gap-2 mb-3">
+                          <h3 className="text-base font-bold" style={{ color: colors.onSurface }}>
+                            {g.entity_title}
+                          </h3>
+                          <span className="text-[11px] uppercase tracking-wider font-semibold"
+                                style={{ color: colors.muted }}>
+                            {g.kind === "estimate" ? "Estimate" : "Job"}
+                            {g.job_scheduled_date ? ` · ${g.job_scheduled_date.slice(0, 10)}` : ""}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {g.videos.map((v) => (
+                            <PortalVideoTile
+                              key={v.video_id}
+                              video={v}
+                              onPlay={() => setLightboxSrc(tokenizedSrc(v.storage_path))}
+                            />
+                          ))}
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })()
       )}
 
       {lightboxSrc ? (

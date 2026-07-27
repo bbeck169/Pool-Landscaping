@@ -139,40 +139,70 @@ export function PortalServiceReports() {
           hint="Your first report will appear here after your next scheduled visit."
         />
       ) : (
-        <ul className="space-y-2" data-testid="portal-service-reports-list">
-          {rows.map((r) => {
-            const kind = reportKind(r);
-            const KindIcon = kind === "landscape" ? Leaf : Waves;
-            const iconTone =
-              kind === "landscape" ? colors.success : colors.brand;
-            return (
-              <li
-                key={r.id}
-                onClick={() => navigate(`/portal/service-reports/${r.id}`)}
-                className="cursor-pointer flex items-center gap-3 p-4 rounded-xl transition hover:brightness-95"
-                style={{
-                  backgroundColor: colors.surface,
-                  border: `1px solid ${colors.border}`,
-                }}
-                data-testid={`portal-service-report-card-${r.id}`}
-              >
-                <div
-                  className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
-                  style={{ backgroundColor: iconTone + "22", color: iconTone }}
-                >
-                  <KindIcon size={18} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <KindChip kind={kind} />
-                    <span
-                      className="text-xs"
-                      style={{ color: colors.muted }}
-                      data-testid={`portal-service-report-date-${r.id}`}
-                    >
-                      {fmtDate(r.submitted_at || r.scheduled_start)}
-                    </span>
-                  </div>
+        (() => {
+          // Phase 34 · Feb 2026 — group service reports by date
+          // (submitted_at → scheduled_start). Newest date group first;
+          // items within a group keep their existing order. Divider +
+          // long-date header between groups.
+          const byDate = new Map();
+          for (const r of rows) {
+            const day = (r.submitted_at || r.scheduled_start || r.created_at || "").slice(0, 10) || "Unknown date";
+            if (!byDate.has(day)) byDate.set(day, []);
+            byDate.get(day).push(r);
+          }
+          const dayKeys = Array.from(byDate.keys()).sort((a, b) => b.localeCompare(a));
+          const fmtHeader = (d) => {
+            if (d === "Unknown date") return d;
+            try {
+              return new Date(d + "T00:00:00").toLocaleDateString(undefined,
+                { weekday: "long", month: "short", day: "numeric", year: "numeric" });
+            } catch { return d; }
+          };
+          return (
+            <div data-testid="portal-service-reports-grouped">
+              {dayKeys.map((day, gi) => (
+                <div key={day} data-testid={`portal-service-reports-date-group-${day}`}
+                     className={gi > 0 ? "pt-6 mt-6" : ""}
+                     style={gi > 0 ? { borderTop: `1px solid ${colors.border}` } : {}}>
+                  <h2 className="text-sm font-bold mb-3"
+                      style={{ color: colors.onSurface }}
+                      data-testid={`portal-service-reports-date-header-${day}`}>
+                    {fmtHeader(day)}
+                  </h2>
+                  <ul className="space-y-2" data-testid="portal-service-reports-list">
+                    {byDate.get(day).map((r) => {
+                      const kind = reportKind(r);
+                      const KindIcon = kind === "landscape" ? Leaf : Waves;
+                      const iconTone =
+                        kind === "landscape" ? colors.success : colors.brand;
+                      return (
+                        <li
+                          key={r.id}
+                          onClick={() => navigate(`/portal/service-reports/${r.id}`)}
+                          className="cursor-pointer flex items-center gap-3 p-4 rounded-xl transition hover:brightness-95"
+                          style={{
+                            backgroundColor: colors.surface,
+                            border: `1px solid ${colors.border}`,
+                          }}
+                          data-testid={`portal-service-report-card-${r.id}`}
+                        >
+                          <div
+                            className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
+                            style={{ backgroundColor: iconTone + "22", color: iconTone }}
+                          >
+                            <KindIcon size={18} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <KindChip kind={kind} />
+                              <span
+                                className="text-xs"
+                                style={{ color: colors.muted }}
+                                data-testid={`portal-service-report-date-${r.id}`}
+                              >
+                                {fmtDate(r.submitted_at || r.scheduled_start)}
+                              </span>
+                            </div>
                   <div
                     className="text-sm font-semibold mt-1 truncate"
                     style={{ color: colors.onSurface }}
@@ -197,11 +227,16 @@ export function PortalServiceReports() {
                     )}
                   </div>
                 </div>
-                <StatusPill status="completed" />
-              </li>
-            );
-          })}
-        </ul>
+                          <StatusPill status="completed" />
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          );
+        })()
       )}
     </div>
   );

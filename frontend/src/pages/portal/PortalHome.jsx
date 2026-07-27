@@ -99,6 +99,51 @@ export default function PortalHome() {
           the JSX render call was deleted from PortalHome. */}
       {/* <GreetingTile /> */}
 
+      {/* Phase 34 · Feb 2026 — hero card relocated to the TOP of the
+          Portal Home content area per user directive. It used to sit
+          below the stat/alert cards + ToS banner + Call/Request
+          buttons; now it renders first so customers land on their
+          "Hi, {first} 👋 · next visit" greeting immediately. Content
+          + styling unchanged — this is a pure DOM reorder. */}
+      <div
+        className="rounded-2xl p-6 md:p-8 mb-4 text-white relative overflow-hidden"
+        style={{ background: brandGradientCss, minHeight: 180 }}
+        data-testid="portal-hero"
+        data-tour-id="next-service-visit"
+      >
+        <div
+          className="absolute inset-0 opacity-25"
+          style={{
+            backgroundImage:
+              "url(https://images.pexels.com/photos/261101/pexels-photo-261101.jpeg?auto=compress&cs=tinysrgb&w=1200)",
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+          }}
+        />
+        <div className="relative">
+          <p className="text-white/85 text-sm">Welcome back</p>
+          <h1 className="text-3xl md:text-4xl font-bold mt-1">Hi, {first} 👋</h1>
+          {data ? (
+            data.next_visit ? (
+              <div className="mt-4 bg-white/15 backdrop-blur rounded-xl p-4">
+                <div className="text-xs uppercase tracking-widest opacity-80">Next visit</div>
+                <div className="text-lg font-bold mt-0.5">{data.next_visit.title}</div>
+                <div className="text-sm opacity-90 mt-1">
+                  {data.next_visit.scheduled_date
+                    ? new Date(data.next_visit.scheduled_date).toDateString()
+                    : "TBD"}{" "}
+                  · {data.next_visit.technician_name || "Unassigned"}
+                </div>
+              </div>
+            ) : (
+              <p className="text-white/85 mt-3 text-sm">No upcoming visits scheduled.</p>
+            )
+          ) : (
+            <Skeleton style={{ height: 60, backgroundColor: "rgba(255,255,255,0.2)", marginTop: 12 }} />
+          )}
+        </div>
+      </div>
+
       {/* Feb-2026 · Item 12 — status "circles" hoisted directly under
           the greeting tile. Two rows: primary account tiles
           (Balance/Past Due/Credit/Next Service) + optional alert
@@ -261,45 +306,11 @@ export default function PortalHome() {
           so the primary landing surface shows service + billing tiles
           first. Testids preserved. */}
 
-      {/* Original hero + rest of the page continues below */}
-      <div
-        className="rounded-2xl p-6 md:p-8 mb-4 text-white relative overflow-hidden"
-        style={{ background: brandGradientCss, minHeight: 180 }}
-        data-testid="portal-hero"
-        data-tour-id="next-service-visit"
-      >
-        <div
-          className="absolute inset-0 opacity-25"
-          style={{
-            backgroundImage:
-              "url(https://images.pexels.com/photos/261101/pexels-photo-261101.jpeg?auto=compress&cs=tinysrgb&w=1200)",
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-          }}
-        />
-        <div className="relative">
-          <p className="text-white/85 text-sm">Welcome back</p>
-          <h1 className="text-3xl md:text-4xl font-bold mt-1">Hi, {first} 👋</h1>
-          {data ? (
-            data.next_visit ? (
-              <div className="mt-4 bg-white/15 backdrop-blur rounded-xl p-4">
-                <div className="text-xs uppercase tracking-widest opacity-80">Next visit</div>
-                <div className="text-lg font-bold mt-0.5">{data.next_visit.title}</div>
-                <div className="text-sm opacity-90 mt-1">
-                  {data.next_visit.scheduled_date
-                    ? new Date(data.next_visit.scheduled_date).toDateString()
-                    : "TBD"}{" "}
-                  · {data.next_visit.technician_name || "Unassigned"}
-                </div>
-              </div>
-            ) : (
-              <p className="text-white/85 mt-3 text-sm">No upcoming visits scheduled.</p>
-            )
-          ) : (
-            <Skeleton style={{ height: 60, backgroundColor: "rgba(255,255,255,0.2)", marginTop: 12 }} />
-          )}
-        </div>
-      </div>
+      {/* Phase 34 · Feb 2026 — original hero card location. Moved to
+          the top of the page (see the block right after the stat
+          circles comment). This slot is intentionally blank so the
+          content below (Terms of Service banner, Call Now, Quick
+          Actions) shifts up by one card slot. */}
 
       {/* Alerts — Feb-2026 · Item 12 · moved into the status-circles
           block at the top of the page. The old copy here is retained
