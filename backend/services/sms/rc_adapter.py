@@ -27,6 +27,8 @@ import os
 import re
 from typing import Any, Dict, Optional
 
+import httpx
+
 from config import logger
 from services.ringcentral.rc_client import RingCentralError, RingCentralService
 
@@ -204,6 +206,15 @@ class RingCentralSMSAdapter:
                     "[rc-sms] attempt %s/%s to %s crashed: %s",
                     attempt, _MAX_ATTEMPTS, addr_e164, exc,
                 )
+                # Feb-2026 · Prod 502 hardening — httpx timeout / connect
+                # errors on the OAuth path are TERMINAL. Retrying just
+                # piles on latency (up to 3 × 15s = 45s) and blows past
+                # the ~30s edge-gateway timeout, turning a clean 502
+                # into an opaque HTML 502. Fail fast so the endpoint
+                # layer can surface a JSON error.
+                if isinstance(exc, (httpx.TimeoutException,
+                                        httpx.ConnectError)):
+                    break
                 if attempt == _MAX_ATTEMPTS:
                     break
                 await asyncio.sleep(2 ** (attempt - 1))
