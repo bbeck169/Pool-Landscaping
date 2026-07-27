@@ -46,7 +46,11 @@ def render_email(
     reason: Optional[str] = None,
 ) -> dict:
     company = (tenant or {}).get("name") or "Pool & Landscaping"
-    logo = (tenant or {}).get("logo_url") or ""
+    # Phase 34 · Feb 2026 — brand logo fallback so every pricing email
+    # carries brand identity even when the tenant hasn't uploaded one.
+    logo = ((tenant or {}).get("logo_url")
+            or (((tenant or {}).get("settings") or {}).get("business_card") or {}).get("logo_url")
+            or "https://app.plofv.com/logo-full.png")
     first_name = ((customer or {}).get("name") or "there").split(" ")[0]
     delta = round(float(recommended_price) - float(current_price), 2)
     delta_pct = (delta / float(current_price) * 100) if current_price else 0.0

@@ -24,6 +24,7 @@ RBAC:
 """
 from __future__ import annotations
 
+import os
 from io import BytesIO
 from typing import Any, Dict, Optional
 
@@ -35,6 +36,29 @@ from utils import get_current_user, now_iso
 from routers.tenants import get_current_tenant
 
 router = APIRouter()
+
+
+# ── Brand logo path resolver (Phase 34 · Feb 2026) ────────────────────
+# Prefer a per-tenant custom logo when one has been uploaded; fall back
+# to the shared brand mark shipped with the frontend so every generated
+# invoice PDF still carries brand identity.
+_FALLBACK_LOGO_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "frontend", "public", "logo-full.png",
+)
+
+
+def _resolve_logo_path(tenant: Dict[str, Any]) -> Optional[str]:
+    """Return a filesystem path to the logo image for ReportLab, or None
+    if we should render the PDF without a logo."""
+    settings = (tenant or {}).get("settings") or {}
+    biz = settings.get("business_card") or {}
+    override = biz.get("logo_local_path") or tenant.get("logo_local_path")
+    if override and os.path.exists(override):
+        return override
+    if os.path.exists(_FALLBACK_LOGO_PATH):
+        return _FALLBACK_LOGO_PATH
+    return None
 
 
 DEFAULT_NOTE = (
@@ -238,6 +262,7 @@ async def get_invoice_pdf(iid: str,
     from reportlab.lib.units import inch
     from reportlab.platypus import (
         SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable,
+        Image,
     )
 
     styles = getSampleStyleSheet()
@@ -254,6 +279,19 @@ async def get_invoice_pdf(iid: str,
                               leftMargin=0.5 * inch, rightMargin=0.5 * inch,
                               topMargin=0.5 * inch, bottomMargin=0.5 * inch)
     story = []
+
+    # ── Brand logo (Phase 34 · Feb 2026) ────────────────────────
+    # Per-tenant override wins; falls back to the shared brand logo
+    # bundled with the frontend so every generated invoice PDF
+    # carries the same brand identity as estimates + login screens.
+    logo_path = _resolve_logo_path(tenant)
+    if logo_path:
+        try:
+            story.append(Image(logo_path, width=2.4 * inch, height=0.9 * inch,
+                                kind="proportional", hAlign="LEFT"))
+            story.append(Spacer(1, 8))
+        except Exception:  # pragma: no cover — never let a missing asset kill the PDF
+            logger.warning("invoice_pdf: failed to embed logo from %s", logo_path)
 
     # ── Header (two columns) ────────────────────────────────────
     company = payload["company"]

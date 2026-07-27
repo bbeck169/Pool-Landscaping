@@ -49,6 +49,16 @@
   align-items: start;
 }
 .iv-header-left { font-size: 13px; line-height: 1.5; }
+/* Phase 34 · Feb 2026 — brand logo header on invoice/estimate previews. */
+.iv-brand-logo {
+  display: block;
+  max-height: 72px;
+  max-width: 220px;
+  width: auto;
+  height: auto;
+  margin-bottom: 10px;
+  object-fit: contain;
+}
 .iv-company-name {
   font-weight: 800;
   font-size: 15px;

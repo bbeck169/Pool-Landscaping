@@ -335,55 +335,13 @@ export default function PortalHome() {
         </div>
       </div>
 
-      {/* Slice O2 · Refer a Friend section. */}
-      <ReferralSection />
-      {/* Slice O.2 · My Referrals — hides when list is empty. */}
-      <MyReferralsSection />
-
-      {/* Feb-2026 · Item 3/10 — Customer-facing business card. Tap
-          to save the company contact / open NFC handoff. Tagged for
-          the portal tour (step 4). */}
-      <div className="mb-4 max-w-md" data-tour-id="business-card">
-        <BusinessCard variant="compact" />
-      </div>
-
-      {/* Last visit */}
-      {data?.last_visit ? (
-        <div
-          className="rounded-2xl p-5"
-          style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-          data-testid="last-visit-card"
-        >
-          <div className="text-xs uppercase font-semibold mb-2" style={{ color: colors.muted }}>
-            Last visit
-          </div>
-          <div className="flex items-start gap-3">
-            <div
-              className="w-11 h-11 rounded-xl flex items-center justify-center"
-              style={{ backgroundColor: colors.brandTertiary, color: colors.brand }}
-            >
-              <Waves size={18} />
-            </div>
-            <div className="flex-1">
-              <div className="text-base font-semibold" style={{ color: colors.onSurface }}>{data.last_visit.title}</div>
-              <div className="text-sm" style={{ color: colors.muted }}>
-                {data.last_visit.scheduled_date} · {data.last_visit.technician_name || "—"}
-              </div>
-              <div className="mt-2"><StatusPill status={data.last_visit.status} /></div>
-            </div>
-            <button onClick={() => navigate(`/portal/services/${data.last_visit.id}`)}>
-              <ChevronRight size={18} color={colors.muted} />
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {/* Feb-2026 · Slice J1 — AI Employees ("Ask a concierge") block
-          moved from top-of-page to bottom-of-page per user request.
-          Testids preserved (``portal-ai-section``, ``portal-ai-<key>-card``)
-          so existing e2e wiring keeps working. */}
+      {/* Phase 34 · Feb 2026 · reorder — "Ask a concierge" moved
+          from bottom-of-page to sit directly ABOVE the "Refer a
+          Friend" section per product request. Testids preserved
+          (`portal-ai-section`, `portal-ai-<key>-card`) so existing
+          e2e wiring keeps working. */}
       {aiEmployees.length > 0 ? (
-        <div className="mt-5" data-testid="portal-ai-section">
+        <div className="mt-5 mb-4" data-testid="portal-ai-section">
           <div className="flex items-center gap-2 mb-2">
             <Sparkles size={16} style={{ color: colors.brand }} />
             <h2
@@ -440,6 +398,56 @@ export default function PortalHome() {
           </div>
         </div>
       ) : null}
+
+      {/* Slice O2 · Refer a Friend section. */}
+      <ReferralSection />
+      {/* Slice O.2 · My Referrals — hides when list is empty. */}
+      <MyReferralsSection />
+
+      {/* Feb-2026 · Item 3/10 — Customer-facing business card. Tap
+          to save the company contact / open NFC handoff. Tagged for
+          the portal tour (step 4). */}
+      <div className="mb-4 max-w-md" data-tour-id="business-card">
+        <BusinessCard variant="compact" />
+      </div>
+
+      {/* Last visit */}
+      {data?.last_visit ? (
+        <div
+          className="rounded-2xl p-5"
+          style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+          data-testid="last-visit-card"
+        >
+          <div className="text-xs uppercase font-semibold mb-2" style={{ color: colors.muted }}>
+            Last visit
+          </div>
+          <div className="flex items-start gap-3">
+            <div
+              className="w-11 h-11 rounded-xl flex items-center justify-center"
+              style={{ backgroundColor: colors.brandTertiary, color: colors.brand }}
+            >
+              <Waves size={18} />
+            </div>
+            <div className="flex-1">
+              <div className="text-base font-semibold" style={{ color: colors.onSurface }}>{data.last_visit.title}</div>
+              <div className="text-sm" style={{ color: colors.muted }}>
+                {data.last_visit.scheduled_date} · {data.last_visit.technician_name || "—"}
+              </div>
+              <div className="mt-2"><StatusPill status={data.last_visit.status} /></div>
+            </div>
+            <button onClick={() => navigate(`/portal/services/${data.last_visit.id}`)}>
+              <ChevronRight size={18} color={colors.muted} />
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Feb-2026 · Slice J1 — the "Ask a concierge" AI Employees
+          block used to render here at the bottom of the page.
+          Phase 34 · Feb 2026 · reorder — it has been moved up to
+          sit immediately above the "Refer a Friend" section. This
+          slot is intentionally left empty so nothing below shifts. */}
+      {null}
 
       {/* Feb-2026 · Slice 3D — Quick Request Service modal.
           only when the CTA is tapped.  Submits to the same endpoint

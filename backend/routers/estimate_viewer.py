@@ -38,6 +38,7 @@ from pydantic import BaseModel
 from config import db, logger, JWT_SECRET, JWT_ALGO
 from utils import get_current_user, now_iso, new_id
 from routers.tenants import get_current_tenant
+from routers.invoice_viewer import _resolve_logo_path
 from routers.invoice_viewer import (
     _fmt_addr, _load_company, _load_customer,
 )
@@ -469,6 +470,7 @@ async def estimate_pdf(eid: str,
     from reportlab.lib.units import inch
     from reportlab.platypus import (
         SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable,
+        Image,
     )
     styles = getSampleStyleSheet()
     big = ParagraphStyle("big", parent=styles["Title"], alignment=1, fontSize=28)
@@ -484,6 +486,20 @@ async def estimate_pdf(eid: str,
         topMargin=0.5 * inch, bottomMargin=0.5 * inch,
     )
     story = []
+
+    # ── Brand logo (Phase 34 · Feb 2026) ────────────────────────
+    # Per-tenant override wins; falls back to the shared brand logo
+    # bundled with the frontend so every generated estimate PDF
+    # matches the invoice + login + email surfaces.
+    logo_path = _resolve_logo_path(tenant)
+    if logo_path:
+        try:
+            story.append(Image(logo_path, width=2.4 * inch, height=0.9 * inch,
+                                kind="proportional", hAlign="LEFT"))
+            story.append(Spacer(1, 8))
+        except Exception:  # pragma: no cover
+            logger.warning("estimate_pdf: failed to embed logo from %s", logo_path)
+
     company = payload["company"]
     hdr = payload["header"]
     header_t = Table([[

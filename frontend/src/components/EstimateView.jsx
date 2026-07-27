@@ -244,6 +244,15 @@ export default function EstimateView({
       <div className="iv-doc ev-doc">
         <div className="iv-header ev-header" data-testid="estimate-header">
           <div className="iv-header-left">
+            {/* Phase 34 · Feb 2026 — brand logo header. Falls back to
+                the shared /logo-full.png bundled with the frontend so
+                every estimate preview matches PDFs, invoices + emails. */}
+            <img
+              src={company.logo_url || "/logo-full.png"}
+              alt={company.name || "Pool & Landscaping of Vistancia"}
+              className="iv-brand-logo"
+              data-testid="estimate-brand-logo"
+            />
             <div className="iv-company-name">{company.name}</div>
             {company.address ? <div>{company.address}</div> : null}
             {company.phone ? <div><a href={`tel:${company.phone}`} className="iv-link">{company.phone}</a></div> : null}

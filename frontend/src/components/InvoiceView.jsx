@@ -115,6 +115,15 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
         {/* ── Header ─────────────────────────────────────── */}
         <div className="iv-header" data-testid="invoice-header">
           <div className="iv-header-left" data-testid="invoice-header-logo">
+            {/* Phase 34 · Feb 2026 — brand logo header. Falls back to
+                the shared /logo-full.png bundled with the frontend so
+                every invoice preview matches PDFs, estimates + emails. */}
+            <img
+              src={company.logo_url || "/logo-full.png"}
+              alt={company.name || "Pool & Landscaping of Vistancia"}
+              className="iv-brand-logo"
+              data-testid="invoice-brand-logo"
+            />
             <div className="iv-company-name">{company.name}</div>
             {company.address ? (
               <div className="iv-company-addr">{company.address}</div>

@@ -122,7 +122,12 @@ def _landscape_body_sections(sr: dict) -> list[dict]:
 def render_email(tenant: dict, job: dict, sr: dict, customer: dict) -> dict:
     """Return {subject, html, text}. `sr` must already be customer-redacted."""
     company = tenant.get("name") or "Pool & Landscaping"
-    logo = tenant.get("logo_url") or ""
+    # Phase 34 · Feb 2026 — brand logo header. Tenant override wins;
+    # falls back to the shared brand mark so every service-visit email
+    # matches the estimate/invoice/login surfaces.
+    logo = (tenant.get("logo_url")
+            or ((tenant.get("settings") or {}).get("business_card") or {}).get("logo_url")
+            or "https://app.plofv.com/logo-full.png")
     kind = (sr.get("kind") or job.get("service_type") or "pool").lower()
     is_landscape = "landscape" in kind or "landscap" in kind
     visit_date = _visit_date_formatted(sr, job)
