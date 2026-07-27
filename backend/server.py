@@ -197,6 +197,9 @@ from routers import lumino_zapier_bridge as _qq_lumino_zapier  # noqa: E402
 api_router.include_router(_qq_lumino_zapier.router)
 from routers import lumino_return as _qq_lumino_return  # noqa: E402
 api_router.include_router(_qq_lumino_return.router)
+# Task SS · Feb 2026 — admin service credit issuance / reversal.
+from routers import customer_credits_admin as _ss_customer_credits_admin  # noqa: E402
+api_router.include_router(_ss_customer_credits_admin.router)
 # Phase 32 · Feb 2026 — Mobile offline sync backend (batch op replay
 # + offline-bundle prefetch). Idempotent per ``client_op_id``;
 # conflicts resolve mobile-wins with an audit-logged snapshot.

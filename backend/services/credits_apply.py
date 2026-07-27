@@ -103,6 +103,22 @@ def apply_credits_to_invoice(
         "credit_line": True,
     })
     new_invoice["line_items"] = line_items
+    # Task SS · Feb 2026 — when the credit fully covers the invoice
+    # (``new_total_cents == 0``), close the invoice out here so the
+    # downstream card charge is short-circuited and the customer
+    # sees the invoice as paid immediately. We only stamp the
+    # payment fields when the invoice was previously unpaid /
+    # in-draft — an idempotent guard against re-application on
+    # re-issue.
+    if new_total_cents == 0 and (new_invoice.get("payment_status") or "unpaid") != "paid":
+        new_invoice["payment_status"] = "paid"
+        new_invoice["paid_method"] = "service_credit"
+        new_invoice["paid_at"] = _now_iso()
+        new_invoice["amount_paid"] = round(total / 100.0, 2)
+        # Status field mirrors payment_status for surfaces that
+        # index on ``status`` rather than ``payment_status``.
+        if (new_invoice.get("status") or "").lower() in ("", "draft", "sent"):
+            new_invoice["status"] = "paid"
 
     # ─── Compose updated customer.
     new_customer = dict(customer)

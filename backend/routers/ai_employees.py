@@ -245,6 +245,15 @@ class EmployeePatch(BaseModel):
     system_prompt: Optional[str] = Field(None, max_length=4000)
     active: Optional[bool] = None
     avatar_emoji: Optional[str] = Field(None, max_length=8)
+    # Task RR · Feb 2026 — per-persona data read scope.
+    # ``customer_scoped`` (default for all seeded personas) restricts
+    # tool calls to the caller's OWN customer data. ``tenant_all``
+    # lifts the scope and is only intended for admin-audience
+    # personas (Billy-admin, Skedra-dispatcher). Only super_admin can
+    # flip this via the admin PATCH endpoint — enforced router-side.
+    read_access_scope: Optional[str] = Field(
+        None, pattern="^(customer_scoped|tenant_all)$",
+    )
 
 
 class BrandBrainPatch(BaseModel):
@@ -312,6 +321,15 @@ async def seed_ai_employees_for_tenant(tenant_id: str) -> int:
                     {"$set": {"audience": audience,
                               "updated_at": now_iso()}},
                 )
+            # Task RR · Feb 2026 — backfill ``read_access_scope``.
+            # Default all legacy rows to ``customer_scoped`` (safe).
+            # Admin flips to ``tenant_all`` via PATCH.
+            if not exists.get("read_access_scope"):
+                await db.ai_employees.update_one(
+                    {"id": exists["id"]},
+                    {"$set": {"read_access_scope": "customer_scoped",
+                              "updated_at": now_iso()}},
+                )
             continue
         doc = {
             "id": new_id(), "tenant_id": tenant_id, "key": e["key"],
@@ -319,6 +337,7 @@ async def seed_ai_employees_for_tenant(tenant_id: str) -> int:
             "avatar_emoji": e["avatar_emoji"],
             "system_prompt": e["system_prompt"],
             "audience": audience,
+            "read_access_scope": "customer_scoped",
             "active": True,
             "created_at": now_iso(), "updated_at": now_iso(),
         }
@@ -522,6 +541,15 @@ async def patch_employee(eid: str, body: EmployeePatch,
     updates = {k: v for k, v in body.dict(exclude_unset=True).items()}
     if not updates:
         return await _get_employee(tenant["id"], eid, expected_audience="admin")
+    # Task RR · Feb 2026 — only super_admin can flip a persona to
+    # ``tenant_all``. Regular admins can still flip back to
+    # ``customer_scoped`` (safe direction), so that path is not
+    # gated.
+    if (updates.get("read_access_scope") == "tenant_all"
+            and user.get("role") != "super_admin"):
+        raise HTTPException(
+            403, "Only super_admin can grant tenant_all read access",
+        )
     updates["updated_at"] = now_iso()
     r = await db.ai_employees.update_one(
         {"id": eid, "tenant_id": tenant["id"]}, {"$set": updates},
@@ -531,6 +559,39 @@ async def patch_employee(eid: str, body: EmployeePatch,
     return await db.ai_employees.find_one(
         {"id": eid, "tenant_id": tenant["id"]}, {"_id": 0},
     )
+
+
+# ─── Task RR · Feb 2026 — AI tool call audit trail ───────────────────
+@router.get("/admin/ai-tool-audit")
+async def list_ai_tool_audit(
+    persona_key: Optional[str] = None,
+    tool_name: Optional[str] = None,
+    since: Optional[str] = None,
+    limit: int = 200,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Admin-only tail of the ``ai_tool_calls`` collection.
+
+    Retention is 90 days (TTL index on ``created_at`` installed by
+    the tool dispatcher on first use). Filter by ``persona_key``,
+    ``tool_name``, or an ISO ``since`` cutoff. Default 200 rows.
+    """
+    q: Dict[str, Any] = {"tenant_id": tenant["id"]}
+    if persona_key:
+        q["persona_key"] = persona_key
+    if tool_name:
+        q["tool_name"] = tool_name
+    if since:
+        q["created_at"] = {"$gte": since}
+    try:
+        limit = max(1, min(int(limit), 500))
+    except (TypeError, ValueError):
+        limit = 200
+    rows = await db.ai_tool_calls.find(
+        q, {"_id": 0}
+    ).sort("created_at", -1).limit(limit).to_list(limit)
+    return {"items": rows, "total": len(rows)}
 
 
 # ─── Brand Brain ─────────────────────────────────────────────────────

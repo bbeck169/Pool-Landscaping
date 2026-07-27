@@ -693,8 +693,20 @@ async def send_customer_message(
         # is allowed to see for this call.
         kind = "billing" if emp.get("key") == "billy" else "scheduling"
         ctx = await customer_scoped_context(tenant["id"], cid, kind)
+        # Task RR · Feb 2026 — append the tool schema so the LLM can
+        # emit ```tool ...``` fences to fetch data dynamically. The
+        # dispatcher enforces this persona's read_access_scope and
+        # auto-injects the caller's customer_id — the LLM cannot
+        # cross-customer-lookup.
+        from services.ai_employee_tools import (
+            tool_schema_prompt_snippet,
+            parse_tool_fence,
+            dispatch_tool,
+        )
         system_prompt = (
-            emp["system_prompt"] + "\n\n" + _format_context_for_prompt(ctx)
+            emp["system_prompt"] + "\n\n"
+            + _format_context_for_prompt(ctx) + "\n\n"
+            + tool_schema_prompt_snippet(emp)
         )
 
         history = await db.ai_employee_messages.find(
@@ -705,6 +717,38 @@ async def send_customer_message(
         r = await _llm_chat(system_prompt, body.text, history)
         assistant_text = r["text"]
         provider = r.get("provider", "stub")
+
+        # Task RR · tool loop — up to 3 rounds. If the LLM emitted
+        # a ```tool``` fence, dispatch it, feed the result back,
+        # and re-prompt. This is a best-effort loop: any parse /
+        # dispatch failure surfaces as a structured error which the
+        # LLM can politely explain.
+        tool_history: List[Dict[str, Any]] = []
+        for _round in range(3):
+            parsed = parse_tool_fence(assistant_text)
+            if not parsed:
+                break
+            tname, targs = parsed
+            outcome = await dispatch_tool(
+                tenant_id=tenant["id"],
+                persona=emp,
+                caller_kind="customer",
+                caller_customer_id=cid,
+                tool_name=tname,
+                args=targs,
+            )
+            tool_history.append({"name": tname, "args": targs,
+                                       "outcome_preview": str(outcome)[:200]})
+            payload = outcome.get("result") if "result" in outcome else outcome
+            follow = (
+                f"Tool `{tname}` returned:\n"
+                f"```json\n{__import__('json').dumps(payload, default=str)[:3000]}\n```\n"
+                "Answer the user's question with this data. If it "
+                "doesn't help, offer to escalate."
+            )
+            r2 = await _llm_chat(system_prompt, follow, history)
+            assistant_text = r2["text"]
+            provider = r2.get("provider", provider)
 
         # Escalation trigger — model-emitted marker OR the 2nd
         # unresolved turn (per spec).
@@ -747,6 +791,7 @@ async def send_customer_message(
         "escalated": escalated,
         "escalate_reason": escalate_reason,
         "provider": provider,
+        "tool_calls": locals().get("tool_history") or [],
         "created_at": now_iso(),
     }
     await db.ai_employee_messages.insert_one(assistant_msg)
