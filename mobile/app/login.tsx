@@ -49,9 +49,16 @@ export default function Login() {
         <Image source={{ uri: IMAGES.loginHero }} style={StyleSheet.absoluteFill} contentFit="cover" />
         <LinearGradient colors={["rgba(0,40,65,0.35)", "rgba(20,30,40,0.55)"]} style={StyleSheet.absoluteFill} />
         <View style={styles.heroTop}>
-          <View style={styles.logoBadge}>
-            <Ionicons name="water" size={22} color={colors.brand} />
-          </View>
+          {/* Phase 33 · Feb 2026 — logo + two-line brand header
+              stacked vertically, centered. Layout order:
+                [logo] → [Welcome to] → [Pool & Landscaping ... LLC].
+              Replaces the previous water-icon badge on the left. */}
+          <Image
+            source={require("../assets/logo-full.png")}
+            style={{ height: 120, width: "80%", marginBottom: spacing.md }}
+            contentFit="contain"
+            testID="login-logo-full"
+          />
           <Text style={styles.brand}>
             <Text style={styles.brandLine1}>Welcome to{"\n"}</Text>
             <Text style={styles.brandLine2}>Pool & Landscaping of Vistancia LLC</Text>
@@ -143,7 +150,7 @@ export default function Login() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
   hero: { height: 300, justifyContent: "space-between", paddingTop: 56 },
-  heroTop: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.xl },
+  heroTop: { flexDirection: "column", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.xl },
   logoBadge: {
     width: 44,
     height: 44,
@@ -152,13 +159,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  brand: { fontFamily: font.bold, fontSize: fontSize.lg, color: "#fff", lineHeight: 20 },
+  brand: { fontFamily: font.bold, fontSize: fontSize.lg, color: "#fff", lineHeight: 20, textAlign: "center" },
   // Phase 30 · Feb 2026 — two-line brand header. Line 2 is exactly half
   // the size of Line 1 (28 → 14) per the spec. ``lineHeight`` on Line 1
   // is tightened so Line 2 sits directly below with only natural
-  // line-height as separation.
-  brandLine1: { fontFamily: font.bold, fontSize: 28, color: "#fff", lineHeight: 30 },
-  brandLine2: { fontFamily: font.bold, fontSize: 14, color: "#fff", lineHeight: 18 },
+  // line-height as separation. Phase 33 · centered under the logo.
+  brandLine1: { fontFamily: font.bold, fontSize: 28, color: "#fff", lineHeight: 30, textAlign: "center" },
+  brandLine2: { fontFamily: font.bold, fontSize: 14, color: "#fff", lineHeight: 18, textAlign: "center" },
   heroBottom: { padding: spacing.xl, paddingBottom: spacing.xl },
   heroTitle: { fontFamily: font.bold, fontSize: 26, color: "#fff", lineHeight: 30 },
   heroSub: { fontFamily: font.regular, fontSize: fontSize.base, color: "rgba(255,255,255,0.9)", marginTop: spacing.sm, lineHeight: 19 },

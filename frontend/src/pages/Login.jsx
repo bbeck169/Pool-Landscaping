@@ -82,40 +82,35 @@ export default function Login() {
             backgroundPosition: "center",
           }}
         />
-        <div className="relative z-10 flex flex-col justify-between p-12 text-white">
-          <div className="flex items-center gap-3">
-            <img
-              src="/logo-full.png"
-              alt="Pool & Landscaping of Vistancia"
-              className="max-w-[280px] w-full"
-              data-testid="login-logo-full"
-            />
-          </div>
-          <div>
-            {/* Phase 30 · Feb 2026 — two-line brand header. Line 2 is
-                exactly half of Line 1's font size (48px → 24px on
-                large; 36px → 18px on small). ``leading-none`` prevents
-                extra whitespace between the two lines beyond the
-                natural line-height inherited from the parent. */}
-            <h1
-              className="font-bold leading-none"
-              data-testid="login-welcome-headline"
-              style={{ fontSize: "3rem" }}
+        <div className="relative z-10 flex flex-col items-center justify-center gap-6 p-12 text-white text-center">
+          {/* Phase 33 · Feb 2026 — logo + two-line brand header now
+              stacked vertically, centered on the hero panel:
+              [logo] → [Welcome to] → [Pool & Landscaping of Vistancia LLC].
+              Preserves the 48px / 24px sizing set in Phase 30. */}
+          <img
+            src="/logo-full.png"
+            alt="Pool & Landscaping of Vistancia"
+            style={{ height: 140, maxWidth: "80%", objectFit: "contain" }}
+            data-testid="login-logo-full"
+          />
+          <h1
+            className="font-bold leading-none"
+            data-testid="login-welcome-headline"
+            style={{ fontSize: "3rem" }}
+          >
+            <span
+              data-testid="login-welcome-line1"
+              style={{ fontSize: "3rem", display: "block", lineHeight: 1.05 }}
             >
-              <span
-                data-testid="login-welcome-line1"
-                style={{ fontSize: "3rem", display: "block", lineHeight: 1.05 }}
-              >
-                Welcome to
-              </span>
-              <span
-                data-testid="login-welcome-line2"
-                style={{ fontSize: "1.5rem", display: "block", lineHeight: 1.15 }}
-              >
-                Pool &amp; Landscaping of Vistancia LLC
-              </span>
-            </h1>
-          </div>
+              Welcome to
+            </span>
+            <span
+              data-testid="login-welcome-line2"
+              style={{ fontSize: "1.5rem", display: "block", lineHeight: 1.15 }}
+            >
+              Pool &amp; Landscaping of Vistancia LLC
+            </span>
+          </h1>
         </div>
       </aside>
 

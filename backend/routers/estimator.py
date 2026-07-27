@@ -781,6 +781,19 @@ def _estimate_html(e: Dict[str, Any], tenant: Dict[str, Any]) -> str:
     brand = tenant.get("name") or "Your Business"
     color = ((tenant.get("brand") or {}).get("primary_color")
               or "#0284C7")
+    # Phase 33 · Feb 2026 — brand logo header. Reads the tenant's
+    # public logo URL; falls back to the shared "logo-full.png" served
+    # by the frontend so estimates delivered as PDFs / emails always
+    # carry brand identity even for tenants that haven't set their own.
+    logo_url = (((tenant.get("settings") or {}).get("business_card")
+                 or {}).get("logo_url")
+                or tenant.get("logo_url")
+                or "https://app.plofv.com/logo-full.png")
+    logo_html = (
+        f'<div style="text-align:center;margin-bottom:16px;">'
+        f'<img src="{logo_url}" alt="Pool &amp; Landscaping of Vistancia" '
+        f'style="height:120px;max-width:60%;object-fit:contain;"/></div>'
+    )
     items_html = "".join(
         f'<tr><td>{li.get("description","")}</td>'
         f'<td>{li.get("quantity","")} {li.get("unit","")}</td>'
@@ -825,6 +838,7 @@ def _estimate_html(e: Dict[str, Any], tenant: Dict[str, Any]) -> str:
         f'<!doctype html><html><head><meta charset="utf-8">'
         f'<title>Estimate · {e.get("title","")}</title>'
         f'<style>{css}</style></head><body>'
+        f'{logo_html}'
         f'<div class="hdr"><h1>{e.get("title","")}</h1>'
         f'<div class="brand">{brand} · Estimate #{e["id"][:8]}</div></div>'
         f'<p><b>Scope:</b> {e.get("description","")}</p>'

@@ -87,6 +87,18 @@ describe("Login page · Phase 30", () => {
     expect(spy).not.toHaveBeenCalledWith("/config/public");
   });
 
+  it("renders elements in the correct DOM order: [logo] → [Line 1] → [Line 2] → [form]", () => {
+    renderPage();
+    const logo = screen.getByTestId("login-logo-full");
+    const l1 = screen.getByTestId("login-welcome-line1");
+    const l2 = screen.getByTestId("login-welcome-line2");
+    const form = screen.getByTestId("login-form");
+    // DOCUMENT_POSITION_FOLLOWING === 4 — verifies later-in-DOM order.
+    expect(logo.compareDocumentPosition(l1) & 4).toBe(4);
+    expect(l1.compareDocumentPosition(l2) & 4).toBe(4);
+    expect(l2.compareDocumentPosition(form) & 4).toBe(4);
+  });
+
   it("still renders the manual email + password inputs (backdoor login works)", () => {
     renderPage();
     // The manual form must remain — user can still type

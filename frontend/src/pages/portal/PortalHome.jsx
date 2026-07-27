@@ -90,8 +90,14 @@ export default function PortalHome() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-home">
-      {/* Feb-2026 · Item 9 — first thing the customer sees. */}
-      <GreetingTile />
+      {/* Feb-2026 · Item 9 — first thing the customer sees.
+          Phase 34 · Feb 2026 · surgical removal — the "Good evening,
+          {name}!" greeting tile (blue→green gradient + Contact us /
+          Book service buttons) has been removed at the user's request.
+          The GreetingTile component + import are left in place in the
+          codebase so nothing else that references them breaks; only
+          the JSX render call was deleted from PortalHome. */}
+      {/* <GreetingTile /> */}
 
       {/* Feb-2026 · Item 12 — status "circles" hoisted directly under
           the greeting tile. Two rows: primary account tiles
