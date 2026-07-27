@@ -183,6 +183,11 @@ api_router.include_router(_p22_public_svc_images.router)
 # + reorder + public streaming. Mounts under /api via api_router.
 from routers import service_report_media as _p27_svc_media  # noqa: E402
 api_router.include_router(_p27_svc_media.router)
+# Phase 32 · Feb 2026 — Mobile offline sync backend (batch op replay
+# + offline-bundle prefetch). Idempotent per ``client_op_id``;
+# conflicts resolve mobile-wins with an audit-logged snapshot.
+from routers import mobile_sync as _p32_mobile_sync  # noqa: E402
+api_router.include_router(_p32_mobile_sync.router)
 api_router.include_router(_p17_reassign.router)
 api_router.include_router(_p18_ai_brain.router)
 api_router.include_router(_p19_admin_users.router)

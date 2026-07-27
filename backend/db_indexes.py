@@ -106,6 +106,17 @@ async def ensure_deployment_indexes() -> None:
          [("public_uuid", ASCENDING)],
          {"unique": True, "sparse": True, "name": "uniq_service_report_public_uuid",
           "background": True}),
+        # Phase 32 · Feb 2026 — Mobile offline sync. Unique dedupe key
+        # on the receipts collection + TTL on ``created_at`` so old
+        # receipts auto-expire after ~60 days.
+        ("pending_sync_receipts",
+         [("client_op_id", ASCENDING), ("tenant_id", ASCENDING)],
+         {"unique": True, "name": "uniq_sync_receipt_client_op",
+          "background": True}),
+        ("mobile_devices",
+         [("device_id", ASCENDING), ("tenant_id", ASCENDING)],
+         {"unique": True, "name": "uniq_mobile_device",
+          "background": True}),
     ]
     for coll, keys, opts in plans:
         try:
