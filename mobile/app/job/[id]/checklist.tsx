@@ -23,9 +23,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Alert,
+  Share,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import * as Clipboard from "expo-clipboard";
 
 import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
@@ -492,6 +494,33 @@ export default function JobChecklistScreen() {
               </PillTag>
             );
           })()}
+
+          {/* Phase 22 — Share Visit pill. Visible once report is locked + has public_uuid. */}
+          {locked && report.public_uuid ? (
+            <Pressable
+              style={styles.shareVisitPill}
+              testID="svc-report-share-visit"
+              onPress={async () => {
+                const base = (process.env.EXPO_PUBLIC_BACKEND_URL || "").replace(/\/+$/, "");
+                const url = `${base}/portal/service/${report.public_uuid}`;
+                await Clipboard.setStringAsync(url);
+                Alert.alert(
+                  "Link copied",
+                  "Link copied — you can text this to the customer.",
+                  [
+                    { text: "OK" },
+                    {
+                      text: "Share…",
+                      onPress: () => Share.share({ url, message: url }).catch(() => {}),
+                    },
+                  ],
+                );
+              }}
+            >
+              <Ionicons name="share-outline" size={12} color="#fff" />
+              <Text style={styles.shareVisitText}>Share visit</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {/* Photos — always visible */}
@@ -683,6 +712,22 @@ const styles = StyleSheet.create({
   networkPillSyncing: { backgroundColor: "rgba(37,99,235,0.95)" },
   networkPillError: { backgroundColor: "rgba(220,38,38,0.95)" },
   networkPillText: {
+    fontFamily: font.bold, fontSize: 11, color: "#FFFFFF",
+  },
+  shareVisitPill: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: "rgba(255,255,255,0.25)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.4)",
+  },
+  shareVisitText: {
     fontFamily: font.bold, fontSize: 11, color: "#FFFFFF",
   },
   card: {

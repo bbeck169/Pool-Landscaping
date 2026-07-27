@@ -220,6 +220,30 @@ export default function ScheduleCalendar() {
     await load();
   };
 
+  const bulkDelete = async () => {
+    if (!checked.size) return;
+    Alert.alert(
+      `Delete ${checked.size} job${checked.size === 1 ? "" : "s"}?`,
+      "Soft-deleted jobs can be recovered by a super admin.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete", style: "destructive", onPress: async () => {
+            setBusy(true);
+            try {
+              await api.post("/jobs/bulk-soft-delete", { job_ids: [...checked] });
+              Alert.alert("Deleted", `${checked.size} job${checked.size === 1 ? "" : "s"} removed.`);
+              setChecked(new Set());
+              await load();
+            } catch (e: any) {
+              Alert.alert("Delete failed", e.message || "Unknown error");
+            } finally { setBusy(false); }
+          },
+        },
+      ],
+    );
+  };
+
   const saveReorder = async () => {
     if (!isAdmin) {
       setRearrangeMode(false);
@@ -342,6 +366,7 @@ export default function ScheduleCalendar() {
           onSaveReorder={saveReorder}
           onShift={shift}
           onBulkComplete={bulkComplete}
+          onBulkDelete={bulkDelete}
           onOpenMove={() => setMoveOpen(true)}
           moveOpen={moveOpen} setMoveOpen={setMoveOpen}
           moveDate={moveDate} setMoveDate={setMoveDate}
@@ -375,7 +400,7 @@ function GridView(props: any) {
   const {
     focus, setFocus, jobs, loading, checked, onToggle, canWrite,
     rearrangeMode, onToggleRearrange, onSaveReorder, onShift,
-    onBulkComplete, onOpenMove, moveOpen, setMoveOpen, moveDate, setMoveDate,
+    onBulkComplete, onBulkDelete, onOpenMove, moveOpen, setMoveOpen, moveDate, setMoveDate,
     onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, hourlyData,
     weatherWidget,
   } = props;
@@ -421,6 +446,15 @@ function GridView(props: any) {
           >
             <Ionicons name="calendar-outline" size={13} color="#fff" />
             <Text style={gStyles.pillText}>Move ({checked.size})</Text>
+          </Pressable>
+          <Pressable
+            onPress={onBulkDelete}
+            disabled={busy || checked.size === 0}
+            style={[gStyles.pill, gStyles.pillRed, (busy || checked.size === 0) && { opacity: 0.4 }]}
+            testID="grid-bulk-delete"
+          >
+            <Ionicons name="trash-outline" size={13} color="#fff" />
+            <Text style={gStyles.pillText}>Delete ({checked.size})</Text>
           </Pressable>
           <Pressable
             onPress={rearrangeMode ? onSaveReorder : onToggleRearrange}
@@ -781,6 +815,7 @@ const gStyles = StyleSheet.create({
   },
   pillGreen:  { backgroundColor: "#059669" },
   pillBlue:   { backgroundColor: "#2563EB" },
+  pillRed:    { backgroundColor: "#DC2626" },
   pillPurple: { backgroundColor: "#7C3AED" },
   pillText: { fontFamily: font.bold, fontSize: fontSize.xs, color: "#fff" },
   moveBox: {
