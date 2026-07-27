@@ -232,6 +232,12 @@ async def _bootstrap_report(tenant_id: str, job: dict, tech_id: str) -> dict:
         "tenant_id": tenant_id,
         "job_id": job["id"],
         "tech_id": tech_id,
+        # Phase 22 · Feb 2026 — opaque public UUID keys the public
+        # /portal/service/{uuid} page used by the SERVICE_RECORD_IMAGES
+        # merge tag. Generated at bootstrap so every submitted report
+        # has one; kept independent from the internal ``id`` so we can
+        # rotate it without touching primary keys.
+        "public_uuid": new_id(),
         "template": kind,
         "chemical_readings": [
             {"key": f.get("key") or f["name"], "name": f["name"],
@@ -410,9 +416,16 @@ async def submit_service_report(jid: str,
     if rep.get("submitted_at"):
         return rep  # idempotent
     now = now_iso()
+    # Phase 22 · Feb 2026 — backfill ``public_uuid`` on submit for
+    # reports that were bootstrapped before the field existed. Safe
+    # for freshly-bootstrapped reports too (idempotent when set).
+    _submit_updates: Dict[str, Any] = {"submitted_at": now, "updated_at": now}
+    if not rep.get("public_uuid"):
+        _submit_updates["public_uuid"] = new_id()
+        rep["public_uuid"] = _submit_updates["public_uuid"]
     await db.service_reports.update_one(
         {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id},
-        {"$set": {"submitted_at": now, "updated_at": now}},
+        {"$set": _submit_updates},
     )
     # Roll job status forward. Preserve existing lifecycle: use `completed` since
     # that already exists across the codebase.

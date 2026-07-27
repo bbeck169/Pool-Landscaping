@@ -98,6 +98,14 @@ async def ensure_deployment_indexes() -> None:
           ("kind", ASCENDING)],
          {"unique": True, "name": "uniq_promo_redemption_pi_kind",
           "background": True}),
+        # Phase 22 · Feb 2026 — Service Record Images public portal.
+        # Unique lookup key for ``GET /api/public/service/{uuid}`` and
+        # the SERVICE_RECORD_IMAGES merge tag. Sparse because legacy
+        # rows may not carry a ``public_uuid`` field.
+        ("service_reports",
+         [("public_uuid", ASCENDING)],
+         {"unique": True, "sparse": True, "name": "uniq_service_report_public_uuid",
+          "background": True}),
     ]
     for coll, keys, opts in plans:
         try:

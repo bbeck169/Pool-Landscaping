@@ -146,6 +146,8 @@ import PublicInstaQuotePage from "@/pages/public/PublicInstaQuote";
 import InstaScheduleAdminPage from "@/pages/marketing/InstaScheduleAdmin";
 import PublicInstaSchedulePage from "@/pages/public/PublicInstaSchedule";
 import PublicInvoicePay from "@/pages/public/PublicInvoicePay";
+// Phase 22 · Feb 2026 — Public Service Images portal (no auth).
+import ServiceImagesPortalPage from "@/pages/public/ServiceImagesPortalPage";
 import AddCardPage from "@/pages/portal/AddCardPage";
 import TeamChatPage from "@/pages/chat/TeamChatPage";
 import {
@@ -377,6 +379,9 @@ export default function App() {
 
           {/* Phase 4B · Feb 2026 — public magic-link invoice payer (no auth). */}
           <Route path="/pay/invoice/:id" element={<PublicInvoicePay />} />
+
+          {/* Phase 22 · Feb 2026 — public service-record images portal (no auth). */}
+          <Route path="/portal/service/:uuid" element={<ServiceImagesPortalPage />} />
 
           {/* Phase 12 · Feb 2026 — public magic-link "Add card" page (no auth). */}
           <Route path="/portal/add-card" element={<AddCardPage />} />

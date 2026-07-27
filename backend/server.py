@@ -174,6 +174,11 @@ from routers import integrations_supercool as _p26_supercool_router  # noqa: E40
 api_router.include_router(_p26_supercool_router.router)
 from routers import media_gen as _phaseb_media_router  # noqa: E402
 api_router.include_router(_phaseb_media_router.router)
+# Phase 22 · Feb 2026 — Public Service Images portal endpoint. Mounted
+# via ``api_router`` so the ``/api`` prefix is applied automatically;
+# rate-limited internally (60 req/min per IP). No auth.
+from routers import public_service_images as _p22_public_svc_images  # noqa: E402
+api_router.include_router(_p22_public_svc_images.router)
 api_router.include_router(_p17_reassign.router)
 api_router.include_router(_p18_ai_brain.router)
 api_router.include_router(_p19_admin_users.router)

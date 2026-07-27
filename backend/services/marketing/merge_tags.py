@@ -295,6 +295,86 @@ def _job_time(ctx: Dict[str, Any]) -> str:
     return ""
 
 
+# ─── Phase 22 · Feb 2026 · Addition — SERVICE_RECORD_IMAGES ─────────────
+# Renders the technician's service-visit photos as 200x200 clickable
+# thumbnails inside outbound emails. Each thumbnail links to the public
+# portal (``/portal/service/{public_uuid}``) so recipients can view the
+# full-size image without a login. NEVER exposes customer PII — the
+# public portal endpoint enforces redaction independently.
+#
+# Empty-string substitution when:
+#   * no ``service_report`` in context, OR
+#   * the report has no ``public_uuid`` (unsubmitted / legacy), OR
+#   * the report has zero public (non-internal) photos.
+
+_SERVICE_IMAGE_PRIVATE_TAGS = {"internal", "issue", "private"}
+_SERVICE_IMAGE_THUMB_SIZE = 200
+
+
+def _service_record_public_photos(sr: Dict[str, Any]) -> List[Dict[str, Any]]:
+    photos = sr.get("photos") or []
+    out: List[Dict[str, Any]] = []
+    for p in photos:
+        if not isinstance(p, dict):
+            continue
+        tags = p.get("tags") or []
+        if isinstance(tags, list) and any(
+                str(t).lower() in _SERVICE_IMAGE_PRIVATE_TAGS for t in tags):
+            continue
+        url = str(p.get("url") or p.get("public_url") or p.get("uri") or "")
+        if not url:
+            continue
+        out.append({"url": url,
+                    "thumbnail_url": p.get("thumbnail_url")
+                                       or p.get("thumb_url") or url})
+    return out
+
+
+def _service_record_images(ctx: Dict[str, Any]) -> str:
+    sr = ctx.get("service_report") or {}
+    if not isinstance(sr, dict):
+        return ""
+    public_uuid = sr.get("public_uuid")
+    if not public_uuid:
+        return ""
+    # Require job context so we never render a stray tag when the sender
+    # is not in a service-report scope (per spec §5).
+    job = ctx.get("job") or {}
+    if not (isinstance(job, dict) and job.get("id")):
+        return ""
+    photos = _service_record_public_photos(sr)
+    if not photos:
+        return ""
+    # Resolve public base URL — prefers tenant override, then env fallback.
+    try:
+        from services.tenant_urls import resolve_primary_app_domain
+        base = resolve_primary_app_domain(ctx.get("tenant") or {})
+    except Exception:
+        base = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
+    if not base:
+        # No public URL → thumbnails would 404 when clicked. Substitute
+        # empty rather than emit a broken link.
+        return ""
+    link = f"{base.rstrip('/')}/portal/service/{public_uuid}"
+    size = _SERVICE_IMAGE_THUMB_SIZE
+    parts: List[str] = [
+        '<div style="margin:12px 0;display:flex;flex-wrap:wrap;gap:8px;">'
+    ]
+    for p in photos:
+        thumb = p["thumbnail_url"]
+        parts.append(
+            f'<a href="{link}" target="_blank" rel="noopener" '
+            f'style="display:inline-block;line-height:0;">'
+            f'<img src="{thumb}" alt="Service photo" '
+            f'width="{size}" height="{size}" '
+            f'style="width:{size}px;height:{size}px;object-fit:cover;'
+            f'border-radius:6px;border:1px solid #e5e7eb;"/>'
+            f'</a>'
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+
 def _tech_name(ctx: Dict[str, Any]) -> str:
     """Phase 21 · Feb 2026 · Addition — TECH_NAME resolves the assigned
     tech's display name. Cascades: ``ctx['tech']['name'] →
@@ -791,6 +871,20 @@ MERGE_TAGS: List[Dict[str, Any]] = [
                        "``job.technician_name``, or ``ctx['employee']`` "
                        "in that order."),
      "resolver": _tech_name},
+
+    # ─── Phase 22 · Feb 2026 · Addition — service-record photo gallery
+    # for outbound emails. Renders 200x200 clickable thumbnails; each
+    # links to the public ``/portal/service/{public_uuid}`` page. Empty
+    # string when no job / no service_report / no photos.
+    {"token": "SERVICE_RECORD_IMAGES", "label": "Service Record Images",
+     "category": "Job",
+     "description": ("HTML block of 200x200 thumbnails of the tech's "
+                       "service-report photos. Each thumbnail links to a "
+                       "public portal page (no login required). Empty "
+                       "when there's no service report in scope, no "
+                       "photos on the visit, or the report is missing a "
+                       "public UUID."),
+     "resolver": _service_record_images},
 ]
 
 _TAG_INDEX: Dict[str, Callable] = {t["token"].upper(): t["resolver"]
@@ -880,6 +974,8 @@ def render_context(*, customer: Optional[Dict[str, Any]] = None,
                     employee: Optional[Dict[str, Any]] = None,
                     event: Optional[Dict[str, Any]] = None,
                     document: Optional[Dict[str, Any]] = None,
+                    job: Optional[Dict[str, Any]] = None,
+                    service_report: Optional[Dict[str, Any]] = None,
                     **extra: Any) -> Dict[str, Any]:
     """Build a render context dict from the caller's Mongo docs. Every
     Phase 9 send-time code path assembles its ctx via this helper so
@@ -893,6 +989,8 @@ def render_context(*, customer: Optional[Dict[str, Any]] = None,
         "employee": employee or {},
         "event": event or {},
         "document": document or {},
+        "job": job or {},
+        "service_report": service_report or {},
         **extra,
     }
 

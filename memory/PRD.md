@@ -9314,3 +9314,70 @@ as a follow-up.
   Phase A OAuth, Path B, WordPress activation, Phase B media_gen,
   Phase 25, or `/app/mobile/`.
 - `/app`-only work.
+
+## Phase 22 · Feb-2026 — {{SERVICE_RECORD_IMAGES}} merge tag + public portal (SHIPPED)
+
+Task delivered end-to-end. Guardrail honored — no external repo clone attempted.
+
+### Backend
+- `services/marketing/merge_tags.py` — new `SERVICE_RECORD_IMAGES`
+  merge tag. Renders an HTML flex block of 200x200 clickable
+  thumbnails, each anchor pointing at `/portal/service/{public_uuid}`.
+  Uses tenant-aware base URL via `resolve_primary_app_domain`; falls
+  back to `APP_PUBLIC_URL`. Substitutes empty string when there's no
+  job, no service_report, no `public_uuid`, no photos, or no public
+  URL. Photos tagged `internal`/`issue`/`private` are dropped before
+  render. `render_context()` gained `job=` and `service_report=`
+  kwargs so downstream callers can supply the ctx.
+- `routers/service_reports.py` — `_bootstrap_report()` now mints a
+  `public_uuid` (uuid4) at report creation. `submit_service_report()`
+  backfills legacy reports missing the field on submit (idempotent).
+- `routers/public_service_images.py` — NEW public router (no auth).
+  `GET /api/public/service/{uuid}` — 60 req/min per IP sliding window;
+  429 on overflow. Returns `{business_name, logo_url,
+  tech_first_name, service_date, service_type, images[]}`. Never
+  emits customer name, address, phone, email, chemistry readings,
+  invoice/price info, or any other PII. Reads business identity from
+  `tenant.settings.business_card` → `tenant.name`. Tech name is
+  first-name only. 404 unknown uuid, 410 soft-deleted.
+- `db_indexes.py` — unique+sparse index on
+  `service_reports.public_uuid` for O(log n) portal lookups.
+- `server.py` — mount `public_service_images` router under `/api`.
+
+### Frontend
+- `pages/public/ServiceImagesPortalPage.jsx` — NEW page at
+  `/portal/service/:uuid`. Public (no auth). Displays business
+  header (logo + name), meta grid (date / service / tech first
+  name), and a responsive photo grid. Full-size lightbox with
+  Esc / ArrowLeft / ArrowRight keybindings. Handles 404 / 410 /
+  429 / network errors distinctly.
+- `App.js` — new route mounted OUTSIDE the protected shell.
+
+### Tests
+- `tests/test_service_record_images_merge_tag.py` — 12 tests all
+  green. Covers: thumbnail render (200x200, correct href, dedupe),
+  empty-string substitution across all 4 missing-context paths,
+  tag registration in catalog, public endpoint 404, response shape,
+  PII redaction (regression guard), 60/min rate limit ceiling,
+  bootstrap public_uuid guarantee, submit backfill guarantee.
+
+### Deployment
+Prod redeploy required — backend adds new router + new merge tag +
+new DB index; frontend adds a new public route.
+
+### Guardrails honored
+- No external repo clone attempted (guardrail Option A).
+- No touch to Phase A OAuth, Path B, WordPress activation, Phase B
+  media_gen, Phase 25, or `/app/mobile/`.
+- Zero PII in public endpoint response body; regression test guards
+  it.
+- All test emails/SMS are mocked at the service layer — no live
+  outbound sends during pytest.
+
+### Remaining backlog (unchanged)
+- P1 · `/dispatch` blank page bug (not investigated in this ticket).
+- P1 · Main menu route updates (`/team?t=team` etc.) — NOT STARTED.
+- P2 · `{{SERVICE_TITLE}}` template substitution regression —
+  BLOCKED awaiting user confirmation on the affected surface.
+- Mobile parity for schedule multi-select — delegate to
+  `e1_expo_frontend_dev`.
