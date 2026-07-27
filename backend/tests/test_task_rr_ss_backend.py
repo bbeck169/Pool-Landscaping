@@ -299,103 +299,66 @@ def test_ss_apply_credits_zero_balance_no_op():
 
 
 def test_ss_admin_issue_credit_happy_path(admin_headers, aq_customer_id, db, aq_tenant_id):
-    # Snapshot the current balance.
+    """Task SS Phase 2 · Feb 2026 — the admin-issue endpoint is the
+    already-shipped Phase 10 ``POST /customers/{cid}/credits/adjust``
+    (retired the parallel Task-SS router to avoid divergent storage
+    backends). Contract: ``{delta_cents, reason}``."""
     async def _bal():
-        c = await db.customers.find_one(
-            {"id": aq_customer_id, "tenant_id": aq_tenant_id},
-            {"_id": 0, "credits_balance_cents": 1},
-        )
-        return int((c or {}).get("credits_balance_cents") or 0)
+        row = await db.customer_credits_balance.find_one(
+            {"customer_id": aq_customer_id, "tenant_id": aq_tenant_id},
+            {"_id": 0, "balance_cents": 1, "balance": 1},
+        ) or {}
+        return int(row.get("balance_cents")
+                       or int(float(row.get("balance") or 0) * 100))
     before = _sync(_bal())
     r = requests.post(
-        f"{API}/customers/{aq_customer_id}/credits",
+        f"{API}/customers/{aq_customer_id}/credits/adjust",
         headers={**admin_headers, "Content-Type": "application/json"},
-        json={"amount_cents": 2500, "kind": "admin_manual",
-                "note": "TEST_SS admin issued credit"},
+        json={"delta_cents": 2500, "reason": "TEST_SS admin issued credit"},
         timeout=30,
     )
-    assert r.status_code == 201, r.text
+    assert r.status_code == 200, r.text
     body = r.json()
     assert body["balance_cents"] == before + 2500
-    assert body["entry"]["delta_cents"] == 2500
-    # Rollback.
-    reverse = requests.post(
-        f"{API}/customers/{aq_customer_id}/credits/{body['entry']['id']}/reverse",
-        headers=admin_headers, timeout=30,
+    # Rollback via a compensating adjust so re-runs stay balanced.
+    requests.post(
+        f"{API}/customers/{aq_customer_id}/credits/adjust",
+        headers={**admin_headers, "Content-Type": "application/json"},
+        json={"delta_cents": -2500, "reason": "TEST_SS rollback"},
+        timeout=30,
     )
-    assert reverse.status_code == 201
 
 
 def test_ss_admin_issue_credit_customer_role_gate(customer_headers, aq_customer_id):
     r = requests.post(
-        f"{API}/customers/{aq_customer_id}/credits",
+        f"{API}/customers/{aq_customer_id}/credits/adjust",
         headers={**customer_headers, "Content-Type": "application/json"},
-        json={"amount_cents": 1000, "kind": "admin_manual",
-                "note": "should be blocked"},
+        json={"delta_cents": 1000, "reason": "should be blocked"},
         timeout=30,
     )
     assert r.status_code in (401, 403)
 
 
 def test_ss_admin_negative_pushes_below_zero_blocked(admin_headers, aq_customer_id, db, aq_tenant_id):
-    # Snapshot balance; attempt to deduct MORE than current.
     async def _bal():
-        c = await db.customers.find_one(
-            {"id": aq_customer_id, "tenant_id": aq_tenant_id},
-            {"_id": 0, "credits_balance_cents": 1},
-        )
-        return int((c or {}).get("credits_balance_cents") or 0)
+        row = await db.customer_credits_balance.find_one(
+            {"customer_id": aq_customer_id, "tenant_id": aq_tenant_id},
+            {"_id": 0, "balance_cents": 1, "balance": 1},
+        ) or {}
+        return int(row.get("balance_cents")
+                       or int(float(row.get("balance") or 0) * 100))
     current = _sync(_bal())
     r = requests.post(
-        f"{API}/customers/{aq_customer_id}/credits",
+        f"{API}/customers/{aq_customer_id}/credits/adjust",
         headers={**admin_headers, "Content-Type": "application/json"},
-        json={"amount_cents": -(current + 5000), "kind": "admin_manual",
-                "note": "TEST_SS deduct below zero"},
+        json={"delta_cents": -(current + 5000),
+                "reason": "TEST_SS deduct below zero"},
         timeout=30,
     )
-    assert r.status_code == 422
-    assert "below zero" in r.text.lower() or "balance" in r.text.lower()
-
-
-def test_ss_admin_negative_below_zero_requires_super_admin_with_force(
-    admin_headers, super_headers, aq_customer_id, db, aq_tenant_id,
-):
-    async def _bal():
-        c = await db.customers.find_one(
-            {"id": aq_customer_id, "tenant_id": aq_tenant_id},
-            {"_id": 0, "credits_balance_cents": 1},
-        )
-        return int((c or {}).get("credits_balance_cents") or 0)
-    current = _sync(_bal())
-    # Regular admin with force_negative → 403.
-    r_a = requests.post(
-        f"{API}/customers/{aq_customer_id}/credits",
-        headers={**admin_headers, "Content-Type": "application/json"},
-        json={"amount_cents": -(current + 1000), "kind": "admin_manual",
-                "note": "TEST_SS force by admin", "force_negative": True},
-        timeout=30,
-    )
-    assert r_a.status_code == 403
-    # Super_admin with force_negative → 201 + balance goes negative.
-    deduct = -(current + 1000)
-    r_s = requests.post(
-        f"{API}/customers/{aq_customer_id}/credits",
-        headers={**super_headers, "Content-Type": "application/json"},
-        json={"amount_cents": deduct, "kind": "admin_manual",
-                "note": "TEST_SS force by super_admin",
-                "force_negative": True},
-        timeout=30,
-    )
-    assert r_s.status_code == 201, r_s.text
-    body = r_s.json()
-    assert body["balance_cents"] < 0
-    # Rollback — reverse the deduction so the fixture customer's
-    # balance returns to its prior state for the next test run.
-    reverse = requests.post(
-        f"{API}/customers/{aq_customer_id}/credits/{body['entry']['id']}/reverse",
-        headers=super_headers, timeout=30,
-    )
-    assert reverse.status_code == 201
+    assert r.status_code == 400
+    detail = r.json().get("detail") or {}
+    if isinstance(detail, dict):
+        assert detail.get("code") == "INSUFFICIENT_BALANCE"
 
 
 def test_ss_admin_list_credits(admin_headers, aq_customer_id):
@@ -404,13 +367,18 @@ def test_ss_admin_list_credits(admin_headers, aq_customer_id):
     assert r.status_code == 200, r.text
     body = r.json()
     assert "balance_cents" in body
-    assert "items" in body
-    assert isinstance(body["items"], list)
+    assert "ledger" in body
+    assert isinstance(body["ledger"], list)
 
 
-def test_ss_admin_reverse_nonexistent_entry_404(admin_headers, aq_customer_id):
-    r = requests.post(
-        f"{API}/customers/{aq_customer_id}/credits/nonexistent-id/reverse",
-        headers=admin_headers, timeout=30,
-    )
-    assert r.status_code == 404
+def test_ss_portal_own_credit_balance_endpoint(customer_headers):
+    """Task RR/SS Phase 2 · Feb 2026 — new customer-scoped balance
+    endpoint that powers the Portal Home CREDIT stat tile."""
+    r = requests.get(f"{API}/customer-portal/credits/balance",
+                          headers=customer_headers, timeout=30)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "balance_cents" in body
+    assert "balance_dollars" in body
+    assert isinstance(body["balance_cents"], int)
+    assert isinstance(body["balance_dollars"], (int, float))

@@ -168,3 +168,71 @@ Use exactly one opted-in real customer (Brian). Test:
 After the 48h Brian window is clean:
 - Communication to customer base: brief email + in-portal banner (Task QQ Phase 3 scope).
 - Gradually shift more tenants onto Lumino by tenant_id.
+
+## Common issues
+
+### 500 on Zapier test click
+
+**Symptom** — Zapier's "Test this Zap" button on any of the 3 payment
+Zaps returns `HTTP 500 Internal Server Error` from
+`https://app.plofv.com/api/webhooks/lumino/zapier`.
+
+**Root cause** — the Lumino Zapier bridge code was shipped in the
+preview environment first and **hasn't been redeployed to prod yet**.
+Zapier is POSTing to a URL that hits an older prod build without the
+bridge router registered → FastAPI's default 500 fallback.
+
+**Fix (before prod redeploy)** — point Zapier at the preview URL
+temporarily for iterative testing:
+
+```
+https://poolscape-audit.preview.emergentagent.com/api/webhooks/lumino/zapier
+```
+
+**Fix (permanent)** — redeploy prod so the bridge router lands.
+Verify at boot:
+
+```
+grep "LUMINO_ZAPIER" /var/log/supervisor/backend.err.log | tail -3
+```
+
+The startup line `[LUMINO_ZAPIER] shared secret configured: <4chars>…
+(len=<N>)` proves both the router is loaded AND the env var is
+populated. If instead you see `shared secret NOT configured — bridge
+will 401 every request until env is populated`, the Emergent Secrets
+menu update didn't propagate to the pod — trigger a manual pod
+restart or ping Emergent support.
+
+### 401 `shared_secret_not_configured`
+
+The bridge fails closed when `LUMINO_ZAPIER_SHARED_SECRET` is empty
+on the server side (Phase 2 safety). Set it via Emergent Secrets
+(preview) or the prod pod's secure env manager (prod) — **NEVER**
+paste the secret into `/app/backend/.env` in a chat / PR / commit
+where the raw value would end up on disk. Restart backend to load.
+
+### 401 `invalid_shared_secret`
+
+The server IS configured, but the header Zapier is sending doesn't
+match. Two typical causes:
+1. Zapier still has the OLD (compromised chat) secret cached in its
+   Zap's header config → open each Zap → Action step → paste the
+   fresh secret from `openssl rand -hex 32`.
+2. The pod was recently rolled and the Secrets menu regenerated a
+   value → re-copy from the Secrets menu into each Zap.
+
+### 400 `invalid_json_body`
+
+Zapier's body-template rendered something FastAPI's json parser
+can't decode. Open the Zap → Action step → toggle "Send Data as JSON"
+ON, or set `Content-Type: application/json` in headers. The bridge
+also accepts a Zapier-test empty body → `{ok: true, test_mode: true}`
+so a plain "Test this Zap" click should not hit the 400 path.
+
+### Correlation ids
+
+Every response body carries `correlation_id: <16hex>`. Every log
+line for that request shares the same id. Grep `[<correlation_id>]`
+in supervisor logs to trace exactly what happened.
+
+

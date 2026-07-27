@@ -562,6 +562,25 @@ async def patch_employee(eid: str, body: EmployeePatch,
 
 
 # ─── Task RR · Feb 2026 — AI tool call audit trail ───────────────────
+@router.get("/admin/ai-personas-scope")
+async def list_all_personas_for_scope(
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Admin-only listing of EVERY persona (both admin + customer
+    audiences) with their current ``read_access_scope`` — powers the
+    Task RR/SS Phase 2 scope-toggle admin surface.
+    """
+    await seed_ai_employees_for_tenant(tenant["id"])
+    rows = await db.ai_employees.find(
+        {"tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "key": 1, "name": 1, "role": 1,
+          "audience": 1, "read_access_scope": 1, "active": 1,
+          "avatar_emoji": 1},
+    ).sort("audience", 1).to_list(50)
+    return {"items": rows, "total": len(rows)}
+
+
 @router.get("/admin/ai-tool-audit")
 async def list_ai_tool_audit(
     persona_key: Optional[str] = None,

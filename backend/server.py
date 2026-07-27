@@ -197,9 +197,15 @@ from routers import lumino_zapier_bridge as _qq_lumino_zapier  # noqa: E402
 api_router.include_router(_qq_lumino_zapier.router)
 from routers import lumino_return as _qq_lumino_return  # noqa: E402
 api_router.include_router(_qq_lumino_return.router)
-# Task SS · Feb 2026 — admin service credit issuance / reversal.
-from routers import customer_credits_admin as _ss_customer_credits_admin  # noqa: E402
-api_router.include_router(_ss_customer_credits_admin.router)
+# Task SS/RR Phase 2 · Feb 2026 — the admin credit issuance /
+# reversal endpoints originally shipped in ``customer_credits_admin``
+# collided with the already-shipped Phase 10 ``/customers/{cid}/
+# credits/adjust`` endpoint (which lives in ``referrals_phase10`` and
+# is wired to the CustomerCreditsPanel UI). Retired to avoid two
+# writers to divergent storage backends. The Phase 10 endpoint is
+# the source of truth for admin adjustments; ``credits_apply.py`` now
+# reads/writes the same Phase 10 collections so autobilling +
+# manual-invoice hooks see the balance the admin actually adjusted.
 # Phase 32 · Feb 2026 — Mobile offline sync backend (batch op replay
 # + offline-bundle prefetch). Idempotent per ``client_op_id``;
 # conflicts resolve mobile-wins with an audit-logged snapshot.

@@ -542,6 +542,15 @@ async def submit_service_report(jid: str,
                 invoice = await apply_referral_credits_to_invoice(invoice)
             except Exception as e:
                 logger.warning(f"invoice credit apply skipped: {e}")
+            # Task SS/RR Phase 2 · Feb 2026 — cents-denominated credit
+            # auto-apply. Runs AFTER the legacy referral percent-off
+            # hook so the two are additive: percent-off shrinks the
+            # invoice first, then the flat credit consumes what's left.
+            try:
+                from services.credits_apply import apply_and_persist
+                invoice = await apply_and_persist(db, tenant["id"], invoice)
+            except Exception as e:
+                logger.warning(f"cents-credit apply skipped: {e}")
             await db.quotes.insert_one(invoice)
             invoice_id = inv_id
             # Comms Phase 3 — auto-invoice from a submitted service

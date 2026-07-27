@@ -27,7 +27,9 @@ from fastapi.testclient import TestClient
 # Random per pytest run, never reused, and NOT any value that has
 # been pasted in chat / email / logs.
 _TEST_SECRET = "test_" + uuid.uuid4().hex + uuid.uuid4().hex
-os.environ["LUMINO_ZAPIER_SHARED_SECRET"] = _TEST_SECRET
+# NOTE: env var is set per-test via the autouse fixture below —
+# NOT at module import time. Prevents cross-file interference with
+# the Phase 2.7 hardening tests.
 
 
 # ─── In-memory fake for ``db.payment_events`` ─────────────────────
@@ -76,7 +78,26 @@ import routers.lumino_zapier_bridge as bridge_module    # noqa: E402
 from routers.lumino_zapier_bridge import router as _bridge_router  # noqa: E402
 
 _fake = _FakeDB()
-bridge_module.db = _fake                # override the module-level ref
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _patch_bridge_db():
+    """Module-scoped autouse — sets shared secret + db BEFORE the
+    ``client`` module fixture is built, and BEFORE Phase 2.7's
+    module-scoped fixture (whichever runs later wins for env, so
+    each file's fixture re-seats state at its own module setup)."""
+    import os as _os
+    prev_secret = _os.environ.get("LUMINO_ZAPIER_SHARED_SECRET", "")
+    prev_db = getattr(bridge_module, "db", None)
+    bridge_module.db = _fake
+    _os.environ["LUMINO_ZAPIER_SHARED_SECRET"] = _TEST_SECRET
+    yield
+    if prev_db is not None:
+        bridge_module.db = prev_db
+    if prev_secret:
+        _os.environ["LUMINO_ZAPIER_SHARED_SECRET"] = prev_secret
+    else:
+        _os.environ.pop("LUMINO_ZAPIER_SHARED_SECRET", None)
 
 
 @pytest.fixture(scope="module")

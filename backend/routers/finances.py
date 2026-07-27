@@ -102,6 +102,16 @@ async def accrue_chem_invoice(job: dict):
             await db.quotes.update_one({"id": inv["id"]}, {"$set": payload})
         else:
             payload.update({"id": new_id(), "amount_paid": 0.0, "payment_status": "unpaid", "created_at": now_iso()})
+            # Task SS/RR Phase 2 · Feb 2026 — apply cents credits to
+            # the freshly-minted chem invoice too.
+            try:
+                if payload.get("tenant_id"):
+                    from services.credits_apply import apply_and_persist
+                    payload = await apply_and_persist(
+                        db, payload["tenant_id"], payload,
+                    )
+            except Exception as _e:                                # noqa: BLE001
+                pass
             await db.quotes.insert_one(payload)
     except Exception as e:
         logger.warning(f"accrue_chem_invoice error: {e}")

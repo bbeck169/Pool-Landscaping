@@ -813,6 +813,29 @@ async def send_customer_message(
     }
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Task RR/SS Phase 2 · Feb 2026 — Customer-scoped credit balance
+# endpoint. Powers the Portal Home CREDIT stat tile. Returns dollars
+# and cents; the balance lives on the customer doc as
+# ``credits_balance_cents`` (Phase 10 wire).
+# ═══════════════════════════════════════════════════════════════════
+@router.get("/customer-portal/credits/balance")
+async def get_own_credit_balance(
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    cid = _require_customer(user)
+    cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "credits_balance_cents": 1},
+    )
+    balance_cents = int((cust or {}).get("credits_balance_cents") or 0)
+    return {
+        "balance_cents": balance_cents,
+        "balance_dollars": round(balance_cents / 100.0, 2),
+    }
+
+
 @router.post("/customer-portal/ai-employees/{eid}/conversations/{cid_conv}/handoff",
               status_code=201)
 async def manual_handoff(

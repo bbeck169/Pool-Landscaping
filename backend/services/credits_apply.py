@@ -210,24 +210,45 @@ def revert_credits_from_invoice(
 async def apply_and_persist(db, tenant_id: str, invoice: dict) -> dict:
     """Callable from invoice-creation flows. Reads the customer once,
     applies credits, and commits both writes + a ledger push in the
-    same request cycle. Returns the mutated invoice dict."""
+    same request cycle. Returns the mutated invoice dict.
+
+    Task SS/RR Phase 2 (Feb 2026) — the balance is stored in the
+    Phase-10 ``customer_credits_balance`` collection with the ledger
+    in the ``customer_credits`` collection. This function now reads
+    / writes those collections directly instead of the (unused)
+    inline fields on the customer doc.
+    """
     if not invoice.get("customer_id"):
         return invoice
-    cust = await db.customers.find_one(
-        {"id": invoice["customer_id"], "tenant_id": tenant_id}, {"_id": 0},
+    cid = invoice["customer_id"]
+    # Phase-10 storage: separate balance doc + separate ledger.
+    balance_row = await db.customer_credits_balance.find_one(
+        {"tenant_id": tenant_id, "customer_id": cid}, {"_id": 0},
+    ) or {}
+    balance_cents = int(
+        balance_row.get("balance_cents")
+        or int(float(balance_row.get("balance") or 0) * 100)
     )
-    if not cust:
+    if balance_cents <= 0:
         return invoice
-    res = apply_credits_to_invoice(invoice, cust)
+    # Synthesize a customer-shaped dict so ``apply_credits_to_invoice``
+    # (pure-function contract, doesn't know about the storage layout)
+    # still works unchanged.
+    synth_customer = {"id": cid, "credits_balance_cents": balance_cents,
+                            "credits_ledger": []}
+    res = apply_credits_to_invoice(invoice, synth_customer)
     if res["credits_applied_cents"] <= 0:
         return res["updated_invoice"]
-    # Atomic-ish updates.
-    await db.customers.update_one(
-        {"id": cust["id"], "tenant_id": tenant_id},
-        {
-            "$set": {"credits_balance_cents":
-                       res["updated_customer"]["credits_balance_cents"]},
-            "$push": {"credits_ledger": res["ledger_entry"]},
-        },
+    new_balance = int(res["updated_customer"]["credits_balance_cents"])
+    ledger_entry = dict(res["ledger_entry"])
+    ledger_entry["tenant_id"] = tenant_id
+    ledger_entry["customer_id"] = cid
+    await db.customer_credits.insert_one(ledger_entry)
+    await db.customer_credits_balance.update_one(
+        {"tenant_id": tenant_id, "customer_id": cid},
+        {"$set": {"balance_cents": new_balance,
+                    "balance": new_balance / 100.0,
+                    "updated_at": _now_iso()}},
+        upsert=True,
     )
     return res["updated_invoice"]

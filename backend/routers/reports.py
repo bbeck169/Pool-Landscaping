@@ -501,9 +501,28 @@ async def run_all_due_billing_plans(user: dict = Depends(require_admin)):
             "notes": "Auto-generated from billing plan",
             "billing_plan_id": pid, "created_at": now_iso(),
         }
+        # Task SS/RR Phase 2 · Feb 2026 — auto-apply available credits
+        # BEFORE persisting. tenant_id lives on the billing_plan; when
+        # missing we fall back to the customer doc. Failure is
+        # non-fatal — legacy invoices still bill as before.
+        try:
+            tid = p.get("tenant_id")
+            if not tid and p.get("customer_id"):
+                _c = await db.customers.find_one(
+                    {"id": p["customer_id"]}, {"_id": 0, "tenant_id": 1},
+                )
+                tid = (_c or {}).get("tenant_id")
+            if tid:
+                invoice["tenant_id"] = tid
+                from services.credits_apply import apply_and_persist
+                invoice = await apply_and_persist(db, tid, invoice)
+        except Exception as _e:                                    # noqa: BLE001
+            pass
         await db.quotes.insert_one(invoice)
         new_next = advance_date(p.get("next_run") or now_iso(), p.get("frequency", "monthly"))
-        await db.billing_plans.update_one({"id": pid}, {"$set": {"next_run": new_next, "last_run": now_iso()}})
+        await db.billing_plans.update_one(
+            {"id": pid}, {"$set": {"next_run": new_next, "last_run": now_iso()}},
+        )
         try:
             await notify_customer(p["customer_id"], "New invoice",
                                   f"An invoice for {p.get('service', 'your service')} was issued.")
