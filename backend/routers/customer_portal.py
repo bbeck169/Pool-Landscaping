@@ -431,6 +431,186 @@ def _fmt_service_request_body(
     return "\n".join(lines)
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Phase 34 · Task N · Feb-2026 — Editable customer profile
+# ══════════════════════════════════════════════════════════════════════
+class PatchMyProfileIn(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+
+
+def _normalize_phone(raw: str) -> Optional[str]:
+    if not raw:
+        return None
+    digits = "".join(c for c in raw if c.isdigit())
+    if len(digits) == 10:
+        return f"+1{digits}"
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+{digits}"
+    return raw.strip() or None
+
+
+def _valid_email(e: str) -> bool:
+    import re as _re
+    return bool(_re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", (e or "").strip()))
+
+
+@router.patch("/customer-portal/profile")
+async def patch_my_profile(
+    body: PatchMyProfileIn,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Task N · Feb 2026 — customers edit their own contact info.
+
+    Patches ``users`` + ``customers`` + mirrors the change onto the
+    linked ``contacts`` record so the admin CRM view reflects the
+    edit in real time. Writes an audit-log row and returns the merged
+    profile view.
+
+    Validation rules (server is source of truth — frontend just gives
+    quick feedback):
+      * ``first_name`` / ``last_name`` — if provided, ≥1 char each.
+      * ``email`` — valid RFC-lite format AND must not collide with
+        any OTHER user's email (uniqueness enforced globally).
+      * ``phone`` — must produce a 10- or 11-digit number; normalized
+        to E.164 (``+1XXXXXXXXXX``) before persistence.
+      * ``address`` — ≥5 chars.
+    """
+    cid = _require_customer(user)
+
+    patch_user: Dict[str, Any] = {}
+    patch_cust: Dict[str, Any] = {}
+
+    if body.first_name is not None:
+        fn = (body.first_name or "").strip()
+        if not fn:
+            raise HTTPException(400, "First name is required.")
+        patch_user["first_name"] = fn
+        patch_cust["first_name"] = fn
+    if body.last_name is not None:
+        ln = (body.last_name or "").strip()
+        if not ln:
+            raise HTTPException(400, "Last name is required.")
+        patch_user["last_name"] = ln
+        patch_cust["last_name"] = ln
+    if patch_user.get("first_name") or patch_user.get("last_name"):
+        full = " ".join(x for x in [patch_user.get("first_name") or user.get("first_name"),
+                                      patch_user.get("last_name") or user.get("last_name")]
+                         if x).strip()
+        if full:
+            patch_user["name"] = full
+            patch_cust["name"] = full
+
+    if body.email is not None:
+        em = (body.email or "").strip().lower()
+        if not _valid_email(em):
+            raise HTTPException(400, "Please enter a valid email address.")
+        collision = await db.users.find_one(
+            {"email": em, "id": {"$ne": user["id"]}}, {"_id": 0, "id": 1}
+        )
+        if collision:
+            raise HTTPException(409, "That email is already in use.")
+        patch_user["email"] = em
+        patch_cust["email"] = em
+
+    if body.phone is not None:
+        p_norm = _normalize_phone(body.phone or "")
+        if not p_norm or len("".join(c for c in p_norm if c.isdigit())) < 10:
+            raise HTTPException(400, "Please enter a valid phone number.")
+        patch_user["phone"] = p_norm
+        patch_cust["phone"] = p_norm
+
+    if body.address is not None:
+        addr = (body.address or "").strip()
+        if len(addr) < 5:
+            raise HTTPException(400, "Address is required.")
+        patch_cust["address"] = addr
+
+    if not patch_user and not patch_cust:
+        raise HTTPException(400, "No changes provided.")
+
+    now = now_iso()
+
+    # BEFORE snapshot for audit + diff.
+    before_cust = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0}
+    ) or {}
+    before_user = await db.users.find_one(
+        {"id": user["id"]}, {"_id": 0, "password_hash": 0}
+    ) or {}
+
+    if patch_user:
+        patch_user["updated_at"] = now
+        await db.users.update_one({"id": user["id"]}, {"$set": patch_user})
+    if patch_cust:
+        patch_cust["updated_at"] = now
+        await db.customers.update_one(
+            {"id": cid, "tenant_id": tenant["id"]}, {"$set": patch_cust}
+        )
+
+    # Contacts mirror — the admin CRM Contact page keeps a shadow copy
+    # of the customer's contact info. Best-effort update; missing
+    # collection or no matching row is not fatal.
+    try:
+        contact_patch = {**{k: v for k, v in patch_cust.items()
+                             if k in ("first_name", "last_name", "name",
+                                      "email", "phone", "address")},
+                          "updated_at": now,
+                          "updated_by": "customer_self_serve"}
+        if contact_patch:
+            await db.contacts.update_many(
+                {"tenant_id": tenant["id"],
+                 "$or": [
+                     {"customer_id": cid},
+                     {"email": (before_cust.get("email") or "").lower()},
+                     {"email": patch_cust.get("email")},
+                 ]},
+                {"$set": contact_patch},
+            )
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[task-n] contacts mirror failed: %s", exc)
+
+    # Audit log — always write, non-fatal on failure.
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "actor_user_id": user["id"],
+            "actor_customer_id": cid,
+            "event": "self_updated_profile",
+            "diff": {
+                "before": {k: before_cust.get(k) or before_user.get(k)
+                             for k in set(patch_user) | set(patch_cust)},
+                "after": {**patch_user, **patch_cust},
+            },
+            "created_at": now,
+        })
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[task-n] audit write failed: %s", exc)
+
+    # Realtime broadcast so admin CRM views auto-refresh.
+    try:
+        from routers.realtime import bus
+        await bus.broadcast(
+            f"tenant:{tenant['id']}",
+            {"type": "customer_profile_updated",
+             "payload": {"customer_id": cid, "user_id": user["id"]}},
+        )
+    except Exception:
+        pass
+
+    merged = await db.customers.find_one(
+        {"id": cid, "tenant_id": tenant["id"]},
+        {"_id": 0, "name": 1, "first_name": 1, "last_name": 1,
+         "email": 1, "phone": 1, "address": 1},
+    ) or {}
+    return {"ok": True, "profile": merged}
+
+
 @router.post("/customer-portal/service-requests")
 async def create_service_request(
     body: ServiceRequestIn,

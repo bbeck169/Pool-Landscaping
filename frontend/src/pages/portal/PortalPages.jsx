@@ -736,35 +736,111 @@ export function PortalMessages() {
 
 // ──────────────── /portal/profile ────────────────
 export function PortalProfile() {
-  const { user, me } = useAuth();
+  const { user, refreshMe } = useAuth();
   const [customer, setCustomer] = useState(null);
+  const [form, setForm] = useState({ first_name: "", last_name: "", email: "", phone: "", address: "" });
+  const [initial, setInitial] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
   const [oldPw, setOldPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
+
   useEffect(() => {
-    if (user?.customer_id) api.get(`/me`).then(setCustomer).catch(() => {});
-    else me?.().then(setCustomer);
-  }, []);
+    // Phase 34 · Task N — load the customer's current profile from
+    // /me so we start with the freshest linked values.
+    api.get(`/me`)
+      .then((c) => {
+        setCustomer(c);
+        const nx = {
+          first_name: c?.first_name || (user?.name || "").split(" ")[0] || "",
+          last_name: c?.last_name || (user?.name || "").split(" ").slice(1).join(" ") || "",
+          email: c?.email || user?.email || "",
+          phone: c?.phone || "",
+          address: c?.address || "",
+        };
+        setForm(nx);
+        setInitial(JSON.stringify(nx));
+      })
+      .catch(() => {});
+  }, [user]);
+
+  const dirty = initial && JSON.stringify(form) !== initial;
+  const valid = (
+    form.first_name.trim() &&
+    form.email.trim() && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email) &&
+    ("" + form.phone).replace(/\D/g, "").length >= 10 &&
+    form.address.trim().length >= 5
+  );
+  const canSave = dirty && valid && !saving;
+
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const save = async (e) => {
+    e.preventDefault();
+    if (!canSave) return;
+    setSaving(true); setError("");
+    try {
+      const resp = await api.patch("/customer-portal/profile", form);
+      setToast({ tone: "success", message: "Profile updated" });
+      // Snapshot the saved values so the form becomes clean again.
+      setInitial(JSON.stringify(form));
+      // Refresh cached user context so the header / other surfaces
+      // pick up the new name/email.
+      try { await refreshMe?.(); } catch (_) { /* best-effort */ }
+      setCustomer((c) => ({ ...(c || {}), ...(resp?.profile || {}) }));
+    } catch (err) {
+      setError(err?.message || "Could not save. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cancel = () => {
+    if (!initial) return;
+    setForm(JSON.parse(initial));
+    setError("");
+  };
+
   const changePw = async () => {
     setBusy(true);
     try {
-      await api.post("/auth/change-password", { old_password: oldPw, new_password: newPw });
+      // Phase 34 · Task O — endpoint expects ``current_password`` /
+      // ``new_password``. Prior code used ``old_password`` which
+      // silently 400'd server-side.
+      await api.post("/auth/change-password", { current_password: oldPw, new_password: newPw });
       setToast({ tone: "success", message: "Password changed" });
       setOldPw(""); setNewPw("");
     } catch (e) { setToast({ tone: "error", message: e.message }); }
     finally { setBusy(false); }
   };
+
   return (
     <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6" data-testid="portal-profile">
-      <PageHeader title="Profile" subtitle="Contact info is managed by your service team." />
-      <div className="rounded-2xl p-5 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
-        <ReadOnly label="Name" value={user?.name} />
-        <ReadOnly label="Email" value={user?.email} />
-        <ReadOnly label="Phone" value={customer?.phone} />
-        <ReadOnly label="Address" value={customer?.address} />
-        <p className="text-xs mt-2" style={{ color: colors.muted }}>Contact admin to update your contact info.</p>
-      </div>
+      <PageHeader title="Profile" subtitle="Keep your contact info up to date so your service team can reach you." />
+      <form onSubmit={save} className="rounded-2xl p-5 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }} data-testid="portal-profile-form">
+        {error ? (
+          <div className="rounded-lg p-3 mb-3 text-sm"
+                style={{ background: "#FEF2F2", border: "1px solid #FCA5A5", color: "#991B1B" }}
+                data-testid="portal-profile-error">{error}</div>
+        ) : null}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <TextInput label="FIRST NAME" value={form.first_name} onChange={set("first_name")} testid="portal-profile-first-name" />
+          <TextInput label="LAST NAME"  value={form.last_name}  onChange={set("last_name")}  testid="portal-profile-last-name" />
+        </div>
+        <TextInput label="EMAIL"   type="email" value={form.email}   onChange={set("email")}   testid="portal-profile-email" />
+        <TextInput label="PHONE"   type="tel"   value={form.phone}   onChange={set("phone")}   testid="portal-profile-phone" />
+        <TextInput label="ADDRESS"              value={form.address} onChange={set("address")} testid="portal-profile-address" />
+        <div className="mt-4 flex items-center gap-3">
+          <Button type="submit" disabled={!canSave} testid="portal-profile-save">
+            {saving ? "Saving…" : "Save changes"}
+          </Button>
+          <button type="button" onClick={cancel} disabled={!dirty || saving}
+                  className="text-sm font-semibold" style={{ color: colors.muted }}
+                  data-testid="portal-profile-cancel">Cancel</button>
+        </div>
+      </form>
       <div className="rounded-2xl p-5" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
         <h3 className="font-bold mb-2" style={{ color: colors.onSurface }}>Change password</h3>
         <div className="space-y-3">

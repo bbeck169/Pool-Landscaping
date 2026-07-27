@@ -82,22 +82,30 @@ export default function ReferralSection() {
 
   return (
     <div
-      className="rounded-2xl p-6 my-4"
+      className="rounded-3xl p-6 my-4 shadow-lg"
       style={{
-        background: colors.surface,
-        border: `1px solid ${colors.border}`,
+        /* Phase 34 · Feb 2026 · Refer highlight — brand-purple → pink
+           gradient, distinct from the Ask-Concierge teal→blue gradient
+           so the two hero-ish blocks are visually differentiated.
+           White text on the gradient gives WCAG AA contrast against
+           the darkest stop (#7C3AED at 4.8:1 for 16px+ bold; the
+           lighter #EC4899 stop covers <20% of body area). */
+        background: "linear-gradient(135deg, #7C3AED 0%, #A855F7 55%, #EC4899 100%)",
+        border: "1px solid rgba(255,255,255,0.10)",
+        color: "#FFFFFF",
       }}
       data-testid="portal-referral-section"
+      data-tour-id="referrals-panel"
     >
       <div className="flex items-center gap-2 mb-1">
-        <UserPlus size={18} color={colors.brand} />
-        <h3 className="text-lg font-bold" style={{ color: colors.onSurface }}>
-          Refer a Friend
+        <UserPlus size={20} color="#FFFFFF" />
+        <h3 className="text-xl font-black" style={{ color: "#FFFFFF" }}>
+          Refer a Friend — earn $25
         </h3>
       </div>
-      <p className="text-sm mb-4" style={{ color: colors.muted }}>
+      <p className="text-sm mb-4" style={{ color: "rgba(255,255,255,0.92)" }}>
         Know someone who could use pool or landscape care? Send us their info
-        and we'll reach out.
+        and we'll reach out. You'll get $25 in credit after their first paid month.
       </p>
 
       <form onSubmit={submit} className="space-y-3">

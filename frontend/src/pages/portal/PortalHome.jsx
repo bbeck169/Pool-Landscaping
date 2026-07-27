@@ -110,6 +110,7 @@ export default function PortalHome() {
       <div
         className="mb-4 flex flex-col sm:flex-row gap-3 md:gap-4"
         data-testid="portal-cta-row"
+        data-tour-id="portal-cta-row"
       >
         <div className="flex-1 min-w-0" data-testid="portal-cta-call">
           <CallNowButton />
@@ -315,6 +316,7 @@ export default function PortalHome() {
           className="rounded-2xl p-5 mb-4"
           style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
           data-testid="last-visit-card"
+          data-tour-id="last-visit-card"
         >
           <div className="text-xs uppercase font-semibold mb-2" style={{ color: colors.muted }}>
             Last visit
@@ -340,31 +342,45 @@ export default function PortalHome() {
         </div>
       ) : null}
 
-      {/* Phase 34 · Feb 2026 · reorder — "Ask a concierge" moved
-          from bottom-of-page to sit directly ABOVE the "Refer a
-          Friend" section per product request. Testids preserved
-          (`portal-ai-section`, `portal-ai-<key>-card`) so existing
-          e2e wiring keeps working. */}
+      {/* Phase 34 · Feb 2026 · Ask-Concierge highlight — teal→blue
+          gradient, distinct from the Refer-a-Friend purple→pink card
+          so the two blocks read as separate hero-ish moments. White
+          text on the gradient meets WCAG AA for 14px bold+. */}
       {aiEmployees.length > 0 ? (
-        <div className="mt-5 mb-4" data-testid="portal-ai-section">
-          <div className="flex items-center gap-2 mb-2">
-            <Sparkles size={16} style={{ color: colors.brand }} />
+        <div
+          className="mt-5 mb-4 rounded-3xl p-5 shadow-lg"
+          style={{
+            background: "linear-gradient(135deg, #0891B2 0%, #0EA5E9 50%, #10B981 100%)",
+            border: "1px solid rgba(255,255,255,0.10)",
+          }}
+          data-testid="portal-ai-section"
+          data-tour-id="portal-ai-section"
+        >
+          <div className="flex items-center gap-2 mb-3">
+            <Sparkles size={20} style={{ color: "#FFFFFF" }} />
             <h2
-              className="text-sm font-bold uppercase tracking-wider"
-              style={{ color: colors.onSurface }}
+              className="text-lg font-black uppercase tracking-wide"
+              style={{ color: "#FFFFFF" }}
             >
-              Ask a concierge
+              Ask a Concierge
             </h2>
           </div>
+          <p
+            className="text-sm mb-4"
+            style={{ color: "rgba(255,255,255,0.92)" }}
+          >
+            Chat with one of our AI concierges — no wait, answers in seconds.
+          </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {aiEmployees.map((emp) => (
               <button
                 key={emp.id}
                 onClick={() => setAiChat({ employee: emp })}
-                className="text-left rounded-2xl p-4 transition hover:brightness-95 flex items-start gap-3"
+                className="text-left rounded-2xl p-4 transition hover:brightness-110 flex items-start gap-3"
                 style={{
-                  backgroundColor: colors.surface,
-                  border: `1px solid ${colors.border}`,
+                  backgroundColor: "rgba(255,255,255,0.16)",
+                  border: "1px solid rgba(255,255,255,0.28)",
+                  backdropFilter: "blur(6px)",
                 }}
                 data-testid={`portal-ai-${emp.key}-card`}
               >
@@ -385,13 +401,13 @@ export default function PortalHome() {
                 <div className="min-w-0">
                   <div
                     className="text-sm font-bold truncate"
-                    style={{ color: colors.onSurface }}
+                    style={{ color: "#FFFFFF" }}
                   >
                     {emp.name}
                   </div>
                   <div
                     className="text-xs mt-0.5 truncate"
-                    style={{ color: colors.muted }}
+                    style={{ color: "rgba(255,255,255,0.85)" }}
                   >
                     {emp.key === "billy"
                       ? "Ask about your balance, invoices, and payment history."

@@ -17,15 +17,26 @@ import { api } from "@/api";
 import { useAuth } from "@/auth";
 
 const STEPS = [
-  { anchor: "greeting-tile",        route: "/portal/home",
-    title: "Welcome to your portal",
-    body:  "Your personalised home base. Let's take a 30-second tour." },
+  // Phase 34 · Feb 2026 · Tour v2 — extended step list covers the
+  // Task-K top CTA row + Task-R Last Visit position + Task-34
+  // Ask-Concierge / Refer-a-Friend highlights. Anchors point at
+  // stable ``data-tour-id`` (or the equivalent ``data-testid``
+  // which the tour engine will also accept as a fallback selector).
+  { anchor: "portal-cta-row",       route: "/portal/home",
+    title: "Call Now + Request Service",
+    body:  "Two taps to reach us — call directly or send a written request." },
   { anchor: "status-circles",       route: "/portal/home",
     title: "Quick account status",
     body:  "Balance, past due, credit, and your next scheduled visit at a glance." },
-  { anchor: "next-service-visit",   route: "/portal/home",
-    title: "Next service visit",
-    body:  "Here's your upcoming visit. Add to calendar, or reschedule from here." },
+  { anchor: "last-visit-card",      route: "/portal/home",
+    title: "Your last visit",
+    body:  "See the most recent service we performed, with a shortcut to the full report." },
+  { anchor: "portal-ai-section",    route: "/portal/home",
+    title: "Ask a Concierge",
+    body:  "Billy handles billing questions; Skedra covers scheduling. Answers in seconds." },
+  { anchor: "portal-referral-section", route: "/portal/home",
+    title: "Refer a Friend — earn $25",
+    body:  "Send us a friend's contact info and we'll reach out. You get $25 in credit after their first paid month." },
   { anchor: "business-card",        route: "/portal/home",
     title: "Our contact card",
     body:  "Save our contact — tap-to-share via NFC or vCard." },
@@ -39,17 +50,14 @@ const STEPS = [
     title: "Estimates",
     body:  "Approve or decline estimates here — you'll be notified when a new one is ready." },
   { anchor: "service-reports-list", route: "/portal/service-reports",
-    title: "Service reports",
-    body:  "After every visit we send a service report with photos and readings. Find them all here." },
+    title: "Service reports · grouped by date",
+    body:  "After every visit we send a report with photos and readings. Reports are now grouped by visit date." },
   { anchor: "request-service-form", route: "/portal/request-service",
     title: "Request a one-off visit",
-    body:  "Need something outside your normal schedule? Ask here." },
+    body:  "Need something outside your normal schedule? Tell us what you need in a short paragraph." },
   { anchor: "payment-method-panel", route: "/portal/payment-method",
     title: "Payment method",
     body:  "Add or update the card we use for automatic billing. Cards are securely stored with Stripe." },
-  { anchor: "referrals-panel",      route: "/portal/referrals",
-    title: "Refer a friend",
-    body:  "Refer a friend and earn $25 — credited after their first paid month." },
 ];
 
 const ROUTE_SETTLE_MS = 350;
