@@ -1,11 +1,9 @@
-import React, { useCallback, useState } from "react";
+/**
+ * Phase 33 · Portal Service Reports — grouped by date.
+ */
+import React, { useCallback, useMemo, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  RefreshControl,
-  Pressable,
+  View, Text, StyleSheet, SectionList, RefreshControl, Pressable,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -15,33 +13,17 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { EmptyState, StatusChip } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 
-function fmtDate(iso: string | undefined) {
-  if (!iso) return "\u2014";
+function formatDateHeader(dateKey: string): string {
   try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return String(iso);
-    return d.toLocaleDateString(undefined, {
-      weekday: "short",
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  } catch {
-    return String(iso);
-  }
+    const d = new Date(dateKey + "T12:00:00Z");
+    if (Number.isNaN(d.getTime())) return dateKey;
+    return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  } catch { return dateKey; }
 }
 
 function reportKind(row: any): "pool" | "landscape" | "generic" {
-  const raw = (
-    row?.template ||
-    row?.service_type ||
-    row?.job?.service_type ||
-    ""
-  )
-    .toString()
-    .toLowerCase();
-  if (raw.includes("landscap") || raw.includes("mow") || raw.includes("lawn"))
-    return "landscape";
+  const raw = (row?.template || row?.service_type || row?.job?.service_type || "").toString().toLowerCase();
+  if (raw.includes("landscap") || raw.includes("mow") || raw.includes("lawn")) return "landscape";
   if (raw.includes("pool") || raw.includes("chem")) return "pool";
   return "generic";
 }
@@ -51,6 +33,21 @@ const KIND_META = {
   landscape: { label: "Landscape service", bg: "#DCFCE7", fg: "#166534", icon: "leaf-outline" as const },
   generic: { label: "Service", bg: colors.surfaceTertiary, fg: colors.onSurfaceSecondary, icon: "clipboard-outline" as const },
 };
+
+function groupByDate(rows: any[]): { title: string; dateKey: string; data: any[] }[] {
+  const map = new Map<string, any[]>();
+  for (const r of rows) {
+    const key = (r.submitted_at || r.created_at || "").slice(0, 10);
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(r);
+  }
+  const sorted = Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  return sorted.map(([dateKey, items]) => {
+    items.sort((a: any, b: any) => (b.submitted_at || b.created_at || "").localeCompare(a.submitted_at || a.created_at || ""));
+    return { title: formatDateHeader(dateKey), dateKey, data: items };
+  });
+}
 
 function SkeletonRows() {
   return (
@@ -90,12 +87,14 @@ export default function PortalServiceReports() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
+  const sections = useMemo(() => (rows ? groupByDate(rows) : []), [rows]);
+
   const renderItem = ({ item }: { item: any }) => {
     const kind = reportKind(item);
     const km = KIND_META[kind];
     return (
       <Pressable
-        testID={`portal-service-report-card-${item.id}`}
+        testID={`portal-service-reports-item-${item.id}`}
         style={({ pressed }) => [s.card, pressed && { opacity: 0.85 }]}
         onPress={() => router.push(`/portal/service-report/${item.id}` as any)}
       >
@@ -107,18 +106,11 @@ export default function PortalServiceReports() {
             <View style={[s.kindChip, { backgroundColor: km.bg }]}>
               <Text style={[s.kindChipText, { color: km.fg }]}>{km.label}</Text>
             </View>
-            <Text style={s.dateText} testID={`portal-service-report-date-${item.id}`}>
-              {fmtDate(item.submitted_at || item.scheduled_start)}
-            </Text>
           </View>
-          <Text style={s.title} numberOfLines={1}>
-            {item.job_title || "Service visit"}
-          </Text>
+          <Text style={s.title} numberOfLines={1}>{item.job_title || "Service visit"}</Text>
           <View style={s.techRow}>
             <Ionicons name="person-outline" size={11} color={colors.muted} />
-            <Text style={s.techName}>
-              {item.tech_name || "Technician not recorded"}
-            </Text>
+            <Text style={s.techName}>{item.tech_name || "Technician not recorded"}</Text>
           </View>
         </View>
         <StatusChip status="completed" />
@@ -147,18 +139,24 @@ export default function PortalServiceReports() {
           testID="portal-service-reports-empty"
         />
       ) : (
-        <FlatList
-          testID="portal-service-reports-list"
-          data={rows}
+        <SectionList
+          testID="portal-service-reports-grouped"
+          sections={sections}
           keyExtractor={(item) => item.id}
-          renderItem={renderItem}
+          stickySectionHeadersEnabled={false}
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
           refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => { setRefreshing(true); load(); }}
-            />
+            <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />
           }
+          renderSectionHeader={({ section }) => (
+            <Text
+              style={s.dateHeader}
+              testID={`portal-service-reports-date-header-${section.dateKey}`}
+            >
+              {section.title}
+            </Text>
+          )}
+          renderItem={renderItem}
         />
       )}
     </View>
@@ -167,100 +165,35 @@ export default function PortalServiceReports() {
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  dateHeader: {
+    fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface,
+    marginTop: spacing.lg, marginBottom: spacing.sm,
+  },
   card: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
-    padding: spacing.lg,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    padding: spacing.lg, borderRadius: radius.lg,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
     marginBottom: spacing.sm,
   },
-  kindIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.md,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  chipRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    flexWrap: "wrap",
-  },
-  kindChip: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: radius.pill,
-  },
-  kindChipText: {
-    fontFamily: font.bold,
-    fontSize: 10,
-    textTransform: "uppercase",
-  },
-  dateText: {
-    fontFamily: font.regular,
-    fontSize: fontSize.sm,
-    color: colors.muted,
-  },
-  title: {
-    fontFamily: font.semibold,
-    fontSize: fontSize.base,
-    color: colors.onSurface,
-    marginTop: 4,
-  },
-  techRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    marginTop: 2,
-  },
-  techName: {
-    fontFamily: font.regular,
-    fontSize: fontSize.sm,
-    color: colors.muted,
-  },
+  kindIcon: { width: 44, height: 44, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
+  chipRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" },
+  kindChip: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: radius.pill },
+  kindChipText: { fontFamily: font.bold, fontSize: 10, textTransform: "uppercase" },
+  title: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 4 },
+  techRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 },
+  techName: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
   errorBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.md,
-    padding: spacing.md,
-    borderRadius: radius.lg,
-    backgroundColor: "#FEE2E2",
-    borderWidth: 1,
-    borderColor: "#FCA5A5",
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    marginHorizontal: spacing.lg, marginTop: spacing.md, padding: spacing.md,
+    borderRadius: radius.lg, backgroundColor: "#FEE2E2", borderWidth: 1, borderColor: "#FCA5A5",
   },
-  errorText: {
-    fontFamily: font.medium,
-    fontSize: fontSize.sm,
-    color: "#991B1B",
-    flex: 1,
-  },
+  errorText: { fontFamily: font.medium, fontSize: fontSize.sm, color: "#991B1B", flex: 1 },
   skeletonWrap: { padding: spacing.lg, gap: spacing.sm },
   skeletonCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
-    padding: spacing.lg,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    padding: spacing.lg, borderRadius: radius.lg,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
   },
-  skeletonIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.md,
-    backgroundColor: colors.surfaceTertiary,
-  },
-  skeletonBar: {
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: colors.surfaceTertiary,
-  },
+  skeletonIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
+  skeletonBar: { height: 12, borderRadius: 6, backgroundColor: colors.surfaceTertiary },
 });

@@ -10,6 +10,7 @@ import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, IMAGES } from "@/src/theme";
 import { PrimaryButton } from "@/src/components/ui";
+import BrandLogo from "@/src/components/BrandLogo";
 
 export default function Login() {
   const { login } = useAuth();
@@ -53,12 +54,9 @@ export default function Login() {
               stacked vertically, centered. Layout order:
                 [logo] → [Welcome to] → [Pool & Landscaping ... LLC].
               Replaces the previous water-icon badge on the left. */}
-          <Image
-            source={require("../assets/logo-full.png")}
-            style={{ height: 120, width: "80%", marginBottom: spacing.md }}
-            contentFit="contain"
-            testID="login-logo-full"
-          />
+          <View style={{ width: "80%", marginBottom: spacing.md }}>
+            <BrandLogo size="lg" testID="login-logo-full" />
+          </View>
           <Text style={styles.brand}>
             <Text style={styles.brandLine1}>Welcome to{"\n"}</Text>
             <Text style={styles.brandLine2}>Pool & Landscaping of Vistancia LLC</Text>
@@ -123,6 +121,14 @@ export default function Login() {
             <Ionicons name={showPw ? "eye-off-outline" : "eye-outline"} size={18} color={colors.muted} />
           </Pressable>
         </View>
+
+        <Pressable
+          style={styles.forgotLink}
+          onPress={() => router.push("/forgot-password")}
+          testID="login-forgot-password-link"
+        >
+          <Text style={styles.forgotText}>Forgot password?</Text>
+        </Pressable>
 
         {error ? (
           <Text style={styles.error} testID="login-error">
@@ -206,6 +212,8 @@ const styles = StyleSheet.create({
     color: colors.onSurface,
     ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}),
   },
+  forgotLink: { alignSelf: "flex-end", marginTop: spacing.sm },
+  forgotText: { fontFamily: font.semibold, fontSize: fontSize.sm, color: colors.brand },
   error: { color: colors.error, fontFamily: font.medium, fontSize: fontSize.base, marginTop: spacing.md },
   signupLink: { alignItems: "center", marginTop: spacing.lg },
   signupText: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted },

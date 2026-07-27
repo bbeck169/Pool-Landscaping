@@ -202,13 +202,30 @@ _JOB_SPECIAL_PATCH = {"scheduled_date_shift_days"}
 
 
 async def _jobs_bulk_shift(ids: List[str], shift_days: int,
-                              user: dict, tenant: dict) -> dict:
+                              user: dict, tenant: dict,
+                              anchor_unscheduled_from_today: bool = False) -> dict:
     """Per-row scheduled_date shift. Uses each job's existing
     ``scheduled_date`` as the anchor and adds/subtracts N days. Jobs
-    without a ``scheduled_date`` land in ``failed[]``."""
+    without a ``scheduled_date`` land in ``failed[]`` unless
+    ``anchor_unscheduled_from_today`` is True — in which case they get
+    a fresh date of ``today + shift_days`` (tenant TZ if available)."""
     updated: List[str] = []
     failed: List[dict] = []
     stamp = now_iso()
+    anchor_count = 0
+    # Compute "today" once. Prefer tenant timezone if present.
+    tz_name = (tenant or {}).get("timezone")
+    if tz_name:
+        try:
+            from zoneinfo import ZoneInfo
+            from datetime import datetime as _dt
+            today = _dt.now(ZoneInfo(tz_name)).date()
+        except Exception:                                            # noqa: BLE001
+            from datetime import datetime as _dt, timezone as _tz
+            today = _dt.now(_tz.utc).date()
+    else:
+        from datetime import datetime as _dt, timezone as _tz
+        today = _dt.now(_tz.utc).date()
     for _id in ids:
         row = await db.jobs.find_one(
             {"id": _id, "tenant_id": tenant["id"]},
@@ -219,16 +236,22 @@ async def _jobs_bulk_shift(ids: List[str], shift_days: int,
             continue
         cur = row.get("scheduled_date")
         if not cur:
-            failed.append({"id": _id, "reason": "Job has no scheduled_date to shift",
-                              "status_code": 409})
-            continue
-        try:
-            base = date.fromisoformat(cur[:10])
-        except ValueError:
-            failed.append({"id": _id, "reason": "Existing scheduled_date is unparseable",
-                              "status_code": 409})
-            continue
-        new_date = (base + timedelta(days=shift_days)).isoformat()
+            if not anchor_unscheduled_from_today:
+                failed.append({"id": _id,
+                                  "reason": "Job has no scheduled_date to shift",
+                                  "status_code": 409})
+                continue
+            new_date = (today + timedelta(days=shift_days)).isoformat()
+            anchor_count += 1
+        else:
+            try:
+                base = date.fromisoformat(cur[:10])
+            except ValueError:
+                failed.append({"id": _id,
+                                  "reason": "Existing scheduled_date is unparseable",
+                                  "status_code": 409})
+                continue
+            new_date = (base + timedelta(days=shift_days)).isoformat()
         await db.jobs.update_one(
             {"id": _id, "tenant_id": tenant["id"]},
             {"$set": {"scheduled_date": new_date,
@@ -237,10 +260,12 @@ async def _jobs_bulk_shift(ids: List[str], shift_days: int,
         )
         await _write_audit("job.bulk_update", user, tenant["id"], _id,
                               patch_fields=["scheduled_date"],
-                              shift_days=shift_days)
+                              shift_days=shift_days,
+                              anchored=(anchor_unscheduled_from_today and not cur))
         updated.append(_id)
     return {"ok": True, "updated_count": len(updated),
-              "updated": updated, "failed": failed}
+              "updated": updated, "failed": failed,
+              "anchored_count": anchor_count}
 
 
 async def _job_locked(row: dict) -> Optional[str]:
@@ -289,7 +314,10 @@ async def jobs_bulk_update(body: _BulkUpdateIn,
             raise HTTPException(400, "ids is empty")
         if len(ids) > _CAP:
             raise HTTPException(400, f"bulk-update capped at {_CAP} rows per call")
-        return await _jobs_bulk_shift(ids, shift_days, user, tenant)
+        return await _jobs_bulk_shift(
+            ids, shift_days, user, tenant,
+            anchor_unscheduled_from_today=bool(patch.get("anchor_unscheduled_from_today")),
+        )
     return await _generic_bulk_update("jobs", "job.bulk_update", ids,
                                           patch, _JOB_PATCH_ALLOWED,
                                           user, tenant)

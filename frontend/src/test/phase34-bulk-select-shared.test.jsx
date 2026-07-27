@@ -69,6 +69,12 @@ const SURFACES = [
   { name: "communications", endpoint: "/communications/bulk-archive" },
   { name: "email-templates", endpoint: "/email-templates/bulk-delete" },
   { name: "sms-templates", endpoint: "/sms-templates/bulk-delete" },
+  // Task NN · Feb 2026 — P1 secondary admin surfaces.
+  { name: "reviews", endpoint: "/reviews/bulk-delete" },
+  { name: "users", endpoint: "/users/bulk-delete" },
+  { name: "customer-tags", endpoint: "/customer-tags/bulk-delete" },
+  { name: "service-reports", endpoint: "/service-reports/bulk-delete" },
+  { name: "time-entries", endpoint: "/time-entries/bulk-delete" },
 ];
 
 SURFACES.forEach(({ name, endpoint }) => {
@@ -236,5 +242,35 @@ describe("bulk-reschedule · jobs", () => {
     expect(canConfirm("relative", "", 0)).toBe(false);
     expect(canConfirm("relative", "", 3)).toBe(true);
     expect(canConfirm("relative", "", -7)).toBe(true);
+  });
+
+  // Task MM · Feb 2026 — anchor-unscheduled flag.
+  it("anchor checkbox on adds anchor_unscheduled_from_today to payload", async () => {
+    const spy = jest.fn().mockResolvedValue({
+      updated_count: 5, updated: [], failed: [], anchored_count: 2,
+    });
+    const anchorUnscheduled = true;
+    const shiftDays = 3;
+    const patch = {
+      scheduled_date_shift_days: shiftDays,
+      ...(anchorUnscheduled ? { anchor_unscheduled_from_today: true } : {}),
+    };
+    await spy("/jobs/bulk-update", { ids: ["a", "b"], patch });
+    expect(spy).toHaveBeenCalledWith("/jobs/bulk-update", expect.objectContaining({
+      patch: expect.objectContaining({
+        scheduled_date_shift_days: 3,
+        anchor_unscheduled_from_today: true,
+      }),
+    }));
+  });
+
+  it("anchor checkbox off (default) omits the flag entirely", () => {
+    const anchorUnscheduled = false;
+    const patch = {
+      scheduled_date_shift_days: 3,
+      ...(anchorUnscheduled ? { anchor_unscheduled_from_today: true } : {}),
+    };
+    expect("anchor_unscheduled_from_today" in patch).toBe(false);
+    expect(patch.scheduled_date_shift_days).toBe(3);
   });
 });

@@ -1,5 +1,8 @@
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable } from "react-native";
+import {
+  View, Text, StyleSheet, ScrollView, RefreshControl, Pressable,
+  Linking, Dimensions,
+} from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -11,23 +14,22 @@ import { colors, spacing, radius, font, fontSize, money, IMAGES } from "@/src/th
 import { Loading, StatusChip } from "@/src/components/ui";
 import { Header, NotificationBell } from "@/src/components/widgets";
 
-const SECTIONS: { key: string; label: string; icon: any; route: string }[] = [
+const SCREEN_W = Dimensions.get("window").width;
+const IS_NARROW = SCREEN_W < 480;
+
+const QA_SECTIONS: { key: string; label: string; icon: any; route: string }[] = [
   { key: "services", label: "Service Records", icon: "clipboard-outline", route: "/portal/services" },
   { key: "service-reports", label: "Service Reports", icon: "document-text-outline", route: "/portal/service-reports" },
-  { key: "book",     label: "Book Service",    icon: "calendar-outline", route: "/portal/book" },
-  { key: "appts",    label: "Appointments",    icon: "checkmark-done-outline", route: "/portal/appointments" },
-  { key: "photos",   label: "Photos",          icon: "images-outline", route: "/portal/photos" },
-  { key: "videos",   label: "Videos",           icon: "videocam-outline", route: "/portal/videos" },
-  { key: "chats",    label: "Chat Threads",    icon: "chatbubbles-outline", route: "/portal/chats" },
+  { key: "appts", label: "Appointments", icon: "checkmark-done-outline", route: "/portal/appointments" },
+  { key: "photos", label: "Photos", icon: "images-outline", route: "/portal/photos" },
+  { key: "videos", label: "Videos", icon: "videocam-outline", route: "/portal/videos" },
+  { key: "chats", label: "Chat Threads", icon: "chatbubbles-outline", route: "/portal/chats" },
   { key: "invoices", label: "Invoices", icon: "receipt-outline", route: "/portal/invoices" },
   { key: "estimates", label: "Estimates", icon: "document-text-outline", route: "/portal/estimates" },
   { key: "payments", label: "Payments", icon: "card-outline", route: "/portal/payments" },
   { key: "paymethod", label: "Payment Method", icon: "wallet-outline", route: "/portal/payment-method" },
   { key: "messages", label: "Messages (AI)", icon: "chatbubble-outline", route: "/portal/messages" },
   { key: "documents", label: "Documents", icon: "folder-open-outline", route: "/portal/documents" },
-  { key: "request", label: "Work Request", icon: "add-circle-outline", route: "/request-service" },
-  { key: "card", label: "Business Card", icon: "id-card-outline", route: "/card" },
-  { key: "referrals", label: "Refer & Earn", icon: "gift-outline", route: "/referrals" },
   { key: "profile", label: "My Profile", icon: "person-outline", route: "/portal/profile" },
 ];
 
@@ -37,10 +39,19 @@ export default function PortalHome() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [aiEmployees, setAiEmployees] = useState<any[]>([]);
+  const [tenantPhone, setTenantPhone] = useState("(602) 887-4400");
 
   const load = useCallback(async () => {
     try {
-      setData(await api.get("/dashboard"));
+      const [dashboard, aiRes, cfg] = await Promise.all([
+        api.get("/dashboard"),
+        api.get("/customer-portal/ai-employees").catch(() => ({ employees: [] })),
+        api.get("/config/public").catch(() => ({})),
+      ]);
+      setData(dashboard);
+      setAiEmployees(aiRes?.employees || aiRes || []);
+      if (cfg?.tenant_phone) setTenantPhone(cfg.tenant_phone);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -58,7 +69,7 @@ export default function PortalHome() {
   };
 
   return (
-    <View style={styles.root}>
+    <View style={s.root}>
       <Header title="My Account" subtitle={`Hi, ${user?.name?.split(" ")[0] || ""}`} right={<NotificationBell />} />
       {loading || !data ? (
         <Loading testID="portal-home-loading" />
@@ -68,64 +79,224 @@ export default function PortalHome() {
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
         >
-          <View style={styles.hero}>
+          {/* 1. Top CTA Row: Call Now + Request Service */}
+          <View
+            testID="portal-cta-row"
+            style={[s.ctaRow, { flexDirection: IS_NARROW ? "column" : "row" }]}
+          >
+            <Pressable
+              testID="portal-cta-call"
+              style={s.ctaCallBtn}
+              onPress={() => Linking.openURL(`tel:${tenantPhone}`)}
+            >
+              <Ionicons name="call" size={18} color="#fff" />
+              <Text style={s.ctaCallText}>Call Now</Text>
+            </Pressable>
+            <Pressable
+              testID="portal-request-service-btn"
+              style={s.ctaRequestBtn}
+              onPress={() => router.push("/request-service" as any)}
+            >
+              <LinearGradient
+                colors={["#0284C7", "#16A34A"]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={s.ctaRequestGrad}
+              >
+                <Ionicons name="add-circle-outline" size={18} color="#fff" />
+                <Text style={s.ctaRequestText}>Request Service</Text>
+              </LinearGradient>
+            </Pressable>
+          </View>
+
+          {/* 2. Welcome-back Hero Card */}
+          <View style={s.hero} testID="portal-hero">
             <Image source={{ uri: IMAGES.dashboardHero }} style={StyleSheet.absoluteFill} contentFit="cover" />
             <LinearGradient colors={["rgba(0,60,95,0.55)", "rgba(26,43,60,0.92)"]} style={StyleSheet.absoluteFill} />
-            <View style={styles.heroInner}>
-              <Text style={styles.heroLabel}>Balance Due</Text>
-              <Text style={styles.heroValue} testID="portal-balance">{money(data.outstanding)}</Text>
-              <View style={styles.heroRow}>
-                <View style={styles.heroPill}>
+            <View style={s.heroInner}>
+              <Text style={s.heroLabel}>Balance Due</Text>
+              <Text style={s.heroValue} testID="portal-balance">{money(data.outstanding)}</Text>
+              <View style={s.heroRow}>
+                <View style={s.heroPill}>
                   <Ionicons name="flash" size={14} color="#fff" />
-                  <Text style={styles.heroPillText}>{data.active_jobs} upcoming</Text>
+                  <Text style={s.heroPillText}>{data.active_jobs} upcoming</Text>
                 </View>
-                <View style={styles.heroPill}>
+                <View style={s.heroPill}>
                   <Ionicons name="checkmark-done" size={14} color="#fff" />
-                  <Text style={styles.heroPillText}>{data.completed_jobs} completed</Text>
+                  <Text style={s.heroPillText}>{data.completed_jobs} completed</Text>
                 </View>
               </View>
             </View>
           </View>
 
+          {/* 3. Next Service */}
           {data.next_service ? (
-            <Pressable style={styles.nextCard} onPress={() => router.push(`/job/${data.next_service.id}`)} testID="portal-next-service">
-              <View style={styles.nextIcon}>
+            <Pressable style={s.nextCard} onPress={() => router.push(`/job/${data.next_service.id}`)} testID="portal-next-service">
+              <View style={s.nextIcon}>
                 <Ionicons name="calendar" size={20} color={colors.brand} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.nextLabel}>Next Service</Text>
-                <Text style={styles.nextTitle} numberOfLines={1}>{data.next_service.title}</Text>
-                <Text style={styles.nextMeta}>{(data.next_service.scheduled_date || "").slice(0, 10) || "To be scheduled"}</Text>
+                <Text style={s.nextLabel}>Next Service</Text>
+                <Text style={s.nextTitle} numberOfLines={1}>{data.next_service.title}</Text>
+                <Text style={s.nextMeta}>{(data.next_service.scheduled_date || "").slice(0, 10) || "To be scheduled"}</Text>
               </View>
               <StatusChip status={data.next_service.status} />
             </Pressable>
           ) : null}
 
-          <Text style={styles.gridTitle}>Explore</Text>
-          <View style={styles.grid}>
-            {SECTIONS.map((s) => {
-              const badge = badgeFor(s.key);
+          {/* 4. Quick Actions Grid */}
+          <Text style={s.gridTitle}>Quick Actions</Text>
+          <View style={s.grid}>
+            {QA_SECTIONS.map((sec) => {
+              const badge = badgeFor(sec.key);
               return (
-                <Pressable key={s.key} style={styles.card} onPress={() => router.push(s.route as any)} testID={`portal-card-${s.key}`}>
+                <Pressable key={sec.key} style={s.card} onPress={() => router.push(sec.route as any)} testID={`portal-card-${sec.key}`}>
                   {badge > 0 ? (
-                    <View style={styles.cardBadge}><Text style={styles.cardBadgeText}>{badge}</Text></View>
+                    <View style={s.cardBadge}><Text style={s.cardBadgeText}>{badge}</Text></View>
                   ) : null}
-                  <View style={styles.cardIcon}>
-                    <Ionicons name={s.icon} size={22} color={colors.brand} />
+                  <View style={s.cardIcon}>
+                    <Ionicons name={sec.icon} size={22} color={colors.brand} />
                   </View>
-                  <Text style={styles.cardLabel}>{s.label}</Text>
+                  <Text style={s.cardLabel}>{sec.label}</Text>
                 </Pressable>
               );
             })}
           </View>
+
+          {/* 5. Last Visit Card */}
+          {data.last_visit ? (
+            <Pressable
+              style={s.lastVisitCard}
+              testID="last-visit-card"
+              onPress={() => data.last_visit.id && router.push(`/portal/service/${data.last_visit.id}` as any)}
+            >
+              <View style={s.lastVisitIcon}>
+                <Ionicons name="time-outline" size={22} color={colors.brand} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.lastVisitLabel}>Last Visit</Text>
+                <Text style={s.lastVisitTitle} numberOfLines={1}>
+                  {data.last_visit.title || "Recent service"}
+                </Text>
+                <Text style={s.lastVisitDate}>
+                  {(data.last_visit.date || data.last_visit.scheduled_date || "").slice(0, 10)}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+            </Pressable>
+          ) : null}
+
+          {/* 6. Ask a Concierge — teal→emerald gradient */}
+          {Array.isArray(aiEmployees) && aiEmployees.length > 0 ? (
+            <LinearGradient
+              colors={["#0891B2", "#0EA5E9", "#10B981"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={s.conciergeWrap}
+              testID="portal-ai-section"
+            >
+              <View style={s.conciergeHeader}>
+                <Ionicons name="sparkles" size={20} color="#fff" />
+                <Text style={s.conciergeTitle}>ASK A CONCIERGE</Text>
+              </View>
+              <Text style={s.conciergeSubtitle}>
+                Chat with one of our AI concierges — no wait, answers in seconds.
+              </Text>
+              {aiEmployees.map((emp: any) => (
+                <Pressable
+                  key={emp.id || emp.key}
+                  testID={`portal-ai-${emp.key || emp.id}-card`}
+                  style={s.conciergeCard}
+                  onPress={() => router.push(`/ai-chat/${emp.id}` as any)}
+                >
+                  <View style={s.conciergeAvatar}>
+                    <Text style={s.conciergeEmoji}>{emp.avatar || "🤖"}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.conciergeName}>{emp.name}</Text>
+                    <Text style={s.conciergeDesc} numberOfLines={2}>{emp.description || emp.tagline || ""}</Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.7)" />
+                </Pressable>
+              ))}
+            </LinearGradient>
+          ) : null}
+
+          {/* 7. Refer a Friend — purple→magenta gradient */}
+          <LinearGradient
+            colors={["#7C3AED", "#A855F7", "#EC4899"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={s.referralWrap}
+            testID="portal-referral-section"
+          >
+            <Ionicons name="gift" size={28} color="#fff" />
+            <Text style={s.referralTitle}>Refer a Friend — earn $55 credit</Text>
+            <Text style={s.referralBody}>
+              You'll get $55 in credit after their first paid month.
+            </Text>
+            <Pressable
+              style={s.referralBtn}
+              onPress={() => router.push("/referrals" as any)}
+              testID="portal-referral-cta"
+            >
+              <Text style={s.referralBtnText}>Send Referral</Text>
+            </Pressable>
+          </LinearGradient>
+
+          {/* 8. Business Card */}
+          <Pressable
+            style={s.bizCard}
+            onPress={() => router.push("/card" as any)}
+            testID="portal-card-business"
+          >
+            <View style={s.bizCardIcon}>
+              <Ionicons name="id-card-outline" size={22} color={colors.brand} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.bizCardLabel}>Business Card</Text>
+              <Text style={s.bizCardSub}>Contact info, QR code & more</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+          </Pressable>
         </ScrollView>
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
+
+  // CTA Row
+  ctaRow: { gap: 12, marginBottom: spacing.lg },
+  ctaCallBtn: {
+    flex: 1,
+    minHeight: 48,
+    backgroundColor: "#0F766E",
+    borderRadius: radius.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  ctaCallText: { fontFamily: font.bold, fontSize: fontSize.base, color: "#fff" },
+  ctaRequestBtn: { flex: 1, minHeight: 48, borderRadius: radius.md, overflow: "hidden" },
+  ctaRequestGrad: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: radius.md,
+  },
+  ctaRequestText: { fontFamily: font.bold, fontSize: fontSize.base, color: "#fff" },
+
+  // Hero
   hero: { height: 150, borderRadius: radius.lg, overflow: "hidden", marginBottom: spacing.lg },
   heroInner: { flex: 1, padding: spacing.lg, justifyContent: "flex-end" },
   heroLabel: { fontFamily: font.medium, fontSize: fontSize.base, color: "rgba(255,255,255,0.85)" },
@@ -133,16 +304,82 @@ const styles = StyleSheet.create({
   heroRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md },
   heroPill: { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: "rgba(255,255,255,0.18)", paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill },
   heroPillText: { fontFamily: font.medium, fontSize: fontSize.sm, color: "#fff" },
-  nextCard: { flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg },
+
+  // Next Service
+  nextCard: {
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md,
+    borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg,
+  },
   nextIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
   nextLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted },
   nextTitle: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
   nextMeta: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 1 },
+
+  // Quick Actions Grid
   gridTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface, marginBottom: spacing.md },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
-  card: { width: "47.5%", flexGrow: 1, backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border },
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, marginBottom: spacing.lg },
+  card: {
+    width: "47.5%", flexGrow: 1, backgroundColor: colors.surface,
+    borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border,
+  },
   cardIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", marginBottom: spacing.sm },
   cardLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },
   cardBadge: { position: "absolute", top: spacing.md, right: spacing.md, minWidth: 22, height: 22, paddingHorizontal: 6, borderRadius: 11, backgroundColor: colors.error, alignItems: "center", justifyContent: "center" },
   cardBadgeText: { color: "#fff", fontFamily: font.bold, fontSize: fontSize.sm },
+
+  // Last Visit
+  lastVisitCard: {
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md,
+    borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg,
+  },
+  lastVisitIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
+  lastVisitLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted },
+  lastVisitTitle: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
+  lastVisitDate: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 1 },
+
+  // Ask a Concierge
+  conciergeWrap: {
+    borderRadius: 24, padding: 18, marginBottom: spacing.lg,
+    shadowColor: "#000", shadowOpacity: 0.15,
+    shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 6,
+  },
+  conciergeHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
+  conciergeTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: "#fff", textTransform: "uppercase", letterSpacing: 1 },
+  conciergeSubtitle: { fontFamily: font.regular, fontSize: fontSize.base, color: "rgba(255,255,255,0.92)", marginBottom: spacing.md, lineHeight: 20 },
+  conciergeCard: {
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    backgroundColor: "rgba(255,255,255,0.16)", borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.28)", borderRadius: radius.lg,
+    padding: spacing.md, marginTop: spacing.sm,
+  },
+  conciergeAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center" },
+  conciergeEmoji: { fontSize: 22 },
+  conciergeName: { fontFamily: font.bold, fontSize: fontSize.base, color: "#fff" },
+  conciergeDesc: { fontFamily: font.regular, fontSize: fontSize.sm, color: "rgba(255,255,255,0.85)", marginTop: 2, lineHeight: 16 },
+
+  // Refer a Friend
+  referralWrap: {
+    borderRadius: 24, padding: 20, marginBottom: spacing.lg,
+    shadowColor: "#000", shadowOpacity: 0.15,
+    shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 6,
+    alignItems: "center",
+  },
+  referralTitle: { fontFamily: font.bold, fontSize: fontSize.xl, color: "#fff", marginTop: spacing.sm, textAlign: "center" },
+  referralBody: { fontFamily: font.regular, fontSize: fontSize.base, color: "rgba(255,255,255,0.92)", marginTop: spacing.xs, textAlign: "center", lineHeight: 20 },
+  referralBtn: {
+    backgroundColor: "#fff", borderRadius: radius.pill, paddingHorizontal: 28, paddingVertical: 12, marginTop: spacing.md,
+  },
+  referralBtnText: { fontFamily: font.bold, fontSize: fontSize.base, color: "#7C3AED" },
+
+  // Business Card
+  bizCard: {
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md,
+    borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md,
+  },
+  bizCardIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
+  bizCardLabel: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
+  bizCardSub: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 1 },
 });

@@ -1,23 +1,27 @@
-/**
- * Phase 20B mobile A.2 · Customer appointment booking.
- */
-import React, { useEffect, useState } from 'react';
-import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Alert,
-} from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+// DEPRECATED — Phase 34 · Task H
+// "Book Service" has been retired. This route redirects to Request Service.
+import React, { useEffect } from "react";
+import { View, Text, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
-
-import { api } from "@/src/api";
-import { colors, spacing, radius, font, fontSize } from "@/src/theme";
-import { Header } from "@/src/components/widgets";
-
-const SERVICE_TYPES = [
-  "Pool Cleaning", "Weekly Pool Service", "Chemical Balance Only",
-  "Landscape Maintenance", "Monthly Landscaping", "One-time Cleanup",
-];
+import { colors, font, fontSize, spacing } from "@/src/theme";
 
 export default function PortalBook() {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace("/request-service" as any);
+  }, [router]);
+  return (
+    <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface }}>
+      <Text style={{ fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted }}>
+        Redirecting to Request Service…
+      </Text>
+    </View>
+  );
+}
+
+// Legacy code below preserved for reference only.
+/* eslint-disable */
+function _LegacyPortalBook() {
   const router = useRouter();
   const [avail, setAvail] = useState<any>({ windows: [] });
   const [service, setService] = useState(SERVICE_TYPES[0]);

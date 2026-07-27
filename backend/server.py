@@ -187,6 +187,8 @@ api_router.include_router(_p27_svc_media.router)
 # (customers, jobs, tasks, communications, email/sms templates).
 from routers import bulk_crm as _p34_bulk_crm  # noqa: E402
 api_router.include_router(_p34_bulk_crm.router)
+from routers import bulk_crm_p1 as _p34_bulk_crm_p1  # noqa: E402
+api_router.include_router(_p34_bulk_crm_p1.router)
 # Phase 32 · Feb 2026 — Mobile offline sync backend (batch op replay
 # + offline-bundle prefetch). Idempotent per ``client_op_id``;
 # conflicts resolve mobile-wins with an audit-logged snapshot.

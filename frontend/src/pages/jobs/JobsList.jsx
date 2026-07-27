@@ -52,6 +52,7 @@ export default function JobsList() {
   const [shiftValue, setShiftValue] = useState(1);
   const [shiftUnit, setShiftUnit] = useState("days"); // days | weeks
   const [shiftDirection, setShiftDirection] = useState(1); // 1 | -1
+  const [anchorUnscheduled, setAnchorUnscheduled] = useState(false);
   const [rescheduleConfirmOpen, setRescheduleConfirmOpen] = useState(false);
   const [rescheduleBusy, setRescheduleBusy] = useState(false);
 
@@ -123,16 +124,23 @@ export default function JobsList() {
     try {
       const patch = rescheduleMode === "absolute"
         ? { scheduled_date: rescheduleDate }
-        : { scheduled_date_shift_days: shiftDays };
+        : {
+            scheduled_date_shift_days: shiftDays,
+            ...(anchorUnscheduled ? { anchor_unscheduled_from_today: true } : {}),
+          };
       const res = await api.post("/jobs/bulk-update", {
         ids: Array.from(selected), patch,
       });
       applyFailures(res.failed);
       const okC = res.updated_count || 0;
       const failC = (res.failed || []).length;
+      const anchoredC = res.anchored_count || 0;
+      const anchorSuffix = anchoredC
+        ? ` (${anchoredC} backlog job${anchoredC === 1 ? "" : "s"} scheduled from today)`
+        : "";
       const msg = rescheduleMode === "absolute"
         ? `Rescheduled ${okC} job${okC === 1 ? "" : "s"} to ${formatFriendly(rescheduleDate)}`
-        : `Shifted ${okC} job${okC === 1 ? "" : "s"} by ${shiftDays > 0 ? "+" : ""}${shiftDays} day${Math.abs(shiftDays) === 1 ? "" : "s"}`;
+        : `Shifted ${okC} job${okC === 1 ? "" : "s"} by ${shiftDays > 0 ? "+" : ""}${shiftDays} day${Math.abs(shiftDays) === 1 ? "" : "s"}${anchorSuffix}`;
       if (failC === 0) toast.success(msg);
       else toast(`${msg} · ${failC} locked`, {
         description: (res.failed || []).slice(0, 3).map((f) => f.reason).join(" · "),
@@ -394,6 +402,21 @@ export default function JobsList() {
                 <div className="mt-2 text-xs" style={{ color: colors.muted }}>
                   Effective shift: <b>{shiftDays > 0 ? "+" : ""}{shiftDays} day{Math.abs(shiftDays) === 1 ? "" : "s"}</b>
                 </div>
+                <label className="mt-3 flex items-start gap-2 cursor-pointer text-xs"
+                         style={{ color: colors.onSurface }}>
+                  <input type="checkbox"
+                           checked={anchorUnscheduled}
+                           onChange={(e) => setAnchorUnscheduled(e.target.checked)}
+                           className="cursor-pointer mt-0.5"
+                           data-testid="bulk-reschedule-anchor-unscheduled" />
+                  <span>
+                    <b>Also schedule unscheduled jobs</b> — anchor from today
+                    <div className="text-[11px] mt-0.5" style={{ color: colors.muted }}>
+                      Backlog jobs without a current date get a fresh date of
+                      today {shiftDays > 0 ? "+" : "−"} {Math.abs(shiftDays)} day{Math.abs(shiftDays) === 1 ? "" : "s"}.
+                    </div>
+                  </span>
+                </label>
               </>
             )}
 

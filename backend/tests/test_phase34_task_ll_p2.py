@@ -400,6 +400,99 @@ def test_jobs_bulk_reschedule_shift_non_integer_rejected(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Task MM · Feb 2026 — anchor_unscheduled_from_today flag on the shift
+# handler. Backlog jobs (no scheduled_date) get today + shift instead
+# of landing in failed[]. Absolute+shift mutex still applies.
+# ═══════════════════════════════════════════════════════════════════════
+def test_jobs_bulk_shift_anchor_unscheduled_on_computes_today_plus_shift(
+        db, super_headers, tid):
+    from datetime import datetime, timezone, timedelta as _td
+    async def _plant():
+        happy = uuid.uuid4().hex
+        backlog = uuid.uuid4().hex
+        await db.jobs.insert_many([
+            {"id": happy, "tenant_id": tid, "customer_id": "c-x",
+              "title": "MM-happy", "status": "scheduled",
+              "scheduled_date": "2026-03-01",
+              "created_at": "2026-02-01T00:00:00Z"},
+            {"id": backlog, "tenant_id": tid, "customer_id": "c-x",
+              "title": "MM-backlog", "status": "scheduled",
+              # No scheduled_date field.
+              "created_at": "2026-02-01T00:00:00Z"},
+        ])
+        return happy, backlog
+    happy, backlog = _run(_plant())
+    r = requests.post(
+        f"{API}/jobs/bulk-update",
+        headers={**super_headers, "Content-Type": "application/json"},
+        json={"ids": [happy, backlog], "patch": {
+            "scheduled_date_shift_days": 3,
+            "anchor_unscheduled_from_today": True,
+        }},
+        timeout=30,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["updated_count"] == 2
+    assert body["failed"] == []
+    assert body.get("anchored_count") == 1
+    expected_today_plus_3 = (datetime.now(timezone.utc).date() + _td(days=3)).isoformat()
+    async def _check():
+        return (await db.jobs.find_one({"id": backlog}))["scheduled_date"]
+    assert _run(_check()) == expected_today_plus_3
+
+
+def test_jobs_bulk_shift_anchor_off_default_still_fails_backlog(
+        db, super_headers, tid):
+    async def _plant():
+        backlog = uuid.uuid4().hex
+        await db.jobs.insert_one({
+            "id": backlog, "tenant_id": tid, "customer_id": "c-x",
+            "title": "MM-backlog-off", "status": "scheduled",
+            "created_at": "2026-02-01T00:00:00Z",
+        })
+        return backlog
+    backlog = _run(_plant())
+    r = requests.post(
+        f"{API}/jobs/bulk-update",
+        headers={**super_headers, "Content-Type": "application/json"},
+        json={"ids": [backlog],
+                "patch": {"scheduled_date_shift_days": 3}},
+        timeout=30,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["updated_count"] == 0
+    assert len(body["failed"]) == 1
+    assert body["failed"][0]["id"] == backlog
+    assert body.get("anchored_count", 0) == 0
+
+
+def test_jobs_bulk_shift_anchor_does_not_rescue_mutex_error(
+        db, super_headers, tid):
+    async def _plant():
+        jid = uuid.uuid4().hex
+        await db.jobs.insert_one({
+            "id": jid, "tenant_id": tid, "customer_id": "c-x",
+            "title": "MM-mutex", "status": "scheduled",
+            "created_at": "2026-02-01T00:00:00Z",
+        })
+        return jid
+    jid = _run(_plant())
+    r = requests.post(
+        f"{API}/jobs/bulk-update",
+        headers={**super_headers, "Content-Type": "application/json"},
+        json={"ids": [jid], "patch": {
+            "scheduled_date": "2026-04-01",
+            "scheduled_date_shift_days": 3,
+            "anchor_unscheduled_from_today": True,
+        }},
+        timeout=30,
+    )
+    assert r.status_code == 422, r.text
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Tasks — happy path
 # ═══════════════════════════════════════════════════════════════════════
 def test_tasks_bulk_update_status(db, super_headers, tid):

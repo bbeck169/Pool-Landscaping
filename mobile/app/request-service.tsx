@@ -1,37 +1,36 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, Pressable } from "react-native";
+import { View, Text, StyleSheet, TextInput, Pressable, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useRouter } from "expo-router";
 
 import { api } from "@/src/api";
-import { colors, spacing, font, fontSize } from "@/src/theme";
+import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
-import { PrimaryButton, Sheet } from "@/src/components/ui";
-import { Field } from "@/app/customer/new";
-import { Selector } from "@/app/job/new";
+import { PrimaryButton } from "@/src/components/ui";
 
-const SERVICE_TYPES = ["Pool Cleaning", "Repair", "Landscaping", "Inspection", "Installation"];
+const MIN_LEN = 10;
+const MAX_LEN = 2000;
 
 export default function RequestService() {
   const router = useRouter();
-  const [serviceType, setServiceType] = useState("Pool Cleaning");
+  const [details, setDetails] = useState("");
   const [date, setDate] = useState("");
-  const [notes, setNotes] = useState("");
-  const [sheet, setSheet] = useState(false);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
 
+  const charCount = details.length;
+  const isValid = charCount >= MIN_LEN && charCount <= MAX_LEN;
+
   const submit = async () => {
+    if (!isValid) return;
     setBusy(true);
     setError("");
     try {
-      await api.post("/service-requests", {
-        service_type: serviceType,
-        title: `${serviceType} Request`,
-        scheduled_date: date || null,
-        notes,
+      await api.post("/customer-portal/service-requests", {
+        request_details: details,
+        preferred_date: date || undefined,
       });
       setDone(true);
     } catch (e: any) {
@@ -43,52 +42,123 @@ export default function RequestService() {
 
   if (done) {
     return (
-      <View style={styles.root}>
+      <View style={s.root}>
         <Header title="Request Sent" back />
-        <View style={styles.doneWrap}>
-          <View style={styles.doneIcon}>
+        <View style={s.doneWrap}>
+          <View style={s.doneIcon}>
             <Ionicons name="checkmark-circle" size={56} color={colors.success} />
           </View>
-          <Text style={styles.doneTitle}>Request submitted!</Text>
-          <Text style={styles.doneSub}>Our team will review your {serviceType.toLowerCase()} request and schedule a technician shortly.</Text>
+          <Text style={s.doneTitle}>Request submitted!</Text>
+          <Text style={s.doneSub}>
+            Our team will review your request and get back to you shortly.
+          </Text>
           <View style={{ height: spacing.xl }} />
-          <PrimaryButton title="Back to My Services" onPress={() => router.replace("/(app)/jobs")} testID="request-done-button" />
+          <PrimaryButton
+            title="Back to Home"
+            onPress={() => router.replace("/portal/home" as any)}
+            testID="request-done-button"
+          />
         </View>
       </View>
     );
   }
 
   return (
-    <View style={styles.root}>
+    <View style={s.root}>
       <Header title="Request a Service" back />
-      <KeyboardAwareScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }} bottomOffset={24} keyboardShouldPersistTaps="handled">
-        <Text style={styles.intro}>Tell us what you need and we will schedule it for you.</Text>
-        <Selector label="Service Type" value={serviceType} onPress={() => setSheet(true)} testID="request-select-service" />
-        <Field label="Preferred Date (optional)" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" testID="request-date-input" />
-        <Field label="Details" value={notes} onChangeText={setNotes} placeholder="Describe the issue or service needed…" multiline testID="request-notes-input" />
-        {error ? <Text style={styles.error} testID="request-error">{error}</Text> : null}
-        <View style={{ height: spacing.lg }} />
-        <PrimaryButton title="Submit Request" icon="send-outline" onPress={submit} loading={busy} testID="submit-request-button" />
-      </KeyboardAwareScrollView>
+      <KeyboardAwareScrollView
+        contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
+        bottomOffset={24}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={s.intro}>
+          Tell us what you need and we'll schedule it for you.
+        </Text>
 
-      <Sheet visible={sheet} onClose={() => setSheet(false)} title="Service Type" testID="request-service-sheet">
-        {SERVICE_TYPES.map((s) => (
-          <Pressable key={s} style={styles.opt} onPress={() => { setServiceType(s); setSheet(false); }} testID={`request-pick-${s}`}>
-            <Text style={styles.optText}>{s}</Text>
-            {serviceType === s ? <Ionicons name="checkmark" size={20} color={colors.brand} /> : null}
-          </Pressable>
-        ))}
-      </Sheet>
+        <Text style={s.label}>WHAT SERVICE DO YOU NEED?</Text>
+        <TextInput
+          testID="rs-details"
+          style={s.textArea}
+          placeholder="Describe what you need — e.g., green pool, broken sprinkler, tree trim, etc."
+          placeholderTextColor={colors.muted}
+          value={details}
+          onChangeText={(t) => setDetails(t.slice(0, MAX_LEN))}
+          multiline
+          numberOfLines={6}
+          textAlignVertical="top"
+        />
+        <View style={s.counterRow}>
+          <Text
+            style={[s.counterText, charCount < MIN_LEN && charCount > 0 ? { color: colors.warning } : null]}
+            testID="rs-details-count"
+          >
+            {charCount}/{MAX_LEN}
+          </Text>
+          {charCount > 0 && charCount < MIN_LEN ? (
+            <Text style={s.hintText} testID="rs-details-hint">
+              At least {MIN_LEN} characters required
+            </Text>
+          ) : null}
+        </View>
+
+        <Text style={s.label}>PREFERRED DATE (OPTIONAL)</Text>
+        <View style={s.inputRow}>
+          <Ionicons name="calendar-outline" size={18} color={colors.muted} />
+          <TextInput
+            testID="rs-date"
+            style={s.input}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor={colors.muted}
+            value={date}
+            onChangeText={setDate}
+            autoCapitalize="none"
+            {...(Platform.OS === "web" ? {} : {})}
+          />
+        </View>
+
+        {error ? <Text style={s.error} testID="request-error">{error}</Text> : null}
+
+        <View style={{ height: spacing.lg }} />
+        <PrimaryButton
+          testID="rs-submit"
+          title="Submit Request"
+          icon="send-outline"
+          onPress={submit}
+          loading={busy}
+          disabled={!isValid}
+        />
+      </KeyboardAwareScrollView>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
-  intro: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted, marginBottom: spacing.lg },
+  intro: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted, marginBottom: spacing.lg, lineHeight: 22 },
+  label: {
+    fontFamily: font.semibold, fontSize: 11, letterSpacing: 1,
+    color: colors.onSurfaceSecondary, marginBottom: spacing.xs, marginTop: spacing.md,
+  },
+  textArea: {
+    backgroundColor: colors.surface, borderRadius: radius.md,
+    padding: spacing.md, minHeight: 140,
+    fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface,
+    borderWidth: 1.5, borderColor: colors.border, textAlignVertical: "top",
+    ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}),
+  },
+  counterRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: spacing.xs },
+  counterText: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
+  hintText: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.warning },
+  inputRow: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md,
+    paddingHorizontal: spacing.md, backgroundColor: colors.surface, height: 52,
+  },
+  input: {
+    flex: 1, fontFamily: font.regular, fontSize: fontSize.lg, color: colors.onSurface,
+    ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}),
+  },
   error: { color: colors.error, fontFamily: font.medium, fontSize: fontSize.base, marginTop: spacing.sm },
-  opt: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.divider },
-  optText: { fontFamily: font.medium, fontSize: fontSize.lg, color: colors.onSurface },
   doneWrap: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl },
   doneIcon: { marginBottom: spacing.lg },
   doneTitle: { fontFamily: font.bold, fontSize: fontSize["2xl"], color: colors.onSurface, textAlign: "center" },
