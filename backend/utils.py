@@ -92,7 +92,13 @@ def _active_is_false(user: dict) -> bool:
 
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") not in ("admin", "super_admin"):
+    # Phase 34 · Task X · Feb 2026 — admin-equivalent roles. Any user
+    # whose role is ``admin``, ``super_admin``, or ``owner`` on the
+    # acting tenant passes this gate. Cross-tenant scoping is still
+    # enforced downstream via ``get_current_tenant`` on every mutating
+    # endpoint, so a tenant-A admin remains unable to edit tenant-B
+    # jobs.
+    if user.get("role") not in ("admin", "super_admin", "owner"):
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 

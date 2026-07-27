@@ -86,7 +86,11 @@ export default function PortalWalkthrough({ forceOpen = false, onClose }) {
     api.get("/customer-portal/walkthrough/status")
       .then((r) => {
         if (!alive) return;
-        if (r.should_show) { setStatus("should_show"); setVisible(true); }
+        // Phase 34 · Task V — prefer the v2 flag so v1-completers see
+        // the extended step list once. Falls back to the legacy
+        // ``should_show`` for older backend responses.
+        const shouldShow = r?.should_show_v2 ?? r?.should_show;
+        if (shouldShow) { setStatus("should_show"); setVisible(true); }
         else               { setStatus("done"); }
       })
       .catch(() => { if (alive) setStatus("done"); });

@@ -11,6 +11,7 @@ import Login from "@/pages/Login";
 // Backend endpoint tracked in /app/memory/todo_password_reset.md.
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
+import PortalReviewSubmit from "@/pages/portal/PortalReviewSubmit";
 import Signup from "@/pages/Signup";
 import TenantPicker from "@/pages/TenantPicker";
 import AdminDashboard from "@/pages/admin/Dashboard";
@@ -356,6 +357,10 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          {/* Phase 34 · Task T · Feb 2026 — Portal review submit page.
+              Token-authed (no bearer). Consumes the existing gating
+              endpoint at /api/public/r/{token}/rating. */}
+          <Route path="/portal/review/submit" element={<PortalReviewSubmit />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/tenant-picker" element={<TenantPicker />} />
           <Route path="/public/card/:slug" element={<PublicCard />} />

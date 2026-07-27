@@ -1387,11 +1387,13 @@ async def undelete_job(jid: str,
                           tenant: dict = Depends(get_current_tenant)):
     """Feb-2026 · Schedule multi-select — restore a soft-deleted job.
 
-    super_admin only. Idempotent — returns ``already_active=true`` when
+    Phase 34 · Task X · Feb 2026 — restore is now available to any
+    admin-equivalent role (admin, super_admin, owner) on the acting
+    tenant. Idempotent — returns ``already_active=true`` when
     the job wasn't deleted in the first place.
     """
-    if (user.get("role") or "").lower() != "super_admin":
-        raise HTTPException(403, "Only super_admin can undelete jobs")
+    if (user.get("role") or "").lower() not in ("admin", "super_admin", "owner"):
+        raise HTTPException(403, "Admin role required to undelete jobs")
     job = await db.jobs.find_one(
         {"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1, "deleted_at": 1})
     if not job:
