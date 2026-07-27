@@ -1735,6 +1735,65 @@ function PriceBook() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", category: "Pool", unit: "each", unit_price: 0 });
   const [toast, setToast] = useState(null);
+  // Phase 34 · Task LL Phase 2 · Feb 2026 — Pricebook frontend polish.
+  // Bulk-select state + inline row edit state.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editDraft, setEditDraft] = useState({});
+  const visibleIds = (rows || []).map((r) => r.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+  const indeterminate = visibleIds.some((id) => selectedIds.has(id)) && !allVisibleSelected;
+  const selectedCount = selectedIds.size;
+  const toggleAll = () => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (allVisibleSelected) visibleIds.forEach((id) => next.delete(id));
+    else visibleIds.forEach((id) => next.add(id));
+    return next;
+  });
+  const toggleOne = (id) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const clearSelection = () => setSelectedIds(new Set());
+  const doBulkDelete = async () => {
+    setBusy(true);
+    try {
+      const res = await api.post("/pricebook/bulk-delete", { ids: Array.from(selectedIds) });
+      const ok = res.deleted_count || 0;
+      const failCount = (res.failed || []).length;
+      clearSelection(); setConfirmOpen(false); refresh();
+      if (failCount === 0) setToast({ tone: "success", message: `${ok} item${ok === 1 ? "" : "s"} archived` });
+      else setToast({ tone: "warning", message: `${ok} archived · ${failCount} locked`, description: (res.failed || []).slice(0, 3).map((f) => f.reason).join(" · ") });
+    } catch (e) {
+      setToast({ tone: "error", message: e.message || "Bulk delete failed" });
+    } finally { setBusy(false); }
+  };
+  const startEdit = (row) => {
+    setEditingId(row.id);
+    setEditDraft({
+      name: row.name || "", category: row.category || "", unit: row.unit || "",
+      unit_price: row.unit_price || 0, cost: row.cost || 0,
+      tax_rate: row.tax_rate || 0, active: row.active !== false,
+    });
+  };
+  const saveEdit = async (rowId) => {
+    try {
+      await api.patch(`/items/${rowId}`, {
+        ...editDraft,
+        unit_price: Number(editDraft.unit_price) || 0,
+        cost: Number(editDraft.cost) || 0,
+        tax_rate: Number(editDraft.tax_rate) || 0,
+      });
+      setEditingId(null); setEditDraft({}); refresh();
+      setToast({ tone: "success", message: "Item updated" });
+    } catch (e) {
+      setToast({ tone: "error", message: e.message || "Update failed" });
+    }
+  };
+  const cancelEdit = () => { setEditingId(null); setEditDraft({}); };
   const save = async () => { try { await api.post("/items", { ...form, unit_price: Number(form.unit_price) || 0 }); setOpen(false); refresh(); } catch (e) { setToast({ tone: "error", message: e.message }); } };
   // BUG B fix (Feb-2026) — soft-delete a pricebook row with a
   // HEAVY (type "DELETE") confirmation.
@@ -1755,28 +1814,137 @@ function PriceBook() {
   };
   return (
     <Card testid="pricebook-page">
-      <div className="flex justify-between mb-3">
-        <div className="text-xs uppercase font-semibold" style={{ color: colors.muted }}>Items · {(rows || []).length}</div>
-        <Button onClick={() => setOpen(true)} testid="pb-new"><Plus size={14} /> New item</Button>
+      <div className="flex justify-between items-center mb-3">
+        <div className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            checked={allVisibleSelected}
+            ref={(el) => { if (el) el.indeterminate = indeterminate; }}
+            onChange={toggleAll}
+            aria-label="Select all pricebook items"
+            data-testid="bulk-select-all"
+            className="cursor-pointer"
+          />
+          <div className="text-xs uppercase font-semibold" style={{ color: colors.muted }}>
+            Items · {(rows || []).length}
+          </div>
+        </div>
+        <Button onClick={() => setOpen(true)} testid="pb-new"><Plus size={14} /> Add new item</Button>
       </div>
       {rows === null ? <Skeleton style={{ height: 160 }} /> :
        <ul className="divide-y" style={{ borderColor: colors.divider }}>
          {rows.map((r) => (
-           <li key={r.id} className="py-2 flex items-center gap-3" data-testid={`pb-row-${r.id}`}>
-             <div className="flex-1"><div className="text-sm font-semibold">{r.name}</div><div className="text-xs" style={{ color: colors.muted }}>{r.category} · {r.unit}</div></div>
-             <div className="font-semibold">{money(r.unit_price)}</div>
-             <button
-               type="button"
-               onClick={() => delRow(r)}
-               className="p-1.5 rounded-md hover:bg-red-50"
-               title="Delete"
-               data-testid={`pb-delete-${r.id}`}
-             >
-               <Trash2 size={14} style={{ color: "#B91C1C" }} />
-             </button>
+           <li key={r.id} className="py-2 flex items-center gap-3"
+                data-testid={`pb-row-${r.id}`}
+                style={{ backgroundColor: selectedIds.has(r.id) ? "#EFF6FF" : "transparent" }}>
+             <input
+               type="checkbox"
+               checked={selectedIds.has(r.id)}
+               onChange={() => toggleOne(r.id)}
+               aria-label={`Select ${r.name}`}
+               data-testid={`bulk-select-row-${r.id}`}
+               className="cursor-pointer"
+             />
+             {editingId === r.id ? (
+               <>
+                 <input value={editDraft.name}
+                          onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
+                          className="flex-1 border px-2 py-1 text-sm rounded"
+                          data-testid={`pb-edit-name-${r.id}`} />
+                 <input value={editDraft.category}
+                          onChange={(e) => setEditDraft({ ...editDraft, category: e.target.value })}
+                          className="w-24 border px-2 py-1 text-sm rounded"
+                          data-testid={`pb-edit-category-${r.id}`} />
+                 <input value={editDraft.unit_price} type="number" step="0.01"
+                          onChange={(e) => setEditDraft({ ...editDraft, unit_price: e.target.value })}
+                          className="w-20 border px-2 py-1 text-sm rounded text-right"
+                          data-testid={`pb-edit-price-${r.id}`} />
+                 <button onClick={() => saveEdit(r.id)}
+                          className="text-xs font-bold text-white px-2 py-1 rounded"
+                          style={{ backgroundColor: "#16A34A" }}
+                          data-testid={`pb-edit-save-${r.id}`}>Save</button>
+                 <button onClick={cancelEdit}
+                          className="text-xs font-semibold px-2 py-1"
+                          data-testid={`pb-edit-cancel-${r.id}`}>Cancel</button>
+               </>
+             ) : (
+               <>
+                 <div className="flex-1">
+                   <div className="text-sm font-semibold">{r.name}</div>
+                   <div className="text-xs" style={{ color: colors.muted }}>{r.category} · {r.unit}</div>
+                 </div>
+                 <div className="font-semibold">{money(r.unit_price)}</div>
+                 <button onClick={() => startEdit(r)}
+                            className="text-xs font-semibold underline"
+                            style={{ color: colors.muted }}
+                            data-testid={`pb-edit-${r.id}`}>Edit</button>
+                 <button
+                   type="button"
+                   onClick={() => delRow(r)}
+                   className="p-1.5 rounded-md hover:bg-red-50"
+                   title="Delete"
+                   data-testid={`pb-delete-${r.id}`}
+                 >
+                   <Trash2 size={14} style={{ color: "#B91C1C" }} />
+                 </button>
+               </>
+             )}
            </li>
          ))}
        </ul>}
+
+      {/* Phase 34 · Task LL Phase 2 · bulk-select action bar. */}
+      {selectedCount > 0 ? (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 rounded-2xl shadow-2xl flex items-center gap-3 px-4 py-3 z-40"
+             style={{ backgroundColor: colors.onSurface, color: "#FFFFFF",
+                       border: "1px solid rgba(255,255,255,0.08)" }}
+             data-testid="bulk-action-bar">
+          <div className="text-sm font-semibold" data-testid="bulk-action-bar-count">
+            {selectedCount} selected
+          </div>
+          <button type="button" onClick={() => setConfirmOpen(true)} disabled={busy}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
+                    style={{ backgroundColor: "#DC2626", color: "#FFFFFF" }}
+                    data-testid="bulk-delete-button">
+            <Trash2 size={12} /> Delete selected
+          </button>
+          <button type="button" onClick={clearSelection}
+                    className="text-xs font-semibold underline"
+                    style={{ color: "rgba(255,255,255,0.85)" }}
+                    data-testid="bulk-clear-selection">
+            Clear selection
+          </button>
+        </div>
+      ) : null}
+
+      {confirmOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
+              style={{ background: "rgba(15,23,42,0.55)" }}
+              onMouseDown={(e) => { if (e.target === e.currentTarget) setConfirmOpen(false); }}
+              data-testid="bulk-delete-confirm-modal">
+          <div className="w-full max-w-md rounded-2xl p-6 shadow-2xl bg-white">
+            <h2 className="text-lg font-bold">
+              Delete {selectedCount} pricebook item{selectedCount === 1 ? "" : "s"}?
+            </h2>
+            <p className="text-sm mt-1" style={{ color: colors.muted }}>
+              Items referenced by active invoices/estimates/autobilling
+              plans will show as "locked" and remain unchanged.
+              This can be restored from the archive.
+            </p>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setConfirmOpen(false)}
+                        className="px-4 py-2 rounded-xl text-sm font-semibold bg-slate-100"
+                        data-testid="bulk-delete-cancel">Cancel</button>
+              <button type="button" onClick={doBulkDelete} disabled={busy}
+                        className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
+                        style={{ backgroundColor: "#DC2626" }}
+                        data-testid="bulk-delete-confirm-btn">
+                {busy ? "Deleting…" : `Delete ${selectedCount}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <Modal open={open} onClose={() => setOpen(false)} title="New item"
         footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save}>Save</Button></>}>
         <div className="space-y-2">

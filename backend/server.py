@@ -183,6 +183,10 @@ api_router.include_router(_p22_public_svc_images.router)
 # + reorder + public streaming. Mounts under /api via api_router.
 from routers import service_report_media as _p27_svc_media  # noqa: E402
 api_router.include_router(_p27_svc_media.router)
+# Phase 34 · Task LL Phase 2 · Feb 2026 — CRM-wide bulk endpoints
+# (customers, jobs, tasks, communications, email/sms templates).
+from routers import bulk_crm as _p34_bulk_crm  # noqa: E402
+api_router.include_router(_p34_bulk_crm.router)
 # Phase 32 · Feb 2026 — Mobile offline sync backend (batch op replay
 # + offline-bundle prefetch). Idempotent per ``client_op_id``;
 # conflicts resolve mobile-wins with an audit-logged snapshot.
