@@ -47,8 +47,14 @@ vi.mock("@/api", () => ({
 }));
 
 vi.mock("@/auth", () => ({
-  useAuth: () => ({ user: { id: "u1", role: "admin", email: "a@t" } }),
+  useAuth: () => useAuthMock(),
   AuthProvider: ({ children }) => <>{children}</>,
+}));
+
+const { useAuthMock } = vi.hoisted(() => ({
+  useAuthMock: vi.fn(() => ({
+    user: { id: "u1", role: "admin", email: "a@t" },
+  })),
 }));
 
 vi.mock("@/hooks/usePermissions", () => ({
@@ -96,6 +102,11 @@ beforeEach(() => {
   apiGetMock.mockReset();
   apiPostMock.mockReset();
   apiPutMock.mockReset();
+  // Default auth = admin. Individual tests can override via
+  // ``useAuthMock.mockReturnValue(...)`` for the whole render.
+  useAuthMock.mockReturnValue({
+    user: { id: "u1", role: "admin", email: "a@t" },
+  });
   window.sessionStorage.clear();
 });
 afterEach(() => { vi.useRealTimers(); cleanup(); });
@@ -183,5 +194,101 @@ describe("Schedule · day-of-week filter + status border", () => {
     // a future refactor that drops the data attribute).
     expect(cardA.style.borderLeftColor.toLowerCase().replace(/\s/g, "")).toBe("rgb(37,99,235)");
     expect(cardB.style.borderLeftColor.toLowerCase().replace(/\s/g, "")).toBe("rgb(220,38,38)");
+  });
+});
+
+
+// ─── 3. Multi-select bulk soft-delete ─────────────────────────────────
+describe("Schedule · multi-select bulk soft-delete", () => {
+  it("does NOT render the selection checkbox for a tech role", async () => {
+    // Override the shared auth mock for THIS render — resets to
+    // admin in the next test's beforeEach.
+    useAuthMock.mockReturnValue({
+      user: { id: "u1", role: "technician", email: "t@t" },
+    });
+    apiGetMock.mockImplementation((path) => {
+      if (path.startsWith("/jobs")) return Promise.resolve(jobsFixture);
+      if (path === "/technicians") return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+    await mountSchedule();
+    // Card renders …
+    expect(await screen.findByTestId("grid-job-job-a")).toBeInTheDocument();
+    // … but the selection checkbox does NOT.
+    expect(screen.queryByTestId("grid-select-job-a")).toBeNull();
+    expect(screen.queryByTestId("grid-selection-toolbar")).toBeNull();
+  });
+
+  it("admin can toggle selection + toolbar shows the count", async () => {
+    apiGetMock.mockImplementation((path) => {
+      if (path.startsWith("/jobs")) return Promise.resolve(jobsFixture);
+      if (path === "/technicians") return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+    await mountSchedule();
+    // Both today-cards render — click their selection boxes.
+    fireEvent.click(await screen.findByTestId("grid-select-job-a"));
+    // Toolbar surfaces with count=1 …
+    expect(await screen.findByTestId("grid-selection-toolbar")).toBeInTheDocument();
+    expect(screen.getByTestId("grid-selection-count")).toHaveTextContent("1 selected");
+    // Second select bumps to 2.
+    fireEvent.click(screen.getByTestId("grid-select-job-b"));
+    expect(screen.getByTestId("grid-selection-count")).toHaveTextContent("2 selected");
+    // Deselect all → toolbar disappears.
+    fireEvent.click(screen.getByTestId("grid-selection-clear"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("grid-selection-toolbar")).toBeNull();
+    });
+  });
+
+  it("delete flow POSTs /jobs/bulk-soft-delete with the selected ids", async () => {
+    apiGetMock.mockImplementation((path) => {
+      if (path.startsWith("/jobs")) return Promise.resolve(jobsFixture);
+      if (path === "/technicians") return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+    apiPostMock.mockImplementation((path) => {
+      if (path === "/jobs/bulk-soft-delete") {
+        return Promise.resolve({ ok: true, count: 2,
+                                   deleted: ["job-a","job-b"], failed: [] });
+      }
+      return Promise.resolve({});
+    });
+    await mountSchedule();
+    fireEvent.click(await screen.findByTestId("grid-select-job-a"));
+    fireEvent.click(await screen.findByTestId("grid-select-job-b"));
+    // Click "Delete N" — opens the confirm modal.
+    fireEvent.click(screen.getByTestId("grid-selection-delete"));
+    expect(await screen.findByTestId("grid-bulk-delete-modal")).toBeInTheDocument();
+    // Confirm.
+    fireEvent.click(screen.getByTestId("grid-bulk-delete-confirm"));
+
+    await waitFor(() => {
+      const bulk = apiPostMock.mock.calls.find(([p]) => p === "/jobs/bulk-soft-delete");
+      expect(bulk).toBeTruthy();
+      expect(bulk[1]).toEqual({ job_ids: ["job-a", "job-b"] });
+    });
+    // Modal closes on success.
+    await waitFor(() => {
+      expect(screen.queryByTestId("grid-bulk-delete-modal")).toBeNull();
+    });
+  });
+
+  it("cancel button closes the confirm modal without POSTing", async () => {
+    apiGetMock.mockImplementation((path) => {
+      if (path.startsWith("/jobs")) return Promise.resolve(jobsFixture);
+      if (path === "/technicians") return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+    await mountSchedule();
+    fireEvent.click(await screen.findByTestId("grid-select-job-a"));
+    fireEvent.click(screen.getByTestId("grid-selection-delete"));
+    expect(await screen.findByTestId("grid-bulk-delete-modal")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("grid-bulk-delete-cancel"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("grid-bulk-delete-modal")).toBeNull();
+    });
+    expect(apiPostMock.mock.calls.find(([p]) => p === "/jobs/bulk-soft-delete"))
+      .toBeUndefined();
   });
 });

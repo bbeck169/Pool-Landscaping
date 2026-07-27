@@ -292,8 +292,17 @@ async def list_jobs(
     scheduled_date: Optional[str] = Query(None, description="Phase 51.0/52: exact date (YYYY-MM-DD) — matches bare date or ISO datetime prefix"),
     recurring_template_id: Optional[str] = Query(None, description="Phase 51.I: filter by recurring template origin"),
     limit: int = Query(1000, ge=1, le=5000, description="Feb-2026: cap on returned rows; default 1000"),
+    include_deleted: bool = Query(False, description="Feb-2026 · super_admin only — include soft-deleted jobs"),
 ):
     q = scope_jobs_query(user, tenant, status, technician_id)
+    # Feb-2026 · Schedule multi-select soft-delete — hide rows with
+    # ``deleted_at`` set by default. Only a ``super_admin`` may pass
+    # ``?include_deleted=true`` to view (and later undelete) previously-
+    # removed jobs. Any other role that passes the flag is silently
+    # ignored — defense in depth.
+    is_super = (user.get("role") or "").lower() == "super_admin"
+    if not (include_deleted and is_super):
+        q["$or"] = [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]
     # Phase 30 · optional inclusive date-range filter so the new calendar
     # can ask the backend for a bounded window instead of pulling all 1000
     # jobs and filtering client-side. Both ends are optional.
@@ -1053,6 +1062,179 @@ async def delete_job(jid: str,
     res = await db.jobs.delete_one({"id": jid, "tenant_id": tenant["id"]})
     await db.notifications.delete_many({"job_id": jid, "tenant_id": tenant["id"]})
     return {"ok": True, "deleted": res.deleted_count}
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Feb-2026 · Schedule multi-select soft-delete
+# ═════════════════════════════════════════════════════════════════════════
+class BulkSoftDeleteIn(BaseModel):
+    job_ids: List[str]
+
+
+_HISTORICAL_COMPLETED_DAYS = 30
+
+
+async def _perform_soft_delete_job(jid: str, user: dict, tenant: dict) -> dict:
+    """Shared soft-delete helper — enforces the historical-completed
+    guardrail and writes the audit row. Called from both the single
+    and bulk endpoints so behavior is identical.
+
+    Raises HTTPException on any refusal; returns the response dict on
+    success. Caller decides how to surface failures (single endpoint
+    re-raises; bulk endpoint captures the ``detail`` into ``failed``).
+    """
+    job = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "status": 1, "deleted_at": 1,
+          "completed_at": 1, "scheduled_date": 1},
+    )
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("deleted_at"):
+        return {"ok": True, "job_id": jid, "already_deleted": True}
+
+    # Historical-completed guardrail — protect audit trail. If the job
+    # is ``completed`` AND its ``completed_at`` (or falling back to
+    # ``scheduled_date``) is more than 30 days ago, refuse.
+    if (job.get("status") or "").lower() == "completed":
+        pivot = job.get("completed_at") or job.get("scheduled_date")
+        if pivot:
+            try:
+                # Support both ``yyyy-mm-dd`` and full ISO strings.
+                pivot_dt = datetime.fromisoformat(str(pivot).replace("Z", "+00:00"))
+                if pivot_dt.tzinfo is None:
+                    pivot_dt = pivot_dt.replace(tzinfo=timezone.utc)
+                age = datetime.now(timezone.utc) - pivot_dt
+                if age > timedelta(days=_HISTORICAL_COMPLETED_DAYS):
+                    raise HTTPException(400,
+                        "Cannot delete historical completed jobs older than 30 days")
+            except HTTPException:
+                raise
+            except Exception:
+                # Malformed date → be conservative and allow the delete
+                # (the audit log still records the operation).
+                pass
+
+    deleted_at = now_iso()
+    await db.jobs.update_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"$set": {"deleted_at": deleted_at,
+                    "deleted_by_user_id": user.get("id")}},
+    )
+    # Cascade — cancel any pending notifications tied to this job.
+    try:
+        await db.notifications.update_many(
+            {"job_id": jid, "tenant_id": tenant["id"], "read_at": None},
+            {"$set": {"read_at": deleted_at, "cancelled_by": "job.soft_delete"}},
+        )
+    except Exception as e:
+        logger.warning(f"job.soft_delete notification cancel failed: {e}")
+
+    # Audit row — best-effort.
+    try:
+        await db.audit_log.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "action": "job.soft_delete",
+            "target_job_id": jid,
+            "at": deleted_at,
+        })
+    except Exception as e:
+        logger.warning(f"job.soft_delete audit failed: {e}")
+
+    return {"ok": True, "job_id": jid,
+              "deleted_at": deleted_at,
+              "deleted_by_user_id": user.get("id")}
+
+
+@router.post("/jobs/{jid}/soft-delete",
+              operation_id="jobs.softDelete")
+async def soft_delete_job(jid: str,
+                             user: dict = Depends(require_admin),
+                             tenant: dict = Depends(get_current_tenant)):
+    """Feb-2026 · Schedule multi-select — soft-delete a single job.
+
+    Sets ``deleted_at`` + ``deleted_by_user_id``, cancels any pending
+    notifications tied to the job, and writes an audit row. Refuses
+    if the job is a completed job older than 30 days (protects the
+    audit trail from tampering).
+    """
+    return await _perform_soft_delete_job(jid, user, tenant)
+
+
+@router.post("/jobs/bulk-soft-delete",
+              operation_id="jobs.bulkSoftDelete")
+async def bulk_soft_delete_jobs(body: BulkSoftDeleteIn,
+                                  user: dict = Depends(require_admin),
+                                  tenant: dict = Depends(get_current_tenant)):
+    """Feb-2026 · Schedule multi-select — bulk soft-delete wrapper.
+
+    Iterates the shared helper so per-job guardrails still apply.
+    Caps at 100 rows per call to keep the request bounded. Response
+    surfaces both successes and failures so the UI can toast a summary
+    like "Deleted 8 of 10 (2 failed)".
+    """
+    ids = list(body.job_ids or [])
+    if not ids:
+        raise HTTPException(400, "job_ids is empty")
+    if len(ids) > 100:
+        raise HTTPException(400, "bulk soft-delete capped at 100 rows per call")
+
+    deleted: List[str] = []
+    failed: List[Dict[str, Any]] = []
+    for jid in ids:
+        try:
+            r = await _perform_soft_delete_job(jid, user, tenant)
+            deleted.append(r["job_id"])
+        except HTTPException as e:
+            failed.append({"job_id": jid, "reason": str(e.detail),
+                              "status_code": e.status_code})
+        except Exception as e:                                # noqa: BLE001
+            failed.append({"job_id": jid, "reason": str(e), "status_code": 500})
+
+    return {"ok": True, "count": len(deleted),
+              "deleted": deleted, "failed": failed}
+
+
+@router.post("/jobs/{jid}/undelete",
+              operation_id="jobs.undelete")
+async def undelete_job(jid: str,
+                          user: dict = Depends(get_current_user),
+                          tenant: dict = Depends(get_current_tenant)):
+    """Feb-2026 · Schedule multi-select — restore a soft-deleted job.
+
+    super_admin only. Idempotent — returns ``already_active=true`` when
+    the job wasn't deleted in the first place.
+    """
+    if (user.get("role") or "").lower() != "super_admin":
+        raise HTTPException(403, "Only super_admin can undelete jobs")
+    job = await db.jobs.find_one(
+        {"id": jid, "tenant_id": tenant["id"]}, {"_id": 0, "id": 1, "deleted_at": 1})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if not job.get("deleted_at"):
+        return {"ok": True, "job_id": jid, "already_active": True}
+    await db.jobs.update_one(
+        {"id": jid, "tenant_id": tenant["id"]},
+        {"$set": {"deleted_at": None, "deleted_by_user_id": None,
+                    "undeleted_at": now_iso(),
+                    "undeleted_by_user_id": user.get("id")}},
+    )
+    try:
+        await db.audit_log.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "action": "job.undelete",
+            "target_job_id": jid,
+            "at": now_iso(),
+        })
+    except Exception as e:
+        logger.warning(f"job.undelete audit failed: {e}")
+    return {"ok": True, "job_id": jid, "restored_at": now_iso()}
 
 
 @router.post("/jobs/{jid}/on-my-way")

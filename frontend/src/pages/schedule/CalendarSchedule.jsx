@@ -28,7 +28,7 @@ import { enUS } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import { Plus, Search, X as XIcon, Filter, ChevronLeft, ChevronRight,
          CheckCircle2, Move as MoveIcon, ArrowUp, ArrowDown, FileText,
-         Save as SaveIcon, Star } from "lucide-react";
+         Save as SaveIcon, Star, Check, Trash2, Loader2 } from "lucide-react";
 
 import { api } from "@/api";
 import { colors, font } from "@/theme";
@@ -228,6 +228,43 @@ export default function CalendarSchedule() {
   const canCreateJobs = ["admin", "super_admin"].includes((user?.role || "").toLowerCase());
   // Phase 56.3 follow-up — clock-in gate for landscape techs opening events.
   const clockGate = useClockInGate(user);
+
+  // Feb-2026 · Schedule multi-select soft-delete state ------------------
+  // ``selectedJobIds`` is a Set<string> keyed on job.id. Toolbar only
+  // renders when it has at least one entry AND the caller is admin+.
+  const [selectedJobIds, setSelectedJobIds] = useState(() => new Set());
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const canMultiSelectDelete = ["admin", "super_admin"].includes(
+    (user?.role || "").toLowerCase());
+  const toggleJobSelected = (jid) => {
+    setSelectedJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jid)) next.delete(jid); else next.add(jid);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedJobIds(new Set());
+  const doBulkDelete = async () => {
+    setDeleteBusy(true);
+    try {
+      const ids = Array.from(selectedJobIds);
+      const r = await api.post("/jobs/bulk-soft-delete", { job_ids: ids });
+      const count = r?.count ?? 0;
+      const failed = (r?.failed || []).length;
+      if (failed) {
+        setToast({ text: `Deleted ${count} of ${ids.length} · ${failed} failed`,
+                     kind: "err" });
+      } else {
+        setToast({ text: `Deleted ${count} job(s)`, kind: "info" });
+      }
+      clearSelection();
+      setDeleteConfirmOpen(false);
+      await load();
+    } catch (e) {
+      setToast({ text: e?.message || "Bulk delete failed", kind: "err" });
+    } finally { setDeleteBusy(false); }
+  };
 
   const [view, setView] = useState(params.get("view") || "month");   // Phase 30X · month default
   const [date, setDate] = useState(() => {
@@ -865,8 +902,23 @@ export default function CalendarSchedule() {
           onOpenJob={(id) => clockGate.openJob(id, () => setChecklistJobId(id))}
           onNewJob={canCreateJobs ? (() => navigate(`/jobs/new?date=${focusISO}`)) : undefined}
           reorderUnavailable={reorderUnavailable}
+          selectedJobIds={selectedJobIds}
+          onToggleSelect={toggleJobSelected}
+          canMultiSelectDelete={canMultiSelectDelete}
+          onOpenBulkDelete={() => setDeleteConfirmOpen(true)}
+          onClearSelection={clearSelection}
         />
       )}
+
+      {/* Feb-2026 · Schedule multi-select · bulk soft-delete confirm. */}
+      {deleteConfirmOpen ? (
+        <BulkDeleteConfirmModal
+          count={selectedJobIds.size}
+          busy={deleteBusy}
+          onCancel={() => setDeleteConfirmOpen(false)}
+          onConfirm={doBulkDelete}
+        />
+      ) : null}
 
       {/* Phase 56.3 follow-up — clock-in gate dialog for landscape techs. */}
       <ClockInGateDialog gate={clockGate} />
@@ -973,6 +1025,9 @@ function GridPanel({
   rearrangeMode, setRearrangeMode, onSaveReorder, onShift,
   onBulkComplete, onOpenMove, moveOpen, setMoveOpen, moveDate, setMoveDate,
   onConfirmMove, busy, onOpenJob, onNewJob, reorderUnavailable,
+  // Feb-2026 · Schedule multi-select soft-delete —
+  selectedJobIds, onToggleSelect, canMultiSelectDelete,
+  onOpenBulkDelete, onClearSelection,
 }) {
   const focusISO = format(date, "yyyy-MM-dd");
   const isToday = focusISO === format(new Date(), "yyyy-MM-dd");
@@ -1107,6 +1162,42 @@ function GridPanel({
         </div>
       ) : null}
 
+      {/* Feb-2026 · Schedule multi-select · action toolbar.
+          Rendered above the row list when the caller is admin+ and at
+          least one job is selected. Purely a UX affordance — clicking
+          "Delete N" opens the shared confirm modal in the parent. */}
+      {canMultiSelectDelete && selectedJobIds && selectedJobIds.size > 0 ? (
+        <div
+          className="flex items-center gap-2 rounded-xl mb-3 px-3 py-2"
+          style={{ background: "#FEF3C7",
+                     border: "1px solid #FDE68A", color: "#78350F" }}
+          data-testid="grid-selection-toolbar"
+        >
+          <span className="text-sm font-bold" data-testid="grid-selection-count">
+            {selectedJobIds.size} selected
+          </span>
+          <button
+            type="button"
+            onClick={onClearSelection}
+            className="text-xs font-semibold underline hover:no-underline"
+            style={{ color: "#78350F" }}
+            data-testid="grid-selection-clear"
+          >
+            Deselect all
+          </button>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={onOpenBulkDelete}
+            className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-xs font-bold"
+            style={{ background: "#DC2626", color: "#FFFFFF" }}
+            data-testid="grid-selection-delete"
+          >
+            <Trash2 size={13} /> Delete {selectedJobIds.size}
+          </button>
+        </div>
+      ) : null}
+
       {/* Rows */}
       {loading ? (
         <div className="py-10 text-center text-xs" style={{ color: colors.muted }} data-testid="grid-loading">
@@ -1145,6 +1236,8 @@ function GridPanel({
             const isChecked = checked.has(j.id);
             // Feb-2026 · Schedule-UI · colored left border.
             const statusBorderColor = getStatusBorderColor(j.status);
+            // Feb-2026 · Schedule multi-select · per-card delete checkbox.
+            const isSelectedForDelete = !!(selectedJobIds && selectedJobIds.has(j.id));
             return (
               <div
                 key={j.id}
@@ -1160,6 +1253,22 @@ function GridPanel({
                 onClick={() => { if (!rearrangeMode) onOpenJob(j.id); }}
                 role="button"
               >
+                {canMultiSelectDelete && !rearrangeMode ? (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onToggleSelect?.(j.id); }}
+                    className="w-5 h-5 rounded-md flex items-center justify-center"
+                    style={{
+                      background: isSelectedForDelete ? "#DC2626" : "transparent",
+                      border: `1.5px solid ${isSelectedForDelete ? "#DC2626" : colors.muted}`,
+                    }}
+                    aria-label={isSelectedForDelete ? "Deselect this job" : "Select this job for deletion"}
+                    data-testid={`grid-select-${j.id}`}
+                    data-selected={isSelectedForDelete ? "true" : "false"}
+                  >
+                    {isSelectedForDelete ? <Check size={12} color="#FFFFFF" /> : null}
+                  </button>
+                ) : null}
                 {rearrangeMode ? (
                   <div className="flex flex-col items-center gap-0.5 w-8">
                     <button
@@ -1336,6 +1445,73 @@ function TechColorLegend({ techs, techColorMap }) {
           <span className="text-xs" style={{ color: colors.onSurface }}>{t.name}</span>
         </span>
       ))}
+    </div>
+  );
+}
+
+
+/**
+ * Feb-2026 · Schedule multi-select · bulk soft-delete confirm dialog.
+ *
+ * Simple inline confirm — mirrors the destructive-variant pattern from
+ * the Team page's DeleteTeamMemberDialog. Not a shadcn Dialog (matches
+ * the rest of CalendarSchedule's inline-modal convention).
+ */
+function BulkDeleteConfirmModal({ count, busy, onCancel, onConfirm }) {
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      style={{ background: "rgba(15,23,42,0.55)" }}
+      onMouseDown={busy ? undefined : onCancel}
+      data-testid="grid-bulk-delete-modal"
+    >
+      <div
+        onMouseDown={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-2xl overflow-hidden"
+        style={{ background: colors.surface, border: `1px solid ${colors.border}` }}
+      >
+        <div className="px-5 py-3 flex items-center justify-between"
+             style={{ background: "#DC2626", color: "#FFFFFF" }}>
+          <h2 className="text-base font-bold">Delete {count} job{count === 1 ? "" : "s"}?</h2>
+          <button type="button" onClick={busy ? undefined : onCancel}
+                  className="w-7 h-7 rounded-md flex items-center justify-center"
+                  style={{ background: "rgba(255,255,255,0.18)" }}
+                  data-testid="grid-bulk-delete-close"
+                  aria-label="Close">
+            <XIcon size={14} />
+          </button>
+        </div>
+        <div className="p-5 space-y-3 text-sm" style={{ color: colors.onSurface }}>
+          <p>
+            Are you sure you want to delete <b>{count}</b> job{count === 1 ? "" : "s"}?
+          </p>
+          <p style={{ color: colors.muted }}>
+            The jobs will be hidden from the schedule + list views. They can be
+            undeleted by a super_admin. Historical completed jobs older than
+            30 days are protected and will be skipped.
+          </p>
+        </div>
+        <div className="px-5 py-3 flex items-center justify-end gap-2"
+             style={{ background: colors.surfaceSecondary,
+                        borderTop: `1px solid ${colors.border}` }}>
+          <button type="button" onClick={onCancel} disabled={busy}
+                  className="h-9 px-3 rounded-lg text-xs font-bold disabled:opacity-60"
+                  style={{ background: colors.surface,
+                              color: colors.onSurface,
+                              border: `1px solid ${colors.border}` }}
+                  data-testid="grid-bulk-delete-cancel">
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} disabled={busy}
+                  className="inline-flex items-center gap-1 h-9 px-3 rounded-lg text-xs font-bold disabled:opacity-60"
+                  style={{ background: "#DC2626", color: "#FFFFFF" }}
+                  data-testid="grid-bulk-delete-confirm">
+            {busy
+              ? <><Loader2 size={13} className="animate-spin" /> Deleting…</>
+              : <><Trash2 size={13} /> Delete</>}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
