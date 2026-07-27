@@ -28,7 +28,7 @@ import { enUS } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import { Plus, Search, X as XIcon, Filter, ChevronLeft, ChevronRight,
          CheckCircle2, Move as MoveIcon, ArrowUp, ArrowDown, FileText,
-         Save as SaveIcon, Star, Check, Trash2, Loader2 } from "lucide-react";
+         Save as SaveIcon, Star, Check, Trash2, Loader2, UsersRound } from "lucide-react";
 
 import { api } from "@/api";
 import { colors, font } from "@/theme";
@@ -237,6 +237,13 @@ export default function CalendarSchedule() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const canMultiSelectDelete = ["admin", "super_admin"].includes(
     (user?.role || "").toLowerCase());
+  // Phase 28 · Feb-2026 — multi-select reassign to a new tech. Reuses
+  // the same selection state; the toolbar adds a second action next to
+  // "Delete N". Admin+ only, per backend permission check.
+  const [assignConfirmOpen, setAssignConfirmOpen] = useState(false);
+  const [assignPickedTechId, setAssignPickedTechId] = useState("");
+  const [assignBusy, setAssignBusy] = useState(false);
+  const canMultiSelectAssign = canMultiSelectDelete;
   const toggleJobSelected = (jid) => {
     setSelectedJobIds((prev) => {
       const next = new Set(prev);
@@ -264,6 +271,31 @@ export default function CalendarSchedule() {
     } catch (e) {
       setToast({ text: e?.message || "Bulk delete failed", kind: "err" });
     } finally { setDeleteBusy(false); }
+  };
+  const doBulkReassign = async () => {
+    if (!assignPickedTechId) return;
+    setAssignBusy(true);
+    try {
+      const ids = Array.from(selectedJobIds);
+      const r = await api.post("/jobs/bulk-reassign", {
+        job_ids: ids, new_tech_id: assignPickedTechId,
+      });
+      const count = r?.count ?? 0;
+      const failed = (r?.failed || []).length;
+      const techName = r?.new_tech_name || "tech";
+      if (failed) {
+        setToast({ text: `Reassigned ${count} of ${ids.length} to ${techName} · ${failed} failed`,
+                     kind: "err" });
+      } else {
+        setToast({ text: `${count} job(s) reassigned to ${techName}`, kind: "info" });
+      }
+      clearSelection();
+      setAssignConfirmOpen(false);
+      setAssignPickedTechId("");
+      await load();
+    } catch (e) {
+      setToast({ text: e?.message || "Bulk reassign failed", kind: "err" });
+    } finally { setAssignBusy(false); }
   };
 
   const [view, setView] = useState(params.get("view") || "month");   // Phase 30X · month default
@@ -907,6 +939,12 @@ export default function CalendarSchedule() {
           canMultiSelectDelete={canMultiSelectDelete}
           onOpenBulkDelete={() => setDeleteConfirmOpen(true)}
           onClearSelection={clearSelection}
+          canMultiSelectAssign={canMultiSelectAssign}
+          onOpenBulkAssign={(techId) => {
+            setAssignPickedTechId(techId);
+            setAssignConfirmOpen(true);
+          }}
+          techs={techs}
         />
       )}
 
@@ -917,6 +955,18 @@ export default function CalendarSchedule() {
           busy={deleteBusy}
           onCancel={() => setDeleteConfirmOpen(false)}
           onConfirm={doBulkDelete}
+        />
+      ) : null}
+
+      {/* Phase 28 · Feb-2026 · Schedule multi-select · bulk reassign confirm. */}
+      {assignConfirmOpen ? (
+        <BulkReassignConfirmModal
+          count={selectedJobIds.size}
+          techs={techs}
+          pickedTechId={assignPickedTechId}
+          busy={assignBusy}
+          onCancel={() => { setAssignConfirmOpen(false); setAssignPickedTechId(""); }}
+          onConfirm={doBulkReassign}
         />
       ) : null}
 
@@ -1028,6 +1078,8 @@ function GridPanel({
   // Feb-2026 · Schedule multi-select soft-delete —
   selectedJobIds, onToggleSelect, canMultiSelectDelete,
   onOpenBulkDelete, onClearSelection,
+  // Phase 28 · Feb-2026 · Schedule multi-select bulk reassign —
+  canMultiSelectAssign, onOpenBulkAssign, techs,
 }) {
   const focusISO = format(date, "yyyy-MM-dd");
   const isToday = focusISO === format(new Date(), "yyyy-MM-dd");
@@ -1195,6 +1247,13 @@ function GridPanel({
           >
             <Trash2 size={13} /> Delete {selectedJobIds.size}
           </button>
+          {canMultiSelectAssign ? (
+            <AssignTechDropdown
+              techs={techs}
+              onPick={onOpenBulkAssign}
+              count={selectedJobIds.size}
+            />
+          ) : null}
         </div>
       ) : null}
 
@@ -1516,3 +1575,142 @@ function BulkDeleteConfirmModal({ count, busy, onCancel, onConfirm }) {
   );
 }
 
+
+
+/**
+ * Phase 28 · Feb-2026 · Schedule multi-select · Assign-tech dropdown.
+ *
+ * Rendered inline in the selection toolbar next to "Delete N". Click
+ * opens a lightweight list of tech-family users (``pool_tech`` /
+ * ``landscape_tech`` / ``technician``). Picking one fires
+ * ``onPick(technician_id)`` which the parent uses to open the confirm
+ * modal.
+ */
+function AssignTechDropdown({ techs, onPick, count }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    if (!open) return;
+    function _onDocClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", _onDocClick);
+    return () => document.removeEventListener("mousedown", _onDocClick);
+  }, [open]);
+  const options = (techs || []).filter((t) => {
+    const role = (t.role || "").toLowerCase();
+    return role === "pool_tech" || role === "landscape_tech"
+        || role === "technician" || role === "tech";
+  });
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-xs font-bold"
+        style={{ background: "#0F6ED1", color: "#FFFFFF" }}
+        data-testid="grid-selection-assign"
+      >
+        <UsersRound size={13} /> Assign tech {count} ▾
+      </button>
+      {open ? (
+        <div
+          className="absolute right-0 mt-1 rounded-lg shadow-xl"
+          style={{
+            background: "#fff",
+            border: "1px solid #e5e7eb",
+            minWidth: 220, maxHeight: 320, overflowY: "auto",
+            zIndex: 40,
+          }}
+          data-testid="grid-selection-assign-menu"
+        >
+          {options.length === 0 ? (
+            <div className="px-3 py-2 text-xs" style={{ color: "#6b7280" }}
+                 data-testid="grid-selection-assign-empty">
+              No techs available
+            </div>
+          ) : options.map((t) => (
+            <button
+              key={t.technician_id || t.id}
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onPick(t.technician_id || t.id);
+              }}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-gray-100"
+              style={{ color: "#111" }}
+              data-testid={`grid-selection-assign-tech-${t.technician_id || t.id}`}
+            >
+              <div className="font-semibold">{t.name || t.first_name || t.email}</div>
+              <div style={{ color: "#6b7280", fontSize: 10 }}>
+                {(t.role || "").replace("_", " ")}
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+/**
+ * Phase 28 · Feb-2026 · Schedule multi-select · Bulk reassign confirm.
+ *
+ * Mirrors ``BulkDeleteConfirmModal`` — inline modal (no shadcn) for
+ * consistency with the rest of CalendarSchedule. Shows the picked
+ * tech's display name so admins can double-check before firing the
+ * POST /api/jobs/bulk-reassign call.
+ */
+function BulkReassignConfirmModal({ count, techs, pickedTechId, busy,
+                                        onCancel, onConfirm }) {
+  const picked = (techs || []).find(
+    (t) => (t.technician_id || t.id) === pickedTechId);
+  const techName = (picked && (picked.name || picked.first_name || picked.email)) || "tech";
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ backgroundColor: "rgba(15,23,42,0.55)" }}
+      role="dialog" aria-modal="true"
+      data-testid="grid-bulk-reassign-modal"
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl shadow-2xl"
+        style={{ backgroundColor: colors.surface }}
+      >
+        <div className="px-5 py-4">
+          <div className="text-base font-bold"
+               style={{ color: colors.onSurface }}
+               data-testid="grid-bulk-reassign-title">
+            Reassign {count} job(s) to {techName}?
+          </div>
+          <p className="text-xs mt-2" style={{ color: colors.muted }}>
+            The previously-assigned tech (if any) will get an in-app
+            notification. No SMS or email is sent to the customer.
+          </p>
+        </div>
+        <div className="px-5 py-3 flex items-center justify-end gap-2"
+             style={{ background: colors.surfaceSecondary,
+                        borderTop: `1px solid ${colors.border}` }}>
+          <button type="button" onClick={onCancel} disabled={busy}
+                  className="h-9 px-3 rounded-lg text-xs font-bold disabled:opacity-60"
+                  style={{ background: colors.surface,
+                              color: colors.onSurface,
+                              border: `1px solid ${colors.border}` }}
+                  data-testid="grid-bulk-reassign-cancel">
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} disabled={busy || !pickedTechId}
+                  className="inline-flex items-center gap-1 h-9 px-3 rounded-lg text-xs font-bold disabled:opacity-60"
+                  style={{ background: "#0F6ED1", color: "#FFFFFF" }}
+                  data-testid="grid-bulk-reassign-confirm">
+            {busy
+              ? <><Loader2 size={13} className="animate-spin" /> Reassigning…</>
+              : <><UsersRound size={13} /> Reassign</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

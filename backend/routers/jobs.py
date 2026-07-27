@@ -1198,6 +1198,188 @@ async def bulk_soft_delete_jobs(body: BulkSoftDeleteIn,
               "deleted": deleted, "failed": failed}
 
 
+# ═════════════════════════════════════════════════════════════════════════
+# Phase 28 · Feb-2026 · Schedule multi-select — bulk reassign to a new tech
+# ═════════════════════════════════════════════════════════════════════════
+class BulkReassignIn(BaseModel):
+    job_ids: List[str]
+    new_tech_id: str
+
+
+_TECH_ROLES = {"pool_tech", "landscape_tech", "technician", "tech"}
+_BULK_REASSIGN_CAP = 100
+
+
+async def _lookup_tech_user(tenant_id: str, tech_id: str) -> Optional[dict]:
+    """Resolve a tech identifier to its user row. The frontend may pass
+    either ``users.technician_id`` (preferred — matches the job schema)
+    or ``users.id`` — try both so callers don't have to disambiguate."""
+    if not tech_id:
+        return None
+    row = await db.users.find_one(
+        {"technician_id": tech_id, "tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "technician_id": 1, "role": 1,
+          "name": 1, "first_name": 1, "email": 1},
+    )
+    if row:
+        return row
+    return await db.users.find_one(
+        {"id": tech_id, "tenant_id": tenant_id},
+        {"_id": 0, "id": 1, "technician_id": 1, "role": 1,
+          "name": 1, "first_name": 1, "email": 1},
+    )
+
+
+@router.post("/jobs/bulk-reassign", operation_id="jobs.bulkReassign")
+async def bulk_reassign_jobs(body: BulkReassignIn,
+                                user: dict = Depends(require_admin),
+                                tenant: dict = Depends(get_current_tenant)):
+    """Phase 28 · Feb-2026 · Schedule multi-select — reassign N jobs
+    to a single tech in one call. Response mirrors the bulk-soft-delete
+    shape: ``{ok, count, reassigned, failed}``.
+
+    Per-job behavior:
+      * Skipped when the job is not found or is soft-deleted → recorded
+        in ``failed`` with a reason string.
+      * ``assigned_tech_id`` (legacy alias) + ``technician_id`` (current
+        canonical field) are both written so downstream code that
+        reads either sees the new value.
+      * Writes an ``audit_log`` row and a bell-channel notification to
+        BOTH the outgoing (if any) and incoming techs.
+    """
+    ids = list(dict.fromkeys(body.job_ids or []))
+    if not ids:
+        raise HTTPException(400, "job_ids is empty")
+    if len(ids) > _BULK_REASSIGN_CAP:
+        raise HTTPException(
+            400, f"bulk reassign capped at {_BULK_REASSIGN_CAP} rows per call")
+
+    if not body.new_tech_id:
+        raise HTTPException(400, "new_tech_id is required")
+
+    new_user = await _lookup_tech_user(tenant["id"], body.new_tech_id)
+    if not new_user:
+        raise HTTPException(400, "new_tech_id does not resolve to a user")
+    role = (new_user.get("role") or "").lower()
+    if role not in _TECH_ROLES:
+        raise HTTPException(
+            400, f"new_tech_id role {role!r} is not a technician role")
+    canonical_tech_id = new_user.get("technician_id") or new_user.get("id")
+
+    reassigned: List[str] = []
+    failed: List[Dict[str, Any]] = []
+    outgoing_touches: Dict[str, List[str]] = {}   # old_user_id → [job_title]
+    incoming_titles: List[str] = []
+    now = now_iso()
+    audit_rows: List[Dict[str, Any]] = []
+
+    for jid in ids:
+        job = await db.jobs.find_one(
+            {"id": jid, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "technician_id": 1, "assigned_tech_id": 1,
+              "title": 1, "service_type": 1, "deleted_at": 1},
+        )
+        if not job:
+            failed.append({"job_id": jid, "reason": "not found",
+                            "status_code": 404})
+            continue
+        if job.get("deleted_at"):
+            failed.append({"job_id": jid, "reason": "job is deleted",
+                            "status_code": 409})
+            continue
+
+        old_tech_id = (job.get("technician_id")
+                         or job.get("assigned_tech_id") or None)
+        if old_tech_id == canonical_tech_id:
+            # No-op — already assigned. Not an error, just record it
+            # into the success bucket so counts add up.
+            reassigned.append(jid)
+            continue
+
+        try:
+            await db.jobs.update_one(
+                {"id": jid, "tenant_id": tenant["id"]},
+                {"$set": {"technician_id": canonical_tech_id,
+                            "assigned_tech_id": canonical_tech_id,
+                            "reassigned_at": now,
+                            "reassigned_by_user_id": user.get("id"),
+                            "updated_at": now}},
+            )
+        except Exception as e:                                    # noqa: BLE001
+            failed.append({"job_id": jid, "reason": str(e)[:200],
+                            "status_code": 500})
+            continue
+
+        reassigned.append(jid)
+        title = str(job.get("title") or job.get("service_type") or f"Job {jid[:8]}")
+        incoming_titles.append(title)
+        audit_rows.append({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "action": "job.reassign",
+            "target_job_id": jid,
+            "old_tech_id": old_tech_id,
+            "new_tech_id": canonical_tech_id,
+            "at": now,
+        })
+        if old_tech_id and old_tech_id != canonical_tech_id:
+            # Resolve outgoing tech user_id for notification.
+            old_user = await _lookup_tech_user(tenant["id"], old_tech_id)
+            if old_user and old_user.get("id"):
+                outgoing_touches.setdefault(old_user["id"], []).append(title)
+
+    # Persist audit rows in one batch — non-fatal if it fails.
+    if audit_rows:
+        try:
+            await db.audit_log.insert_many(audit_rows)
+        except Exception as e:
+            logger.warning(f"job.reassign audit insert failed: {e}")
+
+    # In-app notifications. NO SMS / email — per Phase 28 brief.
+    if reassigned:
+        try:
+            from services.notifications import emit as _emit_notif
+            # New tech — one aggregate notification.
+            new_user_id = new_user.get("id")
+            if new_user_id:
+                preview = ", ".join(incoming_titles[:3])
+                more = len(incoming_titles) - 3
+                if more > 0:
+                    preview = f"{preview}, +{more} more"
+                await _emit_notif(
+                    user_ids=[new_user_id], kind="job_assigned",
+                    title=f"You've been assigned {len(incoming_titles)} job(s)",
+                    body=preview or "See your schedule for details.",
+                    source_ref={"kind": "bulk_reassign",
+                                 "count": len(incoming_titles)},
+                    href="/schedule", priority="normal",
+                    tenant_id=tenant["id"])
+            # Old techs — one aggregate notification per outgoing user.
+            for old_uid, titles in outgoing_touches.items():
+                preview = ", ".join(titles[:3])
+                more = len(titles) - 3
+                if more > 0:
+                    preview = f"{preview}, +{more} more"
+                await _emit_notif(
+                    user_ids=[old_uid], kind="job_unassigned",
+                    title=f"{len(titles)} job(s) reassigned away from you",
+                    body=preview or "Your schedule has been updated.",
+                    source_ref={"kind": "bulk_reassign",
+                                 "count": len(titles)},
+                    href="/schedule", priority="normal",
+                    tenant_id=tenant["id"])
+        except Exception as e:
+            logger.warning(f"job.reassign notification fan-out failed: {e}")
+
+    return {"ok": True, "count": len(reassigned),
+              "reassigned": reassigned, "failed": failed,
+              "new_tech_id": canonical_tech_id,
+              "new_tech_name": (new_user.get("name")
+                                  or new_user.get("first_name") or "")}
+
+
 @router.post("/jobs/{jid}/undelete",
               operation_id="jobs.undelete")
 async def undelete_job(jid: str,

@@ -497,6 +497,25 @@ def _service_record_public_videos(sr: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _service_record_images(ctx: Dict[str, Any]) -> str:
+    """Phase 28 · Feb 2026 — slider-preview rewrite. Renders a
+    "first-3-big + counter tile" pattern instead of the old flat grid.
+
+    Layout rules:
+        * 0 media → empty string (unchanged)
+        * 1 photo → single 300x300 tile
+        * 2-3 media → all at 200x200
+        * 4+ media → first 3 at 200x200 + a counter tile
+          "View N more" that links to the same portal URL
+
+    Photos and videos share the "first-3" pool so a report with
+    ``12 photos + 2 videos`` renders as ``3 tiles + "View 11 more"``
+    per the spec. Each tile — including the counter — links to the
+    public portal at ``/portal/service/{public_uuid}``.
+
+    Uses inline-CSS table layout for maximum email-client
+    compatibility (Outlook / Gmail / Apple Mail all render nested
+    tables reliably; flex is spotty in older clients).
+    """
     sr = ctx.get("service_report") or {}
     if not isinstance(sr, dict):
         return ""
@@ -523,43 +542,86 @@ def _service_record_images(ctx: Dict[str, Any]) -> str:
         # empty rather than emit a broken link.
         return ""
     link = f"{base.rstrip('/')}/portal/service/{public_uuid}"
-    size = _SERVICE_IMAGE_THUMB_SIZE
-    parts: List[str] = [
-        '<div style="margin:12px 0;display:flex;flex-wrap:wrap;gap:8px;">'
-    ]
+
+    # Combined media pool preserving order — photos then videos.
+    media: List[Dict[str, Any]] = []
     for p in photos:
-        thumb = p["thumbnail_url"]
-        parts.append(
-            f'<a href="{link}" target="_blank" rel="noopener" '
-            f'style="display:inline-block;line-height:0;">'
-            f'<img src="{thumb}" alt="Service photo" '
-            f'width="{size}" height="{size}" '
-            f'style="width:{size}px;height:{size}px;object-fit:cover;'
-            f'border-radius:6px;border:1px solid #e5e7eb;"/>'
-            f'</a>'
-        )
-    # Phase 27 · Feb 2026 — Videos rendered as poster + centered "▶"
-    # play-icon overlay. Same 200x200 footprint as photos so the row
-    # stays visually uniform.
+        media.append({"kind": "photo",
+                      "img": p["thumbnail_url"],
+                      "alt": "Service photo"})
     for v in videos:
-        poster = v["poster_url"]
-        parts.append(
-            f'<a href="{link}" target="_blank" rel="noopener" '
-            f'style="display:inline-block;position:relative;'
-            f'line-height:0;width:{size}px;height:{size}px;">'
-            f'<img src="{poster}" alt="Service video" '
-            f'width="{size}" height="{size}" '
-            f'style="width:{size}px;height:{size}px;object-fit:cover;'
+        media.append({"kind": "video",
+                      "img": v["poster_url"],
+                      "alt": "Service video"})
+    total = len(media)
+
+    # Sizing rule — 1 photo = 300x300, everything else = 200x200.
+    if total == 1 and media[0]["kind"] == "photo":
+        tile_size = 300
+    else:
+        tile_size = _SERVICE_IMAGE_THUMB_SIZE  # 200
+
+    max_visible = 3 if total > 3 else total
+    visible = media[:max_visible]
+    hidden_count = total - max_visible
+
+    def _tile(item: Dict[str, Any]) -> str:
+        img_html = (
+            f'<img src="{item["img"]}" alt="{item["alt"]}" '
+            f'width="{tile_size}" height="{tile_size}" '
+            f'style="display:block;width:{tile_size}px;'
+            f'height:{tile_size}px;object-fit:cover;'
             f'border-radius:6px;border:1px solid #e5e7eb;"/>'
-            f'<span style="position:absolute;top:50%;left:50%;'
-            f'transform:translate(-50%,-50%);width:44px;height:44px;'
-            f'border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;'
-            f'display:inline-block;text-align:center;'
-            f'line-height:44px;font-size:20px;'
-            f'font-family:system-ui,-apple-system,sans-serif;">&#9654;</span>'
-            f'</a>'
         )
-    parts.append("</div>")
+        if item["kind"] == "video":
+            # Play-icon overlay pinned to the centre — inline table
+            # centering so clients without CSS positioning still show
+            # the arrow.
+            img_html = (
+                f'<span style="display:inline-block;position:relative;'
+                f'line-height:0;width:{tile_size}px;height:{tile_size}px;">'
+                f'{img_html}'
+                f'<span style="position:absolute;top:50%;left:50%;'
+                f'transform:translate(-50%,-50%);width:44px;height:44px;'
+                f'border-radius:50%;background:rgba(0,0,0,0.65);color:#fff;'
+                f'display:inline-block;text-align:center;line-height:44px;'
+                f'font-size:20px;'
+                f'font-family:system-ui,-apple-system,sans-serif;">'
+                f'&#9654;</span></span>'
+            )
+        return (
+            f'<td style="padding:0 4px;">'
+            f'<a href="{link}" target="_blank" rel="noopener" '
+            f'style="text-decoration:none;color:#0f6ed1;">{img_html}</a>'
+            f'</td>'
+        )
+
+    def _counter_tile(count: int) -> str:
+        return (
+            f'<td style="padding:0 4px;">'
+            f'<a href="{link}" target="_blank" rel="noopener" '
+            f'style="text-decoration:none;color:#0f6ed1;'
+            f'display:inline-block;width:{tile_size}px;height:{tile_size}px;'
+            f'background:#1f2937;color:#fff;border-radius:6px;'
+            f'border:1px solid #111827;text-align:center;'
+            f'font-family:system-ui,-apple-system,sans-serif;">'
+            f'<table role="presentation" cellspacing="0" cellpadding="0" '
+            f'style="width:100%;height:{tile_size}px;">'
+            f'<tr><td style="text-align:center;color:#fff;'
+            f'vertical-align:middle;font-size:15px;font-weight:600;'
+            f'line-height:1.3;">+{count}<br/>View {count} more</td></tr>'
+            f'</table></a></td>'
+        )
+
+    parts: List[str] = [
+        '<table role="presentation" cellspacing="0" cellpadding="0" '
+        'style="margin:12px 0;border-collapse:separate;"><tr>'
+    ]
+    for item in visible:
+        parts.append(_tile(item))
+    if hidden_count > 0:
+        parts.append(_counter_tile(hidden_count))
+    parts.append("</tr></table>")
     return "".join(parts)
 
 
