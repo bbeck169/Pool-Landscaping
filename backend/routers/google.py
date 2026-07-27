@@ -200,6 +200,21 @@ async def get_integrations_status(admin: dict = Depends(require_admin)):
 async def integration_health(integration: str, admin: dict = Depends(require_admin)):
     """Lightweight liveness check for the specified integration."""
     import os
+
+    def _mask_key(text: str, key: str) -> str:
+        """Replace any occurrence of the API key value in the text
+        with ``***MASKED***`` so a Resend echo-back never leaks the
+        secret through this endpoint. Also masks the first 8 chars
+        as a substring defense (Resend prefixes error responses with
+        request context in some edge cases)."""
+        if not text or not key:
+            return text
+        masked = text.replace(key, "***MASKED***")
+        prefix = key[:8]
+        if len(prefix) >= 6:
+            masked = masked.replace(prefix, "***")
+        return masked
+
     try:
         if integration == "google":
             if not GOOGLE_API_KEY: return {"ok": False, "message": "GOOGLE_API_KEY unset"}
@@ -215,10 +230,60 @@ async def integration_health(integration: str, admin: dict = Depends(require_adm
             return {"ok": r.status_code == 200, "message": f"HTTP {r.status_code}"}
         if integration == "resend":
             key = os.environ.get("RESEND_API_KEY", "")
-            if not key: return {"ok": False, "message": "RESEND_API_KEY unset"}
-            async with httpx.AsyncClient(timeout=8) as c:
-                r = await c.get("https://api.resend.com/domains", headers={"Authorization": f"Bearer {key}"})
-            return {"ok": r.status_code == 200, "message": f"HTTP {r.status_code}"}
+            if not key:
+                return {"ok": False, "message": "RESEND_API_KEY unset"}
+            # Phase 27.1 · Feb 2026 — expose the actual Resend response
+            # body on failure so admins can distinguish "invalid API
+            # key" from "missing scope" from "domain quota" without
+            # spelunking through pod logs. On success, include the
+            # verified-domains list. NEVER echoes the API key value
+            # itself — the ``_mask_key`` helper below is applied to any
+            # accidental key-substring in the Resend response.
+            try:
+                async with httpx.AsyncClient(timeout=8) as c:
+                    r = await c.get(
+                        "https://api.resend.com/domains",
+                        headers={"Authorization": f"Bearer {key}"},
+                    )
+            except Exception as e:
+                return {"ok": False, "message": f"unreachable: {str(e)[:200]}"}
+            body_snippet = _mask_key((r.text or "")[:400], key)
+            if r.status_code == 200:
+                try:
+                    payload = r.json() or {}
+                    raw_domains = payload.get("data") or payload.get("domains") or []
+                    domains = []
+                    for d in raw_domains:
+                        if not isinstance(d, dict):
+                            continue
+                        domains.append({
+                            "name": d.get("name"),
+                            "status": d.get("status"),
+                            "region": d.get("region"),
+                        })
+                except Exception:
+                    domains = []
+                return {"ok": True, "message": "HTTP 200",
+                        "domains": domains,
+                        "domain_count": len(domains)}
+            # Non-200 — parse the error name/message if Resend returned JSON.
+            resend_error = None
+            try:
+                j = r.json()
+                if isinstance(j, dict):
+                    resend_error = {
+                        "name": j.get("name"),
+                        "message": _mask_key(str(j.get("message") or "")[:200], key),
+                        "statusCode": j.get("statusCode"),
+                    }
+            except Exception:
+                pass
+            return {
+                "ok": False,
+                "message": f"HTTP {r.status_code}",
+                "resend_error": resend_error,
+                "response_body": body_snippet if not resend_error else None,
+            }
         if integration == "stripe":
             key = os.environ.get("STRIPE_API_KEY", "") or os.environ.get("STRIPE_SECRET_KEY", "")
             if not key: return {"ok": False, "message": "STRIPE_API_KEY unset"}
