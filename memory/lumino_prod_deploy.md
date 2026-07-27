@@ -17,25 +17,91 @@
 
 ## Step 2 — Zapier configuration
 
-For each of these Lumino events, create a Zap:
-- `subscription.renewed`
-- `subscription.canceled`
-- `payment.refunded`
-- `dispute.opened`
-- `dispute.resolved`
+The bridge accepts `event_type` from an **HTTP header** first
+(Phase 2.5, Feb 2026). If the header is missing or its value is
+not in the allow-list, the backend infers `event_type` from
+`data.status` in the JSON body and records
+`resolution_source="inferred"` on the stored `payment_events` doc
+so operators can spot a misconfigured Zap.
 
-Zap action: **Webhooks by Zapier → POST**
+### Shared secret
+
+Generate a **fresh** shared secret at cutover — never reuse any
+value that has been pasted in chat, email, log, ticket, or PR
+description (they are compromised regardless of whether they
+actually leaked):
+
+```
+openssl rand -hex 32
+```
+
+Set the output as `LUMINO_ZAPIER_SHARED_SECRET` in the prod pod's
+secure env manager (Step 3). In preview `.env` this stays **empty**
+so the bridge fails closed with `401 shared secret not configured`.
+
+**Never paste the shared secret in chat, email, or logs.** If it
+does end up somewhere insecure, rotate immediately.
+
+### Per-Zap configuration
+
+7 Zaps total. All share the same Action (Webhooks by Zapier →
+POST) and the same URL / auth header — only the `event_type`
+header differs.
+
+**Common to every Zap**
 - URL: `https://app.plofv.com/api/webhooks/lumino/zapier`
-- Header: `x-zapier-shared-secret: <SHARED_SECRET>` (generate fresh; do not reuse)
+- Method: `POST`
+- Header `x-zapier-shared-secret`: `<value from openssl rand>`
+- Header `Content-Type`: `application/json`
 - Body (JSON):
   ```json
   {
     "event_id": "{{lumino.event_id}}",
-    "event_type": "{{lumino.event_type}}",
     "occurred_at": "{{lumino.occurred_at}}",
     "data": { … per-event Lumino payload … }
   }
   ```
+  (Note: `event_type` is no longer required in the body — the
+  header carries it. If included in the body it will be ignored;
+  header wins.)
+
+**Per-Zap `event_type` header**
+
+| Zap name | Lumino trigger | `event_type` header value |
+|----------|----------------|---------------------------|
+| New Payment | Payment.Succeeded | `payment.created` |
+| Updated Payment | Payment.Updated | `payment.updated` |
+| Refunded Payment | Payment.Refunded | `payment.refunded` |
+| Subscription Renewed | Subscription.Renewed | `subscription.renewed` |
+| Subscription Canceled | Subscription.Canceled | `subscription.canceled` |
+| Dispute Opened | Dispute.Opened | `dispute.opened` |
+| Dispute Resolved | Dispute.Resolved | `dispute.resolved` |
+
+### Zap destinations (approved by user Feb 2026)
+
+**Each of the 3 payment Zaps (New Payment, Updated Payment,
+Refunded Payment) has exactly ONE Action step — the POST to
+`https://app.plofv.com/api/webhooks/lumino/zapier`. No secondary
+email / Slack / Sheets steps.** If audit-trail visibility is
+needed later, add them as **extra Action steps on the same Zap**
+— do NOT create new Zaps (a second Zap on the same trigger would
+double-fire the webhook and, thanks to `event_id` dedupe, the
+second call would 200 as `deduped:true` but pollute
+`payment_events` traffic metrics).
+
+The same one-Action rule applies to the 4 subscription / dispute
+Zaps for consistency.
+
+### Pre-enable checklist
+
+- ☐ Confirm each Zap has ONE Action step only before enabling.
+- ☐ Confirm each Zap's `event_type` header matches the table above.
+- ☐ Confirm the shared secret is set in prod pod env (Step 3) BEFORE
+      enabling any Zap — otherwise every event 401s and Zapier will
+      auto-disable the Zap after N failures.
+- ☐ Send one manual test event through each Zap and verify
+      `db.payment_events.find({"lumino_event_id": <test id>})`
+      contains `resolution_source: "header"`.
 
 ## Step 3 — Prod pod env vars (secure)
 
