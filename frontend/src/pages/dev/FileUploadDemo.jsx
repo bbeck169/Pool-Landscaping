@@ -20,7 +20,7 @@ export default function FileUploadDemoPage() {
       <p className="text-sm text-zinc-500 mb-6">
         Preview-only route — verifies the F0 backend + F1 shared
         components end-to-end. Uploads land in
-        ``poolscape-crm/{tenant}/dev_smoke/…``.
+        <code className="mx-1 px-1 rounded bg-zinc-100">poolscape-crm/&lt;tenant&gt;/dev_smoke/…</code>.
       </p>
 
       <section className="mb-6">
