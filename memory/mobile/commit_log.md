@@ -524,3 +524,22 @@
   - Job detail: Before/After Photos card with upload buttons + file list + delete ✅
   - Booking confirmation: "Add Photos" card with Take Photo / Choose from Library / Choose File ✅
 - **Surprise**: Backend returns `message_id` not `id` for service requests. Fixed ID capture to accept both.
+
+## Iteration 29 — Wave M3: F2d + F2e + F2f
+- **Commit**: 7b8cb177ed06dfe860c073227ec113c0cb9095c0
+- **Date**: 2026-07-28
+- **Changes**:
+  - **F2d Chat Attachments**: Rewrote chat.tsx with paperclip button (ActionSheetIOS/Alert menu for camera/library/document), `pending[]` queue for uploaded attachments, pending chips strip above composer with remove buttons, `attachment_ids` included in send payload, inline attachment links rendered under each message.
+  - **F2e Persona Avatar Upload**: Rewrote ai-employees.tsx with camera icon overlay on each persona row, Modal bottom-sheet with FileUpload (purpose=persona_avatar), PATCH `/api/ai-employees/{eid}` with avatar_url on upload, "Reset to default" restores built-in avatar path, AuthedImage for existing custom avatars.
+  - **F2f Staff Profile Photo**: Created new profile.tsx screen at /app/(app)/profile.tsx. Mirrors web MyProfilePage: fetches /api/auth/me, shows AuthedImage or InitialBadge fallback, FileUpload (purpose=staff_profile_photo), PATCH /api/users/me on upload, "Remove photo" button, Identity card (name/email/role). Profile card in more.tsx now tappable with chevron navigating to profile.
+  - Tests: 77/77 passing (18 new in 3 suites). No regressions.
+- **Files created**:
+  - mobile/app/(app)/profile.tsx
+  - mobile/__tests__/f2d-chat-attachments.test.tsx (5 tests)
+  - mobile/__tests__/f2e-persona-avatar.test.tsx (6 tests)
+  - mobile/__tests__/f2f-staff-profile.test.tsx (7 tests)
+- **Files modified**:
+  - mobile/app/(app)/chat.tsx (F2d: full rewrite with attachment flow)
+  - mobile/app/ai-employees.tsx (F2e: added avatar upload modal)
+  - mobile/app/(app)/more.tsx (F2f: profile card now tappable → profile screen)
+- **Web files referenced**: frontend/src/pages/chat/TeamChatPage.jsx, frontend/src/components/personas/PersonaAvatarUploadModal.jsx, frontend/src/pages/account/MyProfilePage.jsx, frontend/src/pages/admin/AiPersonasScopePage.jsx
