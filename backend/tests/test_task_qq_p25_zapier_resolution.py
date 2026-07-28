@@ -310,19 +310,27 @@ def test_duplicate_event_id_is_deduped(client):
 # in chat and confirmed compromised. All values are assembled at
 # runtime from parts so THIS test file itself never contains any
 # literal (else the grep would flag itself).
+#
+# Feb 2026 update #2 — extended from 4 → 6 values after a rotated
+# OpenWebNinja key (V5) and a rotated Zapier shared secret (V6)
+# were also pasted in chat and immediately marked compromised.
 # ═══════════════════════════════════════════════════════════════════
 def test_compromised_secret_not_present_anywhere():
     import pathlib
-    # All 4 known-compromised values, assembled from parts.
+    # All 6 known-compromised values, assembled from parts.
     V1 = "zap_lum_" + "9f7d4c2e" + "8b1a5f6e" + "3d9c2b7a" + "8e1f4d6c"
     V2 = "zap_lum_" + "a7f2e9d1" + "c4b8h6j3" + "k1m5n2p9" + "q7r4s8t1"
     V3 = "ak_" + "r0gahuut" + "3djgfat0" + "3tpn7fxe" + "ckss99qz" + "t3oobqq9ycjd201"
     V4 = "sk_live_" + "b116141e" + "_4j0jCE_" + "8tyZHQtc" + "fDlIDle4" + "hk8cv2hRhAKQ7A"
+    V5 = "ak_" + "n1ojoydj" + "bmr5lcsu" + "ijkhm7mv" + "cqqk1o29" + "2jvzhvbo68yeq9y"
+    V6 = "zap_lum_" + "n3q6t9w2" + "z5c8f1h4" + "k7m0p3r6" + "s9v2w5y"
     compromised = {
         "V1_zapier_shared_secret_1": V1,
         "V2_zapier_shared_secret_2": V2,
         "V3_rapidapi_key": V3,
         "V4_lumino_live_secret": V4,
+        "V5_openwebninja_key_rotated": V5,
+        "V6_zapier_shared_secret_rotated": V6,
     }
     # Repo-scope scan — /app is the source-of-truth workspace and
     # the only tree deploys can source. /var/log, /tmp, /root are
