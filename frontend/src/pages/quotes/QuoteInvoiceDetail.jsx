@@ -26,6 +26,8 @@ import { PayNowButton, StripeCheckoutReturn } from '@/components/stripe/StripePa
 // route hit a Stripe SDK exception, which surfaced to the user as
 // "Stripe not configured".
 import PaymentForm from "@/components/PaymentForm";
+import { useAuth } from "@/auth";
+import InvoiceAttachments from "@/components/quotes/InvoiceAttachments";
 import {
   PageHeader,
   Button,
@@ -88,6 +90,7 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
   const [payOpen, setPayOpen] = useState(false);
   const [convertOpen, setConvertOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const { user } = useAuth();
   // Phase 5A hot-fix · Feb 2026 — Phase 4B PaymentForm mount toggle.
   const [payNowOpen, setPayNowOpen] = useState(false);
   const [termsEditOpen, setTermsEditOpen] = useState(false);
@@ -451,6 +454,12 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
           </div>
         </div>
       </div>
+
+      {/* Phase F2b · Attachments (F0-native, purpose-scoped).
+          Renders on both invoice and estimate views. Customer sees a
+          read-only list; upload UI is gated on role inside the
+          component. */}
+      <InvoiceAttachments docId={doc.id} isInvoice={isInvoice} user={user} />
 
       {/* Terms & Conditions */}
       <div

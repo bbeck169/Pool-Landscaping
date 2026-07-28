@@ -433,11 +433,11 @@ export default function JobDetail() {
       </div>
 
       {/* Phase F2a · Before & After Photos (F0-native, purpose-scoped).
-          Hidden for customer role — they consume these read-only in the
-          customer portal (F2c, out of scope for this task). */}
-      {!isCustomer ? (
-        <JobBeforeAfterPhotos jobId={job.id} user={user} />
-      ) : null}
+          Non-customer: full upload + delete UI. Customer (F2c.2): the
+          same component in ``readOnly`` mode — upload is hidden, delete
+          is disabled, and buckets that have no files are suppressed so
+          the customer portal doesn't render an empty shell. */}
+      <JobBeforeAfterPhotos jobId={job.id} user={user} readOnly={isCustomer} />
 
       {/* Photos */}
       {(user?.role === "admin" || user?.role === "super_admin") ? (

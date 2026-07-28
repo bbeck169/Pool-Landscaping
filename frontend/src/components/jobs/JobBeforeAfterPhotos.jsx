@@ -38,10 +38,20 @@ export function canDeletePhoto({ user, file }) {
 
 /** Small self-contained "one purpose" bucket — upload area on top,
  *  scoped list below. ``nonce`` is incremented on successful upload
- *  which remounts FileList so it re-fetches. */
-function PhotoBucket({ label, purpose, jobId, canDelete }) {
+ *  which remounts FileList so it re-fetches.
+ *
+ *  ``readOnly`` (F2c.2) hides the FileUpload and forces
+ *  ``canDelete=false`` for the customer-portal view. When paired with
+ *  ``hideWhenEmpty``, the whole bucket is unrendered if the scoped
+ *  FileList reports zero files (keeps the portal free of empty
+ *  "No photos" noise). */
+function PhotoBucket({ label, purpose, jobId, canDelete, readOnly = false,
+                        hideWhenEmpty = false }) {
   const [nonce, setNonce] = useState(0);
+  const [count, setCount] = useState(null);
   const onUploaded = useCallback(() => setNonce((n) => n + 1), []);
+  const onChange = useCallback((items) => setCount((items || []).length), []);
+  if (hideWhenEmpty && count === 0) return null;
 
   return (
     <section
@@ -51,37 +61,47 @@ function PhotoBucket({ label, purpose, jobId, canDelete }) {
       <h3 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
         {label}
       </h3>
-      <FileUpload
-        purpose={purpose}
-        linkedEntityType="job"
-        linkedEntityId={jobId}
-        accept={ACCEPT}
-        multiple
-        maxFiles={12}
-        onUploaded={onUploaded}
-        buttonLabel="Add photos or MP4"
-      />
+      {!readOnly ? (
+        <FileUpload
+          purpose={purpose}
+          linkedEntityType="job"
+          linkedEntityId={jobId}
+          accept={ACCEPT}
+          multiple
+          maxFiles={12}
+          onUploaded={onUploaded}
+          buttonLabel="Add photos or MP4"
+        />
+      ) : null}
       <FileList
         key={nonce}
         linkedEntityType="job"
         linkedEntityId={jobId}
         purpose={purpose}
-        canDelete={canDelete}
+        canDelete={readOnly ? false : canDelete}
+        onChange={onChange}
         emptyLabel="No photos yet."
       />
     </section>
   );
 }
 
-export function JobBeforeAfterPhotos({ jobId, user }) {
+export function JobBeforeAfterPhotos({ jobId, user, readOnly = false }) {
+  const [beforeCount, setBeforeCount] = useState(null);
+  const [afterCount, setAfterCount] = useState(null);
   if (!jobId) return null;
+
   // Backend enforces the fine-grained (uploader-owned) gate; here we
-  // just show the delete button whenever the caller COULD delete
-  // (admin/super_admin) — non-admin uploaders will see the button
-  // per file, and the backend rejects unauthorized attempts.
+  // just show the delete button whenever the caller COULD delete —
+  // non-admin uploaders will see the button per file, and the backend
+  // rejects unauthorized attempts.
   const role = String(user?.role || "").toLowerCase();
   const canDelete = role === "admin" || role === "super_admin"
                      || role === "manager" || role === "pool_tech";
+
+  // Read-only + both buckets empty → suppress the entire section so
+  // the customer portal doesn't render an empty shell.
+  if (readOnly && beforeCount === 0 && afterCount === 0) return null;
 
   return (
     <div
@@ -94,14 +114,16 @@ export function JobBeforeAfterPhotos({ jobId, user }) {
     >
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-bold" style={{ color: "var(--onSurface, #18181B)" }}>
-          Before &amp; After Photos
+          {readOnly ? "Photos" : "Before & After Photos"}
         </h2>
-        <span
-          className="text-xs uppercase tracking-wide text-zinc-500"
-          data-testid="job-before-after-photos-hint"
-        >
-          Images + MP4 · 25 MB max per file
-        </span>
+        {!readOnly ? (
+          <span
+            className="text-xs uppercase tracking-wide text-zinc-500"
+            data-testid="job-before-after-photos-hint"
+          >
+            Images + MP4 · 25 MB max per file
+          </span>
+        ) : null}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
         <PhotoBucket
@@ -109,12 +131,16 @@ export function JobBeforeAfterPhotos({ jobId, user }) {
           purpose="job_before_photo"
           jobId={jobId}
           canDelete={canDelete}
+          readOnly={readOnly}
+          hideWhenEmpty={readOnly}
         />
         <PhotoBucket
           label="After"
           purpose="job_after_photo"
           jobId={jobId}
           canDelete={canDelete}
+          readOnly={readOnly}
+          hideWhenEmpty={readOnly}
         />
       </div>
     </div>

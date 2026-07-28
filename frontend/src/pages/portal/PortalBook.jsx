@@ -5,6 +5,7 @@ import React, { useEffect, useState } from "react";
 import { CalendarClock, CheckCircle2, Clock as ClockIcon } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
+import PortalBookingPhotos from "@/components/portal/PortalBookingPhotos";
 
 const SERVICE_TYPES = [
   "Pool Cleaning", "Weekly Pool Service", "Chemical Balance Only",
@@ -75,6 +76,9 @@ export default function PortalBook() {
                   data-testid="portal-book-another">
             Book another
           </button>
+          {/* Phase F2c.1 · optional photo upload on the confirmation
+              panel — attaches to the freshly created appointment. */}
+          <PortalBookingPhotos appointmentId={result.id} />
         </div>
       ) : (
         <>

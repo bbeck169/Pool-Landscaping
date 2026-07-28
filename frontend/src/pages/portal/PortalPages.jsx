@@ -18,6 +18,7 @@ import { colors, money } from "@/theme";
 import { useAuth } from "@/auth";
 import InvoiceView from "@/components/InvoiceView";
 import EstimateView from "@/components/EstimateView";
+import PortalBookingPhotos from "@/components/portal/PortalBookingPhotos";
 // Phase 5A hot-fix · Feb 2026 — replace the legacy hosted-checkout
 // redirect with the Phase 4B <PaymentForm> modal (Card + ACH + wallets).
 import PaymentForm from "@/components/PaymentForm";
@@ -876,11 +877,18 @@ export function PortalRequestService() {
   // ``"general_request"`` server-side so downstream dashboards keep
   // rendering. Preferred date + attachments (unchanged surface here)
   // remain intact.
+  //
+  // Phase F2c.1 · Feb-2026 — post-submit, we hold on to the returned
+  // service-request id and render <PortalBookingPhotos> so the
+  // customer can attach photos of the issue before leaving the page.
+  // Falls back to the historical "immediate navigate" behaviour if
+  // the endpoint doesn't return an id.
   const MIN_LEN = 10;
   const MAX_LEN = 2000;
   const [form, setForm] = useState({ request_details: "", preferred_date: "" });
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
+  const [createdId, setCreatedId] = useState(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const detailsLen = form.request_details.trim().length;
   const canSubmit = detailsLen >= MIN_LEN && detailsLen <= MAX_LEN && !busy;
@@ -889,12 +897,17 @@ export function PortalRequestService() {
     if (!canSubmit) return;
     setBusy(true);
     try {
-      await api.post("/customer-portal/service-requests", {
+      const res = await api.post("/customer-portal/service-requests", {
         request_details: form.request_details.trim(),
         preferred_date: form.preferred_date || undefined,
       });
-      setToast({ tone: "success", message: "Request sent — we'll be in touch shortly." });
-      setTimeout(() => navigate("/portal/home"), 800);
+      const rid = res?.id || res?.request_id || res?.message_id;
+      setToast({ tone: "success", message: "Request sent — attach photos below if it helps." });
+      if (rid) {
+        setCreatedId(rid);   // stay on page for optional photo upload
+      } else {
+        setTimeout(() => navigate("/portal/home"), 800);
+      }
     } catch (err) { setToast({ tone: "error", message: err.message }); }
     finally { setBusy(false); }
   };
@@ -929,11 +942,21 @@ export function PortalRequestService() {
         </div>
         <TextInput label="PREFERRED DATE (OPTIONAL)" type="date" value={form.preferred_date} onChange={set("preferred_date")} testid="rs-date" />
         <div className="flex justify-end pt-2">
-          <Button type="submit" disabled={!canSubmit} testid="rs-submit">
-            <Plus size={14} /> {busy ? "Sending…" : "Send request"}
+          <Button type="submit" disabled={!canSubmit || Boolean(createdId)} testid="rs-submit">
+            <Plus size={14} /> {busy ? "Sending…" : createdId ? "Request sent ✓" : "Send request"}
           </Button>
         </div>
       </form>
+      {createdId ? (
+        <div className="mt-4" data-testid="rs-photos-panel">
+          <PortalBookingPhotos appointmentId={createdId} />
+          <div className="flex justify-end mt-3">
+            <Button type="button" variant="ghost" onClick={() => navigate("/portal/home")} testid="rs-done">
+              Done
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
