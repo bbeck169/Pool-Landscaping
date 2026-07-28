@@ -15,6 +15,7 @@ import { colors, spacing, money, IMAGES } from "@/src/theme";
 import { Loading, StatusChip, PrimaryButton, Sheet } from "@/src/components/ui";
 import { styles } from "@/src/components/job/styles";
 import { colors as themeColors, spacing as themeSpacing, radius as themeRadius, font as themeFont } from "@/src/theme";
+import { JobBeforeAfterPhotos } from "@/src/components/files";
 import FieldReport from "@/src/components/job/FieldReport";
 
 // Phase 49.0 — inline styles for the "Open Service Report" CTA. Kept
@@ -452,6 +453,12 @@ export default function JobDetail() {
             onPatched={(v) => setJob((j: any) => ({ ...j, videos: (j.videos || []).map((vv: any) => (vv.id === v.id ? v : vv)) }))}
             readonly={isCustomer}
           />
+
+          {/* F2a — Before/After Photos (F0 pipeline).
+              Tech + admin: full upload.  Customer: read-only (hidden if empty). */}
+          <View style={{ marginTop: spacing.md }}>
+            <JobBeforeAfterPhotos jobId={id!} readOnly={isCustomer} />
+          </View>
         </View>
 
         <ServiceIssues job={job} canManage={canManage} isCustomer={isCustomer} onSaved={setJob} />

@@ -8,6 +8,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { PrimaryButton } from "@/src/components/ui";
+import { FileUpload } from "@/src/components/files";
 
 const MIN_LEN = 10;
 const MAX_LEN = 2000;
@@ -19,6 +20,8 @@ export default function RequestService() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const [uploadedCount, setUploadedCount] = useState(0);
 
   const charCount = details.length;
   const isValid = charCount >= MIN_LEN && charCount <= MAX_LEN;
@@ -28,10 +31,13 @@ export default function RequestService() {
     setBusy(true);
     setError("");
     try {
-      await api.post("/customer-portal/service-requests", {
+      const res = await api.post("/customer-portal/service-requests", {
         request_details: details,
         preferred_date: date || undefined,
       });
+      // Capture created request id (accept any shape the backend returns)
+      const rid = res?.id || res?.request_id || res?.appointment_id || null;
+      setCreatedId(rid);
       setDone(true);
     } catch (e: any) {
       setError(e.message || "Failed to submit request");
@@ -44,21 +50,54 @@ export default function RequestService() {
     return (
       <View style={s.root}>
         <Header title="Request Sent" back />
-        <View style={s.doneWrap}>
-          <View style={s.doneIcon}>
-            <Ionicons name="checkmark-circle" size={56} color={colors.success} />
+        <KeyboardAwareScrollView
+          contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={s.doneWrap}>
+            <View style={s.doneIcon}>
+              <Ionicons name="checkmark-circle" size={56} color={colors.success} />
+            </View>
+            <Text style={s.doneTitle}>Request submitted!</Text>
+            <Text style={s.doneSub}>
+              Our team will review your request and get back to you shortly.
+            </Text>
           </View>
-          <Text style={s.doneTitle}>Request submitted!</Text>
-          <Text style={s.doneSub}>
-            Our team will review your request and get back to you shortly.
-          </Text>
+
+          {/* F2c.1 — Photo upload (only when we have a created request id) */}
+          {createdId ? (
+            <View style={s.photoCard} testID="booking-photo-upload-section">
+              <View style={s.photoCardHeader}>
+                <Ionicons name="camera-outline" size={18} color={colors.brand} />
+                <Text style={s.photoCardTitle}>Add Photos</Text>
+              </View>
+              <Text style={s.photoCardSub}>
+                Help us understand the job better — attach up to 5 photos or videos.
+              </Text>
+              <FileUpload
+                purpose="portal_booking_photo"
+                linkedEntityType="booking_request"
+                linkedEntityId={createdId}
+                accept="image/*,video/mp4"
+                multiple
+                maxFiles={5}
+                onUploaded={() => setUploadedCount((c) => c + 1)}
+              />
+              {uploadedCount > 0 ? (
+                <Text style={s.uploadedNote} testID="booking-photo-count">
+                  {uploadedCount} file{uploadedCount > 1 ? "s" : ""} attached
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+
           <View style={{ height: spacing.xl }} />
           <PrimaryButton
-            title="Back to Home"
+            title="Done"
             onPress={() => router.replace("/portal/home" as any)}
             testID="request-done-button"
           />
-        </View>
+        </KeyboardAwareScrollView>
       </View>
     );
   }
@@ -159,8 +198,23 @@ const s = StyleSheet.create({
     ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}),
   },
   error: { color: colors.error, fontFamily: font.medium, fontSize: fontSize.base, marginTop: spacing.sm },
-  doneWrap: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl },
+  doneWrap: { alignItems: "center", justifyContent: "center", paddingVertical: spacing.xl },
   doneIcon: { marginBottom: spacing.lg },
   doneTitle: { fontFamily: font.bold, fontSize: fontSize["2xl"], color: colors.onSurface, textAlign: "center" },
   doneSub: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted, textAlign: "center", marginTop: spacing.sm, lineHeight: 20 },
+  photoCard: {
+    backgroundColor: colors.surface, borderRadius: radius.md,
+    padding: spacing.lg, marginTop: spacing.xl,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  photoCardHeader: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: 4,
+  },
+  photoCardTitle: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
+  photoCardSub: {
+    fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginBottom: spacing.md,
+  },
+  uploadedNote: {
+    fontFamily: font.medium, fontSize: fontSize.sm, color: colors.success, marginTop: spacing.sm,
+  },
 });
