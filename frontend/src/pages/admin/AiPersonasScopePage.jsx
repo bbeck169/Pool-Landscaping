@@ -24,7 +24,7 @@
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ShieldCheck, Users, Info } from "lucide-react";
+import { ShieldCheck, Users, Info, Camera } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import {
@@ -35,6 +35,7 @@ import {
   BulkConfirmModal,
 } from "@/components/bulk-select/BulkSelectToolkit";
 import PersonaAvatar from "@/components/personas/PersonaAvatar";
+import PersonaAvatarUploadModal from "@/components/personas/PersonaAvatarUploadModal";
 
 function scopeLabel(scope) {
   return scope === "tenant_all" ? "Tenant-wide" : "Own customer only";
@@ -48,6 +49,8 @@ function scopeClass(scope) {
 export default function AiPersonasScopePage() {
   const [items, setItems] = useState(null);
   const [err, setErr] = useState(null);
+  // F2e · avatar upload modal target — null when closed.
+  const [avatarTarget, setAvatarTarget] = useState(null);
   const [confirmFor, setConfirmFor] = useState(null);    // persona row awaiting scope-elevation confirm
   const [saving, setSaving] = useState(null);              // persona id currently mutating
   const [me, setMe] = useState(null);                        // current user (for super_admin gate)
@@ -282,7 +285,19 @@ export default function AiPersonasScopePage() {
                                 label={`Select ${row.name}`} />
               </div>
               <div className="col-span-3 flex items-center gap-2">
-                <PersonaAvatar persona={row} size={40} />
+                <div className="relative">
+                  <PersonaAvatar persona={row} size={40} />
+                  <button
+                    type="button"
+                    onClick={() => setAvatarTarget(row)}
+                    title="Upload custom avatar"
+                    aria-label={`Upload custom avatar for ${row.name}`}
+                    data-testid={`persona-avatar-upload-${row.key}`}
+                    className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center bg-white shadow border border-zinc-200 text-zinc-700 hover:bg-zinc-50"
+                  >
+                    <Camera size={10} />
+                  </button>
+                </div>
                 <div>
                   <div className="font-semibold">{row.name}</div>
                   <div className="text-xs" style={{ color: colors.muted }}>
@@ -418,6 +433,18 @@ export default function AiPersonasScopePage() {
           </div>
         </div>
       )}
+      {avatarTarget ? (
+        <PersonaAvatarUploadModal
+          persona={avatarTarget}
+          onClose={() => setAvatarTarget(null)}
+          onSaved={(next) => {
+            // Optimistic patch of the visible row.
+            setItems((prev) => (prev || []).map((r) =>
+              r.key === next.key ? { ...r, avatar_url: next.avatar_url } : r,
+            ));
+          }}
+        />
+      ) : null}
     </div>
   );
 }
