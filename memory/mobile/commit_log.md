@@ -485,3 +485,24 @@
   - `mobile/app/dev/file-upload.tsx`
   - `mobile/__tests__/file-upload-components.test.tsx`
 - **Web files referenced**: `frontend/src/api/files.js`, `frontend/src/components/files/FileUpload.jsx`, `frontend/src/components/files/AuthedImage.jsx`, `frontend/src/components/files/FileList.jsx`
+
+## Iteration 27 — Wave M1: F2b + F2c.2
+- **Commit**: 21d0ca66c96e92b0fac1e6cede626fd1bbe4f45a
+- **Date**: 2026-07-28
+- **Changes**:
+  - **F2b InvoiceAttachments**: New component wrapping FileUpload+FileList with purpose=invoice_attachment, linked_entity_type=invoice. Role-gated: admin/super_admin/manager can upload+delete; customer/tech read-only. Wired into invoice/[id].tsx and estimate-view/[id].tsx after Notes section.
+  - **F2c.2 JobBeforeAfterPhotos**: New component with dual "Before"/"After" sections, each with FileList filtered by purpose (job_before_photo / job_after_photo). Read-only mode hides if both empty (deferred render: hidden container fetches counts first). Wired into portal/service/[id].tsx below legacy Photos section.
+  - **FileList purpose prop**: Added optional `purpose` prop that passes through to `listFilesByEntity` for purpose-filtered queries.
+  - **Barrel export updated**: Added InvoiceAttachments, canUploadInvoiceAttachment, JobBeforeAfterPhotos.
+  - Tests: 50/50 passing (14 new in 2 suites). Compromised-secret guard: PASSING.
+- **Files created**:
+  - mobile/src/components/files/InvoiceAttachments.tsx
+  - mobile/src/components/files/JobBeforeAfterPhotos.tsx
+  - mobile/__tests__/invoice-attachments.test.tsx
+  - mobile/__tests__/job-before-after-photos.test.tsx
+- **Files modified**:
+  - mobile/src/components/files/FileList.tsx (added purpose prop)
+  - mobile/src/components/files/index.ts (barrel)
+  - mobile/app/invoice/[id].tsx (wired InvoiceAttachments)
+  - mobile/app/estimate-view/[id].tsx (wired InvoiceAttachments)
+  - mobile/app/portal/service/[id].tsx (wired JobBeforeAfterPhotos readOnly)
