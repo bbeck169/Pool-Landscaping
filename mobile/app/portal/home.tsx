@@ -175,7 +175,22 @@ export default function PortalHome() {
             </View>
           </View>
 
-          {/* 3. Quick Actions Grid */}
+          {/* 3. Next Service (reverted ABOVE Quick Actions · Feb 2026) */}
+          {data.next_service ? (
+            <Pressable style={s.nextCard} onPress={() => router.push(`/job/${data.next_service.id}`)} testID="portal-next-service">
+              <View style={s.nextIcon}>
+                <Ionicons name="calendar" size={20} color={colors.brand} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.nextLabel}>Next Service</Text>
+                <Text style={s.nextTitle} numberOfLines={1}>{data.next_service.title}</Text>
+                <Text style={s.nextMeta}>{(data.next_service.scheduled_date || "").slice(0, 10) || "To be scheduled"}</Text>
+              </View>
+              <StatusChip status={data.next_service.status} />
+            </Pressable>
+          ) : null}
+
+          {/* 4. Quick Actions Grid */}
           <Text style={s.gridTitle}>Quick Actions</Text>
           <View style={s.grid}>
             {QA_SECTIONS.map((sec) => {
@@ -193,21 +208,6 @@ export default function PortalHome() {
               );
             })}
           </View>
-
-          {/* 4. Next Service (moved BELOW Quick Actions · Feb 2026 fix) */}
-          {data.next_service ? (
-            <Pressable style={s.nextCard} onPress={() => router.push(`/job/${data.next_service.id}`)} testID="portal-next-service">
-              <View style={s.nextIcon}>
-                <Ionicons name="calendar" size={20} color={colors.brand} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.nextLabel}>Next Service</Text>
-                <Text style={s.nextTitle} numberOfLines={1}>{data.next_service.title}</Text>
-                <Text style={s.nextMeta}>{(data.next_service.scheduled_date || "").slice(0, 10) || "To be scheduled"}</Text>
-              </View>
-              <StatusChip status={data.next_service.status} />
-            </Pressable>
-          ) : null}
 
           {/* 4b. Next Service Day Tile */}
           <View style={s.nextServiceDayCard} testID="portal-next-service-day">
