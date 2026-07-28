@@ -209,6 +209,59 @@ export default function PortalHome() {
             })}
           </View>
 
+          {/* 4b. Next Service Day Tile */}
+          <View style={s.nextServiceDayCard} testID="portal-next-service-day">
+            <View style={s.nextServiceDayHeader}>
+              <View style={s.nextServiceDayIcon}>
+                <Ionicons name="sunny-outline" size={22} color="#0369A1" />
+              </View>
+              <Text style={s.nextServiceDayTitle}>Next Service Day</Text>
+            </View>
+            {data.next_service ? (
+              <Pressable
+                style={s.nextServiceDayBody}
+                onPress={() => router.push(`/job/${data.next_service.id}`)}
+                testID="portal-next-service-day-detail"
+              >
+                <View style={s.nextServiceDayDateBox}>
+                  <Text style={s.nextServiceDayDateNum}>
+                    {(() => {
+                      const d = new Date(data.next_service.scheduled_date);
+                      return isNaN(d.getTime()) ? "--" : d.getDate();
+                    })()}
+                  </Text>
+                  <Text style={s.nextServiceDayDateMonth}>
+                    {(() => {
+                      const d = new Date(data.next_service.scheduled_date);
+                      return isNaN(d.getTime()) ? "---" : d.toLocaleDateString("en-US", { month: "short" });
+                    })()}
+                  </Text>
+                  <Text style={s.nextServiceDayDateDay}>
+                    {(() => {
+                      const d = new Date(data.next_service.scheduled_date);
+                      return isNaN(d.getTime()) ? "---" : d.toLocaleDateString("en-US", { weekday: "short" });
+                    })()}
+                  </Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.nextServiceDayName} numberOfLines={1}>{data.next_service.title}</Text>
+                  <Text style={s.nextServiceDayMeta}>
+                    {data.next_service.technician_name || "Unassigned"} · {data.next_service.service_type || "Service"}
+                  </Text>
+                  <Text style={s.nextServiceDayAddr} numberOfLines={1}>
+                    {data.next_service.address || "No address"}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+              </Pressable>
+            ) : (
+              <View style={s.nextServiceDayEmpty} testID="portal-next-service-day-empty">
+                <Ionicons name="calendar-clear-outline" size={28} color={colors.muted} />
+                <Text style={s.nextServiceDayEmptyText}>No upcoming service scheduled</Text>
+              </View>
+            )}
+          </View>
+
           {/* 5. Last Visit Card */}
           {data.last_visit ? (
             <Pressable
@@ -400,6 +453,65 @@ const s = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: spacing.md,
     backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.md,
     borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg,
+  },
+
+  // Next Service Day
+  nextServiceDayCard: {
+    backgroundColor: colors.surface, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg,
+    overflow: "hidden",
+  },
+  nextServiceDayHeader: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    borderBottomWidth: 1, borderBottomColor: colors.divider,
+    backgroundColor: "#F0F9FF",
+  },
+  nextServiceDayIcon: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: "#E0F2FE",
+    alignItems: "center", justifyContent: "center",
+  },
+  nextServiceDayTitle: {
+    fontFamily: font.bold, fontSize: fontSize.base, color: "#0369A1",
+    letterSpacing: 0.3,
+  },
+  nextServiceDayBody: {
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    padding: spacing.md,
+  },
+  nextServiceDayDateBox: {
+    width: 56, alignItems: "center", justifyContent: "center",
+    backgroundColor: colors.brand, borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+  },
+  nextServiceDayDateNum: {
+    fontFamily: font.bold, fontSize: 22, color: "#fff", lineHeight: 24,
+  },
+  nextServiceDayDateMonth: {
+    fontFamily: font.semibold, fontSize: 11, color: "rgba(255,255,255,0.85)",
+    textTransform: "uppercase", letterSpacing: 0.6,
+  },
+  nextServiceDayDateDay: {
+    fontFamily: font.medium, fontSize: 10, color: "rgba(255,255,255,0.7)",
+    textTransform: "uppercase", marginTop: 1,
+  },
+  nextServiceDayName: {
+    fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface,
+  },
+  nextServiceDayMeta: {
+    fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2,
+  },
+  nextServiceDayAddr: {
+    fontFamily: font.regular, fontSize: fontSize.sm, color: colors.onSurfaceSecondary, marginTop: 1,
+  },
+  nextServiceDayEmpty: {
+    alignItems: "center", justifyContent: "center",
+    paddingVertical: spacing.xl, gap: spacing.sm,
+  },
+  nextServiceDayEmptyText: {
+    fontFamily: font.medium, fontSize: fontSize.base, color: colors.muted,
+    textAlign: "center",
   },
   lastVisitIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
   lastVisitLabel: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.muted },

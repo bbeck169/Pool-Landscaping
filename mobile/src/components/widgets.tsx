@@ -69,21 +69,23 @@ export function Header({
   const crumbs = useBreadcrumbs(breadcrumbLabel || title);
   return (
     <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-      <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-        {back ? (
-          <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn} testID="header-back">
-            <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
-          </Pressable>
-        ) : null}
-        {left}
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {title}
-          </Text>
-          {subtitle ? <Text style={styles.headerSub}>{subtitle}</Text> : null}
+      <View style={styles.headerRow}>
+        <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+          {back ? (
+            <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backBtn} testID="header-back">
+              <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
+            </Pressable>
+          ) : null}
+          {left}
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              {title}
+            </Text>
+            {subtitle ? <Text style={styles.headerSub}>{subtitle}</Text> : null}
+          </View>
         </View>
+        {right}
       </View>
-      {right}
       {crumbs.length > 0 && <Breadcrumbs items={crumbs} />}
     </View>
   );
@@ -389,6 +391,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+  },
+  headerRow: {
     flexDirection: "row",
     alignItems: "flex-end",
   },

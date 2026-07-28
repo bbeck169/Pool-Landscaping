@@ -145,6 +145,37 @@ export default function Login() {
           </Text>
         </Pressable>
 
+        {process.env.EXPO_PUBLIC_ENV === "preview" ? (
+          <View style={styles.demoSection} testID="demo-login-section">
+            <Text style={styles.demoSectionTitle}>DEMO ACCOUNTS</Text>
+            <Text style={styles.demoSectionSub}>Tap to sign in instantly</Text>
+            <View style={styles.demoList}>
+              {([
+                { label: "Super Admin", email: "super@aquaterra.com", icon: "shield" as const },
+                { label: "Admin", email: "manager@aquaterra.com", icon: "person-circle" as const },
+                { label: "Customer", email: "customer@aquaterra.com", icon: "people" as const },
+                { label: "Pool Tech", email: "mike@aquaterra.com", icon: "construct" as const },
+              ] as const).map((acct, i, arr) => (
+                <Pressable
+                  key={acct.email}
+                  style={[styles.demoRow, i < arr.length - 1 && styles.demoRowBorder]}
+                  onPress={() => submit(acct.email, "password123")}
+                  testID={`demo-login-${acct.label.toLowerCase().replace(/\s+/g, "-")}-btn`}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                    <Ionicons name={acct.icon} size={20} color={colors.brand} />
+                    <View>
+                      <Text style={styles.demoLabel}>{acct.label}</Text>
+                      <Text style={styles.demoEmail}>{acct.email}</Text>
+                    </View>
+                  </View>
+                  <Ionicons name="arrow-forward-circle" size={22} color={colors.brand} />
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
         {/* Phase 30 · Feb 2026 — DEMO ACCOUNTS block removed
             unconditionally. Manual sign-in above still authenticates the
             three seed accounts — only the visual shortcuts are gone. */}
@@ -239,5 +270,19 @@ const styles = StyleSheet.create({
     fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }),
     fontSize: fontSize.sm,
     color: colors.muted,
+  },
+  demoSection: {
+    marginTop: spacing.xl,
+    paddingTop: spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  demoSectionTitle: {
+    fontFamily: font.bold, fontSize: 11, letterSpacing: 1.5,
+    color: colors.brand, marginBottom: 2,
+  },
+  demoSectionSub: {
+    fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted,
+    marginBottom: spacing.sm,
   },
 });
