@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Search, FileText, Layers, Clock, TrendingUp, AlertCircle, Trash2, X as XIcon } from "lucide-react";
+import { Plus, Search, FileText, Layers, Clock, TrendingUp, AlertCircle, Trash2, X as XIcon, CreditCard, ArrowUp, ArrowDown } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -12,18 +12,88 @@ import {
   EmptyState,
 } from "@/components/ui-kit";
 
+// ─── Pure helpers · exported for Vitest ────────────────────────────
+// Feb-2026 · Bulk-pay iteration 1. These live at module scope so the
+// unit tests can import them without mounting the router-heavy page.
+
+const _NON_CHARGEABLE_STATUSES = new Set([
+  "draft", "void", "voided", "cancelled", "paid",
+]);
+
+/** True iff the invoice can plausibly be bulk-charged in this
+ *  iteration — status must be issued-but-unpaid AND the customer's
+ *  card-on-file (Stripe PM) must be present. Mirrors the backend
+ *  pre-filter in ``routers/payments.py::bulk_charge_on_file``.
+ */
+export function isChargeableInvoice(row) {
+  if (!row) return false;
+  const status = String(row.status || "").toLowerCase();
+  const pstatus = String(row.payment_status || "").toLowerCase();
+  if (_NON_CHARGEABLE_STATUSES.has(status)) return false;
+  if (pstatus === "paid" || pstatus === "voided") return false;
+  if (!row.has_payment_method) return false;
+  return true;
+}
+
+/** Reason bucket for a selected invoice that's NOT chargeable — used
+ *  by the confirm-modal disclosure ("N invoices skipped: no card X,
+ *  draft Y, etc"). Draft / paid / void wins over no_card so users
+ *  aren't misled about the root cause. */
+export function nonChargeableReason(row) {
+  if (!row) return "unknown";
+  const status = String(row.status || "").toLowerCase();
+  const pstatus = String(row.payment_status || "").toLowerCase();
+  if (_NON_CHARGEABLE_STATUSES.has(status)) return status;
+  if (pstatus === "paid") return "paid";
+  if (pstatus === "voided") return "voided";
+  if (!row.has_payment_method) return "no_card";
+  return "unknown";
+}
+
+/** Aggregate a bulk-charge response into per-status counts for the
+ *  summary modal. Accepts either the raw array of ``results`` or the
+ *  wrapper ``{results, summary}`` — the backend already returns a
+ *  ``summary`` but tests need this shape-agnostic helper. */
+export function summarizeBulkChargeResult(input) {
+  const results = Array.isArray(input) ? input : (input?.results || []);
+  const counts = {
+    total: results.length,
+    succeeded: 0, processing: 0, requires_action: 0,
+    no_card: 0, not_chargeable: 0, failed: 0, not_found: 0,
+  };
+  for (const r of results) {
+    const s = String(r?.status || "").toLowerCase();
+    if (s in counts) counts[s] += 1;
+    else counts.failed += 1;
+  }
+  return counts;
+}
+
 export default function InvoicesList() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [rows, setRows] = useState(null);
+  // ``pmByInvoice`` — map of {invoice_id: {has_payment_method, pm_label}}
+  // populated from ``/invoices/overview`` (which enriches with PM data)
+  // and merged into the display rows on render. Backend contract for
+  // /quotes is intentionally left untouched.
+  const [pmByInvoice, setPmByInvoice] = useState({});
   const [summary, setSummary] = useState(null);
   const [q, setQ] = useState(params.get("q") || "");
   const status = params.get("status") || "";
   const hasLateFee = params.get("late_fee") === "1";
-  // Phase 34 · Task BB · Feb 2026 — bulk-select state.
+  // Feb-2026 · Bulk-pay iteration 1 — card-on-file filter + sort state.
+  const cardFilter = params.get("card") || "any"; // any | yes | no
+  const [sort, setSort] = useState({ col: null, dir: null }); // dir: asc|desc|null
+  // Phase 34 · Task BB — bulk-select state.
   const [selected, setSelected] = useState(() => new Set());
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Bulk-pay modals + results.
+  const [payConfirmOpen, setPayConfirmOpen] = useState(false);
+  const [paySummaryOpen, setPaySummaryOpen] = useState(false);
+  const [payResults, setPayResults] = useState(null);
+  const [paying, setPaying] = useState(false);
 
   const setStatus = (v) => {
     const s = new URLSearchParams(params);
@@ -39,9 +109,35 @@ export default function InvoicesList() {
     setParams(s, { replace: true });
   };
 
-  useEffect(() => {
+  const setCardFilter = (v) => {
+    const s = new URLSearchParams(params);
+    if (v && v !== "any") s.set("card", v);
+    else s.delete("card");
+    setParams(s, { replace: true });
+  };
+
+  const loadRows = () => {
     api.get("/quotes?doc_type=invoice").then((r) => setRows(r || [])).catch(() => setRows([]));
     api.get("/payments/summary").then(setSummary).catch(() => {});
+    // Bulk-pay iteration 1 · pull PM enrichment from /invoices/overview.
+    // /overview only returns outstanding invoices (paid excluded), which
+    // is exactly the set we'd want to bulk-charge anyway. Rows not in
+    // the map default to has_payment_method:false.
+    api.get("/invoices/overview").then((o) => {
+      const rows = (o && Array.isArray(o.invoices)) ? o.invoices : [];
+      const map = {};
+      for (const r of rows) {
+        map[r.id] = {
+          has_payment_method: !!r.has_payment_method,
+          pm_label: r.pm_label || "",
+        };
+      }
+      setPmByInvoice(map);
+    }).catch(() => setPmByInvoice({}));
+  };
+
+  useEffect(() => {
+    loadRows();
   }, []);
 
   const today = new Date();
@@ -65,14 +161,53 @@ export default function InvoicesList() {
     return b;
   }, [rows, today]);
 
-  const filtered = (rows || [])
-    .filter((r) => (status ? (r.payment_status || "unpaid") === status : true))
-    .filter((r) => (hasLateFee ? (r.line_items || []).some((li) => li.is_late_fee) : true))
-    .filter((r) =>
-      q
-        ? [r.title, r.customer_name].filter(Boolean).some((s) => s.toLowerCase().includes(q.toLowerCase()))
-        : true
-    );
+  const filtered = useMemo(() => {
+    // Merge PM enrichment onto every row before filtering / sorting so
+    // the Card column, filter, and Pay Now predicate all see the same
+    // shape.
+    const enriched = (rows || []).map((r) => {
+      const pm = pmByInvoice[r.id] || {};
+      return {
+        ...r,
+        has_payment_method: !!pm.has_payment_method,
+        pm_label: pm.pm_label || "",
+      };
+    });
+    let out = enriched
+      .filter((r) => (status ? (r.payment_status || "unpaid") === status : true))
+      .filter((r) => (hasLateFee ? (r.line_items || []).some((li) => li.is_late_fee) : true))
+      .filter((r) =>
+        q
+          ? [r.title, r.customer_name].filter(Boolean).some((s) => s.toLowerCase().includes(q.toLowerCase()))
+          : true
+      )
+      .filter((r) => {
+        if (cardFilter === "yes") return !!r.has_payment_method;
+        if (cardFilter === "no") return !r.has_payment_method;
+        return true;
+      });
+
+    // Bulk-pay iteration 1 · client-side sort on the enriched rows.
+    if (sort.col && sort.dir) {
+      const getVal = (r) => {
+        switch (sort.col) {
+          case "due_date": return r.due_date || "";
+          case "total": return Number(r.total || 0);
+          case "customer_name": return String(r.customer_name || "").toLowerCase();
+          case "has_payment_method": return r.has_payment_method ? 1 : 0;
+          default: return "";
+        }
+      };
+      const mult = sort.dir === "asc" ? 1 : -1;
+      out = [...out].sort((a, b) => {
+        const va = getVal(a), vb = getVal(b);
+        if (va < vb) return -1 * mult;
+        if (va > vb) return 1 * mult;
+        return 0;
+      });
+    }
+    return out;
+  }, [rows, pmByInvoice, status, hasLateFee, q, cardFilter, sort]);
 
   // Phase 34 · Task BB · Feb 2026 — visible-page selection helpers.
   const visibleIds = filtered.map((r) => r.id);
@@ -109,7 +244,7 @@ export default function InvoicesList() {
       // Optimistic remove from the visible list.
       setRows((prev) => (prev || []).filter((r) => !res.deleted.includes(r.id)));
       clearSelection();
-      setConfirmOpen(false);
+      setConfirmDeleteOpen(false);
       if (failCount === 0) {
         toast.success(`${okCount} invoice${okCount === 1 ? "" : "s"} deleted`);
       } else {
@@ -120,6 +255,54 @@ export default function InvoicesList() {
     } catch (e) {
       toast.error(e?.message || "Bulk delete failed");
     } finally { setBusy(false); }
+  };
+
+  // ─── Bulk-pay iteration 1 · Stripe path · Feb-2026 ────────────────
+  // Selection buckets used by both the button-enable check and the
+  // confirmation modal's disclosure.
+  const selectionBuckets = useMemo(() => {
+    const chargeable = [];
+    const skips = { no_card: [], draft: [], paid: [], other: [] };
+    for (const r of filtered) {
+      if (!selected.has(r.id)) continue;
+      if (isChargeableInvoice(r)) chargeable.push(r);
+      else {
+        const reason = nonChargeableReason(r);
+        if (reason === "no_card") skips.no_card.push(r);
+        else if (reason === "draft") skips.draft.push(r);
+        else if (reason === "paid" || reason === "voided") skips.paid.push(r);
+        else skips.other.push(r);
+      }
+    }
+    const totalAmount = chargeable.reduce(
+      (acc, r) => acc + Math.max(0, Number(r.total || 0) - Number(r.amount_paid || 0)),
+      0,
+    );
+    const uniqueCustomers = new Set(chargeable.map((r) => r.customer_id)).size;
+    return { chargeable, skips, totalAmount, uniqueCustomers };
+  }, [filtered, selected]);
+
+  const doBulkPay = async () => {
+    if (paying) return;
+    const invoice_ids = selectionBuckets.chargeable.map((r) => r.id);
+    if (invoice_ids.length === 0) return;
+    setPaying(true);
+    try {
+      const res = await api.post("/payments/bulk-charge-on-file", { invoice_ids });
+      setPayResults(res);
+      setPayConfirmOpen(false);
+      setPaySummaryOpen(true);
+    } catch (e) {
+      toast.error(e?.message || "Bulk charge failed");
+      setPayConfirmOpen(false);
+    } finally { setPaying(false); }
+  };
+
+  const closeBulkPaySummary = () => {
+    setPaySummaryOpen(false);
+    setPayResults(null);
+    clearSelection();
+    loadRows();
   };
 
   return (
@@ -205,6 +388,18 @@ export default function InvoicesList() {
         >
           Has late fee{hasLateFee ? " ✓" : ""}
         </button>
+        {/* Bulk-pay iteration 1 · card-on-file filter */}
+        <select
+          value={cardFilter}
+          onChange={(e) => setCardFilter(e.target.value)}
+          className="text-xs font-semibold px-3 py-2 rounded-lg"
+          style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurfaceSecondary, border: `1px solid ${colors.border}` }}
+          data-testid="inv-filter-card"
+        >
+          <option value="any">Card on file: Any</option>
+          <option value="yes">Card on file: Yes</option>
+          <option value="no">Card on file: No</option>
+        </select>
       </div>
 
       {rows === null ? (
@@ -265,6 +460,11 @@ export default function InvoicesList() {
                   <td className="px-3 py-3 hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)}>{r.customer_name}</td>
                   <td className="px-3 py-3 hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }} onClick={() => navigate(`/invoices/${r.id}`)}>{r.due_date || "—"}</td>
                   <td className="px-3 py-3 text-right font-semibold" style={{ color: colors.onSurface }} onClick={() => navigate(`/invoices/${r.id}`)}>{money(r.total)}</td>
+                  <td className="px-3 py-3" onClick={() => navigate(`/invoices/${r.id}`)} data-testid={`invoice-card-${r.id}`}>
+                    {r.has_payment_method
+                      ? <span className="text-xs font-semibold" style={{ color: colors.success }}>✓ {r.pm_label || "On file"}</span>
+                      : <span className="text-xs" style={{ color: colors.muted }}>—</span>}
+                  </td>
                   <td className="px-3 py-3 text-right" onClick={() => navigate(`/invoices/${r.id}`)}>
                     <Chip
                       label={r.payment_status || "unpaid"}
@@ -297,7 +497,20 @@ export default function InvoicesList() {
           </div>
           <button
             type="button"
-            onClick={() => setConfirmOpen(true)}
+            onClick={() => setPayConfirmOpen(true)}
+            disabled={paying || selectionBuckets.chargeable.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50"
+            style={{ backgroundColor: colors.brand, color: "#FFFFFF" }}
+            data-testid="bulk-pay-button"
+            title={selectionBuckets.chargeable.length === 0
+              ? "None of the selected invoices are chargeable"
+              : `Charge ${selectionBuckets.chargeable.length} invoice(s)`}
+          >
+            <CreditCard size={12} /> Pay Now ({selectionBuckets.chargeable.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmDeleteOpen(true)}
             disabled={busy}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
             style={{ backgroundColor: "#DC2626", color: "#FFFFFF" }}
@@ -317,12 +530,12 @@ export default function InvoicesList() {
         </div>
       ) : null}
 
-      {/* Confirmation modal. */}
-      {confirmOpen ? (
+      {/* Confirmation modal — delete. */}
+      {confirmDeleteOpen ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center px-4"
           style={{ background: "rgba(15,23,42,0.55)" }}
-          onMouseDown={(e) => { if (e.target === e.currentTarget) setConfirmOpen(false); }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setConfirmDeleteOpen(false); }}
           data-testid="bulk-delete-confirm"
         >
           <div
@@ -343,7 +556,7 @@ export default function InvoicesList() {
               </div>
               <button
                 type="button"
-                onClick={() => setConfirmOpen(false)}
+                onClick={() => setConfirmDeleteOpen(false)}
                 className="p-1"
                 style={{ color: colors.muted }}
                 aria-label="Close"
@@ -354,7 +567,7 @@ export default function InvoicesList() {
             <div className="mt-5 flex items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setConfirmOpen(false)}
+                onClick={() => setConfirmDeleteOpen(false)}
                 className="px-4 py-2 rounded-xl text-sm font-semibold"
                 style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
                 data-testid="bulk-delete-cancel"
@@ -375,6 +588,200 @@ export default function InvoicesList() {
           </div>
         </div>
       ) : null}
+
+      {/* Bulk-pay confirmation modal. */}
+      {payConfirmOpen ? (
+        <BulkPayConfirmModal
+          buckets={selectionBuckets}
+          paying={paying}
+          onCancel={() => setPayConfirmOpen(false)}
+          onCharge={doBulkPay}
+        />
+      ) : null}
+
+      {/* Bulk-pay summary modal. */}
+      {paySummaryOpen && payResults ? (
+        <BulkPaySummaryModal results={payResults} onClose={closeBulkPaySummary} />
+      ) : null}
+    </div>
+  );
+}
+
+// ─── SortableTh · click header to cycle unsorted → asc → desc ──────
+function SortableTh({ label, col, sort, setSort, align = "left", className = "" }) {
+  const active = sort.col === col;
+  const dir = active ? sort.dir : null;
+  const cycle = () => {
+    if (!active) setSort({ col, dir: "asc" });
+    else if (dir === "asc") setSort({ col, dir: "desc" });
+    else setSort({ col: null, dir: null });
+  };
+  return (
+    <th
+      onClick={cycle}
+      className={`px-3 py-2 font-semibold cursor-pointer select-none text-${align} ${className}`}
+      style={{ color: colors.onSurfaceSecondary }}
+      data-testid={`sort-${col}`}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {active && dir === "asc" ? <ArrowUp size={12} /> : null}
+        {active && dir === "desc" ? <ArrowDown size={12} /> : null}
+      </span>
+    </th>
+  );
+}
+
+// ─── Bulk-pay confirmation modal ──────────────────────────────────
+function BulkPayConfirmModal({ buckets, paying, onCancel, onCharge }) {
+  const { chargeable, skips, totalAmount, uniqueCustomers } = buckets;
+  const skipCount = skips.no_card.length + skips.draft.length + skips.paid.length + skips.other.length;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      style={{ background: "rgba(15,23,42,0.55)" }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}
+      data-testid="bulk-pay-confirm"
+    >
+      <div
+        className="w-full max-w-lg rounded-2xl p-6 shadow-2xl"
+        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between mb-3">
+          <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
+            Charge {chargeable.length} invoice{chargeable.length === 1 ? "" : "s"}?
+          </h2>
+          <button type="button" onClick={onCancel} className="p-1" style={{ color: colors.muted }} aria-label="Close">
+            <XIcon size={18} />
+          </button>
+        </div>
+        <p className="text-sm" style={{ color: colors.onSurfaceSecondary }} data-testid="bulk-pay-confirm-body">
+          You're about to charge <strong>{money(totalAmount)}</strong> across{" "}
+          <strong>{chargeable.length}</strong> invoice{chargeable.length === 1 ? "" : "s"} for{" "}
+          <strong>{uniqueCustomers}</strong> customer{uniqueCustomers === 1 ? "" : "s"} using their cards on file. Continue?
+        </p>
+        {skipCount > 0 ? (
+          <div
+            className="mt-3 rounded-lg p-3 text-xs"
+            style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurfaceSecondary }}
+            data-testid="bulk-pay-skip-disclosure"
+          >
+            <div className="font-semibold mb-1">
+              {skipCount} invoice{skipCount === 1 ? "" : "s"} will be skipped:
+            </div>
+            <ul className="list-disc list-inside space-y-0.5">
+              {skips.no_card.length ? <li>{skips.no_card.length} · no card on file</li> : null}
+              {skips.draft.length ? <li>{skips.draft.length} · draft (not issued)</li> : null}
+              {skips.paid.length ? <li>{skips.paid.length} · already paid / voided</li> : null}
+              {skips.other.length ? <li>{skips.other.length} · other</li> : null}
+            </ul>
+          </div>
+        ) : null}
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-4 py-2 rounded-xl text-sm font-semibold"
+            style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
+            data-testid="bulk-pay-cancel"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onCharge}
+            disabled={paying || chargeable.length === 0}
+            className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
+            style={{ backgroundColor: colors.brand }}
+            data-testid="bulk-pay-charge-btn"
+          >
+            {paying ? "Charging…" : `Charge ${chargeable.length}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Bulk-pay summary modal ──────────────────────────────────────
+function BulkPaySummaryModal({ results, onClose }) {
+  const rows = results?.results || [];
+  const s = results?.summary || summarizeBulkChargeResult(rows);
+  const chip = (label, count, tone) =>
+    count > 0 ? (
+      <span
+        className="text-xs font-semibold rounded-full px-2 py-0.5"
+        style={{ backgroundColor: tone, color: "#FFF" }}
+      >
+        {label}: {count}
+      </span>
+    ) : null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      style={{ background: "rgba(15,23,42,0.55)" }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      data-testid="bulk-pay-summary"
+    >
+      <div
+        className="w-full max-w-2xl rounded-2xl p-6 shadow-2xl"
+        style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between mb-3">
+          <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
+            Bulk charge complete
+          </h2>
+          <button type="button" onClick={onClose} className="p-1" style={{ color: colors.muted }} aria-label="Close">
+            <XIcon size={18} />
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-2 mb-4" data-testid="bulk-pay-summary-chips">
+          {chip("Succeeded", s.succeeded, colors.success)}
+          {chip("Processing", s.processing, "#A16207")}
+          {chip("Action required", s.requires_action, "#A16207")}
+          {chip("No card", s.no_card, "#64748B")}
+          {chip("Not chargeable", s.not_chargeable, "#64748B")}
+          {chip("Not found", s.not_found, "#64748B")}
+          {chip("Failed", s.failed, colors.error)}
+        </div>
+        <div className="rounded-lg overflow-hidden mb-4" style={{ border: `1px solid ${colors.border}` }}>
+          <table className="w-full text-sm" data-testid="bulk-pay-summary-table">
+            <thead>
+              <tr style={{ backgroundColor: colors.surfaceSecondary }}>
+                <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Customer</th>
+                <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Invoice</th>
+                <th className="text-right px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={r.invoice_id + i} style={{ borderTop: `1px solid ${colors.divider}` }} data-testid={`bulk-pay-row-${r.invoice_id}`}>
+                  <td className="px-3 py-2" style={{ color: colors.onSurface }}>{r.customer_name || "—"}</td>
+                  <td className="px-3 py-2 font-mono text-xs" style={{ color: colors.onSurfaceSecondary }}>{r.invoice_id.slice(0, 8)}</td>
+                  <td className="px-3 py-2 text-right">
+                    <span className="text-xs font-semibold">
+                      {r.status}{r.reason ? ` · ${r.reason}` : ""}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-xl text-sm font-bold text-white"
+            style={{ backgroundColor: colors.brand }}
+            data-testid="bulk-pay-summary-close"
+          >
+            Close
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

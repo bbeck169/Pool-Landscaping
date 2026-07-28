@@ -665,6 +665,138 @@ async def charge_on_file(qid: str, user: dict = Depends(require_admin)):
     return res
 
 
+# ─── Bulk charge-on-file (Feb-2026 · Bulk-pay iteration 1 · Stripe path) ───
+try:
+    from typing import List as _BulkList, Dict as _BulkDict, Any as _BulkAny  # noqa: F401
+except Exception:  # pragma: no cover
+    _BulkList = list
+    _BulkDict = dict
+    _BulkAny = object
+
+from typing import List, Dict, Any  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
+
+
+class BulkChargeIn(BaseModel):
+    invoice_ids: List[str] = Field(default_factory=list)
+
+
+_NON_CHARGEABLE_STATUSES = {"draft", "void", "voided", "cancelled", "paid"}
+
+
+@router.post("/payments/bulk-charge-on-file",
+               operation_id="payments.bulkChargeOnFile")
+async def bulk_charge_on_file(body: BulkChargeIn,
+                                 user: dict = Depends(require_admin),
+                                 tenant: dict = Depends(get_current_tenant)):
+    """Loop-per-invoice bulk-charge admin action for iteration 1.
+
+    Server-side pre-filter (tenant scope + status + card-on-file) before
+    delegating to :func:`charge_invoice_on_file`, the same single-charge
+    helper the invoice detail page uses. Never partially fails — returns
+    a per-invoice status envelope + summary count.
+
+    Provider-aware routing (Lumino path) is deferred to Task QQ Phase 3.
+    """
+    ids = [i for i in (body.invoice_ids or []) if isinstance(i, str) and i.strip()]
+    if not ids:
+        raise HTTPException(400, "invoice_ids is required and must be a non-empty list")
+    if not stripe.api_key:
+        raise HTTPException(503, "Payments are not configured")
+
+    invs = await db.quotes.find(
+        {"id": {"$in": ids}, "tenant_id": tenant["id"]},
+        {"_id": 0},
+    ).to_list(len(ids))
+    by_id = {i["id"]: i for i in invs}
+
+    cust_ids = list({i.get("customer_id") for i in invs if i.get("customer_id")})
+    custs: List[Dict[str, Any]] = []
+    if cust_ids:
+        custs = await db.customers.find(
+            {"id": {"$in": cust_ids}, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "name": 1, "default_payment_method_id": 1,
+             "stripe_customer_id": 1, "pm_brand": 1, "pm_last4": 1},
+        ).to_list(len(cust_ids))
+    cust_by_id = {c["id"]: c for c in custs}
+
+    results: List[Dict[str, Any]] = []
+    summary = {"total": len(ids), "succeeded": 0, "processing": 0,
+                "no_card": 0, "not_chargeable": 0, "failed": 0,
+                "not_found": 0, "requires_action": 0}
+
+    for qid in ids:
+        inv = by_id.get(qid)
+        if not inv:
+            results.append({"invoice_id": qid, "status": "not_found"})
+            summary["not_found"] += 1
+            continue
+
+        cust = cust_by_id.get(inv.get("customer_id") or "") or {}
+        base = {
+            "invoice_id": qid,
+            "customer_id": inv.get("customer_id"),
+            "customer_name": inv.get("customer_name") or cust.get("name") or "",
+        }
+
+        status = (inv.get("status") or "").lower()
+        pstatus = (inv.get("payment_status") or "").lower()
+        if status in _NON_CHARGEABLE_STATUSES or pstatus in {"paid", "voided"}:
+            results.append({**base, "status": "not_chargeable",
+                              "reason": f"invoice_status_{status or pstatus or 'unknown'}"})
+            summary["not_chargeable"] += 1
+            continue
+
+        if not (cust.get("default_payment_method_id") and cust.get("stripe_customer_id")):
+            results.append({**base, "status": "no_card"})
+            summary["no_card"] += 1
+            continue
+
+        try:
+            res = await charge_invoice_on_file(qid)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("[bulk-charge] %s crashed: %s", qid, exc)
+            results.append({**base, "status": "failed", "reason": "exception"})
+            summary["failed"] += 1
+            continue
+
+        st = (res or {}).get("status") or "unknown"
+        row: Dict[str, Any] = {**base, "status": st}
+        if st == "succeeded":
+            row["amount"] = res.get("amount")
+            row["method"] = res.get("method")
+            summary["succeeded"] += 1
+        elif st == "processing":
+            row["method"] = res.get("method")
+            summary["processing"] += 1
+        elif st == "requires_action":
+            summary["requires_action"] += 1
+        elif st == "no_method":
+            row["status"] = "no_card"
+            summary["no_card"] += 1
+        elif st == "already_paid":
+            row["status"] = "not_chargeable"
+            row["reason"] = "already_paid"
+            summary["not_chargeable"] += 1
+        elif st == "nothing_due":
+            row["status"] = "not_chargeable"
+            row["reason"] = "nothing_due"
+            summary["not_chargeable"] += 1
+        elif st in ("failed", "error"):
+            row["reason"] = res.get("message") or "declined"
+            summary["failed"] += 1
+        else:
+            row["reason"] = st
+            summary["failed"] += 1
+        results.append(row)
+
+    logger.info(
+        "[bulk-charge] tenant=%s user=%s summary=%s",
+        tenant["id"], user.get("email"), summary,
+    )
+    return {"results": results, "summary": summary}
+
+
 @router.post("/payments/webhook")
 async def stripe_webhook(request: Request):
     payload = await request.body()
