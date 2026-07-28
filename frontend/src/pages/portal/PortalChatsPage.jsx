@@ -1,11 +1,19 @@
 /**
- * Phase 20B.1a · Portal chat threads (customer + admin, same shell).
+ * Phase B2 · Feb 2026 — Portal chat threads (customer + admin, same shell).
+ *
+ * Attachment parity with TeamChatPage — customers can upload files
+ * via the F0 pipeline scoped to their own customer_id, then attach
+ * the resulting file ids to the outgoing message. Staff viewing the
+ * thread sees the hydrated tiles inline.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { MessageSquare, Plus, Send, X } from "lucide-react";
+import { MessageSquare, Plus, Send, X, Paperclip } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 import { useAuth } from "@/auth";
+import { ChatAttachmentTile } from "@/components/chat/ChatAttachmentTile";
+
+const BACKEND = process.env.REACT_APP_BACKEND_URL || "";
 
 export default function PortalChatsPage() {
   const { user } = useAuth();
@@ -17,6 +25,9 @@ export default function PortalChatsPage() {
   const [showNew, setShowNew] = useState(false);
   const [subject, setSubject] = useState("");
   const [firstMsg, setFirstMsg] = useState("");
+  // ── B2 attachments state ─────────────────────────────────────
+  const [pending, setPending] = useState([]);   // uploaded file ids awaiting send
+  const [uploading, setUploading] = useState(false);
   const scrollRef = useRef(null);
 
   const loadThreads = () => api.get("/portal/chats").then(setThreads);
@@ -29,20 +40,73 @@ export default function PortalChatsPage() {
       setTimeout(() => scrollRef.current?.scrollTo(0, 9e9), 50);
     });
     api.post(`/portal/chats/${selected.id}/read`).catch(() => {});
+    setPending([]);  // reset pending on thread switch
   }, [selected?.id]);
 
+  const uploadFiles = async (fileList) => {
+    if (!fileList || fileList.length === 0) return;
+    setUploading(true);
+    const tok = localStorage.getItem("access_token");
+    const uploaded = [];
+    try {
+      for (const file of Array.from(fileList)) {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("purpose", "portal_chat_attachment");
+        // Scope the file to the current customer so the ownership
+        // check on POST accepts it. Admins uploading through this
+        // page shouldn't happen (paperclip is customer-only), but
+        // the linked_entity fields are harmless if it does.
+        if (user?.customer_id) {
+          fd.append("linked_entity_type", "customer");
+          fd.append("linked_entity_id", user.customer_id);
+        }
+        const r = await fetch(`${BACKEND}/api/files/upload`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${tok}` },
+          body: fd,
+        });
+        if (!r.ok) {
+          // eslint-disable-next-line no-console
+          console.error("[portal-chat] upload failed", r.status);
+          continue;
+        }
+        const doc = await r.json();
+        uploaded.push({
+          id: doc.id,
+          filename: doc.original_filename || file.name,
+          mime: doc.content_type || file.type,
+          size: doc.size || file.size,
+        });
+      }
+      if (uploaded.length) setPending((p) => [...p, ...uploaded]);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removePending = (id) =>
+    setPending((p) => p.filter((x) => x.id !== id));
+
   const send = async () => {
-    if (!text.trim() || !selected) return;
-    const m = await api.post(`/portal/chats/${selected.id}/messages`, { body: text });
-    setMessages([...messages, m]); setText("");
+    if ((!text.trim() && pending.length === 0) || !selected) return;
+    const body = { body: text, attachment_ids: pending.map((p) => p.id) };
+    const m = await api.post(`/portal/chats/${selected.id}/messages`, body);
+    setMessages([...messages, m]);
+    setText("");
+    setPending([]);
     setTimeout(() => scrollRef.current?.scrollTo(0, 9e9), 50);
     loadThreads();
   };
 
   const createThread = async () => {
     if (!subject.trim()) return;
-    const c = await api.post("/portal/chats", { subject, first_message: firstMsg });
-    setShowNew(false); setSubject(""); setFirstMsg("");
+    const c = await api.post("/portal/chats", {
+      subject,
+      first_message: firstMsg,
+      attachment_ids: pending.map((p) => p.id),
+    });
+    setShowNew(false); setSubject(""); setFirstMsg(""); setPending([]);
     loadThreads(); setSelected(c);
   };
 
@@ -115,17 +179,56 @@ export default function PortalChatsPage() {
                            style={{
                              backgroundColor: mine ? colors.brand : colors.background,
                              color: mine ? "#fff" : colors.onSurface,
-                           }}>
+                           }}
+                           data-testid={`portal-chat-msg-${m.id}`}>
                         <div className="text-[10px] opacity-75 mb-1 font-semibold">
                           {m.sender_name || m.sender_role}
                         </div>
                         {m.body}
+                        {(m.attachments || []).map((a) => (
+                          <ChatAttachmentTile
+                            key={a.id}
+                            attachment={a}
+                            testid={`portal-chat-att-${a.id}`}
+                          />
+                        ))}
                       </div>
                     </div>
                   );
                 })}
               </div>
-              <div className="p-2 flex gap-2 border-t" style={{ borderColor: colors.border }}>
+
+              {/* Pending attachment strip */}
+              {pending.length > 0 && (
+                <div className="px-3 pt-2 flex flex-wrap gap-2"
+                     data-testid="portal-chats-pending-strip">
+                  {pending.map((p) => (
+                    <span key={p.id}
+                          className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border"
+                          style={{ borderColor: colors.border, backgroundColor: colors.surfaceSecondary }}
+                          data-testid={`portal-chats-pending-${p.id}`}>
+                      📎 {p.filename}
+                      <button type="button" onClick={() => removePending(p.id)}
+                              aria-label="Remove attachment"
+                              className="text-xs opacity-60 hover:opacity-100">×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div className="p-2 flex gap-2 border-t items-center" style={{ borderColor: colors.border }}>
+                {!isAdmin && (
+                  <label className="p-2 rounded-lg cursor-pointer border"
+                         style={{ borderColor: colors.border, color: colors.brand }}
+                         data-testid="portal-chats-upload-label"
+                         aria-label="Attach file">
+                    <Paperclip size={16}/>
+                    <input type="file" hidden multiple
+                           accept="image/*,application/pdf"
+                           onChange={(e) => uploadFiles(e.target.files)}
+                           data-testid="portal-chats-upload" />
+                  </label>
+                )}
                 <input value={text} onChange={(e) => setText(e.target.value)}
                        onKeyDown={(e) => e.key === "Enter" && send()}
                        placeholder="Type a message…"
@@ -133,7 +236,8 @@ export default function PortalChatsPage() {
                        style={{ backgroundColor: colors.background, border: `1px solid ${colors.border}`, color: colors.onSurface }}
                        data-testid="portal-chats-input" />
                 <button onClick={send}
-                        className="p-2.5 rounded-lg"
+                        disabled={uploading || (!text.trim() && pending.length === 0)}
+                        className="p-2.5 rounded-lg disabled:opacity-50"
                         style={{ backgroundColor: colors.brand, color: "#fff" }}
                         data-testid="portal-chats-send">
                   <Send size={16}/>

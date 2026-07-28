@@ -236,10 +236,7 @@ export default function TeamChatPage() {
                     {m.deleted_at ? "(deleted)" : m.body_markdown}
                   </div>
                   {(m.attachments || []).map((a) => (
-                    <a key={a.id} href={a.storage_url} target="_blank" rel="noreferrer"
-                        className="text-xs underline block mt-1">
-                      📎 {a.name}
-                    </a>
+                    <ChatAttachmentTile key={a.id} attachment={a} />
                   ))}
                   {Object.keys(m.reactions || {}).length > 0 && (
                     <div className="flex gap-1 mt-1">
