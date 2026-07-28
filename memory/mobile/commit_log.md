@@ -460,3 +460,28 @@
 
 - **Web files referenced**: None
 
+
+## Iteration 26 — Phase F1-mobile: File Upload/Display Components
+- **Commit**: a7f575ea940e2652f50c437914f8060502a51bee
+- **Date**: 2026-07-28
+- **Changes**:
+  - **API client** (`src/api/files.ts`): uploadFile (XHR+FormData with progress), deleteFile (POST), listFilesByEntity (GET with query params), buildAuthedDownloadUrl (?auth= query), downloadToLocalCache (expo-file-system/legacy), humanBytes, mimeAllowed validators. MAX_UPLOAD_SIZE_BYTES = 25MB.
+  - **AuthedImage** (`src/components/files/AuthedImage.tsx`): Renders file from API using expo-image with ?auth={token} query. Loading/error/fallback states.
+  - **FileUpload** (`src/components/files/FileUpload.tsx`): Take Photo (expo-image-picker camera), Choose from Library (library), Choose File (expo-document-picker for PDF/video). Client-side size (25MB) + MIME validation. XHR upload with progress bar. Thumbnail preview (local URI pre-upload, AuthedImage post-upload). Remove button. Single + multi-file modes.
+  - **FileList** (`src/components/files/FileList.tsx`): FlatList with AuthedImage thumbnails for images, Ionicons for PDF/video. Delete with Alert confirm. Pull-to-refresh. Loading/empty/error states.
+  - **Demo screen** (`app/dev/file-upload.tsx`): Route /dev/file-upload, gated on EXPO_PUBLIC_ENV=preview. Renders FileUpload + FileList with dev entity.
+  - **Barrel export** (`src/components/files/index.ts`): Re-exports all 3 components.
+  - **Tests** (`__tests__/file-upload-components.test.tsx`): 22 tests — API helpers (5), FileUpload (7), AuthedImage (3), FileList (5), Demo screen env gate (2). All green.
+  - Auth pattern consumed: `getAuthToken()` from `@/src/api` → `storage.secureGet(TOKEN_KEY)` (SecureStore on iOS, AsyncStorage on web).
+  - Import convention: `expo-file-system/legacy` for cacheDirectory + downloadAsync (SDK 54 new API).
+  - Compromised-secret guard: PASSING ✅
+  - Total test suite: 36/36 passing (22 new + 14 existing)
+- **Files created**:
+  - `mobile/src/api/files.ts`
+  - `mobile/src/components/files/AuthedImage.tsx`
+  - `mobile/src/components/files/FileUpload.tsx`
+  - `mobile/src/components/files/FileList.tsx`
+  - `mobile/src/components/files/index.ts`
+  - `mobile/app/dev/file-upload.tsx`
+  - `mobile/__tests__/file-upload-components.test.tsx`
+- **Web files referenced**: `frontend/src/api/files.js`, `frontend/src/components/files/FileUpload.jsx`, `frontend/src/components/files/AuthedImage.jsx`, `frontend/src/components/files/FileList.jsx`
