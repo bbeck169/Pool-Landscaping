@@ -407,6 +407,20 @@ export default function App() {
           {/* Marketing Slice F · Feb 2026 — magic-link unsubscribe (no auth). */}
           <Route path="/r/preferences" element={<PortalPreferences />} />
 
+          {/* Phase F1 · Feb 2026 — dev smoke-test surface for the
+              shared file-upload components. Only mounted in preview
+              (env-gated); production build renders nothing here. */}
+          {String(process.env.REACT_APP_PUBLIC_ENV || "").toLowerCase() === "preview" && (
+            <Route
+              path="/dev/file-upload"
+              element={
+                <React.Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
+                  {React.createElement(React.lazy(() => import("@/pages/dev/FileUploadDemo")))}
+                </React.Suspense>
+              }
+            />
+          )}
+
           {/* QuoteIQ Q4 · public InstaQuote portal — no auth. */}
           <Route path="/quote/:slug" element={<PublicInstaQuotePage />} />
 
