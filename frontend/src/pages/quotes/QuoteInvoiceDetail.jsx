@@ -38,6 +38,41 @@ import {
   EmptyState,
 } from "@/components/ui-kit";
 
+// ─── Pure helpers · exported for Vitest ────────────────────────────────
+// Feb 2026 · P0/P0.5a/P1 — draft-transition fix. These are pulled out
+// as module-level pure functions so contract-level tests don't have to
+// mount the (router-heavy) full detail page.
+
+/** P0 — dedicated "Send invoice" button is shown ONLY when the doc
+ *  is an invoice AND still in ``draft`` status. */
+export function shouldShowSendInvoiceButton({ isInvoice, docStatus }) {
+  return Boolean(isInvoice) && String(docStatus || "").toLowerCase() === "draft";
+}
+
+/** P0.5a — the Email invoice button re-labels to "Send invoice" while
+ *  the doc is still a draft (matches CRM convention: sending IS issuing).
+ *  Once the doc has been issued (status !== draft) the historical
+ *  "Email invoice" wording is restored. */
+export function emailInvoiceButtonLabel({ docStatus }) {
+  return String(docStatus || "").toLowerCase() === "draft"
+    ? "Send invoice"
+    : "Email invoice";
+}
+
+/** P1 — toast copy for the reminder / send path.
+ *  ``wasDraftFlippedToSent`` = true means we just chained
+ *  status(draft→sent) + send-reminder on the same click, so the correct
+ *  human copy is "Invoice sent to customer" (not "Reminder sent"). */
+export function reminderToastCopy({ wasDraftFlippedToSent, emailSent }) {
+  const base = wasDraftFlippedToSent
+    ? "Invoice sent to customer"
+    : "Reminder sent";
+  if (emailSent === false) {
+    return `${base} (email delivery not configured — logged only)`;
+  }
+  return base;
+}
+
 /** Reused for both /quotes/:id and /invoices/:id — same collection. */
 export default function QuoteInvoiceDetail({ docType = "quote" }) {
   const { id } = useParams();
@@ -62,6 +97,11 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
   const [signOpen, setSignOpen] = useState(false);
   const [signEmail, setSignEmail] = useState("");
   const [signMsg, setSignMsg] = useState("");
+  // Feb 2026 · P0 — track the in-flight draft→sent PUT so we can
+  // disable the "Send invoice" / "Email invoice" buttons + show a
+  // spinner. Shared between the P0 button and the P0.5a auto-flip
+  // path on the Email button.
+  const [sending, setSending] = useState(false);
 
   const load = async () => {
     try {
@@ -101,11 +141,60 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
 
   const setStatus = async (status) => {
     try {
-      await api.put(`/quotes/${id}/status`, { status });
+      // Backend expects ``status`` as a query param (see
+      // ``routers/quotes.py::update_quote_status``). The previous
+      // body-only call produced a 422 — Feb-2026 P0 fix.
+      await api.put(`/quotes/${id}/status?status=${encodeURIComponent(status)}`);
       setToast({ tone: "success", message: `Marked ${status}` });
       await load();
     } catch (e) {
       setToast({ tone: "error", message: e.message });
+    }
+  };
+
+  // ─── P0 · dedicated "Send invoice" button (draft-only) ──────────────
+  // Flips status draft → sent via the same helper (patched above so the
+  // query-param contract holds), then reloads the doc so the Pay button
+  // becomes unblocked.
+  const handleSendInvoice = async () => {
+    if (sending) return;
+    setSending(true);
+    try {
+      await api.put(`/quotes/${id}/status?status=sent`);
+      setToast({ tone: "success", message: "Invoice sent to customer" });
+      await load();
+    } catch (e) {
+      setToast({ tone: "error", message: e.message });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // ─── P0.5a · Email invoice with auto-flip on draft ──────────────────
+  // If the invoice is still a draft, chain status(draft→sent) + reminder
+  // so a single click both issues AND emails the invoice (standard CRM
+  // convention). Otherwise fall through to the plain reminder path.
+  const handleEmailInvoice = async () => {
+    if (sending) return;
+    const wasDraft = String(doc?.status || "").toLowerCase() === "draft";
+    setSending(true);
+    try {
+      if (wasDraft) {
+        await api.put(`/quotes/${id}/status?status=sent`);
+      }
+      const r = await api.post(`/quotes/${id}/send-reminder`);
+      setToast({
+        tone: "success",
+        message: reminderToastCopy({
+          wasDraftFlippedToSent: wasDraft,
+          emailSent: r?.email_sent,
+        }),
+      });
+      await load();
+    } catch (e) {
+      setToast({ tone: "error", message: e.message });
+    } finally {
+      setSending(false);
     }
   };
 
@@ -264,7 +353,26 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
             </>
           ) : (
             <>
-              <Button variant="ghost" onClick={sendReminder} testid="id-send-email"><Send size={14} /> Email invoice</Button>
+              {shouldShowSendInvoiceButton({ isInvoice, docStatus: doc.status }) ? (
+                <Button
+                  onClick={handleSendInvoice}
+                  disabled={sending}
+                  testid="id-send-invoice"
+                >
+                  <Send size={14} /> {sending ? "Sending…" : "Send invoice"}
+                </Button>
+              ) : null}
+              <Button
+                variant="ghost"
+                onClick={handleEmailInvoice}
+                disabled={sending}
+                testid="id-send-email"
+              >
+                <Send size={14} />{" "}
+                {sending && String(doc.status || "").toLowerCase() === "draft"
+                  ? "Sending…"
+                  : emailInvoiceButtonLabel({ docStatus: doc.status })}
+              </Button>
               <Button variant="ghost" onClick={() => setSmsOpen(true)} testid="id-send-sms"><MessageSquare size={14} /> Text invoice</Button>
               <Button variant="ghost" onClick={generateLink} testid="id-gen-link"><Link2 size={14} /> Payment link</Button>
               {pmethod?.brand ? (
