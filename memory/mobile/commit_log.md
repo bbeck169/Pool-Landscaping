@@ -1,3 +1,17 @@
+## Iteration 25 — Fix Batch: Header Layout + Next Service Day + Demo Logins
+- **Commit**: a7d0054d3588021bad40d57ca234cbe04e990268
+- **Date**: 2026-07-28
+- **Changes**:
+  - FIX 1: Restructured Header component — removed flexDirection:"row" from outer container, added headerRow wrapper. Fixes vertical one-char-per-line text rendering on Appointments page.
+  - FIX 2: Added "Next Service Day" tile below Quick Actions on portal/home.tsx with populated and empty states
+  - FIX 3: Added 4 demo login buttons gated on EXPO_PUBLIC_ENV=preview in login.tsx
+  - Jest test infrastructure: jest.config.js + 3 test suites (14 tests total, all passing)
+  - test_compromised_secret_not_present_anywhere: PASSED
+- **Files modified**: `src/components/widgets.tsx`, `app/portal/home.tsx`, `app/login.tsx`, `.env`
+- **Files created**: `jest.config.js`, `__tests__/demo-login.test.tsx`, `__tests__/next-service-day.test.tsx`, `__tests__/appointments-header.test.tsx`
+- **Web files referenced**: None (bug fixes and feature addition)
+
+
 ## Iteration 24 — Phase 33 + 34 + 32 (Portal Parity + Offline Foundation)
 - **Commit**: 6722a503f6c39e4a75b6285a944a5af6aaae8808
 - **Date**: 2026-07-27
