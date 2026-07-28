@@ -99,6 +99,7 @@ import AIBrainPage from "@/pages/settings/AIBrainPage";
 import CopilotPage from "@/pages/admin/CopilotPage";
 // Feb-2026 · Item 6 — Business Card admin editor.
 import BusinessCardSettingsPage from "@/pages/settings/BusinessCardSettings";
+import MyProfilePage from "@/pages/account/MyProfilePage";
 import GoogleReviewSettings from "@/pages/settings/GoogleReviewSettings";
 import VanitySlugsPage from "@/pages/settings/VanitySlugsPage";
 import OrphanUsersPage from "@/pages/settings/OrphanUsersPage";
@@ -896,6 +897,7 @@ export default function App() {
             <Route path="admin/copilot" element={<AdminOnly><CopilotPage /></AdminOnly>} />
             {/* Feb-2026 · Item 6 — Business Card admin editor. */}
             <Route path="settings/business-card" element={<AdminOnly><BusinessCardSettingsPage /></AdminOnly>} />
+            <Route path="account/profile" element={<MyProfilePage />} />
             {/* Phase 34 · Task GG · Feb 2026 — Google Business Profile
                 review URL admin settings screen. Uses AdminOnly so
                 admin + super_admin can edit; add ``owner`` role to

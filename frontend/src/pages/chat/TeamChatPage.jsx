@@ -32,6 +32,9 @@ export default function TeamChatPage() {
   const [selected, setSelected] = useState(null);
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
+  // F2d · pending chat attachments (see ``upload`` below).
+  const [pending, setPending] = useState([]);
+  const [uploading, setUploading] = useState(false);
   const [q, setQ] = useState("");
   const [searchHits, setSearchHits] = useState(null);
   const scrollRef = useRef(null);
@@ -93,19 +96,23 @@ export default function TeamChatPage() {
 
   const upload = async (file) => {
     if (!file || !selected) return;
+    // Path A · queue on the draft; commit to the next ``send()``.
+    setUploading(true);
     const fd = new FormData(); fd.append("file", file);
     const tok = localStorage.getItem("access_token");
-    const r = await fetch(`${BACKEND}/api/chat/attachments/upload`,
-                            { method: "POST",
-                              headers: { Authorization: `Bearer ${tok}` },
-                              body: fd });
-    if (!r.ok) { toast.error("Upload failed"); return; }
-    const att = await r.json();
-    await api.post(`/chat/conversations/${selected.id}/messages`,
-                     { body_markdown: `📎 ${att.name}`,
-                       attachment_ids: [att.id] });
-    loadMessages(selected.id);
+    try {
+      const r = await fetch(`${BACKEND}/api/chat/attachments/upload`,
+                               { method: "POST",
+                                 headers: { Authorization: `Bearer ${tok}` },
+                                 body: fd });
+      if (!r.ok) { toast.error("Upload failed"); return; }
+      const att = await r.json();
+      setPending((p) => [...p, att]);
+    } catch (e) {
+      toast.error(e?.message || "Upload failed");
+    } finally { setUploading(false); }
   };
+  const removePending = (id) => setPending((p) => p.filter((x) => x.id !== id));
 
   const doSearch = async () => {
     if (!q.trim()) { setSearchHits(null); return; }
@@ -259,13 +266,32 @@ export default function TeamChatPage() {
                 </div>
               ))}
             </div>
-            <div className="p-3 border-t flex items-center gap-2"
+            <div className="p-3 border-t"
                   style={{ borderColor: colors.border,
                             backgroundColor: colors.surface }}>
+              {pending.length > 0 ? (
+                <div className="flex flex-wrap gap-2 mb-2" data-testid="chat-pending-strip">
+                  {pending.map((p) => (
+                    <span key={p.id}
+                            className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full border"
+                            style={{ borderColor: colors.border, backgroundColor: colors.surfaceSecondary }}
+                            data-testid={`chat-pending-${p.id}`}>
+                      📎 {p.name || "attachment"}
+                      <button type="button" onClick={() => removePending(p.id)}
+                                aria-label="Remove attachment"
+                                data-testid={`chat-pending-remove-${p.id}`}
+                                className="text-xs opacity-60 hover:opacity-100">×</button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <div className="flex items-center gap-2">
               <label className="p-2 rounded border cursor-pointer"
-                      style={{ borderColor: colors.border }}>
+                      style={{ borderColor: colors.border }}
+                      data-testid="chat-upload-label">
                 <Paperclip className="w-4 h-4" />
                 <input type="file" hidden
+                        accept="image/*,video/mp4,application/pdf"
                         onChange={(e) => upload(e.target.files?.[0])}
                         data-testid="chat-upload" />
               </label>
@@ -274,9 +300,12 @@ export default function TeamChatPage() {
                       onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
                       placeholder="Type a message… @mention, **bold**, `code`"
                       data-testid="chat-composer" />
-              <Button onClick={send} data-testid="chat-send">
+              <Button onClick={send}
+                       disabled={uploading || (!draft.trim() && pending.length === 0)}
+                       data-testid="chat-send">
                 <Send className="w-4 h-4" />
               </Button>
+              </div>
             </div>
           </>
         ) : (

@@ -36,6 +36,12 @@ router = APIRouter(tags=["Auto Clock-In / User self-service"])
 
 class SelfPatchBody(BaseModel):
     auto_clockin_enabled: bool | None = None
+    # F2f · Feb-2026 — staff profile photo self-update. Passing
+    # ``profile_photo_url=None`` explicitly clears the photo (used by
+    # the "Remove photo" action).
+    profile_photo_url: Optional[str] = None
+    name: Optional[str] = None
+    phone: Optional[str] = None
 
 
 @router.patch("/users/me", operation_id="users.selfPatch")
@@ -44,20 +50,63 @@ async def patch_self(body: SelfPatchBody,
     """Authenticated user updates their OWN preferences.
 
     Deliberately narrow — self-update MUST NOT let a user escalate
-    their role or department. Only ``auto_clockin_enabled`` is
-    accepted today; more fields can be added later behind the same
-    guard.
+    their role, tenant, or department. Only these self-service fields
+    are accepted:
+      • ``auto_clockin_enabled`` — mobile Clock-In toggle
+      • ``profile_photo_url``   — F2f staff avatar
+      • ``name`` / ``phone``    — basic identity
     """
+    payload = body.model_dump(exclude_unset=True)
     updates: Dict[str, Any] = {}
-    if body.auto_clockin_enabled is not None:
-        updates["auto_clockin_enabled"] = bool(body.auto_clockin_enabled)
+    if "auto_clockin_enabled" in payload and payload["auto_clockin_enabled"] is not None:
+        updates["auto_clockin_enabled"] = bool(payload["auto_clockin_enabled"])
+    # ``profile_photo_url`` is nullable (clear-on-null), so we accept
+    # the key whenever it was set on the request body — even to None.
+    if "profile_photo_url" in payload:
+        updates["profile_photo_url"] = payload["profile_photo_url"]
+    if "name" in payload and payload["name"] is not None:
+        updates["name"] = str(payload["name"])[:100]
+    if "phone" in payload and payload["phone"] is not None:
+        updates["phone"] = str(payload["phone"])[:32]
     if not updates:
         return {"ok": True, "no_op": True, "user": user}
 
     updates["updated_at"] = now_iso()
     await db.users.update_one({"id": user["id"]}, {"$set": updates})
     fresh = await db.users.find_one({"id": user["id"]},
-                                      {"_id": 0, "password_hash": 0})
+                                      {"_id": 0, "password_hash": 0, "hashed_password": 0})
+    return {"ok": True, "user": fresh}
+
+
+# ─── F2f · Admin variant · admin/super_admin patches ANY tenant user ──
+@router.patch("/admin/users/{uid}/profile",
+                operation_id="adminUsers.updateProfile")
+async def admin_update_user_profile(
+    uid: str, body: SelfPatchBody,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Admin / super_admin update ANY user's profile within their tenant."""
+    if user.get("role") not in ("admin", "super_admin"):
+        raise HTTPException(403, "Admin access required")
+    target = await db.users.find_one(
+        {"id": uid, "tenant_id": user.get("tenant_id")},
+        {"_id": 0},
+    )
+    if not target:
+        raise HTTPException(404, "User not found")
+    payload = body.model_dump(exclude_unset=True)
+    updates: Dict[str, Any] = {}
+    if "profile_photo_url" in payload:
+        updates["profile_photo_url"] = payload["profile_photo_url"]
+    if "name" in payload and payload["name"] is not None:
+        updates["name"] = str(payload["name"])[:100]
+    if "phone" in payload and payload["phone"] is not None:
+        updates["phone"] = str(payload["phone"])[:32]
+    if not updates:
+        return {"ok": True, "no_op": True}
+    updates["updated_at"] = now_iso()
+    await db.users.update_one({"id": uid}, {"$set": updates})
+    fresh = await db.users.find_one({"id": uid}, {"_id": 0, "password_hash": 0, "hashed_password": 0})
     return {"ok": True, "user": fresh}
 
 
