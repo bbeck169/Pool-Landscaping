@@ -60,17 +60,20 @@ export default function PortalHome() {
   const [aiEmployees, setAiEmployees] = useState<any[]>([]);
   const [tenantPhone, setTenantPhone] = useState("(602) 887-4400");
   const [showTour, setShowTour] = useState(false);
+  const [creditBalance, setCreditBalance] = useState(0);
 
   const load = useCallback(async () => {
     try {
-      const [dashboard, aiRes, cfg] = await Promise.all([
+      const [dashboard, aiRes, cfg, creditsRes] = await Promise.all([
         api.get("/dashboard"),
         api.get("/customer-portal/ai-employees").catch(() => ({ employees: [] })),
         api.get("/config/public").catch(() => ({})),
+        api.get("/customer-portal/credits/balance").catch(() => ({ balance_cents: 0 })),
       ]);
       setData(dashboard);
       setAiEmployees(aiRes?.employees || aiRes || []);
       if (cfg?.tenant_phone) setTenantPhone(cfg.tenant_phone);
+      setCreditBalance(((creditsRes?.balance_cents || 0) / 100));
 
       // Check if tour has been shown
       const tourDone = await AsyncStorage.getItem(TOUR_KEY).catch(() => null);
@@ -149,6 +152,26 @@ export default function PortalHome() {
                   <Text style={s.heroPillText}>{data.completed_jobs} completed</Text>
                 </View>
               </View>
+            </View>
+          </View>
+
+          {/* 2b. Stat Circles Row — Balance Due, Past Due, Credit */}
+          <View style={s.statsRow} testID="portal-stat-circles">
+            <View style={s.statCircle}>
+              <Text style={s.statValue} testID="portal-stat-balance">{money(data.outstanding || 0)}</Text>
+              <Text style={s.statLabel}>Balance Due</Text>
+            </View>
+            <View style={[s.statCircle, (data.past_due || 0) > 0 && s.statCircleWarn]}>
+              <Text style={[s.statValue, (data.past_due || 0) > 0 && { color: colors.error }]} testID="portal-stat-past-due">
+                {money(data.past_due || 0)}
+              </Text>
+              <Text style={s.statLabel}>Past Due</Text>
+            </View>
+            <View style={[s.statCircle, creditBalance > 0 && s.statCircleCredit]}>
+              <Text style={[s.statValue, creditBalance > 0 && { color: "#166534" }]} testID="portal-stat-credit">
+                {money(creditBalance)}
+              </Text>
+              <Text style={s.statLabel}>Credit</Text>
             </View>
           </View>
 
@@ -329,7 +352,19 @@ const s = StyleSheet.create({
   ctaRequestText: { fontFamily: font.bold, fontSize: fontSize.base, color: "#fff" },
 
   // Hero
-  hero: { height: 150, borderRadius: radius.lg, overflow: "hidden", marginBottom: spacing.lg },
+  hero: { height: 150, borderRadius: radius.lg, overflow: "hidden", marginBottom: spacing.md },
+
+  // Stat Circles
+  statsRow: { flexDirection: "row", gap: spacing.md, marginBottom: spacing.lg },
+  statCircle: {
+    flex: 1, alignItems: "center", justifyContent: "center",
+    backgroundColor: colors.surface, borderRadius: radius.lg,
+    paddingVertical: 14, borderWidth: 1, borderColor: colors.border,
+  },
+  statCircleWarn: { borderColor: colors.error, backgroundColor: "#FEF2F2" },
+  statCircleCredit: { borderColor: "#22C55E", backgroundColor: "#F0FDF4" },
+  statValue: { fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface },
+  statLabel: { fontFamily: font.medium, fontSize: 11, color: colors.muted, marginTop: 2 },
   heroInner: { flex: 1, padding: spacing.lg, justifyContent: "flex-end" },
   heroLabel: { fontFamily: font.medium, fontSize: fontSize.base, color: "rgba(255,255,255,0.85)" },
   heroValue: { fontFamily: font.bold, fontSize: 34, color: "#fff", marginTop: 2 },

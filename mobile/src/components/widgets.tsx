@@ -54,12 +54,14 @@ export function Header({
   subtitle,
   right,
   back,
+  left,
   breadcrumbLabel,
 }: {
   title: string;
   subtitle?: string;
   right?: React.ReactNode;
   back?: boolean;
+  left?: React.ReactNode;
   breadcrumbLabel?: string;
 }) {
   const insets = useSafeAreaInsets();
@@ -73,6 +75,7 @@ export function Header({
             <Ionicons name="chevron-back" size={24} color={colors.onSurface} />
           </Pressable>
         ) : null}
+        {left}
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle} numberOfLines={1}>
             {title}

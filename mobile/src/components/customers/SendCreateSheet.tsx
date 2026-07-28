@@ -12,7 +12,8 @@ import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 const ACTIONS = [
   { key: "new-quote", icon: "document-text-outline", label: "New Quote", route: "/quote/new" },
   { key: "new-job", icon: "briefcase-outline", label: "New Job", route: "/job/new" },
-  { key: "send-message", icon: "chatbubble-outline", label: "Send Message", route: null },
+  { key: "send-email", icon: "mail-outline", label: "Send Email", route: null },
+  { key: "send-sms", icon: "chatbubble-outline", label: "Send SMS", route: null },
   { key: "send-invoice", icon: "receipt-outline", label: "Send Invoice", route: null },
   { key: "add-task", icon: "checkbox-outline", label: "Add Task", route: null },
   { key: "add-note", icon: "document-text-outline", label: "Add Service Note", route: null },
@@ -41,6 +42,12 @@ export default function SendCreateSheet({ visible, onClose, customerId, onAddNot
         break;
       case "send-message":
         router.push({ pathname: "/communications", params: { customer_id: customerId } } as any);
+        break;
+      case "send-email":
+        router.push({ pathname: `/customer/${customerId}/compose`, params: { channel: "email" } } as any);
+        break;
+      case "send-sms":
+        router.push({ pathname: `/customer/${customerId}/compose`, params: { channel: "sms" } } as any);
         break;
       case "send-invoice":
         router.push({ pathname: "/invoices", params: { customer_id: customerId } } as any);

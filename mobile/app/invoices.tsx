@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money, statusMeta } from "@/src/theme";
 import { Loading, EmptyState, StatusChip, Sheet, PrimaryButton } from "@/src/components/ui";
 import { Header, FilterRow } from "@/src/components/widgets";
+import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bulk-select/BulkSelectToolkit";
 
 Object.assign(statusMeta, {
   pending: { label: "Pending", bg: "#FEF9C3", fg: "#A16207" },
@@ -31,6 +32,7 @@ export default function Invoices() {
   const [payFor, setPayFor] = useState<any>(null);
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -46,6 +48,22 @@ export default function Invoices() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const invoices = (data.invoices || []).filter((i: any) => (filter === "outstanding" ? true : i[filter]));
+  const visibleIds = invoices.map((i: any) => i.id);
+  const bulk = useBulkSelect(visibleIds);
+  const exitSelectMode = () => { setSelectMode(false); bulk.clear(); };
+
+  const bulkMarkPaid = async () => {
+    Alert.alert(`Mark ${bulk.count} invoice${bulk.count !== 1 ? "s" : ""} as paid?`, "", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Confirm", onPress: async () => {
+        try {
+          await api.post("/invoices/bulk-mark-paid", { ids: [...bulk.selected] });
+          Alert.alert("Done", `${bulk.count} invoice${bulk.count !== 1 ? "s" : ""} marked as paid.`);
+          exitSelectMode(); load();
+        } catch (e: any) { Alert.alert("Error", e?.message || "Failed"); }
+      }},
+    ]);
+  };
 
   const openPay = (inv: any) => {
     setPayFor(inv);
@@ -172,10 +190,14 @@ export default function Invoices() {
           contentContainerStyle={{ padding: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing["3xl"] }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
           renderItem={({ item }) => (
-            <View style={styles.card} testID={`invoice-${item.id}`}>
-              <Pressable onPress={() => router.push(`/quote/${item.id}`)}>
+            <View style={[styles.card, bulk.selected.has(item.id) && { borderColor: colors.brand, backgroundColor: colors.brandTertiary }]} testID={`invoice-${item.id}`}>
+              <Pressable
+                onPress={() => selectMode ? bulk.toggleOne(item.id) : router.push(`/quote/${item.id}`)}
+                onLongPress={() => { if (!selectMode) { setSelectMode(true); bulk.toggleOne(item.id); } }}
+              >
                 <View style={styles.topRow}>
-                  <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
+                  {selectMode ? <BulkCheckbox checked={bulk.selected.has(item.id)} onPress={() => bulk.toggleOne(item.id)} /> : null}
+                  <Text style={[styles.title, { flex: 1 }]} numberOfLines={1}>{item.title}</Text>
                   <StatusChip status={chipFor(item)} />
                 </View>
                 <Text style={styles.customer}>{item.customer_name}</Text>
@@ -241,6 +263,13 @@ export default function Invoices() {
           </>
         ) : null}
       </Sheet>
+      <BulkActionBar
+        count={bulk.count}
+        onClear={exitSelectMode}
+        actions={[
+          { key: "bulk-mark-paid-invoices", label: "Mark Paid", icon: "checkmark-circle-outline", tone: "primary", onPress: bulkMarkPaid },
+        ]}
+      />
     </View>
   );
 }

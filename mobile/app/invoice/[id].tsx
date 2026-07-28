@@ -187,6 +187,14 @@ export default function InvoiceDetail() {
               <Text style={s.metaLabel}>Paid</Text>
               <Text style={s.metaValue}>{fmt(totals.amount_paid)}</Text>
             </View>
+            {(data as any).credits_applied_cents > 0 ? (
+              <View style={s.metaItem} testID="invoice-credit-applied">
+                <Text style={[s.metaLabel, { color: "#166534" }]}>Credit Applied</Text>
+                <Text style={[s.metaValue, { color: "#166534" }]}>
+                  −{fmt(((data as any).credits_applied_cents || 0) / 100)}
+                </Text>
+              </View>
+            ) : null}
           </View>
         </View>
 

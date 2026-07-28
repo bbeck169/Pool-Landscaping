@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import PersonaAvatar from "@/src/components/personas/PersonaAvatar";
 
 type Msg = { id: string; role: "user" | "assistant"; text: string };
 
@@ -26,6 +27,7 @@ export default function AIChat() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [toolRunning, setToolRunning] = useState(false);
   const sessionRef = useRef<string | null>(null);
   const listRef = useRef<FlatList>(null);
 
@@ -36,6 +38,7 @@ export default function AIChat() {
     const userMsg: Msg = { id: `u-${Date.now()}`, role: "user", text: trimmed };
     setMessages((m) => [...m, userMsg]);
     setSending(true);
+    setToolRunning(false);
     try {
       const res = await api.post("/ai-employees/chat", {
         employee_id: employeeId,
@@ -43,6 +46,13 @@ export default function AIChat() {
         session_id: sessionRef.current,
       });
       sessionRef.current = res.session_id;
+      // Phase 34: If tool calls happened, the reply might include tool_calls metadata
+      if (res.tool_calls?.length) {
+        setToolRunning(true);
+        // brief pause to show tool indicator before displaying reply
+        await new Promise((r) => setTimeout(r, 400));
+        setToolRunning(false);
+      }
       setMessages((m) => [...m, { id: `a-${Date.now()}`, role: "assistant", text: res.reply }]);
     } catch (e: any) {
       setMessages((m) => [...m, { id: `e-${Date.now()}`, role: "assistant", text: `⚠️ ${e?.message || "Something went wrong. Try again."}` }]);
@@ -54,7 +64,12 @@ export default function AIChat() {
 
   return (
     <View style={styles.root}>
-      <Header title={name} back subtitle={role} />
+      <Header
+        title={name}
+        back
+        subtitle={role}
+        left={<PersonaAvatar personaId={employeeId} size={36} />}
+      />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={0}>
         {messages.length === 0 ? (
           <View style={styles.empty}>
@@ -89,7 +104,12 @@ export default function AIChat() {
           />
         )}
 
-        {sending ? (
+        {toolRunning ? (
+          <View style={styles.typing} testID="tool-running-indicator">
+            <Ionicons name="search" size={14} color={colors.brand} />
+            <Text style={styles.typingText}>Looking up your account…</Text>
+          </View>
+        ) : sending ? (
           <View style={styles.typing}>
             <ActivityIndicator size="small" color={colors.brand} />
             <Text style={styles.typingText}>{name} is typing…</Text>

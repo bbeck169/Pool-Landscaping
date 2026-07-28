@@ -7,30 +7,34 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money, statusMeta } from "@/src/theme";
 import { Loading, EmptyState, StatusChip, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, FilterRow, IconButton } from "@/src/components/widgets";
+import { useBulkSelect, BulkCheckbox, BulkActionBar } from "@/src/components/bulk-select/BulkSelectToolkit";
 
 const FILTERS = [
   { key: "all", label: "All" },
   { key: "new", label: "New" },
   { key: "contacted", label: "Contacted" },
-  { key: "qualified", label: "Qualified" },
-  { key: "won", label: "Won" },
-  { key: "lost", label: "Lost" },
+  { key: "quoted", label: "Quoted" },
+  { key: "closed_won", label: "Closed – Won" },
+  { key: "closed_lost", label: "Closed – Lost" },
 ];
-const STATUSES = ["new", "contacted", "qualified", "won", "lost"];
+const STATUSES = ["new", "contacted", "quoted", "closed_won", "closed_lost"];
 
-// Phase 34: 5 canonical snake_case lead statuses
+// Phase 34 · Task CC: 5 canonical snake_case lead statuses
 Object.assign(statusMeta, {
   "new": { label: "New", bg: "#DBEAFE", fg: "#1E3A8A" },
   "contacted": { label: "Contacted", bg: "#FEF3C7", fg: "#854D0E" },
-  "qualified": { label: "Qualified", bg: "#E0E7FF", fg: "#3730A3" },
-  "won": { label: "Won", bg: "#DCFCE7", fg: "#166534" },
-  "lost": { label: "Lost", bg: "#FEE2E2", fg: "#991B1B" },
+  "quoted": { label: "Quoted", bg: "#E0E7FF", fg: "#3730A3" },
+  "closed_won": { label: "Closed – Won", bg: "#DCFCE7", fg: "#166534" },
+  "closed_lost": { label: "Closed – Lost", bg: "#FEE2E2", fg: "#991B1B" },
   // Legacy backwards-compat
   "New": { label: "New", bg: "#DBEAFE", fg: "#1E3A8A" },
   "Contacted": { label: "Contacted", bg: "#FEF3C7", fg: "#854D0E" },
-  "Quoted": { label: "Qualified", bg: "#E0E7FF", fg: "#3730A3" },
-  "Closed Won": { label: "Won", bg: "#DCFCE7", fg: "#166534" },
-  "Closed Lost": { label: "Lost", bg: "#FEE2E2", fg: "#991B1B" },
+  "Quoted": { label: "Quoted", bg: "#E0E7FF", fg: "#3730A3" },
+  "Closed Won": { label: "Closed – Won", bg: "#DCFCE7", fg: "#166534" },
+  "Closed Lost": { label: "Closed – Lost", bg: "#FEE2E2", fg: "#991B1B" },
+  "qualified": { label: "Quoted", bg: "#E0E7FF", fg: "#3730A3" },
+  "won": { label: "Closed – Won", bg: "#DCFCE7", fg: "#166534" },
+  "lost": { label: "Closed – Lost", bg: "#FEE2E2", fg: "#991B1B" },
   "On Hold": { label: "On Hold", bg: "#F1F5F9", fg: "#475569" },
   "Archived": { label: "Archived", bg: "#E5E7EB", fg: "#374151" },
 });
@@ -52,6 +56,24 @@ export default function Leads() {
   const [convBusy, setConvBusy] = useState(false);
   const [jobForm, setJobForm] = useState({ service_type: "Pool Service", scheduled_date: "", price: "" });
   const [quoteForm, setQuoteForm] = useState({ title: "", unit_price: "" });
+  const [selectMode, setSelectMode] = useState(false);
+  const [bulkStatusTarget, setBulkStatusTarget] = useState("");
+
+  const visibleIds = items.map((i: any) => i.id);
+  const bulk = useBulkSelect(visibleIds);
+  const exitSelectMode = () => { setSelectMode(false); bulk.clear(); };
+
+  const bulkChangeStatus = async (status: string) => {
+    if (!bulk.count) return;
+    try {
+      await api.post("/leads/bulk-status", { ids: [...bulk.selected], status });
+      Alert.alert("Updated", `${bulk.count} lead${bulk.count !== 1 ? "s" : ""} set to ${status.replace("_", " ")}.`);
+      exitSelectMode();
+      load(filter);
+    } catch (e: any) {
+      Alert.alert("Error", e?.message || "Update failed");
+    }
+  };
 
   const load = useCallback(async (f: string) => {
     try {
@@ -152,7 +174,13 @@ export default function Leads() {
           contentContainerStyle={{ padding: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing["3xl"] }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(filter); }} />}
           renderItem={({ item }) => (
-            <Pressable style={styles.card} onPress={() => router.push(`/leads/${item.id}`)} testID={`lead-${item.id}`}>
+            <Pressable
+              style={[styles.card, bulk.selected.has(item.id) && { borderColor: colors.brand, backgroundColor: colors.brandTertiary }]}
+              onPress={() => selectMode ? bulk.toggleOne(item.id) : router.push(`/leads/${item.id}`)}
+              onLongPress={() => { if (!selectMode) { setSelectMode(true); bulk.toggleOne(item.id); } }}
+              testID={`lead-${item.id}`}
+            >
+              {selectMode ? <BulkCheckbox checked={bulk.selected.has(item.id)} onPress={() => bulk.toggleOne(item.id)} /> : null}
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                 <Text style={styles.name}>{item.name}</Text>
                 <StatusChip status={item.status} />
@@ -239,6 +267,18 @@ export default function Leads() {
         <View style={{ height: spacing.lg }} />
         <PrimaryButton title={convMode === "job" ? "Create Scheduled Job" : "Create & Send Estimate"} icon="flash" loading={convBusy} onPress={doConvert} testID="convert-confirm-button" />
       </Sheet>
+      <BulkActionBar
+        count={bulk.count}
+        onClear={exitSelectMode}
+        actions={
+          STATUSES.map((s) => ({
+            key: `bulk-status-${s}`,
+            label: s.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+            tone: s === "closed_lost" ? "danger" as const : "default" as const,
+            onPress: () => bulkChangeStatus(s),
+          }))
+        }
+      />
     </View>
   );
 }

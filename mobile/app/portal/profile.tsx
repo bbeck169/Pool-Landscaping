@@ -69,12 +69,17 @@ export default function PortalProfile() {
     setSaving(true);
     setSaved(false);
     try {
-      await api.put("/me", { name, phone, address, billing_address: billing, avatar });
+      // Phase 34: Use customer-portal profile PATCH endpoint (now shipped)
+      await api.patch("/customer-portal/profile", { name, phone, address, billing_address: billing, avatar });
       setSaved(true);
     } catch {
-      // Save endpoint may also fail if customer record doesn't exist
-      // Still persist what we can via /auth/me if available
-      setSaved(false);
+      // Fallback to legacy PUT /me endpoint if portal patch fails
+      try {
+        await api.put("/me", { name, phone, address, billing_address: billing, avatar });
+        setSaved(true);
+      } catch {
+        setSaved(false);
+      }
     } finally {
       setSaving(false);
     }

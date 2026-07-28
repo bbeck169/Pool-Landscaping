@@ -119,10 +119,10 @@ export default function JobDetail() {
     }, [load, online])
   );
 
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const isCustomer = user?.role === "customer";
   const isTech = user?.role === "technician";
-  const canManage = user?.role === "admin" || user?.role === "technician";
+  const canManage = isAdmin || isTech;
   const MAX_PHOTOS = 10;
   const MAX_VIDEOS = 3;
   const photoCount = (job?.photos?.length || 0) + pendingPhotos.length;

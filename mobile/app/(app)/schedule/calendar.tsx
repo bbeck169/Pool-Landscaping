@@ -24,7 +24,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Platform,
-  ActivityIndicator, Alert,
+  ActivityIndicator, Alert, Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter, Redirect } from "expo-router";
@@ -126,6 +126,9 @@ export default function ScheduleCalendar() {
   const [rearrangeMode, setRearrangeMode] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveDate, setMoveDate] = useState("");
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [techs, setTechs] = useState<{ id: string; name: string }[]>([]);
+  const [reassignTechId, setReassignTechId] = useState("");
   const [hourlyData, setHourlyData] = useState<HourlyEntry[]>([]);
 
   // Load persisted mode.
@@ -242,6 +245,35 @@ export default function ScheduleCalendar() {
         },
       ],
     );
+  };
+
+  const openReassign = async () => {
+    if (!checked.size) return;
+    try {
+      const res = await api.get("/users?role=tech");
+      const list = (res.users || res || []).filter((u: any) => u.id && u.name);
+      setTechs(list);
+    } catch { setTechs([]); }
+    setReassignTechId("");
+    setReassignOpen(true);
+  };
+
+  const bulkReassign = async () => {
+    if (!checked.size || !reassignTechId) {
+      Alert.alert("Select a tech", "Choose a technician to reassign the jobs.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.post("/jobs/bulk-reassign", { job_ids: [...checked], tech_id: reassignTechId });
+      const techName = techs.find((t) => t.id === reassignTechId)?.name || "tech";
+      Alert.alert("Reassigned", `${checked.size} job${checked.size === 1 ? "" : "s"} assigned to ${techName}.`);
+      setChecked(new Set());
+      setReassignOpen(false);
+      await load();
+    } catch (e: any) {
+      Alert.alert("Reassign failed", e.message || "Unknown error");
+    } finally { setBusy(false); }
   };
 
   const saveReorder = async () => {
@@ -368,6 +400,7 @@ export default function ScheduleCalendar() {
           onBulkComplete={bulkComplete}
           onBulkDelete={bulkDelete}
           onOpenMove={() => setMoveOpen(true)}
+          onOpenReassign={openReassign}
           moveOpen={moveOpen} setMoveOpen={setMoveOpen}
           moveDate={moveDate} setMoveDate={setMoveDate}
           onConfirmMove={bulkMove}
@@ -391,6 +424,71 @@ export default function ScheduleCalendar() {
           weatherWidget={(isTech || isAdmin) ? <WeatherWidget onHourlyLoaded={setHourlyData} /> : null}
         />
       )}
+
+      {/* Reassign Tech Modal */}
+      <Modal visible={reassignOpen} transparent animationType="fade" onRequestClose={() => setReassignOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", alignItems: "center", justifyContent: "center", paddingHorizontal: 24 }}>
+          <View style={{ width: "100%", maxWidth: 380, backgroundColor: colors.surface, borderRadius: 16, padding: 20 }} testID="reassign-modal">
+            <Text style={{ fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface, marginBottom: 8 }}>
+              Reassign {checked.size} job{checked.size !== 1 ? "s" : ""}
+            </Text>
+            <Text style={{ fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted, marginBottom: spacing.lg }}>
+              Select a technician:
+            </Text>
+            <ScrollView style={{ maxHeight: 300 }}>
+              {techs.map((t) => (
+                <Pressable
+                  key={t.id}
+                  onPress={() => setReassignTechId(t.id)}
+                  style={{
+                    flexDirection: "row", alignItems: "center", gap: 10,
+                    paddingVertical: 10, paddingHorizontal: 12, borderRadius: radius.md,
+                    backgroundColor: reassignTechId === t.id ? colors.brandTertiary : "transparent",
+                    marginBottom: 4,
+                  }}
+                  testID={`reassign-tech-${t.id}`}
+                >
+                  <View style={{
+                    width: 20, height: 20, borderRadius: 10,
+                    borderWidth: 2, borderColor: reassignTechId === t.id ? colors.brand : colors.border,
+                    backgroundColor: reassignTechId === t.id ? colors.brand : "transparent",
+                    alignItems: "center", justifyContent: "center",
+                  }}>
+                    {reassignTechId === t.id ? <Ionicons name="checkmark" size={12} color="#fff" /> : null}
+                  </View>
+                  <Text style={{ fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface }}>{t.name}</Text>
+                </Pressable>
+              ))}
+              {techs.length === 0 ? (
+                <Text style={{ fontFamily: font.regular, fontSize: fontSize.base, color: colors.muted, textAlign: "center", paddingVertical: 20 }}>
+                  No technicians available
+                </Text>
+              ) : null}
+            </ScrollView>
+            <View style={{ flexDirection: "row", gap: 12, justifyContent: "flex-end", marginTop: spacing.lg }}>
+              <Pressable
+                onPress={() => setReassignOpen(false)}
+                style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border }}
+                testID="reassign-cancel"
+              >
+                <Text style={{ fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface }}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={bulkReassign}
+                disabled={!reassignTechId || busy}
+                style={{
+                  paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md,
+                  backgroundColor: reassignTechId ? colors.brand : colors.border,
+                  opacity: (!reassignTechId || busy) ? 0.5 : 1,
+                }}
+                testID="reassign-confirm"
+              >
+                <Text style={{ fontFamily: font.bold, fontSize: fontSize.base, color: "#fff" }}>Assign</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -400,7 +498,7 @@ function GridView(props: any) {
   const {
     focus, setFocus, jobs, loading, checked, onToggle, canWrite,
     rearrangeMode, onToggleRearrange, onSaveReorder, onShift,
-    onBulkComplete, onBulkDelete, onOpenMove, moveOpen, setMoveOpen, moveDate, setMoveDate,
+    onBulkComplete, onBulkDelete, onOpenMove, onOpenReassign, moveOpen, setMoveOpen, moveDate, setMoveDate,
     onConfirmMove, busy, onOpenJob, onNewJob, isAdmin, hourlyData,
     weatherWidget,
   } = props;
@@ -455,6 +553,15 @@ function GridView(props: any) {
           >
             <Ionicons name="trash-outline" size={13} color="#fff" />
             <Text style={gStyles.pillText}>Delete ({checked.size})</Text>
+          </Pressable>
+          <Pressable
+            onPress={onOpenReassign}
+            disabled={busy || checked.size === 0}
+            style={[gStyles.pill, gStyles.pillOrange, (busy || checked.size === 0) && { opacity: 0.4 }]}
+            testID="grid-bulk-reassign"
+          >
+            <Ionicons name="people-outline" size={13} color="#fff" />
+            <Text style={gStyles.pillText}>Assign ({checked.size})</Text>
           </Pressable>
           <Pressable
             onPress={rearrangeMode ? onSaveReorder : onToggleRearrange}
@@ -816,6 +923,7 @@ const gStyles = StyleSheet.create({
   pillGreen:  { backgroundColor: "#059669" },
   pillBlue:   { backgroundColor: "#2563EB" },
   pillRed:    { backgroundColor: "#DC2626" },
+  pillOrange: { backgroundColor: "#D97706" },
   pillPurple: { backgroundColor: "#7C3AED" },
   pillText: { fontFamily: font.bold, fontSize: fontSize.xs, color: "#fff" },
   moveBox: {

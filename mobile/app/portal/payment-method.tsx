@@ -68,14 +68,14 @@ export default function PaymentMethod() {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.methodTitle}>{has ? method?.label : "No payment method on file"}</Text>
-            <Text style={styles.methodSub}>{has ? "Saved securely with Stripe" : "Add a card or bank account to continue"}</Text>
+            <Text style={styles.methodSub}>{has ? "Saved securely" : "Add a card or bank account to continue"}</Text>
           </View>
           {has ? <Ionicons name="checkmark-circle" size={22} color={colors.success} /> : null}
         </Card>
 
         <View style={{ height: spacing.lg }} />
         <PrimaryButton title={has ? "Update payment method" : "Add card or bank (ACH)"} icon="lock-closed" loading={busy} onPress={addMethod} testID="add-payment-method" />
-        <Text style={styles.secure}>🔒 Payments are handled securely by Stripe. We never store your card or bank details.</Text>
+        <Text style={styles.secure}>🔒 Payments are handled securely. We never store your card or bank details.</Text>
       </ScrollView>
     </View>
   );

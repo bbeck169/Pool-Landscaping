@@ -19,23 +19,26 @@ import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 
-const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
-  // Phase 34: 5 canonical snake_case statuses
-  "new": { bg: "#DBEAFE", fg: "#1E3A8A" },
-  "contacted": { bg: "#FEF3C7", fg: "#854D0E" },
-  "qualified": { bg: "#E0E7FF", fg: "#3730A3" },
-  "won": { bg: "#DCFCE7", fg: "#166534" },
-  "lost": { bg: "#FEE2E2", fg: "#991B1B" },
+const STATUS_COLORS: Record<string, { bg: string; fg: string; label: string }> = {
+  // Phase 34 · Task CC: 5 canonical snake_case statuses
+  "new": { bg: "#DBEAFE", fg: "#1E3A8A", label: "New" },
+  "contacted": { bg: "#FEF3C7", fg: "#854D0E", label: "Contacted" },
+  "quoted": { bg: "#E0E7FF", fg: "#3730A3", label: "Quoted" },
+  "closed_won": { bg: "#DCFCE7", fg: "#166534", label: "Closed – Won" },
+  "closed_lost": { bg: "#FEE2E2", fg: "#991B1B", label: "Closed – Lost" },
   // Legacy backwards-compat
-  "New": { bg: "#DBEAFE", fg: "#1E3A8A" },
-  "Contacted": { bg: "#FEF3C7", fg: "#854D0E" },
-  "Quoted": { bg: "#E0E7FF", fg: "#3730A3" },
-  "Closed Won": { bg: "#DCFCE7", fg: "#166534" },
-  "Closed Lost": { bg: "#FEE2E2", fg: "#991B1B" },
-  "On Hold": { bg: "#F1F5F9", fg: "#475569" },
-  "Archived": { bg: "#E5E7EB", fg: "#374151" },
-  "on_hold": { bg: "#F1F5F9", fg: "#475569" },
-  "archived": { bg: "#E5E7EB", fg: "#374151" },
+  "New": { bg: "#DBEAFE", fg: "#1E3A8A", label: "New" },
+  "Contacted": { bg: "#FEF3C7", fg: "#854D0E", label: "Contacted" },
+  "Quoted": { bg: "#E0E7FF", fg: "#3730A3", label: "Quoted" },
+  "Closed Won": { bg: "#DCFCE7", fg: "#166534", label: "Closed – Won" },
+  "Closed Lost": { bg: "#FEE2E2", fg: "#991B1B", label: "Closed – Lost" },
+  "qualified": { bg: "#E0E7FF", fg: "#3730A3", label: "Quoted" },
+  "won": { bg: "#DCFCE7", fg: "#166534", label: "Closed – Won" },
+  "lost": { bg: "#FEE2E2", fg: "#991B1B", label: "Closed – Lost" },
+  "On Hold": { bg: "#F1F5F9", fg: "#475569", label: "On Hold" },
+  "Archived": { bg: "#E5E7EB", fg: "#374151", label: "Archived" },
+  "on_hold": { bg: "#F1F5F9", fg: "#475569", label: "On Hold" },
+  "archived": { bg: "#E5E7EB", fg: "#374151", label: "Archived" },
 };
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -48,7 +51,7 @@ function StatusPill({ status }: { status: string }) {
   const sc = STATUS_COLORS[status] || { bg: "#F1F5F9", fg: "#475569" };
   return (
     <View style={[st.pill, { backgroundColor: sc.bg }]} testID="lead-status-pill">
-      <Text style={[st.pillText, { color: sc.fg }]}>{status || "—"}</Text>
+      <Text style={[st.pillText, { color: sc.fg }]}>{sc.label || status || "—"}</Text>
     </View>
   );
 }
@@ -194,7 +197,7 @@ export default function LeadDetailScreen() {
     lead.source?.startsWith("form:") ? `Form · ${lead.source.slice(5)}` :
     SOURCE_LABELS[lead.source] || lead.source || "—";
 
-  const canAct = !["won", "lost", "archived", "Closed Won", "Closed Lost", "Archived", "closed_won", "closed_lost"].includes(lead.status);
+  const canAct = !["closed_won", "closed_lost", "archived", "won", "lost", "Closed Won", "Closed Lost", "Archived"].includes(lead.status);
 
   return (
     <View style={[st.root, { paddingTop: insets.top }]}>
