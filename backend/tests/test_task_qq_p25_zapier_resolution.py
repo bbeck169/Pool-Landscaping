@@ -301,29 +301,62 @@ def test_duplicate_event_id_is_deduped(client):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Guardrail — the compromised chat secret must never appear in code
-# or env. This test grep-scans for it and fails loudly if a future
-# contributor pastes it back in.
+# Guardrail — compromised chat secrets must never appear in code
+# or env. This test grep-scans for every leaked value we know about
+# and fails loudly if a future contributor pastes any of them back.
+#
+# Feb 2026 update — extended from 1 → 4 values after a second
+# Zapier secret + a RapidAPI key + a live Lumino secret were pasted
+# in chat and confirmed compromised. All values are assembled at
+# runtime from parts so THIS test file itself never contains any
+# literal (else the grep would flag itself).
 # ═══════════════════════════════════════════════════════════════════
 def test_compromised_secret_not_present_anywhere():
     import pathlib
-    # The compromised value is assembled at runtime from parts so
-    # THIS test file itself never contains the literal string
-    # (else the grep would flag itself).
-    compromised = "zap_lum_" + "9f7d4c2e" + "8b1a5f6e" + "3d9c2b7a" + "8e1f4d6c"
-    root = pathlib.Path(__file__).resolve().parent.parent      # /app/backend
-    hits = []
+    # All 4 known-compromised values, assembled from parts.
+    V1 = "zap_lum_" + "9f7d4c2e" + "8b1a5f6e" + "3d9c2b7a" + "8e1f4d6c"
+    V2 = "zap_lum_" + "a7f2e9d1" + "c4b8h6j3" + "k1m5n2p9" + "q7r4s8t1"
+    V3 = "ak_" + "r0gahuut" + "3djgfat0" + "3tpn7fxe" + "ckss99qz" + "t3oobqq9ycjd201"
+    V4 = "sk_live_" + "b116141e" + "_4j0jCE_" + "8tyZHQtc" + "fDlIDle4" + "hk8cv2hRhAKQ7A"
+    compromised = {
+        "V1_zapier_shared_secret_1": V1,
+        "V2_zapier_shared_secret_2": V2,
+        "V3_rapidapi_key": V3,
+        "V4_lumino_live_secret": V4,
+    }
+    # Repo-scope scan — /app is the source-of-truth workspace and
+    # the only tree deploys can source. /var/log, /tmp, /root are
+    # ephemeral pod state and not shipped, so they're intentionally
+    # out of scope for the regression guard.
+    root = pathlib.Path("/app")
+    # Skip vendor / build / cache trees that can't possibly ship a
+    # secret and would balloon the scan by hours.
+    SKIP_DIRS = {"node_modules", "__pycache__", ".git", ".yarn",
+                 ".cache", "dist", "build", ".next", ".venv"}
+    SKIP_SUFFIX = {".pyc", ".so", ".png", ".jpg", ".jpeg", ".pdf",
+                    ".zip", ".gz", ".mp4", ".mp3", ".woff",
+                    ".woff2", ".ttf", ".ico", ".webp"}
+    hits: list[str] = []
     for p in root.rglob("*"):
-        if any(part.startswith(".") for part in p.parts):
-            continue
-        if p.suffix in (".pyc", ".so", ".png", ".jpg", ".pdf"):
+        if any(part in SKIP_DIRS for part in p.parts):
             continue
         if not p.is_file():
+            continue
+        if p.suffix in SKIP_SUFFIX:
+            continue
+        try:
+            if p.stat().st_size > 20 * 1024 * 1024:
+                continue
+        except OSError:
             continue
         try:
             text = p.read_text(errors="ignore")
         except Exception:
             continue
-        if compromised in text:
-            hits.append(str(p))
-    assert not hits, f"Compromised secret leaked into: {hits}"
+        for label, v in compromised.items():
+            if v in text:
+                hits.append(f"{label} → {p}")
+    assert not hits, (
+        "COMPROMISED SECRET(S) leaked into repo — purge immediately "
+        f"and rotate every affected credential:\n  " + "\n  ".join(hits)
+    )
