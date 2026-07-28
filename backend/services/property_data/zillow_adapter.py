@@ -1,28 +1,47 @@
-"""Task TT · Feb 2026 — RapidAPI-Zillow adapter (dry-scaffold).
+"""Task TT / TT.5 · Feb 2026 — OpenWebNinja-Zillow adapter (dry-scaffold).
 
-Design
-------
-* Env is read on **each call** (not module import) so a supervisor
-  restart after populating ``RAPIDAPI_KEY`` / ``RAPIDAPI_ZILLOW_HOST``
-  in ``.env`` immediately flips the adapter from *keys_missing → live*
-  without a code change.
-* Cache-first: every method inspects the ``zillow_rapidapi_cache``
-  Mongo collection regardless of whether the RapidAPI env is
-  populated. A cache hit returns immediately with ``cached: True``.
-* Missing keys → **never** raise, **never** log per-call. Every
-  method returns ``{"unavailable": True, "reason": "keys_not_configured"}``.
-  The one-time boot banner in ``server.py`` announces the armed
-  state; per-call chatter is suppressed to keep logs clean.
+Provider
+--------
+User's Zillow provider is **OpenWebNinja direct** (not RapidAPI):
+    https://api.openwebninja.com/realtime-zillow-data
+    header: x-api-key: <OPENWEB_NINJA_API_KEY>
+
+Task TT originally shipped a RapidAPI-style scaffold. TT.5 reconciles
+the adapter to the real provider — same wrapper contract (cache-first,
+test-scope guard, 5-min throttle memo, graceful ``{unavailable, reason}``
+returns), swapped provider auth + endpoint paths.
+
+Isolation from the legacy Phase 56.9b path
+------------------------------------------
+The existing ``routers/property.py`` + ``routers/d2d.py`` still own
+their own cache (``zillow_cache`` — 30-day TTL, ``cached_at_dt``),
+their tech/tenant rate-limit contract, and their audit trail. This
+adapter uses a **separate** cache collection (``zillow_own_cache``,
+7-day TTL, ``expires_at``) so both systems coexist without stepping
+on each other. Both share the single ``OPENWEB_NINJA_API_KEY`` env
+so provider rotation is one-shot.
+
+Design invariants (unchanged from Task TT)
+------------------------------------------
+* Env is read on **each call** so a supervisor restart after the
+  operator populates ``OPENWEB_NINJA_API_KEY`` in ``.env`` flips the
+  adapter from *keys_missing → live* without a code change.
+* Cache-first: every method inspects ``zillow_own_cache`` regardless
+  of whether the API key env is populated. A cache hit returns
+  immediately with ``cached: True``.
+* Missing key → **never** raise, **never** log per-call. Every method
+  returns ``{"unavailable": True, "reason": "keys_not_configured"}``.
+  The one-time boot banner announces the armed state; per-call
+  chatter is suppressed to keep logs clean.
 * Test-scope guardrail — when ``APP_ENV`` is not ``production`` the
   adapter refuses live calls unless (a) the normalized address
   contains ``aquaterra`` (synthetic seed data) or (b) the
   ``ZILLOW_TEST_ALLOWLIST_ADDRESSES`` env lists it (comma-separated,
-  case-insensitive substring match). Refusals return
-  ``{"unavailable": True, "reason": "test_scope_refused"}``.
-* 429 throttle memo — a 5-minute in-process cool-down per RapidAPI
+  case-insensitive substring match).
+* 429 throttle memo — a 5-minute in-process cool-down per provider
   host. When the throttle is armed, every method short-circuits to
   ``{"unavailable": True, "reason": "quota_exhausted"}`` **before**
-  hitting the network. Logged at WARN level once per arm.
+  hitting the network.
 * Zero live network in pytest — every test monkey-patches
   ``httpx.AsyncClient`` and ``db``.
 """
@@ -35,13 +54,19 @@ import re
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 import httpx
 
 from config import db, logger
 
-# ─── constants ────────────────────────────────────────────────────────
-CACHE_COLL = "zillow_rapidapi_cache"
+# ─── provider constants ──────────────────────────────────────────────
+PROVIDER_NAME = "openwebninja"
+PROVIDER_BASE_URL = "https://api.openwebninja.com/realtime-zillow-data"
+PROVIDER_HOST = urlparse(PROVIDER_BASE_URL).hostname or "api.openwebninja.com"
+
+# ─── cache + throttle constants ──────────────────────────────────────
+CACHE_COLL = "zillow_own_cache"  # namespaced separately from legacy zillow_cache
 CACHE_TTL_SECONDS = 7 * 24 * 3600  # 7 days
 THROTTLE_COOLDOWN_SECONDS = 5 * 60  # 5 minutes
 DEFAULT_TIMEOUT_S = 10.0
@@ -53,31 +78,27 @@ REASON_TEST_SCOPE_REFUSED = "test_scope_refused"
 REASON_PROVIDER_ERROR = "provider_error"
 REASON_NOT_FOUND = "not_found"
 
-# ─── module-level throttle state ──────────────────────────────────────
-# Keyed by RapidAPI host string. Value is the epoch-seconds until
-# which the host is considered rate-limited. In-process only — a
-# supervisor restart clears it, which is intentional (allows a manual
-# retry cycle without waiting the full 5 minutes).
+# ─── module-level throttle state ─────────────────────────────────────
 _throttle_until: Dict[str, float] = {}
 _throttle_lock = asyncio.Lock()
 
-# Prevents ensure_indexes from running twice within a single process.
 _indexes_ready = False
 
 
-# ─── env helpers (read-each-call so restart-live-refresh works) ──────
-def _rapidapi_key() -> Optional[str]:
-    v = os.environ.get("RAPIDAPI_KEY", "").strip()
-    return v or None
-
-
-def _rapidapi_host() -> Optional[str]:
-    v = os.environ.get("RAPIDAPI_ZILLOW_HOST", "").strip()
+# ─── env helpers (read-each-call so restart-live-refresh works) ─────
+def _provider_api_key() -> Optional[str]:
+    """Prefer ``OPENWEB_NINJA_ZILLOW_API_KEY``; fall back to
+    ``OPENWEB_NINJA_API_KEY``. Matches the resolution order used in
+    ``config.OPENWEB_NINJA_API_KEY`` so both legacy code and this
+    adapter always agree on which key is authoritative.
+    """
+    v = (os.environ.get("OPENWEB_NINJA_ZILLOW_API_KEY", "").strip()
+         or os.environ.get("OPENWEB_NINJA_API_KEY", "").strip())
     return v or None
 
 
 def keys_configured() -> bool:
-    return bool(_rapidapi_key() and _rapidapi_host())
+    return bool(_provider_api_key())
 
 
 def _app_env() -> str:
@@ -90,7 +111,8 @@ def _test_allowlist() -> list[str]:
 
 
 def startup_log_line() -> str:
-    return f"[ZILLOW] adapter armed · keys_configured={keys_configured()}"
+    return (f"[ZILLOW] adapter armed · provider={PROVIDER_NAME}"
+            f" · keys_configured={keys_configured()}")
 
 
 # ─── normalization + cache primitives ────────────────────────────────
@@ -113,19 +135,12 @@ def _now_utc() -> datetime:
 
 
 async def _ensure_indexes() -> None:
-    """Idempotent — creates TTL on expires_at + unique cache_key.
-
-    Silent-recovers if the index already exists with a different spec
-    (e.g. re-ordered fields) — the underlying collection stays usable.
-    """
     global _indexes_ready
     if _indexes_ready:
         return
     try:
         await db[CACHE_COLL].create_index("cache_key", unique=True)
-        await db[CACHE_COLL].create_index(
-            "expires_at", expireAfterSeconds=0,
-        )
+        await db[CACHE_COLL].create_index("expires_at", expireAfterSeconds=0)
         _indexes_ready = True
     except Exception as e:  # pragma: no cover — defensive
         logger.warning(f"[ZILLOW] ensure_indexes: {e}")
@@ -136,8 +151,6 @@ async def _cache_get(cache_key: str) -> Optional[Dict[str, Any]]:
     doc = await db[CACHE_COLL].find_one({"cache_key": cache_key})
     if not doc:
         return None
-    # Defensive: the Mongo TTL sweeper runs every ~60s, so an expired
-    # doc may still be visible for a minute. Manual expiry check.
     exp = doc.get("expires_at")
     if isinstance(exp, datetime):
         if exp.tzinfo is None:
@@ -172,10 +185,8 @@ async def _cache_put(
 
 # ─── throttle memo ───────────────────────────────────────────────────
 async def _throttle_check(host: str) -> bool:
-    """Return True iff the host is currently in cool-down."""
     async with _throttle_lock:
-        until = _throttle_until.get(host, 0.0)
-        return until > time.time()
+        return _throttle_until.get(host, 0.0) > time.time()
 
 
 async def _throttle_arm(host: str) -> None:
@@ -191,15 +202,11 @@ async def _throttle_arm(host: str) -> None:
 
 
 def _reset_throttle_for_tests() -> None:
-    """Test-only helper to clear the in-process throttle memo."""
     _throttle_until.clear()
 
 
 # ─── test-scope guard ────────────────────────────────────────────────
 def _test_scope_allows(ident: str) -> bool:
-    """When APP_ENV != production, block live calls unless the address
-    is synthetic (contains ``aquaterra``) or matches the allowlist env.
-    """
     if _app_env() == "production":
         return True
     n = _normalize(ident)
@@ -213,7 +220,7 @@ def _test_scope_allows(ident: str) -> bool:
 
 # ─── the client ──────────────────────────────────────────────────────
 class ZillowClient:
-    """Thin RapidAPI-Zillow wrapper with cache + guardrails.
+    """Thin OpenWebNinja-Zillow wrapper with cache + guardrails.
 
     Every method returns a dict shaped like one of::
 
@@ -225,24 +232,19 @@ class ZillowClient:
     """
 
     def __init__(self, http_client: Optional[httpx.AsyncClient] = None):
-        # ``http_client`` is injectable for tests. Production callers
-        # let the client build a per-call short-lived AsyncClient so
-        # timeouts are enforced and no long-lived socket sits idle.
         self._http = http_client
 
-    # ── search_by_address ──────────────────────────────────────────
     async def search_by_address(
         self, address: str, tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         return await self._call(
             method="search_by_address",
             ident=address,
-            path="/propertyExtendedSearch",
-            params={"location": address},
+            path="/property-details-address",
+            params={"address": address},
             tenant_id=tenant_id,
         )
 
-    # ── property_detail ────────────────────────────────────────────
     async def property_detail(
         self, zpid: str, tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -254,19 +256,21 @@ class ZillowClient:
             tenant_id=tenant_id,
         )
 
-    # ── zestimate ─────────────────────────────────────────────────
     async def zestimate(
         self, zpid: str, tenant_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        # OpenWebNinja's realtime-zillow-data returns zestimate inside
+        # /property; there is no discrete /zestimate endpoint. We keep
+        # the method surface for callers, but reuse /property under
+        # the hood so a single API call powers both facts + zestimate.
         return await self._call(
             method="zestimate",
             ident=str(zpid),
-            path="/zestimateHistory",
+            path="/property",
             params={"zpid": str(zpid)},
             tenant_id=tenant_id,
         )
 
-    # ── internal ──────────────────────────────────────────────────
     async def _call(
         self,
         *,
@@ -289,9 +293,8 @@ class ZillowClient:
             return {"unavailable": False, "data": cached, "cached": True}
 
         # 2. Keys check (silent, per-call decision, no logging).
-        key = _rapidapi_key()
-        host = _rapidapi_host()
-        if not key or not host:
+        key = _provider_api_key()
+        if not key:
             return {
                 "unavailable": True,
                 "reason": REASON_KEYS_NOT_CONFIGURED,
@@ -304,19 +307,16 @@ class ZillowClient:
                 "reason": REASON_TEST_SCOPE_REFUSED,
             }
 
-        # 4. Throttle memo — refuse live call if host is in cool-down.
-        if await _throttle_check(host):
+        # 4. Throttle memo — refuse live call if provider is in cool-down.
+        if await _throttle_check(PROVIDER_HOST):
             return {
                 "unavailable": True,
                 "reason": REASON_QUOTA_EXHAUSTED,
             }
 
         # 5. Live call.
-        url = f"https://{host}{path}"
-        headers = {
-            "x-rapidapi-key": key,
-            "x-rapidapi-host": host,
-        }
+        url = f"{PROVIDER_BASE_URL}{path}"
+        headers = {"x-api-key": key}
         try:
             client = self._http
             owns_client = False
@@ -337,7 +337,7 @@ class ZillowClient:
 
         # 6. Response handling.
         if resp.status_code == 429:
-            await _throttle_arm(host)
+            await _throttle_arm(PROVIDER_HOST)
             return {"unavailable": True, "reason": REASON_QUOTA_EXHAUSTED}
         if resp.status_code == 404:
             return {"unavailable": True, "reason": REASON_NOT_FOUND}
@@ -353,6 +353,15 @@ class ZillowClient:
         except Exception as e:
             logger.warning(f"[ZILLOW] {method} non-JSON response: {e}")
             return {"unavailable": True, "reason": REASON_PROVIDER_ERROR}
+
+        # OpenWebNinja wraps payloads under a top-level ``data`` key
+        # (mirroring ``routers/property.py`` handling). Empty ``data``
+        # is a not-found signal from this provider — surface it that
+        # way so callers can render the "no record" copy variant.
+        if isinstance(payload, dict) and "data" in payload:
+            data_val = payload.get("data")
+            if data_val in (None, [], {}):
+                return {"unavailable": True, "reason": REASON_NOT_FOUND}
 
         # 7. Cache-write + return.
         try:

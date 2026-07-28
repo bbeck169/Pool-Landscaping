@@ -1,4 +1,4 @@
-"""Task TT · Feb 2026 — RapidAPI-Zillow adapter pytest.
+"""Task TT / TT.5 · Feb 2026 — OpenWebNinja-Zillow adapter pytest.
 
 Zero live network — every httpx call is monkey-patched. Cache is
 exercised against a fresh in-memory fake so no test touches Mongo.
@@ -6,9 +6,8 @@ exercised against a fresh in-memory fake so no test touches Mongo.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -77,18 +76,29 @@ class _FakeDB:
         return self._colls[name]
 
 
+# ─── OpenWebNinja response fixtures ──────────────────────────────────
+# The provider wraps every payload under a top-level ``data`` key.
+OWN_SEARCH_OK = {"data": {"zpid": "own-1", "streetAddress": "742 Aquaterra Way",
+                           "zestimate": 425000, "bedrooms": 3, "bathrooms": 2}}
+OWN_PROPERTY_OK = {"data": {"zpid": "own-detail-1", "streetAddress": "77 Aquaterra Ln",
+                             "yearBuilt": 1998}}
+OWN_ZESTIMATE_OK = {"data": {"zpid": "own-detail-1", "zestimate": 512000,
+                              "priceHistory": [{"date": "2024-06-01", "price": 500000}]}}
+OWN_EMPTY_DATA = {"data": None}  # OpenWebNinja "no match" shape
+
+
 # ─── fixtures ────────────────────────────────────────────────────────
 @pytest.fixture
 def adapter_env(monkeypatch):
     """Reset adapter module state + env before each test."""
     from services.property_data import zillow_adapter as za
 
-    # Force test-scope-allowing address for most tests via synthetic
-    # token. Individual tests override APP_ENV/allowlist as needed.
     monkeypatch.setenv("APP_ENV", "preview")
     monkeypatch.delenv("ZILLOW_TEST_ALLOWLIST_ADDRESSES", raising=False)
-    monkeypatch.setenv("RAPIDAPI_KEY", "test-key-xxx")
-    monkeypatch.setenv("RAPIDAPI_ZILLOW_HOST", "zillow-fake.p.rapidapi.com")
+    # Set BOTH variant names to a synthetic value so we can assert the
+    # env-per-call resolution order (ZILLOW variant preferred).
+    monkeypatch.setenv("OPENWEB_NINJA_ZILLOW_API_KEY", "test-own-zillow-key")
+    monkeypatch.delenv("OPENWEB_NINJA_API_KEY", raising=False)
 
     fake_db = _FakeDB()
     monkeypatch.setattr(za, "db", fake_db)
@@ -98,18 +108,18 @@ def adapter_env(monkeypatch):
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro) if False else asyncio.run(coro)
+    return asyncio.run(coro)
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 1. keys_missing → 503-graceful (no HTTP call, no raise)
+# 1. keys_missing → graceful (no HTTP call, no raise)
 # ═══════════════════════════════════════════════════════════════════
 def test_keys_missing_returns_graceful_for_all_methods(adapter_env, monkeypatch):
     za, _ = adapter_env
-    monkeypatch.delenv("RAPIDAPI_KEY", raising=False)
-    monkeypatch.delenv("RAPIDAPI_ZILLOW_HOST", raising=False)
+    monkeypatch.delenv("OPENWEB_NINJA_ZILLOW_API_KEY", raising=False)
+    monkeypatch.delenv("OPENWEB_NINJA_API_KEY", raising=False)
 
-    fake_http = _FakeAsyncClient([])  # zero responses queued — MUST NOT be called
+    fake_http = _FakeAsyncClient([])  # zero responses — MUST NOT be called
     client = za.ZillowClient(http_client=fake_http)
 
     r1 = _run(client.search_by_address("123 aquaterra way"))
@@ -127,53 +137,87 @@ def test_keys_missing_returns_graceful_for_all_methods(adapter_env, monkeypatch)
 # ═══════════════════════════════════════════════════════════════════
 def test_cache_hit_short_circuits_http(adapter_env):
     za, fake_db = adapter_env
-
-    # Seed cache directly with a fresh (non-expired) doc.
     key = za._cache_key("search_by_address", "742 aquaterra way")
     fake_db[za.CACHE_COLL].docs[key] = {
         "cache_key": key,
-        "response_json": {"props": [{"zpid": "cached-1"}]},
+        "response_json": OWN_SEARCH_OK,
         "expires_at": za._now_utc() + timedelta(days=6),
     }
-
     fake_http = _FakeAsyncClient([])
     client = za.ZillowClient(http_client=fake_http)
-    r = _run(client.search_by_address("742 aquaterra way"))
 
+    r = _run(client.search_by_address("742 aquaterra way"))
     assert r["unavailable"] is False
     assert r["cached"] is True
-    assert r["data"] == {"props": [{"zpid": "cached-1"}]}
+    assert r["data"] == OWN_SEARCH_OK
     assert fake_http.calls == []
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 3. cache miss — live call, cache writes fresh doc with expires_at
+# 3. cache miss — live call → writes fresh entry, sends x-api-key header
 # ═══════════════════════════════════════════════════════════════════
-def test_cache_miss_writes_fresh_entry(adapter_env):
+def test_cache_miss_writes_fresh_entry_and_uses_x_api_key(adapter_env):
     za, fake_db = adapter_env
-
-    payload = {"props": [{"zpid": "fresh-1"}]}
-    fake_http = _FakeAsyncClient([_FakeResponse(200, payload)])
+    fake_http = _FakeAsyncClient([_FakeResponse(200, OWN_SEARCH_OK)])
     client = za.ZillowClient(http_client=fake_http)
 
     r = _run(client.search_by_address("100 aquaterra ave"))
 
     assert r["unavailable"] is False
     assert r["cached"] is False
-    assert r["data"] == payload
+    assert r["data"] == OWN_SEARCH_OK
     assert len(fake_http.calls) == 1
 
-    # cache written
+    # ── the actual call assertions — this is what TT.5 reconciles ──
+    call = fake_http.calls[0]
+    assert call["url"] == f"{za.PROVIDER_BASE_URL}/property-details-address"
+    assert call["params"] == {"address": "100 aquaterra ave"}
+    assert call["headers"] == {"x-api-key": "test-own-zillow-key"}
+    # No RapidAPI headers may leak in.
+    assert "x-rapidapi-key" not in call["headers"]
+    assert "x-rapidapi-host" not in call["headers"]
+
+    # Cache written with 7-day TTL
     key = za._cache_key("search_by_address", "100 aquaterra ave")
     doc = fake_db[za.CACHE_COLL].docs[key]
-    assert doc["response_json"] == payload
+    assert doc["response_json"] == OWN_SEARCH_OK
     exp = doc["expires_at"]
-    # 7-day TTL (within a small clock-skew tolerance)
     assert timedelta(days=6, hours=23) < (exp - za._now_utc()) <= timedelta(days=7, minutes=1)
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 4. 429 arms throttle memo and returns quota_exhausted
+# 4. property_detail hits /property?zpid= endpoint
+# ═══════════════════════════════════════════════════════════════════
+def test_property_detail_hits_property_endpoint(adapter_env):
+    za, _ = adapter_env
+    fake_http = _FakeAsyncClient([_FakeResponse(200, OWN_PROPERTY_OK)])
+    client = za.ZillowClient(http_client=fake_http)
+
+    r = _run(client.property_detail("own-detail-1-aquaterra"))
+    assert r["unavailable"] is False
+    assert r["data"] == OWN_PROPERTY_OK
+
+    call = fake_http.calls[0]
+    assert call["url"] == f"{za.PROVIDER_BASE_URL}/property"
+    assert call["params"] == {"zpid": "own-detail-1-aquaterra"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 5. zestimate reuses /property (OpenWebNinja has no /zestimate)
+# ═══════════════════════════════════════════════════════════════════
+def test_zestimate_reuses_property_endpoint(adapter_env):
+    za, _ = adapter_env
+    fake_http = _FakeAsyncClient([_FakeResponse(200, OWN_ZESTIMATE_OK)])
+    client = za.ZillowClient(http_client=fake_http)
+
+    r = _run(client.zestimate("own-detail-1-aquaterra"))
+    assert r["unavailable"] is False
+    assert r["data"] == OWN_ZESTIMATE_OK
+    assert fake_http.calls[0]["url"] == f"{za.PROVIDER_BASE_URL}/property"
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 6. 429 arms throttle memo and returns quota_exhausted
 # ═══════════════════════════════════════════════════════════════════
 def test_429_arms_throttle_and_returns_quota(adapter_env):
     za, _ = adapter_env
@@ -181,23 +225,19 @@ def test_429_arms_throttle_and_returns_quota(adapter_env):
     client = za.ZillowClient(http_client=fake_http)
 
     r = _run(client.search_by_address("55 aquaterra"))
-
     assert r == {"unavailable": True, "reason": za.REASON_QUOTA_EXHAUSTED}
-    # Throttle armed
-    host = za._rapidapi_host()
-    assert host in za._throttle_until
-    assert za._throttle_until[host] > time.time()
+    assert za.PROVIDER_HOST in za._throttle_until
+    assert za._throttle_until[za.PROVIDER_HOST] > time.time()
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 5. throttle active → subsequent call skips HTTP
+# 7. throttle active → subsequent call skips HTTP
 # ═══════════════════════════════════════════════════════════════════
 def test_throttle_active_short_circuits(adapter_env):
     za, _ = adapter_env
-    host = za._rapidapi_host()
-    za._throttle_until[host] = time.time() + 60  # armed for 60s
+    za._throttle_until[za.PROVIDER_HOST] = time.time() + 60
 
-    fake_http = _FakeAsyncClient([])  # would fail if hit
+    fake_http = _FakeAsyncClient([])
     client = za.ZillowClient(http_client=fake_http)
 
     r = _run(client.property_detail("z-throttled-aquaterra"))
@@ -206,7 +246,7 @@ def test_throttle_active_short_circuits(adapter_env):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 6. test-scope refusal — non-prod + non-synthetic address
+# 8. test-scope refusal — non-prod + non-synthetic
 # ═══════════════════════════════════════════════════════════════════
 def test_test_scope_refuses_non_synthetic(adapter_env, monkeypatch):
     za, _ = adapter_env
@@ -221,7 +261,7 @@ def test_test_scope_refuses_non_synthetic(adapter_env, monkeypatch):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 7. test-scope allowlist — env unlocks a specific address
+# 9. test-scope allowlist — env unlocks a specific address
 # ═══════════════════════════════════════════════════════════════════
 def test_test_scope_allowlist_env(adapter_env, monkeypatch):
     za, _ = adapter_env
@@ -230,58 +270,51 @@ def test_test_scope_allowlist_env(adapter_env, monkeypatch):
         "ZILLOW_TEST_ALLOWLIST_ADDRESSES",
         "evergreen terrace, springfield",
     )
-
-    payload = {"props": [{"zpid": "allowlisted-1"}]}
-    fake_http = _FakeAsyncClient([_FakeResponse(200, payload)])
+    fake_http = _FakeAsyncClient([_FakeResponse(200, OWN_SEARCH_OK)])
     client = za.ZillowClient(http_client=fake_http)
 
     r = _run(client.search_by_address("742 Evergreen Terrace, Springfield"))
     assert r["unavailable"] is False
-    assert r["data"] == payload
-    assert len(fake_http.calls) == 1
+    assert r["data"] == OWN_SEARCH_OK
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 8. production env skips test-scope guard
+# 10. production env skips test-scope guard
 # ═══════════════════════════════════════════════════════════════════
 def test_production_env_skips_test_scope_guard(adapter_env, monkeypatch):
     za, _ = adapter_env
     monkeypatch.setenv("APP_ENV", "production")
-
-    payload = {"props": [{"zpid": "prod-1"}]}
-    fake_http = _FakeAsyncClient([_FakeResponse(200, payload)])
+    fake_http = _FakeAsyncClient([_FakeResponse(200, OWN_SEARCH_OK)])
     client = za.ZillowClient(http_client=fake_http)
 
     r = _run(client.search_by_address("742 Evergreen Terrace, Springfield"))
     assert r["unavailable"] is False
-    assert r["data"] == payload
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 9. TTL expiry — stale cache doc is ignored, fresh call fires
+# 11. TTL expiry — stale cache doc ignored, fresh call fires
 # ═══════════════════════════════════════════════════════════════════
 def test_ttl_expiry_forces_refresh(adapter_env):
     za, fake_db = adapter_env
-
     key = za._cache_key("search_by_address", "300 aquaterra st")
     fake_db[za.CACHE_COLL].docs[key] = {
         "cache_key": key,
         "response_json": {"stale": True},
         "expires_at": za._now_utc() - timedelta(minutes=1),
     }
-    fresh_payload = {"stale": False, "zpid": "fresh"}
-    fake_http = _FakeAsyncClient([_FakeResponse(200, fresh_payload)])
+    fresh = {"data": {"zpid": "fresh-1", "streetAddress": "300 Aquaterra St"}}
+    fake_http = _FakeAsyncClient([_FakeResponse(200, fresh)])
     client = za.ZillowClient(http_client=fake_http)
 
     r = _run(client.search_by_address("300 aquaterra st"))
     assert r["unavailable"] is False
     assert r["cached"] is False
-    assert r["data"] == fresh_payload
+    assert r["data"] == fresh
     assert len(fake_http.calls) == 1
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 10. 404 → not_found (not cached)
+# 12. 404 → not_found (not cached)
 # ═══════════════════════════════════════════════════════════════════
 def test_404_returns_not_found(adapter_env):
     za, fake_db = adapter_env
@@ -290,13 +323,28 @@ def test_404_returns_not_found(adapter_env):
 
     r = _run(client.property_detail("does-not-exist-aquaterra"))
     assert r == {"unavailable": True, "reason": za.REASON_NOT_FOUND}
-    # Not cached — a real address that missed once may exist tomorrow.
     key = za._cache_key("property_detail", "does-not-exist-aquaterra")
     assert key not in fake_db[za.CACHE_COLL].docs
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 11. Non-JSON / 5xx → provider_error
+# 13. OpenWebNinja "empty data" 200 → not_found (provider-specific
+#     idiom: it returns HTTP 200 with ``{"data": null}`` on no match)
+# ═══════════════════════════════════════════════════════════════════
+def test_empty_data_wrapper_returns_not_found(adapter_env):
+    za, fake_db = adapter_env
+    fake_http = _FakeAsyncClient([_FakeResponse(200, OWN_EMPTY_DATA)])
+    client = za.ZillowClient(http_client=fake_http)
+
+    r = _run(client.search_by_address("999 phantom aquaterra"))
+    assert r == {"unavailable": True, "reason": za.REASON_NOT_FOUND}
+    # Not cached — same rationale as 404.
+    key = za._cache_key("search_by_address", "999 phantom aquaterra")
+    assert key not in fake_db[za.CACHE_COLL].docs
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 14. 5xx → provider_error
 # ═══════════════════════════════════════════════════════════════════
 def test_5xx_returns_provider_error(adapter_env):
     za, _ = adapter_env
@@ -308,22 +356,43 @@ def test_5xx_returns_provider_error(adapter_env):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 12. Startup log reflects keys state (True + False)
+# 15. Startup log reflects provider + keys state (True + False)
 # ═══════════════════════════════════════════════════════════════════
-def test_startup_log_reflects_keys_state(adapter_env, monkeypatch):
+def test_startup_log_reflects_provider_and_keys_state(adapter_env, monkeypatch):
     za, _ = adapter_env
-    assert "keys_configured=True" in za.startup_log_line()
-    monkeypatch.delenv("RAPIDAPI_KEY", raising=False)
-    assert "keys_configured=False" in za.startup_log_line()
+    banner_on = za.startup_log_line()
+    assert "provider=openwebninja" in banner_on
+    assert "keys_configured=True" in banner_on
+
+    monkeypatch.delenv("OPENWEB_NINJA_ZILLOW_API_KEY", raising=False)
+    monkeypatch.delenv("OPENWEB_NINJA_API_KEY", raising=False)
+    banner_off = za.startup_log_line()
+    assert "provider=openwebninja" in banner_off
+    assert "keys_configured=False" in banner_off
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 13. Second call after cache write hits cache (no second HTTP)
+# 16. Env-per-call resolution order — ZILLOW variant preferred, but
+#     if only OPENWEB_NINJA_API_KEY is set the adapter still arms.
+# ═══════════════════════════════════════════════════════════════════
+def test_key_resolution_falls_back_to_base_env(adapter_env, monkeypatch):
+    za, _ = adapter_env
+    monkeypatch.delenv("OPENWEB_NINJA_ZILLOW_API_KEY", raising=False)
+    monkeypatch.setenv("OPENWEB_NINJA_API_KEY", "fallback-key-xxx")
+
+    fake_http = _FakeAsyncClient([_FakeResponse(200, OWN_SEARCH_OK)])
+    client = za.ZillowClient(http_client=fake_http)
+    r = _run(client.search_by_address("400 aquaterra"))
+    assert r["unavailable"] is False
+    assert fake_http.calls[0]["headers"] == {"x-api-key": "fallback-key-xxx"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 17. Second call after cache write hits cache (no second HTTP)
 # ═══════════════════════════════════════════════════════════════════
 def test_second_call_hits_cache(adapter_env):
     za, _ = adapter_env
-    payload = {"props": [{"zpid": "roundtrip-1"}]}
-    fake_http = _FakeAsyncClient([_FakeResponse(200, payload)])
+    fake_http = _FakeAsyncClient([_FakeResponse(200, OWN_SEARCH_OK)])
     client = za.ZillowClient(http_client=fake_http)
 
     r1 = _run(client.search_by_address("77 aquaterra ln"))
@@ -331,5 +400,5 @@ def test_second_call_hits_cache(adapter_env):
 
     assert r1["cached"] is False
     assert r2["cached"] is True
-    assert r2["data"] == payload
-    assert len(fake_http.calls) == 1, "second call MUST hit cache, not network"
+    assert r2["data"] == OWN_SEARCH_OK
+    assert len(fake_http.calls) == 1

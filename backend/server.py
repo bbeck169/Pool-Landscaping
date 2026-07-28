@@ -197,10 +197,11 @@ from routers import lumino_zapier_bridge as _qq_lumino_zapier  # noqa: E402
 api_router.include_router(_qq_lumino_zapier.router)
 from routers import lumino_return as _qq_lumino_return  # noqa: E402
 api_router.include_router(_qq_lumino_return.router)
-# Task TT · Feb 2026 — RapidAPI-Zillow adapter (dry-scaffold). Ships
-# in ``keys_missing → 503 graceful`` mode: routes register unconditionally
-# so a supervisor restart after populating ``RAPIDAPI_KEY`` +
-# ``RAPIDAPI_ZILLOW_HOST`` in ``.env`` immediately flips the adapter live.
+# Task TT · Feb 2026 (reconciled TT.5) — OpenWebNinja-Zillow adapter
+# (dry-scaffold). Ships in ``keys_missing → 503 graceful`` mode: routes
+# register unconditionally so a supervisor restart after populating
+# ``OPENWEB_NINJA_ZILLOW_API_KEY`` (or the fallback ``OPENWEB_NINJA_API_KEY``)
+# in ``.env`` immediately flips the adapter live.
 from routers import zillow_adapter_api as _tt_zillow_adapter  # noqa: E402
 api_router.include_router(_tt_zillow_adapter.router)
 # Task SS/RR Phase 2 · Feb 2026 — the admin credit issuance /
