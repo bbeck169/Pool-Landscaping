@@ -181,6 +181,7 @@ def _seed_check(tenant_id: str, memo: str, amount: float) -> str:
             "amount": amount, "date": datetime.now(timezone.utc).date().isoformat(),
             "voided_at": None, "category": None, "memo": memo,
             "payee_name_snapshot": "TEST_ vendor",
+            # random.randint() — non-security use (test fixture check number)
             "check_number": random.randint(100000, 999999),
             "bank_account_id": f"TEST-{uuid.uuid4().hex[:8]}",
             "ref_type": "adhoc",

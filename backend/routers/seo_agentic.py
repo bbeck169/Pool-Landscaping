@@ -771,6 +771,7 @@ async def _generate_heatmap(heatmap_id: str, tenant_id: str,
         # Currently no SERP provider configured — flag mocked=true & synthesize
         # deterministically-random ranks around a plausible mid-teen average
         # so the UI has data to render.
+        # random.Random(seed) — non-security use (deterministic mock SERP data)
         rng = random.Random(f"{tenant_id}:{keyword}")
         results = []
         for p in pts:

@@ -499,6 +499,7 @@ async def seed_extras():
     if await db.rank_grid.count_documents({}) == 0:
         def g(base):
             import random
+            # random.randint() — non-security use (seed data / demo rank grid)
             return [[max(1, base + random.randint(-2, 3)) for _ in range(3)] for _ in range(3)]
         rg = [
             {"id": new_id(), "keyword": "pool service near me", "grid": g(2), "created_at": now_iso()},
