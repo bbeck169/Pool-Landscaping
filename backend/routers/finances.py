@@ -139,7 +139,12 @@ async def run_monthly_chem_billing():
             if cust and cust.get("default_payment_method_id"):
                 try:
                     from routers.payments import charge_invoice_on_file
-                    res = await charge_invoice_on_file(inv["id"])
+                    # Feb-2026 · tenant-scope hardening — pass the invoice's
+                    # own tenant_id since this is a scheduled background
+                    # job with no request auth context.
+                    res = await charge_invoice_on_file(
+                        inv["id"], tenant_id=inv.get("tenant_id")
+                    )
                     status = res.get("status")
                     if status == "succeeded":
                         charged = True  # customer already notified by the charge helper

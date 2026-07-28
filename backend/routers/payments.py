@@ -1,6 +1,7 @@
 import os
 import asyncio
 from datetime import datetime, timezone
+from typing import Optional
 
 import stripe
 from fastapi import APIRouter, HTTPException, Depends, Request
@@ -586,11 +587,20 @@ async def request_payment_method(customer_id: str,
     return {"ok": True}
 
 
-async def charge_invoice_on_file(qid: str) -> dict:
+async def charge_invoice_on_file(qid: str, tenant_id: Optional[str] = None) -> dict:
     """Charge a customer's saved card/ACH off-session for an invoice's balance.
     Returns a status dict (never raises for business cases): no_method | succeeded |
-    processing | requires_action | already_paid | nothing_due | not_found | failed | error."""
-    doc = await db.quotes.find_one({"id": qid}, {"_id": 0})
+    processing | requires_action | already_paid | nothing_due | not_found | failed | error.
+
+    Feb-2026 · tenant-scope hardening — when ``tenant_id`` is provided the
+    invoice + customer lookups are BOTH filtered by tenant. Callers that
+    have an auth context MUST pass it; the parameter is optional only to
+    preserve the existing signature for tests / migration paths.
+    """
+    inv_q: Dict[str, Any] = {"id": qid}
+    if tenant_id:
+        inv_q["tenant_id"] = tenant_id
+    doc = await db.quotes.find_one(inv_q, {"_id": 0})
     if not doc:
         return {"status": "not_found"}
     if doc.get("payment_status") == "paid":
@@ -598,7 +608,10 @@ async def charge_invoice_on_file(qid: str) -> dict:
     balance = round(float(doc.get("total") or 0) - float(doc.get("amount_paid") or 0), 2)
     if balance <= 0:
         return {"status": "nothing_due"}
-    cust = await db.customers.find_one({"id": doc.get("customer_id")}, {"_id": 0}) or {}
+    cust_q: Dict[str, Any] = {"id": doc.get("customer_id")}
+    if tenant_id:
+        cust_q["tenant_id"] = tenant_id
+    cust = await db.customers.find_one(cust_q, {"_id": 0}) or {}
     scid = cust.get("stripe_customer_id")
     pm = cust.get("default_payment_method_id")
     if not (scid and pm):
@@ -644,11 +657,12 @@ async def charge_invoice_on_file(qid: str) -> dict:
 
 
 @router.post("/payments/charge-on-file/{qid}", operation_id="payments.chargeOnFile")
-async def charge_on_file(qid: str, user: dict = Depends(require_admin)):
+async def charge_on_file(qid: str, user: dict = Depends(require_admin),
+                            tenant: dict = Depends(get_current_tenant)):
     """Admin charges the customer's saved card/ACH off-session for the invoice balance."""
     if not stripe.api_key:
         raise HTTPException(503, "Payments are not configured")
-    res = await charge_invoice_on_file(qid)
+    res = await charge_invoice_on_file(qid, tenant_id=tenant["id"])
     st = res.get("status")
     if st == "not_found":
         raise HTTPException(404, "Invoice not found")
@@ -753,7 +767,7 @@ async def bulk_charge_on_file(body: BulkChargeIn,
             continue
 
         try:
-            res = await charge_invoice_on_file(qid)
+            res = await charge_invoice_on_file(qid, tenant_id=tenant["id"])
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning("[bulk-charge] %s crashed: %s", qid, exc)
             results.append({**base, "status": "failed", "reason": "exception"})

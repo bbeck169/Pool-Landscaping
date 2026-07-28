@@ -240,8 +240,27 @@ class TestTenantScope:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 5. Response shape sanity
+# 6. Single-charge endpoint tenant scope (Feb-2026 hardening)
 # ═══════════════════════════════════════════════════════════════════
+class TestSingleChargeTenantScope:
+    def test_foreign_tenant_invoice_returns_404(self, admin_h, dbc):
+        """POST /api/payments/charge-on-file/{id} must not touch a
+        different tenant's invoice, even if the id is guessed correctly.
+        Regression guard on the Feb-2026 tenant-scope hardening."""
+        sunbelt = dbc.tenants.find_one({"slug": "sunbelt"})
+        assert sunbelt, "sunbelt tenant not present"
+        i1, c1 = _seed_invoice(dbc, tenant_id=sunbelt["id"],
+                                  status="sent", payment_status="unpaid",
+                                  with_pm=True, tag="SINGLEXTNT")
+        try:
+            # Manager is on aquaterra; must not see the sunbelt invoice.
+            r = requests.post(
+                f"{BASE}/api/payments/charge-on-file/{i1}",
+                headers=admin_h, timeout=15,
+            )
+            assert r.status_code == 404, r.text
+        finally:
+            _cleanup(dbc, iids=[i1], cids=[c1])
 def test_response_envelope_keys(admin_h, dbc, tenant_id):
     i1, c1 = _seed_invoice(dbc, tenant_id=tenant_id, status="sent",
                               payment_status="unpaid", with_pm=False,

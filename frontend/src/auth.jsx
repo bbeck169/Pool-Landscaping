@@ -4,36 +4,48 @@ import { api, TOKEN_KEY } from "@/api";
 const USER_KEY = "user";
 const AuthCtx = createContext(null);
 
+/** Feb-2026 · Fix 2 — bootstrap race helper.
+ *  Read the cached user object out of localStorage synchronously so
+ *  the very first render already sees ``user != null`` when a token
+ *  is present. Previously the effect ran AFTER paint and any
+ *  auth-guarded route could flash to /login before storage was read.
+ *  Playwright's ``page.evaluate(localStorage.setItem…)`` before
+ *  ``page.goto`` now works end-to-end.
+ */
+function _readCachedUserSync() {
+  if (typeof window === "undefined") return null;
+  try {
+    const token = window.localStorage.getItem(TOKEN_KEY);
+    const stored = window.localStorage.getItem(USER_KEY);
+    if (!token || !stored) return null;
+    return JSON.parse(stored);
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Initial state is derived from localStorage synchronously — the
+  // useEffect below now ONLY runs the ``/auth/me`` self-heal, it no
+  // longer bootstraps ``user``.
+  const [user, setUser] = useState(() => _readCachedUserSync());
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    // If we bootstrapped from cache, background-refresh /auth/me so
+    // stale role/tenant changes get picked up. Same behavior as
+    // before, just decoupled from the initial-mount race.
     const token = localStorage.getItem(TOKEN_KEY);
-    const stored = localStorage.getItem(USER_KEY);
-    if (token && stored) {
+    if (!token) return;
+    (async () => {
       try {
-        setUser(JSON.parse(stored));
-      } catch {
-        localStorage.removeItem(USER_KEY);
-      }
-      // Feb-2026 · self-heal against a stale localStorage user object
-      // (e.g., when a user's role is promoted server-side while their
-      // session is still live). Fires ``/auth/me`` in the background —
-      // if the response comes back with a fresher record we swap it in.
-      // On any failure we leave the cached copy in place so we don't
-      // flap the guards during a transient blip.
-      (async () => {
-        try {
-          const fresh = await api.get("/auth/me");
-          if (fresh && fresh.id) {
-            localStorage.setItem(USER_KEY, JSON.stringify(fresh));
-            setUser(fresh);
-          }
-        } catch { /* keep cached copy */ }
-      })();
-    }
-    setLoading(false);
+        const fresh = await api.get("/auth/me");
+        if (fresh && fresh.id) {
+          localStorage.setItem(USER_KEY, JSON.stringify(fresh));
+          setUser(fresh);
+        }
+      } catch { /* keep cached copy */ }
+    })();
   }, []);
 
   const persist = (accessToken, u) => {
