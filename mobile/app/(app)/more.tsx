@@ -122,7 +122,11 @@ export default function More() {
     <View style={styles.root}>
       <Header title={isAdmin ? "More" : "Profile"} />
       <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}>
-        <View style={styles.profileCard}>
+        <Pressable
+          style={styles.profileCard}
+          onPress={() => router.push("/(app)/profile" as any)}
+          testID="more-profile-link"
+        >
           {user?.avatar ? (
             <Image source={{ uri: user.avatar }} style={styles.avatar} />
           ) : (
@@ -137,7 +141,8 @@ export default function More() {
               <Text style={styles.roleText}>{roleLabel}</Text>
             </View>
           </View>
-        </View>
+          <Ionicons name="chevron-forward" size={20} color={colors.muted} />
+        </Pressable>
 
         {showAdminSection ? (
           <View style={styles.section}>
