@@ -29,6 +29,7 @@ import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 type Props = {
   linkedEntityType: string;
   linkedEntityId: string;
+  purpose?: string;
   canDelete?: boolean;
   onChange?: (items: FileRecord[]) => void;
 };
@@ -44,7 +45,7 @@ function iconFor(ct: string): keyof typeof Ionicons.glyphMap {
   return "document-outline";
 }
 
-export function FileList({ linkedEntityType, linkedEntityId, canDelete = false, onChange }: Props) {
+export function FileList({ linkedEntityType, linkedEntityId, purpose, canDelete = false, onChange }: Props) {
   const [rows, setRows] = useState<FileRecord[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -52,14 +53,14 @@ export function FileList({ linkedEntityType, linkedEntityId, canDelete = false, 
   const reload = useCallback(async () => {
     setErr(null);
     try {
-      const items = await listFilesByEntity(linkedEntityType, linkedEntityId);
+      const items = await listFilesByEntity(linkedEntityType, linkedEntityId, purpose);
       setRows(items);
       onChange?.(items);
     } catch (e: any) {
       setRows([]);
       setErr(e?.message || "Failed to load files.");
     }
-  }, [linkedEntityType, linkedEntityId, onChange]);
+  }, [linkedEntityType, linkedEntityId, purpose, onChange]);
 
   useEffect(() => {
     reload();

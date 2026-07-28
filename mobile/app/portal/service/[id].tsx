@@ -14,6 +14,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { StatusChip } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import { JobBeforeAfterPhotos } from "@/src/components/files";
 
 function Skeleton() {
   return (
@@ -123,7 +124,7 @@ export default function PortalServiceDetail() {
           </View>
         ) : null}
 
-        {/* Photos */}
+        {/* Photos (legacy base64) */}
         {photos.length > 0 ? (
           <View style={s.card}>
             <Text style={s.sectionTitle}>Photos</Text>
@@ -142,6 +143,9 @@ export default function PortalServiceDetail() {
             </View>
           </View>
         ) : null}
+
+        {/* F2c.2 — Before/After photos (F0 pipeline, read-only for customers) */}
+        <JobBeforeAfterPhotos jobId={id!} readOnly />
 
         {/* Notes */}
         {job.notes ? (

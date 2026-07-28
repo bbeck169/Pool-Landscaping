@@ -22,6 +22,7 @@ import {
   getEstimateFull, acceptEstimate, declineEstimate, requestEstimateChanges,
   type EstimateFull,
 } from "@/src/api/estimatesFull";
+import { InvoiceAttachments } from "@/src/components/files";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 
 const fmt = (n: number | undefined) => "$" + (n || 0).toFixed(2);
@@ -251,6 +252,9 @@ export default function EstimateViewScreen() {
             <Text style={s.notesText}>{notes}</Text>
           </View>
         ) : null}
+
+        {/* F2b — Attachments */}
+        <InvoiceAttachments docId={id!} isInvoice={false} user={user} />
 
         {/* Disclaimer */}
         <View style={s.disclaimer}>

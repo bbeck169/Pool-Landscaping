@@ -22,6 +22,7 @@ import { useAuth } from "@/src/auth";
 import { useStripeConfig } from "@/src/config/stripe";
 import { getInvoiceFull, type InvoiceFull } from "@/src/api/invoices";
 import { createPaymentIntent } from "@/src/api/payments";
+import { InvoiceAttachments } from "@/src/components/files";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 
 const fmt = (n: number | undefined) => "$" + (n || 0).toFixed(2);
@@ -340,6 +341,9 @@ export default function InvoiceDetail() {
             <Text style={s.notesText}>{notes}</Text>
           </View>
         ) : null}
+
+        {/* F2b — Attachments */}
+        <InvoiceAttachments docId={id!} isInvoice={true} user={user} />
       </ScrollView>
 
       {/* Payment WebView Modal */}
