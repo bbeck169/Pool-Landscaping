@@ -62,9 +62,9 @@ export default function LeadRequestPage() {
         catch { showToast(`Link: ${r.url}`); }
       } else if (method === "sms") {
         if (r.sent) showToast("SMS sent");
-        else if (r.reason === "twilio-not-configured") {
-          try { await navigator.clipboard.writeText(r.url); showToast("Twilio not configured — link copied to clipboard"); }
-          catch { showToast(`Twilio not configured. Copy link manually: ${r.url}`); }
+        else if (r.reason === "sms-not-configured" || r.reason === "twilio-not-configured") {
+          try { await navigator.clipboard.writeText(r.url); showToast("SMS delivery not configured — link copied to clipboard"); }
+          catch { showToast(`SMS delivery not configured. Copy link manually: ${r.url}`); }
         } else showToast(`Send failed: ${r.reason || "unknown"}`);
       } else if (method === "email") {
         if (r.sent) showToast("Email sent");

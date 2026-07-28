@@ -83,7 +83,7 @@ export default function PaymentHandlesSettings() {
               <div className="font-semibold" style={{ color: colors.onSurface }}>Automatic Invoice Texting</div>
               <p className="text-sm mt-0.5" style={{ color: colors.muted }}>
                 When a new invoice is created, auto-send an SMS with the payment link.
-                Uses Twilio — falls back to a no-op if Twilio env vars are unset.
+                Uses RingCentral SMS — falls back to no-op if RC env vars are unset.
               </p>
               <label className="mt-3 inline-flex items-center gap-2 text-sm">
                 <input

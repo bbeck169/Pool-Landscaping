@@ -5,8 +5,8 @@ reminder trigger + pause/resume + scheduled scanner.
 
 Channels:
  - Email via Resend (LIVE when RESEND_API_KEY is set)
- - SMS via Twilio (queued as `pending_twilio` when key absent — no silent
-   mock)
+ - SMS via RingCentral (returns `pending_sms` when RC creds absent — no
+   silent mock)
 
 Payment link:
  - Stripe hosted PaymentLink when `STRIPE_SECRET_KEY` is set (created
@@ -374,11 +374,9 @@ async def _send_email(to: str, subject: str, body: str,
 
 async def _send_sms(to: str, body: str, *, tenant_id: Optional[str] = None,
                      customer_id: Optional[str] = None) -> Dict[str, Any]:
-    """Phase 5A hot-fix · Feb 2026 — delegate to the shipped Twilio
-    adapter so API-key auth (SID + API_KEY_SID + API_KEY_SECRET) is
-    recognised. Previously this function required ``TWILIO_AUTH_TOKEN``
-    which is intentionally blank on tenants using API-key auth, causing
-    a false ``twilio-not-configured`` response.
+    """Feb-2026 · Twilio→RC consolidation — delegates to the shipped
+    RingCentral adapter. Adapter fails-closed when RC creds absent;
+    caller receives ``status="pending_sms"``.
     """
     if not to:
         return {"status": "failed", "error": "no-recipient"}
@@ -386,13 +384,14 @@ async def _send_sms(to: str, body: str, *, tenant_id: Optional[str] = None,
     res = await _sms_send(to=to, body=body, category="transactional",
                             tenant_id=tenant_id, customer_id=customer_id)
     provider = res.get("provider")
-    if provider == "twilio" and res.get("provider_status") in ("queued", "sent", "delivered", "accepted"):
+    status = res.get("provider_status")
+    if provider == "ringcentral" and status in ("queued", "sent", "delivered", "accepted"):
         return {"status": "sent"}
-    if provider == "mock":
-        return {"status": "pending_twilio",
-                 "reason": "twilio-not-configured"}
+    if provider == "mock" or status == "dry_run":
+        return {"status": "pending_sms",
+                 "reason": "sms-not-configured"}
     return {"status": "failed",
-             "error": res.get("error") or "twilio-send-failed"}
+             "error": res.get("error") or "sms-send-failed"}
 
 
 async def _send_reminder(invoice: Dict[str, Any], stage: Dict[str, Any],

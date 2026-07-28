@@ -173,11 +173,12 @@ async def get_integrations_status(admin: dict = Depends(require_admin)):
     """Report the wiring status of all third-party integrations. Keys are masked."""
     import os
     stripe_key = os.environ.get("STRIPE_API_KEY", "") or os.environ.get("STRIPE_SECRET_KEY", "")
-    twilio_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
     resend_from = os.environ.get("EMAIL_FROM", "")
     stripe_wh = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
     wp_url = os.environ.get("WORDPRESS_URL", "")
     gbp_client = os.environ.get("GBP_CLIENT_ID", "")
+    # Feb-2026 · Twilio removed — RingCentral is the sole SMS provider.
+    rc_client_id = os.environ.get("RC_CLIENT_ID", "")
     ring_key = ""
     ring_doc = await db.settings.find_one({"id": "ringcentral"}, {"_id": 0}) or {}
     if ring_doc.get("api_key"):
@@ -189,10 +190,9 @@ async def get_integrations_status(admin: dict = Depends(require_admin)):
         "resend":          {"configured": bool(RESEND_API_KEY),          "preview": _mask(RESEND_API_KEY),        "note": f"Transactional email · from {resend_from}"},
         "stripe":          {"configured": bool(stripe_key),              "preview": _mask(stripe_key),            "note": "Card payments (test mode)"},
         "stripe_webhook":  {"configured": bool(stripe_wh),               "preview": _mask(stripe_wh),             "note": "Webhook signing secret · unsigned fallback active if missing"},
-        "twilio":          {"configured": bool(twilio_sid),              "preview": _mask(twilio_sid),            "note": "SMS delivery"},
         "wordpress":       {"configured": bool(wp_url),                  "preview": _mask(wp_url),                "note": "SEO article publishing"},
         "gbp":             {"configured": bool(gbp_client),              "preview": _mask(gbp_client),            "note": "Google Business Profile OAuth (Client ID)"},
-        "ringcentral":     {"configured": bool(ring_key),                "preview": _mask(ring_key),              "note": "Inbound call tracking"},
+        "ringcentral":     {"configured": bool(rc_client_id or ring_key), "preview": _mask(rc_client_id or ring_key), "note": "SMS delivery + inbound call tracking"},
     }
 
 
@@ -336,11 +336,11 @@ async def integration_health(integration: str, admin: dict = Depends(require_adm
                                        "SG bot protection for /wp-json/*"}
             return {"ok": False,
                       "message": f"HTTP {r.status_code} ({ct[:40] or 'unknown ct'})"}
-        if integration in {"twilio", "gbp", "ringcentral", "stripe_webhook"}:
+        if integration in {"gbp", "ringcentral", "stripe_webhook"}:
             # Not enough config wired yet to actually ping — report presence only.
             keymap = {
-                "twilio": "TWILIO_ACCOUNT_SID", "gbp": "GBP_CLIENT_ID",
-                "wordpress": "WORDPRESS_URL", "ringcentral": "RINGCENTRAL_API_KEY",
+                "gbp": "GBP_CLIENT_ID",
+                "wordpress": "WORDPRESS_URL", "ringcentral": "RC_CLIENT_ID",
                 "stripe_webhook": "STRIPE_WEBHOOK_SECRET",
             }
             v = os.environ.get(keymap[integration], "")

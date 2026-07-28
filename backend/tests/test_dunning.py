@@ -140,13 +140,13 @@ def test_manual_send_reminder_persists(admin_h, dbc):
     dbc.dunning_reminders.delete_many({"invoice_id": iid})
 
 
-def test_sms_returns_pending_twilio_when_key_absent(admin_h, dbc,
+def test_sms_returns_pending_sms_when_key_absent(admin_h, dbc,
                                                         monkeypatch):
     iid = _seed_invoice(dbc, days_past=14)
-    # Force-unset Twilio env vars in the running process is not possible
+    # Force-unset RC env vars in the running process is not possible
     # from an external request; instead assert the behavior via a direct
-    # send with a stage that includes sms — if Twilio is not configured
-    # (which is the default in this env), the SMS row must be "pending_twilio".
+    # send with a stage that includes sms — if RC is not configured
+    # (which is the default in this env), the SMS row must be "pending_sms".
     r = requests.post(f"{API}/dunning/invoices/{iid}/send-reminder",
                        headers=admin_h,
                        json={"stage_id": "past_due_14d"}, timeout=30).json()
@@ -154,11 +154,11 @@ def test_sms_returns_pending_twilio_when_key_absent(admin_h, dbc,
     if not sms_rows:
         pytest.skip("stage did not include sms — env config")
     row = sms_rows[0]
-    # Either sent (Twilio keys present) or the honest pending_twilio.
-    assert row["status"] in {"sent", "pending_twilio"}
+    # Either sent (RC keys present) or the honest pending_sms.
+    assert row["status"] in {"sent", "pending_sms"}
     # If pending, never silently mocked — must expose a reason.
-    if row["status"] == "pending_twilio":
-        assert row["error"] == "twilio-not-configured"
+    if row["status"] == "pending_sms":
+        assert row["error"] == "sms-not-configured"
     dbc.quotes.delete_one({"id": iid})
     dbc.dunning_reminders.delete_many({"invoice_id": iid})
 

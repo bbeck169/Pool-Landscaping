@@ -11,7 +11,7 @@ Contract
   with a 30-day TTL index on ``processed_at`` (created at startup by
   ``db_indexes.ensure_deployment_indexes``). Replay-safe: identical
   ``event.id`` values are processed exactly once.
-* Returns 200 fast; heavy work (Resend + Twilio receipts, admin
+* Returns 200 fast; heavy work (Resend + RingCentral receipts, admin
   fan-out on disputes) runs inside the same request but the mutations
   are additive/idempotent so a slow send never blocks Stripe's retry
   logic beyond the usual 20-second webhook budget.
@@ -20,7 +20,7 @@ Event handlers wired
 ====================
 * ``payment_intent.succeeded``        → mark invoice paid, insert
                                         payment record, send Resend +
-                                        Twilio receipts (both recorded
+                                        RingCentral receipts (both recorded
                                         in ``marketing_deliveries``
                                         with ``kind='transactional'``).
 * ``payment_intent.payment_failed``   → flag ledger + invoice.
@@ -101,7 +101,7 @@ async def _record_delivery(*, tenant_id: str, kind: str, channel: str,
 
 async def _send_receipts(*, tenant_id: str, invoice_id: str,
                           payment_intent_id: str, amount_cents: int) -> None:
-    """Send Resend email + Twilio SMS receipts on payment_intent.succeeded."""
+    """Send Resend email + RingCentral SMS receipts on payment_intent.succeeded."""
     inv = await db.quotes.find_one(
         {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice"},
         {"_id": 0},

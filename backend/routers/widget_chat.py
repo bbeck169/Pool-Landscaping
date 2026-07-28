@@ -427,7 +427,7 @@ async def post_widget_message(
                     tenant["id"],
                 )
             else:
-                from services.sms.rc_adapter import send as _twilio_send
+                from services.sms.rc_adapter import send as _sms_send
                 sms_body = (
                     f"{tenant_row.get('name') or 'Widget'} chat lead "
                     f"({cid[:8]}): {who} · {contact_str} — "
@@ -435,7 +435,7 @@ async def post_widget_message(
                 )
                 for r in recips[:5]:  # hard cap fan-out
                     try:
-                        await _twilio_send(
+                        await _sms_send(
                             to=r, body=sms_body,
                             category="transactional",
                             tenant_id=tenant["id"],

@@ -177,7 +177,7 @@ function StepIntegrations({ data, setData }) {
     { key: "stripe", label: "Stripe (Payments)" },
     { key: "google", label: "Google (Maps + Places)" },
     { key: "resend", label: "Resend (Email)" },
-    { key: "twilio", label: "Twilio (SMS)" },
+    { key: "ringcentral", label: "RingCentral (SMS)" },
     { key: "openweb", label: "OpenWeb Ninja (Search)" },
   ];
   return (

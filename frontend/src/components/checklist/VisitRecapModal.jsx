@@ -3,8 +3,8 @@
  *
  * Shown right after `Close Job` completes on the ChecklistModal. Lets
  * the tech decide whether to text the customer, email them, both — or
- * skip the whole thing. Uses honest mocking: when Twilio/Resend aren't
- * configured the backend returns `{sent:false, mocked:true, reason}`
+ * skip the whole thing. Uses honest mocking: when RingCentral/Resend
+ * aren't configured the backend returns `{sent:false, mocked:true, reason}`
  * per channel and this modal surfaces the reason verbatim.
  */
 import React, { useMemo, useState } from "react";

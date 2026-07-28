@@ -364,7 +364,7 @@ async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, i
         if step["channel"] == "sms":
             body = strip_html(body)
         delivery_id = new_id()
-        # Slice N / S · route email through Resend, SMS through Twilio.
+        # Slice N / S · route email through Resend, SMS through RingCentral.
         provider_status = None
         provider = "mock"
         provider_response_id = None
@@ -391,8 +391,8 @@ async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, i
                 provider_status = "failed"
         elif step["channel"] == "sms":
             try:
-                from services.sms.rc_adapter import send as _twilio_send
-                res = await _twilio_send(
+                from services.sms.rc_adapter import send as _sms_send
+                res = await _sms_send(
                     to=(cust.get("phone") or "").strip(),
                     body=body,
                     category="drip",
@@ -405,7 +405,7 @@ async def process_due_enrolments(tenant_id: Optional[str] = None) -> Dict[str, i
                 provider_response_id = res.get("provider_response_id")
                 attempts = res.get("attempts") or 0
             except Exception as exc:  # pragma: no cover
-                logger.warning("[m5c] twilio adapter failed: %s", exc)
+                logger.warning("[m5c] rc adapter failed: %s", exc)
                 provider_status = "failed"
         await db.marketing_deliveries.insert_one({
             "id": delivery_id,

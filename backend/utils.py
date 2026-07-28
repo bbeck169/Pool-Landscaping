@@ -146,13 +146,13 @@ def deny_impersonation(user: dict) -> None:
 def send_sms(to: str, body: str) -> bool:
     """Legacy sync-return SMS helper.
 
-    Phase 5A hot-fix · Feb 2026 — delegates to the shipped Twilio
-    adapter (``services.sms.rc_adapter.send``) so API-key auth
-    is picked up correctly. The adapter is async; we hop threads via
-    ``asyncio.run`` (safe here because this helper is invoked from
-    sync fire-and-forget code paths like ``notify_customer``).
-    Returns True on any successful queue/send, False otherwise —
-    matches the historical return shape callers already handle."""
+    Feb-2026 · Twilio→RC consolidation — delegates to the shipped
+    RingCentral adapter (``services.sms.rc_adapter.send``). The adapter
+    is async; we hop threads via ``asyncio.run`` (safe here because this
+    helper is invoked from sync fire-and-forget code paths like
+    ``notify_customer``). Returns True on any successful queue/send,
+    False otherwise — matches the historical return shape callers
+    already handle."""
     if not to:
         return False
     try:
@@ -172,8 +172,14 @@ def send_sms(to: str, body: str) -> bool:
         else:
             fut = asyncio.run_coroutine_threadsafe(_go(), loop)
             res = fut.result(timeout=15)
-        return (res.get("provider") == "twilio"
-                and res.get("provider_status") in ("queued", "sent", "delivered", "accepted"))
+        provider = res.get("provider")
+        status = res.get("provider_status")
+        # RC adapter returns provider="ringcentral" on live sends,
+        # "mock" when unconfigured, and provider_status="dry_run" when
+        # the comms_env_guard blocks the send. Only accept live RC
+        # successes as True.
+        return (provider == "ringcentral"
+                and status in ("queued", "sent", "delivered", "accepted"))
     except Exception as e:
         logger.warning(f"SMS send failed: {e}")
         return False

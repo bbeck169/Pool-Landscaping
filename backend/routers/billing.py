@@ -1,7 +1,7 @@
 """Phase 3 additions:
 - Payment-handle settings (Venmo/Zelle/Cash App/PayPal + automatic-invoice-texting toggle)
 - Master invoices (combine multiple regular invoices into one payable)
-- Invoice SMS (Twilio; graceful no-op when unconfigured)
+- Invoice SMS (RingCentral; graceful no-op when unconfigured)
 - Quote → Job conversion
 """
 import asyncio
@@ -71,14 +71,11 @@ class InvoiceSmsIn(BaseModel):
 async def send_invoice_sms(iid: str, body: InvoiceSmsIn,
                            user: dict = Depends(require_admin),
                            tenant: dict = Depends(get_current_tenant)):
-    """Text an invoice link via the shipped Twilio adapter.
+    """Text an invoice link via the shipped RingCentral SMS adapter.
 
-    Phase 5A hot-fix · Feb 2026 — the previous implementation read
-    ``TWILIO_AUTH_TOKEN`` directly and returned ``twilio-not-configured``
-    when it was blank, even though this tenant uses API-key auth
-    (``TWILIO_API_KEY_SID`` + ``TWILIO_API_KEY_SECRET``). All SMS traffic
-    now funnels through ``services/sms/rc_adapter.send`` which
-    understands both auth modes and never raises.
+    Feb-2026 · Twilio→RC consolidation — all SMS traffic funnels through
+    ``services/sms/rc_adapter.send`` which handles E.164 normalization,
+    retry, DRY-RUN allow-list guard, and never raises.
     """
     inv = await db.quotes.find_one({"id": iid, "tenant_id": tenant["id"]}, {"_id": 0})
     if not inv:
@@ -104,16 +101,16 @@ async def send_invoice_sms(iid: str, body: InvoiceSmsIn,
         idempotency_key=f"invoice-sms:{iid}",
     )
     provider = res.get("provider")
-    if provider == "twilio" and res.get("provider_status") in ("queued", "sent", "delivered", "accepted"):
+    status = res.get("provider_status")
+    if provider == "ringcentral" and status in ("queued", "sent", "delivered", "accepted"):
         return {"sent": True, "to": to, "sid": res.get("provider_response_id")}
-    if provider == "mock":
-        # Adapter is disabled at runtime (no API-key pair AND no
-        # auth token). Preserve the historical shape so any existing
-        # UI that keys off ``reason == "twilio-not-configured"`` keeps
-        # working — but the shipped adapter's ``enabled`` gate is now
-        # the single source of truth.
-        return {"sent": False, "reason": "twilio-not-configured", "to": to}
-    return {"sent": False, "reason": res.get("error") or "twilio-send-failed", "to": to}
+    if provider == "mock" or status == "dry_run":
+        # Adapter is disabled at runtime (RC creds absent) OR the
+        # comms_env_guard blocked the send (non-prod env, recipient
+        # not on allow-list). Preserve the shape any existing UI keys
+        # off — reason is now a neutral "sms-not-configured".
+        return {"sent": False, "reason": "sms-not-configured", "to": to}
+    return {"sent": False, "reason": res.get("error") or "sms-send-failed", "to": to}
 
 
 # ─── Convert approved quote → job ───────────────────────────────────────────

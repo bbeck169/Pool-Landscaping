@@ -642,7 +642,7 @@ function SmsModal({ open, onClose, invoice, customer, onDone }) {
     try {
       const r = await api.post(`/invoices/${invoice.id}/send-sms`, { to, message: msg });
       if (r.sent) onDone(`Text sent to ${r.to}`);
-      else if (r.reason === "twilio-not-configured") onDone("Twilio not configured — SMS skipped (dev mode)", "info");
+      else if (r.reason === "sms-not-configured" || r.reason === "twilio-not-configured") onDone("SMS delivery not configured — logged only", "info");
       else onDone(r.reason || "Failed", "error");
     } catch (e) {
       onDone(e.message, "error");

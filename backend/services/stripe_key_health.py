@@ -4,7 +4,7 @@ Runs once a day at 08:00 America/Phoenix (falls back to 15:00 UTC when
 the ``zoneinfo`` stdlib module isn't available). Calls
 ``stripe.Account.retrieve()`` internally, and if Stripe refuses the key
 (most commonly ``AuthenticationError`` from an expired/rotated key),
-fans out an alert to tenant admins via the shipped Resend + Twilio
+fans out an alert to tenant admins via the shipped Resend + RingCentral
 adapters — same code paths used by the rest of the app so any tenant
 suppressions / transactional overrides continue to apply.
 

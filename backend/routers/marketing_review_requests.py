@@ -602,7 +602,7 @@ async def _deliver(rr: Dict[str, Any], now: datetime) -> None:
     if rr["channel"] == "sms":
         body = strip_html(body)
     delivery_id = new_id()
-    # Slice N / S · Resend for email, Twilio for SMS.
+    # Slice N / S · Resend for email, RingCentral for SMS.
     provider_status = None
     provider = "mock"
     provider_response_id = None
@@ -628,8 +628,8 @@ async def _deliver(rr: Dict[str, Any], now: datetime) -> None:
             provider_status = "failed"
     elif rr["channel"] == "sms":
         try:
-            from services.sms.rc_adapter import send as _twilio_send
-            res = await _twilio_send(
+            from services.sms.rc_adapter import send as _sms_send
+            res = await _sms_send(
                 to=(cust.get("phone") or "").strip(),
                 body=body,
                 category="review_request",
@@ -642,7 +642,7 @@ async def _deliver(rr: Dict[str, Any], now: datetime) -> None:
             provider_response_id = res.get("provider_response_id")
             attempts = res.get("attempts") or 0
         except Exception as exc:  # pragma: no cover
-            logger.warning("[m6] twilio adapter failed: %s", exc)
+            logger.warning("[m6] rc adapter failed: %s", exc)
             provider_status = "failed"
     await db.marketing_deliveries.insert_one({
         "id": delivery_id,

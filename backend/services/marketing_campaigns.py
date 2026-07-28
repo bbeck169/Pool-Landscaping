@@ -592,12 +592,12 @@ async def dispatch_campaign(tenant_id: str, campaign_id: str) -> Dict[str, Any]:
             primary = m.group(0) if m else None
             final_sms = rewrite_sms_body(rendered_sms, campaign_id,
                                               sub["id"], send_id, primary)
-            # Phase-3 · route through the Slice-S Twilio adapter which
+            # Phase-3 · route through the RingCentral SMS adapter which
             # handles E.164, retry, STOP suffix on category=campaign,
             # and a marketing-suppression re-check as belt-and-braces.
             try:
-                from services.sms.rc_adapter import send as _twilio_send
-                r = await _twilio_send(
+                from services.sms.rc_adapter import send as _sms_send
+                r = await _sms_send(
                     to=sub["phone"], body=final_sms,
                     category="campaign", tenant_id=tenant_id,
                     customer_id=sub.get("customer_id"),
@@ -606,7 +606,7 @@ async def dispatch_campaign(tenant_id: str, campaign_id: str) -> Dict[str, Any]:
                 provider_id = provider_id or (r or {}).get("provider_response_id")
                 if (r or {}).get("provider_status") == "failed":
                     ok_sms = False
-                    logger.warning("[m2] twilio failed: %s",
+                    logger.warning("[m2] rc adapter failed: %s",
                                     (r or {}).get("error"))
             except Exception as e:
                 ok_sms = False

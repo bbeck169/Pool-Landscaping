@@ -35,10 +35,10 @@ class TestLeadRequestGeneration:
                           json={"method": "sms", "to": "+15551234567",
                                 "custom_message": "TEST_LR sms", "expiry_hours": 48},
                           timeout=15).json()
-        # If Twilio isn't configured, sent should be False with a reason.
+        # If RC isn't configured, sent should be False with a reason.
         # If it happens to be live, sent may be True.
         if not r["sent"]:
-            assert r["reason"] in ("twilio-not-configured", None) or "twilio" in (r["reason"] or "").lower() or "not configured" in (r["reason"] or "").lower()
+            assert r["reason"] in ("sms-not-configured", "twilio-not-configured", None) or "sms" in (r["reason"] or "").lower() or "not configured" in (r["reason"] or "").lower()
         assert r["url"].startswith("http")
 
     def test_generate_email_graceful(self):

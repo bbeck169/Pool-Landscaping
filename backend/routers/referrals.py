@@ -6,10 +6,10 @@
 - Every response is tenant-scoped. Tech role (`role == "technician"`) is
   blocked with 403 on the entire authenticated surface — only the two public
   endpoints (/track, /apply) are exempt.
-- No silent mocking: SMS invites explicitly return `status: "pending_twilio"`
-  when Twilio credentials are absent.
+- No silent mocking: SMS invites route through the RingCentral adapter
+  (services.sms.rc_adapter). When RC is unconfigured the adapter fails
+  closed with ``provider="mock"`` and we surface ``status="pending_sms"``.
 """
-import os
 import secrets
 import string
 from datetime import datetime, timezone, timedelta
@@ -195,21 +195,48 @@ async def send_invite(
     if body.channel not in ("email", "sms", "copy", "social"):
         raise HTTPException(400, f"Unsupported channel {body.channel}")
     code_doc = await _get_or_create_code(tenant["id"], user["id"])
-    twilio_ready = bool(os.environ.get("TWILIO_ACCOUNT_SID")
-                        and os.environ.get("TWILIO_AUTH_TOKEN")
-                        and os.environ.get("TWILIO_FROM_NUMBER"))
-    resend_ready = bool(os.environ.get("RESEND_API_KEY"))
+    import os as _os
+    resend_ready = bool(_os.environ.get("RESEND_API_KEY"))
     results = []
     recipients = body.recipients or [Recipient()]
     for r in recipients:
         status = "sent"
         error = None
         if body.channel == "sms":
-            if not (twilio_ready and r.phone):
-                status = "pending_twilio"
-                error = ("Twilio not configured — invite recorded, delivery "
-                         "starts once credentials are added") if not twilio_ready \
-                         else "phone missing"
+            if not r.phone:
+                status = "pending_sms"
+                error = "phone missing"
+            else:
+                # Feb-2026 Twilio→RC consolidation — call the RC adapter
+                # directly. It fails-closed with provider="mock" when RC
+                # is unconfigured; surface that as pending_sms so the
+                # invite is still recorded.
+                try:
+                    from services.sms.rc_adapter import send as _sms_send
+                    _sms_body = (f"{user.get('name','A friend')} thinks you'll "
+                                   f"love Pool & Landscaping. Use their referral "
+                                   f"link — they'll earn 50% off a month of "
+                                   f"service: {_link_for(code_doc['code'])}")
+                    res = await _sms_send(
+                        to=r.phone, body=_sms_body,
+                        category="transactional",
+                        tenant_id=tenant["id"],
+                        idempotency_key=f"referral-invite:{code_doc['code']}:{r.phone}",
+                    )
+                    ps = (res or {}).get("provider_status")
+                    if ps in ("sent", "queued", "delivered", "accepted"):
+                        status = "sent"
+                    elif ps in ("mocked", "dry_run"):
+                        status = "pending_sms"
+                        error = ("SMS delivery not configured — invite recorded, "
+                                   "delivery starts once RingCentral is wired")
+                    else:
+                        status = "failed"
+                        error = (res or {}).get("error") or "sms-send-failed"
+                except Exception as exc:
+                    logger.warning("[referrals] SMS invite failed: %s", exc)
+                    status = "failed"
+                    error = str(exc)[:120]
         elif body.channel == "email":
             if not (resend_ready and r.email):
                 status = "pending_resend" if not resend_ready else "sent"

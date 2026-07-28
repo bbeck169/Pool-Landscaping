@@ -210,7 +210,7 @@ async def email_smoke_test(
 
 
 # ══════════════════════════════════════════════════════════════════
-# Slice S · Twilio SMS smoke-test + status callback
+# SMS smoke-test (RingCentral) + status callback
 # ══════════════════════════════════════════════════════════════════
 @router.post("/dev/sms-smoke-test")
 async def sms_smoke_test(
@@ -219,15 +219,15 @@ async def sms_smoke_test(
     user: dict = Depends(require_admin),
     tenant: dict = Depends(get_current_tenant),
 ):
-    """Fire a canned SMS through the Twilio adapter for wiring checks.
-    Disabled when ``APP_ENV=production``.  Uses category=transactional
-    so no ``Reply STOP`` suffix is auto-appended."""
+    """Fire a canned SMS through the RingCentral adapter for wiring
+    checks. Disabled when ``APP_ENV=production``. Uses
+    category=transactional so no ``Reply STOP`` suffix is auto-appended."""
     if os.environ.get("APP_ENV", "").lower() == "production":
         raise HTTPException(403, "Smoke test disabled in production")
     from services.sms.rc_adapter import send as _sms_send
     text = body or (
-        f"Slice S smoke test from {tenant.get('name') or tenant['id']}. "
-        "Twilio adapter live."
+        f"SMS smoke test from {tenant.get('name') or tenant['id']}. "
+        "RingCentral adapter live."
     )
     res = await _sms_send(
         to=to, body=text,

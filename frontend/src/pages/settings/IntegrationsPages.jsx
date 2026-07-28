@@ -54,10 +54,9 @@ export function IntegrationsHub() {
     { k: "resend", label: "Resend", desc: "Transactional email" },
     { k: "stripe", label: "Stripe", desc: "Card payments" },
     { k: "stripe_webhook", label: "Stripe Webhook", desc: "Webhook signing secret" },
-    { k: "twilio", label: "Twilio", desc: "SMS delivery" },
     { k: "wordpress", label: "WordPress", desc: "SEO article publishing" },
     { k: "gbp", label: "Google Business Profile", desc: "OAuth Client ID" },
-    { k: "ringcentral", label: "RingCentral", desc: "Inbound call tracking" },
+    { k: "ringcentral", label: "RingCentral", desc: "SMS delivery + inbound call tracking" },
   ];
 
   return (

@@ -171,7 +171,7 @@ async def generate(body: GenerateIn,
             if ok:
                 sent = True
             else:
-                reason = "twilio-not-configured"
+                reason = "sms-not-configured"
         except Exception as e:
             logger.warning(f"lead-request SMS failed: {e}")
             reason = str(e)[:120]
@@ -256,7 +256,7 @@ async def resend(did: str,
                                              d.get("expiry_hours") or 48, d.get("custom_message", "")))
             sent = bool(ok)
             if not sent:
-                reason = "twilio-not-configured"
+                reason = "sms-not-configured"
         except Exception as e:
             reason = str(e)[:120]
     elif d["method"] == "email" and d.get("to"):

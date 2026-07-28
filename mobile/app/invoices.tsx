@@ -133,7 +133,7 @@ export default function Invoices() {
       Alert.alert(
         "Reminder sent ✅",
         `${inv.customer_name} was notified in-app${r.email_sent ? " and by email" : ""}.` +
-          (r.email_sent ? "" : "\n(Email/SMS send is skipped until Resend/Twilio keys are added.)")
+          (r.email_sent ? "" : "\n(Email/SMS delivery not configured — logged only.)")
       );
     } catch (e: any) {
       Alert.alert("Failed", e.message);

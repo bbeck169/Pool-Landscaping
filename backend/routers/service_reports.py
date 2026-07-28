@@ -1188,7 +1188,7 @@ async def last_readings(
 # ─── Phase 39 · Send Visit Recap ────────────────────────────────────────
 # Fired after a tech closes a job. Composes a short summary of the visit
 # (chemicals added, water readings, up to 3 photos) and sends it to the
-# customer via Twilio SMS and/or Resend email. If either channel isn't
+# customer via RingCentral SMS and/or Resend email. If either channel isn't
 # configured we return an honest `mocked:true, reason` for that channel
 # instead of silently pretending to send. Every attempt (real or mocked)
 # is written to `visit_recaps_sent` for the audit trail.
@@ -1329,10 +1329,9 @@ def _compose_recap(report: dict, job: dict, customer: dict, tech_name: str,
 
 
 async def _send_recap_sms(customer: dict, plain: str) -> dict:
-    """Phase 5A hot-fix · Feb 2026 — route through the shipped Twilio
-    adapter so API-key auth works. Previously required
-    ``TWILIO_AUTH_TOKEN`` which is intentionally blank on API-key
-    tenants."""
+    """Feb-2026 · Twilio→RC consolidation — route through the shipped
+    RingCentral adapter. Fails-closed with a neutral reason string
+    when RC creds are absent."""
     to = customer.get("alert_phone") or customer.get("phone")
     if not to:
         return {"sent": False, "mocked": True,
@@ -1343,14 +1342,15 @@ async def _send_recap_sms(customer: dict, plain: str) -> dict:
         customer_id=customer.get("id"),
     )
     provider = res.get("provider")
-    if provider == "twilio" and res.get("provider_status") in ("queued", "sent", "delivered", "accepted"):
+    status = res.get("provider_status")
+    if provider == "ringcentral" and status in ("queued", "sent", "delivered", "accepted"):
         return {"sent": True, "mocked": False,
-                 "twilio_sid": res.get("provider_response_id")}
-    if provider == "mock":
+                 "sms_message_id": res.get("provider_response_id")}
+    if provider == "mock" or status == "dry_run":
         return {"sent": False, "mocked": True,
-                 "reason": "twilio not configured"}
+                 "reason": "sms not configured"}
     return {"sent": False, "mocked": True,
-             "reason": f"twilio error: {res.get('error') or 'send_failed'}"}
+             "reason": f"sms error: {res.get('error') or 'send_failed'}"}
 
 
 async def _send_recap_email(customer: dict, subject: str, html: str) -> dict:
