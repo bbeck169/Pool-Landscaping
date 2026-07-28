@@ -44,7 +44,7 @@ CHAT_MSG_COST = 1        # credits per chat send
 HEAVY_ACTION_COST = 5    # credits per LLM-heavy action (drafts)
 
 DEFAULT_EMPLOYEES: List[Dict[str, Any]] = [
-    {"key": "casey",  "name": "Casey",  "role": "Directories",     "avatar_emoji": "📇",
+    {"key": "casey",  "name": "Casey",  "role": "Directories",     "avatar_emoji": "📇", "avatar_url": "/avatars/personas/casey.jpg",
      "system_prompt": (
          "You are Casey, the Directories AI Employee for a pool + landscaping CRM. "
          "You help the admin keep their business listings (Google, Yelp, BBB, "
@@ -54,40 +54,40 @@ DEFAULT_EMPLOYEES: List[Dict[str, Any]] = [
          "Ground your drafts in the tenant's NAP profile (business_name, "
          "phone, address, hours, categories) and brand voice."
      )},
-    {"key": "emmie",  "name": "Emmie",  "role": "Email marketing", "avatar_emoji": "✉️",
+    {"key": "emmie",  "name": "Emmie",  "role": "Email marketing", "avatar_emoji": "✉️", "avatar_url": "/avatars/personas/emmie.jpg",
      "system_prompt": (
          "You are Emmie, an email-marketing copilot. Draft campaigns, subject "
          "lines, and A/B variants. Never mark a campaign live yourself — "
          "propose it and let the admin approve. (Ships in slice AE2.)"
      )},
-    {"key": "buddy",  "name": "Buddy",  "role": "Growth analytics", "avatar_emoji": "📈",
+    {"key": "buddy",  "name": "Buddy",  "role": "Growth analytics", "avatar_emoji": "📈", "avatar_url": "/avatars/personas/buddy.jpg",
      "system_prompt": (
          "You are Buddy, a growth analyst. Weekly briefs on pipeline win "
          "rate, InstaQuote conversion, review sentiment, seasonal trends. "
          "(Ships in slice AE3.)"
      )},
-    {"key": "vizzy",  "name": "Vizzy",  "role": "Daily brief",      "avatar_emoji": "🗞️",
+    {"key": "vizzy",  "name": "Vizzy",  "role": "Daily brief",      "avatar_emoji": "🗞️", "avatar_url": "/avatars/personas/vizzy.jpg",
      "system_prompt": (
          "You are Vizzy, the admin's morning brief. Jobs today, open "
          "estimates, hot deals, mentions. (Ships in slice AE3.)"
      )},
-    {"key": "dexter", "name": "Dexter", "role": "Ad-hoc analytics", "avatar_emoji": "🧮",
+    {"key": "dexter", "name": "Dexter", "role": "Ad-hoc analytics", "avatar_emoji": "🧮", "avatar_url": "/avatars/personas/dexter.jpg",
      "system_prompt": (
          "You are Dexter, an ad-hoc analytics AI. Answer natural-language "
          "questions with numbers pulled from the CRM. (Ships in AE3.)"
      )},
-    {"key": "soshie", "name": "Soshie", "role": "Social media",     "avatar_emoji": "📱",
+    {"key": "soshie", "name": "Soshie", "role": "Social media",     "avatar_emoji": "📱", "avatar_url": "/avatars/personas/soshie.jpg",
      "system_prompt": (
          "You are Soshie, a social media drafter for FB/IG/LinkedIn. "
          "Before/after post copy, seasonal ideas. Publishing is "
          "always approve-gated. (Ships in slice AE4.)"
      )},
-    {"key": "scouty", "name": "Scouty", "role": "Recruiting",       "avatar_emoji": "🎯",
+    {"key": "scouty", "name": "Scouty", "role": "Recruiting",       "avatar_emoji": "🎯", "avatar_url": "/avatars/personas/scouty.jpg",
      "system_prompt": (
          "You are Scouty, a recruiting copilot. Job ad drafts, interview "
          "scheduling. (Ships in slice AE4.)"
      )},
-    {"key": "commet", "name": "Commet", "role": "Funnels",          "avatar_emoji": "🚀",
+    {"key": "commet", "name": "Commet", "role": "Funnels",          "avatar_emoji": "🚀", "avatar_url": "/avatars/personas/commet.jpg",
      "audience": "admin",
      "system_prompt": (
          "You are Commet, a minimal funnel/landing-page builder. Draft "
@@ -99,7 +99,7 @@ DEFAULT_EMPLOYEES: List[Dict[str, Any]] = [
     # admin AI, and escalate to the human admin group when they hit
     # anything outside their read-only lookup scope.
     {"key": "skedra", "name": "Skedra", "role": "Scheduling concierge",
-     "audience": "customer", "avatar_emoji": "📅",
+     "audience": "customer", "avatar_emoji": "📅", "avatar_url": "/avatars/personas/skedra.jpg",
      "system_prompt": (
          "You are Skedra, a scheduling concierge for a homeowner using "
          "this pool + landscaping company's portal. You have read-only "
@@ -122,7 +122,7 @@ DEFAULT_EMPLOYEES: List[Dict[str, Any]] = [
          "5. Keep replies short and warm — 1-3 sentences, no jargon."
      )},
     {"key": "billy", "name": "Billy", "role": "Billing concierge",
-     "audience": "customer", "avatar_emoji": "💳",
+     "audience": "customer", "avatar_emoji": "💳", "avatar_url": "/avatars/personas/billy.jpg",
      "system_prompt": (
          "You are Billy, a billing concierge for a homeowner using "
          "this pool + landscaping company's portal. You have FULL "
@@ -245,6 +245,12 @@ class EmployeePatch(BaseModel):
     system_prompt: Optional[str] = Field(None, max_length=4000)
     active: Optional[bool] = None
     avatar_emoji: Optional[str] = Field(None, max_length=8)
+    # Task RR/SS Phase 2 follow-on · Feb 2026 — per-persona portrait
+    # URL. Nullable string; when unset the frontend falls back to the
+    # emoji. Not tenant-branded — every tenant sees the same shared
+    # persona portraits committed under
+    # ``/app/frontend/public/avatars/personas/{key}.jpg``.
+    avatar_url: Optional[str] = Field(None, max_length=1024)
     # Task RR · Feb 2026 — per-persona data read scope.
     # ``customer_scoped`` (default for all seeded personas) restricts
     # tool calls to the caller's OWN customer data. ``tenant_all``
@@ -335,6 +341,7 @@ async def seed_ai_employees_for_tenant(tenant_id: str) -> int:
             "id": new_id(), "tenant_id": tenant_id, "key": e["key"],
             "name": e["name"], "role": e["role"],
             "avatar_emoji": e["avatar_emoji"],
+            "avatar_url": e.get("avatar_url"),
             "system_prompt": e["system_prompt"],
             "audience": audience,
             "read_access_scope": "customer_scoped",
@@ -576,7 +583,7 @@ async def list_all_personas_for_scope(
         {"tenant_id": tenant["id"]},
         {"_id": 0, "id": 1, "key": 1, "name": 1, "role": 1,
           "audience": 1, "read_access_scope": 1, "active": 1,
-          "avatar_emoji": 1},
+          "avatar_emoji": 1, "avatar_url": 1},
     ).sort("audience", 1).to_list(50)
     return {"items": rows, "total": len(rows)}
 

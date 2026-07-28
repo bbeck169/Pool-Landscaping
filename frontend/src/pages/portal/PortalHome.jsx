@@ -407,7 +407,7 @@ export default function PortalHome() {
                 data-testid={`portal-ai-${emp.key}-card`}
               >
                 <div
-                  className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 text-xl"
+                  className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 text-xl overflow-hidden"
                   style={{
                     background:
                       emp.key === "billy"
@@ -418,7 +418,17 @@ export default function PortalHome() {
                   }}
                   aria-hidden="true"
                 >
-                  {emp.avatar_emoji || "🤖"}
+                  {emp.avatar_url ? (
+                    <img
+                      src={emp.avatar_url}
+                      alt={`${emp.name} avatar`}
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                      data-testid={`portal-ai-${emp.key}-avatar`}
+                    />
+                  ) : (
+                    <span>{emp.avatar_emoji || "🤖"}</span>
+                  )}
                 </div>
                 <div className="min-w-0">
                   <div
@@ -895,7 +905,7 @@ function CustomerAiChatPane({ employee, onClose }) {
         >
           <div className="flex items-center gap-2 min-w-0">
             <div
-              className="w-9 h-9 rounded-full flex items-center justify-center text-lg shrink-0"
+              className="w-12 h-12 rounded-full flex items-center justify-center text-2xl shrink-0 overflow-hidden"
               style={{
                 background:
                   employee.key === "billy"
@@ -904,7 +914,16 @@ function CustomerAiChatPane({ employee, onClose }) {
               }}
               aria-hidden="true"
             >
-              {employee.avatar_emoji || "🤖"}
+              {employee.avatar_url ? (
+                <img
+                  src={employee.avatar_url}
+                  alt={`${employee.name} avatar`}
+                  className="w-full h-full object-cover"
+                  data-testid={`portal-ai-chat-avatar-${employee.key}`}
+                />
+              ) : (
+                <span>{employee.avatar_emoji || "🤖"}</span>
+              )}
             </div>
             <div className="min-w-0">
               <div

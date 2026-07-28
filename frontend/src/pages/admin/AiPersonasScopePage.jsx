@@ -34,6 +34,7 @@ import {
   BulkActionBar,
   BulkConfirmModal,
 } from "@/components/bulk-select/BulkSelectToolkit";
+import PersonaAvatar from "@/components/personas/PersonaAvatar";
 
 function scopeLabel(scope) {
   return scope === "tenant_all" ? "Tenant-wide" : "Own customer only";
@@ -281,7 +282,7 @@ export default function AiPersonasScopePage() {
                                 label={`Select ${row.name}`} />
               </div>
               <div className="col-span-3 flex items-center gap-2">
-                <span className="text-2xl">{row.avatar_emoji || "🤖"}</span>
+                <PersonaAvatar persona={row} size={40} />
                 <div>
                   <div className="font-semibold">{row.name}</div>
                   <div className="text-xs" style={{ color: colors.muted }}>

@@ -422,7 +422,7 @@ async def list_customer_ai_employees(
     rows = await db.ai_employees.find(
         {"tenant_id": tenant["id"], "audience": "customer", "active": True},
         {"_id": 0, "id": 1, "key": 1, "name": 1, "role": 1,
-         "avatar_emoji": 1, "audience": 1},
+         "avatar_emoji": 1, "avatar_url": 1, "audience": 1},
     ).sort("key", 1).to_list(20)
     return rows
 
