@@ -35,6 +35,7 @@ import JobCostingPanel from "@/pages/budget/JobCostingPanel";
 import MediaUploader from "@/components/media/MediaUploader";
 import LineItemsSection from "@/pages/jobs/LineItemsSection";
 import TimelineSection from "@/pages/jobs/TimelineSection";
+import JobBeforeAfterPhotos from "@/components/jobs/JobBeforeAfterPhotos";
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
 
 export default function JobDetail() {
@@ -430,6 +431,13 @@ export default function JobDetail() {
           </div>
         ) : null}
       </div>
+
+      {/* Phase F2a · Before & After Photos (F0-native, purpose-scoped).
+          Hidden for customer role — they consume these read-only in the
+          customer portal (F2c, out of scope for this task). */}
+      {!isCustomer ? (
+        <JobBeforeAfterPhotos jobId={job.id} user={user} />
+      ) : null}
 
       {/* Photos */}
       {(user?.role === "admin" || user?.role === "super_admin") ? (

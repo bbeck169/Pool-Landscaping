@@ -26,8 +26,8 @@ function iconFor(ct) {
 }
 
 export function FileList({
-  linkedEntityType, linkedEntityId, canDelete = false, onChange,
-  className = "",
+  linkedEntityType, linkedEntityId, purpose, canDelete = false, onChange,
+  className = "", emptyLabel,
 }) {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState(null);
@@ -35,14 +35,17 @@ export function FileList({
   const reload = useCallback(async () => {
     setErr(null);
     try {
-      const items = await listFilesByEntity(linkedEntityType, linkedEntityId);
+      // Feb-2026 · F2a — pass ``purpose`` through so the caller can
+      // render narrowly-scoped lists (e.g. "Before" vs "After" job
+      // photos) without an extra client-side filter pass.
+      const items = await listFilesByEntity(linkedEntityType, linkedEntityId, purpose);
       setRows(items);
       onChange?.(items);
     } catch (e) {
       setRows([]);
       setErr(e?.message || "Failed to load files.");
     }
-  }, [linkedEntityType, linkedEntityId, onChange]);
+  }, [linkedEntityType, linkedEntityId, purpose, onChange]);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -66,7 +69,7 @@ export function FileList({
   }
   if (rows.length === 0) {
     return <div className={`text-sm text-zinc-500 ${className}`}
-                data-testid="file-list-empty">No files yet.</div>;
+                data-testid="file-list-empty">{emptyLabel || "No files yet."}</div>;
   }
 
   return (
