@@ -197,6 +197,12 @@ from routers import lumino_zapier_bridge as _qq_lumino_zapier  # noqa: E402
 api_router.include_router(_qq_lumino_zapier.router)
 from routers import lumino_return as _qq_lumino_return  # noqa: E402
 api_router.include_router(_qq_lumino_return.router)
+# Task TT · Feb 2026 — RapidAPI-Zillow adapter (dry-scaffold). Ships
+# in ``keys_missing → 503 graceful`` mode: routes register unconditionally
+# so a supervisor restart after populating ``RAPIDAPI_KEY`` +
+# ``RAPIDAPI_ZILLOW_HOST`` in ``.env`` immediately flips the adapter live.
+from routers import zillow_adapter_api as _tt_zillow_adapter  # noqa: E402
+api_router.include_router(_tt_zillow_adapter.router)
 # Task SS/RR Phase 2 · Feb 2026 — the admin credit issuance /
 # reversal endpoints originally shipped in ``customer_credits_admin``
 # collided with the already-shipped Phase 10 ``/customers/{cid}/
@@ -995,6 +1001,14 @@ async def startup():
         logger.info(startup_banner())
     except Exception as e:  # pragma: no cover
         logger.warning(f"comms_env_guard startup_banner failed: {e}")
+    # Task TT · Feb 2026 — Zillow adapter armed banner. Reads env
+    # freshly at boot; a supervisor restart flips ``keys_configured``
+    # from False → True the moment RapidAPI env is populated.
+    try:
+        from services.property_data import startup_log_line as _zillow_startup_log
+        logger.info(_zillow_startup_log())
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"[ZILLOW] startup banner failed: {e}")
     await seed()  # idempotent, ~ms after first run; creates demo admin.
     SEEDS_STARTED_AT = datetime.now(_tz.utc).isoformat()
     # Deployment audit (Phase 58.a) — ensure the deploy-blocker indexes

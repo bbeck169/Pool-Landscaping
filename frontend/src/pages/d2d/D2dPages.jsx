@@ -5,6 +5,7 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import MapView from "@/components/MapView";
 import { ZillowUsageChip } from "@/components/ZillowUsageChip";
+import PropertyMapUnavailable from "@/components/PropertyMapUnavailable";
 
 /* ═══ Phase 10 — D2D Sales module (admin-focused, single dense file) ═══ */
 
@@ -169,12 +170,33 @@ export function D2dMap() {
   useEffect(() => {
     api.get("/customers").then((r) => setCustomers(Array.isArray(r) ? r : (r?.rows || [])));
   }, []);
-  useEffect(() => {
+  const loadSold = React.useCallback(() => {
     setSold({ properties: [], error: null, loading: true });
     api.get(`/d2d/sold-leads?zip=${encodeURIComponent(zip)}&days=${days}`)
-      .then((r) => setSold({ properties: r?.properties || [], error: null, loading: false, rateLimited: false }))
-      .catch((e) => setSold({ properties: [], error: e.message || "Zillow data unavailable", loading: false, rateLimited: String(e?.message || "").includes("429") }));
+      .then((r) => {
+        // Task TT · Feb 2026 — accept the RapidAPI-Zillow adapter's
+        // graceful ``{unavailable: true, reason}`` shape without a
+        // page crash. Existing OpenWebNinja shape (``{properties: []}``)
+        // stays untouched.
+        if (r && r.unavailable === true) {
+          setSold({ properties: [], error: null, loading: false, rateLimited: r.reason === "quota_exhausted", unavailable: true, reason: r.reason });
+          return;
+        }
+        setSold({ properties: r?.properties || [], error: null, loading: false, rateLimited: false, unavailable: false });
+      })
+      .catch((e) => {
+        const is429 = String(e?.message || "").includes("429");
+        setSold({
+          properties: [],
+          error: e.message || "Zillow data unavailable",
+          loading: false,
+          rateLimited: is429,
+          unavailable: is429,
+          reason: is429 ? "quota_exhausted" : undefined,
+        });
+      });
   }, [zip, days]);
+  useEffect(() => { loadSold(); }, [loadSold]);
 
   const layers = useMemo(() => {
     const customerPoints = (customers || [])
@@ -247,7 +269,11 @@ export function D2dMap() {
       <ZillowUsageChip rateLimited={!!sold.rateLimited} refreshKey={sold.properties?.length || 0}
                        testid="d2d-map-zillow-chip" />
 
-      {sold.error && (
+      {sold.unavailable && (
+        <PropertyMapUnavailable reason={sold.reason} onRefresh={loadSold} testid="property-map-unavailable" />
+      )}
+
+      {!sold.unavailable && sold.error && (
         <div className="rounded-xl px-4 py-3 text-sm" style={{ backgroundColor: "#FEF3C7", color: "#78350F" }} data-testid="d2d-zillow-warning">
           Zillow data unavailable — {sold.error}
         </div>
