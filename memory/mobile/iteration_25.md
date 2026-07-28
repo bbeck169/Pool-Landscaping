@@ -1,41 +1,27 @@
-# Iteration 25 — Fix Batch: Header Layout + Next Service Day + Demo Logins
-
-## What was implemented
-
-### FIX 1 — Appointments page Header layout (P0)
-- **Root cause**: `Header` component in `widgets.tsx` had `flexDirection: "row"` on the outer container, causing Breadcrumbs to sit as a horizontal sibling of the title row. This squeezed the title's `flex: 1` container to near-zero width when breadcrumbs were present.
-- **Fix**: Removed `flexDirection: "row"` from outer `header` style (now defaults to column). Added new `headerRow` style with `flexDirection: "row"` wrapping title+right. Breadcrumbs naturally sit below.
-- **Impact**: Affects ALL screens using `Header` — verified both Appointments and Portal Home render correctly.
-
-### FIX 2 — "Next Service Day" tile on Portal Home (P1)
-- Added tile below Quick Actions grid in `portal/home.tsx`
-- Uses existing `data.next_service` from `GET /api/dashboard` endpoint (already fetched)
-- Shows date box (day/month/weekday), service title, tech name, address, chevron
-- Empty state: "No upcoming service scheduled" with calendar icon
-- Tappable — navigates to `/job/{id}`
-
-### FIX 3 — Demo login buttons for preview builds (P1)
-- Added 4 demo login buttons gated on `process.env.EXPO_PUBLIC_ENV === "preview"`
-- Accounts: Super Admin, Admin, Customer, Pool Tech with `password123`
-- Added `EXPO_PUBLIC_ENV=preview` to `.env`
-- When env is not `preview`, renders nothing (fail-safe)
-
-### Tests
-- 14 tests across 3 suites, all passing
-- `demo-login.test.tsx`: 5 tests (render preview, hide production, hide unset, Super Admin tap, Customer tap)
-- `next-service-day.test.tsx`: 4 tests (populated tile, empty state, navigation, tech name)
-- `appointments-header.test.tsx`: 5 tests (title/subtitle visible, left prop, full page render, empty state, data rows)
-
-### Jest infrastructure
-- Installed: `jest`, `jest-expo`, `@testing-library/react-native@12.9.0`, `@types/jest`, `react-test-renderer`
-- Created `jest.config.js` with `jest-expo` preset and module name mapper
-
-## Dependencies installed
-- jest, jest-expo, @testing-library/react-native@12.9.0, @types/jest, react-test-renderer (devDependencies)
-
-## Known issues
-- None. All fixes verified via screenshot + tests.
-
-## Web-to-mobile mapping decisions
-- Next Service Day tile uses `/api/dashboard` endpoint (same as web frontend), not a dedicated endpoint
-- Demo login section mirrors web's prior demo accounts UI pattern, re-gated on EXPO_PUBLIC_ENV
+## Iteration 25 — 3-Fix Batch (Header Layout + Next Service Day + Demo Logins) + Tests
+- **Commit**: a7d0054d3588021bad40d57ca234cbe04e990268
+- **Date**: 2026-07-28
+- **Changes**:
+  - **FIX 1 (P0)**: Fixed Appointments page vertical text layout. Root cause: `Header` component's outer container had `flexDirection: "row"`, making breadcrumbs a horizontal sibling that squeezed the title to near-zero width. Fix: restructured to column outer + row inner for title+right, breadcrumbs below.
+  - **FIX 2 (P1)**: Added "Next Service Day" tile below Quick Actions grid on Portal Home. Uses `data.next_service` from existing `/api/dashboard` endpoint. Shows date box (day/month/weekday), service title, technician, address. Empty state when no service scheduled.
+  - **FIX 3 (P1)**: Added 4 demo login buttons (Super Admin, Admin, Customer, Pool Tech) to login page, gated on `EXPO_PUBLIC_ENV=preview`. Each button calls `login()` with hardcoded email and `password123`. Added `EXPO_PUBLIC_ENV=preview` to `.env`.
+  - **Tests**: Created 3 Jest/RTL test suites (14 tests total, all passing):
+    - `demo-login.test.tsx`: 5 tests (renders when preview, hides when not, credential verification)
+    - `next-service-day.test.tsx`: 4 tests (renders with data, empty state, navigation, tech name)
+    - `appointments-header.test.tsx`: 5 tests (header text visible, left prop, appointments page, empty state, rows)
+  - **Infrastructure**: Set up Jest testing with jest-expo@57.0.2, jest@29.7.0, @testing-library/react-native@12.9.0
+  - `test_compromised_secret_not_present_anywhere` PASSED
+- **Files modified**:
+  - `mobile/src/components/widgets.tsx` (Header restructure: column outer + headerRow style)
+  - `mobile/app/portal/home.tsx` (Next Service Day tile + styles)
+  - `mobile/app/login.tsx` (Demo login section, gated on EXPO_PUBLIC_ENV)
+  - `mobile/.env` (added EXPO_PUBLIC_ENV=preview)
+  - `mobile/jest.config.js` (new)
+  - `mobile/__tests__/demo-login.test.tsx` (new)
+  - `mobile/__tests__/next-service-day.test.tsx` (new)
+  - `mobile/__tests__/appointments-header.test.tsx` (new)
+  - `mobile/package.json` (added jest, jest-expo, testing-library, react-test-renderer, types/jest)
+- **Verified via screenshots**:
+  - Login page: Demo accounts section visible with 4 buttons
+  - Portal Home: Next Service Day tile showing below Quick Actions with date/details
+  - Appointments: Header text renders horizontally, subtitle readable, Book button aligned right
