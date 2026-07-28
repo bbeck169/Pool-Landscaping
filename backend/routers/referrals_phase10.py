@@ -242,6 +242,10 @@ async def reverse_customer_credit_entry(
 
     Guardrails
     ----------
+    * ``body.reason`` (≥5 chars) is REQUIRED (Task RR/SS Phase 2
+      revised scope · Feb 2026). Matches the ``adjust`` endpoint
+      contract so the audit-trail reason column is always human-
+      readable and never auto-generated.
     * Idempotent per entry — refuses if a prior reversal row
       already references this ``entry_id`` (409).
     * Refuses to reverse a reversal (422) — chain unwinds via the
@@ -253,6 +257,12 @@ async def reverse_customer_credit_entry(
     """
     body = body or {}
     force_negative = bool(body.get("force_negative"))
+    reason = (body.get("reason") or "").strip()
+    if len(reason) < 5:
+        raise HTTPException(400, detail={
+            "code": "REASON_REQUIRED",
+            "message": "Reason must be at least 5 characters.",
+        })
     # ── Load original entry ─────────────────────────────────────
     original = await db.customer_credits.find_one(
         {"id": entry_id, "tenant_id": tenant["id"], "customer_id": cid},
@@ -307,8 +317,8 @@ async def reverse_customer_credit_entry(
         "reverted_from_entry_id": entry_id,
         "actor_user_id": user.get("id"),
         "actor_email": user.get("email"),
-        "reason": f"Reversal of entry {entry_id}",
-        "note": f"Reversal of entry {entry_id}",
+        "reason": reason,
+        "note": reason,
         "created_at": now_iso(),
     }
     await db.customer_credits.insert_one(reversal_entry)

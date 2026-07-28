@@ -306,16 +306,19 @@ export function AdjustDialog({ currentBalanceCents, customerId, onClose, onSaved
  */
 export function ReverseConfirmDialog({ entry, customerId, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
+  const [reason, setReason] = useState("");
   const dollars = ((entry?.delta_cents || 0) / 100);
   const abs = Math.abs(dollars).toFixed(2);
   const positive = dollars >= 0;
+  const reasonOk = reason.trim().length >= 5;
 
   async function submit() {
+    if (!reasonOk) return;
     setSaving(true);
     try {
       await api.post(
         `/customers/${customerId}/credits/${entry.id}/reverse`,
-        {},
+        { reason: reason.trim() },
       );
       toast.success("Credit reversed.");
       onSaved?.();
@@ -348,6 +351,20 @@ export function ReverseConfirmDialog({ entry, customerId, onClose, onSaved }) {
             <strong>Original note:</strong> {entry.note}
           </div>
         )}
+        <label className="block">
+          <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1 mt-3">
+            Reason{" "}
+            {!reasonOk && reason.length > 0 && (
+              <span className="text-red-500 normal-case">— min 5 chars</span>
+            )}
+          </div>
+          <textarea rows={2}
+                     value={reason}
+                     onChange={(e) => setReason(e.target.value)}
+                     data-testid="customer-credits-reverse-reason"
+                     placeholder="Why is this being reversed? (audit trail — required)"
+                     className="w-full px-3 py-2 rounded-lg border border-zinc-200 text-sm" />
+        </label>
         <div className="flex items-center justify-end gap-2 mt-2">
           <button onClick={onClose}
                    disabled={saving}
@@ -356,7 +373,7 @@ export function ReverseConfirmDialog({ entry, customerId, onClose, onSaved }) {
           </button>
           <button
             onClick={submit}
-            disabled={saving}
+            disabled={saving || !reasonOk}
             data-testid="customer-credits-reverse-confirm-btn"
             className="px-4 py-2 rounded-lg text-sm text-white bg-red-600 hover:bg-red-700 disabled:opacity-50">
             {saving ? "Reversing…" : "Reverse credit"}

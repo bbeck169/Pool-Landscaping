@@ -81,11 +81,17 @@ def _issue(headers, cid, delta_cents: int, reason: str = "TEST_reverse_setup"):
     return r.json()
 
 
-def _reverse(headers, cid, entry_id, force_negative=False):
+def _reverse(headers, cid, entry_id, force_negative=False,
+              reason: str = "TEST_reverse_via_helper"):
+    """Task RR/SS Phase 2 revised scope · Feb 2026 — ``reason``
+    (≥5 chars) is required by the backend. Helper defaults to a
+    valid stub so callers that don't care about the reason keep
+    working; the three explicit-reason tests below override it."""
     return requests.post(
         f"{API}/customers/{cid}/credits/{entry_id}/reverse",
         headers={**headers, "Content-Type": "application/json"},
-        json={"force_negative": force_negative}, timeout=30,
+        json={"force_negative": force_negative, "reason": reason},
+        timeout=30,
     )
 
 
@@ -189,3 +195,59 @@ def test_reverse_below_zero_super_admin_force_returns_200(
     # Restore balance to zero.
     _issue(super_headers, aq_customer_id, 3000,
               reason="TEST_reverse_force_cleanup")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Task RR/SS Phase 2 revised scope · Feb 2026 — required reason field
+# on the reverse endpoint. Backend now returns 400 REASON_REQUIRED
+# when the reason is missing or shorter than 5 chars, and persists
+# the reason verbatim on the reversal ledger row.
+# ═══════════════════════════════════════════════════════════════════
+
+def test_reverse_missing_reason_returns_400_reason_required(
+    admin_headers, aq_customer_id,
+):
+    orig = _issue(admin_headers, aq_customer_id, 2100,
+                     reason="TEST_reason_missing_setup")
+    entry_id = orig["ledger_entry"]["id"]
+    # No ``reason`` field in the body at all — should 400.
+    r = requests.post(
+        f"{API}/customers/{aq_customer_id}/credits/{entry_id}/reverse",
+        headers={**admin_headers, "Content-Type": "application/json"},
+        json={"force_negative": False}, timeout=30,
+    )
+    assert r.status_code == 400, r.text
+    detail = r.json().get("detail") or {}
+    assert (detail.get("code") if isinstance(detail, dict) else "") \
+        == "REASON_REQUIRED"
+
+
+def test_reverse_short_reason_returns_400_reason_required(
+    admin_headers, aq_customer_id,
+):
+    orig = _issue(admin_headers, aq_customer_id, 2200,
+                     reason="TEST_reason_short_setup")
+    entry_id = orig["ledger_entry"]["id"]
+    r = _reverse(admin_headers, aq_customer_id, entry_id,
+                    reason="hi")     # <5 chars
+    assert r.status_code == 400, r.text
+    detail = r.json().get("detail") or {}
+    assert (detail.get("code") if isinstance(detail, dict) else "") \
+        == "REASON_REQUIRED"
+
+
+def test_reverse_valid_reason_persists_verbatim(
+    admin_headers, aq_customer_id,
+):
+    orig = _issue(admin_headers, aq_customer_id, 2300,
+                     reason="TEST_reason_persist_setup")
+    entry_id = orig["ledger_entry"]["id"]
+    submitted_reason = "TEST_persist_verbatim_" + uuid.uuid4().hex[:8]
+    r = _reverse(admin_headers, aq_customer_id, entry_id,
+                    reason=submitted_reason)
+    assert r.status_code == 200, r.text
+    entry = r.json()["ledger_entry"]
+    assert entry["kind"] == "reversal"
+    # Reason + note both carry the submitted reason verbatim.
+    assert entry["reason"] == submitted_reason
+    assert entry["note"] == submitted_reason
