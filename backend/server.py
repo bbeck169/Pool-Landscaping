@@ -204,6 +204,11 @@ api_router.include_router(_qq_lumino_return.router)
 # in ``.env`` immediately flips the adapter live.
 from routers import zillow_adapter_api as _tt_zillow_adapter  # noqa: E402
 api_router.include_router(_tt_zillow_adapter.router)
+# Phase F0 · Feb 2026 — /api/files/* (upload/download/list/delete)
+# backed by Emergent Object Storage. Fail-soft: router registers even
+# when EMERGENT_LLM_KEY is missing; upload/download return 503.
+from routers import files as _f0_files  # noqa: E402
+api_router.include_router(_f0_files.router)
 # Task SS/RR Phase 2 · Feb 2026 — the admin credit issuance /
 # reversal endpoints originally shipped in ``customer_credits_admin``
 # collided with the already-shipped Phase 10 ``/customers/{cid}/
@@ -1010,6 +1015,17 @@ async def startup():
         logger.info(_zillow_startup_log())
     except Exception as e:  # pragma: no cover
         logger.warning(f"[ZILLOW] startup banner failed: {e}")
+    # Phase F0 · Feb 2026 — File storage init. Fail-soft when
+    # EMERGENT_LLM_KEY is missing; module logs its own warning.
+    try:
+        from services.file_storage import init_storage as _f0_init, is_storage_configured as _f0_ok
+        _f0_init()
+        if _f0_ok():
+            logger.info("[FILE_STORAGE] initialized")
+        else:
+            logger.warning("[FILE_STORAGE] disabled — see prior WARN for reason")
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"[FILE_STORAGE] init failed: {e}")
     await seed()  # idempotent, ~ms after first run; creates demo admin.
     SEEDS_STARTED_AT = datetime.now(_tz.utc).isoformat()
     # Deployment audit (Phase 58.a) — ensure the deploy-blocker indexes

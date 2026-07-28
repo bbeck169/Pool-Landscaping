@@ -314,16 +314,23 @@ def test_duplicate_event_id_is_deduped(client):
 # Feb 2026 update #2 — extended from 4 → 6 values after a rotated
 # OpenWebNinja key (V5) and a rotated Zapier shared secret (V6)
 # were also pasted in chat and immediately marked compromised.
+#
+# Feb 2026 update #3 — extended from 6 → 7 values after ANOTHER
+# rotated OpenWebNinja key (V7) was pasted in chat. The chat
+# channel keeps leaking rotated keys, hence the 3rd extension in
+# a week. Every entry stays assembled-at-runtime for the same
+# self-flagging reason as before.
 # ═══════════════════════════════════════════════════════════════════
 def test_compromised_secret_not_present_anywhere():
     import pathlib
-    # All 6 known-compromised values, assembled from parts.
+    # All 7 known-compromised values, assembled from parts.
     V1 = "zap_lum_" + "9f7d4c2e" + "8b1a5f6e" + "3d9c2b7a" + "8e1f4d6c"
     V2 = "zap_lum_" + "a7f2e9d1" + "c4b8h6j3" + "k1m5n2p9" + "q7r4s8t1"
     V3 = "ak_" + "r0gahuut" + "3djgfat0" + "3tpn7fxe" + "ckss99qz" + "t3oobqq9ycjd201"
     V4 = "sk_live_" + "b116141e" + "_4j0jCE_" + "8tyZHQtc" + "fDlIDle4" + "hk8cv2hRhAKQ7A"
     V5 = "ak_" + "n1ojoydj" + "bmr5lcsu" + "ijkhm7mv" + "cqqk1o29" + "2jvzhvbo68yeq9y"
     V6 = "zap_lum_" + "n3q6t9w2" + "z5c8f1h4" + "k7m0p3r6" + "s9v2w5y"
+    V7 = "ak_" + "gvhognqm" + "y0lzdvgi" + "jm8uopra" + "4rkkf0np" + "2bqn6yx9449ttph"
     compromised = {
         "V1_zapier_shared_secret_1": V1,
         "V2_zapier_shared_secret_2": V2,
@@ -331,6 +338,7 @@ def test_compromised_secret_not_present_anywhere():
         "V4_lumino_live_secret": V4,
         "V5_openwebninja_key_rotated": V5,
         "V6_zapier_shared_secret_rotated": V6,
+        "V7_openwebninja_key_rotated_again": V7,
     }
     # Repo-scope scan — /app is the source-of-truth workspace and
     # the only tree deploys can source. /var/log, /tmp, /root are
