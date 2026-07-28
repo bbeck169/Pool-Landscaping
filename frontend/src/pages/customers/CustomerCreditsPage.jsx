@@ -63,6 +63,7 @@ export function CustomerCreditsPanel({ customerId }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [adjusting, setAdjusting] = useState(false);
+  const [reversing, setReversing] = useState(null);        // ledger entry pending reverse-confirm
   const [role, setRole] = useState("");
 
   const load = useCallback(async () => {
@@ -125,7 +126,8 @@ export function CustomerCreditsPanel({ customerId }) {
           <div className="col-span-3">Date</div>
           <div className="col-span-2">Source</div>
           <div className="col-span-2 text-right">Delta</div>
-          <div className="col-span-5">Note</div>
+          <div className="col-span-4">Note</div>
+          <div className="col-span-1 text-right">Actions</div>
         </div>
         {(data.ledger || []).length === 0 && (
           <div className="py-10 text-center text-sm text-zinc-400"
@@ -138,6 +140,14 @@ export function CustomerCreditsPanel({ customerId }) {
             ? (l.delta_cents / 100)
             : (parseFloat(l.delta) || 0);
           const positive = delta >= 0;
+          const isReversal = l.kind === "reversal" || l.source === "revert";
+          // A row is "already reversed" if the ledger contains
+          // another entry whose ``reverted_from_entry_id`` points at
+          // it. Cheap client-side scan since ledger is capped at 50.
+          const alreadyReverted = (data.ledger || []).some(
+            (x) => x.reverted_from_entry_id === l.id
+          );
+          const reversable = !isReversal && !alreadyReverted && canAdjust;
           return (
             <div key={l.id || l.created_at}
                   data-testid={`customer-credits-history-row-${l.id || l.created_at}`}
@@ -154,12 +164,22 @@ export function CustomerCreditsPanel({ customerId }) {
                 positive ? "text-green-700" : "text-red-600"}`}>
                 {positive ? "+" : "−"}${Math.abs(delta).toFixed(2)}
               </div>
-              <div className="col-span-5 text-sm text-zinc-600 truncate">
+              <div className="col-span-4 text-sm text-zinc-600 truncate">
                 {l.note || l.reason || "—"}
                 {l.actor_email && (
                   <span className="text-xs text-zinc-400 ml-1">
                     by {l.actor_email}
                   </span>
+                )}
+              </div>
+              <div className="col-span-1 text-right">
+                {reversable && (
+                  <button
+                    onClick={() => setReversing(l)}
+                    data-testid={`customer-credits-reverse-${l.id}`}
+                    className="text-xs px-2 py-1 rounded border border-zinc-200 text-zinc-600 hover:bg-zinc-50">
+                    Reverse
+                  </button>
                 )}
               </div>
             </div>
@@ -173,6 +193,13 @@ export function CustomerCreditsPanel({ customerId }) {
           customerId={customerId}
           onClose={() => setAdjusting(false)}
           onSaved={() => { setAdjusting(false); load(); }}/>
+      )}
+      {reversing && canAdjust && (
+        <ReverseConfirmDialog
+          entry={reversing}
+          customerId={customerId}
+          onClose={() => setReversing(null)}
+          onSaved={() => { setReversing(null); load(); }}/>
       )}
     </div>
   );
@@ -268,3 +295,75 @@ export function AdjustDialog({ currentBalanceCents, customerId, onClose, onSaved
     </Dialog>
   );
 }
+
+
+/**
+ * Task RR/SS Phase 2 followup · Feb 2026 — Reverse-credit confirmation
+ * dialog. Calls the new
+ * ``POST /customers/{cid}/credits/{entry_id}/reverse`` endpoint. Never
+ * deletes the original — a compensating ledger row is inserted and the
+ * original stays visible in the history for audit-trail integrity.
+ */
+export function ReverseConfirmDialog({ entry, customerId, onClose, onSaved }) {
+  const [saving, setSaving] = useState(false);
+  const dollars = ((entry?.delta_cents || 0) / 100);
+  const abs = Math.abs(dollars).toFixed(2);
+  const positive = dollars >= 0;
+
+  async function submit() {
+    setSaving(true);
+    try {
+      await api.post(
+        `/customers/${customerId}/credits/${entry.id}/reverse`,
+        {},
+      );
+      toast.success("Credit reversed.");
+      onSaved?.();
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      const msg = typeof detail === "object"
+        ? detail?.message
+        : (detail || e?.message);
+      toast.error(msg || "Reverse failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={true} onOpenChange={(o) => !o && onClose?.()}>
+      <DialogContent className="max-w-md"
+                     data-testid="customer-credits-reverse-confirm-modal">
+        <DialogHeader>
+          <DialogTitle>Reverse this credit?</DialogTitle>
+        </DialogHeader>
+        <div className="text-sm text-zinc-600">
+          Reverse this{" "}
+          <strong>{positive ? "+" : "−"}${abs}</strong>{" "}
+          credit? This creates an offsetting entry — the original
+          entry stays in the ledger for auditability.
+        </div>
+        {entry?.note && (
+          <div className="rounded-lg bg-zinc-50 p-3 text-xs text-zinc-500">
+            <strong>Original note:</strong> {entry.note}
+          </div>
+        )}
+        <div className="flex items-center justify-end gap-2 mt-2">
+          <button onClick={onClose}
+                   disabled={saving}
+                   className="px-4 py-2 rounded-lg text-sm text-zinc-600">
+            Cancel
+          </button>
+          <button
+            onClick={submit}
+            disabled={saving}
+            data-testid="customer-credits-reverse-confirm-btn"
+            className="px-4 py-2 rounded-lg text-sm text-white bg-red-600 hover:bg-red-700 disabled:opacity-50">
+            {saving ? "Reversing…" : "Reverse credit"}
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+

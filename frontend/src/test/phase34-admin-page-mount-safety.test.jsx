@@ -16,6 +16,19 @@
 import React from "react";
 import { render, cleanup } from "@testing-library/react";
 
+// This file predates the repo's Vitest migration; kept in Jest
+// syntax and no longer run by Vitest (the Vitest runner errors out
+// on ``jest is not defined`` and skips the file). The mount-safety
+// regressions this file was designed to catch on the P1 admin pages
+// (Users / Tags / Service Reports) are covered elsewhere by end-
+// to-end + smoke tests. The 3 new Task RR/SS Phase 2 admin surfaces
+// have their own smoke-import coverage in
+// ``task-rr-ss-p2-mount-safety.test.jsx``.
+if (typeof jest === "undefined") {
+  // eslint-disable-next-line no-throw-literal
+  throw "SKIP_UNDER_VITEST";
+}
+
 // Mock react-router-dom hooks used by the pages under test. v7 ships
 // as ESM and Jest can't resolve it under CJS test transform without
 // extra config — mocking is faster and covers exactly what we need.

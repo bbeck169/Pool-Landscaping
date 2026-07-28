@@ -228,6 +228,124 @@ async def get_customer_credits(
 
 
 # ═══════════════════════════ Manual watcher trigger ═══════════════════
+# ═══════════════════════════ Manual watcher trigger ═══════════════════
+@router.post("/customers/{cid}/credits/{entry_id}/reverse")
+async def reverse_customer_credit_entry(
+    cid: str, entry_id: str,
+    body: dict | None = None,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Task RR/SS Phase 2 followup · Feb 2026 — reverse a prior
+    ledger entry by creating an OFFSETTING row (never delete the
+    original — audit-trail integrity).
+
+    Guardrails
+    ----------
+    * Idempotent per entry — refuses if a prior reversal row
+      already references this ``entry_id`` (409).
+    * Refuses to reverse a reversal (422) — chain unwinds via the
+      normal adjust endpoint.
+    * Refuses if the resulting balance would go below zero unless
+      ``force_negative: true`` is passed AND the caller is
+      super_admin (matches the Issue Credit endpoint's semantics).
+    * Writes ``credit_admin_audit`` row.
+    """
+    body = body or {}
+    force_negative = bool(body.get("force_negative"))
+    # ── Load original entry ─────────────────────────────────────
+    original = await db.customer_credits.find_one(
+        {"id": entry_id, "tenant_id": tenant["id"], "customer_id": cid},
+        {"_id": 0},
+    )
+    if not original:
+        raise HTTPException(404, "credit entry not found")
+    if (original.get("kind") == "reversal"
+            or original.get("source") == "revert"):
+        raise HTTPException(422, "cannot reverse a reversal entry")
+    # ── Already-reversed guard ──────────────────────────────────
+    prior_reversal = await db.customer_credits.find_one(
+        {"tenant_id": tenant["id"], "customer_id": cid,
+          "reverted_from_entry_id": entry_id},
+        {"_id": 0, "id": 1},
+    )
+    if prior_reversal:
+        raise HTTPException(409, "entry already reversed")
+    # ── Balance guard ───────────────────────────────────────────
+    orig_delta = int(original.get("delta_cents") or 0)
+    reversal_delta = -orig_delta
+    balance_row = await db.customer_credits_balance.find_one(
+        {"tenant_id": tenant["id"], "customer_id": cid}, {"_id": 0},
+    ) or {}
+    current = int(
+        balance_row.get("balance_cents")
+        or int(float(balance_row.get("balance") or 0) * 100)
+    )
+    new_balance = current + reversal_delta
+    if new_balance < 0:
+        if not force_negative:
+            raise HTTPException(422, detail={
+                "code": "INSUFFICIENT_BALANCE",
+                "message": (f"Reversal would push balance to "
+                                 f"${new_balance/100:.2f}. Pass "
+                                 "force_negative=true (super_admin only) "
+                                 "to proceed."),
+            })
+        if user.get("role") != "super_admin":
+            raise HTTPException(
+                403, "only super_admin can force a negative balance",
+            )
+    # ── Insert reversal row + update balance ────────────────────
+    from utils import new_id as _new_id
+    reversal_entry = {
+        "id": _new_id(),
+        "tenant_id": tenant["id"],
+        "customer_id": cid,
+        "delta_cents": reversal_delta,
+        "source": "revert",
+        "kind": "reversal",
+        "reverted_from_entry_id": entry_id,
+        "actor_user_id": user.get("id"),
+        "actor_email": user.get("email"),
+        "reason": f"Reversal of entry {entry_id}",
+        "note": f"Reversal of entry {entry_id}",
+        "created_at": now_iso(),
+    }
+    await db.customer_credits.insert_one(reversal_entry)
+    await db.customer_credits_balance.update_one(
+        {"tenant_id": tenant["id"], "customer_id": cid},
+        {"$set": {"balance_cents": new_balance,
+                    "balance": new_balance / 100.0,
+                    "updated_at": now_iso()}},
+        upsert=True,
+    )
+    # ── Audit ────────────────────────────────────────────────────
+    try:
+        await db.credit_admin_audit.insert_one({
+            "id": _new_id(),
+            "tenant_id": tenant["id"],
+            "customer_id": cid,
+            "acting_user_id": user.get("id"),
+            "acting_user_role": user.get("role"),
+            "action": "reverse",
+            "entry_id": entry_id,
+            "reversal_entry_id": reversal_entry["id"],
+            "amount_cents": reversal_delta,
+            "balance_before_cents": current,
+            "balance_after_cents": new_balance,
+            "created_at": now_iso(),
+        })
+    except Exception:                                                # noqa: BLE001
+        pass
+    return {
+        "ok": True,
+        "customer_id": cid,
+        "balance_cents": new_balance,
+        "balance_formatted": f"${new_balance/100:.2f}",
+        "ledger_entry": {k: v for k, v in reversal_entry.items() if k != "_id"},
+    }
+
+
 @router.post("/admin/referral-watcher/run")
 async def manual_watcher_run(
     user: dict = Depends(require_admin),
