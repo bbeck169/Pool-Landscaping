@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, TextInput, Pressable, Platform } from "react-native";
+import { View, Text, StyleSheet, TextInput, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useRouter } from "expo-router";
@@ -36,7 +36,7 @@ export default function RequestService() {
         preferred_date: date || undefined,
       });
       // Capture created request id (accept any shape the backend returns)
-      const rid = res?.id || res?.request_id || res?.appointment_id || null;
+      const rid = res?.id || res?.request_id || res?.appointment_id || res?.message_id || res?.message?.id || null;
       setCreatedId(rid);
       setDone(true);
     } catch (e: any) {
