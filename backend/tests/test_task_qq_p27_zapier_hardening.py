@@ -296,3 +296,52 @@ def test_shared_secret_redacted_in_logs(client, caplog):
     # But a 6-char prefix + ellipsis SHOULD appear so ops can
     # correlate which secret Zapier sent.
     assert _TEST_SECRET[:6] in log_lines
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Placeholder guard — REPLACE_ME_* shared-secret env value is
+# treated exactly like the empty-env case: bridge fail-closes to
+# 401 shared_secret_not_configured on every signed OR unsigned
+# request. (Task RR/SS Phase 2 follow-on · Feb 2026.)
+# ═══════════════════════════════════════════════════════════════════
+def test_placeholder_shared_secret_returns_401_shared_secret_not_configured(client):
+    prev = os.environ.get("LUMINO_ZAPIER_SHARED_SECRET", "")
+    os.environ["LUMINO_ZAPIER_SHARED_SECRET"] = "REPLACE_ME_WITH_LUMINO_ZAPIER_SHARED_SECRET"
+    try:
+        # Signed with the placeholder string itself — bridge must
+        # STILL refuse, because the guard treats placeholders as
+        # unconfigured (not as a valid secret to compare against).
+        r = client.post(
+            "/api/webhooks/lumino/zapier",
+            headers={
+                "x-zapier-shared-secret": "REPLACE_ME_WITH_LUMINO_ZAPIER_SHARED_SECRET",
+                "Content-Type": "application/json",
+                "event_type": "payment.created",
+            },
+            json={"event_id": "placeholder-test-1",
+                     "data": {"status": "paid", "payment_id": "p_ph"}},
+        )
+        assert r.status_code == 401, r.text
+        body = r.json()
+        assert body["ok"] is False
+        assert body["error"] == "shared_secret_not_configured"
+        assert body["correlation_id"]
+    finally:
+        os.environ["LUMINO_ZAPIER_SHARED_SECRET"] = prev
+
+
+def test_placeholder_shared_secret_returns_401_on_unsigned_request(client):
+    prev = os.environ.get("LUMINO_ZAPIER_SHARED_SECRET", "")
+    os.environ["LUMINO_ZAPIER_SHARED_SECRET"] = "REPLACE_ME_ANYTHING_HERE"
+    try:
+        r = client.post(
+            "/api/webhooks/lumino/zapier",
+            headers={"Content-Type": "application/json",
+                        "event_type": "payment.created"},
+            json={"event_id": "placeholder-test-2",
+                     "data": {"status": "paid", "payment_id": "p_ph_u"}},
+        )
+        assert r.status_code == 401, r.text
+        assert r.json()["error"] == "shared_secret_not_configured"
+    finally:
+        os.environ["LUMINO_ZAPIER_SHARED_SECRET"] = prev

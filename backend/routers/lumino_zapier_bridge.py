@@ -90,17 +90,33 @@ def _now_iso() -> str:
 
 
 def _shared_secret() -> str:
-    return (os.environ.get("LUMINO_ZAPIER_SHARED_SECRET") or "").strip()
+    """Return the configured shared secret, or ``""`` if unset OR
+    if the current env value looks like an escape-hatch placeholder
+    (starts with ``REPLACE_ME_``). Treating placeholders as unset
+    keeps the bridge fail-closed even after the operator has
+    populated the env line with an unfilled sentinel."""
+    v = (os.environ.get("LUMINO_ZAPIER_SHARED_SECRET") or "").strip()
+    if not v:
+        return ""
+    if v.startswith("REPLACE_ME_"):
+        return ""
+    return v
 
 
 # Boot-time confirmation that the env var is populated by Emergent
 # Secrets (or wherever). Prints the first 4 characters ONLY so an
 # operator can distinguish which secret is active without leaking
 # the value. The full secret NEVER appears in any log line.
-_boot_sec = (os.environ.get("LUMINO_ZAPIER_SHARED_SECRET") or "").strip()
-if _boot_sec:
+_boot_sec_raw = (os.environ.get("LUMINO_ZAPIER_SHARED_SECRET") or "").strip()
+if _boot_sec_raw and _boot_sec_raw.startswith("REPLACE_ME_"):
+    log.warning(
+        "[LUMINO_ZAPIER] shared secret env value looks like a placeholder "
+        "— treating as not configured. Please replace REPLACE_ME_* in "
+        "/app/backend/.env with the real secret and restart.",
+    )
+elif _boot_sec_raw:
     log.info("[LUMINO_ZAPIER] shared secret configured: %s… (len=%d)",
-                _boot_sec[:4], len(_boot_sec))
+                _boot_sec_raw[:4], len(_boot_sec_raw))
 else:
     log.warning("[LUMINO_ZAPIER] shared secret NOT configured — bridge "
                    "will 401 every request until env is populated")

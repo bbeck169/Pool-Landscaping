@@ -85,16 +85,58 @@ _throttle_lock = asyncio.Lock()
 _indexes_ready = False
 
 
+# Placeholder-detection guard (Task RR/SS Phase 2 follow-on · Feb 2026).
+# The escape-hatch flow leaves literal ``REPLACE_ME_*`` strings in
+# ``.env`` until the operator swaps them for real values. Those
+# strings are non-empty, so a naive ``bool(env)`` check would report
+# the adapter as armed even though every live call would 401 upstream.
+# The guard short-circuits placeholder values to ``None`` so the
+# banner reports ``keys_configured=False`` and every live call falls
+# through to the graceful ``keys_not_configured`` return path.
+_PLACEHOLDER_PREFIX = "REPLACE_ME_"
+_placeholder_warned = False
+
+
+def _looks_like_placeholder(value: str) -> bool:
+    return bool(value) and value.startswith(_PLACEHOLDER_PREFIX)
+
+
+def _reset_placeholder_warning_for_tests() -> None:
+    """Test helper — clears the one-shot warning latch so multiple
+    tests can each assert the WARN log line without one silencing
+    the next."""
+    global _placeholder_warned
+    _placeholder_warned = False
+
+
 # ─── env helpers (read-each-call so restart-live-refresh works) ─────
 def _provider_api_key() -> Optional[str]:
     """Prefer ``OPENWEB_NINJA_ZILLOW_API_KEY``; fall back to
     ``OPENWEB_NINJA_API_KEY``. Matches the resolution order used in
     ``config.OPENWEB_NINJA_API_KEY`` so both legacy code and this
     adapter always agree on which key is authoritative.
+
+    Placeholder-detection: if the resolved value starts with
+    ``REPLACE_ME_`` (the escape-hatch marker), treat it as unset.
+    A one-shot WARN log fires the first time this happens per
+    process so the operator sees the guidance in the logs without
+    per-call spam.
     """
+    global _placeholder_warned
     v = (os.environ.get("OPENWEB_NINJA_ZILLOW_API_KEY", "").strip()
          or os.environ.get("OPENWEB_NINJA_API_KEY", "").strip())
-    return v or None
+    if not v:
+        return None
+    if _looks_like_placeholder(v):
+        if not _placeholder_warned:
+            logger.warning(
+                "[ZILLOW] adapter env value looks like a placeholder — "
+                "treating as not configured. Please replace REPLACE_ME_* "
+                "in /app/backend/.env with the real key and restart.",
+            )
+            _placeholder_warned = True
+        return None
+    return v
 
 
 def keys_configured() -> bool:

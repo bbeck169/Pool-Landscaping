@@ -402,3 +402,58 @@ def test_second_call_hits_cache(adapter_env):
     assert r2["cached"] is True
     assert r2["data"] == OWN_SEARCH_OK
     assert len(fake_http.calls) == 1
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 18. Placeholder guard — REPLACE_ME_* value is treated as unset
+#     (Task RR/SS Phase 2 follow-on · Feb 2026).
+# ═══════════════════════════════════════════════════════════════════
+def test_replace_me_placeholder_treated_as_not_configured(adapter_env, monkeypatch, caplog):
+    za, _ = adapter_env
+    monkeypatch.setenv("OPENWEB_NINJA_ZILLOW_API_KEY",
+                          "REPLACE_ME_WITH_ROTATED_OPENWEBNINJA_KEY")
+    monkeypatch.delenv("OPENWEB_NINJA_API_KEY", raising=False)
+    # Reset the one-shot warning latch so we can assert it fires here.
+    za._reset_placeholder_warning_for_tests()
+
+    # keys_configured() must report False.
+    assert za.keys_configured() is False
+    # Startup banner reflects the guard.
+    assert "keys_configured=False" in za.startup_log_line()
+
+    # Live call short-circuits to keys_not_configured (no HTTP fired).
+    fake_http = _FakeAsyncClient([])
+    client = za.ZillowClient(http_client=fake_http)
+    r = _run(client.search_by_address("742 aquaterra way"))
+    assert r == {"unavailable": True, "reason": za.REASON_KEYS_NOT_CONFIGURED}
+    assert fake_http.calls == []
+
+
+def test_replace_me_placeholder_falls_back_to_base_env_variant(adapter_env, monkeypatch):
+    """Placeholder on the ZILLOW-suffixed var must NOT unlock the
+    base ``OPENWEB_NINJA_API_KEY`` — the resolver already prefers
+    ZILLOW, but the placeholder in that slot returns None which
+    then falls through to the base var. If the base is a real
+    value, the adapter arms; if it too is a placeholder, unset."""
+    za, _ = adapter_env
+    monkeypatch.setenv("OPENWEB_NINJA_ZILLOW_API_KEY", "")
+    monkeypatch.setenv("OPENWEB_NINJA_API_KEY",
+                          "REPLACE_ME_WITH_ROTATED_OPENWEBNINJA_KEY")
+    za._reset_placeholder_warning_for_tests()
+    assert za.keys_configured() is False
+
+
+def test_placeholder_warning_is_one_shot_per_process(adapter_env, monkeypatch, caplog):
+    za, _ = adapter_env
+    monkeypatch.setenv("OPENWEB_NINJA_ZILLOW_API_KEY",
+                          "REPLACE_ME_WITH_ROTATED_OPENWEBNINJA_KEY")
+    za._reset_placeholder_warning_for_tests()
+    with caplog.at_level("WARNING", logger="pool_crm"):
+        _ = za.keys_configured()
+        _ = za.keys_configured()
+        _ = za.keys_configured()
+    warn_lines = [r for r in caplog.records
+                    if "looks like a placeholder" in r.getMessage()]
+    assert len(warn_lines) == 1, (
+        f"expected ONE placeholder-warning line, got {len(warn_lines)}"
+    )
