@@ -506,3 +506,21 @@
   - mobile/app/invoice/[id].tsx (wired InvoiceAttachments)
   - mobile/app/estimate-view/[id].tsx (wired InvoiceAttachments)
   - mobile/app/portal/service/[id].tsx (wired JobBeforeAfterPhotos readOnly)
+
+## Iteration 28 — Wave M2: F2a + F2c.1
+- **Commit**: 121dc668ed1cf9a95eb6c279f0235751ed9e672a
+- **Date**: 2026-07-28
+- **Changes**:
+  - **F2a Job Before/After Photos**: Wired JobBeforeAfterPhotos into job/[id].tsx below VideoMediaUploader. readOnly={isCustomer} for role-based access. Alongside legacy base64 photo system (untouched).
+  - **F2c.1 Portal Booking Photos**: Refactored request-service.tsx: (1) capture message_id/id/request_id from POST response, (2) FileUpload card on confirmation (purpose=portal_booking_photo, linkedEntityType=booking_request, max 5), (3) replaced auto-navigate with Done button. Backend returns {message_id, message:{id}} — both captured.
+  - Tests: 59/59 passing (9 new in 2 suites). Compromised-secret guard: PASSING.
+- **Files created**:
+  - mobile/__tests__/f2a-job-photos.test.tsx (4 tests)
+  - mobile/__tests__/f2c1-booking-photos.test.tsx (5 tests)
+- **Files modified**:
+  - mobile/app/job/[id].tsx (added JobBeforeAfterPhotos import + section)
+  - mobile/app/request-service.tsx (capture createdId, FileUpload on confirmation, Done button, styles)
+- **Verified via screenshots**:
+  - Job detail: Before/After Photos card with upload buttons + file list + delete ✅
+  - Booking confirmation: "Add Photos" card with Take Photo / Choose from Library / Choose File ✅
+- **Surprise**: Backend returns `message_id` not `id` for service requests. Fixed ID capture to accept both.
