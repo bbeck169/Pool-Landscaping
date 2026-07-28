@@ -9,7 +9,12 @@ from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
 from routers.tenants import get_current_tenant
-from models import *  # noqa: F403,F405
+from models import (
+    CreateLoginRequest,
+    CustomerBulkAction,
+    CustomerIn,
+    CustomerProfileUpdate,
+)
 
 router = APIRouter()
 

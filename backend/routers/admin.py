@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
-from models import *  # noqa: F403,F405
+from models import AIChatIn, AccessUpdate
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 router = APIRouter()
