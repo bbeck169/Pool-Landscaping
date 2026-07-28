@@ -3,6 +3,7 @@ import { Plus, CheckCircle2, Circle, Clock, Trash2, User } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button, TextInput, EmptyState, Modal, Toast, Chip } from "@/components/ui-kit";
+import { UserAvatar } from "@/components/UserAvatar";
 
 /**
  * Customer Tasks panel — Feb-2026 Customer Detail Additions ship.
@@ -162,8 +163,12 @@ export function CustomerTasksPanel({ customerId, registerOpener }) {
                       </span>
                     ) : null}
                     {assignee ? (
-                      <span className="inline-flex items-center gap-1">
-                        <User size={11} /> {assignee.name}
+                      <span
+                        className="inline-flex items-center gap-1"
+                        data-testid={`cd-task-assignee-chip-${t.id}`}
+                      >
+                        <UserAvatar user={assignee} size="xs" />
+                        {assignee.name}
                       </span>
                     ) : null}
                   </div>

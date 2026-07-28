@@ -14,6 +14,7 @@ import TosGate from "@/components/legal/TosGate";
 import ProfileCompletionGate from "@/components/portal/ProfileCompletionGate";
 import Breadcrumbs from "@/components/breadcrumbs/Breadcrumbs";
 import { OnboardingLoginModal } from "@/pages/onboarding/OnboardingPage";
+import { UserAvatar } from "@/components/UserAvatar";
 import { brandGradientCss, colors, font } from "@/theme";
 import {
   LayoutDashboard,
@@ -461,19 +462,24 @@ function AppLayout() {
           <div className="text-xs uppercase tracking-wide mb-1" style={{ color: colors.muted }}>
             Signed in
           </div>
-          <div
-            className="text-sm font-semibold truncate"
-            style={{ color: colors.onSurface }}
-            data-testid="shell-user-name"
-          >
-            {user.name || user.email}
-          </div>
-          <div
-            className="text-xs mb-3"
-            style={{ color: colors.muted }}
-            data-testid="shell-user-role"
-          >
-            {roleLabel}
+          <div className="flex items-center gap-3 mb-3">
+            <UserAvatar user={user} size="md" testid="shell-user-avatar" />
+            <div className="min-w-0 flex-1">
+              <div
+                className="text-sm font-semibold truncate"
+                style={{ color: colors.onSurface }}
+                data-testid="shell-user-name"
+              >
+                {user.name || user.email}
+              </div>
+              <div
+                className="text-xs"
+                style={{ color: colors.muted }}
+                data-testid="shell-user-role"
+              >
+                {roleLabel}
+              </div>
+            </div>
           </div>
           <button
             onClick={onLogout}

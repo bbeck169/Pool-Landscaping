@@ -110,12 +110,9 @@ import DealsKanbanPage from "@/pages/deals/DealsKanbanPage";
 import AIEstimatorPage from "@/pages/estimates/AIEstimatorPage";
 // Phase 34 · Feb-2026 · Task H — the customer-facing Book Service
 // surface has been retired. The route ``/portal/book`` now redirects
-// to ``/portal/request-service`` (see below). The ``PortalBook`` page
-// component is intentionally NOT imported so the redirect is a pure
-// react-router shim. The source file at
-// ``src/pages/portal/PortalBook.jsx`` is kept on disk for legacy
-// reference but is no longer wired into the router.
-// import PortalBook from "@/pages/portal/PortalBook";
+// to ``/portal/request-service`` (see below). The former
+// ``PortalBook`` page component was deleted in Phase B1 (Feb 2026)
+// after confirming no route or import referenced it.
 import PortalChatsPage from "@/pages/portal/PortalChatsPage";
 import AppointmentsQueue from "@/pages/admin/AppointmentsQueue";
 import AdminAssets from "@/pages/admin/AdminAssets";

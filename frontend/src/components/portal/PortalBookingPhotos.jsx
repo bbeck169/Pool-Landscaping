@@ -1,8 +1,8 @@
 /**
  * Phase F2c.1 · Feb 2026 — Customer portal booking-request photos.
  *
- * Renders on the confirmation panel of ``PortalBook.jsx`` AFTER the
- * appointment has been created (so we have a real
+ * Renders on the confirmation panel of the portal request-service
+ * flow AFTER the appointment has been created (so we have a real
  * ``portal_appointment`` id to attach to). Pre-submit upload is
  * intentionally skipped: it would require reserving a client-side
  * temp id + a backend contract change, which is out of scope.

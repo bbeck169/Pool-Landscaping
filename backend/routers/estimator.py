@@ -1001,6 +1001,25 @@ async def send_estimate(eid: str, body: SendIn,
     attachment_bytes = pdf if pdf else _estimate_html(e, t).encode("utf-8")
     fname = (f"estimate-{eid[:8]}.pdf" if pdf
               else f"estimate-{eid[:8]}.html")
+    # Phase B1 · F2b polish — count F0 attachments linked to this
+    # estimate (purpose=invoice_attachment, shared with invoices — see
+    # components/quotes/InvoiceAttachments.jsx). Renders "N attachments
+    # included" copy above the total when N > 0.
+    try:
+        attach_n = await db.files.count_documents({
+            "purpose": "invoice_attachment",
+            "linked_entity_id": eid,
+            "deleted_at": None,
+        })
+    except Exception:                                                # noqa: BLE001
+        attach_n = 0
+    attach_line = ""
+    if attach_n > 0:
+        noun = "attachment" if attach_n == 1 else "attachments"
+        attach_line = (
+            f'<p style="font-size:13px;color:#475569;margin:8px 0 0;">'
+            f'📎 {attach_n} {noun} included</p>'
+        )
     try:
         import resend
         resend.api_key = RESEND_API_KEY
@@ -1012,7 +1031,8 @@ async def send_estimate(eid: str, body: SendIn,
                           f"({t.get('name') or 'Pool & Landscaping'})"),
             "html": (body.body
                        or f"<p>Please find your estimate attached.</p>"
-                       f"<p>Total: <b>${e.get('total',0):.2f}</b></p>"),
+                       f"<p>Total: <b>${e.get('total',0):.2f}</b></p>"
+                       f"{attach_line}"),
             "attachments": [{
                 "filename": fname,
                 "content": base64.b64encode(attachment_bytes).decode("ascii"),

@@ -97,7 +97,7 @@ async def send_completion_email(job: dict) -> bool:
         return False
 
 
-def _reminder_html(inv: dict, name: str) -> str:
+def _reminder_html(inv: dict, name: str, attachment_count: int = 0) -> str:
     balance = round(float(inv.get("total") or 0) - float(inv.get("amount_paid") or 0), 2)
     due = inv.get("due_date") or "now"
     # Feb 2026 · Pay-Now hotfix — mint a magic-link JWT so the emailed
@@ -105,11 +105,23 @@ def _reminder_html(inv: dict, name: str) -> str:
     from services.pay_link_builder import build_pay_now_url
     pay_link = build_pay_now_url(inv["id"], inv.get("tenant_id") or "")
     link_html = f'<p><a href="{pay_link}" style="background:#0891b2;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block">Pay Now</a></p>' if pay_link else ""
+    # Phase B1 · Feb 2026 — F2b attachment-count copy.
+    # Renders "N attachment(s) included" line above the CTA when
+    # the invoice has 1+ F0 attachments (purpose=invoice_attachment).
+    # Renders nothing when N == 0.
+    n = max(0, int(attachment_count or 0))
+    attach_html = ""
+    if n > 0:
+        noun = "attachment" if n == 1 else "attachments"
+        attach_html = (
+            f'<p style="font-size:13px;color:#475569;margin:8px 0 0;">'
+            f'📎 {n} {noun} included</p>'
+        )
     return (
         f'<div style="font-family:sans-serif;max-width:520px;margin:auto">'
         f"<h2>Payment reminder</h2><p>Hi {name},</p>"
         f"<p>This is a friendly reminder that invoice <b>{inv.get('title','')}</b> has an outstanding balance of "
-        f"<b>${balance:,.2f}</b> (was due {due}).</p>{link_html}"
+        f"<b>${balance:,.2f}</b> (was due {due}).</p>{attach_html}{link_html}"
         f"<p>Thank you,<br/>Pool &amp; Landscaping of Vistancia</p></div>"
     )
 
@@ -139,13 +151,26 @@ async def send_invoice_reminder_email(inv: dict) -> bool:
             to_email, inv.get("id"),
         )
         return False
+    # Phase B1 · F2b polish — count F0 attachments linked to this
+    # invoice (purpose=invoice_attachment, linked_entity_id=inv.id) so
+    # the email copy can surface "N attachments included" above the
+    # CTA. Query is best-effort; on failure we send without the line.
+    try:
+        attachment_count = await db.files.count_documents({
+            "purpose": "invoice_attachment",
+            "linked_entity_id": inv.get("id"),
+            "deleted_at": None,
+        })
+    except Exception:                                                # noqa: BLE001
+        attachment_count = 0
     try:
         resend.api_key = RESEND_API_KEY
         resend.Emails.send({
             "from": EMAIL_FROM,
             "to": to_email,
             "subject": f"Payment reminder — {inv.get('title', 'invoice')}",
-            "html": _reminder_html(inv, cust.get("name", "there")),
+            "html": _reminder_html(inv, cust.get("name", "there"),
+                                    attachment_count=attachment_count),
         })
         return True
     except Exception as e:
