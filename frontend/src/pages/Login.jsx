@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/auth";
 import { brandGradientCss, colors, font } from "@/theme";
+import { PreviewDemoLogins } from "@/components/auth/PreviewDemoLogins";
 
 // Role -> home landing (mirrors the Expo app's tab targeting).
 function landingFor(role) {
@@ -246,11 +247,43 @@ export default function Login() {
             </Link>
           </p>
 
-          {/* Phase 30 · Feb 2026 — DEMO ACCOUNTS block removed
-              unconditionally. Manual sign-in above still authenticates
-              admin@aquaterra.com / mike@aquaterra.com /
-              customer@aquaterra.com — backend auth unchanged; only the
-              visual shortcut buttons are gone from the UI. */}
+          {/* Feb 2026 · Preview demo logins — hidden unless
+              ``REACT_APP_PUBLIC_ENV=preview``. Fail-safe: any value
+              other than the literal string ``preview`` (including
+              unset, empty, or ``production``) hides the block. */}
+          {String(process.env.REACT_APP_PUBLIC_ENV || "").toLowerCase() === "preview" && (
+            <PreviewDemoLogins
+              onPick={(email) => {
+                setEmail(email);
+                setPassword("password123");
+              }}
+              disabled={submitting}
+              onSubmitDirect={async (email) => {
+                setSubmitting(true);
+                setError("");
+                try {
+                  await login(email, "password123");
+                  const user = await me().catch(() => null);
+                  const role = user?.role;
+                  localStorage.removeItem("tenant_slug");
+                  localStorage.removeItem("tenant_name");
+                  try {
+                    const memberships = await (await import("@/api")).api.get("/tenants/memberships/mine");
+                    const list = Array.isArray(memberships) ? memberships : (memberships?.memberships || []);
+                    if (list.length > 1) {
+                      navigate("/tenant-picker", { replace: true });
+                      return;
+                    }
+                  } catch (_) {}
+                  navigate(landingFor(role), { replace: true });
+                } catch (err) {
+                  setError(err.message || "Demo login failed");
+                } finally {
+                  setSubmitting(false);
+                }
+              }}
+            />
+          )}
         </div>
       </main>
     </div>
