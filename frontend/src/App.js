@@ -149,6 +149,7 @@ import DispatchBoardPage from "@/pages/dispatch/DispatchBoardPage";
 // and get reported to /api/client-errors for admin review.
 import DispatchErrorBoundary from "@/components/errors/DispatchErrorBoundary";
 import AdminDiagnosticsErrorsPage from "@/pages/admin/AdminDiagnosticsErrorsPage";
+import DriverActivityPage from "@/pages/admin/DriverActivityPage";
 import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
 import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPages";
 import WarrantyPlans, { WarrantyContracts, WarrantyClaims, PortalWarranties } from "@/pages/warranties/WarrantyPages";
@@ -647,6 +648,8 @@ export default function App() {
             <Route path="admin/reports/pool-service" element={<AdminOnly><PoolServiceReport /></AdminOnly>} />
             {/* Phase 50.D — Job Margin Leaderboard (admin/super_admin) */}
             <Route path="admin/reports/job-margins" element={<AdminOnly><JobMarginLeaderboard /></AdminOnly>} />
+            {/* G2 · Feb-2026 — Driver Activity timeline (admin/super_admin/manager). */}
+            <Route path="admin/reports/driver-activity" element={<AdminOnly><DriverActivityPage /></AdminOnly>} />
             {/* Phase 50.A — Chemical Costs CRUD (admin/super_admin) */}
             <Route path="admin/settings/chemical-costs" element={<AdminOnly><ChemicalCosts /></AdminOnly>} />
             {/* Phase 51.I — Recurring Jobs (admin/super_admin) */}

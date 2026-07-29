@@ -233,6 +233,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/recurring-jobs",         label: "Recurring Jobs",      icon: CalendarClock, feature: "scheduling" },
     { to: "/admin/reports/pool-service",   label: "Pool Service Report", icon: Waves,   feature: "reports" },
     { to: "/admin/reports/job-margins",    label: "Job Margin Leaderboard", icon: TrendingUp, feature: "reports" },
+    // G2 · Feb-2026 — Driver Activity (server-detected GPS stops).
+    { to: "/admin/reports/driver-activity", label: "Driver Activity",   icon: Truck, feature: "reports", hard_rule: "manager_only" },
     { to: "/admin/reports/pricing-insights",label: "Pricing Insights",    icon: LineChart, feature: "reports" },
     // PB1 · Feb-2026 — Internal profit report (admin/super_admin only).
     { to: "/admin/reports/profit",         label: "Profit Report",       icon: TrendingUp, feature: "reports", hard_rule: "admin_only" },

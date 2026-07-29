@@ -52,6 +52,11 @@ def _default_row(tenant_id: str) -> Dict[str, Any]:
         "ping_interval_background_s": 300,
         "retention_days": 90,
         "geocoder": "mapbox",
+        # G2 · Feb-2026 — Stop-detection tunables.
+        "stop_radius_m": 75,
+        "stop_min_duration_s": 300,
+        "stop_gap_close_s": 120,
+        "stop_batch_window_min": 15,
         "updated_at": now_iso(),
         "updated_by_user_id": None,
     }
@@ -78,6 +83,11 @@ class GpsSettingsPatch(BaseModel):
     ping_interval_background_s: Optional[int] = Field(None, ge=60, le=3600)
     retention_days: Optional[int] = Field(None, ge=7, le=365)
     geocoder: Optional[str] = None
+    # G2 · Feb-2026 — Stop-detection tunables (see gps_stop_detector.py).
+    stop_radius_m: Optional[int] = Field(None, ge=10, le=500)
+    stop_min_duration_s: Optional[int] = Field(None, ge=60, le=3600)
+    stop_gap_close_s: Optional[int] = Field(None, ge=30, le=900)
+    stop_batch_window_min: Optional[int] = Field(None, ge=5, le=120)
 
 
 @router.get("/admin/gps/settings")

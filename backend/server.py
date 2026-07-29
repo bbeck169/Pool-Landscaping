@@ -267,6 +267,10 @@ api_router.include_router(_client_errors_router.router)
 from routers import gps_live_positions as _gps_live_positions_router  # noqa: E402
 api_router.include_router(_gps_live_positions_router.router)
 
+# G2 · Feb-2026 — Server-side stop detection: query + admin rebuild.
+from routers import gps_stops as _gps_stops_router  # noqa: E402
+api_router.include_router(_gps_stops_router.router)
+
 # Feb-2026 · Re-added after LZ4 Stripe purge — Payments summary tile.
 from routers import payments_summary as _payments_summary_router  # noqa: E402
 api_router.include_router(_payments_summary_router.router)
@@ -793,6 +797,20 @@ async def _background_seed():
             _rc_nightly_pull,
             "cron", hour=3, minute=0,
             id="rc_contact_pull_sync", replace_existing=True)
+
+        # G2 · Feb-2026 — Server-side stop detection batch cron.
+        # Runs every 3 minutes; each run is a no-op when
+        # gps_settings.enabled=false for the tenant.
+        try:
+            from services.gps_stops_batch import run_gps_stops_batch
+            scheduler.add_job(
+                run_gps_stops_batch,
+                "interval", minutes=3,
+                id="gps_stops_batch_processor", replace_existing=True,
+                max_instances=1, coalesce=True,
+            )
+        except Exception as e:                                        # noqa: BLE001
+            logger.warning(f"[gps_stops] cron install failed: {e}")
         # Task QQ Phase 2 · Feb 2026 — nightly Lumino reconciler
         # (03:00 UTC). Polls pending payments/subscriptions to close
         # any gap left by the return-URL / Zapier bridge paths.
