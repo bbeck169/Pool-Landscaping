@@ -582,3 +582,25 @@
   - mobile/app/portal/chats/[id].tsx
   - mobile/app/(app)/chat.tsx
   - mobile/__tests__/PortalChatAttachments.test.tsx
+
+## Iteration 32 — Phase PB1-M: Price Book Wholesale + Profit Report + Invoice Margin
+- **Commit**: 852e8da64fc6fec644143e8d8e53c98c1011180f
+- **Date**: 2026-07-29
+- **Changes**:
+  - **A. Price Book admin**: Updated `price-book.tsx` with wholesale_price and labor_cost_default columns (admin-only `W:` and `L:` badges under each item). Added edit sheet with wholesale + labor input fields. PATCH /api/items/{id} on save.
+  - **B. Invoice detail internal margin**: Added amber "Internal margin — not shown to customer" section to `quote/[id].tsx` (which is where the invoice list navigates). Shows per-line W/u, L/u, Rev, COGS, Profit columns plus totals row with margin %. Gated to admin/super_admin/manager roles. Fixed isAdmin check to include super_admin + manager.
+  - **C. Profit Report screen**: New `profit-report.tsx` admin-only screen. Range pills (This Month / Last Month / QTD / YTD / Custom), dimension toggle (Service/Income Category), 5 summary tiles, sortable breakdown table, Export CSV button. Forbidden screen for non-admin roles.
+  - **D. Role gating**: All surfaces gated to admin + super_admin + manager. Customer + technician cannot see wholesale/labor/cogs/margin anywhere. Test verifies customer view has zero internal strings.
+  - Added "Profit Report" link in more.tsx admin section.
+  - Tests: 111/111 total (88 existing + 23 new). 0 regressions.
+- **Files created**:
+  - mobile/app/profit-report.tsx
+  - mobile/__tests__/ProfitReport.test.tsx (9 tests)
+  - mobile/__tests__/InvoiceInternalMargin.test.tsx (7 tests)
+  - mobile/__tests__/PriceBookAdmin.test.tsx (7 tests)
+- **Files modified**:
+  - mobile/app/price-book.tsx (wholesale/labor columns + edit sheet)
+  - mobile/app/quote/[id].tsx (internal margin section + isAdmin fix)
+  - mobile/app/invoice/[id].tsx (internal margin section — standalone viewer)
+  - mobile/app/(app)/more.tsx (Profit Report nav link)
+- **Web files referenced**: ProfitReportPage.jsx, QuoteInvoiceDetail.jsx, PriceBookPage.jsx

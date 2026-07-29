@@ -85,6 +85,7 @@ export default function More() {
     { icon: "stats-chart-outline", label: "Avg Job Time", onPress: () => router.push("/avg-job-time") },
     { icon: "water-outline", label: "Pool Service Report", onPress: () => router.push("/pool-service") },
     { icon: "pie-chart-outline", label: "Income by Category", onPress: () => router.push("/income-by-category") },
+    { icon: "analytics-outline", label: "Profit Report", onPress: () => router.push("/profit-report") },
     { icon: "pricetag-outline", label: "Income Categories", onPress: () => router.push("/income-categories") },
     { icon: "footsteps-outline", label: "Door-to-Door", onPress: () => router.push("/d2d") },
     { icon: "bar-chart-outline", label: "D2D Sales Report", onPress: () => router.push("/d2d/report") },

@@ -342,6 +342,79 @@ export default function InvoiceDetail() {
           </View>
         ) : null}
 
+        {/* PB1 · Internal Margin section — admin/manager/super_admin ONLY.
+            NEVER rendered for customer or technician roles. */}
+        {(user?.role === "admin" || user?.role === "super_admin" ||
+          user?.role === "manager") ? (() => {
+            const rows = line_items || [];
+            const perLine = rows.map((li: any) => {
+              const q = Number(li.qty_hr || li.quantity || 1);
+              const retail = Number(li.retail_price_snapshot ?? li.cost_rate ?? li.unit_price ?? 0);
+              const wholesale = Number(li.wholesale_price_snapshot || 0);
+              const labor = Number(li.labor_cost_snapshot || 0);
+              return {
+                description: li.description,
+                revenue: q * retail,
+                cogs: q * wholesale,
+                labor: q * labor,
+                profit: q * (retail - wholesale - labor),
+                wholesale_per_unit: wholesale,
+                labor_per_unit: labor,
+              };
+            });
+            const totRev = perLine.reduce((acc: number, r: any) => acc + r.revenue, 0);
+            const totCogs = perLine.reduce((acc: number, r: any) => acc + r.cogs, 0);
+            const totLabor = perLine.reduce((acc: number, r: any) => acc + r.labor, 0);
+            const totProfit = totRev - totCogs - totLabor;
+            const margin = totRev > 0
+              ? (totProfit / totRev * 100).toFixed(1)
+              : "0.0";
+            return (
+              <View style={s.marginSection} testID="internal-margin-section">
+                <Text style={s.marginTitle}>
+                  Internal margin — not shown to customer
+                </Text>
+                {/* Header */}
+                <View style={s.marginHeaderRow}>
+                  <Text style={[s.marginHdr, { flex: 2 }]}>Line</Text>
+                  <Text style={[s.marginHdr, s.marginRight]}>W/u</Text>
+                  <Text style={[s.marginHdr, s.marginRight]}>L/u</Text>
+                  <Text style={[s.marginHdr, s.marginRight]}>Rev</Text>
+                  <Text style={[s.marginHdr, s.marginRight]}>COGS</Text>
+                  <Text style={[s.marginHdr, s.marginRight]}>Profit</Text>
+                </View>
+                {perLine.map((r: any, i: number) => (
+                  <View key={i} style={s.marginRow} testID={`internal-margin-line-${i}`}>
+                    <Text style={[s.marginCell, { flex: 2 }]} numberOfLines={1}>
+                      {r.description}
+                    </Text>
+                    <Text style={[s.marginCell, s.marginRight]}>{fmt(r.wholesale_per_unit)}</Text>
+                    <Text style={[s.marginCell, s.marginRight]}>{fmt(r.labor_per_unit)}</Text>
+                    <Text style={[s.marginCell, s.marginRight]}>{fmt(r.revenue)}</Text>
+                    <Text style={[s.marginCell, s.marginRight, { color: "#B45309" }]}>
+                      {fmt(r.cogs)}
+                    </Text>
+                    <Text style={[s.marginCell, s.marginRight, { fontFamily: font.semibold }]}>
+                      {fmt(r.profit)}
+                    </Text>
+                  </View>
+                ))}
+                <View style={s.marginTotalsRow} testID="internal-margin-totals">
+                  <Text style={[s.marginTotalCell, { flex: 2 }]}>Totals</Text>
+                  <Text style={[s.marginTotalCell, s.marginRight]}></Text>
+                  <Text style={[s.marginTotalCell, s.marginRight]}></Text>
+                  <Text style={[s.marginTotalCell, s.marginRight]}>{fmt(totRev)}</Text>
+                  <Text style={[s.marginTotalCell, s.marginRight, { color: "#B45309" }]}>
+                    {fmt(totCogs)}
+                  </Text>
+                  <Text style={[s.marginTotalCell, s.marginRight]}>
+                    {fmt(totProfit)} ({margin}%)
+                  </Text>
+                </View>
+              </View>
+            );
+          })() : null}
+
         {/* F2b — Attachments */}
         <InvoiceAttachments docId={id!} isInvoice={true} user={user} />
       </ScrollView>
@@ -459,6 +532,63 @@ const s = StyleSheet.create({
   lineQty: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
   lineTotal: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface, marginTop: 2 },
   notesText: { fontFamily: font.regular, fontSize: fontSize.base, color: colors.onSurface, lineHeight: 22 },
+  // PB1 · Internal Margin styles
+  marginSection: {
+    marginTop: spacing.md,
+    marginBottom: spacing.md,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+  },
+  marginTitle: {
+    fontFamily: font.bold,
+    fontSize: 11,
+    color: "#92400E",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: spacing.sm,
+  },
+  marginHeaderRow: {
+    flexDirection: "row",
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "#FCD34D",
+  },
+  marginHdr: {
+    flex: 1,
+    fontFamily: font.bold,
+    fontSize: 10,
+    color: "#92400E",
+    textTransform: "uppercase",
+  },
+  marginRight: { textAlign: "right" },
+  marginRow: {
+    flexDirection: "row",
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "#FDEAB0",
+  },
+  marginCell: {
+    flex: 1,
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: "#78350F",
+  },
+  marginTotalsRow: {
+    flexDirection: "row",
+    paddingVertical: 6,
+    borderTopWidth: 1,
+    borderTopColor: "#FCD34D",
+    marginTop: 2,
+  },
+  marginTotalCell: {
+    flex: 1,
+    fontFamily: font.bold,
+    fontSize: 11,
+    color: "#78350F",
+  },
   payModalRoot: { flex: 1, backgroundColor: colors.surface },
   payModalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
   payModalTitle: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface },

@@ -16,7 +16,7 @@ import { exportInvoicePdf } from "@/src/utils/exportInvoicePdf";
 export default function QuoteDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin" || user?.role === "manager";
   const insets = useSafeAreaInsets();
   const [q, setQ] = useState<any>(null);
   const [company, setCompany] = useState<any>(null);
@@ -198,6 +198,74 @@ export default function QuoteDetail() {
           </Text>
         </View>
 
+        {/* PB1 · Internal Margin — admin/manager/super_admin ONLY.
+            NEVER rendered for customer or technician roles. */}
+        {isAdmin && isInvoice && q.line_items?.length ? (() => {
+          const rows = q.line_items.map((li: any) => {
+            const qty = Number(li.quantity || li.qty_hr || 1);
+            const retail = Number(li.retail_price_snapshot ?? li.unit_price ?? 0);
+            const wholesale = Number(li.wholesale_price_snapshot || 0);
+            const labor = Number(li.labor_cost_snapshot || 0);
+            return {
+              description: li.description || li.name || "—",
+              revenue: qty * retail,
+              cogs: qty * wholesale,
+              labor: qty * labor,
+              profit: qty * (retail - wholesale - labor),
+              wholesale_per: wholesale,
+              labor_per: labor,
+            };
+          });
+          const totRev = rows.reduce((s: number, r: any) => s + r.revenue, 0);
+          const totCogs = rows.reduce((s: number, r: any) => s + r.cogs, 0);
+          const totLabor = rows.reduce((s: number, r: any) => s + r.labor, 0);
+          const totProfit = totRev - totCogs - totLabor;
+          const margin = totRev > 0 ? (totProfit / totRev * 100).toFixed(1) : "0.0";
+          return (
+            <View style={styles.marginSection} testID="internal-margin-section">
+              <Text style={styles.marginTitle}>
+                Internal margin — not shown to customer
+              </Text>
+              <View style={styles.marginHdrRow}>
+                <Text style={[styles.marginHdrCell, { flex: 2 }]}>Line</Text>
+                <Text style={[styles.marginHdrCell, styles.marginRt]}>W/u</Text>
+                <Text style={[styles.marginHdrCell, styles.marginRt]}>L/u</Text>
+                <Text style={[styles.marginHdrCell, styles.marginRt]}>Rev</Text>
+                <Text style={[styles.marginHdrCell, styles.marginRt]}>COGS</Text>
+                <Text style={[styles.marginHdrCell, styles.marginRt]}>Profit</Text>
+              </View>
+              {rows.map((r: any, i: number) => (
+                <View key={i} style={styles.marginDataRow} testID={`internal-margin-line-${i}`}>
+                  <Text style={[styles.marginDataCell, { flex: 2 }]} numberOfLines={1}>
+                    {r.description}
+                  </Text>
+                  <Text style={[styles.marginDataCell, styles.marginRt]}>{money(r.wholesale_per)}</Text>
+                  <Text style={[styles.marginDataCell, styles.marginRt]}>{money(r.labor_per)}</Text>
+                  <Text style={[styles.marginDataCell, styles.marginRt]}>{money(r.revenue)}</Text>
+                  <Text style={[styles.marginDataCell, styles.marginRt, { color: "#B45309" }]}>
+                    {money(r.cogs)}
+                  </Text>
+                  <Text style={[styles.marginDataCell, styles.marginRt, { fontFamily: font.semibold }]}>
+                    {money(r.profit)}
+                  </Text>
+                </View>
+              ))}
+              <View style={styles.marginTotRow} testID="internal-margin-totals">
+                <Text style={[styles.marginTotCell, { flex: 2 }]}>Totals</Text>
+                <Text style={[styles.marginTotCell, styles.marginRt]} />
+                <Text style={[styles.marginTotCell, styles.marginRt]} />
+                <Text style={[styles.marginTotCell, styles.marginRt]}>{money(totRev)}</Text>
+                <Text style={[styles.marginTotCell, styles.marginRt, { color: "#B45309" }]}>
+                  {money(totCogs)}
+                </Text>
+                <Text style={[styles.marginTotCell, styles.marginRt]}>
+                  {money(totProfit)} ({margin}%)
+                </Text>
+              </View>
+            </View>
+          );
+        })() : null}
+
         {isAdmin && isInvoice && q.reminders?.length ? (
           <View style={styles.historyCard} testID="reminder-history">
             <Text style={styles.cardLabel}>Reminder History</Text>
@@ -305,4 +373,60 @@ const styles = StyleSheet.create({
   },
   doneBanner: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, height: 52 },
   doneText: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.success },
+  // PB1 · Internal Margin styles
+  marginSection: {
+    marginTop: spacing.lg,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+  },
+  marginTitle: {
+    fontFamily: font.bold,
+    fontSize: 11,
+    color: "#92400E",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: spacing.sm,
+  },
+  marginHdrRow: {
+    flexDirection: "row" as const,
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "#FCD34D",
+  },
+  marginHdrCell: {
+    flex: 1,
+    fontFamily: font.bold,
+    fontSize: 10,
+    color: "#92400E",
+    textTransform: "uppercase" as const,
+  },
+  marginRt: { textAlign: "right" as const },
+  marginDataRow: {
+    flexDirection: "row" as const,
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "#FDEAB0",
+  },
+  marginDataCell: {
+    flex: 1,
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: "#78350F",
+  },
+  marginTotRow: {
+    flexDirection: "row" as const,
+    paddingVertical: 6,
+    borderTopWidth: 1,
+    borderTopColor: "#FCD34D",
+    marginTop: 2,
+  },
+  marginTotCell: {
+    flex: 1,
+    fontFamily: font.bold,
+    fontSize: 11,
+    color: "#78350F",
+  },
 });
