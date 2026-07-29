@@ -130,16 +130,23 @@ describe("PB1 · Profit Report", () => {
 
   it("renders forbidden screen for customer role", async () => {
     mockRole = "customer";
-    const { getByTestId, queryByTestId } = render(<ProfitReport />);
+    const { getByTestId, queryByTestId, queryByText } = render(<ProfitReport />);
     expect(getByTestId("profit-report-forbidden")).toBeTruthy();
     expect(queryByTestId("profit-report-page")).toBeNull();
+    // Strict string-leak check: none of these internal terms may appear
+    for (const term of ["wholesale", "labor cost", "cogs", "margin", "gross profit"]) {
+      expect(queryByText(new RegExp(term, "i"))).toBeNull();
+    }
   });
 
   it("renders forbidden screen for technician role", async () => {
     mockRole = "technician";
-    const { getByTestId, queryByTestId } = render(<ProfitReport />);
+    const { getByTestId, queryByTestId, queryByText } = render(<ProfitReport />);
     expect(getByTestId("profit-report-forbidden")).toBeTruthy();
     expect(queryByTestId("profit-report-page")).toBeNull();
+    for (const term of ["wholesale", "labor cost", "cogs", "margin", "gross profit"]) {
+      expect(queryByText(new RegExp(term, "i"))).toBeNull();
+    }
   });
 
   it("export CSV button is present and enabled when data loaded", async () => {

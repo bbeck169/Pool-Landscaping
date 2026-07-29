@@ -151,7 +151,7 @@ export default function ProfitReport() {
         <View style={styles.forbidden} testID="profit-report-forbidden">
           <Ionicons name="lock-closed" size={24} color="#7F1D1D" />
           <Text style={styles.forbiddenText}>
-            Admin only. This report shows internal wholesale + labor cost data.
+            You do not have permission to view this report. Contact your administrator if you need access.
           </Text>
         </View>
       </View>
