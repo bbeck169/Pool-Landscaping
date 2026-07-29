@@ -221,6 +221,8 @@ api_router.include_router(_income_categories.router)
 # Feb 2026 — Admin check-in overrides.
 from routers import admin_checkins as _admin_checkins  # noqa: E402
 api_router.include_router(_admin_checkins.router)
+from routers import checkin_rewrite as _checkin_rewrite  # noqa: E402
+api_router.include_router(_checkin_rewrite.router)
 # Feb 2026 — Service categories (pricebook business-unit taxonomy).
 from routers import service_categories as _service_categories  # noqa: E402
 api_router.include_router(_service_categories.router)

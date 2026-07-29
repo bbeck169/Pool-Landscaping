@@ -29,7 +29,21 @@ from utils import get_current_user
 
 router = APIRouter()
 
-_DEFAULTS = ["Pool", "Landscaping"]
+_DEFAULTS = [
+    "Pool",
+    "Landscaping",
+    "Irrigation",
+    "Hardscaping",
+    "Landscape Lighting",
+    "Rock Install",
+    "Pool Equipment Installs",
+    "Pool Equipment Upgrades",
+    "Pool Drains",
+    "Acid Wash",
+    "Pool Cleaning",
+    "Pool Repair",
+    "Pool Maintenance",
+]
 
 
 def _require_admin(user: dict) -> None:
@@ -49,22 +63,35 @@ def _auto_color(name: str) -> str:
 
 
 async def ensure_defaults_for_tenant(tenant_id: str) -> None:
+    """Idempotent — seeds any DEFAULT that isn't already present in
+    the tenant.  This runs both on first-tenant-access AND as a
+    silent backfill for tenants that were previously seeded with the
+    smaller Pool+Landscaping set (Feb-2026 taxonomy merge).  A name
+    is considered "already present" case-insensitively.
+    """
     if not tenant_id:
         return
-    if await db.service_categories.count_documents({"tenant_id": tenant_id}) > 0:
+    existing = await db.service_categories.find(
+        {"tenant_id": tenant_id}, {"_id": 0, "name": 1},
+    ).to_list(500)
+    have = {(r.get("name") or "").strip().lower() for r in existing}
+    missing = [n for n in _DEFAULTS if n.lower() not in have]
+    if not missing:
         return
     now = _now()
     docs = [{
         "id": str(uuid.uuid4()),
         "name": n, "description": "", "color": _auto_color(n),
-        "is_archived": False, "sort_order": i,
+        "is_archived": False, "sort_order": _DEFAULTS.index(n),
         "tenant_id": tenant_id,
         "created_at": now, "created_by_user_id": "system:seed",
         "updated_at": now,
-    } for i, n in enumerate(_DEFAULTS)]
+    } for n in missing]
     await db.service_categories.insert_many(docs)
-    logger.info("[service_categories] seeded %d defaults for tenant=%s",
-                len(docs), tenant_id)
+    logger.info(
+        "[service_categories] seeded %d defaults for tenant=%s (missing=%s)",
+        len(docs), tenant_id, missing,
+    )
 
 
 async def validate_service_category(tenant_id: str,

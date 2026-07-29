@@ -4,6 +4,7 @@ import { LogIn, LogOut, RotateCcw, X, ShieldCheck } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button } from "@/components/ui-kit";
+import AIDescriptionRewriteButton from "@/components/ai/AIDescriptionRewriteButton";
 
 /* Phase 13 parity-gap closures — two thin admin list pages that
    mirror the Expo mobile equivalents.  Feb-2026: extended with
@@ -148,20 +149,36 @@ function AdminOverrideModal({ action, row, onClose, onDone }) {
             </div>
           ) : null}
           <div>
-            <label className="text-xs uppercase font-semibold block mb-1"
-                    style={{ color: colors.onSurfaceSecondary }}>
-              {action === "reset" ? "Reason (required)" : "Note (optional)"}
-            </label>
-            <input
-              type="text"
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs uppercase font-semibold"
+                      style={{ color: colors.onSurfaceSecondary }}>
+                {action === "reset" ? "Reason (required)" : "Note (optional)"}
+              </label>
+              {action !== "reset" ? (
+                <AIDescriptionRewriteButton
+                  draft={note}
+                  onRewritten={(txt) => setNote(txt)}
+                  context={{
+                    service_category: row?.service_category,
+                    customer_name: row?.customer_name,
+                    address: row?.address,
+                    business_name: row?.business_name,
+                  }}
+                  size="xs"
+                  testid="checkin-note-ai-rewrite"
+                />
+              ) : null}
+            </div>
+            <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
+              rows={action === "reset" ? 2 : 3}
               className="w-full px-3 py-2 text-sm rounded-lg"
               style={{ background: colors.surface,
                         border: `1px solid ${colors.border}` }}
               placeholder={action === "reset"
                 ? "e.g., Duplicate entry from GPS glitch"
-                : "Reason for admin override"}
+                : "Describe the work performed — AI can polish this."}
               data-testid="checkin-override-note"
             />
           </div>
