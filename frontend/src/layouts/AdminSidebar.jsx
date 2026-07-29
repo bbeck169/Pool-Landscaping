@@ -1,10 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { Star, ChevronRight, ChevronDown, Search as SearchIcon, HelpCircle } from "lucide-react";
+import { Star, ChevronRight, ChevronDown, Search as SearchIcon, HelpCircle, GripVertical } from "lucide-react";
 import { ADMIN_NAV_V2, NAV_FLAT, KEYBOARD_SHORTCUTS, SHORTCUT_TARGETS } from "@/nav/adminNav";
 import { usePermissions } from "@/hooks/usePermissions";
 import RolePreviewSwitcher from "@/components/RolePreviewSwitcher";
 import { colors, brandGradientCss } from "@/theme";
+// Feb-2026 · Drag-and-drop reordering of pinned nav items.
+import {
+  DndContext, closestCenter, KeyboardSensor, PointerSensor,
+  useSensor, useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext, verticalListSortingStrategy, arrayMove,
+  sortableKeyboardCoordinates, useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 // Groups that render nested sub-subgroups (from entry.subsection) when present.
 // Phase 35 — all five reorganised categories now use subsections for readability.
@@ -18,6 +28,8 @@ const SUBGROUPED_GROUPS = new Set([
 const LS_PINNED = "nav_pinned_v1";
 const LS_RECENT = "nav_recent_v1";
 const LS_GROUPS = "nav_groups_state_v1";
+// Feb-2026 · Admin pinned-nav cap raised from 8 → 20 per user request.
+const MAX_PINNED = 20;
 
 function loadLS(k, fb) { try { return JSON.parse(localStorage.getItem(k) || "null") ?? fb; } catch { return fb; } }
 function saveLS(k, v)  { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
@@ -106,7 +118,7 @@ export default function AdminSidebar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [navigate]);
 
-  const togglePin = (to) => setPinned((p) => p.includes(to) ? p.filter((x) => x !== to) : [...p, to].slice(0, 8));
+  const togglePin = (to) => setPinned((p) => p.includes(to) ? p.filter((x) => x !== to) : [...p, to].slice(0, MAX_PINNED));
   const toggleGroup = (k) => setGroupsOpen((s) => ({ ...s, [k]: !s[k] }));
 
   const visible = useMemo(() => ADMIN_NAV_V2.map((g) => ({
@@ -148,6 +160,74 @@ export default function AdminSidebar() {
     );
   };
 
+  // Feb-2026 · Drag-and-drop reordering — pinned-only wrapper.
+  // Each pinned row gets a grip-handle that owns the drag listeners;
+  // the rest of the row (link + star) stays clickable so single-click
+  // navigation continues to work.
+  const SortablePinnedEntry = ({ e }) => {
+    const {
+      attributes, listeners, setNodeRef, transform, transition, isDragging,
+    } = useSortable({ id: e.to });
+    const style = {
+      transform: CSS.Transform.toString(transform),
+      transition,
+      opacity: isDragging ? 0.6 : 1,
+    };
+    const Icon = e.icon || SearchIcon;
+    return (
+      <div ref={setNodeRef} style={style}
+            className="flex items-center group"
+            data-testid={`nav-pinned-entry-${e.to.replaceAll("/", "-")}`}>
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className="p-1 rounded cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 touch-none"
+          aria-label={`Reorder ${e.label}`}
+          data-testid={`nav-pinned-handle-${e.to.replaceAll("/", "-")}`}
+          title="Drag to reorder"
+        >
+          <GripVertical size={13} />
+        </button>
+        <NavLink to={e.to}
+                  className={() => "flex-1 flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm"}
+                  style={({ isActive }) => ({
+                    background: isActive ? brandGradientCss : "transparent",
+                    color: isActive ? "#fff" : colors.onSurface,
+                    fontWeight: isActive ? 600 : 400,
+                  })}>
+          <Icon size={15} />
+          <span className="truncate">{e.label}</span>
+        </NavLink>
+        <button onClick={() => togglePin(e.to)}
+                className="ml-1 p-1 rounded opacity-0 group-hover:opacity-100"
+                style={{ color: "#EAB308" }}
+                data-testid={`nav-unpin-${e.to.replaceAll("/", "-")}`}
+                title="Unpin">
+          <Star size={13} fill="#EAB308" />
+        </button>
+      </div>
+    );
+  };
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  const handlePinnedDragEnd = (event) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setPinned((prev) => {
+      const from = prev.indexOf(active.id);
+      const to = prev.indexOf(over.id);
+      if (from === -1 || to === -1) return prev;
+      return arrayMove(prev, from, to);
+    });
+  };
+
   return (
     <>
       {/* Command palette trigger (rendered by parent AppLayout top-bar too) */}
@@ -173,7 +253,22 @@ export default function AdminSidebar() {
       {pinnedItems.length > 0 && (
         <div className="px-2 mb-3" data-testid="nav-pinned">
           <div className="px-2 mb-1 text-[10px] font-bold uppercase tracking-wider" style={{ color: colors.onSurfaceSecondary }}>⭐ Pinned</div>
-          <div className="space-y-0.5">{pinnedItems.map((e) => <Entry key={e.to} e={e} />)}</div>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handlePinnedDragEnd}
+          >
+            <SortableContext
+              items={pinnedItems.map((e) => e.to)}
+              strategy={verticalListSortingStrategy}
+            >
+              <div className="space-y-0.5" data-testid="nav-pinned-sortable">
+                {pinnedItems.map((e) => (
+                  <SortablePinnedEntry key={e.to} e={e} />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
         </div>
       )}
 

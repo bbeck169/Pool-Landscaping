@@ -37,9 +37,11 @@ function readCapFromSource() {
 }
 
 describe("UniversalMenu MAX_PINS", () => {
-  it("is set to at least 30 (the current user-requested cap)", () => {
+  it("is set to 20 (the current user-requested cap)", () => {
     const cap = readCapFromSource();
     expect(cap).not.toBeNull();
-    expect(cap).toBeGreaterThanOrEqual(30);
+    // Feb-2026 correction — user reverted 30 → 20; also see
+    // ``AdminSidebar.jsx`` MAX_PINNED (separate admin-side surface).
+    expect(cap).toBe(20);
   });
 });
