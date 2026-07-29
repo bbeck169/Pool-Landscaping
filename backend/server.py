@@ -221,6 +221,8 @@ from routers import lumino_backfill as _lumino_backfill  # noqa: E402
 api_router.include_router(_lumino_backfill.router)
 from routers import profit_report as _profit_report  # noqa: E402
 api_router.include_router(_profit_report.router)
+from routers import gps_settings as _gps_settings  # noqa: E402
+api_router.include_router(_gps_settings.router)
 # Feb 2026 — Service categories (pricebook business-unit taxonomy).
 from routers import service_categories as _service_categories  # noqa: E402
 api_router.include_router(_service_categories.router)
@@ -858,6 +860,21 @@ async def _background_seed():
         # Phase 12B · Feb 2026 — Weekly Stripe customer sync cron.
         # REMOVED in Phase LZ4 (Feb 2026). Kept the empty block as a
         # signpost so nobody reintroduces the retired code path.
+
+        # G0 · Feb-2026 — GPS driver-activity retention purge cron.
+        # Daily 04:00 UTC. Safe against empty collections. G1/G2 will
+        # feed real pings; today this job runs against zero rows.
+        try:
+            from routers.gps_settings import purge_expired_pings
+            scheduler.add_job(
+                purge_expired_pings, "cron",
+                hour=4, minute=0,
+                id="gps_pings_retention_purge",
+                replace_existing=True,
+            )
+            logger.info("scheduler: gps_pings_retention_purge registered (04:00 UTC daily)")
+        except Exception as _g0e:                                     # noqa: BLE001
+            logger.warning(f"gps purge cron registration crashed: {_g0e}")
 
         # Comms Phase 3 · Feb 2026 — automation-engine daily sweeps.
         # invoice.overdue (09:00 UTC), customer.birthday (08:00),

@@ -187,6 +187,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/tenants",               label: "Tenants (super)", icon: Shield,   feature: "settings", hard_rule: "super_admin_only", subsection: "Settings" },
     { to: "/access-settings",       label: "Access Settings", icon: Shield,   feature: "permissions", subsection: "Settings" },
     { to: "/settings/integrations", label: "Integrations",    icon: Compass,  feature: "settings", subsection: "Settings" },
+    // G0 · Feb-2026 — GPS driver-activity settings (admin-only).
+    { to: "/admin/settings/gps",    label: "GPS Driver Activity", icon: MapPin, feature: "settings", hard_rule: "admin_only", subsection: "Settings" },
     { to: "/settings/maps",         label: "Maps",            icon: MapIcon,  feature: "settings", subsection: "Settings" },
     { to: "/settings/terms",        label: "Terms",           icon: ScrollText, feature: "settings", subsection: "Settings" },
     { to: "/settings/legal",        label: "Legal Docs",      icon: ScrollText, feature: "settings", subsection: "Settings" },

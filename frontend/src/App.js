@@ -101,6 +101,7 @@ import AIBrainPage from "@/pages/settings/AIBrainPage";
 import CopilotPage from "@/pages/admin/CopilotPage";
 import LuminoBackfillPage from "@/pages/admin/LuminoBackfillPage";
 import ProfitReportPage from "@/pages/admin/ProfitReportPage";
+import GpsSettingsPage from "@/pages/admin/GpsSettingsPage";
 // Feb-2026 · Item 6 — Business Card admin editor.
 import BusinessCardSettingsPage from "@/pages/settings/BusinessCardSettings";
 import MyProfilePage from "@/pages/account/MyProfilePage";
@@ -909,6 +910,8 @@ export default function App() {
             <Route path="admin/tools/lumino-backfill" element={<SuperAdminOnly><LuminoBackfillPage /></SuperAdminOnly>} />
             {/* PB1 · Feb-2026 — Profit report (admin-only; internal margin data). */}
             <Route path="admin/reports/profit" element={<AdminOnly><ProfitReportPage /></AdminOnly>} />
+            {/* G0 · Feb-2026 — GPS driver-activity settings (admin-only). */}
+            <Route path="admin/settings/gps" element={<AdminOnly><GpsSettingsPage /></AdminOnly>} />
             {/* Feb-2026 · Item 6 — Business Card admin editor. */}
             <Route path="settings/business-card" element={<AdminOnly><BusinessCardSettingsPage /></AdminOnly>} />
             <Route path="account/profile" element={<MyProfilePage />} />
