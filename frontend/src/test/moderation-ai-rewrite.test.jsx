@@ -85,7 +85,7 @@ describe("ModerationCheckinsPage · AI Rewrite wiring", () => {
     // covers the toast surface separately).
     render(<MemoryRouter><ModerationCheckinsPage /></MemoryRouter>);
     await screen.findByTestId("moderation-item-ai-p");
-    const ta = screen.getByTestId("moderation-field-description");
+    const ta = await screen.findByTestId("moderation-field-description");
     const before = ta.value;
     // Draft still present after a re-render — sanity check.
     expect(ta.value).toBe(before);

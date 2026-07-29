@@ -151,6 +151,7 @@ import DispatchErrorBoundary from "@/components/errors/DispatchErrorBoundary";
 import AdminDiagnosticsErrorsPage from "@/pages/admin/AdminDiagnosticsErrorsPage";
 import DriverActivityPage from "@/pages/admin/DriverActivityPage";
 import ModerationCheckinsPage from "@/pages/admin/ModerationCheckinsPage";
+import SeoAuditorPage from "@/pages/admin/SeoAuditorPage";
 import WidgetEmbedPage from "@/pages/admin/WidgetEmbedPage";
 import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
 import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPages";
@@ -654,6 +655,8 @@ export default function App() {
             <Route path="admin/reports/driver-activity" element={<AdminOnly><DriverActivityPage /></AdminOnly>} />
             {/* MR0 · Feb-2026 — Public check-in moderation queue (admin/super_admin/manager). */}
             <Route path="admin/moderation/checkins" element={<AdminOnly><ModerationCheckinsPage /></AdminOnly>} />
+            {/* Phase SEO-A · Feb-2026 — Free on-page SEO auditor (admin+/manager). */}
+            <Route path="admin/seo/auditor" element={<AdminOnly><SeoAuditorPage /></AdminOnly>} />
             {/* MR1+MR2 · Feb-2026 — Public widget embed preview + snippet. */}
             <Route path="admin/moderation/widget-embed" element={<AdminOnly><WidgetEmbedPage /></AdminOnly>} />
             {/* Phase 50.A — Chemical Costs CRUD (admin/super_admin) */}

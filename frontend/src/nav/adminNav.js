@@ -237,6 +237,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/reports/driver-activity", label: "Driver Activity",   icon: Truck, feature: "reports", hard_rule: "manager_only" },
     // MR0 · Feb-2026 — Public check-in moderation queue.
     { to: "/admin/moderation/checkins",     label: "Check-in Moderation", icon: ShieldCheck, feature: "reports", hard_rule: "manager_only" },
+    // Phase SEO-A · Feb-2026 — Free on-page SEO auditor.
+    { to: "/admin/seo/auditor",             label: "SEO Auditor",         icon: SearchIcon, feature: "reports", hard_rule: "manager_only" },
     // MR1+MR2 · Feb-2026 — Public widget embed preview.
     { to: "/admin/moderation/widget-embed", label: "Widget Embed",        icon: Globe, feature: "reports", hard_rule: "manager_only" },
     { to: "/admin/reports/pricing-insights",label: "Pricing Insights",    icon: LineChart, feature: "reports" },
