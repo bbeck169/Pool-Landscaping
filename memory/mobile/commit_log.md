@@ -620,3 +620,26 @@
   - mobile/app/time-clock.tsx (G1 GPS tracker hooks + green pill UI)
   - backend/routers/gps_ingest.py (HTTPException detail fix)
 - **Web files referenced**: None (backend-only endpoints, no web frontend equivalent)
+
+## Iteration 34 — Phase G1: Complete GPS Ping Ingest (re-issued, self-contained)
+- **Commit**: 3807f9325dc594353ff749be8977c972a7194ee7
+- **Date**: 2026-07-29
+- **Changes**:
+  - Rewrote `backend/routers/gps_ingest.py` with full spec: role gating, source enum, 24h freshness, lat/lon/accuracy ranges, dedup on (user_id, captured_at, source), 413 batch cap, 409 gates
+  - Rewrote `backend/tests/test_gps_ingest.py` with 11 test cases (all green)
+  - Rewrote `mobile/src/services/gpsTracker.ts`: foreground watch + background task, buffer flush at 20/2min/foreground, 409 auto-stop, 413 split-and-retry
+  - Rewrote `mobile/app/time-clock.tsx`: G1 hooks + green pill + fixed font.semiBold→font.semibold TS errors
+  - Created `mobile/__tests__/GpsTracker.test.ts` with 7 tests (all green)
+  - Updated `mobile/app.json` permission strings for compliance
+  - Backend smoke: 409 disabled, 200 single+dedup, 413/422/403 all verified
+  - Jest: 118/118 (0 regressions). Pytest G1: 11/11. G0: 12/12.
+- **Files created**:
+  - mobile/__tests__/GpsTracker.test.ts
+- **Files modified**:
+  - backend/routers/gps_ingest.py (full rewrite)
+  - backend/tests/test_gps_ingest.py (full rewrite)
+  - mobile/src/services/gpsTracker.ts (full rewrite)
+  - mobile/app/time-clock.tsx (G1 hooks + green pill + TS fix)
+  - mobile/app.json (permission strings)
+- **Web files referenced**: None (backend-only endpoints)
+
