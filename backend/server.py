@@ -200,6 +200,9 @@ api_router.include_router(_qq_lumino_return.router)
 # Feb 2026 — inspection audits receiver (Zap-fed, shared-secret auth).
 from routers import audits as _audits_receiver  # noqa: E402
 api_router.include_router(_audits_receiver.router)
+# LZ1 · Feb 2026 — Lumino invoice-link callback receiver (Zap-fed).
+from routers import lumino_invoice_link_callback as _lz1_link_callback  # noqa: E402
+api_router.include_router(_lz1_link_callback.router)
 # Task TT · Feb 2026 (reconciled TT.5) — OpenWebNinja-Zillow adapter
 # (dry-scaffold). Ships in ``keys_missing → 503 graceful`` mode: routes
 # register unconditionally so a supervisor restart after populating
