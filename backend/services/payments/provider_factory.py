@@ -21,16 +21,20 @@ def get_payment_provider() -> PaymentProvider:
     global _PROVIDER
     if _PROVIDER is not None:
         return _PROVIDER
-    choice = (os.environ.get("PAYMENT_PROVIDER") or "stripe").strip().lower()
-    if choice == "lumino":
-        from .lumino_provider import LuminoProvider
-        _PROVIDER = LuminoProvider()
-    else:
-        from .stripe_provider import StripeProvider
-        _PROVIDER = StripeProvider()
-        if choice not in ("stripe", ""):
-            log.warning("Unknown PAYMENT_PROVIDER=%s — defaulting to stripe",
-                          choice)
+    # Phase LZ4 · Feb 2026 — Stripe SDK retired. Lumino is now the
+    # only concrete provider; ``PAYMENT_PROVIDER`` is honoured only
+    # to preserve backward compatibility with any script / test that
+    # still reads it, but every value maps to Lumino.
+    choice = (os.environ.get("PAYMENT_PROVIDER") or "lumino").strip().lower()
+    if choice not in ("lumino", "stripe", ""):
+        log.warning("Unknown PAYMENT_PROVIDER=%s — using Lumino", choice)
+    if choice == "stripe":
+        log.warning(
+            "PAYMENT_PROVIDER=stripe is retired (Phase LZ4); Lumino "
+            "is now the sole provider — using LuminoProvider anyway."
+        )
+    from .lumino_provider import LuminoProvider
+    _PROVIDER = LuminoProvider()
     log.info("PaymentProvider selected: %s", _PROVIDER.name)
     return _PROVIDER
 

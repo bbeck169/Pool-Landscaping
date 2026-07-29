@@ -1422,42 +1422,19 @@ async def public_add_card_context(token: str):
 
 @router.post("/customers/add-card/{token}/setup-intent")
 async def public_add_card_setup_intent(token: str):
-    """Public: create a Stripe SetupIntent for this customer. Returns
-    ``{client_secret}`` for the SetupElement to mount."""
-    from services.add_card_links import decode_add_card_token
-    from services.stripe_client import get_stripe
-    payload = decode_add_card_token(token)
-    stripe = get_stripe()
-    customer = await db.customers.find_one(
-        {"id": payload["customer_id"], "tenant_id": payload["tenant_id"]},
-        {"_id": 0},
-    )
-    if not customer:
-        raise HTTPException(404, "Customer not found")
-    # Ensure a Stripe customer exists (idempotent).
-    stripe_customer_id = customer.get("stripe_customer_id")
-    if not stripe_customer_id:
-        sc = stripe.Customer.create(
-            email=customer.get("email") or None,
-            phone=customer.get("phone") or None,
-            name=customer.get("name") or None,
-            metadata={"tenant_id": payload["tenant_id"],
-                        "customer_id": payload["customer_id"]},
-        )
-        stripe_customer_id = sc.id
-        await db.customers.update_one(
-            {"id": payload["customer_id"],
-              "tenant_id": payload["tenant_id"]},
-            {"$set": {"stripe_customer_id": stripe_customer_id}},
-        )
-    si = stripe.SetupIntent.create(
-        customer=stripe_customer_id,
-        payment_method_types=["card"],
-        metadata={
-            "tenant_id": payload["tenant_id"],
-            "customer_id": payload["customer_id"],
-            "phase": "phase12_add_card_link",
-        },
-    )
-    return {"client_secret": si.client_secret,
-              "stripe_customer_id": stripe_customer_id}
+    """Phase LZ4 (Feb 2026) — retired.
+
+    Previously created a Stripe SetupIntent so the customer could
+    attach a card via the SetupElement. Stripe SDK removal has
+    retired this route; new card-on-file capture is handled via
+    Lumino's hosted payment link (see the LZ2 Zapier bridge). We
+    keep the URL registered so any in-flight magic-link that customers
+    still have in their inbox lands on a graceful "unavailable"
+    payload instead of a 500.
+    """
+    return {
+        "client_secret": None,
+        "stripe_customer_id": None,
+        "retired": True,
+        "reason": "stripe_setup_intent_retired_lz4",
+    }

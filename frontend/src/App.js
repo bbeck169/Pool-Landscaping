@@ -173,7 +173,9 @@ import PublicInstaSchedulePage from "@/pages/public/PublicInstaSchedule";
 import PublicInvoicePay from "@/pages/public/PublicInvoicePay";
 // Phase 22 · Feb 2026 — Public Service Images portal (no auth).
 import ServiceImagesPortalPage from "@/pages/public/ServiceImagesPortalPage";
-import AddCardPage from "@/pages/portal/AddCardPage";
+// Phase LZ4 (Feb 2026) — AddCardPage removed with the Stripe SDK
+// retirement. The card-on-file flow is now handled by Lumino's
+// hosted payment link, not a SetupIntent-based SetupElement modal.
 import TeamChatPage from "@/pages/chat/TeamChatPage";
 import {
   SequencesList, SequenceNew, SequenceDetail,
@@ -192,7 +194,8 @@ import {
 } from "@/pages/tracking/EquipmentTrackerPages";
 import NotificationsPage from "@/pages/notifications/NotificationsPage";
 import NotificationPrefs from "@/pages/settings/NotificationPrefs";
-import StripeReconciliation from "@/pages/finance/StripeReconciliation";
+// StripeReconciliation page removed in Phase LZ4 (Feb 2026);
+// Stripe SDK is retired. Import + route deleted.
 import {
   D2dDashboard, D2dMap, D2dKnocks, D2dOpenLeads, D2dSoldLeads, D2dReport, D2dLeaderboard,
 } from "@/pages/d2d/D2dPages";
@@ -436,8 +439,8 @@ export default function App() {
           <Route path="/portal/service/:uuid" element={<ServiceImagesPortalPage />} />
 
           {/* Phase 12 · Feb 2026 — public magic-link "Add card" page (no auth). */}
-          <Route path="/portal/add-card" element={<AddCardPage />} />
-          <Route path="/portal/add-card/success" element={<AddCardPage />} />
+          {/* /portal/add-card routes removed in Phase LZ4 (Feb 2026);
+              Lumino's hosted payment link replaces the SetupElement flow. */}
 
           {/* Everything else lives inside the protected shell (side nav + top bar + bottom tabs). */}
           <Route path="/" element={<AppLayout />}>
@@ -590,7 +593,7 @@ export default function App() {
             <Route path="tasks" element={<AdminOnly><TasksPage /></AdminOnly>} />
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="settings/notifications" element={<NotificationPrefs />} />
-            <Route path="admin/finance/stripe-payments" element={<AdminOnly><StripeReconciliation /></AdminOnly>} />
+            {/* Stripe reconciliation route removed in Phase LZ4 (Feb 2026). */}
 
             {/* Phase 15A — CSAT admin */}
             <Route path="csat" element={<AdminOnly><CsatDashboard /></AdminOnly>} />

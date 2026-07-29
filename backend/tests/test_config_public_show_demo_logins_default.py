@@ -16,7 +16,7 @@ import os
 
 import pytest
 
-from routers import payments_stripe_live as _psl
+from routers import config as _cfg
 
 
 @pytest.fixture(autouse=True)
@@ -28,9 +28,9 @@ def _preserve_env(monkeypatch):
 
 
 def _call_public():
-    return asyncio.get_event_loop().run_until_complete(_psl.config_public()) \
+    return asyncio.get_event_loop().run_until_complete(_cfg.config_public()) \
         if not asyncio.get_event_loop().is_closed() \
-        else asyncio.new_event_loop().run_until_complete(_psl.config_public())
+        else asyncio.new_event_loop().run_until_complete(_cfg.config_public())
 
 
 def test_default_is_false_when_env_var_is_unset(monkeypatch):
@@ -65,10 +65,17 @@ def test_false_for_unknown_or_garbage_values(monkeypatch):
         assert r["show_demo_logins"] is False, f"got True for env={v!r}"
 
 
-def test_response_shape_still_includes_the_other_fields(monkeypatch):
-    """Additive contract — the flip must not drop existing keys."""
+def test_response_shape_still_includes_show_demo_logins(monkeypatch):
+    """Post-LZ4 contract — only ``show_demo_logins`` remains.
+
+    The old Phase-4B ``/config/public`` payload also carried
+    ``stripe_publishable_key`` / ``stripe_mode`` / ``app_public_url``
+    / ``brand_name`` for the checkout modal. Those fields were dropped
+    when the Stripe SDK was retired (Phase LZ4). No frontend surface
+    reads them any more, so this test intentionally narrows to the
+    single field that IS still consumed by the Login screen.
+    """
     monkeypatch.delenv("SHOW_DEMO_LOGINS", raising=False)
     r = _call_public()
-    for key in ("stripe_publishable_key", "stripe_mode", "app_public_url",
-                  "brand_name", "show_demo_logins"):
-        assert key in r, f"missing key: {key}"
+    assert "show_demo_logins" in r
+    assert isinstance(r["show_demo_logins"], bool)

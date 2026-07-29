@@ -285,11 +285,13 @@ async def integration_health(integration: str, admin: dict = Depends(require_adm
                 "response_body": body_snippet if not resend_error else None,
             }
         if integration == "stripe":
-            key = os.environ.get("STRIPE_API_KEY", "") or os.environ.get("STRIPE_SECRET_KEY", "")
-            if not key: return {"ok": False, "message": "STRIPE_API_KEY unset"}
-            async with httpx.AsyncClient(timeout=8) as c:
-                r = await c.get("https://api.stripe.com/v1/payment_intents?limit=1", headers={"Authorization": f"Bearer {key}"})
-            return {"ok": r.status_code == 200, "message": f"HTTP {r.status_code}"}
+            # Phase LZ4 (Feb 2026) — Stripe SDK retired. Health-check
+            # always reports the retired-integration state so the
+            # settings screen can render a "Stripe removed — use
+            # Lumino" tile instead of a probe.
+            return {"ok": False,
+                    "message": "Stripe integration retired (Phase LZ4). "
+                                "Payments now flow through Lumino via Zapier."}
         if integration == "emergent_llm":
             return {"ok": bool(EMERGENT_LLM_KEY), "message": "Key present" if EMERGENT_LLM_KEY else "unset"}
         if integration == "wordpress":

@@ -272,43 +272,20 @@ def _render(template: str, ctx: Dict[str, Any]) -> str:
 
 async def _payment_link_for(invoice: Dict[str, Any],
                               settings: Dict[str, Any]) -> str:
-    """Return a Stripe hosted PaymentLink URL (created + cached on the
-    invoice), or an in-app portal URL as fallback."""
+    """Return a hosted payment-link URL (created + cached on the
+    invoice), or the public magic-link viewer as fallback.
+
+    Phase LZ4 · Feb 2026 — the Stripe PaymentLink branch was removed
+    when the Stripe SDK was retired. New links are dispatched via the
+    LZ2 Zapier bridge to Lumino when the invoice is created/edited;
+    any URL saved onto ``invoice.payment_link`` (or the legacy
+    ``stripe_payment_link``) is returned as-is. The magic-link viewer
+    stays the reliable fallback so a paying customer never sees a
+    dead page even if the Lumino dispatch is still in-flight.
+    """
     cached = invoice.get("payment_link")
-    if cached: return cached
-    if settings.get("stripe_payment_link_enabled"):
-        key = os.environ.get("STRIPE_SECRET_KEY") or ""
-        if key:
-            try:
-                import stripe
-                stripe.api_key = key
-                total_cents = int(round(float(invoice.get("total", 0)) * 100))
-                if total_cents > 0:
-                    pl = await asyncio.to_thread(
-                        stripe.PaymentLink.create,
-                        line_items=[{
-                            "price_data": {
-                                "currency": "usd",
-                                "product_data": {
-                                    "name": invoice.get("title")
-                                              or f"Invoice {invoice['id'][:8]}",
-                                },
-                                "unit_amount": total_cents,
-                            },
-                            "quantity": 1,
-                        }],
-                        metadata={"invoice_id": invoice["id"],
-                                    "tenant_id": invoice["tenant_id"]},
-                    )
-                    url = pl.url
-                    await db.quotes.update_one(
-                        {"id": invoice["id"],
-                          "tenant_id": invoice["tenant_id"]},
-                        {"$set": {"payment_link": url}},
-                    )
-                    return url
-            except Exception as e:
-                logger.warning(f"Stripe PaymentLink failed for {invoice['id']}: {e}")
+    if cached:
+        return cached
     # Feb 2026 · Pay-Now hotfix — the previous fallback pointed at
     # ``/portal/invoices/{id}/pay`` which is BEHIND auth; customers
     # without an active session were bounced to the login page. Use

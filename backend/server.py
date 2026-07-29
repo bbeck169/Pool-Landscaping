@@ -8,8 +8,7 @@ from config import client, db, logger
 from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user, seed_landscape_tech_carlos, auto_heal_demo_passwords_if_needed, seed_prior_readings, seed_phase51k_finance, seed_mike_today_job, align_demo_tech_departments, seed_manager_user
 from routers import (
     notifications as notifications_router,
-    stripe_payments as stripe_payments_router,
-    auth, customers, technicians, jobs, quotes, leads, team, items, payments,
+    auth, customers, technicians, jobs, quotes, leads, team, items,
     operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google as google_router, phase11,
     weather_v2,
     realtime, csat, signatures,
@@ -37,7 +36,6 @@ from routers import (
     budgets,
     chemical_costs,
     recurring_jobs,
-    stripe_admin,
     zillow_admin,
     ringcentral,
     ringcentral_customer,
@@ -103,8 +101,6 @@ from routers import (
     invoice_viewer,
     estimate_viewer,
     referral_rewards,
-    payments_stripe_live,
-    stripe_webhooks_live,
     checklists,
     workstream_service_log,
     ringcentral_jwt,
@@ -143,11 +139,9 @@ api_router = APIRouter(prefix="/api")
 api_router.include_router(marketing_campaigns_router.router)
 
 # Phase 12B · Feb 2026 — Stripe ↔ Customers cross-reference admin
-# endpoints. Registered here so the ``/admin/stripe-customer-sync/*``
-# routes stay under the ``/api`` prefix and pass through the same
-# tenant-resolution + auth deps as the rest of the app.
-from routers import stripe_customer_sync_admin as _p12b_admin  # noqa: E402
-api_router.include_router(_p12b_admin.router)
+# endpoints. REMOVED in Phase LZ4 (Feb 2026) — Stripe SDK retired
+# in favour of Lumino via Zapier bridge. Legacy stripe_* invoice
+# fields are preserved as historical audit; no live sync remains.
 
 # Feb-2026 · BUG E — global Terms of Service gate. Registered BEFORE
 # the generic router loop so that ``GET /api/legal/tos`` wins the path
@@ -258,8 +252,7 @@ api_router.include_router(_p19_admin_users.router)
 api_router.include_router(_p19_integrations_admin.router)
 
 for module in [notifications_router,
-               stripe_payments_router,
-               auth, customers, technicians, jobs, quotes, leads, team, items, payments,
+               auth, customers, technicians, jobs, quotes, leads, team, items,
                operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google_router, phase11,
                weather_v2,
                realtime, csat, signatures,
@@ -285,7 +278,6 @@ for module in [notifications_router,
                budgets,
                chemical_costs,
                recurring_jobs,
-               stripe_admin,
                zillow_admin,
                ringcentral,
                ringcentral_customer,
@@ -352,8 +344,6 @@ for module in [notifications_router,
                invoice_viewer,
                estimate_viewer,
                referral_rewards,
-               payments_stripe_live,
-               stripe_webhooks_live,
                checklists,
                workstream_service_log,
                ringcentral_jwt,
@@ -751,24 +741,9 @@ async def _background_seed():
             "cron", hour=2, minute=0,
             id="recurring_job_generator", replace_existing=True)
 
-        # Phase 4B follow-up · Feb 2026 — daily Stripe live-key health
-        # alert. Runs 08:00 America/Phoenix; when ``zoneinfo`` is
-        # unavailable falls back to 15:00 UTC (rough Phoenix equivalent).
-        from services.stripe_key_health import run_stripe_key_health_scan
-        try:
-            from zoneinfo import ZoneInfo
-            _phoenix_tz = ZoneInfo("America/Phoenix")
-            scheduler.add_job(
-                run_stripe_key_health_scan, "cron",
-                hour=8, minute=0, timezone=_phoenix_tz,
-                id="stripe_key_daily_health", replace_existing=True,
-            )
-        except Exception:
-            scheduler.add_job(
-                run_stripe_key_health_scan, "cron",
-                hour=15, minute=0,
-                id="stripe_key_daily_health", replace_existing=True,
-            )
+        # Phase 4B follow-up · Feb 2026 — Stripe live-key health cron
+        # was REMOVED in Phase LZ4 (Feb 2026). Lumino via Zapier bridge
+        # is the sole payment provider; nothing to health-check here.
         # Phase 54 — nightly RingCentral contact pull-sync (03:00 UTC).
         async def _rc_nightly_pull():
             try:
@@ -877,26 +852,8 @@ async def _background_seed():
             logger.warning(f"referral watcher registration crashed: {_re}")
 
         # Phase 12B · Feb 2026 — Weekly Stripe customer sync cron.
-        # Registered as an hourly tick that dispatches per tenant when
-        # their local time hits Thursday 02:00. Same per-tenant local-
-        # hour pattern as the Phase 10 referral watcher and Phase 11
-        # equipment tracker digest above.
-        try:
-            from services.stripe_customer_sync_cron import (
-                hourly_scan as _p12b_cron_scan,
-            )
-            scheduler.add_job(
-                _p12b_cron_scan, "cron", minute=0,
-                id="stripe_customer_sync_weekly", replace_existing=True,
-            )
-            logger.info(
-                "scheduler: stripe_customer_sync_weekly registered "
-                "(per-tenant Thu 02:00 local dispatch, live mode only)"
-            )
-        except Exception as _p12be:
-            logger.warning(
-                f"stripe customer sync cron registration crashed: {_p12be}"
-            )
+        # REMOVED in Phase LZ4 (Feb 2026). Kept the empty block as a
+        # signpost so nobody reintroduces the retired code path.
 
         # Comms Phase 3 · Feb 2026 — automation-engine daily sweeps.
         # invoice.overdue (09:00 UTC), customer.birthday (08:00),
@@ -1198,24 +1155,9 @@ async def startup():
     except Exception as e:
         logger.warning(f"[phase12] boot migration crashed: {e}")
 
-    # Phase 4B · Stripe Live Payments — one-shot startup log with masked
-    # key + mode. Never logs the secret value. Boots the Stripe SDK.
-    try:
-        from services.stripe_client import get_stripe, mode as _stripe_mode
-        _sk = os.getenv("STRIPE_SECRET_KEY") or ""
-        _pk = os.getenv("STRIPE_PUBLISHABLE_KEY") or ""
-        _ws = os.getenv("STRIPE_WEBHOOK_SECRET") or ""
-        _mode_val = _stripe_mode()
-        # Masked prefix — keep 7-char prefix + last 4 (never the middle).
-        _mask = lambda s: (f"{s[:7]}…{s[-4:]}" if s and len(s) > 12 else ("(unset)" if not s else "(short)"))
-        logger.info(
-            f"[phase4b] stripe mode={_mode_val} "
-            f"key={_mask(_sk)} pk={_mask(_pk)} "
-            f"webhook_secret={'set' if _ws else 'unset'}"
-        )
-        get_stripe()  # boot SDK
-    except Exception as e:
-        logger.warning(f"[phase4b] stripe boot log crashed: {e}")
+    # Phase 4B · Stripe Live Payments boot log — REMOVED in Phase LZ4
+    # (Feb 2026). Stripe SDK is retired; Lumino via Zapier is the sole
+    # payment provider now. No boot-time key inspection is needed.
 
     # Phase 6 · Feb 2026 — RingCentral banner + subscription index.
     try:

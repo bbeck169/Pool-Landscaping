@@ -16,15 +16,10 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
-import { PayNowButton, StripeCheckoutReturn } from '@/components/stripe/StripePayments';
-// Phase 5A hot-fix · Feb 2026 — Pay Now on the invoice detail page now
-// uses the Phase 4B <PaymentForm> (Card + ACH + wallets via Stripe
-// PaymentElement). The legacy hosted-checkout <PayNowButton> above is
-// kept only for the Portal / Magic-Link viewer where it still ships,
-// but the authenticated invoice screen no longer calls it. The
-// legacy path returned ``stripe_error`` whenever the Phase-53 checkout
-// route hit a Stripe SDK exception, which surfaced to the user as
-// "Stripe not configured".
+// Phase LZ4 (Feb 2026) — StripePayments module retired.
+// PayNowButton + StripeCheckoutReturn are gone; Lumino's hosted
+// payment page + LZ2 dispatcher replaces the Stripe checkout return
+// flow. The <PaymentForm> below already drives the Lumino redirect.
 import PaymentForm from "@/components/PaymentForm";
 import { useAuth } from "@/auth";
 import InvoiceAttachments from "@/components/quotes/InvoiceAttachments";
@@ -280,7 +275,10 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
         <ArrowLeft size={14} /> All {isInvoice ? "invoices" : "quotes"}
       </button>
 
-      <StripeCheckoutReturn onPaid={() => load()} />
+      {/* Phase LZ4 (Feb 2026) — StripeCheckoutReturn removed with
+          the Stripe SDK retirement. Payment success is now surfaced
+          via the Lumino return URL + webhook callback, so nothing
+          needs to be polled from here. */}
 
       <div
         className="rounded-2xl p-6 mb-4"

@@ -32,6 +32,25 @@ async def frontend_env():
     }
 
 
+@router.get("/config/public")
+async def config_public():
+    """Public runtime flags for the web + mobile clients.
+
+    Feb 2026 · SHOW_DEMO_LOGINS default flip — hide the demo-account
+    block by default in production. Preview / dev opt in by setting
+    ``SHOW_DEMO_LOGINS=true`` in ``backend/.env``.
+
+    Phase LZ4 · Feb 2026 — this endpoint used to live inside the
+    Stripe live-payments router (``payments_stripe_live.py``) so it
+    got scooped up when that module was retired. Restored here in
+    the natural ``config`` home so the frontend keeps its
+    ``show_demo_logins`` gate.
+    """
+    raw = (os.getenv("SHOW_DEMO_LOGINS") or "").strip().lower()
+    show_demo = raw in ("1", "true", "yes", "on")
+    return {"show_demo_logins": show_demo}
+
+
 @router.get("/google-maps/health")
 async def google_maps_health(user: dict = Depends(require_admin)):
     """Admin-only — reports whether the Google Maps key is configured.

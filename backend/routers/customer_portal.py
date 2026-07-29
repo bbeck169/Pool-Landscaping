@@ -192,8 +192,10 @@ def _stripe_key_is_placeholder(key: str) -> bool:
 
 
 def _stripe_configured() -> bool:
-    """True when STRIPE_SECRET_KEY is present AND not a placeholder."""
-    return not _stripe_key_is_placeholder(os.environ.get("STRIPE_SECRET_KEY") or "")
+    """Phase LZ4 (Feb 2026) — Stripe SDK is retired. Always False so
+    the ACH/Financial-Connections endpoints short-circuit into the
+    "not configured" branch the frontend already knows how to render."""
+    return False
 
 
 @router.post(
@@ -204,87 +206,17 @@ async def start_ach_link_session(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
-    """Create a Stripe Financial Connections session so the customer can
-    verify their bank account instantly.
+    """Create an ACH bank-verification session for the customer.
 
-    When ``STRIPE_SECRET_KEY`` is empty the endpoint short-circuits and
-    returns ``{ok: false, reason: "stripe_not_configured"}`` — the
-    frontend uses this to render a disabled Connect button + tooltip.
-
-    When the key is present, we ask Stripe for a real Financial
-    Connections session bound to the customer's Stripe customer id
-    (creating one on the fly if missing). No money moves — Financial
-    Connections is verification only.
+    Phase LZ4 · Feb 2026 — the Stripe SDK integration this endpoint
+    relied on (Financial Connections) has been retired. Until an
+    ACH provider is re-wired via Lumino, this endpoint always
+    returns ``{ok: false, reason: "stripe_not_configured"}`` so the
+    frontend continues to render its "Connect bank" disabled state
+    without an error banner.
     """
-    cid = _require_customer(user)
-
-    if not _stripe_configured():
-        return {"ok": False, "reason": "stripe_not_configured"}
-
-    # Import lazily so the module loads even when Stripe SDK isn't wired.
-    try:
-        import stripe as _stripe
-
-        _stripe.api_key = os.environ.get("STRIPE_SECRET_KEY") or ""
-    except Exception as exc:  # pragma: no cover — SDK missing
-        logger.warning("Stripe SDK unavailable: %s", exc)
-        return {"ok": False, "reason": "stripe_sdk_unavailable"}
-
-    # Look up (or create) the customer's Stripe customer id.
-    cust = await db.customers.find_one(
-        {"id": cid, "tenant_id": tenant["id"]}, {"_id": 0},
-    ) or {}
-    scid = cust.get("stripe_customer_id")
-    if not scid:
-        try:
-            import asyncio as _asyncio
-
-            sc = await _asyncio.to_thread(
-                _stripe.Customer.create,
-                email=cust.get("email") or user.get("email"),
-                name=cust.get("name") or user.get("name"),
-                metadata={
-                    "customer_id": cid,
-                    "tenant_id": tenant["id"],
-                },
-            )
-            scid = sc.get("id") if isinstance(sc, dict) else getattr(sc, "id", None)
-            if scid:
-                await db.customers.update_one(
-                    {"id": cid, "tenant_id": tenant["id"]},
-                    {"$set": {"stripe_customer_id": scid}},
-                )
-        except Exception as exc:
-            logger.warning("Stripe customer bootstrap failed: %s", exc)
-            return {"ok": False, "reason": "stripe_customer_error"}
-
-    try:
-        import asyncio as _asyncio
-
-        session = await _asyncio.to_thread(
-            _stripe.financial_connections.Session.create,
-            account_holder={"type": "customer", "customer": scid},
-            permissions=["payment_method", "balances"],
-            filters={"countries": ["US"]},
-        )
-        client_secret = (
-            session.get("client_secret")
-            if isinstance(session, dict)
-            else getattr(session, "client_secret", None)
-        )
-        session_id = (
-            session.get("id") if isinstance(session, dict) else getattr(session, "id", None)
-        )
-        if not client_secret:
-            return {"ok": False, "reason": "stripe_error"}
-        return {
-            "ok": True,
-            "client_secret": client_secret,
-            "session_id": session_id,
-        }
-    except Exception as exc:
-        logger.warning("Stripe Financial Connections session failed: %s", exc)
-        return {"ok": False, "reason": "stripe_error"}
+    _require_customer(user)
+    return {"ok": False, "reason": "stripe_not_configured"}
 
 
 class AchAttachIn(BaseModel):
