@@ -510,6 +510,46 @@ export function AutoBilling() {
     } finally { setBulkBusy(false); }
   };
 
+  // Phase AB1 · Feb-2026 — Bulk cancel (soft; keeps the row, sets
+  // active=false + cancelled_at + cancel_reason). Separate from
+  // bulk-delete, which removes the plan from the active table.
+  const [confirmCancelOpen, setConfirmCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelResult, setCancelResult] = useState(null);
+  const doBulkCancel = async () => {
+    setBulkBusy(true);
+    try {
+      const res = await api.post("/autobilling/bulk-cancel", {
+        ids: Array.from(selectedIds),
+        reason: cancelReason || null,
+      });
+      const cancelledIds = new Set(
+        (res.results || [])
+          .filter((r) => r.status === "cancelled")
+          .map((r) => r.id),
+      );
+      setPlans((prev) => prev.map((p) => (
+        cancelledIds.has(p.id) ? { ...p, active: false } : p
+      )));
+      setCancelResult(res);
+      clearSelection();
+      setConfirmCancelOpen(false);
+      setCancelReason("");
+      const cancelled = res.cancelled || 0;
+      const skipped = res.skipped || 0;
+      if (skipped === 0) sonnerToast.success(`${cancelled} autobilling entr${cancelled === 1 ? "y" : "ies"} cancelled`);
+      else sonnerToast(`${cancelled} cancelled · ${skipped} skipped`, {
+        description: (res.results || [])
+          .filter((r) => r.status === "skipped")
+          .slice(0, 3)
+          .map((r) => r.reason || "skipped")
+          .join(" · "),
+      });
+    } catch (e) {
+      sonnerToast.error(e?.message || "Bulk cancel failed");
+    } finally { setBulkBusy(false); }
+  };
+
   // Phase 56.17 — client-side preview of the next fire anchor for the
   // currently-selected schedule in the New Plan modal. Mirrors the
   // server-side `anchor_date_for_month` helper so admins see the same
@@ -791,6 +831,13 @@ export function AutoBilling() {
                     data-testid="bulk-delete-button">
             <Trash2 size={12} /> Delete selected
           </button>
+          {/* Phase AB1 · Bulk cancel (soft — retains the row). */}
+          <button type="button" onClick={() => setConfirmCancelOpen(true)} disabled={bulkBusy}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
+                    style={{ backgroundColor: "#B45309", color: "#FFFFFF" }}
+                    data-testid="bulk-cancel-button">
+            <XIcon size={12} /> Cancel selected
+          </button>
           <button type="button" onClick={clearSelection}
                     className="text-xs font-semibold underline"
                     style={{ color: "rgba(255,255,255,0.85)" }}
@@ -836,6 +883,64 @@ export function AutoBilling() {
                         style={{ backgroundColor: "#DC2626" }}
                         data-testid="bulk-delete-confirm-btn">
                 {bulkBusy ? "Deleting…" : `Delete ${selectedCount}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Phase AB1 · Bulk-cancel confirm modal. */}
+      {confirmCancelOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4"
+              style={{ background: "rgba(15,23,42,0.55)" }}
+              onMouseDown={(e) => { if (e.target === e.currentTarget) setConfirmCancelOpen(false); }}
+              data-testid="bulk-cancel-confirm">
+          <div className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+                style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+                onMouseDown={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
+                  Cancel {selectedCount} autobilling entr{selectedCount === 1 ? "y" : "ies"}?
+                </h2>
+                <p className="text-sm mt-1" style={{ color: colors.muted }}>
+                  This is a soft cancel — the row stays in your history and can be
+                  re-activated later. Already-cancelled or already-deleted rows will
+                  be skipped in the result.
+                </p>
+              </div>
+              <button type="button" onClick={() => setConfirmCancelOpen(false)} className="p-1"
+                        style={{ color: colors.muted }} aria-label="Close">
+                <XIcon size={18} />
+              </button>
+            </div>
+            <label className="block text-xs uppercase font-semibold mb-1"
+                    style={{ color: colors.muted }}>
+              Reason (optional)
+            </label>
+            <textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={2}
+              className="w-full px-3 py-2 rounded-lg text-sm"
+              style={{ background: colors.surfaceSecondary,
+                        border: `1px solid ${colors.border}`,
+                        color: colors.onSurface }}
+              placeholder="e.g., customer paused service"
+              data-testid="bulk-cancel-reason"
+            />
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button type="button" onClick={() => setConfirmCancelOpen(false)}
+                        className="px-4 py-2 rounded-xl text-sm font-semibold"
+                        style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurface }}
+                        data-testid="bulk-cancel-cancel">
+                Keep active
+              </button>
+              <button type="button" onClick={doBulkCancel} disabled={bulkBusy}
+                        className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-60"
+                        style={{ backgroundColor: "#B45309" }}
+                        data-testid="bulk-cancel-confirm-btn">
+                {bulkBusy ? "Cancelling…" : `Cancel ${selectedCount}`}
               </button>
             </div>
           </div>

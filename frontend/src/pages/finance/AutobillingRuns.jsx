@@ -13,7 +13,8 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Download, Repeat } from "lucide-react";
+import { ArrowLeft, Download, Repeat, XCircle } from "lucide-react";
+import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { PageHeader } from "@/components/ui-kit";
@@ -111,6 +112,75 @@ export default function AutobillingRuns() {
   const bump = (key) => setSort((s) =>
     s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }
   );
+
+  // Phase AB1 · Feb-2026 — bulk-select + bulk-cancel state.
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [confirmCancelOpen, setConfirmCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelResult, setCancelResult] = useState(null);
+
+  const visibleIds = useMemo(() => sorted.map((r) => r.id), [sorted]);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+  const selectedCount = selectedIds.size;
+
+  const toggleAllVisible = () => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (allVisibleSelected) visibleIds.forEach((id) => next.delete(id));
+    else visibleIds.forEach((id) => next.add(id));
+    return next;
+  });
+  const toggleOne = (id) => setSelectedIds((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const doBulkCancel = async () => {
+    setCancelBusy(true);
+    try {
+      const res = await api.post("/autobilling/runs/bulk-cancel", {
+        ids: Array.from(selectedIds),
+        reason: cancelReason || null,
+      });
+      setCancelResult(res);
+      const cancelled = res.cancelled || 0;
+      const skipped = res.skipped || 0;
+      if (skipped === 0) {
+        sonnerToast.success(`${cancelled} run${cancelled === 1 ? "" : "s"} cancelled`);
+      } else {
+        sonnerToast(`${cancelled} cancelled · ${skipped} skipped`, {
+          description: (res.results || [])
+            .filter((r) => r.status === "skipped")
+            .slice(0, 3)
+            .map((r) => r.reason || "skipped")
+            .join(" · "),
+        });
+      }
+      // Optimistic UI: flip cancelled rows locally so the pill turns
+      // grey without a full refetch.
+      const cancelledSet = new Set(
+        (res.results || [])
+          .filter((r) => r.status === "cancelled")
+          .map((r) => r.id),
+      );
+      setRows((prev) => prev.map((r) => (
+        cancelledSet.has(r.id) ? { ...r, status: "cancelled" } : r
+      )));
+      clearSelection();
+      setConfirmCancelOpen(false);
+      setCancelReason("");
+      // Then background-refresh to catch anything else the backend
+      // adjusted (e.g. an audit-driven message field).
+      load();
+    } catch (e) {
+      sonnerToast.error(e?.message || "Bulk cancel failed");
+    } finally {
+      setCancelBusy(false);
+    }
+  };
 
   const exportCsv = () => {
     const header = ["Timestamp", "Plan", "Schedule", "Anchor date", "Current month", "Status", "Message", "Invoice"];
@@ -231,6 +301,17 @@ export default function AutobillingRuns() {
           <table className="w-full text-xs" data-testid="autobilling-runs-table">
             <thead style={{ background: colors.surfaceAlt }}>
               <tr>
+                <th className="px-3 py-2 w-8" onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={toggleAllVisible}
+                    disabled={visibleIds.length === 0}
+                    aria-label="Select all visible runs"
+                    data-testid="autobilling-runs-select-all"
+                    className="cursor-pointer"
+                  />
+                </th>
                 {COLS.map((c) => (
                   <th
                     key={c.k}
@@ -248,7 +329,7 @@ export default function AutobillingRuns() {
             <tbody>
               {sorted.length === 0 ? (
                 <tr>
-                  <td colSpan={COLS.length} className="px-3 py-6 text-center"
+                  <td colSpan={COLS.length + 1} className="px-3 py-6 text-center"
                       style={{ color: colors.muted }}
                       data-testid="autobilling-runs-empty">
                     No autobilling runs yet. Runs appear here when the daily
@@ -256,7 +337,19 @@ export default function AutobillingRuns() {
                   </td>
                 </tr>
               ) : sorted.map((r) => (
-                <tr key={r.id} data-testid={`autobilling-runs-row-${r.id}`}>
+                <tr key={r.id}
+                     data-testid={`autobilling-runs-row-${r.id}`}
+                     style={{ backgroundColor: selectedIds.has(r.id) ? "#EFF6FF" : "transparent" }}>
+                  <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(r.id)}
+                      onChange={() => toggleOne(r.id)}
+                      aria-label={`Select run ${r.id}`}
+                      data-testid={`autobilling-runs-row-select-${r.id}`}
+                      className="cursor-pointer"
+                    />
+                  </td>
                   <td className="px-3 py-2" style={{ color: colors.onSurface }}>{fmtTs(r.ts)}</td>
                   <td className="px-3 py-2 font-bold" style={{ color: colors.onSurface }}>
                     {r.plan_name || r.plan_id || "—"}
@@ -273,6 +366,127 @@ export default function AutobillingRuns() {
           </table>
         </div>
       )}
+
+      {/* Phase AB1 · Bulk-cancel action bar. Visible only when ≥1 selected. */}
+      {selectedCount > 0 ? (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 rounded-2xl shadow-2xl flex items-center gap-3 px-4 py-3 z-40"
+          style={{ backgroundColor: colors.onSurface, color: "#FFFFFF",
+                    border: "1px solid rgba(255,255,255,0.08)" }}
+          data-testid="autobilling-runs-bulk-action-bar"
+        >
+          <div className="text-sm font-semibold"
+                data-testid="autobilling-runs-bulk-action-bar-count">
+            {selectedCount} selected
+          </div>
+          <button
+            type="button"
+            onClick={() => setConfirmCancelOpen(true)}
+            disabled={cancelBusy}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
+            style={{ backgroundColor: "#B45309", color: "#FFFFFF" }}
+            data-testid="autobilling-runs-bulk-cancel-button"
+          >
+            <XCircle size={12} /> Bulk cancel
+          </button>
+          <button
+            type="button"
+            onClick={clearSelection}
+            className="text-xs font-semibold underline"
+            style={{ color: "rgba(255,255,255,0.85)" }}
+            data-testid="autobilling-runs-bulk-clear-selection"
+          >
+            Clear selection
+          </button>
+        </div>
+      ) : null}
+
+      {/* Phase AB1 · Bulk-cancel confirmation modal. */}
+      {confirmCancelOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(15,23,42,0.55)" }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setConfirmCancelOpen(false); }}
+          data-testid="autobilling-runs-bulk-cancel-confirm"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+            style={{ background: "#fff", border: `1px solid ${colors.border}` }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold mb-1" style={{ color: colors.onSurface }}>
+              Cancel {selectedCount} run{selectedCount === 1 ? "" : "s"}?
+            </h2>
+            <p className="text-sm mb-3" style={{ color: colors.muted }}>
+              Only pending / scheduled / queued runs will be cancelled.
+              Completed, failed, and already-cancelled runs will be
+              skipped and listed in the result summary.
+            </p>
+            <label className="block text-[10px] uppercase font-bold mb-1"
+                    style={{ color: colors.muted }}>
+              Reason (optional)
+            </label>
+            <textarea
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={2}
+              className="w-full px-3 py-2 rounded-lg text-sm"
+              style={{ background: colors.surface,
+                        border: `1px solid ${colors.border}`,
+                        color: colors.onSurface }}
+              placeholder="e.g., plans consolidated into a single monthly invoice"
+              data-testid="autobilling-runs-bulk-cancel-reason"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmCancelOpen(false)}
+                disabled={cancelBusy}
+                className="px-4 py-2 rounded-lg text-sm font-semibold"
+                style={{ background: colors.surface,
+                          border: `1px solid ${colors.border}`,
+                          color: colors.onSurface,
+                          opacity: cancelBusy ? 0.5 : 1 }}
+                data-testid="autobilling-runs-bulk-cancel-cancel"
+              >
+                Keep runs
+              </button>
+              <button
+                type="button"
+                onClick={doBulkCancel}
+                disabled={cancelBusy}
+                className="px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-60"
+                style={{ backgroundColor: "#B45309" }}
+                data-testid="autobilling-runs-bulk-cancel-confirm-btn"
+              >
+                {cancelBusy ? "Cancelling…" : `Cancel ${selectedCount}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Phase AB1 · Post-run result summary (auto-hides on next selection). */}
+      {cancelResult ? (
+        <div
+          className="rounded-lg p-3 text-xs"
+          style={{ background: "#FEF3C7",
+                    border: "1px solid #FCD34D",
+                    color: "#92400E" }}
+          data-testid="autobilling-runs-bulk-cancel-summary"
+        >
+          <b>Bulk cancel:</b> {cancelResult.cancelled || 0} cancelled ·{" "}
+          {cancelResult.skipped || 0} skipped.{" "}
+          <button
+            type="button"
+            onClick={() => setCancelResult(null)}
+            className="ml-2 underline font-semibold"
+            data-testid="autobilling-runs-bulk-cancel-summary-dismiss"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

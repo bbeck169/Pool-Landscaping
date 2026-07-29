@@ -1166,3 +1166,197 @@ async def bulk_delete_autobilling_alias(body: _AutobillingBulkDeleteIn,
                                             tenant: dict = Depends(get_current_tenant)):
     return await bulk_delete_billing_plans(body, user, tenant)
 
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase AB1 · Feb 2026 — Autobilling bulk-cancel.
+# ═════════════════════════════════════════════════════════════════════════
+# Soft cancel of billing_plans rows: flip ``active=False`` and stamp
+# ``cancelled_at`` + ``cancelled_by_user_id`` + ``cancel_reason`` without
+# removing the row (bulk-delete already covers the archival flow). This
+# is the sibling operation admins reach for when a customer pauses a
+# recurring plan indefinitely but the row itself should stay in place
+# for reporting continuity.
+#
+# The parallel ``autobilling/runs/bulk-cancel`` endpoint operates on
+# ``db.autobilling_runs``. That collection is an *audit log* of past
+# run events today (statuses today = ``fired|manual|skipped|error|
+# late_missed``), but Phase AB1 anticipates future schema growth
+# where scheduled/queued rows will land there. The endpoint therefore
+# accepts requests and returns per-id skip reasons for anything
+# outside the eligible-statuses list — safe & idempotent regardless
+# of current data.
+class _AutobillingBulkCancelIn(_AutobillingBulkBase):
+    ids: List[str]
+    reason: Optional[str] = None
+
+
+_AUTOBILLING_BULK_CANCEL_CAP = 500
+
+_RUN_STATUSES_ELIGIBLE_FOR_CANCEL = {"pending", "scheduled", "queued"}
+
+
+async def _write_bulk_cancel_audit(*, kind: str, target_id: str,
+                                     user: dict, tenant: dict,
+                                     reason: Optional[str]) -> None:
+    try:
+        await db.audits.insert_one({
+            "id": new_id(),
+            "kind": kind,
+            "tenant_id": tenant["id"],
+            "target_id": target_id,
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "cancel_reason": reason or "",
+            "at": now_iso(),
+        })
+    except Exception as e:                                            # noqa: BLE001
+        logger.warning(f"{kind} audit failed for {target_id}: {e}")
+
+
+@router.post("/billing-plans/bulk-cancel",
+              operation_id="billingPlans.bulkCancel")
+async def bulk_cancel_billing_plans(body: _AutobillingBulkCancelIn,
+                                       user: dict = Depends(require_admin),
+                                       tenant: dict = Depends(get_current_tenant)):
+    ids = list(body.ids or [])
+    if not ids:
+        raise HTTPException(400, "ids is empty")
+    if len(ids) > _AUTOBILLING_BULK_CANCEL_CAP:
+        raise HTTPException(
+            400,
+            f"bulk-cancel capped at {_AUTOBILLING_BULK_CANCEL_CAP} rows per call",
+        )
+
+    cancelled: List[str] = []
+    skipped: List[dict] = []
+    results: List[dict] = []
+    when = now_iso()
+
+    for pid in ids:
+        plan = await db.billing_plans.find_one(
+            {"id": pid, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "active": 1, "cancelled_at": 1,
+              "deleted_at": 1},
+        )
+        if not plan:
+            entry = {"id": pid, "status": "skipped", "reason": "not_found"}
+            skipped.append(entry)
+            results.append(entry)
+            continue
+        # Already cancelled or deleted → skip idempotently.
+        if plan.get("cancelled_at") or plan.get("deleted_at") \
+                or plan.get("active") is False:
+            entry = {"id": pid, "status": "skipped",
+                      "reason": "already_cancelled_or_inactive"}
+            skipped.append(entry)
+            results.append(entry)
+            continue
+        try:
+            await db.billing_plans.update_one(
+                {"id": pid, "tenant_id": tenant["id"]},
+                {"$set": {"active": False,
+                            "cancelled_at": when,
+                            "cancelled_by_user_id": user.get("id"),
+                            "cancel_reason": (body.reason or "")}},
+            )
+            await _write_bulk_cancel_audit(
+                kind="autobilling_bulk_cancel", target_id=pid,
+                user=user, tenant=tenant, reason=body.reason,
+            )
+            cancelled.append(pid)
+            results.append({"id": pid, "status": "cancelled", "reason": None})
+        except Exception as e:                                        # noqa: BLE001
+            entry = {"id": pid, "status": "skipped",
+                      "reason": f"error: {e}"}
+            skipped.append(entry)
+            results.append(entry)
+
+    return {"cancelled": len(cancelled), "skipped": len(skipped),
+              "results": results}
+
+
+# Alias — mirror the /autobilling/bulk-delete naming convention so the
+# admin frontend can call whichever URL it prefers.
+@router.post("/autobilling/bulk-cancel",
+              operation_id="autobilling.bulkCancel")
+async def bulk_cancel_autobilling_alias(body: _AutobillingBulkCancelIn,
+                                            user: dict = Depends(require_admin),
+                                            tenant: dict = Depends(get_current_tenant)):
+    return await bulk_cancel_billing_plans(body, user, tenant)
+
+
+@router.post("/autobilling/runs/bulk-cancel",
+              operation_id="autobillingRuns.bulkCancel")
+async def bulk_cancel_autobilling_runs(body: _AutobillingBulkCancelIn,
+                                            user: dict = Depends(require_admin),
+                                            tenant: dict = Depends(get_current_tenant)):
+    """Bulk-cancel scheduled runs in ``db.autobilling_runs``.
+
+    Only rows whose ``status`` (or legacy ``run_status``) is
+    ``pending`` / ``scheduled`` / ``queued`` are eligible. Everything
+    else — ``fired`` / ``completed`` / ``failed`` / ``error`` /
+    ``late_missed`` / already ``cancelled`` — is left untouched and
+    returned in ``skipped`` with a machine-readable reason so the
+    frontend can surface it verbatim in the result summary.
+    """
+    ids = list(body.ids or [])
+    if not ids:
+        raise HTTPException(400, "ids is empty")
+    if len(ids) > _AUTOBILLING_BULK_CANCEL_CAP:
+        raise HTTPException(
+            400,
+            f"bulk-cancel capped at {_AUTOBILLING_BULK_CANCEL_CAP} rows per call",
+        )
+
+    cancelled: List[str] = []
+    skipped: List[dict] = []
+    results: List[dict] = []
+    when = now_iso()
+
+    for rid in ids:
+        row = await db.autobilling_runs.find_one(
+            {"id": rid, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "status": 1, "run_status": 1,
+              "cancelled_at": 1},
+        )
+        if not row:
+            entry = {"id": rid, "status": "skipped", "reason": "not_found"}
+            skipped.append(entry)
+            results.append(entry)
+            continue
+        if row.get("cancelled_at"):
+            entry = {"id": rid, "status": "skipped",
+                      "reason": "already_cancelled"}
+            skipped.append(entry)
+            results.append(entry)
+            continue
+        current = (row.get("status") or row.get("run_status") or "").lower()
+        if current not in _RUN_STATUSES_ELIGIBLE_FOR_CANCEL:
+            entry = {"id": rid, "status": "skipped",
+                      "reason": f"not_eligible: current_status={current or 'unknown'}"}
+            skipped.append(entry)
+            results.append(entry)
+            continue
+        try:
+            await db.autobilling_runs.update_one(
+                {"id": rid, "tenant_id": tenant["id"]},
+                {"$set": {"status": "cancelled",
+                            "cancelled_at": when,
+                            "cancelled_by_user_id": user.get("id"),
+                            "cancel_reason": (body.reason or "")}},
+            )
+            await _write_bulk_cancel_audit(
+                kind="autobilling_runs_bulk_cancel", target_id=rid,
+                user=user, tenant=tenant, reason=body.reason,
+            )
+            cancelled.append(rid)
+            results.append({"id": rid, "status": "cancelled", "reason": None})
+        except Exception as e:                                        # noqa: BLE001
+            entry = {"id": rid, "status": "skipped",
+                      "reason": f"error: {e}"}
+            skipped.append(entry)
+            results.append(entry)
+
+    return {"cancelled": len(cancelled), "skipped": len(skipped),
+              "results": results}
+
