@@ -1,4 +1,3 @@
-# ruff: noqa: F403,F405
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
@@ -7,7 +6,8 @@ from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response)
 from routers.tenants import get_current_tenant
-from models import *  # noqa: F403,F405
+# Bucket A2 · Feb-2026 — wildcard removed; dashboard.py does not reference
+# any symbol from ``models`` (verified via AST diff against models exports).
 
 router = APIRouter()
 
