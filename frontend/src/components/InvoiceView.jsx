@@ -314,14 +314,11 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
       </div>
       {payOpen ? (
         <PaymentForm
+          invoice={data}
           invoiceId={invoiceId}
           source={paySource}
           magicToken={magicToken}
           onClose={() => setPayOpen(false)}
-          onSuccess={() => {
-            setPayOpen(false);
-            setReloadTick((t) => t + 1);
-          }}
         />
       ) : null}
     </div>

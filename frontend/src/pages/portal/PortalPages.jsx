@@ -240,14 +240,10 @@ export function PortalInvoiceDetail() {
       <InvoiceView invoiceId={id} printable={printable} />
       {payNowOpen ? (
         <PaymentForm
+          invoice={doc}
           invoiceId={id}
           source="authenticated"
           onClose={() => setPayNowOpen(false)}
-          onSuccess={() => {
-            setPayNowOpen(false);
-            setToast({ tone: "success", message: "Payment received. Thank you!" });
-            api.get(`/quotes/${id}`).then(setDoc).catch(() => {});
-          }}
         />
       ) : null}
       <Toast toast={toast} onClose={() => setToast(null)} />
