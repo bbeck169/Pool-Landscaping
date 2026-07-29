@@ -223,6 +223,8 @@ from routers import profit_report as _profit_report  # noqa: E402
 api_router.include_router(_profit_report.router)
 from routers import gps_settings as _gps_settings  # noqa: E402
 api_router.include_router(_gps_settings.router)
+from routers import gps_ingest as _gps_ingest  # noqa: E402
+api_router.include_router(_gps_ingest.router)
 # Feb 2026 — Service categories (pricebook business-unit taxonomy).
 from routers import service_categories as _service_categories  # noqa: E402
 api_router.include_router(_service_categories.router)

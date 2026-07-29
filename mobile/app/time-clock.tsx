@@ -1,11 +1,14 @@
 /**
- * Phase 16A · Technician Time Clock (Expo web + native).
+ * Phase 16A + G1 · Technician Time Clock (Expo web + native).
  *
  * Foreground GPS clock-in against today's assigned jobs. Ping loop sends a
  * location-ping every 30s while a shift is open; pings queue in AsyncStorage
  * when offline and flush on reconnect. Background pings (app closed) require
  * a native build with `expo-task-manager` — this screen relies on foreground
  * only, keeping web/Expo-Go compatible.
+ *
+ * G1: Adds batched GPS pings via POST /api/gps/pings (gpsTracker service).
+ * Auto-starts on clock-in, stops+flushes on clock-out. Shows green pill.
  */
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView, Alert } from 'react-native';
@@ -19,6 +22,7 @@ import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import BreadcrumbBar from "@/src/components/nav/BreadcrumbBar";
+import * as GpsTracker from "@/src/services/gpsTracker";
 
 const QUEUE_KEY = "workforce_ping_queue_v1";
 const PING_MS = 30_000;
@@ -34,6 +38,7 @@ export default function TimeClockScreen() {
   const [shiftSeconds, setShiftSeconds] = useState(0);
   const [breakOpen, setBreakOpen] = useState(false);
   const [inGeofence, setInGeofence] = useState<boolean | null>(null);
+  const [gpsActive, setGpsActive] = useState(false);
   const pingTimer = useRef<any>(null);
   const shiftTimer = useRef<any>(null);
 
@@ -56,6 +61,22 @@ export default function TimeClockScreen() {
         }
       } catch { /* ignore */ }
     })();
+  }, []);
+
+  /* G1 — Best-effort resume GPS tracker when screen mounts with open shift */
+  useEffect(() => {
+    if (entry && !GpsTracker.isTracking()) {
+      GpsTracker.startTracking().then((ok) => setGpsActive(ok)).catch(() => {});
+    }
+    if (!entry && GpsTracker.isTracking()) {
+      GpsTracker.stopTracking();
+      setGpsActive(false);
+    }
+  }, [entry?.id]);
+
+  /* G1 — Stop callback when server returns 409 */
+  useEffect(() => {
+    GpsTracker.onTrackingStopped(() => setGpsActive(false));
   }, []);
 
   /** Persist offline ping queue */
@@ -150,6 +171,8 @@ export default function TimeClockScreen() {
       });
       setEntry(r);
       setInGeofence(!r.out_of_geofence);
+      // G1: Start GPS batch tracker
+      GpsTracker.startTracking().then((ok) => setGpsActive(ok)).catch(() => {});
     } catch (e: any) {
       Alert.alert("Clock-in failed", e?.message || "Try again");
     } finally { setBusy(false); }
@@ -159,6 +182,11 @@ export default function TimeClockScreen() {
     if (!entry) return;
     setBusy(true);
     try {
+      // G1: Stop GPS tracker and flush remaining pings before clock-out
+      GpsTracker.stopTracking();
+      setGpsActive(false);
+      await GpsTracker.flushPings().catch(() => {});
+
       const g = await requestGps();
       if (!g) return;
       const r = await api.post("/workforce/clock-out", {
@@ -241,6 +269,14 @@ export default function TimeClockScreen() {
                 <Text style={[styles.pillText,
                               { color: inGeofence ? colors.success : colors.error }]}>
                   {inGeofence ? "In site" : "Out of site"}
+                </Text>
+              </View>
+            )}
+            {gpsActive && (
+              <View style={[styles.pill, { backgroundColor: "#DCFCE7" }]}
+                    testID="time-clock-gps-tracking-pill">
+                <Text style={[styles.pillText, { color: "#16A34A" }]}>
+                  {"\u{1F4CD}"} Location tracking on
                 </Text>
               </View>
             )}
