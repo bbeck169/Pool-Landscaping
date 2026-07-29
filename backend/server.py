@@ -285,6 +285,10 @@ api_router.include_router(_public_widget_router.router)
 from routers import seo_scans as _seo_scans_router  # noqa: E402
 api_router.include_router(_seo_scans_router.router)
 
+# Phase SEO-B · Feb-2026 — Backlink outreach CRM (admin+/manager).
+from routers import outreach as _outreach_router  # noqa: E402
+api_router.include_router(_outreach_router.router)
+
 # Feb-2026 · Re-added after LZ4 Stripe purge — Payments summary tile.
 from routers import payments_summary as _payments_summary_router  # noqa: E402
 api_router.include_router(_payments_summary_router.router)
@@ -825,6 +829,22 @@ async def _background_seed():
             )
         except Exception as e:                                        # noqa: BLE001
             logger.warning(f"[gps_stops] cron install failed: {e}")
+
+        # Phase SEO-B · Feb-2026 — Outreach follow-up daily digest
+        # at 08:00 UTC. Emails each tenant owner a summary of due
+        # follow-ups. Idempotent by day.
+        try:
+            from services.outreach_followups import (
+                run_outreach_followup_digest)
+            scheduler.add_job(
+                run_outreach_followup_digest,
+                "cron", hour=8, minute=0,
+                id="outreach_daily_followup_digest",
+                replace_existing=True,
+                max_instances=1, coalesce=True,
+            )
+        except Exception as e:                                        # noqa: BLE001
+            logger.warning(f"[outreach] cron install failed: {e}")
         # Task QQ Phase 2 · Feb 2026 — nightly Lumino reconciler
         # (03:00 UTC). Polls pending payments/subscriptions to close
         # any gap left by the return-URL / Zapier bridge paths.

@@ -116,6 +116,9 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/seo/studio",          label: "Website Studio",   icon: FileText,   feature: "seo", subsection: "SEO Suite" },
     { to: "/admin/seo/reports",         label: "White-Label Reports", icon: FileText, feature: "seo", subsection: "SEO Suite" },
     { to: "/admin/seo/content-refresh", label: "Content Refresh",  icon: Sparkles,   feature: "seo", subsection: "SEO Suite" },
+    // Phase SEO-B · Feb-2026 — Backlink outreach CRM (admin+/manager).
+    { to: "/admin/outreach/prospects",  label: "Outreach Prospects", icon: SearchIcon, feature: "seo", subsection: "Outreach" },
+    { to: "/admin/outreach/templates",  label: "Outreach Templates", icon: FileText,   feature: "seo", subsection: "Outreach" },
     // GBP
     { to: "/gbp",          label: "GBP Hub",      icon: Building2, feature: "gbp", subsection: "Google Business" },
     { to: "/gbp/posts",    label: "GBP Posts",    icon: FileText,  feature: "gbp", subsection: "Google Business" },
