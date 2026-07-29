@@ -277,6 +277,10 @@ from routers import moderation_public_checkins as _mod_public_checkins_router  #
 api_router.include_router(_public_checkins_router.router)
 api_router.include_router(_mod_public_checkins_router.router)
 
+# MR1+MR2 · Feb-2026 — Public widget (feed + widget.js + preview).
+from routers import public_widget as _public_widget_router  # noqa: E402
+api_router.include_router(_public_widget_router.router)
+
 # Feb-2026 · Re-added after LZ4 Stripe purge — Payments summary tile.
 from routers import payments_summary as _payments_summary_router  # noqa: E402
 api_router.include_router(_payments_summary_router.router)

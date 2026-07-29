@@ -151,6 +151,7 @@ import DispatchErrorBoundary from "@/components/errors/DispatchErrorBoundary";
 import AdminDiagnosticsErrorsPage from "@/pages/admin/AdminDiagnosticsErrorsPage";
 import DriverActivityPage from "@/pages/admin/DriverActivityPage";
 import ModerationCheckinsPage from "@/pages/admin/ModerationCheckinsPage";
+import WidgetEmbedPage from "@/pages/admin/WidgetEmbedPage";
 import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
 import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPages";
 import WarrantyPlans, { WarrantyContracts, WarrantyClaims, PortalWarranties } from "@/pages/warranties/WarrantyPages";
@@ -653,6 +654,8 @@ export default function App() {
             <Route path="admin/reports/driver-activity" element={<AdminOnly><DriverActivityPage /></AdminOnly>} />
             {/* MR0 · Feb-2026 — Public check-in moderation queue (admin/super_admin/manager). */}
             <Route path="admin/moderation/checkins" element={<AdminOnly><ModerationCheckinsPage /></AdminOnly>} />
+            {/* MR1+MR2 · Feb-2026 — Public widget embed preview + snippet. */}
+            <Route path="admin/moderation/widget-embed" element={<AdminOnly><WidgetEmbedPage /></AdminOnly>} />
             {/* Phase 50.A — Chemical Costs CRUD (admin/super_admin) */}
             <Route path="admin/settings/chemical-costs" element={<AdminOnly><ChemicalCosts /></AdminOnly>} />
             {/* Phase 51.I — Recurring Jobs (admin/super_admin) */}
