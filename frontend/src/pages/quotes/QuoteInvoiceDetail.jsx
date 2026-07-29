@@ -28,6 +28,7 @@ import { PayNowButton, StripeCheckoutReturn } from '@/components/stripe/StripePa
 import PaymentForm from "@/components/PaymentForm";
 import { useAuth } from "@/auth";
 import InvoiceAttachments from "@/components/quotes/InvoiceAttachments";
+import InvoiceEditModal from "@/components/invoices/InvoiceEditModal";
 import {
   PageHeader,
   Button,
@@ -100,6 +101,11 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
   const [signOpen, setSignOpen] = useState(false);
   const [signEmail, setSignEmail] = useState("");
   const [signMsg, setSignMsg] = useState("");
+  // Feb-2026 · Admin invoice edit — modal toggle + audit history state.
+  const [editOpen, setEditOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState(null);
+  const isStaff = ["admin", "super_admin"].includes(String(user?.role || ""));
   // Feb 2026 · P0 — track the in-flight draft→sent PUT so we can
   // disable the "Send invoice" / "Email invoice" buttons + show a
   // spinner. Shared between the P0 button and the P0.5a auto-flip
@@ -396,6 +402,15 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
           <Button variant="danger" onClick={() => setConfirmDelete(true)} testid="qd-cancel">
             <Trash2 size={14} /> Cancel
           </Button>
+          {isStaff && isInvoice ? (
+            <Button
+              variant="ghost"
+              onClick={() => setEditOpen(true)}
+              testid="qd-edit-invoice"
+            >
+              <PenTool size={14} /> Edit invoice
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -626,6 +641,95 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
           source="authenticated"
           onClose={() => setPayNowOpen(false)}
         />
+      ) : null}
+      {editOpen && isInvoice ? (
+        <InvoiceEditModal
+          invoice={doc}
+          onClose={() => setEditOpen(false)}
+          onSaved={(res) => {
+            if (res?.invoice) setDoc(res.invoice);
+            setEditOpen(false);
+            setToast({ tone: "success",
+                        message: res?.changed
+                          ? "Invoice updated" : "No changes to save" });
+            // Refresh history if the panel is open.
+            if (historyOpen && res?.changed) {
+              api.get(`/quotes/${id}/edit-history`).then(setHistory).catch(() => {});
+            }
+          }}
+        />
+      ) : null}
+      {isStaff && isInvoice ? (
+        <div
+          className="rounded-2xl p-4 mt-4"
+          style={{ backgroundColor: colors.surface,
+                    border: `1px solid ${colors.border}` }}
+          data-testid="invoice-edit-history-section"
+        >
+          <button
+            type="button"
+            onClick={() => {
+              const next = !historyOpen;
+              setHistoryOpen(next);
+              if (next && history === null) {
+                api.get(`/quotes/${id}/edit-history`)
+                  .then(setHistory)
+                  .catch(() => setHistory({ items: [], total: 0 }));
+              }
+            }}
+            className="text-sm font-semibold flex items-center justify-between w-full"
+            style={{ color: colors.onSurface }}
+            data-testid="invoice-edit-history-toggle"
+          >
+            <span>Edit history</span>
+            <span style={{ color: colors.muted }}>{historyOpen ? "▾" : "▸"}</span>
+          </button>
+          {historyOpen ? (
+            <div className="mt-3" data-testid="invoice-edit-history-body">
+              {history === null ? (
+                <div className="text-xs" style={{ color: colors.muted }}>
+                  Loading…
+                </div>
+              ) : (history.items || []).length === 0 ? (
+                <div className="text-xs" style={{ color: colors.muted }}>
+                  No edits recorded yet.
+                </div>
+              ) : (
+                <ul className="space-y-3">
+                  {history.items.map((h) => (
+                    <li key={h.id}
+                        data-testid={`invoice-edit-history-row-${h.id}`}
+                        className="text-xs pb-2"
+                        style={{ borderBottom: `1px solid ${colors.divider || colors.border}` }}>
+                      <div className="font-semibold" style={{ color: colors.onSurface }}>
+                        {h.edited_at} · {h.edited_by_user_email || "unknown"} · {h.edited_by_role}
+                      </div>
+                      <div style={{ color: colors.muted }}>
+                        Status at edit: {h.invoice_status_at_edit}
+                      </div>
+                      <div className="mt-1">
+                        Changed:{" "}
+                        {Object.keys(h.changed_fields || {}).length
+                          ? Object.keys(h.changed_fields).join(", ")
+                          : "—"}
+                      </div>
+                      {(h.auto_effects || []).length ? (
+                        <div style={{ color: colors.brand }}>
+                          Auto-effects: {h.auto_effects.map((a) => a.kind).join("; ")}
+                        </div>
+                      ) : null}
+                      {h.reason ? (
+                        <div className="mt-1" style={{ color: colors.muted }}>
+                          Reason: "{h.reason}"
+                        </div>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
