@@ -209,6 +209,9 @@ api_router.include_router(_lz1_link_callback.router)
 # Feb 2026 — Admin invoice edit (PATCH + audit history).
 from routers import invoice_edit as _invoice_edit  # noqa: E402
 api_router.include_router(_invoice_edit.router)
+# Feb 2026 — Portal quick-action media aggregation (photos/videos/unread).
+from routers import portal_media as _portal_media  # noqa: E402
+api_router.include_router(_portal_media.router)
 # Task TT · Feb 2026 (reconciled TT.5) — OpenWebNinja-Zillow adapter
 # (dry-scaffold). Ships in ``keys_missing → 503 graceful`` mode: routes
 # register unconditionally so a supervisor restart after populating

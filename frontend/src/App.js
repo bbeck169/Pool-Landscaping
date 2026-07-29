@@ -114,6 +114,8 @@ import AIEstimatorPage from "@/pages/estimates/AIEstimatorPage";
 // ``PortalBook`` page component was deleted in Phase B1 (Feb 2026)
 // after confirming no route or import referenced it.
 import PortalChatsPage from "@/pages/portal/PortalChatsPage";
+import PortalPhotosPage from "@/pages/portal/PortalPhotosPage";
+import PortalVideosPage from "@/pages/portal/PortalVideosPage";
 import AppointmentsQueue from "@/pages/admin/AppointmentsQueue";
 import AdminAssets from "@/pages/admin/AdminAssets";
 import MyOnboarding, { OnboardingTemplates, OnboardingQueue }
@@ -864,6 +866,8 @@ export default function App() {
             <Route path="portal/documents" element={<PortalDocuments />} />
             <Route path="portal/messages" element={<PortalMessages />} />
             <Route path="portal/chats" element={<PortalChatsPage />} />
+            <Route path="portal/photos" element={<PortalPhotosPage />} />
+            <Route path="portal/videos" element={<PortalVideosPage />} />
             {/* Phase 34 · Feb-2026 · Task H — the ``/portal/book`` route
                 has been removed from the customer portal. The Request
                 Service flow (below) supersedes it. Redirect any bookmark

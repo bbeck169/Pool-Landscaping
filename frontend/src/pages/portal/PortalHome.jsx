@@ -20,6 +20,8 @@ import {
   Sparkles,
   UserRound,
   Star,
+  Image as ImageIcon,
+  Video as VideoIcon,
 } from "lucide-react";
 import { api } from "@/api";
 import { brandGradientCss, colors } from '@/theme';
@@ -531,11 +533,11 @@ function AlertTile({ label, value, tone, onClick, testid }) {
   );
 }
 
-function ActionTile({ icon: Icon, label, tone, onClick, testid }) {
+function ActionTile({ icon: Icon, label, tone, onClick, testid, badge }) {
   return (
     <button
       onClick={onClick}
-      className="rounded-xl p-4 text-left transition hover:brightness-95"
+      className="rounded-xl p-4 text-left transition hover:brightness-95 relative"
       style={{ backgroundColor: colors.surfaceSecondary, border: `1px solid ${colors.border}` }}
       data-testid={testid}
     >
@@ -543,6 +545,13 @@ function ActionTile({ icon: Icon, label, tone, onClick, testid }) {
         <Icon size={18} />
       </div>
       <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>{label}</div>
+      {badge && Number(badge) > 0 ? (
+        <span
+          className="absolute top-2 right-2 min-w-[20px] h-5 px-1.5 rounded-full flex items-center justify-center text-[10px] font-bold"
+          style={{ background: colors.error, color: "#fff" }}
+          data-testid={`${testid}-badge`}
+        >{Number(badge) > 99 ? "99+" : badge}</span>
+      ) : null}
     </button>
   );
 }
