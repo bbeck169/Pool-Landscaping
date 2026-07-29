@@ -29,6 +29,7 @@ from utils import get_current_user, new_id, now_iso, require_admin
 from routers.tenants import get_current_tenant
 from services.ringcentral_client import (
     get_rc_platform, reset_rc_platform, is_outbound_enabled, rc_health_env,
+    is_live_events_enabled,
 )
 from services.notifications import emit as notify_emit
 
@@ -200,6 +201,7 @@ async def ringcentral_health(user: dict = Depends(require_admin)):
         "webhook_url": _webhook_url(),
         **env,
         "outbound_enabled": outbound,
+        "live_events_enabled": await is_live_events_enabled(),
         "active_subscription_id": (sub or {}).get("subscription_id"),
         "active_subscription_expires": (sub or {}).get("expires_at"),
         "rc_auth_ok": rc_auth_ok,
@@ -1030,6 +1032,27 @@ async def set_outbound_flag(body: OutboundToggleBody,
         upsert=True,
     )
     return {"outbound_enabled": bool(body.enabled)}
+
+
+# ═══════════════════════ /settings/live-events (toggle) ═════════════
+# Feb-2026 · Console-noise cleanup — default OFF. When disabled the
+# client hook skips opening the SSE EventSource entirely, so tenants
+# without RingCentral configured never see reconnect churn in the
+# browser console.
+class LiveEventsToggleBody(BaseModel):
+    enabled: bool
+
+
+@router.post("/settings/live-events")
+async def set_live_events_flag(body: LiveEventsToggleBody,
+                                user: dict = Depends(require_admin)):
+    await db.rc_settings.update_one(
+        {"key": "live_events_enabled"},
+        {"$set": {"key": "live_events_enabled", "value": bool(body.enabled),
+                    "updated_at": now_iso(), "updated_by": user["id"]}},
+        upsert=True,
+    )
+    return {"live_events_enabled": bool(body.enabled)}
 
 
 # ═══════════════════════ /simulate-inbound (test-only) ══════════════

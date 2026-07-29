@@ -263,6 +263,14 @@ api_router.include_router(_p19_integrations_admin.router)
 from routers import client_errors as _client_errors_router  # noqa: E402
 api_router.include_router(_client_errors_router.router)
 
+# Feb-2026 · Phase P2 · Live GPS positions for the Dispatch Board.
+from routers import gps_live_positions as _gps_live_positions_router  # noqa: E402
+api_router.include_router(_gps_live_positions_router.router)
+
+# Feb-2026 · Re-added after LZ4 Stripe purge — Payments summary tile.
+from routers import payments_summary as _payments_summary_router  # noqa: E402
+api_router.include_router(_payments_summary_router.router)
+
 for module in [notifications_router,
                auth, customers, technicians, jobs, quotes, leads, team, items,
                operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google_router, phase11,

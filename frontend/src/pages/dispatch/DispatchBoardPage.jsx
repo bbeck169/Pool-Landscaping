@@ -32,6 +32,7 @@ import {
   fetchBoard, optimizeBoard, applyBoardOrder,
 } from "@/pages/dispatch/dispatchBoardApi";
 import DispatchMapView from "@/pages/dispatch/DispatchMapView";
+import useLiveTechPositions from "@/hooks/useLiveTechPositions";
 import RouteDetailsList from "@/pages/dispatch/RouteDetailsList";
 import TechLoadStrip from "@/pages/dispatch/TechLoadStrip";
 import ShiftRouteDialog from "@/pages/dispatch/ShiftRouteDialog";
@@ -86,6 +87,23 @@ export default function DispatchBoardPage() {
   const [selectedStopIds, setSelectedStopIds] = React.useState([]);
   const [activeShifts, setActiveShifts] = React.useState([]);
   const setPinColorModePersistent = (m) => { setPinColorMode(m); savePinColorMode(m); };
+
+  // Phase P2 · Feb-2026 — live technician GPS markers on the map.
+  // Toggle default ON, persisted to localStorage. Poll every 30 s while
+  // the toggle is on; hook is a no-op when off.
+  const [showLiveTechs, setShowLiveTechs] = React.useState(() => {
+    try {
+      const v = localStorage.getItem("dispatch.showLiveTechs");
+      return v === null ? true : v === "true";
+    } catch { return true; }
+  });
+  React.useEffect(() => {
+    try { localStorage.setItem("dispatch.showLiveTechs", String(showLiveTechs)); } catch {}
+  }, [showLiveTechs]);
+  const { positions: livePositions } = useLiveTechPositions({
+    enabled: showLiveTechs,
+    intervalMs: 30000,
+  });
 
   // Load the tech directory once so the dropdown is populated even
   // when the current filter returns no pins for a tech (offline day).
@@ -404,6 +422,41 @@ export default function DispatchBoardPage() {
           </div>
         </div>
         <ColorLegend mode={pinColorMode} techLoad={techLoad} />
+        {/* Phase P2 · Feb-2026 — Show/Hide live technician GPS pins.
+            Toggle persists to localStorage (dispatch.showLiveTechs). */}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={showLiveTechs}
+          onClick={() => setShowLiveTechs((v) => !v)}
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-semibold transition"
+          style={{
+            backgroundColor: showLiveTechs ? "#DCFCE7" : colors.surface,
+            color: showLiveTechs ? "#065F46" : colors.onSurface,
+            border: `1px solid ${showLiveTechs ? "#86EFAC" : colors.border}`,
+          }}
+          data-testid="dispatch-show-live-techs-toggle"
+          title="Show live technician GPS pins on the map"
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              display: "inline-block",
+              width: 8, height: 8, borderRadius: 999,
+              background: showLiveTechs ? "#10B981" : "#94A3B8",
+              boxShadow: showLiveTechs ? "0 0 0 2px rgba(16,185,129,0.25)" : "none",
+            }}
+          />
+          {showLiveTechs ? "Live techs · on" : "Live techs · off"}
+          {showLiveTechs && livePositions.length > 0 ? (
+            <span
+              style={{ marginLeft: 2, fontWeight: 500, opacity: 0.75 }}
+              data-testid="dispatch-live-techs-count"
+            >
+              ({livePositions.length})
+            </span>
+          ) : null}
+        </button>
       </div>
 
       {/* ─────────── 3-column grid: left filters / map / right sidebar ─────────── */}
@@ -535,6 +588,7 @@ export default function DispatchBoardPage() {
             activeCustomerId={selectedCustomerId}
             onSelectCustomer={setSelectedCustomerId}
             pinColorMode={pinColorMode}
+            liveTechPositions={showLiveTechs ? livePositions : []}
           />
         </section>
 

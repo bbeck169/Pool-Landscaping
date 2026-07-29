@@ -1,7 +1,7 @@
 import React from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/auth";
-import { TOKEN_KEY } from "@/api";
+import { api, TOKEN_KEY } from "@/api";
 
 /**
  * Phase 6B · Feb 2026 — Live inbound-call SSE hook.
@@ -12,6 +12,13 @@ import { TOKEN_KEY } from "@/api";
  *   • Open-invoice balance (admin/manager only — never leaks to techs
  *     because the subscription itself is role-gated at the endpoint)
  *   • Action buttons: "Open" (jump to customer/lead), "Dismiss"
+ *
+ * Feb-2026 · Console-noise cleanup — the SSE is now gated on a tenant
+ * runtime toggle ``ringcentral.settings.live_events_enabled`` (default
+ * FALSE). Tenants that haven't configured RingCentral won't attempt to
+ * open the EventSource at all, so the browser console stays quiet.
+ * Admins flip the toggle from the RingCentral admin page once RC is
+ * wired.
  *
  * The hook uses the browser's native EventSource. Because EventSource
  * cannot attach Authorization headers, we pass the JWT via the
@@ -43,6 +50,26 @@ export default function useTelephonyLiveEvents() {
 
     const tokenNow = () => localStorage.getItem(TOKEN_KEY) || "";
     const tenantNow = () => localStorage.getItem("tenant_slug") || "";
+
+    // Feb-2026 · Gate the entire SSE lifecycle on the tenant's
+    // live_events_enabled toggle. When RC isn't set up (default) we
+    // never open the EventSource, avoiding the reconnect churn that
+    // was polluting the browser console.
+    const openIfEnabled = async () => {
+      if (cancelled) return;
+      try {
+        const health = await api.get("/ringcentral/health").catch(() => null);
+        if (cancelled) return;
+        if (!health || health.live_events_enabled !== true) {
+          // Silently no-op — RC live events off for this tenant.
+          return;
+        }
+      } catch {
+        // If health check itself fails, don't open SSE either.
+        return;
+      }
+      open();
+    };
 
     const open = () => {
       if (cancelled) return;
@@ -135,7 +162,7 @@ export default function useTelephonyLiveEvents() {
       };
     };
 
-    open();
+    openIfEnabled();
 
     return () => {
       cancelled = true;

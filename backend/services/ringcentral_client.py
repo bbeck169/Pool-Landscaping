@@ -46,6 +46,22 @@ async def is_outbound_enabled() -> bool:
     return (os.getenv("RC_OUTBOUND_ENABLED") or "").lower() == "true"
 
 
+async def is_live_events_enabled() -> bool:
+    """Feb-2026 · Runtime toggle for the RC inbound-call SSE stream.
+    Defaults to ``False`` so tenants that haven't configured RingCentral
+    don't spam their browser consoles with failed reconnects. Admin
+    flips it via ``POST /api/ringcentral/settings/live-events``."""
+    try:
+        row = await db.rc_settings.find_one(
+            {"key": "live_events_enabled"}, {"_id": 0, "value": 1},
+        )
+        if row is not None:
+            return bool(row.get("value"))
+    except Exception:
+        pass
+    return False
+
+
 def _build_platform():
     """Constructs a fresh, JWT-authenticated Platform. Any failure is
     logged as a class name only — never with credential material."""

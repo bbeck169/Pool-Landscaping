@@ -14,6 +14,7 @@ import { Map, AdvancedMarker, InfoWindow, useMap } from "@vis.gl/react-google-ma
 import { MarkerClusterer } from "@googlemaps/markerclusterer";
 import { colors } from "@/theme";
 import { colorForPin } from "@/pages/dispatch/dispatchColors";
+import LiveTechPinsLayer from "@/pages/dispatch/LiveTechPinsLayer";
 
 const AZ_CENTER = { lat: 33.6975, lng: -112.3708 }; // Vistancia/Peoria default
 
@@ -172,6 +173,7 @@ export default function DispatchMapView({
   onSelectCustomer = () => {},
   mapId,
   pinColorMode = "tech",
+  liveTechPositions = [],
 }) {
   const active = React.useMemo(
     () => pins.find((p) => p.customer_id === activeCustomerId) || null,
@@ -213,6 +215,8 @@ export default function DispatchMapView({
           pins={unroutedPins}
           onSelect={onSelectCustomer}
         />
+        {/* Phase P2 · Feb-2026 — live technician GPS markers. */}
+        <LiveTechPinsLayer positions={liveTechPositions} />
         {polyline ? <PolylineOverlay encoded={polyline} /> : null}
         {active ? (
           <InfoWindow

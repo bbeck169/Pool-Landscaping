@@ -69,6 +69,14 @@ export default function RingCentralAdmin() {
       api.post("/ringcentral/settings/outbound", { enabled: enabling }));
   };
 
+  // Feb-2026 · Console-noise cleanup — Live inbound-events SSE toggle.
+  // Default OFF so tenants without RC configured never open the
+  // EventSource. Enable once RC is wired to receive live call toasts.
+  const flipLiveEvents = () =>
+    doAction("flip-live-events", () =>
+      api.post("/ringcentral/settings/live-events",
+                { enabled: !health?.live_events_enabled }));
+
   const testSms = async () => {
     if (!smsPhone || !smsMsg) { setResult({ label: "test-sms", ok: false, error: "phone + message required" }); return; }
     const ok = await mustConfirm({
@@ -186,6 +194,20 @@ export default function RingCentralAdmin() {
                     data-testid="rc-action-toggle-outbound">
               <Zap size={14} />
               {health?.outbound_enabled ? "Disable live outbound" : "Enable live outbound"}
+            </button>
+            <button type="button" onClick={flipLiveEvents} disabled={busy === "flip-live-events"}
+                    className="w-full inline-flex items-center gap-2 text-sm font-bold px-3 py-2 rounded-md"
+                    style={{
+                      background: colors.surface,
+                      color: colors.onSurface,
+                      border: `1px solid ${colors.border}`,
+                    }}
+                    data-testid="rc-action-toggle-live-events"
+                    title="When ON, admin + manager browsers open an SSE stream to receive inbound-call toasts. Leave OFF if RingCentral isn't fully configured yet.">
+              <Zap size={14} />
+              {health?.live_events_enabled
+                ? "Disable inbound-call toasts (SSE)"
+                : "Enable inbound-call toasts (SSE)"}
             </button>
           </div>
         </div>
