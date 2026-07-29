@@ -30,6 +30,9 @@ import LiveWeatherWidget from "@/components/Weather/WeatherWidget";
 import MassMessagingCard from "@/components/mass-messaging/MassMessagingCard";
 import TeamCpoReadinessWidget from "@/components/admin/TeamCpoReadinessWidget";
 import RecommendationsQueueWidget from "@/components/admin/RecommendationsQueueWidget";
+import RevenueDateRangeFilter from "@/components/dashboard/RevenueDateRangeFilter";
+import RevenueByCategoryTile from "@/components/dashboard/RevenueByCategoryTile";
+import RevenueForecastTile from "@/components/dashboard/RevenueForecastTile";
 import { useAuth } from "@/auth";
 
 function Skeleton({ className = "", style = {} }) {
@@ -343,6 +346,8 @@ export default function AdminDashboard() {
   const { user } = useAuth();
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  // Feb-2026 · Revenue tiles — shared date range across both tiles.
+  const [revenueRange, setRevenueRange] = useState(null);
 
   useEffect(() => {
     api
@@ -458,6 +463,20 @@ export default function AdminDashboard() {
           <ChevronRight size={16} color="#C2410C" />
         </button>
       ) : null}
+
+      {/* Feb-2026 · Revenue tiles — donut + forecast with a shared
+          date-range filter.  Both tiles refetch when the range changes. */}
+      <div className="mb-6" data-testid="revenue-tiles-section">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold"
+              style={{ color: colors.onSurface }}>Revenue insights</h2>
+          <RevenueDateRangeFilter onChange={setRevenueRange} />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <RevenueByCategoryTile range={revenueRange} />
+          <RevenueForecastTile range={revenueRange} />
+        </div>
+      </div>
 
       {/* KPI grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
