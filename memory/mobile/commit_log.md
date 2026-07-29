@@ -563,3 +563,22 @@
 - **Files created**:
   - mobile/__tests__/PortalChatAttachments.test.tsx (10 tests)
 - **Web files referenced**: frontend/src/pages/portal/PortalChatsPage.jsx, frontend/src/components/chat/ChatAttachmentTile.jsx
+
+## Iteration 31 — Fix: Expo Web paperclip inert (Platform.OS === "web" branch)
+- **Commit**: c34e9ad57007db9750d7545b916e318f77d77eb1
+- **Date**: 2026-07-29
+- **Changes**:
+  - Added `Platform.OS === "web"` branch to `pickAttachment()` in both:
+    - `app/portal/chats/[id].tsx` (portal chat)
+    - `app/(app)/chat.tsx` (team chat)
+  - On web: hidden `<input type="file" multiple accept="image/*,video/*,application/pdf">` rendered in composer area
+  - Paperclip tap → `webFileInputRef.current.click()` → browser native file picker
+  - New `uploadWebFile(file: File)` handler creates FormData with native File object (not RN {uri,name,type} convention)
+  - `handleWebFileChange` processes selected files and resets input for re-selection
+  - Native iOS (ActionSheetIOS) and Android (Alert.alert) paths completely unchanged
+  - 1 new test: "on Platform.OS=web, tapping paperclip does NOT call ActionSheetIOS or Alert.alert"
+  - Tests: 88/88 passing, 0 regressions
+- **Files modified**:
+  - mobile/app/portal/chats/[id].tsx
+  - mobile/app/(app)/chat.tsx
+  - mobile/__tests__/PortalChatAttachments.test.tsx

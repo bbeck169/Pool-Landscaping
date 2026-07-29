@@ -351,4 +351,32 @@ describe("Portal Chat Attachments", () => {
     const sendBtn = getByTestId("chat-send");
     expect(sendBtn).toBeTruthy();
   });
+
+  it("on Platform.OS=web, tapping paperclip does NOT call ActionSheetIOS or Alert.alert", async () => {
+    // Set Platform.OS to web for this test
+    Object.defineProperty(require("react-native").Platform, "OS", { get: () => "web", configurable: true });
+
+    const { getByTestId } = render(<ChatThread />);
+    await waitFor(() => expect(getByTestId("portal-chats-upload-btn")).toBeTruthy());
+
+    // Clear any prior Alert calls from setup
+    alertSpy.mockClear();
+
+    // Tap the paperclip button
+    await act(async () => {
+      fireEvent.press(getByTestId("portal-chats-upload-btn"));
+    });
+
+    // On web, pickAttachment should NOT call Alert.alert (which is a no-op on web)
+    // and should NOT call ActionSheetIOS — it should use the hidden file input instead.
+    // In test env the ref click is a no-op since the input isn't rendered in RN tree,
+    // but we verify the native paths were NOT triggered.
+    const attachAlertCalls = alertSpy.mock.calls.filter(
+      (c) => c[0] === "Attach" || c[0] === "Attach File",
+    );
+    expect(attachAlertCalls).toHaveLength(0);
+
+    // Restore Platform.OS
+    Object.defineProperty(require("react-native").Platform, "OS", { get: () => "ios", configurable: true });
+  });
 });

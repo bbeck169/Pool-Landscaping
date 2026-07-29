@@ -91,6 +91,8 @@ export default function ChatThread() {
   const [pending, setPending] = useState<PendingAtt[]>([]);
   const [uploading, setUploading] = useState(false);
   const listRef = useRef<FlatList>(null);
+  // Web-only: hidden file input ref
+  const webFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // ─── Load messages ───
   const load = useCallback(async () => {
@@ -180,7 +182,60 @@ export default function ChatThread() {
     setPending((p) => p.filter((x) => x.id !== fid));
   };
 
-  // ─── Send message ───
+  // ─── Web-only: upload a browser File object directly ───
+  const uploadWebFile = async (file: File) => {
+    setUploading(true);
+    const token = await getAuthToken();
+    const form = new FormData();
+    form.append("file", file);
+    form.append("purpose", "portal_chat_attachment");
+    if (user?.customer_id) {
+      form.append("linked_entity_type", "customer");
+      form.append("linked_entity_id", user.customer_id);
+    }
+    try {
+      const res = await fetch(`${api_base()}/files/upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        const detail =
+          body?.detail && typeof body.detail === "string"
+            ? body.detail
+            : `Upload failed (${res.status})`;
+        if (res.status === 413) Alert.alert("File too large", detail);
+        else if (res.status === 403) Alert.alert("Permission denied", detail);
+        else Alert.alert("Upload failed", detail);
+        return;
+      }
+      const doc = await res.json();
+      setPending((p) => [
+        ...p,
+        {
+          id: doc.id,
+          filename: doc.original_filename || file.name,
+          mime: doc.content_type || file.type,
+          size: doc.size || file.size,
+        },
+      ]);
+    } catch (e: any) {
+      Alert.alert("Upload failed", e?.message || "Network error — tap to retry.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleWebFileChange = (e: any) => {
+    const files = e?.target?.files;
+    if (!files || files.length === 0) return;
+    for (const f of Array.from(files) as File[]) {
+      uploadWebFile(f);
+    }
+    // Reset the input so the same file can be re-selected
+    if (webFileInputRef.current) webFileInputRef.current.value = "";
+  };
   const send = async () => {
     if ((!text.trim() && pending.length === 0) || sending) return;
     setSending(true);
@@ -202,6 +257,11 @@ export default function ChatThread() {
 
   // ─── Picker ───
   const pickAttachment = () => {
+    if (Platform.OS === "web") {
+      // On Expo Web, trigger the hidden <input type="file"> element
+      webFileInputRef.current?.click();
+      return;
+    }
     if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
         {
@@ -430,6 +490,18 @@ export default function ChatThread() {
 
       {/* Composer */}
       <View style={styles.composer}>
+        {/* Web-only: hidden file input for browser file picker */}
+        {Platform.OS === "web" && (
+          <input
+            ref={webFileInputRef as any}
+            type="file"
+            multiple
+            accept="image/*,video/*,application/pdf"
+            onChange={handleWebFileChange}
+            style={{ display: "none" }}
+            data-testid="portal-chats-web-file-input"
+          />
+        )}
         {/* Paperclip — customers only (web mirrors this guard) */}
         {!isAdmin && (
           <Pressable

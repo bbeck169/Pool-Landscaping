@@ -33,6 +33,8 @@ export default function ChatMobile() {
   const [pending, setPending] = useState<ChatAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const listRef = useRef<FlatList>(null);
+  // Web-only: hidden file input ref
+  const webFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadConvos = useCallback(async () => {
     try {
@@ -119,7 +121,46 @@ export default function ChatMobile() {
     setPending((prev) => prev.filter((x) => x.id !== id));
   };
 
+  // ─── Web-only: upload a browser File object directly ───
+  const uploadWebFile = async (file: File) => {
+    setUploading(true);
+    const token = await getAuthToken();
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const res = await fetch(`${api_base()}/chat/attachments/upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      if (!res.ok) {
+        Alert.alert("Upload failed", `Status ${res.status}`);
+        return;
+      }
+      const att: ChatAttachment = await res.json();
+      setPending((prev) => [...prev, att]);
+    } catch (e: any) {
+      Alert.alert("Upload failed", e?.message || "Network error");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleWebFileChange = (e: any) => {
+    const files = e?.target?.files;
+    if (!files || files.length === 0) return;
+    for (const f of Array.from(files) as File[]) {
+      uploadWebFile(f);
+    }
+    if (webFileInputRef.current) webFileInputRef.current.value = "";
+  };
+
   const pickAttachment = () => {
+    if (Platform.OS === "web") {
+      // On Expo Web, trigger the hidden <input type="file"> element
+      webFileInputRef.current?.click();
+      return;
+    }
     if (Platform.OS === "ios") {
       ActionSheetIOS.showActionSheetWithOptions(
         {
@@ -311,6 +352,18 @@ export default function ChatMobile() {
         )}
 
         <View style={styles.composerRow}>
+          {/* Web-only: hidden file input for browser file picker */}
+          {Platform.OS === "web" && (
+            <input
+              ref={webFileInputRef as any}
+              type="file"
+              multiple
+              accept="image/*,video/mp4,application/pdf"
+              onChange={handleWebFileChange}
+              style={{ display: "none" }}
+              data-testid="chat-web-file-input"
+            />
+          )}
           {/* Paperclip button */}
           <Pressable
             style={styles.attachBtn}
