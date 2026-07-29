@@ -200,6 +200,9 @@ api_router.include_router(_qq_lumino_return.router)
 # Feb 2026 — inspection audits receiver (Zap-fed, shared-secret auth).
 from routers import audits as _audits_receiver  # noqa: E402
 api_router.include_router(_audits_receiver.router)
+# LZ2 · Feb 2026 — Retroactive "request-payment-link" endpoint.
+from routers import lumino_link_request as _lz2_link_request  # noqa: E402
+api_router.include_router(_lz2_link_request.router)
 # LZ1 · Feb 2026 — Lumino invoice-link callback receiver (Zap-fed).
 from routers import lumino_invoice_link_callback as _lz1_link_callback  # noqa: E402
 api_router.include_router(_lz1_link_callback.router)

@@ -116,6 +116,25 @@ async def create_quote(body: QuoteIn,
         await assign_invoice_number_if_missing(doc, tenant)
     await db.quotes.insert_one(doc)
     doc.pop("_id", None)
+    # LZ2 · Feb 2026 — fire-and-forget request to Zapier to create a
+    # Lumino payment link for this invoice. Fails open — never blocks
+    # invoice creation. Zap will call back into
+    # /api/webhooks/lumino/invoice-link-created (LZ1) with the URL.
+    if body.doc_type == "invoice":
+        try:
+            from services.lumino_zapier_dispatcher import schedule_dispatch
+            _cust = {}
+            if doc.get("customer_id"):
+                _cust = await db.customers.find_one(
+                    {"id": doc["customer_id"]}, {"_id": 0}
+                ) or {}
+            if not _cust:
+                _cust = {"id": doc.get("customer_id"),
+                          "name": doc.get("customer_name"),
+                          "email": doc.get("customer_email")}
+            schedule_dispatch(doc, _cust, base_return_url="")
+        except Exception:
+            pass  # fail-open
     # Comms Phase 3 — invoice.created automation (only for docs that
     # actually landed as invoices; quotes stay quiet).
     try:
