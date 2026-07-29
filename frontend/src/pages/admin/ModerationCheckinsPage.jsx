@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
+import AIDescriptionRewriteButton from "@/components/ai/AIDescriptionRewriteButton";
 import {
   RefreshCw, Check, X, MapPin, ShieldCheck, ShieldAlert, Ban, ExternalLink,
 } from "lucide-react";
@@ -49,6 +50,11 @@ export default function ModerationCheckinsPage() {
   const [selected, setSelected] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
 
+  // MR-QoL · Feb-2026 — Bulk selection state (pending list only).
+  const [bulkSelected, setBulkSelected] = React.useState(new Set());
+  const [bulkMode, setBulkMode] = React.useState(null); // "approve" | "reject" | null
+  const [bulkNotes, setBulkNotes] = React.useState("");
+
   const [draft, setDraft] = React.useState(null);
   const [rejectNotes, setRejectNotes] = React.useState("");
 
@@ -70,6 +76,54 @@ export default function ModerationCheckinsPage() {
   }, [state, selectedId]);
 
   React.useEffect(() => { loadList(); /* eslint-disable-next-line */ }, [state]);
+
+  // MR-QoL · Feb-2026 — Bulk helpers (declared after loadList so we
+  // can reference it in runBulk).
+  React.useEffect(() => { setBulkSelected(new Set()); }, [items, state]);
+
+  const toggleRow = (id) => {
+    setBulkSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const toggleAllVisible = () => {
+    setBulkSelected((prev) => {
+      const visibleIds = items.map((it) => it.id);
+      const allSelected = visibleIds.every((id) => prev.has(id));
+      return allSelected ? new Set() : new Set(visibleIds);
+    });
+  };
+  const closeBulkModal = () => {
+    setBulkMode(null); setBulkNotes(""); setBusy(false);
+  };
+  const runBulk = async () => {
+    if (!bulkMode) return;
+    const ids = Array.from(bulkSelected);
+    if (ids.length === 0) return;
+    if (bulkMode === "reject" && !bulkNotes.trim()) {
+      toast.error("Reviewer notes required to reject");
+      return;
+    }
+    setBusy(true);
+    try {
+      const url = `/admin/moderation/public-checkins/bulk-${bulkMode}`;
+      const body = bulkMode === "reject"
+        ? { ids, reviewer_notes: bulkNotes.trim() }
+        : { ids, reviewer_notes: bulkNotes.trim() || null };
+      const r = await api.post(url, body);
+      const key = bulkMode === "reject" ? "rejected" : "approved";
+      toast.success(`Bulk done · ${key} ${r[key] || 0}, skipped ${r.skipped || 0}`);
+      closeBulkModal();
+      setBulkSelected(new Set());
+      loadList();
+    } catch (e) {
+      toast.error("Bulk action failed", { description: e?.message });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   React.useEffect(() => {
     let cancelled = false;
@@ -256,6 +310,45 @@ export default function ModerationCheckinsPage() {
             <span>{total} row{total === 1 ? "" : "s"}</span>
             <span>{state.replace("_", " ")}</span>
           </div>
+          {state === "pending_review" && items.length > 0 ? (
+            <div
+              className="flex items-center gap-2 px-3 py-2"
+              style={{ borderBottom: `1px solid ${colors.border}`, backgroundColor: colors.surfaceSecondary }}
+            >
+              <input
+                type="checkbox"
+                onChange={toggleAllVisible}
+                checked={items.length > 0 && items.every((it) => bulkSelected.has(it.id))}
+                data-testid="moderation-select-all"
+                aria-label="Select all visible"
+              />
+              <span className="text-xs font-semibold" style={{ color: colors.muted }}>
+                {bulkSelected.size > 0 ? `${bulkSelected.size} selected` : "Select all visible"}
+              </span>
+              {bulkSelected.size > 0 ? (
+                <div className="ml-auto flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => { setBulkMode("approve"); setBulkNotes(""); }}
+                    className="h-7 px-2 rounded text-xs font-semibold text-white"
+                    style={{ backgroundColor: "#10B981", border: 0 }}
+                    data-testid="moderation-bulk-approve"
+                  >
+                    <Check size={12} className="inline" /> Bulk approve
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setBulkMode("reject"); setBulkNotes(""); }}
+                    className="h-7 px-2 rounded text-xs font-semibold text-white"
+                    style={{ backgroundColor: "#DC2626", border: 0 }}
+                    data-testid="moderation-bulk-reject"
+                  >
+                    <X size={12} className="inline" /> Bulk reject
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {loading ? (
             <div className="p-4 text-sm text-center" style={{ color: colors.muted }}
                   data-testid="moderation-loading">
@@ -273,32 +366,45 @@ export default function ModerationCheckinsPage() {
                 const active = it.id === selectedId;
                 return (
                   <li key={it.id}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedId(it.id)}
-                      className="w-full text-left px-3 py-2 border-b"
-                      style={{
-                        borderColor: colors.border,
-                        backgroundColor: active ? "#EEF2FF" : "transparent",
-                        color: colors.onSurface,
-                      }}
-                      data-testid={`moderation-item-${it.id}`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-sm font-semibold truncate">
-                          {it.service_name || "Untitled service"}
+                    <div className="flex items-stretch"
+                          style={{ borderBottom: `1px solid ${colors.border}`,
+                                    backgroundColor: active ? "#EEF2FF" : "transparent" }}>
+                      {state === "pending_review" ? (
+                        <label className="flex items-center px-2"
+                               style={{ borderRight: `1px solid ${colors.border}` }}
+                               onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={bulkSelected.has(it.id)}
+                            onChange={() => toggleRow(it.id)}
+                            data-testid={`moderation-select-${it.id}`}
+                            aria-label={`Select ${it.service_name || it.id}`}
+                          />
+                        </label>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedId(it.id)}
+                        className="w-full text-left px-3 py-2"
+                        style={{ color: colors.onSurface, backgroundColor: "transparent" }}
+                        data-testid={`moderation-item-${it.id}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-sm font-semibold truncate">
+                            {it.service_name || "Untitled service"}
+                          </div>
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded"
+                            style={{ backgroundColor: p.bg, color: p.fg }}
+                          >
+                            {p.label}
+                          </span>
                         </div>
-                        <span
-                          className="text-[10px] px-1.5 py-0.5 rounded"
-                          style={{ backgroundColor: p.bg, color: p.fg }}
-                        >
-                          {p.label}
-                        </span>
-                      </div>
-                      <div className="text-[11px] mt-0.5" style={{ color: colors.muted }}>
-                        {(it.submitted_at || "").slice(0, 16).replace("T", " ")} · {(it.photos || []).length} photo{(it.photos || []).length === 1 ? "" : "s"}
-                      </div>
-                    </button>
+                        <div className="text-[11px] mt-0.5" style={{ color: colors.muted }}>
+                          {(it.submitted_at || "").slice(0, 16).replace("T", " ")} · {(it.photos || []).length} photo{(it.photos || []).length === 1 ? "" : "s"}
+                        </div>
+                      </button>
+                    </div>
                   </li>
                 );
               })}
@@ -373,12 +479,14 @@ export default function ModerationCheckinsPage() {
                   testId="moderation-field-service-category"
                 />
               </div>
-              <LabelledTextarea
+              <LabelledTextareaWithAI
                 label="Description"
                 value={draft?.description || ""}
                 onChange={(v) => setDraft({ ...(draft || {}), description: v })}
                 disabled={!canEdit}
                 testId="moderation-field-description"
+                canRewrite={canEdit}
+                selected={selected}
               />
               <LabelledInput
                 label="Tags (comma-separated)"
@@ -487,6 +595,72 @@ export default function ModerationCheckinsPage() {
           )}
         </section>
       </div>
+      {/* MR-QoL · Feb-2026 — Bulk confirm modal. */}
+      {bulkMode ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ backgroundColor: "rgba(15,23,42,0.5)" }}
+          role="dialog" aria-modal="true"
+          data-testid="moderation-bulk-modal"
+        >
+          <div className="w-full max-w-md rounded-2xl p-5"
+                style={{ backgroundColor: colors.surface,
+                          border: `1px solid ${colors.border}` }}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-base font-semibold" style={{ color: colors.onSurface }}>
+                {bulkMode === "approve"
+                  ? `Bulk approve ${bulkSelected.size} row${bulkSelected.size === 1 ? "" : "s"}`
+                  : `Bulk reject ${bulkSelected.size} row${bulkSelected.size === 1 ? "" : "s"}`}
+              </div>
+              <button type="button" onClick={closeBulkModal}
+                       aria-label="Close" data-testid="moderation-bulk-close">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-xs mb-2" style={{ color: colors.muted }}>
+              {bulkMode === "approve"
+                ? "Optional reviewer notes will be stamped on every row."
+                : "Reviewer notes are required and will appear on the rejected row."}
+            </p>
+            <textarea
+              value={bulkNotes}
+              onChange={(e) => setBulkNotes(e.target.value)}
+              rows={3}
+              placeholder={bulkMode === "reject" ? "Required: reason for rejection" : "Optional notes"}
+              data-testid="moderation-bulk-notes"
+              className="w-full p-2 rounded-lg text-sm"
+              style={{ backgroundColor: colors.surface,
+                        color: colors.onSurface,
+                        border: `1px solid ${colors.border}` }}
+            />
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button type="button" onClick={closeBulkModal}
+                       className="h-9 px-3 rounded-lg text-sm font-semibold"
+                       style={{ backgroundColor: colors.surface,
+                                 color: colors.onSurface,
+                                 border: `1px solid ${colors.border}` }}
+                       data-testid="moderation-bulk-cancel">
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={runBulk}
+                disabled={busy || (bulkMode === "reject" && !bulkNotes.trim())}
+                className="h-9 px-3 rounded-lg text-sm font-semibold text-white"
+                style={{
+                  backgroundColor: bulkMode === "approve" ? "#10B981" : "#DC2626",
+                  border: 0,
+                  opacity: (bulkMode === "reject" && !bulkNotes.trim()) ? 0.6 : 1,
+                  cursor: (bulkMode === "reject" && !bulkNotes.trim()) ? "not-allowed" : "pointer",
+                }}
+                data-testid="moderation-bulk-submit"
+              >
+                {busy ? "Working…" : (bulkMode === "approve" ? "Approve all" : "Reject all")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </SafeScrollContainer>
   );
 }
@@ -561,6 +735,44 @@ function LabelledInput({ label, value, onChange, disabled, testId }) {
 }
 
 
+// MR-QoL · Feb-2026 — Description textarea + inline AI Rewrite button.
+function LabelledTextareaWithAI({ label, value, onChange, disabled,
+                                    testId, canRewrite, selected }) {
+  return (
+    <label className="flex flex-col gap-1 text-xs font-semibold" style={{ color: colors.muted }}>
+      <div className="flex items-center justify-between">
+        <span>{label}</span>
+        {canRewrite ? (
+          <AIDescriptionRewriteButton
+            draft={value}
+            onRewritten={(text) => { onChange(text); }}
+            context={{ service_category: selected?.service_category || undefined }}
+            size="xs"
+            testid="moderation-field-description-ai"
+          />
+        ) : null}
+      </div>
+      <textarea
+        rows={4}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        data-testid={testId}
+        className="p-2 rounded-lg text-sm"
+        style={{
+          backgroundColor: colors.surface,
+          color: colors.onSurface,
+          border: `1px solid ${colors.border}`,
+        }}
+      />
+    </label>
+  );
+}
+
+
+
+
+
 function LabelledTextarea({ label, value, onChange, disabled, testId }) {
   return (
     <label className="flex flex-col gap-1 text-xs font-semibold" style={{ color: colors.muted }}>
@@ -581,3 +793,4 @@ function LabelledTextarea({ label, value, onChange, disabled, testId }) {
     </label>
   );
 }
+

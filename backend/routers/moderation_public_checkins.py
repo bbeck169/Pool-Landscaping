@@ -245,3 +245,122 @@ async def unpublish_public_checkin(
     )
     await _audit(caller, "public_checkin_unpublished", mod_id)
     return await _load_or_404(tenant_id, mod_id)
+
+
+# ═══════════════════════ MR-QoL · Feb-2026 — Bulk ══════════════════
+# Bulk-approve / bulk-reject. Same semantics as the single-row
+# variants above but batched. Hard-capped at 100 ids to keep the
+# transaction small enough that a partial failure doesn't stall the
+# admin UI.
+
+_BULK_CAP = 100
+
+
+class BulkApproveBody(BaseModel):
+    ids: List[str] = Field(..., min_length=1)
+    reviewer_notes: Optional[str] = None
+
+
+class BulkRejectBody(BaseModel):
+    ids: List[str] = Field(..., min_length=1)
+    reviewer_notes: str = Field(..., min_length=1)
+
+
+@router.post("/admin/moderation/public-checkins/bulk-approve",
+              operation_id="publicCheckins.bulkApprove")
+async def bulk_approve_public_checkins(
+    body: BulkApproveBody,
+    caller: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_mod(caller)
+    tenant_id = caller.get("tenant_id") or ""
+    if not tenant_id:
+        raise HTTPException(400, {"error": "missing_tenant"})
+    if len(body.ids) > _BULK_CAP:
+        raise HTTPException(422, {"error": "too_many_ids",
+                                     "max": _BULK_CAP})
+
+    results: List[Dict[str, Any]] = []
+    approved = 0
+    skipped = 0
+    for mod_id in body.ids:
+        row = await db.public_checkins.find_one(
+            {"id": mod_id, "tenant_id": tenant_id}, {"_id": 0})
+        if not row:
+            results.append({"id": mod_id, "status": "skipped",
+                              "reason": "not_found"})
+            skipped += 1
+            continue
+        if row["state"] != "pending_review":
+            results.append({"id": mod_id, "status": "skipped",
+                              "reason": f"state={row['state']}"})
+            skipped += 1
+            continue
+        masked = mask_address(row.get("raw_address"))
+        now_ts = now_iso()
+        await db.public_checkins.update_one(
+            {"id": mod_id, "tenant_id": tenant_id},
+            {"$set": {
+                "state": "approved",
+                "masked_address": masked,
+                "reviewed_by_user_id": caller.get("id"),
+                "reviewed_at": now_ts,
+                "reviewer_notes": body.reviewer_notes,
+                "approved_at": now_ts,
+                "approved_by_user_id": caller.get("id"),
+                "updated_at": now_ts,
+            }},
+        )
+        await _audit(caller, "public_checkin_approved", mod_id,
+                       details="bulk")
+        results.append({"id": mod_id, "status": "approved"})
+        approved += 1
+    return {"approved": approved, "skipped": skipped, "results": results}
+
+
+@router.post("/admin/moderation/public-checkins/bulk-reject",
+              operation_id="publicCheckins.bulkReject")
+async def bulk_reject_public_checkins(
+    body: BulkRejectBody,
+    caller: Dict[str, Any] = Depends(get_current_user),
+):
+    _require_mod(caller)
+    tenant_id = caller.get("tenant_id") or ""
+    if not tenant_id:
+        raise HTTPException(400, {"error": "missing_tenant"})
+    if len(body.ids) > _BULK_CAP:
+        raise HTTPException(422, {"error": "too_many_ids",
+                                     "max": _BULK_CAP})
+
+    results: List[Dict[str, Any]] = []
+    rejected = 0
+    skipped = 0
+    for mod_id in body.ids:
+        row = await db.public_checkins.find_one(
+            {"id": mod_id, "tenant_id": tenant_id}, {"_id": 0})
+        if not row:
+            results.append({"id": mod_id, "status": "skipped",
+                              "reason": "not_found"})
+            skipped += 1
+            continue
+        if row["state"] != "pending_review":
+            results.append({"id": mod_id, "status": "skipped",
+                              "reason": f"state={row['state']}"})
+            skipped += 1
+            continue
+        now_ts = now_iso()
+        await db.public_checkins.update_one(
+            {"id": mod_id, "tenant_id": tenant_id},
+            {"$set": {
+                "state": "rejected",
+                "reviewed_by_user_id": caller.get("id"),
+                "reviewed_at": now_ts,
+                "reviewer_notes": body.reviewer_notes,
+                "updated_at": now_ts,
+            }},
+        )
+        await _audit(caller, "public_checkin_rejected", mod_id,
+                       details="bulk")
+        results.append({"id": mod_id, "status": "rejected"})
+        rejected += 1
+    return {"rejected": rejected, "skipped": skipped, "results": results}
