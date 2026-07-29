@@ -289,6 +289,11 @@ api_router.include_router(_seo_scans_router.router)
 from routers import outreach as _outreach_router  # noqa: E402
 api_router.include_router(_outreach_router.router)
 
+# Phase SEO-C · Feb-2026 — Keyword ideation (Google Autocomplete +
+# Trends via pytrends). Admin+/manager only.
+from routers import keywords as _keywords_router  # noqa: E402
+api_router.include_router(_keywords_router.router)
+
 # Feb-2026 · Re-added after LZ4 Stripe purge — Payments summary tile.
 from routers import payments_summary as _payments_summary_router  # noqa: E402
 api_router.include_router(_payments_summary_router.router)
