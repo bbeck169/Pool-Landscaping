@@ -206,6 +206,11 @@ async def patch_invoice(
     provided = body.dict(exclude_unset=True)
     if "line_items" in provided:
         provided["line_items"] = _validate_line_items(provided["line_items"])
+        # Feb-2026 · Income category enforcement — every touched line
+        # item must resolve to an active income_categories row.
+        from routers.income_categories import validate_line_item_categories
+        await validate_line_item_categories(inv.get("tenant_id") or "",
+                                              provided["line_items"])
 
     # ── Invoice number uniqueness within tenant ──────────────────
     tenant_id = inv.get("tenant_id")

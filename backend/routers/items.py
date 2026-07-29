@@ -25,7 +25,13 @@ async def list_items(user: dict = Depends(require_admin)):
 @router.post("/items")
 async def create_item(body: ItemIn, user: dict = Depends(require_admin)):
     doc = body.dict()
+    # Feb-2026 · Service category enforcement on pricebook write.
+    from routers.service_categories import validate_service_category
+    tenant_id = user.get("tenant_id") or ""
+    await validate_service_category(tenant_id, doc.get("service_category_id"))
     doc.update({"id": new_id(), "created_at": now_iso()})
+    if tenant_id:
+        doc["tenant_id"] = tenant_id
     await db.items.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -79,6 +85,8 @@ class ItemPatch(BaseModel):
     description: Optional[str] = None
     active: Optional[bool] = None
     sku: Optional[str] = None
+    # Feb-2026 · Service category — patchable, validated below.
+    service_category_id: Optional[str] = None
 
 
 @router.patch("/items/{iid}", operation_id="pricebook.patch")
@@ -102,6 +110,11 @@ async def patch_item(iid: str, body: ItemPatch,
         raise HTTPException(422, "cost must be ≥ 0")
     if "tax_rate" in upd and (upd["tax_rate"] < 0 or upd["tax_rate"] > 100):
         raise HTTPException(422, "tax_rate must be between 0 and 100")
+    # Feb-2026 · Service category — if the patch touches it, validate.
+    if "service_category_id" in upd:
+        from routers.service_categories import validate_service_category
+        await validate_service_category(row.get("tenant_id") or user.get("tenant_id") or "",
+                                          upd["service_category_id"])
     upd["updated_at"] = now_iso()
     upd["updated_by_user_id"] = user.get("id")
     await db.items.update_one({"id": iid}, {"$set": upd})

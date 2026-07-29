@@ -77,6 +77,12 @@ async def create_quote(body: QuoteIn,
         if len(active_props) == 1:
             property_id = active_props[0]["id"]
     items = [li.dict() for li in body.line_items]
+    # Feb-2026 · Income category enforcement — every line item on a
+    # NEW invoice must carry a valid category (existing seed data is
+    # grandfathered). Enforced only for invoices; quotes remain lenient.
+    if body.doc_type == "invoice":
+        from routers.income_categories import validate_line_item_categories
+        await validate_line_item_categories(tenant["id"], items)
     subtotal, tax, total = compute_totals(items, body.tax_rate)
     due_date = body.due_date
     if body.doc_type == "invoice" and not due_date:

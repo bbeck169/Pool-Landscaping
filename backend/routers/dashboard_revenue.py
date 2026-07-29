@@ -73,12 +73,35 @@ def _color_for(label: str) -> str:
 async def revenue_by_category(
     start: str = Query(..., description="ISO date (YYYY-MM-DD or full ISO)"),
     end: str = Query(..., description="ISO date (YYYY-MM-DD or full ISO)"),
+    service_category_id: Optional[str] = Query(
+        None,
+        description=("Optional filter: only include revenue from line "
+                      "items whose source pricebook item has this "
+                      "service_category_id."),
+    ),
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ) -> Dict[str, Any]:
     _require_admin(user)
     s_iso, e_iso = _parse_range(start, end)
     tenant_id = tenant["id"]
+
+    # If a service_category_id filter is set, first resolve which
+    # pricebook item ids belong to that business unit — line_items
+    # carry the ``item_id`` field, so we can gate on membership.
+    allowed_item_ids: Optional[set] = None
+    if service_category_id:
+        cur = db.items.find(
+            {"tenant_id": tenant_id,
+              "service_category_id": service_category_id},
+            {"_id": 0, "id": 1},
+        )
+        allowed_item_ids = {row["id"] async for row in cur}
+        if not allowed_item_ids:
+            # No pricebook items match → guaranteed empty result.
+            return {"items": [], "total": 0, "currency": "USD",
+                    "range": {"start": s_iso, "end": e_iso},
+                    "service_category_id": service_category_id}
 
     # Query: invoices in this tenant, dated inside the range. Match both
     # legacy ``created_at`` (which most seed data uses) and modern
@@ -104,6 +127,12 @@ async def revenue_by_category(
             currency = inv["currency"]
         items = inv.get("line_items") or []
         for li in items:
+            # Feb-2026 · Optional service-category filter — skip any
+            # line whose source pricebook item is outside the set.
+            if allowed_item_ids is not None:
+                iid = li.get("item_id")
+                if not iid or iid not in allowed_item_ids:
+                    continue
             cat = (li.get("category") or "").strip() or _UNCATEGORISED
             amt = (float(li.get("quantity") or 0)
                     * float(li.get("unit_price") or 0))
@@ -119,6 +148,87 @@ async def revenue_by_category(
             "amount": round(b["amount"], 2),
             "count": b["count"],
             "color": _color_for(cat),
+        })
+        grand_total += b["amount"]
+
+    return {
+        "items": items_out,
+        "total": round(grand_total, 2),
+        "currency": currency,
+        "range": {"start": s_iso, "end": e_iso},
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Income by SERVICE category — pricebook business-unit taxonomy.
+# ═════════════════════════════════════════════════════════════════════
+@router.get("/admin/dashboard/income-by-service-category")
+async def income_by_service_category(
+    start: str = Query(...),
+    end: str = Query(...),
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Group invoiced revenue by service-category (Pool, Landscaping,
+    …) via the invoice line item's ``item_id`` → pricebook item
+    (``db.items.service_category_id``) → ``db.service_categories``
+    lookup chain.  Lines without an item_id, or whose item has no
+    service_category_id, bucket into ``"Uncategorized"``."""
+    _require_admin(user)
+    s_iso, e_iso = _parse_range(start, end)
+    tenant_id = tenant["id"]
+
+    # Build item_id → service_category_id map (all items in this tenant).
+    item_to_svc: Dict[str, str] = {}
+    async for r in db.items.find(
+        {"tenant_id": tenant_id, "service_category_id": {"$ne": None}},
+        {"_id": 0, "id": 1, "service_category_id": 1},
+    ):
+        if r.get("service_category_id"):
+            item_to_svc[r["id"]] = r["service_category_id"]
+
+    # Build service_category_id → name map.
+    svc_id_to_name: Dict[str, str] = {}
+    async for c in db.service_categories.find(
+        {"tenant_id": tenant_id}, {"_id": 0, "id": 1, "name": 1},
+    ):
+        svc_id_to_name[c["id"]] = c["name"]
+
+    totals: Dict[str, Dict[str, Any]] = {}
+    currency = "USD"
+    cur = db.quotes.find(
+        {"tenant_id": tenant_id, "doc_type": "invoice",
+          "$or": [
+              {"created_at": {"$gte": s_iso, "$lte": e_iso}},
+              {"issue_date": {"$gte": s_iso, "$lte": e_iso}},
+              {"invoice_date": {"$gte": s_iso, "$lte": e_iso}},
+          ]},
+        {"_id": 0, "id": 1, "line_items": 1, "currency": 1},
+    )
+    async for inv in cur:
+        if inv.get("currency"):
+            currency = inv["currency"]
+        for li in (inv.get("line_items") or []):
+            iid = li.get("item_id")
+            svc_id = item_to_svc.get(iid) if iid else None
+            svc_name = svc_id_to_name.get(svc_id) if svc_id else None
+            bucket_key = svc_name or "Uncategorized"
+            amt = (float(li.get("quantity") or 0)
+                    * float(li.get("unit_price") or 0))
+            b = totals.setdefault(bucket_key, {"amount": 0.0, "count": 0})
+            b["amount"] += amt
+            b["count"] += 1
+
+    items_out: List[Dict[str, Any]] = []
+    grand_total = 0.0
+    for name, b in sorted(totals.items(),
+                            key=lambda kv: kv[1]["amount"], reverse=True):
+        color = "#94A3B8" if name == "Uncategorized" else _color_for(name)
+        items_out.append({
+            "category": name,
+            "amount": round(b["amount"], 2),
+            "count": b["count"],
+            "color": color,
         })
         grand_total += b["amount"]
 

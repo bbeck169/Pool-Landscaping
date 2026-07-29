@@ -33,6 +33,7 @@ import RecommendationsQueueWidget from "@/components/admin/RecommendationsQueueW
 import RevenueDateRangeFilter from "@/components/dashboard/RevenueDateRangeFilter";
 import RevenueByCategoryTile from "@/components/dashboard/RevenueByCategoryTile";
 import RevenueForecastTile from "@/components/dashboard/RevenueForecastTile";
+import IncomeByServiceCategoryTile from "@/components/dashboard/IncomeByServiceCategoryTile";
 import { useAuth } from "@/auth";
 
 function Skeleton({ className = "", style = {} }) {
@@ -348,6 +349,13 @@ export default function AdminDashboard() {
   const [error, setError] = useState("");
   // Feb-2026 · Revenue tiles — shared date range across both tiles.
   const [revenueRange, setRevenueRange] = useState(null);
+  // Feb-2026 · Income-category enforcement — banner data.
+  const [uncategorized, setUncategorized] = useState(null);
+  useEffect(() => {
+    api.get("/reports/uncategorized-count")
+      .then(setUncategorized)
+      .catch(() => setUncategorized(null));
+  }, []);
 
   useEffect(() => {
     api
@@ -472,8 +480,27 @@ export default function AdminDashboard() {
               style={{ color: colors.onSurface }}>Revenue insights</h2>
           <RevenueDateRangeFilter onChange={setRevenueRange} />
         </div>
+        {uncategorized && uncategorized.count > 0 ? (
+          <button
+            onClick={() => navigate("/reports/uncategorized-items")}
+            className="w-full flex items-center gap-3 rounded-xl p-3 mb-3 transition hover:brightness-95 text-left"
+            style={{ background: "#FEF3C7", color: "#78350F",
+                      border: "1px solid #FCD34D" }}
+            data-testid="uncategorized-banner"
+          >
+            <span className="text-lg" aria-hidden="true">⚠️</span>
+            <span className="flex-1 text-sm font-semibold">
+              {uncategorized.count} line item
+              {uncategorized.count === 1 ? "" : "s"} are uncategorized.
+            </span>
+            <span className="text-xs font-bold underline">Review →</span>
+          </button>
+        ) : null}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <RevenueByCategoryTile range={revenueRange} />
+          <IncomeByServiceCategoryTile range={revenueRange} />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
           <RevenueForecastTile range={revenueRange} />
         </div>
       </div>

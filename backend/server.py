@@ -215,6 +215,15 @@ api_router.include_router(_portal_media.router)
 # Feb 2026 — Admin dashboard revenue tiles (category + forecast).
 from routers import dashboard_revenue as _dashboard_revenue  # noqa: E402
 api_router.include_router(_dashboard_revenue.router)
+# Feb 2026 — Income category picklist + enforcement.
+from routers import income_categories as _income_categories  # noqa: E402
+api_router.include_router(_income_categories.router)
+# Feb 2026 — Admin check-in overrides.
+from routers import admin_checkins as _admin_checkins  # noqa: E402
+api_router.include_router(_admin_checkins.router)
+# Feb 2026 — Service categories (pricebook business-unit taxonomy).
+from routers import service_categories as _service_categories  # noqa: E402
+api_router.include_router(_service_categories.router)
 # Task TT · Feb 2026 (reconciled TT.5) — OpenWebNinja-Zillow adapter
 # (dry-scaffold). Ships in ``keys_missing → 503 graceful`` mode: routes
 # register unconditionally so a supervisor restart after populating

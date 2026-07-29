@@ -309,6 +309,10 @@ class ItemIn(BaseModel):
     unit: Optional[str] = "each"
     unit_price: float = 0.0
     taxable: Optional[bool] = True
+    # Feb-2026 · Service categories — higher-level business-unit
+    # taxonomy attached to pricebook items. Required on new writes;
+    # existing rows without one are grandfathered on reads.
+    service_category_id: Optional[str] = None
 
 
 class BillingPlanIn(BaseModel):

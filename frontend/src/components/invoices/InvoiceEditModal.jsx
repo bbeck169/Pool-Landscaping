@@ -10,6 +10,7 @@ import { X, Plus, Trash2, AlertTriangle } from "lucide-react";
 import { colors, money } from "@/theme";
 import { Button, TextInput } from "@/components/ui-kit";
 import { api } from "@/api";
+import CategoryPicker from "@/components/income/CategoryPicker";
 
 const MONEY_FIELDS = new Set([
   "line_items", "discount_amount", "discount_type", "tax_rate", "currency",
@@ -52,7 +53,7 @@ function moneyFieldsChanged(before, form) {
 }
 
 const EMPTY_ITEM = () => ({
-  description: "", quantity: 1, unit_price: 0, tax_rate: 0,
+  description: "", quantity: 1, unit_price: 0, tax_rate: 0, category: "",
 });
 
 export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
@@ -68,6 +69,7 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
       quantity: Number(li.quantity || 0),
       unit_price: Number(li.unit_price || 0),
       tax_rate: Number(li.tax_rate || 0),
+      category: li.category || "",  // Feb-2026 · income category enforcement
     })),
     discount_amount: Number(invoice?.discount_amount || 0),
     discount_type: invoice?.discount_type || "fixed",
@@ -130,7 +132,11 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
   // ── Gate whether Save is allowed ─────────────────────────────
   const paidNumberOk = !paid || paidNumberInput === (invoice?.invoice_number || "");
   const sentOk = !sent || confirmSent;
-  const canSave = !terminal && sentOk && paidNumberOk && !busy;
+  // Feb-2026 · Income category enforcement — every line must have one.
+  const allLinesCategorised = (form.line_items || [])
+    .every((li) => (li.category || "").toString().trim().length > 0);
+  const canSave = !terminal && sentOk && paidNumberOk
+    && allLinesCategorised && !busy;
 
   const submit = async () => {
     if (!canSave) return;
@@ -146,6 +152,7 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
         quantity: Number(li.quantity) || 0,
         unit_price: Number(li.unit_price) || 0,
         tax_rate: Number(li.tax_rate) || 0,
+        category: li.category || "",
       }));
       if (sent) payload.confirm_edit_sent = true;
       if (paid) payload.confirm_edit_paid_invoice_number = paidNumberInput;
@@ -321,6 +328,7 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
                 <thead style={{ background: colors.surfaceSecondary }}>
                   <tr>
                     <th className="text-left px-2 py-1 font-semibold">Description</th>
+                    <th className="w-32 text-left px-2 py-1 font-semibold">Category *</th>
                     <th className="w-20 text-right px-2 py-1 font-semibold">Qty</th>
                     <th className="w-28 text-right px-2 py-1 font-semibold">Unit price</th>
                     <th className="w-24 text-right px-2 py-1 font-semibold">Line total</th>
@@ -339,6 +347,15 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
                           value={li.description}
                           onChange={(e) => patchItem(i, { description: e.target.value })}
                           data-testid={`invoice-edit-line-${i}-desc`}
+                        />
+                      </td>
+                      <td className="px-2 py-1">
+                        <CategoryPicker
+                          value={li.category}
+                          onChange={(v) => patchItem(i, { category: v })}
+                          required
+                          testid={`invoice-edit-line-${i}-cat`}
+                          placeholder="Choose…"
                         />
                       </td>
                       <td className="px-2 py-1 text-right">
