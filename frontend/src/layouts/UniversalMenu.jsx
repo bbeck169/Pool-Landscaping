@@ -37,11 +37,11 @@ import { navForRoleAndDept } from '@/nav/roleNav';
 import { colors } from "@/theme";
 import NotificationBell from "@/components/NotificationBell";
 
-// Feb-2026 · Raised from 6 → 20 per user request. Pins live in
+// Feb-2026 · Raised from 6 → 20 → 30 per user request. Pins live in
 // localStorage only (no backend cap), so this is a pure UX limit.
 // The Universal Menu renders pins in a scrollable strip that stays
-// legible up to ~20 entries without cramping other sections.
-const MAX_PINS = 20;
+// legible up to ~30 entries without cramping other sections.
+const MAX_PINS = 30;
 const MAX_RECENTS = 5;
 
 function scope(userId, key) { return `${key}::${userId || "unknown"}`; }
