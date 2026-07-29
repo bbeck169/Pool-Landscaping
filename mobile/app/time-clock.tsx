@@ -19,7 +19,7 @@ import { useRouter } from "expo-router";
 import NetInfo from "@react-native-community/netinfo";
 
 import { useAuth } from "@/src/auth";
-import { api } from "@/src/api";
+import { api, getAuthToken } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import BreadcrumbBar from "@/src/components/nav/BreadcrumbBar";
 import * as GpsTracker from "@/src/services/gpsTracker";
@@ -66,7 +66,11 @@ export default function TimeClockScreen() {
   /* G1 — Best-effort resume GPS tracker when screen mounts with open shift */
   useEffect(() => {
     if (entry && !GpsTracker.isTracking()) {
-      GpsTracker.startTracking().then((ok) => setGpsActive(ok)).catch(() => {});
+      (async () => {
+        const token = await getAuthToken();
+        const ok = await GpsTracker.startTracking(token).catch(() => false);
+        setGpsActive(!!ok);
+      })();
     }
     if (!entry && GpsTracker.isTracking()) {
       GpsTracker.stopTracking();
@@ -172,7 +176,8 @@ export default function TimeClockScreen() {
       setEntry(r);
       setInGeofence(!r.out_of_geofence);
       // G1: Start GPS batch tracker
-      GpsTracker.startTracking().then((ok) => setGpsActive(ok)).catch(() => {});
+      const token = await getAuthToken();
+      GpsTracker.startTracking(token).then((ok) => setGpsActive(ok)).catch(() => {});
     } catch (e: any) {
       Alert.alert("Clock-in failed", e?.message || "Try again");
     } finally { setBusy(false); }
@@ -183,9 +188,9 @@ export default function TimeClockScreen() {
     setBusy(true);
     try {
       // G1: Stop GPS tracker and flush remaining pings before clock-out
-      GpsTracker.stopTracking();
+      await GpsTracker.stopTracking();
       setGpsActive(false);
-      await GpsTracker.flushPings().catch(() => {});
+      await GpsTracker.flushBufferedPings().catch(() => {});
 
       const g = await requestGps();
       if (!g) return;
@@ -273,10 +278,11 @@ export default function TimeClockScreen() {
               </View>
             )}
             {gpsActive && (
-              <View style={[styles.pill, { backgroundColor: "#DCFCE7" }]}
+              <View style={[styles.pill, styles.gpsPill]}
                     testID="time-clock-gps-tracking-pill">
-                <Text style={[styles.pillText, { color: "#16A34A" }]}>
-                  {"\u{1F4CD}"} Location tracking on
+                <Ionicons name="navigate" size={10} color="#16A34A" />
+                <Text style={[styles.pillText, { color: "#16A34A", marginLeft: 4 }]}>
+                  Location tracking on
                 </Text>
               </View>
             )}
@@ -311,14 +317,14 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
   h1: { fontFamily: font.bold, fontSize: 26, color: colors.onSurface, marginBottom: 4 },
   hint: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginBottom: spacing.lg },
-  h2: { fontFamily: font.semiBold, fontSize: 16, color: colors.onSurface, marginBottom: spacing.md },
+  h2: { fontFamily: font.semibold, fontSize: 16, color: colors.onSurface, marginBottom: spacing.md },
   card: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg,
           borderWidth: 1, borderColor: colors.border, marginBottom: spacing.lg },
   jobRow: { flexDirection: "row", alignItems: "center", padding: spacing.md,
             borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
             marginBottom: spacing.sm, backgroundColor: colors.surface },
   jobRowActive: { borderColor: colors.brand, backgroundColor: colors.brandTertiary },
-  jobTitle: { fontFamily: font.semiBold, fontSize: 14, color: colors.onSurface },
+  jobTitle: { fontFamily: font.semibold, fontSize: 14, color: colors.onSurface },
   jobSub: { fontFamily: font.regular, fontSize: 12, color: colors.muted, marginTop: 2 },
   muted: { fontFamily: font.regular, fontSize: 14, color: colors.muted },
   bigBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center",
@@ -331,12 +337,13 @@ const styles = StyleSheet.create({
               paddingVertical: spacing.md, borderRadius: radius.md, gap: spacing.sm,
               backgroundColor: colors.surfaceSecondary,
               borderWidth: 1, borderColor: colors.border },
-  btnGhostLabel: { color: colors.onSurface, fontFamily: font.semiBold, fontSize: 14 },
+  btnGhostLabel: { color: colors.onSurface, fontFamily: font.semibold, fontSize: 14 },
   pillRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md, flexWrap: "wrap" },
   pill: { paddingHorizontal: spacing.md, paddingVertical: 4, borderRadius: 999 },
   pillText: { fontFamily: font.bold, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5 },
+  gpsPill: { backgroundColor: "#DCFCE7", flexDirection: "row", alignItems: "center" },
   timerBig: { fontFamily: font.bold, fontSize: 48, textAlign: "center",
               color: colors.onSurface, marginVertical: spacing.md, letterSpacing: 2 },
   linkRow: { alignItems: "center", padding: spacing.md },
-  link: { fontFamily: font.semiBold, fontSize: 14, color: colors.brand },
+  link: { fontFamily: font.semibold, fontSize: 14, color: colors.brand },
 });

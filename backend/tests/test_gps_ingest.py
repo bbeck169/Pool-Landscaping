@@ -1,18 +1,23 @@
-"""G1 · GPS Ingest integration tests (live server).
+"""G1 · GPS Ingest integration tests (live server + requests).
 
 Cases:
-1. 409 when tracking disabled.
-2. 409 when user not clocked in.
-3. 200 when both green — ping row in db.gps_pings with correct fields.
-4. 413 when batch > 60.
-5. 401 when unauthenticated.
-6. GET /api/gps/config returns settings.
+ 1. 401 unauthenticated.
+ 2. 409 tracking_disabled when gps_settings.enabled=false.
+ 3. 409 not_clocked_in when no open time_entries row.
+ 4. 200 single ping → inserted=1, dedup_count=0, clock_in_id present, DB row correct.
+ 5. 200 batch of 3 pings → inserted=3.
+ 6. 200 dedup — repost same batch → inserted=0, dedup_count=3.
+ 7. 413 when batch is 61 pings.
+ 8. 422 when source="foo".
+ 9. 422 when captured_at is >24 h old.
+10. 403 when customer role tries to POST.
+11. GET /api/gps/config returns only the three permitted keys.
 """
 from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -34,6 +39,8 @@ if _BACKEND_DIR not in sys.path:
 from utils import new_id, now_iso
 
 
+# ── Helpers ──────────────────────────────────────────────────────────
+
 def _login(email: str, pw: str = "password123") -> str:
     r = requests.post(f"{API}/auth/login",
                       json={"email": email, "password": pw}, timeout=15)
@@ -45,168 +52,263 @@ def _admin_headers() -> dict:
     return {"Authorization": f"Bearer {_login('manager@aquaterra.com')}"}
 
 
+def _customer_headers() -> dict:
+    return {"Authorization": f"Bearer {_login('customer@aquaterra.com')}"}
+
+
 def _tech_headers() -> dict:
-    """Login as a technician — create one if needed."""
-    email = "gps_test_tech@aquaterra.com"
+    """Login as a technician — seed one if needed."""
+    email = "gps_g1_tech@aquaterra.com"
     try:
         return {"Authorization": f"Bearer {_login(email)}"}
     except Exception:
-        # Create a technician user
         from passlib.context import CryptContext
-        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
         tenant = _sync.tenants.find_one({})
-        tid = tenant["id"]
-        uid = new_id()
         _sync.users.insert_one({
-            "id": uid, "tenant_id": tid, "email": email,
-            "role": "technician", "name": "GPS Test Tech",
-            "password_hash": pwd_context.hash("password123"),
+            "id": new_id(), "tenant_id": tenant["id"], "email": email,
+            "role": "technician", "name": "G1 GPS Tech",
+            "password_hash": pwd_ctx.hash("password123"),
             "is_active": True,
         })
         return {"Authorization": f"Bearer {_login(email)}"}
 
 
-def _get_tech_user():
-    return _sync.users.find_one({"email": "gps_test_tech@aquaterra.com"})
+def _tech_user():
+    return _sync.users.find_one({"email": "gps_g1_tech@aquaterra.com"})
 
 
-def _ping_body(ts: str | None = None):
+def _tenant_id():
+    return _sync.tenants.find_one({})["id"]
+
+
+def _now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _ping(ts: str | None = None):
     return {
         "lat": 33.4484,
-        "lon": -112.0740,
+        "lon": -112.074,
         "accuracy_m": 10.0,
         "source": "foreground",
-        "captured_at": ts or datetime.now(timezone.utc).isoformat(),
+        "captured_at": ts or _now_iso(),
     }
+
+
+def _enable_gps(tid: str):
+    _sync.gps_settings.update_one(
+        {"tenant_id": tid},
+        {"$set": {"enabled": True, "hr_agreement_ack": True,
+                  "ping_interval_foreground_s": 60,
+                  "ping_interval_background_s": 300}},
+        upsert=True,
+    )
+
+
+def _disable_gps(tid: str):
+    _sync.gps_settings.update_one(
+        {"tenant_id": tid},
+        {"$set": {"enabled": False}},
+        upsert=True,
+    )
+
+
+def _create_shift(tid: str, uid: str) -> str:
+    sid = new_id()
+    _sync.time_entries.insert_one({
+        "id": sid, "tenant_id": tid, "user_id": uid,
+        "clock_in_at": now_iso(), "clock_out_at": None,
+        "job_id": new_id(),
+    })
+    return sid
 
 
 @pytest.fixture(autouse=True)
 def _cleanup():
-    """Clean test data before/after each test."""
-    tech = _sync.users.find_one({"email": "gps_test_tech@aquaterra.com"})
-    if tech:
-        _sync.time_entries.delete_many({"user_id": tech["id"]})
-        _sync.gps_pings.delete_many({"user_id": tech["id"]})
+    """Wipe test artifacts before/after each test."""
+    tech = _sync.users.find_one({"email": "gps_g1_tech@aquaterra.com"})
+    uid = tech["id"] if tech else None
+    if uid:
+        _sync.time_entries.delete_many({"user_id": uid})
+        _sync.gps_pings.delete_many({"user_id": uid})
     yield
-    if tech:
-        _sync.time_entries.delete_many({"user_id": tech["id"]})
-        _sync.gps_pings.delete_many({"user_id": tech["id"]})
+    if uid:
+        _sync.time_entries.delete_many({"user_id": uid})
+        _sync.gps_pings.delete_many({"user_id": uid})
 
+
+# ── Tests ────────────────────────────────────────────────────────────
 
 class TestGpsIngest:
-    """GPS Ping ingest endpoint tests."""
 
+    # 1. Unauthenticated → 401/403
     def test_401_unauthenticated(self):
-        r = requests.post(f"{API}/gps/pings", json=_ping_body(), timeout=15)
+        r = requests.post(f"{API}/gps/pings", json=_ping(), timeout=15)
         assert r.status_code in (401, 403)
 
+    # 2. Tracking disabled → 409
     def test_409_tracking_disabled(self):
-        headers = _tech_headers()
-        # Make sure GPS is disabled
-        _sync.gps_settings.update_many({}, {"$set": {"enabled": False}})
-        r = requests.post(f"{API}/gps/pings", json=_ping_body(),
-                          headers=headers, timeout=15)
+        h = _tech_headers()
+        tid = _tenant_id()
+        tech = _tech_user()
+        _disable_gps(tid)
+        # Need a shift for the "not_clocked_in" check to not fire first
+        _create_shift(tid, tech["id"])
+        r = requests.post(f"{API}/gps/pings", json=_ping(), headers=h, timeout=15)
         assert r.status_code == 409
         body = r.json()
         detail = body.get("detail", body)
-        assert detail.get("error") == "tracking_not_enabled"
+        assert detail.get("error") == "tracking_disabled"
 
+    # 3. Not clocked in → 409
     def test_409_not_clocked_in(self):
-        headers = _tech_headers()
-        tech = _get_tech_user()
-        # Enable GPS settings
-        tenant = _sync.tenants.find_one({})
-        _sync.gps_settings.update_one(
-            {"tenant_id": tenant["id"]},
-            {"$set": {"enabled": True, "hr_agreement_ack": True}},
-            upsert=True,
-        )
-        # Ensure no open shift
+        h = _tech_headers()
+        tid = _tenant_id()
+        _enable_gps(tid)
+        tech = _tech_user()
         _sync.time_entries.delete_many({"user_id": tech["id"], "clock_out_at": None})
-        r = requests.post(f"{API}/gps/pings", json=_ping_body(),
-                          headers=headers, timeout=15)
+        r = requests.post(f"{API}/gps/pings", json=_ping(), headers=h, timeout=15)
         assert r.status_code == 409
         body = r.json()
         detail = body.get("detail", body)
         assert detail.get("error") == "not_clocked_in"
 
-    def test_200_ping_inserted(self):
-        headers = _tech_headers()
-        tech = _get_tech_user()
-        tenant = _sync.tenants.find_one({})
-        tid = tenant["id"]
-        uid = tech["id"]
+    # 4. Single ping → 200
+    def test_200_single_ping(self):
+        h = _tech_headers()
+        tid = _tenant_id()
+        tech = _tech_user()
+        _enable_gps(tid)
+        sid = _create_shift(tid, tech["id"])
 
-        # Enable GPS
-        _sync.gps_settings.update_one(
-            {"tenant_id": tid},
-            {"$set": {"enabled": True, "hr_agreement_ack": True,
-                      "ping_interval_foreground_s": 60,
-                      "ping_interval_background_s": 300}},
-            upsert=True,
-        )
-        # Create an open shift
-        shift_id = new_id()
-        _sync.time_entries.insert_one({
-            "id": shift_id, "tenant_id": tid, "user_id": uid,
-            "clock_in_at": now_iso(), "clock_out_at": None,
-            "job_id": new_id(),
-        })
-
-        ts = datetime.now(timezone.utc).isoformat()
-        r = requests.post(f"{API}/gps/pings", json=_ping_body(ts),
-                          headers=headers, timeout=15)
-        assert r.status_code == 200, f"unexpected {r.status_code}: {r.text}"
+        ts = _now_iso()
+        r = requests.post(f"{API}/gps/pings", json=_ping(ts), headers=h, timeout=15)
+        assert r.status_code == 200, f"Unexpected {r.status_code}: {r.text}"
         body = r.json()
         assert body["inserted"] == 1
-        assert body["clock_in_id"] == shift_id
+        assert body["dedup_count"] == 0
+        assert body["clock_in_id"] == sid
 
-        # Verify row in DB
-        row = _sync.gps_pings.find_one({"tenant_id": tid, "user_id": uid})
+        # Verify DB row
+        row = _sync.gps_pings.find_one({"user_id": tech["id"], "captured_at": ts})
         assert row is not None
+        assert row["tenant_id"] == tid
+        assert row["user_id"] == tech["id"]
+        assert row["received_at"] is not None
         assert row["lat"] == 33.4484
-        assert row["lon"] == -112.0740
-        assert row["clock_in_id"] == shift_id
+        assert row["accuracy_m"] == 10.0
 
-    def test_413_batch_too_large(self):
-        headers = _tech_headers()
-        tech = _get_tech_user()
-        tenant = _sync.tenants.find_one({})
-        tid = tenant["id"]
-        uid = tech["id"]
+    # 5. Batch of 3 → inserted=3
+    def test_200_batch_three(self):
+        h = _tech_headers()
+        tid = _tenant_id()
+        tech = _tech_user()
+        _enable_gps(tid)
+        _create_shift(tid, tech["id"])
 
-        # Enable GPS + create shift
-        _sync.gps_settings.update_one(
-            {"tenant_id": tid},
-            {"$set": {"enabled": True, "hr_agreement_ack": True}},
-            upsert=True,
-        )
-        _sync.time_entries.insert_one({
-            "id": new_id(), "tenant_id": tid, "user_id": uid,
-            "clock_in_at": now_iso(), "clock_out_at": None,
-            "job_id": new_id(),
-        })
-
-        ts = datetime.now(timezone.utc).isoformat()
-        pings = [{"lat": 33.0, "lon": -112.0, "accuracy_m": 5,
-                   "source": "foreground", "captured_at": ts}
-                  for _ in range(61)]
+        pings = []
+        for i in range(3):
+            ts = (datetime.now(timezone.utc) - timedelta(seconds=i * 10)).isoformat()
+            pings.append({**_ping(ts), "lat": 33.0 + i * 0.001})
         r = requests.post(f"{API}/gps/pings", json={"pings": pings},
-                          headers=headers, timeout=15)
+                          headers=h, timeout=15)
+        assert r.status_code == 200
+        assert r.json()["inserted"] == 3
+
+    # 6. Dedup — repost same batch → inserted=0, dedup_count=3
+    def test_200_dedup(self):
+        h = _tech_headers()
+        tid = _tenant_id()
+        tech = _tech_user()
+        _enable_gps(tid)
+        _create_shift(tid, tech["id"])
+
+        pings = []
+        for i in range(3):
+            ts = (datetime.now(timezone.utc) - timedelta(seconds=100 + i * 10)).isoformat()
+            pings.append({**_ping(ts)})
+
+        # First POST
+        r1 = requests.post(f"{API}/gps/pings", json={"pings": pings},
+                           headers=h, timeout=15)
+        assert r1.status_code == 200
+        assert r1.json()["inserted"] == 3
+
+        # Re-POST same pings
+        r2 = requests.post(f"{API}/gps/pings", json={"pings": pings},
+                           headers=h, timeout=15)
+        assert r2.status_code == 200
+        assert r2.json()["inserted"] == 0
+        assert r2.json()["dedup_count"] == 3
+
+    # 7. Batch > 60 → 413
+    def test_413_batch_too_large(self):
+        h = _tech_headers()
+        tid = _tenant_id()
+        tech = _tech_user()
+        _enable_gps(tid)
+        _create_shift(tid, tech["id"])
+
+        pings = []
+        for i in range(61):
+            ts = (datetime.now(timezone.utc) - timedelta(seconds=i)).isoformat()
+            pings.append(_ping(ts))
+        r = requests.post(f"{API}/gps/pings", json={"pings": pings},
+                          headers=h, timeout=15)
         assert r.status_code == 413
 
-    def test_gps_config(self):
-        headers = _tech_headers()
-        tenant = _sync.tenants.find_one({})
+    # 8. Invalid source → 422
+    def test_422_bad_source(self):
+        h = _tech_headers()
+        tid = _tenant_id()
+        tech = _tech_user()
+        _enable_gps(tid)
+        _create_shift(tid, tech["id"])
+
+        bad = _ping()
+        bad["source"] = "foo"
+        r = requests.post(f"{API}/gps/pings", json={"pings": [bad]},
+                          headers=h, timeout=15)
+        assert r.status_code == 422
+
+    # 9. Stale captured_at (>24 h ago) → 422
+    def test_422_stale_ping(self):
+        h = _tech_headers()
+        tid = _tenant_id()
+        tech = _tech_user()
+        _enable_gps(tid)
+        _create_shift(tid, tech["id"])
+
+        stale_ts = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        bad = _ping(stale_ts)
+        r = requests.post(f"{API}/gps/pings", json={"pings": [bad]},
+                          headers=h, timeout=15)
+        assert r.status_code == 422
+
+    # 10. Customer role → 403
+    def test_403_customer_role(self):
+        h = _customer_headers()
+        r = requests.post(f"{API}/gps/pings", json=_ping(), headers=h, timeout=15)
+        assert r.status_code == 403
+
+    # 11. GET /api/gps/config — only three keys
+    def test_gps_config_keys(self):
+        h = _tech_headers()
+        tid = _tenant_id()
         _sync.gps_settings.update_one(
-            {"tenant_id": tenant["id"]},
+            {"tenant_id": tid},
             {"$set": {"enabled": True, "ping_interval_foreground_s": 45,
-                      "ping_interval_background_s": 120}},
+                      "ping_interval_background_s": 120,
+                      "hr_agreement_ack": True, "geocoder": "mapbox",
+                      "retention_days": 90, "updated_by_user_id": "x"}},
             upsert=True,
         )
-        r = requests.get(f"{API}/gps/config", headers=headers, timeout=15)
+        r = requests.get(f"{API}/gps/config", headers=h, timeout=15)
         assert r.status_code == 200
         body = r.json()
+        assert set(body.keys()) == {"enabled", "ping_interval_foreground_s",
+                                     "ping_interval_background_s"}
         assert body["enabled"] is True
         assert body["ping_interval_foreground_s"] == 45
         assert body["ping_interval_background_s"] == 120

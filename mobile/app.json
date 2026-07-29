@@ -15,8 +15,8 @@
         "NSCameraUsageDescription": "Take before and after photos of service jobs",
         "NSPhotoLibraryUsageDescription": "Attach job photos from your library",
         "NSMicrophoneUsageDescription": "Record video with audio for service documentation",
-        "NSLocationWhenInUseUsageDescription": "Enables auto clock-in when you arrive at a scheduled job's site.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Enables auto clock-in when you arrive at a scheduled job's site.",
+        "NSLocationWhenInUseUsageDescription": "Your employer uses this to record location during your shift. Location is only collected while you are clocked in.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Your employer uses this to record location during your shift, including when the app is in the background. Location is only collected while you are clocked in.",
         "UIBackgroundModes": [
           "fetch",
           "location"
@@ -63,8 +63,8 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Auto-start job timers when you arrive on-site",
-          "locationAlwaysAndWhenInUsePermission": "Auto-start job timers on arrival, even in background",
+          "locationWhenInUsePermission": "Location is used only during your active work shift, per your employer's agreement.",
+          "locationAlwaysAndWhenInUsePermission": "Location is used only during your active work shift, per your employer's agreement.",
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
         }
