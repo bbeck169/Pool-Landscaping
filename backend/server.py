@@ -271,6 +271,12 @@ api_router.include_router(_gps_live_positions_router.router)
 from routers import gps_stops as _gps_stops_router  # noqa: E402
 api_router.include_router(_gps_stops_router.router)
 
+# MR0 · Feb-2026 — Public check-in submission + moderation queue.
+from routers import public_checkins as _public_checkins_router  # noqa: E402
+from routers import moderation_public_checkins as _mod_public_checkins_router  # noqa: E402
+api_router.include_router(_public_checkins_router.router)
+api_router.include_router(_mod_public_checkins_router.router)
+
 # Feb-2026 · Re-added after LZ4 Stripe purge — Payments summary tile.
 from routers import payments_summary as _payments_summary_router  # noqa: E402
 api_router.include_router(_payments_summary_router.router)
@@ -1074,6 +1080,13 @@ async def startup():
         await ensure_deployment_indexes()
     except Exception as e:
         logger.warning(f"ensure_deployment_indexes crashed: {e}")
+
+    # MR0 · Feb-2026 — Public check-in moderation queue indexes.
+    try:
+        from routers.public_checkins import ensure_public_checkins_indexes
+        await ensure_public_checkins_indexes()
+    except Exception as e:
+        logger.warning(f"ensure_public_checkins_indexes crashed: {e}")
 
     # Phase 5A · Feb 2026 — seed daily service-line checklists per
     # tenant. Idempotent, non-destructive; tenants that have already

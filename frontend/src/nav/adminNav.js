@@ -235,6 +235,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/reports/job-margins",    label: "Job Margin Leaderboard", icon: TrendingUp, feature: "reports" },
     // G2 · Feb-2026 — Driver Activity (server-detected GPS stops).
     { to: "/admin/reports/driver-activity", label: "Driver Activity",   icon: Truck, feature: "reports", hard_rule: "manager_only" },
+    // MR0 · Feb-2026 — Public check-in moderation queue.
+    { to: "/admin/moderation/checkins",     label: "Check-in Moderation", icon: ShieldCheck, feature: "reports", hard_rule: "manager_only" },
     { to: "/admin/reports/pricing-insights",label: "Pricing Insights",    icon: LineChart, feature: "reports" },
     // PB1 · Feb-2026 — Internal profit report (admin/super_admin only).
     { to: "/admin/reports/profit",         label: "Profit Report",       icon: TrendingUp, feature: "reports", hard_rule: "admin_only" },
