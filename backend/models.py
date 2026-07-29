@@ -159,6 +159,20 @@ class LineItem(BaseModel):
     quantity: float = 1
     unit_price: float = 0.0
     category: str = "Pool"
+    # Feb-2026 · Income Category enforcement — optional per line.
+    income_category_id: Optional[str] = None
+    # Feb-2026 · PB1 · Price-book linkage — when the line was created
+    # from a pricebook item, the id sticks so the profit report can
+    # resolve the service_category + fall back to the current cost.
+    item_id: Optional[str] = None
+    # Feb-2026 · PB1 · Immutable margin snapshots. Written once at
+    # create-time (and by the backfill script for historical rows).
+    # Once set, the update path must never overwrite them — that
+    # would silently rewrite historical margin data every time an
+    # admin tweaks a description.
+    retail_price_snapshot: Optional[float] = None
+    wholesale_price_snapshot: Optional[float] = None
+    labor_cost_snapshot: Optional[float] = None
 
 
 class QuoteIn(BaseModel):
@@ -313,6 +327,17 @@ class ItemIn(BaseModel):
     # taxonomy attached to pricebook items. Required on new writes;
     # existing rows without one are grandfathered on reads.
     service_category_id: Optional[str] = None
+    # Feb-2026 · PB1 · Internal cost fields (admin-only surface).
+    wholesale_price: Optional[float] = 0.0
+    labor_cost_default: Optional[float] = 0.0
+    # Legacy ``cost``/``tax_rate``/``description``/``active``/``sku``
+    # are accepted for backward compatibility with the existing
+    # Pricebook UI which sends them via POST /items.
+    cost: Optional[float] = 0.0
+    tax_rate: Optional[float] = 0.0
+    description: Optional[str] = None
+    active: Optional[bool] = True
+    sku: Optional[str] = None
 
 
 class BillingPlanIn(BaseModel):

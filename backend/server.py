@@ -219,6 +219,8 @@ from routers import checkin_rewrite as _checkin_rewrite  # noqa: E402
 api_router.include_router(_checkin_rewrite.router)
 from routers import lumino_backfill as _lumino_backfill  # noqa: E402
 api_router.include_router(_lumino_backfill.router)
+from routers import profit_report as _profit_report  # noqa: E402
+api_router.include_router(_profit_report.router)
 # Feb 2026 — Service categories (pricebook business-unit taxonomy).
 from routers import service_categories as _service_categories  # noqa: E402
 api_router.include_router(_service_categories.router)

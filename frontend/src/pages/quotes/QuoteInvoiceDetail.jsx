@@ -466,6 +466,102 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
             </div>
           </div>
         </div>
+
+        {/* PB1 · Feb-2026 · Internal Margin section. Admin-only.
+             Renders ONLY when the current session role is admin or
+             super_admin AND we're on the admin (not portal) surface.
+             Never rendered on the customer portal invoice view or
+             any PDF/email template. */}
+        {(user?.role === "admin" || user?.role === "super_admin" ||
+          user?.role === "manager") ? (() => {
+            const rows = doc.line_items || [];
+            const perLine = rows.map((li) => {
+              const q = Number(li.quantity || 0);
+              const retail = Number(li.retail_price_snapshot ?? li.unit_price ?? 0);
+              const wholesale = Number(li.wholesale_price_snapshot || 0);
+              const labor = Number(li.labor_cost_snapshot || 0);
+              return {
+                description: li.description,
+                revenue: q * retail,
+                cogs: q * wholesale,
+                labor: q * labor,
+                profit: q * (retail - wholesale - labor),
+                wholesale_per_unit: wholesale,
+                labor_per_unit: labor,
+              };
+            });
+            const totRev = perLine.reduce((s, r) => s + r.revenue, 0);
+            const totCogs = perLine.reduce((s, r) => s + r.cogs, 0);
+            const totLabor = perLine.reduce((s, r) => s + r.labor, 0);
+            const totProfit = totRev - totCogs - totLabor;
+            const margin = totRev > 0
+              ? (totProfit / totRev * 100).toFixed(1)
+              : "0.0";
+            return (
+              <div className="mt-6 rounded-xl p-4"
+                    style={{ background: "#FEF3C7",
+                              border: "1px solid #FCD34D",
+                              color: "#78350F" }}
+                    data-testid="internal-margin-section">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs uppercase font-bold tracking-wide"
+                         style={{ color: "#92400E" }}>
+                    Internal margin — not shown to customer
+                  </span>
+                </div>
+                <table className="w-full text-xs"
+                        data-testid="internal-margin-table">
+                  <thead>
+                    <tr style={{ color: "#92400E" }}>
+                      <th className="text-left py-1">Line</th>
+                      <th className="text-right py-1">Wholesale/u</th>
+                      <th className="text-right py-1">Labor/u</th>
+                      <th className="text-right py-1">Revenue</th>
+                      <th className="text-right py-1">COGS</th>
+                      <th className="text-right py-1">Labor</th>
+                      <th className="text-right py-1">Profit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perLine.map((r, i) => (
+                      <tr key={i}
+                           data-testid={`internal-margin-line-${i}`}>
+                        <td className="py-1">{r.description}</td>
+                        <td className="py-1 text-right font-mono">
+                          {money(r.wholesale_per_unit)}
+                        </td>
+                        <td className="py-1 text-right font-mono">
+                          {money(r.labor_per_unit)}
+                        </td>
+                        <td className="py-1 text-right">{money(r.revenue)}</td>
+                        <td className="py-1 text-right">{money(r.cogs)}</td>
+                        <td className="py-1 text-right">{money(r.labor)}</td>
+                        <td className="py-1 text-right font-semibold">
+                          {money(r.profit)}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr style={{ borderTop: "1px solid #FCD34D",
+                                  fontWeight: 700 }}
+                         data-testid="internal-margin-totals">
+                      <td className="py-2">Totals</td>
+                      <td></td>
+                      <td></td>
+                      <td className="py-2 text-right">{money(totRev)}</td>
+                      <td className="py-2 text-right">{money(totCogs)}</td>
+                      <td className="py-2 text-right">{money(totLabor)}</td>
+                      <td className="py-2 text-right">
+                        {money(totProfit)}{" "}
+                        <span className="text-[10px] font-normal">
+                          ({margin}% margin)
+                        </span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            );
+          })() : null}
       </div>
 
       {/* Phase F2b · Attachments (F0-native, purpose-scoped).

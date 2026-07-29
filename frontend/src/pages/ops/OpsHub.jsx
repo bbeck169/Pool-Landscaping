@@ -1733,8 +1733,15 @@ function Equipment() {
 function PriceBook() {
   const [rows, refresh] = useList("/items");
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0, tax_rate: 0 });
+  const [form, setForm] = useState({ name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0, tax_rate: 0, wholesale_price: 0, labor_cost_default: 0 });
   const [toast, setToast] = useState(null);
+  // PB1 · Feb-2026 — internal cost columns visible only to admins.
+  // Uses ``useAuth`` from the app context to gate the two new columns
+  // + the two new form fields. Non-admins still see the rest of the
+  // row (name, price, edit) but never see wholesale or labor cost.
+  const authCtx = useAuth() || {};
+  const role = authCtx.user?.role || "";
+  const showInternalCols = role === "admin" || role === "super_admin";
   // Phase 34 · Task LL Phase 2 · Feb 2026 — Pricebook frontend polish.
   // Bulk-select state + inline row edit state.
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -1777,6 +1784,8 @@ function PriceBook() {
       name: row.name || "", category: row.category || "", unit: row.unit || "",
       unit_price: row.unit_price || 0, cost: row.cost || 0,
       tax_rate: row.tax_rate || 0, active: row.active !== false,
+      wholesale_price: row.wholesale_price || 0,
+      labor_cost_default: row.labor_cost_default || 0,
     });
   };
   const saveEdit = async (rowId) => {
@@ -1786,6 +1795,8 @@ function PriceBook() {
     // the same message regardless of where the check fires.
     const costN = Number(editDraft.cost);
     const taxN = Number(editDraft.tax_rate);
+    const wpN = Number(editDraft.wholesale_price ?? 0);
+    const laborN = Number(editDraft.labor_cost_default ?? 0);
     if (Number.isNaN(costN) || costN < 0) {
       setToast({ tone: "error", message: "Cost must be a number ≥ 0" });
       return;
@@ -1794,12 +1805,22 @@ function PriceBook() {
       setToast({ tone: "error", message: "Tax rate must be between 0 and 100" });
       return;
     }
+    if (Number.isNaN(wpN) || wpN < 0) {
+      setToast({ tone: "error", message: "Wholesale must be a number ≥ 0" });
+      return;
+    }
+    if (Number.isNaN(laborN) || laborN < 0) {
+      setToast({ tone: "error", message: "Labor cost must be a number ≥ 0" });
+      return;
+    }
     try {
       await api.patch(`/items/${rowId}`, {
         ...editDraft,
         unit_price: Number(editDraft.unit_price) || 0,
         cost: costN,
         tax_rate: taxN,
+        wholesale_price: wpN,
+        labor_cost_default: laborN,
       });
       setEditingId(null); setEditDraft({}); refresh();
       setToast({ tone: "success", message: "Item updated" });
@@ -1918,6 +1939,24 @@ function PriceBook() {
                           placeholder="tax %"
                           aria-label="Tax rate (%)"
                           title="Tax rate (%)" />
+                {showInternalCols ? (
+                  <>
+                    <input value={editDraft.wholesale_price ?? 0} type="number" step="0.01" min="0"
+                             onChange={(e) => setEditDraft({ ...editDraft, wholesale_price: e.target.value })}
+                             className="w-24 border px-2 py-1 text-sm rounded text-right"
+                             data-testid={`pb-edit-wholesale-${r.id}`}
+                             placeholder="wholesale"
+                             aria-label="Wholesale price ($, internal)"
+                             title="Wholesale — internal only" />
+                    <input value={editDraft.labor_cost_default ?? 0} type="number" step="0.01" min="0"
+                             onChange={(e) => setEditDraft({ ...editDraft, labor_cost_default: e.target.value })}
+                             className="w-24 border px-2 py-1 text-sm rounded text-right"
+                             data-testid={`pb-edit-labor-${r.id}`}
+                             placeholder="labor"
+                             aria-label="Labor cost ($, internal)"
+                             title="Labor cost — internal only" />
+                  </>
+                ) : null}
                  <button onClick={() => saveEdit(r.id)}
                           className="text-xs font-bold text-white px-2 py-1 rounded"
                           style={{ backgroundColor: "#16A34A" }}
@@ -1933,6 +1972,22 @@ function PriceBook() {
                    <div className="text-xs" style={{ color: colors.muted }}>{r.category} · {r.unit}</div>
                  </div>
                  <div className="font-semibold">{money(r.unit_price)}</div>
+                {showInternalCols ? (
+                  <>
+                    <div className="text-xs font-mono w-20 text-right"
+                          style={{ color: colors.muted }}
+                          data-testid={`pb-view-wholesale-${r.id}`}
+                          title="Wholesale — internal only">
+                      W {money(r.wholesale_price || 0)}
+                    </div>
+                    <div className="text-xs font-mono w-20 text-right"
+                          style={{ color: colors.muted }}
+                          data-testid={`pb-view-labor-${r.id}`}
+                          title="Labor cost — internal only">
+                      L {money(r.labor_cost_default || 0)}
+                    </div>
+                  </>
+                ) : null}
                  <button onClick={() => startEdit(r)}
                             className="text-xs font-semibold underline"
                             style={{ color: colors.muted }}

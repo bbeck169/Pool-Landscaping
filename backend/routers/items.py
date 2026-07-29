@@ -87,6 +87,14 @@ class ItemPatch(BaseModel):
     sku: Optional[str] = None
     # Feb-2026 · Service category — patchable, validated below.
     service_category_id: Optional[str] = None
+    # Feb-2026 · PB1 · Internal-only cost fields.
+    #   ``wholesale_price``     — supplier cost per unit (COGS).
+    #   ``labor_cost_default``  — labor cost per unit; used as the
+    #                             per-line snapshot default when the
+    #                             item is added to a new quote / invoice.
+    # Both admin-gated and NEVER surfaced on customer-facing views.
+    wholesale_price: Optional[float] = None
+    labor_cost_default: Optional[float] = None
 
 
 @router.patch("/items/{iid}", operation_id="pricebook.patch")
@@ -110,6 +118,23 @@ async def patch_item(iid: str, body: ItemPatch,
         raise HTTPException(422, "cost must be ≥ 0")
     if "tax_rate" in upd and (upd["tax_rate"] < 0 or upd["tax_rate"] > 100):
         raise HTTPException(422, "tax_rate must be between 0 and 100")
+    # PB1 · Feb-2026 — wholesale + labor cost validation.
+    if "wholesale_price" in upd:
+        try:
+            wp = float(upd["wholesale_price"])
+        except (TypeError, ValueError) as e:
+            raise HTTPException(422, "wholesale_price must be numeric") from e
+        if wp < 0:
+            raise HTTPException(422, "wholesale_price must be ≥ 0")
+        upd["wholesale_price"] = wp
+    if "labor_cost_default" in upd:
+        try:
+            lc = float(upd["labor_cost_default"])
+        except (TypeError, ValueError) as e:
+            raise HTTPException(422, "labor_cost_default must be numeric") from e
+        if lc < 0:
+            raise HTTPException(422, "labor_cost_default must be ≥ 0")
+        upd["labor_cost_default"] = lc
     # Feb-2026 · Service category — if the patch touches it, validate.
     if "service_category_id" in upd:
         from routers.service_categories import validate_service_category

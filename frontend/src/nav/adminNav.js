@@ -232,6 +232,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/reports/pool-service",   label: "Pool Service Report", icon: Waves,   feature: "reports" },
     { to: "/admin/reports/job-margins",    label: "Job Margin Leaderboard", icon: TrendingUp, feature: "reports" },
     { to: "/admin/reports/pricing-insights",label: "Pricing Insights",    icon: LineChart, feature: "reports" },
+    // PB1 · Feb-2026 — Internal profit report (admin/super_admin only).
+    { to: "/admin/reports/profit",         label: "Profit Report",       icon: TrendingUp, feature: "reports", hard_rule: "admin_only" },
     { to: "/admin/cfo/reports",            label: "CFO Reports",         icon: PieChart, feature: "reports" },
     { to: "/admin/finance/bills",          label: "Vendor Bills",        icon: Receipt, feature: "reports" },
     // Phase LZ4 (Feb 2026) — "Stripe Payments" nav entry removed

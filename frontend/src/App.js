@@ -100,6 +100,7 @@ import NfcReviewCardPage from "@/pages/public/NfcReviewCardPage";
 import AIBrainPage from "@/pages/settings/AIBrainPage";
 import CopilotPage from "@/pages/admin/CopilotPage";
 import LuminoBackfillPage from "@/pages/admin/LuminoBackfillPage";
+import ProfitReportPage from "@/pages/admin/ProfitReportPage";
 // Feb-2026 · Item 6 — Business Card admin editor.
 import BusinessCardSettingsPage from "@/pages/settings/BusinessCardSettings";
 import MyProfilePage from "@/pages/account/MyProfilePage";
@@ -906,6 +907,8 @@ export default function App() {
             <Route path="admin/copilot" element={<AdminOnly><CopilotPage /></AdminOnly>} />
             {/* LZ5 · Feb-2026 — Lumino payment-link backfill (super_admin only). */}
             <Route path="admin/tools/lumino-backfill" element={<SuperAdminOnly><LuminoBackfillPage /></SuperAdminOnly>} />
+            {/* PB1 · Feb-2026 — Profit report (admin-only; internal margin data). */}
+            <Route path="admin/reports/profit" element={<AdminOnly><ProfitReportPage /></AdminOnly>} />
             {/* Feb-2026 · Item 6 — Business Card admin editor. */}
             <Route path="settings/business-card" element={<AdminOnly><BusinessCardSettingsPage /></AdminOnly>} />
             <Route path="account/profile" element={<MyProfilePage />} />

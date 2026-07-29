@@ -20,6 +20,48 @@ def compute_totals(line_items: List[dict], tax_rate: float):
     return round(subtotal, 2), tax, round(subtotal + tax, 2)
 
 
+# ── PB1 · Feb-2026 · Line-item margin snapshot stamping.
+# ────────────────────────────────────────────────────────────────
+# Snapshots are IMMUTABLE once written. On every write path we look
+# at each line and only fill the ``*_snapshot`` fields that are still
+# missing / None. The retail snapshot always mirrors the ``unit_price``
+# on the write (that's the price the customer sees on the invoice at
+# this exact moment); wholesale + labor come from the linked pricebook
+# ``item_id`` if present, defaulting to 0.
+#
+# This function mutates each line dict in place and returns the list.
+async def _stamp_line_snapshots(items: List[dict]) -> List[dict]:
+    # Batch-load only the items we actually reference to keep this O(N).
+    ids = list({li.get("item_id") for li in items if li.get("item_id")})
+    item_master: dict = {}
+    if ids:
+        rows = await db.items.find(
+            {"id": {"$in": ids}},
+            {"_id": 0, "id": 1, "wholesale_price": 1,
+              "labor_cost_default": 1, "unit_price": 1},
+        ).to_list(len(ids))
+        item_master = {r["id"]: r for r in rows}
+    for li in items:
+        if li.get("retail_price_snapshot") is None:
+            try:
+                li["retail_price_snapshot"] = float(li.get("unit_price") or 0)
+            except (TypeError, ValueError):
+                li["retail_price_snapshot"] = 0.0
+        if li.get("wholesale_price_snapshot") is None:
+            master = item_master.get(li.get("item_id") or "") or {}
+            try:
+                li["wholesale_price_snapshot"] = float(master.get("wholesale_price") or 0)
+            except (TypeError, ValueError):
+                li["wholesale_price_snapshot"] = 0.0
+        if li.get("labor_cost_snapshot") is None:
+            master = item_master.get(li.get("item_id") or "") or {}
+            try:
+                li["labor_cost_snapshot"] = float(master.get("labor_cost_default") or 0)
+            except (TypeError, ValueError):
+                li["labor_cost_snapshot"] = 0.0
+    return items
+
+
 @router.get("/quotes")
 async def list_quotes(user: dict = Depends(get_current_user),
                       tenant: dict = Depends(get_current_tenant),
@@ -83,6 +125,8 @@ async def create_quote(body: QuoteIn,
     if body.doc_type == "invoice":
         from routers.income_categories import validate_line_item_categories
         await validate_line_item_categories(tenant["id"], items)
+    # PB1 · Feb-2026 · Stamp immutable margin snapshots on every line.
+    await _stamp_line_snapshots(items)
     subtotal, tax, total = compute_totals(items, body.tax_rate)
     due_date = body.due_date
     if body.doc_type == "invoice" and not due_date:
@@ -199,6 +243,30 @@ async def update_quote(qid: str, body: QuoteUpdate,
             raise HTTPException(400, "property_id refers to an inactive property")
     if "line_items" in upd:
         upd["line_items"] = [li if isinstance(li, dict) else li.dict() for li in upd["line_items"]]
+        # PB1 · Feb-2026 · Preserve existing snapshots when updating.
+        # For every incoming line, if it matches an existing line by
+        # id (or same-index for legacy rows without id), inherit any
+        # snapshot fields that are already stamped on the existing
+        # doc — snapshots are IMMUTABLE. This overwrites any value
+        # the caller supplied in the payload for those three fields,
+        # which is the point: "immutable once set" means the API
+        # never accepts an update to them.
+        existing_lines = existing.get("line_items") or []
+        existing_by_id = {li.get("id"): li for li in existing_lines if li.get("id")}
+        _SNAPSHOT_KEYS = ("retail_price_snapshot",
+                            "wholesale_price_snapshot",
+                            "labor_cost_snapshot")
+        for idx, new_li in enumerate(upd["line_items"]):
+            match = existing_by_id.get(new_li.get("id"))
+            if not match and idx < len(existing_lines):
+                match = existing_lines[idx]
+            if match:
+                for k in _SNAPSHOT_KEYS:
+                    if match.get(k) is not None:
+                        # Unconditional overwrite of incoming payload —
+                        # snapshots are immutable once set.
+                        new_li[k] = match[k]
+        await _stamp_line_snapshots(upd["line_items"])
     if "line_items" in upd or "tax_rate" in upd:
         items = upd.get("line_items", existing.get("line_items", []))
         tax_rate = float(upd.get("tax_rate", existing.get("tax_rate", 0)) or 0)
