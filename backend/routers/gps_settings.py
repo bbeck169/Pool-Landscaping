@@ -153,7 +153,9 @@ async def put_gps_settings(body: GpsSettingsPatch,
 # ══════════════════════════════════════════════════════════════════
 async def purge_expired_pings() -> Dict[str, int]:
     """Delete expired ``gps_pings`` rows per tenant per its own
-    ``retention_days`` setting. Safe against empty collections."""
+    ``retention_days`` setting. G4 · Feb-2026 — respects
+    per-user ``gps_retention_override_days`` when set. Safe
+    against empty collections."""
     now = datetime.now(timezone.utc)
     total_purged = 0
     tenant_count = 0
@@ -161,23 +163,57 @@ async def purge_expired_pings() -> Dict[str, int]:
         {}, {"_id": 0, "tenant_id": 1, "retention_days": 1},
     ):
         tid = row["tenant_id"]
-        days = int(row.get("retention_days") or 90)
-        cutoff = (now - timedelta(days=days)).isoformat()
+        tenant_days = int(row.get("retention_days") or 90)
+        tenant_cutoff = (now - timedelta(days=tenant_days)).isoformat()
+
+        # Users in this tenant with a per-user override.
+        override_users: Dict[str, int] = {}
+        async for u in db.users.find(
+            {"tenant_id": tid,
+              "gps_retention_override_days": {"$exists": True, "$ne": None}},
+            {"_id": 0, "id": 1, "gps_retention_override_days": 1},
+        ):
+            try:
+                d = int(u["gps_retention_override_days"])
+                if 1 <= d <= 3650:
+                    override_users[u["id"]] = d
+            except Exception:                                            # noqa: BLE001
+                continue
+
+        purged_here = 0
+        # Per-user override deletes first (they may be tighter than
+        # tenant default — never widen a user's retention).
+        for uid, d in override_users.items():
+            cutoff = (now - timedelta(days=d)).isoformat()
+            try:
+                r = await db.gps_pings.delete_many(
+                    {"tenant_id": tid, "user_id": uid,
+                      "captured_at": {"$lt": cutoff}})
+                purged_here += int(r.deleted_count or 0)
+            except Exception as e:                                       # noqa: BLE001
+                logger.warning("[gps_purge] tenant=%s uid=%s err=%s",
+                                tid, uid, e)
+
+        # Then the tenant-default sweep for everyone else.
         try:
-            res = await db.gps_pings.delete_many(
-                {"tenant_id": tid, "captured_at": {"$lt": cutoff}})
-            purged = int(res.deleted_count or 0)
-        except Exception as e:                                        # noqa: BLE001
-            logger.warning("[gps_purge] tenant=%s delete error: %s", tid, e)
-            purged = 0
+            q = {"tenant_id": tid,
+                 "captured_at": {"$lt": tenant_cutoff}}
+            if override_users:
+                q["user_id"] = {"$nin": list(override_users.keys())}
+            r = await db.gps_pings.delete_many(q)
+            purged_here += int(r.deleted_count or 0)
+        except Exception as e:                                            # noqa: BLE001
+            logger.warning("[gps_purge] tenant=%s tenant-sweep err=%s",
+                            tid, e)
+
         try:
             retained = await db.gps_pings.count_documents({"tenant_id": tid})
         except Exception:
             retained = -1
         logger.info(
-            "[gps_purge] tenant=%s retained=%s purged=%s",
-            tid, retained, purged,
+            "[gps_purge] tenant=%s users_overridden=%s retained=%s purged=%s",
+            tid, len(override_users), retained, purged_here,
         )
-        total_purged += purged
+        total_purged += purged_here
         tenant_count += 1
     return {"tenants": tenant_count, "purged": total_purged}

@@ -373,6 +373,10 @@ function RouteMapPanel({ techId, day, onRefreshStops }) {
   const [backfillOpen, setBackfillOpen] = React.useState(false);
   const [backfillBusy, setBackfillBusy] = React.useState(false);
   const [backfillResult, setBackfillResult] = React.useState(null);
+  // G4 · CSV export dialog state.
+  const [exportOpen, setExportOpen] = React.useState(false);
+  const [exportScope, setExportScope] = React.useState("tech");
+  const [exportKind, setExportKind] = React.useState("stops");
 
   React.useEffect(() => {
     let cancelled = false;
@@ -497,6 +501,17 @@ function RouteMapPanel({ techId, day, onRefreshStops }) {
                     data-testid="route-map-backfill-btn">
             Backfill addresses
           </button>
+          {/* G4 · Feb-2026 — CSV export dialog trigger. */}
+          <button type="button" onClick={() => setExportOpen(true)}
+                    className="inline-flex items-center gap-1 h-7 px-2 rounded text-xs font-semibold"
+                    style={{
+                      backgroundColor: colors.surface,
+                      color: colors.onSurface,
+                      border: `1px solid ${colors.border}`,
+                    }}
+                    data-testid="route-map-export-btn">
+            Export CSV
+          </button>
         </div>
       </div>
 
@@ -573,8 +588,7 @@ function RouteMapPanel({ techId, day, onRefreshStops }) {
       {backfillOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
              data-testid="route-map-backfill-modal"
-             onClick={() => setBackfillOpen(false)}>
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6"
+             onClick={() => setBackfillOpen(false)}>          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6"
                onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-semibold mb-2">
               Backfill stop addresses
@@ -605,6 +619,80 @@ function RouteMapPanel({ techId, day, onRefreshStops }) {
           </div>
         </div>
       )}
+      {exportOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+             data-testid="route-map-export-modal"
+             onClick={() => setExportOpen(false)}>
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6"
+               onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold mb-3">Export CSV</h3>
+            <div className="text-xs text-zinc-500 mb-3">
+              Range: {day} · single-day export.
+            </div>
+            <div className="mb-3">
+              <div className="text-xs text-zinc-600 mb-1">Scope</div>
+              <label className="text-sm inline-flex items-center gap-1 mr-4">
+                <input type="radio" name="scope" value="tech"
+                        checked={exportScope === "tech"}
+                        onChange={() => setExportScope("tech")}
+                        data-testid="export-scope-tech" />
+                This tech only
+              </label>
+              <label className="text-sm inline-flex items-center gap-1">
+                <input type="radio" name="scope" value="all"
+                        checked={exportScope === "all"}
+                        onChange={() => setExportScope("all")}
+                        data-testid="export-scope-all" />
+                All techs
+              </label>
+            </div>
+            <div className="mb-4">
+              <div className="text-xs text-zinc-600 mb-1">Kind</div>
+              <label className="text-sm inline-flex items-center gap-1 mr-4">
+                <input type="radio" name="kind" value="stops"
+                        checked={exportKind === "stops"}
+                        onChange={() => setExportKind("stops")}
+                        data-testid="export-kind-stops" />
+                Stops
+              </label>
+              <label className="text-sm inline-flex items-center gap-1">
+                <input type="radio" name="kind" value="pings"
+                        checked={exportKind === "pings"}
+                        onChange={() => setExportKind("pings")}
+                        data-testid="export-kind-pings" />
+                Raw pings
+              </label>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setExportOpen(false)}
+                       className="px-3 py-1.5 rounded border border-zinc-200 text-sm">
+                Cancel
+              </button>
+              <a
+                href={(() => {
+                  const from = `${day}T00:00:00Z`;
+                  const to = `${day}T23:59:59Z`;
+                  const kindPath = exportKind === "pings"
+                                     ? "pings.csv" : "activity.csv";
+                  const base = process.env.REACT_APP_BACKEND_URL || "";
+                  const uid = exportScope === "tech"
+                                ? `&user_id=${encodeURIComponent(techId || "")}`
+                                : "";
+                  return `${base}/api/admin/gps/export/${kindPath}`
+                       + `?from=${encodeURIComponent(from)}`
+                       + `&to=${encodeURIComponent(to)}${uid}`;
+                })()}
+                target="_blank" rel="noopener noreferrer"
+                onClick={() => setExportOpen(false)}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded bg-sky-600 text-white text-sm no-underline"
+                data-testid="export-download-btn">
+                Download
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

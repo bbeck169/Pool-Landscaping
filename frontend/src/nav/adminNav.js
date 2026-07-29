@@ -244,6 +244,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/seo/auditor",             label: "SEO Auditor",         icon: SearchIcon, feature: "reports", hard_rule: "manager_only" },
     // Phase SEO-C · Feb-2026 — Free keyword ideation (autocomplete + trends).
     { to: "/admin/seo/keywords",            label: "Keyword Ideation",    icon: SearchIcon, feature: "reports", hard_rule: "manager_only" },
+    // Phase G4 · Feb-2026 — Per-user GPS controls (admin+/manager).
+    { to: "/admin/settings/gps-users",      label: "GPS Per-User Controls", icon: MapPin, feature: "reports", hard_rule: "manager_only" },
     // MR1+MR2 · Feb-2026 — Public widget embed preview.
     { to: "/admin/moderation/widget-embed", label: "Widget Embed",        icon: Globe, feature: "reports", hard_rule: "manager_only" },
     { to: "/admin/reports/pricing-insights",label: "Pricing Insights",    icon: LineChart, feature: "reports" },

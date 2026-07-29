@@ -138,6 +138,14 @@ async def ingest_pings(body: PingBatchIn,
     if not settings.get("enabled"):
         raise HTTPException(409, {"error": "tracking_disabled"})
 
+    # G4 · Feb-2026 — per-user opt-out gate. Techs who opted out
+    # cannot ingest pings even when the tenant is enabled.
+    user_row = await db.users.find_one(
+        {"id": uid, "tenant_id": tid},
+        {"_id": 0, "gps_tracking_opt_out": 1})
+    if user_row and bool(user_row.get("gps_tracking_opt_out")):
+        raise HTTPException(409, {"error": "user_opted_out"})
+
     shift = await _get_open_shift(tid, uid)
     if not shift:
         raise HTTPException(409, {"error": "not_clocked_in"})

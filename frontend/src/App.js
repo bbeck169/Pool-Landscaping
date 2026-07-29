@@ -155,6 +155,7 @@ import SeoAuditorPage from "@/pages/admin/SeoAuditorPage";
 import ProspectsKanbanPage from "@/pages/admin/outreach/ProspectsKanbanPage";
 import OutreachTemplatesPage from "@/pages/admin/outreach/TemplatesPage";
 import KeywordIdeatorPage from "@/pages/admin/KeywordIdeatorPage";
+import GpsUsersPage from "@/pages/admin/GpsUsersPage";
 import WidgetEmbedPage from "@/pages/admin/WidgetEmbedPage";
 import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
 import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPages";
@@ -665,6 +666,8 @@ export default function App() {
             <Route path="admin/outreach/templates" element={<AdminOnly><OutreachTemplatesPage /></AdminOnly>} />
             {/* Phase SEO-C · Feb-2026 — Keyword ideation (admin+/manager). */}
             <Route path="admin/seo/keywords" element={<AdminOnly><KeywordIdeatorPage /></AdminOnly>} />
+            {/* Phase G4 · Feb-2026 — GPS per-user controls (admin+/manager). */}
+            <Route path="admin/settings/gps-users" element={<AdminOnly><GpsUsersPage /></AdminOnly>} />
             {/* MR1+MR2 · Feb-2026 — Public widget embed preview + snippet. */}
             <Route path="admin/moderation/widget-embed" element={<AdminOnly><WidgetEmbedPage /></AdminOnly>} />
             {/* Phase 50.A — Chemical Costs CRUD (admin/super_admin) */}
