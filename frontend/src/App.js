@@ -99,6 +99,7 @@ import NfcReviewCardPage from "@/pages/public/NfcReviewCardPage";
 // Feb-2026 · Item 4 — AI Brain + Copilot admin pages.
 import AIBrainPage from "@/pages/settings/AIBrainPage";
 import CopilotPage from "@/pages/admin/CopilotPage";
+import LuminoBackfillPage from "@/pages/admin/LuminoBackfillPage";
 // Feb-2026 · Item 6 — Business Card admin editor.
 import BusinessCardSettingsPage from "@/pages/settings/BusinessCardSettings";
 import MyProfilePage from "@/pages/account/MyProfilePage";
@@ -903,6 +904,8 @@ export default function App() {
             {/* Feb-2026 · Item 4 — AI Brain (knowledge base) + Copilot chat. */}
             <Route path="settings/ai-brain" element={<AdminOnly><AIBrainPage /></AdminOnly>} />
             <Route path="admin/copilot" element={<AdminOnly><CopilotPage /></AdminOnly>} />
+            {/* LZ5 · Feb-2026 — Lumino payment-link backfill (super_admin only). */}
+            <Route path="admin/tools/lumino-backfill" element={<SuperAdminOnly><LuminoBackfillPage /></SuperAdminOnly>} />
             {/* Feb-2026 · Item 6 — Business Card admin editor. */}
             <Route path="settings/business-card" element={<AdminOnly><BusinessCardSettingsPage /></AdminOnly>} />
             <Route path="account/profile" element={<MyProfilePage />} />

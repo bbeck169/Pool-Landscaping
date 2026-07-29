@@ -320,7 +320,7 @@ class TestRCWebhookToken:
 # ═══════════ 5. CFO STRIPE CASH WEEKLY ═══════════
 class TestCfoStripeCash:
     def test_admin_gets_weekly_buckets(self, admin_tok):
-        r = requests.get(f"{API}/cfo/stripe-cash-weekly?month=2026-06",
+        r = requests.get(f"{API}/cfo/legacy-card-cash-weekly?month=2026-06",
                          headers=_h(admin_tok), timeout=30)
         assert r.status_code == 200, r.text[:300]
         data = r.json()
@@ -341,7 +341,7 @@ class TestCfoStripeCash:
         assert net == 85000
 
     def test_tech_403(self, tech_tok):
-        r = requests.get(f"{API}/cfo/stripe-cash-weekly?month=2026-06",
+        r = requests.get(f"{API}/cfo/legacy-card-cash-weekly?month=2026-06",
                          headers=_h(tech_tok), timeout=30)
         assert r.status_code == 403
 

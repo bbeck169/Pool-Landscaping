@@ -35,7 +35,7 @@ export default function PricingInsights() {
       const [r, h, s] = await Promise.all([
         api.get(`/reports/least-profitable-services?month=${month}&limit=3`),
         api.get("/reports/pricing-insights/email-history?limit=10").catch(() => ({ items: [] })),
-        api.get(`/cfo/stripe-cash-weekly?month=${month}`).catch(() => ({ weeks: [] })),
+        api.get(`/cfo/legacy-card-cash-weekly?month=${month}`).catch(() => ({ weeks: [] })),
       ]);
       setRanked(r);
       setHistory(h?.items || []);

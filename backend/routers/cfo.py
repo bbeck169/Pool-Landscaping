@@ -1283,15 +1283,25 @@ async def price_increase_suggestions(
     return result
 
 
-@router.get("/stripe-cash-weekly")
-async def stripe_cash_weekly_endpoint(
+@router.get("/legacy-card-cash-weekly")
+async def legacy_card_cash_weekly_endpoint(
     month: Optional[str] = None,
     user: dict = Depends(require_admin),
     tenant: dict = Depends(get_current_tenant),
 ):
-    """Phase 55.1 — Weekly net Stripe cash for a given ``YYYY-MM`` (default
-    last month). Used by the Pricing Insights page + CFO digest email.
-    Buckets by ISO week starting Monday. Amounts are integer cents."""
+    """Historical report over legacy card processor rows retained for
+    audit; no live processor calls.
+
+    Phase LZ5 · Feb 2026 — this endpoint was renamed from
+    ``/api/cfo/stripe-cash-weekly`` when the Stripe SDK was retired
+    (Phase LZ4). The underlying data source (``stripe_charge_id`` on
+    legacy invoice rows) is preserved untouched per LZ4 rule #5, but
+    the URL no longer implies a live Stripe integration exists.
+
+    Phase 55.1 heritage — Weekly net cash for a given ``YYYY-MM``
+    (default last month). Used by the Pricing Insights page + CFO
+    digest email. Buckets by ISO week starting Monday. Amounts are
+    integer cents."""
     from services.reports import stripe_cash_weekly
     return {"month": month, "weeks": await stripe_cash_weekly(tenant["id"], month)}
 
