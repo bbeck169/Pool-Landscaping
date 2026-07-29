@@ -543,3 +543,23 @@
   - mobile/app/ai-employees.tsx (F2e: added avatar upload modal)
   - mobile/app/(app)/more.tsx (F2f: profile card now tappable → profile screen)
 - **Web files referenced**: frontend/src/pages/chat/TeamChatPage.jsx, frontend/src/components/personas/PersonaAvatarUploadModal.jsx, frontend/src/pages/account/MyProfilePage.jsx, frontend/src/pages/admin/AiPersonasScopePage.jsx
+
+## Iteration 30 — Phase M3 Portal Chat Attachments (B2 parity)
+- **Commit**: 7c5bcbe066e37008ae4e70e92e06f2ed20400d58
+- **Date**: 2026-07-29
+- **Changes**:
+  - Rewrote `portal/chats/[id].tsx` with full attachment parity matching web PortalChatsPage.jsx:
+    - Paperclip button (customer-only) → ActionSheetIOS/Alert menu → camera/library/document picker
+    - Upload to `POST /api/files/upload` with purpose=portal_chat_attachment, linked_entity_type=customer, linked_entity_id=customer_id
+    - `pending[]` state with removable chips strip above composer
+    - `attachment_ids` sent with message in POST body
+    - Inline image thumbnails (AuthedImage) + non-image file cards (name/size/download icon)
+    - Tap attachment → download via expo-file-system + share via expo-sharing
+    - Error handling: 403 → Alert, 413 → Alert, network → Alert, permission → link to Settings
+    - Send disabled when uploading or (no text AND no pending)
+  - Tests: 10 new in `__tests__/PortalChatAttachments.test.tsx`. 87/87 total passing, 0 regressions.
+- **Files modified**:
+  - mobile/app/portal/chats/[id].tsx (full rewrite with attachment support)
+- **Files created**:
+  - mobile/__tests__/PortalChatAttachments.test.tsx (10 tests)
+- **Web files referenced**: frontend/src/pages/portal/PortalChatsPage.jsx, frontend/src/components/chat/ChatAttachmentTile.jsx
