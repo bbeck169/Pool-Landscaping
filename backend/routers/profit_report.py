@@ -197,6 +197,14 @@ async def _compute(
     # {category_id: {"name": ..., "revenue": ..., "cogs": ..., "labor": ...,
     #                 "line_count": ...}}
     buckets: Dict[str, Dict[str, Any]] = {}
+    # PB1-QoL · Feb-2026 — Uncategorized "Fix" deep-link.
+    # Collect the distinct item ids that fed the Uncategorized bucket
+    # so the frontend can render a per-item fix affordance. Capped at
+    # 100 ids so the JSON payload stays bounded on very-long-tail
+    # tenants with hundreds of pricebook rows missing a taxonomy.
+    _UNCAT_CAP = 100
+    uncat_item_ids: List[str] = []
+    uncat_seen: set = set()
 
     def _bucket(cat_id: str, cat_name: str) -> Dict[str, Any]:
         b = buckets.get(cat_id)
@@ -228,6 +236,12 @@ async def _compute(
                 cat_name = income_lookup.get(cat_id) if cat_id and cat_id != "__uncategorized__" else "Uncategorized"
                 if not cat_name:
                     cat_name = "Uncategorized"
+            # PB1-QoL · Track the item id feeding the Uncategorized bucket.
+            if cat_id == "__uncategorized__":
+                iid = li.get("item_id") or ""
+                if iid and iid not in uncat_seen and len(uncat_item_ids) < _UNCAT_CAP:
+                    uncat_seen.add(iid)
+                    uncat_item_ids.append(iid)
             bucket = _bucket(cat_id, cat_name)
             bucket["revenue"] += rev
             bucket["cogs"] += cogs
@@ -242,7 +256,7 @@ async def _compute(
     breakdown: List[Dict[str, Any]] = []
     for b in buckets.values():
         profit = b["revenue"] - b["cogs"] - b["labor"]
-        breakdown.append({
+        row: Dict[str, Any] = {
             "category_id": b["category_id"],
             "category_name": b["category_name"],
             "revenue": round(b["revenue"], 2),
@@ -251,7 +265,12 @@ async def _compute(
             "profit": round(profit, 2),
             "margin_pct": _pct(profit, b["revenue"]),
             "line_count": b["line_count"],
-        })
+        }
+        # PB1-QoL · Attach contributing item ids ONLY to the
+        # Uncategorized row so the frontend can offer a "Fix" deep-link.
+        if b["category_id"] == "__uncategorized__":
+            row["uncategorized_item_ids"] = uncat_item_ids
+        breakdown.append(row)
     breakdown.sort(key=lambda r: r["revenue"], reverse=True)
     breakdown = breakdown[:_MAX_BREAKDOWN]
 

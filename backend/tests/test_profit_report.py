@@ -397,8 +397,121 @@ def test_csv_totals_match_json_totals():
 
 
 # ══════════════════════════════════════════════════════════════════
-# PATCH /items accepts wholesale + labor
+# PB1-QoL · Uncategorized item ids deep-link
 # ══════════════════════════════════════════════════════════════════
+@needs_server
+def test_uncategorized_row_lists_contributing_item_ids():
+    """Seed 2 items with NO service_category and reference them from
+    a fresh invoice. The Uncategorized row must surface those two
+    ids in ``uncategorized_item_ids`` — capped at 100."""
+    iid_a = f"TEST-QOL-a-{uuid.uuid4().hex[:6]}"
+    iid_b = f"TEST-QOL-b-{uuid.uuid4().hex[:6]}"
+    _sync.items.insert_many([
+        {"id": iid_a, "tenant_id": _TENANT_ID,
+          "name": "QoL Uncat Item A", "category": "Part",
+          "unit_price": 40, "wholesale_price": 10,
+          "labor_cost_default": 4, "active": True},
+        {"id": iid_b, "tenant_id": _TENANT_ID,
+          "name": "QoL Uncat Item B", "category": "Part",
+          "unit_price": 50, "wholesale_price": 15,
+          "labor_cost_default": 5, "active": True},
+    ])
+    inv_id = f"TEST-QOL-inv-{uuid.uuid4().hex[:6]}"
+    now = datetime.now(timezone.utc).isoformat()
+    _sync.quotes.insert_one({
+        "id": inv_id, "tenant_id": _TENANT_ID, "doc_type": "invoice",
+        "status": "sent", "customer_id": "test-c-qol",
+        "customer_name": "QoL Test", "title": "QoL uncat check",
+        "created_at": now, "tax_rate": 0, "subtotal": 90,
+        "tax": 0, "total": 90,
+        "line_items": [
+            {"description": "Uncat A", "quantity": 1,
+              "unit_price": 40, "item_id": iid_a,
+              "retail_price_snapshot": 40,
+              "wholesale_price_snapshot": 10,
+              "labor_cost_snapshot": 4},
+            {"description": "Uncat B", "quantity": 1,
+              "unit_price": 50, "item_id": iid_b,
+              "retail_price_snapshot": 50,
+              "wholesale_price_snapshot": 15,
+              "labor_cost_snapshot": 5},
+        ],
+    })
+    try:
+        r = requests.get(
+            f"{API}/reports/profit?dimension=service_category&range=ytd",
+            headers=_admin_headers(), timeout=30,
+        )
+        assert r.status_code == 200
+        body = r.json()
+        uncat = [x for x in body["breakdown"]
+                  if x["category_id"] == "__uncategorized__"]
+        assert len(uncat) == 1
+        ids = uncat[0].get("uncategorized_item_ids") or []
+        assert iid_a in ids
+        assert iid_b in ids
+        # Cap holds.
+        assert len(ids) <= 100
+        # Non-uncat rows never get the field.
+        for other in body["breakdown"]:
+            if other["category_id"] != "__uncategorized__":
+                assert "uncategorized_item_ids" not in other, \
+                    f"leaked on non-uncat row {other['category_id']}"
+    finally:
+        _sync.items.delete_many({"id": {"$in": [iid_a, iid_b]}})
+        _sync.quotes.delete_one({"id": inv_id})
+
+
+@needs_server
+def test_uncategorized_item_ids_absent_from_non_uncat_rows():
+    """Sanity check on the current tenant's snapshot: any category-
+    named breakdown row must NOT carry the deep-link field."""
+    r = requests.get(
+        f"{API}/reports/profit?dimension=service_category&range=ytd",
+        headers=_admin_headers(), timeout=30,
+    ).json()
+    for row in r["breakdown"]:
+        if row["category_id"] != "__uncategorized__":
+            assert "uncategorized_item_ids" not in row
+
+
+@needs_server
+def test_uncategorized_income_dimension_lists_ids():
+    """Same behavior on the income_category dimension — items whose
+    line has no ``income_category_id`` should surface."""
+    iid = f"TEST-QOL-inc-{uuid.uuid4().hex[:6]}"
+    _sync.items.insert_one({
+        "id": iid, "tenant_id": _TENANT_ID,
+        "name": "QoL Income Missing", "category": "Part",
+        "unit_price": 60, "active": True,
+    })
+    inv_id = f"TEST-QOL-inc-inv-{uuid.uuid4().hex[:6]}"
+    now = datetime.now(timezone.utc).isoformat()
+    _sync.quotes.insert_one({
+        "id": inv_id, "tenant_id": _TENANT_ID, "doc_type": "invoice",
+        "status": "sent", "customer_id": "c",
+        "created_at": now, "tax_rate": 0, "subtotal": 60,
+        "tax": 0, "total": 60,
+        "line_items": [
+            {"description": "no income", "quantity": 1,
+              "unit_price": 60, "item_id": iid,
+              "retail_price_snapshot": 60,
+              "wholesale_price_snapshot": 20,
+              "labor_cost_snapshot": 5},
+        ],
+    })
+    try:
+        r = requests.get(
+            f"{API}/reports/profit?dimension=income_category&range=ytd",
+            headers=_admin_headers(), timeout=30,
+        ).json()
+        uncat = [x for x in r["breakdown"]
+                  if x["category_id"] == "__uncategorized__"]
+        assert uncat, "expected an Uncategorized row"
+        assert iid in (uncat[0].get("uncategorized_item_ids") or [])
+    finally:
+        _sync.items.delete_one({"id": iid})
+        _sync.quotes.delete_one({"id": inv_id})
 @needs_server
 def test_patch_items_accepts_wholesale_and_labor():
     iid = f"TEST-PB1-patch-{uuid.uuid4().hex[:6]}"

@@ -24,7 +24,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Download, TrendingUp, ShieldCheck, DollarSign, Package,
-  Wrench, PiggyBank, Percent,
+  Wrench, PiggyBank, Percent, Wrench as FixIcon, X as CloseIcon, Loader2,
 } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
@@ -137,6 +137,37 @@ export default function ProfitReportPage() {
   const bump = (col) => setSort((s) =>
     s.col === col ? { col, dir: s.dir === "asc" ? "desc" : "asc" }
                     : { col, dir: "desc" });
+
+  // ── PB1-QoL · Uncategorized "Fix" modal state. ──────────────
+  const [fixModalOpen, setFixModalOpen] = useState(false);
+  const [fixBusy, setFixBusy] = useState(false);
+  const [fixItems, setFixItems] = useState([]);
+  const [fixErr, setFixErr] = useState("");
+
+  const openFixModal = async (row) => {
+    const ids = row.uncategorized_item_ids || [];
+    setFixModalOpen(true);
+    setFixItems([]);
+    setFixErr("");
+    if (ids.length === 0) return;
+    setFixBusy(true);
+    // Fetch item names in parallel (capped at 100 ids by backend).
+    try {
+      const rows = await Promise.all(
+        ids.map((id) =>
+          api.get(`/items/${id}`)
+            .then((it) => ({ id, name: it?.name || `Item ${id.slice(0, 8)}` }))
+            .catch(() => ({ id, name: `Item ${id.slice(0, 8)} (not found)` })),
+        ),
+      );
+      setFixItems(rows);
+    } catch (e) {
+      setFixErr(e?.message || "Failed to load item names.");
+    } finally {
+      setFixBusy(false);
+    }
+  };
+  const closeFixModal = () => { if (!fixBusy) setFixModalOpen(false); };
 
   const exportCsv = () => {
     const qs = buildQuery();
@@ -387,7 +418,19 @@ export default function ProfitReportPage() {
                        data-testid={`profit-report-row-${row.category_id}`}>
                     <td className="px-3 py-2 font-semibold"
                          style={{ color: colors.onSurface }}>
-                      {row.category_name}
+                      <span>{row.category_name}</span>
+                      {row.category_id === "__uncategorized__" ? (
+                        <button
+                          type="button"
+                          onClick={() => openFixModal(row)}
+                          className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold text-white"
+                          style={{ background: "#B45309" }}
+                          data-testid="profit-report-uncategorized-fix-btn"
+                          title="See which items are feeding this bucket"
+                        >
+                          <FixIcon size={10} /> Fix
+                        </button>
+                      ) : null}
                     </td>
                     <td className="px-3 py-2 text-right">
                       {money(row.revenue)}
@@ -418,6 +461,113 @@ export default function ProfitReportPage() {
             </table>
           </div>
         </>
+      ) : null}
+
+      {/* ── PB1-QoL · Uncategorized "Fix" modal ── */}
+      {fixModalOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(15,23,42,0.55)" }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) closeFixModal(); }}
+          data-testid="profit-report-uncategorized-fix-modal"
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl"
+            style={{ background: colors.surface,
+                      border: `1px solid ${colors.border}` }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <header
+              className="px-5 py-3 flex items-center justify-between"
+              style={{ borderBottom: `1px solid ${colors.border}` }}
+            >
+              <div className="flex items-center gap-2">
+                <FixIcon size={14} color="#B45309" />
+                <div className="font-bold" style={{ color: colors.onSurface }}>
+                  Items missing a{" "}
+                  {dimension === "service_category" ? "service" : "income"} category
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeFixModal}
+                className="p-1"
+                style={{ color: colors.muted }}
+                aria-label="Close"
+                data-testid="profit-report-uncategorized-fix-close"
+              >
+                <CloseIcon size={16} />
+              </button>
+            </header>
+            <div className="px-5 py-3 max-h-[60vh] overflow-y-auto">
+              {fixBusy ? (
+                <div className="flex items-center gap-2 py-4 text-sm"
+                      style={{ color: colors.muted }}
+                      data-testid="profit-report-uncategorized-fix-loading">
+                  <Loader2 size={14} className="animate-spin" />
+                  Loading item names…
+                </div>
+              ) : fixErr ? (
+                <div className="rounded-md p-3 text-sm"
+                      style={{ background: "#FEE2E2", color: "#7F1D1D" }}>
+                  {fixErr}
+                </div>
+              ) : fixItems.length === 0 ? (
+                <div className="py-4 text-sm"
+                      style={{ color: colors.muted }}
+                      data-testid="profit-report-uncategorized-fix-empty">
+                  All Uncategorized lines came from ad-hoc entries with no
+                  linked pricebook item — nothing to fix here.
+                </div>
+              ) : (
+                <ul className="divide-y" style={{ borderColor: colors.border }}
+                     data-testid="profit-report-uncategorized-fix-list">
+                  {fixItems.map((it) => (
+                    <li key={it.id}
+                         className="flex items-center justify-between py-2"
+                         data-testid={`profit-report-fix-item-${it.id}`}>
+                      <div>
+                        <div className="text-sm font-semibold"
+                              style={{ color: colors.onSurface }}>
+                          {it.name}
+                        </div>
+                        <div className="text-[11px] font-mono"
+                              style={{ color: colors.muted }}>
+                          {it.id}
+                        </div>
+                      </div>
+                      <a
+                        href={`/pricebook?highlight=${encodeURIComponent(it.id)}`}
+                        className="text-xs font-semibold px-2 py-1 rounded-md"
+                        style={{ background: "#0891B2", color: "#fff" }}
+                        data-testid={`profit-report-fix-item-link-${it.id}`}
+                      >
+                        Set category
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <footer
+              className="px-5 py-3 flex justify-end"
+              style={{ borderTop: `1px solid ${colors.border}`,
+                        background: colors.surfaceSecondary || "#fafafa" }}
+            >
+              <button
+                type="button"
+                onClick={closeFixModal}
+                className="px-3 py-1.5 text-sm font-semibold rounded-lg"
+                style={{ background: colors.surface,
+                          border: `1px solid ${colors.border}`,
+                          color: colors.onSurface }}
+                data-testid="profit-report-uncategorized-fix-done"
+              >
+                Done
+              </button>
+            </footer>
+          </div>
+        </div>
       ) : null}
     </div>
   );
