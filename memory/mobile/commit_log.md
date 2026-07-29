@@ -604,3 +604,19 @@
   - mobile/app/invoice/[id].tsx (internal margin section — standalone viewer)
   - mobile/app/(app)/more.tsx (Profit Report nav link)
 - **Web files referenced**: ProfitReportPage.jsx, QuoteInvoiceDetail.jsx, PriceBookPage.jsx
+
+
+## Iteration 33 — Phase G1: GPS Tracker Service + Time Clock Integration
+- **Commit**: b637d516b86424e7fe341e49e20c6b76b60b8fb7
+- **Date**: 2026-07-29
+- **Changes**:
+  - Fixed backend `gps_ingest.py` double-nested HTTPException detail (6/6 tests now pass)
+  - Created `src/services/gpsTracker.ts`: foreground GPS tracking via expo-location, AsyncStorage buffering (max 60 pings), batch flush to POST /api/gps/pings, 409 auto-stop
+  - Updated `time-clock.tsx`: auto-start tracking on clock-in, stop+flush on clock-out, best-effort resume on screen mount with open shift, green "Location tracking on" pill
+  - No new dependencies or `app.json` changes needed (already had location permissions)
+- **Files created**:
+  - mobile/src/services/gpsTracker.ts
+- **Files modified**:
+  - mobile/app/time-clock.tsx (G1 GPS tracker hooks + green pill UI)
+  - backend/routers/gps_ingest.py (HTTPException detail fix)
+- **Web files referenced**: None (backend-only endpoints, no web frontend equivalent)
