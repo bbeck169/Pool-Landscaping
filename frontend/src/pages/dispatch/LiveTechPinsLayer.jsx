@@ -123,6 +123,23 @@ export default function LiveTechPinsLayer({ positions = [] }) {
                 Accuracy: ±{Math.round(active.accuracy_m)} m
               </div>
             ) : null}
+            {/* G3 · Feb-2026 — address enrichment, cache-first. */}
+            <div style={{ fontSize: 11, marginTop: 6, color: colors.onSurface }}
+                 data-testid={`dispatch-live-tech-addr-${active.user_id}`}>
+              {active.address?.formatted ? (
+                <span>{active.address.formatted}</span>
+              ) : active.address_status === "no_token" ? (
+                <span style={{ color: "#92400E" }}
+                      data-testid={`dispatch-live-tech-addr-notoken-${active.user_id}`}>
+                  Address unavailable — set MAPBOX_ACCESS_TOKEN
+                </span>
+              ) : (
+                <span style={{ color: colors.muted, fontStyle: "italic" }}
+                      data-testid={`dispatch-live-tech-addr-fallback-${active.user_id}`}>
+                  {active.lat?.toFixed(5)}, {active.lon?.toFixed(5)}
+                </span>
+              )}
+            </div>
           </div>
         </InfoWindow>
       ) : null}

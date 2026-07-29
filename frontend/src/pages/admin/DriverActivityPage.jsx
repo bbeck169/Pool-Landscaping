@@ -1,8 +1,9 @@
 import React from "react";
 import { api } from "@/api";
 import { colors } from "@/theme";
-import { RefreshCw, MapPin, Clock, AlertTriangle } from "lucide-react";
+import { RefreshCw, MapPin, Clock, AlertTriangle, Layers } from "lucide-react";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
+import { toast } from "sonner";
 
 /**
  * G2 · Feb-2026 — Driver Activity report (first-pass timeline).
@@ -329,14 +330,282 @@ export default function DriverActivityPage() {
               <div className="font-mono">
                 {(s.started_at || "").slice(11, 19)} – {(s.ended_at || "").slice(11, 19)}
               </div>
+              <div className="flex-1 mx-3 truncate"
+                   data-testid={`driver-activity-stop-addr-${s.id}`}
+                   title={s.address?.formatted || ""}>
+                {s.address?.formatted ? (
+                  <span style={{ color: colors.onSurface }}>
+                    {s.address.formatted}
+                  </span>
+                ) : (
+                  <span style={{ color: colors.muted, fontStyle: "italic" }}
+                        data-testid={`driver-activity-stop-addr-fallback-${s.id}`}>
+                    Address unavailable · {s.center_lat?.toFixed(4)}, {s.center_lon?.toFixed(4)}
+                  </span>
+                )}
+              </div>
               <div style={{ color: colors.muted }}>
-                {_fmtHMS(s.duration_s)} · {s.center_lat?.toFixed(4)}, {s.center_lon?.toFixed(4)}
+                {_fmtHMS(s.duration_s)}
               </div>
             </div>
           ))}
         </div>
       </div>
+
+      {/* G3 · Feb-2026 — Route Map panel with 3 toggleable layers. */}
+      <RouteMapPanel techId={techId} day={day} onRefreshStops={load} />
     </SafeScrollContainer>
+  );
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// G3 · Route Map panel — polyline / stops-only / ping-trail toggles
+// ══════════════════════════════════════════════════════════════════
+
+function RouteMapPanel({ techId, day, onRefreshStops }) {
+  const [route, setRoute] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [showPolyline, setShowPolyline] = React.useState(true);
+  const [showStops, setShowStops] = React.useState(true);
+  const [showPings, setShowPings] = React.useState(false);
+  const [backfillOpen, setBackfillOpen] = React.useState(false);
+  const [backfillBusy, setBackfillBusy] = React.useState(false);
+  const [backfillResult, setBackfillResult] = React.useState(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!techId || !day) return () => {};
+    (async () => {
+      setLoading(true); setError(null);
+      try {
+        const from = `${day}T00:00:00Z`;
+        const to = `${day}T23:59:59Z`;
+        const r = await api.get(
+          `/gps/route?user_id=${encodeURIComponent(techId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+        if (!cancelled) setRoute(r);
+      } catch (e) {
+        if (!cancelled) setError(e?.message || "failed to load route");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [techId, day]);
+
+  const bounds = React.useMemo(() => {
+    const lats = []; const lons = [];
+    for (const s of route?.stops || []) {
+      if (typeof s.center_lat === "number") lats.push(s.center_lat);
+      if (typeof s.center_lon === "number") lons.push(s.center_lon);
+    }
+    for (const p of route?.pings || []) {
+      if (typeof p.lat === "number") lats.push(p.lat);
+      if (typeof p.lon === "number") lons.push(p.lon);
+    }
+    if (!lats.length) return null;
+    const min_lat = Math.min(...lats); const max_lat = Math.max(...lats);
+    const min_lon = Math.min(...lons); const max_lon = Math.max(...lons);
+    // Pad 5% either side.
+    const pad_lat = Math.max(0.0005, (max_lat - min_lat) * 0.1);
+    const pad_lon = Math.max(0.0005, (max_lon - min_lon) * 0.1);
+    return {
+      min_lat: min_lat - pad_lat, max_lat: max_lat + pad_lat,
+      min_lon: min_lon - pad_lon, max_lon: max_lon + pad_lon,
+    };
+  }, [route]);
+
+  const project = React.useCallback((lat, lon) => {
+    if (!bounds) return { x: 0, y: 0 };
+    const w = 800, h = 360;
+    const x = ((lon - bounds.min_lon) /
+                Math.max(1e-9, (bounds.max_lon - bounds.min_lon))) * w;
+    const y = h - ((lat - bounds.min_lat) /
+                    Math.max(1e-9, (bounds.max_lat - bounds.min_lat))) * h;
+    return { x, y };
+  }, [bounds]);
+
+  const runBackfill = async () => {
+    setBackfillBusy(true);
+    try {
+      const r = await api.post(
+        "/admin/gps/reverse-geocode/backfill",
+        { dry_run: false, scope: "stops", max_calls: 100 });
+      setBackfillResult(r);
+      if (r?.status === "no_token") {
+        toast.info("Mapbox token missing — nothing processed.");
+      } else {
+        toast.success(
+          `Backfill done · resolved=${r?.resolved ?? 0}, errors=${r?.errors ?? 0}`);
+        onRefreshStops?.();
+      }
+    } catch (e) {
+      toast.error("Backfill failed", { description: e?.message });
+    } finally {
+      setBackfillBusy(false);
+    }
+  };
+
+  const stops = route?.stops || [];
+  const pings = route?.pings || [];
+  const tokenSet = !!route?.mapbox_token_configured;
+
+  return (
+    <div
+      className="rounded-xl p-4"
+      style={{ backgroundColor: colors.surface,
+                border: `1px solid ${colors.border}` }}
+      data-testid="driver-activity-route-map"
+    >
+      <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+        <div className="text-sm font-semibold flex items-center gap-2"
+              style={{ color: colors.onSurface }}>
+          <Layers size={14} /> Route Map
+        </div>
+        <div className="flex items-center gap-3 text-xs"
+              style={{ color: colors.onSurface }}
+              data-testid="route-map-legend">
+          <label className="inline-flex items-center gap-1"
+                  data-testid="route-map-toggle-polyline-wrap">
+            <input type="checkbox" checked={showPolyline}
+                    onChange={(e) => setShowPolyline(e.target.checked)}
+                    data-testid="route-map-toggle-polyline" />
+            <span style={{ color: "#0284C7" }}>Polyline</span>
+          </label>
+          <label className="inline-flex items-center gap-1"
+                  data-testid="route-map-toggle-stops-wrap">
+            <input type="checkbox" checked={showStops}
+                    onChange={(e) => setShowStops(e.target.checked)}
+                    data-testid="route-map-toggle-stops" />
+            <span style={{ color: "#10B981" }}>Stops-only</span>
+          </label>
+          <label className="inline-flex items-center gap-1"
+                  data-testid="route-map-toggle-pings-wrap">
+            <input type="checkbox" checked={showPings}
+                    onChange={(e) => setShowPings(e.target.checked)}
+                    data-testid="route-map-toggle-pings" />
+            <span style={{ color: "#F59E0B" }}>Ping trail</span>
+          </label>
+          <button type="button" onClick={() => setBackfillOpen(true)}
+                    className="ml-2 inline-flex items-center gap-1 h-7 px-2 rounded text-xs font-semibold"
+                    style={{
+                      backgroundColor: colors.surface,
+                      color: colors.onSurface,
+                      border: `1px solid ${colors.border}`,
+                    }}
+                    data-testid="route-map-backfill-btn">
+            Backfill addresses
+          </button>
+        </div>
+      </div>
+
+      {!tokenSet && (
+        <div className="mb-3 rounded-lg px-3 py-2 text-xs flex items-center gap-2"
+             style={{ backgroundColor: "#FEF3C7", color: "#92400E",
+                       border: "1px solid #FDE68A" }}
+             data-testid="route-map-no-token-banner">
+          <AlertTriangle size={14} />
+          <span>
+            <strong>MAPBOX_ACCESS_TOKEN not set.</strong>{" "}
+            Reverse-geocoding disabled — stops show coordinates only.
+          </span>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-sm" style={{ color: colors.muted }}
+             data-testid="route-map-loading">Loading route…</div>
+      ) : error ? (
+        <div className="text-sm" style={{ color: "#7F1D1D" }}
+             data-testid="route-map-error">{error}</div>
+      ) : !bounds ? (
+        <div className="text-sm py-8 text-center"
+             style={{ color: colors.muted }}
+             data-testid="route-map-empty">
+          No stops or pings for this day yet.
+        </div>
+      ) : (
+        <svg viewBox="0 0 800 360"
+             className="w-full rounded-lg"
+             style={{ backgroundColor: "#F4F4F5",
+                       border: `1px solid ${colors.border}` }}
+             data-testid="route-map-svg">
+          {/* Ping trail — small amber dots */}
+          {showPings && pings.map((p, i) => {
+            const { x, y } = project(p.lat, p.lon);
+            return (
+              <circle key={`png-${i}`} cx={x} cy={y} r={1.5}
+                      fill="#F59E0B" opacity={0.75}
+                      data-testid={`route-map-ping-${i}`} />
+            );
+          })}
+          {/* Polyline — connect stops in chronological order */}
+          {showPolyline && stops.length >= 2 && (
+            <polyline
+              fill="none" stroke="#0284C7" strokeWidth={2.5}
+              points={stops.map((s) => {
+                const { x, y } = project(s.center_lat, s.center_lon);
+                return `${x.toFixed(1)},${y.toFixed(1)}`;
+              }).join(" ")}
+              data-testid="route-map-polyline"
+            />
+          )}
+          {/* Stops-only — emerald pins */}
+          {showStops && stops.map((s, i) => {
+            const { x, y } = project(s.center_lat, s.center_lon);
+            return (
+              <g key={s.id || `s-${i}`}
+                 data-testid={`route-map-stop-${s.id || i}`}>
+                <circle cx={x} cy={y} r={7}
+                        fill="#10B981" stroke="#065F46"
+                        strokeWidth={1.5} />
+                <text x={x + 10} y={y + 4} fontSize={10}
+                      fill="#065F46">
+                  {i + 1}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      )}
+
+      {backfillOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+             data-testid="route-map-backfill-modal"
+             onClick={() => setBackfillOpen(false)}>
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6"
+               onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold mb-2">
+              Backfill stop addresses
+            </h3>
+            <p className="text-xs text-zinc-500 mb-4">
+              Runs reverse-geocoding on up to 100 stops that currently
+              have no address. Cached results are free; new lookups
+              call Mapbox. Skipped entirely if MAPBOX_ACCESS_TOKEN is
+              unset.
+            </p>
+            {backfillResult && (
+              <pre className="text-[11px] bg-zinc-50 border border-zinc-200 rounded p-2 mb-3 overflow-x-auto">
+                {JSON.stringify(backfillResult, null, 2)}
+              </pre>
+            )}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setBackfillOpen(false)}
+                       className="px-3 py-1.5 rounded border border-zinc-200 text-sm">
+                Close
+              </button>
+              <button type="button" onClick={runBackfill}
+                       disabled={backfillBusy}
+                       className="px-3 py-1.5 rounded bg-sky-600 text-white text-sm disabled:opacity-50"
+                       data-testid="route-map-backfill-submit">
+                {backfillBusy ? "Running…" : "Run backfill"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

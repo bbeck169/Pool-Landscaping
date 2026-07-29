@@ -134,4 +134,20 @@ async def get_live_positions(user: Dict[str, Any] = Depends(get_current_user)):
 
     # Newest first (smallest staleness first) for a stable UI order.
     positions.sort(key=lambda r: r["staleness_s"])
+
+    # G3 · Feb-2026 — enrich each pin with a reverse-geocoded address
+    # if available (cache-first; no Mapbox call when token missing).
+    try:
+        from services.reverse_geocoder import reverse_geocode
+        for p in positions:
+            try:
+                r = await reverse_geocode(p["lat"], p["lon"], tenant_id)
+                p["address"] = r.get("address")
+                p["address_status"] = r.get("status")
+            except Exception:                                            # noqa: BLE001
+                p["address"] = None
+                p["address_status"] = "error"
+    except Exception:                                                    # noqa: BLE001
+        pass
+
     return {"as_of": as_of, "positions": positions}

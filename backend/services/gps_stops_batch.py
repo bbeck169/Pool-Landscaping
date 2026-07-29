@@ -104,10 +104,33 @@ async def _process_shift_pings(
 
 async def _persist_stops(stops: List[Stop]) -> int:
     inserted = 0
+    # G3 · Feb-2026 — best-effort reverse-geocode enrichment on new
+    # stops. Cache-first; if MAPBOX_ACCESS_TOKEN is missing, the
+    # reverse_geocode helper returns ``no_token`` without any network
+    # call and the row lands with ``address_status="no_token"``.
+    try:
+        from services.reverse_geocoder import reverse_geocode
+    except Exception:                                                    # noqa: BLE001
+        reverse_geocode = None
     for s in stops:
         row = asdict(s)
         row["id"] = new_id()
         row["created_at"] = now_iso()
+        if reverse_geocode is not None:
+            try:
+                r = await reverse_geocode(
+                    row.get("center_lat"), row.get("center_lon"),
+                    tenant_id=row.get("tenant_id") or "")
+                row["address"] = r.get("address")
+                row["address_status"] = r.get("status") or "pending"
+                row["address_resolved_at"] = now_iso()
+            except Exception:                                            # noqa: BLE001
+                row["address"] = None
+                row["address_status"] = "error"
+                row["address_resolved_at"] = now_iso()
+        else:
+            row["address"] = None
+            row["address_status"] = "pending"
         try:
             await db.driver_stops.insert_one(row)
             inserted += 1

@@ -101,6 +101,13 @@ async def get_gps_settings(user: dict = Depends(get_current_user)):
     if not row:
         row = _default_row(tid)
         await db.gps_settings.insert_one(dict(row))
+    # G3 · Feb-2026 — surface Mapbox status for the admin UI without
+    # ever leaking the token itself. Reads env at request time.
+    try:
+        from services.reverse_geocoder import mapbox_token_configured
+        row["mapbox_token_configured"] = mapbox_token_configured()
+    except Exception:                                                    # noqa: BLE001
+        row["mapbox_token_configured"] = False
     return row
 
 

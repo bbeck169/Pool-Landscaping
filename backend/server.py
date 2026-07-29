@@ -294,6 +294,11 @@ api_router.include_router(_outreach_router.router)
 from routers import keywords as _keywords_router  # noqa: E402
 api_router.include_router(_keywords_router.router)
 
+# Phase G3 · Feb-2026 — Mapbox reverse-geocoding: /gps/route +
+# admin backfill endpoint. Both admin+/manager only.
+from routers import gps_route as _gps_route_router  # noqa: E402
+api_router.include_router(_gps_route_router.router)
+
 # Feb-2026 · Re-added after LZ4 Stripe purge — Payments summary tile.
 from routers import payments_summary as _payments_summary_router  # noqa: E402
 api_router.include_router(_payments_summary_router.router)
@@ -850,6 +855,22 @@ async def _background_seed():
             )
         except Exception as e:                                        # noqa: BLE001
             logger.warning(f"[outreach] cron install failed: {e}")
+
+        # Phase G3 · Feb-2026 — Reverse-geocode cache purge (05:00 UTC).
+        # Drops rows in ``reverse_geocode_cache`` where ``expires_at``
+        # is in the past. Safe against empty collections.
+        try:
+            from services.reverse_geocoder import (
+                purge_expired_geocode_cache)
+            scheduler.add_job(
+                purge_expired_geocode_cache,
+                "cron", hour=5, minute=0,
+                id="reverse_geocode_cache_purge",
+                replace_existing=True,
+                max_instances=1, coalesce=True,
+            )
+        except Exception as e:                                        # noqa: BLE001
+            logger.warning(f"[reverse_geocoder] cron install failed: {e}")
         # Task QQ Phase 2 · Feb 2026 — nightly Lumino reconciler
         # (03:00 UTC). Polls pending payments/subscriptions to close
         # any gap left by the return-URL / Zapier bridge paths.
