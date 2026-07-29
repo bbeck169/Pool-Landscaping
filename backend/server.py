@@ -197,6 +197,9 @@ from routers import lumino_zapier_bridge as _qq_lumino_zapier  # noqa: E402
 api_router.include_router(_qq_lumino_zapier.router)
 from routers import lumino_return as _qq_lumino_return  # noqa: E402
 api_router.include_router(_qq_lumino_return.router)
+# Feb 2026 — inspection audits receiver (Zap-fed, shared-secret auth).
+from routers import audits as _audits_receiver  # noqa: E402
+api_router.include_router(_audits_receiver.router)
 # Task TT · Feb 2026 (reconciled TT.5) — OpenWebNinja-Zillow adapter
 # (dry-scaffold). Ships in ``keys_missing → 503 graceful`` mode: routes
 # register unconditionally so a supervisor restart after populating
