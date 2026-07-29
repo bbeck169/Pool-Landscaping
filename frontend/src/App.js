@@ -144,6 +144,11 @@ import PropertyLookupPage from "@/pages/property-lookup/PropertyLookupPage";
 import DispatchBoard, { WeatherReschedule } from "@/pages/dispatch/DispatchPages";
 // Phase 17 · Feb 2026 — Google Maps + Directions redesigned dispatch board.
 import DispatchBoardPage from "@/pages/dispatch/DispatchBoardPage";
+// Feb-2026 · P1 diagnostic — wrap DispatchBoardPage in an ErrorBoundary
+// so mobile crashes surface a friendly panel instead of a blank screen,
+// and get reported to /api/client-errors for admin review.
+import DispatchErrorBoundary from "@/components/errors/DispatchErrorBoundary";
+import AdminDiagnosticsErrorsPage from "@/pages/admin/AdminDiagnosticsErrorsPage";
 import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
 import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPages";
 import WarrantyPlans, { WarrantyContracts, WarrantyClaims, PortalWarranties } from "@/pages/warranties/WarrantyPages";
@@ -776,7 +781,8 @@ export default function App() {
             {/* Phase 17 · Feb 2026 — /dispatch now renders the Google Maps
                 + Directions redesigned board. Admin-only; techs never
                 see pricing/routing. Legacy path preserved at /ops/dispatch. */}
-            <Route path="dispatch" element={<AdminOnly><DispatchBoardPage /></AdminOnly>} />
+            <Route path="dispatch" element={<AdminOnly><DispatchErrorBoundary component="DispatchBoard" componentLabel="Dispatch Board"><DispatchBoardPage /></DispatchErrorBoundary></AdminOnly>} />
+            <Route path="admin/diagnostics/errors" element={<AdminOnly><AdminDiagnosticsErrorsPage /></AdminOnly>} />
             <Route path="ops/dispatch" element={<OpsHub />} />
             <Route path="dispatch/map" element={<AdminOnly><DispatchMap /></AdminOnly>} />
             <Route path="schedule" element={<OpsHub />} />

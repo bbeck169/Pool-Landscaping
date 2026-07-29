@@ -32,6 +32,59 @@ from utils import (
 router = APIRouter(tags=["Admin Users"])
 
 _ADMIN_ROLES = {"admin", "super_admin"}
+
+
+# Feb-2026 · GET /api/users listing — powers the Dispatch Board tech
+# dropdown and any admin surface that needs a filtered users list.
+# The Team router already owns POST /api/users (create) so this GET
+# cohabits at the same path via a distinct HTTP verb.
+@router.get("/users", operation_id="adminUsers.list")
+async def list_users(
+    role: Optional[str] = None,
+    active: Optional[bool] = True,
+    limit: int = 100,
+    user: Dict[str, Any] = Depends(get_current_user),
+):
+    """List users for the caller's tenant.
+
+    * Admin+ / super_admin only (403 otherwise).
+    * ``role`` optional — case-insensitive exact match (e.g. ``technician``).
+    * ``active`` default ``true`` — excludes soft-deleted rows. Pass
+      ``active=false`` to see only soft-deleted users.
+    * ``limit`` default 100, capped at 500.
+
+    Returns ``{ users: [{ id, name, email, role, is_active, department }] }``.
+    """
+    if user.get("role") not in _ADMIN_ROLES:
+        raise HTTPException(403, "Admin only")
+
+    limit = max(1, min(500, int(limit)))
+    q: Dict[str, Any] = {"tenant_id": user.get("tenant_id")}
+    if role:
+        q["role"] = str(role).strip().lower()
+    if active is False:
+        # Soft-deleted only.
+        q["deleted_at"] = {"$ne": None}
+    else:
+        # Default: exclude soft-deleted rows.
+        q["$or"] = [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]
+
+    projection = {
+        "_id": 0, "id": 1, "name": 1, "email": 1, "role": 1,
+        "is_active": 1, "department": 1,
+    }
+    rows: list = []
+    async for u in db.users.find(q, projection).limit(limit):
+        rows.append({
+            "id": u.get("id"),
+            "name": u.get("name") or "",
+            "email": u.get("email") or "",
+            "role": u.get("role"),
+            "department": u.get("department"),
+            "is_active": bool(u.get("is_active"))
+                          if u.get("is_active") is not None else True,
+        })
+    return {"users": rows, "count": len(rows)}
 _STRONG_ALPHA = string.ascii_letters + string.digits + "!@#$%^*+-="
 
 # Feb-2026 · Team page admin actions — permission matrix.

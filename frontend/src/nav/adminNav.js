@@ -249,6 +249,9 @@ export const ADMIN_NAV_V2 = [
     { to: "/admin/budget/wizard",          label: "Budget Wizard",       icon: Sparkles, feature: "settings" },
     { to: "/landscape/time-clock",         label: "Landscape Time Clock", icon: Timer,  feature: "jobs" },
     { to: "/access-history",              label: "Access History",    icon: ScrollText, feature: "audit_logs" },
+    // Feb-2026 · Diagnostics — browse client-side errors captured by
+    // the frontend Error Boundary (admin+ / super_admin only).
+    { to: "/admin/diagnostics/errors",    label: "Client Errors",     icon: AlertTriangleIcon, feature: "audit_logs", hard_rule: "admin_only" },
     // LZ5 · Feb-2026 — Lumino payment-link backfill (super_admin only).
     // Not pinned by default; visible only to super_admin via hard_rule.
     { to: "/admin/tools/lumino-backfill", label: "Lumino Backfill",   icon: Zap,        feature: "reports", hard_rule: "super_admin_only" },
