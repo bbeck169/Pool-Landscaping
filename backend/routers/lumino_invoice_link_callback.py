@@ -137,8 +137,9 @@ async def lumino_invoice_link_created(request: Request):
     if payment_ref is not None and not isinstance(payment_ref, str):
         payment_ref = None
 
-    # ── Look up invoice ────────────────────────────────────────────
-    inv = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+    # ── Look up invoice (dual-collection) ─────────────────────────
+    from services.invoice_lookup import find_invoice_dual
+    inv, collection = await find_invoice_dual(db, invoice_id)
     if not inv:
         # INFO not ERROR — this might be a probe/typo, not a real bug.
         log.info("[%s] invoice_not_found id=%s", correlation_id, invoice_id)
@@ -146,7 +147,7 @@ async def lumino_invoice_link_created(request: Request):
                              content={"error": "invoice_not_found",
                                       "correlation_id": correlation_id})
 
-    # ── Persist on invoice ─────────────────────────────────────────
+    # ── Persist on invoice (write to the collection it lives in) ─
     now = _now()
     set_fields = {
         "lumino_payment_url": payment_url,
@@ -158,8 +159,8 @@ async def lumino_invoice_link_created(request: Request):
     if payment_ref:
         set_fields["lumino_payment_ref"] = payment_ref
     try:
-        await db.invoices.update_one({"id": invoice_id},
-                                       {"$set": set_fields})
+        target = db.invoices if collection == "invoices" else db.quotes
+        await target.update_one({"id": invoice_id}, {"$set": set_fields})
     except Exception as exc:                                          # noqa: BLE001
         log.error("[%s] invoice update failed: %s",
                     correlation_id, type(exc).__name__)

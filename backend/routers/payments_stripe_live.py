@@ -351,7 +351,28 @@ class CreatePIBody(BaseModel):
 
 
 @router.post("/payments/create-payment-intent")
-async def create_payment_intent(
+async def create_payment_intent(request: Request):
+    # LZ3 · Feb 2026 — Stripe intent creation is deprecated in favor
+    # of the Lumino hosted-checkout flow. Frontend now redirects to
+    # ``invoice.lumino_payment_url`` (set by the LZ1 callback after a
+    # Zapier round-trip). This endpoint returns 410 to make the
+    # transition visible; full removal happens in LZ4.
+    #
+    # Note: signature does NOT validate the body via Pydantic — we
+    # want the 410 to fire before any body validation so misfired
+    # frontend calls get a clear "gone" signal, not a 422.
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "error": "gone",
+            "message": "Stripe payment intent creation is deprecated. "
+                          "Use /api/invoices/{id}/request-payment-link instead.",
+        },
+    )
+
+
+# Legacy implementation kept here for reference during LZ4 removal.
+async def _legacy_create_payment_intent(
     body: CreatePIBody,
     request: Request,
 ):

@@ -1,327 +1,135 @@
 /**
- * Phase 4B · <PaymentForm> — Stripe PaymentElement (Card + ACH + wallets).
+ * LZ3 · Feb-2026 — Lumino hosted-checkout redirect flow.
  *
- * Usage
- * -----
- *   <PaymentForm
- *     invoiceId={id}
- *     source="authenticated"          // or "portal"
- *     magicToken={token}              // required when source==="portal"
- *     onSuccess={() => refreshInvoice()}
- *     onClose={() => setOpen(false)}
- *   />
+ * Replaces the Stripe PaymentElement modal. When mounted:
+ *   1. If the invoice already has ``lumino_payment_url`` → redirect
+ *      immediately.
+ *   2. Otherwise → POST /api/invoices/{id}/request-payment-link,
+ *      then poll /api/quotes/{id} every 3s (up to 30s / 10 tries)
+ *      waiting for the URL to appear. Redirect on success. Show a
+ *      retry-friendly error on timeout.
  *
- * Flow
- * ----
- * 1. GET /api/config/public              → publishable key + mode
- * 2. POST /api/payments/create-payment-intent
- *      { invoice_id, source, magic_token? }  → client_secret
- * 3. <Elements clientSecret={cs}> + <PaymentElement automatic_payment_methods />
- * 4. On confirm → Stripe SCA/3DS if needed → success/failure toast.
- *
- * The publishable key is fetched at runtime — never baked into the
- * webpack bundle. loadStripe is called once per mount and cached in
- * a promise for the modal lifetime.
+ * All Stripe/PaymentElement/client_secret code paths deleted per
+ * LZ3 scope. Stripe integration will be fully removed in LZ4.
  */
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { loadStripe } from "@stripe/stripe-js";
-import {
-  Elements,
-  PaymentElement,
-  useElements,
-  useStripe,
-} from "@stripe/react-stripe-js";
-import { X, Loader2, ShieldCheck, AlertTriangle } from "lucide-react";
-import PromoCodeInput from "@/components/marketing/PromoCodeInput";
+import React, { useEffect, useRef, useState } from "react";
+import { api } from "@/api";
 
-const BASE = process.env.REACT_APP_BACKEND_URL;
-const TOKEN_KEY = "token";
+const POLL_INTERVAL_MS = 3000;
+const POLL_MAX_ATTEMPTS = 10;   // 30 s total
 
-async function apiRaw(path, opts = {}, magicOverrideHeaders) {
-  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
-  if (!magicOverrideHeaders) {
-    const t = localStorage.getItem(TOKEN_KEY) || "";
-    if (t) headers["Authorization"] = `Bearer ${t}`;
-    const slug = localStorage.getItem("tenant_slug") || "";
-    if (slug) headers["X-Tenant-Slug"] = slug;
-  }
-  const res = await fetch(`${BASE}/api${path}`, { ...opts, headers });
-  const text = await res.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { /* leave as null */ }
-  if (!res.ok) {
-    const msg = data?.detail || `Request failed (${res.status})`;
-    const err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
-    err.status = res.status;
-    throw err;
-  }
-  return data;
-}
+export default function PaymentForm({ invoice, invoiceId, source = "authenticated", onClose }) {
+  const [status, setStatus] = useState("idle");   // idle | preparing | error
+  const [errorMsg, setErrorMsg] = useState("");
+  const cancelledRef = useRef(false);
 
-function InnerForm({ amountCents, currency, onSuccess, onError }) {
-  const stripe = useStripe();
-  const elements = useElements();
-  const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState("");
+  const inv = invoice || {};
+  const invId = invoiceId || inv.id || "";
 
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!stripe || !elements) return;
-    setSubmitting(true); setMessage("");
-    const { error, paymentIntent } = await stripe.confirmPayment({
-      elements,
-      confirmParams: { return_url: window.location.href },
-      redirect: "if_required",
-    });
-    setSubmitting(false);
-    if (error) {
-      const msg = error.message || "Payment failed.";
-      setMessage(msg);
-      onError && onError(msg);
+  useEffect(() => () => { cancelledRef.current = true; }, []);
+
+  const redirectTo = (url) => {
+    if (!url || cancelledRef.current) return;
+    window.location.assign(url);
+  };
+
+  const pollForUrl = async () => {
+    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
+      if (cancelledRef.current) return null;
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      try {
+        const fresh = await api.get(`/quotes/${invId}`);
+        if (fresh?.lumino_payment_url) return fresh.lumino_payment_url;
+      } catch (_e) {
+        /* keep polling */
+      }
+    }
+    return null;
+  };
+
+  const startFlow = async () => {
+    const existing = inv.lumino_payment_url;
+    if (existing) {
+      redirectTo(existing);
       return;
     }
-    if (paymentIntent && paymentIntent.status === "succeeded") {
-      onSuccess && onSuccess(paymentIntent);
-    } else if (paymentIntent && paymentIntent.status === "processing") {
-      onSuccess && onSuccess(paymentIntent);
-    } else {
-      setMessage("Payment is pending. You'll receive a receipt when it's finalised.");
+    setStatus("preparing");
+    setErrorMsg("");
+    try {
+      const result = await api.post(
+        `/invoices/${invId}/request-payment-link`, {},
+      );
+      // If Zap responded synchronously with URL (rare), take shortcut
+      if (result?.lumino_payment_url) {
+        redirectTo(result.lumino_payment_url);
+        return;
+      }
+      const url = await pollForUrl();
+      if (url) {
+        redirectTo(url);
+      } else {
+        setStatus("error");
+        setErrorMsg(
+          "Payment link generation is delayed. Please try again in a "
+          + "moment or contact support."
+        );
+      }
+    } catch (e) {
+      setStatus("error");
+      setErrorMsg(
+        (e && e.message)
+        || "We couldn't start the payment. Please try again."
+      );
     }
   };
 
-  const amountLabel = ((amountCents || 0) / 100).toFixed(2);
-  const cur = (currency || "usd").toUpperCase();
-
-  return (
-    <form onSubmit={submit} data-testid="pay-form">
-      <div style={{ padding: "8px 0 16px", fontSize: 14, color: "#475569" }}>
-        Amount due: <b>${amountLabel} {cur}</b>
-      </div>
-      <PaymentElement
-        options={{ layout: { type: "tabs", defaultCollapsed: false } }}
-      />
-      {message ? (
-        <div
-          role="alert"
-          data-testid="pay-form-error"
-          style={{
-            marginTop: 12, padding: "10px 12px", borderRadius: 8,
-            background: "#FEF3C7", color: "#92400E",
-            display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13,
-          }}
-        >
-          <AlertTriangle size={16} /> {message}
-        </div>
-      ) : null}
-      <button
-        type="submit"
-        disabled={!stripe || submitting}
-        data-testid="pay-form-submit-btn"
-        style={{
-          marginTop: 16, width: "100%",
-          padding: "12px 16px", borderRadius: 10,
-          background: submitting ? "#94A3B8" : "#0F172A",
-          color: "white", fontWeight: 600, fontSize: 14,
-          border: "none", cursor: submitting ? "wait" : "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          gap: 8,
-        }}
-      >
-        {submitting ? (
-          <><Loader2 size={16} className="animate-spin" /> Processing…</>
-        ) : (
-          <><ShieldCheck size={16} /> Pay ${amountLabel}</>
-        )}
-      </button>
-      <div style={{ marginTop: 10, fontSize: 11, color: "#64748B", textAlign: "center" }}>
-        Secured by Stripe. Card & ACH accepted.
-      </div>
-    </form>
-  );
-}
-
-export default function PaymentForm({
-  invoiceId, source = "authenticated", magicToken = "",
-  onSuccess, onClose,
-}) {
-  const [phase, setPhase] = useState("loading");   // loading|ready|error
-  const [error, setError] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
-  const [amountCents, setAmountCents] = useState(0);
-  const [baseAmountCents, setBaseAmountCents] = useState(0);
-  const [currency, setCurrency] = useState("usd");
-  const [stripePromise, setStripePromise] = useState(null);
-  // Phase 10c · Feb 2026 — applied promo state (from <PromoCodeInput>).
-  const [appliedPromo, setAppliedPromo] = useState(null);
-  const [rebuilding, setRebuilding] = useState(false);
-  const initedRef = useRef(false);
-
-  const buildIntent = async (promoState) => {
-    const cfg = await apiRaw("/config/public", {}, source === "portal");
-    const pk = cfg?.stripe_publishable_key;
-    if (!pk) throw new Error("Payments unavailable — publishable key not configured.");
-    if (!stripePromise) setStripePromise(loadStripe(pk));
-
-    const body = { invoice_id: invoiceId, source };
-    if (source === "portal") body.magic_token = magicToken;
-    if (promoState?.promo_code_id) body.promo_code_id = promoState.promo_code_id;
-    const overrideAuth = source === "portal" && magicToken;
-    const pi = await apiRaw(
-      "/payments/create-payment-intent",
-      { method: "POST", body: JSON.stringify(body) },
-      overrideAuth,
-    );
-    if (!pi?.client_secret) throw new Error("Could not create payment intent.");
-    setClientSecret(pi.client_secret);
-    setAmountCents(pi.amount_cents || 0);
-    if (!promoState) setBaseAmountCents(pi.amount_cents || 0);
-    setCurrency(pi.currency || "usd");
-    setPhase("ready");
-  };
-
+  // Auto-start when modal opens.
   useEffect(() => {
-    if (initedRef.current) return;
-    initedRef.current = true;
-    (async () => {
-      try {
-        await buildIntent(null);
-      } catch (e) {
-        setError(e?.message || "Failed to start payment.");
-        setPhase("error");
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoiceId, source, magicToken]);
-
-  const onPromoChange = async (state) => {
-    setAppliedPromo(state);
-    // Only rebuild the PaymentIntent when the promo affects the
-    // charged amount — account_credit promos don't change today's
-    // total, so we can keep the current intent + client_secret.
-    if (state && state.apply_to === "next_invoice") {
-      setRebuilding(true);
-      try {
-        await buildIntent(state);
-      } catch (e) {
-        // Surface as a soft error banner and restore base intent.
-        setError(e?.message || "Could not apply promo — please try another code.");
-        setAppliedPromo(null);
-        await buildIntent(null).catch(() => {});
-      } finally {
-        setRebuilding(false);
-      }
-    } else if (state === null && baseAmountCents && amountCents !== baseAmountCents) {
-      // Clear applied promo → restore full amount.
-      setRebuilding(true);
-      try {
-        await buildIntent(null);
-      } finally {
-        setRebuilding(false);
-      }
+    if (invId && status === "idle") {
+      startFlow();
     }
-  };
-
-  const elementsOptions = useMemo(() => ({
-    clientSecret,
-    appearance: { theme: "stripe", variables: { colorPrimary: "#0F172A" } },
-  }), [clientSecret]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invId]);
 
   return (
     <div
-      data-testid="payment-form-modal"
-      role="dialog"
-      aria-modal="true"
-      style={{
-        position: "fixed", inset: 0, zIndex: 1000,
-        background: "rgba(15, 23, 42, 0.55)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        padding: 16,
-      }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose && onClose(); }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.5)" }}
+      onClick={onClose}
+      data-testid="pay-modal-backdrop"
     >
       <div
-        style={{
-          width: "100%", maxWidth: 480,
-          background: "white", borderRadius: 14,
-          boxShadow: "0 20px 40px rgba(0,0,0,0.25)",
-          padding: 20,
-        }}
+        className="bg-white max-w-md w-full p-6 rounded-2xl"
+        onClick={(e) => e.stopPropagation()}
+        data-testid="pay-modal"
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: "#0F172A" }}>
-            Pay Invoice
-          </div>
-          <button
-            type="button"
-            data-testid="payment-form-close-btn"
-            aria-label="Close"
-            onClick={() => onClose && onClose()}
-            style={{
-              background: "transparent", border: "none",
-              padding: 4, cursor: "pointer", color: "#475569",
-            }}
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        {phase === "loading" ? (
-          <div data-testid="pay-loading" style={{ padding: "40px 0", textAlign: "center", color: "#64748B" }}>
-            <Loader2 className="animate-spin" size={24} />
-            <div style={{ marginTop: 12, fontSize: 13 }}>Preparing secure checkout…</div>
-          </div>
-        ) : null}
-
-        {phase === "error" ? (
-          <div data-testid="pay-error" style={{
-            padding: 16, borderRadius: 10,
-            background: "#FEE2E2", color: "#991B1B",
-            fontSize: 14, display: "flex", gap: 8, alignItems: "flex-start",
-          }}>
-            <AlertTriangle size={16} /> {error}
-          </div>
-        ) : null}
-
-        {phase === "ready" && stripePromise && clientSecret ? (
-          <>
-            <div style={{ marginBottom: 12 }} data-testid="payment-form-promo-slot">
-              <PromoCodeInput
-                invoiceId={invoiceId}
-                invoiceTotalCents={baseAmountCents || amountCents}
-                magicToken={source === "portal" ? magicToken : ""}
-                onChange={onPromoChange}
-              />
-              {appliedPromo?.apply_to === "account_credit" ? (
-                <div
-                  data-testid="payment-form-account-credit-hint"
-                  style={{
-                    marginTop: 8, padding: "6px 10px", borderRadius: 8,
-                    background: "#ECFDF5", color: "#065F46",
-                    fontSize: 12,
-                  }}
-                >
-                  ${(appliedPromo.discount_cents / 100).toFixed(2)} credit will
-                  be added to your account after payment. Today's total is unchanged.
-                </div>
-              ) : null}
+        <h3 className="text-lg font-semibold mb-3">Pay Invoice</h3>
+        {status === "preparing" ? (
+          <div data-testid="pay-preparing" className="text-sm text-gray-700">
+            <div className="animate-pulse mb-2">⏳ Preparing your payment link…</div>
+            <div className="text-xs text-gray-500">
+              This usually takes just a few seconds.
             </div>
-            {rebuilding ? (
-              <div
-                data-testid="pay-rebuilding"
-                style={{ padding: "6px 0 10px", fontSize: 12, color: "#64748B" }}
-              >
-                <Loader2 size={14} className="animate-spin" /> Recalculating total…
-              </div>
-            ) : null}
-            <Elements key={clientSecret} stripe={stripePromise} options={elementsOptions}>
-              <InnerForm
-                amountCents={amountCents}
-                currency={currency}
-                onSuccess={(pi) => { onSuccess && onSuccess(pi); }}
-                onError={() => {}}
-              />
-            </Elements>
-          </>
+          </div>
+        ) : null}
+        {status === "error" ? (
+          <div data-testid="pay-error" className="text-sm">
+            <div className="text-red-600 mb-3">{errorMsg}</div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setStatus("idle"); startFlow(); }}
+                data-testid="pay-retry-btn"
+                className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold">
+                Retry
+              </button>
+              <button
+                onClick={onClose}
+                data-testid="pay-close-btn"
+                className="px-3 py-2 rounded-lg border text-sm">
+                Close
+              </button>
+            </div>
+          </div>
         ) : null}
       </div>
     </div>

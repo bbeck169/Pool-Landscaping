@@ -495,19 +495,9 @@ export default function InvoicesList() {
           <div className="text-sm font-semibold" data-testid="bulk-action-bar-count">
             {selectedCount} selected
           </div>
-          <button
-            type="button"
-            onClick={() => setPayConfirmOpen(true)}
-            disabled={paying || selectionBuckets.chargeable.length === 0}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50"
-            style={{ backgroundColor: colors.brand, color: "#FFFFFF" }}
-            data-testid="bulk-pay-button"
-            title={selectionBuckets.chargeable.length === 0
-              ? "None of the selected invoices are chargeable"
-              : `Charge ${selectionBuckets.chargeable.length} invoice(s)`}
-          >
-            <CreditCard size={12} /> Pay Now ({selectionBuckets.chargeable.length})
-          </button>
+          {/* LZ3 · Feb 2026 — Bulk-Pay button removed. Lumino
+              hosted-checkout does not currently offer a batch API.
+              Per-invoice pay via the invoice detail page. */}
           <button
             type="button"
             onClick={() => setConfirmDeleteOpen(true)}
@@ -589,20 +579,8 @@ export default function InvoicesList() {
         </div>
       ) : null}
 
-      {/* Bulk-pay confirmation modal. */}
-      {payConfirmOpen ? (
-        <BulkPayConfirmModal
-          buckets={selectionBuckets}
-          paying={paying}
-          onCancel={() => setPayConfirmOpen(false)}
-          onCharge={doBulkPay}
-        />
-      ) : null}
-
-      {/* Bulk-pay summary modal. */}
-      {paySummaryOpen && payResults ? (
-        <BulkPaySummaryModal results={payResults} onClose={closeBulkPaySummary} />
-      ) : null}
+      {/* LZ3 · Feb 2026 — Bulk-Pay confirm + summary modals removed.
+          Bulk-select is retained for other bulk actions (delete etc.). */}
     </div>
   );
 }

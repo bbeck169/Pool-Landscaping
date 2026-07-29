@@ -49,8 +49,24 @@ def _seed_invoice() -> str:
     return inv_id
 
 
+def _seed_invoice_in_quotes() -> str:
+    """Seed an invoice in db.quotes (doc_type=invoice) — matches the
+    real create path via POST /api/quotes."""
+    inv_id = f"lz1-qinv-{uuid.uuid4().hex[:12]}"
+    _sync_db.quotes.insert_one({
+        "id": inv_id,
+        "tenant_id": "lz1-test-tenant",
+        "customer_id": "lz1-cust-x",
+        "doc_type": "invoice",
+        "total": 100.0,
+        "status": "sent",
+    })
+    return inv_id
+
+
 def _cleanup_invoice(inv_id: str):
     _sync_db.invoices.delete_one({"id": inv_id})
+    _sync_db.quotes.delete_one({"id": inv_id})
     # Clean up any audit row we may have created.
     _sync_db.payment_events.delete_many({"invoice_id": inv_id})
 
@@ -216,5 +232,53 @@ def test_callback_double_call_idempotent():
              "lumino_payment_url": url}))
         assert len(events) == 1, \
             f"Expected exactly 1 audit row, got {len(events)}"
+    finally:
+        _cleanup_invoice(inv_id)
+
+
+# ── 13. Dual-lookup: quotes-collection invoice is found + updated ─
+@needs_secret
+def test_callback_finds_invoice_in_quotes_collection():
+    inv_id = _seed_invoice_in_quotes()
+    try:
+        url = f"https://pay.lumino.io/checkout/{uuid.uuid4().hex[:12]}"
+        payload = {"invoice_id": inv_id, "lumino_payment_url": url}
+        r = requests.post(URL, headers=HDR_OK,
+                           data=json.dumps(payload), timeout=10)
+        assert r.status_code == 200, r.text
+        # DB round-trip — value landed in db.quotes, NOT db.invoices.
+        q_doc = _sync_db.quotes.find_one({"id": inv_id})
+        assert q_doc["lumino_payment_url"] == url
+        i_doc = _sync_db.invoices.find_one({"id": inv_id})
+        assert i_doc is None, "Should not dual-write to db.invoices"
+    finally:
+        _cleanup_invoice(inv_id)
+
+
+# ── 14. Dual-lookup: db.invoices wins when both exist ─────────────
+@needs_secret
+def test_callback_prefers_invoices_collection_when_both_have_id():
+    """Edge case: the same id exists in both. Helper checks invoices
+    first, so the write should land there (not quotes)."""
+    inv_id = f"lz1-dual-{uuid.uuid4().hex[:10]}"
+    _sync_db.invoices.insert_one({
+        "id": inv_id, "tenant_id": "lz1", "customer_id": "cx",
+        "total": 1.0, "status": "sent",
+    })
+    _sync_db.quotes.insert_one({
+        "id": inv_id, "tenant_id": "lz1", "customer_id": "cx",
+        "doc_type": "invoice", "total": 1.0, "status": "sent",
+    })
+    try:
+        url = f"https://pay.lumino.io/checkout/{uuid.uuid4().hex[:12]}"
+        payload = {"invoice_id": inv_id, "lumino_payment_url": url}
+        r = requests.post(URL, headers=HDR_OK,
+                           data=json.dumps(payload), timeout=10)
+        assert r.status_code == 200
+        i_doc = _sync_db.invoices.find_one({"id": inv_id})
+        q_doc = _sync_db.quotes.find_one({"id": inv_id})
+        assert i_doc.get("lumino_payment_url") == url
+        assert q_doc.get("lumino_payment_url") is None, \
+            "quotes must NOT be updated when invoices already had the id"
     finally:
         _cleanup_invoice(inv_id)

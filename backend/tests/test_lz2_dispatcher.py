@@ -41,8 +41,13 @@ def _customer():
 
 
 def _run(coro):
+    """Fresh event loop per call — pytest closes loops between tests."""
     import asyncio
-    return asyncio.get_event_loop().run_until_complete(coro)
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 # Ensure the env var IS set for the dispatcher module — the tests

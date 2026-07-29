@@ -51,13 +51,9 @@ def _rate_limit_check(invoice_id: str) -> bool:
 
 
 async def _lookup_invoice(invoice_id: str) -> dict | None:
-    """Look in db.invoices first, then db.quotes (doc_type=invoice)."""
-    doc = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
-    if doc:
-        return doc
-    doc = await db.quotes.find_one(
-        {"id": invoice_id, "doc_type": "invoice"}, {"_id": 0}
-    )
+    """Delegate to the shared dual-collection helper."""
+    from services.invoice_lookup import find_invoice_dual
+    doc, _collection = await find_invoice_dual(db, invoice_id)
     return doc
 
 

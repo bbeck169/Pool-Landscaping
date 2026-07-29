@@ -621,15 +621,10 @@ export default function QuoteInvoiceDetail({ docType = "quote" }) {
       <Toast toast={toast} onClose={() => setToast(null)} />
       {payNowOpen ? (
         <PaymentForm
+          invoice={doc}
           invoiceId={doc?.id}
           source="authenticated"
           onClose={() => setPayNowOpen(false)}
-          onSuccess={() => {
-            setPayNowOpen(false);
-            setToast({ tone: "success", message: "Payment received. Thank you!" });
-            // Refresh invoice so paid/partial reflects immediately.
-            api.get(`/quotes/${id}`).then(setDoc).catch(() => {});
-          }}
         />
       ) : null}
     </div>
