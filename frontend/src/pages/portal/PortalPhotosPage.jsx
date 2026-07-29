@@ -8,7 +8,7 @@
 import React, { useEffect, useState } from "react";
 import { X, Image as ImageIcon } from "lucide-react";
 import { colors } from "@/theme";
-import { api } from "@/api";
+import { api, TOKEN_KEY } from "@/api";
 import { Skeleton } from "@/components/ui-kit";
 
 const PAGE = 24;
@@ -24,7 +24,7 @@ function authedImgUrl(url) {
   // Files download endpoint accepts ?auth=<token> for <img> src.
   if (!url || !url.includes("/api/files/")) return resolveUrl(url);
   try {
-    const tok = localStorage.getItem("pool_crm_token") || "";
+    const tok = localStorage.getItem(TOKEN_KEY) || "";
     const abs = resolveUrl(url);
     if (!tok) return abs;
     const joiner = abs.includes("?") ? "&" : "?";

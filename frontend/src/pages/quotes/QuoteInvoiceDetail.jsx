@@ -750,7 +750,12 @@ function SmsModal({ open, onClose, invoice, customer, onDone }) {
     try {
       const r = await api.post(`/invoices/${invoice.id}/send-sms`, { to, message: msg });
       if (r.sent) onDone(`Text sent to ${r.to}`);
-      else if (r.reason === "sms-not-configured" || r.reason === "twilio-not-configured") onDone("SMS delivery not configured — logged only", "info");
+      // Feb-2026 · Copy fix — the backend's "sms-not-configured" reason
+      // is actually raised by the preview-only comms guard when the
+      // recipient isn't on the SMS_ALLOWLIST. RC itself IS configured
+      // + reachable. Clearer copy avoids user confusion.
+      else if (r.reason === "sms-not-configured" || r.reason === "twilio-not-configured")
+        onDone("SMS suppressed in preview environment. This number is not on the SMS_ALLOWLIST. In production, this would send via RingCentral.", "info");
       else onDone(r.reason || "Failed", "error");
     } catch (e) {
       onDone(e.message, "error");

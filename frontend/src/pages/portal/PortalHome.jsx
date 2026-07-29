@@ -69,6 +69,9 @@ export default function PortalHome() {
   // Feb-2026 · Slice 5 — customer AI carve-out (Skedra + Billy).
   const [aiEmployees, setAiEmployees] = useState([]);
   const [aiChat, setAiChat] = useState(null);   // { employee } or null
+  // Feb-2026 — Portal Quick Action tiles: Photos/Videos/Messages.
+  // ``unreadMessages`` powers the Messages tile badge.
+  const [unreadMessages, setUnreadMessages] = useState(0);
 
   const loadSummary = () =>
     api.get("/customer-portal/summary").then(setSummary).catch(() => setSummary(null));
@@ -84,6 +87,10 @@ export default function PortalHome() {
     api.get("/portal/home").then(setData).catch(() => setData({ counts: {} }));
     api.get("/portal/terms/status").then(setTosStatus).catch(() => {});
     loadSummary();
+    // Feb-2026 — unread portal-chat count for the Messages tile badge.
+    api.get("/portal/messages/unread-count")
+      .then((r) => setUnreadMessages(Number(r?.unread || 0)))
+      .catch(() => setUnreadMessages(0));
     // Feb-2026 · Slice 5 — pull the two customer-audience AI
     // employees so the "Ask AI" section can render their cards.
     api
@@ -328,6 +335,10 @@ export default function PortalHome() {
           <ActionTile icon={FileText} label="Estimates" tone="#4338CA" onClick={() => navigate("/portal/estimates")} testid="qa-estimates" />
           <ActionTile icon={Wrench} label="Payment Method" tone={colors.success} onClick={() => navigate("/portal/payment-method")} testid="qa-pm" />
           <ActionTile icon={Star} label="Leave a Review" tone="#F59E0B" onClick={() => navigate("/portal/reviews")} testid="portal-reviews-tab" />
+          {/* Feb-2026 — Quick Action tiles: Photos, Videos, Messages. */}
+          <ActionTile icon={ImageIcon} label="Photos" tone="#DB2777" onClick={() => navigate("/portal/photos")} testid="qa-photos" />
+          <ActionTile icon={VideoIcon} label="Videos" tone="#7C3AED" onClick={() => navigate("/portal/videos")} testid="qa-videos" />
+          <ActionTile icon={MessageSquare} label="Messages" tone="#0284C7" onClick={() => navigate("/portal/chats")} testid="qa-messages" badge={unreadMessages} />
         </div>
       </div>
 
