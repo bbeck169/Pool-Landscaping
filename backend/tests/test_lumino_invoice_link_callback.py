@@ -38,11 +38,15 @@ needs_secret = pytest.mark.skipif(not SECRET,
 
 
 def _seed_invoice() -> str:
+    """Phase 11 (Feb-2026) — seeds into db.quotes with doc_type=invoice
+    (the sole source of truth). The prior seeder wrote to db.invoices
+    which is now retired."""
     inv_id = f"lz1-inv-{uuid.uuid4().hex[:12]}"
-    _sync_db.invoices.insert_one({
+    _sync_db.quotes.insert_one({
         "id": inv_id,
         "tenant_id": "lz1-test-tenant",
         "customer_id": "lz1-cust-x",
+        "doc_type": "invoice",
         "total": 100.0,
         "status": "sent",
     })
@@ -50,8 +54,7 @@ def _seed_invoice() -> str:
 
 
 def _seed_invoice_in_quotes() -> str:
-    """Seed an invoice in db.quotes (doc_type=invoice) — matches the
-    real create path via POST /api/quotes."""
+    """Legacy alias — kept for tests that name the collection explicitly."""
     inv_id = f"lz1-qinv-{uuid.uuid4().hex[:12]}"
     _sync_db.quotes.insert_one({
         "id": inv_id,
@@ -65,7 +68,8 @@ def _seed_invoice_in_quotes() -> str:
 
 
 def _cleanup_invoice(inv_id: str):
-    _sync_db.invoices.delete_one({"id": inv_id})
+    # Phase 11: db.invoices is retired; only clean db.quotes now. Left
+    # the delete_one on db.invoices in case a stale test row exists.
     _sync_db.quotes.delete_one({"id": inv_id})
     # Clean up any audit row we may have created.
     _sync_db.payment_events.delete_many({"invoice_id": inv_id})
@@ -184,7 +188,7 @@ def test_callback_signed_valid_invoice_persists_url_200():
         assert body["lumino_payment_url_set"] is True
         assert body["correlation_id"]
         # DB round-trip
-        persisted = _sync_db.invoices.find_one({"id": inv_id})
+        persisted = _sync_db.quotes.find_one({"id": inv_id})
         assert persisted["lumino_payment_url"] == url
         assert persisted["lumino_link_created_at"]
         assert persisted["updated_at"]
@@ -207,7 +211,7 @@ def test_callback_optional_refs_persist():
         r = requests.post(URL, headers=HDR_OK,
                            data=json.dumps(payload), timeout=10)
         assert r.status_code == 200
-        persisted = _sync_db.invoices.find_one({"id": inv_id})
+        persisted = _sync_db.quotes.find_one({"id": inv_id})
         assert persisted["lumino_customer_ref"] == "cus_L_abc123"
         assert persisted["lumino_payment_ref"] == "pay_L_xyz789"
     finally:
@@ -246,20 +250,20 @@ def test_callback_finds_invoice_in_quotes_collection():
         r = requests.post(URL, headers=HDR_OK,
                            data=json.dumps(payload), timeout=10)
         assert r.status_code == 200, r.text
-        # DB round-trip — value landed in db.quotes, NOT db.invoices.
+        # Phase 11 — value landed in db.quotes (sole source of truth).
         q_doc = _sync_db.quotes.find_one({"id": inv_id})
         assert q_doc["lumino_payment_url"] == url
-        i_doc = _sync_db.invoices.find_one({"id": inv_id})
-        assert i_doc is None, "Should not dual-write to db.invoices"
     finally:
         _cleanup_invoice(inv_id)
 
 
-# ── 14. Dual-lookup: db.invoices wins when both exist ─────────────
+# ── 14. Phase 11 · single-collection write ────────────────────────
 @needs_secret
-def test_callback_prefers_invoices_collection_when_both_have_id():
-    """Edge case: the same id exists in both. Helper checks invoices
-    first, so the write should land there (not quotes)."""
+def test_callback_writes_to_quotes_only_after_phase11_refactor():
+    """After Phase 11, `find_invoice_dual` reads only from db.quotes.
+    Even if a stray row exists in db.invoices for the same id, the
+    callback resolves via db.quotes and updates only db.quotes — the
+    db.invoices row is untouched."""
     inv_id = f"lz1-dual-{uuid.uuid4().hex[:10]}"
     _sync_db.invoices.insert_one({
         "id": inv_id, "tenant_id": "lz1", "customer_id": "cx",
@@ -277,8 +281,10 @@ def test_callback_prefers_invoices_collection_when_both_have_id():
         assert r.status_code == 200
         i_doc = _sync_db.invoices.find_one({"id": inv_id})
         q_doc = _sync_db.quotes.find_one({"id": inv_id})
-        assert i_doc.get("lumino_payment_url") == url
-        assert q_doc.get("lumino_payment_url") is None, \
-            "quotes must NOT be updated when invoices already had the id"
+        assert q_doc.get("lumino_payment_url") == url, \
+            "Phase 11: quotes MUST receive the write"
+        assert i_doc.get("lumino_payment_url") is None, \
+            "Phase 11: db.invoices must NOT be updated"
     finally:
+        _sync_db.invoices.delete_one({"id": inv_id})
         _cleanup_invoice(inv_id)

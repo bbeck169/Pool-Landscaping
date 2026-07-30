@@ -43,9 +43,10 @@ async def _referrer_has_paid_invoice_since(
 ) -> bool:
     """Returns True when the referred customer has at least one PAID
     invoice with paid_at >= since_iso."""
-    row = await db.invoices.find_one({
+    row = await db.quotes.find_one({
         "tenant_id": tenant_id,
         "customer_id": referred_customer_id,
+        "doc_type": "invoice",
         "status": {"$in": ["paid", "partially_paid"]},
         "paid_at": {"$gte": since_iso},
     }, {"_id": 0, "id": 1})

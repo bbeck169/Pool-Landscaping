@@ -10,7 +10,8 @@ Not the HMAC pattern from ``lumino_zapier_bridge.py`` — the callback
 carries no sensitive customer data beyond the invoice id + URL, and
 the Zap can rotate the secret at any time.
 
-New invoice fields (added implicitly — ``db.invoices`` is a
+New invoice fields (added implicitly — ``db.quotes`` with
+``doc_type="invoice"`` is a
 schema-free Mongo collection):
     lumino_payment_url:      Optional[str]
     lumino_customer_ref:     Optional[str]
@@ -159,8 +160,9 @@ async def lumino_invoice_link_created(request: Request):
     if payment_ref:
         set_fields["lumino_payment_ref"] = payment_ref
     try:
-        target = db.invoices if collection == "invoices" else db.quotes
-        await target.update_one({"id": invoice_id}, {"$set": set_fields})
+        await db.quotes.update_one(
+            {"id": invoice_id, "doc_type": "invoice"},
+            {"$set": set_fields})
     except Exception as exc:                                          # noqa: BLE001
         log.error("[%s] invoice update failed: %s",
                     correlation_id, type(exc).__name__)

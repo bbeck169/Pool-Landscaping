@@ -230,19 +230,22 @@ def _admin_token():
 
 
 def _seed_invoice_in_db_invoices() -> str:
+    """Phase 11 (Feb-2026) — name kept for back-compat; now writes into
+    db.quotes with doc_type=invoice (the sole source of truth)."""
     inv_id = f"lz2-endpoint-inv-{uuid.uuid4().hex[:10]}"
-    _sync_db.invoices.insert_one({
+    _sync_db.quotes.insert_one({
         "id": inv_id, "tenant_id": "lz2-endpoint",
         "customer_id": "lz2-cust-x",
         "customer_name": "EndpointCust",
         "customer_email": "endpoint@example.com",
+        "doc_type": "invoice",
         "total": 50.0, "status": "sent",
     })
     return inv_id
 
 
 def _cleanup(inv_id: str):
-    _sync_db.invoices.delete_one({"id": inv_id})
+    _sync_db.quotes.delete_one({"id": inv_id})
 
 
 # ── 10. Endpoint dispatches ───────────────────────────────────────

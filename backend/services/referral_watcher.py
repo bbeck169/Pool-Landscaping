@@ -258,23 +258,13 @@ async def _earliest_paid_at(
 ) -> Optional[str]:
     if not customer_id:
         return None
-    row = await db.invoices.find_one(
-        {"tenant_id": tenant_id, "customer_id": customer_id,
-          "status": "paid"},
-        {"_id": 0, "paid_at": 1},
-        sort=[("paid_at", 1)],
-    )
-    if row and row.get("paid_at"):
-        return row["paid_at"]
-    # Fallback: some tenants store paid invoices in ``quotes`` with
-    # ``doc_type="invoice"`` (legacy).
-    row2 = await db.quotes.find_one(
+    row = await db.quotes.find_one(
         {"tenant_id": tenant_id, "customer_id": customer_id,
           "doc_type": "invoice", "status": "paid"},
         {"_id": 0, "paid_at": 1},
         sort=[("paid_at", 1)],
     )
-    return (row2 or {}).get("paid_at")
+    return (row or {}).get("paid_at")
 
 
 async def _check_refund_or_dispute_inside_window(

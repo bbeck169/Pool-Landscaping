@@ -2,7 +2,8 @@
 
 Retro-active dispatcher for unpaid invoices that pre-date the LZ2
 Zapier bridge (or where the initial dispatch was lost). Iterates
-``db.quotes`` / ``db.invoices`` for candidates that:
+Reads ``db.quotes`` (``doc_type=="invoice"``, the sole source of truth
+post-Phase 11) for candidates that:
 
   * are ``doc_type=invoice``
   * have ``status`` in an unpaid state (``sent``, ``overdue``,
@@ -117,9 +118,9 @@ def _is_dead(inv: Dict[str, Any]) -> bool:
 async def _load_candidates(body: BackfillBody) -> List[Dict[str, Any]]:
     """Return up to ``body.limit`` unpaid invoices with no Lumino link.
 
-    Reads primarily from ``db.quotes`` (``doc_type=invoice``, the main
-    creation collection) and then merges ``db.invoices`` (the ancillary
-    collection used by reconciler / referrals). De-dupes by ``id``.
+    Phase 11 (Feb-2026) — single-collection reader. Reads only from
+    ``db.quotes`` (``doc_type=invoice``, the source of truth). The
+    former ``db.invoices`` fallback was retired.
     """
     limit = min(body.limit, _HARD_CAP)
 
@@ -131,7 +132,7 @@ async def _load_candidates(body: BackfillBody) -> List[Dict[str, Any]]:
     if body.invoice_ids:
         base_query["id"] = {"$in": body.invoice_ids}
 
-    # ─── db.quotes (doc_type=invoice) ───
+    # ─── db.quotes (doc_type=invoice) — source of truth ───
     quotes_query = dict(base_query)
     quotes_query["doc_type"] = "invoice"
     quotes_query["status"] = {"$in": _UNPAID_STATUSES}
@@ -159,20 +160,6 @@ async def _load_candidates(body: BackfillBody) -> List[Dict[str, Any]]:
     ]}
     rows = await db.quotes.find(quotes_query, {"_id": 0}).sort(
         "created_at", -1).to_list(limit * 2)
-
-    # ─── db.invoices (ancillary) ───
-    if len(rows) < limit:
-        inv_query = dict(base_query)
-        inv_query["status"] = {"$in": _UNPAID_STATUSES}
-        try:
-            more = await db.invoices.find(inv_query, {"_id": 0}).sort(
-                "created_at", -1).to_list(limit * 2)
-        except Exception:
-            more = []
-        seen = {r.get("id") for r in rows}
-        for r in more:
-            if r.get("id") not in seen:
-                rows.append(r)
 
     # Final in-Python filter — belt-and-braces for the guards the
     # dispatcher would otherwise apply anyway.

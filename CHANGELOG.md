@@ -8,6 +8,59 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-01 — Phase 11 · Invoice dual-collection refactor (`db.invoices` → `db.quotes`)
+
+Consolidated the two-collection invoice model onto **`db.quotes` with `doc_type="invoice"`** as the single source of truth. `db.invoices` was preserved for rollback safety but is now inert — no production code reads or writes it. Migrated 17 orphan rows (all test-seed residue in one tenant) into `db.quotes` with `migrated_from_invoices=True` and `migration_needs_review=True` for later super-admin review.
+
+### Added
+- `scripts/migrate_invoices_to_quotes.py` — idempotent one-shot migrator with `--dry-run`. Conservative schema-gap fills (`doc_type="invoice"`, `total=total_cents/100`, `line_items=[]`, `payment_status="unpaid"`, `created_at=now`). Never overwrites: on a duplicate id, `db.quotes` wins and the diff is written to `db.invoice_reconciliation_log`. Ran cleanly on live preview: `scanned=17, migrated=17, already_present=0, drift_logged=0`.
+- `routers/invoice_reconciliation.py` — `GET /api/admin/invoice-reconciliation-log?limit=100` — super-admin-only (`admin` + `super_admin`). Response body includes the deferred-Lumino-backfill disclaimer.
+- `tests/test_invoice_collection_unification.py` — 7 guardrail tests: migration idempotency (5 orphans → run twice → 0 double-writes), quotes-wins duplicate handling + drift log, `find_invoice_dual` reads only from `db.quotes` (retired `db.invoices` branch), promo-code redeem writes to `db.quotes` only (fixes B1), role guard × 3 accounts × reconciliation endpoint (manager 403, admin/super_admin 200), backward-compat lookup of migrated hex32 ids, **grep-lint** that fails on any live `db.invoices.<method>(` call in production code outside the shim's own definition + migration script.
+
+### Changed
+- `services/invoice_lookup.py` — `find_invoice_dual` now hits **only** `db.quotes` and emits a `WARNING`-level deprecation on first call per process (via `functools.lru_cache(maxsize=1)`). Tuple shape `(doc, "quotes")` is preserved for back-compat with the 4 existing callers.
+- `routers/lumino_return.py` — `status=paid` + `paid_at` write moved to `db.quotes` (was writing to `db.invoices`).
+- `services/lumino_reconciler.py` — nightly "mirror payment" step moved to `db.quotes`.
+- `routers/lumino_invoice_link_callback.py` — write target unconditionally `db.quotes` (dropped the `db.invoices if collection == "invoices" else db.quotes` branch).
+- `routers/invoice_edit.py` — `invoice_number` uniqueness scan simplified to a single `db.quotes` query.
+- `routers/portal_greeting.py` — unpaid-invoice greeting slot reads `db.quotes` with `doc_type="invoice"` filter.
+- `routers/referrals_vesting.py` — `_referrer_has_paid_invoice_since()` reads `db.quotes`.
+- `services/referral_watcher.py` — first-paid-invoice lookup reads `db.quotes` (removed the legacy fallback branch).
+- `routers/lumino_backfill.py` — single-collection scan (removed the merge-with-`db.invoices` de-dup path).
+- `routers/promo_codes.py` — **B1 fix**: replaced the `for coll in (db.invoices, db.quotes)` dual-push loop with a single write to `db.quotes`.
+- Five test seeders re-pointed to `db.quotes`: `test_invoice_edit.py` (default `collection="quotes"`), `test_lumino_invoice_link_callback.py`, `test_lz2_dispatcher.py`, `test_phase10_referrals.py`, `test_task_qq_p2_lumino.py`.
+- Test 14 in `test_lumino_invoice_link_callback.py` inverted its expectation to assert the Phase 11 contract ("db.invoices row is NEVER updated when a matching db.quotes row exists").
+- Stale docstrings in `routers/invoice_edit.py`, `routers/lumino_backfill.py`, `routers/lumino_invoice_link_callback.py`, `routers/lumino_link_request.py` updated to describe the unified model.
+
+### Fixed
+- **B1** `promo_codes.py` · dual-push loop (`for coll in (db.invoices, db.quotes)`) removed. Single write to `db.quotes` — no risk of double-`$push` into `applied_promo_code_ids` on any future duplicate.
+- **B2** `referrals_vesting.py` · referrer paid-invoice window check now sees the 466 real invoices in `db.quotes`, not just the 17 test residues in `db.invoices`. **This unblocks the vesting gate for real customers going forward.**
+- **B3** `portal_greeting.py` · customer-portal "unpaid invoice" greeting slot now fires against real invoices in `db.quotes` instead of silently missing them.
+- **B4** `lumino_return.py` · Lumino redirect `status=paid + paid_at` write lands on the source of truth. Going-forward payments are correct; historical drift is called out under **Notes** below.
+- **B5** `lumino_reconciler.py` · nightly reconciler mirrors payment status onto `db.quotes`. Same historical-drift caveat.
+- **B6** `invoice_lookup.py` · shim no longer prefers the ancillary `db.invoices` collection.
+
+### Deprecated
+- `services.invoice_lookup.find_invoice_dual` — kept as a compatibility symbol for the 4 existing callers (`routers/invoice_edit.py`, `routers/lumino_invoice_link_callback.py`, `routers/lumino_link_request.py`), but emits a WARNING once per process boot. **Scheduled for removal in a future phase after ≥ 30 days of clean production logs.** Migrate callers to a direct `db.quotes.find_one({"id": …, "doc_type": "invoice"})` when convenient.
+
+### Security
+- New `GET /api/admin/invoice-reconciliation-log` endpoint enforces **super-admin scope only** (`role in {"super_admin", "admin"}`). `manager`, `technician`, `customer` all 403. Verified live and in pytest.
+- Response body always includes a `notes[]` array with the "Historical Lumino paid_at drift is NOT in this log" disclaimer so operators don't misinterpret an empty log as a clean bill of health.
+
+### Notes
+- **Historical Lumino `paid_at` drift is NOT reconciled by this phase.** Any Lumino payment that completed *before* the refactor was written into `db.invoices` (a bug per B4/B5) and never landed on the matching `db.quotes` doc. A follow-up data-fix phase will scan `db.payment_events` for successful Lumino returns older than the Phase 11 cutover and replay the `paid_at` mirror onto `db.quotes`. The reconciliation-log endpoint calls this out in its response `notes[]`.
+- `db.invoices` collection is **retained** (empty of live writes, but the 17 legacy rows plus any pytest seeds remain) as a rollback net. A future phase will drop the collection after ≥ 30 days of clean deprecation-warning logs.
+- The migration script wrote 17 rows with `migration_needs_review=True`. All 17 look like fork-loop test residue in the `manager@aquaterra` tenant (no `line_items`, no `invoice_number`, no `created_at`). A super-admin can decide via the reconciliation-log endpoint (drift log is empty — the migration was drift-free) whether to delete them.
+
+### Verification
+- Full targeted regression across 14 invoice-adjacent test files: **0 newly-broken tests**, 16 pre-existing baseline failures unchanged.
+- New guardrail file `tests/test_invoice_collection_unification.py`: **7 / 7 passing**.
+- Vitest baseline: **13 failed / 537** — inside 11-14 tolerance, unchanged from Phase 10.
+- Migration dry-run + real: 17 rows migrated cleanly, 0 drift, 0 duplicates.
+- `/api/openapi.json` returns 200 with the new `/api/admin/invoice-reconciliation-log` path present.
+
+---
+
 ## 2026-07-31 — Phase 10 · Bundled extensions (D + E + F)
 
 Three small extensions bundled together — Response Draft Library (D), Auto-Slot Preview Badge (E), Cumulative Weekly savings_km KPI (F). None of them touch Phase 3-9 internals beyond a one-line append-only event-log hook (F) and a status-transition side-effect (D).

@@ -126,8 +126,8 @@ async def _reconcile_payments() -> Dict[str, int]:
                 # If the payment carries an invoice_id and the new
                 # status is paid, mirror on the invoice too.
                 if normalized == "paid" and pay.get("invoice_id"):
-                    await db.invoices.update_one(
-                        {"id": pay["invoice_id"]},
+                    await db.quotes.update_one(
+                        {"id": pay["invoice_id"], "doc_type": "invoice"},
                         {"$set": {"status": "paid",
                                     "paid_at": _now_iso()}},
                     )

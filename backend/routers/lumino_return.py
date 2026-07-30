@@ -72,8 +72,8 @@ async def payments_lumino_return(
         outcome = "paid"
         next_step = "success_screen"
         if invoice_id:
-            await db.invoices.update_one(
-                {"id": invoice_id},
+            await db.quotes.update_one(
+                {"id": invoice_id, "doc_type": "invoice"},
                 {"$set": {
                     "status": "paid",
                     "paid_at": _now_iso(),

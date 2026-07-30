@@ -90,9 +90,11 @@ def test_return_url_mock_session_marks_paid(db, customer_headers):
     async def _plant():
         t = await db.tenants.find_one({"slug": "aquaterra"},
                                               {"_id": 0, "id": 1})
-        await db.invoices.insert_one({
+        # Phase 11 — Lumino return path writes to db.quotes (source of truth).
+        await db.quotes.insert_one({
             "id": inv_id, "tenant_id": t["id"],
             "customer_id": "c-x", "status": "sent",
+            "doc_type": "invoice",
             "total_cents": 1000,
         })
     _sync(_plant())

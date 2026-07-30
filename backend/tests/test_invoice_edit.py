@@ -1,7 +1,8 @@
 """Invoice edit · Feb-2026 — Admin PATCH endpoint + audit history tests.
 
 Uses direct HTTP against the running backend (like ``test_lz2_dispatcher``),
-seeds throwaway rows into ``db.invoices`` with the ``TEST_`` prefix so
+seeds throwaway rows into ``db.quotes`` (with ``doc_type="invoice"``, the
+sole source of truth post-Phase 11) with the ``TEST_`` prefix so
 ``conftest.py`` cleans them up at session teardown.
 """
 from __future__ import annotations
@@ -82,9 +83,15 @@ def _seed_invoice(status: str = "draft",
                    lumino_url: str | None = None,
                    invoice_number: str = "TEST-EDIT-001",
                    line_items=None,
-                   collection: str = "invoices",
+                   collection: str = "quotes",
                    tenant_id: str | None = None,
                    title: str = "TEST_edit_invoice") -> str:
+    """Phase 11 (Feb-2026): default seeding collection is now
+    ``quotes`` (source of truth). The ``collection`` parameter is
+    retained for back-compat but any value other than ``"quotes"``
+    is coerced to ``"quotes"``."""
+    if collection != "quotes":
+        collection = "quotes"
     inv_id = f"TEST-edit-inv-{uuid.uuid4().hex[:10]}"
     doc = {
         "id": inv_id,
@@ -115,7 +122,7 @@ def _seed_invoice(status: str = "draft",
 
 
 def _cleanup_invoice(inv_id: str):
-    _sync_db.invoices.delete_one({"id": inv_id})
+    # Phase 11 — db.quotes only. Legacy db.invoices left for rollback safety.
     _sync_db.quotes.delete_one({"id": inv_id})
     _sync_db.invoice_edit_history.delete_many({"invoice_id": inv_id})
 

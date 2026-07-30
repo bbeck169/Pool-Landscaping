@@ -68,7 +68,8 @@ def _cleanup():
     _sync_db.promo_codes.delete_many({"tenant_id": tid, "metadata.pytest": True})
     _sync_db.customer_credits.delete_many({"tenant_id": tid, "note": {"$regex": "pytest-p10"}})
     _sync_db.stripe_events.delete_many({"tenant_id": tid, "source_row_id": "pytest-p10"})
-    _sync_db.invoices.delete_many({"tenant_id": tid, "id": {"$regex": "^pytest-p10-"}})
+    _sync_db.quotes.delete_many({"tenant_id": tid, "id": {"$regex": "^pytest-p10-"},
+                                     "doc_type": "invoice"})
 
 
 # ═══════════════════════════ Promo code CRUD ═════════════════════════
@@ -162,7 +163,8 @@ def test_promo_code_redeem_increments_uses_and_blocks_same_invoice_twice():
     }, timeout=15).json()
     inv_id = f"pytest-p10-inv-{uuid.uuid4().hex[:8]}"
     tid = _tenant_id()
-    _sync_db.invoices.insert_one({
+    # Phase 11: promo-code redeem hits db.quotes (source of truth).
+    _sync_db.quotes.insert_one({
         "id": inv_id, "tenant_id": tid, "customer_id": "any",
         "total": 100.0, "doc_type": "invoice",
     })

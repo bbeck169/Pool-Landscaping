@@ -5,8 +5,11 @@ Endpoints:
   • PATCH /api/quotes/{invoice_id}
   • GET   /api/quotes/{invoice_id}/edit-history
 
-Invoices live in ``db.quotes`` (doc_type=="invoice") OR ``db.invoices``
-depending on their provenance — this router uses ``find_invoice_dual``
+Invoices are stored in ``db.quotes`` (``doc_type == "invoice"``). Prior
+to the Phase 11 (Feb-2026) refactor they could ALSO live in ``db.invoices``;
+that ancillary collection is now retired. This router uses
+``find_invoice_dual`` for backward compatibility but the shim now reads
+only from ``db.quotes``.
 and writes back to whichever collection the doc came from.
 """
 from __future__ import annotations
@@ -217,20 +220,17 @@ async def patch_invoice(
     if "invoice_number" in provided:
         new_number = provided["invoice_number"]
         if new_number and new_number != inv.get("invoice_number"):
-            # Scan both collections in the same tenant.
+            # Phase 11 — single-collection scan; source of truth is quotes.
             conflict = None
             if tenant_id:
-                conflict = await db.invoices.find_one(
+                conflict = await db.quotes.find_one(
                     {"tenant_id": tenant_id, "invoice_number": new_number,
-                      "id": {"$ne": invoice_id}}, {"_id": 0, "id": 1})
-                if not conflict:
-                    conflict = await db.quotes.find_one(
-                        {"tenant_id": tenant_id, "invoice_number": new_number,
-                          "doc_type": "invoice", "id": {"$ne": invoice_id}},
-                        {"_id": 0, "id": 1})
+                      "doc_type": "invoice", "id": {"$ne": invoice_id}},
+                    {"_id": 0, "id": 1})
             else:
-                conflict = await db[collection].find_one(
-                    {"invoice_number": new_number, "id": {"$ne": invoice_id}},
+                conflict = await db.quotes.find_one(
+                    {"invoice_number": new_number, "doc_type": "invoice",
+                      "id": {"$ne": invoice_id}},
                     {"_id": 0, "id": 1})
             if conflict:
                 raise HTTPException(

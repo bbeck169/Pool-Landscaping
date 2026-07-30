@@ -8,7 +8,7 @@ the first time, or invoice pre-dates LZ2).
 Invoices live in two collections in this codebase:
   • ``db.quotes`` where ``doc_type == "invoice"`` (main creation path
     via ``POST /api/quotes``)
-  • ``db.invoices``  (used by reconciler, promo codes, referrals,
+  • ``db.quotes`` with ``doc_type == "invoice"``  (source of truth,
     lumino_return, etc — where LZ1's callback writes)
 This endpoint looks in BOTH so it works regardless of provenance.
 

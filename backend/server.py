@@ -305,6 +305,10 @@ api_router.include_router(_dispatch_ins_router.router, dependencies=[Depends(_rg
 from routers import dispatch_savings as _dispatch_savings_router  # noqa: E402
 api_router.include_router(_dispatch_savings_router.router, dependencies=[Depends(_rg)])
 
+# Phase 11 · Feb-2026 — Invoice reconciliation log (super-admin only).
+from routers import invoice_reconciliation as _invoice_reconciliation_router  # noqa: E402
+api_router.include_router(_invoice_reconciliation_router.router)
+
 # Phase 5a · Feb-2026 — AEO Suite (JSON-LD generator + LLMs.txt generator).
 # Auditor lives inside services/seo_scanner and rides on /api/seo/scans.
 from routers import aeo as _aeo_router  # noqa: E402

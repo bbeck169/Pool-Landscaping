@@ -270,8 +270,9 @@ async def validate_promo_code(
     # If invoice_id supplied, ensure this code hasn't already been
     # applied to that same invoice.
     if body.invoice_id:
-        applied = await db.invoices.find_one({
+        applied = await db.quotes.find_one({
             "id": body.invoice_id, "tenant_id": tenant["id"],
+            "doc_type": "invoice",
             "applied_promo_code_ids": promo["id"],
         }, {"_id": 0, "id": 1})
         if applied:
@@ -310,10 +311,9 @@ async def redeem_promo_code(
     if int(promo.get("uses_count") or 0) >= int(promo.get("max_uses") or 1):
         raise HTTPException(400, "Promo code max uses reached")
 
-    inv = await db.invoices.find_one({
+    inv = await db.quotes.find_one({
         "id": body.invoice_id, "tenant_id": tenant["id"],
-    }, {"_id": 0}) or await db.quotes.find_one({
-        "id": body.invoice_id, "tenant_id": tenant["id"], "doc_type": "invoice",
+        "doc_type": "invoice",
     }, {"_id": 0})
     if not inv:
         raise HTTPException(404, "Invoice not found")
@@ -337,24 +337,25 @@ async def redeem_promo_code(
     if upd.modified_count != 1:
         raise HTTPException(409, "Concurrent redemption — retry")
 
-    # Record on the invoice (works for both invoices + quotes collections).
-    for coll in (db.invoices, db.quotes):
-        await coll.update_one(
-            {"id": body.invoice_id, "tenant_id": tenant["id"]},
-            {
-                "$push": {
-                    "applied_promo_code_ids": promo["id"],
-                    "applied_promos": {
-                        "promo_code_id": promo["id"],
-                        "code": promo["code"],
-                        "discount_kind": promo["discount_kind"],
-                        "discount_cents": discount,
-                        "applied_at": now_iso(),
-                        "applied_by": user.get("id"),
-                    },
+    # Record on the invoice (source of truth is db.quotes with
+    # doc_type=invoice — Phase 11 refactor: single write, no dual-push).
+    await db.quotes.update_one(
+        {"id": body.invoice_id, "tenant_id": tenant["id"],
+          "doc_type": "invoice"},
+        {
+            "$push": {
+                "applied_promo_code_ids": promo["id"],
+                "applied_promos": {
+                    "promo_code_id": promo["id"],
+                    "code": promo["code"],
+                    "discount_kind": promo["discount_kind"],
+                    "discount_cents": discount,
+                    "applied_at": now_iso(),
+                    "applied_by": user.get("id"),
                 },
             },
-        )
+        },
+    )
     return {
         "ok": True,
         "promo_code_id": promo["id"],

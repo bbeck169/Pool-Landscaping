@@ -125,8 +125,10 @@ async def greeting_state(user: Dict[str, Any] = Depends(get_current_user)):
             }
         else:
             # ── 3. Unpaid invoice ────────────────────────────────
-            inv = await db.invoices.find_one(
-                {"tenant_id": user["tenant_id"], "customer_id": user.get("customer_id"),
+            inv = await db.quotes.find_one(
+                {"tenant_id": user["tenant_id"],
+                 "customer_id": user.get("customer_id"),
+                 "doc_type": "invoice",
                  "status": {"$in": ["due", "past_due", "unpaid", "outstanding"]}},
                 {"_id": 0, "id": 1, "total_cents": 1, "balance_cents": 1, "amount_due": 1},
                 sort=[("created_at", 1)],
