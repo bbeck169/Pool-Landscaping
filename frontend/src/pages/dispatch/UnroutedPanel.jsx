@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import formatAddress from "@/utils/formatAddress";
 
 const REASON_LABEL = {
   no_service_day: "No service day",
@@ -168,7 +169,7 @@ export default function UnroutedPanel({
                     <div className="text-[11px] flex items-center gap-1 truncate"
                          style={{ color: colors.muted }}>
                       <MapPin size={10} />
-                      {it.address || "No address"}
+                      {formatAddress(it.address) || "No address"}
                     </div>
                   </button>
                   <div className="mt-1 flex items-center gap-1.5 flex-wrap">

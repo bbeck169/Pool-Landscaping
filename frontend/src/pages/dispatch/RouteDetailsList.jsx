@@ -4,6 +4,7 @@
 import React from "react";
 import { GripVertical, MapPin, X } from "lucide-react";
 import { colors } from "@/theme";
+import formatAddress from "@/utils/formatAddress";
 
 export default function RouteDetailsList({
   stops = [],
@@ -105,7 +106,7 @@ export default function RouteDetailsList({
                 style={{ color: "#1E40AF" }}
               >
                 <MapPin size={11} />
-                {s.address || "No address"}
+                {formatAddress(s.address) || "No address"}
               </div>
             </div>
             {!disabled && (

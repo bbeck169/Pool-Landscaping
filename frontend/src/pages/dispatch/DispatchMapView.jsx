@@ -15,6 +15,7 @@ import { MarkerClusterer } from "@googlemaps/markerclusterer";
 import { colors } from "@/theme";
 import { colorForPin } from "@/pages/dispatch/dispatchColors";
 import LiveTechPinsLayer from "@/pages/dispatch/LiveTechPinsLayer";
+import formatAddress from "@/utils/formatAddress";
 
 const AZ_CENTER = { lat: 33.6975, lng: -112.3708 }; // Vistancia/Peoria default
 
@@ -226,7 +227,7 @@ export default function DispatchMapView({
             <div style={{ minWidth: 220 }} data-testid="dispatch-map-infowindow">
               <div style={{ fontWeight: 600, fontSize: 13 }}>{active.name}</div>
               <div style={{ fontSize: 12, color: colors.muted, marginTop: 2 }}>
-                {active.address}
+                {formatAddress(active.address)}
               </div>
               {active.service_days?.length ? (
                 <div style={{ fontSize: 11, marginTop: 6, color: colors.onSurfaceSecondary }}>

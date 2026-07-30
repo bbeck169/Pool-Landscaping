@@ -43,6 +43,7 @@ import {
   PIN_COLOR_MODES, PIN_COLOR_BY_DAY, CREW_LEGEND,
   loadPinColorMode, savePinColorMode, colorForPin,
 } from "@/pages/dispatch/dispatchColors";
+import formatAddress from "@/utils/formatAddress";
 
 const DAYS = [
   { key: "mon", label: "Mon" },
@@ -801,7 +802,7 @@ function SelectCustomerPanel({ pins, selectedCustomerId, onSelect }) {
     const q = query.trim().toLowerCase();
     const rows = q
       ? pins.filter((p) => (p.name || "").toLowerCase().includes(q)
-          || (p.address || "").toLowerCase().includes(q))
+          || formatAddress(p.address).toLowerCase().includes(q))
       : pins;
     return rows.slice(0, 40);
   }, [pins, query]);
@@ -857,7 +858,7 @@ function SelectCustomerPanel({ pins, selectedCustomerId, onSelect }) {
               >
                 <div className="font-semibold truncate">{p.name || "(unnamed)"}</div>
                 <div className="text-[11px] truncate" style={{ color: colors.muted }}>
-                  {p.address || "No address"}
+                  {formatAddress(p.address) || "No address"}
                 </div>
               </button>
             </li>

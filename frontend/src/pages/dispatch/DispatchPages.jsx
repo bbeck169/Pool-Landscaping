@@ -11,6 +11,7 @@ import {
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Gate } from "@/hooks/usePermissions";
+import formatAddress from "@/utils/formatAddress";
 
 /* ═════════ DISPATCH BOARD ═════════════════════════════════════════════ */
 export default function DispatchBoard() {
@@ -206,7 +207,7 @@ export default function DispatchBoard() {
                     {j.service_type || j.job_type || "—"}
                   </td>
                   <td className="p-2 text-xs" style={{ color: colors.muted }}>
-                    {j.address}
+                    {formatAddress(j.address)}
                   </td>
                   <td className="p-2 text-right">
                     <button onClick={() => assignOne(j.id)}
