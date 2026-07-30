@@ -14,7 +14,17 @@ const RANGE_OPTIONS = [
   { value: "this_week",     label: "This Week"    },
   { value: "last_week",     label: "Last Week"    },
   { value: "month_to_date", label: "Month to Date"},
+  { value: "custom",        label: "Custom"       },
 ];
+
+function _todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+function _sevenDaysAgoIso() {
+  const d = new Date();
+  d.setDate(d.getDate() - 7);
+  return d.toISOString().slice(0, 10);
+}
 
 function _fmtMinutes(sec) {
   const s = Math.max(0, Math.round(sec || 0));
@@ -151,29 +161,54 @@ function DetailDrawer({ userId, range, onClose }) {
 export default function DriverScorecardPage() {
   const [range, setRange] = React.useState("this_week");
   const [department, setDepartment] = React.useState("");
+  // G5d polish · Feb-2026 — Custom range state (dates in YYYY-MM-DD).
+  const [customFrom, setCustomFrom] = React.useState(_sevenDaysAgoIso);
+  const [customTo, setCustomTo] = React.useState(_todayIso);
   const [board, setBoard] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [forbidden, setForbidden] = React.useState(false);
   const [drawerUid, setDrawerUid] = React.useState(null);
 
+  const customInvalid = range === "custom"
+    && customFrom && customTo && customFrom > customTo;
+
   const load = React.useCallback(async () => {
+    if (range === "custom") {
+      if (!customFrom || !customTo || customFrom > customTo) {
+        // Skip request when the range is invalid — inline error tells why.
+        return;
+      }
+    }
     setLoading(true);
     try {
       const qs = new URLSearchParams({ range });
       if (department) qs.set("department", department);
+      if (range === "custom") {
+        qs.set("from", `${customFrom}T00:00:00Z`);
+        qs.set("to",   `${customTo}T23:59:59Z`);
+      }
       const r = await api.get(`/admin/gps/scorecard/leaderboard?${qs}`);
       setBoard(r); setForbidden(false);
     } catch (e) {
       if ((e?.message || "").includes("403")) setForbidden(true);
       else toast.error("Load failed", { description: e?.message });
     } finally { setLoading(false); }
-  }, [range, department]);
+  }, [range, department, customFrom, customTo]);
 
   React.useEffect(() => { load(); }, [load]);
 
   const exportCsv = () => {
+    if (range === "custom" && (!customFrom || !customTo
+                                || customFrom > customTo)) {
+      toast.error("Fix the custom date range first");
+      return;
+    }
     const qs = new URLSearchParams({ range });
     if (department) qs.set("department", department);
+    if (range === "custom") {
+      qs.set("from", `${customFrom}T00:00:00Z`);
+      qs.set("to",   `${customTo}T23:59:59Z`);
+    }
     const token = localStorage.getItem(TOKEN_KEY) || "";
     // Trigger download via fetch (needs auth header — can't use plain <a>).
     fetch(`${api_base()}/admin/gps/scorecard/export.csv?${qs}`, {
@@ -224,6 +259,20 @@ export default function DriverScorecardPage() {
             {RANGE_OPTIONS.map((o) =>
               <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
+          {range === "custom" && (
+            <div className="flex items-center gap-1"
+                 data-testid="scorecard-custom-range">
+              <input type="date" value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                className="px-2 py-1.5 border border-zinc-200 rounded text-sm"
+                data-testid="scorecard-custom-from" />
+              <span className="text-xs text-zinc-500">→</span>
+              <input type="date" value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+                className="px-2 py-1.5 border border-zinc-200 rounded text-sm"
+                data-testid="scorecard-custom-to" />
+            </div>
+          )}
           <select value={department}
             onChange={(e) => setDepartment(e.target.value)}
             className="px-3 py-1.5 border border-zinc-200 rounded text-sm"
@@ -243,6 +292,15 @@ export default function DriverScorecardPage() {
           </button>
         </div>
       </header>
+
+      {customInvalid && (
+        <div className="rounded-md px-3 py-2 text-sm"
+             style={{ background: "#FEE2E2", color: "#991B1B" }}
+             data-testid="scorecard-custom-error">
+          The <strong>from</strong> date must be on or before the {" "}
+          <strong>to</strong> date.
+        </div>
+      )}
 
       <div className="bg-white border border-zinc-200 rounded-lg shadow-sm overflow-hidden"
            data-testid="scorecard-table">

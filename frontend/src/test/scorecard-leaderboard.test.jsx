@@ -133,4 +133,35 @@ describe("DriverScorecardPage · G5d", () => {
     render(<MemoryRouter><DriverScorecardPage /></MemoryRouter>);
     expect(await screen.findByTestId("scorecard-empty")).toBeInTheDocument();
   });
+
+  it("Custom range reveals date inputs and fires the endpoint with from/to", async () => {
+    render(<MemoryRouter><DriverScorecardPage /></MemoryRouter>);
+    await screen.findByTestId("scorecard-title");
+    fireEvent.change(screen.getByTestId("scorecard-range"),
+                      { target: { value: "custom" } });
+    // Custom date-inputs revealed.
+    const fromEl = await screen.findByTestId("scorecard-custom-from");
+    const toEl   = await screen.findByTestId("scorecard-custom-to");
+    expect(fromEl).toBeInTheDocument();
+    expect(toEl).toBeInTheDocument();
+    // Set both dates.
+    fireEvent.change(fromEl, { target: { value: "2026-02-01" } });
+    fireEvent.change(toEl,   { target: { value: "2026-02-14" } });
+    await waitFor(() => {
+      const calls = api.get.mock.calls
+        .filter((c) => c[0].startsWith("/admin/gps/scorecard/leaderboard")
+                        && c[0].includes("range=custom")
+                        && c[0].includes("from=2026-02-01T00%3A00%3A00Z")
+                        && c[0].includes("to=2026-02-14T23%3A59%3A59Z"));
+      expect(calls.length).toBeGreaterThan(0);
+    });
+    // Invalid range (from > to) shows inline error and does NOT refetch.
+    api.get.mockClear();
+    fireEvent.change(fromEl, { target: { value: "2026-03-01" } });
+    expect(await screen.findByTestId("scorecard-custom-error"))
+      .toBeInTheDocument();
+    expect(api.get.mock.calls.filter(
+      (c) => c[0].startsWith("/admin/gps/scorecard/leaderboard")).length)
+      .toBe(0);
+  });
 });
