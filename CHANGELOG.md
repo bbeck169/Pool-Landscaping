@@ -8,6 +8,26 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-07-30 — Phase 7 · Weekly Scorecard Digest (Slack + Email)
+
+### Added
+- `services/scorecard_digest.py` — Mon-Sun window math + WoW deltas + per-department aggregators (field / dispatch / sales) + composite scoring (jobs·revenue·rating / assignments·optimizations·savings / conversions·value·new_quotes) + Slack Block Kit builder + Resend email HTML builder + delivery adapters with injected clients + `weekly_digest_cron()` runner + settings CRUD with masked webhook.
+- `routers/scorecard.py` — 5 new endpoints: `POST /api/scorecard/digest/run-now`, `GET /api/scorecard/digest/preview`, `GET /api/scorecard/digest/history`, `POST /api/scorecard/digest/settings`, `GET /api/scorecard/digest/settings`.
+- Collections `scorecard_digests` + `scorecard_digest_settings`.
+- APScheduler job `scorecard_weekly_digest` — hourly, per-tenant day-of-week + hour_utc gate, dedup via `already_generated_this_week()`.
+- Web admin `/admin/reports/weekly-digest` — Settings (Slack URL paste-only + masked-current display, channel, recipients, DOW/hour, enabled toggle, "Send test digest" btn), Preview (period-end date picker + rendered top/bottom lists per department), History (last 10 digests with Slack/Email delivery status).
+- Pytest suite `backend/tests/test_scorecard_digest.py` — 11 tests: period math, composite + delta arithmetic (divide-by-zero → null), Slack Block Kit shape + medal emoji + delta arrows, Resend email subject + HTML + plain-text, delivery adapter uses stubs and records status, empty-department omission, webhook mask helper, live settings round-trip with masked webhook, role guard × 5 endpoints × 2 accounts, cron dedup guard.
+
+### Security
+- All 5 endpoints reject Tech + Customer with 403.
+- Slack webhook URL is stored plain-text but NEVER surfaced back — GET/POST responses expose only `slack_webhook_url_masked` (last 6 chars).
+- Slack + Resend calls run inside per-tenant try/except; a failing channel does not abort the other and does not crash the cron.
+
+### Changed
+- `server.py` — mounted `scorecard` router and cron.
+
+---
+
 ## 2026-07-30 — Phase 6 · Reputation Response Drafts
 
 ### Added
