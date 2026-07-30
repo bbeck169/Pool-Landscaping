@@ -8,6 +8,39 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-07-31 — Phase 9 · LLMs.txt Auto-Publish (Netlify / Vercel / Cloudflare Pages)
+
+### Added
+- `services/llmstxt_publish.py` — 3 provider adapters (Netlify, Vercel, Cloudflare Pages) behind a common shape: each exports `test_connection(config)` and `publish(config, filename, content)`; both return `{ok, error?, account_info?, deploy_id?, url?}` and never raise. Netlify uses `POST https://api.netlify.com/api/v1/sites/{site_id}/files/{filename}` (octet-stream raw body). Vercel uses `POST https://api.vercel.com/v13/deployments` with an inline `files` array — documented as "counts as a full production redeploy" (Vercel has no single-file live upload). Cloudflare Pages uses `POST https://api.cloudflare.com/client/v4/accounts/{account_id}/pages/projects/{project_name}/deployments` with a multipart `files` field. Adapters read `_mock_publish_response` / `_mock_test_response` from the config row as a test shortcut so pytest can stub HTTP without a shared-process transport injection. `publish()` orchestrator writes a `pending` history row, calls the adapter inside a try/except, then patches the row to `success` / `failed` and stamps `provider_deploy_id`, `provider_url`, `error_message`, `completed_at`. Config CRUD + masked read (`_mask` → last 6 chars, same pattern as Phase 7 Slack webhook). `auto_publish_on_generate(tenant, filename, content, requested_by)` iterates all `enabled=True + auto_publish_on_generate=True` configs and returns `{triggered, results[]}` — swallows exceptions.
+- `routers/llmstxt_publish.py` — 6 admin/super_admin/manager-only endpoints: `GET /api/aeo/llms-txt/publish/providers`, `POST /api/aeo/llms-txt/publish/config`, `DELETE /api/aeo/llms-txt/publish/config/{provider}`, `POST /api/aeo/llms-txt/publish/test/{provider}`, `POST /api/aeo/llms-txt/publish/{provider}` (calls Phase 5a `generate_llms_txt` then delegates to `publish()`; maps `http_status_hint=400 → HTTP 400 not_configured` and `502 → HTTP 502 upstream_error` while still writing the history row), `GET /api/aeo/llms-txt/publish/history?provider=&limit=20`.
+- Collections `llmstxt_publish_configs` (per-tenant, per-provider — schema: `provider, api_token, site_id?/site_url?, project_id?, project_name?, account_id?, enabled, auto_publish_on_generate, last_publish_at?, last_publish_status?, created_at, updated_at`) and `llmstxt_publish_history` (`publish_id, provider, filename, size_bytes, content_bytes_hash (sha256[:32]), requested_at, requested_by, status pending/success/failed, provider_deploy_id?, provider_url?, error_message?, completed_at?`).
+- Phase 5a integration — `routers/aeo.py:api_generate_llms_txt` now calls `auto_publish_on_generate()` after the generator and appends `publish_triggered` (bool) + `publish_results` (list of `{provider, status, publish_id?, error_message?}`) to the response. The generator's core signature and success path are unchanged; auto-publish failure never aborts the response.
+- Web admin — new **PublishConfigPanel** collapsible section on the existing `/admin/marketing/aeo` LLMs.txt tab (no new top-level page). 3 provider sub-tabs (Netlify / Vercel / Cloudflare Pages), per-tab paste-only token input with masked display of the last 6 chars, provider-specific fields (Netlify: `site_id` + optional `site_url`; Vercel: `project_id` with an amber "counts as full redeploy" note; Cloudflare Pages: `account_id` + `project_name`), Enabled + Auto-publish-on-Generate toggles, Save / Test-connection / Publish-llms.txt / Publish-llms-full.txt / Remove buttons, publish-history table (last 20 rows, provider, filename, size, colored status badge, deploy ID with external-link chip, error message on row `title`), plus a "Where do I get this token?" help link per provider (Netlify → `app.netlify.com/user/applications#personal-access-tokens`, Vercel → `vercel.com/account/tokens`, Cloudflare → `dash.cloudflare.com/profile/api-tokens`).
+- Pytest suite `backend/tests/test_llmstxt_publish.py` — 10 tests all green: adapter URL selection via `httpx.MockTransport`, not-configured 400 path, publish-success writes success history + captures `provider_deploy_id`/`provider_url`, publish-failure writes failed history + returns `http_status_hint=502` + `error_message` starts with `http_401`, POST-config through the live route strips `api_token` from the response and returns `api_token_masked` ending in the token's last 6 chars, auto-publish hook via live POST `/api/aeo/llms-txt/generate` sets `publish_triggered=true` + writes a history row, role guard × 6 endpoints × 2 non-mod accounts (all 403), cross-tenant lookup returns `[]` not 500, live test-connection endpoint round-trips through DB-mocked adapter, live POST publish endpoint (Cloudflare Pages) succeeds end-to-end.
+
+### Design decisions
+- **Token storage**: raw in `llmstxt_publish_configs.api_token`, NEVER surfaced back — every read helper drops `api_token` and exposes only `api_token_masked` (last 6 chars). Same pattern as the Phase 7 Slack webhook. No new secrets store introduced.
+- **HTTP stubbing pattern for tests**: an in-config `_mock_publish_response` / `_mock_test_response` short-circuits the adapter *before* it opens `httpx.AsyncClient`. This side-steps the cross-process issue where the uvicorn worker cannot see a monkey-patched `_http_client_factory` from the pytest process. `httpx.MockTransport` is still used for the pure-service adapter-selection test that runs in-process.
+- **Auto-publish concurrency**: awaited inline in the generator handler rather than fire-and-forget. This makes `publish_triggered` + `publish_results` in the response *authoritative* about the outcome (spec asked for a history row to be present after the generator returns — a background task would have raced). The perf cost is one stubbed HTTP round-trip per configured provider; acceptable for a UX where the user just clicked "Generate".
+- **Vercel single-file limitation**: documented in the UI as an amber banner + in the adapter docstring. For git-linked projects we recommend a commit PR path in a future phase.
+
+### Security
+- All 6 new endpoints reject Tech + Customer with 403 (verified live).
+- Cross-tenant config fetch returns `[]` (no 500 leak).
+- Adapter helpers guard on missing token / missing provider-specific fields with `{ok: False, error: "not_configured"}` — endpoints never crash on incomplete configs.
+- `POST /api/aeo/llms-txt/publish/{provider}` maps upstream failures to HTTP 502 with a friendly JSON body containing the `publish_id` for follow-up in history, without leaking provider response bodies beyond the first 400 chars.
+
+### Changed
+- `server.py` — mounted `llmstxt_publish` router.
+- `routers/aeo.py` — `api_generate_llms_txt` now returns `publish_triggered` + `publish_results` alongside the existing generator fields.
+
+### Out of scope (deferred, per spec)
+- OAuth flows for all 3 providers (PAT-only in Phase 9).
+- Auto-detect `site_id` / `project_id` from a PAT (needs a list-projects call per provider).
+- Multi-file publish, rollback / version pinning, and CI/GitHub-push integrations.
+
+---
+
 ## 2026-07-31 — Phase 8 · Weekly AEO PDF Digest (ReportLab + Resend)
 
 ### Added

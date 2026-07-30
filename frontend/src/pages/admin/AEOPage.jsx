@@ -14,7 +14,8 @@ import React from "react";
 import { toast } from "sonner";
 import { Sparkles, ScanSearch, Copy, RefreshCw, PlusCircle, X,
           FileText, ClipboardCheck, TrendingUp, Wrench, CheckCircle2,
-          AlertCircle, Globe, ExternalLink } from "lucide-react";
+          AlertCircle, Globe, ExternalLink, UploadCloud, Cloud, Save,
+          PlayCircle, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   AreaChart, Area,
@@ -437,6 +438,388 @@ function LlmsTxtTab() {
             <div>{result.install_instructions}</div>
           </div>
         </>
+      ) : null}
+
+      <PublishConfigPanel />
+    </div>
+  );
+}
+
+// ── Phase 9 · Publish LLMs.txt to Netlify / Vercel / CF Pages ────
+const _P9_TABS = [
+  { key: "netlify", label: "Netlify",
+    fields: [
+      { k: "site_id", label: "Site ID", placeholder: "12ab34cd-…",
+        hint: "Netlify dashboard → Site → Settings → Site details → Site ID." },
+      { k: "site_url", label: "Site URL (optional)",
+        placeholder: "https://your-site.netlify.app",
+        hint: "Used only to build the public URL shown in history." },
+    ],
+    docs: "https://app.netlify.com/user/applications#personal-access-tokens" },
+  { key: "vercel", label: "Vercel",
+    fields: [
+      { k: "project_id", label: "Project ID",
+        placeholder: "prj_…",
+        hint: "Vercel → Project → Settings → General → Project ID." },
+    ],
+    docs: "https://vercel.com/account/tokens",
+    note: "Vercel does not support single-file live upload — publishing creates a new production deployment containing only llms.txt. For git-linked projects prefer opening a commit PR." },
+  { key: "cloudflare_pages", label: "Cloudflare Pages",
+    fields: [
+      { k: "account_id", label: "Account ID", placeholder: "abc123…",
+        hint: "Cloudflare dashboard → Right sidebar → Account ID." },
+      { k: "project_name", label: "Project name", placeholder: "your-project",
+        hint: "The Pages project slug (URL: <name>.pages.dev)." },
+    ],
+    docs: "https://dash.cloudflare.com/profile/api-tokens" },
+];
+
+function PublishConfigPanel() {
+  const [open, setOpen] = React.useState(true);
+  const [active, setActive] = React.useState("netlify");
+  const [configs, setConfigs] = React.useState({});
+  const [form, setForm] = React.useState({});
+  const [testResult, setTestResult] = React.useState({});
+  const [busy, setBusy] = React.useState(false);
+  const [history, setHistory] = React.useState([]);
+
+  const activeMeta = _P9_TABS.find((t) => t.key === active);
+
+  const load = React.useCallback(async () => {
+    try {
+      const [p, h] = await Promise.all([
+        api.get("/aeo/llms-txt/publish/providers"),
+        api.get("/aeo/llms-txt/publish/history?limit=20"),
+      ]);
+      const map = {};
+      for (const c of p.items || []) map[c.provider] = c;
+      setConfigs(map);
+      setHistory(h.items || []);
+    } catch (e) {
+      toast.error(e?.body?.detail || e?.message || "Failed to load");
+    }
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+
+  React.useEffect(() => {
+    // Seed the form for the active tab from the saved config.
+    const c = configs[active] || {};
+    setForm({
+      api_token: "",  // paste-only, never round-tripped
+      site_id: c.site_id || "",
+      site_url: c.site_url || "",
+      project_id: c.project_id || "",
+      project_name: c.project_name || "",
+      account_id: c.account_id || "",
+      enabled: !!c.enabled,
+      auto_publish_on_generate: !!c.auto_publish_on_generate,
+    });
+    setTestResult({});
+  }, [active, configs]);
+
+  const saved = configs[active];
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const payload = { provider: active,
+                        enabled: !!form.enabled,
+                        auto_publish_on_generate: !!form.auto_publish_on_generate };
+      if (form.api_token) payload.api_token = form.api_token.trim();
+      for (const f of activeMeta.fields) {
+        if (form[f.k]) payload[f.k] = form[f.k].trim();
+      }
+      await api.post("/aeo/llms-txt/publish/config", payload);
+      toast.success(`${activeMeta.label} config saved`);
+      setForm({ ...form, api_token: "" });
+      await load();
+    } catch (e) {
+      toast.error(e?.body?.detail || e?.message || "Save failed");
+    } finally { setBusy(false); }
+  };
+
+  const testConnection = async () => {
+    setBusy(true); setTestResult({});
+    try {
+      const r = await api.post(`/aeo/llms-txt/publish/test/${active}`, {});
+      setTestResult(r);
+      if (r.ok) toast.success("Connection OK");
+      else toast.error(`Connection failed: ${r.error || "unknown"}`);
+    } catch (e) {
+      const msg = e?.body?.detail || e?.message || "Test failed";
+      setTestResult({ ok: false, error: String(msg).slice(0, 200) });
+      toast.error(msg);
+    } finally { setBusy(false); }
+  };
+
+  const publishNow = async (style) => {
+    setBusy(true);
+    try {
+      const r = await api.post(`/aeo/llms-txt/publish/${active}`,
+                                  { style });
+      toast.success(`Published (${r.filename}, ${r.size_bytes}B) · ${r.status}`);
+      await load();
+    } catch (e) {
+      toast.error(e?.body?.detail || e?.body?.error || e?.message || "Publish failed");
+    } finally { setBusy(false); }
+  };
+
+  const removeConfig = async () => {
+    if (!window.confirm(`Delete ${activeMeta.label} config?`)) return;
+    setBusy(true);
+    try {
+      await api.del(`/aeo/llms-txt/publish/config/${active}`);
+      toast.success("Removed");
+      await load();
+    } catch (e) {
+      toast.error(e?.body?.detail || e?.message || "Delete failed");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="rounded-xl overflow-hidden"
+          style={{ backgroundColor: colors.surface,
+                    border: `1px solid ${colors.border}` }}
+          data-testid="aeo-llms-publish-panel">
+      <button type="button"
+               onClick={() => setOpen(!open)}
+               className="w-full flex items-center gap-2 px-4 py-3 text-left"
+               style={{ color: colors.onSurface }}
+               data-testid="aeo-llms-publish-toggle">
+        {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        <UploadCloud size={16} />
+        <span className="text-sm font-semibold">Auto-publish to your site</span>
+        <span className="text-[11px]" style={{ color: colors.muted }}>
+          One-click push to Netlify / Vercel / Cloudflare Pages
+        </span>
+      </button>
+      {open ? (
+        <div className="px-4 pb-4 space-y-4">
+          <div className="flex gap-0.5 p-0.5 rounded-md w-fit"
+                style={{ backgroundColor: colors.surfaceSecondary,
+                          border: `1px solid ${colors.border}` }}
+                role="tablist" data-testid="aeo-llms-publish-tabs">
+            {_P9_TABS.map((t) => (
+              <button key={t.key} type="button"
+                       onClick={() => setActive(t.key)}
+                       className="px-3 py-1 rounded text-xs font-semibold flex items-center gap-1"
+                       style={{
+                         backgroundColor: active === t.key ? colors.brand : "transparent",
+                         color: active === t.key ? "#fff" : colors.onSurface,
+                       }}
+                       data-testid={`aeo-llms-publish-tab-${t.key}`}>
+                <Cloud size={12} /> {t.label}
+                {configs[t.key]?.enabled ? (
+                  <span className="inline-block w-1.5 h-1.5 rounded-full"
+                         style={{ backgroundColor: "#10B981" }} />
+                ) : null}
+              </button>
+            ))}
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 flex-wrap text-xs"
+                  style={{ color: colors.muted }}>
+              <span>API token</span>
+              {saved?.api_token_masked ? (
+                <span className="px-1.5 py-0.5 rounded font-mono"
+                       style={{ backgroundColor: colors.surfaceSecondary,
+                                 color: colors.onSurface,
+                                 border: `1px solid ${colors.border}` }}
+                       data-testid={`aeo-llms-publish-masked-${active}`}>
+                  {saved.api_token_masked}
+                </span>
+              ) : (
+                <span style={{ color: "#DC2626" }}>Not configured</span>
+              )}
+              <a href={activeMeta.docs} target="_blank" rel="noopener noreferrer"
+                  className="ml-auto text-[11px] inline-flex items-center gap-1"
+                  style={{ color: colors.brand }}>
+                Where do I get this? <ExternalLink size={10} />
+              </a>
+            </div>
+            <input type="password" value={form.api_token || ""}
+                    onChange={(e) => setForm({ ...form, api_token: e.target.value })}
+                    placeholder={saved?.api_token_masked
+                                    ? "Paste to replace the current token…"
+                                    : "Paste your Personal Access Token"}
+                    className="w-full rounded-lg px-3 py-1.5 text-sm font-mono"
+                    style={{ backgroundColor: colors.surfaceSecondary,
+                              color: colors.onSurface,
+                              border: `1px solid ${colors.border}` }}
+                    data-testid={`aeo-llms-publish-token-${active}`} />
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {activeMeta.fields.map((f) => (
+                <div key={f.k}>
+                  <label className="text-[11px] font-semibold block mb-0.5"
+                          style={{ color: colors.muted }}>{f.label}</label>
+                  <input value={form[f.k] || ""}
+                          onChange={(e) => setForm({ ...form, [f.k]: e.target.value })}
+                          placeholder={f.placeholder}
+                          className="w-full rounded-lg px-2 py-1.5 text-sm"
+                          style={{ backgroundColor: colors.surfaceSecondary,
+                                    color: colors.onSurface,
+                                    border: `1px solid ${colors.border}` }}
+                          data-testid={`aeo-llms-publish-field-${active}-${f.k}`} />
+                  {f.hint ? (
+                    <div className="text-[10px] mt-0.5" style={{ color: colors.muted }}>
+                      {f.hint}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-4 flex-wrap">
+              <label className="flex items-center gap-2 text-sm"
+                      style={{ color: colors.onSurface }}>
+                <input type="checkbox" checked={!!form.enabled}
+                        onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
+                        data-testid={`aeo-llms-publish-enabled-${active}`} />
+                Enabled
+              </label>
+              <label className="flex items-center gap-2 text-sm"
+                      style={{ color: colors.onSurface }}>
+                <input type="checkbox" checked={!!form.auto_publish_on_generate}
+                        onChange={(e) => setForm({ ...form,
+                                                      auto_publish_on_generate: e.target.checked })}
+                        data-testid={`aeo-llms-publish-auto-${active}`} />
+                Auto-publish on Generate
+              </label>
+            </div>
+
+            {activeMeta.note ? (
+              <div className="text-[11px] p-2 rounded-md"
+                    style={{ backgroundColor: "#FEF3C7", color: "#92400E",
+                              border: "1px solid #FCD34D" }}>
+                {activeMeta.note}
+              </div>
+            ) : null}
+
+            <div className="flex gap-2 flex-wrap">
+              <button type="button" onClick={save} disabled={busy}
+                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold disabled:opacity-50"
+                       style={{ backgroundColor: colors.brand, color: "#fff" }}
+                       data-testid={`aeo-llms-publish-save-${active}`}>
+                <Save size={14} /> Save
+              </button>
+              <button type="button" onClick={testConnection} disabled={busy || !saved}
+                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold disabled:opacity-50"
+                       style={{ backgroundColor: colors.surfaceSecondary,
+                                 color: colors.onSurface,
+                                 border: `1px solid ${colors.border}` }}
+                       data-testid={`aeo-llms-publish-test-${active}`}>
+                <CheckCircle2 size={14} /> Test connection
+              </button>
+              <button type="button" onClick={() => publishNow("concise")} disabled={busy || !saved}
+                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold disabled:opacity-50"
+                       style={{ backgroundColor: "#059669", color: "#fff" }}
+                       data-testid={`aeo-llms-publish-now-concise-${active}`}>
+                <PlayCircle size={14} /> Publish llms.txt
+              </button>
+              <button type="button" onClick={() => publishNow("full")} disabled={busy || !saved}
+                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold disabled:opacity-50"
+                       style={{ backgroundColor: colors.surfaceSecondary,
+                                 color: colors.onSurface,
+                                 border: `1px solid ${colors.border}` }}
+                       data-testid={`aeo-llms-publish-now-full-${active}`}>
+                <PlayCircle size={14} /> Publish llms-full.txt
+              </button>
+              {saved ? (
+                <button type="button" onClick={removeConfig} disabled={busy}
+                         className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold disabled:opacity-50"
+                         style={{ backgroundColor: "transparent",
+                                   color: "#DC2626",
+                                   border: `1px solid #FCA5A5` }}
+                         data-testid={`aeo-llms-publish-delete-${active}`}>
+                  <Trash2 size={14} /> Remove
+                </button>
+              ) : null}
+            </div>
+
+            {testResult && Object.keys(testResult).length ? (
+              <div className="text-xs p-2 rounded-md flex items-start gap-2"
+                    style={{ backgroundColor: testResult.ok ? "#ECFDF5" : "#FEE2E2",
+                              color: testResult.ok ? "#065F46" : "#991B1B",
+                              border: `1px solid ${testResult.ok ? "#A7F3D0" : "#FCA5A5"}` }}
+                    data-testid={`aeo-llms-publish-test-result-${active}`}>
+                {testResult.ok ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                <div>
+                  {testResult.ok
+                    ? `OK · ${JSON.stringify(testResult.account_info || {})}`
+                    : `Failed · ${testResult.error || "unknown"}${testResult.detail ? " · " + testResult.detail : ""}`}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="pt-2 border-t"
+                style={{ borderColor: colors.border }}
+                data-testid="aeo-llms-publish-history">
+            <div className="text-[11px] uppercase tracking-wide font-semibold mb-2"
+                  style={{ color: colors.muted }}>Publish history</div>
+            {history.length === 0 ? (
+              <div className="text-xs" style={{ color: colors.muted }}>
+                No publishes yet.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs"
+                        style={{ color: colors.onSurface }}>
+                  <thead>
+                    <tr style={{ color: colors.muted }}>
+                      <th className="text-left py-1 pr-2">When</th>
+                      <th className="text-left py-1 pr-2">Provider</th>
+                      <th className="text-left py-1 pr-2">File</th>
+                      <th className="text-right py-1 pr-2">Size</th>
+                      <th className="text-left py-1 pr-2">Status</th>
+                      <th className="text-left py-1 pr-2">Deploy</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map((h) => (
+                      <tr key={h.publish_id}
+                           style={{ borderTop: `1px solid ${colors.border}` }}
+                           data-testid={`aeo-llms-publish-row-${h.publish_id}`}
+                           title={h.error_message || ""}>
+                        <td className="py-1 pr-2 font-mono text-[11px]">
+                          {(h.requested_at || "").slice(0, 19).replace("T", " ")}
+                        </td>
+                        <td className="py-1 pr-2">{h.provider}</td>
+                        <td className="py-1 pr-2 font-mono">{h.filename}</td>
+                        <td className="py-1 pr-2 text-right">{h.size_bytes}B</td>
+                        <td className="py-1 pr-2">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                                 style={{
+                                   backgroundColor: h.status === "success" ? "#D1FAE5"
+                                     : h.status === "failed" ? "#FEE2E2" : "#E5E7EB",
+                                   color: h.status === "success" ? "#065F46"
+                                     : h.status === "failed" ? "#991B1B" : "#374151",
+                                 }}>
+                            {h.status}
+                          </span>
+                        </td>
+                        <td className="py-1 pr-2">
+                          {h.provider_url ? (
+                            <a href={h.provider_url} target="_blank" rel="noopener noreferrer"
+                                style={{ color: colors.brand }}
+                                className="inline-flex items-center gap-1">
+                              {(h.provider_deploy_id || "open").slice(0, 12)}
+                              <ExternalLink size={10} />
+                            </a>
+                          ) : h.provider_deploy_id ? (
+                            <span className="font-mono">{h.provider_deploy_id.slice(0, 12)}</span>
+                          ) : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
       ) : null}
     </div>
   );

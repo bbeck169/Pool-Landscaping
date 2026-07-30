@@ -314,6 +314,10 @@ api_router.include_router(_scorecard_router.router)
 from routers import aeo_digest as _aeo_digest_router  # noqa: E402
 api_router.include_router(_aeo_digest_router.router)
 
+# Phase 9 · Feb-2026 — LLMs.txt Auto-Publish (Netlify / Vercel / CF Pages).
+from routers import llmstxt_publish as _llmstxt_pub_router  # noqa: E402
+api_router.include_router(_llmstxt_pub_router.router)
+
 # Phase SEO-A · Feb-2026 — Free on-page SEO auditor (admin+/manager).
 from routers import seo_scans as _seo_scans_router  # noqa: E402
 api_router.include_router(_seo_scans_router.router)

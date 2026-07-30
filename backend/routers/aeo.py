@@ -125,6 +125,20 @@ async def api_generate_llms_txt(body: LlmsTxtBody,
     out = generate_llms_txt(tenant=tenant, style=body.style,
                               include_faqs=body.include_faqs,
                               recent_checkins=recent)
+    # Phase 9 · Feb-2026 — opt-in auto-publish hook. Fires against every
+    # provider config with enabled=True + auto_publish_on_generate=True.
+    # Failures never abort the generator response.
+    try:
+        from services.llmstxt_publish import auto_publish_on_generate as _autopub
+        ap = await _autopub(tenant_id, filename=out["filename"],
+                              content=out["content"].encode("utf-8"),
+                              requested_by=(caller.get("id")
+                                             or caller.get("email") or ""))
+        out["publish_triggered"] = bool(ap.get("triggered"))
+        out["publish_results"] = ap.get("results") or []
+    except Exception:
+        out["publish_triggered"] = False
+        out["publish_results"] = []
     return out
 
 # ─── Phase 5b · AI Visibility Tracker ─────────────────────────────
