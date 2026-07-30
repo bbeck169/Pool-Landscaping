@@ -1,9 +1,10 @@
 import React from "react";
 import { api } from "@/api";
 import { colors } from "@/theme";
-import { RefreshCw, MapPin, Clock, AlertTriangle, Layers } from "lucide-react";
+import { RefreshCw, MapPin, Clock, AlertTriangle, Layers, Link as LinkIcon } from "lucide-react";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 import { toast } from "sonner";
+import StopAttributionModal from "@/pages/admin/StopAttributionModal";
 
 /**
  * G2 · Feb-2026 — Driver Activity report (first-pass timeline).
@@ -52,6 +53,22 @@ export default function DriverActivityPage() {
   const [loading, setLoading] = React.useState(false);
   const [data, setData] = React.useState(null);
   const [error, setError] = React.useState(null);
+  // G5b · Feb-2026 — attribution modal state.
+  const [attrStop, setAttrStop] = React.useState(null);
+  // G5b addendum #2 · Feb-2026 — customer/address search filters
+  // (debounced 400ms so we don't refetch on every keystroke).
+  const [qCustomer, setQCustomer] = React.useState("");
+  const [qAddress, setQAddress] = React.useState("");
+  const [qCustomerDebounced, setQCustomerDebounced] = React.useState("");
+  const [qAddressDebounced, setQAddressDebounced] = React.useState("");
+  React.useEffect(() => {
+    const t = setTimeout(() => setQCustomerDebounced(qCustomer.trim()), 400);
+    return () => clearTimeout(t);
+  }, [qCustomer]);
+  React.useEffect(() => {
+    const t = setTimeout(() => setQAddressDebounced(qAddress.trim()), 400);
+    return () => clearTimeout(t);
+  }, [qAddress]);
 
   // Load techs on mount.
   React.useEffect(() => {
@@ -78,16 +95,19 @@ export default function DriverActivityPage() {
     try {
       const from = `${day}T00:00:00Z`;
       const to = `${day}T23:59:59Z`;
-      const r = await api.get(
-        `/gps/stops?user_id=${encodeURIComponent(techId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
-      );
+      const qs = new URLSearchParams({
+        user_id: techId, from, to,
+      });
+      if (qCustomerDebounced) qs.set("q_customer", qCustomerDebounced);
+      if (qAddressDebounced)  qs.set("q_address",  qAddressDebounced);
+      const r = await api.get(`/gps/stops?${qs.toString()}`);
       setData(r);
     } catch (e) {
       setError(e?.message || "failed to load stops");
     } finally {
       setLoading(false);
     }
-  }, [techId, day]);
+  }, [techId, day, qCustomerDebounced, qAddressDebounced]);
 
   React.useEffect(() => { load(); }, [load]);
 
@@ -195,6 +215,48 @@ export default function DriverActivityPage() {
             }}
           />
         </label>
+
+        {/* G5b addendum #2 · Feb-2026 — filter stops by customer / address */}
+        <label className="flex flex-col gap-1 text-xs font-semibold"
+                style={{ color: colors.muted }}>
+          Customer
+          <input
+            type="text"
+            value={qCustomer}
+            placeholder="Search customer…"
+            onChange={(e) => setQCustomer(e.target.value)}
+            data-testid="driver-activity-q-customer"
+            className="h-9 px-2 rounded-lg text-sm"
+            style={{ backgroundColor: colors.surface,
+                     color: colors.onSurface,
+                     border: `1px solid ${colors.border}`, minWidth: 160 }}
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-xs font-semibold"
+                style={{ color: colors.muted }}>
+          Address
+          <input
+            type="text"
+            value={qAddress}
+            placeholder="Search address…"
+            onChange={(e) => setQAddress(e.target.value)}
+            data-testid="driver-activity-q-address"
+            className="h-9 px-2 rounded-lg text-sm"
+            style={{ backgroundColor: colors.surface,
+                     color: colors.onSurface,
+                     border: `1px solid ${colors.border}`, minWidth: 160 }}
+          />
+        </label>
+        {(qCustomer || qAddress) && (
+          <button type="button"
+            onClick={() => { setQCustomer(""); setQAddress(""); }}
+            className="self-end h-9 px-2 rounded-lg text-xs"
+            style={{ border: `1px solid ${colors.border}`,
+                     color: colors.muted }}
+            data-testid="driver-activity-q-clear">
+            Clear filters
+          </button>
+        )}
       </div>
 
       {/* Summary tiles */}
@@ -343,6 +405,58 @@ export default function DriverActivityPage() {
                     Address unavailable · {s.center_lat?.toFixed(4)}, {s.center_lon?.toFixed(4)}
                   </span>
                 )}
+                {/* G5b addendum · Feb-2026 — attributed customer name */}
+                {s.attributed_customer_name ? (
+                  <span
+                    className="ml-2 text-[11px]"
+                    style={{ color: colors.muted }}
+                    data-testid={`driver-activity-stop-customer-${s.id}`}
+                  >
+                    · {s.attributed_customer_name}
+                  </span>
+                ) : null}
+              </div>
+              {/* G5b · Feb-2026 — attribution badge + change action */}
+              <div className="flex items-center gap-2 mr-2"
+                   data-testid={`driver-activity-stop-attribution-${s.id}`}>
+                {s.attribution_status === "auto_linked"
+                    || s.attribution_status === "manual_linked" ? (
+                  <span
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px]"
+                    style={{
+                      background: s.attribution_status === "manual_linked"
+                        ? "#DBEAFE" : "#DCFCE7",
+                      color: s.attribution_status === "manual_linked"
+                        ? "#1E40AF" : "#065F46",
+                    }}
+                    data-testid={`driver-activity-stop-job-${s.id}`}
+                    title={s.attributed_job_name || ""}
+                  >
+                    <LinkIcon size={10} />
+                    {s.attributed_job_name || "Linked"}
+                  </span>
+                ) : s.attribution_status === "no_match" ? (
+                  <span className="text-[10px]"
+                        style={{ color: colors.muted }}
+                        data-testid={`driver-activity-stop-nomatch-${s.id}`}>
+                    unlinked
+                  </span>
+                ) : s.attribution_status === "unlinked" ? (
+                  <span className="text-[10px]"
+                        style={{ color: colors.muted }}
+                        data-testid={`driver-activity-stop-manual-unlinked-${s.id}`}>
+                    unlinked (manual)
+                  </span>
+                ) : (
+                  <Clock size={10} style={{ color: colors.muted }}
+                    data-testid={`driver-activity-stop-pending-${s.id}`} />
+                )}
+                <button type="button"
+                  onClick={() => setAttrStop(s)}
+                  className="text-[10px] text-sky-600 hover:underline"
+                  data-testid={`driver-activity-stop-change-${s.id}`}>
+                  Change
+                </button>
               </div>
               <div style={{ color: colors.muted }}>
                 {_fmtHMS(s.duration_s)}
@@ -354,6 +468,12 @@ export default function DriverActivityPage() {
 
       {/* G3 · Feb-2026 — Route Map panel with 3 toggleable layers. */}
       <RouteMapPanel techId={techId} day={day} onRefreshStops={load} />
+      {/* G5b · Feb-2026 — attribution override modal. */}
+      {attrStop && (
+        <StopAttributionModal stop={attrStop}
+          onClose={() => setAttrStop(null)}
+          onSaved={() => { setAttrStop(null); load(); }} />
+      )}
     </SafeScrollContainer>
   );
 }

@@ -266,6 +266,8 @@ async def export_activity_csv(
     from_: str = Query(..., alias="from"),
     to: str = Query(...),
     user_id: Optional[str] = Query(None),
+    q_customer: Optional[str] = Query(None),
+    q_address: Optional[str] = Query(None),
     caller: Dict[str, Any] = Depends(get_current_user),
 ):
     _require_mod(caller)
@@ -287,11 +289,43 @@ async def export_activity_csv(
 
     name_map = await _tech_name_map(tenant_id)
 
+    # G5b addendum · Feb-2026 — resolve attributed customer names in
+    # one round-trip (rather than per-row) before streaming rows.
+    all_cust_ids: set = set()
+    cust_names: Dict[str, str] = {}
+    if True:
+        # Two-pass: first pass collects IDs so we can bulk-fetch names.
+        # Small cost given we're already streaming from Mongo.
+        # (Streaming with per-row lookups would N+1 the DB.)
+        async for s in db.driver_stops.find(
+                q, {"_id": 0, "attributed_customer_id": 1}):
+            cid = s.get("attributed_customer_id")
+            if cid:
+                all_cust_ids.add(cid)
+        if all_cust_ids:
+            async for c in db.customers.find(
+                    {"tenant_id": tenant_id, "id": {"$in": list(all_cust_ids)}},
+                    {"_id": 0, "id": 1, "name": 1}):
+                cust_names[c["id"]] = c.get("name") or ""
+
+    # Precompile filters once.
+    import re
+    cust_pat = (re.compile(re.escape(q_customer), re.IGNORECASE)
+                if q_customer else None)
+    addr_pat = (re.compile(re.escape(q_address), re.IGNORECASE)
+                if q_address else None)
+
     async def _rows():
         cursor = db.driver_stops.find(q, {"_id": 0}) \
                                     .sort("started_at", 1)
         async for s in cursor:
             addr = (s.get("address") or {}).get("formatted") or ""
+            cid = s.get("attributed_customer_id")
+            cust_name = cust_names.get(cid, "") if cid else ""
+            if cust_pat and not cust_pat.search(cust_name):
+                continue
+            if addr_pat and not addr_pat.search(addr):
+                continue
             yield [
                 s.get("user_id") or "",
                 name_map.get(s.get("user_id") or "", ""),
@@ -301,11 +335,13 @@ async def export_activity_csv(
                 s.get("center_lat"),
                 s.get("center_lon"),
                 addr,
+                cust_name,
                 len(s.get("ping_ids") or []),
             ]
 
     header = ["user_id", "user_name", "started_at", "ended_at",
               "duration_s", "center_lat", "center_lon", "address",
+              "attributed_customer_name",
               "ping_count"]
     filename = f'driver_activity_{from_.replace(":", "").replace("-", "")}_{to.replace(":", "").replace("-", "")}.csv'
     return StreamingResponse(

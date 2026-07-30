@@ -13,6 +13,7 @@ import {
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { useAuth } from "@/auth";
+import AttributionSettingsPanel from "@/pages/admin/AttributionSettingsPanel";
 
 const HELPER_FG =
   "How often the app sends a location ping while the technician has the "
@@ -266,6 +267,8 @@ export default function GpsSettingsPage() {
           </button>
         </div>
       </section>
+      {/* G5b · Feb-2026 — Stop → Job attribution knobs. */}
+      <AttributionSettingsPanel />
     </div>
   );
 }

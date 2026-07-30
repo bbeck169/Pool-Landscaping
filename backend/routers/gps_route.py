@@ -54,6 +54,8 @@ async def get_route(
     user_id: str = Query(..., min_length=1),
     from_: str = Query(..., alias="from"),
     to: str = Query(...),
+    q_customer: Optional[str] = Query(None),
+    q_address: Optional[str] = Query(None),
     caller: Dict[str, Any] = Depends(get_current_user),
 ):
     _require_mod(caller)
@@ -77,6 +79,37 @@ async def get_route(
                               "$lte": to.replace("Z", "+00:00")}},
             {"_id": 0}).sort("started_at", 1):
         stops.append(s)
+
+    # G5b addendum · Feb-2026 — hydrate attributed_customer_name on
+    # every stop (one round-trip). Missing/deleted customers → null.
+    cust_ids = list({s.get("attributed_customer_id") for s in stops
+                     if s.get("attributed_customer_id")})
+    if cust_ids:
+        cust_map: Dict[str, str] = {}
+        async for c in db.customers.find(
+                {"tenant_id": tenant_id, "id": {"$in": cust_ids}},
+                {"_id": 0, "id": 1, "name": 1}):
+            cust_map[c["id"]] = c.get("name") or ""
+        for s in stops:
+            cid = s.get("attributed_customer_id")
+            s["attributed_customer_name"] = cust_map.get(cid) if cid else None
+    else:
+        for s in stops:
+            s["attributed_customer_name"] = None
+
+    # G5b addendum #2 · Feb-2026 — post-hydration search filters. Only
+    # the stops list is filtered — pings are not (they're the raw
+    # signal, and downsampling already happens above). Empty filter =
+    # no-op. Case-insensitive substring; regex chars escaped.
+    import re
+    if q_customer:
+        pat = re.compile(re.escape(q_customer), re.IGNORECASE)
+        stops = [s for s in stops
+                 if pat.search(s.get("attributed_customer_name") or "")]
+    if q_address:
+        pat = re.compile(re.escape(q_address), re.IGNORECASE)
+        stops = [s for s in stops
+                 if pat.search((s.get("address") or {}).get("formatted") or "")]
 
     # Pings — count first, then downsample if we need to.
     q_pings = {"tenant_id": tenant_id, "user_id": user_id,

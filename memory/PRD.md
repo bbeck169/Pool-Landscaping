@@ -9667,3 +9667,95 @@ enters or exits a monitored zone.
 - Auto job attribution based on geofence entry.
 - Route replay (G5c).
 - Driver scorecard (G5d).
+
+---
+
+## Phase G5b · Feb-2026 — Auto Job Attribution + addenda (COMPLETE)
+
+**Summary**
+Attributes GPS `driver_stops` to `jobs` by same-day proximity with a
+tenant-tunable threshold. Emits stable `attribution_status` on every
+row (pending / auto_linked / manual_linked / no_match / unlinked).
+Manual overrides survive the cron. Time-on-site report + Driver
+Activity attribution UI ship together. Two addenda folded in:
+(#1) `attributed_customer_name` echoed on 4 admin surfaces + CSV;
+(#2) `q_customer` / `q_address` server-side filters on 4 endpoints.
+
+**Backend added**
+- `services/stop_attributor.py` — candidate selection, address
+  resolution (job → property → customer.service_lat/lng), haversine
+  scoring, `attribute_stop`, `run_attribution_batch`, and
+  `run_attribution_batch_all_tenants` (cron entry).
+- `routers/stop_attribution.py` — 5 admin endpoints: settings
+  GET/PATCH, `run-batch`, manual attribute/unlink (audited),
+  summary, per-job detail.
+- `tests/test_stop_attributor.py`, `test_attribution_api.py`,
+  `test_gps_report_search.py`.
+
+**Backend extended**
+- `routers/gps_stops.py` — projects attribution fields + address;
+  hydrates `attributed_job_name` + `attributed_customer_name`;
+  accepts `q_customer`, `q_address` filters.
+- `routers/gps_route.py` — same customer-name hydration + filters
+  on stops (pings unfiltered).
+- `routers/gps_user_controls.py` — activity CSV gains
+  `attributed_customer_name` column + `q_customer` / `q_address`.
+- `server.py` — registers `stop_attribution` router + 5-min cron
+  `stop_attribution_batch`.
+
+**New collections**
+- `stop_attribution_meta` (tenant-scoped tuning).
+- `driver_stops` extended (additive): `attribution_status`,
+  `attributed_job_id`, `attributed_customer_id`,
+  `attribution_distance_m`, `attribution_updated_at`,
+  `attribution_updated_by_user_id`.
+
+**Frontend added**
+- `pages/admin/TimeOnSitePage.jsx` — counts strip, top-jobs table
+  by total time-on-site, job drawer.
+- `pages/admin/StopAttributionModal.jsx` — same-day scheduled-job
+  candidate list sorted by distance, per-row Link + Unlink.
+- `pages/admin/AttributionSettingsPanel.jsx` — knobs on
+  `/admin/settings/gps`.
+
+**Frontend extended**
+- `pages/admin/DriverActivityPage.jsx` — attribution status pills +
+  customer name inline on each row + "Change" opens the modal;
+  Customer/Address debounced search inputs above the timeline;
+  Clear filters button.
+- `pages/admin/GpsSettingsPage.jsx` — mounts
+  `AttributionSettingsPanel` at bottom.
+- `App.js` — `/admin/gps/time-on-site` route (AdminOnly).
+
+**Vitest suites added**
+- `time-on-site-page.test.jsx` (4 tests) — counts + drawer +
+  range + run-batch.
+- `driver-activity-attribution.test.jsx` (3 tests) — modal
+  candidate order + Link + Unlink POSTs.
+- `driver-activity-filters.test.jsx` (4 tests) — search inputs
+  render + debounced refetch + Clear + inline customer name.
+
+**Test counts**
+- Backend: 37 passing (10 unit + 16 API + 11 report-search).
+- Frontend new: 11 passing (across 3 new files).
+- **Vitest baseline**: 12 pre-existing failures unchanged
+  (`moderation-bulk.test.jsx` is a known flaky file that flips
+  between pass/fail based on test ordering — passes in isolation).
+- Total after G5b: 498 passing / 512 tests / 108 files.
+
+**Guardrails**
+- No external repo cloning.
+- No mobile changes.
+- No LZ/AB/PB/MR/SEO code touched.
+- G0-G5a extended only at declared extension points (ingest hook +
+  live-positions in G5a; `/gps/stops`, `/gps/route`, activity CSV
+  in G5b).
+- Manual overrides (`manual_linked` / `unlinked`) survive the cron.
+- Every attribution change writes a `stop_attribution_changed`
+  audit row.
+- Tenant-scoped everywhere.
+- `attributed_customer_name` NEVER appears on customer_portal,
+  public_widget, public_checkins, PDF templates, or any
+  `customer/`, `public/`, `portal/` frontend page (grep-verified).
+- Regex-special chars in `q_customer` / `q_address` are escaped
+  with `re.escape` — filters can't over-match or crash.

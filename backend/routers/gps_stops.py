@@ -44,6 +44,8 @@ async def list_stops(
     user_id: str = Query(...),
     from_: str = Query(..., alias="from"),
     to: str = Query(...),
+    q_customer: Optional[str] = Query(None),
+    q_address: Optional[str] = Query(None),
     caller: Dict[str, Any] = Depends(get_current_user),
 ):
     _require(caller.get("role") or "", _READ_ROLES)
@@ -77,9 +79,66 @@ async def list_stops(
             "_id": 0, "id": 1, "started_at": 1, "ended_at": 1,
             "duration_s": 1, "center_lat": 1, "center_lon": 1,
             "radius_m": 1, "ping_count": 1, "source": 1,
+            # G3 · Feb-2026 — reverse-geocoded address (nullable).
+            "address": 1, "address_status": 1,
+            # G5b · Feb-2026 — attribution fields (nullable, additive).
+            "attribution_status": 1, "attributed_job_id": 1,
+            "attributed_customer_id": 1, "attribution_distance_m": 1,
+            "attribution_updated_at": 1,
         },
     ).sort("started_at", 1):
         stops.append(s)
+
+    # G5b · Feb-2026 — one-round-trip hydrate of job + customer names
+    # so the driver-activity UI can render "attributed to X" inline.
+    job_ids = list({s.get("attributed_job_id") for s in stops
+                    if s.get("attributed_job_id")})
+    cust_ids = list({s.get("attributed_customer_id") for s in stops
+                     if s.get("attributed_customer_id")})
+    jobs_by_id: Dict[str, Any] = {}
+    custs_by_id: Dict[str, Any] = {}
+    if job_ids:
+        async for j in db.jobs.find(
+            {"tenant_id": tenant_id, "id": {"$in": job_ids}},
+            {"_id": 0, "id": 1, "title": 1, "service_type": 1,
+             "customer_name": 1, "address": 1},
+        ):
+            jobs_by_id[j["id"]] = j
+    if cust_ids:
+        async for c in db.customers.find(
+            {"tenant_id": tenant_id, "id": {"$in": cust_ids}},
+            {"_id": 0, "id": 1, "name": 1},
+        ):
+            custs_by_id[c["id"]] = c
+    for s in stops:
+        jid = s.get("attributed_job_id")
+        cid = s.get("attributed_customer_id")
+        j = jobs_by_id.get(jid) if jid else None
+        c = custs_by_id.get(cid) if cid else None
+        if j:
+            s["attributed_job_name"] = (j.get("title")
+                                        or j.get("service_type") or "Job")
+        # G5b addendum · Feb-2026 — only trust the live customer doc.
+        # If the customer no longer exists, echo null (per the
+        # deleted-customer contract).
+        if cid:
+            s["attributed_customer_name"] = (c.get("name")
+                                              if c else None)
+        else:
+            s["attributed_customer_name"] = None
+
+    # G5b addendum #2 · Feb-2026 — post-hydration filters. Substring,
+    # case-insensitive. Applied AFTER the join so the fields we filter
+    # on already exist on the row.
+    import re
+    if q_customer:
+        pat = re.compile(re.escape(q_customer), re.IGNORECASE)
+        stops = [s for s in stops
+                 if pat.search(s.get("attributed_customer_name") or "")]
+    if q_address:
+        pat = re.compile(re.escape(q_address), re.IGNORECASE)
+        stops = [s for s in stops
+                 if pat.search((s.get("address") or {}).get("formatted") or "")]
 
     return {
         "user_id": user_id,

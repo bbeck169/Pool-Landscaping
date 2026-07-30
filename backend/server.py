@@ -310,6 +310,12 @@ api_router.include_router(_gps_user_controls_router.router)
 from routers import geofences as _geofences_router  # noqa: E402
 api_router.include_router(_geofences_router.router)
 
+# Phase G5b · Feb-2026 — Stop → Job proximity attribution. Extends
+# G2 driver_stops with attribution fields (backwards-compatible).
+# Cron registered in the scheduler init block below.
+from routers import stop_attribution as _stop_attr_router  # noqa: E402
+api_router.include_router(_stop_attr_router.router)
+
 # Feb-2026 · Re-added after LZ4 Stripe purge — Payments summary tile.
 from routers import payments_summary as _payments_summary_router  # noqa: E402
 api_router.include_router(_payments_summary_router.router)
@@ -850,6 +856,25 @@ async def _background_seed():
             )
         except Exception as e:                                        # noqa: BLE001
             logger.warning(f"[gps_stops] cron install failed: {e}")
+
+        # G5b · Feb-2026 — Attribution batch: link pending stops to
+        # closest same-day scheduled job (within tenant-configurable
+        # threshold). Runs every 5 minutes; no-op when gps_settings
+        # is disabled or the tenant has zero pending stops.
+        try:
+            from services.stop_attributor import (
+                run_attribution_batch_all_tenants)
+            scheduler.add_job(
+                run_attribution_batch_all_tenants,
+                "interval", minutes=5,
+                id="stop_attribution_batch",
+                replace_existing=True,
+                max_instances=1, coalesce=True,
+            )
+            logger.info("scheduler: stop_attribution_batch "
+                         "registered (every 5 min)")
+        except Exception as e:                                        # noqa: BLE001
+            logger.warning(f"[stop_attribute] cron install failed: {e}")
 
         # Phase SEO-B · Feb-2026 — Outreach follow-up daily digest
         # at 08:00 UTC. Emails each tenant owner a summary of due
