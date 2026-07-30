@@ -9824,3 +9824,72 @@ and a scrub bar.
 - G3 no-token degradation preserved.
 - G5b addendum #2 `q_customer` / `q_address` filters still work
   alongside the playback meta.
+
+---
+
+## Phase G5d · Feb-2026 — Driver Scorecard / Leaderboard (COMPLETE)
+
+**Summary**
+Per-technician weekly composite score (0-100) derived from
+`driver_stops`, `gps_pings`, and G5b job attribution. Leaderboard,
+per-user 8-week trend, and CSV export. No behavior-signal inference —
+all fields are derivations of G0-G5c data.
+
+**Backend added**
+- `services/driver_scorecard.py` — 10 pure metrics
+  (`stops_count`, `avg_stop_duration_s`, `total_stopped_time_s`,
+  `total_driving_time_s`, `total_pings_count`,
+  `unique_jobs_attributed`, `unique_customers_attributed`,
+  `on_time_arrival_rate`, `estimated_miles`, `days_active`) plus
+  `attribution_coverage`, `idle_penalty`, and a composite `score`
+  with tunable `SCORECARD_WEIGHTS`. 5-min TTL cache in
+  `db.scorecard_cache`. Range resolver for this_week / last_week /
+  month_to_date / custom.
+- `routers/driver_scorecard.py` — 3 endpoints:
+  `GET /admin/gps/scorecard/leaderboard`,
+  `GET /admin/gps/scorecard/user/{uid}` (adds 8-week trend),
+  `GET /admin/gps/scorecard/export.csv`. Admin+/manager only.
+- `tests/test_driver_scorecard.py` — 9 tests: ranking + metric
+  math, department filter, idle-penalty math, custom-range
+  validation, RBAC, empty state, user-detail 8-week trend shape,
+  404 for unknown user, CSV shape + RBAC.
+
+**Backend extended**
+- `server.py` — mounts `driver_scorecard` router.
+
+**New collection**
+- `scorecard_cache` (5-min TTL keyed by
+  `{tenant_id}::{range_label}::{department}`).
+
+**Frontend added**
+- `pages/admin/DriverScorecardPage.jsx` — range + department
+  filters, Export CSV button, leaderboard table with rank + score
+  badge (green ≥80 / yellow ≥60 / red <60) + all metrics; row-click
+  opens a detail drawer with a big SVG score gauge, an 8-week
+  recharts `LineChart` trend, full metrics table, and a
+  cross-link to `/admin/reports/driver-activity?user_id=...`.
+- `test/scorecard-leaderboard.test.jsx` — 5 tests: rows + badges,
+  range refetch, row-click drawer + trend chart + metrics table,
+  department filter refetch, empty state.
+
+**Frontend extended**
+- `App.js` — `admin/gps/scorecard` route (AdminOnly).
+
+**Test counts**
+- Backend: 9 new; all G5 backend tests together (G5a + G5b + G5c +
+  G5d) → **81 passing / 0 failed** (20.7s).
+- Frontend Vitest new: 5 passing.
+- **Vitest baseline preserved**: 12 pre-existing failures / 510
+  passing / 1 skipped (523 tests across 110 files).
+
+**Guardrails held**
+- No external repo cloning.
+- No mobile changes.
+- No LZ/AB/PB/MR/SEO code touched.
+- G0-G5c extended only at declared extension points (mount router
+  + link on `/admin/reports/driver-activity`).
+- Tenant-scoped everywhere.
+- No paid APIs.
+- Manual overrides + G5b batch behavior unchanged.
+- Aggregation bounded by 300-user tenant fan-out cap + 100-row
+  leaderboard cap + 5-min cache TTL.

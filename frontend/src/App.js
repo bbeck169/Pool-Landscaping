@@ -161,6 +161,8 @@ import GeofencesPage from "@/pages/admin/GeofencesPage";
 import CrossingsInbox from "@/pages/admin/CrossingsInbox";
 // Phase G5b · Feb-2026 — Stop → Job attribution report.
 import TimeOnSitePage from "@/pages/admin/TimeOnSitePage";
+// Phase G5d · Feb-2026 — Driver Scorecard / Leaderboard.
+import DriverScorecardPage from "@/pages/admin/DriverScorecardPage";
 import WidgetEmbedPage from "@/pages/admin/WidgetEmbedPage";
 import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
 import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPages";
@@ -678,6 +680,8 @@ export default function App() {
             <Route path="admin/gps/crossings" element={<AdminOnly><CrossingsInbox /></AdminOnly>} />
             {/* Phase G5b · Feb-2026 — Time on Site (attribution report). */}
             <Route path="admin/gps/time-on-site" element={<AdminOnly><TimeOnSitePage /></AdminOnly>} />
+            {/* Phase G5d · Feb-2026 — Driver Scorecard / Leaderboard. */}
+            <Route path="admin/gps/scorecard" element={<AdminOnly><DriverScorecardPage /></AdminOnly>} />
             {/* MR1+MR2 · Feb-2026 — Public widget embed preview + snippet. */}
             <Route path="admin/moderation/widget-embed" element={<AdminOnly><WidgetEmbedPage /></AdminOnly>} />
             {/* Phase 50.A — Chemical Costs CRUD (admin/super_admin) */}

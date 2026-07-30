@@ -316,6 +316,10 @@ api_router.include_router(_geofences_router.router)
 from routers import stop_attribution as _stop_attr_router  # noqa: E402
 api_router.include_router(_stop_attr_router.router)
 
+# Phase G5d · Feb-2026 — Driver scorecard / leaderboard (admin+).
+from routers import driver_scorecard as _driver_scorecard_router  # noqa: E402
+api_router.include_router(_driver_scorecard_router.router)
+
 # Feb-2026 · Re-added after LZ4 Stripe purge — Payments summary tile.
 from routers import payments_summary as _payments_summary_router  # noqa: E402
 api_router.include_router(_payments_summary_router.router)
