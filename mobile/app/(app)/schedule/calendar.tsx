@@ -163,7 +163,7 @@ export default function ScheduleCalendar() {
   const focusISO = iso(focus);
   const dayJobs = useMemo(() => {
     const list = jobs.filter((j) => j.scheduled_date === focusISO);
-    list.sort((a, b) => (a.route_order ?? 999) - (b.route_order ?? 999));
+    list.sort((a, b) => (a.route_index ?? a.route_order ?? 999) - (b.route_index ?? b.route_order ?? 999));
     // Phase 30X · schedule is per-day; no time-of-day tiebreaker.
     return list;
   }, [jobs, focusISO]);

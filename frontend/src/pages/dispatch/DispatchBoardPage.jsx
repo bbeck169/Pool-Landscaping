@@ -39,6 +39,7 @@ import TechLoadStrip from "@/pages/dispatch/TechLoadStrip";
 import ShiftRouteDialog from "@/pages/dispatch/ShiftRouteDialog";
 import ActiveShiftsSidebar from "@/pages/dispatch/ActiveShiftsSidebar";
 import UnroutedPanel from "@/pages/dispatch/UnroutedPanel";
+import OptimizeRouteModal from "@/pages/dispatch/OptimizeRouteModal";
 import {
   PIN_COLOR_MODES, PIN_COLOR_BY_DAY, CREW_LEGEND,
   loadPinColorMode, savePinColorMode, colorForPin,
@@ -68,6 +69,27 @@ function todayKey() {
   return map[new Date().getDay()];
 }
 
+// Phase 3 · Feb-2026 — resolve a DOW key ("mon".."sun") to the ISO
+// date (YYYY-MM-DD) of that weekday inside the CURRENT week (Mon=1,
+// Sun=7 per ISO). Returns null for "all" so callers can gate the
+// nearest-neighbor optimizer.
+function isoDateForDayKey(dayKey) {
+  if (!dayKey || dayKey === "all") return null;
+  const order = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const target = order.indexOf(dayKey);
+  if (target < 0) return null;
+  const now = new Date();
+  const jsDow = now.getDay();          // 0..6, Sun=0
+  const isoDow = jsDow === 0 ? 6 : jsDow - 1;  // 0..6, Mon=0
+  const delta = target - isoDow;
+  const d = new Date(now);
+  d.setDate(now.getDate() + delta);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 export default function DispatchBoardPage() {
   const navigate = useNavigate();
   const [day, setDay] = React.useState(todayKey());
@@ -88,6 +110,8 @@ export default function DispatchBoardPage() {
   const [shiftScope, setShiftScope] = React.useState("whole_route");
   const [selectedStopIds, setSelectedStopIds] = React.useState([]);
   const [activeShifts, setActiveShifts] = React.useState([]);
+  // Phase 3 · Feb-2026 — Nearest-neighbor optimizer modal state.
+  const [nnModalOpen, setNnModalOpen] = React.useState(false);
   const setPinColorModePersistent = (m) => { setPinColorMode(m); savePinColorMode(m); };
 
   // Phase P2 · Feb-2026 — live technician GPS markers on the map.
@@ -116,7 +140,8 @@ export default function DispatchBoardPage() {
     let cancelled = false;
     (async () => {
       try {
-        const rows = await api.get("/users?role=technician");
+        const raw = await api.get("/users?role=technician");
+        const rows = Array.isArray(raw) ? raw : (raw?.users || raw?.items || []);
         if (!cancelled) {
           setTechs((rows || []).map((u) => ({
             id: u.id, name: u.name || u.email || u.id,
@@ -655,6 +680,22 @@ export default function DispatchBoardPage() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => setNnModalOpen(true)}
+                  disabled={!techId || day === "all"}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{
+                    backgroundColor: colors.surfaceSecondary,
+                    color: colors.onSurface,
+                    border: `1px solid ${colors.border}`,
+                  }}
+                  data-testid="dispatch-nn-optimize-btn"
+                  title="Nearest-neighbor preview + apply route_index"
+                >
+                  <Sparkles size={12} />
+                  NN Optimize
+                </button>
+                <button
+                  type="button"
                   onClick={onSave}
                   disabled={applying || activeStops.length === 0 || !techId || day === "all"}
                   className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold transition hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -728,6 +769,15 @@ export default function DispatchBoardPage() {
         scope={shiftScope}
         day={day}
         onSuccess={() => { loadActiveShifts(); load(); }}
+      />
+
+      <OptimizeRouteModal
+        open={nnModalOpen}
+        onClose={() => setNnModalOpen(false)}
+        onApplied={() => { load(); }}
+        techUserId={techId}
+        techName={techs.find((t) => t.id === techId)?.name || techId}
+        day={isoDateForDayKey(day)}
       />
     </SafeScrollContainer>
   );

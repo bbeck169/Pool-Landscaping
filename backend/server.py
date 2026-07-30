@@ -291,7 +291,11 @@ api_router.include_router(_widget_analytics_router.router)
 
 # Phase 2 · Feb-2026 — Signed 24 h public share links for Route Replay.
 from routers import replay_share as _replay_share_router  # noqa: E402
-api_router.include_router(_replay_share_router.router)
+api_router.include_router(_replay_share_router.router, dependencies=[Depends(_rg)])
+
+# Phase 3 · Feb-2026 — Dispatch route optimizer (nearest-neighbor).
+from routers import dispatch_route_optimize as _dispatch_opt_router  # noqa: E402
+api_router.include_router(_dispatch_opt_router.router, dependencies=[Depends(_rg)])
 
 # Phase SEO-A · Feb-2026 — Free on-page SEO auditor (admin+/manager).
 from routers import seo_scans as _seo_scans_router  # noqa: E402
