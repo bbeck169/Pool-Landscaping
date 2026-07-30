@@ -16,6 +16,24 @@ ideation via Google Autocomplete + pytrends Google Trends). LZ4 (Stripe SDK remo
 was completed in a prior session and is included here only for env-var / dependency
 reference. Everything is preview-only until this sync.
 
+## Session Guardrails (Held Across Full G3–G5d Track)
+
+The following guardrails held for the entire session and are worth capturing for the
+handoff:
+
+- **No external repo cloning.** Multiple attempts to pull code from GitHub were
+  refused across context restarts; nothing from an external repo was ever copied
+  into `/app`.
+- **No mobile touches from `e1_dev`.** All mobile work went through the Expo
+  specialist during earlier phases; `/app/mobile/` was untouched throughout the
+  G3–G5d track.
+- **No LZ4 / LZ5 / AB1 / PB1 / PB1-M / MR0 / MR1+MR2 / MR-QoL / SEO-A / SEO-B /
+  SEO-C code paths modified** during G3–G5d. Those surfaces stayed frozen; the only
+  changes below live under new files or new endpoints on the GPS track.
+- **Preview only.** Prod (`app.plofv.com`) was never touched by this agent. Every
+  landing catalogued below was shipped and verified on the preview environment
+  only.
+
 ## New / Modified Backend Files
 
 ### LZ4 (context — prior session)
@@ -112,6 +130,48 @@ reference. Everything is preview-only until this sync.
 | `backend/routers/keywords.py` | added | 3 endpoints (ideate, history, lookup) |
 | `backend/tests/test_keyword_ideator.py` | added | Unit + live-server tests |
 
+### G3 — Reverse-geocoding for stops (Mapbox)
+| Path | Change | Purpose |
+|---|---|---|
+| `backend/services/reverse_geocoder.py` | added | Mapbox reverse-geocode client with in-DB cache + graceful degrade when `MAPBOX_ACCESS_TOKEN` is unset |
+| `backend/routers/gps_stops.py` | modified | Attach `address` string to stop rows when cache hit / on-demand fetch |
+| `backend/routers/gps_settings.py` | modified | `GET /api/admin/gps/settings` now returns `mapbox_token_configured: bool` (env-read on every call — no restart needed to pick up the token) |
+| `backend/tests/test_reverse_geocoder.py` | added | pytest (cache hit, cache miss, missing-token graceful degrade) |
+
+### G4 — GPS route rendering
+| Path | Change | Purpose |
+|---|---|---|
+| `backend/routers/gps_route.py` | added | `GET /api/gps/route` — polyline + stops for a driver/day |
+| `backend/tests/test_gps_route.py` | added | pytest |
+
+### G5a — Geofences + entry/exit alerts
+| Path | Change | Purpose |
+|---|---|---|
+| `backend/routers/geofences.py` | added | Geofence CRUD + entry/exit event query |
+| `backend/services/geofence_engine.py` | added | Point-in-polygon + hysteresis state machine (hooked into the G2 stop-detection batch) |
+| `backend/tests/test_geofences.py` | added | pytest (CRUD + entry/exit trigger logic) |
+
+### G5b — Auto job attribution
+| Path | Change | Purpose |
+|---|---|---|
+| `backend/routers/stop_attribution.py` | added | Attribution config + manual batch trigger |
+| `backend/services/stop_attribution.py` | added | Match stops → jobs by proximity + same-day window; writes `attributed_job_id` / `attributed_customer_id` / `attribution_status` back onto `driver_stops` |
+| `backend/routers/gps_stops.py` | modified | Search filters (`?q=`, `?attributed_only=`) + customer-name join on GPS report rows |
+| `backend/tests/test_stop_attribution.py` | added | pytest |
+
+### G5c — Route Replay animation meta
+| Path | Change | Purpose |
+|---|---|---|
+| `backend/routers/gps_route.py` | modified | Extended response with `playback_duration_s` for animated replay clients |
+| `backend/tests/test_gps_route_replay.py` | added | pytest |
+
+### G5d — Driver Scorecard / Leaderboard
+| Path | Change | Purpose |
+|---|---|---|
+| `backend/routers/driver_scorecard.py` | added | Leaderboard + per-user scorecard endpoints with TTL cache |
+| `backend/services/scorecard_compute.py` | added | Pure scoring / aggregation engine (stops, on-time %, dwell, attribution rate, geofence entries) |
+| `backend/tests/test_driver_scorecard.py` | added | pytest |
+
 ## New / Modified Frontend Files
 
 ### P1
@@ -177,6 +237,43 @@ reference. Everything is preview-only until this sync.
 | `frontend/src/pages/admin/KeywordIdeatorPage.jsx` | added | Autocomplete + Trends + tabs UI |
 | `frontend/src/test/keyword-ideator-page.test.jsx` | added | vitest |
 
+### G3 — Reverse-geocoded addresses on stops
+| Path | Change | Purpose |
+|---|---|---|
+| `frontend/src/pages/admin/DriverActivityPage.jsx` | modified | Render reverse-geocoded address labels on stop rows |
+| `frontend/src/pages/admin/AdminGpsSettingsPage.jsx` | modified | Show `mapbox_token_configured` badge |
+
+### G4 — GPS route rendering on Driver Activity
+| Path | Change | Purpose |
+|---|---|---|
+| `frontend/src/hooks/useGpsRoute.js` | added | Reusable fetcher for `/api/gps/route` |
+| `frontend/src/pages/admin/DriverActivityPage.jsx` | modified | Render map polyline + stop pins |
+
+### G5a — Geofences
+| Path | Change | Purpose |
+|---|---|---|
+| `frontend/src/pages/admin/GeofencesPage.jsx` | added | Google Maps `DrawingManager` custom drawing UI + CRUD |
+| `frontend/src/test/geofences-page.test.jsx` | added | vitest |
+
+### G5b — Attribution + GPS report search filters + customer names
+| Path | Change | Purpose |
+|---|---|---|
+| `frontend/src/pages/admin/DriverActivityPage.jsx` | modified | Search bar + customer name / job link columns |
+| `frontend/src/pages/admin/StopAttributionSettingsPage.jsx` | added | `proximity_threshold_m` + `same_day_only` config + manual run-batch button |
+| `frontend/src/test/driver-activity-search.test.jsx` | added | vitest |
+
+### G5c — Route Replay panel
+| Path | Change | Purpose |
+|---|---|---|
+| `frontend/src/pages/admin/RouteReplayPanel.jsx` | added | Animated polyline playback with play / pause / speed on the Driver Activity map |
+| `frontend/src/test/route-replay-panel.test.jsx` | added | vitest |
+
+### G5d — Driver Scorecard / Leaderboard
+| Path | Change | Purpose |
+|---|---|---|
+| `frontend/src/pages/admin/DriverScorecardPage.jsx` | added | Leaderboard + per-driver detail + `recharts` trend lines + custom date-range picker |
+| `frontend/src/test/driver-scorecard-page.test.jsx` | added | vitest |
+
 ### Cross-cutting
 | Path | Change | Purpose |
 |---|---|---|
@@ -220,6 +317,17 @@ covers the web/API deploy only.
 | `outreach_messages` | `routers/outreach.py` | `(tenant_id, prospect_id, sent_at desc)` | Per-send log |
 | `keyword_lookups` | `routers/keywords.py` | `(tenant_id, seed_keyword, region, language)` unique | 24h cached keyword ideation results |
 | `keyword_search_history` | `routers/keywords.py` | `(tenant_id, user_id, requested_at desc)` | Rate-limit counter + per-user search trail |
+| `reverse_geocode_cache` | first write in `services/reverse_geocoder.py` | `(lat_bucket, lng_bucket)` compound, `(expires_at)` TTL | G3 — cached Mapbox reverse-geocode results |
+| `geofences` | `routers/geofences.py` | `(tenant_id, active)` | G5a — polygon boundaries |
+| `geofence_events` | `services/geofence_engine.py` | `(tenant_id, user_id, ts desc)`, `(tenant_id, geofence_id, ts desc)` | G5a — entry/exit event log |
+| `geofence_state` | `services/geofence_engine.py` | `(tenant_id, user_id, geofence_id)` unique | G5a — hysteresis state per (user, fence) |
+| `stop_attribution_meta` | `routers/stop_attribution.py` | `(tenant_id)` unique | G5b — per-tenant config (`proximity_threshold_m`, `same_day_only`) |
+| `scorecard_cache` | `routers/driver_scorecard.py` | `(tenant_id, cache_key)` unique, `(expires_at)` TTL | G5d — leaderboard TTL cache |
+
+> **G5b extension of existing `driver_stops`**: existing rows in `driver_stops` now
+> also carry `attributed_job_id`, `attributed_customer_id`, and
+> `attribution_status` once the attribution batch has run for that stop. No
+> destructive migration — fields are additive and default to null on legacy rows.
 
 > **Note on indexes**: MongoDB creates indexes lazily. If you want them upfront on Prod,
 > run a one-time script that calls `create_index(...)` on each collection with the
@@ -268,7 +376,7 @@ covers the web/API deploy only.
 | `COMMS_TEST_ALLOWLIST_EMAILS` / `COMMS_TEST_ALLOWLIST_PHONES` | optional | Preview-only allowlist | — |
 | `SUPERCOOL_MCP_URL` / `SUPERCOOL_DAILY_IMAGE_LIMIT` | optional | Supercool integration | — |
 | `TEST_LLM_MOCK` | no | Must be **false/absent** on Prod | — |
-| **`MAPBOX_ACCESS_TOKEN`** | **RESERVED — not yet wired** | Placeholder for Phase G3 reverse-geocoding. Set now if you want to be ready; nothing currently reads it. `gps_settings.geocoder = "mapbox"` is defaulted but the actual geocode call is not shipped. | — |
+| **`MAPBOX_ACCESS_TOKEN`** | recommended (wired in Phase G3) | Reverse-geocoding of stop coordinates. **Hot-picked-up:** if the user sets it later on Preview or Prod, `GET /api/admin/gps/settings` will immediately return `mapbox_token_configured: true` on the next request — **no backend restart required** for the value to be picked up. If unset, reverse-geocoding gracefully degrades (stops render lat/lng only, no address strings; no errors). | — |
 
 **Env vars REMOVED (LZ4 Stripe purge — do not add these back on Prod):**
 - `STRIPE_API_KEY`
@@ -307,6 +415,8 @@ All registered via APScheduler in `backend/server.py`. IDs are stable so
 | `gps_pings_retention_purge` | daily 04:00 UTC | Purge `gps_pings` older than per-tenant retention |
 | `gps_stops_batch_processor` | every 3 minutes | Server-side stop detection (G2). `max_instances=1, coalesce=True` |
 | `outreach_daily_followup_digest` | daily 08:00 UTC | Email each tenant owner a summary of due outreach follow-ups |
+| `stop_attribution_batch` | every 5 minutes | G5b — matches recent driver stops to jobs by proximity + same-day window. `max_instances=1, coalesce=True` |
+| `reverse_geocode_cache_purge` | daily 04:30 UTC | G3 — evicts expired `reverse_geocode_cache` rows (belt-and-suspenders alongside the Mongo TTL index) |
 
 Existing crons (not touched, listed for completeness): `seo_drip`, `chem_billing`,
 `autobilling_daily`, `coverage_revert`, `late_fees`, `marketing_autopost`,
@@ -393,6 +503,33 @@ Existing crons (not touched, listed for completeness): `seo_drip`, `chem_billing
 - `GET  /api/keywords/history`
 - `GET  /api/keywords/lookup/{id}`
 
+### G3 — Reverse-geocoding (no new public path)
+- No new endpoints. `GET /api/admin/gps/driver-stops` rows now include an `address` string when the reverse-geocode cache is hit, and `GET /api/admin/gps/settings` returns `mapbox_token_configured: bool`.
+
+### G4 — GPS route rendering
+- `GET  /api/gps/route`
+
+### G5a — Geofences + entry/exit alerts
+- `POST /api/admin/gps/geofences`
+- `GET  /api/admin/gps/geofences`
+- `GET  /api/admin/gps/geofences/{id}`
+- `PATCH /api/admin/gps/geofences/{id}`
+- `DELETE /api/admin/gps/geofences/{id}`
+- `GET  /api/admin/gps/geofence-events`
+
+### G5b — Auto job attribution
+- `GET  /api/admin/gps/attribution/settings`
+- `PATCH /api/admin/gps/attribution/settings`
+- `POST /api/admin/gps/attribution/run-batch` (manual trigger)
+- (`GET /api/admin/gps/driver-stops` extended with `?q=`, `?attributed_only=`, and customer-name join on each row)
+
+### G5c — Route Replay (extends G4)
+- `GET  /api/gps/route` — response now carries `playback_duration_s` for animated replay clients
+
+### G5d — Driver Scorecard / Leaderboard
+- `GET  /api/admin/gps/scorecard/leaderboard`
+- `GET  /api/admin/gps/scorecard/user/{user_id}`
+
 ## New Admin UI Routes / Sidebar Entries
 
 | Route | Sidebar location | RBAC |
@@ -406,6 +543,9 @@ Existing crons (not touched, listed for completeness): `seo_drip`, `chem_billing
 | `/admin/seo/keywords` | Reports → Keyword Ideation | admin+/manager |
 | `/admin/outreach/prospects` | Marketing → Outreach → Outreach Prospects | admin+/manager |
 | `/admin/outreach/templates` | Marketing → Outreach → Outreach Templates | admin+/manager |
+| `/admin/gps/geofences` | Operations → GPS → Geofences | admin+/manager |
+| `/admin/gps/attribution` | Operations → GPS → Attribution Settings | admin+ |
+| `/admin/reports/driver-scorecard` | Reports → Driver Scorecard | admin+/manager |
 | `/admin/tools/lumino-backfill` | Reports (hidden by default; super_admin) | super_admin only |
 
 ## Migration / Backfill Scripts to Run Once on Prod
@@ -511,9 +651,25 @@ Expected: 200 with `autocomplete_suggestions`, `question_suggestions`, `comparis
 
 **Step 15: Sidebar visual smoke.** Log into the admin UI as your Prod admin, expand
 each of these menu groups, and verify no 404s: **Reports** (Driver Activity, Check-in
-Moderation, Widget Embed, SEO Auditor, Keyword Ideation, Client Errors),
+Moderation, Widget Embed, SEO Auditor, Keyword Ideation, Client Errors, **Driver
+Scorecard**), **Operations → GPS** (**Geofences**, **Attribution Settings**),
 **Marketing → Outreach** (Prospects, Templates). Click one card / one row in each
 page to make sure the detail view renders.
+
+**Step 16: GPS route rendering + Route Replay meta (G4 + G5c).** `curl -s "$API/gps/route?user_id=<tech-uid>&date=<YYYY-MM-DD>" -H "Authorization: Bearer $TOKEN"`  
+Expected: 200 with `polyline`, `stops`, and **`playback_duration_s`** in the payload (G4 landed and the G5c extension shipped). An empty `polyline` is OK if that tech didn't move on that date.
+
+**Step 17: Reverse-geocode wire status (G3).** `curl -s "$API/admin/gps/settings" -H "Authorization: Bearer $TOKEN" | python3 -c 'import sys,json;d=json.load(sys.stdin);print("mapbox_token_configured=", d.get("mapbox_token_configured"))'`  
+Expected: prints `mapbox_token_configured= True` if `MAPBOX_ACCESS_TOKEN` is set in Prod `.env`, otherwise `False`. **Either value is legal** — `False` means stops render lat/lng only (graceful degrade). If you set the token after this step, re-run the curl and it should flip to `True` **without a backend restart**.
+
+**Step 18: Geofences + entry/exit events (G5a).** `curl -s "$API/admin/gps/geofences" -H "Authorization: Bearer $TOKEN"`  
+Expected: `{"items":[...],"total":N}`. Then hit `curl -s "$API/admin/gps/geofence-events?limit=5" -H "Authorization: Bearer $TOKEN"` — expected `{"items":[...],"total":N}` (G5a landed). Empty lists are legal on a fresh install.
+
+**Step 19: Attribution settings + batch runner (G5b).** `curl -s "$API/admin/gps/attribution/settings" -H "Authorization: Bearer $TOKEN"`  
+Expected: 200 with `{"proximity_threshold_m":N,"same_day_only":true|false}`. Then `curl -s -X POST "$API/admin/gps/attribution/run-batch" -H "Authorization: Bearer $TOKEN"` — expected 200 with `{"stops_scanned":N,"stops_attributed":N,...}` (G5b landed). Non-zero `stops_attributed` requires driver stops **and** jobs in the same 24 h window.
+
+**Step 20: Driver Scorecard leaderboard (G5d).** `curl -s "$API/admin/gps/scorecard/leaderboard?range=7d" -H "Authorization: Bearer $TOKEN"`  
+Expected: 200 with `{"leaderboard":[...],"generated_at":"...","range":"7d"}` (G5d landed). An empty `leaderboard` is OK on a fresh install. Hit the same URL twice back-to-back — the second response should return quickly and carry the **same** `generated_at` value (confirming the `scorecard_cache` TTL cache is warm).
 
 If any step above fails, do NOT declare deploy complete — bisect back to the phase in
 "New API Endpoints" and investigate that router / its cron / its env vars.
