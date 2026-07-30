@@ -147,10 +147,16 @@ async def track_event(body: TrackBody, request: Request) -> Response:
     ip_h = _ip_hash(ip, tenant["id"])
 
     # 60/min per (ip_hash) — very generous but blocks stuffing bots.
+    # MR3-fix · Feb 2026: return HTTP 429 (not 204) so clients / testers
+    # can see the throttle from the response line alone. The
+    # `X-Widget-Analytics: rate_limited` header is retained for
+    # backwards-compatibility with any log tailer that already keys on
+    # it. Retry-After is set to 60 s (the sliding window length).
     if not _rate_ok(ip_h):
-        return Response(status_code=204,
+        return Response(status_code=429,
                         headers={"Access-Control-Allow-Origin": "*",
-                                  "X-Widget-Analytics": "rate_limited"})
+                                  "X-Widget-Analytics": "rate_limited",
+                                  "Retry-After": str(_RATE_WINDOW_S)})
 
     await _ensure_indexes()
     doc: Dict[str, Any] = {

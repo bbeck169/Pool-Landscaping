@@ -73,14 +73,17 @@ def _cleanup(tid: str) -> None:
 
 # ── 1. Rate limit ───────────────────────────────────────────────────
 def test_track_rate_limit_60_per_min():
+    """60 successful posts, 61st MUST return HTTP 429 with the
+    ``X-Widget-Analytics: rate_limited`` header and a Retry-After
+    hint. Also verifies a concurrent burst of 200 posts persists at
+    most 60 rows (the throttled 140+ must NOT reach the DB)."""
     tid, slug = _mk_tenant("rl")
     try:
-        # Unique IP so we don't collide with other tests / real traffic.
         fake_ip = f"198.51.100.{uuid.uuid4().int % 250 + 1}"
         headers = {"Content-Type": "application/json",
                     "X-Forwarded-For": fake_ip}
 
-        # 60 accepted.
+        # 60 accepted, all HTTP 204.
         for i in range(60):
             r = requests.post(
                 f"{API}/public/widget/analytics/track",
@@ -91,18 +94,66 @@ def test_track_rate_limit_60_per_min():
             )
             assert r.status_code == 204, f"call {i}: {r.status_code} {r.text}"
 
-        # 61st — rate limited.
+        # 61st — HTTP 429 (rate-limited).
         r = requests.post(
             f"{API}/public/widget/analytics/track",
             headers=headers,
             json={"widget_id": slug, "event_type": "impression",
                    "session_id": "s061abcdef"}, timeout=10,
         )
-        assert r.status_code == 204
-        assert r.headers.get("X-Widget-Analytics") == "rate_limited", \
-            f"expected rate_limited header, got {dict(r.headers)}"
+        assert r.status_code == 429, \
+            f"expected 429 for 61st call, got {r.status_code} {r.text}"
+        assert r.headers.get("X-Widget-Analytics") == "rate_limited"
+        assert r.headers.get("Retry-After") == "60"
 
-        # Exactly 60 rows persisted.
+        # 62nd + 63rd still 429 (window still active).
+        for j in (62, 63):
+            r = requests.post(
+                f"{API}/public/widget/analytics/track",
+                headers=headers,
+                json={"widget_id": slug, "event_type": "impression",
+                       "session_id": f"s{j:03d}abcdef"}, timeout=10,
+            )
+            assert r.status_code == 429, f"call {j}: got {r.status_code}"
+
+        # Only 60 rows persisted — the 429s never touched the DB.
+        n = _sync.widget_analytics_events.count_documents({"tenant_id": tid})
+        assert n == 60, f"expected 60 rows, got {n}"
+    finally:
+        _cleanup(tid)
+
+
+# ── 1b. Concurrent-burst rate limit ─────────────────────────────────
+def test_track_rate_limit_concurrent_burst():
+    """Fire 200 requests concurrently from a single IP + widget.
+    At most 60 must be persisted and at least 140 must return HTTP 429.
+    Matches the exact scenario the tester used to catch the original
+    ``all-200-returned-204`` regression."""
+    import concurrent.futures
+    tid, slug = _mk_tenant("rlc")
+    try:
+        fake_ip = f"198.51.100.{uuid.uuid4().int % 250 + 1}"
+
+        def fire(i: int) -> int:
+            r = requests.post(
+                f"{API}/public/widget/analytics/track",
+                headers={"Content-Type": "application/json",
+                          "X-Forwarded-For": fake_ip},
+                json={"widget_id": slug, "event_type": "impression",
+                       "session_id": f"burst{i:03d}abcdef"}, timeout=15,
+            )
+            return r.status_code
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:
+            statuses = list(pool.map(fire, range(200)))
+
+        ok_204 = sum(1 for s in statuses if s == 204)
+        throttled_429 = sum(1 for s in statuses if s == 429)
+        assert ok_204 == 60, f"expected exactly 60x 204, got {ok_204}"
+        assert throttled_429 == 140, \
+            f"expected exactly 140x 429, got {throttled_429} (statuses: {set(statuses)})"
+
+        # Only 60 rows persisted.
         n = _sync.widget_analytics_events.count_documents({"tenant_id": tid})
         assert n == 60, f"expected 60 rows, got {n}"
     finally:
