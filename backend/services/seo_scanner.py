@@ -624,6 +624,16 @@ async def run_scan(target_url: str, tenant_id: str, user_id: str,
             "robots_txt": robots,
             "sitemap_xml": sitemap,
         }
+        # Phase 5a · Feb-2026 — AEO signals (schema/faq/llms.txt/passages/entity).
+        # Best-effort; failure must not break a scan.
+        try:
+            from services.aeo_auditor import compute_aeo_signals
+            async with httpx.AsyncClient(max_redirects=_REDIRECT_CAP) as _c2:
+                results["aeo_signals"] = await compute_aeo_signals(
+                    _c2, page["html_bytes"], target_url, business_name="")
+        except Exception as _e:  # noqa: BLE001
+            logger.info(f"[seo_scanner] aeo_signals skipped: {_e}")
+            results["aeo_signals"] = None
         score, issue_count = compute_score(results)
         results["score"] = score
         results["issue_count"] = issue_count
