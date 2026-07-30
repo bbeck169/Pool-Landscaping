@@ -310,6 +310,10 @@ api_router.include_router(_aeo_router.router)
 from routers import scorecard as _scorecard_router  # noqa: E402
 api_router.include_router(_scorecard_router.router)
 
+# Phase 8 · Feb-2026 — Weekly AEO PDF Digest via Resend.
+from routers import aeo_digest as _aeo_digest_router  # noqa: E402
+api_router.include_router(_aeo_digest_router.router)
+
 # Phase SEO-A · Feb-2026 — Free on-page SEO auditor (admin+/manager).
 from routers import seo_scans as _seo_scans_router  # noqa: E402
 api_router.include_router(_seo_scans_router.router)
@@ -853,6 +857,13 @@ async def _background_seed():
                                 replace_existing=True)
         except Exception as _e:  # noqa: BLE001
             logger.warning(f"[scorecard] cron install failed: {_e}")
+        # Phase 8 · Weekly AEO PDF digest — hourly, per-tenant hour gate.
+        try:
+            from services.aeo_digest import weekly_digest_cron as _aeo_digest_cron
+            scheduler.add_job(_aeo_digest_cron, "cron", minute=10,
+                                id="aeo_weekly_digest", replace_existing=True)
+        except Exception as _e:  # noqa: BLE001
+            logger.warning(f"[aeo_digest] cron install failed: {_e}")
         # Phase 27.1 — weekly churn rescore (Mondays 06:00 UTC).
         scheduler.add_job(churn.scheduled_churn_scan_all, "cron",
                             day_of_week="mon", hour=6, minute=0,

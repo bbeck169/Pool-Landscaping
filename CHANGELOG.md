@@ -8,6 +8,27 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-07-31 — Phase 8 · Weekly AEO PDF Digest (ReportLab + Resend)
+
+### Added
+- `services/aeo_digest.py` — Aggregates last-completed-week AEO health into a 4-section snapshot: (1) AEO score (`overall_aeo_score` from latest `seo_scans` + WoW delta + sub-signal breakdown for `schema`/`faq`/`llms_txt`/`passages`/`entity_clarity`), (2) AI visibility (avg `aeo_visibility_probes.score`, brand-mention rate, top/bottom queries, per-provider tally), (3) brand mentions (`brand_mentions` count, sentiment split, top domains, opt-in negative snippet samples), (4) action items (pending AEO fixes + pending response drafts). ReportLab `canvas` renderer (Helvetica, single-page portrait letter, ≤500 KB target — actual ~2.4 KB), b64-persisted to `db.aeo_digest_pdfs`. HMAC-SHA256 signed public URL (10-min TTL, SECRET_KEY/JWT_SECRET-keyed, 32-char hex sig). Resend delivery with PDF attachment, injectable `resend_send` stub for tests. `run_digest()` runner returns `{digest_id, snapshot, pdf_url, pdf_size_bytes, delivery}`. `weekly_digest_cron()` — hourly gate on tenant DOW+hour_utc, `aeo_visibility_enabled=True` required, `already_generated_this_week()` dedup, per-tenant try/except.
+- `routers/aeo_digest.py` — 5 authenticated endpoints (`POST /api/aeo/digest/preview`, `POST /api/aeo/digest/run-now`, `GET /api/aeo/digest/history`, `POST /api/aeo/digest/settings`, `GET /api/aeo/digest/settings`) + 1 signature-gated public endpoint (`GET /api/aeo/digest/pdf/{digest_id}?tid=&exp=&sig=`, `include_in_schema=False`). Reuses `require_gps_read`-style admin/super_admin/manager guard.
+- Collections `aeo_digest_pdfs` (b64 body cache), `aeo_digest_runs` (history), `aeo_digest_settings` (per-tenant `{enabled, recipient_emails[], day_of_week 0-6, hour_utc 0-23, include_negative_snippets}`).
+- APScheduler job `aeo_weekly_digest` wired in `server.py` at `minute=10` (offset from Phase 7's scorecard cron to avoid rush-hour collisions).
+- Web admin `/admin/marketing/aeo/digest` (`pages/admin/AEODigestPage.jsx`) — Settings card (recipients CSV, DOW select, hour_utc, Enabled + Include-negative-snippets toggles, Save / Send-test / Generate-preview CTAs), Preview card (embedded `<iframe>` of signed PDF URL + Open-PDF anchor + byte counter), History card (last 10 digests with period range, size, download link, per-channel delivery ✓/✗). Route mounted in `App.js:683` under `<AdminOnly>` guard.
+- Pytest suite `backend/tests/test_aeo_digest.py` — 8 tests all green: empty-week snapshot no-crash, ReportLab bytes start with `%PDF-` and size < 500 KB, sign+verify signature round-trip + tampered-sig rejection, snapshot with seeded metrics reads visibility/mentions/drafts, `deliver_email` invokes injected Resend stub with attachment payload, cron dedup skips a second run for the same `period_start`, live `/settings` + role guard × 4 endpoints × 2 accounts (admin 200 / customer 403), live `/preview` returns downloadable PDF via signed URL.
+
+### Security
+- 5 authenticated endpoints reject Tech + Customer with 403 (verified live: `GET /settings`, `POST /preview`, `GET /history`, `POST /settings` all 403 for customer, 200 for manager).
+- Public PDF download endpoint requires valid HMAC signature + non-expired `exp` — invalid or expired signatures return 403 without touching the DB. Signature key resolution order: `SECRET_KEY` → `JWT_SECRET` → static salt (dev-only fallback).
+- PDF is b64-persisted per (tenant_id, digest_id); the public route scopes fetch by both, so a signed URL for tenant A cannot exfiltrate a PDF from tenant B.
+- Resend HTTP call is wrapped in try/except — a Resend outage does not crash the cron and does not corrupt the `aeo_digest_runs` row.
+
+### Changed
+- `server.py` — mounted `aeo_digest` router (line 315) and cron install (lines 862-866).
+
+---
+
 ## 2026-07-30 — Phase 7 · Weekly Scorecard Digest (Slack + Email)
 
 ### Added

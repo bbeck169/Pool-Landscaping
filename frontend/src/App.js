@@ -154,6 +154,7 @@ import ModerationCheckinsPage from "@/pages/admin/ModerationCheckinsPage";
 import SeoAuditorPage from "@/pages/admin/SeoAuditorPage";
 import AEOPage from "@/pages/admin/AEOPage";
 import WeeklyDigestPage from "@/pages/admin/WeeklyDigestPage";
+import AEODigestPage from "@/pages/admin/AEODigestPage";
 import ProspectsKanbanPage from "@/pages/admin/outreach/ProspectsKanbanPage";
 import OutreachTemplatesPage from "@/pages/admin/outreach/TemplatesPage";
 import KeywordIdeatorPage from "@/pages/admin/KeywordIdeatorPage";
@@ -679,6 +680,7 @@ export default function App() {
             <Route path="admin/seo/auditor" element={<AdminOnly><SeoAuditorPage /></AdminOnly>} />
             <Route path="admin/marketing/aeo" element={<AdminOnly><AEOPage /></AdminOnly>} />
             <Route path="admin/reports/weekly-digest" element={<AdminOnly><WeeklyDigestPage /></AdminOnly>} />
+            <Route path="admin/marketing/aeo/digest" element={<AdminOnly><AEODigestPage /></AdminOnly>} />
             {/* Phase SEO-B · Feb-2026 — Backlink outreach CRM (admin+/manager). */}
             <Route path="admin/outreach/prospects" element={<AdminOnly><ProspectsKanbanPage /></AdminOnly>} />
             <Route path="admin/outreach/templates" element={<AdminOnly><OutreachTemplatesPage /></AdminOnly>} />
