@@ -1,7 +1,7 @@
 // Phase 2 · Feb-2026 — Public read-only Route Replay page.
 //
 // Route: `/replay/:shareId` — unauthenticated. Hits
-// `GET /api/public/replay/{shareId}` and renders a stripped-down
+// `GET /api/gps/replay/share/{shareId}` and renders a stripped-down
 // read-only view (polyline + stops + geofence events markers, no
 // admin controls / no assign-job / no phone / no edit buttons).
 //
@@ -17,7 +17,7 @@ import React from "react";
 import { useParams } from "react-router-dom";
 import { MapPin, Clock, Route as RouteIcon, ShieldAlert, Info } from "lucide-react";
 
-const BASE = process.env.REACT_APP_BACKEND_URL;
+import { api } from "@/api";
 
 function _fmtTime(iso) {
   if (!iso) return "";
@@ -54,7 +54,7 @@ function ErrorCard({ icon: Icon, title, body, testId }) {
   );
 }
 
-export default function PublicReplayPage() {
+export default function AdminSharedReplayPage() {
   const { shareId } = useParams();
   const [state, setState] = React.useState({ loading: true, payload: null,
                                                 error: null, status: 0 });
@@ -63,21 +63,15 @@ export default function PublicReplayPage() {
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch(`${BASE}/api/public/replay/${encodeURIComponent(shareId)}`);
-        const status = r.status;
-        let payload = null;
-        try { payload = await r.json(); } catch { payload = null; }
+        const payload = await api.get(`/gps/replay/share/${encodeURIComponent(shareId)}`);
         if (cancelled) return;
-        if (status === 200) {
-          setState({ loading: false, payload, error: null, status });
-        } else {
-          setState({ loading: false, payload: null,
-                      error: payload?.detail || `HTTP ${status}`, status });
-        }
+        setState({ loading: false, payload, error: null, status: 200 });
       } catch (e) {
-        if (!cancelled) setState({ loading: false, payload: null,
-                                      error: e?.message || "Network error",
-                                      status: 0 });
+        if (cancelled) return;
+        // `api` throws ApiHttpError with a numeric .status attribute.
+        const status = e?.status || 0;
+        const detail = e?.body?.detail || e?.message || `HTTP ${status || "unknown"}`;
+        setState({ loading: false, payload: null, error: detail, status });
       }
     })();
     return () => { cancelled = true; };
@@ -102,6 +96,12 @@ export default function PublicReplayPage() {
                        icon={Info}
                        title="Link not found."
                        body="Please double-check the URL and try again." />;
+  }
+  if (state.status === 403) {
+    return <ErrorCard testId="public-replay-forbidden"
+                       icon={ShieldAlert}
+                       title="Admin access required."
+                       body="Route replay share links are restricted to Admin and Super Admin users only." />;
   }
   if (state.status === 429) {
     return <ErrorCard testId="public-replay-throttled"

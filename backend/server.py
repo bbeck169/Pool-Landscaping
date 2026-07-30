@@ -1,4 +1,8 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, Depends
+# Phase 2 rework addendum · Feb-2026 — GPS read lockdown dep, wrapped at
+# include_router() time on every GPS router except gps_ingest (POST /gps/pings
+# stays open to techs).
+from utils import require_gps_read as _rg
 from starlette.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import os
@@ -222,7 +226,7 @@ api_router.include_router(_lumino_backfill.router)
 from routers import profit_report as _profit_report  # noqa: E402
 api_router.include_router(_profit_report.router)
 from routers import gps_settings as _gps_settings  # noqa: E402
-api_router.include_router(_gps_settings.router)
+api_router.include_router(_gps_settings.router, dependencies=[Depends(_rg)])
 from routers import gps_ingest as _gps_ingest  # noqa: E402
 api_router.include_router(_gps_ingest.router)
 # Feb 2026 — Service categories (pricebook business-unit taxonomy).
@@ -265,11 +269,11 @@ api_router.include_router(_client_errors_router.router)
 
 # Feb-2026 · Phase P2 · Live GPS positions for the Dispatch Board.
 from routers import gps_live_positions as _gps_live_positions_router  # noqa: E402
-api_router.include_router(_gps_live_positions_router.router)
+api_router.include_router(_gps_live_positions_router.router, dependencies=[Depends(_rg)])
 
 # G2 · Feb-2026 — Server-side stop detection: query + admin rebuild.
 from routers import gps_stops as _gps_stops_router  # noqa: E402
-api_router.include_router(_gps_stops_router.router)
+api_router.include_router(_gps_stops_router.router, dependencies=[Depends(_rg)])
 
 # MR0 · Feb-2026 — Public check-in submission + moderation queue.
 from routers import public_checkins as _public_checkins_router  # noqa: E402
@@ -305,28 +309,28 @@ api_router.include_router(_keywords_router.router)
 # Phase G3 · Feb-2026 — Mapbox reverse-geocoding: /gps/route +
 # admin backfill endpoint. Both admin+/manager only.
 from routers import gps_route as _gps_route_router  # noqa: E402
-api_router.include_router(_gps_route_router.router)
+api_router.include_router(_gps_route_router.router, dependencies=[Depends(_rg)])
 
 # Phase G4 · Feb-2026 — Per-user GPS controls + CSV exports
 # (admin+/manager). Extends G0-G3 without touching mobile.
 from routers import gps_user_controls as _gps_user_controls_router  # noqa: E402
-api_router.include_router(_gps_user_controls_router.router)
+api_router.include_router(_gps_user_controls_router.router, dependencies=[Depends(_rg)])
 
 # Phase G5a · Feb-2026 — Geofences + entry/exit alerts. CRUD lives
 # here; the ingest hook (POST /gps/pings) and live-positions endpoint
 # call into services.geofence_engine + evaluate_ping_against_fences.
 from routers import geofences as _geofences_router  # noqa: E402
-api_router.include_router(_geofences_router.router)
+api_router.include_router(_geofences_router.router, dependencies=[Depends(_rg)])
 
 # Phase G5b · Feb-2026 — Stop → Job proximity attribution. Extends
 # G2 driver_stops with attribution fields (backwards-compatible).
 # Cron registered in the scheduler init block below.
 from routers import stop_attribution as _stop_attr_router  # noqa: E402
-api_router.include_router(_stop_attr_router.router)
+api_router.include_router(_stop_attr_router.router, dependencies=[Depends(_rg)])
 
 # Phase G5d · Feb-2026 — Driver scorecard / leaderboard (admin+).
 from routers import driver_scorecard as _driver_scorecard_router  # noqa: E402
-api_router.include_router(_driver_scorecard_router.router)
+api_router.include_router(_driver_scorecard_router.router, dependencies=[Depends(_rg)])
 
 # Feb-2026 · Re-added after LZ4 Stripe purge — Payments summary tile.
 from routers import payments_summary as _payments_summary_router  # noqa: E402

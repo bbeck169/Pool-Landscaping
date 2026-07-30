@@ -142,7 +142,8 @@ export default function ShareReplay() {
               <Text style={styles.urlText} numberOfLines={2} selectable>{url}</Text>
             </View>
             <Text style={styles.helpText}>
-              Expires {new Date(active.expires_at).toLocaleString()}
+              Admins and Super Admins only. Customers cannot view this link.
+              {"\n"}Expires {new Date(active.expires_at).toLocaleString()}
               {" · "}{active.view_count} views
             </Text>
 

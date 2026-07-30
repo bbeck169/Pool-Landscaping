@@ -138,7 +138,8 @@ export default function ShareReplayModal({ open, onClose, techId, day }) {
           </button>
         </div>
         <div style={{ fontSize: 13, color: colors.muted, marginBottom: 20 }}>
-          Expires in 24 hours. Anyone with the link can view.
+          <b>Admins and Super Admins only.</b> Customers cannot view this link.
+          Expires in 24 hours.
         </div>
 
         {loading && (

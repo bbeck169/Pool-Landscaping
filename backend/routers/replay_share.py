@@ -1,37 +1,31 @@
-"""Phase 2 · Feb-2026 — Signed 24 h public share URLs for Route Replay.
+"""Phase 2 · Feb-2026 — 24 h Route Replay share links (ADMIN-ONLY rework).
 
-Endpoints (all under ``/api``)
-------------------------------
-Authed (tenant-scoped, role ≥ dispatcher / manager):
+Endpoints (all authed, all tenant-scoped, ADMIN or SUPER_ADMIN only)
+-------------------------------------------------------------------
     POST   /gps/replay/share
     GET    /gps/replay/shares?user_id=&date=
+    GET    /gps/replay/share/{share_id}
     POST   /gps/replay/share/{share_id}/revoke
 
-Public (no auth):
-    GET    /public/replay/{share_id}
+Policy note (Feb-2026 rework)
+-----------------------------
+The original spec exposed the replay to unauthenticated customers via
+``GET /api/public/replay/{share_id}``. The human owner reversed that
+policy: "no one should see any GPS information except Admin and Super
+Admin". The public route is gone, the rate limiter is gone (authed
+callers don't need it), and role gating is tightened so Manager /
+Dispatcher / Technician / Customer all get 403 even though many of
+them still have access to the LIVE replay through the existing GPS
+admin pages. This restriction only applies to share URLs.
 
 Storage
 -------
-Collection ``route_replay_shares``:
+Collection ``route_replay_shares`` (unchanged from the pre-rework
+schema — TTL logic and view_count/last_viewed_at still meaningful for
+audit of admin-to-admin sharing):
     {tenant_id, share_id, user_id, replay_date, created_by,
      created_at, expires_at, revoked_at?,
      view_count, last_viewed_at?, viewer_ip_hash_last?}
-Indexes: unique(share_id), (tenant_id, expires_at),
-         (tenant_id, user_id, replay_date).
-
-Security notes
---------------
-The share_id itself is the bearer token — a 16-char base62 string
-(``secrets.token_urlsafe`` truncated) gives ~93 bits of entropy, plenty
-for a 24 h TTL. Nothing else is embedded in the URL; we don't sign or
-HMAC. To revoke, the row is marked revoked_at; to expire, we compare
-now vs. expires_at at each public GET.
-
-The public payload MASKS every field flagged as PII in the technician
-doc (phone, email, home address, DOB, etc.). Only the display name
-survives — everything else the widget shows is location / stop /
-geofence data, which is precisely what the customer already saw the
-technician doing.
 """
 from __future__ import annotations
 
@@ -39,10 +33,8 @@ import hashlib
 import os
 import secrets
 import string
-import time
-from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from pydantic import BaseModel, Field
@@ -52,17 +44,16 @@ from utils import get_current_user
 
 router = APIRouter()
 
-# ── Rate-limit — 30 req / 60 s per (share_id, ip_hash). Same style as
-# MR3 widget analytics: in-process sliding window.
-_RATE_WINDOW_S = 60
-_RATE_LIMIT = 30
-_rate_buckets: Dict[str, Deque[float]] = defaultdict(deque)
-
 # ── Config
 _MAX_TTL_HOURS = 24
 _DEFAULT_TTL_HOURS = 24
 _SHARE_ID_LEN = 16  # base62 chars → ~93 bits of entropy
 _ALPHABET = string.ascii_letters + string.digits
+
+# Tightened from the pre-rework role set. Manager / Dispatcher /
+# Technician / Customer are explicitly denied even though many of them
+# retain access to the LIVE replay via existing admin pages.
+_ALLOWED_ROLES = {"admin", "super_admin", "owner"}
 
 _indexes_ready = False
 
@@ -90,27 +81,14 @@ def _ip_hash(raw_ip: str, salt: str) -> str:
     return hashlib.sha256(f"{raw_ip}|{salt}".encode("utf-8")).hexdigest()
 
 
-def _rate_ok(share_id: str, ip: str) -> bool:
-    key = f"{share_id}|{_ip_hash(ip, share_id)}"
-    now = time.monotonic()
-    q = _rate_buckets[key]
-    while q and (now - q[0]) > _RATE_WINDOW_S:
-        q.popleft()
-    if len(q) >= _RATE_LIMIT:
-        return False
-    q.append(now)
-    return True
-
-
 def _mk_share_id() -> str:
     return "".join(secrets.choice(_ALPHABET) for _ in range(_SHARE_ID_LEN))
 
 
-def _require_share_role(user: Dict[str, Any]) -> None:
+def _require_admin(user: Dict[str, Any]) -> None:
     role = (user.get("role") or "").lower()
-    allowed = {"dispatcher", "manager", "admin", "super_admin", "owner"}
-    if role not in allowed:
-        raise HTTPException(403, detail="insufficient_role")
+    if role not in _ALLOWED_ROLES:
+        raise HTTPException(403, detail="admin_or_super_admin_only")
 
 
 def _tenant_or_400(user: Dict[str, Any]) -> str:
@@ -121,13 +99,11 @@ def _tenant_or_400(user: Dict[str, Any]) -> str:
 
 
 def _now() -> datetime:
-    """Isolated so tests can monkeypatch it."""
     return datetime.now(timezone.utc)
 
 
 def _as_utc(v: Any) -> Optional[datetime]:
-    """Motor deserialises BSON UTC datetimes as *naive* — normalise
-    to a tz-aware UTC datetime so we can compare against ``_now()``."""
+    """Motor returns BSON datetimes as *naive* — normalise to tz-aware."""
     if v is None:
         return None
     if isinstance(v, datetime):
@@ -138,6 +114,14 @@ def _as_utc(v: Any) -> Optional[datetime]:
         return None
 
 
+def _iso(v: Any) -> Optional[str]:
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v.isoformat()
+    return str(v)
+
+
 def _public_base_url(request: Request) -> str:
     override = os.environ.get("PUBLIC_APP_BASE_URL", "").rstrip("/")
     if override:
@@ -145,7 +129,6 @@ def _public_base_url(request: Request) -> str:
     origin = request.headers.get("origin") or ""
     if origin:
         return origin.rstrip("/")
-    # Fall back to the request's own scheme+host — good enough for dev.
     return f"{request.url.scheme}://{request.url.netloc}".rstrip("/")
 
 
@@ -161,15 +144,13 @@ class ShareCreateBody(BaseModel):
               tags=["replay-share"])
 async def create_share(body: ShareCreateBody, request: Request,
                         caller: Dict[str, Any] = Depends(get_current_user)):
-    _require_share_role(caller)
+    _require_admin(caller)
     tenant_id = _tenant_or_400(caller)
     await _ensure_indexes()
 
-    # Verify the target user exists in this tenant. Server-derived —
-    # we never trust a client-supplied tenant_id.
     tech = await db.users.find_one(
         {"id": body.user_id, "tenant_id": tenant_id},
-        {"_id": 0, "id": 1, "name": 1, "email": 1})
+        {"_id": 0, "id": 1, "name": 1})
     if not tech:
         raise HTTPException(404, detail="technician_not_found")
 
@@ -178,7 +159,7 @@ async def create_share(body: ShareCreateBody, request: Request,
     expires_at = now + timedelta(hours=min(ttl, _MAX_TTL_HOURS))
 
     share_id = _mk_share_id()
-    doc = {
+    await db.route_replay_shares.insert_one({
         "tenant_id": tenant_id,
         "share_id": share_id,
         "user_id": body.user_id,
@@ -190,17 +171,13 @@ async def create_share(body: ShareCreateBody, request: Request,
         "view_count": 0,
         "last_viewed_at": None,
         "viewer_ip_hash_last": None,
-    }
-    await db.route_replay_shares.insert_one(doc)
+    })
 
     base = _public_base_url(request)
-    share_url = f"{base}/replay/{share_id}"
-    revoke_url = f"{base}/api/gps/replay/share/{share_id}/revoke"
-
     return {
         "share_id": share_id,
-        "share_url": share_url,
-        "revoke_url": revoke_url,
+        "share_url": f"{base}/replay/{share_id}",
+        "revoke_url": f"{base}/api/gps/replay/share/{share_id}/revoke",
         "expires_at": expires_at.isoformat(),
         "user_id": body.user_id,
         "replay_date": body.replay_date,
@@ -213,7 +190,7 @@ async def create_share(body: ShareCreateBody, request: Request,
 async def list_shares(user_id: str = Query(...),
                        date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
                        caller: Dict[str, Any] = Depends(get_current_user)):
-    _require_share_role(caller)
+    _require_admin(caller)
     tenant_id = _tenant_or_400(caller)
     await _ensure_indexes()
     items: List[Dict[str, Any]] = []
@@ -221,7 +198,6 @@ async def list_shares(user_id: str = Query(...),
             {"tenant_id": tenant_id, "user_id": user_id,
               "replay_date": date},
             {"_id": 0}).sort("created_at", -1).limit(20):
-        # Compute status flag for the UI.
         now = _now()
         status = "active"
         if r.get("revoked_at"):
@@ -231,8 +207,6 @@ async def list_shares(user_id: str = Query(...),
             if exp and exp <= now:
                 status = "expired"
         r["status"] = status
-        # Do not echo internal viewer IP hashes to the list view (only
-        # the last-viewed timestamp is useful for dispatchers).
         r.pop("viewer_ip_hash_last", None)
         items.append(r)
     return {"items": items, "total": len(items)}
@@ -244,7 +218,7 @@ async def list_shares(user_id: str = Query(...),
               tags=["replay-share"])
 async def revoke_share(share_id: str = Path(..., min_length=8, max_length=32),
                         caller: Dict[str, Any] = Depends(get_current_user)):
-    _require_share_role(caller)
+    _require_admin(caller)
     tenant_id = _tenant_or_400(caller)
     await _ensure_indexes()
     r = await db.route_replay_shares.find_one_and_update(
@@ -254,37 +228,31 @@ async def revoke_share(share_id: str = Path(..., min_length=8, max_length=32),
         return_document=True,
     )
     if not r:
-        # Either wrong tenant, unknown share, or already revoked. Return
-        # a stable ok:false so the UI can render an idempotent message
-        # without leaking whether the share ever existed.
         raise HTTPException(404, detail="share_not_found_or_already_revoked")
     return {"ok": True, "share_id": share_id,
             "revoked_at": r["revoked_at"].isoformat()}
 
 
-# ═══════════════════════ 4) Public GET ══════════════════════════════
-_PING_LIMIT = 5000  # same order of magnitude as the authed route
+# ═══════════════════════ 4) Authed GET ══════════════════════════════
+# Feb-2026 rework: replaces the deleted unauthenticated
+# ``GET /public/replay/{share_id}`` endpoint. Admin-or-Super-Admin
+# only. Same payload shape and PII masking as before. Tenant scope is
+# enforced — you can only fetch a share that lives in your own tenant.
+_PING_LIMIT = 5000
+_PII_ON_STOP = {
+    "phone", "phone_number", "email", "home_address",
+    "attributed_customer_email", "attributed_customer_phone",
+    "reviewer_notes", "notes",
+}
 
 
-def _iso(v: Any) -> Optional[str]:
-    if v is None:
-        return None
-    if isinstance(v, datetime):
-        return v.isoformat()
-    return str(v)
-
-
-async def _build_public_payload(share: Dict[str, Any]) -> Dict[str, Any]:
-    """Fetches stops + pings + geofence entries for the (user_id,
-    replay_date) pair and returns a PII-scrubbed payload safe for
-    unauthenticated viewing."""
+async def _build_share_payload(share: Dict[str, Any]) -> Dict[str, Any]:
     tenant_id = share["tenant_id"]
     user_id = share["user_id"]
     date = share["replay_date"]
     day_start = f"{date}T00:00:00+00:00"
     day_end = f"{date}T23:59:59+00:00"
 
-    # Tech display name — nothing PII beyond first name / display.
     tech_name = ""
     tech = await db.users.find_one(
         {"id": user_id, "tenant_id": tenant_id},
@@ -292,19 +260,12 @@ async def _build_public_payload(share: Dict[str, Any]) -> Dict[str, Any]:
     if tech:
         tech_name = tech.get("display_name") or tech.get("name") or "Technician"
 
-    # Tenant display for the footer.
     tenant_name = ""
     tenant = await db.tenants.find_one(
         {"id": tenant_id}, {"_id": 0, "name": 1})
     if tenant:
         tenant_name = tenant.get("name") or ""
 
-    # Stops — strip PII fields on the way out.
-    _PII_ON_STOP = {
-        "phone", "phone_number", "email", "home_address",
-        "attributed_customer_email", "attributed_customer_phone",
-        "reviewer_notes", "notes",
-    }
     stops: List[Dict[str, Any]] = []
     async for s in db.driver_stops.find(
             {"tenant_id": tenant_id, "user_id": user_id,
@@ -315,7 +276,6 @@ async def _build_public_payload(share: Dict[str, Any]) -> Dict[str, Any]:
                 s.pop(k, None)
         stops.append(s)
 
-    # Pings — downsample if huge.
     pings: List[Dict[str, Any]] = []
     total_pings = await db.gps_pings.count_documents(
         {"tenant_id": tenant_id, "user_id": user_id,
@@ -336,7 +296,6 @@ async def _build_public_payload(share: Dict[str, Any]) -> Dict[str, Any]:
         if len(pings) >= _PING_LIMIT:
             break
 
-    # Geofence entries + exits (public-safe — only fence name + ts).
     fences: List[Dict[str, Any]] = []
     async for g in db.geofence_events.find(
             {"tenant_id": tenant_id, "user_id": user_id,
@@ -381,32 +340,20 @@ async def _build_public_payload(share: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@router.options("/public/replay/{share_id}", include_in_schema=False)
-async def public_replay_options(share_id: str):
-    return Response(status_code=204, headers={
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, OPTIONS",
-        "Access-Control-Allow-Headers": "*",
-    })
-
-
-@router.get("/public/replay/{share_id}", operation_id="replayShare.public",
+@router.get("/gps/replay/share/{share_id}",
+             operation_id="replayShare.get",
              tags=["replay-share"])
-async def public_replay(share_id: str, request: Request):
+async def get_share(share_id: str = Path(..., min_length=8, max_length=32),
+                     request: Request = None,
+                     caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_admin(caller)
+    tenant_id = _tenant_or_400(caller)
     await _ensure_indexes()
-    ip = _client_ip(request)
 
-    # Rate limit first — we don't want a bot to be able to enumerate
-    # even 404 vs 410 vs 200 at unlimited RPS.
-    if not _rate_ok(share_id, ip):
-        return Response(status_code=429,
-                        headers={"Access-Control-Allow-Origin": "*",
-                                  "X-Widget-Analytics": "rate_limited",
-                                  "Retry-After": str(_RATE_WINDOW_S)})
-
-    share = await db.route_replay_shares.find_one({"share_id": share_id},
-                                                     {"_id": 0})
+    share = await db.route_replay_shares.find_one(
+        {"share_id": share_id, "tenant_id": tenant_id}, {"_id": 0})
     if not share:
+        # 404 (not 403) so we don't leak share-existence across tenants.
         raise HTTPException(404, detail="share_not_found")
 
     now = _now()
@@ -416,10 +363,10 @@ async def public_replay(share_id: str, request: Request):
     if exp and exp <= now:
         raise HTTPException(410, detail="share_expired")
 
-    payload = await _build_public_payload(share)
+    payload = await _build_share_payload(share)
 
-    # Increment view counters. No raw IP is stored anywhere — only its
-    # hash, and only the LAST viewer (not a rolling list).
+    # Increment view counters (audit trail of admin-to-admin sharing).
+    ip = _client_ip(request) if request is not None else "?"
     ip_h = _ip_hash(ip, share_id)
     await db.route_replay_shares.update_one(
         {"share_id": share_id},
@@ -427,11 +374,4 @@ async def public_replay(share_id: str, request: Request):
          "$set": {"last_viewed_at": now, "viewer_ip_hash_last": ip_h}},
     )
     payload["view_count"] = int(share.get("view_count", 0)) + 1
-
-    resp = Response(
-        content=__import__("json").dumps(payload, default=str),
-        media_type="application/json",
-        headers={"Access-Control-Allow-Origin": "*",
-                  "Cache-Control": "no-store"},
-    )
-    return resp
+    return payload

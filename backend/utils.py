@@ -109,6 +109,26 @@ def require_super_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+# Feb-2026 · Phase 2 REWORK addendum — GPS read lockdown.
+#
+# The human owner tightened GPS visibility: read access to every GPS
+# feature (live positions, stops, route, geofences, scorecard, exports,
+# settings) is restricted to admin / super_admin / manager / dispatcher
+# / owner. Techs and customers are explicitly denied — techs still POST
+# pings (that path is deliberately not gated by this dep) but they must
+# not READ any GPS data. Applied at include_router() time in server.py
+# so every route on a gated router picks up the guard uniformly.
+_GPS_READ_ROLES = {"admin", "super_admin", "owner", "manager", "dispatcher"}
+
+
+def require_gps_read(user: dict = Depends(get_current_user)) -> dict:
+    role = (user.get("role") or "").lower()
+    if role not in _GPS_READ_ROLES:
+        raise HTTPException(status_code=403,
+                             detail="GPS access restricted to admin, super admin, manager, or dispatcher")
+    return user
+
+
 # Phase 56.9b Step 8 — RBAC gate for Zillow-backed surfaces (property
 # lookup, save/list/delete, D2D sold-leads canvassing). Techs get access
 # to the same data admins do, but the paid endpoints are additionally
