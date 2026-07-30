@@ -14,9 +14,10 @@ import React from "react";
 import { toast } from "sonner";
 import { Sparkles, ScanSearch, Copy, RefreshCw, PlusCircle, X,
           FileText, ClipboardCheck, TrendingUp, Wrench, CheckCircle2,
-          AlertCircle } from "lucide-react";
+          AlertCircle, Globe, ExternalLink } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+  AreaChart, Area,
 } from "recharts";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -27,6 +28,7 @@ const TABS = [
   { key: "llmstxt",    label: "LLMs.txt",          icon: FileText },
   { key: "visibility", label: "AI Visibility",     icon: TrendingUp },
   { key: "fixes",      label: "Fixes",             icon: Wrench },
+  { key: "mentions",   label: "Brand Mentions",    icon: Globe },
 ];
 
 async function _copy(text, label = "Copied") {
@@ -793,6 +795,335 @@ function FixCard({ fix, onApply }) {
   );
 }
 
+// ── Brand Mentions tab (Phase 5c) ─────────────────────────────────
+function MentionsTab() {
+  const [dash, setDash] = React.useState(null);
+  const [range, setRange] = React.useState("30d");
+  const [sentimentFilter, setSentimentFilter] = React.useState("");
+  const [domainFilter, setDomainFilter] = React.useState("");
+  const [list, setList] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [showCompetitors, setShowCompetitors] = React.useState(false);
+  const [competitorInput, setCompetitorInput] = React.useState("");
+  const [competitorDomains, setCompetitorDomains] = React.useState([]);
+
+  const load = React.useCallback(async () => {
+    try {
+      const params = new URLSearchParams({ range });
+      if (domainFilter) params.set("domain", domainFilter);
+      if (sentimentFilter) params.set("sentiment", sentimentFilter);
+      const [d, l] = await Promise.all([
+        api.get("/aeo/mentions/dashboard"),
+        api.get(`/aeo/mentions/list?${params.toString()}`),
+      ]);
+      setDash(d);
+      setList(l);
+    } catch (e) {
+      toast.error(e?.body?.detail || e?.message || "Failed to load");
+    }
+  }, [range, domainFilter, sentimentFilter]);
+  React.useEffect(() => { load(); }, [load]);
+
+  const runNow = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post("/aeo/mentions/run-now", {});
+      if (r.skipped_reason === "cooldown") {
+        toast("Cooldown active — last scan < 20h ago");
+      } else if (r.provider_configured === false) {
+        toast.error("No search API key configured.");
+      } else {
+        toast.success(`Found ${r.new_mentions} new · ${r.updated_mentions} updated`);
+      }
+      load();
+    } catch (e) {
+      toast.error(e?.body?.detail || e?.message || "Run failed");
+    } finally { setBusy(false); }
+  };
+
+  const saveCompetitors = async () => {
+    try {
+      const cleaned = competitorInput.split(",").map((s) => s.trim()).filter(Boolean);
+      const r = await api.post("/aeo/mentions/competitors", { domains: cleaned });
+      setCompetitorDomains(r.domains || []);
+      toast.success(`Competitors saved · retagged ${r.retagged_true}`);
+      load();
+    } catch (e) {
+      toast.error(e?.body?.detail || e?.message || "Save failed");
+    }
+  };
+
+  const mark = async (mention_id, updates) => {
+    try {
+      await api.post(`/aeo/mentions/${mention_id}/mark`, updates);
+      toast.success("Marked");
+      load();
+    } catch (e) {
+      toast.error(e?.body?.detail || e?.message || "Failed");
+    }
+  };
+
+  const providerConfigured = dash?.provider_configured;
+
+  return (
+    <div className="space-y-4" data-testid="aeo-mentions-tab">
+      {providerConfigured === false ? (
+        <div className="rounded-xl p-3 text-xs flex items-start gap-2"
+              style={{ backgroundColor: "#FEF9C3", color: "#713F12",
+                        border: "1px solid #FDE68A" }}
+              data-testid="aeo-mentions-unconfigured">
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          <div>
+            <b>No Search API key configured.</b> Set
+            {" "}<code>SERPER_API_KEY</code> (recommended) or
+            {" "}<code>GOOGLE_CSE_API_KEY</code> + <code>GOOGLE_CSE_CX</code>
+            {" "}in your environment to enable Brand Mention Crawling.
+          </div>
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <KPI label="Total mentions (30d)" value={dash?.total_30d ?? 0}
+              testid="aeo-mentions-total" />
+        <KPI label="New this week" value={dash?.new_this_week ?? 0}
+              testid="aeo-mentions-new" />
+        <KPI label="Sentiment breakdown"
+              value={dash ? Object.entries(dash.sentiment_breakdown || {})
+                       .map(([k, v]) => `${k}:${v}`).join("  ") || "—" : "—"}
+              testid="aeo-mentions-sentiment" />
+        <KPI label="Spend / cap"
+              value={`$${(dash?.cost_this_month || 0).toFixed(3)}`}
+              sub={`cap $${(dash?.cost_cap || 0).toFixed(2)}`}
+              color={dash?.cost_capped ? "#DC2626" : colors.onSurface}
+              testid="aeo-mentions-cost" />
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex gap-0.5 p-0.5 rounded-md"
+              style={{ backgroundColor: colors.surfaceSecondary,
+                        border: `1px solid ${colors.border}` }}>
+          {["7d", "30d", "90d"].map((r) => (
+            <button key={r} type="button" onClick={() => setRange(r)}
+                     className="px-2.5 py-1 rounded text-xs font-semibold"
+                     style={{
+                       backgroundColor: range === r ? colors.brand : "transparent",
+                       color: range === r ? "#fff" : colors.onSurface,
+                     }}
+                     data-testid={`aeo-mentions-range-${r}`}>
+              {r}
+            </button>
+          ))}
+        </div>
+        <input value={domainFilter}
+                onChange={(e) => setDomainFilter(e.target.value)}
+                placeholder="Filter domain (e.g. yelp.com)"
+                className="rounded-lg px-3 py-1.5 text-xs"
+                style={{ backgroundColor: colors.surfaceSecondary,
+                          color: colors.onSurface,
+                          border: `1px solid ${colors.border}` }}
+                data-testid="aeo-mentions-domain-filter" />
+        <select value={sentimentFilter}
+                onChange={(e) => setSentimentFilter(e.target.value)}
+                className="rounded-lg px-2 py-1.5 text-xs"
+                style={{ backgroundColor: colors.surfaceSecondary,
+                          color: colors.onSurface,
+                          border: `1px solid ${colors.border}` }}
+                data-testid="aeo-mentions-sentiment-filter">
+          <option value="">All sentiment</option>
+          <option value="positive">Positive</option>
+          <option value="neutral">Neutral</option>
+          <option value="negative">Negative</option>
+        </select>
+        <button type="button" onClick={runNow}
+                 disabled={busy || providerConfigured === false}
+                 className="ml-auto flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
+                 style={{ backgroundColor: colors.brand, color: "#fff" }}
+                 data-testid="aeo-mentions-run">
+          {busy ? <RefreshCw size={14} className="animate-spin" /> : <Globe size={14} />}
+          Run scan now
+        </button>
+      </div>
+
+      <div className="rounded-xl p-4"
+            style={{ backgroundColor: colors.surface,
+                      border: `1px solid ${colors.border}` }}
+            data-testid="aeo-mentions-chart">
+        <div className="text-xs uppercase tracking-wide font-semibold mb-2"
+              style={{ color: colors.muted }}>New mentions per day · {range}</div>
+        {(dash?.series_range || []).length === 0 ? (
+          <div className="text-center py-10 text-xs"
+                style={{ color: colors.muted }}
+                data-testid="aeo-mentions-chart-empty">
+            No mentions in this range yet.
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart data={dash.series_range}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+              <XAxis dataKey="date" stroke={colors.muted} fontSize={11} />
+              <YAxis allowDecimals={false} stroke={colors.muted} fontSize={11} />
+              <Tooltip />
+              <Area type="monotone" dataKey="count" stroke={colors.brand}
+                     fill={colors.brand} fillOpacity={0.2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {list?.items?.length ? (
+        <div className="rounded-xl overflow-hidden"
+              style={{ backgroundColor: colors.surface,
+                        border: `1px solid ${colors.border}` }}
+              data-testid="aeo-mentions-table">
+          <ul className="divide-y" style={{ borderColor: colors.border }}>
+            {list.items.map((m) => (
+              <MentionRow key={m.mention_id} m={m} onMark={mark} />
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <div className="rounded-xl p-10 text-center"
+              style={{ backgroundColor: colors.surface,
+                        border: `1px dashed ${colors.border}`,
+                        color: colors.muted }}
+              data-testid="aeo-mentions-empty">
+          No mentions yet. Run a scan or wait for the daily cron.
+        </div>
+      )}
+
+      <div className="rounded-xl p-3"
+            style={{ backgroundColor: colors.surface,
+                      border: `1px solid ${colors.border}` }}
+            data-testid="aeo-mentions-competitors">
+        <button type="button" onClick={() => setShowCompetitors((v) => !v)}
+                 className="w-full text-left text-xs uppercase tracking-wide font-semibold flex items-center justify-between"
+                 style={{ color: colors.muted }}>
+          <span>Manage competitor domains</span>
+          <span>{showCompetitors ? "−" : "+"}</span>
+        </button>
+        {showCompetitors ? (
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
+            <input value={competitorInput}
+                    onChange={(e) => setCompetitorInput(e.target.value)}
+                    placeholder="acme-competitor.com, other-pool-co.com"
+                    className="flex-1 rounded-lg px-3 py-1.5 text-xs"
+                    style={{ backgroundColor: colors.surfaceSecondary,
+                              color: colors.onSurface,
+                              border: `1px solid ${colors.border}` }}
+                    data-testid="aeo-mentions-comp-input" />
+            <button type="button" onClick={saveCompetitors}
+                     className="px-2.5 py-1.5 rounded-md text-xs font-semibold"
+                     style={{ backgroundColor: colors.brand, color: "#fff" }}
+                     data-testid="aeo-mentions-comp-save">
+              Save
+            </button>
+            {competitorDomains.length ? (
+              <div className="w-full text-[11px]"
+                    style={{ color: colors.muted }}>
+                Current: {competitorDomains.join(", ")}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+const SENTIMENT_STYLES = {
+  positive: { bg: "#DCFCE7", fg: "#166534", border: "#BBF7D0" },
+  neutral:  { bg: "#F1F5F9", fg: "#334155", border: "#E2E8F0" },
+  negative: { bg: "#FEE2E2", fg: "#991B1B", border: "#FECACA" },
+};
+
+function MentionRow({ m, onMark }) {
+  const sTone = SENTIMENT_STYLES[m.sentiment] || SENTIMENT_STYLES.neutral;
+  const [open, setOpen] = React.useState(false);
+  return (
+    <li className="p-3"
+         data-testid={`aeo-mention-row-${m.mention_id}`}>
+      <div className="flex items-start gap-3">
+        <div className="text-[11px] shrink-0"
+              style={{ color: colors.muted, minWidth: 84 }}>
+          {(m.discovered_at || "").slice(0, 10)}
+          <div className="mt-0.5">
+            {m.sentiment ? (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                     style={{ backgroundColor: sTone.bg, color: sTone.fg,
+                               border: `1px solid ${sTone.border}` }}>
+                {m.sentiment}
+              </span>
+            ) : null}
+            {m.is_competitor_domain ? (
+              <span className="text-[10px] font-bold ml-1 px-1.5 py-0.5 rounded-full"
+                     style={{ backgroundColor: "#FEF3C7", color: "#92400E",
+                               border: "1px solid #FDE68A" }}>
+                competitor
+              </span>
+            ) : null}
+            {m.is_own_domain ? (
+              <span className="text-[10px] font-bold ml-1 px-1.5 py-0.5 rounded-full"
+                     style={{ backgroundColor: "#DBEAFE", color: "#1E40AF",
+                               border: "1px solid #BFDBFE" }}>
+                own
+              </span>
+            ) : null}
+          </div>
+        </div>
+        <div className="min-w-0 flex-1">
+          <a href={m.url} target="_blank" rel="noopener noreferrer"
+              className="text-sm font-semibold flex items-center gap-1 truncate"
+              style={{ color: colors.brand }}>
+            {m.title || m.url} <ExternalLink size={11} className="shrink-0" />
+          </a>
+          <div className="text-[11px]" style={{ color: colors.muted }}>
+            {m.domain}
+          </div>
+          {m.snippet ? (
+            <div className="text-[12px] mt-1 line-clamp-2"
+                  style={{ color: colors.onSurface }}>
+              {m.snippet}
+            </div>
+          ) : null}
+        </div>
+        <button type="button" onClick={() => setOpen((v) => !v)}
+                 className="text-[11px] font-semibold px-2 py-1 rounded-md shrink-0"
+                 style={{ backgroundColor: colors.surfaceSecondary,
+                           color: colors.onSurface,
+                           border: `1px solid ${colors.border}` }}
+                 data-testid={`aeo-mention-mark-${m.mention_id}`}>
+          Mark
+        </button>
+      </div>
+      {open ? (
+        <div className="mt-2 flex items-center gap-1 flex-wrap"
+              data-testid={`aeo-mention-mark-menu-${m.mention_id}`}>
+          {["positive", "neutral", "negative"].map((s) => (
+            <button key={s} type="button"
+                     onClick={() => onMark(m.mention_id, { sentiment: s })}
+                     className="text-[10px] font-semibold px-2 py-1 rounded-md"
+                     style={{ backgroundColor: colors.surfaceSecondary,
+                               color: colors.onSurface,
+                               border: `1px solid ${colors.border}` }}>
+              sentiment:{s}
+            </button>
+          ))}
+          {["competitor", "customer", "press", "ignore"].map((t) => (
+            <button key={t} type="button"
+                     onClick={() => onMark(m.mention_id, { tag: t })}
+                     className="text-[10px] font-semibold px-2 py-1 rounded-md"
+                     style={{ backgroundColor: colors.surfaceSecondary,
+                               color: colors.onSurface,
+                               border: `1px solid ${colors.border}` }}>
+              tag:{t}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
 // ── Page shell ───────────────────────────────────────────────────
 export default function AEOPage() {
   const [tab, setTab] = React.useState("auditor");
@@ -838,6 +1169,7 @@ export default function AEOPage() {
       {tab === "llmstxt" ? <LlmsTxtTab /> : null}
       {tab === "visibility" ? <VisibilityTab /> : null}
       {tab === "fixes" ? <FixesTab /> : null}
+      {tab === "mentions" ? <MentionsTab /> : null}
     </div>
   );
 }

@@ -8,6 +8,28 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-07-30 — Phase 5c · AEO Brand Mention Crawler
+
+### Added
+- `services/search_provider.py` — adapter for Serper.dev (default when `SERPER_API_KEY` is set) and Google Custom Search JSON API fallback (`GOOGLE_CSE_API_KEY` + `GOOGLE_CSE_CX`). Returns `{provider_configured, results}`; unconfigured runs return empty results, never crash.
+- `services/brand_mentions.py` — crawl runner with dedup (per-tenant per-URL), cached sentiment classification (30d cache, min 40-char snippet), per-tenant monthly cost cap ($3 default via `AEO_MENTIONS_MONTHLY_CAP_USD`), 20h duplicate-run cooldown, retroactive competitor-domain retagging, dashboard + list aggregators, `daily_mentions_scan()` cron.
+- `routers/aeo.py` — 5 new endpoints: `POST /api/aeo/mentions/run-now`, `GET /api/aeo/mentions/list`, `GET /api/aeo/mentions/dashboard`, `POST /api/aeo/mentions/{id}/mark`, `POST /api/aeo/mentions/competitors`.
+- Collections: `brand_mentions`, `brand_mention_runs`, `brand_sentiment_cache`.
+- APScheduler job `aeo_mentions_scan` at hour `AEO_MENTIONS_CRON_HOUR_UTC` (default 08:00 UTC — one hour after Phase 5b's visibility cron to prevent collisions). Only crawls tenants with `aeo_visibility_enabled=True` (reuses Phase 5b flag; no second toggle).
+- Web admin — new **Brand Mentions** tab in `/admin/marketing/aeo`: KPI strip, area chart of new mentions/day, filters (range / domain / sentiment), mention table with sentiment + competitor + own-domain pills, Mark popover (sentiment + tag override), collapsible "Manage competitor domains" panel.
+- Pytest suite `backend/tests/test_brand_mentions.py` — 8 tests: adapter selection (Serper / Google / none), dedup (2 identical crawls → 1 insert + 1 update), cost cap, sentiment cache (LLM stub called once), competitor retag, role guard (parametrized × 2), unconfigured-provider survives with 200.
+
+### Changed
+- LLM sentiment classification shares the Phase 5b AEO cost pool — no second budget line.
+- Test file wires a private motor client bound to a shared event loop to sidestep motor's "Event loop is closed" cross-test issue that surfaces when running the AEO test suite together.
+
+### Security
+- All 5 new endpoints reject Tech + Customer with 403.
+- `POST /mentions/{id}/mark` is scoped by both `mention_id` and `tenant_id` — cross-tenant marks return 404.
+- Raw search-provider keys are read from env only; the mark/competitors payloads are strictly typed (invalid sentiment/tag → 422).
+
+---
+
 ## 2026-07-30 — Phase 5b · AEO AI Visibility Tracker + LLM Fix Recs
 
 ### Added

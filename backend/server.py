@@ -829,6 +829,17 @@ async def _background_seed():
                                 replace_existing=True)
         except Exception as _e:  # noqa: BLE001
             logger.warning(f"[aeo] cron install failed: {_e}")
+        # Phase 5c · AEO — daily brand-mention crawl (default 08:00 UTC).
+        try:
+            from services.brand_mentions import (
+                daily_mentions_scan, CRON_HOUR_UTC as _MENTIONS_HR,
+            )
+            scheduler.add_job(daily_mentions_scan, "cron",
+                                hour=_MENTIONS_HR, minute=0,
+                                id="aeo_mentions_scan",
+                                replace_existing=True)
+        except Exception as _e:  # noqa: BLE001
+            logger.warning(f"[aeo] mentions cron install failed: {_e}")
         # Phase 27.1 — weekly churn rescore (Mondays 06:00 UTC).
         scheduler.add_job(churn.scheduled_churn_scan_all, "cron",
                             day_of_week="mon", hour=6, minute=0,

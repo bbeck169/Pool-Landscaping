@@ -252,3 +252,108 @@ async def api_fixes_pending(scan_id: Optional[str] = None,
         items.append(row)
     return {"items": items, "count": len(items)}
 
+
+# ─── Phase 5c · Brand Mention Crawler ─────────────────────────────
+from services.brand_mentions import (
+    run_crawl, dashboard_for_tenant as _mentions_dashboard,
+    list_mentions as _mentions_list, set_competitor_domains,
+    DUPLICATE_HOURS as _MENTIONS_DUP_H,
+)
+from services.search_provider import selected_provider
+
+
+class MentionsRunBody(BaseModel):
+    queries: Optional[List[str]] = None
+    max_results_per_query: int = 10
+
+
+@router.post("/aeo/mentions/run-now",
+              operation_id="aeo.mentionsRunNow", tags=["aeo"])
+async def api_mentions_run_now(body: MentionsRunBody,
+                                 caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    from datetime import datetime, timedelta, timezone
+    dup_cutoff = (datetime.now(timezone.utc)
+                    - timedelta(hours=_MENTIONS_DUP_H)).isoformat()
+    recent = await db.brand_mention_runs.find_one(
+        {"tenant_id": tenant_id, "ran_at": {"$gte": dup_cutoff}},
+        {"_id": 0, "ran_at": 1})
+    if recent:
+        return {"new_mentions": 0, "updated_mentions": 0, "total_seen": 0,
+                "provider_configured": bool(selected_provider()),
+                "skipped_reason": "cooldown",
+                "last_ran_at": recent.get("ran_at")}
+    tenant = await _tenant_row(tenant_id)
+    tenant = {"id": tenant_id, **(tenant or {})}
+    r = await run_crawl(tenant, queries=body.queries,
+                          max_results_per_query=body.max_results_per_query)
+    return r
+
+
+@router.get("/aeo/mentions/list",
+             operation_id="aeo.mentionsList", tags=["aeo"])
+async def api_mentions_list(range: str = "30d",
+                              domain: Optional[str] = None,
+                              sentiment: Optional[str] = None,
+                              page: int = 1, size: int = 25,
+                              caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    return await _mentions_list(tenant_id, range_key=range,
+                                   domain=domain, sentiment=sentiment,
+                                   page=page, size=size)
+
+
+@router.get("/aeo/mentions/dashboard",
+             operation_id="aeo.mentionsDashboard", tags=["aeo"])
+async def api_mentions_dashboard(caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    return await _mentions_dashboard(tenant_id)
+
+
+class MentionMarkBody(BaseModel):
+    sentiment: Optional[str] = None
+    tag: Optional[str] = None
+
+
+@router.post("/aeo/mentions/{mention_id}/mark",
+              operation_id="aeo.mentionsMark", tags=["aeo"])
+async def api_mention_mark(mention_id: str, body: MentionMarkBody,
+                             caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    updates: Dict[str, Any] = {}
+    if body.sentiment in {"positive", "neutral", "negative", None}:
+        if body.sentiment is not None:
+            updates["sentiment"] = body.sentiment
+    else:
+        raise HTTPException(422, {"error": "invalid_sentiment"})
+    if body.tag in {"competitor", "customer", "press", "ignore", None}:
+        if body.tag is not None:
+            updates["tag"] = body.tag
+    else:
+        raise HTTPException(422, {"error": "invalid_tag"})
+    if not updates:
+        raise HTTPException(400, {"error": "no_updates"})
+    r = await db.brand_mentions.update_one(
+        {"mention_id": mention_id, "tenant_id": tenant_id},
+        {"$set": updates})
+    if r.matched_count == 0:
+        raise HTTPException(404, {"error": "mention_not_found"})
+    return {"ok": True, "updated": updates}
+
+
+class MentionCompetitorsBody(BaseModel):
+    domains: List[str] = Field(default_factory=list)
+
+
+@router.post("/aeo/mentions/competitors",
+              operation_id="aeo.mentionsSetCompetitors", tags=["aeo"])
+async def api_mentions_set_competitors(body: MentionCompetitorsBody,
+                                          caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    return await set_competitor_domains(tenant_id, body.domains or [])
+
