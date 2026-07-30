@@ -33,6 +33,7 @@ import {
 } from "@/pages/dispatch/dispatchBoardApi";
 import DispatchMapView from "@/pages/dispatch/DispatchMapView";
 import useLiveTechPositions from "@/hooks/useLiveTechPositions";
+import useCrossingToasts from "@/hooks/useCrossingToasts";
 import RouteDetailsList from "@/pages/dispatch/RouteDetailsList";
 import TechLoadStrip from "@/pages/dispatch/TechLoadStrip";
 import ShiftRouteDialog from "@/pages/dispatch/ShiftRouteDialog";
@@ -100,10 +101,13 @@ export default function DispatchBoardPage() {
   React.useEffect(() => {
     try { localStorage.setItem("dispatch.showLiveTechs", String(showLiveTechs)); } catch {}
   }, [showLiveTechs]);
-  const { positions: livePositions } = useLiveTechPositions({
+  const { positions: livePositions, recentCrossings } = useLiveTechPositions({
     enabled: showLiveTechs,
     intervalMs: 30000,
   });
+  // Phase G5a · Feb-2026 — toast on new geofence crossings (dedupe
+  // via localStorage inside the hook). Only when live-techs is on.
+  useCrossingToasts(recentCrossings, { enabled: showLiveTechs });
 
   // Load the tech directory once so the dropdown is populated even
   // when the current filter returns no pins for a tech (offline day).

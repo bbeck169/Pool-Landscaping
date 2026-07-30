@@ -156,6 +156,9 @@ import ProspectsKanbanPage from "@/pages/admin/outreach/ProspectsKanbanPage";
 import OutreachTemplatesPage from "@/pages/admin/outreach/TemplatesPage";
 import KeywordIdeatorPage from "@/pages/admin/KeywordIdeatorPage";
 import GpsUsersPage from "@/pages/admin/GpsUsersPage";
+// Phase G5a · Feb-2026 — Geofences + crossings inbox.
+import GeofencesPage from "@/pages/admin/GeofencesPage";
+import CrossingsInbox from "@/pages/admin/CrossingsInbox";
 import WidgetEmbedPage from "@/pages/admin/WidgetEmbedPage";
 import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
 import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPages";
@@ -668,6 +671,9 @@ export default function App() {
             <Route path="admin/seo/keywords" element={<AdminOnly><KeywordIdeatorPage /></AdminOnly>} />
             {/* Phase G4 · Feb-2026 — GPS per-user controls (admin+/manager). */}
             <Route path="admin/settings/gps-users" element={<AdminOnly><GpsUsersPage /></AdminOnly>} />
+            {/* Phase G5a · Feb-2026 — Geofences + crossings inbox (admin+/manager). */}
+            <Route path="admin/gps/geofences" element={<AdminOnly><GeofencesPage /></AdminOnly>} />
+            <Route path="admin/gps/crossings" element={<AdminOnly><CrossingsInbox /></AdminOnly>} />
             {/* MR1+MR2 · Feb-2026 — Public widget embed preview + snippet. */}
             <Route path="admin/moderation/widget-embed" element={<AdminOnly><WidgetEmbedPage /></AdminOnly>} />
             {/* Phase 50.A — Chemical Costs CRUD (admin/super_admin) */}

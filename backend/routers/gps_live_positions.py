@@ -150,4 +150,23 @@ async def get_live_positions(user: Dict[str, Any] = Depends(get_current_user)):
     except Exception:                                                    # noqa: BLE001
         pass
 
-    return {"as_of": as_of, "positions": positions}
+    # G5a · Feb-2026 — recent geofence crossings (last 60s) so the
+    # dispatch board can toast on new enter/exit events. Additive
+    # field only; missing/empty is treated as "no new crossings" by
+    # the UI. Cap at 50 to keep the poll response bounded.
+    recent_crossings: List[Dict[str, Any]] = []
+    try:
+        cutoff = (as_of_dt - timedelta(seconds=60)).isoformat().replace(
+            "+00:00", "+00:00")
+        async for e in db.geofence_events.find(
+            {"tenant_id": tenant_id, "detected_at": {"$gte": cutoff}},
+            {"_id": 0, "id": 1, "geofence_id": 1, "geofence_name": 1,
+             "user_id": 1, "user_name": 1, "crossing": 1,
+             "detected_at": 1, "lat": 1, "lon": 1},
+        ).sort("detected_at", -1).limit(50):
+            recent_crossings.append(e)
+    except Exception:                                                    # noqa: BLE001
+        recent_crossings = []
+
+    return {"as_of": as_of, "positions": positions,
+            "recent_crossings": recent_crossings}

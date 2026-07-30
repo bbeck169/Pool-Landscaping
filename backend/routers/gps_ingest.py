@@ -156,6 +156,7 @@ async def ingest_pings(body: PingBatchIn,
     # ── Dedup + insert ───────────────────────────────────────────
     inserted = 0
     dedup_count = 0
+    accepted: List[Dict[str, Any]] = []  # G5a — pings we actually inserted
 
     for p in pings:
         # Soft dedup on (user_id, captured_at, source)
@@ -185,11 +186,50 @@ async def ingest_pings(body: PingBatchIn,
         }
         await db.gps_pings.insert_one(doc)
         inserted += 1
+        accepted.append(doc)
 
-    logger.info("[gps_ingest] user=%s inserted=%d dedup=%d clock_in=%s",
-                uid, inserted, dedup_count, clock_in_id)
+    # ── G5a · Feb-2026 — Geofence evaluation hook ────────────────
+    # Cheap look-ahead: skip DB churn if the tenant has no active
+    # fences. Otherwise evaluate each accepted ping in insertion
+    # order (state machine per user+fence). Failure here MUST NOT
+    # 500 the ingest — we log and return crossings_detected=0.
+    crossings_detected = 0
+    if accepted:
+        try:
+            has_fence = await db.geofences.find_one(
+                {"tenant_id": tid, "active": True}, {"_id": 1})
+            if has_fence:
+                # Resolve display name once (best-effort — falls back to email).
+                user_row = await db.users.find_one(
+                    {"id": uid, "tenant_id": tid},
+                    {"_id": 0, "name": 1, "email": 1})
+                user_name = ((user_row or {}).get("name")
+                             or (user_row or {}).get("email") or "")
+                from routers.geofences import evaluate_ping_against_fences
+                for doc in accepted:
+                    try:
+                        crossings_detected += await evaluate_ping_against_fences(
+                            tenant_id=tid,
+                            user_id=uid,
+                            user_name=user_name,
+                            lat=float(doc["lat"]),
+                            lon=float(doc["lon"]),
+                            captured_at=doc["captured_at"],
+                            ping_id=doc["id"],
+                        )
+                    except Exception as e:                                # noqa: BLE001
+                        logger.warning("[gps_ingest] geofence eval failed "
+                                       "user=%s ping=%s err=%s",
+                                       uid, doc.get("id"), e)
+        except Exception as e:                                            # noqa: BLE001
+            logger.warning("[gps_ingest] geofence hook skipped: %s", e)
+
+    logger.info("[gps_ingest] user=%s inserted=%d dedup=%d clock_in=%s "
+                "crossings=%d",
+                uid, inserted, dedup_count, clock_in_id, crossings_detected)
     return {"inserted": inserted, "dedup_count": dedup_count,
-            "clock_in_id": clock_in_id}
+            "clock_in_id": clock_in_id,
+            "crossings_detected": crossings_detected}
 
 
 # ── GET /api/gps/config ─────────────────────────────────────────────

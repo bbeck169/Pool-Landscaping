@@ -269,7 +269,7 @@ function ProtectedShell() {
   const mapsKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || "";
   if (mapsKey) {
     return (
-      <APIProvider apiKey={mapsKey} libraries={["marker"]}>
+      <APIProvider apiKey={mapsKey} libraries={["marker", "geometry"]}>
         <AppLayout />
       </APIProvider>
     );

@@ -9561,3 +9561,109 @@ remaining gaps.
   (`_dispatch` in `lumino_zapier_bridge.py`) — currently
   logging-only stubs.
 - Removal of Stripe code paths.
+
+---
+
+## Phase G5a · Feb-2026 — Geofences + Entry/Exit Alerts (COMPLETE)
+
+**Summary**
+Tenant-scoped geofences (circle or polygon) with real-time crossing
+detection tied into the existing GPS ping ingest. Admin+/manager can
+draw fences on a Google Map, review crossings in a dedicated inbox,
+and see toast notifications on the Dispatch Board when a technician
+enters or exits a monitored zone.
+
+**Backend files added**
+
+- `backend/services/geofence_engine.py` — pure math (haversine,
+  point-in-circle, ray-casting point-in-polygon, bbox compute + hit).
+- `backend/routers/geofences.py` — CRUD, list, patch (recomputes
+  bbox), soft archive, list events with filters, acknowledge event,
+  and `test-point` utility endpoint. Also exports the async
+  `evaluate_ping_against_fences()` helper used by the ingest hook.
+
+**Backend files extended**
+
+- `backend/routers/gps_ingest.py` — after inserting accepted pings,
+  evaluates each against active fences (500-per-tenant cap, warn +
+  skip beyond). Returns additive `crossings_detected: int`.
+- `backend/routers/gps_live_positions.py` — response now includes
+  `recent_crossings` (last 60s, capped at 50).
+- `backend/server.py` — mounts `routers.geofences.router`.
+
+**Frontend files added**
+
+- `src/pages/admin/GeofencesPage.jsx` — interactive map with
+  click-based drawing (`google.maps` v3.65-compatible; the deprecated
+  `DrawingManager` is NOT used). Two-click circle (center → radius
+  point), N-click polygon with a "Finish polygon" button. Ships a
+  no-maps `ManualCreatePanel` fallback so the page still works when
+  the Google JS key is missing.
+- `src/pages/admin/CrossingsInbox.jsx` — table with type +
+  acknowledgement filters and per-row acknowledge action.
+- `src/hooks/useCrossingToasts.js` — Sonner toast dispatcher with
+  localStorage-backed dedupe (last 200 ids).
+
+**Frontend files extended**
+
+- `src/hooks/useLiveTechPositions.js` — now also returns
+  `recentCrossings` from the live-positions response.
+- `src/pages/dispatch/DispatchBoardPage.jsx` — wires
+  `useCrossingToasts` so admins see enter/exit toasts on the board.
+- `src/App.js` — new routes `admin/gps/geofences` and
+  `admin/gps/crossings` (AdminOnly).
+- `src/layouts/AppLayout.jsx` — swapped `drawing` for `geometry` in
+  the APIProvider `libraries` list (used for accurate haversine).
+
+**New collections**
+
+- `db.geofences`  — `{tenant_id, name, kind, shape, center_lat,
+  center_lon, radius_m, points, bbox, alert_on_enter, alert_on_exit,
+  active, tags, created_by_user_id, created_at, updated_at}`.
+- `db.geofence_events` — `{tenant_id, geofence_id, geofence_name,
+  user_id, user_name, crossing:"enter"|"exit", captured_at,
+  detected_at, lat, lon, ping_id, acknowledged}`.
+- `db.geofence_state` — `{tenant_id, user_id, geofence_id, inside,
+  last_evaluated_at}` (upserted every evaluation).
+
+**Tests added**
+
+- `backend/tests/test_geofence_engine.py` — 18 tests (haversine,
+  point-in-circle, point-in-polygon, bbox compute + hit,
+  point_in_fence integration).  **PASS.**
+- `backend/tests/test_geofences_api.py` — 13 integration tests
+  covering RBAC, CRUD validation, bbox recompute on patch, soft
+  archive, test-point utility, ingest-hook enter→still-inside→exit
+  flow, disabled fence ignored, suppressed-enter still flips state,
+  live-positions carries `recent_crossings`, and additive
+  backwards-compat of the ingest response.  **PASS.**
+- `frontend/src/test/geofences-page.test.jsx` — 5 tests
+  (list, ManualCreatePanel fallback, quick-create POST, detail
+  drawer archive, toolbar rendering).  **PASS.**
+- `frontend/src/test/crossings-inbox.test.jsx` — 4 tests
+  (row rendering, acknowledge POST, ack label swap, filter refetch).
+  **PASS.**
+- `frontend/src/test/dispatch-crossing-toasts.test.jsx` — 5 tests
+  (fires per new crossing, dedupes on re-render, dedupes across
+  mounts via localStorage, disabled flag, empty/null safe).  **PASS.**
+
+**Vitest baseline** — 12 pre-existing failures unchanged (93 passed,
+1 skipped baseline preserved; total 501 tests, 488 passing).
+
+**Guardrails held**
+
+- No external repo cloning.
+- No `mobile/` changes.
+- No LZ/AB/PB/MR/SEO/G0-G4 code touched beyond declared extension
+  points (ingest hook + live-positions).
+- Tenant-scoped everywhere.
+- 500-fence-per-tenant cap in the ingest evaluator; overflow logged
+  and skipped.
+- G3 no-token degradation preserved (reverse-geocoder still returns
+  `no_token` status without erroring).
+
+**Deferred (Phase G5b onward)**
+
+- Auto job attribution based on geofence entry.
+- Route replay (G5c).
+- Driver scorecard (G5d).

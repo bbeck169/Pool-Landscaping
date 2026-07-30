@@ -25,6 +25,7 @@ import { api } from "@/api";
  */
 export default function useLiveTechPositions({ enabled = true, intervalMs = 30000 } = {}) {
   const [positions, setPositions] = React.useState([]);
+  const [recentCrossings, setRecentCrossings] = React.useState([]);
   const [asOf, setAsOf] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
@@ -37,6 +38,7 @@ export default function useLiveTechPositions({ enabled = true, intervalMs = 3000
       const r = await api.get("/gps/live-positions");
       if (!mountedRef.current) return;
       setPositions(Array.isArray(r?.positions) ? r.positions : []);
+      setRecentCrossings(Array.isArray(r?.recent_crossings) ? r.recent_crossings : []);
       setAsOf(r?.as_of || null);
       setError(null);
     } catch (e) {
@@ -51,6 +53,7 @@ export default function useLiveTechPositions({ enabled = true, intervalMs = 3000
     mountedRef.current = true;
     if (!enabled) {
       setPositions([]);
+      setRecentCrossings([]);
       setLoading(false);
       return () => { mountedRef.current = false; };
     }
@@ -66,5 +69,5 @@ export default function useLiveTechPositions({ enabled = true, intervalMs = 3000
     };
   }, [enabled, intervalMs, fetchOnce]);
 
-  return { positions, asOf, loading, error, refresh: fetchOnce };
+  return { positions, recentCrossings, asOf, loading, error, refresh: fetchOnce };
 }

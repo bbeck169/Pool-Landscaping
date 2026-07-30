@@ -304,6 +304,12 @@ api_router.include_router(_gps_route_router.router)
 from routers import gps_user_controls as _gps_user_controls_router  # noqa: E402
 api_router.include_router(_gps_user_controls_router.router)
 
+# Phase G5a · Feb-2026 — Geofences + entry/exit alerts. CRUD lives
+# here; the ingest hook (POST /gps/pings) and live-positions endpoint
+# call into services.geofence_engine + evaluate_ping_against_fences.
+from routers import geofences as _geofences_router  # noqa: E402
+api_router.include_router(_geofences_router.router)
+
 # Feb-2026 · Re-added after LZ4 Stripe purge — Payments summary tile.
 from routers import payments_summary as _payments_summary_router  # noqa: E402
 api_router.include_router(_payments_summary_router.router)
