@@ -21,6 +21,7 @@
 import React from "react";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
+import { DndContext, PointerSensor, useSensor, useSensors, useDroppable } from "@dnd-kit/core";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 import {
   CalendarDays, Globe, Zap, MapPin, X, Users, ChevronDown,
@@ -40,6 +41,8 @@ import ShiftRouteDialog from "@/pages/dispatch/ShiftRouteDialog";
 import ActiveShiftsSidebar from "@/pages/dispatch/ActiveShiftsSidebar";
 import UnroutedPanel from "@/pages/dispatch/UnroutedPanel";
 import OptimizeRouteModal from "@/pages/dispatch/OptimizeRouteModal";
+import UnscheduledJobsPanel from "@/pages/dispatch/UnscheduledJobsPanel";
+import AssignJobModal from "@/pages/dispatch/AssignJobModal";
 import {
   PIN_COLOR_MODES, PIN_COLOR_BY_DAY, CREW_LEGEND,
   loadPinColorMode, savePinColorMode, colorForPin,
@@ -112,6 +115,9 @@ export default function DispatchBoardPage() {
   const [activeShifts, setActiveShifts] = React.useState([]);
   // Phase 3 · Feb-2026 — Nearest-neighbor optimizer modal state.
   const [nnModalOpen, setNnModalOpen] = React.useState(false);
+  // Phase 4 · Feb-2026 — Unscheduled jobs (drag source) + assign-popup fallback.
+  const [unschedJobs, setUnschedJobs] = React.useState([]);
+  const [assignModalJob, setAssignModalJob] = React.useState(null);
   const setPinColorModePersistent = (m) => { setPinColorMode(m); savePinColorMode(m); };
 
   // Phase P2 · Feb-2026 — live technician GPS markers on the map.
@@ -185,6 +191,59 @@ export default function DispatchBoardPage() {
     }
   }, []);
   React.useEffect(() => { loadActiveShifts(); }, [loadActiveShifts]);
+
+  // Phase 4 · Feb-2026 — Pull unscheduled jobs for the drag source panel.
+  // Refetched after every successful insert.
+  const loadUnscheduled = React.useCallback(async () => {
+    try {
+      const res = await api.get("/dispatch/route/unscheduled-jobs");
+      setUnschedJobs(res?.items || []);
+    } catch { /* non-fatal — panel just stays empty */ }
+  }, []);
+  React.useEffect(() => { loadUnscheduled(); }, [loadUnscheduled]);
+
+  // Phase 4 · dnd-kit sensors + drop handler wired to /insert.
+  const dndSensors = useSensors(useSensor(PointerSensor, {
+    activationConstraint: { distance: 5 },
+  }));
+  const insertJob = React.useCallback(async (jobId, techIdArg, dayKeyArg) => {
+    const isoDate = isoDateForDayKey(dayKeyArg);
+    if (!techIdArg || !isoDate) {
+      toast.error("Pick a specific day + tech before dropping.");
+      return;
+    }
+    try {
+      const r = await api.post("/dispatch/route/insert", {
+        tech_user_id: techIdArg, route_date: isoDate, job_id: jobId,
+      });
+      const j = unschedJobs.find((x) => x.id === jobId);
+      const title = j?.title || "Job";
+      toast.success(
+        `Inserted "${title}" at position ${r.inserted_at + 1}/${r.total_stops} · +${(r.added_distance_km || 0).toFixed(1)} km`,
+      );
+      loadUnscheduled();
+      load();
+    } catch (e) {
+      const detail = e?.body?.detail || e?.message || "Insert failed";
+      if (detail === "job_missing_coords") {
+        toast.error("Job has no coords — geocode before scheduling.");
+      } else if (detail === "job_already_scheduled") {
+        toast.error("Job already scheduled.");
+        loadUnscheduled();
+      } else {
+        toast.error(String(detail));
+      }
+    }
+  }, [unschedJobs, loadUnscheduled, load]);
+  const onDragEnd = (event) => {
+    const { active, over } = event;
+    if (!over || !active) return;
+    if (over.id !== "route-details-drop") return;
+    const activeId = String(active.id || "");
+    if (!activeId.startsWith("unsched:")) return;
+    const jobId = activeId.slice("unsched:".length);
+    insertJob(jobId, techId, day);
+  };
 
   const techColorById = React.useMemo(() => {
     const map = {};
@@ -303,6 +362,7 @@ export default function DispatchBoardPage() {
     // container + pb-24 bottom breathing room". See
     // ``components/layout/SafeScrollContainer.jsx`` + the
     // ``assertNoScrollTrap`` vitest helper.
+    <DndContext sensors={dndSensors} onDragEnd={onDragEnd}>
     <SafeScrollContainer className="px-4 md:px-8 pt-4 space-y-4"
                           data-testid="dispatch-board-page">
       {/* ─────────── Header + Day tabs ─────────── */}
@@ -652,6 +712,8 @@ export default function DispatchBoardPage() {
             />
           </div>
 
+          <RouteDetailsDropZone techId={techId} day={day}
+                                  unschedCount={unschedJobs.length}>
           <div
             className="rounded-xl p-3 space-y-3"
             style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
@@ -732,6 +794,12 @@ export default function DispatchBoardPage() {
               </div>
             ) : null}
           </div>
+          </RouteDetailsDropZone>
+
+          <UnscheduledJobsPanel
+            jobs={unschedJobs}
+            onAssignClick={(job) => setAssignModalJob(job)}
+          />
 
           <ActiveShiftsSidebar
             items={activeShifts}
@@ -779,7 +847,18 @@ export default function DispatchBoardPage() {
         techName={techs.find((t) => t.id === techId)?.name || techId}
         day={isoDateForDayKey(day)}
       />
+
+      <AssignJobModal
+        open={!!assignModalJob}
+        onClose={() => setAssignModalJob(null)}
+        onAssigned={() => { loadUnscheduled(); load(); }}
+        job={assignModalJob}
+        techs={techs}
+        defaultTechId={techId}
+        defaultDayKey={day === "all" ? "mon" : day}
+      />
     </SafeScrollContainer>
+    </DndContext>
   );
 }
 
@@ -924,6 +1003,51 @@ function SelectCustomerPanel({ pins, selectedCustomerId, onSelect }) {
           </li>
         )}
       </ul>
+    </div>
+  );
+}
+
+
+// Phase 4 · Feb-2026 — Droppable wrapper around the Route Details panel.
+// Highlights when a job is dragged over. When no tech + day is picked
+// yet, we still register the drop zone (the parent's onDragEnd shows a
+// toast telling the dispatcher to pick a filter first).
+function RouteDetailsDropZone({ techId, day, unschedCount, children }) {
+  const { isOver, setNodeRef } = useDroppable({ id: "route-details-drop" });
+  const armed = !!techId && day !== "all";
+  const showHint = isOver && unschedCount > 0;
+  return (
+    <div
+      ref={setNodeRef}
+      data-testid="dispatch-route-drop-zone"
+      style={{
+        borderRadius: 14,
+        outline: isOver
+          ? `3px dashed ${armed ? "#0284C7" : "#F97316"}`
+          : "3px dashed transparent",
+        outlineOffset: 4,
+        transition: "outline-color 120ms ease",
+        position: "relative",
+      }}
+    >
+      {showHint ? (
+        <div
+          data-testid="dispatch-route-drop-hint"
+          style={{
+            position: "absolute", top: -14, right: 8, zIndex: 10,
+            padding: "3px 10px", borderRadius: 999,
+            fontSize: 11, fontWeight: 700,
+            background: armed ? "#0284C7" : "#F97316",
+            color: "#FFFFFF",
+            boxShadow: "0 2px 8px rgba(15,23,42,0.24)",
+          }}
+        >
+          {armed
+            ? `Drop to auto-insert · ${unschedCount} unscheduled`
+            : "Pick a tech + day first"}
+        </div>
+      ) : null}
+      {children}
     </div>
   );
 }

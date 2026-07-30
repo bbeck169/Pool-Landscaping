@@ -8,6 +8,25 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-07-30 — Phase 4 · Drag-Drop Unscheduled Jobs with Auto-Insert
+
+### Added
+- `POST /api/dispatch/route/insert` — auto-inserts an unscheduled job at the cheapest-position slot in a (tech, date) route via added-leg-distance minimization; shifts subsequent `route_index` on write (`backend/routers/dispatch_route_insert.py`).
+- `GET /api/dispatch/route/unscheduled-jobs` — tenant-scoped listing of jobs with no tech and no `scheduled_date` for the Dispatch Board drag source.
+- `UnscheduledJobsPanel.jsx` — right-column panel; each row is a `useDraggable` source with fallback "Assign" button (`frontend/src/pages/dispatch/UnscheduledJobsPanel.jsx`).
+- `AssignJobModal.jsx` — popup with Day + Tech pickers that hits the same `/insert` endpoint (`frontend/src/pages/dispatch/AssignJobModal.jsx`).
+- `RouteDetailsDropZone` — inline droppable wrapper around the Route Details panel; outline + badge appear on hover (armed = blue, needs-filter = orange).
+- Pytest suite `backend/tests/test_dispatch_route_insert.py` — 6 tests: cheapest-slot correctness, empty-route insert, missing-coords 422, already-scheduled 409, role gate, cross-tenant 404.
+
+### Changed
+- Dispatch Board wraps its Safe container in `<DndContext>` (`@dnd-kit/core`) with a 5px pointer activation constraint.
+- Success toast on insert format: `Inserted "<title>" at position N/M · +X.X km`.
+
+### Security
+- Both new endpoints inherit the `require_gps_read` guard — Tech and Customer receive 403.
+
+---
+
 ## 2026-07-30 — Phase 3 · Dispatch Route Optimization
 
 ### Added
