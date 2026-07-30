@@ -357,3 +357,101 @@ async def api_mentions_set_competitors(body: MentionCompetitorsBody,
     tenant_id = _tenant_or_400(caller)
     return await set_competitor_domains(tenant_id, body.domains or [])
 
+
+# ─── Phase 6 · Reputation Response Drafts ─────────────────────────
+from services.response_drafts import (
+    create_or_get_draft, list_drafts as _list_drafts,
+    update_draft as _update_draft, check_rate_limit as _draft_rate_limit,
+    pending_draft_count,
+)
+
+
+class DraftBody(BaseModel):
+    tone: str = "empathetic"
+    regenerate: bool = False
+
+
+@router.post("/aeo/mentions/{mention_id}/response/draft",
+              operation_id="aeo.draftResponse", tags=["aeo"])
+async def api_draft_response(mention_id: str, body: DraftBody,
+                               caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    retry = _draft_rate_limit(tenant_id)
+    if retry is not None:
+        raise HTTPException(429, headers={"Retry-After": str(retry)},
+                              detail={"error": "rate_limited",
+                                        "retry_after_sec": retry})
+    mention = await db.brand_mentions.find_one(
+        {"tenant_id": tenant_id, "mention_id": mention_id}, {"_id": 0})
+    if not mention:
+        raise HTTPException(404, {"error": "mention_not_found"})
+    tenant = await _tenant_row(tenant_id)
+    tenant = {"id": tenant_id, **(tenant or {})}
+    r = await create_or_get_draft(tenant=tenant, mention=mention,
+                                     tone=body.tone,
+                                     regenerate=body.regenerate,
+                                     user_id=caller.get("id", ""))
+    if r.get("error"):
+        detail = r["error"]
+        if detail in ("empty_response",) or "emergent" in str(detail).lower():
+            raise HTTPException(503, detail={"error": "llm_unavailable",
+                                               "cause": detail})
+        raise HTTPException(500, detail={"error": detail})
+    return r
+
+
+@router.get("/aeo/mentions/{mention_id}/response/drafts",
+             operation_id="aeo.listResponseDrafts", tags=["aeo"])
+async def api_list_drafts(mention_id: str,
+                            caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    items = await _list_drafts(tenant_id, mention_id)
+    return {"items": items, "count": len(items)}
+
+
+class DraftUpdateBody(BaseModel):
+    edited_text: Optional[str] = None
+    status: Optional[str] = None
+
+
+@router.post("/aeo/response/drafts/{draft_id}",
+              operation_id="aeo.updateDraft", tags=["aeo"])
+async def api_update_draft(draft_id: str, body: DraftUpdateBody,
+                             caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    r = await _update_draft(tenant_id=tenant_id, draft_id=draft_id,
+                               edited_text=body.edited_text,
+                               status=body.status,
+                               user_id=caller.get("id", ""))
+    if r.get("error") == "not_found":
+        raise HTTPException(404, {"error": "draft_not_found"})
+    if r.get("error"):
+        raise HTTPException(422, {"error": r["error"]})
+    return r
+
+
+@router.delete("/aeo/response/drafts/{draft_id}",
+                operation_id="aeo.discardDraft", tags=["aeo"])
+async def api_discard_draft(draft_id: str,
+                              caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    r = await _update_draft(tenant_id=tenant_id, draft_id=draft_id,
+                               status="discarded",
+                               user_id=caller.get("id", ""))
+    if r.get("error") == "not_found":
+        raise HTTPException(404, {"error": "draft_not_found"})
+    return {"ok": True, "status": "discarded"}
+
+
+@router.get("/aeo/response/drafts/pending-count",
+             operation_id="aeo.draftsPendingCount", tags=["aeo"])
+async def api_drafts_pending_count(caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    n = await pending_draft_count(tenant_id)
+    return {"pending": n}
+

@@ -8,6 +8,27 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-07-30 — Phase 6 · Reputation Response Drafts
+
+### Added
+- `services/response_drafts.py` — Claude-drafted public replies to brand mentions. Platform auto-detection (yelp, google_reviews, nextdoor, reddit, facebook, bbb, generic), 4 tone knobs (empathetic / professional / apologetic / assertive), per-platform length hints in the prompt (yelp 750, google_reviews 600, nextdoor 500, reddit 400, facebook 500, bbb 700, generic 500), 24h dedup per (mention_id, tone), 10/hr/tenant sliding-window rate limit, soft-delete via `status="discarded"`.
+- `routers/aeo.py` — 4 new endpoints: `POST /api/aeo/mentions/{id}/response/draft`, `GET /api/aeo/mentions/{id}/response/drafts`, `POST /api/aeo/response/drafts/{draft_id}` (update text/status), `DELETE /api/aeo/response/drafts/{draft_id}` (soft-delete), `GET /api/aeo/response/drafts/pending-count`.
+- Collection `mention_response_drafts` with fields `draft_id, mention_id, platform, tone, draft_text, edited_text, status, model_used, tokens_used, cost_est_usd, drafted/edited/status_updated_at, drafted_by/edited_by/status_updated_by`.
+- Denormalized fields on `brand_mentions`: `has_response_draft` + `latest_draft_status` (mirrored on every draft insert / status update).
+- Web admin — **Response Draft modal** (`pages/admin/ResponseDraftModal.jsx`) mounted from the Brand Mentions tab. Header with mention title + platform + sentiment badges; quoted snippet; 4 tone pills; Generate / Regenerate CTA; editable textarea (autosaves on blur) with char counter vs platform hint; Copy (flips status→copied) / Mark posted / Discard actions; model + cost footer; friendly banner on 503 `llm_unavailable`; row-level "Draft reply" button for negative mentions plus Reddit / Google Reviews neutral rows; "View draft · <status>" chip when a prior draft exists.
+- KPI tile "Drafts pending action" on the Brand Mentions dashboard (draft + copied statuses only).
+- Pytest suite `backend/tests/test_response_drafts.py` — 9 tests: platform detection matrix, stubbed-LLM creation + 24h dedup + regenerate, per-platform length-hint assertion on the prompt, rate-limit at 11th call, role guard (parametrized × 2), status→mirror to brand_mentions, discard soft-delete, live 404 on missing mention.
+
+### Changed
+- LLM cost for drafts shares Phase 5b's monthly AEO cap ($5) — no second budget line.
+
+### Security
+- All 4 new endpoints reject Tech + Customer with 403.
+- Draft lookups always scope by `(tenant_id, draft_id)` — cross-tenant returns 404.
+- Emergent LLM error → HTTP 503 `llm_unavailable`, no partial DB write.
+
+---
+
 ## 2026-07-30 — Phase 5c · AEO Brand Mention Crawler
 
 ### Added

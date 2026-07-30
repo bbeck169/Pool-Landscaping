@@ -21,6 +21,7 @@ import {
 } from "recharts";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import ResponseDraftModal from "@/pages/admin/ResponseDraftModal";
 
 const TABS = [
   { key: "auditor",    label: "Auditor",           icon: ScanSearch },
@@ -806,18 +807,23 @@ function MentionsTab() {
   const [showCompetitors, setShowCompetitors] = React.useState(false);
   const [competitorInput, setCompetitorInput] = React.useState("");
   const [competitorDomains, setCompetitorDomains] = React.useState([]);
+  // Phase 6 · Feb-2026 — response-draft modal state + pending KPI.
+  const [draftMention, setDraftMention] = React.useState(null);
+  const [pendingDrafts, setPendingDrafts] = React.useState(0);
 
   const load = React.useCallback(async () => {
     try {
       const params = new URLSearchParams({ range });
       if (domainFilter) params.set("domain", domainFilter);
       if (sentimentFilter) params.set("sentiment", sentimentFilter);
-      const [d, l] = await Promise.all([
+      const [d, l, p] = await Promise.all([
         api.get("/aeo/mentions/dashboard"),
         api.get(`/aeo/mentions/list?${params.toString()}`),
+        api.get("/aeo/response/drafts/pending-count").catch(() => ({ pending: 0 })),
       ]);
       setDash(d);
       setList(l);
+      setPendingDrafts(p?.pending || 0);
     } catch (e) {
       toast.error(e?.body?.detail || e?.message || "Failed to load");
     }
@@ -882,7 +888,7 @@ function MentionsTab() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
         <KPI label="Total mentions (30d)" value={dash?.total_30d ?? 0}
               testid="aeo-mentions-total" />
         <KPI label="New this week" value={dash?.new_this_week ?? 0}
@@ -896,6 +902,9 @@ function MentionsTab() {
               sub={`cap $${(dash?.cost_cap || 0).toFixed(2)}`}
               color={dash?.cost_capped ? "#DC2626" : colors.onSurface}
               testid="aeo-mentions-cost" />
+        <KPI label="Drafts pending action" value={pendingDrafts}
+              color={pendingDrafts > 0 ? colors.brand : colors.onSurface}
+              testid="aeo-mentions-drafts-pending" />
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -977,7 +986,8 @@ function MentionsTab() {
               data-testid="aeo-mentions-table">
           <ul className="divide-y" style={{ borderColor: colors.border }}>
             {list.items.map((m) => (
-              <MentionRow key={m.mention_id} m={m} onMark={mark} />
+              <MentionRow key={m.mention_id} m={m} onMark={mark}
+                            onDraft={() => setDraftMention(m)} />
             ))}
           </ul>
         </div>
@@ -1026,6 +1036,13 @@ function MentionsTab() {
           </div>
         ) : null}
       </div>
+
+      <ResponseDraftModal
+        open={!!draftMention}
+        mention={draftMention}
+        onClose={() => setDraftMention(null)}
+        onChange={() => load()}
+      />
     </div>
   );
 }
@@ -1036,9 +1053,17 @@ const SENTIMENT_STYLES = {
   negative: { bg: "#FEE2E2", fg: "#991B1B", border: "#FECACA" },
 };
 
-function MentionRow({ m, onMark }) {
+function MentionRow({ m, onMark, onDraft }) {
   const sTone = SENTIMENT_STYLES[m.sentiment] || SENTIMENT_STYLES.neutral;
   const [open, setOpen] = React.useState(false);
+  // Phase 6 · Feb-2026 — show "Draft reply" for negative sentiment,
+  // and for neutral on Reddit / Google Reviews (common complaint venues).
+  const dom = (m.domain || "").toLowerCase();
+  const neutralComplainVenue = m.sentiment === "neutral" && (
+    dom.includes("reddit.com") || (dom.includes("google.com") && (m.url || "").includes("/maps/"))
+  );
+  const showDraftBtn = m.sentiment === "negative" || neutralComplainVenue;
+  const draftStatus = m.latest_draft_status || null;
   return (
     <li className="p-3"
          data-testid={`aeo-mention-row-${m.mention_id}`}>
@@ -1094,6 +1119,36 @@ function MentionRow({ m, onMark }) {
                  data-testid={`aeo-mention-mark-${m.mention_id}`}>
           Mark
         </button>
+        {showDraftBtn ? (
+          draftStatus ? (
+            <button type="button" onClick={() => onDraft?.()}
+                     className="text-[11px] font-semibold px-2 py-1 rounded-md shrink-0 flex items-center gap-1"
+                     style={{
+                       backgroundColor: SENTIMENT_STYLES[
+                         draftStatus === "posted" ? "positive"
+                         : draftStatus === "discarded" ? "negative"
+                         : "neutral"].bg,
+                       color: SENTIMENT_STYLES[
+                         draftStatus === "posted" ? "positive"
+                         : draftStatus === "discarded" ? "negative"
+                         : "neutral"].fg,
+                       border: `1px solid ${SENTIMENT_STYLES[
+                         draftStatus === "posted" ? "positive"
+                         : draftStatus === "discarded" ? "negative"
+                         : "neutral"].border}`,
+                     }}
+                     data-testid={`aeo-mention-view-draft-${m.mention_id}`}>
+              View draft · {draftStatus}
+            </button>
+          ) : (
+            <button type="button" onClick={() => onDraft?.()}
+                     className="text-[11px] font-semibold px-2 py-1 rounded-md shrink-0 flex items-center gap-1"
+                     style={{ backgroundColor: colors.brand, color: "#fff" }}
+                     data-testid={`aeo-mention-draft-${m.mention_id}`}>
+              Draft reply
+            </button>
+          )
+        ) : null}
       </div>
       {open ? (
         <div className="mt-2 flex items-center gap-1 flex-wrap"
