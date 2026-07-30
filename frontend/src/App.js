@@ -166,6 +166,8 @@ import DriverScorecardPage from "@/pages/admin/DriverScorecardPage";
 import WidgetEmbedPage from "@/pages/admin/WidgetEmbedPage";
 // MR3 · Feb-2026 — Public widget analytics.
 import WidgetAnalyticsPage from "@/pages/admin/WidgetAnalyticsPage";
+// Phase 2 · Feb-2026 — Public read-only Route Replay share page.
+import PublicReplayPage from "@/pages/PublicReplayPage";
 import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
 import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPages";
 import WarrantyPlans, { WarrantyContracts, WarrantyClaims, PortalWarranties } from "@/pages/warranties/WarrantyPages";
@@ -415,6 +417,8 @@ export default function App() {
           {/* Feb-2026 · Phase 20 P5 — Public NFC review card page. */}
           <Route path="/nfc/:slug" element={<NfcReviewCardPage />} />
           <Route path="/widget-demo" element={<WidgetDemoPage />} />
+          {/* Phase 2 · Feb-2026 — public read-only route replay share. */}
+          <Route path="/replay/:shareId" element={<PublicReplayPage />} />
           <Route path="/f/:slug" element={<PublicForm />} />
           {/* Phase 15A public magic-link routes (no auth) */}
           <Route path="/csat/:token" element={<PublicCsat />} />

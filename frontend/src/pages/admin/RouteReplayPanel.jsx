@@ -14,9 +14,10 @@
  */
 import React from "react";
 import { Map, useMap, AdvancedMarker } from "@vis.gl/react-google-maps";
-import { Play, Pause, RotateCcw, MapPin, Route, Clock } from "lucide-react";
+import { Play, Pause, RotateCcw, MapPin, Route, Clock, Share2 } from "lucide-react";
 import { colors } from "@/theme";
 import useGpsRoute from "@/hooks/useGpsRoute";
+import ShareReplayModal from "@/pages/admin/ShareReplayModal";
 
 const _SPEED_CHOICES = [1, 2, 5, 10, 30, 60];
 const _IDLE_GAP_S = 5 * 60;         // gaps larger than 5 min are compressed
@@ -186,6 +187,7 @@ export default function RouteReplayPanel({ techId, day }) {
   const [speed, setSpeed] = React.useState(5);
   const [playing, setPlaying] = React.useState(false);
   const [playbackS, setPlaybackS] = React.useState(0);
+  const [shareOpen, setShareOpen] = React.useState(false);
   const rafRef = React.useRef(null);
   const lastTsRef = React.useRef(null);
 
@@ -360,7 +362,24 @@ export default function RouteReplayPanel({ techId, day }) {
           <Clock size={12} className="inline mr-1" />
           {marker ? _fmtLocalTime(marker.real_at) : "—"}
         </div>
+        <button
+          data-testid="route-replay-share-btn"
+          onClick={() => setShareOpen(true)}
+          title="Share a 24-hour public link to this replay"
+          className="ml-2 inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-semibold"
+          style={{ background: colors.brand || "#0284C7", color: "#FFFFFF",
+                    border: "none", cursor: "pointer" }}
+        >
+          <Share2 size={13} /> Share
+        </button>
       </header>
+
+      <ShareReplayModal
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        techId={techId}
+        day={day}
+      />
 
       {hasMaps ? (
         <div className="rounded-lg overflow-hidden"

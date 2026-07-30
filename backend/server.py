@@ -285,6 +285,10 @@ api_router.include_router(_public_widget_router.router)
 from routers import widget_analytics as _widget_analytics_router  # noqa: E402
 api_router.include_router(_widget_analytics_router.router)
 
+# Phase 2 · Feb-2026 — Signed 24 h public share links for Route Replay.
+from routers import replay_share as _replay_share_router  # noqa: E402
+api_router.include_router(_replay_share_router.router)
+
 # Phase SEO-A · Feb-2026 — Free on-page SEO auditor (admin+/manager).
 from routers import seo_scans as _seo_scans_router  # noqa: E402
 api_router.include_router(_seo_scans_router.router)
