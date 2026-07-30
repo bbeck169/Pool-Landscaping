@@ -817,6 +817,18 @@ async def _background_seed():
         scheduler.add_job(dispatch.scheduled_weather_scan_all, "cron",
                             hour=5, minute=0, id="weather_scan",
                             replace_existing=True)
+        # Phase 5b · AEO — daily AI visibility scan across enabled tenants.
+        # Hour configurable via AEO_VISIBILITY_CRON_HOUR_UTC (default 7).
+        try:
+            from services.aeo_visibility import (
+                daily_visibility_scan, CRON_HOUR_UTC,
+            )
+            scheduler.add_job(daily_visibility_scan, "cron",
+                                hour=CRON_HOUR_UTC, minute=0,
+                                id="aeo_visibility_scan",
+                                replace_existing=True)
+        except Exception as _e:  # noqa: BLE001
+            logger.warning(f"[aeo] cron install failed: {_e}")
         # Phase 27.1 — weekly churn rescore (Mondays 06:00 UTC).
         scheduler.add_job(churn.scheduled_churn_scan_all, "cron",
                             day_of_week="mon", hour=6, minute=0,

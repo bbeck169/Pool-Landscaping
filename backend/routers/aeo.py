@@ -13,6 +13,12 @@ from pydantic import BaseModel, Field
 
 from config import db
 from services.aeo_generators import generate_jsonld, generate_llms_txt
+from services.aeo_visibility import (
+    run_probes, dashboard_for_tenant, history_for_tenant,
+    DUPLICATE_HOURS, MONTHLY_COST_CAP_USD,
+)
+from services.aeo_fixes import generate_fixes as _gen_fixes
+from services.aeo_visibility import check_fix_rate_limit
 from utils import get_current_user
 
 router = APIRouter()
@@ -120,3 +126,129 @@ async def api_generate_llms_txt(body: LlmsTxtBody,
                               include_faqs=body.include_faqs,
                               recent_checkins=recent)
     return out
+
+# ─── Phase 5b · AI Visibility Tracker ─────────────────────────────
+
+class VisibilityRunBody(BaseModel):
+    query_templates: Optional[List[str]] = None
+    providers: Optional[List[Dict[str, str]]] = None
+
+
+@router.post("/aeo/visibility/run-now",
+              operation_id="aeo.visibilityRunNow", tags=["aeo"])
+async def api_visibility_run_now(body: VisibilityRunBody,
+                                   caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    tenant = await _tenant_row(tenant_id)
+    if not tenant:
+        raise HTTPException(404, {"error": "tenant_not_found"})
+    tenant = {"id": tenant_id, **tenant}
+    from datetime import datetime, timedelta, timezone
+    dup_cutoff = (datetime.now(timezone.utc)
+                    - timedelta(hours=DUPLICATE_HOURS)).isoformat()
+    recent = await db.aeo_visibility_probes.find_one(
+        {"tenant_id": tenant_id, "ran_at": {"$gte": dup_cutoff}},
+        {"_id": 0, "probe_id": 1, "ran_at": 1})
+    if recent:
+        return {"probes": [], "summary": {"total": 0, "mentions": 0,
+                                             "avg_score": 0},
+                "cost_capped": False, "skipped_reason": "cooldown",
+                "next_available_after_hours": DUPLICATE_HOURS,
+                "last_ran_at": recent.get("ran_at")}
+    out = await run_probes(tenant, templates=body.query_templates,
+                              providers=body.providers)
+    return out
+
+
+@router.get("/aeo/visibility/history",
+             operation_id="aeo.visibilityHistory", tags=["aeo"])
+async def api_visibility_history(range: str = "30d",
+                                    caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    return await history_for_tenant(tenant_id, range_key=range)
+
+
+@router.get("/aeo/visibility/dashboard",
+             operation_id="aeo.visibilityDashboard", tags=["aeo"])
+async def api_visibility_dashboard(caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    return await dashboard_for_tenant(tenant_id)
+
+
+# ─── Phase 5b · LLM fix recommendations ───────────────────────────
+
+class FixesGenerateBody(BaseModel):
+    scan_id: str = Field(..., min_length=1)
+    sub_signals: Optional[List[str]] = None
+
+
+@router.post("/aeo/fixes/generate",
+              operation_id="aeo.fixesGenerate", tags=["aeo"])
+async def api_fixes_generate(body: FixesGenerateBody,
+                               caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    retry = check_fix_rate_limit(tenant_id)
+    if retry is not None:
+        raise HTTPException(429, headers={"Retry-After": str(retry)},
+                              detail={"error": "rate_limited",
+                                        "retry_after_sec": retry})
+    tenant = await _tenant_row(tenant_id)
+    tenant = {"id": tenant_id, **(tenant or {})}
+    # Cross-tenant scan protection.
+    scan = await db.seo_scans.find_one(
+        {"id": body.scan_id, "tenant_id": tenant_id}, {"_id": 0, "id": 1})
+    if not scan:
+        raise HTTPException(404, {"error": "scan_not_found"})
+    out = await _gen_fixes(body.scan_id, tenant,
+                              requested_signals=body.sub_signals)
+    return out
+
+
+class FixApplyBody(BaseModel):
+    applied: bool = True
+
+
+@router.post("/aeo/fixes/{fix_id}/apply",
+              operation_id="aeo.fixesApply", tags=["aeo"])
+async def api_fix_apply(fix_id: str, body: FixApplyBody,
+                         caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    from bson import ObjectId
+    from datetime import datetime, timezone
+    try:
+        oid = ObjectId(fix_id)
+    except Exception:
+        raise HTTPException(400, {"error": "invalid_fix_id"})
+    r = await db.aeo_fixes.update_one(
+        {"_id": oid, "tenant_id": tenant_id},
+        {"$set": {"applied": body.applied,
+                   "applied_at": datetime.now(timezone.utc).isoformat()
+                     if body.applied else None,
+                   "applied_by": caller["id"] if body.applied else None}},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(404, {"error": "fix_not_found"})
+    return {"ok": True, "applied": body.applied}
+
+
+@router.get("/aeo/fixes/pending",
+             operation_id="aeo.fixesPending", tags=["aeo"])
+async def api_fixes_pending(scan_id: Optional[str] = None,
+                              caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    q = {"tenant_id": tenant_id, "applied": False,
+         "superseded": {"$in": [False, None]}}
+    if scan_id:
+        q["scan_id"] = scan_id
+    items: List[Dict[str, Any]] = []
+    async for row in db.aeo_fixes.find(q).sort("generated_at", -1).limit(50):
+        row["_id"] = str(row["_id"])
+        items.append(row)
+    return {"items": items, "count": len(items)}
+

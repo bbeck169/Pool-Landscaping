@@ -13,14 +13,20 @@
 import React from "react";
 import { toast } from "sonner";
 import { Sparkles, ScanSearch, Copy, RefreshCw, PlusCircle, X,
-          FileText, ClipboardCheck } from "lucide-react";
+          FileText, ClipboardCheck, TrendingUp, Wrench, CheckCircle2,
+          AlertCircle } from "lucide-react";
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+} from "recharts";
 import { api } from "@/api";
 import { colors } from "@/theme";
 
 const TABS = [
-  { key: "auditor",   label: "Auditor",         icon: ScanSearch },
-  { key: "jsonld",    label: "JSON-LD Generator", icon: Sparkles },
-  { key: "llmstxt",   label: "LLMs.txt",         icon: FileText },
+  { key: "auditor",    label: "Auditor",           icon: ScanSearch },
+  { key: "jsonld",     label: "JSON-LD Generator", icon: Sparkles },
+  { key: "llmstxt",    label: "LLMs.txt",          icon: FileText },
+  { key: "visibility", label: "AI Visibility",     icon: TrendingUp },
+  { key: "fixes",      label: "Fixes",             icon: Wrench },
 ];
 
 async function _copy(text, label = "Copied") {
@@ -433,6 +439,360 @@ function LlmsTxtTab() {
   );
 }
 
+// ── AI Visibility tab ────────────────────────────────────────────
+function VisibilityTab() {
+  const [dash, setDash] = React.useState(null);
+  const [history, setHistory] = React.useState(null);
+  const [range, setRange] = React.useState("30d");
+  const [busy, setBusy] = React.useState(false);
+  const [runResult, setRunResult] = React.useState(null);
+
+  const load = React.useCallback(async () => {
+    try {
+      const [d, h] = await Promise.all([
+        api.get("/aeo/visibility/dashboard"),
+        api.get(`/aeo/visibility/history?range=${range}`),
+      ]);
+      setDash(d);
+      setHistory(h);
+    } catch (e) {
+      toast.error(e?.body?.detail || e?.message || "Failed to load");
+    }
+  }, [range]);
+  React.useEffect(() => { load(); }, [load]);
+
+  const runNow = async () => {
+    setBusy(true);
+    setRunResult(null);
+    try {
+      const r = await api.post("/aeo/visibility/run-now", {});
+      setRunResult(r);
+      if (r.skipped_reason === "cooldown") {
+        toast(`Cooldown active — last scan < ${r.next_available_after_hours}h ago`);
+      } else {
+        toast.success(`Ran ${r.summary?.total || 0} probes · ${r.summary?.mentions || 0} mentions`);
+      }
+      load();
+    } catch (e) {
+      toast.error(e?.body?.detail || e?.message || "Run failed");
+    } finally { setBusy(false); }
+  };
+
+  // Cooldown check — disable button if last probe < 20h.
+  const cooldownLeft = React.useMemo(() => {
+    const ts = dash?.latest_ran_at;
+    if (!ts) return 0;
+    const mins = (Date.now() - new Date(ts).getTime()) / 60000;
+    const remaining = Math.max(0, 20 * 60 - mins);
+    return remaining;
+  }, [dash]);
+
+  return (
+    <div className="space-y-4" data-testid="aeo-visibility-tab">
+      {/* KPI row */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <KPI label="Avg score (30d)" value={dash?.avg_score_30d ?? 0}
+              color={_scoreColor(dash?.avg_score_30d)} testid="aeo-vis-avg" />
+        <KPI label="Probes (30d)" value={dash?.probes_30d ?? 0}
+              testid="aeo-vis-probes" />
+        <KPI label="Providers checked"
+              value={(dash?.providers || []).length}
+              testid="aeo-vis-providers" />
+        <KPI label="Spend this month"
+              value={`$${(dash?.cost_this_month || 0).toFixed(2)}`}
+              sub={`cap $${(dash?.cost_cap || 0).toFixed(2)}`}
+              color={dash?.cost_capped ? "#DC2626" : colors.onSurface}
+              testid="aeo-vis-cost" />
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex gap-0.5 p-0.5 rounded-md"
+              style={{ backgroundColor: colors.surfaceSecondary,
+                        border: `1px solid ${colors.border}` }}>
+          {["7d", "30d", "90d"].map((r) => (
+            <button key={r} type="button" onClick={() => setRange(r)}
+                     className="px-2.5 py-1 rounded text-xs font-semibold"
+                     style={{
+                       backgroundColor: range === r ? colors.brand : "transparent",
+                       color: range === r ? "#fff" : colors.onSurface,
+                     }}
+                     data-testid={`aeo-vis-range-${r}`}>
+              {r}
+            </button>
+          ))}
+        </div>
+        <button type="button" onClick={runNow}
+                 disabled={busy || cooldownLeft > 0}
+                 className="ml-auto flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
+                 style={{ backgroundColor: colors.brand, color: "#fff" }}
+                 data-testid="aeo-vis-run-now"
+                 title={cooldownLeft > 0
+                   ? `Cooldown · ${Math.ceil(cooldownLeft/60)}h remaining`
+                   : "Run all default probes now"}>
+          {busy ? <RefreshCw size={14} className="animate-spin" /> : <TrendingUp size={14} />}
+          Run scan now
+        </button>
+      </div>
+
+      {/* Chart */}
+      <div className="rounded-xl p-4"
+            style={{ backgroundColor: colors.surface,
+                      border: `1px solid ${colors.border}` }}
+            data-testid="aeo-vis-chart">
+        <div className="text-xs uppercase tracking-wide font-semibold mb-2"
+              style={{ color: colors.muted }}>Score over time · {range}</div>
+        {(history?.series || []).length === 0 ? (
+          <div className="text-center py-10 text-xs"
+                style={{ color: colors.muted }}
+                data-testid="aeo-vis-chart-empty">
+            No probes in this range yet. Click "Run scan now" to start.
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={history.series}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+              <XAxis dataKey="date" stroke={colors.muted} fontSize={11} />
+              <YAxis domain={[0, 100]} stroke={colors.muted} fontSize={11} />
+              <Tooltip />
+              <Line type="monotone" dataKey="avg_score"
+                     stroke={colors.brand} strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Latest probes table (or run-result summary) */}
+      {runResult?.probes?.length ? (
+        <div className="rounded-xl p-4"
+              style={{ backgroundColor: colors.surface,
+                        border: `1px solid ${colors.border}` }}
+              data-testid="aeo-vis-runresult">
+          <div className="text-xs uppercase tracking-wide font-semibold mb-2"
+                style={{ color: colors.muted }}>
+            Latest run · {runResult.summary.total} probes ·
+            {" "}{runResult.summary.mentions} mentions ·
+            {" "}avg {runResult.summary.avg_score}
+          </div>
+          <ul className="space-y-2 text-xs" data-testid="aeo-vis-runlist">
+            {runResult.probes.map((p) => (
+              <li key={p.probe_id} className="flex items-start gap-2 p-2 rounded-md"
+                   style={{ backgroundColor: colors.surfaceSecondary,
+                             border: `1px solid ${colors.border}` }}
+                   data-testid={`aeo-vis-probe-${p.probe_id}`}>
+                <span className="text-sm font-bold shrink-0"
+                       style={{ color: _scoreColor(p.score), minWidth: 32 }}>{p.score}</span>
+                <div className="min-w-0">
+                  <div className="font-semibold truncate">{p.provider} · {p.query}</div>
+                  <div className="text-[11px] truncate"
+                        style={{ color: colors.muted }}>{p.snippet || (p.error ? `error: ${p.error}` : "")}</div>
+                </div>
+                {p.brand_mentioned ? (
+                  <CheckCircle2 size={14} color="#16A34A" />
+                ) : (
+                  <AlertCircle size={14} color="#CA8A04" />
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (history?.pairs?.length ? (
+        <div className="rounded-xl p-4"
+              style={{ backgroundColor: colors.surface,
+                        border: `1px solid ${colors.border}` }}
+              data-testid="aeo-vis-pairs">
+          <div className="text-xs uppercase tracking-wide font-semibold mb-2"
+                style={{ color: colors.muted }}>
+            Latest by provider × query
+          </div>
+          <ul className="space-y-2 text-xs">
+            {history.pairs.map((p, i) => (
+              <li key={i} className="flex items-start gap-2 p-2 rounded-md"
+                   style={{ backgroundColor: colors.surfaceSecondary,
+                             border: `1px solid ${colors.border}` }}>
+                <span className="text-sm font-bold shrink-0"
+                       style={{ color: _scoreColor(p.latest_score), minWidth: 32 }}>{p.latest_score}</span>
+                <div className="min-w-0">
+                  <div className="font-semibold truncate">{p.provider} · {p.query_template}</div>
+                  <div className="text-[11px] truncate"
+                        style={{ color: colors.muted }}>{p.latest_snippet}</div>
+                </div>
+                {p.latest_brand_mentioned ? (
+                  <CheckCircle2 size={14} color="#16A34A" />
+                ) : (
+                  <AlertCircle size={14} color="#CA8A04" />
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null)}
+    </div>
+  );
+}
+
+function KPI({ label, value, sub, color, testid }) {
+  return (
+    <div className="rounded-xl p-4"
+          style={{ backgroundColor: colors.surface,
+                    border: `1px solid ${colors.border}` }}
+          data-testid={testid}>
+      <div className="text-xs uppercase tracking-wide font-semibold"
+            style={{ color: colors.muted }}>{label}</div>
+      <div className="text-2xl font-bold mt-1"
+            style={{ color: color || colors.onSurface }}>{value}</div>
+      {sub ? <div className="text-[11px]"
+                    style={{ color: colors.muted }}>{sub}</div> : null}
+    </div>
+  );
+}
+
+// ── Fixes tab ────────────────────────────────────────────────────
+function FixesTab() {
+  const [scanId, setScanId] = React.useState("");
+  const [pending, setPending] = React.useState([]);
+  const [busy, setBusy] = React.useState(false);
+
+  const loadPending = React.useCallback(async () => {
+    try {
+      const q = scanId ? `?scan_id=${encodeURIComponent(scanId)}` : "";
+      const r = await api.get(`/aeo/fixes/pending${q}`);
+      setPending(r.items || []);
+    } catch { /* silent */ }
+  }, [scanId]);
+  React.useEffect(() => { loadPending(); }, [loadPending]);
+
+  const generate = async () => {
+    if (!scanId) { toast.error("Enter a scan ID first."); return; }
+    setBusy(true);
+    try {
+      const r = await api.post("/aeo/fixes/generate", { scan_id: scanId });
+      toast.success(`Generated ${r.fixes?.length || 0} fix(es)`);
+      loadPending();
+    } catch (e) {
+      const s = e?.status;
+      if (s === 429) toast.error("Rate limit — try in an hour.");
+      else toast.error(e?.body?.detail || e?.message || "Generate failed");
+    } finally { setBusy(false); }
+  };
+
+  const markApplied = async (fixId, applied) => {
+    try {
+      await api.post(`/aeo/fixes/${fixId}/apply`, { applied });
+      toast.success(applied ? "Marked applied" : "Marked pending");
+      loadPending();
+    } catch (e) {
+      toast.error(e?.body?.detail || e?.message || "Failed");
+    }
+  };
+
+  return (
+    <div className="space-y-4" data-testid="aeo-fixes-tab">
+      <div className="rounded-xl p-4"
+            style={{ backgroundColor: colors.surface,
+                      border: `1px solid ${colors.border}` }}>
+        <div className="flex items-center gap-2 flex-wrap">
+          <input value={scanId}
+                  onChange={(e) => setScanId(e.target.value)}
+                  placeholder="Scan ID (from Auditor tab)"
+                  className="flex-1 rounded-lg px-3 py-2 text-sm"
+                  style={{ backgroundColor: colors.surfaceSecondary,
+                            color: colors.onSurface,
+                            border: `1px solid ${colors.border}` }}
+                  data-testid="aeo-fixes-scan-id" />
+          <button type="button" onClick={generate}
+                   disabled={busy || !scanId}
+                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
+                   style={{ backgroundColor: colors.brand, color: "#fff" }}
+                   data-testid="aeo-fixes-generate">
+            {busy ? <RefreshCw size={14} className="animate-spin" /> : <Wrench size={14} />}
+            Generate fixes
+          </button>
+        </div>
+        <p className="text-[11px] mt-2" style={{ color: colors.muted }}>
+          Rate limit: 5 fix-generation calls per hour per tenant.
+        </p>
+      </div>
+
+      {pending.length === 0 ? (
+        <div className="rounded-xl p-10 text-center"
+              style={{ backgroundColor: colors.surface,
+                        border: `1px dashed ${colors.border}`,
+                        color: colors.muted }}
+              data-testid="aeo-fixes-empty">
+          No pending fixes. Paste a scan ID and click Generate.
+        </div>
+      ) : (
+        <div className="space-y-3" data-testid="aeo-fixes-list">
+          {pending.map((f) => (
+            <FixCard key={f._id} fix={f}
+                      onApply={() => markApplied(f._id, true)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const PRIORITY_STYLES = {
+  high: { bg: "#FEE2E2", fg: "#991B1B", border: "#FECACA" },
+  med:  { bg: "#FEF3C7", fg: "#92400E", border: "#FDE68A" },
+  low:  { bg: "#DBEAFE", fg: "#1E40AF", border: "#BFDBFE" },
+};
+
+function FixCard({ fix, onApply }) {
+  const tone = PRIORITY_STYLES[fix.priority] || PRIORITY_STYLES.med;
+  return (
+    <div className="rounded-xl p-4 space-y-2"
+          style={{ backgroundColor: colors.surface,
+                    border: `1px solid ${colors.border}` }}
+          data-testid={`aeo-fix-card-${fix.sub_signal}`}>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs uppercase tracking-wide font-semibold"
+                style={{ color: colors.muted }}>{fix.sub_signal}</span>
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                 style={{ backgroundColor: tone.bg, color: tone.fg,
+                           border: `1px solid ${tone.border}` }}>
+            {fix.priority}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button type="button"
+                   onClick={() => _copy(
+                     fix.generated_content || fix.suggestion_markdown,
+                     "Copied fix content")}
+                   className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold"
+                   style={{ backgroundColor: colors.surfaceSecondary,
+                             color: colors.onSurface,
+                             border: `1px solid ${colors.border}` }}
+                   data-testid={`aeo-fix-copy-${fix.sub_signal}`}>
+            <Copy size={12} /> Copy
+          </button>
+          <button type="button" onClick={onApply}
+                   className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold"
+                   style={{ backgroundColor: colors.brand, color: "#fff" }}
+                   data-testid={`aeo-fix-apply-${fix.sub_signal}`}>
+            <CheckCircle2 size={12} /> Mark done
+          </button>
+        </div>
+      </div>
+      <pre className="text-[12px] whitespace-pre-wrap"
+            style={{ color: colors.onSurface,
+                      fontFamily: "inherit", margin: 0 }}>
+        {fix.suggestion_markdown}
+      </pre>
+      {fix.generated_content ? (
+        <pre className="text-[11px] rounded p-3 overflow-auto max-h-[240px]"
+              style={{ backgroundColor: "#0F172A", color: "#E2E8F0",
+                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
+              data-testid={`aeo-fix-content-${fix.sub_signal}`}>
+          {fix.generated_content}
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
 // ── Page shell ───────────────────────────────────────────────────
 export default function AEOPage() {
   const [tab, setTab] = React.useState("auditor");
@@ -476,6 +836,8 @@ export default function AEOPage() {
       {tab === "auditor" ? <AuditorTab /> : null}
       {tab === "jsonld" ? <JsonldTab /> : null}
       {tab === "llmstxt" ? <LlmsTxtTab /> : null}
+      {tab === "visibility" ? <VisibilityTab /> : null}
+      {tab === "fixes" ? <FixesTab /> : null}
     </div>
   );
 }

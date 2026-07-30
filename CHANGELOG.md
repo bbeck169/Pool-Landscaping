@@ -8,6 +8,27 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-07-30 — Phase 5b · AEO AI Visibility Tracker + LLM Fix Recs
+
+### Added
+- `services/aeo_visibility.py` — probe runner (5 default query templates × 3 providers), scoring math (+60 mention / +20 first-para / +15 domain citation / +5 competitor-context), month cost cap ($5 default via `AEO_VISIBILITY_MONTHLY_CAP_USD`), duplicate-run cooldown (20h), sliding-window fix-rate-limiter (5/hour/tenant), dashboard + history aggregators, `daily_visibility_scan()` cron job.
+- `services/aeo_fixes.py` — per-sub-signal LLM fix generator; schema + llms_txt fall through to Phase 5a generators (no LLM). FAQ / passages / entity_clarity call Claude via `EMERGENT_LLM_KEY`.
+- `routers/aeo.py` — 5 new endpoints: `POST /api/aeo/visibility/run-now`, `GET /api/aeo/visibility/history`, `GET /api/aeo/visibility/dashboard`, `POST /api/aeo/fixes/generate`, `POST /api/aeo/fixes/{id}/apply`, `GET /api/aeo/fixes/pending`.
+- Collections: `aeo_visibility_probes`, `aeo_probe_runs`, `aeo_fixes`.
+- APScheduler job `aeo_visibility_scan` at hour `AEO_VISIBILITY_CRON_HOUR_UTC` (default 07:00 UTC) — iterates tenants with `aeo_visibility_enabled=True`, skips if latest probe < 20h old, writes an audit row.
+- Web admin — two new tabs on `/admin/marketing/aeo`: **AI Visibility** (KPIs / Recharts line / cooldown-aware Run scan now / probe table) and **Fixes** (scan-ID input, Generate button, priority-badged cards with Copy + Mark done).
+- Pytest suite `backend/tests/test_aeo_visibility.py` — 9 tests: scoring math (high + low), cost cap, cron cooldown via HTTP, schema fix `<script>` block, rate-limit 429, role guard (parametrized × 2), empty dashboard shape.
+
+### Changed
+- LLM probe execution is dependency-injectable — pytest stubs bypass Emergent entirely.
+
+### Security
+- All 5 new endpoints reject Tech + Customer roles with 403.
+- Fix-generation cross-tenant scan lookup returns 404 (never leaks another tenant's scan_id).
+- Cost cap enforced before every probe write; capped tenants receive `cost_capped=true` in response and no probes are written.
+
+---
+
 ## 2026-07-30 — Phase 5a · AEO Suite (Auditor + JSON-LD + LLMs.txt)
 
 ### Added
