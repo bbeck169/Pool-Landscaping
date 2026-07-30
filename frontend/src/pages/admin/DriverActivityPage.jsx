@@ -5,6 +5,9 @@ import { RefreshCw, MapPin, Clock, AlertTriangle, Layers, Link as LinkIcon } fro
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 import { toast } from "sonner";
 import StopAttributionModal from "@/pages/admin/StopAttributionModal";
+// Phase G5c · Feb-2026 — Animated route replay.
+import RouteReplayPanel from "@/pages/admin/RouteReplayPanel";
+import useGpsRoute from "@/hooks/useGpsRoute";
 
 /**
  * G2 · Feb-2026 — Driver Activity report (first-pass timeline).
@@ -468,6 +471,8 @@ export default function DriverActivityPage() {
 
       {/* G3 · Feb-2026 — Route Map panel with 3 toggleable layers. */}
       <RouteMapPanel techId={techId} day={day} onRefreshStops={load} />
+      {/* G5c · Feb-2026 — Animated Route Replay (below the static map). */}
+      <RouteReplayPanel techId={techId} day={day} />
       {/* G5b · Feb-2026 — attribution override modal. */}
       {attrStop && (
         <StopAttributionModal stop={attrStop}
@@ -484,9 +489,8 @@ export default function DriverActivityPage() {
 // ══════════════════════════════════════════════════════════════════
 
 function RouteMapPanel({ techId, day, onRefreshStops }) {
-  const [route, setRoute] = React.useState(null);
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState(null);
+  // G5c · Feb-2026 — share the /gps/route fetch with RouteReplayPanel.
+  const { route, loading, error, invalidate } = useGpsRoute({ techId, day });
   const [showPolyline, setShowPolyline] = React.useState(true);
   const [showStops, setShowStops] = React.useState(true);
   const [showPings, setShowPings] = React.useState(false);
@@ -497,26 +501,6 @@ function RouteMapPanel({ techId, day, onRefreshStops }) {
   const [exportOpen, setExportOpen] = React.useState(false);
   const [exportScope, setExportScope] = React.useState("tech");
   const [exportKind, setExportKind] = React.useState("stops");
-
-  React.useEffect(() => {
-    let cancelled = false;
-    if (!techId || !day) return () => {};
-    (async () => {
-      setLoading(true); setError(null);
-      try {
-        const from = `${day}T00:00:00Z`;
-        const to = `${day}T23:59:59Z`;
-        const r = await api.get(
-          `/gps/route?user_id=${encodeURIComponent(techId)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
-        if (!cancelled) setRoute(r);
-      } catch (e) {
-        if (!cancelled) setError(e?.message || "failed to load route");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [techId, day]);
 
   const bounds = React.useMemo(() => {
     const lats = []; const lons = [];
@@ -562,6 +546,7 @@ function RouteMapPanel({ techId, day, onRefreshStops }) {
       } else {
         toast.success(
           `Backfill done · resolved=${r?.resolved ?? 0}, errors=${r?.errors ?? 0}`);
+        invalidate();
         onRefreshStops?.();
       }
     } catch (e) {

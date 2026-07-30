@@ -9759,3 +9759,68 @@ Activity attribution UI ship together. Two addenda folded in:
   `customer/`, `public/`, `portal/` frontend page (grep-verified).
 - Regex-special chars in `q_customer` / `q_address` are escaped
   with `re.escape` — filters can't over-match or crash.
+
+---
+
+## Phase G5c · Feb-2026 — Route Replay (COMPLETE)
+
+**Summary**
+Animated day-playback of a technician's GPS pings on a real Google
+Map. Uses the existing `@vis.gl/react-google-maps` loader (no new
+mapping deps). Backend contributes three additive playback-meta
+fields on `/api/gps/route`; frontend adds an animated marker,
+growing polyline, stop-highlight, Play/Pause, 1-60x speed picker,
+and a scrub bar.
+
+**Backend added**
+- `tests/test_gps_route_playback_meta.py` (4 tests).
+
+**Backend extended**
+- `routers/gps_route.py` — response now includes `playback_duration_s`
+  (int seconds), `first_ping_at`, `last_ping_at`. Computed from the
+  already-fetched (possibly downsampled) pings — no extra Mongo hit.
+
+**Frontend added**
+- `hooks/useGpsRoute.js` — small dedupe cache so RouteMapPanel (G3)
+  and RouteReplayPanel (G5c) share ONE `/gps/route` fetch per
+  (techId, day) pair. Exposes `_resetCacheForTest` for vitest.
+- `pages/admin/RouteReplayPanel.jsx` — animated marker + growing
+  polyline + stop overlays (highlighted while the marker is inside
+  a stop radius) + Play/Pause + 1/2/5/10/30/60x speed picker +
+  scrub bar + current-time display + legend. `requestAnimationFrame`
+  loop with proper unmount cleanup. Idle gaps >5 min are compressed
+  to 1 wall-second of animation. Empty-state + single-ping state
+  handled cleanly.
+- `test/route-replay-panel.test.jsx` (6 tests): empty state,
+  single-ping state, controls render, Play↔Pause toggle, scrub-bar
+  updates elapsed display, Play-again after end.
+
+**Frontend extended**
+- `pages/admin/DriverActivityPage.jsx` — RouteMapPanel refactored
+  to consume the shared hook (removes duplicate fetch);
+  RouteReplayPanel mounted below the existing map panel.
+- `test/driver-activity-route-map.test.jsx` — added
+  `_resetCacheForTest` in `beforeEach` (module-level dedupe cache
+  now shared with RouteReplayPanel).
+
+**Test counts**
+- Backend: 4 new tests → all G5 backend tests together:
+  **72 passing / 0 failed** (18.6s across G5a + G5b + G5c files).
+- Frontend Vitest new: 6 passing (route-replay-panel).
+- **Vitest baseline**: 12 pre-existing failures (same set as before
+  G5c). Total 504 passing / 518 tests.
+
+**Guardrails held**
+- No client-side Mapbox / Leaflet dep added.
+- Reused `@vis.gl/react-google-maps` from AppLayout — no changes
+  to `libraries` list.
+- Fetch dedupe via `useGpsRoute` — RouteMapPanel + RouteReplayPanel
+  share a single network call per (techId, day) pair.
+- `requestAnimationFrame` loop is cancelled in `useEffect` cleanup;
+  no `setInterval` used.
+- Playback fields (`first_ping_at`, `last_ping_at`,
+  `playback_duration_s`) are additive — existing consumers ignore
+  them safely.
+- G3 no-token degradation preserved.
+- G5b addendum #2 `q_customer` / `q_address` filters still work
+  alongside the playback meta.

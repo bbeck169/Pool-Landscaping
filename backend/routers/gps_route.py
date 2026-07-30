@@ -144,6 +144,26 @@ async def get_route(
     if u:
         user_name = u.get("name") or u.get("email") or ""
 
+    # G5c · Feb-2026 — playback metadata for the Route Replay panel.
+    # Uses the ALREADY-fetched (possibly downsampled) pings list so
+    # we don't touch Mongo again. When 0 pings, all three fields are
+    # null / 0 so the frontend can render its empty state cleanly.
+    first_ping_at = None
+    last_ping_at = None
+    playback_duration_s = 0
+    if pings:
+        first_ping_at = pings[0].get("captured_at")
+        last_ping_at = pings[-1].get("captured_at")
+        try:
+            from datetime import datetime as _dt
+            a = _dt.fromisoformat(
+                str(first_ping_at).replace("Z", "+00:00"))
+            b = _dt.fromisoformat(
+                str(last_ping_at).replace("Z", "+00:00"))
+            playback_duration_s = max(0, int((b - a).total_seconds()))
+        except Exception:                                                # noqa: BLE001
+            playback_duration_s = 0
+
     return {
         "user_id": user_id,
         "user_name": user_name,
@@ -154,6 +174,10 @@ async def get_route(
         "pings_total": total_pings,
         "pings_downsample_step": step,
         "mapbox_token_configured": mapbox_token_configured(),
+        # G5c · Feb-2026 — replay metadata.
+        "first_ping_at": first_ping_at,
+        "last_ping_at": last_ping_at,
+        "playback_duration_s": playback_duration_s,
     }
 
 

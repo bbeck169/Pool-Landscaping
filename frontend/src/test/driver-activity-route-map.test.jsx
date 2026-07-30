@@ -72,9 +72,10 @@ vi.mock("@/components/layout/SafeScrollContainer", () => ({
 
 import DriverActivityPage from "@/pages/admin/DriverActivityPage";
 import { api } from "@/api";
+import { _resetCacheForTest } from "@/hooks/useGpsRoute";
 
 describe("DriverActivityPage · Route Map panel (G3)", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => { vi.clearAllMocks(); _resetCacheForTest(); });
 
   it("renders the route map panel with three legend toggles", async () => {
     render(<MemoryRouter><DriverActivityPage /></MemoryRouter>);
