@@ -281,6 +281,10 @@ api_router.include_router(_mod_public_checkins_router.router)
 from routers import public_widget as _public_widget_router  # noqa: E402
 api_router.include_router(_public_widget_router.router)
 
+# MR3 · Feb-2026 — Widget analytics (impressions + clicks + top-checkins).
+from routers import widget_analytics as _widget_analytics_router  # noqa: E402
+api_router.include_router(_widget_analytics_router.router)
+
 # Phase SEO-A · Feb-2026 — Free on-page SEO auditor (admin+/manager).
 from routers import seo_scans as _seo_scans_router  # noqa: E402
 api_router.include_router(_seo_scans_router.router)

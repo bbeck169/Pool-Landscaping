@@ -95,7 +95,10 @@ describe("widget.js runtime", () => {
     for (let i = 0; i < 10; i++) await Promise.resolve();
 
     // fetch called with expected URL.
-    expect(fetchStub).toHaveBeenCalledTimes(1);
+    // MR3 note: the widget also fires an impression POST after render,
+    // so `fetch` may be called more than once — assert on the feed
+    // call specifically (the first call).
+    expect(fetchStub).toHaveBeenCalled();
     const calledWith = fetchStub.mock.calls[0][0];
     expect(calledWith).toContain("/api/public/checkins/aquaterra/feed");
     expect(calledWith).toContain("limit=12");

@@ -164,6 +164,8 @@ import TimeOnSitePage from "@/pages/admin/TimeOnSitePage";
 // Phase G5d · Feb-2026 — Driver Scorecard / Leaderboard.
 import DriverScorecardPage from "@/pages/admin/DriverScorecardPage";
 import WidgetEmbedPage from "@/pages/admin/WidgetEmbedPage";
+// MR3 · Feb-2026 — Public widget analytics.
+import WidgetAnalyticsPage from "@/pages/admin/WidgetAnalyticsPage";
 import CheckBatchNew, { CheckPayrollImport } from "@/pages/checks/CheckBatchPages";
 import ChurnDashboard, { ContentRefresh } from "@/pages/customer-success/ChurnPages";
 import WarrantyPlans, { WarrantyContracts, WarrantyClaims, PortalWarranties } from "@/pages/warranties/WarrantyPages";
@@ -684,6 +686,8 @@ export default function App() {
             <Route path="admin/gps/scorecard" element={<AdminOnly><DriverScorecardPage /></AdminOnly>} />
             {/* MR1+MR2 · Feb-2026 — Public widget embed preview + snippet. */}
             <Route path="admin/moderation/widget-embed" element={<AdminOnly><WidgetEmbedPage /></AdminOnly>} />
+            {/* MR3 · Feb-2026 — Public widget analytics (impressions/clicks/CTR). */}
+            <Route path="admin/moderation/widget-analytics" element={<AdminOnly><WidgetAnalyticsPage /></AdminOnly>} />
             {/* Phase 50.A — Chemical Costs CRUD (admin/super_admin) */}
             <Route path="admin/settings/chemical-costs" element={<AdminOnly><ChemicalCosts /></AdminOnly>} />
             {/* Phase 51.I — Recurring Jobs (admin/super_admin) */}

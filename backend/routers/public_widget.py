@@ -181,7 +181,7 @@ async def public_feed(
 
 
 # ═══════════════════════ 2) widget.js ═══════════════════════════════
-_WIDGET_JS = r"""/*! Emergent Widget · MR1 Feb-2026 · Public check-in feed */
+_WIDGET_JS = r"""/*! Emergent Widget · MR1+MR3 Feb-2026 · Public check-in feed */
 (function () {
   // `document.currentScript` can be null when the script is loaded
   // async (attribute set on the tag) — the browser may execute after
@@ -202,6 +202,73 @@ _WIDGET_JS = r"""/*! Emergent Widget · MR1 Feb-2026 · Public check-in feed */
   var CATEGORY = TAG.getAttribute("data-category") || "";
   var ORIGIN = new URL(TAG.src, document.location.href).origin;
 
+  // ── MR3 · analytics helpers ────────────────────────────────────
+  // Session id is generated once per browser and cached in
+  // localStorage for 24h. Falls back to an in-memory value if
+  // localStorage is unavailable (private browsing).
+  var SESS_KEY = "emg_widget_session";
+  var IMPR_KEY = "emg_widget_impr_" + TENANT;
+  var TTL_MS = 24 * 60 * 60 * 1000;
+  var mem = {};
+  function safeGet(k){ try { return window.localStorage.getItem(k); } catch(e){ return mem[k] || null; } }
+  function safeSet(k, v){ try { window.localStorage.setItem(k, v); } catch(e){ mem[k] = v; } }
+
+  function sessionId(){
+    try {
+      var raw = safeGet(SESS_KEY);
+      if (raw) {
+        var parts = raw.split(":");
+        if (parts.length === 2 && (Date.now() - parseInt(parts[1], 10)) < TTL_MS) {
+          return parts[0];
+        }
+      }
+    } catch(e){}
+    var id = (Date.now().toString(36) +
+              Math.random().toString(36).slice(2, 10));
+    try { safeSet(SESS_KEY, id + ":" + Date.now()); } catch(e){}
+    return id;
+  }
+  var SESSION = sessionId();
+
+  function shouldSendImpression(){
+    // Dedupe: one impression per session per widget mount (24h window).
+    try {
+      var raw = safeGet(IMPR_KEY);
+      if (!raw) return true;
+      var parts = raw.split(":");
+      if (parts.length !== 2) return true;
+      if (parts[0] !== SESSION) return true;
+      return (Date.now() - parseInt(parts[1], 10)) > TTL_MS;
+    } catch(e){ return true; }
+  }
+  function markImpressionSent(){
+    try { safeSet(IMPR_KEY, SESSION + ":" + Date.now()); } catch(e){}
+  }
+
+  function track(event_type, checkin_id){
+    if (!TENANT) return;
+    try {
+      var body = JSON.stringify({
+        widget_id: TENANT,
+        event_type: event_type,
+        checkin_id: checkin_id || null,
+        session_id: SESSION,
+        referrer: (document.referrer || "").slice(0, 512),
+      });
+      var url = ORIGIN + "/api/public/widget/analytics/track";
+      // Prefer sendBeacon for click events on unload paths; otherwise
+      // use fetch keepalive. Both are fire-and-forget.
+      if (navigator && typeof navigator.sendBeacon === "function") {
+        var ok = navigator.sendBeacon(url, new Blob([body],
+                                                       {type:"application/json"}));
+        if (ok) return;
+      }
+      fetch(url, {method:"POST", headers:{"Content-Type":"application/json"},
+                   body: body, keepalive: true, mode:"cors",
+                   credentials:"omit"}).catch(function(){/*silent*/});
+    } catch(e){ /* never break widget on analytics failure */ }
+  }
+
   var host = TAG.nextElementSibling;
   if (!host || host.tagName !== "DIV" || !host.hasAttribute("data-emergent-widget-mount")) {
     host = document.createElement("div");
@@ -221,7 +288,7 @@ _WIDGET_JS = r"""/*! Emergent Widget · MR1 Feb-2026 · Public check-in feed */
     ".grid{display:grid;grid-template-columns:1fr;gap:16px;}\n" +
     "@media(min-width:480px){.grid{grid-template-columns:1fr 1fr;}}\n" +
     "@media(min-width:800px){.grid{grid-template-columns:1fr 1fr 1fr;}}\n" +
-    ".card{background:var(--w-surface);border:1px solid var(--w-border);border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.06);transition:box-shadow .2s ease;}\n" +
+    ".card{background:var(--w-surface);border:1px solid var(--w-border);border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,0.06);transition:box-shadow .2s ease;cursor:pointer;}\n" +
     ".card:hover{box-shadow:0 4px 12px rgba(15,23,42,0.10);}\n" +
     ".photo{aspect-ratio:16/9;background:var(--w-border);background-size:cover;background-position:center;}\n" +
     ".body{padding:12px;}\n" +
@@ -302,6 +369,7 @@ _WIDGET_JS = r"""/*! Emergent Widget · MR1 Feb-2026 · Public check-in feed */
     items.forEach(function(c, idx){
       var card = document.createElement("div");
       card.className = "card"; card.setAttribute("data-testid", "widget-card-"+idx);
+      if (c.id) card.setAttribute("data-checkin-id", String(c.id));
       var mainPhoto = (c.photos && c.photos[0] && c.photos[0].url) || "";
       var loc = c.location || {};
       var locStr = [loc.street_name, loc.city, loc.state].filter(Boolean).join(", ");
@@ -315,6 +383,12 @@ _WIDGET_JS = r"""/*! Emergent Widget · MR1 Feb-2026 · Public check-in feed */
           (tagsHtml ? '<div class="tags">' + tagsHtml + '</div>' : "") +
           '<div class="ts">' + fmtDate(c.completed_at) + '</div>' +
         '</div>';
+      // MR3 · fire a click event when the card (or any of its children)
+      // is clicked. We register the listener on the card itself so the
+      // event bubbles from any inner element.
+      card.addEventListener("click", function(ev){
+        try { track("click", c.id || null); } catch(e){}
+      }, true);
       grid.appendChild(card);
     });
     container.appendChild(grid);
@@ -332,7 +406,13 @@ _WIDGET_JS = r"""/*! Emergent Widget · MR1 Feb-2026 · Public check-in feed */
   function load(){
     if(!TENANT){ return; }
     fetch(url()).then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); })
-      .then(render)
+      .then(function(feed){
+        render(feed);
+        // MR3 · impression fires exactly once per session per widget.
+        if (shouldSendImpression()) {
+          try { track("impression", null); markImpressionSent(); } catch(e){}
+        }
+      })
       .catch(function(e){
         console.warn("emergent-widget load failed:", e);
       });
@@ -350,7 +430,10 @@ _WIDGET_JS = r"""/*! Emergent Widget · MR1 Feb-2026 · Public check-in feed */
   }, 5 * 60 * 1000);
 
   // Expose a tiny debug hook for the vitest suite.
-  window.__EmergentWidget = { host: host, shadow: shadow, url: url };
+  window.__EmergentWidget = {
+    host: host, shadow: shadow, url: url,
+    session: SESSION, track: track, shouldSendImpression: shouldSendImpression,
+  };
 })();
 """
 
