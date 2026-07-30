@@ -231,6 +231,18 @@ async def insert_route_job(body: InsertBody,
     total_pts = [(r["lat"], r["lon"]) for r in final if r["lat"] is not None]
     new_total = _route_total_km(origin, total_pts)
 
+    # Phase 10 · sub-item F — event log for KPI aggregation.
+    try:
+        from services.route_events import log_event
+        await log_event(tenant_id=tenant_id, kind="insert",
+                          tech_user_id=tech_id, route_date=date,
+                          savings_km=0.0,
+                          added_distance_km=added_km,
+                          stop_count=len(final),
+                          executed_by=(caller.get("id") or caller.get("email") or ""))
+    except Exception:
+        pass
+
     return {
         "ok": True,
         "inserted_at": best_i,
@@ -239,3 +251,65 @@ async def insert_route_job(body: InsertBody,
         "new_total_distance_km": new_total,
         "ordered_jobs": final,
     }
+
+
+
+
+# ─── Phase 10 · sub-item E — Batch preview-insert ─────────────────
+class PreviewBatchBody(BaseModel):
+    tech_user_id: str = Field(..., min_length=1)
+    route_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    job_ids: List[str] = Field(..., max_length=50)
+
+
+@router.post("/dispatch/route/preview-insert-batch",
+              operation_id="dispatchRoute.previewInsertBatch",
+              tags=["dispatch-route"])
+async def preview_insert_batch(body: PreviewBatchBody,
+                                  caller: Dict[str, Any] = Depends(get_current_user)):
+    """Compute cheapest-slot `added_distance_km` for each candidate job
+    WITHOUT modifying anything. Reuses `_cheapest_slot()` exactly so the
+    numbers match what a real drop would produce."""
+    tenant_id = _tenant_of(caller)
+    if not body.job_ids:
+        return {"previews": []}
+
+    # Load the currently-assigned route.
+    date_prefix = re.escape(body.route_date)
+    q = {"tenant_id": tenant_id,
+          "scheduled_date": {"$regex": f"^{date_prefix}"},
+          "$or": [{"tech_user_id": body.tech_user_id},
+                    {"assigned_to": body.tech_user_id},
+                    {"technician_id": body.tech_user_id}]}
+    existing_pts: List[Tuple[float, float]] = []
+    async for j in db.jobs.find(q, {"_id": 0}).sort("route_index", 1):
+        c = await _job_coords(j)
+        if c:
+            existing_pts.append(c)
+    origin, _src = await _tech_origin(tenant_id, body.tech_user_id,
+                                          body.route_date)
+
+    previews: List[Dict[str, Any]] = []
+    for jid in body.job_ids[:50]:
+        j = await db.jobs.find_one({"id": jid, "tenant_id": tenant_id},
+                                      {"_id": 0})
+        if not j:
+            previews.append({"job_id": jid, "added_distance_km": None,
+                              "best_position": None,
+                              "currently_missing_coords": True})
+            continue
+        c = await _job_coords(j)
+        if not c:
+            previews.append({"job_id": jid, "added_distance_km": None,
+                              "best_position": None,
+                              "currently_missing_coords": True})
+            continue
+        # If tech has no route and no origin → use the candidate as its own
+        # origin, which yields 0 km — a truthful "first-stop" preview.
+        eff_origin = origin or (existing_pts[0] if existing_pts else c)
+        best_i, added_km = _cheapest_slot(eff_origin, existing_pts, c)
+        previews.append({"job_id": jid,
+                          "added_distance_km": added_km,
+                          "best_position": best_i,
+                          "currently_missing_coords": False})
+    return {"previews": previews}

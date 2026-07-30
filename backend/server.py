@@ -301,6 +301,10 @@ api_router.include_router(_dispatch_opt_router.router, dependencies=[Depends(_rg
 from routers import dispatch_route_insert as _dispatch_ins_router  # noqa: E402
 api_router.include_router(_dispatch_ins_router.router, dependencies=[Depends(_rg)])
 
+# Phase 10 · sub-item F — Dispatch weekly savings KPI.
+from routers import dispatch_savings as _dispatch_savings_router  # noqa: E402
+api_router.include_router(_dispatch_savings_router.router, dependencies=[Depends(_rg)])
+
 # Phase 5a · Feb-2026 — AEO Suite (JSON-LD generator + LLMs.txt generator).
 # Auditor lives inside services/seo_scanner and rides on /api/seo/scans.
 from routers import aeo as _aeo_router  # noqa: E402

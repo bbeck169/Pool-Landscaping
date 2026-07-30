@@ -133,6 +133,7 @@ class ApplyBody(BaseModel):
     tech_user_id: str = Field(..., min_length=1)
     route_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
     ordered_job_ids: List[str]
+    savings_km: Optional[float] = None
 
 
 def _tenant_of(user: Dict[str, Any]) -> str:
@@ -233,6 +234,17 @@ async def apply_route(body: ApplyBody,
         )
         if r.matched_count:
             updated += 1
+    # Phase 10 · sub-item F — append-only event log for KPI aggregation.
+    try:
+        from services.route_events import log_event
+        await log_event(tenant_id=tenant_id, kind="optimize",
+                          tech_user_id=body.tech_user_id,
+                          route_date=body.route_date,
+                          savings_km=float(getattr(body, "savings_km", 0.0) or 0.0),
+                          stop_count=updated,
+                          executed_by=(caller.get("id") or caller.get("email") or ""))
+    except Exception:
+        pass
     return {"ok": True, "updated": updated,
             "tech_user_id": body.tech_user_id,
             "route_date": body.route_date}

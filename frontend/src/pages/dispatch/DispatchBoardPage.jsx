@@ -43,6 +43,7 @@ import UnroutedPanel from "@/pages/dispatch/UnroutedPanel";
 import OptimizeRouteModal from "@/pages/dispatch/OptimizeRouteModal";
 import UnscheduledJobsPanel from "@/pages/dispatch/UnscheduledJobsPanel";
 import AssignJobModal from "@/pages/dispatch/AssignJobModal";
+import DispatchSavingsStrip from "@/pages/dispatch/DispatchSavingsStrip";
 import {
   PIN_COLOR_MODES, PIN_COLOR_BY_DAY, CREW_LEGEND,
   loadPinColorMode, savePinColorMode, colorForPin,
@@ -118,6 +119,9 @@ export default function DispatchBoardPage() {
   // Phase 4 · Feb-2026 — Unscheduled jobs (drag source) + assign-popup fallback.
   const [unschedJobs, setUnschedJobs] = React.useState([]);
   const [assignModalJob, setAssignModalJob] = React.useState(null);
+  // Phase 10 · sub-item E — batch preview cache.
+  const [previewsById, setPreviewsById] = React.useState({});
+  const previewCacheRef = React.useRef({}); // key: `${tech}|${date}|${idsHash}` → {at, previews}
   const setPinColorModePersistent = (m) => { setPinColorMode(m); savePinColorMode(m); };
 
   // Phase P2 · Feb-2026 — live technician GPS markers on the map.
@@ -201,6 +205,40 @@ export default function DispatchBoardPage() {
     } catch { /* non-fatal — panel just stays empty */ }
   }, []);
   React.useEffect(() => { loadUnscheduled(); }, [loadUnscheduled]);
+
+  // Phase 10 · sub-item E — batch preview-insert for the visible unscheduled
+  // panel, keyed by (tech, day). Debounced 300ms; 30s in-memory cache.
+  React.useEffect(() => {
+    const isoDate = isoDateForDayKey(day);
+    if (!techId || !isoDate || day === "all" || unschedJobs.length === 0) {
+      if (Object.keys(previewsById).length) setPreviewsById({});
+      return;
+    }
+    const ids = unschedJobs.map((j) => j.id).slice(0, 50);
+    const idsHash = ids.join(",");
+    const cacheKey = `${techId}|${isoDate}|${idsHash}`;
+    const cached = previewCacheRef.current[cacheKey];
+    const now = Date.now();
+    if (cached && now - cached.at < 30_000) {
+      setPreviewsById(cached.previews);
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const r = await api.post("/dispatch/route/preview-insert-batch", {
+          tech_user_id: techId, route_date: isoDate, job_ids: ids,
+        });
+        if (cancelled) return;
+        const map = {};
+        for (const p of r.previews || []) map[p.job_id] = p;
+        previewCacheRef.current[cacheKey] = { at: Date.now(), previews: map };
+        setPreviewsById(map);
+      } catch { /* non-fatal */ }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(handle); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [techId, day, unschedJobs]);
 
   // Phase 4 · dnd-kit sensors + drop handler wired to /insert.
   const dndSensors = useSensors(useSensor(PointerSensor, {
@@ -377,6 +415,7 @@ export default function DispatchBoardPage() {
             Route optimization powered by Google Directions.
           </p>
         </div>
+        <DispatchSavingsStrip />
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -799,6 +838,7 @@ export default function DispatchBoardPage() {
           <UnscheduledJobsPanel
             jobs={unschedJobs}
             onAssignClick={(job) => setAssignModalJob(job)}
+            previewsById={previewsById}
           />
 
           <ActiveShiftsSidebar

@@ -32,6 +32,10 @@ def _run(coro):
         asyncio.set_event_loop(_LOOP)
     except Exception:
         pass
+    # Phase 10 hardening — other pytest files may share the response_drafts
+    # module and clobber `db` with their own loop-bound Motor client. Re-bind
+    # before each run so our loop-bound client is always in use.
+    _rd_module.db = _FRESH_MOTOR[_ENV["DB_NAME"]]
     return _LOOP.run_until_complete(coro)
 
 

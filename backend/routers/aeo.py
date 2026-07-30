@@ -469,3 +469,44 @@ async def api_drafts_pending_count(caller: Dict[str, Any] = Depends(get_current_
     n = await pending_draft_count(tenant_id)
     return {"pending": n}
 
+
+
+
+# ─── Phase 10 · sub-item D — Response Draft Library ───────────────
+from services.response_library import (  # noqa: E402
+    list_templates as _lib_list,
+    use_template as _lib_use,
+    soft_delete_template as _lib_del,
+)
+
+
+@router.get("/aeo/response/templates",
+             operation_id="aeo.responseLibrary.list", tags=["aeo"])
+async def api_response_lib_list(platform: Optional[str] = None,
+                                   limit: int = 50,
+                                   caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    items = await _lib_list(tenant_id=tenant_id, platform=platform, limit=limit)
+    return {"items": items, "count": len(items)}
+
+
+@router.post("/aeo/response/templates/{template_id}/use",
+              operation_id="aeo.responseLibrary.use", tags=["aeo"])
+async def api_response_lib_use(template_id: str,
+                                  caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    r = await _lib_use(tenant_id=tenant_id, template_id=template_id)
+    if not r:
+        raise HTTPException(404, {"error": "template_not_found"})
+    return r
+
+
+@router.delete("/aeo/response/templates/{template_id}",
+                operation_id="aeo.responseLibrary.delete", tags=["aeo"])
+async def api_response_lib_delete(template_id: str,
+                                     caller: Dict[str, Any] = Depends(get_current_user)):
+    _require_mod(caller)
+    tenant_id = _tenant_or_400(caller)
+    return await _lib_del(tenant_id=tenant_id, template_id=template_id)

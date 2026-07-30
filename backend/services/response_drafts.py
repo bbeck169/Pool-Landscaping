@@ -72,7 +72,9 @@ def detect_platform(domain: str, url: str = "") -> str:
 
 
 def _build_prompt(*, tenant: Dict[str, Any], mention: Dict[str, Any],
-                    platform: str, tone: str) -> Dict[str, str]:
+                    platform: str, tone: str,
+                    examples: Optional[List[Dict[str, Any]]] = None
+                    ) -> Dict[str, str]:
     name = tenant.get("name") or tenant.get("business_name") or "Your business"
     city = ""
     if isinstance(tenant.get("address"), dict):
@@ -91,6 +93,14 @@ def _build_prompt(*, tenant: Dict[str, Any], mention: Dict[str, Any],
         "number or email from the tenant profile), and thank them. "
         "Match the platform's expected tone."
     )
+    # Phase 10 · sub-item D — few-shot conditioning from the tenant's
+    # own posted-reply library. `examples` is a list of template dicts.
+    if examples:
+        try:
+            from services.response_library import render_examples_for_prompt
+            system += render_examples_for_prompt(examples)
+        except Exception:
+            pass
     constraints = (
         "\nHard constraints:\n"
         "- Do NOT include the customer's name unless it appears in the snippet.\n"
@@ -158,8 +168,19 @@ async def create_or_get_draft(*, tenant: Dict[str, Any],
 
     platform = detect_platform(mention.get("domain") or "",
                                  mention.get("url") or "")
+    # Phase 10 · sub-item D — pull up to 3 in-context examples from the
+    # tenant's own template library.
+    examples: List[Dict[str, Any]] = []
+    try:
+        from services.response_library import top_templates_for
+        examples = await top_templates_for(tenant_id=tenant_id,
+                                              platform=platform, tone=tone,
+                                              limit=3)
+    except Exception:
+        examples = []
     prompt = _build_prompt(tenant=tenant, mention=mention,
-                             platform=platform, tone=tone)
+                             platform=platform, tone=tone,
+                             examples=examples)
     r = await llm_call(prompt["system"], prompt["user"])
     if r.get("error"):
         return {"error": r["error"]}
@@ -233,6 +254,14 @@ async def update_draft(*, tenant_id: str, draft_id: str,
         await db.brand_mentions.update_one(
             {"tenant_id": tenant_id, "mention_id": doc["mention_id"]},
             {"$set": {"latest_draft_status": status}})
+        # Phase 10 · sub-item D — auto-capture posted drafts into the
+        # response-library. Failures never bubble.
+        if status == "posted":
+            try:
+                from services.response_library import capture_template_from_draft
+                await capture_template_from_draft(tenant_id=tenant_id, draft=doc)
+            except Exception:
+                pass
     return doc
 
 

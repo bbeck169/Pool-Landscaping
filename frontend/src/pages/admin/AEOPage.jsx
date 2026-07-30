@@ -15,7 +15,8 @@ import { toast } from "sonner";
 import { Sparkles, ScanSearch, Copy, RefreshCw, PlusCircle, X,
           FileText, ClipboardCheck, TrendingUp, Wrench, CheckCircle2,
           AlertCircle, Globe, ExternalLink, UploadCloud, Cloud, Save,
-          PlayCircle, Trash2, ChevronDown, ChevronRight } from "lucide-react";
+          PlayCircle, Trash2, ChevronDown, ChevronRight,
+          LibraryBig } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   AreaChart, Area,
@@ -31,6 +32,7 @@ const TABS = [
   { key: "visibility", label: "AI Visibility",     icon: TrendingUp },
   { key: "fixes",      label: "Fixes",             icon: Wrench },
   { key: "mentions",   label: "Brand Mentions",    icon: Globe },
+  { key: "library",    label: "Response Library",  icon: LibraryBig },
 ];
 
 async function _copy(text, label = "Copied") {
@@ -1608,6 +1610,148 @@ export default function AEOPage() {
       {tab === "visibility" ? <VisibilityTab /> : null}
       {tab === "fixes" ? <FixesTab /> : null}
       {tab === "mentions" ? <MentionsTab /> : null}
+      {tab === "library" ? <ResponseLibraryTab /> : null}
+    </div>
+  );
+}
+
+// ── Phase 10 · sub-item D · Response Library tab ─────────────────
+function ResponseLibraryTab() {
+  const [items, setItems] = React.useState([]);
+  const [platform, setPlatform] = React.useState("");
+  const [query, setQuery] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+
+  const load = React.useCallback(async () => {
+    setBusy(true);
+    try {
+      const q = platform ? `?platform=${platform}&limit=100` : "?limit=100";
+      const r = await api.get(`/aeo/response/templates${q}`);
+      setItems(r.items || []);
+    } catch (e) {
+      toast.error(e?.body?.detail || e?.message || "Failed to load");
+    } finally { setBusy(false); }
+  }, [platform]);
+  React.useEffect(() => { load(); }, [load]);
+
+  const removeItem = async (tpl) => {
+    if (!window.confirm(`Delete this template? "${tpl.template_text.slice(0, 40)}…"`)) return;
+    try {
+      await api.del(`/aeo/response/templates/${tpl.template_id}`);
+      toast.success("Deleted");
+      await load();
+    } catch (e) { toast.error(e?.message || "Delete failed"); }
+  };
+
+  const filtered = items.filter((t) =>
+    !query || (t.template_text || "").toLowerCase().includes(query.toLowerCase())
+  );
+
+  return (
+    <div className="space-y-3" data-testid="aeo-library-tab">
+      <div className="rounded-xl p-3 space-y-2"
+            style={{ backgroundColor: colors.surface,
+                      border: `1px solid ${colors.border}` }}>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select value={platform}
+                   onChange={(e) => setPlatform(e.target.value)}
+                   className="rounded-lg px-2 py-1 text-sm"
+                   style={{ backgroundColor: colors.surfaceSecondary,
+                             color: colors.onSurface,
+                             border: `1px solid ${colors.border}` }}
+                   data-testid="aeo-lib-platform-filter">
+            <option value="">All platforms</option>
+            {["yelp", "google_reviews", "nextdoor", "reddit", "facebook", "bbb", "generic"].map((p) =>
+              <option key={p} value={p}>{p}</option>)}
+          </select>
+          <input value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search template text…"
+                  className="flex-1 min-w-[200px] rounded-lg px-2 py-1 text-sm"
+                  style={{ backgroundColor: colors.surfaceSecondary,
+                            color: colors.onSurface,
+                            border: `1px solid ${colors.border}` }}
+                  data-testid="aeo-lib-query" />
+          <span className="text-xs" style={{ color: colors.muted }}>
+            {filtered.length} of {items.length}
+          </span>
+        </div>
+      </div>
+
+      {items.length === 0 && !busy ? (
+        <div className="rounded-xl p-6 text-center text-sm"
+              style={{ backgroundColor: colors.surface,
+                        color: colors.muted,
+                        border: `1px dashed ${colors.border}` }}
+              data-testid="aeo-lib-empty">
+          <LibraryBig size={20} className="mx-auto mb-2 opacity-60" />
+          Templates appear here once you post drafts on the Brand Mentions tab.
+        </div>
+      ) : (
+        <div className="rounded-xl overflow-hidden"
+              style={{ backgroundColor: colors.surface,
+                        border: `1px solid ${colors.border}` }}>
+          <table className="w-full text-xs"
+                  style={{ color: colors.onSurface }}
+                  data-testid="aeo-lib-table">
+            <thead>
+              <tr style={{ color: colors.muted,
+                            borderBottom: `1px solid ${colors.border}` }}>
+                <th className="text-left py-2 px-3">Platform</th>
+                <th className="text-left py-2 px-3">Tone</th>
+                <th className="text-left py-2 px-3">Template</th>
+                <th className="text-right py-2 px-3">Uses</th>
+                <th className="text-right py-2 px-3">30d</th>
+                <th className="text-left py-2 px-3">Last used</th>
+                <th className="text-right py-2 px-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((t) => (
+                <tr key={t.template_id}
+                     style={{ borderTop: `1px solid ${colors.border}` }}
+                     data-testid={`aeo-lib-row-${t.template_id}`}>
+                  <td className="py-2 px-3">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                           style={{ backgroundColor: colors.surfaceSecondary,
+                                     border: `1px solid ${colors.border}` }}>
+                      {t.platform}
+                    </span>
+                  </td>
+                  <td className="py-2 px-3">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                           style={{ backgroundColor: "#EDE9FE", color: "#5B21B6",
+                                     border: "1px solid #DDD6FE" }}>
+                      {t.tone}
+                    </span>
+                  </td>
+                  <td className="py-2 px-3 max-w-md">
+                    <div className="line-clamp-2" style={{ color: colors.onSurface }}>
+                      {(t.template_text || "").slice(0, 120)}
+                      {(t.template_text || "").length > 120 ? "…" : ""}
+                    </div>
+                  </td>
+                  <td className="py-2 px-3 text-right font-mono">{t.use_count}</td>
+                  <td className="py-2 px-3 text-right font-mono">{t.times_used_last_30d}</td>
+                  <td className="py-2 px-3 font-mono text-[11px]"
+                       style={{ color: colors.muted }}>
+                    {(t.last_used_at || "").slice(0, 10) || "—"}
+                  </td>
+                  <td className="py-2 px-3 text-right">
+                    <button type="button" onClick={() => removeItem(t)}
+                             className="p-1 rounded hover:bg-red-50"
+                             style={{ color: "#DC2626" }}
+                             data-testid={`aeo-lib-delete-${t.template_id}`}
+                             aria-label="Delete">
+                      <Trash2 size={12} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

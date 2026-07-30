@@ -8,6 +8,67 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-07-31 — Phase 10 · Bundled extensions (D + E + F)
+
+Three small extensions bundled together — Response Draft Library (D), Auto-Slot Preview Badge (E), Cumulative Weekly savings_km KPI (F). None of them touch Phase 3-9 internals beyond a one-line append-only event-log hook (F) and a status-transition side-effect (D).
+
+### Sub-item D · Response Draft Library — Added
+- `services/response_library.py` — `capture_template_from_draft()` (dedup on `sha256(platform + normalised text)[:32]`, min 20 chars text, per-tenant), `list_templates()`, `top_templates_for()`, `use_template()` (increments `use_count`, updates `last_used_at`, rolling 30-day counter — window resets to 1 when prior `last_used_at` is older than 30 days), `soft_delete_template()` (sets `deleted_at`, excludes from list/top), `render_examples_for_prompt()` (assembles a Claude system-suffix block from up to 3 templates).
+- `routers/aeo.py` — 3 new endpoints: `GET /api/aeo/response/templates?platform=&limit=`, `POST /api/aeo/response/templates/{template_id}/use`, `DELETE /api/aeo/response/templates/{template_id}`.
+- Collection `response_draft_templates` (`template_id, platform, tone, source_draft_id, template_text, template_hash, use_count, times_used_last_30d, last_used_at?, deleted_at?, created_at`).
+- Phase 6 integration — `services/response_drafts.py`:
+  - `update_draft()` on `status="posted"` transition calls `capture_template_from_draft(draft)` (fire-and-forget, swallow exceptions).
+  - `create_or_get_draft()` pulls up to 3 top templates for `(platform, tone)` and passes them to `_build_prompt()`, which appends a "Examples of prior public replies from this business …" block to the Claude system message. Neither the endpoint signature nor the mention_response_drafts shape changed.
+- Web admin — new **Response Library** 7th tab on `/admin/marketing/aeo` (`ResponseLibraryTab`): platform filter + client-side substring search + table (platform badge, tone badge, first 120 chars, uses, 30d, last_used_at, delete). Empty state guides the user to the Brand Mentions tab.
+- `ResponseDraftModal.jsx` — new `SuggestedFromLibrary` collapsible section below the tone pills. Renders up to 3 prior templates, each with a `Use this` button that pastes the template into the textarea, calls `POST /aeo/response/templates/{id}/use`, and (if there is an active draft) `POST /aeo/response/drafts/{draft_id}` with `edited_text`.
+
+### Sub-item E · Auto-Slot Preview Badge — Added
+- `routers/dispatch_route_insert.py` — `POST /api/dispatch/route/preview-insert-batch` with body `{tech_user_id, route_date, job_ids[≤50]}`. Reuses the existing `_cheapest_slot()` helper 1:1 — no algorithm duplication. Loads the current (tech, date) route + coords once, then loops the candidates and returns `[{job_id, added_distance_km, best_position, currently_missing_coords}]`. Jobs with missing coords → `added_distance_km=null, currently_missing_coords=true`. If the tech has no origin AND no existing route, treats the candidate as its own origin (0 km first-stop preview).
+- Web — `UnscheduledJobsPanel.jsx` accepts a new `previewsById` prop. Each row renders a colour-coded pill: `≤ 5 km → green`, `5-15 km → amber`, `> 15 km → red`, `null → gray "no coords"`.
+- `DispatchBoardPage.jsx` — new effect that fires a 300 ms-debounced `POST /preview-insert-batch` whenever `(techId, day)` becomes concrete AND `unschedJobs.length > 0`. Results are cached in a `useRef` map keyed by `${techId}|${isoDate}|${idsHash}` for 30 s, then propagated via `setPreviewsById`. When no tech / day is selected, `previewsById` clears so no stale pills remain.
+
+### Sub-item F · Weekly savings_km KPI — Added
+- `services/route_events.py` — append-only `route_optimize_events` writer (`log_event(kind, tech_user_id, route_date, savings_km, stop_count, added_distance_km?, executed_by)`, swallows exceptions) + `weekly_summary(tenant_id, range_='7d'|'30d', top_n=5)` aggregator. Returns `{range, period_start, period_end, total_savings_km, total_optimize_events, total_insert_events, per_day[]  (backfilled zeros for missing days), top_techs[]}`.
+- `routers/dispatch_savings.py` — `GET /api/dispatch/route/savings/weekly?range=7d|30d`. Mounted with `Depends(_rg)` in `server.py` (same guard as Phase 3/4).
+- Phase 3 · `routers/dispatch_route_optimize.py:apply_route` — one-line append at the end of a successful apply, logging `kind="optimize"` with the client-supplied `savings_km` (a new optional `ApplyBody.savings_km` field the frontend already computes).
+- Phase 4 · `routers/dispatch_route_insert.py:insert_route_job` — one-line append at the end of a successful insert, logging `kind="insert"` with `savings_km=0` and `added_distance_km` populated (insert doesn't save distance, it adds it — the field is informational).
+- Web — `DispatchSavingsStrip.jsx` in `pages/dispatch/`, rendered inside the Dispatch Board header row. Big number `Team saved X.X km this week` (7d default), recharts sparkline area chart (60 px tall), "View report" link → modal with a 7d/30d toggle, 3 KPI cards (Total saved · Optimize events · Insert events), a larger sparkline, and a Top techs table. `hidden md:block` — collapses on mobile.
+
+### Design decisions
+- **Sub-item D · few-shot injection**: appended to the Claude *system* prompt (not the user prompt) so the model treats the examples as tone / voice conditioning rather than data. Truncated at 800 chars each; capped at 3. Empty examples list emits no suffix at all — the prompt is bit-identical to Phase 6 when the library is empty.
+- **Sub-item D · dedup key**: `sha256(platform + ":" + text.strip().lower())[:32]`. Same text posted to Yelp and Google Reviews → two separate templates (platform-aware voice). Case-insensitive so trivial edits don't spawn duplicates.
+- **Sub-item D · soft-delete**: sets `deleted_at`, filtered by all readers (`{"deleted_at": {"$exists": False}}`). Preserves audit trail for the source_draft_id link.
+- **Sub-item E · cache pattern**: `useRef` map keyed by `${techId}|${isoDate}|${idsHash}`, 30 s TTL. Hovers, panel-toggle, and quick tech-flip don't refire — the previous result is served instantly. When any of the 3 key inputs changes → new fetch. When context becomes invalid (no tech / day="all" / no unscheduled) → `setPreviewsById({})` so no stale pills remain.
+- **Sub-item E · degraded modes**: (1) job missing coords → `null` + flag, panel renders "no coords" gray pill (2) unknown job_id → treated as missing_coords (server never 404s a batch preview) (3) tech has no route yet → cheapest-slot is 0 km using the candidate as its own origin.
+- **Sub-item F · log-vs-recompute trade-off**: chose append-only event log over rescanning `jobs` for `savings_km` on every request. Log rows are 1 KB, one per apply/insert — the write cost is negligible and the read is a straight `find + sum` that hits a natural `(tenant_id, executed_at)` index. Historical replay before this phase is intentionally deferred.
+
+### Security
+- All 3 new template endpoints reject Tech + Customer with 403 (verified live; pytest × 3 × 2 accounts).
+- `POST /dispatch/route/preview-insert-batch` inherits the router-level `require_gps_read` guard mounted at `include_router()` in `server.py` — Tech + Customer 403 (verified live).
+- `GET /dispatch/route/savings/weekly` inherits the same `require_gps_read` guard — Tech + Customer 403 (verified live).
+- Cross-tenant `list_templates()` / `weekly_summary()` return empty results (never 500).
+- Auto-capture failures inside `update_draft(status="posted")` are caught and swallowed — Phase 6's posted-status path is never blocked by a library bug.
+
+### Changed
+- `services/response_drafts.py` — `_build_prompt` accepts optional `examples` list, `create_or_get_draft` fetches top templates, `update_draft` calls `capture_template_from_draft` on `status="posted"`.
+- `routers/aeo.py` — 3 new endpoints appended (imports from `services.response_library`).
+- `routers/dispatch_route_insert.py` — new `POST /preview-insert-batch` endpoint appended; the existing `POST /insert` gets a 5-line event-log tail block.
+- `routers/dispatch_route_optimize.py` — `ApplyBody.savings_km: Optional[float] = None`; `apply_route()` gets an 8-line event-log tail block.
+- `server.py` — mounted `dispatch_savings` router below Phase 4.
+- `frontend/src/pages/dispatch/UnscheduledJobsPanel.jsx` — accepts `previewsById`; row renders a colour-coded pill.
+- `frontend/src/pages/dispatch/DispatchBoardPage.jsx` — imports `DispatchSavingsStrip`, renders it in the header row; new 300 ms-debounced batch-preview effect + `useRef` cache.
+- `frontend/src/pages/admin/AEOPage.jsx` — 7th "Response Library" tab + `ResponseLibraryTab` component.
+- `frontend/src/pages/admin/ResponseDraftModal.jsx` — `SuggestedFromLibrary` block wired to `/api/aeo/response/templates`.
+
+### Out of scope (deferred)
+- Slack notification when a new template is auto-captured.
+- Per-user template pinning / favorites.
+- Batch preview streaming (websocket).
+- Historical replay of savings before the log was introduced.
+- Multi-tenant leaderboard.
+
+---
+
 ## 2026-07-31 — Phase 9 · LLMs.txt Auto-Publish (Netlify / Vercel / Cloudflare Pages)
 
 ### Added

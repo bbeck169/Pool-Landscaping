@@ -6,7 +6,8 @@
 // Discard, status footer.
 import React from "react";
 import { toast } from "sonner";
-import { X, Sparkles, Copy, Send, Trash2, RefreshCw } from "lucide-react";
+import { X, Sparkles, Copy, Send, Trash2, RefreshCw,
+          ChevronDown, ChevronRight, LibraryBig } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 
@@ -199,6 +200,24 @@ export default function ResponseDraftModal({
           })}
         </div>
 
+        <SuggestedFromLibrary platform={platform}
+                                  onPick={async (tpl) => {
+                                    setText(tpl.template_text);
+                                    if (draft) {
+                                      try {
+                                        const saved = await api.post(
+                                          `/aeo/response/drafts/${draft.draft_id}`,
+                                          { edited_text: tpl.template_text });
+                                        setDraft(saved);
+                                      } catch {}
+                                    }
+                                    try {
+                                      await api.post(
+                                        `/aeo/response/templates/${tpl.template_id}/use`);
+                                    } catch {}
+                                    toast.success("Template applied");
+                                  }} />
+
         {/* Generate button */}
         <button type="button" onClick={() => generate(!!draft)}
                  disabled={busy}
@@ -298,4 +317,71 @@ function _detectPlatform(m) {
   if (d.includes("bbb.org")) return "bbb";
   if (d.includes("google.com") && u.includes("/maps/")) return "google_reviews";
   return "generic";
+}
+
+// Phase 10 · sub-item D — few suggestions from the tenant's library.
+function SuggestedFromLibrary({ platform, onPick }) {
+  const [open, setOpen] = React.useState(true);
+  const [items, setItems] = React.useState([]);
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.get(`/aeo/response/templates?platform=${platform}&limit=3`);
+        if (alive) setItems((r.items || []).slice(0, 3));
+      } catch { if (alive) setItems([]); }
+    })();
+    return () => { alive = false; };
+  }, [platform]);
+  if (!items.length) return null;
+  return (
+    <div style={{ background: colors.surfaceSecondary, borderRadius: 8,
+                    border: `1px solid ${colors.border}`,
+                    padding: "6px 10px", marginBottom: 12 }}
+          data-testid="response-draft-library-suggest">
+      <button type="button" onClick={() => setOpen(!open)}
+               style={{ background: "transparent", border: "none",
+                         cursor: "pointer", display: "flex", alignItems: "center",
+                         gap: 6, fontSize: 11, fontWeight: 700, width: "100%",
+                         color: colors.muted, textTransform: "uppercase",
+                         letterSpacing: "0.04em" }}>
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <LibraryBig size={12} /> Suggested from your library
+        <span style={{ marginLeft: "auto", fontSize: 10, color: colors.muted,
+                          textTransform: "none", letterSpacing: 0 }}>
+          {items.length} match{items.length === 1 ? "" : "es"}
+        </span>
+      </button>
+      {open ? (
+        <ul style={{ listStyle: "none", padding: 0, margin: "6px 0 0 0",
+                       display: "flex", flexDirection: "column", gap: 4 }}>
+          {items.map((t) => (
+            <li key={t.template_id}
+                 data-testid={`response-draft-lib-row-${t.template_id}`}
+                 style={{ display: "flex", gap: 8, alignItems: "center",
+                          background: colors.surface, borderRadius: 6,
+                          border: `1px solid ${colors.border}`,
+                          padding: "6px 8px" }}>
+              <div style={{ flex: 1, fontSize: 12, color: colors.onSurface,
+                             lineHeight: 1.35 }}>
+                <span style={{ color: colors.muted, fontSize: 10,
+                                 marginRight: 4 }}>
+                  used {t.use_count}×
+                </span>
+                {(t.template_text || "").slice(0, 80)}
+                {(t.template_text || "").length > 80 ? "…" : ""}
+              </div>
+              <button type="button"
+                       onClick={() => onPick(t)}
+                       className="text-xs font-semibold px-2 py-0.5 rounded-md"
+                       style={{ background: colors.brand, color: "#fff" }}
+                       data-testid={`response-draft-lib-use-${t.template_id}`}>
+                Use this
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 }

@@ -13,12 +13,22 @@ import {
 import { colors } from "@/theme";
 import formatAddress from "@/utils/formatAddress";
 
-function DraggableJobRow({ job, onAssignClick }) {
+function DraggableJobRow({ job, onAssignClick, previewKm, previewMissing }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `unsched:${job.id}`,
     data: { kind: "unscheduled-job", jobId: job.id, title: job.title,
              hasCoords: job.has_coords },
   });
+  // Phase 10 · sub-item E — preview pill colour bucket.
+  let pill = null;
+  if (previewMissing) {
+    pill = { label: "no coords", bg: "#F1F5F9", fg: "#475569", border: "#CBD5E1" };
+  } else if (typeof previewKm === "number") {
+    const km = previewKm;
+    if (km <= 5) pill = { label: `+${km.toFixed(1)} km`, bg: "#DCFCE7", fg: "#166534", border: "#BBF7D0" };
+    else if (km <= 15) pill = { label: `+${km.toFixed(1)} km`, bg: "#FEF3C7", fg: "#92400E", border: "#FDE68A" };
+    else pill = { label: `+${km.toFixed(1)} km`, bg: "#FEE2E2", fg: "#991B1B", border: "#FECACA" };
+  }
   return (
     <li
       ref={setNodeRef}
@@ -34,9 +44,19 @@ function DraggableJobRow({ job, onAssignClick }) {
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <div className="text-xs font-semibold truncate"
-                style={{ color: colors.onSurface }}>
-            {job.title || "(untitled)"}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="text-xs font-semibold truncate"
+                  style={{ color: colors.onSurface }}>
+              {job.title || "(untitled)"}
+            </div>
+            {pill ? (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0"
+                     style={{ backgroundColor: pill.bg, color: pill.fg,
+                               border: `1px solid ${pill.border}` }}
+                     data-testid={`dispatch-unsched-preview-${job.id}`}>
+                {pill.label}
+              </span>
+            ) : null}
           </div>
           <div className="text-[11px] flex items-center gap-1 truncate"
                 style={{ color: colors.muted }}>
@@ -77,6 +97,7 @@ function DraggableJobRow({ job, onAssignClick }) {
 export default function UnscheduledJobsPanel({
   jobs = [],
   onAssignClick = () => {},
+  previewsById = {},
 }) {
   const [open, setOpen] = React.useState(true);
   if (!jobs.length) {
@@ -125,9 +146,15 @@ export default function UnscheduledJobsPanel({
       </button>
       {open && (
         <ul className="space-y-1.5" data-testid="dispatch-unsched-jobs-list">
-          {jobs.map((j) => (
-            <DraggableJobRow key={j.id} job={j} onAssignClick={onAssignClick} />
-          ))}
+          {jobs.map((j) => {
+            const p = previewsById[j.id];
+            return (
+              <DraggableJobRow key={j.id} job={j}
+                                 onAssignClick={onAssignClick}
+                                 previewKm={p?.added_distance_km ?? null}
+                                 previewMissing={!!p?.currently_missing_coords} />
+            );
+          })}
         </ul>
       )}
       <div className="text-[10px] italic" style={{ color: colors.muted }}>
