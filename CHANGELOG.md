@@ -8,6 +8,74 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-01 — Phase 13 · Deployment audit hygiene (W1 · CORS tightening, W2 · Session-collection indexes)
+
+Two independent, tightly-scoped hygiene items called out by the Phase 12 audit. Shipped together as one pass.
+
+### W1 · CORS tightening
+Historical state: `CORS_ORIGINS="*"` was a dangling env var — the middleware actually read `ALLOWED_ORIGINS`, so `CORS_ORIGINS` had no effect. The Phase 12 audit correctly flagged this as a WARNING because the env variable name that operators would expect to control CORS was inert.
+
+#### Added
+- `services/…` behavior in `server.py` now honors `CORS_ORIGINS` per the operator's mental model:
+  - **Unset** → prior behavior unchanged (existing `ALLOWED_ORIGINS`-derived allowlist).
+  - **`*`** → permissive mode; `Access-Control-Allow-Credentials` is switched OFF (CORS spec forbids `*` + credentials); a single `WARNING [cors] CORS_ORIGINS is permissive (*) — tighten before production release.` fires on boot.
+  - **`https://a.com,https://b.com,…`** → parsed (whitespace-tolerant) and appended to the existing allowlist. `allow_credentials=True` is preserved. Inline wildcards inside a list are rejected with a WARNING and stripped.
+- `tests/test_cors_config.py` — 6 unit tests: wildcard permissive marker, comma-separated exact list, whitespace tolerance, inline-wildcard stripping, empty-env return, startup-log-line contract.
+
+#### Verified live
+- `CORS_ORIGINS="*"` → boot log emits `[cors] CORS_ORIGINS is permissive (*) — tighten before production release.` (one line per uvicorn worker). Final `CORS allow_origins = ['*']`.
+- `CORS_ORIGINS="https://poolscape-audit.preview.emergentagent.com,https://staging.example.com"` → boot log emits no warning; final allowlist merges the two supplied origins with the existing `ALLOWED_ORIGINS`-derived list: `['https://poolscape-audit.preview.emergentagent.com', 'https://app.plofv.com', 'https://plofv.com', 'https://staging.example.com']`.
+- Reverted to `*` at end of test — production preview restored to permissive baseline.
+
+### W2 · Session-collection compound indexes
+Phase 12 flagged 15 of 17 session collections as missing `(tenant_id, ts_desc)` compound indexes. All added.
+
+#### Added
+- `scripts/create_session_indexes.py` — idempotent one-shot migrator with `--dry-run`. For each of 15 collections, picks the appropriate timestamp field (primary → fallback via document-sample inspection), then creates a named index `tenant_<field>_desc`. Prints per-collection status + a summary tally (`created / already_exists / skipped_missing_field / skipped_empty_collection / substituted_field`). Empty collections are skipped cleanly. Concurrent-create races are absorbed as `already_exists`.
+- **Boot hook** in `server.py:startup` (`from scripts.create_session_indexes import ensure_on_boot`) — self-healing safety net so freshly-deployed pods don't need a manual step. Wrapped in try/except so a Mongo hiccup never blocks boot; failure logs `[indexes] boot hook failed (non-fatal): …`.
+- `tests/test_session_indexes.py` — 6 tests: dry-run doesn't mutate; real run creates then second run is a no-op; field-substitution when the primary timestamp is absent on the sample; empty-collection skip case; subprocess dry-run smoke; boot-hook never-raises contract.
+
+#### Indexes ensured on the live preview DB (14 created on first boot; second boot: 0 created, 14 already-exists)
+
+| Collection | Index name | Notes |
+|---|---|---|
+| `route_optimize_events` | `tenant_executed_at_desc` | Phase 10 sub-item F |
+| `aeo_visibility_probes` | `tenant_ran_at_desc` | Phase 5b |
+| `brand_mentions` | `tenant_discovered_at_desc` | Phase 5c |
+| `brand_mention_runs` | `tenant_ran_at_desc` | Phase 5c |
+| `aeo_fixes` | `tenant_generated_at_desc` | Phase 5b |
+| `mention_response_drafts` | `tenant_drafted_at_desc` | Phase 6 |
+| `response_draft_templates` | `tenant_created_at_desc` | Phase 10 sub-item D |
+| `scorecard_digests` | `tenant_generated_at_desc` | Phase 7 |
+| `aeo_digest_runs` | `tenant_generated_at_desc` | Phase 8 |
+| `aeo_digest_pdfs` | `tenant_created_at_desc` | Phase 8 (primary `generated_at` absent on sample → substituted `created_at`) |
+| `llmstxt_publish_configs` | `tenant_updated_at_desc` | Phase 9 |
+| `llmstxt_publish_history` | `tenant_requested_at_desc` | Phase 9 |
+| `invoice_reconciliation_log` | `tenant_logged_at_desc` | Phase 11 |
+| `quotes` | `tenant_created_at_desc` | co-exists with the existing `tenant_invoice_number_unique` index |
+| `aeo_probe_runs` | (skipped) | collection does not exist yet — 0 rows historically |
+
+#### Operational note for ops
+The startup boot hook self-heals on next boot, so no manual step is strictly required. If you want to force it out-of-band without a redeploy:
+```
+python -m scripts.create_session_indexes
+```
+Idempotent — safe to run any number of times. `--dry-run` inspects without mutating.
+
+### Design decisions
+- **W1**: kept the existing `ALLOWED_ORIGINS`-driven allowlist logic intact, and layered `CORS_ORIGINS` as an additive control. This preserves back-compat for anyone who has already tuned `ALLOWED_ORIGINS`, while giving operators the env-var name the audit expected. `CORS_ORIGINS=*` deliberately switches `allow_credentials` to `False` (CORS spec forbids wildcard + credentials) — this is a **breaking change for any browser client that relies on credentialed cross-origin XHR while permissive mode is on**, but that combination was never spec-compliant anyway; production should not run permissive.
+- **W2**: index NAMES are deterministic (`tenant_<field>_desc`) so operators can `db.<coll>.dropIndex("tenant_created_at_desc")` predictably. Field substitution logs a `NOTE` line but never crashes — the primary/fallback chain guarantees a sensible pick even if the collection's schema drifts. The boot hook lives in the existing `@app.on_event("startup")` handler (immediately after the Mongo ping) so its outcome is unambiguously logged before any traffic is served.
+- **Test isolation**: the session-index tests originally used `subprocess.run(python -m scripts.create_session_indexes)` which launches a fresh interpreter — meaning `_script.SPECS.append(...)` in the test process was invisible to the subprocess. Refactored to call the async `_script.run(dry_run=…)` directly on the test's event loop. One subprocess-based smoke test remains to prove `python -m scripts.create_session_indexes --dry-run` exits 0 end-to-end.
+
+### Verification
+- New pytest files: **12 / 12 passing** (`test_cors_config.py` = 6, `test_session_indexes.py` = 6).
+- Targeted regression across 6 invoice/AEO test files (72 tests): **70 passing / 2 pre-existing baseline failures unchanged** — zero Phase-13 regressions.
+- Vitest baseline: **14 failed / 537** — inside the accepted 11-14 tolerance (upper edge). Zero Phase-13-authored tests among the failures.
+- `/api/openapi.json` returns 200. Live-verified with `CORS_ORIGINS="*"` (permissive + warning) and `CORS_ORIGINS="https://…,https://…"` (list mode, no warning).
+- Live-verified all 14 indexes on the preview Mongo (`getIndexes()` reports each `tenant_<field>_desc` entry present).
+
+---
+
 ## 2026-08-01 — Phase 11 · Invoice dual-collection refactor (`db.invoices` → `db.quotes`)
 
 Consolidated the two-collection invoice model onto **`db.quotes` with `doc_type="invoice"`** as the single source of truth. `db.invoices` was preserved for rollback safety but is now inert — no production code reads or writes it. Migrated 17 orphan rows (all test-seed residue in one tenant) into `db.quotes` with `migrated_from_invoices=True` and `migration_needs_review=True` for later super-admin review.

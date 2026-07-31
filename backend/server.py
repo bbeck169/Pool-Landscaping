@@ -523,6 +523,35 @@ if not _origins:
     else:
         # Dev/preview convenience: fall back to APP_PUBLIC_URL or localhost.
         _origins = [_app_public or "http://localhost:3000"]
+
+# ─── Phase 13 · Feb-2026 — W1 CORS tightening ────────────────────
+# Honor `CORS_ORIGINS` env var (per Phase 12 audit). Behavior:
+#   * unset            → keep the ALLOWED_ORIGINS-derived list unchanged.
+#   * "*"              → permissive; emit a one-time WARNING; credentials
+#                        are FORBIDDEN with wildcard per CORS spec.
+#   * "a.com,b.com,…"  → parse (whitespace tolerated) and append to the
+#                        allowlist. Wildcards inside a list are rejected
+#                        with a WARNING and stripped.
+_cors_env = os.environ.get("CORS_ORIGINS", "").strip()
+_cors_permissive = False
+if _cors_env == "*":
+    _cors_permissive = True
+    _origins = ["*"]
+    logging.getLogger("pool_crm").warning(
+        "[cors] CORS_ORIGINS is permissive (*) — tighten before "
+        "production release.")
+elif _cors_env:
+    _extra = []
+    for o in (x.strip() for x in _cors_env.split(",") if x.strip()):
+        if "*" in o:
+            logging.getLogger("pool_crm").warning(
+                "[cors] wildcard entry %r ignored in CORS_ORIGINS list "
+                "mode; use the bare '*' value for permissive mode.", o)
+            continue
+        _extra.append(o)
+    for o in _extra:
+        if o not in _origins:
+            _origins.append(o)
 logging.getLogger("pool_crm").info(f"CORS allow_origins = {_origins}")
 
 # SEC-P3-2 hotfix — auto-force ALLOW_TEST_HOOKS=0 in production, regardless
@@ -534,7 +563,9 @@ if _APP_ENV_MW == "production" and os.environ.get("ALLOW_TEST_HOOKS") == "1":
 
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
+    # CORS spec forbids `Access-Control-Allow-Credentials: true` alongside
+    # a wildcard origin — flip credentials off when in permissive mode.
+    allow_credentials=not _cors_permissive,
     allow_origins=_origins,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1222,6 +1253,14 @@ async def startup():
         logger.info("MongoDB ping OK")
     except Exception as e:
         logger.error(f"MongoDB ping FAILED at startup: {e}")
+    # Phase 13 · Feb-2026 — W2 · ensure session-collection compound
+    # indexes at boot (self-healing safety net; the script can also be
+    # run manually). Wrapped so a Mongo hiccup can't block boot.
+    try:
+        from scripts.create_session_indexes import ensure_on_boot as _idx_boot
+        await _idx_boot()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[indexes] boot hook failed (non-fatal): {e}")
     # Phase 34 · Task L · Feb-2026 — one-line audit banner so it's
     # unmistakable from the boot logs whether outbound comms are
     # LIVE or DRY-RUN in the current environment.
