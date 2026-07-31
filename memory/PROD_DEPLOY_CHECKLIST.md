@@ -1,3 +1,87 @@
+# Prod Deploy Checklist — 2026-08-01 (Phase 12 · Deployment Readiness Audit)
+
+## Go/No-Go recommendation
+
+**GO with conditions** — all shipped features (Phases 1-11) are prod-ready. Zero deployment blockers. Two non-blocking warnings + several INFO items listed below.
+
+## Per-phase readiness
+
+| Phase | Feature | Status | Notes |
+|---|---|---|---|
+| P1  | Widget Analytics (MR3) | ✅ prod-ready | `POST /public/widget/analytics/track` requires `event_type` + `session_id` fields (schema is stricter than the smoke script currently assumes — updated in `PROD_SMOKE.sh`). Rate-limit enforced. |
+| P2  | Share-Replay + GPS Read Lockdown | ✅ prod-ready | `POST /gps/replay/share` schema uses `{user_id, replay_date}`. Public `/api/public/replay/*` returns 404 as designed. |
+| P3  | Dispatch Route Optimize | ✅ prod-ready | 404 `no_jobs_for_tech_on_date` is a valid semantic response for empty seeds. Tech/customer 403 verified. |
+| P4  | Drag-Drop Auto-Insert + Batch Preview | ✅ prod-ready | |
+| P5a | AEO Auditor / JSON-LD / LLMs.txt | ✅ prod-ready | `POST /aeo/jsonld/generate` requires `types` array. |
+| P5b | AI Visibility + Fixes | ✅ prod-ready | Manager-tenant probe returned 200 with `skipped_reason`; cost cap wired. |
+| P5c | Brand Mentions | ✅ prod-ready | Returns `provider_configured=false` when Serper/Google CSE keys absent per-tenant. |
+| P6  | Reputation Response Drafts | ✅ prod-ready | 404 on bad mention_id; EMERGENT_LLM_KEY present in .env so no 503. |
+| P7  | Weekly Scorecard Digest | ✅ prod-ready | `preview` is a `GET` (not `POST`). |
+| P8  | Weekly AEO PDF Digest | ✅ prod-ready | Signed URL round-trip verified; PDF starts with `%PDF-1.4`, 2368 bytes. HMAC valid+tampered+expired+cross-tenant all correctly enforced. |
+| P9  | LLMs.txt Auto-Publish | ✅ prod-ready | `not_configured` responses correct for tenants without provider keys. |
+| P10 | Response Library + Batch Preview Pills + Savings KPI | ✅ prod-ready | |
+| P11 | Invoice dual-collection refactor | ✅ prod-ready | Reconciliation-log endpoint enforces super-admin; `find_invoice_dual` deprecation fires once per boot. |
+
+## Env vars required for prod deploy
+
+### Backend (`/app/backend/.env`) — REQUIRED (blockers if missing)
+- `MONGO_URL` — SET
+- `DB_NAME` — SET
+- `JWT_SECRET` — SET (used as HMAC fallback for Phase 8 signed URLs)
+- `EMERGENT_LLM_KEY` — SET (Phase 5b visibility, 5b fixes, Phase 6 drafts)
+- `RESEND_API_KEY` + `RESEND_FROM` — SET (Phase 7 + Phase 8 email delivery)
+- `MAPBOX_ACCESS_TOKEN` — SET (route-map / GPS features)
+- `CORS_ORIGINS` — SET (currently `*`; **WARN**: tighten before public prod)
+
+### Backend — OPTIONAL / FEATURE-GATED
+- `AEO_VISIBILITY_CRON_HOUR_UTC` — default 07:00 UTC
+- `AEO_MENTIONS_CRON_HOUR_UTC` — default 08:00 UTC
+- `AEO_VISIBILITY_MONTHLY_CAP_USD` — feature-gated cost cap
+- `AEO_MENTIONS_MONTHLY_CAP_USD` — feature-gated cost cap
+- `LUMINO_API_TOKEN` — SET; `LUMINO_ZAPIER_SHARED_SECRET` — SET
+- `LUMINO_API_URL` — **MISSING** (used by reconciler; parked externally per session note)
+- `LUMINO_WEBHOOK_SECRET` — **MISSING** (webhook validator; parked per session note)
+- `RC_*` (RingCentral) — all SET
+- `WORDPRESS_*` — all SET
+- `GOOGLE_MAPS_API_KEY` / `GOOGLE_API_KEY` — SET
+- `DATAFORSEO_LOGIN` / `DATAFORSEO_PASSWORD` — SET
+- `WEATHERAPI_KEY` — SET
+- `OPENWEB_NINJA_API_KEY` (Zillow adapter) — SET
+- `ZAPIER_INVOICE_LINK_WEBHOOK_URL` — SET (parked externally per session note)
+
+### Per-tenant configuration (each tenant sets independently in the admin UI)
+- **Slack webhook URL** (Phase 7 scorecard delivery)
+- **Serper.dev key** OR **Google CSE key + CX** (Phase 5c mentions)
+- **AEO visibility enabled toggle** + **AEO mentions enabled toggle**
+- **Scorecard digest schedule** (DOW + hour + recipients)
+- **AEO PDF digest schedule** (DOW + hour + recipients + include-negative-snippets)
+- **LLMs.txt publish provider config** (Netlify/Vercel/Cloudflare Pages PAT + site/project id)
+
+### Deprecated / removed
+- `STRIPE_*` — removed (LZ4 in a prior session); frontend `.env` still ships `REACT_APP_STRIPE_PUBLISHABLE_KEY` — **INFO**, safe to leave for now, remove during next cleanup pass.
+- `db.invoices` writes — retired (Phase 11); grep-lint pytest enforces the guard.
+
+## Blocker / Warning / Info summary
+
+**BLOCKERS**: none.
+
+**WARNINGS**:
+1. `CORS_ORIGINS=*` — permissive. Tighten to the public prod origin before general release.
+2. Mongo compound indexes missing on 15 of 17 Phase 1-11 collections. See §5 in the audit report. Not a data-integrity risk today (row counts are low: `quotes=588, widget_analytics_events=311, route_optimize_events=17`, everything else <30). Add before scaling past ~10 tenants or ~100k events.
+
+**INFO**:
+1. `LUMINO_API_URL` + `LUMINO_WEBHOOK_SECRET` unset — the parked Lumino/Zapier reconciler path is inert until these are supplied. This is expected per the pre-session inbox item that keeps Lumino/Zapier parked.
+2. Historical Lumino `paid_at` drift on the ~466 pre-refactor invoices remains unreconciled — a separate follow-up phase will backfill from `db.payment_events`. Called out in the `GET /api/admin/invoice-reconciliation-log` response body.
+3. Frontend `REACT_APP_STRIPE_PUBLISHABLE_KEY` is a dangling artifact from LZ4 (Stripe SDK was removed). No consumer in the current code — safe to drop in the next cleanup pass.
+4. Backend `APP_BASE_URL` unset — used only if a code path needs to build absolute URLs; nothing today depends on it.
+5. Vitest baseline 13/537 failing — inside the accepted 11-14 tolerance since Phase 8. Zero Phase 1-11-authored tests among the failures.
+
+## Verification data appended to `PROD_SMOKE.sh`
+
+Added Phase 1-11 curl checks at the bottom of the smoke script. See §10 in the audit report.
+
+---
+
 # Prod Deploy Checklist — 2026-07-29
 
 ## Summary

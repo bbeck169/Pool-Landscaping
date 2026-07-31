@@ -434,10 +434,160 @@ else
 fi
 
 # =========================================================================
+# Phase 1-11 curl matrix (audit 2026-08-01)
+# ---------------------------------------------------------------------------
+# These checks were added post-Phase-11 to bring the smoke script up to
+# current surface area. Each block runs as its own step; failures collect
+# into the same summary array.
+# =========================================================================
+
+# ── Phase 1 · Widget Analytics
+STEP=21 ; NAME="P1 · widget analytics summary"
+r=$(curl_with_code GET "/widget/analytics/summary?range=7d" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+STEP=22 ; NAME="P1 · public widget track (event_type + session_id)"
+r=$(curl_with_code POST "/public/widget/analytics/track" \
+    -H "Content-Type: application/json" \
+    --data-raw '{"event_type":"impression","widget_id":"probe","tenant_id":"probe","session_id":"sid_probe"}')
+[[ $(http_code "$r") == "204" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r") (expected 204)" "$(body_of "$r" | head -c 200)"
+
+# ── Phase 2 · GPS read lockdown (super) + public replay 404
+STEP=23 ; NAME="P2 · GPS live-positions (admin)"
+r=$(curl_with_code GET "/gps/live-positions" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+STEP=24 ; NAME="P2 · public replay 404 (retired)"
+r=$(curl_with_code GET "/public/replay/anything")
+[[ $(http_code "$r") == "404" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r") (expected 404)" ""
+
+# ── Phase 3 · Dispatch optimize/apply (empty seed → 404 semantic OK)
+STEP=25 ; NAME="P3 · dispatch/route/apply (empty updates=0)"
+r=$(curl_with_code POST "/dispatch/route/apply" "${AUTH[@]}" \
+    -H "Content-Type: application/json" \
+    --data-raw '{"tech_user_id":"probe","route_date":"2026-07-30","ordered_job_ids":[]}')
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+# ── Phase 4 · Drag-drop batch preview + unscheduled list
+STEP=26 ; NAME="P4 · dispatch preview-insert-batch (empty)"
+r=$(curl_with_code POST "/dispatch/route/preview-insert-batch" "${AUTH[@]}" \
+    -H "Content-Type: application/json" \
+    --data-raw '{"tech_user_id":"probe","route_date":"2026-07-30","job_ids":[]}')
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+STEP=27 ; NAME="P4 · dispatch unscheduled-jobs"
+r=$(curl_with_code GET "/dispatch/route/unscheduled-jobs?limit=1" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+# ── Phase 5a · AEO basics
+STEP=28 ; NAME="P5a · AEO JSON-LD generate"
+r=$(curl_with_code POST "/aeo/jsonld/generate" "${AUTH[@]}" \
+    -H "Content-Type: application/json" --data-raw '{"types":["LocalBusiness"]}')
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+STEP=29 ; NAME="P5a · AEO llms.txt generate"
+r=$(curl_with_code POST "/aeo/llms-txt/generate" "${AUTH[@]}" \
+    -H "Content-Type: application/json" --data-raw '{"style":"concise","include_faqs":false}')
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+# ── Phase 5b · Visibility dashboard + fixes pending
+STEP=30 ; NAME="P5b · AEO visibility dashboard"
+r=$(curl_with_code GET "/aeo/visibility/dashboard" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+STEP=31 ; NAME="P5b · AEO fixes pending"
+r=$(curl_with_code GET "/aeo/fixes/pending" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+# ── Phase 5c · Brand mentions dashboard/list
+STEP=32 ; NAME="P5c · brand mentions dashboard"
+r=$(curl_with_code GET "/aeo/mentions/dashboard" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+# ── Phase 6 · Response drafts
+STEP=33 ; NAME="P6 · response drafts pending-count"
+r=$(curl_with_code GET "/aeo/response/drafts/pending-count" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+# ── Phase 7 · Scorecard digest
+STEP=34 ; NAME="P7 · scorecard digest settings"
+r=$(curl_with_code GET "/scorecard/digest/settings" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+STEP=35 ; NAME="P7 · scorecard digest preview (GET)"
+r=$(curl_with_code GET "/scorecard/digest/preview" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+# ── Phase 8 · AEO PDF digest + signed URL round-trip
+STEP=36 ; NAME="P8 · AEO digest preview (POST) → signed %PDF- URL"
+r=$(curl_with_code POST "/aeo/digest/preview" "${AUTH[@]}" \
+    -H "Content-Type: application/json" --data-raw '{}')
+code=$(http_code "$r"); body=$(body_of "$r")
+pdf_url=$(json_get "$body" 'd.get("pdf_url","")')
+if [[ "$code" == "200" && -n "$pdf_url" ]]; then
+  # fetch the signed PDF (strip /api prefix — pdf_url is repo-relative)
+  pdf_path="${pdf_url#/api}"
+  pr=$(curl -s -o /tmp/prod_smoke_pdf.bin -w "%{http_code}" "${API_BASE}${pdf_path}")
+  magic=$(head -c 5 /tmp/prod_smoke_pdf.bin)
+  [[ "$pr" == "200" && "$magic" == "%PDF-" ]] && record_pass "$STEP" "$NAME" \
+    || record_fail "$STEP" "$NAME" "pdf_http=$pr magic=$magic" ""
+else
+  record_fail "$STEP" "$NAME" "http=$code" "$(echo "$body" | head -c 200)"
+fi
+
+STEP=37 ; NAME="P8 · AEO digest history"
+r=$(curl_with_code GET "/aeo/digest/history?limit=3" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+# ── Phase 9 · LLMs.txt Auto-Publish
+STEP=38 ; NAME="P9 · llms-txt publish providers"
+r=$(curl_with_code GET "/aeo/llms-txt/publish/providers" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+STEP=39 ; NAME="P9 · llms-txt publish history"
+r=$(curl_with_code GET "/aeo/llms-txt/publish/history?limit=5" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+# ── Phase 10 · Bundled extensions (D + F)
+STEP=40 ; NAME="P10 · response templates list"
+r=$(curl_with_code GET "/aeo/response/templates?limit=5" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+STEP=41 ; NAME="P10 · dispatch savings weekly (7d)"
+r=$(curl_with_code GET "/dispatch/route/savings/weekly?range=7d" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+# ── Phase 11 · Invoice reconciliation log (super-admin)
+STEP=42 ; NAME="P11 · invoice reconciliation log"
+r=$(curl_with_code GET "/admin/invoice-reconciliation-log?limit=5" "${AUTH[@]}")
+[[ $(http_code "$r") == "200" ]] && record_pass "$STEP" "$NAME" \
+  || record_fail "$STEP" "$NAME" "http=$(http_code "$r")" "$(body_of "$r" | head -c 200)"
+
+# =========================================================================
 # Summary
 # =========================================================================
 printf "\n%sSummary%s\n" "$C_B" "$C_0"
-printf "  PASSED: %s%d%s / 20\n" "$C_G" "$PASS_COUNT" "$C_0"
+printf "  PASSED: %s%d%s / 42\n" "$C_G" "$PASS_COUNT" "$C_0"
 printf "  FAILED: %s%d%s\n"       "$C_R" "$FAIL_COUNT" "$C_0"
 
 if [[ "$FAIL_COUNT" -gt 0 ]]; then
@@ -448,5 +598,5 @@ if [[ "$FAIL_COUNT" -gt 0 ]]; then
   exit 1
 fi
 
-printf "\n%sAll 20 checks passed — deploy is healthy.%s\n" "$C_G" "$C_0"
+printf "\n%sAll 42 checks passed — deploy is healthy.%s\n" "$C_G" "$C_0"
 exit 0
