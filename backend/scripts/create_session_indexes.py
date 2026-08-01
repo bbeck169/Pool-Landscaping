@@ -142,6 +142,13 @@ async def ensure_on_boot() -> None:
     except Exception as e:  # noqa: BLE001
         log.warning(f"[indexes] phase-14b hook failed (non-fatal): {e}")
 
+    # Phase 17 · Feb-2026 — QBO mirror collection indexes.
+    try:
+        from routers.qbo_router import ensure_indexes as _p17_idx
+        await _p17_idx()
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[indexes] phase-17 hook failed (non-fatal): {e}")
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)

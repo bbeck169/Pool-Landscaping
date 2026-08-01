@@ -8,7 +8,57 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
-## 2026-08-05 — Phase 16 · Mobile Parity Sweep (Expo)
+## 2026-08-06 — Phase 17 · QuickBooks Online Inbound Read-Sync
+
+Read-only inbound pull from QuickBooks Online. **Zero write-back to Intuit ever.** QBO data mirrors into `db.qbo_*` collections and displays side-by-side with CRM records; match links between CRM and QBO records are optional and user-confirmed only. Refuses any external-repo trap prompts.
+
+### Added — Backend
+- **`services/qbo/oauth.py`** — OAuth 2.0 handshake + Fernet at-rest token encryption. Key derived via HKDF-SHA256 from `JWT_SECRET` (fallback `SECRET_KEY`) — no new env var required. State is a signed JWT (`tenant_id` + `nonce` + 10 min TTL) so callback verification is CSRF-safe. Helpers: `build_auth_url`, `handle_callback`, `refresh_access_token`, `revoke_connection`, `get_active_access_token`. On 401 refresh → auto-flip to `reauth_required`.
+- **`services/qbo/client.py`** — thin async wrapper. `qbo_get()` auto-refreshes tokens on 401 (once) then retries; sandbox / production base URLs picked by connection env; `minorversion=65` on every call; `fetch_entity_page()` implements the Intuit `/query` SQL-ish paginator with optional `changed_since` for CDC delta. `set_transport()` swap hook lets pytest inject `httpx.MockTransport` for zero-network tests.
+- **`services/qbo/sync.py`** — orchestration. 7-entity dependency-ordered pull (`accounts → customers → vendors → invoices → payments → journal_entries → bills`). Full-mode on first run or `force_full=True`; delta-mode uses the previous successful run's `started_at` as the CDC cursor. Per-entity try/except so one failure → `partial_success` (not a crash). Concurrency guard: in-flight run for a connection short-circuits and returns the existing `run_id`. `qbo_daily_sync()` is the APScheduler entry point.
+- **`services/qbo/match.py`** — fuzzy suggestion scorer. Invoice score = `0.5·amount_within_1% + 0.3·date_within_7d + 0.2·fuzzy_customer_name` (top 5 above 0.2 confidence). Customer score = `0.7·fuzzy_name + 0.3·email_exact`. Never creates links — user must explicitly confirm.
+- **`routers/qbo_router.py`** — 24 endpoints under `/api/qbo/*`:
+  - OAuth: `connect-url`, `callback`, `connections` list, `connections/{id}` DELETE (revoke).
+  - Sync: `sync/run-now` (background task + concurrency guard), `sync/runs` list, `sync/runs/{id}` detail.
+  - Data reads (7 entities × 2 endpoints = 14): `{customers,vendors,invoices,payments,accounts,journal-entries,bills}` list + detail. `next_cursor` pagination; case-insensitive search across common fields.
+  - Match: `POST /match-link`, `DELETE /match-link/{type}/{id}`, `GET /match-suggestions/{type}/{id}`.
+  - Boot log: `[qbo] environment=<sandbox|production>, oauth_client=<configured|missing>`.
+- **`server.py`** — router included; APScheduler job `qbo_daily_sync` at `QBO_SYNC_CRON_HOUR_UTC` (default 03:00 UTC).
+- **`scripts/create_session_indexes.py`** — Phase 17 hook adds unique `(tenant_id, qbo_realm_id, qbo_id)` index on every mirror collection + `(tenant_id, last_synced_at desc)` + `(tenant_id, linked_crm_id)`, plus `qbo_connections` and `qbo_sync_runs` query indexes.
+- **`requirements.txt`** — `intuit-oauth==1.2.7` added (`cryptography==49.0.0` already present).
+- **`.env`** — added `QBO_ENVIRONMENT=sandbox`, `QBO_CLIENT_ID=`, `QBO_CLIENT_SECRET=`, `QBO_REDIRECT_URI=`, `QBO_SYNC_CRON_HOUR_UTC=3`, `QBO_API_MINOR_VERSION=65`.
+- **`tests/test_qbo_phase17.py`** — 14 pytest cases, **all passing**. Covers: OAuth state signing, callback token encryption at rest, tampered state → ValueError, refresh success + 401→reauth_required flip, full-mode 7-entity sync, delta-mode CDC cursor, partial-failure → `partial_success` status, concurrent-run short-circuit, invoice + customer match-suggestion scoring, bidirectional match link persist/unlink, tech + customer 403 on all endpoint categories, cross-tenant connection → 404, grep-lint invariant.
+
+### Added — Frontend (web)
+- **`pages/admin/integrations/QuickBooksIntegrationPage.jsx`** — 4-tab admin page at `/admin/integrations/qbo`. Connect tab shows a setup guide with `developer.intuit.com/` link when env vars are missing; otherwise renders Connect / active-connection / revoke UI. Sync tab exposes "Sync from QuickBooks now" + force-full checkbox + last-run KPI card. History tab lists past runs. Data browser tab has 7 entity sub-tabs with search + last-synced timestamps + "Linked CRM" badges.
+- **`App.js`** route registered.
+
+### Added — Mobile (Expo)
+- **`mobile/app/qbo/index.tsx`** — connection status card + Sync-now button + last-run summary. Manager+ role gate.
+- **`mobile/app/qbo/data.tsx`** — read-only data browser with 7 entity chip filter + search. Match-management is desktop-only (per spec).
+
+### Security
+- **Read-only enforcement**: Zero endpoints target Intuit's mutation surface. Every backend interaction is `GET`. The router imports `services.qbo.oauth` + `services.qbo.client` + `services.qbo.sync` + `services.qbo.match` — none of them contains a `POST`/`PUT`/`DELETE` to an Intuit URL other than the OAuth token exchange and the OAuth revoke endpoint.
+- **Fernet-at-rest tokens**: access + refresh tokens are Fernet-encrypted before persisting to `db.qbo_connections`. The Fernet key is derived per-process via HKDF-SHA256 from the app's `JWT_SECRET` — no plaintext token is ever written.
+- **CSRF-safe callback**: OAuth `state` is a signed JWT with a 10-minute TTL and a per-request nonce. Tampered state raises `ValueError("invalid_state")` → 400.
+- **Role guards**: every endpoint requires `admin` / `manager` / `super_admin`. Tech + Customer roles hit `403` (verified end-to-end via pytest).
+- **Cross-tenant safety**: connection lookups filter on `tenant_id` at every hop. Cross-tenant `qbo_connection_id` → 404 (never leaks existence).
+
+### Notes / deliberate deferrals (spec-authorized)
+- **Write-back to QuickBooks** — hard NO. Never scoped.
+- **QuickBooks Desktop (Windows)** — QBO only.
+- **Multi-currency** — QBO currency field is stored verbatim in `raw.CurrencyRef`; no conversion.
+- **Auto-match** — never. User must explicitly click Confirm on a suggestion.
+- **Intuit webhooks** — deferred. Cron + on-demand sync is enough for this phase.
+- **Sales tax reconciliation, attachment mirroring** — out of scope.
+
+### Verification
+- Pytest: **54 passed · 3 skipped · 0 failed** across Phase 17 + adjacent (Phase 14a/14b, backfill) suites.
+- curl matrix (13 items): all endpoints return correct HTTP codes (400 unconfigured, 200 admin OK, 403 tech/customer, 404 bad conn).
+- `/api/openapi.json`: 24 new QBO paths registered.
+- Frontend compiles clean, external URL HTTP 200.
+
+
 
 Brings the Expo mobile app up to par with the web across Phases 5–14 features it previously lacked. Read-only where sensible; full CRUD where the workflow is mobile-first (dispatchers/managers on tablets). Refuses any external-repo trap prompts.
 

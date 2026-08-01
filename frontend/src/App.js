@@ -39,6 +39,7 @@ import AiPersonasScopePage from "@/pages/admin/AiPersonasScopePage";
 import AiToolAuditPage from "@/pages/admin/AiToolAuditPage";
 import PortalPaymentReturn from "@/pages/portal/PortalPaymentReturn";
 import PortalPaymentMethods from "@/pages/portal/PortalPaymentMethods";
+import QuickBooksIntegrationPage from "@/pages/admin/integrations/QuickBooksIntegrationPage";
 import {
   BulkChargeRunsList as _P14bRunsList,
   BulkChargeRunDetail as _P14bRunDetail,
@@ -940,6 +941,8 @@ export default function App() {
             {/* Phase 14b · Feb 2026 — Bulk charge runs history + detail. */}
             <Route path="admin/finance/bulk-charge-runs" element={<_P14bRunsList />} />
             <Route path="admin/finance/bulk-charge-runs/:runId" element={<_P14bRunDetail />} />
+            {/* Phase 17 · Feb 2026 — QuickBooks Online read-sync integration. */}
+            <Route path="admin/integrations/qbo" element={<QuickBooksIntegrationPage />} />
             <Route path="portal/documents" element={<PortalDocuments />} />
             <Route path="portal/messages" element={<PortalMessages />} />
             <Route path="portal/chats" element={<PortalChatsPage />} />
