@@ -149,6 +149,13 @@ async def ensure_on_boot() -> None:
     except Exception as e:  # noqa: BLE001
         log.warning(f"[indexes] phase-17 hook failed (non-fatal): {e}")
 
+    # Phase 19 · Feb-2026 — ai_rewrite_usage composite-unique index.
+    try:
+        from routers.checkin_rewrite import ensure_indexes as _p19_idx
+        await _p19_idx()
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[indexes] phase-19 hook failed (non-fatal): {e}")
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)

@@ -8,6 +8,158 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-08 — Phase 19 · P2 backlog — Avatar Swap + AI Rewrite Rate-Limit Persistence
+
+Two independent P2 items bundled into one small phase. Both ship together.
+
+### Sub-item A · Global Avatar Swap for Job Assignee
+
+**Added**
+- `assignee_photo_url` field is now returned on every job response. Value is
+  the tech's `db.users.technician_photo_url` when populated, else `null`.
+- Enrichment happens inside the existing
+  `routers/jobs.py::_enrich_jobs_dept_and_kind()` batched lookup — the
+  same `users` query that already resolves `department` + `checklist_kind`
+  now also projects `technician_photo_url`. **Zero additional DB
+  round-trips** on the hot job-list path.
+
+**Changed**
+- `frontend/src/pages/workstream/WorkstreamPage.jsx` — added a
+  `<UserAvatar>` next to the "Assigned to" line on every job card. Reuses
+  the existing `UserAvatar` component by threading `assignee_photo_url`
+  through the `profile_photo_url` source it already reads (initials
+  fallback is unchanged).
+- `mobile/app/job/[id].tsx` — job detail screen now renders
+  `job.assignee_photo_url` (falls back to the older `technician_avatar`
+  key, then to the initials/person-icon placeholder). Both branches
+  carry the new `testID`s `job-assignee-avatar` /
+  `job-assignee-avatar-fallback`.
+
+**Notes / decisions**
+- **Data state**: 0/26 techs currently have `technician_photo_url`
+  populated. Field name confirmed from `db.users` schema. Per the P2
+  brief, no backfill in this phase — the plumbing is future-proofed and
+  admins fill photos via the existing user-edit UI.
+- **Zero-extra-round-trip pattern**: the batched enricher was already
+  fetching `users` for `department` — we simply added
+  `technician_photo_url` to the projection. `_enrich_job_dept_and_kind`
+  (single-doc variant, used by `get_job`) got the same treatment.
+
+**Follow-ups (intentionally deferred)**
+- Dispatch board (`pages/admin/DispatchBoard*`) and schedule tiles do
+  NOT yet render the assignee photo. The two touch-points shipped in
+  this pass (WorkstreamPage + mobile job detail) are the most visible;
+  the dispatch board is dense enough that adding avatars is a separate
+  UX call to make in a follow-up.
+
+### Sub-item B · AI Rewrite Rate-Limit Persistence to MongoDB
+
+**Added**
+- New collection `db.ai_rewrite_usage` with a composite-unique index on
+  `(tenant_id, user_id, action, window_start_utc)`. Registered via
+  `routers.checkin_rewrite.ensure_indexes()` and wired into
+  `scripts/create_session_indexes.ensure_on_boot()` so index creation
+  runs once per boot without blocking startup.
+- Atomic upsert + `$inc` on `call_count` — multi-worker safe with no
+  application-side lock. `find_one_and_update` with
+  `return_document=After` gives us the post-increment count in a single
+  round-trip.
+- Response now includes a `Retry-After` HTTP header (seconds until
+  `window_end_utc`) on 429 responses, per spec.
+- Test-only bypass: when `ALLOW_TEST_HOOKS=1` in the pod env AND the
+  request carries `X-Test-Skip-Llm: 1`, the endpoint returns a canned
+  `[TEST-STUB] <draft>` string instead of hitting the real Emergent
+  LLM. Both conditions must be true — impossible to hit in production.
+- Boot-hook wiring in `scripts/create_session_indexes.py`
+  (`ensure_on_boot` now also calls `checkin_rewrite.ensure_indexes()`).
+
+**Changed**
+- `routers/checkin_rewrite.py` — HTTP endpoint now uses `_rate_charge()`
+  (Mongo-backed) instead of the in-process `_rate_check()` deque.
+- The legacy sync `_rate_check(user_id)` and `_rate_reset(user_id)`
+  helpers are **preserved as shims** so
+  `tests/test_checkin_rewrite.py::test_unit_rate_check_*` continue to
+  pass without modification. They now only exercise a legacy code
+  path — the HTTP endpoint no longer touches them.
+- The prompt-builder text (`_build_prompt`) and the LLM adapter
+  (`_call_emergent_text`, `_generate_rewrite`) are byte-identical to
+  the prior implementation.
+
+**Notes / decisions**
+- **Fixed-window trade-off (accepted)**: the prior impl was a rolling
+  sliding-window (`deque[timestamp]`); the new impl is a **fixed
+  UTC-hour window**. Numeric budget preserved (10 / user / 3600s).
+  Worst-case boundary drift: a user could get 20 calls in ~2 minutes if
+  they perfectly straddle the boundary. Acceptable for a soft cost /
+  abuse limit.
+- **Rollback-on-reject**: when a call exceeds the limit, the `$inc`
+  that pushed the counter past `_RATE_MAX` is rolled back with a
+  compensating `-1` so the persisted counter never inflates under
+  hammer attacks. `last_rejected_at` is stamped on the row so admin
+  dashboards can still see abuse patterns.
+- **Cutover behaviour**: existing in-memory counters are lost on the
+  first boot after Phase 19 ships — the current UTC-hour window
+  restarts fresh from 0. No migration script.
+- **Numeric limit preserved**: `_RATE_MAX=10`, `_RATE_WINDOW_S=3600`.
+  Unchanged from the prior implementation.
+
+### Tests
+
+- **`backend/tests/test_phase19_avatar_and_rewrite_ratelimit.py`** — 5
+  new pytest cases · all passing.
+  - `A1`: `/api/jobs` returns `assignee_photo_url` populated for techs
+    with `technician_photo_url` set.
+  - `A2`: `/api/jobs` returns `assignee_photo_url = null` for techs
+    without a photo.
+  - `B1`: 1st call under limit → 200 + row in `ai_rewrite_usage` with
+    `call_count == 1`, `window_start_utc` / `window_end_utc` populated.
+  - `B2`: call count survives an in-process `importlib.reload()` of
+    the router module — 5 calls, reload, 5 more calls → `call_count == 10`.
+  - `B3`: 11th call → **429** with `Retry-After: <secs>` header AND
+    the counter is rolled back to 10 (not 11) AND `last_rejected_at`
+    is stamped.
+- Legacy `tests/test_checkin_rewrite.py::test_unit_rate_check_*` still
+  pass thanks to the preserved sync shims (verified — no modification
+  needed).
+
+### Verification (curl matrix)
+
+```
+1) GET  /api/jobs                                    admin  → 200; every row
+                                                              has key `assignee_photo_url`
+                                                              (null while photos are unset)
+2) POST /api/checkins/rewrite-description × 10       admin  → 200 each
+3) POST /api/checkins/rewrite-description  (11th)    admin  → 429 with
+                                                              Retry-After: <1-3600>
+4) GET  /api/openapi.json                             (open) → 200
+```
+
+### Files added / changed
+
+- `backend/routers/checkin_rewrite.py` — Phase 19 rewrite (Mongo-backed
+  rate limit; sync-shim helpers + prompt/LLM adapter preserved verbatim)
+- `backend/routers/jobs.py` — `_enrich_job_dept_and_kind` +
+  `_enrich_jobs_dept_and_kind` now project + attach `assignee_photo_url`
+- `backend/scripts/create_session_indexes.py` — `ensure_on_boot()` now
+  calls `checkin_rewrite.ensure_indexes()` too
+- `backend/tests/test_phase19_avatar_and_rewrite_ratelimit.py` (NEW, 5
+  tests)
+- `frontend/src/pages/workstream/WorkstreamPage.jsx` — `<UserAvatar>`
+  next to the assignee line
+- `mobile/app/job/[id].tsx` — image with fallback icon using the new
+  `assignee_photo_url` field
+
+### Cross-cutting checks
+
+- Grep-lint: 0 `db.invoices` writes in any Phase 19 file. ✅
+- Vitest baseline: 522 pass / 14 fail — inside the 11-14 tolerated
+  flake budget. ✅
+- `/api/openapi.json` reachable (HTTP 200). ✅
+- 21/21 pytest across Phase 19 + Phase 18 + webform bugfix + legacy
+  rewrite units. ✅
+
+---
+
 ## 2026-08-08 — Phase 18 · Chemical Cost Report + Per-Tech Inventory + Low-Stock Notifications
 
 Snapshot-priced chemical cost reporting, per-tech / per-department attribution,

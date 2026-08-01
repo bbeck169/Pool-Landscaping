@@ -35,6 +35,8 @@ import { useAuth } from "@/auth";
 import { Forbidden } from "@/hooks/usePermissions";
 import { colors } from "@/theme";
 import { StatusPill } from "@/components/ui-kit";
+// Phase 19 · Feb-2026 · Sub-item A — job assignee avatar.
+import { UserAvatar } from "@/components/UserAvatar";
 
 const SORT_OPTIONS = [
   { value: "newest", label: "Newest first" },
@@ -237,9 +239,24 @@ function JobCard({ job, onOpen }) {
               <CalendarIcon size={11} /> {humanDate(job.scheduled_date)}
             </span>
           </div>
-          <div className="text-[11px] mt-0.5" style={{ color: colors.muted }}>
-            Assigned to <b>{job.technician_name || "Unassigned"}</b>
-            {job.line_items_count ? ` · ${job.line_items_count} line item${job.line_items_count === 1 ? "" : "s"}` : ""}
+          <div className="text-[11px] mt-0.5 flex items-center gap-1.5"
+               style={{ color: colors.muted }}
+               data-testid={`ws-job-assignee-${job.id}`}>
+            <UserAvatar
+              user={{
+                name: job.technician_name,
+                // Phase 19 · Feb-2026 · Sub-item A — new server-side
+                // field wired through the existing profile_photo_url
+                // source that UserAvatar already reads.
+                profile_photo_url: job.assignee_photo_url || null,
+              }}
+              size="xs"
+              testid={`ws-job-assignee-avatar-${job.id}`}
+            />
+            <span>
+              Assigned to <b>{job.technician_name || "Unassigned"}</b>
+              {job.line_items_count ? ` · ${job.line_items_count} line item${job.line_items_count === 1 ? "" : "s"}` : ""}
+            </span>
           </div>
           <MediaStrip jid={job.id} media={job.media} />
         </div>

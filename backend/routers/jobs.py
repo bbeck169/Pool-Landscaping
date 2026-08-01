@@ -236,32 +236,53 @@ def _derive_checklist_kind(job: dict, tech_department: Optional[str]) -> str:
 
 
 async def _enrich_job_dept_and_kind(doc: dict, tenant_id: str) -> None:
-    """Mutates ``doc`` to add ``technician_department`` and ``checklist_kind``
-    at READ-TIME. Never persists — the stored job doc is untouched."""
+    """Mutates ``doc`` to add ``technician_department``, ``checklist_kind``,
+    and ``assignee_photo_url`` at READ-TIME. Never persists — the stored
+    job doc is untouched."""
     tid = doc.get("technician_id")
     dept = None
+    photo = None
     if tid:
-        u = await db.users.find_one({"technician_id": tid, "tenant_id": tenant_id},
-                                     {"_id": 0, "department": 1}) or {}
+        u = await db.users.find_one(
+            {"technician_id": tid, "tenant_id": tenant_id},
+            {"_id": 0, "department": 1, "technician_photo_url": 1},
+        ) or {}
         dept = u.get("department")
+        photo = u.get("technician_photo_url") or None
     doc["technician_department"] = dept
     doc["checklist_kind"] = _derive_checklist_kind(doc, dept)
+    # Phase 19 · Feb-2026 · Sub-item A — expose the assignee's photo so
+    # every job-card surface can render a real headshot with the
+    # existing UserAvatar initials fallback. Null when the tech has no
+    # photo (26/26 today; will fill in over time via user-edit UI).
+    doc["assignee_photo_url"] = photo
 
 
 async def _enrich_jobs_dept_and_kind(docs: list, tenant_id: str) -> None:
     """Batch variant — single ``users`` query for the whole page."""
     tech_ids = list({d.get("technician_id") for d in docs if d.get("technician_id")})
-    dept_map = {}
+    dept_map: Dict[str, Optional[str]] = {}
+    # Phase 19 · Feb-2026 · Sub-item A — piggyback the photo lookup on
+    # the same batched users query. Zero additional round-trips.
+    photo_map: Dict[str, Optional[str]] = {}
     if tech_ids:
         users = await db.users.find(
             {"technician_id": {"$in": tech_ids}, "tenant_id": tenant_id},
-            {"_id": 0, "technician_id": 1, "department": 1},
+            {"_id": 0, "technician_id": 1, "department": 1,
+              "technician_photo_url": 1},
         ).to_list(1000)
-        dept_map = {u["technician_id"]: u.get("department") for u in users if u.get("technician_id")}
+        for u in users:
+            tid = u.get("technician_id")
+            if not tid:
+                continue
+            dept_map[tid] = u.get("department")
+            photo_map[tid] = u.get("technician_photo_url") or None
     for d in docs:
-        dept = dept_map.get(d.get("technician_id"))
+        tid = d.get("technician_id")
+        dept = dept_map.get(tid)
         d["technician_department"] = dept
         d["checklist_kind"] = _derive_checklist_kind(d, dept)
+        d["assignee_photo_url"] = photo_map.get(tid) if tid else None
 
 
 

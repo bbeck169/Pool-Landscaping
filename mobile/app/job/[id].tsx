@@ -327,10 +327,15 @@ export default function JobDetail() {
             testID="job-assign-technician"
           >
             <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, flex: 1 }}>
-              {job.technician_avatar ? (
-                <Image source={{ uri: job.technician_avatar }} style={styles.techAvatar} />
+              {(job.assignee_photo_url || job.technician_avatar) ? (
+                <Image
+                  source={{ uri: (job.assignee_photo_url || job.technician_avatar) as string }}
+                  style={styles.techAvatar}
+                  testID="job-assignee-avatar"
+                />
               ) : (
-                <View style={[styles.techAvatar, styles.techFallback]}>
+                <View style={[styles.techAvatar, styles.techFallback]}
+                      testID="job-assignee-avatar-fallback">
                   <Ionicons name="person" size={18} color={colors.muted} />
                 </View>
               )}
