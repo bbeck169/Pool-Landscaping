@@ -994,6 +994,16 @@ async def public_lead_intake(body: PublicLeadIn, request: "Request"):
     origin = (request.headers.get("origin") or "").strip()
     referer = (request.headers.get("referer") or "").strip()
     x_fwd_origin = (request.headers.get("x-forwarded-origin") or "").strip()
+    # Phase 18 hotfix (follow-up) · Feb-2026 — Cloudflare Worker at
+    # preview.emergentagent.com rewrites the ``Origin`` header to the
+    # internal cluster hostname (…cluster-12.preview.emergentcf.cloud)
+    # before it reaches FastAPI, so the browser-supplied public origin
+    # is preserved ONLY in ``X-Forwarded-Host``. Add a synthesized
+    # candidate ``https://{x-forwarded-host}`` so the tenant allowlist
+    # (which lists the public host) can still match.
+    x_fwd_host = (request.headers.get("x-forwarded-host") or "").strip()
+    x_fwd_proto = (request.headers.get("x-forwarded-proto") or "https").strip()
+    x_fwd_host_origin = f"{x_fwd_proto}://{x_fwd_host}" if x_fwd_host else ""
     env_allow = {o.strip() for o in
                     (_os.environ.get("PUBLIC_LEADS_ORIGIN_ALLOWLIST") or "").split(",")
                     if o.strip()}
@@ -1013,7 +1023,7 @@ async def public_lead_intake(body: PublicLeadIn, request: "Request"):
                 status_code=403,
                 detail="Origin allowlist not configured for this tenant",
             )
-        candidates = [c for c in (origin, x_fwd_origin, referer) if c]
+        candidates = [c for c in (origin, x_fwd_origin, x_fwd_host_origin, referer) if c]
         if not candidates:
             raise HTTPException(
                 status_code=403,
@@ -1022,13 +1032,29 @@ async def public_lead_intake(body: PublicLeadIn, request: "Request"):
 
         def _matches(candidate: str) -> bool:
             candidate = candidate.rstrip("/")
+            # Phase 18 hotfix · Feb-2026 — normalize scheme + trailing
+            # slash on BOTH sides so a bare-host allowlist entry
+            # ("example.com") matches a schemed browser Origin
+            # ("https://example.com"). This is the root cause of the
+            # "webform not creating leads" bug — allowlists in
+            # ``tenant.widget_allowed_domains`` are stored bare, but
+            # browsers always send ``https://…``.
+            def _host(s: str) -> str:
+                s = s.strip().rstrip("/")
+                for prefix in ("https://", "http://"):
+                    if s.startswith(prefix):
+                        s = s[len(prefix):]
+                        break
+                # Strip any path component so a Referer with a path
+                # still compares by host.
+                s = s.split("/", 1)[0]
+                return s.lower()
+            cand_host = _host(candidate)
             for a in allowed:
                 a2 = a.rstrip("/")
-                if candidate == a2:
+                if candidate == a2 or candidate.startswith(a2 + "/"):
                     return True
-                # Referer usually has a path suffix — accept startswith
-                # after normalising trailing slash.
-                if candidate.startswith(a2 + "/"):
+                if cand_host and cand_host == _host(a2):
                     return True
             return False
         if not any(_matches(c) for c in candidates):

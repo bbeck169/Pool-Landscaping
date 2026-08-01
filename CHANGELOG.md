@@ -8,7 +8,41 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
-## 2026-08-06 — Phase 17 · QuickBooks Online Inbound Read-Sync
+## 2026-08-08 — Bug fix follow-up · Webform still 403 through Cloudflare edge (Phase 8 origin-allowlist Cloudflare-Worker rewrite)
+
+**Reported symptom**: After the 2026-08-07 scheme-normalization fix, `POST /api/public/leads` still returned `403 "Origin not allowed"` when called from the live preview URL, even though the exact host was in `tenant.widget_allowed_domains` and local pytest passed.
+
+**Root cause**: The Cloudflare Worker fronting `*.preview.emergentagent.com` **rewrites the incoming `Origin` header** to the internal cluster hostname (`https://<slug>.cluster-12.preview.emergentcf.cloud`) before the request reaches FastAPI. Diagnostic header dump confirmed FastAPI received `origin=https://poolscape-audit.cluster-12.preview.emergentcf.cloud` while `x-forwarded-host=poolscape-audit.preview.emergentagent.com` (the public host in the allowlist). The `_matches()` fix from 2026-08-07 was correct but was matching against the wrong candidate.
+
+**Fix**: Synthesize an additional candidate `f"{x-forwarded-proto}://{x-forwarded-host}"` and add it to the candidates list consulted by `_matches()`. Public browser Origins are now recovered from the CF forwarding headers.
+
+**Files changed**
+- `backend/routers/leads.py` (added `x_fwd_host_origin` synthesis + candidates list extension)
+
+**Verification**
+- External `curl -H "Origin: https://poolscape-audit.preview.emergentagent.com" POST …/api/public/leads` → `200 {"ok":true,"lead_id":"908296f8-…"}` post-fix (was `403` pre-fix).
+- Lead confirmed persisted in `db.leads` with full payload intact.
+- Existing 4 pytest cases in `test_public_lead_intake_bugfix.py` still pass (no regression on scheme-normalization logic).
+
+---
+
+## 2026-08-07 — Bug fix · Webform submissions now land in `db.leads` (Phase 8 origin-allowlist scheme mismatch)
+
+**Reported symptom**: "Webform is not pulling customer information and description of services in to leads."
+
+**Root cause**: `routers/leads.py::public_lead_intake._matches()` (lines 1023-1033) compared the browser's `Origin` header (`https://poolscape-audit.preview.emergentagent.com`) to `tenant.widget_allowed_domains` entries stored as *bare hostnames* (`poolscape-audit.preview.emergentagent.com`). The exact-string / trailing-slash comparison never succeeded, so every website form submission returned `403 "Origin not allowed"` before the payload was ever inserted. Investigation confirmed **zero `source=website_form` leads** in the production tenant's `db.leads` collection.
+
+**Fix**: extended `_matches()` to normalize both sides by stripping `https://` / `http://` and any path component before comparison, in addition to the pre-existing exact/prefix checks. Bare-host allowlist entries now match schemed browser Origins; schemed allowlist entries continue to work; unlisted origins remain rejected.
+
+**Files changed**
+- `backend/routers/leads.py` (5-line edit inside `_matches`)
+- `backend/tests/test_public_lead_intake_bugfix.py` (new · 4 regression cases, all passing)
+
+**Verification**
+- End-to-end curl reproduces the bug pre-fix (`403 "Origin not allowed"`), lands cleanly post-fix (`200 {"ok": true}`) with every field (`name`, `email`, `phone`, `service_address`, `service_interest`, `notes`) intact in the resulting Mongo doc.
+- 4/4 new pytest cases pass: full-payload landing, schemed-origin ↔ bare-host allowlist match, Referer-with-path fallback, evil-origin still 403.
+
+
 
 Read-only inbound pull from QuickBooks Online. **Zero write-back to Intuit ever.** QBO data mirrors into `db.qbo_*` collections and displays side-by-side with CRM records; match links between CRM and QBO records are optional and user-confirmed only. Refuses any external-repo trap prompts.
 
