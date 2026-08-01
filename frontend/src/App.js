@@ -38,6 +38,7 @@ import ReflowHistoryPage from "@/pages/admin/ReflowHistoryPage";
 import AiPersonasScopePage from "@/pages/admin/AiPersonasScopePage";
 import AiToolAuditPage from "@/pages/admin/AiToolAuditPage";
 import PortalPaymentReturn from "@/pages/portal/PortalPaymentReturn";
+import PortalPaymentMethods from "@/pages/portal/PortalPaymentMethods";
 import QuotesList from "@/pages/quotes/QuotesList";
 import QuoteInvoiceNew from "@/pages/quotes/QuoteInvoiceNew";
 import QuoteInvoiceDetail from "@/pages/quotes/QuoteInvoiceDetail";
@@ -931,6 +932,7 @@ export default function App() {
             <Route path="portal/estimates/:id" element={<PortalEstimateDetail />} />
             <Route path="portal/payments" element={<PortalPayments />} />
             <Route path="portal/payment-method" element={<PortalPaymentMethod />} />
+            <Route path="portal/payment-methods" element={<PortalPaymentMethods />} />
             <Route path="portal/documents" element={<PortalDocuments />} />
             <Route path="portal/messages" element={<PortalMessages />} />
             <Route path="portal/chats" element={<PortalChatsPage />} />

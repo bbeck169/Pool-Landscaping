@@ -8,7 +8,47 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
-## 2026-08-01 — Phase 13 · Deployment audit hygiene (W1 · CORS tightening, W2 · Session-collection indexes)
+## 2026-08-02 — Phase 14a · Stripe Re-Integration (Primary card-on-file processor)
+
+Fresh Stripe re-integration for the SetupIntent → attach → off-session PaymentIntent pipeline. Runs alongside the parked Lumino/Zapier bridge; the two providers are cleanly separated by a `provider` field on `payment_methods` rows so there is no risk of cross-contamination.
+
+Investigation confirmed a clean slate before shipping: no `stripe` package in `requirements.txt`, no `import stripe` in backend, no `@stripe/*` in frontend. The dangling `REACT_APP_STRIPE_PUBLISHABLE_KEY` in `frontend/.env` was preserved (per env rules) and superseded by `_TEST`/`_LIVE` mode-split variants.
+
+### Added
+- **`services/payments/stripe_charge.py`** — 5 async helpers wrapping the raw `stripe` SDK (14.x). All Stripe HTTP calls are dispatched through `asyncio.to_thread` so the FastAPI event loop is never blocked.
+  - `create_setup_intent(tenant_id, customer_id)` — idempotent Stripe customer create + SetupIntent (`payment_method_types=["card"], usage="off_session"`). Stamps `stripe_customer_id` on the CRM customer doc.
+  - `attach_payment_method(...)` — attaches a PM to the Stripe customer, retrieves the fresh card metadata, upserts a mirror into `db.payment_methods` with `provider="stripe"`. Optional `set_default` demotes siblings + updates `customers.stripe_default_payment_method_id` + `saved_payment_methods_count`.
+  - `list_payment_methods(...)` — reads the local mirror (DB is the source of truth for the CRM UI).
+  - `detach_payment_method(...)` — detach from Stripe + delete mirror + clear the customer's default pointer when it matched.
+  - `charge_card_on_file(...)` — off_session `PaymentIntent.create(confirm=True)` with an idempotency key. Every attempt (success OR failure) is persisted to the fresh `db.stripe_charges` collection with `{amount_cents, currency, invoice_id, stripe_payment_intent_id, status, error, actor_user_id, stripe_mode, created_at}`.
+  - `verify_and_parse_webhook(payload, sig_header)` — mode-aware `Webhook.construct_event` verification.
+  - `handle_webhook_event(event)` — idempotent handler for `payment_method.attached`, `payment_method.detached`, `payment_intent.succeeded`, `payment_intent.payment_failed`. Upserts on `stripe_payment_intent_id` so a delayed webhook can't drop a status update.
+- **`routers/stripe_router.py`** — 6 endpoints under `/api/payments/stripe/*` wired into `server.py`. Role guards:
+  - `POST /setup-intent`, `POST /attach` — customer self-serve (JWT-inferred `customer_id`) OR admin/manager/super_admin (must pass `customer_id` in body; missing = 422).
+  - `GET /payment-methods/{customer_id}` — customer (own) OR admin+. **Technicians receive 403 unconditionally.**
+  - `DELETE /payment-methods/{payment_method_id}` — customer (own PM) OR admin+; tech = 403.
+  - `POST /charge` — **admin/manager/super_admin ONLY.** Tech and customer roles receive 403.
+  - `POST /webhook` — public; signature verified before any DB write; unverified requests get 400 (never touch Mongo).
+- **`components/payments/StripeAddCardForm.jsx`** — reusable Stripe Elements form. Fetches the SetupIntent client_secret, mounts `<Elements>` + `<PaymentElement>`, calls `stripe.confirmSetup({ redirect: "if_required" })`, then hits `/attach` with the resulting `payment_method` id. Data-test IDs on every actionable element.
+- **`components/customers/AdminCardCapturePanel.jsx`** — admin capture panel wired into `CustomerDetail.jsx` as a new **Payments** tab. Lists saved cards with brand/last4/expiry + Default badge + Remove button; toggle mounts the reusable form for card capture on behalf of the customer.
+- **`pages/portal/PortalPaymentMethods.jsx`** — customer-facing counterpart at `/portal/payment-methods`. Uses the same reusable form (customer_id inferred from JWT, no admin capture prop).
+- **`tests/test_stripe_phase14a.py`** — 18 pytest cases (15 pass, 3 skip on missing prerequisites). Stripe SDK is fully stubbed via a `set_stripe_client()` injection hook; no live HTTP is ever issued. Covers: setup-intent create + reuse, attach mirror + default demotion, detach clears default, charge success/failure logging, invalid amount / unknown PM rejection, webhook secret selection per `STRIPE_MODE`, webhook payload verification, `payment_method.attached` mirror upsert, `payment_intent.succeeded` charge-row upsert, router 403 for technicians, router 422 for missing `customer_id`, admin GET payment-methods.
+
+### Env vars (added; never rewriting existing lines)
+- `backend/.env`: `STRIPE_MODE=test`, `STRIPE_SECRET_KEY_TEST=`, `STRIPE_SECRET_KEY_LIVE=`, `STRIPE_WEBHOOK_SECRET_TEST=`, `STRIPE_WEBHOOK_SECRET_LIVE=`, `STRIPE_PUBLISHABLE_KEY_TEST=`, `STRIPE_PUBLISHABLE_KEY_LIVE=`.
+- `frontend/.env`: `REACT_APP_STRIPE_MODE=test`, `REACT_APP_STRIPE_PUBLISHABLE_KEY_TEST=`, `REACT_APP_STRIPE_PUBLISHABLE_KEY_LIVE=`. The legacy `REACT_APP_STRIPE_PUBLISHABLE_KEY` (pk_live_…) is preserved as a fallback for existing code paths.
+- Mode selection falls back to the platform-injected `STRIPE_API_KEY` (default `sk_test_emergent`) if a mode-specific override isn't set, so preview boots without extra config.
+
+### Not resurrected
+- **`db.stripe_payments_live`** stays retired (Phase LZ4). All new charge logs land in the fresh `db.stripe_charges` collection.
+- **`emergentintegrations.payments.stripe.checkout`** is not used — the Emergent Checkout helpers cover Session-redirect flows, not the SetupIntent + off-session PaymentIntent pattern Phase 14a requires. Raw `stripe` SDK is the correct primitive.
+- **`sk_live_...` in `frontend/.env`** — preserved verbatim per env rules; superseded by the `_TEST`/`_LIVE` variants selected at read time.
+
+### Dependencies
+- Backend: `stripe>=13.0.0,<15.0.0` (`stripe==14.4.1` installed). Constrained below 15 to satisfy `emergentintegrations==0.2.0`.
+- Frontend: `@stripe/stripe-js@9.12.1`, `@stripe/react-stripe-js@6.8.0` (via `yarn add`).
+
+
 
 Two independent, tightly-scoped hygiene items called out by the Phase 12 audit. Shipped together as one pass.
 

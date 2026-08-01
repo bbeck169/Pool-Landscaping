@@ -1,0 +1,251 @@
+"""Phase 14a · Feb-2026 — Stripe endpoints.
+
+Mounts under ``/api/payments/stripe/*``. Role guards:
+
+* ``POST /setup-intent``           — customer (own record) OR admin/manager/super_admin.
+* ``POST /attach``                 — customer (own record) OR admin/manager/super_admin.
+* ``GET  /payment-methods/{cid}``  — customer (own record) OR admin/manager/super_admin.
+                                     Technicians receive ``403`` (they must never see
+                                     the mirrored card metadata).
+* ``DELETE /payment-methods/{pm}`` — customer (own PM) OR admin/manager/super_admin.
+* ``POST /charge``                 — admin/manager/super_admin ONLY. Tech + customer → 403.
+* ``POST /webhook``                — public; signature verified inline.
+
+Every endpoint returns JSON. Errors bubble up as HTTPException so the
+FastAPI validator + our shared handler render the usual ``{detail: ...}``
+envelope.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field
+
+from config import db
+from routers.tenants import get_current_tenant
+from services.payments import stripe_charge as stripe_svc
+from utils import get_current_user
+
+router = APIRouter(prefix="/payments/stripe", tags=["payments-stripe"])
+logger = logging.getLogger("stripe_router")
+
+_ADMIN_ROLES = ("admin", "manager", "super_admin")
+_TECH_ROLES = ("technician", "tech")
+
+
+# ── Helpers ───────────────────────────────────────────────────────────
+def _is_admin(user: dict) -> bool:
+    return (user.get("role") or "") in _ADMIN_ROLES
+
+
+def _is_customer(user: dict) -> bool:
+    return (user.get("role") or "") == "customer"
+
+
+def _is_tech(user: dict) -> bool:
+    return (user.get("role") or "") in _TECH_ROLES
+
+
+def _require_self_or_admin(user: dict, customer_id: str) -> None:
+    """Customer role → allowed only for their own customer_id.
+    Admin/manager/super_admin → allowed for anyone in the tenant.
+    Tech role → 403 (never sees card data)."""
+    if _is_admin(user):
+        return
+    if _is_customer(user) and user.get("customer_id") == customer_id:
+        return
+    if _is_tech(user):
+        raise HTTPException(403, "Technicians cannot access payment methods")
+    raise HTTPException(403, "Not allowed")
+
+
+def _require_admin(user: dict) -> None:
+    if not _is_admin(user):
+        raise HTTPException(403, "Admin/manager only")
+
+
+async def _lookup_customer_from_pm(
+    payment_method_id: str, tenant_id: str
+) -> Optional[str]:
+    row = await db.payment_methods.find_one(
+        {
+            "provider_payment_method_id": payment_method_id,
+            "tenant_id": tenant_id,
+            "provider": "stripe",
+        },
+        {"_id": 0, "customer_id": 1},
+    )
+    return row.get("customer_id") if row else None
+
+
+# ── Request bodies ────────────────────────────────────────────────────
+class SetupIntentBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    customer_id: Optional[str] = None  # required for admin-on-behalf; ignored for self-serve
+
+
+class AttachBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    customer_id: Optional[str] = None
+    payment_method_id: str
+    set_default: bool = True
+
+
+class ChargeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    customer_id: str
+    payment_method_id: str
+    amount_cents: int = Field(gt=0)
+    currency: str = "usd"
+    invoice_id: Optional[str] = None
+    description: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+# ── Endpoints ─────────────────────────────────────────────────────────
+@router.post("/setup-intent")
+async def post_setup_intent(
+    body: SetupIntentBody,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    # Self-serve customer → operate on THEIR customer_id, always. Admin →
+    # must pass ``customer_id`` in the body.
+    if _is_customer(user):
+        target_id = user.get("customer_id")
+        if not target_id:
+            raise HTTPException(400, "customer account has no customer_id link")
+    else:
+        _require_admin(user)
+        target_id = body.customer_id
+        if not target_id:
+            raise HTTPException(422, "customer_id is required for admin capture")
+    try:
+        return await stripe_svc.create_setup_intent(
+            tenant_id=tenant["id"],
+            customer_id=target_id,
+            actor_user_id=user.get("id"),
+        )
+    except ValueError as exc:
+        raise HTTPException(404 if "not found" in str(exc) else 400, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[stripe] setup_intent error: %s", exc)
+        raise HTTPException(502, f"stripe error: {exc}")
+
+
+@router.post("/attach")
+async def post_attach(
+    body: AttachBody,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    if _is_customer(user):
+        target_id = user.get("customer_id")
+        if not target_id:
+            raise HTTPException(400, "customer account has no customer_id link")
+    else:
+        _require_admin(user)
+        target_id = body.customer_id
+        if not target_id:
+            raise HTTPException(422, "customer_id is required for admin capture")
+    try:
+        return await stripe_svc.attach_payment_method(
+            tenant_id=tenant["id"],
+            customer_id=target_id,
+            payment_method_id=body.payment_method_id,
+            set_default=body.set_default,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[stripe] attach error: %s", exc)
+        raise HTTPException(502, f"stripe error: {exc}")
+
+
+@router.get("/payment-methods/{customer_id}")
+async def get_payment_methods(
+    customer_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    _require_self_or_admin(user, customer_id)
+    rows = await stripe_svc.list_payment_methods(
+        tenant_id=tenant["id"], customer_id=customer_id
+    )
+    return {"customer_id": customer_id, "payment_methods": rows}
+
+
+@router.delete("/payment-methods/{payment_method_id}")
+async def delete_payment_method(
+    payment_method_id: str,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    if _is_tech(user):
+        raise HTTPException(403, "Technicians cannot access payment methods")
+    owner = await _lookup_customer_from_pm(payment_method_id, tenant["id"])
+    if not owner:
+        raise HTTPException(404, "payment method not found")
+    if _is_customer(user) and user.get("customer_id") != owner:
+        raise HTTPException(403, "Not allowed")
+    if not (_is_admin(user) or _is_customer(user)):
+        raise HTTPException(403, "Not allowed")
+    try:
+        return await stripe_svc.detach_payment_method(
+            tenant_id=tenant["id"], payment_method_id=payment_method_id
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[stripe] detach error: %s", exc)
+        raise HTTPException(502, f"stripe error: {exc}")
+
+
+@router.post("/charge")
+async def post_charge(
+    body: ChargeBody,
+    user: dict = Depends(get_current_user),
+    tenant: dict = Depends(get_current_tenant),
+):
+    # Admin-only. Tech and Customer roles must always 403.
+    if _is_tech(user) or _is_customer(user):
+        raise HTTPException(403, "Admin/manager only")
+    _require_admin(user)
+    try:
+        return await stripe_svc.charge_card_on_file(
+            tenant_id=tenant["id"],
+            customer_id=body.customer_id,
+            payment_method_id=body.payment_method_id,
+            amount_cents=body.amount_cents,
+            currency=body.currency,
+            invoice_id=body.invoice_id,
+            description=body.description,
+            metadata=body.metadata,
+            actor_user_id=user.get("id"),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        # Charge attempts still get persisted inside ``charge_card_on_file``
+        # so the audit trail survives — surface a 402 for card-decline
+        # style errors and 502 for anything else.
+        msg = str(exc)
+        code = 402 if "declined" in msg.lower() or "card" in msg.lower() else 502
+        raise HTTPException(code, msg or "stripe error")
+
+
+@router.post("/webhook")
+async def post_webhook(request: Request):
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature") or ""
+    try:
+        event = stripe_svc.verify_and_parse_webhook(payload=payload, sig_header=sig)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:  # includes stripe.error.SignatureVerificationError
+        raise HTTPException(400, f"invalid signature: {exc}")
+    result = await stripe_svc.handle_webhook_event(event)
+    return {"ok": True, **result}

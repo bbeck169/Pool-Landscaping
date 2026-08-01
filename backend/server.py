@@ -369,6 +369,13 @@ api_router.include_router(_driver_scorecard_router.router, dependencies=[Depends
 from routers import payments_summary as _payments_summary_router  # noqa: E402
 api_router.include_router(_payments_summary_router.router)
 
+# Phase 14a · Feb-2026 — Stripe re-integration (card-on-file).
+# Endpoints: /api/payments/stripe/{setup-intent,attach,payment-methods/*,charge,webhook}.
+# Fresh collection ``db.stripe_charges``; legacy ``db.stripe_payments_live``
+# stays retired (Phase LZ4). Test/live mode split via ``STRIPE_MODE``.
+from routers import stripe_router as _p14a_stripe_router  # noqa: E402
+api_router.include_router(_p14a_stripe_router.router)
+
 for module in [notifications_router,
                auth, customers, technicians, jobs, quotes, leads, team, items,
                operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google_router, phase11,

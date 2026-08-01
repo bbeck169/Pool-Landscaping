@@ -53,6 +53,7 @@ import CardOnFileWarningBanner from "@/components/customers/CardOnFileWarningBan
 import BusinessCard from "@/components/business-card/BusinessCard";
 import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
 import CustomerReviewsTab from "@/components/customers/CustomerReviewsTab";
+import AdminCardCapturePanel from "@/components/customers/AdminCardCapturePanel";
 import { toast as sonnerToast } from "sonner";
 
 const TABS = [
@@ -65,6 +66,7 @@ const TABS = [
   { k: "tasks", label: "Tasks", icon: ListChecks },
   { k: "notes", label: "Notes", icon: StickyNote },
   { k: "credits", label: "Credits", icon: DollarSign },
+  { k: "payments", label: "Payments", icon: DollarSign },
   { k: "reviews", label: "Reviews", icon: Star },
   { k: "portal", label: "Portal Access", icon: KeyRound },
 ];
@@ -545,6 +547,10 @@ export default function CustomerDetail() {
 
           {tab === "credits" ? (
             <CustomerCreditsPanel customerId={id} />
+          ) : null}
+
+          {tab === "payments" ? (
+            <AdminCardCapturePanel customerId={id} onChange={load} />
           ) : null}
 
           {tab === "reviews" ? (
