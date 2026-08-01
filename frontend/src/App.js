@@ -145,6 +145,8 @@ import WhiteLabelReports, { WhiteLabelReportDetail } from "@/pages/seo/WhiteLabe
 import EstimatorList, { EstimatorNew, EstimatorDetail, EstimatorRates } from "@/pages/estimator/EstimatorPages";
 import DunningSettings, { DunningQueue, DunningAnalytics } from "@/pages/dunning/DunningPages";
 import InventoryList, { InventoryDetail, InventoryPOs, InventoryAlerts, InventoryAnalytics } from "@/pages/inventory/InventoryPages";
+// Phase 18 · Feb-2026 — Chemical Cost Report (Admin+ only).
+import ChemicalCostReport from "@/pages/inventory/ChemicalCostReport";
 import CheckRegister, { CheckNew, CheckDetail, CheckBanks, CheckPayees, CheckAnalytics } from "@/pages/checks/ChecksPages";
 import PropertyLookupPage from "@/pages/property-lookup/PropertyLookupPage";
 import DispatchBoard, { WeatherReschedule } from "@/pages/dispatch/DispatchPages";
@@ -1035,6 +1037,8 @@ export default function App() {
             <Route path="admin/inventory/purchase-orders" element={<AdminOnly><InventoryPOs /></AdminOnly>} />
             <Route path="admin/inventory/alerts" element={<AdminOnly><InventoryAlerts /></AdminOnly>} />
             <Route path="admin/inventory/analytics" element={<AdminOnly><InventoryAnalytics /></AdminOnly>} />
+            {/* Phase 18 · Feb-2026 — Chemical Cost Report */}
+            <Route path="admin/inventory/chemical-cost-report" element={<AdminOnly><ChemicalCostReport /></AdminOnly>} />
             <Route path="admin/inventory/:id" element={<AdminOnly><InventoryDetail /></AdminOnly>} />
             {/* Phase 24 — Check Writer */}
             <Route path="admin/checks" element={<AdminOnly><CheckRegister /></AdminOnly>} />

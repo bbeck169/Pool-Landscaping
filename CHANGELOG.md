@@ -8,6 +8,174 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-08 — Phase 18 · Chemical Cost Report + Per-Tech Inventory + Low-Stock Notifications
+
+Snapshot-priced chemical cost reporting, per-tech / per-department attribution,
+and a real-time + daily-cron low-stock alert fan-out to bell + email + Slack.
+All six user decisions from 2026-08-01 are locked in (see "Design decisions"
+below). No `db.invoices` writes. No external-repo cloning.
+
+### Added
+
+- **`services/inventory_alerts.py`** — Phase 18 core module.
+  - `SEEDED_CHEMICALS` catalogue (8 core pool chemicals: Liquid Chlorine,
+    Chlorine Tablets, Muriatic Acid, Cal-Hypo Shock, Soda Ash, Cyanuric Acid,
+    Pool Salt, Algaecide).
+  - `seed_chemicals_for_tenant(tenant_id)` — idempotent by `sku=P18-<slug>`
+    (and case-insensitive name match against Phase-23 `_STARTER` rows).
+    Existing rows keep their tuned `reorder_point`; only `sku`,
+    `is_seeded_chemical`, `department` are attached.
+  - `seed_chemicals_all_tenants()` — server-boot fan-out.
+  - `should_alert(item)` — null threshold ⇒ never alerts (user decision 4).
+  - `check_and_notify_low_stock(tenant_id, item_ids, source, slack_post, force)`
+    with a **24-hour dedup window** on `inventory_items.low_stock_notified_at`.
+  - `run_daily_low_stock_scan()` — APScheduler entry, tenant-fanout.
+  - Slack helper `_build_slack_payload()` (mrkdwn text block, includes OUT
+    markers for out-of-stock items).
+  - Quiet-hours honoured on `inventory_alert_settings.quiet_hours_utc`
+    (`{start_hour,end_hour}`), wraps midnight correctly. Real-time fan-out
+    defers into quiet hours; cron path still runs.
+  - Audit row per fan-out written to `inventory_alert_events`.
+
+- **`routers/inventory_reports.py`** — Phase 18 API surface.
+  - `GET /api/reports/chemical-costs` (require_admin) — totals + per-product,
+    per-tech, per-department aggregations sourced from
+    `chemical_usage_events.total_cost_cents` (snapshot-priced — no pricebook
+    join at report time). Optional `start`, `end`, `department`, `tech_id`
+    filters. Default window: last 30 days.
+  - `GET /api/inventory/my-inventory` (any non-customer) — read-only on-hand
+    list for techs. **Cost fields are NEVER included** (`unit_cost`,
+    `cost_per_unit_cents` are omitted at the projection layer). Includes a
+    "You used" panel of the tech's last-30-day usage — quantities only.
+  - `PUT /api/admin/users/{uid}/department` — set enum
+    `pool_tech | landscape_tech | both | null`.
+  - `PUT /api/admin/inventory/{iid}/department` — set enum
+    `pool | landscape | both | null` on a SKU.
+  - `POST /api/admin/suggest-departments` — infers per-tech department from
+    last-N-days job.service_type distribution (thresholds: ≥75% pool ⇒
+    pool_tech, ≥75% landscape ⇒ landscape_tech, ≥25% both ⇒ both).
+  - `GET/PUT /api/admin/inventory-alert-settings` — Slack webhook +
+    quiet-hours CRUD. Webhook URL is masked in GET responses like the
+    Phase 55 pattern.
+
+- **Real-time hook** on `routers/inventory.decrement_from_service_report()` —
+  after every decrement, any SKUs that cross their reorder point fire
+  `check_and_notify_low_stock(source="real_time")`. Fan-out failures never
+  block the service-report submit path (wrapped in `try/except`).
+
+- **APScheduler cron** — `inventory_low_stock_daily` at
+  `INVENTORY_CRON_HOUR_UTC` (default `06:00 UTC`, staggered off Phase 5b/5c/
+  7/8/17). Scans all tenants; skips rows in dedup window; honours quiet hours
+  differently (does still fire outside them).
+
+- **Frontend** —
+  - `src/pages/inventory/ChemicalCostReport.jsx` — new Admin page with
+    date-range + department + tech filters. Cards for total spend / events /
+    quantity plus three breakdown tables. Every element carries a
+    `data-testid`. Cost figures are USD-formatted (cents → dollars).
+  - `src/App.js` — route `admin/inventory/chemical-cost-report` (wrapped in
+    `AdminOnly`) + import.
+  - `src/pages/inventory/InventoryPages.jsx` — added "Cost Report" button
+    on the inventory landing header with `data-testid="inv-cost-report-link"`.
+
+- **Mobile (Expo)** — `mobile/app/(app)/inventory/my-inventory.tsx` — new
+  tech-facing screen. Pulls from `/api/inventory/my-inventory`. Renders
+  summary chips (total / low / out), sorted on-hand list with LOW / OUT
+  badges, and a personal usage panel (quantities only, **no dollar figures**).
+  Every row carries a `testID`.
+
+- **Notifications** — new `inventory_low_stock` kind in
+  `services/notifications.py::KIND_LABELS`; added to
+  `_ADMIN_PUSH_DEFAULT_ON` so admins get Expo push by default.
+
+- **Tests** — `backend/tests/test_phase18_chemical_report.py` — 8 pytest
+  cases (all passing). Loop-rebinding pattern shared with the QBO Phase 17
+  suite to avoid Motor "Event loop is closed" flake.
+  - A: seed idempotency (8 first run, 0 second)
+  - B: seed preserves tuned `reorder_point`
+  - C: null threshold never alerts
+  - D: real-time fan-out + 24h dedup (Slack+bell fire once, second call in
+    window is deduped)
+  - E: quiet hours defer real-time but not cron
+  - F: cost report RBAC (admin 200, tech 403)
+  - G: cost report aggregation math + per-tech / per-department correctness
+  - H: mobile my-inventory strips every cost field
+
+### Changed
+
+- `db.inventory_items` documents grow three optional fields:
+  `is_seeded_chemical: bool`, `department: "pool"|"landscape"|"both"|None`,
+  `low_stock_notified_at: iso-string|None`. All are nullable, no
+  migration required — existing rows keep their current shape.
+- `db.users` documents grow an optional `department` enum
+  `pool_tech|landscape_tech|both|None`. Existing rows stay `None` (per user
+  decision — no bulk migration). Reports show a "Department: unassigned"
+  bucket so null tech data is never invisible.
+
+### Security
+
+- Chemical cost data is `require_admin`-gated — technicians and customers
+  get 403 on `/api/reports/chemical-costs` (curl matrix + pytest F prove
+  this). The mobile `/api/inventory/my-inventory` endpoint strips
+  `unit_cost` / `cost_per_unit_cents` at the projection layer so wholesale
+  margin data can never leak to a tech client (pytest H proves this).
+- Slack webhook URL is stored in `inventory_alert_settings.slack_webhook_url`
+  but always masked in GET responses (`https://hooks.slack.…xxxx`), same
+  pattern as `scorecard_digest_settings`.
+
+### Notes / Design decisions
+
+- **Cost math source of truth**: report reads from
+  `chemical_usage_events.unit_cost_at_time_cents × quantity_used`
+  (snapshot-priced at service-report submit by
+  `chemical_products.snapshot_chemical_usage`). No pricebook join at report
+  time — protects historical margin math from retroactive price edits.
+- **Department field seed strategy**: nullable enum on both `users` and
+  `inventory_items`. No bulk migration. Seeded 8 chemicals ship with
+  `department="pool"`. `/admin/suggest-departments` is a read-only hint
+  layer for a future admin bulk-apply modal (not surfaced in UI in this
+  pass — logged as follow-up).
+- **Quiet hours behaviour**: real-time fan-out defers into quiet hours (the
+  next cron tick will pick it up). The daily cron itself does NOT defer
+  when its `hour=06:00 UTC` schedule fires — that's a fixed operational
+  slot chosen deliberately outside typical quiet windows. Wrap-around
+  windows (e.g. `22 → 06`) are handled correctly.
+- **Slack fallback**: per-tenant `slack_webhook_url` first, then
+  `INVENTORY_SLACK_WEBHOOK_URL` env var, then noop. Never crashes on
+  missing config.
+- **KIND labels**: `inventory_low_stock` was added to the notifications
+  catalogue so per-user preference UI renders a friendly row and admins
+  default to push=on.
+- **11-14 baseline Vitest flake**: not touched — same tolerated failure
+  budget as prior phases.
+
+### Verification (curl matrix)
+
+```
+1) GET  /api/reports/chemical-costs                     admin  → 200 (totals + per_* buckets)
+2) GET  /api/reports/chemical-costs                     tech   → 403
+3) GET  /api/inventory/my-inventory                     tech   → 200 (no unit_cost keys)
+4) POST /api/admin/suggest-departments                  admin  → 200 (25 suggestions)
+5) POST /api/admin/suggest-departments                  tech   → 403
+6) PUT  /api/admin/inventory-alert-settings             admin  → 200 {"ok":true}
+7) GET  /api/admin/inventory-alert-settings             admin  → 200 (slack_webhook_url_masked)
+```
+
+### Files added / changed
+
+- `backend/services/inventory_alerts.py` (NEW, 355 lines)
+- `backend/routers/inventory_reports.py` (NEW, 385 lines)
+- `backend/routers/inventory.py` — real-time hook injected (13-line insert)
+- `backend/services/notifications.py` — `inventory_low_stock` kind + push default
+- `backend/server.py` — router mount + APScheduler cron + boot seed step
+- `backend/tests/test_phase18_chemical_report.py` (NEW, 340 lines · 8 tests)
+- `frontend/src/pages/inventory/ChemicalCostReport.jsx` (NEW)
+- `frontend/src/pages/inventory/InventoryPages.jsx` — Cost Report button
+- `frontend/src/App.js` — new import + `admin/inventory/chemical-cost-report` route
+- `mobile/app/(app)/inventory/my-inventory.tsx` (NEW)
+
+---
+
 ## 2026-08-08 — Bug fix follow-up · Webform still 403 through Cloudflare edge (Phase 8 origin-allowlist Cloudflare-Worker rewrite)
 
 **Reported symptom**: After the 2026-08-07 scheme-normalization fix, `POST /api/public/leads` still returned `403 "Origin not allowed"` when called from the live preview URL, even though the exact host was in `tenant.widget_allowed_domains` and local pytest passed.

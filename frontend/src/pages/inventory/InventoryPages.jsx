@@ -134,6 +134,15 @@ export default function InventoryList() {
                 data-testid="inv-analytics-link">
           <BarChart3 size={14} /> Analytics
         </button>
+        {/* Phase 18 · Feb-2026 — Chemical Cost Report entry point */}
+        <button onClick={() => nav("/admin/inventory/chemical-cost-report")}
+                className="px-3 py-2 text-sm font-bold rounded-xl flex items-center gap-1"
+                style={{ backgroundColor: colors.surface,
+                          border: `1px solid ${colors.border}`,
+                          color: colors.onSurface }}
+                data-testid="inv-cost-report-link">
+          <BarChart3 size={14} /> Cost Report
+        </button>
         <button onClick={() => setShowNew(true)}
                 className="px-3 py-2 text-sm font-bold rounded-xl flex items-center gap-1"
                 style={{ backgroundColor: colors.brand, color: "#fff" }}

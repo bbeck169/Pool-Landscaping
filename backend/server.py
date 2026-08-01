@@ -128,6 +128,12 @@ from routers import quickbooks_cleanup
 from routers import dispatch_reassign as _p17_reassign  # noqa: E402
 # Feb-2026 · Item 4 — Master AI knowledge base + Copilot.
 from routers import ai_brain as _p18_ai_brain  # noqa: E402
+# Phase 18 · Feb-2026 — Chemical cost report + per-tech inventory
+# read view + department admin. Real-time low-stock fan-out lives in
+# services/inventory_alerts.py and is wired into the decrement path
+# on routers/inventory.py; the scheduler cron registration happens
+# lower in this file.
+from routers import inventory_reports as _p18_inventory_reports  # noqa: E402
 
 app = FastAPI(
     title="Pool CRM API",
@@ -260,6 +266,8 @@ from routers import mobile_sync as _p32_mobile_sync  # noqa: E402
 api_router.include_router(_p32_mobile_sync.router)
 api_router.include_router(_p17_reassign.router)
 api_router.include_router(_p18_ai_brain.router)
+# Phase 18 · Feb-2026 — Chemical cost report + tech mobile inventory.
+api_router.include_router(_p18_inventory_reports.router)
 api_router.include_router(_p19_admin_users.router)
 api_router.include_router(_p19_integrations_admin.router)
 
@@ -832,6 +840,14 @@ async def _background_seed():
     await step("phase51k_finance", seed_phase51k_finance())
     await step("mike_today_job", seed_mike_today_job())
     await step("chemical_costs", chemical_costs.seed_chemical_costs())
+    # Phase 18 · Feb-2026 — Auto-seed the 8 core pool chemicals into
+    # every tenant's inventory_items. Idempotent by ``sku=P18-<slug>``;
+    # existing rows keep their tuned reorder_point (per user decision).
+    try:
+        from services.inventory_alerts import seed_chemicals_all_tenants
+        await step("inventory_alerts_seed", seed_chemicals_all_tenants())
+    except Exception as _e:  # noqa: BLE001
+        logger.warning(f"inventory_alerts seed skipped: {_e}")
     # Directories subsystem · Phase D1 (Feb 2026) — global catalogue.
     try:
         from services.directory_seed import ensure_seeded as _dir_seed
@@ -880,6 +896,21 @@ async def _background_seed():
                                 replace_existing=True)
         except Exception as _e:  # noqa: BLE001
             logger.warning("[qbo] scheduler wiring failed: %s", _e)
+        # Phase 18 · Feb-2026 — Daily low-stock inventory scan. Hour
+        # offset from Phase 5b 07:00, Phase 5c 08:00, Phase 7 :05,
+        # Phase 8 :10, Phase 17 03:00 per the operator's cron-load
+        # brief.
+        try:
+            import os as _os
+            from services import inventory_alerts as _p18_inv_alerts  # noqa: WPS433
+            _inv_hr = int(_os.environ.get("INVENTORY_CRON_HOUR_UTC") or 6)
+            scheduler.add_job(
+                _p18_inv_alerts.run_daily_low_stock_scan, "cron",
+                hour=_inv_hr, minute=0, id="inventory_low_stock_daily",
+                replace_existing=True,
+            )
+        except Exception as _e:  # noqa: BLE001
+            logger.warning("[inventory_alerts] scheduler wiring failed: %s", _e)
         # Phase 34 · Feb 2026 — Weekly Bulk Actions Digest.
         # Monday 08:00 UTC. See services/weekly_bulk_actions_digest.py
         # for the rollup logic. Tenants with zero bulk actions in the

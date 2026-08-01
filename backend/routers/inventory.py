@@ -468,6 +468,20 @@ async def decrement_from_service_report(
         if new_qty <= float(matched.get("reorder_point", 0)):
             triggered_alerts.append(matched["id"])
 
+    # Phase 18 · Feb-2026 — real-time low-stock fan-out. Never raises;
+    # the decrement path must NEVER block service-report submission
+    # on notification failures.
+    if triggered_alerts:
+        try:
+            from services.inventory_alerts import check_and_notify_low_stock
+            await check_and_notify_low_stock(
+                tenant_id, item_ids=triggered_alerts,
+                source="real_time",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"[inventory_alerts] real-time fan-out failed: {e}")
+
     return {"decremented": decremented, "misses": misses,
              "low_stock_alerts": triggered_alerts}
 

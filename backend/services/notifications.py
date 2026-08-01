@@ -103,6 +103,8 @@ KIND_LABELS: dict[str, str] = {
     # Multi-Property MP1 (Feb 2026)
     "property.created":           "Property · Added",
     "property.deleted":           "Property · Removed",
+    # Phase 18 · Inventory (Feb 2026)
+    "inventory_low_stock":        "Inventory · Low Stock",
 }
 
 # NB: two new channels added — ``push`` (Expo mobile push) + ``in_app`` alias
@@ -120,6 +122,7 @@ _ADMIN_PUSH_DEFAULT_ON = {
     "chat_dm_to_admin",
     "inbound_customer_message",
     "new_lead",
+    "inventory_low_stock",  # Phase 18 · Feb 2026
 }
 # Non-admin techs / sales default: chat DMs to them, own mentions,
 # customer messages tied to their assigned work. Everything else off.
