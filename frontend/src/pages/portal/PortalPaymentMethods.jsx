@@ -17,33 +17,25 @@ import {
   CardTitle,
 } from "../../components/ui/card";
 import { toast } from "sonner";
+// Phase 20 · Feb-2026 · Sub-item C — publishable key comes from the
+// backend at request time (memoized per session) instead of the
+// build-time REACT_APP_STRIPE_PUBLISHABLE_KEY env var.
+import { getStripeConfig } from "@/lib/stripeConfig";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-
-function _pickPublishableKey() {
-  const mode = (process.env.REACT_APP_STRIPE_MODE || "test").toLowerCase();
-  if (mode === "live") {
-    return (
-      process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY_LIVE ||
-      process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY ||
-      ""
-    );
-  }
-  return (
-    process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY_TEST ||
-    process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY ||
-    ""
-  );
-}
 
 export default function PortalPaymentMethods() {
   const [me, setMe] = useState(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [pubKey, setPubKey] = useState("");
   const token =
     typeof window !== "undefined" ? window.localStorage.getItem("token") : "";
-  const pubKey = _pickPublishableKey();
+
+  useEffect(() => {
+    getStripeConfig().then((c) => setPubKey(c.publishable_key || ""));
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);

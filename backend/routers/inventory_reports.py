@@ -297,6 +297,19 @@ class ItemDepartmentIn(BaseModel):
         None, pattern="^(pool|landscape|both)$")
 
 
+class BulkUserDepartmentAssignment(BaseModel):
+    user_id: str
+    department: Optional[str] = Field(
+        None, pattern="^(pool_tech|landscape_tech|both)$")
+
+
+class BulkUserDepartmentIn(BaseModel):
+    # Phase 20 · Feb-2026 · Sub-item A — bulk-apply admin modal payload.
+    assignments: List[BulkUserDepartmentAssignment] = Field(
+        ..., min_length=1, max_length=500,
+    )
+
+
 @router.put("/admin/users/{uid}/department")
 async def set_user_department(uid: str, body: UserDepartmentIn,
                               user: dict = Depends(require_admin),
@@ -310,6 +323,39 @@ async def set_user_department(uid: str, body: UserDepartmentIn,
     if not r.matched_count:
         raise HTTPException(404, "user not found in this tenant")
     return {"ok": True, "user_id": uid, "department": body.department}
+
+
+@router.post("/admin/users/bulk-department")
+async def bulk_set_user_departments(
+    body: BulkUserDepartmentIn,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase 20 · Feb-2026 · Sub-item A — bulk-apply endpoint powering the
+    Suggest-Departments admin modal. Applies ``assignments`` in a single
+    request. Returns per-row status so the UI can surface partial
+    failures without a re-fetch.
+    """
+    tenant_id = tenant["id"]
+    updated_at = now_iso()
+    results = []
+    updated = 0
+    for a in body.assignments:
+        r = await db.users.update_one(
+            {"id": a.user_id, "tenant_id": tenant_id},
+            {"$set": {"department": a.department,
+                      "department_updated_at": updated_at,
+                      "department_updated_by": user["id"]}},
+        )
+        if r.matched_count:
+            updated += 1
+            results.append({"user_id": a.user_id, "ok": True,
+                            "department": a.department})
+        else:
+            results.append({"user_id": a.user_id, "ok": False,
+                            "error": "user_not_found"})
+    return {"ok": True, "updated_count": updated,
+            "total": len(body.assignments), "results": results}
 
 
 @router.put("/admin/inventory/{iid}/department")

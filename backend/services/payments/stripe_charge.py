@@ -60,6 +60,31 @@ def _mode() -> str:
     return "live" if val == "live" else "test"
 
 
+# Phase 20 · Feb-2026 · Sub-item C — helper: publishable key for the
+# current mode. Returns ``""`` when the env is missing; logs a WARNING
+# on the first miss so ops can see the mis-config without crashing
+# the payment flow (frontend falls back gracefully).
+_PUB_KEY_WARNED = False
+
+
+def _publishable_key() -> str:
+    global _PUB_KEY_WARNED  # noqa: PLW0603
+    env_var = (
+        "STRIPE_PUBLISHABLE_KEY_LIVE"
+        if _mode() == "live"
+        else "STRIPE_PUBLISHABLE_KEY_TEST"
+    )
+    key = (os.environ.get(env_var) or "").strip()
+    if not key and not _PUB_KEY_WARNED:
+        logger.warning(
+            "[stripe] %s is not set — /config + /setup-intent will "
+            "return an empty publishable_key. Set the env to unblock "
+            "Elements init.", env_var,
+        )
+        _PUB_KEY_WARNED = True
+    return key
+
+
 def _select_secret_key() -> str:
     """Return the Stripe secret key to use for API calls in the current
     mode. Falls back to ``STRIPE_API_KEY`` (platform-injected sandbox)
@@ -148,6 +173,13 @@ async def create_setup_intent(
         "setup_intent_id": setup_intent["id"],
         "stripe_customer_id": provider_customer_id,
         "mode": _mode(),
+        # Phase 20 · Feb-2026 · Sub-item C — return the publishable key
+        # alongside the setup-intent so the frontend can init Elements
+        # without reading it from ``REACT_APP_STRIPE_PUBLISHABLE_KEY``
+        # env (which is now scheduled for removal). Returns ``None`` if
+        # the env var isn't configured — frontend must fall back to
+        # ``GET /api/payments/stripe/config``.
+        "publishable_key": _publishable_key(),
     }
 
 

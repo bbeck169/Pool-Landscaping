@@ -106,6 +106,25 @@ class ChargeBody(BaseModel):
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────
+@router.get("/config")
+async def get_stripe_config(user: dict = Depends(get_current_user)):
+    """Phase 20 · Feb-2026 · Sub-item C — return the Stripe
+    publishable key + mode for the current pod, so the frontend can
+    initialize ``<Elements>`` at page-load time without reading a
+    ``REACT_APP_STRIPE_PUBLISHABLE_KEY`` env var.
+
+    Role gate mirrors ``POST /setup-intent``: customer (any) OR
+    admin/manager/super_admin. Techs are excluded (they never touch
+    payment flows).
+    """
+    if not (_is_customer(user) or _is_admin(user)):
+        raise HTTPException(403, "forbidden")
+    return {
+        "publishable_key": stripe_svc._publishable_key(),
+        "mode": stripe_svc._mode(),
+    }
+
+
 @router.post("/setup-intent")
 async def post_setup_intent(
     body: SetupIntentBody,

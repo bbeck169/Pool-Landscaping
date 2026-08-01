@@ -7,6 +7,9 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+// Phase 20 · Feb-2026 · Sub-item B — role-aware tap-through resolver.
+import { resolveNotificationRoute } from "@/src/services/notificationRoutes";
+import { useAuth } from "@/src/auth";
 
 const ICON: Record<string, any> = {
   "Request approved": "checkmark-circle",
@@ -29,6 +32,7 @@ function timeAgo(iso: string) {
 
 export default function Notifications() {
   const router = useRouter();
+  const { user } = useAuth();
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -68,7 +72,13 @@ export default function Notifications() {
           renderItem={({ item }) => (
             <Pressable
               style={[styles.row, !item.read && styles.unreadRow]}
-              onPress={() => item.job_id && router.push(`/job/${item.job_id}`)}
+              onPress={() => {
+                // Phase 20 · Sub-item B — role-aware tap-through with
+                // kind-based routing. Falls back to the existing
+                // job_id / href behaviour when kind is unknown.
+                const path = resolveNotificationRoute(item, user);
+                if (path) router.push(path as any);
+              }}
               testID={`notification-${item.id}`}
             >
               <View style={styles.icon}>

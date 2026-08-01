@@ -174,9 +174,9 @@ export default function StripeAddCardForm({
         </CardHeader>
         <CardContent>
           <p className="text-sm text-red-700">
-            Stripe publishable key not configured. Set{" "}
-            <code>REACT_APP_STRIPE_PUBLISHABLE_KEY_TEST</code> or{" "}
-            <code>REACT_APP_STRIPE_PUBLISHABLE_KEY_LIVE</code> in the frontend
+            Stripe publishable key not configured on the server. Set{" "}
+            <code>STRIPE_PUBLISHABLE_KEY_TEST</code> or{" "}
+            <code>STRIPE_PUBLISHABLE_KEY_LIVE</code> in the backend
             environment.
           </p>
         </CardContent>

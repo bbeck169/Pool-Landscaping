@@ -7,7 +7,7 @@
  * pages.
  */
 import React, { useEffect, useMemo, useState } from "react";
-import { UserCog, RefreshCw } from "lucide-react";
+import { UserCog, RefreshCw, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -19,6 +19,8 @@ import {
   BulkConfirmModal,
   LockedPill,
 } from "@/components/bulk-select/BulkSelectToolkit";
+// Phase 20 · Feb-2026 · Sub-item A — Suggest Departments admin modal.
+import SuggestDepartmentsModal from "./SuggestDepartmentsModal";
 
 const ROLE_OPTIONS = [
   { value: "tech", label: "Technician" },
@@ -33,6 +35,8 @@ export default function AdminUsersList() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [lockedFailures, setLockedFailures] = useState({});
+  // Phase 20 · Feb-2026 · Sub-item A — modal open state.
+  const [suggestOpen, setSuggestOpen] = useState(false);
 
   const load = () => api.get("/team")
     .then((r) => setRows(Array.isArray(r) ? r : (r?.members || r?.items || [])))
@@ -113,6 +117,15 @@ export default function AdminUsersList() {
                           border: `1px solid ${colors.border}` }}
                 data-testid="admin-users-refresh-btn">
           <RefreshCw size={12} /> Refresh
+        </button>
+        {/* Phase 20 · Sub-item A · open the bulk-apply suggestion modal */}
+        <button onClick={() => setSuggestOpen(true)}
+                className="text-xs font-semibold px-3 py-2 rounded-lg inline-flex items-center gap-1.5 ml-2"
+                style={{ backgroundColor: colors.primary,
+                          color: colors.onPrimary || "#fff",
+                          border: `1px solid ${colors.border}` }}
+                data-testid="admin-users-suggest-departments-btn">
+          <Wand2 size={12} /> Suggest departments
         </button>
       </div>
 
@@ -208,6 +221,12 @@ export default function AdminUsersList() {
         description="Your own session, the last owner in this tenant, and admin-locked users will be skipped."
         confirmLabel={busy ? "Deleting…" : `Delete ${selectedCount}`}
         busy={busy}
+      />
+      {/* Phase 20 · Sub-item A · Suggest Departments modal */}
+      <SuggestDepartmentsModal
+        open={suggestOpen}
+        onClose={() => setSuggestOpen(false)}
+        onApplied={() => load()}
       />
     </div>
   );

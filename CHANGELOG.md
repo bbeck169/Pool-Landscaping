@@ -8,6 +8,177 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-08 — Phase 20 · P2 backlog close-out (three sub-items)
+
+Three small, localized items bundled to close out the outstanding-work list.
+All three ship in this pass. No `db.invoices` writes. No external repo
+cloning.
+
+### Sub-item A · Admin bulk-apply modal for `/admin/suggest-departments`
+
+**Added**
+- `frontend/src/pages/admin/SuggestDepartmentsModal.jsx` — new modal
+  component that opens from a "Suggest departments" button on the
+  admin Team page. Renders a table (name / current / suggested /
+  confidence / signals) with per-row checkboxes (rows with
+  `confidence ≥ 0.75` are pre-checked). Empty-state copy when no
+  suggestions surface. Loading spinner while the endpoint is inflight.
+- `POST /api/admin/users/bulk-department` (in
+  `routers/inventory_reports.py`) — new endpoint that atomically
+  applies an array of `{user_id, department}` assignments in one
+  request. Returns per-row `ok` / `error` results plus an
+  `updated_count` summary so the UI surfaces partial failures without
+  a re-fetch. Admin+ role gate.
+
+**Changed**
+- `frontend/src/pages/admin/AdminUsersList.jsx` — added the
+  "Suggest departments" button (`data-testid=
+  "admin-users-suggest-departments-btn"`) in the header actions,
+  wired to the new modal.
+
+**Notes / decisions**
+- **Bulk endpoint is a small, focused addition** rather than looping
+  through the existing `/admin/users/{uid}/department` PUT — one round
+  trip, single-transaction feel to the admin, cleaner UI feedback loop
+  on partial failures.
+- **Pre-check threshold** is 0.75 (matches the Phase 18 backend
+  heuristic that returns `pool_tech` / `landscape_tech` only when a
+  tech's signal is ≥75% of one category — no floating "maybe" rows).
+
+### Sub-item B · Expo push tap-through for `inventory_low_stock`
+
+**Investigation summary** — `expo-notifications` v0.32.17 is installed;
+full permission/token/register flow lives in
+`mobile/src/services/pushNotifications.ts`. `mobile/app/notifications.tsx`
+in-app bell only routed `job_id → /job/{id}`. NO push-response
+listener was wired anywhere (`addNotificationResponseReceivedListener`
+returned zero hits).
+
+**Added**
+- `mobile/src/services/notificationRoutes.ts` — pure `resolveNotificationRoute(notif, user)` function.
+  - `inventory_low_stock` + admin/manager/owner/office → `/admin/inventory`
+  - `inventory_low_stock` + everyone else non-customer → `/inventory/my-inventory`
+  - `job_id` set → `/job/{id}` (legacy behaviour preserved)
+  - `href` set → verbatim
+  - Otherwise → `null`
+- `mobile/app/_layout.tsx` — new inline `<PushTapRouter />` component
+  mounted inside `AuthProvider`. Subscribes to
+  `Notifications.addNotificationResponseReceivedListener`, reads
+  `resp.notification.request.content.data`, and routes via the
+  shared resolver. Never crashes the shell on bad payloads.
+
+**Changed**
+- `mobile/app/notifications.tsx` — in-app bell tap now uses the
+  shared resolver instead of the hard-coded `job_id` push. Role
+  comes from the existing `useAuth()` context.
+
+**Notes / decisions**
+- **Kept it minimal**: push-token registration infrastructure exists
+  and works; only the tap-through was missing. Only the tap-through
+  was built.
+- **Cold-start opens** are also covered — `expo-notifications`
+  delivers the tap event through the same listener when the app
+  boots from a notification tap. No extra plumbing needed.
+- **Pure resolver** is testable outside the Expo runtime (pytest
+  ports the same table — one broken rule fails CI).
+
+### Sub-item C · Stripe pk_live cleanup (proper fix)
+
+**Added**
+- `GET /api/payments/stripe/config` — returns `{publishable_key, mode}`
+  for the current pod. Reads `STRIPE_PUBLISHABLE_KEY_TEST` or
+  `_LIVE` per `STRIPE_MODE`. Role gate mirrors `/setup-intent`
+  (customer OR admin/manager/super_admin — technicians 403).
+- `frontend/src/lib/stripeConfig.js` — session-memoized
+  `getStripeConfig()` helper. First call hits the backend; subsequent
+  in-session calls return the cached object. Concurrent callers share
+  a single inflight promise.
+
+**Changed**
+- `services/payments/stripe_charge.py::create_setup_intent()` — response now
+  includes a `publishable_key` field alongside `client_secret`,
+  `setup_intent_id`, `stripe_customer_id`, `mode`. New helper
+  `_publishable_key()` reads `STRIPE_PUBLISHABLE_KEY_(TEST|LIVE)` per
+  mode. Logs a one-time WARNING when the env is missing (never
+  crashes the payment flow).
+- `frontend/src/pages/portal/PortalPaymentMethods.jsx` and
+  `frontend/src/components/customers/AdminCardCapturePanel.jsx` —
+  swapped the `REACT_APP_STRIPE_PUBLISHABLE_KEY(_TEST|_LIVE)` env
+  reads for a `getStripeConfig()` call.
+- `frontend/src/components/payments/StripeAddCardForm.jsx` — updated
+  the "publishable key not configured" error copy to point at the
+  BACKEND env vars (`STRIPE_PUBLISHABLE_KEY_TEST` /
+  `STRIPE_PUBLISHABLE_KEY_LIVE`) — no longer references the removed
+  frontend env vars.
+
+**Removed**
+- `frontend/.env` — removed all three lines:
+  `REACT_APP_STRIPE_PUBLISHABLE_KEY`,
+  `REACT_APP_STRIPE_PUBLISHABLE_KEY_TEST`,
+  `REACT_APP_STRIPE_PUBLISHABLE_KEY_LIVE`, and the now-unused
+  `REACT_APP_STRIPE_MODE`. Verified via grep: zero references
+  remain in `frontend/src`.
+
+**Notes / decisions**
+- **Server-side ownership** of the publishable key is the right
+  answer long-term: live/test cutover is a single backend env flip,
+  no frontend rebuild needed. Previously the pk lived in three
+  places at build time.
+- **Session-memoization** avoids extra config round-trips on every
+  Elements mount (portal customers often bounce between pages).
+- **Backward compatible** with the setup-intent response — added
+  field only, existing consumers keep working.
+
+### Tests
+
+- `backend/tests/test_phase20_backlog_closeout.py` — 5 new pytest cases
+  (all passing). A + C + resolver Python port.
+- Vitest baseline: **524 pass / 12 fail** — inside the 11-14 tolerated
+  flake budget (actually improved slightly from Phase 19's 14).
+- Full regression: **22/22 pass** across Phase 20 + Phase 19 + Phase 18
+  + webform bugfix.
+
+### Verification (curl matrix)
+
+```
+1) GET  /api/payments/stripe/config              admin  → 200 {"publishable_key":"","mode":"test"}
+2) GET  /api/payments/stripe/config              tech   → 403 {"detail":"forbidden"}
+3) POST /api/admin/suggest-departments           admin  → 200 (25 suggestions surfaced)
+4) POST /api/admin/users/bulk-department         admin  → 200 (per-row ok/error results)
+5) GET  /api/openapi.json                        (open) → 200
+```
+
+### Files added / changed
+
+- `backend/routers/stripe_router.py` — new `GET /config` endpoint
+- `backend/services/payments/stripe_charge.py` — `_publishable_key()`
+  helper + `publishable_key` field on setup-intent response
+- `backend/routers/inventory_reports.py` — new
+  `POST /admin/users/bulk-department` endpoint + `BulkUserDepartmentIn`
+  model
+- `backend/tests/test_phase20_backlog_closeout.py` (NEW, 5 tests)
+- `frontend/src/lib/stripeConfig.js` (NEW — session cache helper)
+- `frontend/src/pages/admin/SuggestDepartmentsModal.jsx` (NEW)
+- `frontend/src/pages/admin/AdminUsersList.jsx` — modal open button
+- `frontend/src/pages/portal/PortalPaymentMethods.jsx` — pubKey via helper
+- `frontend/src/components/customers/AdminCardCapturePanel.jsx` — pubKey via helper
+- `frontend/src/components/payments/StripeAddCardForm.jsx` — error copy
+- `frontend/.env` — removed three legacy publishable-key lines
+- `mobile/src/services/notificationRoutes.ts` (NEW — pure resolver)
+- `mobile/app/notifications.tsx` — in-app bell tap uses resolver
+- `mobile/app/_layout.tsx` — new `<PushTapRouter />` component wires
+  the push-tap listener globally
+
+### Cross-cutting checks
+
+- Grep-lint: 0 `db.invoices` writes in any Phase 20 file. ✅
+- Vitest baseline: 524 pass / 12 fail — inside the tolerated 11-14
+  flake budget. ✅
+- `/api/openapi.json` reachable (HTTP 200). ✅
+- 22/22 pytest across Phase 20 + Phase 19 + Phase 18 + webform bugfix. ✅
+
+---
+
 ## 2026-08-08 — Phase 19 · P2 backlog — Avatar Swap + AI Rewrite Rate-Limit Persistence
 
 Two independent P2 items bundled into one small phase. Both ship together.

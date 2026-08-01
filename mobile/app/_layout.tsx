@@ -1,5 +1,6 @@
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
+import * as Notifications from "expo-notifications";
 import { useEffect } from "react";
 import { LogBox } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -8,11 +9,13 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { useFonts } from "expo-font";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
-import { AuthProvider } from "@/src/auth";
+import { AuthProvider, useAuth } from "@/src/auth";
 import { ImpersonationBanner } from "@/src/components/ImpersonationBanner";
 import { StripeConfigProvider } from "@/src/config/stripe";
 import { registerOfflineTemplateDraftListeners } from "@/src/utils/offlineTemplateDrafts";
 import { SyncManagerProvider } from "@/src/services/SyncManager";
+// Phase 20 · Feb-2026 · Sub-item B — role-aware push tap-through.
+import { resolveNotificationRoute } from "@/src/services/notificationRoutes";
 
 // Disable logbox errors etc so that users can see the app
 // and agent works as expected.
@@ -59,6 +62,7 @@ export default function RootLayout() {
             <SyncManagerProvider>
               <StripeConfigProvider>
                 <ImpersonationBanner />
+                <PushTapRouter />
                 <Stack screenOptions={{ headerShown: false }} />
               </StripeConfigProvider>
             </SyncManagerProvider>
@@ -67,4 +71,36 @@ export default function RootLayout() {
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
+}
+
+/**
+ * Phase 20 · Feb-2026 · Sub-item B — push tap-through listener.
+ *
+ * When a user taps a push notification (either while the app is
+ * backgrounded or from a cold-start "opened by notification" event),
+ * consume ``notification.request.content.data`` (which we set on the
+ * server side alongside every ``notifications.emit`` call), resolve
+ * a role-aware route via the shared resolver, and navigate. Safe to
+ * mount even when the user hasn't granted push permissions — the
+ * subscription just never fires.
+ */
+function PushTapRouter() {
+  const router = useRouter();
+  const { user } = useAuth();
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener(
+      (resp) => {
+        try {
+          const data: any = resp.notification.request.content.data || {};
+          const path = resolveNotificationRoute(data, user);
+          if (path) router.push(path as any);
+        } catch (e) {
+          // Never let a bad payload crash the shell.
+          console.warn("[push] tap-through failed:", e);
+        }
+      },
+    );
+    return () => sub.remove();
+  }, [router, user]);
+  return null;
 }
