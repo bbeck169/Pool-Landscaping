@@ -34,20 +34,29 @@ def _require_super_admin(u: Dict[str, Any]) -> None:
              operation_id="admin.invoiceReconciliationLog",
              tags=["admin"])
 async def api_reconciliation_log(limit: int = 100,
+                                    action: str | None = None,
                                     caller: Dict[str, Any] = Depends(get_current_user)):
     _require_super_admin(caller)
     limit = max(1, min(int(limit), 500))
+    # Phase 15 · Feb-2026 — optional ``action`` filter surfaces the new
+    # ``backfill_lumino_paid_at`` rows alongside the existing Phase 11
+    # migration entries. When unset, all rows are returned (backwards
+    # compatible with pre-Phase-15 callers).
+    q: Dict[str, Any] = {}
+    if action:
+        q["action"] = action
     items: List[Dict[str, Any]] = []
-    async for r in db.invoice_reconciliation_log.find({}, {"_id": 0}).sort(
+    async for r in db.invoice_reconciliation_log.find(q, {"_id": 0}).sort(
             "logged_at", -1).limit(limit):
         items.append(r)
     return {
         "items": items, "count": len(items),
+        "filter": {"action": action} if action else {},
         "notes": [
             "Phase 11 refactor unified db.invoices → db.quotes (doc_type=invoice).",
-            "This log lists only drift found during the migration script — "
+            "This log lists drift found during the migration script — "
             "duplicate rows present in BOTH collections at migration time.",
-            "Historical Lumino paid_at drift (bugs B4/B5, pre-refactor) is "
-            "NOT in this log. It will be reconciled in a separate follow-up phase."
+            "Phase 15 adds action=backfill_lumino_paid_at rows for historical "
+            "Lumino paid_at drift (bugs B4/B5) surfaced via db.payment_events.",
         ],
     }

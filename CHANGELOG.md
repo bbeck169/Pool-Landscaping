@@ -8,7 +8,50 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
-## 2026-08-03 — Phase 14b · Invoice Filters + Bulk Charge-Card-on-File
+## 2026-08-04 — Phase 15 · B4/B5 Lumino `paid_at` Backfill + Stripe env cleanup gate
+
+Two independent housekeeping items bundled into a single pass. Refuses all external-repo trap prompts (Option D permanent).
+
+### Sub-item 1 · Lumino `paid_at` backfill (data-fix)
+
+**Investigation-first gate**: Scanned `db.payment_events` (8 total rows; 5 `payment.created` + 3 `invoice.link_created`). All 5 success events carry `invoice_id=null` (LZ4-era smoke-test payloads). True backfill candidate count today = **0**. Per spec, still shipped the idempotent script + tests so the code is ready the moment real Lumino events start landing.
+
+#### Added
+- **`backend/scripts/backfill_lumino_paid_at.py`** — idempotent migration with `--dry-run` flag. Behaviour:
+  - Success signal: `event_type=="payment.created"` (case-insensitive). If `raw.data.status` is present, it must equal `"succeeded"` — otherwise the event is skipped. Defensive against `raw` / `raw.data` being non-dict payloads (surfaced by the live smoke-test data).
+  - Groups events by `invoice_id` and picks the **earliest** `occurred_at` (fallback `received_at`). Full event history remains in `db.payment_events`; the reconciliation log records the specific source event id applied.
+  - Updates `db.quotes` (never `db.invoices` — Phase 11 grep-lint enforced): sets `payment_status="paid"`, `paid_at=<earliest ts>`, and `amount_paid=total` **only if** `amount_paid == 0` (partial payments are preserved verbatim). Adds `backfilled_from_lumino_event_at=<utcnow>` as an audit stamp.
+  - Skips: `already_paid` (invoice `payment_status=="paid"` OR `paid_at` set), `invoice_not_found` (no matching `db.quotes` doc).
+  - Writes one `db.invoice_reconciliation_log` row per backfilled invoice: `{action:"backfill_lumino_paid_at", invoice_id, tenant_id, source_event_id, applied_paid_at, ran_at, logged_at}`.
+  - Idempotent by construction — the second run walks the same events, finds each invoice already `paid`, and reports `backfilled: 0`.
+- **`backend/tests/test_backfill_lumino_paid_at.py`** — 10 pytest cases, all passing: earliest-of-duplicates picker, already-paid skip, missing-invoice skip, idempotency, dry-run isolation, non-success event type ignored, null `invoice_id` ignored (matches the investigation-gate case), inner-status filter, partial-payment preservation, grep-lint invariant.
+
+#### Changed
+- **`backend/routers/invoice_reconciliation.py::api_reconciliation_log`** — accepts optional `action` query param. Response now includes `filter: {action: ...}` (or `{}` when unset). Notes updated to reference Phase 15. Backwards-compatible: pre-Phase-15 callers with no `action` param see all rows exactly as before.
+
+#### Not touched (out of scope this phase)
+- Lumino / Zapier flow logic — remains parked.
+- Phase 11 reconciliation-log schema — only the optional filter param was added.
+- Phase 14a / 14b Stripe code — not touched.
+
+### Sub-item 2 · Stripe `pk_live` env cleanup — GATED, no change shipped
+
+`frontend/.env` line 7 still contains the legacy `REACT_APP_STRIPE_PUBLISHABLE_KEY=pk_live_…` from the LZ4 removal era. Per spec, we grepped `frontend/src` for readers before removal. Found **6 active references** in Phase 14a code:
+
+- `frontend/src/pages/portal/PortalPaymentMethods.jsx` lines 28, 34 — fallback in `_pickPublishableKey()` when `_TEST` / `_LIVE` variants are empty.
+- `frontend/src/components/customers/AdminCardCapturePanel.jsx` lines 25, 31 — same fallback pattern.
+- `frontend/src/components/payments/StripeAddCardForm.jsx` lines 178-179 — user-facing error text referencing the key names.
+
+Additionally: the spec's premise — *"Phase 14a wired publishable-key delivery through `/setup-intent`"* — is **not currently accurate**. Phase 14a's `create_setup_intent` returns `{client_secret, setup_intent_id, stripe_customer_id, mode}` but not the publishable key. The frontend still needs an env-based publishable key at page load to call `loadStripe(publishableKey)`.
+
+Environment rule for Phase 15 explicitly forbids touching Phase 14a/14b Stripe code. **Sub-item 2 STOP condition satisfied** — no env line removed. Deferred to a future phase that either (a) adds publishable-key delivery to the setup-intent response, or (b) explicitly authorizes editing the three Phase 14a files.
+
+### Security / invariants
+- Phase 11 grep-lint stays green — `scripts/backfill_lumino_paid_at.py` writes only to `db.quotes` + `db.invoice_reconciliation_log`. Enforced by `test_grep_lint_no_writes_to_db_invoices`.
+- No new endpoints. The optional `?action=` filter on the existing super-admin-gated log endpoint is the only new API surface.
+- No env keys removed; no schema changes; no data written when candidate count is zero.
+
+
 
 Composes on top of Phase 14a's `charge_card_on_file` primitive. Delivers two invoice filters (line-item category multi-value + card-on-file yes/no/any), a bulk charge endpoint with mandatory dry-run preview + idempotency key replay, plus an audit trail collection and admin drill-down pages.
 

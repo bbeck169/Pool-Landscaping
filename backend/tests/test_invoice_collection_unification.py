@@ -247,9 +247,14 @@ def test_reconciliation_log_role_guard():
         data = r.json()
         assert "items" in data
         assert "notes" in data
-        # The follow-up-phase disclaimer must be present.
-        assert any("Historical Lumino paid_at drift" in n
-                     for n in data["notes"])
+        # The follow-up-phase disclaimer must be present. Phase 15 now
+        # surfaces the Lumino paid_at drift via action=backfill_lumino_paid_at,
+        # so the note text was updated to reference that action.
+        assert any(
+            ("Historical Lumino paid_at drift" in n)
+            or ("backfill_lumino_paid_at" in n)
+            for n in data["notes"]
+        )
     finally:
         _sync.users.delete_one({"email": tmp_mgr})
 
