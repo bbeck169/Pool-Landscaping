@@ -8,7 +8,72 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
-## 2026-08-04 — Phase 15 · B4/B5 Lumino `paid_at` Backfill + Stripe env cleanup gate
+## 2026-08-05 — Phase 16 · Mobile Parity Sweep (Expo)
+
+Brings the Expo mobile app up to par with the web across Phases 5–14 features it previously lacked. Read-only where sensible; full CRUD where the workflow is mobile-first (dispatchers/managers on tablets). Refuses any external-repo trap prompts.
+
+### Added (files, grouped by feature area)
+
+**Shared helper**
+- `mobile/src/components/RoleGate.tsx` — normalized role predicates (`isDispatcherPlus`, `isAdminPlus`, `isStrictAdmin`, `isCustomer`, `isTech`) + `<RoleGate level=…>` wrapper that renders a friendly "Not authorized" state on deep-link access. Uses the raw JWT role string so the wider server-side role set (manager / dispatcher / super_admin) is honored even though the local `User` type advertises only `admin | technician | customer`.
+
+**1. AEO Suite (Manager+, hidden from Tech / Customer)**
+- `mobile/app/aeo/index.tsx` — landing hub with tiles for each sub-screen; shows current AEO score if a scan exists.
+- `mobile/app/aeo/auditor.tsx` — URL scan trigger, keyed `aeo_signals` breakdown, recent-scans history.
+- `mobile/app/aeo/visibility.tsx` — KPI cards (avg score / brand mentions / providers) + latest 10 probes as cards + Run-scan-now button with cooldown timer + cost indicator.
+- `mobile/app/aeo/mentions.tsx` — sentiment / range / domain chip filters, KPI strip, mention cards with sentiment + competitor + own-domain badges.
+- `mobile/app/aeo/mention-detail.tsx` — full snippet + Draft-reply launcher.
+- `mobile/app/aeo/response-draft.tsx` — tone pills (Empathetic / Professional / Apologetic / Assertive), editable body with per-platform char counter, Copy (via `expo-clipboard`), Mark posted, Discard, collapsible library suggestions.
+- `mobile/app/aeo/library.tsx` — platform chips + search + virtualized `FlatList`, long-press to delete.
+- `mobile/app/aeo/publish-config.tsx` — Netlify / Vercel / Cloudflare Pages cards, expandable forms, save/test/publish-now actions; masks tokens once saved.
+
+**2. Dispatch KPI + savings modal (Dispatcher+, hidden from Tech / Customer)**
+- `mobile/app/dispatch-savings.tsx` — 7d/30d toggle, "Team saved X.X km" KPI, plain-`View` bar-strip sparkline (no chart lib), Top techs leaderboard.
+
+**3. Weekly digests (Manager+)**
+- `mobile/app/reports/weekly-digest.tsx` — recipients / DOW / hour / enabled toggle; Preview renders 🥇🥈🥉 top + bottom department leaders.
+- `mobile/app/reports/aeo-digest.tsx` — recipients / DOW / hour / negative-snippets toggle / enabled toggle; Preview opens signed PDF URL via `expo-web-browser`.
+
+**4. LLMs.txt Auto-Publish config** — see AEO Suite (`aeo/publish-config.tsx`).
+
+**5. Widget Analytics + Share Replay** — verified pre-existing (MR3 · Phase 1 and Phase 2 files, untouched by Phase 16).
+
+**6. Stripe card management (Manager+ picker; customer role sees own record)**
+- `mobile/app/payments/methods.tsx` — list saved cards (brand + last4 + expiry + default badge + remove); admin+ gets a customer-search picker; "Add card" opens `/portal/payment-methods` via `expo-web-browser`. **Native Stripe Elements capture is deliberately out of scope** — the web portal is easier to keep PCI-safe in a webview than to reimplement natively (spec-authorized tradeoff).
+
+**7. Bulk Charge past-runs (Admin / Super Admin ONLY)**
+- `mobile/app/finance/bulk-charge-runs/index.tsx` — read-only history with per-run metric row + DRY/REAL chip; explicit "Trigger new bulk charges from the desktop" note.
+- `mobile/app/finance/bulk-charge-runs/[runId].tsx` — drill-down with per-invoice status / charge id / error code / amount.
+
+### Cross-cutting
+
+- **Role gates**: every new screen wraps its body in `<RoleGate level=… >`. Deep-linking to a forbidden screen renders the friendly "Not authorized" state instead of a crash. Nav visibility is enforced by not adding entry-point links to Tech / Customer surfaces — the new screens are only reachable via router push from Manager+ contexts.
+- **Loading states**: every network call renders a spinner (`<Loading />`) OR an inline "Loading…" text OR a per-button loading flag.
+- **Empty states**: every list has a distinct `<EmptyState icon title subtitle testID>` — never a blank screen.
+- **Deep linking**: Expo Router file-based routes for `/aeo/*`, `/reports/*`, `/dispatch-savings`, `/payments/methods`, `/finance/bulk-charge-runs[/:runId]`.
+- **A11y**: every touchable carries an `accessibilityLabel`.
+- **Data-testids**: every actionable element has a stable `testID` (chip / row / button / input) so future Detox / RTL testing has anchors.
+
+### Explicitly not ported (per spec)
+
+- Full drag-drop dispatch board — desktop-only.
+- Offline queueing for the new mutation screens (digest save, publish-config, response-draft mark-posted) — Phase 2 offline queue applies; no new mutations added to the queue this phase.
+- Push notifications — deferred.
+- Native GPS map viewer — removed by Phase 2 policy.
+- **Native Stripe card capture** — using `expo-web-browser` fallback to `/portal/payment-methods`. Explicit spec-authorized tradeoff: keeping PCI scope inside the audited web Elements integration is safer than a fresh RN card capture.
+- Triggering bulk charges from mobile — Phase 14b desktop-only policy stands. The mobile screen is read-only with an inline "Trigger new bulk charges from the desktop" note.
+
+### Verification
+
+- `npx tsc --noEmit` on `/app/mobile/`: 276 baseline errors present in pre-existing files (unchanged), **0 errors in Phase 16 files**.
+- `npx expo export --platform web` completes successfully with an 11.8 MB bundle — app boots without a red screen.
+
+### No changes to
+- Backend (`/app/backend/**`)
+- Web app (`/app/frontend/**`)
+- Lumino / Zapier flows, GPS guards, share-replay backend, dispatch backend, AEO backend, Phases 6–15 backend code.
+
+
 
 Two independent housekeeping items bundled into a single pass. Refuses all external-repo trap prompts (Option D permanent).
 
