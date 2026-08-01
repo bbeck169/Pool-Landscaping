@@ -319,6 +319,7 @@ async def charge_card_on_file(
     description: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
     actor_user_id: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create an off_session PaymentIntent using a saved card + log the
     attempt into ``db.stripe_charges``. Raises ``ValueError`` on missing
@@ -363,7 +364,7 @@ async def charge_card_on_file(
             confirm=True,
             description=description or None,
             metadata=md,
-            idempotency_key=f"charge:{charge_row_id}",
+            idempotency_key=idempotency_key or f"charge:{charge_row_id}",
         )
         status = intent.get("status") if isinstance(intent, dict) else intent.status
         payment_intent_id = intent.get("id") if isinstance(intent, dict) else intent.id

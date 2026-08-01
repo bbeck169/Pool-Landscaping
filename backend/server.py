@@ -376,6 +376,12 @@ api_router.include_router(_payments_summary_router.router)
 from routers import stripe_router as _p14a_stripe_router  # noqa: E402
 api_router.include_router(_p14a_stripe_router.router)
 
+# Phase 14b · Feb-2026 — Invoice filters + bulk charge-card-on-file.
+# Endpoints: /api/invoices/{line-item-categories, bulk-charge-card-on-file,
+# bulk-charge-runs[/{id}]}. Composes on Phase 14a's ``charge_card_on_file``.
+from routers import invoices_bulk_charge as _p14b_bulk_charge  # noqa: E402
+api_router.include_router(_p14b_bulk_charge.router)
+
 for module in [notifications_router,
                auth, customers, technicians, jobs, quotes, leads, team, items,
                operations, finances, marketing, admin, dashboard, portal, seo, gbp, card, maintenance, d2d, estimates, coverage, attendance, render, cad, measurements, property, weather, impexp, chemicals, billing, portal_admin, ops, reports, legal, marketing_studio, sequences, ai_ops, google_router, phase11,

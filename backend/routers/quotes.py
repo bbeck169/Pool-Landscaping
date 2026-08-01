@@ -66,7 +66,9 @@ async def _stamp_line_snapshots(items: List[dict]) -> List[dict]:
 async def list_quotes(user: dict = Depends(get_current_user),
                       tenant: dict = Depends(get_current_tenant),
                       doc_type: Optional[str] = None,
-                      include_deleted: bool = False):
+                      include_deleted: bool = False,
+                      category: Optional[List[str]] = Query(None),
+                      card_on_file: Optional[str] = Query(None)):
     if user.get("role") == "technician":
         raise HTTPException(403, "Not allowed")
     q: dict = {"tenant_id": tenant["id"]}
@@ -74,11 +76,65 @@ async def list_quotes(user: dict = Depends(get_current_user),
         q["customer_id"] = user.get("customer_id")
     if doc_type:
         q["doc_type"] = doc_type
+    # Phase 14b · Feb-2026 — line-item category filter. Case-insensitive
+    # union across every selected value; matches invoices where ANY
+    # ``line_items[].category`` equals one of the caller's values.
+    if category:
+        cats = [c for c in (str(x).strip() for x in category) if c]
+        if cats:
+            q["line_items"] = {"$elemMatch": {"category": {
+                "$in": [c for c in cats],
+                # elemMatch doesn't support $regex $options directly per key;
+                # implement CI via a $regex OR fallback below.
+            }}}
+            # Build a case-insensitive union using $or over the elemMatch shape
+            # so exact-case AND lower/upper variants match.
+            q.pop("line_items", None)
+            q["$and"] = q.get("$and", []) + [{
+                "$or": [
+                    {"line_items": {"$elemMatch": {"category": {
+                        "$regex": f"^{__import__('re').escape(c)}$",
+                        "$options": "i"}}}}
+                    for c in cats
+                ]
+            }]
     # Phase 34 · Task BB · Feb 2026 — bulk-select soft-delete.
     # Hide soft-deleted rows by default (`deleted_at` is None or
     # missing). Only super_admins can opt-in with ``include_deleted=1``.
     if not (include_deleted and (user.get("role") or "").lower() == "super_admin"):
         q["$or"] = [{"deleted_at": None}, {"deleted_at": {"$exists": False}}]
+
+    # Phase 14b · Feb-2026 — card-on-file filter. Resolves customer_id
+    # cohorts by cross-referencing the ``payment_methods`` collection.
+    # Applied AFTER the base predicate so it composes with the other
+    # filters cleanly. "any" (or unset) is a no-op.
+    cof = (card_on_file or "any").strip().lower()
+    if cof in ("yes", "no"):
+        _now = datetime.now(timezone.utc)
+        pm_q = {
+            "tenant_id": tenant["id"],
+            "$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}],
+        }
+        active_ids: set = set()
+        async for pm in db.payment_methods.find(pm_q,
+                                                 {"_id": 0,
+                                                  "customer_id": 1,
+                                                  "exp_year": 1,
+                                                  "exp_month": 1}):
+            ey = pm.get("exp_year"); em = pm.get("exp_month")
+            try:
+                ey = int(ey) if ey else None
+                em = int(em) if em else None
+            except (TypeError, ValueError):
+                ey = em = None
+            if ey and em:
+                if ey < _now.year: continue
+                if ey == _now.year and em < _now.month: continue
+            active_ids.add(pm.get("customer_id"))
+        if cof == "yes":
+            q["customer_id"] = {"$in": list(active_ids) or ["__no_matches__"]}
+        else:
+            q["customer_id"] = {"$nin": list(active_ids)}
     docs = await db.quotes.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
 

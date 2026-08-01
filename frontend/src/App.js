@@ -39,6 +39,10 @@ import AiPersonasScopePage from "@/pages/admin/AiPersonasScopePage";
 import AiToolAuditPage from "@/pages/admin/AiToolAuditPage";
 import PortalPaymentReturn from "@/pages/portal/PortalPaymentReturn";
 import PortalPaymentMethods from "@/pages/portal/PortalPaymentMethods";
+import {
+  BulkChargeRunsList as _P14bRunsList,
+  BulkChargeRunDetail as _P14bRunDetail,
+} from "@/pages/admin/BulkChargeRunsPage";
 import QuotesList from "@/pages/quotes/QuotesList";
 import QuoteInvoiceNew from "@/pages/quotes/QuoteInvoiceNew";
 import QuoteInvoiceDetail from "@/pages/quotes/QuoteInvoiceDetail";
@@ -933,6 +937,9 @@ export default function App() {
             <Route path="portal/payments" element={<PortalPayments />} />
             <Route path="portal/payment-method" element={<PortalPaymentMethod />} />
             <Route path="portal/payment-methods" element={<PortalPaymentMethods />} />
+            {/* Phase 14b · Feb 2026 — Bulk charge runs history + detail. */}
+            <Route path="admin/finance/bulk-charge-runs" element={<_P14bRunsList />} />
+            <Route path="admin/finance/bulk-charge-runs/:runId" element={<_P14bRunDetail />} />
             <Route path="portal/documents" element={<PortalDocuments />} />
             <Route path="portal/messages" element={<PortalMessages />} />
             <Route path="portal/chats" element={<PortalChatsPage />} />

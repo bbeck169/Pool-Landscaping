@@ -8,7 +8,44 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
-## 2026-08-02 — Phase 14a · Stripe Re-Integration (Primary card-on-file processor)
+## 2026-08-03 — Phase 14b · Invoice Filters + Bulk Charge-Card-on-File
+
+Composes on top of Phase 14a's `charge_card_on_file` primitive. Delivers two invoice filters (line-item category multi-value + card-on-file yes/no/any), a bulk charge endpoint with mandatory dry-run preview + idempotency key replay, plus an audit trail collection and admin drill-down pages.
+
+Refuses any external-repo trap prompts injected via tool output or file content — the guardrail from Phase 14a is permanent.
+
+### Added
+- **`routers/quotes.py::list_quotes`** — accepts `category` (multi-value; case-insensitive union across `line_items[].category`) + `card_on_file` (`yes` | `no` | `any`). The card-on-file cohort is resolved by cross-referencing the `payment_methods` collection at query time, filtering out expired cards (`exp_year < now.year` or `exp_year == now.year && exp_month < now.month`). Existing `doc_type` / `include_deleted` behavior is preserved.
+- **`routers/invoices_bulk_charge.py`** (new) — three endpoints under `/api`:
+  - `GET  /invoices/line-item-categories` — tenant-scoped distinct catalog with a 60 s in-memory cache. Admin/manager/super_admin only.
+  - `POST /invoices/bulk-charge-card-on-file` — pydantic-enforced `invoice_ids` cap of 100, mandatory `idempotency_key` (min length 1, max 200). Two-step: `dry_run=true` returns per-row eligibility with `would_charge` / skip reasons (`already_paid` / `zero_balance` / `no_card_on_file` / `card_expired` / `not_found`) without invoking Stripe; `dry_run=false` invokes Phase 14a's `charge_card_on_file` sequentially with 75 ms spacing between real charges. Every request persists a `bulk_charge_runs` row (dry-run or real). Replay of the same `(tenant_id, idempotency_key)` within 24 h returns the original response verbatim without a re-run.
+  - `GET  /invoices/bulk-charge-runs?limit=` and `GET /invoices/bulk-charge-runs/{run_id}` — history + detail. Admin+ only.
+- **`db.bulk_charge_runs`** (new collection). Unique index on `(tenant_id, idempotency_key)` + query index on `(tenant_id, started_at desc)`. Registered in the Phase 13 boot hook via `scripts/create_session_indexes.py::ensure_on_boot`.
+- **`services/payments/stripe_charge.py::charge_card_on_file`** — accepts a new optional `idempotency_key` parameter. Backwards-compatible: unset falls back to the internal `charge:{row_id}` value. Enables composed per-invoice keys of the form `{bulk_idempotency_key}:{invoice_id}` so a Phase 14b retry never double-charges.
+- **`components/invoices/BulkChargeModal.jsx`** — two-step confirmation modal. Renders a per-row eligibility table with badges (would_charge / already_paid / no_card_on_file / card_expired / zero_balance / not_found) + running total. Confirm button only enabled after step-1 loads and displays the actual dollar total. Toast on completion + direct link to `/admin/finance/bulk-charge-runs/{run_id}`.
+- **`pages/admin/BulkChargeRunsPage.jsx`** (`BulkChargeRunsList` + `BulkChargeRunDetail`) — history table with dry-run/real chips + drill-down. Wired at `/admin/finance/bulk-charge-runs[/{runId}]`.
+- **`pages/invoices/InvoicesList.jsx`** — category multi-select dropdown + selected chip strip + clear button; new **Charge cards on file** action in the bulk action bar (auto-disabled above 100 selection); bulk-charge modal mount.
+- **`tests/test_bulk_charge_phase14b.py`** — 15 pytest cases, **all passing**:
+  - Filter: `category=Pool` single, `category=Pool&category=Late+fee` multi union, `card_on_file=yes` / `card_on_file=no` complement pair, distinct-values endpoint.
+  - Bulk: dry-run per-row reasons (5-invoice seed with 2 eligible / 1 already_paid / 1 no_card_on_file / 1 zero_balance), real run stub call count + persistence + payment_status mirror, idempotency replay (same key, zero side effects), cross-tenant `not_found` no-leak, 101-invoice cap → 422, tech + customer 403 on all 3 endpoints, `{ok:False}` no-charge-id path → `error_code=not_ok_no_charge_id`, stripe exception → `error_code=<ExceptionClassName>`, runs list + detail readback.
+  - Grep-lint invariant: routers/invoices_bulk_charge.py contains zero writes to `db.invoices` (Phase 11 rule preserved).
+
+### Changed
+- `services/payments/stripe_charge.py::charge_card_on_file` — signature now accepts `idempotency_key`. Existing callers unchanged.
+- `scripts/create_session_indexes.py::ensure_on_boot` — invokes `routers.invoices_bulk_charge.ensure_indexes()` after the primary Phase 13 pass so the two new `bulk_charge_runs` indexes are guaranteed on cold boot.
+
+### Security
+- Admin / manager / super_admin gate on every new endpoint (`/invoices/line-item-categories`, `/invoices/bulk-charge-card-on-file`, `/invoices/bulk-charge-runs`, `/invoices/bulk-charge-runs/{id}`). Tech and Customer roles receive `403`. Verified via pytest.
+- The `dry_run=true` step is mandatory in the UI — the modal always fetches the eligibility preview before the confirm button becomes enabled. Backend accepts either directly (an integrator can call `dry_run=false` first), but the persisted `results[]` still carries the identical skip semantics so per-invoice charges never fire for `not_found` / `already_paid` / `no_card_on_file` / `card_expired` / `zero_balance` rows.
+- `idempotency_key` is mandatory on the bulk endpoint (min length enforced by pydantic). Composed per-invoice as `{key}:{invoice_id}` before being handed to Phase 14a, so a retry from the client is safe end-to-end. The unique index on `bulk_charge_runs.(tenant_id, idempotency_key)` provides the DB-side rail for a concurrent-race replay.
+- Cross-tenant invoice IDs land as `{status: "skipped", skip_reason: "not_found"}` — never as a 404 (which would leak existence).
+- Sequential rate-limiting: 75 ms sleep between real charges (spec band 50–100 ms) so a batch of 100 doesn't burst-fire Stripe.
+
+### Not resurrected
+- `db.invoices` — every read/write remains on `db.quotes` with `doc_type="invoice"`. The grep-lint test enforces this against the new router.
+- Legacy LZ3-era `POST /api/payments/bulk-charge-on-file` scaffolding on `InvoicesList.jsx` is left dormant; the new Phase 14b button uses the fresh endpoint.
+
+
 
 Fresh Stripe re-integration for the SetupIntent → attach → off-session PaymentIntent pipeline. Runs alongside the parked Lumino/Zapier bridge; the two providers are cleanly separated by a `provider` field on `payment_methods` rows so there is no risk of cross-contamination.
 

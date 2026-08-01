@@ -4,6 +4,7 @@ import { Plus, Search, FileText, Layers, Clock, TrendingUp, AlertCircle, Trash2,
 import { toast } from "sonner";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
+import BulkChargeModal from "@/components/invoices/BulkChargeModal";
 import {
   PageHeader,
   Button,
@@ -94,6 +95,11 @@ export default function InvoicesList() {
   const [paySummaryOpen, setPaySummaryOpen] = useState(false);
   const [payResults, setPayResults] = useState(null);
   const [paying, setPaying] = useState(false);
+  // Phase 14b · Feb-2026 — category multi-select + bulk-charge modal state.
+  const [categoryOptions, setCategoryOptions] = useState([]);
+  const initialCategories = params.getAll("category");
+  const [selectedCategories, setSelectedCategories] = useState(initialCategories);
+  const [bulkChargeOpen, setBulkChargeOpen] = useState(false);
 
   const setStatus = (v) => {
     const s = new URLSearchParams(params);
@@ -117,7 +123,10 @@ export default function InvoicesList() {
   };
 
   const loadRows = () => {
-    api.get("/quotes?doc_type=invoice").then((r) => setRows(r || [])).catch(() => setRows([]));
+    const qs = new URLSearchParams();
+    qs.set("doc_type", "invoice");
+    for (const c of selectedCategories) qs.append("category", c);
+    api.get(`/quotes?${qs.toString()}`).then((r) => setRows(r || [])).catch(() => setRows([]));
     api.get("/payments/summary").then(setSummary).catch(() => {});
     // Bulk-pay iteration 1 · pull PM enrichment from /invoices/overview.
     // /overview only returns outstanding invoices (paid excluded), which
@@ -138,7 +147,36 @@ export default function InvoicesList() {
 
   useEffect(() => {
     loadRows();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCategories.join("|")]);
+
+  // Phase 14b — load category dropdown options once (admin surfaces only).
+  useEffect(() => {
+    api
+      .get("/invoices/line-item-categories")
+      .then((r) => setCategoryOptions((r && r.categories) || []))
+      .catch(() => setCategoryOptions([]));
   }, []);
+
+  const toggleCategory = (cat) => {
+    const next = selectedCategories.includes(cat)
+      ? selectedCategories.filter((c) => c !== cat)
+      : [...selectedCategories, cat];
+    setSelectedCategories(next);
+    const s = new URLSearchParams(params);
+    s.delete("category");
+    for (const c of next) s.append("category", c);
+    setParams(s, { replace: true });
+    // Clear selection when filters change per spec.
+    setSelected(new Set());
+  };
+  const clearCategories = () => {
+    setSelectedCategories([]);
+    const s = new URLSearchParams(params);
+    s.delete("category");
+    setParams(s, { replace: true });
+    setSelected(new Set());
+  };
 
   const today = new Date();
   const aging = useMemo(() => {
@@ -400,6 +438,62 @@ export default function InvoicesList() {
           <option value="yes">Card on file: Yes</option>
           <option value="no">Card on file: No</option>
         </select>
+
+        {/* Phase 14b · Feb-2026 — Category multi-select. Renders as a dropdown
+            + selected-chip strip. Populated from /api/invoices/line-item-categories. */}
+        {categoryOptions.length > 0 ? (
+          <div className="flex items-center gap-2" data-testid="inv-filter-category">
+            <select
+              value=""
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v) toggleCategory(v);
+              }}
+              className="text-xs font-semibold px-3 py-2 rounded-lg"
+              style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurfaceSecondary, border: `1px solid ${colors.border}` }}
+              data-testid="inv-filter-category-select"
+            >
+              <option value="">Add category…</option>
+              {categoryOptions
+                .filter((c) => !selectedCategories.includes(c))
+                .map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+            </select>
+            {selectedCategories.map((c) => (
+              <span
+                key={c}
+                className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold"
+                style={{ backgroundColor: "#DBEAFE", color: "#1E40AF" }}
+                data-testid={`inv-category-chip-${c}`}
+              >
+                {c}
+                <button
+                  type="button"
+                  onClick={() => toggleCategory(c)}
+                  aria-label={`Remove ${c}`}
+                  className="text-blue-800"
+                  data-testid={`inv-category-chip-remove-${c}`}
+                >
+                  <XIcon size={11} />
+                </button>
+              </span>
+            ))}
+            {selectedCategories.length > 0 ? (
+              <button
+                type="button"
+                onClick={clearCategories}
+                className="text-xs font-semibold underline"
+                style={{ color: colors.muted }}
+                data-testid="inv-category-clear"
+              >
+                Clear
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {rows === null ? (
@@ -497,7 +591,19 @@ export default function InvoicesList() {
           </div>
           {/* LZ3 · Feb 2026 — Bulk-Pay button removed. Lumino
               hosted-checkout does not currently offer a batch API.
-              Per-invoice pay via the invoice detail page. */}
+              Per-invoice pay via the invoice detail page.
+              Phase 14b · Feb 2026 — new Stripe-based Bulk Charge button. */}
+          <button
+            type="button"
+            onClick={() => setBulkChargeOpen(true)}
+            disabled={busy || selectedCount === 0 || selectedCount > 100}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50"
+            style={{ backgroundColor: "#059669", color: "#FFFFFF" }}
+            data-testid="bulk-charge-button"
+            title={selectedCount > 100 ? "Max 100 invoices per batch" : ""}
+          >
+            <CreditCard size={12} /> Charge cards on file
+          </button>
           <button
             type="button"
             onClick={() => setConfirmDeleteOpen(true)}
@@ -581,6 +687,20 @@ export default function InvoicesList() {
 
       {/* LZ3 · Feb 2026 — Bulk-Pay confirm + summary modals removed.
           Bulk-select is retained for other bulk actions (delete etc.). */}
+
+      {/* Phase 14b · Feb 2026 — new Stripe-based bulk-charge modal. */}
+      {bulkChargeOpen ? (
+        <BulkChargeModal
+          invoiceIds={Array.from(selected)}
+          onClose={(runId) => {
+            setBulkChargeOpen(false);
+            if (runId) {
+              clearSelection();
+              loadRows();
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }

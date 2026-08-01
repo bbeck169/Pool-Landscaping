@@ -135,6 +135,13 @@ async def ensure_on_boot() -> None:
     except Exception as e:  # noqa: BLE001
         log.warning(f"[indexes] boot-hook failed (non-fatal): {e}")
 
+    # Phase 14b · Feb-2026 — bulk_charge_runs unique + query indexes.
+    try:
+        from routers.invoices_bulk_charge import ensure_indexes as _p14b_idx
+        await _p14b_idx()
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[indexes] phase-14b hook failed (non-fatal): {e}")
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
