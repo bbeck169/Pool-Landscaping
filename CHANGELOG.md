@@ -10,6 +10,37 @@ Do not rewrite history — only prepend new entries at the top.
 
 ## 2026-08-06 — Phase 27 · Global avatar swap for Schedule tiles + Dispatch Board (P2)
 
+### 2026-08-06 (even later) — Phase 27 follow-up #2 · Dispatch-board seed extension
+
+Dispatch avatar row was blocked because `/api/dispatch/board`'s
+`tech_load` is derived from `customers.assigned_tech_ids`, not job-
+level assignment. Extended the seed script (no product-behaviour
+change) so the demo customer document exists with Luis in the
+tech-array — data-only fix.
+
+- `backend/scripts/seed_phase27_demo_job.py` — added
+  `_upsert_demo_customer` helper. Uses `$addToSet` on the
+  `assigned_tech_ids` array so re-runs never duplicate the entry;
+  `upsert=True` so first run inserts, later runs update. Job
+  document's `customer_id` now references the seeded customer id
+  (`seed-phase27-demo-customer`) so the dispatch board's
+  customer/job join lights up. Verbose logging prints the final
+  `assigned_tech_ids` array so testers can confirm the write.
+  Idempotency verified on-pod: first run inserted, second run
+  updated with the array still holding exactly one entry.
+- `frontend/src/test/phase27-seed-script-invariants.test.jsx` (NEW,
+  5 cases, all green) — source-inspects the seed script and locks:
+  1. `db.customers.update_one(…)` is called (not just jobs).
+  2. `$addToSet` on `assigned_tech_ids` (idempotency guard).
+  3. `upsert=True` (so first run inserts).
+  4. Job payload's `customer_id` references the seeded id.
+  5. Preflight bails with `return None` + "bailing" log when the
+     tenant / Luis drift (regression guard against orphan writes).
+
+Full Phase 25/26/27 vitest sweep: **43/43 passing** (added 5 new
+seed assertions). No product code was touched; existing
+`dispatch_board.py` logic is unchanged.
+
 ### 2026-08-06 (later) — Phase 27 follow-up · CalendarSchedule + demo-job seed
 
 Routing miss caught in verification: `/schedule` mounts

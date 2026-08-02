@@ -101,6 +101,52 @@ async def _preflight(db) -> Optional[Dict[str, Any]]:
     return user
 
 
+async def _upsert_demo_customer(db, tech_uid: str,
+                                 dry_run: bool) -> str:
+    """Phase 27 follow-up #2 — the dispatch board's ``tech_load``
+    derives from ``customers.assigned_tech_ids``. Seeding just the
+    job leaves that array empty, so the Dispatch Board row for Luis
+    never appears. This helper upserts the customer doc + uses
+    ``$addToSet`` so re-running the script stays idempotent.
+    """
+    cid = "seed-phase27-demo-customer"
+    now = _now_iso()
+    if dry_run:
+        log.info("[dry-run] would upsert customer %s with tech %s in "
+                  "assigned_tech_ids", cid, tech_uid)
+        return cid
+    r = await db.customers.update_one(
+        {"id": cid, "tenant_id": DEMO_TENANT_ID},
+        {
+            "$setOnInsert": {
+                "id": cid,
+                "tenant_id": DEMO_TENANT_ID,
+                "created_at": now,
+            },
+            "$set": {
+                "name": "Phase 27 Demo Property",
+                "address": "1234 W Vistancia Blvd, Peoria, AZ",
+                "latitude": DEMO_LAT,
+                "longitude": DEMO_LON,
+                "updated_at": now,
+            },
+            # ``$addToSet`` keeps the operation idempotent — re-runs
+            # will never duplicate Luis in the array. The dispatch
+            # board reads this exact field to compute the per-tech
+            # load strip.
+            "$addToSet": {"assigned_tech_ids": tech_uid},
+        },
+        upsert=True,
+    )
+    if r.upserted_id is not None:
+        log.info("Inserted customer %s (assigned_tech_ids += %s)",
+                  cid, tech_uid)
+    else:
+        log.info("Updated customer %s (matched=%d, modified=%d)",
+                  cid, r.matched_count, r.modified_count)
+    return cid
+
+
 async def seed(dry_run: bool = False) -> Optional[str]:
     mongo_url = os.environ["MONGO_URL"]
     db_name = os.environ["DB_NAME"]
@@ -114,10 +160,15 @@ async def seed(dry_run: bool = False) -> Optional[str]:
         now = _now_iso()
         today = _today_iso()
 
+        # Phase 27 follow-up #2 — ensure the customer doc exists with
+        # Luis in ``assigned_tech_ids`` so the Dispatch Board
+        # ``tech_load`` computation lights up.
+        customer_id = await _upsert_demo_customer(db, tech_uid, dry_run)
+
         payload: Dict[str, Any] = {
             "id": SEED_JOB_ID,
             "tenant_id": DEMO_TENANT_ID,
-            "customer_id": "seed-phase27-demo-customer",
+            "customer_id": customer_id,
             "customer_name": "Phase 27 Demo Property",
             "title": "Phase 27 · Weekly Landscape Service",
             "service_type": "Weekly Landscape Service",
@@ -154,6 +205,16 @@ async def seed(dry_run: bool = False) -> Optional[str]:
             await db.jobs.insert_one(payload)
             log.info("Inserted job %s (tenant=%s, tech=%s)",
                       SEED_JOB_ID, DEMO_TENANT_ID, tech_uid)
+
+        # Phase 27 follow-up #2 — verbose post-write verification so
+        # the tester can confirm the dispatch pre-condition in the
+        # seed-script log.
+        verify = await db.customers.find_one(
+            {"id": customer_id, "tenant_id": DEMO_TENANT_ID},
+            {"_id": 0, "id": 1, "assigned_tech_ids": 1, "name": 1},
+        )
+        log.info("Verify · customer %s → assigned_tech_ids=%s",
+                  customer_id, (verify or {}).get("assigned_tech_ids"))
         return SEED_JOB_ID
     finally:
         client.close()
