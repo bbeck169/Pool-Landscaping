@@ -8,6 +8,112 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-05 — Phase 26 · Super-admin Review Department Suggestions modal + audit trail (P1)
+
+### Added
+
+- **Backend** — new endpoint
+  `POST /api/admin/apply-department-suggestions` in
+  `backend/routers/inventory_reports.py`:
+  - **Auth**: `require_super_admin` — admin/owner/technician all get
+    403.
+  - **Request**:
+    ```json
+    { "applications": [ { "user_id": "…", "department": "pool_tech|landscape_tech|both" } ] }
+    ```
+    Empty `applications` is accepted and returns
+    `{applied: 0, failed: []}` with zero writes.
+  - **Response**:
+    ```json
+    { "applied": <int>, "failed": [ { "user_id": "…", "reason": "user_not_found|update_failed" } ] }
+    ```
+  - **Audit trail**: every successful update inserts a row into
+    `db.department_change_audit`:
+    ```
+    { id, tenant_id, actor_user_id, target_user_id,
+      from_department, to_department, source: "admin_bulk_apply", ts }
+    ```
+    Audit rows are bulk-inserted with `ordered=False` so an
+    individual audit failure never rolls back a successful user
+    mutation; any insert-time exception is logged for post-hoc
+    reconciliation.
+  - **Coexistence**: distinct from the Phase-20 admin+
+    `POST /api/admin/users/bulk-department` (which stays audit-free
+    for backward compatibility) — this new endpoint is the
+    audit-tracked super-admin surface.
+
+- **Frontend** — new component
+  `frontend/src/components/admin/SuggestDepartmentsModal.jsx`:
+  - Fully controlled (parent owns `open`/`onClose`/`onApplied`).
+  - Loads suggestions via
+    `POST /api/admin/suggest-departments` on open, hides rows with
+    no signal, preselects rows with confidence ≥ 0.75.
+  - Table columns: checkbox · Technician · Current · Suggested
+    (editable `<select>` — admin can override the AI suggestion
+    before applying) · Confidence · Rationale (`pool_jobs ·
+    landscape_jobs · days_window`).
+  - Header row: "Select all" checkbox, footer shows
+    `N of M selected` counter.
+  - Footer buttons: Cancel + `Apply selected (N)` (disabled when
+    N=0 or a request is in flight).
+  - On Apply → POSTs `{applications: [{user_id, department}]}` to
+    the new Phase-26 endpoint; success toast on
+    `{applied>0, failed:[]}`, warning toast with counts on partial
+    success, error toast on network/500. Uses existing `sonner`
+    toast wiring — no new toast library introduced.
+  - Test IDs: `phase26-*` (modal, table, toggle-all, per-row check,
+    per-row override select, apply, cancel, close, loading, empty,
+    error).
+
+- **UI entry point**: new "Review Department Suggestions" button
+  added to the header of the Admin Users page
+  (`frontend/src/pages/admin/AdminUsersList.jsx`), next to the
+  existing Phase-20 "Suggest departments" button:
+  - Location: `/admin/users` (or whichever route mounts
+    `AdminUsersList`).
+  - `data-testid="admin-users-review-departments-btn"`.
+  - Clicking opens the new Phase-26 modal; on successful apply
+    the users list refetches so the admin sees the mutated
+    `department` value immediately.
+
+### Tests
+
+- **Pytest** — `backend/tests/test_phase26_bulk_apply_departments.py`
+  (NEW, 5 cases, all green):
+  1. Happy path — 3 applications → 3 `db.users` updates + 3
+     `db.department_change_audit` rows.
+  2. Partial failure — 1 ghost `user_id` yields `applied: 2` +
+     `failed: [{user_id, reason: 'user_not_found'}]`; audit rows
+     land only for the two that succeeded.
+  3. Admin role → 403.
+  4. Technician role → 403.
+  5. Empty payload → `applied: 0, failed: []`, zero writes to
+     either collection.
+
+- **Vitest** —
+  `frontend/src/test/phase26-suggest-departments-modal.test.jsx`
+  (NEW, 6 cases, all green):
+  1. Renders suggestion rows from the mocked load.
+  2. "Select all" cycles preselected → all → none with the
+     counter updating.
+  3. Apply button disabled when zero rows selected.
+  4. Clicking Apply POSTs the correct `{applications: [...]}`
+     payload to `/admin/apply-department-suggestions`.
+  5. Success toast fires when apply returns `{applied>0, failed:[]}`.
+  6. Error toast fires when apply throws (500-like).
+
+### Constraints honoured
+
+- Scope: Phase 26 only. Phases 27–28 untouched.
+- Invoice invariant preserved — no `db.invoices` writes.
+- `db.quotes` / `doc_type` not touched.
+- No new dependencies (backend uses stdlib `uuid`; frontend uses
+  existing `sonner` toast + `@/api` axios wrapper).
+- Phase-20 endpoint and modal remain untouched — this is an
+  additive audit-tracked super-admin surface, not a replacement.
+
+---
+
 ## 2026-08-04 — Phase 25 · Mobile Schedule — JobTrackerTiles label descender-clip fix (P0)
 
 ### Fixed

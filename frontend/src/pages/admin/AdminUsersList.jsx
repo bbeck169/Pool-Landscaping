@@ -21,6 +21,10 @@ import {
 } from "@/components/bulk-select/BulkSelectToolkit";
 // Phase 20 · Feb-2026 · Sub-item A — Suggest Departments admin modal.
 import SuggestDepartmentsModal from "./SuggestDepartmentsModal";
+// Phase 26 · Feb-2026 — Super-admin Review Department Suggestions modal
+// (adds an audit trail via /api/admin/apply-department-suggestions).
+import ReviewDepartmentSuggestionsModal
+  from "@/components/admin/SuggestDepartmentsModal";
 
 const ROLE_OPTIONS = [
   { value: "tech", label: "Technician" },
@@ -37,6 +41,8 @@ export default function AdminUsersList() {
   const [lockedFailures, setLockedFailures] = useState({});
   // Phase 20 · Feb-2026 · Sub-item A — modal open state.
   const [suggestOpen, setSuggestOpen] = useState(false);
+  // Phase 26 · Feb-2026 — audit-tracked review modal open state.
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   const load = () => api.get("/team")
     .then((r) => setRows(Array.isArray(r) ? r : (r?.members || r?.items || [])))
@@ -126,6 +132,15 @@ export default function AdminUsersList() {
                           border: `1px solid ${colors.border}` }}
                 data-testid="admin-users-suggest-departments-btn">
           <Wand2 size={12} /> Suggest departments
+        </button>
+        {/* Phase 26 · super-admin review modal — audit-tracked apply */}
+        <button onClick={() => setReviewOpen(true)}
+                className="text-xs font-semibold px-3 py-2 rounded-lg inline-flex items-center gap-1.5 ml-2"
+                style={{ backgroundColor: colors.surfaceSecondary,
+                          color: colors.onSurfaceSecondary,
+                          border: `1px solid ${colors.border}` }}
+                data-testid="admin-users-review-departments-btn">
+          <Wand2 size={12} /> Review Department Suggestions
         </button>
       </div>
 
@@ -226,6 +241,12 @@ export default function AdminUsersList() {
       <SuggestDepartmentsModal
         open={suggestOpen}
         onClose={() => setSuggestOpen(false)}
+        onApplied={() => load()}
+      />
+      {/* Phase 26 · super-admin audit-tracked Review Suggestions modal */}
+      <ReviewDepartmentSuggestionsModal
+        open={reviewOpen}
+        onClose={() => setReviewOpen(false)}
         onApplied={() => load()}
       />
     </div>

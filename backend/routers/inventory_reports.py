@@ -36,6 +36,7 @@ out of every row.
 """
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -43,7 +44,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from config import db, logger
-from utils import get_current_user, now_iso, require_admin
+from utils import get_current_user, now_iso, require_admin, require_super_admin
 from routers.tenants import get_current_tenant
 
 
@@ -521,3 +522,97 @@ def _mask_webhook(url: str) -> str:
     if len(url) < 12:
         return "***"
     return url[:20] + "…" + url[-4:]
+
+
+# ══════════════════════════════════════════════════════════════════
+# 5) Phase 26 — Super-admin bulk-apply department suggestions with
+#    audit trail. Distinct from the Phase-20 ``bulk-department``
+#    endpoint (which is admin+ and audit-free); this one is
+#    super-admin gated and writes every change to
+#    ``db.department_change_audit`` so the OpsHub review view can
+#    surface who did what and when.
+# ══════════════════════════════════════════════════════════════════
+class DepartmentApplication(BaseModel):
+    user_id: str
+    department: Optional[str] = Field(
+        None, pattern="^(pool_tech|landscape_tech|both)$")
+
+
+class ApplyDepartmentSuggestionsIn(BaseModel):
+    # ``max_length`` is a defensive upper-bound. Empty list is
+    # accepted and returns ``{applied: 0, failed: []}`` with zero
+    # writes per the Phase 26 spec.
+    applications: List[DepartmentApplication] = Field(
+        default_factory=list, max_length=500,
+    )
+
+
+@router.post("/admin/apply-department-suggestions")
+async def apply_department_suggestions(
+    body: ApplyDepartmentSuggestionsIn,
+    user: dict = Depends(require_super_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Phase 26 · Super-admin only. Applies the checked rows from the
+    Suggest-Departments review modal to ``db.users`` and writes an
+    audit row per successful change to ``db.department_change_audit``.
+
+    Response shape:
+        {"applied": int, "failed": [{"user_id": str, "reason": str}]}
+    """
+    tenant_id = tenant["id"]
+    actor_id = user["id"]
+    ts = now_iso()
+
+    applied = 0
+    failed: List[Dict[str, Any]] = []
+    audit_rows: List[Dict[str, Any]] = []
+
+    for app in body.applications:
+        existing = await db.users.find_one(
+            {"id": app.user_id, "tenant_id": tenant_id},
+            {"_id": 0, "id": 1, "department": 1},
+        )
+        if not existing:
+            failed.append({"user_id": app.user_id,
+                            "reason": "user_not_found"})
+            continue
+        prev = existing.get("department")
+        r = await db.users.update_one(
+            {"id": app.user_id, "tenant_id": tenant_id},
+            {"$set": {"department": app.department,
+                      "department_updated_at": ts,
+                      "department_updated_by": actor_id}},
+        )
+        if r.matched_count:
+            applied += 1
+            audit_rows.append({
+                "id": str(uuid.uuid4()),
+                "tenant_id": tenant_id,
+                "actor_user_id": actor_id,
+                "target_user_id": app.user_id,
+                "from_department": prev,
+                "to_department": app.department,
+                "source": "admin_bulk_apply",
+                "ts": ts,
+            })
+        else:
+            failed.append({"user_id": app.user_id,
+                            "reason": "update_failed"})
+
+    if audit_rows:
+        # bulk insert is atomic per document; a partial insert failure
+        # will not roll back the user updates that already succeeded.
+        # This is by design — the user-visible ``applied`` count is the
+        # source of truth for the operator, and any audit-insert
+        # failure gets logged for post-hoc reconciliation.
+        try:
+            await db.department_change_audit.insert_many(
+                audit_rows, ordered=False,
+            )
+        except Exception as e:                              # pragma: no cover
+            logger.exception(
+                "Phase 26 · audit insert failed for %d rows: %s",
+                len(audit_rows), e,
+            )
+    return {"applied": applied, "failed": failed}
