@@ -64,4 +64,29 @@ describe("Phase 27 follow-up #2 · seed script invariants", () => {
     expect(SEED_SRC).toMatch(/return None/);
     expect(SEED_SRC).toMatch(/bailing/);
   });
+
+  // ── Phase 27 follow-up #3 · dispatch-board denormalized fields. ──
+  it("Phase 27 follow-up #3 · writes service_lat / service_lng on the customer", () => {
+    // The dispatch board query hard-filters on ``service_lat:
+    // {$exists: true, $ne: null}`` — customer-form ``latitude``
+    // alone is invisible to that surface. The seed MUST populate
+    // both shapes.
+    expect(SEED_SRC).toMatch(/["']service_lat["']\s*:/);
+    expect(SEED_SRC).toMatch(/["']service_lng["']\s*:/);
+  });
+
+  it("Phase 27 follow-up #3 · writes service_address on the customer", () => {
+    expect(SEED_SRC).toMatch(/["']service_address["']\s*:/);
+  });
+
+  it("Phase 27 follow-up #3 · writes service_days using the mon..sun convention", () => {
+    // dispatch_board.py + customer_categories._DAY_NAMES both use
+    // lowercase 3-letter names. The seed MUST match — a bare list
+    // of integers would silently exclude the row from any
+    // day-filtered dispatch query.
+    expect(SEED_SRC).toMatch(/["']service_days["']\s*:/);
+    expect(SEED_SRC).toMatch(
+      /\[\s*["']mon["'][\s\S]*?["']tue["'][\s\S]*?["']wed["'][\s\S]*?["']thu["'][\s\S]*?["']fri["'][\s\S]*?["']sat["'][\s\S]*?["']sun["']\s*\]/,
+    );
+  });
 });

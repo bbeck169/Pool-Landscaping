@@ -183,6 +183,36 @@ on re-instruction now that this P0 is closed.
 
 ## 2026-08-06 — Phase 27 · Global avatar swap for Schedule tiles + Dispatch Board (P2)
 
+### 2026-08-07 — Phase 27 follow-up #3 · Dispatch-board denormalized fields on demo customer
+
+Dispatch board query hard-filters on
+``service_lat: {$exists: true, $ne: null}`` and (when a day is
+selected) ``service_days: <day>``. The Phase 27 seed only wrote
+customer-form ``latitude`` / ``longitude`` / ``address``, so the
+demo customer was silently excluded from ``tech_load``. Extended
+the seed helper (no product-code change) to write the denormalized
+``service_*`` fields that ``customer_categories.recompute_customer_denorm``
+normally populates.
+
+- `backend/scripts/seed_phase27_demo_job.py::_upsert_demo_customer`
+  now also `$set`s `service_lat` (33.7734), `service_lng`
+  (-112.2378), `service_address`, and `service_days`
+  (`["mon","tue","wed","thu","fri","sat","sun"]` — the exact
+  lowercase 3-letter convention `dispatch_board.py` +
+  `customer_categories._DAY_NAMES` use). Verbose verify log now
+  echoes all four fields.
+- `frontend/src/test/phase27-seed-script-invariants.test.jsx` —
+  extended from 5 → **8 assertions**: adds `service_lat`,
+  `service_lng`, `service_address`, and the `mon..sun`
+  day-name convention lock.
+- **End-to-end verification** (super-admin `GET /api/dispatch/board`
+  against the pod): `tech_load` returns 1 row for Luis
+  (`count: 1, drops: ['seed-phase27-demo-customer']`, `name:
+  'Luis Marquez'`, `color_hex: '#D97706'`); pin resolves with
+  `crew_label: 'Landscaping'` and all `service_days` intact.
+- Full cross-suite regression sweep — Phase 23/25/25b/26/27 all
+  green (**66/66 vitest passing**). No product code touched.
+
 ### 2026-08-06 (even later) — Phase 27 follow-up #2 · Dispatch-board seed extension
 
 Dispatch avatar row was blocked because `/api/dispatch/board`'s

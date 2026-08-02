@@ -108,6 +108,18 @@ async def _upsert_demo_customer(db, tech_uid: str,
     job leaves that array empty, so the Dispatch Board row for Luis
     never appears. This helper upserts the customer doc + uses
     ``$addToSet`` so re-running the script stays idempotent.
+
+    Phase 27 follow-up #3 — ``/api/dispatch/board`` also hard-filters
+    on ``service_lat: {$exists: true, $ne: null}`` and (when a day
+    is picked) ``service_days: <day>``. Plain ``latitude`` /
+    ``longitude`` / ``address`` are the customer-form fields — the
+    dispatch board reads the *denormalized* ``service_*`` fields
+    that ``customer_categories.recompute_customer_denorm`` normally
+    populates. Since this seed never touches the recompute path, we
+    write both shapes explicitly. ``service_days`` uses the
+    lowercase 3-letter names ``mon..sun`` (see
+    ``backend/routers/customer_categories.py::_DAY_NAMES``) so the
+    dispatch board matches on any day-of-week filter.
     """
     cid = "seed-phase27-demo-customer"
     now = _now_iso()
@@ -125,9 +137,22 @@ async def _upsert_demo_customer(db, tech_uid: str,
             },
             "$set": {
                 "name": "Phase 27 Demo Property",
+                # Customer-form shape (kept for compatibility with the
+                # customer editor UI).
                 "address": "1234 W Vistancia Blvd, Peoria, AZ",
                 "latitude": DEMO_LAT,
                 "longitude": DEMO_LON,
+                # Phase 27 follow-up #3 — dispatch-board denormalized
+                # shape. ``service_lat/lng`` are the fields the
+                # dispatch query filters on; without them the seed
+                # customer is silently excluded from ``tech_load``.
+                "service_lat": DEMO_LAT,
+                "service_lng": DEMO_LON,
+                "service_address": "1234 W Vistancia Blvd, Peoria, AZ",
+                # All seven weekdays so the tile appears regardless
+                # of the day filter selected in the dispatch UI.
+                "service_days": ["mon", "tue", "wed",
+                                  "thu", "fri", "sat", "sun"],
                 "updated_at": now,
             },
             # ``$addToSet`` keeps the operation idempotent — re-runs
@@ -209,12 +234,22 @@ async def seed(dry_run: bool = False) -> Optional[str]:
         # Phase 27 follow-up #2 — verbose post-write verification so
         # the tester can confirm the dispatch pre-condition in the
         # seed-script log.
+        # Phase 27 follow-up #3 — verify emits the four dispatch-board
+        # fields (service_lat/lng/days + assigned_tech_ids) so a
+        # future seed drift shows up in the log immediately.
         verify = await db.customers.find_one(
             {"id": customer_id, "tenant_id": DEMO_TENANT_ID},
-            {"_id": 0, "id": 1, "assigned_tech_ids": 1, "name": 1},
+            {"_id": 0, "id": 1, "assigned_tech_ids": 1, "name": 1,
+             "service_lat": 1, "service_lng": 1, "service_days": 1},
         )
-        log.info("Verify · customer %s → assigned_tech_ids=%s",
-                  customer_id, (verify or {}).get("assigned_tech_ids"))
+        v = verify or {}
+        log.info(
+            "Verify · customer %s → assigned_tech_ids=%s · "
+            "service_lat=%s · service_lng=%s · service_days=%s",
+            customer_id, v.get("assigned_tech_ids"),
+            v.get("service_lat"), v.get("service_lng"),
+            v.get("service_days"),
+        )
         return SEED_JOB_ID
     finally:
         client.close()
