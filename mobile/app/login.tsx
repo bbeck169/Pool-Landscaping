@@ -154,7 +154,7 @@ export default function Login() {
                 { label: "Super Admin", email: "super@aquaterra.com", icon: "shield" as const },
                 { label: "Admin", email: "manager@aquaterra.com", icon: "person-circle" as const },
                 { label: "Customer", email: "customer@aquaterra.com", icon: "people" as const },
-                { label: "Pool Tech", email: "mike@aquaterra.com", icon: "construct" as const },
+                { label: "Landscape Tech", email: "landscaper@aquaterra.com", icon: "construct" as const },
               ] as const).map((acct, i, arr) => (
                 <Pressable
                   key={acct.email}

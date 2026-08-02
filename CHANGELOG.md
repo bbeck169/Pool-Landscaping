@@ -8,6 +8,41 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-02 — Bug fix · Login-page demo-credential chips 401 on tech tap
+
+**Fixed** — the "Pool Tech" chip on both the web login page
+(`frontend/src/components/auth/PreviewDemoLogins.jsx:45`) and the mobile
+Expo login screen (`mobile/app/login.tsx:157`) referenced
+`mike@aquaterra.com`, an account that was never seeded — the backend
+boot log had been calling this out for weeks
+(`auto_heal_demo_passwords ... Missing rows: ['mike@aquaterra.com']`).
+Clicking the chip fired the field-populate (`onPick`) correctly, but
+the immediate `onSubmitDirect` returned 401 so users perceived the
+click as broken.
+
+**Change** (single-line each, two files):
+- `PreviewDemoLogins.jsx` — `email: "mike@aquaterra.com"` →
+  `"landscaper@aquaterra.com"`; `role_label: "Pool Tech"` →
+  `"Landscape Tech"` (matches the real seed account).
+- `mobile/app/login.tsx` — same substitution.
+
+**Test guard**
+- `frontend/src/test/preview-demo-logins.test.jsx` — updated the
+  spec assertion + widened the click-handler assertion to cover all 4
+  chips (previously only the "super" chip's `onPick` payload was
+  asserted, which let the tech-chip email typo slip through). Result:
+  **8/8 vitest cases pass**.
+
+**Verified**
+- Mobile-viewport (390 × 844) headless browser: all 4 chips
+  (`demo-login-super`, `-admin`, `-customer`, `-tech`) render
+  visible. Tapping the tech chip signs in and redirects to
+  `/schedule` — the authenticated technician shell (Schedule / D2D /
+  Time Clock / Tools / Training / Profile nav rendered).
+- Grep-lint: 0 `db.invoices` writes touched.
+
+---
+
 ## 2026-08-02 — Phase 21 · Prod deploy unblock + seed drift + Expo Go publish
 
 Three small items shipped in one pass to close out immediate ops needs.

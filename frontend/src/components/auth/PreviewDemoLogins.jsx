@@ -41,8 +41,8 @@ export const DEMO_ACCOUNTS = [
   },
   {
     key: "tech",
-    role_label: "Pool Tech",
-    email: "mike@aquaterra.com",
+    role_label: "Landscape Tech",
+    email: "landscaper@aquaterra.com",
     tint: "#d97706",
   },
 ];
