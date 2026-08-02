@@ -8,6 +8,98 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-08 — P0 investigation · Demo logins reported not working — TRANSIENT (no code change required, regression guard added)
+
+### User report
+"None of the demo logins are working" — all 4 seeded demo credentials
+(`super@aquaterra.com`, `manager@aquaterra.com`,
+`landscaper@aquaterra.com`, `customer@aquaterra.com`) failing.
+
+### Reproduction (first pass)
+- All 4 `POST /api/auth/login` returned **HTTP 502** — Cloudflare shield
+  page, not the FastAPI 4xx/500 envelope.
+- Backend `supervisorctl status` showed `uptime 0:00:30` — process had
+  just restarted.
+- `db.users.find_one({...})` confirmed all 4 users exist with populated
+  `password_hash` and `active=True`.
+
+### Root cause
+**Transient 502 during backend boot pipeline.** The backend runs a heavy
+seed / migration cascade at startup — ~30s of work across ~111 tenants
+(scorecard digest, review scraper, phase-16 business OS, phase-17
+geocode, phase-18 chemical seed, etc.). Cloudflare serves a 502 shield
+until Uvicorn logs `INFO: Application startup complete.` (visible in
+`/var/log/supervisor/backend.err.log`). Any login attempted in that
+window fails at the edge before it reaches FastAPI.
+
+Log entry that pinpointed the issue:
+
+```
+INFO:pool_crm:auto_heal_demo_passwords: all 4 present demo users
+already authenticate with default. Missing rows: ['mike@aquaterra.com']
+INFO:     Application startup complete.
+```
+
+At steady state (post-boot), all four credentials return **200** with a
+valid JWT and correct role — verified via curl + a full web-UI login
+screenshot for `manager@aquaterra.com`.
+
+### Reproduction (second pass, post-boot)
+```
+POST /api/auth/login  super@aquaterra.com       → 200  role=super_admin
+POST /api/auth/login  manager@aquaterra.com     → 200  role=admin
+POST /api/auth/login  landscaper@aquaterra.com  → 200  role=technician
+POST /api/auth/login  customer@aquaterra.com    → 200  role=customer
+```
+
+### Fix
+No code change required — the endpoint is behaving correctly.
+
+### Added (permanent regression guard)
+- `backend/tests/test_demo_login_regression.py` — a parametrised pytest
+  that logs in with each of the 4 seed credentials from
+  `/app/memory/test_credentials.md` and asserts:
+    1. HTTP 200 with a token present.
+    2. JWT decodes against the pod's `JWT_SECRET` / `JWT_ALGO`.
+    3. `payload.role` and `response.user.role` match the expected role.
+  Result: 4/4 pass.
+
+### Related observation (out of scope for this ticket — logged as
+### follow-up)
+- `landscaper@aquaterra.com` has `department: "landscaping"` on their
+  `db.users` row — this value is NOT in the Phase 20
+  `UserDepartmentIn` enum (`pool_tech | landscape_tech | both`). It
+  does not affect login (validation only runs on write, not on read),
+  but any admin attempt to update this user's department via the new
+  Phase 20 endpoints would need to re-seat the field to a valid value
+  first. Data-vs-schema mismatch on one legacy seed row — not urgent.
+- The production deploy at 2026-08-01 23:57 UTC failed at the frontend
+  build step (`postcss-selector-not@9.0.0` requires Node ≥20.19.0; the
+  build container ships 20.18.1). This is a **separate** issue from
+  the login report and needs its own ticket — it does not affect the
+  preview environment (which uses a different node runtime) and did
+  not roll back production either (previous version still serving).
+
+### Files touched
+- `backend/tests/test_demo_login_regression.py` (NEW, 4 parametrised
+  tests · all pass)
+- `CHANGELOG.md` (this entry)
+
+### Verification
+- `python3 -m pytest tests/test_demo_login_regression.py -v` → 4 passed
+- Screenshot: manager@aquaterra.com successfully lands on the admin
+  Dashboard post-login (revenue widget, weather panel, full nav
+  rendered).
+
+### Deliverable summary
+No production-code fix was necessary; the root cause was a transient
+Cloudflare 502 during the backend boot window. The permanent
+regression pytest guards the four seed credentials so any future auth
+break (password-hash migration, JWT secret rotation, role-enum
+tightening, seed-script drift) fails CI loudly.
+
+---
+
 ## 2026-08-08 — Phase 20 · P2 backlog close-out (three sub-items)
 
 Three small, localized items bundled to close out the outstanding-work list.
