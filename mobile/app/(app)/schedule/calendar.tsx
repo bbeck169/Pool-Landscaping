@@ -40,6 +40,10 @@ import RainFlag from "@/src/components/weather/RainFlag";
 import WeekStrip from "@/src/components/schedule/WeekStrip";
 // Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
 import JobTrackerTiles from "./JobTrackerTiles";
+// Phase 27 · Feb-2026 — Global avatar swap for the per-job card in
+// the schedule grid. Compact 20dp footprint keeps row height
+// invariant vs the pre-Phase-27 layout.
+import TechAvatar from "../../../components/common/TechAvatar";
 import { getStatusBorderColor } from "@/src/utils/scheduleStatus";
 import type { HourlyEntry } from "@/src/api/weather";
 
@@ -740,7 +744,26 @@ function JobRow({ job, idx, checked, onCheck, onOpen, rearrangeMode, onShift, fi
           {isRecurring(job) ? "🔁 " : ""}
           {(job.service_type || "General").toUpperCase()}
         </Text>
-        <Text style={gStyles.cust} numberOfLines={1}>{job.customer_name || "Unknown"}</Text>
+        {/* Phase 27 · Feb-2026 — inline tech avatar chip next to
+            customer line. 20dp footprint stays under the existing
+            line-height so row height is unchanged. Only renders when
+            an assigned tech name/photo is present in the payload —
+            unassigned jobs skip the chip entirely. */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
+          {(job.technician_name || job.assigned_technician_name
+             || job.technician_id) ? (
+            <TechAvatar
+              user={{
+                name: job.technician_name || job.assigned_technician_name,
+                profile_photo_url: job.technician_photo_url
+                                 || job.assignee_photo_url,
+              }}
+              size="xs"
+              testID={`grid-tech-avatar-${job.id}`}
+            />
+          ) : null}
+          <Text style={gStyles.cust} numberOfLines={1}>{job.customer_name || "Unknown"}</Text>
+        </View>
         {job.property_label ? (
           <View
             style={{

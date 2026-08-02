@@ -13,6 +13,11 @@ import { useAuth } from "@/auth";
 // user request. File still exists at ``pages/aitools/`` — imported
 // by the admin Dashboard.
 import ServiceNotePill from "@/components/schedule/ServiceNotePill";
+// Phase 27 · Feb-2026 — Global avatar swap for dense layouts.
+// Compact tech avatar rendered next to the customer line so
+// admins/dispatchers can spot the assigned tech at a glance
+// without inflating the card height.
+import TechAvatar from "@/components/common/TechAvatar";
 import {
   Clock, MapPin, Navigation, Car, Coffee, PlayCircle, StopCircle,
   AlertTriangle, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare,
@@ -784,10 +789,26 @@ function ScheduleCardList({ jobs, tz, isTech, onOpen, onClockIn }) {
               {/* Body */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-2 mb-1">
-                  <div className="text-sm font-extrabold uppercase tracking-wide"
+                  <div className="text-sm font-extrabold uppercase tracking-wide flex items-center gap-1.5"
                        style={{ color: "#DC2626" }}
                        data-testid={`schedule-card-service-${j.id}`}>
-                    {j.service_type || j.title || "Service"}
+                    {/* Phase 27 · Feb-2026 — compact tech avatar in the
+                        card header. Only renders when a tech is
+                        actually assigned; keeps row height unchanged
+                        because the avatar (20px) is smaller than the
+                        header line-height. */}
+                    {(j.technician_name || j.assigned_technician_name || j.technician_id) ? (
+                      <TechAvatar
+                        user={{
+                          name: j.technician_name || j.assigned_technician_name,
+                          profile_photo_url: j.technician_photo_url
+                                           || j.assignee_photo_url,
+                        }}
+                        size="xs"
+                        testid={`schedule-card-tech-avatar-${j.id}`}
+                      />
+                    ) : null}
+                    <span>{j.service_type || j.title || "Service"}</span>
                   </div>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide flex-shrink-0"
                         style={{ backgroundColor: tone.bg, color: tone.fg }}

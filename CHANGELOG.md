@@ -8,6 +8,151 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-06 — Phase 27 · Global avatar swap for Schedule tiles + Dispatch Board (P2)
+
+### Housekeeping (Phase 26 tester side-effect)
+
+- Reset seed user `landscaper@aquaterra.com` (Luis Marquez) back to
+  `department: "landscape_tech"` — the Phase-26 tester mutation had
+  flipped him to `pool_tech`. Update ran as a targeted
+  `db.users.update_one` and left every other row untouched.
+
+### Added
+
+- **Shared web avatar shim** —
+  `frontend/src/components/common/TechAvatar.jsx` (NEW): thin wrapper
+  over the Phase-B1 `<UserAvatar />` that standardises the dense
+  layout pixel vocabulary — ``xs=20 · sm=28 · md=40``. Zero business
+  logic; all fallback behaviour (image → initials → deterministic
+  pastel tint) inherited from the underlying component. `TECH_SIZE_PX`
+  named export lets consumers hard-lock the numeric size.
+
+- **Shared mobile avatar** —
+  `mobile/components/common/TechAvatar.tsx` (NEW): RN-native equivalent
+  matching the web shim's ``xs/sm/md`` vocabulary. Same fallback chain,
+  same deterministic pastel palette so cross-platform reviewers see
+  the same visual weight. Pure RN primitives — no new dependencies.
+
+### Changed — web
+
+- `frontend/src/pages/dispatch/TechLoadStrip.jsx` — swapped the
+  generic `<UserRound />` lucide icon for `<TechAvatar size="xs" />`
+  on every tech-load row. Each avatar carries a
+  `dispatch-tech-avatar-${tech_user_id}` testid.
+- `frontend/src/pages/schedule/TodaySchedule.jsx` — the per-job
+  schedule card header now renders a compact `<TechAvatar size="xs" />`
+  immediately left of the service-type badge, conditional on the
+  payload actually carrying an assigned tech identity
+  (`technician_name` / `assigned_technician_name` / `technician_id`).
+  Header line-height already accommodated a 20px badge, so row
+  height is unchanged. Testid:
+  `schedule-card-tech-avatar-${j.id}`.
+
+### Changed — mobile
+
+- `mobile/app/(app)/schedule/calendar.tsx` — the per-job grid row
+  (`JobRow`) now shows a 20dp `<TechAvatar />` chip on the customer
+  line when the job carries an assigned tech. Wrapped the customer
+  `<Text>` + avatar in a horizontal flex row so nothing pushes the
+  cluster of chips below. Testid:
+  `grid-tech-avatar-${job.id}`.
+- `mobile/app/(app)/dispatch/board.tsx` — deliberately untouched.
+  The board.tsx filter is `!j.technician_id && !j.assigned_to`, so
+  the surface renders unassigned jobs only — there is no tech
+  identity to visualise. The Phase-27 mobile vitest guards this
+  invariant so a future refactor that adds assigned-job rendering
+  gets flagged for an avatar swap.
+
+### Preserved
+
+- Dense-layout row heights unchanged on both surfaces.
+- Tenant color theming preserved (avatar tint is deterministic
+  from initials, orthogonal to tenant colors).
+- Phase 25 label-clipping guarantees on `JobTrackerTiles.tsx` are
+  intact — the Phase-27 mobile vitest re-asserts the label
+  `lineHeight`, `includeFontPadding`, `paddingBottom`, and
+  outside-SVG contract.
+
+### Tests
+
+- **Vitest — web** —
+  `frontend/src/test/phase27-avatar-dense-layouts.test.jsx` (NEW,
+  11 cases, all green):
+  1. `TECH_SIZE_PX` matches the ``{xs:20, sm:28, md:40}`` spec.
+  2. `<TechAvatar size="xs" />` renders at 20 x 20 px.
+  3. `<TechAvatar size="sm|md" />` renders at 28 / 40 px.
+  4. Initials fallback: `"Luis Marquez" → "LM"`.
+  5. `TechLoadStrip.jsx` imports `TechAvatar` from
+     `@/components/common/TechAvatar`.
+  6. `TechLoadStrip.jsx` mounts `<TechAvatar size="xs" />`.
+  7. `TechLoadStrip.jsx` attaches
+     `dispatch-tech-avatar-${tech_user_id}` testid.
+  8. `TechLoadStrip.jsx` no longer imports or renders
+     `<UserRound />` (regression guard, comment mentions allowed).
+  9. `TodaySchedule.jsx` imports the shared TechAvatar.
+  10. `TodaySchedule.jsx` mounts `<TechAvatar size="xs" />`.
+  11. Card avatar carries `schedule-card-tech-avatar-${j.id}` testid.
+
+- **Vitest — mobile source-inspection** —
+  `frontend/src/test/phase27-mobile-avatar-dense.test.jsx` (NEW,
+  9 cases, all green):
+  1. `mobile/app/(app)/schedule/calendar.tsx` imports the mobile
+     TechAvatar.
+  2. Same file mounts `<TechAvatar size="xs" />`.
+  3. Avatar chip guarded behind a `technician_name || assigned_…`
+     conditional (no chip for unassigned jobs).
+  4. Per-job testID `grid-tech-avatar-${job.id}` present.
+  5. Dispatch board: either references TechAvatar or is
+     confirmed unassigned-only (the current file satisfies #2).
+  6-9. Phase 25 regression guards (label lineHeight, includeFontPadding,
+       paddingBottom≥borderRadius, outside-SVG).
+
+- **Regression sweep** — Phase 23/25/26/27 vitests all green
+  (**45/45 passing**). Full-suite baseline unchanged at 16 pre-existing
+  failures (all `@jest/globals` stale-import files on surfaces
+  outside Phase 27's scope — `phase22-mobile-schedule-gates`,
+  `phase34-*`, etc.). `slice-p17-additions.test.jsx` (which
+  exercises `TechLoadStrip`) passes 7/7 — the avatar swap is
+  compatible with the existing Phase 17 shift-route flow.
+
+### Manual verification checklist
+
+**Web** — open the preview URL and hit these two routes as an
+admin/dispatcher:
+
+1. **Dispatch Board** — the right-column "Tech Load" strip now
+   shows a 20 px round avatar (initials on a deterministic pastel
+   tint, or the tech's photo if `profile_photo_url` is set) in
+   place of the generic person icon. Row height unchanged.
+2. **Today Schedule (`/schedule/today`)** — each job card that
+   has an assigned technician shows a matching 20 px avatar
+   inline with the red service-type text at the top of the card.
+   Jobs without an assigned tech render unchanged (no chip).
+
+**Mobile (Expo Go)** — `yarn tunnel` in `/app/mobile/` and open on
+Android:
+
+1. Log in as any role that lands on the Schedule tab.
+2. **Schedule → Grid view** — each per-job card in the day list
+   shows a compact 20 dp avatar immediately left of the customer
+   name when the job has an assigned tech. Jobs without a tech
+   render unchanged.
+3. **Schedule → JobTrackerTiles** (Phase 25 regression) — the
+   "Service Stops" / "Repair Stops" tiles must still render with
+   the "p" descender fully visible on the purple → blue gradient.
+4. **Dispatch board** (Expo Go) — unchanged; this surface still
+   renders only unassigned jobs and has no tech identity to swap.
+
+### Constraints honoured
+
+- Scope: Phase 27 only. Phase 28 untouched.
+- Invoice invariant preserved — no `db.invoices` writes.
+- No new dependencies (backend/frontend/mobile).
+- Row / tile heights unchanged on all four dense surfaces.
+- Grep-lint stays green.
+
+---
+
 ## 2026-08-05 — Phase 26 · Super-admin Review Department Suggestions modal + audit trail (P1)
 
 ### Added
