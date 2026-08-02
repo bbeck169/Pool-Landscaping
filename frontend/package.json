@@ -59,7 +59,7 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^0.507.0",
     "next-themes": "^0.4.6",
-    "postcss-selector-not": "^9.0.0",
+    "postcss-selector-not": "^8.0.1",
     "react": "^19.0.0",
     "react-big-calendar": "^1.20.0",
     "react-day-picker": "8.10.1",
@@ -119,6 +119,10 @@
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "vitest": "1.6.1"
+  },
+  "resolutions": {
+    "//": "Phase 21 · Feb-2026 · Sub-item A — pin postcss-selector-not < 9 so the frontend build works on Node 20.18.x (the customer-apps build container). v9.0.0 requires Node >=20.19.0 which broke the prod deploy at 2026-08-01 23:57 UTC. Revisit when the base image bumps to a Node LTS that ships >=20.19.0.",
+    "postcss-selector-not": "^8.0.1"
   },
   "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
 }

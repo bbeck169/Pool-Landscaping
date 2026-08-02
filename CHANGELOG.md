@@ -8,6 +8,158 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-02 — Phase 21 · Prod deploy unblock + seed drift + Expo Go publish
+
+Three small items shipped in one pass to close out immediate ops needs.
+
+### Sub-item A · Unblock production frontend build (`postcss-selector-not` engine pin)
+
+**Reported problem**: Production deploy at 2026-08-01 23:57 UTC failed at
+the `frontend-build-push` cloud-build step:
+
+```
+error postcss-selector-not@9.0.0: The engine "node" is incompatible with
+this module. Expected version ">=20.19.0". Got "20.18.1"
+```
+
+The customer-apps build container ships Node 20.18.1;
+`postcss-selector-not@9.0.0` was released with `engines.node >=20.19.0`.
+
+**Fix**
+- `frontend/package.json` — direct dependency
+  `"postcss-selector-not": "^9.0.0"` → `"^8.0.1"`.
+- Added a `resolutions` block that also pins any transitive resolution
+  to `^8.0.1` with an inline `//` comment explaining the constraint.
+- Post-fix `node_modules/postcss-selector-not/package.json`:
+  `{"version": "8.0.1", "engines": {"node": ">=18"}}` — satisfies Node
+  20.18.1.
+- Verified locally: `yarn install` clean + `yarn build` completes in
+  66.89s producing `build/static/js/main.e0bdafe8.js` (1.42 MB gzip)
+  and `build/static/css/main.a38d0066.css` (26.39 kB gzip).
+
+**Design decision — why `^8.0.1` and not `^9.0.0`**
+- `8.0.1` is the last release with `engines.node >=18` — works on any
+  container from Node 18 through 20+.
+- `9.0.0` shipped a stricter engine constraint; keeping the pin at 8.x
+  is the smallest-blast-radius fix.
+- Base image Node bump was **explicitly out of scope** per the phase
+  brief (bigger blast radius; separate ops phase).
+
+### Sub-item B · Landscape / department seed drift fix
+
+**Reported problem**: Phase 20's `UserDepartmentIn` enum accepts only
+`pool_tech | landscape_tech | both | None`. Multiple legacy seed rows
+carried mis-cased or region-labelled values that would 422 on any
+admin edit:
+
+```
+Pre-fix db.users.department distribution across 111 tenants:
+  None → 31 valid
+  'north' → 3 legacy (regional label, not a department)
+  'south' → 3 legacy
+  'landscaping' → 2 (needs remap)
+  'both' → 1 valid
+  'Pool' → 1 (case-drift)
+  'Landscaping' → 1 (case-drift)
+```
+
+**Fix**
+- `backend/scripts/fix_landscape_tech_seed_drift.py` (NEW) —
+  idempotent one-shot migration with a `--dry-run` flag. Mapping:
+    - `landscaping` / `Landscaping` / `landscape` → `landscape_tech`
+    - `Pool` / `pool`                             → `pool_tech`
+    - Anything else non-null NOT in the enum      → `None` (WARNING logged)
+    - Already-valid values (or `None`)            → untouched
+- Ran real (not dry) once: `{scanned: 11, remapped: 4, cleared: 6, already_valid: 1}`.
+- Ran a second time to prove idempotency: `{scanned: 5, remapped: 0, cleared: 0, already_valid: 5}`.
+- Post-fix distribution: only valid enum values remain
+  (`None: 37, landscape_tech: 3, pool_tech: 1, both: 1`).
+
+**Test coverage**
+- `backend/tests/test_phase21_landscape_seed_drift.py` (NEW, 2 tests)
+    - `test_landscape_drift_is_fixed` — seeds three users
+      (`landscaping`, valid `pool_tech`, unknown `north`), runs the
+      script, asserts:
+        * `landscaping` → `landscape_tech`
+        * `pool_tech` untouched
+        * `north` → `None`
+    - `test_script_is_idempotent` — second run does not mutate any row
+      in the test tenant.
+
+**Design decision — legacy `north` / `south` rows**
+- These are regional labels, not departments. Cleared to `None` (not
+  remapped to any enum value) and logged as WARNINGs so admins can
+  re-seat the field to the correct department + record the
+  region-label elsewhere if needed.
+
+### Sub-item C · Expo Go publish runbook (dev tunnel path)
+
+**Investigation summary** — investigated first, before touching code:
+- `eas.json` NOT present in `/app/mobile/`.
+- `app.json`: `slug=frontend`, **no `owner`**, no `updates` block, no
+  `runtimeVersion`.
+- `expo-updates` package NOT installed.
+- `eas` CLI NOT installed on the pod (`which eas` empty).
+- `EXPO_TOKEN` env NOT set.
+
+**Conclusion** — cannot run `eas update` from this pod. Falling back
+to the local dev-server tunnel path per the phase brief.
+
+**Fix**
+- `mobile/package.json` — added `"tunnel": "expo start --tunnel"` script
+  so testers can `yarn tunnel` without memorizing the flag.
+- `mobile/EXPO_GO_RUNBOOK.md` (NEW) — one-page instructions covering
+  Expo Go install on iOS + Android, prerequisites, the exact command
+  to run locally (`cd mobile && yarn tunnel`), expected terminal
+  output (QR code + `exp://…` URL), LAN-mode fallback, what testers
+  will see once the app launches, and a graduation checklist for
+  when the user wants to move to `eas update` in a future ops phase.
+
+**Follow-up (explicitly deferred)**
+- `eas update --branch preview` requires creating an Expo
+  organization, adding `owner`/`updates`/`runtimeVersion` to
+  `app.json`, installing `expo-updates`, running `eas init`, and
+  configuring an update policy. That's a discrete phase — not
+  urgent while the local tunnel serves the internal-testing use
+  case.
+
+### Cross-cutting checks
+
+- Grep-lint: 0 `db.invoices` writes in any Phase 21 file. ✅
+- `/api/openapi.json` reachable (HTTP 200). ✅
+- Vitest baseline: 522 pass / 14 fail — inside the tolerated 11-14
+  flake budget. ✅
+- Regression pytest sweep: 10/10 pass (2 drift + 4 localhost demo
+  login + 4 external-ingress demo login).
+- Landscaper login still works post-migration (JWT + user record
+  unchanged; only `department` field remapped).
+
+### Files added / changed
+
+- `frontend/package.json` — direct `postcss-selector-not` pin +
+  `resolutions` block
+- `frontend/yarn.lock` — regenerated (all
+  `postcss-selector-not@*` now resolve to `8.0.1`)
+- `backend/scripts/fix_landscape_tech_seed_drift.py` (NEW,
+  idempotent one-shot)
+- `backend/tests/test_phase21_landscape_seed_drift.py` (NEW, 2
+  tests)
+- `mobile/package.json` — new `tunnel` script
+- `mobile/EXPO_GO_RUNBOOK.md` (NEW)
+- `CHANGELOG.md` — this entry
+
+### Follow-ups (logged for future phases, none blocking)
+
+1. Base image Node LTS bump (would let us drop the `postcss-selector-not`
+   pin and pick up any future `>=20.19.0` deps).
+2. `eas update` migration (Expo org + `expo-updates` + runtime version
+   policy) — enables OTA updates + tap-through deep links.
+3. Automatic detection of new department-drift values as the field
+   evolves (nice-to-have — the current script handles known drift
+   patterns and logs anything it doesn't recognize).
+
+---
+
 ## 2026-08-08 — P0 investigation · Demo logins reported not working — TRANSIENT (no code change required, regression guard added)
 
 ### User report
