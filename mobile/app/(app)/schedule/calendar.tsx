@@ -338,7 +338,16 @@ export default function ScheduleCalendar() {
       <Header
         title="Schedule"
         subtitle={loading ? "Loading…" : `${jobs.length} jobs in window · ${mode}`}
-        right={isTech ? <NotificationBell /> : undefined}
+        right={isTech ? (
+          // Phase 22 · 2026-08-02 · Sub-item B — the ambient shell
+          // hamburger renders at the extreme top-right and was
+          // visually overlapping the bell. Push the bell 44dp left
+          // (hamburger tap target + 8dp gap) so both are fully
+          // tappable and non-colliding.
+          <View style={{ marginRight: 52 }} testID="schedule-header-bell">
+            <NotificationBell />
+          </View>
+        ) : undefined}
       />
       <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.md }}>
         {user?.role !== "admin" && user?.role !== "super_admin" && <LandscapingClockWidget />}
@@ -524,7 +533,9 @@ function GridView(props: any) {
         <Text style={gStyles.dayLabel} testID="grid-day-label">{dayLabel(focus)}</Text>
       </View>
 
-      {/* Bulk-action pills. Buttons stay visible but disable when nothing is checked. */}
+      {/* Bulk-action pills. Buttons stay visible but disable when nothing is checked.
+          Phase 22 · 2026-08-02 · Sub-item A — techs only get Complete;
+          Move/Delete/Assign/Rearrange are gated to isAdmin per user brief. */}
       {canWrite ? (
         <View style={gStyles.pillRow} testID="grid-bulk-pills">
           <Pressable
@@ -536,6 +547,7 @@ function GridView(props: any) {
             <Ionicons name="checkmark-circle" size={13} color="#fff" />
             <Text style={gStyles.pillText}>Complete ({checked.size})</Text>
           </Pressable>
+          {isAdmin ? (
           <Pressable
             onPress={onOpenMove}
             disabled={busy || checked.size === 0}
@@ -545,6 +557,8 @@ function GridView(props: any) {
             <Ionicons name="calendar-outline" size={13} color="#fff" />
             <Text style={gStyles.pillText}>Move ({checked.size})</Text>
           </Pressable>
+          ) : null}
+          {isAdmin ? (
           <Pressable
             onPress={onBulkDelete}
             disabled={busy || checked.size === 0}
@@ -554,6 +568,8 @@ function GridView(props: any) {
             <Ionicons name="trash-outline" size={13} color="#fff" />
             <Text style={gStyles.pillText}>Delete ({checked.size})</Text>
           </Pressable>
+          ) : null}
+          {isAdmin ? (
           <Pressable
             onPress={onOpenReassign}
             disabled={busy || checked.size === 0}
@@ -563,6 +579,8 @@ function GridView(props: any) {
             <Ionicons name="people-outline" size={13} color="#fff" />
             <Text style={gStyles.pillText}>Assign ({checked.size})</Text>
           </Pressable>
+          ) : null}
+          {isAdmin ? (
           <Pressable
             onPress={rearrangeMode ? onSaveReorder : onToggleRearrange}
             style={[gStyles.pill, rearrangeMode ? gStyles.pillGreen : gStyles.pillPurple]}
@@ -571,6 +589,7 @@ function GridView(props: any) {
             <Ionicons name={rearrangeMode ? "save-outline" : "reorder-three-outline"} size={13} color="#fff" />
             <Text style={gStyles.pillText}>{rearrangeMode ? "Save order" : "Rearrange"}</Text>
           </Pressable>
+          ) : null}
         </View>
       ) : null}
 

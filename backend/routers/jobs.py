@@ -1003,6 +1003,14 @@ async def update_job(jid: str, body: JobUpdate,
                 await log_cleaning_from_job(fresh)
             except Exception as _et:
                 logger.warning(f"equipment tracker auto-log failed: {_et}")
+            # Phase 22 · 2026-08-02 · Sub-item C — auto-create + charge
+            # invoice on job complete. Never crashes this handler:
+            # the helper swallows all exceptions and writes an audit row.
+            try:
+                from services.auto_invoice import create_invoice_from_job
+                await create_invoice_from_job(jid, tenant["id"])
+            except Exception as _ai:
+                logger.warning(f"auto_invoice hook failed: {_ai}")
             # Phase 15A: schedule a CSAT survey 24h after completion.
             try:
                 from routers.csat import maybe_schedule_survey_for_job

@@ -8,6 +8,132 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-02 — Phase 22 · Tech mobile restrictions + bell repositioning + auto-invoice on job complete
+
+### Sub-item A · Mobile tech schedule — Complete chip only
+
+**Reported problem** — the mobile Expo schedule grid rendered all 5
+bulk-action chips (Complete / Move / Delete / Assign / Rearrange) for
+technicians. Techs shouldn't be able to move, delete, reassign, or
+reorder jobs.
+
+**Fix** — `mobile/app/(app)/schedule/calendar.tsx` — every non-Complete
+pill wrapped in an `{isAdmin ? <Pressable…/> : null}` gate. The
+existing `canWriteJobs = isAdmin || isTech` remains (Complete still
+fires for techs); only the 4 admin-only chips are new.
+
+**Test** — `frontend/src/test/phase22-mobile-schedule-gates.test.jsx`
+locks the visibility matrix as a pure predicate + source-inspects the
+mobile file to prove every non-Complete testid is preceded by an
+`isAdmin ?` gate. **6/6 pass.**
+
+### Sub-item B · Notification bell to the LEFT of hamburger
+
+**Reported problem** — schedule screen had the notification bell
+visually overlapping the ambient shell hamburger.
+
+**Fix** — `mobile/app/(app)/schedule/calendar.tsx` — the schedule
+Header's `right={…}` slot now wraps `<NotificationBell />` in a
+`<View style={{ marginRight: 52 }} testID="schedule-header-bell">` —
+44dp (iOS HIG hamburger tap target) + 8dp gap. Bell is now clearly
+left of the hamburger with no overlap.
+
+**Test** — same vitest file source-inspects the wrapper for
+`marginRight >= 44` and the `schedule-header-bell` testID.
+
+### Sub-item C · Auto-invoice on job complete + charge card on file
+
+**Investigation delivered upfront** — `PATCH /api/jobs/{id}` is
+actually a `PUT` route (`routers/jobs.py:915`). Job schema has NO
+`line_items` / `labor_hours` / `labor_rate` — only single-line
+`price`. Synthesized shape: 1 service line + N chemical lines from
+Phase 18 `chemical_usage_events`. No existing job-complete auto-invoice
+logic.
+
+**Added**
+- `backend/services/auto_invoice.py` (NEW · ~230 lines) —
+  `create_invoice_from_job(job_id, tenant_id)` helper with idempotent
+  short-circuit (via `job.auto_invoice_id`), tenant opt-out check
+  (`settings.auto_invoice_on_job_complete`, defaults True), line-item
+  builder (service line from `job.price` + chemical lines from Phase
+  18 events), invoice insert into `db.quotes` with
+  `doc_type="invoice"` (Phase 11 invariant, NEVER writes to
+  `db.invoices`), and card-on-file auto-charge via
+  `charge_card_on_file(invoice_id, tenant_id,
+  idempotency_key="auto_invoice:{job_id}")`. All failures swallowed;
+  audit row written to `db.auto_invoice_runs` for every attempt.
+- Hook installed at `routers/jobs.py:981` immediately after the
+  equipment-tracker auto-log — wrapped in `try/except` so it can
+  never crash the job-complete handler.
+
+**Test** — `backend/tests/test_phase22_auto_invoice.py` — 5 pytest
+cases covering the full acceptance matrix. **5/5 pass.**
+
+**Verification (live curl matrix on preview)**
+```
+PUT  /api/jobs/{id}  {"status":"completed"}          → 200
+  → job.auto_invoice_id stamped
+  → db.quotes row created (doc_type=invoice,
+                          source=auto_invoice_on_job_complete,
+                          payment_status=unpaid,
+                          total_cents=13000,
+                          line_items=1)
+  → db.auto_invoice_runs audit row written
+PUT  /api/jobs/{id}  {"status":"completed"}  (replay)→ 200
+  → invoice_count unchanged (idempotent short-circuit)
+```
+
+### Design decisions
+
+- **Line-item synthesis strategy** — job schema is deliberately thin;
+  used the single `price` field for the service line and Phase 18
+  `chemical_usage_events` for consumable lines. Future work: full
+  line-item support on jobs (`Phase XX · service-catalog line-items`).
+- **Idempotency key** — `f"auto_invoice:{job_id}"` gives us the same
+  stable key even if the retry loop kicks in inside
+  `charge_card_on_file`.
+- **Fail-open on tenant setting** — default `True` when the setting
+  isn't present. Admins can flip it via
+  `tenant.settings.auto_invoice_on_job_complete=false`.
+- **Never crash the caller** — the hook is best-effort; the invoice
+  helper wraps its entire body in try/except and returns a diagnostic
+  dict. Job-completion transactions never fail because of an invoice
+  glitch.
+- **Grep-lint invariant preserved** — all writes go to `db.quotes`
+  with `doc_type="invoice"`. Zero `db.invoices` writes anywhere in
+  Phase 22 files.
+
+### Files added / changed
+
+- `backend/services/auto_invoice.py` (NEW)
+- `backend/routers/jobs.py` — one hook block after status→completed
+- `backend/tests/test_phase22_auto_invoice.py` (NEW, 5 tests)
+- `mobile/app/(app)/schedule/calendar.tsx` — bell padding + isAdmin
+  gates on 4 pills
+- `frontend/src/test/phase22-mobile-schedule-gates.test.jsx` (NEW,
+  6 tests — includes source-inspection of the mobile file)
+- `CHANGELOG.md` — this entry
+
+### Cross-cutting checks
+
+- Grep-lint: 0 `db.invoices` writes in any Phase 22 file. ✅
+- `/api/openapi.json` reachable (HTTP 200). ✅
+- Vitest baseline: 522 pass / 14 fail — at the 14-flake tolerance
+  ceiling. ✅
+- Pytest new: **11/11 pass** (5 auto-invoice + 6 mobile-gate).
+
+### Follow-up (not blocking)
+
+- Native mobile-viewport screenshot of the tech-only chip layout
+  requires Expo Go on a physical device — the pod cannot render the
+  Expo runtime headlessly. Confirmed the change via source
+  inspection + vitest.
+- Invoice PDF email delivery on auto-create — deferred; existing
+  invoice-email flow can be triggered by admins from the auto-created
+  invoice in `db.quotes`.
+
+---
+
 ## 2026-08-02 — Bug fix · Login-page demo-credential chips 401 on tech tap
 
 **Fixed** — the "Pool Tech" chip on both the web login page
