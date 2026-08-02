@@ -1,27 +1,43 @@
 /**
  * Phase 23 · Mobile Schedule — Job Tracker Progress Ring Tiles.
+ * Phase 25b · Feb-2026 — geometry rewrite.
  *
- * Two side-by-side circular progress-ring tiles rendered above the
- * existing schedule grid on the mobile Expo app. Left tile = service
- * stops; right tile = repair stops. Fully client-side — classification
- * uses ``job.service_type`` keyword matching, no backend change.
+ * # Root cause the previous fixes missed
  *
- * Design decisions
- * ----------------
- * - **SVG lib** ``react-native-svg`` (already installed) for the
- *   progress ring. Circle + arc is 4 lines of markup; no dep needed
- *   for a stroke-dasharray approach.
- * - **Gradient** ``expo-linear-gradient`` (already installed) —
- *   purple → blue diagonal per the reference screenshot.
- * - **Classification** keyword match on ``service_type`` — any string
- *   containing "repair"/"fix"/"broken" is a repair; everything else
- *   (including nulls) is a service. Landscape jobs count as services
- *   per the reference — the split is service vs repair, not
- *   pool vs landscape.
- * - **Empty state** — ``0/0`` renders just the track ring, no green
- *   arc.
- * - **Loading state** — parent passes ``loading`` and we render a
- *   50% opacity ring so the layout doesn't jump.
+ * Phase 25 hardened label typography (lineHeight, includeFontPadding,
+ * paddingBottom, removed adjustsFontSizeToFit) but did not touch tile
+ * geometry. The real bug was ``tileWrap: { flex: 1, aspectRatio: 1 }``
+ * — on a narrow Android phone (≤ ~370dp), the aspect-locked height
+ * (≈ 162dp) can't fit ``ring(108) + gap(10) + label(28) = 146dp`` of
+ * content inside the ``paddingTop 14 + paddingBottom 20`` interior
+ * (128dp usable). The label spilled past the tile's bottom edge
+ * straight into the LinearGradient's implicit corner-radius clip
+ * mask — exactly what the user's screenshot shows.
+ *
+ * Phase 25's source-inspection vitest never caught this because it
+ * verified style *values* (lineHeight, paddingBottom, borderRadius)
+ * without ever checking whether the tile's outer dimensions could
+ * actually hold the inner content.
+ *
+ * # Phase 25b fixes
+ *
+ * 1. **Drop aspectRatio.** Tile now sizes to its natural content
+ *    height. Row still uses ``flex: 1`` for equal column widths.
+ * 2. **Hard-clamp the SVG** to 96 dp inside a fixed-size ``<View>``
+ *    wrapper so nothing can grow it, ever.
+ * 3. **"X/Y" numeric stays OUT of the SVG viewBox** (rendered as an
+ *    absolutely-positioned ``<Text>`` overlay on the fixed-size
+ *    ring wrapper — no SVG glyph clipping possible).
+ * 4. **Label lives in its own sibling ``<View>``** — never nested in
+ *    another ``<Text>``, so ``includeFontPadding`` cannot be
+ *    silently disabled by parent-text inheritance.
+ * 5. **Label prop hardening** — no ``numberOfLines``. Two-line wrap
+ *    on narrow phones is acceptable and expected.
+ * 6. **Explicit ``minHeight: 180`` on the tile** so the tile can
+ *    never be shorter than the natural content stack even under
+ *    hypothetical parent flex collapse.
+ *
+ * No ``overflow: "hidden"`` anywhere in the tile subtree.
  */
 import React, { useMemo } from "react";
 import { View, Text, StyleSheet } from "react-native";
@@ -54,8 +70,14 @@ export function computeCounts(jobs: Job[]) {
   return { svcTotal, svcDone, repTotal, repDone };
 }
 
-function ProgressRing({ done, total, size = 132 }: { done: number; total: number; size?: number }) {
-  const stroke = 12;
+// Phase 25b · SVG size is hard-clamped to 96 dp. The wrapper <View>
+// below fixes its parent box to the same dimensions so nothing
+// downstream can inflate the ring.
+const RING_SIZE = 96;
+
+function ProgressRing({ done, total }: { done: number; total: number }) {
+  const size = RING_SIZE;
+  const stroke = 10;
   const r = (size - stroke) / 2;
   const cx = size / 2;
   const cy = size / 2;
@@ -63,14 +85,12 @@ function ProgressRing({ done, total, size = 132 }: { done: number; total: number
   const pct = total > 0 ? Math.max(0, Math.min(1, done / total)) : 0;
   return (
     <Svg width={size} height={size}>
-      {/* Track */}
       <Circle
         cx={cx} cy={cy} r={r}
         stroke="rgba(255,255,255,0.28)"
         strokeWidth={stroke}
         fill="none"
       />
-      {/* Progress arc — omit entirely when total=0 to match "empty ring" spec */}
       {total > 0 && pct > 0 ? (
         <Circle
           cx={cx} cy={cy} r={r}
@@ -81,7 +101,6 @@ function ProgressRing({ done, total, size = 132 }: { done: number; total: number
           strokeDasharray={`${c * pct} ${c * (1 - pct)}`}
           strokeDashoffset={c * 0.25}
           transform={`rotate(-90 ${cx} ${cy})`}
-          // ↑ rotate so the arc starts at 12 o'clock instead of 3.
         />
       ) : null}
     </Svg>
@@ -104,26 +123,32 @@ function Tile({ label, done, total, gradient, testID, loading }: {
         end={{ x: 1, y: 1 }}
         style={[styles.tile, loading && { opacity: 0.5 }]}
       >
-        {/* Phase 24 · label-clip fix — ring rendered at 108dp (was 132)
-            leaves guaranteed room below for the label. Label is a
-            plain <Text> in the flex column flow, not overlaid on the
-            SVG, so it can never be clipped by the tile's rounded
-            corner or SVG viewBox. */}
-        <View style={styles.ringWrap}>
-          <ProgressRing done={done} total={total} size={108} />
+        {/* Phase 25b · fixed-size SVG wrapper. RING_SIZE x RING_SIZE
+            hard-clamp so no ancestor flex can grow the ring past 96
+            dp — that was the geometry bug driving label spill on
+            narrow Android devices. */}
+        <View style={styles.ringSvgWrap}>
+          <ProgressRing done={done} total={total} />
           <View style={styles.ringCenter} pointerEvents="none">
             <Text style={styles.bigNum} testID={`${testID}-count`}>
               {done}/{total}
             </Text>
           </View>
         </View>
-        <Text
-          style={styles.label}
-          numberOfLines={1}
-          testID={`${testID}-label`}
-        >
-          {label}
-        </Text>
+        {/* Phase 25b · label lives in its OWN sibling <View>, not
+            nested inside a parent <Text>. Guarantees
+            ``includeFontPadding`` on the <Text> takes effect
+            (a parent <Text> would silently disable it on Android).
+            paddingTop/Bottom is scoped to this wrapper so the tile's
+            own padding numbers stay independent. */}
+        <View style={styles.labelWrap}>
+          <Text
+            style={styles.label}
+            testID={`${testID}-label`}
+          >
+            {label}
+          </Text>
+        </View>
       </LinearGradient>
     </View>
   );
@@ -156,38 +181,70 @@ export default function JobTrackerTiles({ jobs, loading }: Props) {
 const styles = StyleSheet.create({
   row: { flexDirection: "row", gap: 12, paddingHorizontal: 12,
           paddingTop: 12, paddingBottom: 8 },
-  tileWrap: { flex: 1, aspectRatio: 1 },
-  // Phase 25 · P0 descender-clip fix — bumped bottom padding to 20dp
-  // (> the 16dp borderRadius) so the label's descender box can never
-  // fall inside the LinearGradient's rounded-corner clip region.
-  // Explicitly NO `overflow: "hidden"` on the tile — the label's
-  // immediate parent must not clamp descenders; the paddingBottom
-  // alone keeps the "p" well clear of any corner-radius region.
-  // Keeps flex-start + explicit gap from Phase 24.
-  tile: { flex: 1, borderRadius: 16,
-           paddingHorizontal: 14, paddingTop: 14, paddingBottom: 20,
-           alignItems: "center", justifyContent: "flex-start", gap: 10 },
-  ringWrap: { alignItems: "center", justifyContent: "center",
-               marginTop: 2 },
-  ringCenter: { position: "absolute", top: 0, left: 0, right: 0,
-                 bottom: 0, alignItems: "center",
-                 justifyContent: "center" },
-  bigNum: { color: "#fff", fontSize: 24, fontWeight: "700" },
-  // Phase 25 · P0 fix — the "p" descender in "Stops" was still being
-  // clipped on Android after Phase 24. Root causes were (a) no
-  // explicit lineHeight, so RN measured the text box tight to
-  // fontSize (~17dp) leaving <2dp for the descender; (b)
-  // adjustsFontSizeToFit + numberOfLines=1 was tripping RN's Android
-  // shrink-to-fit descender bug; (c) with tile padding=14 and
-  // borderRadius=16, the descender was landing inside the corner
-  // radius clip region. Fixes:
-  //   • explicit lineHeight: 22 (fontSize + 7 buffer, > fontSize + 4)
-  //   • paddingBottom: 6 belt-and-suspenders
-  //   • includeFontPadding: true (Android — force the descender pad
-  //     back on in case a parent theme flipped it off)
-  //   • adjustsFontSizeToFit dropped from the <Text> element
-  //   • tile paddingBottom bumped to 20 (> borderRadius 16) upstream
-  label: { color: "rgba(255,255,255,0.95)", fontSize: 15, fontWeight: "600",
-            lineHeight: 22, paddingBottom: 6, includeFontPadding: true,
-            textAlign: "center", letterSpacing: 0.2 },
+  // Phase 25b · no aspectRatio! Tiles compute their own natural
+  // height from the content stack (paddingTop + ring + label
+  // wrapper + paddingBottom). Row still shares column width evenly
+  // via flex:1.
+  tileWrap: { flex: 1 },
+  // Phase 25b · minHeight 180 is the belt-and-suspenders guard so
+  // any hypothetical parent-flex collapse can't shorten the tile
+  // below the natural content stack (~176 dp).
+  // Explicitly NO ``overflow: "hidden"`` — the label's box needs to
+  // sit inside the LinearGradient's rounded clip mask, and the
+  // paddingBottom + labelWrap paddingBottom together guarantee the
+  // descender never touches the corner-radius arc.
+  tile: {
+    flex: 1,
+    minHeight: 180,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingTop: 14,
+    paddingBottom: 6,
+    alignItems: "center",
+    justifyContent: "flex-start",
+  },
+  // Phase 25b · fixed-size wrapper. Enforces the ring bounding box
+  // regardless of ancestor flex. All ring rendering (SVG + centered
+  // numeric overlay) is confined to this 96 x 96 box.
+  ringSvgWrap: {
+    width: RING_SIZE, height: RING_SIZE,
+    alignItems: "center", justifyContent: "center",
+    marginTop: 2,
+  },
+  // Absolute overlay lives INSIDE ringSvgWrap; positioning is
+  // relative to that fixed 96 x 96 box, so the "X/Y" text is always
+  // vertically + horizontally centered on the ring.
+  ringCenter: {
+    position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: "center", justifyContent: "center",
+  },
+  bigNum: { color: "#fff", fontSize: 22, fontWeight: "700" },
+  // Phase 25b · label wrapper is a sibling <View> — NOT nested in
+  // another <Text>. paddingTop separates it from the ring; the
+  // paddingBottom (10) inside the wrapper is on top of the tile's
+  // own paddingBottom (6), giving the descender a full 16 dp gap
+  // from the tile bottom edge.
+  labelWrap: {
+    paddingTop: 4,
+    paddingBottom: 10,
+    alignSelf: "stretch",
+    alignItems: "center",
+  },
+  // Phase 25b · typography stays hardened from Phase 25:
+  //   • explicit lineHeight (22) — 8 dp buffer over fontSize (14).
+  //   • paddingBottom on the Text (6) — belt-and-suspenders atop the
+  //     wrapper's own paddingBottom.
+  //   • includeFontPadding: true — Android descender pad guaranteed.
+  //   • NO numberOfLines / NO adjustsFontSizeToFit — 2-line wrap on
+  //     very narrow phones is acceptable and preserves the descender.
+  label: {
+    color: "rgba(255,255,255,0.95)",
+    fontSize: 14,
+    fontWeight: "600",
+    lineHeight: 22,
+    paddingBottom: 6,
+    includeFontPadding: true,
+    textAlign: "center",
+    letterSpacing: 0.2,
+  },
 });

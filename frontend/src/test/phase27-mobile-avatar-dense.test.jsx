@@ -99,11 +99,21 @@ describe("Phase 27 · Regression — Phase 25 label-clip assertions still hold",
     expect(TILES_SRC).toMatch(/includeFontPadding\s*:\s*true/);
   });
 
-  it("Tile paddingBottom (20) still >= borderRadius (16)", () => {
-    const body = TILES_SRC.match(/tile\s*:\s*\{([\s\S]*?)\}\s*,/)[1];
-    const br = parseInt(body.match(/borderRadius\s*:\s*(\d+)/)[1], 10);
-    const pb = parseInt(body.match(/paddingBottom\s*:\s*(\d+)/)[1], 10);
-    expect(pb).toBeGreaterThanOrEqual(br);
+  it("Phase 25b · descender safe-zone: labelWrap + label paddingBottom >= tile borderRadius", () => {
+    // Superseded from the Phase-25 tile.paddingBottom >= borderRadius
+    // check. Phase 25b geometry moved descender safety into the
+    // dedicated labelWrap <View>.
+    const tileBody = TILES_SRC.match(/tile\s*:\s*\{([\s\S]*?)\}\s*,/)[1];
+    const labelBody = TILES_SRC.match(/label\s*:\s*\{([\s\S]*?)\}\s*,/)[1];
+    const wrapBody = TILES_SRC.match(/labelWrap\s*:\s*\{([\s\S]*?)\}\s*,/)[1];
+    const br = parseInt(tileBody.match(/borderRadius\s*:\s*(\d+)/)[1], 10);
+    const wrapPB = parseInt(
+      (wrapBody.match(/paddingBottom\s*:\s*(\d+)/) || [0, "0"])[1], 10,
+    );
+    const labelPB = parseInt(
+      (labelBody.match(/paddingBottom\s*:\s*(\d+)/) || [0, "0"])[1], 10,
+    );
+    expect(wrapPB + labelPB).toBeGreaterThanOrEqual(br);
   });
 
   it("JobTrackerTiles label still lives outside the SVG viewBox", () => {

@@ -1,29 +1,43 @@
 /**
  * Phase 25 · Mobile Schedule JobTrackerTiles — descender-clip fix.
+ * Phase 25b · Feb-2026 update — one assertion superseded.
  *
  * The "p" in "Stops" was still being clipped on Android after
- * Phase 24. This suite locks the exact style-contract that keeps
+ * Phase 24. This suite locks the style-contract that keeps
  * descenders visible, so future refactors can't silently regress:
  *
  *   • label `lineHeight` >= `fontSize + 4` (buffer for descenders)
  *   • label `paddingBottom` >= 4 (belt-and-suspenders)
  *   • label `includeFontPadding: true` (Android descender pad)
- *   • label's immediate parent (`tile`) has NO `overflow: "hidden"`
- *   • label's immediate parent (`tile`) `paddingBottom` >= `borderRadius`
- *     so the descender never lands inside the corner-radius clip
+ *   • label's immediate parent has NO `overflow: "hidden"`
+ *   • <Text> element still lives OUTSIDE the SVG viewBox
  *
- * jsdom cannot render RN SVG + LinearGradient, so — like Phase 23 —
- * we source-inspect the mobile file and pattern-match the style
- * block.
+ * DEPRECATED (Phase 25b): the assertion
+ * "tile.paddingBottom >= tile.borderRadius" was Phase 25's
+ * descender-safety guard back when tile height was aspect-locked.
+ * Phase 25b geometry drops aspectRatio and moves descender safety
+ * into a dedicated ``labelWrap`` <View> with its own paddingBottom.
+ * That test is rewritten below to assert the NEW safe-zone
+ * contract instead of the old one — see
+ * ``phase25b-job-tracker-geometry.test.jsx`` for the full geometry
+ * lock. Full assertion set is intentionally cross-referenced so a
+ * future refactor that broke either surface would light up here
+ * too.
  */
 import { describe, it, expect } from "vitest";
 import fs from "fs";
 import path from "path";
 
-const SRC = fs.readFileSync(
+const RAW = fs.readFileSync(
   path.resolve(__dirname, "../../../mobile/app/(app)/schedule/JobTrackerTiles.tsx"),
   "utf-8",
 );
+// Strip JSDoc + line comments so regex assertions never match the
+// header's descriptions of the OLD state (aspectRatio, numberOfLines
+// on the label, etc.).
+const SRC = RAW
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .split("\n").map((l) => l.replace(/(^|[^:\\])\/\/.*$/, "$1")).join("\n");
 
 /** Extract the body of a StyleSheet.create key, e.g. `label: { ... }`.
  *  Returns just the inside of the outermost braces so downstream
@@ -82,16 +96,25 @@ describe("Phase 25 · JobTrackerTiles — label descender-clip contract", () => 
     expect(body).not.toMatch(/overflow\s*:\s*['"]hidden['"]/);
   });
 
-  it("tile paddingBottom >= tile borderRadius (descender safe zone)", () => {
-    const body = extractStyleBody("tile");
-    const br = readNumericProp(body, "borderRadius");
-    const pb = readNumericProp(body, "paddingBottom");
+  it("Phase 25b · descender safe-zone now enforced by labelWrap padding, not tile.paddingBottom", () => {
+    // Phase 25b geometry: aspectRatio dropped, tile paddingBottom
+    // reduced, and descender safety moved into a dedicated
+    // <View style={labelWrap}> with its own paddingBottom + the
+    // label <Text>'s own paddingBottom stacking on top.
+    // The invariant we now guarantee is:
+    //     labelWrap.paddingBottom + label.paddingBottom
+    //         >= tile.borderRadius
+    // so the descender still cannot land inside the corner-radius
+    // arc even though the tile's own paddingBottom is smaller now.
+    const tile = extractStyleBody("tile");
+    const label = extractStyleBody("label");
+    const labelWrap = extractStyleBody("labelWrap");
+    expect(labelWrap).not.toBeNull();
+    const br = readNumericProp(tile, "borderRadius");
+    const wrapPB = readNumericProp(labelWrap, "paddingBottom") || 0;
+    const labelPB = readNumericProp(label, "paddingBottom") || 0;
     expect(br).not.toBeNull();
-    expect(pb).not.toBeNull();
-    // If paddingBottom < borderRadius, the label's descender can
-    // land inside the corner-radius arc and get clipped by the
-    // LinearGradient's implicit corner mask on Android.
-    expect(pb).toBeGreaterThanOrEqual(br);
+    expect(wrapPB + labelPB).toBeGreaterThanOrEqual(br);
   });
 
   it("<Text> element for the label does NOT use adjustsFontSizeToFit", () => {

@@ -8,6 +8,179 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-07 — Phase 25b · JobTrackerTiles geometry rewrite (P0)
+
+Root cause: `aspectRatio: 1` + oversized SVG caused the label to
+spill past the LinearGradient rounded clip on narrow phones. Fixed
+by dropping `aspectRatio`, clamping the SVG in a fixed-size `<View>`
+wrapper, moving `0/0` numeric out of the SVG viewBox, and isolating
+the label in its own sibling `<View>`.
+
+### Actual root cause (Phase 25 got the surface but missed the geometry)
+
+Phase 25 hardened label *typography* (lineHeight, includeFontPadding,
+paddingBottom, dropped `adjustsFontSizeToFit`). The vitest checked
+those style-value tuples — but never verified whether the tile's
+outer dimensions could actually hold the inner content stack.
+
+Under `tileWrap: { flex: 1, aspectRatio: 1 }`, on a 360-370 dp
+Android phone the 2-column row math yields:
+
+```
+per-tile width  ≈ 162 dp   → aspectRatio 1 → tile height 162 dp
+interior height  = 162 - 14 (paddingTop) - 20 (paddingBottom) = 128 dp
+content needed   = 108 (ring) + 10 (gap) + 28 (label) = 146 dp
+overflow         = +18 dp  → label falls INTO the LinearGradient
+                             corner-radius clip mask
+```
+
+That's exactly the "faint traces of the top of letters" pattern
+the fresh Android screenshot showed.
+
+### Six-part fix (`mobile/app/(app)/schedule/JobTrackerTiles.tsx`)
+
+1. **Dropped `aspectRatio: 1`** on `tileWrap`. Tile now sizes to
+   the natural content stack; row still uses `flex: 1` so both
+   columns share width evenly.
+2. **Hard-clamped SVG to 96 dp** via a shared `RING_SIZE` constant.
+   The `<Svg>` sits inside a `ringSvgWrap` `<View>` whose width and
+   height are both pinned to `RING_SIZE`, so no ancestor flex can
+   inflate the ring.
+3. **`0/0` numeric stays OUT of the SVG viewBox** — rendered as an
+   absolutely-positioned `<Text>` overlay on the fixed 96 x 96
+   `ringSvgWrap`. Zero SVG glyph clipping possible.
+4. **Label in its own sibling `<View style={styles.labelWrap}>`**
+   — never nested in a parent `<Text>`, so
+   `includeFontPadding` on the label always takes effect on
+   Android (parent-text inheritance would silently disable it).
+5. **Label props hardened** — no `numberOfLines`, no
+   `adjustsFontSizeToFit`. Two-line wrap on very narrow phones is
+   acceptable and preserves the descender.
+6. **`minHeight: 180` on the tile** — natural content stack is
+   ~176 dp so this is a 4 dp safety margin against hypothetical
+   parent-flex collapse.
+
+No `overflow: "hidden"` anywhere in the tile subtree — verified
+by the new geometry vitest.
+
+### New test contract (this is where Phase 25's suite failed us)
+
+`frontend/src/test/phase25b-job-tracker-geometry.test.jsx` (NEW, 9
+cases, all green) — the geometry-first vitest that Phase 25 should
+have shipped:
+
+1. Tile MUST NOT set `aspectRatio` (regression guard).
+2. Tile MUST have `minHeight >= 180`.
+3. SVG lives in a fixed-size `<View>` with `width === height` and
+   both `<= 100` dp.
+4. Label lives in its own sibling `<View>` — `<View
+   style={styles.labelWrap}>` immediately precedes the label
+   `<Text>` in the source.
+5. Label style: `lineHeight >= fontSize + 6`, `paddingBottom >= 6`,
+   `includeFontPadding: true`.
+6. Label `<Text>` carries neither `numberOfLines` nor
+   `adjustsFontSizeToFit`.
+7. No `overflow: "hidden"` on `tile`, `tileWrap`, `ringSvgWrap`,
+   or `labelWrap`.
+8. Label still outside the `<Svg>` viewBox (Phase 24 invariant).
+9. **Content-stack height math holds**:
+   `ringSize + labelWrap.paddingTop + label.lineHeight +
+   label.paddingBottom + labelWrap.paddingBottom
+   <= tile.minHeight - tile.paddingTop - tile.paddingBottom`.
+   Sources the numbers from the actual style bodies + the
+   `RING_SIZE` constant so any future tweak that would silently
+   reopen the spill fails loudly here.
+
+The vitest also strips JSDoc + line comments before matching so
+regexes only inspect executable code (Phase 25's suite matched
+comment text that mentioned the OLD state, which is a general
+lesson for future source-inspection tests).
+
+### Phase 25 test file updated
+
+`frontend/src/test/phase25-job-tracker-label-clipping.test.jsx` —
+the assertion `tile.paddingBottom >= tile.borderRadius` is
+**superseded**. Under Phase 25b geometry, descender safety moved
+into the dedicated `labelWrap` `<View>`, so the new equivalent
+lock is:
+
+```
+labelWrap.paddingBottom + label.paddingBottom  >= tile.borderRadius
+```
+
+Same intent, correct surface. All other Phase 25 assertions
+(lineHeight buffer, includeFontPadding, no
+`adjustsFontSizeToFit`, no `overflow: hidden`, label outside SVG,
+paddingBottom >= 4) still hold under Phase 25b geometry — kept as
+cross-referenced safety guards. Suite: **8/8 passing**.
+
+### Phase 27 mobile regression file updated
+
+`frontend/src/test/phase27-mobile-avatar-dense.test.jsx` had the
+same stale `tile.paddingBottom >= borderRadius` inline assertion
+— rewritten to the Phase 25b equivalent. Suite: **9/9 passing**.
+
+### Manual Expo Go verification checklist
+
+Because Expo cannot render headlessly in the pod:
+
+1. `yarn tunnel` in `/app/mobile/` and open the app in Expo Go on
+   the **same Android device** that produced the regression
+   screenshot (or any device ≤ 380 dp width — that's where the
+   old geometry broke).
+2. Sign in as `landscaper@aquaterra.com` / `password123`.
+3. Open the Schedule tab. The two tiles ("Service Stops",
+   "Repair Stops") sit above the WeekStrip.
+4. Confirm the FULL word "**Stops**" reads clearly on both
+   tiles — the "p" descender must be fully visible with visible
+   pixels below the "o" baseline, well above the tile's rounded
+   bottom edge.
+5. Confirm the ring is visibly smaller than in the regression
+   screenshot — 96 dp with the "0/0" digits at 22 dp fontSize
+   is the target.
+6. Rotate to landscape (or use a wide device) — the tile should
+   naturally grow only in width; the fixed-size ring stays 96 dp
+   centered and the label sits directly below with the same
+   readable spacing.
+7. Try 0/0 (empty ring), partial arc, and full arc — the ring
+   center numeric and the label position must be invariant.
+
+### Cross-suite regression sweep
+
+Phase 23 (11) + Phase 25 (8) + Phase 25b (9) + Phase 26 (6) +
+Phase 27 web (15) + Phase 27 mobile (9) + Phase 27 seed (5) →
+**63/63 vitest passing**. No existing product code outside
+`JobTrackerTiles.tsx` was touched.
+
+### Acknowledgement
+
+Phase 25's source-inspection tests only checked style *values*
+(`lineHeight`, `paddingBottom`, `includeFontPadding`,
+`borderRadius`), never geometry *relationships* — specifically
+whether the tile's outer height could hold the content stack. The
+Phase 25b vitest ships an explicit content-stack math check so any
+future style tweak that would re-open the spill fails immediately.
+
+### Constraints honoured
+
+- Scope: Phase 25b only. Phase 28 untouched. No backend, web,
+  dispatch, or seed changes in this patch — pure mobile fix on
+  one file plus tests.
+- No new dependencies.
+- Tile visual preserved — purple → blue gradient (`#7c3aed` →
+  `#3b82f6`), green completion arc (`#22c55e`), centered X/Y
+  numeric all intact. Ring is now 96 dp (was 108) — a deliberate
+  clamp per the P0 brief.
+- Grep-lint stays green.
+
+### Deferred
+
+Phase 27 dispatch seed follow-up (adding `service_lat`,
+`service_lng`, `service_days` to the demo customer doc) — waiting
+on re-instruction now that this P0 is closed.
+
+---
+
 ## 2026-08-06 — Phase 27 · Global avatar swap for Schedule tiles + Dispatch Board (P2)
 
 ### 2026-08-06 (even later) — Phase 27 follow-up #2 · Dispatch-board seed extension
