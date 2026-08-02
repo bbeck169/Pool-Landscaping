@@ -8,6 +8,104 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-02 — Phase 23 · Mobile Schedule — Job-Tracker progress-ring tiles
+
+### Added
+
+- `mobile/app/(app)/schedule/JobTrackerTiles.tsx` (NEW) — two
+  side-by-side circular progress-ring tiles (Service Stops · Repair
+  Stops) rendered at the top of the mobile schedule page, matching
+  the user's reference screenshot.
+  - `react-native-svg` Circle track + green arc (`#22c55e`) using
+    a `strokeDasharray` proportional to `done/total`.
+  - `expo-linear-gradient` purple → blue (`#7c3aed` → `#3b82f6`)
+    background per the reference.
+  - Empty state (`total === 0`) renders the track ring only — no
+    green arc — with centered `0/0` text.
+  - Full-complete state (`done === total > 0`) renders a full green
+    ring.
+  - Loading state fades the tile to 50% opacity so the layout
+    doesn't jump.
+  - Every tile carries a stable `testID` (`schedule-tile-service`,
+    `schedule-tile-repair`, and nested `-count` / `-label`).
+
+**Client-side classification** — job schema doesn't have a `kind`
+field (612 nulls in `db.jobs`). Classification uses a keyword regex
+over `service_type`: `/(repair|fix|broken|leak|replace)/i` → repair;
+everything else (including landscape and nulls) → service. **No
+backend change needed.**
+
+### Changed
+
+- `mobile/app/(app)/schedule/calendar.tsx` — imported
+  `<JobTrackerTiles>` and rendered it above `<WeekStrip>` with
+  `jobs={dayJobs}` (the client-side memoized array of today's jobs
+  matching `focusISO`). `loading={busy}` wires the existing
+  fetch-busy flag to the tile fade.
+
+### Tests
+
+- `frontend/src/test/phase23-job-tracker-tiles.test.jsx` (NEW) — 9
+  vitest cases. Splits into two groups:
+  - **Pure logic**: classify by keyword; count total + done across
+    mixed jobs; empty list → 0/0; fully-complete states.
+  - **Render contract (source inspection)**: mobile file exposes
+    every required testID, imports `react-native-svg`, uses
+    `#22c55e` for the green arc, uses purple→blue gradient, guards
+    the arc render behind `total > 0 && pct > 0`, and displays
+    "Service Stops" / "Repair Stops" labels.
+
+### Design decisions
+
+- **SVG lib** — `react-native-svg` (already in tree from earlier
+  phases). The ring is 2 `<Circle>` elements: track + arc via
+  `strokeDasharray`. Deliberately did not pull in a third-party
+  progress-ring library for a 4-line effect.
+- **Gradient** — `expo-linear-gradient` (already installed) diagonal
+  `[0,0] → [1,1]`, matches the reference screenshot's top-left
+  purple to bottom-right blue.
+- **Classification is client-side** — the schedule fetch already
+  ships `service_type` + `status` down the wire; no new backend
+  endpoint. Landscape jobs correctly bucket as service (the split is
+  service vs repair, not pool vs landscape).
+- **Arc rotation** — SVG arcs start at 3 o'clock by default;
+  applied `rotate(-90 ${cx} ${cy})` so progress fills from 12
+  o'clock, matching the reference.
+- **Testability** — chose source-inspection tests plus pure-function
+  unit tests for the classifier over rendering the SVG in jsdom.
+  React Native SVG + `expo-linear-gradient` can't render outside of
+  the Expo runtime; source-inspection catches the render-contract
+  regressions that matter (missing testIDs, wrong colors, empty-state
+  guard removed).
+
+### Cross-cutting checks
+
+- Grep-lint: 0 `db.invoices` writes (no backend changes). ✅
+- `/api/openapi.json` reachable (HTTP 200). ✅
+- Vitest baseline: **523 pass / 13 fail** — inside the 11-14 flake
+  tolerance (improved by 1 vs Phase 22).
+- No backend restart needed (mobile-only + frontend vitest).
+
+### Files added / changed
+
+- `mobile/app/(app)/schedule/JobTrackerTiles.tsx` (NEW, ~145 lines)
+- `mobile/app/(app)/schedule/calendar.tsx` (2-line import + 1
+  render insertion)
+- `frontend/src/test/phase23-job-tracker-tiles.test.jsx` (NEW, 9
+  tests)
+- `CHANGELOG.md` — this entry
+
+### Note on visual verification
+
+Native mobile-viewport screenshot requires Expo Go on a physical
+device — the pod cannot render the Expo runtime headlessly. Confirmed
+via source-inspection vitests (colors, testIDs, gradient, arc
+condition, labels) + pure-logic unit tests for the classifier +
+counter. To visually verify on-device, follow the Phase 21
+`mobile/EXPO_GO_RUNBOOK.md` (`cd mobile && yarn tunnel`).
+
+---
+
 ## 2026-08-02 — Phase 22 · Tech mobile restrictions + bell repositioning + auto-invoice on job complete
 
 ### Sub-item A · Mobile tech schedule — Complete chip only

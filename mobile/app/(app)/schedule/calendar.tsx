@@ -38,6 +38,8 @@ import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
 import WeatherWidget from "@/src/components/weather/WeatherWidget";
 import RainFlag from "@/src/components/weather/RainFlag";
 import WeekStrip from "@/src/components/schedule/WeekStrip";
+// Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
+import JobTrackerTiles from "./JobTrackerTiles";
 import { getStatusBorderColor } from "@/src/utils/scheduleStatus";
 import type { HourlyEntry } from "@/src/api/weather";
 
@@ -352,6 +354,12 @@ export default function ScheduleCalendar() {
       <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.md }}>
         {user?.role !== "admin" && user?.role !== "super_admin" && <LandscapingClockWidget />}
       </View>
+
+      {/* Phase 23 · 2026-08-02 — Service / Repair progress-ring
+          tiles at the top of the schedule (above the WeekStrip).
+          Client-side classification off ``service_type`` — no
+          backend change. */}
+      <JobTrackerTiles jobs={dayJobs} loading={busy} />
 
       {/* Feb-2026 · Schedule-UI · 7-day toggle strip.
           The strip drives the shared `focus` state — tapping a day
