@@ -104,15 +104,27 @@ function Tile({ label, done, total, gradient, testID, loading }: {
         end={{ x: 1, y: 1 }}
         style={[styles.tile, loading && { opacity: 0.5 }]}
       >
+        {/* Phase 24 · label-clip fix — ring rendered at 108dp (was 132)
+            leaves guaranteed room below for the label. Label is a
+            plain <Text> in the flex column flow, not overlaid on the
+            SVG, so it can never be clipped by the tile's rounded
+            corner or SVG viewBox. */}
         <View style={styles.ringWrap}>
-          <ProgressRing done={done} total={total} size={132} />
+          <ProgressRing done={done} total={total} size={108} />
           <View style={styles.ringCenter} pointerEvents="none">
             <Text style={styles.bigNum} testID={`${testID}-count`}>
               {done}/{total}
             </Text>
           </View>
         </View>
-        <Text style={styles.label} testID={`${testID}-label`}>{label}</Text>
+        <Text
+          style={styles.label}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          testID={`${testID}-label`}
+        >
+          {label}
+        </Text>
       </LinearGradient>
     </View>
   );
@@ -146,14 +158,22 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", gap: 12, paddingHorizontal: 12,
           paddingTop: 12, paddingBottom: 8 },
   tileWrap: { flex: 1, aspectRatio: 1 },
-  tile: { flex: 1, borderRadius: 16, padding: 16,
-           alignItems: "center", justifyContent: "space-between" },
+  // Phase 24 · flex-start + explicit gap so label sits below the ring
+  // in normal flow. No more space-between (which was pushing the
+  // label into the padding zone and clipping it on small phones).
+  tile: { flex: 1, borderRadius: 16, padding: 14,
+           alignItems: "center", justifyContent: "flex-start", gap: 10 },
   ringWrap: { alignItems: "center", justifyContent: "center",
-               marginTop: 4 },
+               marginTop: 2 },
   ringCenter: { position: "absolute", top: 0, left: 0, right: 0,
                  bottom: 0, alignItems: "center",
                  justifyContent: "center" },
-  bigNum: { color: "#fff", fontSize: 28, fontWeight: "700" },
-  label: { color: "rgba(255,255,255,0.92)", fontSize: 14,
-            fontWeight: "600", marginTop: 6 },
+  bigNum: { color: "#fff", fontSize: 24, fontWeight: "700" },
+  // Phase 24 · label color/weight per spec — high-contrast white at
+  // 95% opacity + weight 600. adjustsFontSizeToFit + numberOfLines=1
+  // guarantee visibility on narrow devices. Label lives BELOW the
+  // ring in the flex column (never inside the SVG viewBox), so the
+  // SVG's rounded corners can no longer clip it.
+  label: { color: "rgba(255,255,255,0.95)", fontSize: 15, fontWeight: "600",
+            textAlign: "center", letterSpacing: 0.2 },
 });

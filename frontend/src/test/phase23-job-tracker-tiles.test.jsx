@@ -123,4 +123,30 @@ describe("Phase 23 · JobTrackerTiles — render contract (source inspection)", 
     expect(SRC.includes('"Service Stops"')).toBe(true);
     expect(SRC.includes('"Repair Stops"')).toBe(true);
   });
+
+  it("Phase 24 · label is a separate <Text> node OUTSIDE the SVG viewBox", () => {
+    // Split the source at the SVG boundary. The label's <Text> node
+    // (marked by testID `${testID}-label`) must live in the *outer*
+    // component body — NOT nested inside <Svg>...</Svg>. Prior bug
+    // rendered the label as SVG text, which the rounded corners of
+    // the tile clipped on narrow devices.
+    const svgOpen = SRC.indexOf("<Svg");
+    const svgClose = SRC.indexOf("</Svg>");
+    expect(svgOpen).toBeGreaterThan(-1);
+    expect(svgClose).toBeGreaterThan(svgOpen);
+    const insideSvg = SRC.slice(svgOpen, svgClose);
+    // The label testID string must NOT appear inside the SVG block.
+    expect(insideSvg.includes("${testID}-label")).toBe(false);
+    // And the tile file must render the label via a <Text> element
+    // (not <SvgText> or similar) so RN's flex layout owns positioning.
+    expect(SRC.match(/<Text[^>]*testID=\{`\$\{testID\}-label`\}/)).not.toBeNull();
+  });
+
+  it("Phase 24 · label uses high-contrast white at 95% opacity + weight 600", () => {
+    // Spec: rgba(255,255,255,0.95) + fontWeight "600". This is the
+    // visual-contract lock so future refactors can't silently drop
+    // the readability fix.
+    expect(SRC.includes('"rgba(255,255,255,0.95)"')).toBe(true);
+    expect(SRC.match(/label:\s*\{[^}]*fontWeight:\s*"600"/)).not.toBeNull();
+  });
 });

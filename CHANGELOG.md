@@ -8,6 +8,65 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-03 — Phase 24 · Mobile Schedule — Scroll fix + JobTrackerTiles label clip fix
+
+### Fixed
+
+- `mobile/app/(app)/schedule/JobTrackerTiles.tsx` — the "Service Stops"
+  / "Repair Stops" labels were being clipped by the tile's rounded
+  gradient corners on narrow devices. Root cause: prior layout used
+  `justifyContent: "space-between"` which pushed the label into the
+  tile's inner padding zone, where the SVG's own bounding-box math +
+  the tile's `borderRadius: 16` combined to eat the descenders on
+  smaller phones. Fix: the label is now a plain `<Text>` node rendered
+  *below* the ring in normal flex-column flow (never inside the SVG
+  viewBox), with `justifyContent: "flex-start"` + explicit `gap: 10`
+  spacing, `color: "rgba(255,255,255,0.95)"`, `fontWeight: "600"`,
+  `numberOfLines={1}`, and `adjustsFontSizeToFit`. Ring size trimmed
+  132 → 108 dp so the label + ring both fit comfortably inside the
+  square tile without touching the padding zone.
+
+- `mobile/app/(app)/schedule/calendar.tsx` — the mobile schedule
+  page didn't scroll top-to-bottom on shorter devices: the
+  `LandscapingClockWidget` + `JobTrackerTiles` + `WeekStrip` +
+  mode-switch band sat in a fixed flex column above the per-view
+  `ScrollView` inside `GridView`/`CalendarView`, so any content that
+  overflowed below the fold was unreachable. Fix: wrapped the body
+  (everything below the `Header`, above the `Modal`) in a single
+  vertical `<ScrollView contentContainerStyle={{ paddingBottom: 40 }}
+  testID="schedule-root-scroll">`. Converted the outer `<ScrollView>`
+  in `GridView` and `CalendarView` to plain `<View>`s to eliminate
+  nested-vertical-scroll conflicts. `WeekStrip`'s internal
+  horizontal scroll and `CalendarView`'s inner horizontal
+  columns-scroll are on the perpendicular axis and continue to work
+  as independent nested scrolls. The reassign-Tech `Modal` is
+  rendered above via RN's Modal portal, so it stays outside the
+  scroll region.
+
+### Tests
+
+- `frontend/src/test/phase23-job-tracker-tiles.test.jsx` — added
+  two Phase-24 source-inspection assertions to lock the visual
+  contract:
+  1. label `<Text>` must live **outside** the `<Svg>...</Svg>`
+     block (never rendered as SVG text, so RN flex layout owns its
+     positioning);
+  2. label style must resolve to `rgba(255,255,255,0.95)` +
+     `fontWeight: "600"` per the spec, preventing a silent
+     regression on future refactors.
+
+### Constraints honoured
+
+- Mobile-only — no backend or web changes.
+- No new dependencies.
+- Tile visual preserved — purple → blue gradient (`#7c3aed` →
+  `#3b82f6`), green completion arc (`#22c55e`), centered big-number
+  `X/Y` count all unchanged.
+- Grep-lint stays green — zero writes to `db.invoices`; no
+  hard-coded URLs; no new dependency added.
+
+---
+
 ## 2026-08-02 — Phase 23 · Mobile Schedule — Job-Tracker progress-ring tiles
 
 ### Added

@@ -351,6 +351,23 @@ export default function ScheduleCalendar() {
           </View>
         ) : undefined}
       />
+      {/* Phase 24 · 2026-08-03 — Root scroll wrapper. Prior layout was
+          a flex column with per-view ScrollViews inside GridView /
+          CalendarView, leaving the JobTrackerTiles + WeekStrip +
+          mode-switch band non-scrollable and clipping content on
+          shorter devices. Wrapping the body (everything below the
+          Header, above the Modal) in a single vertical ScrollView
+          makes the whole schedule page scroll top-to-bottom without
+          disturbing the WeekStrip's independent horizontal scroll or
+          the reassign-Modal (which is rendered above via RN's Modal
+          portal, so it's outside this ScrollView anyway). GridView
+          and CalendarView switched their outer <ScrollView> to plain
+          <View>s to avoid nested-vertical-scroll conflicts. */}
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 40 }}
+        showsVerticalScrollIndicator
+        testID="schedule-root-scroll"
+      >
       <View style={{ paddingHorizontal: spacing.lg, paddingTop: spacing.md }}>
         {user?.role !== "admin" && user?.role !== "super_admin" && <LandscapingClockWidget />}
       </View>
@@ -442,6 +459,8 @@ export default function ScheduleCalendar() {
         />
       )}
 
+      </ScrollView>
+
       {/* Reassign Tech Modal */}
       <Modal visible={reassignOpen} transparent animationType="fade" onRequestClose={() => setReassignOpen(false)}>
         <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", alignItems: "center", justifyContent: "center", paddingHorizontal: 24 }}>
@@ -523,7 +542,7 @@ function GridView(props: any) {
   const isToday = focusISO === iso(new Date());
 
   return (
-    <ScrollView contentContainerStyle={{ padding: spacing.md, paddingBottom: spacing["3xl"] }}>
+    <View style={{ padding: spacing.md, paddingBottom: spacing["3xl"] }}>
       <View style={gStyles.dayHead} testID="schedule-day-head">
         <Pressable onPress={() => setFocus(addDays(focus, -1))} style={gStyles.navBtn} testID="grid-prev-day">
           <Ionicons name="chevron-back" size={18} color={colors.onSurface} />
@@ -666,7 +685,7 @@ function GridView(props: any) {
           {weatherWidget}
         </View>
       ) : null}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -794,7 +813,7 @@ function CalendarView({
   weatherWidget,
 }: any) {
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1 }}>
+    <View style={{ flexGrow: 1 }}>
       <View style={cStyles.head}>
         <Pressable onPress={onPrev} style={cStyles.navBtn} testID="calendar-prev-week">
           <Ionicons name="chevron-back" size={18} color={colors.onSurface} />
@@ -863,7 +882,7 @@ function CalendarView({
           {weatherWidget}
         </View>
       ) : null}
-    </ScrollView>
+    </View>
   );
 }
 
