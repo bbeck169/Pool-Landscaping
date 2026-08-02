@@ -120,7 +120,6 @@ function Tile({ label, done, total, gradient, testID, loading }: {
         <Text
           style={styles.label}
           numberOfLines={1}
-          adjustsFontSizeToFit
           testID={`${testID}-label`}
         >
           {label}
@@ -158,10 +157,15 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", gap: 12, paddingHorizontal: 12,
           paddingTop: 12, paddingBottom: 8 },
   tileWrap: { flex: 1, aspectRatio: 1 },
-  // Phase 24 · flex-start + explicit gap so label sits below the ring
-  // in normal flow. No more space-between (which was pushing the
-  // label into the padding zone and clipping it on small phones).
-  tile: { flex: 1, borderRadius: 16, padding: 14,
+  // Phase 25 · P0 descender-clip fix — bumped bottom padding to 20dp
+  // (> the 16dp borderRadius) so the label's descender box can never
+  // fall inside the LinearGradient's rounded-corner clip region.
+  // Explicitly NO `overflow: "hidden"` on the tile — the label's
+  // immediate parent must not clamp descenders; the paddingBottom
+  // alone keeps the "p" well clear of any corner-radius region.
+  // Keeps flex-start + explicit gap from Phase 24.
+  tile: { flex: 1, borderRadius: 16,
+           paddingHorizontal: 14, paddingTop: 14, paddingBottom: 20,
            alignItems: "center", justifyContent: "flex-start", gap: 10 },
   ringWrap: { alignItems: "center", justifyContent: "center",
                marginTop: 2 },
@@ -169,11 +173,21 @@ const styles = StyleSheet.create({
                  bottom: 0, alignItems: "center",
                  justifyContent: "center" },
   bigNum: { color: "#fff", fontSize: 24, fontWeight: "700" },
-  // Phase 24 · label color/weight per spec — high-contrast white at
-  // 95% opacity + weight 600. adjustsFontSizeToFit + numberOfLines=1
-  // guarantee visibility on narrow devices. Label lives BELOW the
-  // ring in the flex column (never inside the SVG viewBox), so the
-  // SVG's rounded corners can no longer clip it.
+  // Phase 25 · P0 fix — the "p" descender in "Stops" was still being
+  // clipped on Android after Phase 24. Root causes were (a) no
+  // explicit lineHeight, so RN measured the text box tight to
+  // fontSize (~17dp) leaving <2dp for the descender; (b)
+  // adjustsFontSizeToFit + numberOfLines=1 was tripping RN's Android
+  // shrink-to-fit descender bug; (c) with tile padding=14 and
+  // borderRadius=16, the descender was landing inside the corner
+  // radius clip region. Fixes:
+  //   • explicit lineHeight: 22 (fontSize + 7 buffer, > fontSize + 4)
+  //   • paddingBottom: 6 belt-and-suspenders
+  //   • includeFontPadding: true (Android — force the descender pad
+  //     back on in case a parent theme flipped it off)
+  //   • adjustsFontSizeToFit dropped from the <Text> element
+  //   • tile paddingBottom bumped to 20 (> borderRadius 16) upstream
   label: { color: "rgba(255,255,255,0.95)", fontSize: 15, fontWeight: "600",
+            lineHeight: 22, paddingBottom: 6, includeFontPadding: true,
             textAlign: "center", letterSpacing: 0.2 },
 });

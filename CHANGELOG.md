@@ -8,6 +8,99 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-04 — Phase 25 · Mobile Schedule — JobTrackerTiles label descender-clip fix (P0)
+
+### Fixed
+
+- `mobile/app/(app)/schedule/JobTrackerTiles.tsx` — the "p" descender
+  in "Stops" was still being clipped on Android after Phase 24. Root
+  causes identified:
+  1. **No explicit `lineHeight`** on the label — RN measured the
+     text box tight to `fontSize: 15` (implicit lineHeight ≈ 17-18),
+     leaving <2dp for the descender. On Android that's routinely
+     rounded away.
+  2. **`adjustsFontSizeToFit` + `numberOfLines={1}`** — a known RN
+     Android bug where the shrunk font still uses the original
+     baseline math, chopping descenders even when the visible
+     glyph would fit.
+  3. **Corner-radius clip** — `LinearGradient` with
+     `borderRadius: 16` implicitly clips at rounded corners; with
+     the prior `padding: 14` the descender was landing inside the
+     corner-radius arc.
+  4. **`includeFontPadding`** — if any parent Text theme flipped
+     the Android default off, the descender pad disappears.
+
+  Fix:
+  - Label style now sets `lineHeight: 22` (fontSize + 7 buffer,
+    exceeds the spec minimum of `fontSize + 4`).
+  - Label style adds `paddingBottom: 6` as belt-and-suspenders.
+  - Label style adds explicit `includeFontPadding: true` so Android
+    always keeps the descender pad regardless of parent theme.
+  - `adjustsFontSizeToFit` dropped from the `<Text>` element — the
+    labels are short (`"Service Stops"` / `"Repair Stops"`) and
+    known-fit at 108dp ring size; the prop only introduced the
+    shrink-to-fit descender bug.
+  - Tile style splits `padding: 14` into `paddingHorizontal: 14`,
+    `paddingTop: 14`, `paddingBottom: 20`. `paddingBottom > 
+    borderRadius` (20 > 16) guarantees the descender never lands
+    inside the corner-radius arc.
+  - Tile does NOT set `overflow: "hidden"` — deliberately, so the
+    label's immediate parent can never clip descenders even under
+    edge-case font-metric drift.
+
+### Tests
+
+- `frontend/src/test/phase25-job-tracker-label-clipping.test.jsx`
+  (NEW) — source-inspection vitest that reads
+  `mobile/app/(app)/schedule/JobTrackerTiles.tsx` and locks the
+  descender-clip contract:
+  1. label `lineHeight` >= `fontSize + 4`
+  2. label `paddingBottom` >= 4 (or `paddingVertical` >= 4)
+  3. label `includeFontPadding: true`
+  4. label's immediate parent (`tile`) has **NO**
+     `overflow: "hidden"`
+  5. `tile.paddingBottom` >= `tile.borderRadius` (descender safe
+     zone)
+  6. `<Text>` element does not carry `adjustsFontSizeToFit`
+  7. Regression guard from Phase 24 — label still outside `<Svg>`
+
+- Phase 23 / Phase 24 assertions in
+  `phase23-job-tracker-tiles.test.jsx` remain intact (source
+  patterns unchanged for testIDs, gradient, arc color, and label
+  outside-SVG lock).
+
+### Constraints honoured
+
+- Mobile-only — no backend or web code changes.
+- No new dependencies.
+- Tile visual preserved — purple → blue gradient (`#7c3aed` →
+  `#3b82f6`), green completion arc (`#22c55e`), centered big-number
+  `X/Y` count all unchanged.
+- Grep-lint stays green — zero writes to `db.invoices`; no
+  hard-coded URLs.
+
+### Manual verification (Expo Go)
+
+Because the pod cannot headless-render Expo, please spot-check in
+Expo Go:
+
+1. `yarn tunnel` in `/app/mobile/` and open the app in Expo Go on
+   any Android device (Android is where the descender clip was most
+   visible; iOS was less affected).
+2. Sign in as `landscaper@aquaterra.com` / `password123` (or any
+   role that lands on the Schedule tab first).
+3. Navigate to **Schedule** — the two tiles ("Service Stops" and
+   "Repair Stops") sit above the WeekStrip.
+4. Confirm the full word "**Stops**" reads cleanly on **both**
+   tiles — the "p" descender must be fully visible on the purple →
+   blue gradient background with no bottom-edge clip.
+5. Optional stress test — pick a day with 0 jobs vs a day with many
+   jobs; the tile height/aspect is fixed via `aspectRatio: 1` so
+   the label position is invariant, but confirming both empty (`0/0`)
+   and populated states look correct is worthwhile.
+
+---
+
 ## 2026-08-03 — Phase 24 · Mobile Schedule — Scroll fix + JobTrackerTiles label clip fix
 
 ### Fixed
