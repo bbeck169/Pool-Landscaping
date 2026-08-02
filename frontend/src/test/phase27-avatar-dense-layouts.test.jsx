@@ -31,6 +31,13 @@ const SCHEDULE_SRC = fs.readFileSync(
   path.resolve(__dirname, "../pages/schedule/TodaySchedule.jsx"),
   "utf-8",
 );
+// Phase 27 follow-up · Feb-2026 — the /schedule route mounts
+// CalendarSchedule, not TodaySchedule. The avatar swap has to land
+// on the primary surface too, so we source-inspect it here.
+const CALENDAR_SRC = fs.readFileSync(
+  path.resolve(__dirname, "../pages/schedule/CalendarSchedule.jsx"),
+  "utf-8",
+);
 
 describe("Phase 27 · TechAvatar pixel size contract", () => {
   it("exposes xs/sm/md size vocabulary matching the Phase-27 spec", () => {
@@ -128,6 +135,35 @@ describe("Phase 27 · Schedule card source contract", () => {
     // string literal.
     expect(SCHEDULE_SRC).toMatch(
       /schedule-card-tech-avatar-\$\{j\.id\}/,
+    );
+  });
+});
+
+describe("Phase 27 follow-up · Primary /schedule (CalendarSchedule) source contract", () => {
+  it("CalendarSchedule imports the shared TechAvatar", () => {
+    expect(CALENDAR_SRC).toMatch(
+      /import\s+TechAvatar\s+from\s+["']@\/components\/common\/TechAvatar["']/,
+    );
+  });
+
+  it("CalendarSchedule mounts <TechAvatar size='xs' /> inside its per-job card", () => {
+    expect(CALENDAR_SRC).toMatch(/<TechAvatar[\s\S]*?size=["']xs["']/);
+  });
+
+  it("CalendarSchedule attaches schedule-card-tech-avatar-${j.id} testid", () => {
+    // Same testid pattern as TodaySchedule so the tester selector
+    // `[data-testid^=\"schedule-card-tech-avatar-\"]` resolves on
+    // whichever surface is currently rendering.
+    expect(CALENDAR_SRC).toMatch(
+      /schedule-card-tech-avatar-\$\{j\.id\}/,
+    );
+  });
+
+  it("CalendarSchedule avatar is guarded behind a technician-identity conditional", () => {
+    // Same guard shape as TodaySchedule — no chip when the job has
+    // no assigned tech.
+    expect(CALENDAR_SRC).toMatch(
+      /j\.technician_name\s*\|\|\s*j\.assigned_technician_name/,
     );
   });
 });

@@ -10,6 +10,53 @@ Do not rewrite history — only prepend new entries at the top.
 
 ## 2026-08-06 — Phase 27 · Global avatar swap for Schedule tiles + Dispatch Board (P2)
 
+### 2026-08-06 (later) — Phase 27 follow-up · CalendarSchedule + demo-job seed
+
+Routing miss caught in verification: `/schedule` mounts
+`CalendarSchedule` (Grid mode is the default), not the legacy
+`TodaySchedule`. The Phase 27 avatar swap has been extended to the
+primary surface + a demo job seeded so the tester can visually
+verify both dense-layout avatars.
+
+- `frontend/src/pages/schedule/CalendarSchedule.jsx` — the Grid-mode
+  per-job card render (`GridPanel`, jobs.map, line ~1300) now mounts
+  a compact `<TechAvatar size="xs" />` immediately left of the
+  customer name, guarded by the same
+  `technician_name || assigned_technician_name || technician_id`
+  conditional used in `TodaySchedule.jsx`. Testid:
+  `schedule-card-tech-avatar-${j.id}` — matches the legacy-timeline
+  surface so `[data-testid^=\"schedule-card-tech-avatar-\"]`
+  resolves on whichever surface is active. Row height unchanged
+  (20 px avatar fits under the existing font-size line-height).
+- `frontend/src/pages/schedule/TodaySchedule.jsx` — kept intact for
+  the legacy `/schedule/legacy-timeline` route.
+- **Seed helper** —
+  `backend/scripts/seed_phase27_demo_job.py` (NEW, idempotent):
+  upserts one job with the stable id `seed-phase27-today-job`
+  assigned to Luis Marquez (`landscaper@aquaterra.com`) on today's
+  date, with Peoria-AZ coordinates so it lands on the Dispatch
+  Board map viewport. Second run only updates
+  `scheduled_date` (to today) + `updated_at` so it never leaves
+  stale calendar-day data behind. Preflight bails cleanly with a
+  WARNING if the pinned tenant/user drift so no orphan rows land.
+  Ran on the demo pod today — insert on first run, matched=1 on
+  second run.
+- **Vitest** — extended
+  `frontend/src/test/phase27-avatar-dense-layouts.test.jsx` with 4
+  new assertions locking the CalendarSchedule surface (import,
+  `<TechAvatar size='xs' />` mount, testid pattern, technician
+  conditional). Suite total: **15 cases, all green**. Full Phase
+  25/26/27 sweep: **38/38 passing**. No existing Phase 27
+  assertions were altered.
+
+**Seeded job id for the tester**: `seed-phase27-today-job`
+(tenant `3814833a-dd0d-4bd9-90ea-351c24924649`, assigned to
+`landscaper@aquaterra.com`, scheduled for today).
+
+To re-seed on a later day (e.g., new tester run): run
+`python3 /app/backend/scripts/seed_phase27_demo_job.py` — it will
+idempotently move the job to today's date.
+
 ### Housekeeping (Phase 26 tester side-effect)
 
 - Reset seed user `landscaper@aquaterra.com` (Luis Marquez) back to

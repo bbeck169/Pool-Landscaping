@@ -41,6 +41,11 @@ import ServiceNotePill from "@/components/schedule/ServiceNotePill";
 import TechWeatherWidget from "@/components/Weather/WeatherWidget";
 import JobRainFlag from "@/components/Weather/JobRainFlag";
 import WeekStrip from "@/components/schedule/WeekStrip";
+// Phase 27 follow-up · Feb-2026 — the primary /schedule surface is
+// CalendarSchedule (not TodaySchedule), so the compact tech-avatar
+// swap has to live here too. Sized ``xs`` (20px) so per-job card
+// height is preserved.
+import TechAvatar from "@/components/common/TechAvatar";
 
 
 // Feb-2026 · Schedule-UI · left-border indicator for status.
@@ -1367,6 +1372,23 @@ function GridPanel({
                     {isRecurring(j) ? "🔁 " : ""}{j.service_type || "General"}
                   </div>
                   <div className="text-sm font-bold flex items-center gap-1.5" style={{ color: colors.onSurface }}>
+                    {/* Phase 27 follow-up · compact tech avatar on the
+                        primary /schedule (Grid mode) card. Only renders
+                        when the job has an assigned tech; keeps card
+                        height unchanged because 20px fits under the
+                        existing line-height. */}
+                    {(j.technician_name || j.assigned_technician_name
+                       || j.technician_id) ? (
+                      <TechAvatar
+                        user={{
+                          name: j.technician_name || j.assigned_technician_name,
+                          profile_photo_url: j.technician_photo_url
+                                           || j.assignee_photo_url,
+                        }}
+                        size="xs"
+                        testid={`schedule-card-tech-avatar-${j.id}`}
+                      />
+                    ) : null}
                     <span>{j.customer_name || "Unknown"}</span>
                     {j.customer_is_vip ? (
                       <span
