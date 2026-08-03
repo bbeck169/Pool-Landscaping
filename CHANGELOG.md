@@ -10,6 +10,52 @@ Do not rewrite history — only prepend new entries at the top.
 
 ## 2026-08-09 — Phase 28 · `eas update` OTA migration (P2 · infra)
 
+### 2026-08-09 (hotfix) — Phase 28.1 · disable expo-updates auto-check while placeholder is in place (P0)
+
+User's Expo Go screenshot on boot showed **"Uncaught Error:
+Request failed (404)"** from `expo-updates`. Root cause: Phase 28's
+first pass shipped `updates.url =
+https://u.expo.dev/PLACEHOLDER_EXPO_PROJECT_ID` **with**
+`checkAutomatically: "ON_LOAD"`, which made the runtime fire an
+update check against the placeholder host on every foreground.
+That host doesn't exist → 404 → uncaught error surfaced to the
+user. Phase 28 was supposed to be inert until the operator
+provisioned EAS.
+
+- `mobile/app.json` — flipped `expo.updates.checkAutomatically`
+  `"ON_LOAD"` → `"NEVER"` AND added
+  `expo.updates.enabled: false`. Placeholder URL preserved so the
+  operator still sees where to swap.
+- `mobile/scripts/validate_eas_update_config.mjs` — added a hard
+  placeholder-state invariant: while `PLACEHOLDER_EXPO_PROJECT_ID`
+  is in the URL, `enabled: false` AND
+  `checkAutomatically: "NEVER"` MUST both hold, else the script
+  exits 1 with a clear diagnostic. Post-swap, if either is still
+  in the disabled state, the script surfaces a WARNING so the
+  operator remembers to flip both fields active.
+- `mobile/EAS_UPDATE_RUNBOOK.md` (§1d) — expanded to document
+  the two-edit sequence: swap `PLACEHOLDER_EXPO_PROJECT_ID` for
+  the real UUID **and** flip `enabled` → `true` +
+  `checkAutomatically` → `"ON_LOAD"` (or `"ON_ERROR_RECOVERY"`)
+  before the first `eas update` call.
+- `frontend/src/test/phase28-eas-update-config.test.jsx` — split
+  the `checkAutomatically` assertion into a placeholder-gated
+  branch (accepts `"NEVER"` while placeholder present; requires
+  `"ON_LOAD"` or `"ON_ERROR_RECOVERY"` post-swap). Added a new
+  hard assertion that `enabled === false` while placeholder is
+  present + `enabled === true` post-swap. Suite went 12 → 13
+  cases; all green.
+
+**Defensive sanity check on the invariant** — temporarily flipped
+`enabled: true` while the placeholder was still in the URL: the
+validator correctly exited 1 with the diagnostic
+`"expo.updates.enabled MUST be \`false\` while
+PLACEHOLDER_EXPO_PROJECT_ID is in the URL"`. Restored to
+`enabled: false` → exit 0. This class of regression is now
+impossible to ship.
+
+### 2026-08-09 — Phase 28 · `eas update` OTA migration (P2 · infra)
+
 Enables Over-The-Air JavaScript updates for the Expo mobile app.
 Config-only migration — zero user-visible feature change. Future
 JS-only fixes (screens, hooks, business logic, styles) can now

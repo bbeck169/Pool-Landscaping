@@ -13,8 +13,9 @@
     },
     "updates": {
       "url": "https://u.expo.dev/PLACEHOLDER_EXPO_PROJECT_ID",
+      "enabled": false,
       "fallbackToCacheTimeout": 0,
-      "checkAutomatically": "ON_LOAD"
+      "checkAutomatically": "NEVER"
     },
     "ios": {
       "supportsTablet": true,

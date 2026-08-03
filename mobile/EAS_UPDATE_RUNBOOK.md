@@ -46,22 +46,43 @@ eas init
 This writes `extra.eas.projectId` into `app.json` and returns the
 canonical project id (a UUID). Copy that UUID.
 
-### 1d · Swap the `PROJECT_ID` placeholder
+### 1d · Swap the `PROJECT_ID` placeholder (and flip the runtime ON)
 
-Phase 28 shipped `app.json` with a placeholder:
+Phase 28 shipped `app.json` with a placeholder AND with
+`expo-updates` **disabled at runtime** so the app cannot 404 on
+boot before EAS is provisioned:
 
 ```json
 "updates": {
   "url": "https://u.expo.dev/PLACEHOLDER_EXPO_PROJECT_ID",
-  ...
+  "enabled": false,
+  "fallbackToCacheTimeout": 0,
+  "checkAutomatically": "NEVER"
 }
 ```
 
-After `eas init` returns the real project UUID, replace the string
-**`PLACEHOLDER_EXPO_PROJECT_ID`** with that UUID in `/app/mobile/app.json`.
+**Two edits are required before your first `eas update` call:**
 
-If you skip this swap, `eas update --branch …` will fail because
-the runtime cannot resolve which project to publish against.
+1. Replace the string `PLACEHOLDER_EXPO_PROJECT_ID` with the real
+   project UUID (from `eas init`).
+2. In the same `updates` block, flip:
+   - `"enabled": false` → `"enabled": true`
+   - `"checkAutomatically": "NEVER"` → `"ON_LOAD"` (or
+     `"ON_ERROR_RECOVERY"` if you want update checks only after
+     a JS crash).
+
+If you skip either edit, the runtime either does not fetch
+updates (`enabled: false`) or does not check on foreground
+(`checkAutomatically: "NEVER"`). Both are the deliberate P0
+hotfix state that keeps the app safely running against the
+placeholder URL.
+
+The validation script (`§1e`) enforces this invariant:
+`enabled: false` + `checkAutomatically: "NEVER"` MUST both be
+true while the placeholder is in the URL. If you flip
+`enabled: true` while the placeholder is still there, the
+script exits 1 with a diagnostic — that catches the exact
+regression that broke Phase 28's first pass.
 
 ### 1e · Validate the config
 

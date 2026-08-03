@@ -38,12 +38,46 @@ describe("Phase 28 · app.json — updates + runtimeVersion contract", () => {
     expect(appJson.expo.runtimeVersion.policy).toBe("appVersion");
   });
 
-  it("expo.updates configures a fast-fail cache timeout + auto-check on load", () => {
+  it("expo.updates configures a fast-fail cache timeout + placeholder-safe check policy", () => {
     // Defensive — a runtime that hangs on update check is worse
-    // than one that ships stale JS. Zero timeout + ON_LOAD check
-    // is the recommended workforce-app config.
+    // than one that ships stale JS. Zero timeout is always right.
     expect(appJson.expo.updates.fallbackToCacheTimeout).toBe(0);
-    expect(appJson.expo.updates.checkAutomatically).toBe("ON_LOAD");
+
+    // Phase 28 hotfix invariant: while the placeholder is in the
+    // URL, checkAutomatically MUST be "NEVER" (so the runtime
+    // doesn't 404 on boot). Once the placeholder has been
+    // swapped for a real UUID, "ON_LOAD" or "ON_ERROR_RECOVERY"
+    // is the target. We assert the correct value for the
+    // current placeholder state.
+    const url = appJson.expo.updates.url || "";
+    const isPlaceholder = url.includes("PLACEHOLDER_EXPO_PROJECT_ID");
+    if (isPlaceholder) {
+      expect(appJson.expo.updates.checkAutomatically).toBe("NEVER");
+    } else {
+      expect(["ON_LOAD", "ON_ERROR_RECOVERY"])
+        .toContain(appJson.expo.updates.checkAutomatically);
+    }
+  });
+
+  it("Phase 28 hotfix · updates.enabled === false while PLACEHOLDER is in place", () => {
+    // Belt-and-suspenders against the exact P0 regression that
+    // shipped in Phase 28's first pass — `enabled: false`
+    // definitively prevents any runtime fetch against the
+    // placeholder host, so the app cannot surface a boot-time
+    // 404 to the user. When the operator swaps the placeholder,
+    // they MUST also flip enabled → true (documented in the
+    // runbook + surfaced as a warning by the validation script).
+    const url = appJson.expo.updates.url || "";
+    const isPlaceholder = url.includes("PLACEHOLDER_EXPO_PROJECT_ID");
+    if (isPlaceholder) {
+      expect(appJson.expo.updates.enabled).toBe(false);
+    } else {
+      // Post-swap, enabled should be true (otherwise OTA never
+      // runs). Warn-not-fail semantics live in the validator;
+      // the vitest hard-asserts because a post-swap `false` is
+      // almost certainly a config mistake.
+      expect(appJson.expo.updates.enabled).toBe(true);
+    }
   });
 });
 

@@ -61,16 +61,59 @@ if (appJson) {
       `'https://u.expo.dev/'. Got: ${updates.url}`,
     );
   } else if (updates.url.includes("PLACEHOLDER_EXPO_PROJECT_ID")) {
-    // Not fatal — the runbook explicitly documents that this
-    // needs swapping before the first `eas update` call — but
-    // we surface it as a warning so the config-validation step
-    // makes it visible pre-flight.
+    // Phase 28 · Feb-2026 hotfix — while the placeholder is in
+    // the URL, ``expo-updates`` MUST be inert at runtime.
+    // Otherwise the app hits the placeholder host on boot and
+    // surfaces an uncaught 404 to the user (the exact regression
+    // that shipped in Phase 28's first pass). We enforce a hard
+    // invariant here: placeholder present ⇔ enabled:false AND
+    // checkAutomatically:"NEVER".
     warnings.push(
       "app.json → expo.updates.url still contains " +
       "PLACEHOLDER_EXPO_PROJECT_ID. Swap for the real project " +
       "UUID (from `eas init`) before publishing. See §1d of " +
       "EAS_UPDATE_RUNBOOK.md.",
     );
+    if (updates.enabled !== false) {
+      errors.push(
+        "app.json → expo.updates.enabled MUST be `false` while " +
+        "PLACEHOLDER_EXPO_PROJECT_ID is in the URL. Otherwise " +
+        "the runtime fetches from a non-existent host on boot " +
+        "and surfaces a 404 to the user. Set " +
+        "`\"enabled\": false` OR swap the placeholder for a " +
+        "real project UUID first.",
+      );
+    }
+    if (updates.checkAutomatically !== "NEVER") {
+      errors.push(
+        "app.json → expo.updates.checkAutomatically MUST be " +
+        "\"NEVER\" while PLACEHOLDER_EXPO_PROJECT_ID is in the " +
+        "URL. Got: " +
+        JSON.stringify(updates.checkAutomatically) +
+        ". Set `\"checkAutomatically\": \"NEVER\"` OR swap " +
+        "the placeholder for a real project UUID first.",
+      );
+    }
+  } else {
+    // URL contains a real (non-placeholder) UUID. The runtime
+    // should be active — warn (not fail) if enabled/check are
+    // still in the disabled hotfix state, so the operator
+    // remembers to flip them after the swap.
+    if (updates.enabled === false) {
+      warnings.push(
+        "app.json → expo.updates.enabled is `false` even though " +
+        "the placeholder has been swapped. Flip to `true` to " +
+        "actually consume OTA updates.",
+      );
+    }
+    if (updates.checkAutomatically === "NEVER") {
+      warnings.push(
+        "app.json → expo.updates.checkAutomatically is \"NEVER\" " +
+        "even though the placeholder has been swapped. Flip to " +
+        "\"ON_LOAD\" (or \"ON_ERROR_RECOVERY\") to enable " +
+        "update checks on foreground.",
+      );
+    }
   }
 
   if (!runtimeVersion) {
