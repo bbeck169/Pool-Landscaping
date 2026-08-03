@@ -8,6 +8,72 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 40b · Time-off UI (web + mobile)
+
+Replaced the Phase-40 ``ComingSoonPage`` stubs with real employee +
+admin UI on both surfaces. All flows are backed by the Phase-40
+``/api/time-off`` endpoints; no new backend logic was needed except a
+small admin-only ``GET /balances/all`` endpoint used by the admin
+tables.
+
+### Added
+- **Web · `frontend/src/pages/TimeOffPage.jsx`** — employee page at
+  ``/time-off``. Renders a 4-stat balance card
+  (Available · Accrued YTD · Used YTD · Waiting/Cap), a request
+  history table with status pills + inline Cancel on pending rows,
+  and a "Request Time Off" modal that surfaces structured
+  ``waiting_period`` / ``insufficient_balance`` error banners.
+- **Web · `frontend/src/pages/AdminTimeOffPage.jsx`** — admin page
+  at ``/admin/time-off`` (``<AdminOnly>``-gated). Tabs for Pending
+  Approvals / All Requests, per-row Approve / Reject with a notes
+  modal, employee-balance snapshot table, and an inline policy
+  editor that PUTs to ``/time-off/policy``.
+- **App.js routes** — ``/time-off`` (all authenticated) +
+  ``/admin/time-off`` (``<AdminOnly>``).
+- **Mobile · `mobile/app/time-off.tsx`** — full-page employee view.
+  Balance card + history rows + bottom-sheet request modal with the
+  same field set and error UX as web. Cancel uses ``showConfirm()``
+  (the Phase-30.4 modal) — **no ``Alert.alert``**, per the Phase
+  30.3/30.4 root cause.
+- **Mobile · `mobile/app/admin/time-off.tsx`** — full-page admin
+  view. Pending list with Approve / Reject per row, an in-app
+  Modal for reject-notes (no Alert.alert), employee-balance list,
+  and an inline policy editor.
+- **Backend · `GET /api/time-off/balances/all`** — new admin-gated
+  endpoint used by both admin UIs. Enriches each balance with
+  ``user_name``, ``avatar_url``, ``role``, and normalised
+  ``hire_date`` so the tables render without a follow-up
+  ``/api/users`` fan-out.
+
+### Changed
+- ``backend/scripts/seed_phase40_time_off.py`` — enhanced with a
+  fourth step that inserts one **idempotent** pending request per
+  active tech-like user. On aquaterra, this inserted **25** rows —
+  the admin queue is now populated for demos out of the box.
+- ``frontend/src/test/phase40-time-off.test.jsx`` — replaced the
+  "mobile stubs" assertion with real-UI assertions on both mobile
+  screens (testIDs, endpoint calls, no ``Alert.alert``, ``showConfirm``
+  wiring), plus new assertions for the two web pages, App.js
+  routing, ``/balances/all`` shape, and the seed enhancement.
+
+### Test results
+- Backend pytest: **9 / 9** (`test_phase40_time_off.py`).
+- Vitest cross-suite: **101 / 101** across
+  phase40 (20) + drawer parity (39) + revenue parity (15) +
+  portal sign-out (15) + CI config (12).
+
+### Non-scope confirmed
+- No push notifications yet (Phase 40c).
+- No calendar visualisation (deferred).
+- No QBO payroll export (Phase 40d).
+- ``Alert.alert`` NOT used in any confirmation flow — mobile uses
+  ``showConfirm()`` from Phase 30.4 + native ``<Modal>``.
+- Phase 32 CI, Phase 39 ToS, Phase 30.4 Alert audit, Live Radar
+  fallback, Dashboard revenue tiles, drawer parity delivery — all
+  untouched.
+
+---
+
 ## 2026-02-XX — Phase 40 · Time-off requests + accrual (backend + wiring)
 
 Odoo-Time-Off-style paid sick-leave module with the aquaterra-specific

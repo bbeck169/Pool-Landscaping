@@ -337,6 +337,8 @@ import TemplateFillPage from "@/pages/admin/TemplateFillPage";
 import TemplateInstanceNewRedirect from "@/pages/admin/TemplateInstanceNewRedirect";
 // Phase 4 · Batch B — Handbook + Onboarding
 import HandbookPage from "@/pages/HandbookPage";
+import TimeOffPage from "@/pages/TimeOffPage";
+import AdminTimeOffPage from "@/pages/AdminTimeOffPage";
 import EmployeeOnboardingChecklistPage from "@/pages/OnboardingPage";
 import AdminOnboardingDashboardPage from "@/pages/admin/AdminOnboardingDashboardPage";
 
@@ -787,6 +789,8 @@ export default function App() {
             <Route path="admin/templates/instances/:id" element={<AdminOnly><TemplateFillPage /></AdminOnly>} />
             {/* Phase 4 · Batch B — Handbook + Onboarding */}
             <Route path="handbook" element={<HandbookPage />} />
+            <Route path="time-off" element={<TimeOffPage />} />
+            <Route path="admin/time-off" element={<AdminOnly><AdminTimeOffPage /></AdminOnly>} />
             <Route path="handbook/:code" element={<HandbookPage />} />
             <Route path="onboarding-checklist" element={<EmployeeOnboardingChecklistPage />} />
             <Route path="admin/onboarding" element={<AdminOnly><AdminOnboardingDashboardPage /></AdminOnly>} />

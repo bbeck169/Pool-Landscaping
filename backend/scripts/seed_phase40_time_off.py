@@ -79,3 +79,29 @@ else:
     print("seed · time_off_requests already present or demo users missing")
 
 print("seed · done")
+
+# 4) One pending request per active tech-like user (idempotent).
+tech_users = list(db.users.find({
+    "tenant_id": TID,
+    "role": {"$in": ["technician", "landscaper", "tech"]},
+    "active": {"$ne": False},
+}))
+now_iso = datetime.now(timezone.utc).isoformat()
+inserted = 0
+for u in tech_users:
+    marker = f"tor_seed_pending_{u['id']}"
+    if db.time_off_requests.find_one({"id": marker}):
+        continue
+    d = (datetime.now(timezone.utc) + timedelta(days=10)).date().isoformat()
+    db.time_off_requests.insert_one({
+        "id": marker,
+        "tenant_id": TID, "user_id": u["id"],
+        "type": "sick", "from_date": d, "to_date": d, "hours": 2,
+        "reason": f"Seed pending request for {u.get('name') or u.get('email')}",
+        "status": "pending",
+        "approver_id": None, "decided_at": None, "decision_notes": "",
+        "created_at": now_iso, "updated_at": now_iso,
+    })
+    inserted += 1
+print(f"seed · pending-per-tech backfill inserted {inserted} new requests "
+      f"(active techs total: {len(tech_users)})")

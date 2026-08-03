@@ -99,6 +99,30 @@ async def other_balance(user_id: str,
     return await compute_balance(db, tenant["id"], target)
 
 
+@router.get("/balances/all")
+async def all_balances(admin: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    """Admin view — one balance snapshot per active tech-like user,
+    enriched with ``user_name`` + ``avatar_url`` so the UI can render
+    the table without a follow-up ``/api/users`` fan-out."""
+    out: list[dict] = []
+    async for u in db.users.find({
+        "tenant_id": tenant["id"],
+        "role": {"$in": ["technician", "landscaper", "tech", "admin", "manager"]},
+    }):
+        bal = await compute_balance(db, tenant["id"], u)
+        bal["user_name"] = u.get("name") or u.get("email") or "—"
+        bal["avatar_url"] = u.get("avatar_url") or u.get("photo_url")
+        bal["role"] = u.get("role")
+        bal["hire_date"] = (
+            u.get("hire_date").isoformat() if isinstance(u.get("hire_date"), datetime)
+            else u.get("hire_date")
+        )
+        out.append(bal)
+    out.sort(key=lambda b: (b.get("user_name") or "").lower())
+    return out
+
+
 # ── Requests ───────────────────────────────────────────────────────
 
 def _proj(r: dict) -> dict:
