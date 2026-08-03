@@ -6,9 +6,14 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, AppState, Modal, Platform,
+  ActivityIndicator, AppState, Modal, Platform, Linking, Pressable,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+// Phase 30.5 (Feb-2026) · ``react-native-webview`` throws
+// "React Native WebView does not support this platform." when
+// mounted on ``Platform.OS === "web"`` (Expo web bundle). The
+// import itself is safe on all platforms — only the mount is
+// gated (see radar Modal below).
 import { WebView } from "react-native-webview";
 
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
@@ -175,7 +180,36 @@ export default function WeatherWidget({ onHourlyLoaded }: Props) {
             </TouchableOpacity>
           </View>
           {radarUrl ? (
-            <WebView source={{ uri: radarUrl }} style={{ flex: 1 }} />
+            Platform.OS === "web" ? (
+              // Phase 30.5 · Feb-2026 — Expo web fallback.
+              // ``react-native-webview`` is a native-only module and
+              // renders the red "React Native WebView does not
+              // support this platform." error when mounted in the
+              // web bundle. On web we render an HTML ``<iframe>``
+              // pointing at the same Windy embed URL (embed2.html
+              // is explicitly designed for iframe embedding) plus a
+              // graceful-degradation "Open in a new tab" link in
+              // case a tenant CSP blocks the frame.
+              <View style={{ flex: 1 }} testID="weather-radar-web-fallback">
+                {React.createElement("iframe" as any, {
+                  src: radarUrl,
+                  style: { flex: 1, width: "100%", height: "100%", border: 0 },
+                  allow: "fullscreen",
+                  title: "Live Radar",
+                  "data-testid": "weather-radar-iframe",
+                })}
+                <Pressable
+                  testID="weather-radar-open-external"
+                  onPress={() => Linking.openURL(radarUrl)}
+                  style={styles.radarExternalBtn}
+                >
+                  <Ionicons name="open-outline" size={14} color={colors.brand} />
+                  <Text style={styles.radarExternalBtnText}>Open radar in a new tab</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <WebView source={{ uri: radarUrl }} style={{ flex: 1 }} />
+            )
           ) : (
             <ActivityIndicator style={{ flex: 1 }} color={colors.brand} />
           )}

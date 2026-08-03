@@ -8,6 +8,64 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Mobile revenue-tile parity (P1)
+
+Added three tap-through parity tiles at the top of
+``mobile/app/reports.tsx`` mirroring the equivalent web surfaces.
+Each tile links to a dedicated mobile screen — two of them brand new,
+one reusing an existing full-parity screen.
+
+### Added
+- **`mobile/app/reports/revenue-by-service.tsx`** — extracted from the
+  previous inline chart in `reports.tsx`. Full-page view with sortable
+  rows (High → Low, Low → High, A → Z), total card, CSV export, pull-to-
+  refresh. Data source: shared `GET /api/reports` (`revenue_by_service`)
+  — same field the web `admin/Dashboard.jsx` and
+  `reports/BusinessSummary.jsx` cards render.
+- **`mobile/app/reports/forecast.tsx`** — new screen mirroring web
+  `frontend/src/pages/reports/Forecast.jsx`. Companion KPI cards from
+  `/api/reports/forecast-cards`, series bar list from
+  `/api/reports/forecast?range={preset}`. Ships a five-preset filter
+  chip row per product spec: **Today · Tomorrow · This Week · This
+  Month · Custom**. Default preset is `This Week`. Custom Range opens a
+  date-range picker (uses existing `@react-native-community/datetime-
+  picker` — no new dep). Custom chip label auto-updates to `MM/DD –
+  MM/DD` once both endpoints are picked; endpoint becomes
+  `/reports/forecast?range=custom&date_from=…&date_to=…` to match web.
+- **Three tiles at the top of `mobile/app/reports.tsx`** with testIDs
+  `admin-tile-revenue-by-category`, `admin-tile-revenue-by-service`,
+  `admin-tile-forecast-revenue`. Routes: `/income-by-category` (reuses
+  the existing full-parity screen — no duplication), the two new
+  `/reports/…` screens above. Tiles sit as the first three cards below
+  the header; KPI grid + Revenue Trend + Jobs by Status + Top Customers
+  + Technician Performance sections stay unchanged below.
+
+### Removed
+- Inline `Revenue by Service` chart block previously rendered inside
+  `reports.tsx` scroll body — the tile is now the entry point, chart
+  logic lives on the dedicated screen. Also removed now-unused
+  `svcMax` local from `reports.tsx`.
+
+### Tests
+`frontend/src/test/phase-mobile-revenue-parity.test.jsx` (13
+assertions) locks: the three screen files exist, they mount `<Header>`
+with expected titles + testIDs, they hit the same endpoints the web
+equivalents do, the forecast screen renders all five filter chip
+testIDs with `week` as default and the custom-range picker modal, and
+the three tiles on `reports.tsx` appear in the required source order
+above the KPI grid. Regression guards keep the KPI cards + Technician
+Performance sections wired.
+
+### Non-scope confirmed
+- No new backend endpoints — every mobile call reuses the web
+  endpoints (`/finances/income-by-category`, `/reports`,
+  `/reports/forecast`, `/reports/forecast-cards`).
+- No new dependency — date picker is the existing
+  `@react-native-community/datetimepicker` already in `mobile/package.json`.
+- Phase 32 / Phase 39 / Phase 30.4 / Live Radar work untouched.
+
+---
+
 ## 2026-02-XX — Phase 30.3 (final) · Portal sign-out P0 — Alert.alert was the silent link
 
 Removed `Alert.alert` wrap from the customer portal sign-out handler

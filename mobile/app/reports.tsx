@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
@@ -10,6 +10,7 @@ import { Header } from "@/src/components/widgets";
 import { StatusChip as Chip } from "@/src/components/ui";
 
 export default function Reports() {
+  const router = useRouter();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -38,7 +39,6 @@ export default function Reports() {
   }
 
   const d = data || {};
-  const svcMax = Math.max(...(d.revenue_by_service || []).map((x: any) => x.value), 1);
   const revMax = Math.max(...(d.revenue_series || []).map((x: any) => x.value), 1);
   const custMax = Math.max(...(d.top_customers || []).map((x: any) => x.value), 1);
 
@@ -50,6 +50,36 @@ export default function Reports() {
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
       >
+        {/* Revenue parity tiles (Feb-2026) — three tap-through
+            entries at the very top of the reports scroll body,
+            mirroring the web ``income-by-category``,
+            ``business-summary``, and ``forecast`` pages. Each tile
+            preserves the KPI grid and legacy report sections that
+            follow below. */}
+        <View style={styles.tiles}>
+          <RevenueTile
+            testID="admin-tile-revenue-by-category"
+            icon="pie-chart-outline"
+            label="Revenue by Category"
+            hint="Income breakdown by service type"
+            onPress={() => router.push("/income-by-category")}
+          />
+          <RevenueTile
+            testID="admin-tile-revenue-by-service"
+            icon="bar-chart-outline"
+            label="Revenue by Service"
+            hint="Top-earning services"
+            onPress={() => router.push("/reports/revenue-by-service")}
+          />
+          <RevenueTile
+            testID="admin-tile-forecast-revenue"
+            icon="trending-up-outline"
+            label="Forecast Revenue"
+            hint="Projected billing by window"
+            onPress={() => router.push("/reports/forecast")}
+          />
+        </View>
+
         <View style={styles.grid}>
           <Kpi icon="cash-outline" label="Revenue" value={money(d.revenue)} tint={colors.brand} />
           <Kpi icon="time-outline" label="Outstanding" value={money(d.outstanding)} tint={colors.warning} />
@@ -109,21 +139,9 @@ export default function Reports() {
           </View>
         ) : null}
 
-        {/* Revenue by service */}
-        {(d.revenue_by_service || []).length ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Revenue by Service</Text>
-            {d.revenue_by_service.map((s: any) => (
-              <View key={s.label} style={styles.svcRow}>
-                <Text style={styles.svcLabel} numberOfLines={1}>{s.label}</Text>
-                <View style={styles.svcBarTrack}>
-                  <View style={[styles.svcBar, { width: `${Math.max(4, (s.value / svcMax) * 100)}%` }]} />
-                </View>
-                <Text style={styles.svcValue}>{money(s.value)}</Text>
-              </View>
-            ))}
-          </View>
-        ) : null}
+        {/* Revenue by Service moved to its own screen at
+            ``/reports/revenue-by-service`` (Feb-2026 parity tile).
+            The tile at the top of this page is the entry point. */}
 
         {/* Top customers */}
         {(d.top_customers || []).length ? (
@@ -180,8 +198,51 @@ function Kpi({ icon, label, value, tint }: { icon: any; label: string; value: st
   );
 }
 
+function RevenueTile({
+  testID, icon, label, hint, onPress,
+}: {
+  testID: string; icon: any; label: string; hint: string; onPress: () => void;
+}) {
+  return (
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      style={({ pressed }) => [styles.tile, pressed && { opacity: 0.85 }]}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <View style={styles.tileIcon}>
+        <Ionicons name={icon} size={22} color={colors.brand} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.tileLabel}>{label}</Text>
+        <Text style={styles.tileHint}>{hint}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  tiles: { gap: spacing.sm, marginBottom: spacing.lg },
+  tile: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  tileIcon: {
+    width: 42, height: 42, borderRadius: radius.md,
+    backgroundColor: colors.brandTertiary,
+    alignItems: "center", justifyContent: "center",
+  },
+  tileLabel: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
+  tileHint: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 1 },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
   kpi: { width: "47.5%", flexGrow: 1, backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border },
   kpiIcon: { width: 38, height: 38, borderRadius: radius.md, alignItems: "center", justifyContent: "center", marginBottom: spacing.sm },
