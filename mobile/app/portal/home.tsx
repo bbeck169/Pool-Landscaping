@@ -107,6 +107,18 @@ export default function PortalHome() {
   const [tenantPhone, setTenantPhone] = useState("(602) 887-4400");
   const [showTour, setShowTour] = useState(false);
   const [creditBalance, setCreditBalance] = useState(0);
+  // Phase 30.3-diag2 (Feb-2026) — dual-location + visual-state tap
+  // diagnostic. Previous diagnostic MVP (yellow box + console.log +
+  // Alert.alert) proved bundle-freshness but tap still fired nothing
+  // on device. Because Alert can silently no-op in some Expo Go
+  // builds AND console.log requires a live Metro tail, we now
+  // additionally drive a `useState` from onPress so the button
+  // itself flips colour (yellow → lime) on tap — visual proof of
+  // tap arrival that does not depend on Metro or Alert. Mirrored
+  // by a second independently-mounted Pressable in the ScrollView
+  // body so we can distinguish Header-context vs global tap issues.
+  const [tapCount, setTapCount] = useState(0);
+  const [scrollTapCount, setScrollTapCount] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -167,17 +179,17 @@ export default function PortalHome() {
                 testID="portal-sign-out-button"
                 onPress={() => {
                   console.log(
-                    "[SIGN_OUT_DEBUG] tap fired at",
+                    "[SIGN_OUT_DEBUG] HEADER tap fired at",
                     new Date().toISOString(),
                   );
-                  Alert.alert("Sign out debug", "Tap fired successfully");
+                  setTapCount((c) => c + 1);
                 }}
                 style={{
                   width: 44,
                   height: 44,
                   borderWidth: 2,
                   borderColor: "red",
-                  backgroundColor: "yellow",
+                  backgroundColor: tapCount > 0 ? "lime" : "yellow",
                   alignItems: "center",
                   justifyContent: "center",
                 }}
@@ -265,6 +277,39 @@ export default function PortalHome() {
               <Text style={s.statLabel}>Credit</Text>
             </View>
           </View>
+
+          {/* Phase 30.3-diag2 (Feb-2026) — INDEPENDENT scroll-area
+              tap probe. Mounted OUTSIDE the Header, inside the
+              main ScrollView body, so we can distinguish
+              Header-context tap failures from a global Pressable
+              failure. Same Pressable API + same useState toggle
+              pattern as the header button so the two are
+              apples-to-apples. */}
+          <Pressable
+            testID="portal-scroll-test-button"
+            onPress={() => {
+              console.log(
+                "[SIGN_OUT_DEBUG] SCROLL test tap fired at",
+                new Date().toISOString(),
+              );
+              setScrollTapCount((c) => c + 1);
+            }}
+            style={{
+              height: 60,
+              marginHorizontal: 20,
+              marginVertical: 12,
+              borderRadius: 12,
+              borderWidth: 3,
+              borderColor: "red",
+              backgroundColor: scrollTapCount > 0 ? "lime" : "orange",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Text style={{ fontWeight: "bold", fontSize: 16, color: "black" }}>
+              TAP HERE — count: {scrollTapCount}
+            </Text>
+          </Pressable>
 
           {/* Phase 30.2 · Feb-2026 — the previous compact "Next
               Service" row (Surface A) that lived here has been
