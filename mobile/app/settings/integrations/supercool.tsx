@@ -21,6 +21,7 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Card, PrimaryButton, EmptyState, Loading } from "@/src/components/ui";
+import { showConfirm } from "@/src/components/ConfirmModal";
 
 export default function SupercoolIntegration() {
   const { user } = useAuth();
@@ -72,23 +73,24 @@ export default function SupercoolIntegration() {
   };
 
   const doDisconnect = async () => {
-    Alert.alert("Disconnect Supercool?", "This will revoke the OAuth tokens.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Disconnect", style: "destructive", onPress: async () => {
-          setDisconnecting(true);
-          try {
-            await api.post("/integrations/supercool/disconnect", {});
-            await loadStatus();
-            Alert.alert("Disconnected");
-          } catch (e: any) {
-            Alert.alert("Error", e.message);
-          } finally {
-            setDisconnecting(false);
-          }
-        },
+    showConfirm({
+      title: "Disconnect Supercool?",
+      message: "This will revoke the OAuth tokens.",
+      confirmLabel: "Disconnect",
+      confirmStyle: "destructive",
+      onConfirm: async () => {
+        setDisconnecting(true);
+        try {
+          await api.post("/integrations/supercool/disconnect", {});
+          await loadStatus();
+          Alert.alert("Disconnected");
+        } catch (e: any) {
+          Alert.alert("Error", e.message);
+        } finally {
+          setDisconnecting(false);
+        }
       },
-    ]);
+    });
   };
 
   const doRefreshCatalog = async () => {

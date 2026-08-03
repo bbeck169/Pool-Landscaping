@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Loading } from "@/src/components/ui";
+import { showConfirm } from "@/src/components/ConfirmModal";
 
 export default function IncomeCategories() {
   const [cats, setCats] = useState<string[]>([]);
@@ -31,13 +32,16 @@ export default function IncomeCategories() {
   };
 
   const remove = (c: string) => {
-    Alert.alert("Remove category", `Remove "${c}"? Existing invoices keep their category.`, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Remove", style: "destructive", onPress: async () => {
+    showConfirm({
+      title: "Remove category",
+      message: `Remove "${c}"? Existing invoices keep their category.`,
+      confirmLabel: "Remove",
+      confirmStyle: "destructive",
+      onConfirm: async () => {
         try { const r = await api.del(`/income-categories/${encodeURIComponent(c)}`); setCats(r.categories); }
         catch (e: any) { Alert.alert("Error", e.message || "Could not remove."); }
-      } },
-    ]);
+      },
+    });
   };
 
   if (loading) return <Loading testID="income-cats-loading" />;

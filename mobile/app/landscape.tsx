@@ -23,6 +23,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
+import { showConfirm } from "@/src/components/ConfirmModal";
 
 const STYLES = [
   "Modern",
@@ -220,10 +221,13 @@ function LandscapeAIScreen() {
       doDelete();
       return;
     }
-    Alert.alert("Delete design?", "This cannot be undone.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: doDelete },
-    ]);
+    showConfirm({
+      title: "Delete design?",
+      message: "This cannot be undone.",
+      confirmLabel: "Delete",
+      confirmStyle: "destructive",
+      onConfirm: doDelete,
+    });
   };
 
   const startNew = () => {

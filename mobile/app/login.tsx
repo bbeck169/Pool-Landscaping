@@ -145,6 +145,24 @@ export default function Login() {
           </Text>
         </Pressable>
 
+        {/* Phase 39 · Feb-2026 — Terms of Service link. Routes to the
+            top-level ``/terms`` (public re-export of
+            ``portal/terms.tsx``) so pre-auth customers can read the
+            document without being bounced by the portal auth gate. */}
+        <View style={styles.termsRow}>
+          <Text style={styles.termsText}>
+            By signing in, you agree to our{" "}
+            <Text
+              style={styles.termsLink}
+              onPress={() => router.push("/terms")}
+              testID="login-terms-link"
+            >
+              Terms of Service
+            </Text>
+            .
+          </Text>
+        </View>
+
         {process.env.EXPO_PUBLIC_ENV === "preview" ? (
           <View style={styles.demoSection} testID="demo-login-section">
             <Text style={styles.demoSectionTitle}>DEMO ACCOUNTS</Text>

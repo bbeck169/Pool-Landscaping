@@ -11,6 +11,12 @@ import { useFonts } from "expo-font";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider, useAuth } from "@/src/auth";
 import { ImpersonationBanner } from "@/src/components/ImpersonationBanner";
+// Phase 30.4 · Feb-2026 — global destructive-confirmation modal host.
+// Mount once at the root so ``showConfirm({...})`` from any screen
+// opens an in-app modal we can guarantee renders (vs
+// ``Alert.alert(...)`` which silently no-ops on some Android/Expo Go
+// builds — root cause of the Phase 30.3 portal sign-out P0).
+import { ConfirmModalHost } from "@/src/components/ConfirmModal";
 import { StripeConfigProvider } from "@/src/config/stripe";
 import { registerOfflineTemplateDraftListeners } from "@/src/utils/offlineTemplateDrafts";
 import { SyncManagerProvider } from "@/src/services/SyncManager";
@@ -64,6 +70,7 @@ export default function RootLayout() {
                 <ImpersonationBanner />
                 <PushTapRouter />
                 <Stack screenOptions={{ headerShown: false }} />
+                <ConfirmModalHost />
               </StripeConfigProvider>
             </SyncManagerProvider>
           </AuthProvider>

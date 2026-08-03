@@ -25,6 +25,7 @@ import {
 } from "@/src/api/files";
 import { AuthedImage } from "./AuthedImage";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
+import { showConfirm } from "@/src/components/ConfirmModal";
 
 type Props = {
   linkedEntityType: string;
@@ -74,21 +75,20 @@ export function FileList({ linkedEntityType, linkedEntityId, purpose, canDelete 
 
   const remove = useCallback(
     async (id: string, filename: string) => {
-      Alert.alert("Delete File", `Remove "${filename}"?`, [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteFile(id);
-              await reload();
-            } catch (e: any) {
-              Alert.alert("Error", e?.message || "Delete failed.");
-            }
-          },
+      showConfirm({
+        title: "Delete File",
+        message: `Remove "${filename}"?`,
+        confirmLabel: "Delete",
+        confirmStyle: "destructive",
+        onConfirm: async () => {
+          try {
+            await deleteFile(id);
+            await reload();
+          } catch (e: any) {
+            Alert.alert("Error", e?.message || "Delete failed.");
+          }
         },
-      ]);
+      });
     },
     [reload],
   );

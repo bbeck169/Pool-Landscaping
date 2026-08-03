@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
+import { showConfirm } from "@/src/components/ConfirmModal";
 
 export default function EstimateTemplates() {
   const [templates, setTemplates] = useState<any[]>([]);
@@ -22,10 +23,13 @@ export default function EstimateTemplates() {
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const remove = (t: any) => {
-    Alert.alert("Delete template", `Remove "${t.name}"?`, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: async () => { await api.del(`/estimate-templates/${t.id}`); load(); } },
-    ]);
+    showConfirm({
+      title: "Delete template",
+      message: `Remove "${t.name}"?`,
+      confirmLabel: "Delete",
+      confirmStyle: "destructive",
+      onConfirm: async () => { await api.del(`/estimate-templates/${t.id}`); load(); },
+    });
   };
 
   return (

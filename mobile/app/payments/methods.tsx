@@ -19,6 +19,7 @@ import { Card, EmptyState, PrimaryButton } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate, isCustomer, isAdminPlus } from "@/src/components/RoleGate";
 import { useAuth } from "@/src/auth";
+import { showConfirm } from "@/src/components/ConfirmModal";
 
 type Pm = {
   provider_payment_method_id: string;
@@ -78,17 +79,20 @@ export default function PaymentMethods() {
   useEffect(() => { load(); }, [load]);
 
   const remove = (pm: Pm) => {
-    Alert.alert("Remove card?", `Card ending in ${pm.last4 || '----'} will be removed.`, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Remove", style: "destructive", onPress: async () => {
+    showConfirm({
+      title: "Remove card?",
+      message: `Card ending in ${pm.last4 || '----'} will be removed.`,
+      confirmLabel: "Remove",
+      confirmStyle: "destructive",
+      onConfirm: async () => {
         try {
           await api.del(`/payments/stripe/payment-methods/${encodeURIComponent(pm.provider_payment_method_id)}`);
           await load();
         } catch (err: any) {
           Alert.alert("Failed", String(err?.message || err));
         }
-      } },
-    ]);
+      },
+    });
   };
 
   const openAddCardWeb = async () => {

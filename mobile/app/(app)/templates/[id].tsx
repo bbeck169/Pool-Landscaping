@@ -32,6 +32,7 @@ import { Header } from "@/src/components/widgets";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import TemplateFieldRenderer from "@/src/components/templates/TemplateFieldRenderer";
 import TemplateStatusPill from "@/src/components/templates/TemplateStatusPill";
+import { showConfirm } from "@/src/components/ConfirmModal";
 import {
   writeSnapshot,
   clearSnapshot,
@@ -267,25 +268,20 @@ export default function TemplateFillScreen() {
   };
 
   const doDelete = () => {
-    Alert.alert(
-      "Delete this template?",
-      "This will permanently remove this instance.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await api.del(`/templates/instances/${id}`);
-              router.back();
-            } catch (e: any) {
-              Alert.alert("Error", e.message || "Could not delete.");
-            }
-          },
-        },
-      ]
-    );
+    showConfirm({
+      title: "Delete this template?",
+      message: "This will permanently remove this instance.",
+      confirmLabel: "Delete",
+      confirmStyle: "destructive",
+      onConfirm: async () => {
+        try {
+          await api.del(`/templates/instances/${id}`);
+          router.back();
+        } catch (e: any) {
+          Alert.alert("Error", e.message || "Could not delete.");
+        }
+      },
+    });
   };
 
   const doDownload = () => {

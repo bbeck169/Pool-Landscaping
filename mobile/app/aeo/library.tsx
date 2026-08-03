@@ -15,6 +15,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Card, EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
+import { showConfirm } from "@/src/components/ConfirmModal";
 
 type Template = {
   id: string;
@@ -55,17 +56,20 @@ export default function AeoLibrary() {
   }, [items, platform, q]);
 
   const remove = (t: Template) => {
-    Alert.alert("Delete template?", `"${t.title || 'Untitled'}" will be removed.`, [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: async () => {
+    showConfirm({
+      title: "Delete template?",
+      message: `"${t.title || 'Untitled'}" will be removed.`,
+      confirmLabel: "Delete",
+      confirmStyle: "destructive",
+      onConfirm: async () => {
         try {
           await api.del(`/aeo/response/templates/${encodeURIComponent(t.id)}`);
           setItems((prev) => prev.filter((x) => x.id !== t.id));
         } catch (err: any) {
           Alert.alert("Failed", String(err?.message || err));
         }
-      } },
-    ]);
+      },
+    });
   };
 
   return (

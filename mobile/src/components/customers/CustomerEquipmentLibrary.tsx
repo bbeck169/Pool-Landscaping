@@ -40,6 +40,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { PrimaryButton, Sheet } from "@/src/components/ui";
+import { showConfirm } from "@/src/components/ConfirmModal";
 
 type EquipmentPhoto = {
   id: string;
@@ -151,33 +152,28 @@ function EquipmentSection({
   // ── delete (admin only) ─────────────────────────────────────────────
   const handleDelete = useCallback(
     (photo: EquipmentPhoto) => {
-      Alert.alert(
-        "Delete photo?",
-        "This permanently removes the photo from the customer's equipment library.",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Delete",
-            style: "destructive",
-            onPress: async () => {
-              try {
-                await api.del(
-                  `/customers/${customerId}/equipment-photos/${photo.id}`
-                );
-                setLightbox(null);
-                await onChange();
-              } catch (e: any) {
-                const status = e?.status;
-                if (status === 403) {
-                  Alert.alert("Not authorized", "Only admins can delete equipment photos.");
-                } else {
-                  Alert.alert("Delete failed", e?.message || "Please try again.");
-                }
-              }
-            },
-          },
-        ]
-      );
+      showConfirm({
+        title: "Delete photo?",
+        message: "This permanently removes the photo from the customer's equipment library.",
+        confirmLabel: "Delete",
+        confirmStyle: "destructive",
+        onConfirm: async () => {
+          try {
+            await api.del(
+              `/customers/${customerId}/equipment-photos/${photo.id}`
+            );
+            setLightbox(null);
+            await onChange();
+          } catch (e: any) {
+            const status = e?.status;
+            if (status === 403) {
+              Alert.alert("Not authorized", "Only admins can delete equipment photos.");
+            } else {
+              Alert.alert("Delete failed", e?.message || "Please try again.");
+            }
+          }
+        },
+      });
     },
     [customerId, onChange]
   );

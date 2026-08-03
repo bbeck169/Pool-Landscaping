@@ -76,29 +76,13 @@ export const GlobalMenu: React.FC = () => {
   };
 
   const doLogout = () => {
-    if (Platform.OS === "web") {
-      // Show the inline in-sheet confirm; the sheet stays open so the
-      // Cancel / Confirm buttons are visible in the same context.
-      setConfirmingLogout(true);
-      return;
-    }
-    Alert.alert(
-      "Log out?",
-      "You'll need to sign in again.",
-      [
-        {
-          text: "Cancel",
-          style: "cancel",
-          onPress: () => { /* no-op — sheet stays open */ },
-        },
-        {
-          text: "Log out",
-          style: "destructive",
-          onPress: performLogout,
-        },
-      ],
-      { cancelable: true },
-    );
+    // Phase 30.4 · Feb-2026 — always use the inline in-sheet confirm.
+    // Previously the native branch used ``Alert.alert(...)`` which
+    // silently no-ops on some Android/Expo Go builds (root cause of
+    // the Phase 30.3 portal sign-out P0). The inline UI below
+    // renders unconditionally, so this control is now guaranteed to
+    // show a confirmation regardless of platform.
+    setConfirmingLogout(true);
   };
 
   return (

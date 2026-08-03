@@ -26,6 +26,7 @@ import { Header } from "@/src/components/widgets";
 import { colors, font, fontSize, spacing, radius } from "@/src/theme";
 import TemplateCard from "@/src/components/templates/TemplateCard";
 import TemplateStatusPill from "@/src/components/templates/TemplateStatusPill";
+import { showConfirm } from "@/src/components/ConfirmModal";
 
 const CATEGORIES = [
   { key: "all", label: "All" },
@@ -126,25 +127,20 @@ export default function TemplatesLibraryScreen() {
   };
 
   const handleDelete = (inst: any) => {
-    Alert.alert(
-      "Delete Template",
-      `Delete "${inst.title || "this instance"}"? This cannot be undone.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await api.del(`/templates/instances/${inst.id}`);
-              reload(true);
-            } catch (e: any) {
-              Alert.alert("Error", e.message || "Could not delete.");
-            }
-          },
-        },
-      ]
-    );
+    showConfirm({
+      title: "Delete Template",
+      message: `Delete "${inst.title || "this instance"}"? This cannot be undone.`,
+      confirmLabel: "Delete",
+      confirmStyle: "destructive",
+      onConfirm: async () => {
+        try {
+          await api.del(`/templates/instances/${inst.id}`);
+          reload(true);
+        } catch (e: any) {
+          Alert.alert("Error", e.message || "Could not delete.");
+        }
+      },
+    });
   };
 
   const handleDownloadPdf = async (inst: any) => {

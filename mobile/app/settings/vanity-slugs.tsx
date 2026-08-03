@@ -10,6 +10,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import { showConfirm } from "@/src/components/ConfirmModal";
 
 const ALIAS_REGEX = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/;
 
@@ -56,20 +57,21 @@ export default function VanitySlugsPage() {
   };
 
   const deleteAlias = (slug: string) => {
-    Alert.alert("Delete alias?", `Remove "${slug}"?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete", style: "destructive", onPress: async () => {
-          setBusy(true);
-          try {
-            await api.del(`/tenants/current/slug-aliases/${slug}`);
-            await load();
-          } catch (e: any) {
-            Alert.alert("Error", e?.message || "Delete failed");
-          } finally { setBusy(false); }
-        },
+    showConfirm({
+      title: "Delete alias?",
+      message: `Remove "${slug}"?`,
+      confirmLabel: "Delete",
+      confirmStyle: "destructive",
+      onConfirm: async () => {
+        setBusy(true);
+        try {
+          await api.del(`/tenants/current/slug-aliases/${slug}`);
+          await load();
+        } catch (e: any) {
+          Alert.alert("Error", e?.message || "Delete failed");
+        } finally { setBusy(false); }
       },
-    ]);
+    });
   };
 
   if (!isSuperAdmin) {

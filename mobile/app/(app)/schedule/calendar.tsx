@@ -38,6 +38,7 @@ import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
 import WeatherWidget from "@/src/components/weather/WeatherWidget";
 import RainFlag from "@/src/components/weather/RainFlag";
 import WeekStrip from "@/src/components/schedule/WeekStrip";
+import { showConfirm } from "@/src/components/ConfirmModal";
 // Phase 23 · 2026-08-02 — Service / Repair progress ring tiles above the grid.
 import JobTrackerTiles from "./JobTrackerTiles";
 // Phase 27 · Feb-2026 — Global avatar swap for the per-job card in
@@ -231,26 +232,23 @@ export default function ScheduleCalendar() {
 
   const bulkDelete = async () => {
     if (!checked.size) return;
-    Alert.alert(
-      `Delete ${checked.size} job${checked.size === 1 ? "" : "s"}?`,
-      "Soft-deleted jobs can be recovered by a super admin.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete", style: "destructive", onPress: async () => {
-            setBusy(true);
-            try {
-              await api.post("/jobs/bulk-soft-delete", { job_ids: [...checked] });
-              Alert.alert("Deleted", `${checked.size} job${checked.size === 1 ? "" : "s"} removed.`);
-              setChecked(new Set());
-              await load();
-            } catch (e: any) {
-              Alert.alert("Delete failed", e.message || "Unknown error");
-            } finally { setBusy(false); }
-          },
-        },
-      ],
-    );
+    showConfirm({
+      title: `Delete ${checked.size} job${checked.size === 1 ? "" : "s"}?`,
+      message: "Soft-deleted jobs can be recovered by a super admin.",
+      confirmLabel: "Delete",
+      confirmStyle: "destructive",
+      onConfirm: async () => {
+        setBusy(true);
+        try {
+          await api.post("/jobs/bulk-soft-delete", { job_ids: [...checked] });
+          Alert.alert("Deleted", `${checked.size} job${checked.size === 1 ? "" : "s"} removed.`);
+          setChecked(new Set());
+          await load();
+        } catch (e: any) {
+          Alert.alert("Delete failed", e.message || "Unknown error");
+        } finally { setBusy(false); }
+      },
+    });
   };
 
   const openReassign = async () => {

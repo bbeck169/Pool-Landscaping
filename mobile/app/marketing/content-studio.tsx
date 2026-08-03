@@ -20,6 +20,7 @@ import { api, api_base } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { Card, PrimaryButton, Loading } from "@/src/components/ui";
+import { showConfirm } from "@/src/components/ConfirmModal";
 
 const ASPECT_OPTIONS = [
   { v: "1:1", label: "Square" },
@@ -90,19 +91,20 @@ export default function ContentStudio() {
   };
 
   const deleteItem = async (id: string) => {
-    Alert.alert("Delete image?", "This cannot be undone.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete", style: "destructive", onPress: async () => {
-          try {
-            await api.del(`/media/library/${id}`);
-            setLibrary((l) => l.filter((x: any) => x.id !== id));
-          } catch (e: any) {
-            Alert.alert("Delete failed", e.message);
-          }
-        },
+    showConfirm({
+      title: "Delete image?",
+      message: "This cannot be undone.",
+      confirmLabel: "Delete",
+      confirmStyle: "destructive",
+      onConfirm: async () => {
+        try {
+          await api.del(`/media/library/${id}`);
+          setLibrary((l) => l.filter((x: any) => x.id !== id));
+        } catch (e: any) {
+          Alert.alert("Delete failed", e.message);
+        }
       },
-    ]);
+    });
   };
 
   if (loading) {

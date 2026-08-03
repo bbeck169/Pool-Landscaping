@@ -10,6 +10,7 @@ import { useFocusEffect } from "expo-router";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import { showConfirm } from "@/src/components/ConfirmModal";
 import { AdminOnlyGate, BrandPill, CenterLoader } from "./_shared";
 
 type Tab = "queries" | "dashboard";
@@ -64,13 +65,16 @@ function Inner() {
   };
 
   const del = async (qid: string) => {
-    Alert.alert("Delete query", "This cannot be undone.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: async () => {
-          await api.del(`/seo/llm-visibility/queries/${qid}`);
-          await load();
-      } },
-    ]);
+    showConfirm({
+      title: "Delete query",
+      message: "This cannot be undone.",
+      confirmLabel: "Delete",
+      confirmStyle: "destructive",
+      onConfirm: async () => {
+        await api.del(`/seo/llm-visibility/queries/${qid}`);
+        await load();
+      },
+    });
   };
 
   const runScan = async () => {

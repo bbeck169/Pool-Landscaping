@@ -28,6 +28,7 @@ import {
   OfflineError,
 } from "@/src/api/media";
 import VideoPlayerModal from "./VideoPlayerModal";
+import { showConfirm } from "@/src/components/ConfirmModal";
 
 const MAX_DURATION_S = 180;
 const TILE_W = (Dimensions.get("window").width - spacing.lg * 2 - spacing.md * 2) / 3;
@@ -192,21 +193,20 @@ export default function VideoMediaUploader({
 
   const handleDelete = (v: VideoRecord) => {
     if (readonly) return;
-    Alert.alert("Delete video?", "This cannot be undone.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            await deleteVideo(entityKind, entityId, v.id);
-            onDeleted(v.id);
-          } catch (e: any) {
-            Alert.alert("Error", e.message || "Delete failed.");
-          }
-        },
+    showConfirm({
+      title: "Delete video?",
+      message: "This cannot be undone.",
+      confirmLabel: "Delete",
+      confirmStyle: "destructive",
+      onConfirm: async () => {
+        try {
+          await deleteVideo(entityKind, entityId, v.id);
+          onDeleted(v.id);
+        } catch (e: any) {
+          Alert.alert("Error", e.message || "Delete failed.");
+        }
       },
-    ]);
+    });
   };
 
   return (
