@@ -8,6 +8,116 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-10 — Phase 30 · Portal + Admin Avatar Coverage (Option 3 + A) + Phase 30.1 mobile persona correction (P1)
+
+### Part A · Web · AI persona coverage
+- `frontend/src/pages/portal/PortalHome.jsx` — swapped two hand-rolled
+  `<img src={emp.avatar_url}>` + `<span>{emoji}</span>` blocks for the
+  shared `<PersonaAvatar>` (Task RR/SS Phase 2 component). Preserved
+  testids: `portal-ai-{key}-avatar` (concierge card grid, size 44)
+  and `portal-ai-chat-avatar-{key}` (active-chat header, size 48).
+  The F0 `<AuthedImage>` routing + emoji-on-pastel-tint fallback
+  now come free from `PersonaAvatar`; previously the F0-uploaded
+  avatars would 401 because the raw `<img>` didn't include the
+  bearer token.
+
+### Part B · Web · Human staff/tech coverage (5 sites, 3 files)
+- `frontend/src/pages/portal/PortalHome.jsx` — next-visit + last-visit
+  summary lines now render `<TechAvatar size="xs">` chips next to
+  the technician name. Testids: `portal-tech-avatar-next`,
+  `portal-tech-avatar-last`.
+- `frontend/src/pages/portal/PortalPages.jsx` — upcoming service list
+  row + service detail header both render `<TechAvatar>`. Testid
+  pattern: `portal-tech-avatar-{j.id}`.
+- `frontend/src/pages/admin/CopilotPage.jsx` — swapped the generic
+  `<UserIcon>` at the chat-author bubble for
+  `<TechAvatar user={{ name: user?.name || user?.email || 'Admin' }}
+  size="xs">`. Testid: `admin-tech-avatar-copilot-{user_id}`.
+  Removed the `UserIcon` lucide import.
+
+### Part C · Mobile · Customer-portal coverage (3 files)
+- `mobile/app/portal/home.tsx` — next-service block now renders
+  `<TechAvatar size="xs">` next to the tech name. Testid
+  `portal-tech-avatar-next`.
+- `mobile/app/portal/services.tsx` — service list row now renders
+  `<TechAvatar size="xs">` next to the tech name. Testid
+  `portal-tech-avatar-{item.id}`.
+- `mobile/app/portal/service/[id].tsx` — service detail header
+  now renders `<TechAvatar size="sm">`. Testid
+  `portal-tech-avatar-{job.id}`.
+
+### Phase 30.1 — Mobile AI persona correction (audit miss)
+
+The initial audit reported "Mobile · AI persona render sites: NONE."
+That was wrong — the "Ask a Concierge" section of the mobile portal
+home renders Billy and Skedra (customer-audience personas from
+`GET /api/customer-portal/ai-employees`), previously via a
+hand-rolled `<Text style={s.conciergeEmoji}>{emp.avatar || "🤖"}</Text>`
+block that ignored `avatar_url` entirely. Corrected:
+
+- `mobile/app/portal/home.tsx` — replaced the hand-rolled emoji
+  block with `<PersonaAvatar>` (mobile version at
+  `mobile/src/components/personas/PersonaAvatar.tsx`, already
+  present — bundled JPEG lookup by `persona.key` w/ emoji
+  fallback). Testid `portal-ai-{key}-avatar`. Added
+  `overflow: "hidden"` to `conciergeAvatar` so the rounded
+  wrapper properly clips the JPEG.
+
+### Phase 30.1 — Mobile "Ask a Concierge" specialty subtitle
+
+`mobile/app/portal/home.tsx` — each concierge card now shows a
+one-line specialty beneath the name:
+`emp.role || emp.description || emp.tagline || ""`
+(prefers the seed's canonical `role` field, e.g. "Billing
+assistant"; falls back to `description` / `tagline` for older API
+responses). New style `conciergeSpecialty` (fontSize 12,
+lineHeight 16, `rgba(255,255,255,0.85)` on the teal→emerald
+gradient). Row remains fully tappable end-to-end. The pre-existing
+`conciergeDesc` render — now unused — is superseded by
+`conciergeSpecialty`; the previous 2-line description shown as a
+paragraph is replaced with a 1-line subtitle so the card stays
+compact.
+
+Web PortalHome subtitle parity was not applied — the web card
+grid already renders a persona description block that reads from
+the API's `role`/`description` fields; no trivial change fit the
+"< 3 lines" bar you set.
+
+### Deferred to Phase 30b (per Option 3 scope lock)
+
+The following 15 mobile tech-facing files are intentionally NOT
+patched in this phase and remain candidates for Phase 30b:
+`mobile/app/timesheets.tsx`, `job/[id].tsx`, `job-timers.tsx`,
+`business-reports.tsx`, `checkins.tsx`, `workstream.tsx`,
+`dispatch-savings.tsx`, `(app)/reviews/requests/index.tsx`,
+`(app)/reviews/requests/[id].tsx`, `(app)/reviews/leaderboard.tsx`,
+`maintenance.tsx`, `coverage.tsx`, `equipment.tsx`,
+`pool-service.tsx`, `dispatch.tsx`.
+
+### Tests
+
+- **Vitest** —
+  `frontend/src/test/phase30-portal-admin-avatar-coverage.test.jsx`
+  (NEW, **14 cases, all green**). Covers Parts A + B + C + Phase
+  30.1 with regression guards for the removed hand-rolled blocks
+  (`<img src={emp.avatar_url}>`, `<UserIcon>`, `conciergeEmoji`).
+- **Full cross-suite regression sweep** —
+  Phase 23 (11) + 25 (8) + 25b (9) + 26 (6) + 27 web/mobile/seed
+  (15 + 9 + 8) + 28 (13) + 29 (9) + 30 (14) →
+  **102/102 vitest passing**.
+
+### Constraints honoured
+
+- Scope: Portal + admin (web + mobile portal only).
+- No backend changes — fallbacks stay initials-on-color for humans,
+  bundled JPEG + emoji-on-pastel-tint for personas.
+- No mobile files touched outside `mobile/app/portal/**`.
+- No schedule/dispatch pages touched (Phase 27 already handled).
+- No new dependencies.
+- Grep-lint stays green.
+
+---
+
 ## 2026-08-09 — Phase 28 · `eas update` OTA migration (P2 · infra)
 
 ### 2026-08-09 (hotfix) — Phase 28.1 · disable expo-updates auto-check while placeholder is in place (P0)

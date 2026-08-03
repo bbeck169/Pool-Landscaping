@@ -22,6 +22,8 @@ import PortalBookingPhotos from "@/components/portal/PortalBookingPhotos";
 // Phase 5A hot-fix · Feb 2026 — replace the legacy hosted-checkout
 // redirect with the Phase 4B <PaymentForm> modal (Card + ACH + wallets).
 import PaymentForm from "@/components/PaymentForm";
+// Phase 30 · Feb-2026 — shared TechAvatar for tech identity chips.
+import TechAvatar from "@/components/common/TechAvatar";
 import {
   PageHeader,
   Button,
@@ -93,7 +95,12 @@ export function PortalServices() {
              </div>
              <div className="flex-1 min-w-0">
                <div className="text-sm font-semibold" style={{ color: colors.onSurface }}>{j.title}</div>
-               <div className="text-xs" style={{ color: colors.muted }}>{j.scheduled_date || "TBD"} · {j.technician_name || "Unassigned"}</div>
+               <div className="text-xs flex items-center gap-1.5" style={{ color: colors.muted }}>
+                 {j.technician_name ? (
+                   <TechAvatar user={{ name: j.technician_name }} size="xs" testid={`portal-tech-avatar-${j.id}`} />
+                 ) : null}
+                 <span>{j.scheduled_date || "TBD"} · {j.technician_name || "Unassigned"}</span>
+               </div>
              </div>
              <StatusPill status={j.status} />
            </li>
@@ -117,7 +124,12 @@ export function PortalServiceDetail() {
       <div className="rounded-2xl p-6 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
         <StatusPill status={j.status} />
         <h1 className="text-2xl font-bold mt-2" style={{ color: colors.onSurface }}>{j.title}</h1>
-        <p className="text-sm mt-1" style={{ color: colors.muted }}>{j.scheduled_date} · {j.technician_name}</p>
+        <p className="text-sm mt-1 flex items-center gap-1.5" style={{ color: colors.muted }}>
+          {j.technician_name ? (
+            <TechAvatar user={{ name: j.technician_name }} size="sm" testid={`portal-tech-avatar-${j.id}`} />
+          ) : null}
+          <span>{j.scheduled_date} · {j.technician_name}</span>
+        </p>
       </div>
       {(j.checklist || []).length ? (
         <div className="rounded-2xl p-5 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>

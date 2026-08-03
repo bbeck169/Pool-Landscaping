@@ -15,6 +15,12 @@ import { Loading, StatusChip } from "@/src/components/ui";
 import { Header, NotificationBell } from "@/src/components/widgets";
 import Tour, { TourStep } from "@/src/components/Tour";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+// Phase 30 · Feb-2026 — shared mobile TechAvatar for tech chips.
+import TechAvatar from "@/components/common/TechAvatar";
+// Phase 30.1 · Feb-2026 — swap hand-rolled concierge avatar for the
+// shared PersonaAvatar (bundled JPEG w/ emoji fallback) so Billy /
+// Skedra render consistently with the admin persona list.
+import { PersonaAvatar } from "@/src/components/personas/PersonaAvatar";
 
 const TOUR_KEY = "portal_tour_v2_done";
 const TOUR_STEPS: TourStep[] = [
@@ -245,9 +251,18 @@ export default function PortalHome() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={s.nextServiceDayName} numberOfLines={1}>{data.next_service.title}</Text>
-                  <Text style={s.nextServiceDayMeta}>
-                    {data.next_service.technician_name || "Unassigned"} · {data.next_service.service_type || "Service"}
-                  </Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
+                    {data.next_service.technician_name ? (
+                      <TechAvatar
+                        user={{ name: data.next_service.technician_name }}
+                        size="xs"
+                        testID="portal-tech-avatar-next"
+                      />
+                    ) : null}
+                    <Text style={s.nextServiceDayMeta}>
+                      {data.next_service.technician_name || "Unassigned"} · {data.next_service.service_type || "Service"}
+                    </Text>
+                  </View>
                   <Text style={s.nextServiceDayAddr} numberOfLines={1}>
                     {data.next_service.address || "No address"}
                   </Text>
@@ -309,11 +324,25 @@ export default function PortalHome() {
                   onPress={() => router.push(`/ai-chat/${emp.id}` as any)}
                 >
                   <View style={s.conciergeAvatar}>
-                    <Text style={s.conciergeEmoji}>{emp.avatar || "🤖"}</Text>
+                    <PersonaAvatar
+                      persona={{
+                        key: emp.key,
+                        name: emp.name,
+                        avatar_emoji: emp.avatar,
+                      }}
+                      size={44}
+                      testID={`portal-ai-${emp.key}-avatar`}
+                    />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={s.conciergeName}>{emp.name}</Text>
-                    <Text style={s.conciergeDesc} numberOfLines={2}>{emp.description || emp.tagline || ""}</Text>
+                    {/* Phase 30.1 · specialty subtitle. Prefer the
+                        seed's ``role`` field (e.g. "Billing
+                        assistant"); fall back to description /
+                        tagline so an older API response still works. */}
+                    <Text style={s.conciergeSpecialty} numberOfLines={1}>
+                      {emp.role || emp.description || emp.tagline || ""}
+                    </Text>
                   </View>
                   <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.7)" />
                 </Pressable>
@@ -533,7 +562,17 @@ const s = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.28)", borderRadius: radius.lg,
     padding: spacing.md, marginTop: spacing.sm,
   },
-  conciergeAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center" },
+  conciergeAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.2)", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  // Phase 30.1 · specialty subtitle style. White on the teal→emerald
+  // gradient at 85% alpha for legibility without competing with the
+  // persona name.
+  conciergeSpecialty: {
+    fontFamily: font.regular,
+    fontSize: 12,
+    lineHeight: 16,
+    color: "rgba(255,255,255,0.85)",
+    marginTop: 2,
+  },
   conciergeEmoji: { fontSize: 22 },
   conciergeName: { fontFamily: font.bold, fontSize: fontSize.base, color: "#fff" },
   conciergeDesc: { fontFamily: font.regular, fontSize: fontSize.sm, color: "rgba(255,255,255,0.85)", marginTop: 2, lineHeight: 16 },

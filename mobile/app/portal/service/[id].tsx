@@ -15,6 +15,8 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { StatusChip } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { JobBeforeAfterPhotos } from "@/src/components/files";
+// Phase 30 · Feb-2026 — shared mobile TechAvatar for tech chips.
+import TechAvatar from "@/components/common/TechAvatar";
 
 function Skeleton() {
   return (
@@ -73,9 +75,18 @@ export default function PortalServiceDetail() {
         <View style={s.card}>
           <StatusChip status={job.status} />
           <Text style={s.title}>{job.title}</Text>
-          <Text style={s.meta}>
-            {job.scheduled_date || "Unscheduled"} {job.technician_name ? `\u00b7 ${job.technician_name}` : ""}
-          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
+            {job.technician_name ? (
+              <TechAvatar
+                user={{ name: job.technician_name }}
+                size="sm"
+                testID={`portal-tech-avatar-${job.id}`}
+              />
+            ) : null}
+            <Text style={s.meta}>
+              {job.scheduled_date || "Unscheduled"} {job.technician_name ? `\u00b7 ${job.technician_name}` : ""}
+            </Text>
+          </View>
           {job.address ? (
             <View style={s.metaRow}>
               <Ionicons name="location-outline" size={13} color={colors.muted} />

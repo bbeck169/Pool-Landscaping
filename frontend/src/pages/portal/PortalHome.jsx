@@ -33,6 +33,9 @@ import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 import CallNowButton from "@/pages/portal/CallNowButton";
 import ReferralSection from "@/pages/portal/ReferralSection";
 import MyReferralsSection from "@/pages/portal/MyReferralsSection";
+// Phase 30 · Feb-2026 — shared avatar components.
+import PersonaAvatar from "@/components/personas/PersonaAvatar";
+import TechAvatar from "@/components/common/TechAvatar";
 
 const money = (n) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
@@ -176,11 +179,16 @@ export default function PortalHome() {
               <div className="mt-4 bg-white/15 backdrop-blur rounded-xl p-4">
                 <div className="text-xs uppercase tracking-widest opacity-80">Next visit</div>
                 <div className="text-lg font-bold mt-0.5">{data.next_visit.title}</div>
-                <div className="text-sm opacity-90 mt-1">
-                  {data.next_visit.scheduled_date
-                    ? new Date(data.next_visit.scheduled_date).toDateString()
-                    : "TBD"}{" "}
-                  · {data.next_visit.technician_name || "Unassigned"}
+                <div className="text-sm opacity-90 mt-1 flex items-center gap-1.5">
+                  {data.next_visit.technician_name ? (
+                    <TechAvatar user={{ name: data.next_visit.technician_name }} size="xs" testid="portal-tech-avatar-next" />
+                  ) : null}
+                  <span>
+                    {data.next_visit.scheduled_date
+                      ? new Date(data.next_visit.scheduled_date).toDateString()
+                      : "TBD"}{" "}
+                    · {data.next_visit.technician_name || "Unassigned"}
+                  </span>
                 </div>
               </div>
             ) : (
@@ -365,8 +373,11 @@ export default function PortalHome() {
             </div>
             <div className="flex-1">
               <div className="text-base font-semibold" style={{ color: colors.onSurface }}>{data.last_visit.title}</div>
-              <div className="text-sm" style={{ color: colors.muted }}>
-                {data.last_visit.scheduled_date} · {data.last_visit.technician_name || "—"}
+              <div className="text-sm flex items-center gap-1.5" style={{ color: colors.muted }}>
+                {data.last_visit.technician_name ? (
+                  <TechAvatar user={{ name: data.last_visit.technician_name }} size="xs" testid="portal-tech-avatar-last" />
+                ) : null}
+                <span>{data.last_visit.scheduled_date} · {data.last_visit.technician_name || "—"}</span>
               </div>
               <div className="mt-2"><StatusPill status={data.last_visit.status} /></div>
             </div>
@@ -431,17 +442,7 @@ export default function PortalHome() {
                   }}
                   aria-hidden="true"
                 >
-                  {emp.avatar_url ? (
-                    <img
-                      src={emp.avatar_url}
-                      alt={`${emp.name} avatar`}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                      data-testid={`portal-ai-${emp.key}-avatar`}
-                    />
-                  ) : (
-                    <span>{emp.avatar_emoji || "🤖"}</span>
-                  )}
+                  <PersonaAvatar persona={emp} size={44} testid={`portal-ai-${emp.key}-avatar`} />
                 </div>
                 <div className="min-w-0">
                   <div
@@ -934,16 +935,7 @@ function CustomerAiChatPane({ employee, onClose }) {
               }}
               aria-hidden="true"
             >
-              {employee.avatar_url ? (
-                <img
-                  src={employee.avatar_url}
-                  alt={`${employee.name} avatar`}
-                  className="w-full h-full object-cover"
-                  data-testid={`portal-ai-chat-avatar-${employee.key}`}
-                />
-              ) : (
-                <span>{employee.avatar_emoji || "🤖"}</span>
-              )}
+              <PersonaAvatar persona={employee} size={48} testid={`portal-ai-chat-avatar-${employee.key}`} />
             </div>
             <div className="min-w-0">
               <div

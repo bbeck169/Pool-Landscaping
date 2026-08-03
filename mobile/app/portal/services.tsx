@@ -7,6 +7,8 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Loading, EmptyState, StatusChip } from "@/src/components/ui";
 import { Header, FilterRow } from "@/src/components/widgets";
+// Phase 30 · Feb-2026 — shared mobile TechAvatar for tech chips.
+import TechAvatar from "@/components/common/TechAvatar";
 
 const FILTERS = [
   { key: "all", label: "All" },
@@ -47,7 +49,16 @@ export default function PortalServices() {
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
-        <Text style={styles.cardMeta}>{item.scheduled_date || "TBD"} · {item.technician_name || "Unassigned"}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 2 }}>
+          {item.technician_name ? (
+            <TechAvatar
+              user={{ name: item.technician_name }}
+              size="xs"
+              testID={`portal-tech-avatar-${item.id}`}
+            />
+          ) : null}
+          <Text style={styles.cardMeta}>{item.scheduled_date || "TBD"} · {item.technician_name || "Unassigned"}</Text>
+        </View>
       </View>
       <StatusChip status={item.status} />
     </Pressable>

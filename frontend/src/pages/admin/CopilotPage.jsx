@@ -5,11 +5,16 @@
 // under the assistant's reply for transparency + auditability.
 import React from "react";
 import { toast } from "sonner";
-import { Send, Sparkles, Bot, User as UserIcon, Loader2, Wrench } from "lucide-react";
+import { Send, Sparkles, Bot, Loader2, Wrench } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import { useAuth } from "@/auth";
+// Phase 30 · Feb-2026 — swap generic <UserIcon> for shared TechAvatar
+// so the admin's message bubble carries their initials-on-color chip.
+import TechAvatar from "@/components/common/TechAvatar";
 
 export default function CopilotPage() {
+  const { user } = useAuth();
   const [messages, setMessages] = React.useState([]);
   const [input, setInput] = React.useState("");
   const [sending, setSending] = React.useState(false);
@@ -120,7 +125,11 @@ export default function CopilotPage() {
               </div>
               {m.role === "user" && (
                 <div className="mt-0.5 flex-shrink-0">
-                  <UserIcon size={16} style={{ color: colors.brand }} />
+                  <TechAvatar
+                    user={{ name: user?.name || user?.email || "Admin" }}
+                    size="xs"
+                    testid={`admin-tech-avatar-copilot-${user?.id || "self"}`}
+                  />
                 </div>
               )}
             </div>
