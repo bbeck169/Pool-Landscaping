@@ -100,39 +100,60 @@ describe("Phase (Feb-2026) · mobile revenue-tile parity", () => {
     });
   });
 
-  describe("reports.tsx · three parity tiles at the top", () => {
-    const src = R("mobile/app/reports.tsx");
+  describe("Dashboard · three parity tiles at the top (correction Feb-2026)", () => {
+    const src = R("mobile/app/(app)/index.tsx");
+    const reports = R("mobile/app/reports.tsx");
 
-    it("mounts all three testIDs and routes each to the expected screen", () => {
+    it("Dashboard mounts all three testIDs and routes each to the expected screen", () => {
       expect(src).toMatch(/testID="admin-tile-revenue-by-category"[\s\S]{0,500}\/income-by-category/);
       expect(src).toMatch(/testID="admin-tile-revenue-by-service"[\s\S]{0,500}\/reports\/revenue-by-service/);
       expect(src).toMatch(/testID="admin-tile-forecast-revenue"[\s\S]{0,500}\/reports\/forecast/);
     });
 
-    it("tiles appear in the required order and BEFORE the KPI grid", () => {
+    it("tiles appear in the required order and BEFORE Budget Health / Weather / Hero", () => {
       const idxCategory = src.indexOf('testID="admin-tile-revenue-by-category"');
       const idxService  = src.indexOf('testID="admin-tile-revenue-by-service"');
       const idxForecast = src.indexOf('testID="admin-tile-forecast-revenue"');
-      const idxKpi      = src.indexOf('styles.grid');
+      const idxBudget   = src.indexOf('<BudgetHealthCard');
+      const idxWeather  = src.indexOf('<WeatherWidget');
+      const idxHero     = src.indexOf('styles.hero');
       expect(idxCategory).toBeGreaterThan(-1);
       expect(idxService).toBeGreaterThan(idxCategory);
       expect(idxForecast).toBeGreaterThan(idxService);
-      expect(idxKpi).toBeGreaterThan(idxForecast);
+      expect(idxBudget).toBeGreaterThan(idxForecast);
+      expect(idxWeather).toBeGreaterThan(idxForecast);
+      expect(idxHero).toBeGreaterThan(idxForecast);
     });
 
-    it("removes the inline Revenue by Service chart (tile is the entry point now)", () => {
-      // The block previously had ``<Text style={styles.cardTitle}>Revenue by Service</Text>``.
-      // The tile itself uses a different property (``styles.tileLabel``),
-      // so no ``cardTitle`` with that literal text should remain.
-      expect(src).not.toMatch(/style=\{styles\.cardTitle\}>Revenue by Service</);
-      // The now-unused svcMax variable is gone.
-      expect(src).not.toMatch(/const\s+svcMax\s*=/);
+    it("tiles are role-gated to super_admin / admin / manager", () => {
+      // The gate MUST include all three admin-like roles and no
+      // others; techs and customers are already redirected earlier
+      // in the render so this gate is the last line of defence.
+      expect(src).toMatch(
+        /user\?\.role\s*===\s*["']super_admin["'][\s\S]{0,80}user\?\.role\s*===\s*["']admin["'][\s\S]{0,80}user\?\.role\s*===\s*["']manager["']/,
+      );
+      // testID on the wrapper lets integration tests assert
+      // visibility per role.
+      expect(src).toMatch(/testID="dashboard-revenue-tiles"/);
     });
 
-    it("regression · legacy KPI + Technician Performance sections still render", () => {
-      expect(src).toMatch(/<Kpi[^>]*label="Revenue"/);
-      expect(src).toMatch(/Technician Performance/);
-      expect(src).toMatch(/testID={`report-tech-/);
+    it("Reports page no longer references the three tile testIDs (moved, not duplicated)", () => {
+      expect(reports).not.toMatch(/testID="admin-tile-revenue-by-category"/);
+      expect(reports).not.toMatch(/testID="admin-tile-revenue-by-service"/);
+      expect(reports).not.toMatch(/testID="admin-tile-forecast-revenue"/);
+    });
+
+    it("regression · Reports page still renders KPIs + Technician Performance", () => {
+      expect(reports).toMatch(/<Kpi[^>]*label="Revenue"/);
+      expect(reports).toMatch(/Technician Performance/);
+      expect(reports).toMatch(/testID={`report-tech-/);
+    });
+
+    it("regression · Reports page keeps the inline Revenue by Service chart removed", () => {
+      // The extracted screen lives at /reports/revenue-by-service — the
+      // old inline card must stay deleted (svcMax gone, cardTitle text gone).
+      expect(reports).not.toMatch(/style=\{styles\.cardTitle\}>Revenue by Service</);
+      expect(reports).not.toMatch(/const\s+svcMax\s*=/);
     });
   });
 });

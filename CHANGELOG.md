@@ -10,10 +10,17 @@ Do not rewrite history — only prepend new entries at the top.
 
 ## 2026-02-XX — Mobile revenue-tile parity (P1)
 
-Added three tap-through parity tiles at the top of
-``mobile/app/reports.tsx`` mirroring the equivalent web surfaces.
-Each tile links to a dedicated mobile screen — two of them brand new,
-one reusing an existing full-parity screen.
+Added three tap-through parity tiles at the top of the mobile admin
+**Dashboard** (`mobile/app/(app)/index.tsx`), mirroring the equivalent
+web surfaces. Each tile links to a dedicated mobile screen — two of
+them brand new, one reusing an existing full-parity screen.
+
+**Correction (Feb-2026, same-day):** tiles were initially placed on
+`mobile/app/reports.tsx`; the user expected them on the Dashboard.
+Moved to the Dashboard where they now sit above Budget Health /
+Weather / Live Radar / Total Revenue hero. `reports.tsx` reverted to
+its pre-tile state (KPI grid → Revenue Trend → Jobs by Status → Top
+Customers → Technician Performance).
 
 ### Added
 - **`mobile/app/reports/revenue-by-service.tsx`** — extracted from the
@@ -32,13 +39,17 @@ one reusing an existing full-parity screen.
   picker` — no new dep). Custom chip label auto-updates to `MM/DD –
   MM/DD` once both endpoints are picked; endpoint becomes
   `/reports/forecast?range=custom&date_from=…&date_to=…` to match web.
-- **Three tiles at the top of `mobile/app/reports.tsx`** with testIDs
-  `admin-tile-revenue-by-category`, `admin-tile-revenue-by-service`,
-  `admin-tile-forecast-revenue`. Routes: `/income-by-category` (reuses
-  the existing full-parity screen — no duplication), the two new
-  `/reports/…` screens above. Tiles sit as the first three cards below
-  the header; KPI grid + Revenue Trend + Jobs by Status + Top Customers
-  + Technician Performance sections stay unchanged below.
+- **Three tiles at the top of `mobile/app/(app)/index.tsx`
+  (Dashboard)** with testIDs `admin-tile-revenue-by-category`,
+  `admin-tile-revenue-by-service`, `admin-tile-forecast-revenue`.
+  Routes: `/income-by-category` (reuses the existing full-parity
+  screen — no duplication), the two new `/reports/…` screens above.
+  Tiles sit as the first block below the Dashboard header, above
+  the LandscapingClockWidget / Budget Health / Weather / Total
+  Revenue hero. Wrapped in a `testID="dashboard-revenue-tiles"`
+  View and role-gated to `super_admin` / `admin` / `manager` (techs
+  and customers are already redirected off this screen earlier in
+  the render).
 
 ### Removed
 - Inline `Revenue by Service` chart block previously rendered inside

@@ -64,6 +64,39 @@ export default function Dashboard() {
         contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
       >
+        {/* Revenue parity tiles (Feb-2026) — three tap-through
+            entries at the very top of the admin Dashboard, above
+            Budget Health / Weather / Hero. Visible only to admin-
+            like roles (super_admin / admin / manager). Techs and
+            customers never reach this screen (redirected above),
+            so the gate below only excludes any future non-admin
+            role from seeing the tiles. */}
+        {(user?.role === "super_admin" || user?.role === "admin" || user?.role === "manager") ? (
+          <View style={styles.revenueTiles} testID="dashboard-revenue-tiles">
+            <RevenueTile
+              testID="admin-tile-revenue-by-category"
+              icon="pie-chart-outline"
+              label="Revenue by Category"
+              hint="Income breakdown by service type"
+              onPress={() => router.push("/income-by-category")}
+            />
+            <RevenueTile
+              testID="admin-tile-revenue-by-service"
+              icon="bar-chart-outline"
+              label="Revenue by Service"
+              hint="Top-earning services"
+              onPress={() => router.push("/reports/revenue-by-service")}
+            />
+            <RevenueTile
+              testID="admin-tile-forecast-revenue"
+              icon="trending-up-outline"
+              label="Forecast Revenue"
+              hint="Projected billing by window"
+              onPress={() => router.push("/reports/forecast")}
+            />
+          </View>
+        ) : null}
+
         {user?.role !== "admin" && user?.role !== "super_admin" && <LandscapingClockWidget />}
         <BudgetHealthCard />
         <WeatherWidget />
@@ -571,6 +604,31 @@ function Kpi({ icon, label, value, onPress }: { icon: any; label: string; value:
   );
 }
 
+function RevenueTile({
+  testID, icon, label, hint, onPress,
+}: {
+  testID: string; icon: any; label: string; hint: string; onPress: () => void;
+}) {
+  return (
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      style={({ pressed }) => [styles.revenueTile, pressed && { opacity: 0.85 }]}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <View style={styles.revenueTileIcon}>
+        <Ionicons name={icon} size={22} color={colors.brand} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.revenueTileLabel}>{label}</Text>
+        <Text style={styles.revenueTileHint}>{hint}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+    </Pressable>
+  );
+}
+
 /** Phase 20B module B — Referral Revenue tile (mobile). */
 function ReferralRevenueTile() {
   const router = useRouter();
@@ -601,6 +659,24 @@ function ReferralRevenueTile() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  revenueTiles: { gap: spacing.sm, marginBottom: spacing.lg },
+  revenueTile: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  revenueTileIcon: {
+    width: 42, height: 42, borderRadius: radius.md,
+    backgroundColor: colors.brandTertiary,
+    alignItems: "center", justifyContent: "center",
+  },
+  revenueTileLabel: { fontFamily: font.bold, fontSize: fontSize.base, color: colors.onSurface },
+  revenueTileHint: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 1 },
   refTile: { flexDirection: "row", alignItems: "center", gap: spacing.md,
              backgroundColor: colors.brand, padding: spacing.lg,
              borderRadius: radius.lg, marginBottom: spacing.lg },
