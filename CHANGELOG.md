@@ -10,6 +10,86 @@ Do not rewrite history — only prepend new entries at the top.
 
 ## 2026-08-10 — Phase 30 · Portal + Admin Avatar Coverage (Option 3 + A) + Phase 30.1 mobile persona correction (P1)
 
+### 2026-08-10 (later still) — Phase 30.3 · Mobile customer portal sign-out affordance (P1)
+
+Customers landing on the mobile portal home couldn't find a
+sign-out button — one existed on the Profile subpage
+(`testID="portal-logout"`) but was buried behind a nav step.
+Added a discoverable header affordance.
+
+**Placement** — top-right, **immediately to the right of the
+`<NotificationBell />`** icon in the portal home header (per user
+clarification). Both icons live inside a shared
+`<View style={s.headerActions}>` row with an 8 dp gap. No
+alternate bottom-of-page copy exists.
+
+- `mobile/app/portal/home.tsx`
+  - Destructured `logout` from `useAuth()` alongside `user`.
+  - Added `onSignOutPress` handler that pops a native
+    `Alert.alert("Sign out?", "You'll need to log back in to see
+    your account.", [Cancel, {text: "Sign out", style:
+    "destructive", onPress: logout}])` confirmation before
+    invoking the canonical `logout()` (same fn the tech drawer's
+    Sign out button uses at `mobile/app/(app)/more.tsx`).
+  - The `<Pressable testID="portal-sign-out-button">` renders as
+    the second child of the header actions row (bell → sign-out).
+  - Icon: `<Ionicons name="log-out-outline" size={22} />` — the
+    project's mobile icon family is `@expo/vector-icons` (no
+    `lucide-react-native` dep on mobile); `log-out-outline` is
+    the semantic equivalent of lucide's `LogOut`.
+  - Pressable has `hitSlop={{top: 8, right: 8, bottom: 8, left: 8}}`
+    matching the bell's tap footprint.
+  - New styles: `headerActions` (row, gap 8) + `signOutBtn`
+    (pill wrapper, padding 6).
+  - Accessibility: `accessibilityRole="button"` +
+    `accessibilityLabel="Sign out"`.
+  - Testid: `portal-sign-out-button`.
+
+- **Not touched** — the existing `portal-logout` button on the
+  Profile subpage stays put. Customers can now sign out from
+  either surface, but the header one is the newly discoverable
+  entry point.
+
+### Confirmation dialog copy
+
+```
+Title:   "Sign out?"
+Body:    "You'll need to log back in to see your account."
+Cancel:  "Cancel"          (style: "cancel")
+Confirm: "Sign out"        (style: "destructive" → calls logout())
+```
+
+### Tests
+
+- **Vitest** — `frontend/src/test/phase30-3-portal-sign-out.test.jsx`
+  (NEW, **7 cases**, all green):
+  1. `logout` destructured from `useAuth()`.
+  2. Pressable with `testID="portal-sign-out-button"` present.
+  3. Sign-out call wrapped in `Alert.alert("Sign out?", ...)` with
+     a destructive-style handler that calls `logout()`.
+  4. Regression — no bare `onPress={logout}` handler.
+  5. Button sits inside `<View style={s.headerActions}>` right
+     after `<NotificationBell />`, AND no stray JSX elements
+     appear between the two icons (adjacency lock).
+  6. Uses `Ionicons name="log-out-outline"` (mobile icon family
+     lock — no accidental import of `lucide-react-native`).
+  7. Regression — exactly ONE `portal-sign-out-button` testID
+     appears in the file (no duplicate bottom-of-page copy).
+  8. Regression — `Profile` subpage `portal-logout` button still
+     present (redundant surface preserved).
+
+- **Full cross-suite regression sweep** —
+  Phase 23 (11) + 25 (8) + 25b (9) + 26 (6) +
+  27 web/mobile/seed (15 + 9 + 8) + 28 (13) + 29 (9) +
+  30 (17) + 30.3 (7) → **112/112 vitest passing**.
+
+### Constraints honoured
+
+- No web PortalHome touched.
+- Auth store / `logout()` fn untouched — pure UI wire-up.
+- No analytics / telemetry hooks added.
+- No touching of the 15 deferred tech-facing mobile screens.
+
 ### 2026-08-10 (later) — Phase 30.2 · Mobile portal home next-service consolidation
 
 The mobile portal home had two overlapping next-service surfaces

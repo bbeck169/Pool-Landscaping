@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, RefreshControl, Pressable,
-  Linking, Dimensions,
+  Linking, Dimensions, Alert,
 } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -58,7 +58,23 @@ const QA_SECTIONS: { key: string; label: string; icon: any; route: string }[] = 
 ];
 
 export default function PortalHome() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+
+  // Phase 30.3 · Feb-2026 — customer portal sign-out affordance.
+  // Reuses the canonical ``useAuth().logout`` (same fn used by the
+  // tech drawer's Sign out at ``mobile/app/(app)/more.tsx`` and by
+  // the portal Profile subpage). Wrapped in an Alert so a stray
+  // header tap can't silently blow away the session.
+  const onSignOutPress = React.useCallback(() => {
+    Alert.alert(
+      "Sign out?",
+      "You'll need to log back in to see your account.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Sign out", style: "destructive", onPress: () => { void logout(); } },
+      ],
+    );
+  }, [logout]);
   const router = useRouter();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -102,7 +118,29 @@ export default function PortalHome() {
 
   return (
     <View style={s.root}>
-      <Header title="My Account" subtitle={`Hi, ${user?.name?.split(" ")[0] || ""}`} right={<NotificationBell />} />
+      <Header
+        title="My Account"
+        subtitle={`Hi, ${user?.name?.split(" ")[0] || ""}`}
+        right={(
+          // Phase 30.3 · header right-slot cluster — bell + sign-out.
+          // Kept as a compact horizontal row so the header's fixed
+          // right area holds both affordances without pushing the
+          // title.
+          <View style={s.headerActions}>
+            <NotificationBell />
+            <Pressable
+              onPress={onSignOutPress}
+              style={s.signOutBtn}
+              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+              testID="portal-sign-out-button"
+              accessibilityRole="button"
+              accessibilityLabel="Sign out"
+            >
+              <Ionicons name="log-out-outline" size={22} color={colors.onSurface} />
+            </Pressable>
+          </View>
+        )}
+      />
       {loading || !data ? (
         <Loading testID="portal-home-loading" />
       ) : (
@@ -398,6 +436,14 @@ export default function PortalHome() {
 }
 
 const s = StyleSheet.create({
+  // Phase 30.3 · header-right cluster (NotificationBell + Sign out).
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  signOutBtn: {
+    padding: 6,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
 
   // CTA Row
