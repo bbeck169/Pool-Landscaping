@@ -8,6 +8,18 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 40b hotfix · Time-off web pages compile fix
+
+- Corrected `@/lib/api` → `@/api` (canonical named export) in
+  `TimeOffPage.jsx` and `AdminTimeOffPage.jsx`. The `@` alias resolves
+  to `src/`, and `src/api.js` exports `{ api }` (no default), so the
+  bogus `@/lib/api` path broke the webpack build.
+- Verified: `frontend` supervisor logs report `Compiled successfully!`
+  and `phase40-time-off.test.jsx` (20 tests) passes green.
+
+---
+
+
 ## 2026-02-XX — Phase 40b · Time-off UI (web + mobile)
 
 Replaced the Phase-40 ``ComingSoonPage`` stubs with real employee +
