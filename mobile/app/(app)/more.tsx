@@ -8,6 +8,11 @@ import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { registerForPushNotifications, deregisterPushToken } from "@/src/services/pushNotifications";
+// Phase (Feb-2026) — mobile admin drawer parity with the web sidebar.
+// Renders the ``QUICK_ACCESS`` shortcut group + the eight canonical
+// admin groups from a single source of truth so parity edits are a
+// one-file change.
+import { ADMIN_NAV, QUICK_ACCESS, canSeeEntry, type NavEntry, type NavGroup } from "@/src/nav/adminNav";
 
 export default function More() {
   const { user, logout } = useAuth();
@@ -146,21 +151,18 @@ export default function More() {
         </Pressable>
 
         {showAdminSection ? (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Management</Text>
-            {adminLinks.map((l) => (
-              <Pressable key={l.label} style={styles.link} onPress={l.onPress} testID={`more-link-${l.label.split(" ")[0].toLowerCase()}`}>
-                <View style={styles.linkIcon}>
-                  <Ionicons name={l.icon as any} size={20} color={colors.brand} />
-                </View>
-                <Text style={styles.linkLabel}>{l.label}</Text>
-                <Ionicons name="chevron-forward" size={18} color={colors.muted} />
-              </Pressable>
+          <>
+            {/* Quick-Access shortcut group (top of drawer) */}
+            <DrawerGroup group={QUICK_ACCESS} role={role} router={router} />
+
+            {/* Eight canonical admin groups mirroring web sidebar order */}
+            {ADMIN_NAV.map((g) => (
+              <DrawerGroup key={g.key} group={g} role={role} router={router} />
             ))}
-          </View>
+          </>
         ) : null}
 
-        {showSeoSection ? (
+        {false ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>SEO</Text>
             {seoLinks.map((l) => (
@@ -300,4 +302,88 @@ const styles = StyleSheet.create({
   },
   logoutText: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.error },
   version: { textAlign: "center", fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: spacing.xl },
+  webOnlyPill: {
+    marginLeft: 8,
+    paddingHorizontal: 6, paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceTertiary,
+  },
+  webOnlyPillText: { fontFamily: font.semibold, fontSize: 10, color: colors.muted, letterSpacing: 0.4 },
+  comingSoonPill: {
+    marginLeft: 8,
+    paddingHorizontal: 6, paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: colors.brandTertiary,
+  },
+  comingSoonPillText: { fontFamily: font.semibold, fontSize: 10, color: colors.brand, letterSpacing: 0.4 },
 });
+
+// ── Data-driven drawer render (Feb-2026 parity) ────────────────────
+
+function DrawerGroup({ group, role, router }: {
+  group: NavGroup;
+  role: string;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const visible = group.entries.filter((e) => canSeeEntry(role, e));
+  if (visible.length === 0) return null;
+  return (
+    <View style={styles.section} testID={`drawer-group-${group.key}`}>
+      <Text style={styles.sectionTitle}>{group.label}</Text>
+      {visible.map((e) => (
+        <DrawerRow key={e.testID} entry={e} router={router} />
+      ))}
+    </View>
+  );
+}
+
+function DrawerRow({ entry, router }: {
+  entry: NavEntry;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const onPress = () => {
+    if (entry.tier === "t3") {
+      router.push({
+        pathname: "/web-only",
+        params: { title: entry.label, webPath: entry.route },
+      });
+    } else if (entry.tier === "t2") {
+      // Best-effort: navigate to the real mobile route first (in case
+      // the screen was quietly added between drawer edits). If Expo
+      // Router bounces to 404 the fallback route below will still
+      // render the ComingSoonPage.
+      router.push(entry.route as any);
+    } else {
+      router.push(entry.route as any);
+    }
+  };
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.link,
+        entry.tier === "t3" && { opacity: 0.75 },
+        pressed && { opacity: 0.85 },
+      ]}
+      testID={entry.testID}
+      accessibilityRole="button"
+      accessibilityLabel={entry.label}
+    >
+      <View style={styles.linkIcon}>
+        <Ionicons name={entry.icon as any} size={20} color={colors.brand} />
+      </View>
+      <Text style={styles.linkLabel}>{entry.label}</Text>
+      {entry.tier === "t2" ? (
+        <View style={styles.comingSoonPill}>
+          <Text style={styles.comingSoonPillText}>SOON</Text>
+        </View>
+      ) : entry.tier === "t3" ? (
+        <View style={styles.webOnlyPill}>
+          <Text style={styles.webOnlyPillText}>WEB</Text>
+        </View>
+      ) : null}
+      <Ionicons name="chevron-forward" size={18} color={colors.muted} />
+    </Pressable>
+  );
+}

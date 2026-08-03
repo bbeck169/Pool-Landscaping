@@ -8,6 +8,104 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Mobile admin drawer parity (Option B · 85 wired) (P1)
+
+Mobile hamburger drawer at ``mobile/app/(app)/more.tsx`` now mirrors
+the web admin sidebar (``frontend/src/nav/adminNav.js`` /
+``layouts/AdminSidebar.jsx``). Data-driven render from a single source
+of truth so future parity edits are a one-file change.
+
+### Added
+- **`mobile/src/nav/adminNav.ts`** — mobile-side nav data module.
+  Exports ``QUICK_ACCESS`` (Schedule / Dispatch / Team synthetic
+  shortcut group per user request) and ``ADMIN_NAV`` (the eight
+  canonical web groups: Finance · AI Employees · Marketing ·
+  Operations · Customers · Reports · Communications · Reviews). Each
+  entry carries ``{ label, route, icon, tier, roles?, testID }``.
+  Structure is copied from the web module (not derived at runtime),
+  so mobile routes can diverge from web paths safely.
+- **`mobile/src/components/ComingSoonPage.tsx`** — shared Tier-2
+  stub. Reads title + web path from search params so all 25 T2
+  routes are 1-line re-exports.
+- **`mobile/src/components/WebOnlyPage.tsx`** — shared Tier-3
+  fallback. In-app ``<WebView>`` on native, ``Linking.openURL`` CTA
+  on the Expo web bundle (WebView is native-only). URL derived from
+  ``EXPO_PUBLIC_WEB_URL`` + web path from the drawer entry.
+- **`mobile/app/web-only.tsx`** — 1-line re-export of
+  ``WebOnlyPage`` so every Tier-3 tap routes to a single Expo route
+  (``/web-only?title=…&webPath=…``).
+- **25 new T2 stub route files** — 1-line re-exports of
+  ``ComingSoonPage``:
+  `/settings/income-categories`, `/settings/service-categories`,
+  `/settings/notifications`, `/settings/terms`, `/settings/legal`,
+  `/settings/maps`, `/settings/ringcentral`, `/admin/reviews`,
+  `/admin/reviews/requests`, `/admin/reviews/platforms`,
+  `/admin/reviews/widget`, `/admin/comms/email`, `/admin/comms/sms`,
+  `/admin/comms/templates`, `/admin/comms/automations`,
+  `/admin/comms/sends`, `/admin/tags`, `/admin/service-reports`,
+  `/admin/appointments`, `/admin/referrals/analytics`,
+  `/admin/referrals/settings`, `/admin/chemicals`,
+  `/admin/moderation/checkins`, `/admin/diagnostics/errors`,
+  `/weather`. Plus `/crews` and `/tenants` (super-admin gated).
+
+### Changed
+- **`mobile/app/(app)/more.tsx`** — removed the flat hard-coded
+  Management + SEO sections; drawer now maps over ``QUICK_ACCESS``
+  + ``ADMIN_NAV`` via new ``DrawerGroup`` / ``DrawerRow`` helpers.
+  Tier-2 rows carry a "SOON" pill, Tier-3 rows carry a "WEB" pill
+  and route to ``/web-only``. Tech-only section, notifications
+  toggle, and logout row all preserved unchanged.
+
+### Scope (Option B · Phase-B this delivery)
+- **Tier 1 · LINK ONLY — 59 wired.** Mobile screens already existed;
+  drawer now surfaces them.
+- **Tier 2 · STUBS — 25 wired.** Small-effort routes shown with a
+  "SOON" pill; tap opens ``ComingSoonPage`` with a "Open on the web
+  app" CTA. Remaining ~44 T2 items queued for **Phase-B follow-up**.
+- **Tier 3 · WEB-ONLY — 15 exposed via `/web-only`.** Master
+  Invoices, Autobilling Runs, Check Writer, Dunning Queue, Warranty
+  Plans, Marketing Campaigns, Social Composer, SEO Articles,
+  Auto-Dispatch, Routes, Inventory, Business OS, Business Summary,
+  Recurring Jobs, Vendor Bills. Remaining ~57 T3 items **hidden
+  from the drawer entirely** and tracked as **P1/P2 backlog** per
+  the Phase 31 audit.
+- **Quick Access** — three entries at the very top of the drawer
+  (Schedule / Dispatch / Team) duplicating their canonical group
+  positions, per user request.
+
+### Follow-up phases (deferred)
+- **Phase-B follow-up · remaining 44 T2 stubs** — same
+  ``ComingSoonPage`` pattern, small effort.
+- **P1 large builds (already in Phase 31 audit backlog):** mobile
+  finance ops (Master Invoices, Recurring Jobs, Auto-Billing config,
+  Autobilling Runs, Payments ledger, Vendor Bills), CFO deep-dives,
+  Business OS (SOPs / Roles / Scorecards / LeanBoards / Sprints),
+  Dispatch parity (Optimize / Insert / Apply + Mapbox live pins).
+- **P2 large builds:** Marketing Campaigns / Posts / Approval Queue
+  / Calendar / Performance / Brand Memory; Social Composer / Calendar
+  / Library / Drafts / Approvals; SEO Articles / Keywords / Audit /
+  Rank Grid / WordPress; Onboarding Templates / Queue.
+
+### Tests
+`frontend/src/test/phase-mobile-drawer-parity.test.jsx` (39
+assertions) locks: source-of-truth structure (8 group keys in order,
+QUICK_ACCESS shape, tier classifications and counts), presence and
+shape of ``ComingSoonPage`` + ``WebOnlyPage`` + ``/web-only`` route,
+drawer imports from ``adminNav.ts``, ``QUICK_ACCESS`` rendered above
+``ADMIN_NAV``, T2/T3 pill visibility, and one guarded assertion per
+T2 stub file (all 25). Cross-suite (drawer + revenue parity + sign-
+out + CI) passes **81 / 81**.
+
+### Non-scope confirmed
+- Backend untouched.
+- Web sidebar untouched.
+- Tech / customer drawer content unchanged (existing `techLinks` + push
+  notifications toggle + logout row preserved).
+- Phase 32 / Phase 39 / Phase 30.4 / Live Radar / Dashboard tiles /
+  revenue screens untouched.
+
+---
+
 ## 2026-02-XX — Mobile revenue-tile parity (P1)
 
 Added three tap-through parity tiles at the top of the mobile admin
