@@ -8,6 +8,46 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 32 · Minimal CI pipeline (P0.1)
+
+CI pipeline landed — `.github/workflows/ci.yml` runs backend pytest +
+frontend vitest + mobile jest on every pull request and every push to
+`main`. No deploy stage (out of scope; enforced by
+`frontend/src/test/phase32-ci-config.test.jsx`). Cache + concurrency
+configured — pip cache on backend, yarn cache on both Node jobs, and a
+`ci-${{ github.ref }}` concurrency group with `cancel-in-progress: true`.
+
+### Added
+- `.github/workflows/ci.yml` — three parallel jobs: `backend` (Python
+  3.11 + `pytest -m "not live and not destructive and not
+  legacy_iteration"`), `frontend-web` (Node 20.19 + `yarn vitest run
+  --reporter=basic`), `mobile` (Node 20.19 + `yarn test --ci
+  --forceExit`).
+- `.github/workflows/README.md` — one-paragraph documentation of each
+  job and the local-equivalent commands.
+- `frontend/src/test/phase32-ci-config.test.jsx` — 12 source-inspection
+  assertions locking the workflow shape (job names, triggers,
+  concurrency, Node/Python version pins, cache config, and a guardrail
+  that no `deploy` / `publish` / EAS build step is present).
+
+### Verification
+- YAML validated with `python3 -c "import yaml; yaml.safe_load(...)"` —
+  jobs `['backend', 'frontend-web', 'mobile']`, triggers
+  `['pull_request', 'push']`, concurrency `{group: 'ci-${{ github.ref
+  }}', cancel-in-progress: true}`.
+- Phase 32 vitest: **12/12 pass**.
+- Backend command spot-checked with `pytest --collect-only` — marker
+  filter deselected the 690 legacy/live/destructive tests as intended.
+
+### Non-scope
+- Did not fix the 13 red vitest cases or the 9 empty-collection files
+  from Phase 31 audit — deferred to Phase 33.
+- Did not normalize endpoint path drift — deferred to Phase 34.
+- Did not add EAS Build / OTA publish workflow — deferred (documented
+  as manual in `mobile/EAS_UPDATE_RUNBOOK.md`).
+
+---
+
 ## 2026-08-10 — Phase 30 · Portal + Admin Avatar Coverage (Option 3 + A) + Phase 30.1 mobile persona correction (P1)
 
 ### 2026-08-10 (later still) — Phase 30.3 · Mobile customer portal sign-out affordance (P1)
