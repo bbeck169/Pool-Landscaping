@@ -8,6 +8,81 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 30.3 (final) · Portal sign-out P0 — Alert.alert was the silent link
+
+Removed `Alert.alert` wrap from the customer portal sign-out handler
+in `mobile/app/portal/home.tsx`. On the user's Android/Expo Go build,
+`Alert.alert(...)` rendered nothing and silently dropped the
+destructive-button callback → tap looked completely dead even though
+touch events were reaching JS. Three prior "hotfix" attempts (Alert
+wrap, `router.replace` race, flexShrink/hitSlop geometry) all shared
+the same root cause and none of them could have worked.
+
+### How we proved it
+- **Phase 30.3-diag** (single yellow MVP Pressable + `console.log` +
+  `Alert.alert`) proved the bundle was fresh but not whether the tap
+  was firing.
+- **Phase 30.3-diag2** (dual-location, visual-state probes — yellow
+  header button + orange scroll-area bar; both driven by `useState`
+  colour flip) proved that Pressable + touch layer + state flush are
+  100 % OK. Both buttons turned lime green on tap on the user's
+  device. `Alert.alert` was the only thing that never rendered.
+
+### The fix
+Handler now mirrors the two proven-working sign-outs in the repo
+(`mobile/app/(app)/more.tsx` tech drawer +
+`mobile/app/portal/profile.tsx` portal Profile):
+
+```ts
+const handleSignOut = React.useCallback(async () => {
+  try {
+    if (__DEV__) console.log("[portal sign-out] pressed");
+    await logout();
+    if (__DEV__) console.log("[portal sign-out] logout ok, navigating");
+    router.replace("/login");
+  } catch (e) {
+    if (__DEV__) console.error("[portal sign-out] failed", e);
+  }
+}, [logout, router]);
+```
+
+- **No confirmation dialog** — matches Profile-page pattern. Accidental
+  taps are mitigated by a small icon target + deliberate `hitSlop`.
+- `router.replace("/login")` after `logout()` — belt-and-suspenders
+  navigation independent of the `portal/_layout` `<Redirect>` gate.
+- Touch-region guardrails from the earlier hotfix retained:
+  `s.headerActions.flexShrink: 0`, `s.signOutBtn.{padding:8,
+  borderRadius:8, flexShrink:0}`, and `hitSlop={{top:12, bottom:12,
+  left:12, right:12}}`.
+- `Alert` import removed from `react-native`'s named-imports block so
+  the primitive cannot be silently re-introduced by a future refactor.
+
+### Tests
+`frontend/src/test/phase30-3-portal-sign-out.test.jsx` rewritten to
+production shape (15 assertions):
+- Handler wraps `await logout()` in `try/catch`, logs pressed / ok /
+  failed via `__DEV__` guards, and calls `router.replace("/login")`.
+- Button uses `onPress={handleSignOut}` — no `Alert.alert`, no
+  `onSignOutPress`, no `doSignOut`.
+- Regression guard: `Alert.alert(...)` NOT present anywhere in code
+  (comments allowed for the breadcrumb).
+- Regression guard: `Alert` NOT in the react-native named-imports.
+- Regression guard: no `tapCount` / `scrollTapCount` state, no
+  `portal-scroll-test-button`, no `[SIGN_OUT_DEBUG]` diagnostic
+  strings, no `doSignOut` / `onSignOutPress` legacy callbacks.
+- Existing touch-region invariants (flexShrink, padding, hitSlop) still
+  locked.
+- Profile-page `testID="portal-logout"` regression guard preserved.
+
+Full suite (`phase30-3` + `phase32-ci-config`) → **27 / 27 pass**.
+
+### Non-scope
+- Phase 32 CI files untouched.
+- Notification bell untouched.
+- No confirmation dialog reintroduced on any sign-out surface.
+
+---
+
 ## 2026-02-XX — Phase 32 · Minimal CI pipeline (P0.1)
 
 CI pipeline landed — `.github/workflows/ci.yml` runs backend pytest +

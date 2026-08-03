@@ -1,39 +1,24 @@
 /**
- * Phase 30.3-diag2 · Feb-2026 — mobile customer portal sign-out
- * DIAGNOSTIC MODE (dual-location visual-state probe).
+ * Phase 30.3 (final) · Feb-2026 — mobile customer portal sign-out.
  *
- * The Phase 30.3-diag single-button MVP (yellow box + console.log +
- * Alert.alert) proved bundle-freshness but the tap still fired
- * nothing on device — even though the adjacent NotificationBell
- * (same parent, same Pressable API from `react-native`) works.
+ * ROOT CAUSE (locked in by these tests): the previous three hotfix
+ * attempts all wrapped ``logout()`` in ``Alert.alert(...destructive)``.
+ * On the user's Android/Expo Go build ``Alert.alert`` renders nothing
+ * and silently drops the destructive callback → tap looked dead. The
+ * dual-probe diagnostic (Phase 30.3-diag2) proved Pressable + touch
+ * are fine — Alert.alert was the single silent link.
  *
- * Because Alert can silently no-op in some Expo Go builds AND
- * console.log requires a live Metro tail, this diag now drives a
- * `useState` from onPress so the buttons themselves flip colour
- * on tap. Visual proof of tap arrival, independent of Metro/Alert.
- *
- * Two probes are mounted:
- *   1. HEADER probe · `testID="portal-sign-out-button"`
- *      44×44 yellow → lime on `tapCount > 0`, red border,
- *      Ionicons log-out-outline glyph. Lives inside the
- *      Header's `right` slot alongside `<NotificationBell />`.
- *   2. SCROLL probe · `testID="portal-scroll-test-button"`
- *      height 60 orange → lime on `scrollTapCount > 0`, red
- *      border, "TAP HERE — count: N" label. Lives in the
- *      ScrollView body, just above the Next Service Day card.
- *
- * Interpretation matrix (documented for the next fork):
- *   ┌──────────────┬──────────────┬─────────────────────────────────┐
- *   │ HEADER lime? │ SCROLL lime? │ Diagnosis                       │
- *   ├──────────────┼──────────────┼─────────────────────────────────┤
- *   │  YES         │  YES         │ Touch works — P0 is downstream  │
- *   │              │              │ (Alert / handler chain)         │
- *   │  NO          │  YES         │ Header context uniquely broken  │
- *   │              │              │ (move sign-out outside Header)  │
- *   │  YES         │  NO          │ Scroll context broken — cache?  │
- *   │  NO          │  NO          │ Global Pressable failure —      │
- *   │              │              │ Expo Go / RN version mismatch   │
- *   └──────────────┴──────────────┴─────────────────────────────────┘
+ * The production fix mirrors the two proven-working sign-outs in this
+ * repo: ``mobile/app/(app)/more.tsx`` (tech drawer) and
+ * ``mobile/app/portal/profile.tsx`` (portal Profile). Both call
+ * ``onPress={logout}`` directly, no confirmation. We layer:
+ *   * try/catch with ``if (__DEV__) console.log/error(...)`` traces
+ *     so any future silent-drop mode is surfaced immediately.
+ *   * ``router.replace("/login")`` after ``logout()`` — belt-and-
+ *     suspenders navigation independent of the ``portal/_layout``
+ *     ``<Redirect>`` gate.
+ *   * Touch-region guardrails from the earlier hotfix:
+ *     ``flexShrink:0``, ``padding:8``, ``hitSlop`` on all four sides.
  */
 import fs from "fs";
 import path from "path";
@@ -43,124 +28,149 @@ const R = (p) => fs.readFileSync(path.resolve(__dirname, p), "utf-8");
 const M_HOME    = R("../../../mobile/app/portal/home.tsx");
 const M_PROFILE = R("../../../mobile/app/portal/profile.tsx");
 
-describe("Phase 30.3-diag2 · dual visual-state tap probes", () => {
-  it("still destructures `logout` from useAuth() (kept for restoration)", () => {
+describe("Phase 30.3 (final) · Portal home sign-out", () => {
+  it("destructures `logout` from useAuth()", () => {
     expect(M_HOME).toMatch(
       /const\s+\{\s*user\s*,\s*logout\s*\}\s*=\s*useAuth\(\)/,
     );
   });
 
-  it("declares tapCount + scrollTapCount useState hooks", () => {
-    expect(M_HOME).toMatch(
-      /const\s+\[\s*tapCount\s*,\s*setTapCount\s*\]\s*=\s*useState\(\s*0\s*\)/,
+  it("declares a `handleSignOut` useCallback that awaits logout() and navigates", () => {
+    const block = M_HOME.match(
+      /const\s+handleSignOut\s*=\s*React\.useCallback\(\s*async[\s\S]*?\},\s*\[[^\]]*\]\s*\)/,
     );
-    expect(M_HOME).toMatch(
-      /const\s+\[\s*scrollTapCount\s*,\s*setScrollTapCount\s*\]\s*=\s*useState\(\s*0\s*\)/,
+    expect(block).not.toBeNull();
+    const body = block[0];
+    // Must actually call logout() (awaited).
+    expect(body).toMatch(/await\s+logout\(\)/);
+    // Must navigate via router.replace to /login.
+    expect(body).toMatch(/router\.replace\(\s*["']\/login["']\s*\)/);
+    // Must be wrapped in try/catch so a rejected logout doesn't
+    // silently drop like the Alert.alert primitive did.
+    expect(body).toMatch(/try\s*\{/);
+    expect(body).toMatch(/catch\s*\(/);
+    // Dev-only logging around the pressed / ok / failed transitions.
+    expect(body).toMatch(/__DEV__/);
+    expect(body).toMatch(/console\.log\(\s*["']\[portal sign-out\] pressed["']/);
+    expect(body).toMatch(/console\.error\(\s*["']\[portal sign-out\] failed["']/);
+  });
+
+  it("Pressable uses `handleSignOut` as its onPress (no Alert.alert wrap)", () => {
+    const block = M_HOME.match(
+      /<Pressable[\s\S]*?testID=["']portal-sign-out-button["'][\s\S]*?<\/Pressable>/,
+    );
+    expect(block).not.toBeNull();
+    const b = block[0];
+    expect(b).toMatch(/onPress=\{handleSignOut\}/);
+    // ROOT-CAUSE REGRESSION GUARD — the button MUST NOT reintroduce
+    // Alert.alert in any form. That primitive is silently broken
+    // on the user's Android/Expo Go build; using it here again
+    // would reproduce the P0.
+    expect(b).not.toMatch(/Alert\.alert/);
+    expect(b).not.toMatch(/onPress=\{onSignOutPress\}/);
+  });
+
+  it("handler module NO LONGER references Alert.alert anywhere", () => {
+    // Belt-and-suspenders regression guard: even if a future edit
+    // moves the handler out of the JSX block, the file as a whole
+    // must not depend on ``Alert.alert`` for sign-out (or anything
+    // else) — the import itself was removed to make this impossible.
+    //
+    // Strip line comments before matching so the breadcrumb
+    // paragraph above the handler (which intentionally *mentions*
+    // ``Alert.alert(...)`` as a historical note) does not
+    // falsely trip the guard.
+    const codeOnly = M_HOME
+      .split("\n")
+      .filter((ln) => !/^\s*(?:\/\/|\*)/.test(ln))
+      .join("\n");
+    expect(codeOnly).not.toMatch(/Alert\.alert\(/);
+    // Import guard — Alert removed from the react-native named
+    // imports to prevent accidental reintroduction.
+    expect(M_HOME).not.toMatch(
+      /from\s+["']react-native["'][\s\S]{0,200}\bAlert\b[\s\S]{0,20}[},]/,
     );
   });
 
-  // ── HEADER probe ───────────────────────────────────────────
-  it("HEADER probe: exactly one Pressable with testID='portal-sign-out-button'", () => {
+  it("exactly one Pressable with testID='portal-sign-out-button'", () => {
     const matches = M_HOME.match(/testID=["']portal-sign-out-button["']/g);
     expect(matches).not.toBeNull();
     expect(matches.length).toBe(1);
   });
 
-  it("HEADER probe: onPress logs [SIGN_OUT_DEBUG] HEADER and increments tapCount", () => {
+  it("Pressable has hitSlop on all four sides", () => {
     const block = M_HOME.match(
       /<Pressable[\s\S]*?testID=["']portal-sign-out-button["'][\s\S]*?<\/Pressable>/,
     );
-    expect(block).not.toBeNull();
-    const b = block[0];
-    expect(b).toMatch(/console\.log\(\s*["']\[SIGN_OUT_DEBUG\] HEADER tap fired at["']/);
-    expect(b).toMatch(/setTapCount\(\s*\(c\)\s*=>\s*c\s*\+\s*1\s*\)/);
-    // Alert.alert removed — Alert may be silently no-op on device.
-    expect(b).not.toMatch(/Alert\.alert/);
-    // No downstream logout / router.replace — pure touch probe.
-    expect(b).not.toMatch(/logout\(\)/);
-    expect(b).not.toMatch(/router\.replace/);
+    expect(block[0]).toMatch(
+      /hitSlop=\{\{\s*top:\s*\d+,\s*bottom:\s*\d+,\s*left:\s*\d+,\s*right:\s*\d+\s*\}\}/,
+    );
   });
 
-  it("HEADER probe: yellow → lime on tap (visual state), 44×44 with red border", () => {
+  it("Pressable style prop references s.signOutBtn (not the diagnostic inline style)", () => {
     const block = M_HOME.match(
       /<Pressable[\s\S]*?testID=["']portal-sign-out-button["'][\s\S]*?<\/Pressable>/,
     );
-    const b = block[0];
-    expect(b).toMatch(/width:\s*44/);
-    expect(b).toMatch(/height:\s*44/);
-    expect(b).toMatch(/borderWidth:\s*2/);
-    expect(b).toMatch(/borderColor:\s*["']red["']/);
-    expect(b).toMatch(/backgroundColor:\s*tapCount\s*>\s*0\s*\?\s*["']lime["']\s*:\s*["']yellow["']/);
+    expect(block[0]).toMatch(/s\.signOutBtn/);
+    // Diagnostic-only visual state was yellow / red-border / fixed
+    // 44×44. Production styling must not carry any of that debris.
+    expect(block[0]).not.toMatch(/backgroundColor:\s*["']yellow["']/);
+    expect(block[0]).not.toMatch(/backgroundColor:\s*["']orange["']/);
+    expect(block[0]).not.toMatch(/borderColor:\s*["']red["']/);
+    expect(block[0]).not.toMatch(/tapCount/);
   });
 
-  it("HEADER probe: still sits alongside <NotificationBell /> in headerActions", () => {
+  it("Pressable renders Ionicons `log-out-outline` size 24", () => {
+    expect(M_HOME).toMatch(
+      /testID=["']portal-sign-out-button["'][\s\S]{0,1200}<Ionicons\s+name=["']log-out-outline["']\s+size=\{24\}/,
+    );
+  });
+
+  it("sits alongside <NotificationBell /> in the header right slot", () => {
     expect(M_HOME).toMatch(
       /<View\s+style=\{s\.headerActions\}>[\s\S]*?<NotificationBell[\s\S]*?<Pressable[\s\S]*?testID=["']portal-sign-out-button["']/,
     );
   });
 
-  // ── SCROLL probe ───────────────────────────────────────────
-  it("SCROLL probe: exactly one Pressable with testID='portal-scroll-test-button'", () => {
-    const matches = M_HOME.match(/testID=["']portal-scroll-test-button["']/g);
-    expect(matches).not.toBeNull();
-    expect(matches.length).toBe(1);
+  it("headerActions has flexDirection:row + flexShrink:0 + gap", () => {
+    const body = M_HOME.match(/headerActions\s*:\s*\{([\s\S]*?)\}/)[1];
+    expect(body).toMatch(/flexDirection\s*:\s*["']row["']/);
+    expect(body).toMatch(/flexShrink\s*:\s*0/);
+    expect(body).toMatch(/gap\s*:/);
+    // No pointer/overflow blockers on the wrapper.
+    expect(body).not.toMatch(/pointerEvents\s*:\s*["']none["']/);
+    expect(body).not.toMatch(/overflow\s*:\s*["']hidden["']/);
   });
 
-  it("SCROLL probe: onPress logs [SIGN_OUT_DEBUG] SCROLL and increments scrollTapCount", () => {
-    const block = M_HOME.match(
-      /<Pressable[\s\S]*?testID=["']portal-scroll-test-button["'][\s\S]*?<\/Pressable>/,
-    );
-    expect(block).not.toBeNull();
-    const b = block[0];
-    expect(b).toMatch(/console\.log\(\s*["']\[SIGN_OUT_DEBUG\] SCROLL test tap fired at["']/);
-    expect(b).toMatch(/setScrollTapCount\(\s*\(c\)\s*=>\s*c\s*\+\s*1\s*\)/);
-    expect(b).not.toMatch(/Alert\.alert/);
-    expect(b).not.toMatch(/logout\(\)/);
-    expect(b).not.toMatch(/router\.replace/);
+  it("signOutBtn has flexShrink:0 + padding:8 for a safe touch region", () => {
+    const body = M_HOME.match(/signOutBtn\s*:\s*\{([\s\S]*?)\}/)[1];
+    expect(body).toMatch(/flexShrink\s*:\s*0/);
+    expect(body).toMatch(/padding\s*:\s*8/);
+    expect(body).toMatch(/borderRadius\s*:\s*\d+/);
   });
 
-  it("SCROLL probe: orange → lime, 60 high, red border, label with count", () => {
-    const block = M_HOME.match(
-      /<Pressable[\s\S]*?testID=["']portal-scroll-test-button["'][\s\S]*?<\/Pressable>/,
-    );
-    const b = block[0];
-    expect(b).toMatch(/height:\s*60/);
-    expect(b).toMatch(/borderWidth:\s*3/);
-    expect(b).toMatch(/borderColor:\s*["']red["']/);
-    expect(b).toMatch(/backgroundColor:\s*scrollTapCount\s*>\s*0\s*\?\s*["']lime["']\s*:\s*["']orange["']/);
-    expect(b).toMatch(/TAP HERE\s*—\s*count:\s*\{scrollTapCount\}/);
+  // ── Diagnostic cleanup guardrails ─────────────────────────
+  it("diagnostic tap-count state has been removed", () => {
+    expect(M_HOME).not.toMatch(/\btapCount\b/);
+    expect(M_HOME).not.toMatch(/setTapCount/);
+    expect(M_HOME).not.toMatch(/scrollTapCount/);
+    expect(M_HOME).not.toMatch(/setScrollTapCount/);
   });
 
-  it("SCROLL probe: mounted OUTSIDE the Header (inside ScrollView body)", () => {
-    // The scroll probe must sit AFTER the Header's closing bracket
-    // and BEFORE the Next Service Day card.
-    const scrollIdx = M_HOME.indexOf('testID="portal-scroll-test-button"');
-    const headerCloseIdx = M_HOME.indexOf("</Header>");
-    // Some codebases self-close the Header. Fall back to `/>` after
-    // the Header opener if `</Header>` isn't present.
-    const headerFallbackIdx = M_HOME.indexOf("<Header");
-    const nextServiceIdx = M_HOME.indexOf('testID="portal-next-service-day"');
-    expect(scrollIdx).toBeGreaterThan(-1);
-    expect(headerFallbackIdx).toBeGreaterThan(-1);
-    expect(scrollIdx).toBeGreaterThan(headerFallbackIdx);
-    // If </Header> exists it must precede; otherwise the fallback
-    // still gives us a valid ordering check.
-    if (headerCloseIdx > -1) {
-      expect(scrollIdx).toBeGreaterThan(headerCloseIdx);
-    }
-    // Placed above Next Service Day per the diagnostic brief.
-    expect(nextServiceIdx).toBeGreaterThan(-1);
-    expect(scrollIdx).toBeLessThan(nextServiceIdx);
+  it("diagnostic scroll-area test button has been removed", () => {
+    expect(M_HOME).not.toMatch(/testID=["']portal-scroll-test-button["']/);
+    expect(M_HOME).not.toMatch(/TAP HERE\s*—\s*count/);
+    expect(M_HOME).not.toMatch(/\[SIGN_OUT_DEBUG\]/);
   });
 
-  // ── Regression / guardrails ────────────────────────────────
+  it("legacy `doSignOut` / `onSignOutPress` callbacks have been retired", () => {
+    // Those were the Alert.alert-wrapped helpers. If they come
+    // back, someone's re-introduced the broken pattern.
+    expect(M_HOME).not.toMatch(/const\s+doSignOut\s*=/);
+    expect(M_HOME).not.toMatch(/const\s+onSignOutPress\s*=/);
+  });
+
   it("regression · Profile subpage sign-out (testID='portal-logout') still exists", () => {
     expect(M_PROFILE).toMatch(/testID=["']portal-logout["']/);
-  });
-
-  it("Header render still emits the [SIGN_OUT_DEBUG] render trace", () => {
-    expect(M_HOME).toMatch(
-      /console\.log\(\s*["']\[SIGN_OUT_DEBUG\] Header render, right slot present:["']/,
-    );
   });
 });

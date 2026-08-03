@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, RefreshControl, Pressable,
-  Linking, Dimensions, Alert,
+  Linking, Dimensions,
 } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -61,45 +61,37 @@ export default function PortalHome() {
   const { user, logout } = useAuth();
   const router = useRouter();
 
-  // Phase 30.3 hotfix · Feb-2026 — customer portal sign-out.
+  // Phase 30.3 final fix · Feb-2026 — customer portal sign-out.
   //
-  // Root cause of the initial regression: the Alert wrap alone was
-  // insufficient. The two working sign-outs in the codebase
-  // (``mobile/app/(app)/more.tsx`` tech drawer +
-  // ``mobile/app/portal/profile.tsx`` Profile subpage) both use
-  // ``onPress={logout}`` directly and rely on
-  // ``portal/_layout.tsx``'s ``<Redirect href="/login" />`` gate
-  // to navigate after ``user`` flips to null. My prior wiring
-  // wrapped the call in an ``Alert.alert`` destructive handler,
-  // which on Android can race the state flush and leave the
-  // customer on a stale portal home.
+  // Diagnostic history (kept as a breadcrumb for the next fork):
+  //   * Attempt 1 wrapped ``logout()`` in ``Alert.alert(..., destructive)``.
+  //     On Android/Expo Go the Alert never rendered → the destructive
+  //     onPress callback never fired → tap looked dead.
+  //   * Attempts 2 + 3 layered on ``router.replace`` and flex/hitSlop
+  //     tweaks. Still nothing, for the same reason — the tap arrived
+  //     at Alert, and Alert silently no-op'd on the user's build.
+  //   * Phase 30.3-diag / diag2 dual-probe (yellow + orange
+  //     visual-state buttons) proved taps ARE reaching JS and state
+  //     DOES flush — Alert.alert was the only silent link.
   //
-  // The fix: keep the confirmation (per the Phase 30.3 spec) but
-  // (a) drop the ``void`` cast so any rejection surfaces, (b) add
-  // an explicit ``router.replace("/login")`` after ``logout()``
-  // as a belt-and-suspenders navigation that does NOT depend on
-  // the layout gate remounting in time.
-  const doSignOut = React.useCallback(async () => {
+  // The fix: mirror the two proven-working sign-outs in this repo
+  //   * ``mobile/app/(app)/more.tsx`` (tech drawer)
+  //   * ``mobile/app/portal/profile.tsx`` (portal Profile page)
+  // Both call ``onPress={logout}`` directly with no confirmation
+  // dialog. We layer a try/catch + belt-and-suspenders
+  // ``router.replace("/login")`` after so navigation happens
+  // regardless of layout-gate timing.
+  const handleSignOut = React.useCallback(async () => {
     try {
+      if (__DEV__) console.log("[portal sign-out] pressed");
       await logout();
-    } finally {
-      // Guaranteed navigation regardless of layout-gate timing.
-      // ``replace`` (not ``push``) so the customer cannot go back
-      // to the invalidated portal.
+      if (__DEV__) console.log("[portal sign-out] logout ok, navigating");
       router.replace("/login");
+    } catch (e) {
+      if (__DEV__) console.error("[portal sign-out] failed", e);
     }
   }, [logout, router]);
 
-  const onSignOutPress = React.useCallback(() => {
-    Alert.alert(
-      "Sign out?",
-      "You'll need to log back in to see your account.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Sign out", style: "destructive", onPress: doSignOut },
-      ],
-    );
-  }, [doSignOut]);
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -107,18 +99,6 @@ export default function PortalHome() {
   const [tenantPhone, setTenantPhone] = useState("(602) 887-4400");
   const [showTour, setShowTour] = useState(false);
   const [creditBalance, setCreditBalance] = useState(0);
-  // Phase 30.3-diag2 (Feb-2026) — dual-location + visual-state tap
-  // diagnostic. Previous diagnostic MVP (yellow box + console.log +
-  // Alert.alert) proved bundle-freshness but tap still fired nothing
-  // on device. Because Alert can silently no-op in some Expo Go
-  // builds AND console.log requires a live Metro tail, we now
-  // additionally drive a `useState` from onPress so the button
-  // itself flips colour (yellow → lime) on tap — visual proof of
-  // tap arrival that does not depend on Metro or Alert. Mirrored
-  // by a second independently-mounted Pressable in the ScrollView
-  // body so we can distinguish Header-context vs global tap issues.
-  const [tapCount, setTapCount] = useState(0);
-  const [scrollTapCount, setScrollTapCount] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -157,48 +137,30 @@ export default function PortalHome() {
       <Header
         title="My Account"
         subtitle={`Hi, ${user?.name?.split(" ")[0] || ""}`}
-        right={(() => {
-          // Phase 30.3 diagnostic (Feb-2026) — three hypothesis-based
-          // hotfixes (Alert wrap, router.replace race, flexShrink/hitSlop
-          // geometry) all failed on device. User confirms: button VISIBLE
-          // top-right, notification bell (adjacent sibling) works, sign-out
-          // tap fires nothing. Replaced with a bright yellow / red-border
-          // minimum-viable button + a render-time console.log so we can
-          // separate "tap doesn't fire" from "handler crashes silently."
-          // If the yellow box logs [SIGN_OUT_DEBUG] tap: it's a downstream
-          // logout/nav problem. If it doesn't: touch region is being
-          // stolen upstream (Header layout or stale bundle).
-          console.log(
-            "[SIGN_OUT_DEBUG] Header render, right slot present:",
-            true,
-          );
-          return (
-            <View style={s.headerActions}>
-              <NotificationBell />
-              <Pressable
-                testID="portal-sign-out-button"
-                onPress={() => {
-                  console.log(
-                    "[SIGN_OUT_DEBUG] HEADER tap fired at",
-                    new Date().toISOString(),
-                  );
-                  setTapCount((c) => c + 1);
-                }}
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderWidth: 2,
-                  borderColor: "red",
-                  backgroundColor: tapCount > 0 ? "lime" : "yellow",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Ionicons name="log-out-outline" size={24} color="black" />
-              </Pressable>
-            </View>
-          );
-        })()}
+        right={(
+          // Phase 30.3 final · header right-slot cluster — bell + sign-out.
+          // Kept as a compact horizontal row so the header's fixed
+          // right area holds both affordances without pushing the
+          // title. NO confirmation dialog — mirrors the proven
+          // Profile-page sign-out; Alert.alert is the exact primitive
+          // that failed silently on the user's Android/Expo Go build.
+          <View style={s.headerActions}>
+            <NotificationBell />
+            <Pressable
+              testID="portal-sign-out-button"
+              onPress={handleSignOut}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              style={({ pressed }) => [
+                s.signOutBtn,
+                { opacity: pressed ? 0.5 : 1 },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Sign out"
+            >
+              <Ionicons name="log-out-outline" size={24} color={colors.error} />
+            </Pressable>
+          </View>
+        )}
       />
       {loading || !data ? (
         <Loading testID="portal-home-loading" />
@@ -277,39 +239,6 @@ export default function PortalHome() {
               <Text style={s.statLabel}>Credit</Text>
             </View>
           </View>
-
-          {/* Phase 30.3-diag2 (Feb-2026) — INDEPENDENT scroll-area
-              tap probe. Mounted OUTSIDE the Header, inside the
-              main ScrollView body, so we can distinguish
-              Header-context tap failures from a global Pressable
-              failure. Same Pressable API + same useState toggle
-              pattern as the header button so the two are
-              apples-to-apples. */}
-          <Pressable
-            testID="portal-scroll-test-button"
-            onPress={() => {
-              console.log(
-                "[SIGN_OUT_DEBUG] SCROLL test tap fired at",
-                new Date().toISOString(),
-              );
-              setScrollTapCount((c) => c + 1);
-            }}
-            style={{
-              height: 60,
-              marginHorizontal: 20,
-              marginVertical: 12,
-              borderRadius: 12,
-              borderWidth: 3,
-              borderColor: "red",
-              backgroundColor: scrollTapCount > 0 ? "lime" : "orange",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Text style={{ fontWeight: "bold", fontSize: 16, color: "black" }}>
-              TAP HERE — count: {scrollTapCount}
-            </Text>
-          </Pressable>
 
           {/* Phase 30.2 · Feb-2026 — the previous compact "Next
               Service" row (Surface A) that lived here has been
@@ -543,7 +472,7 @@ const s = StyleSheet.create({
   },
   signOutBtn: {
     padding: 8,
-    borderRadius: 999,
+    borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
