@@ -59,6 +59,18 @@ async def patch_self(body: SelfPatchBody,
     payload = body.model_dump(exclude_unset=True)
     updates: Dict[str, Any] = {}
     if "auto_clockin_enabled" in payload and payload["auto_clockin_enabled"] is not None:
+        # Phase 29 · Feb-2026 — technicians cannot disable Auto
+        # Clock-In. Refuse the PATCH with a 403 so a debug-build
+        # tamper (or a stale mobile client) cannot persist ``false``
+        # server-side. Non-tech roles keep the pre-existing
+        # self-toggle behaviour.
+        if (user.get("role") == "technician"
+             and bool(payload["auto_clockin_enabled"]) is False):
+            raise HTTPException(
+                403,
+                "Auto Clock-In is enforced for technicians and "
+                "cannot be disabled. Contact your manager.",
+            )
         updates["auto_clockin_enabled"] = bool(payload["auto_clockin_enabled"])
     # ``profile_photo_url`` is nullable (clear-on-null), so we accept
     # the key whenever it was set on the request body — even to None.

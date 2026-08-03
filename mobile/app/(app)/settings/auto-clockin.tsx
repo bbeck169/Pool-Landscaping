@@ -1,6 +1,21 @@
 /**
  * Phase 20A.3 · Settings screen — Auto Clock-In toggle.
- * Default ON for technicians (first visit). Safe in Expo Go.
+ * Phase 29 · Feb-2026 — enforcement lockdown.
+ *
+ * Technicians cannot disable Auto Clock-In. The <Switch> renders
+ * ``value={true} disabled={true}`` and shows an "Enforced by your
+ * organization" message. Non-tech roles retain the pre-existing
+ * "available to technicians" gate — behaviour unchanged.
+ *
+ * Defence in depth:
+ *   1. On mount for a tech, storage is overwritten to ``true`` (via
+ *      ``setAutoClockinEnabled(true, "technician")``) so a prior
+ *      ``false`` from a debug build gets healed the next time the
+ *      screen opens.
+ *   2. The getter (``isAutoClockinEnabled``) short-circuits to
+ *      ``true`` for tech role regardless of stored value.
+ *   3. Backend ``PATCH /api/users/me`` also refuses
+ *      ``auto_clockin_enabled: false`` for tech callers (403).
  */
 import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, Switch, Pressable, Alert, ScrollView, ActivityIndicator } from "react-native";
@@ -24,16 +39,26 @@ export default function AutoClockinSettingsScreen() {
   const [status, setStatus] = useState<string>("");
 
   const role = String((user as any)?.role || "");
+  const isTech = role === "technician";
 
   useEffect(() => {
     (async () => {
       const val = await isAutoClockinEnabled(role);
       setEnabled(val);
+      // Phase 29 · heal any legacy ``false`` in storage for techs
+      // so the persisted state matches the enforcement contract.
+      if (isTech && val === true) {
+        await setAutoClockinEnabled(true, "technician");
+      }
       setLoaded(true);
     })();
-  }, [role]);
+  }, [role, isTech]);
 
   const onToggle = async (val: boolean) => {
+    // Phase 29 · hard guard. Techs cannot toggle at all — the
+    // <Switch> is disabled below, but this second check ensures
+    // no code path (deep link, race, etc.) can flip the flag.
+    if (isTech) return;
     setBusy(true);
     try {
       if (val) {
@@ -47,19 +72,19 @@ export default function AutoClockinSettingsScreen() {
           );
           setStatus(r.reason || "");
           setEnabled(false);
-          await setAutoClockinEnabled(false);
+          await setAutoClockinEnabled(false, role);
           return;
         }
       } else {
         await stopBackgroundAutoClockin();
       }
-      await setAutoClockinEnabled(val);
+      await setAutoClockinEnabled(val, role);
       setEnabled(val);
       setStatus(val ? "Running" : "Stopped");
     } finally { setBusy(false); }
   };
 
-  if (role !== "technician") {
+  if (!isTech) {
     return (
       <View style={styles.root}>
         <Header title="Auto Clock-In" />
@@ -99,15 +124,24 @@ export default function AutoClockinSettingsScreen() {
             <View style={styles.row}>
               <View style={{ flex: 1, paddingRight: spacing.md }}>
                 <Text style={styles.title}>Automatically clock in on arrival</Text>
-                <Text style={styles.sub}>
-                  Uses background GPS to detect when you arrive at a scheduled
-                  job&apos;s site. You can cancel within 10 seconds of the toast.
-                </Text>
+                {/* Phase 29 · locked-state subtext for techs. The
+                    lock icon uses the already-imported Ionicons
+                    family — no new icon dependency. */}
+                <View style={styles.lockedSubRow}>
+                  <Ionicons name="lock-closed" size={14} color={colors.muted} />
+                  <Text
+                    style={styles.subLocked}
+                    testID="auto-clockin-tech-locked-subtext"
+                  >
+                    Enforced by your organization. Contact your
+                    manager to change this setting.
+                  </Text>
+                </View>
               </View>
               <Switch
-                value={enabled}
+                value={true}
                 onValueChange={onToggle}
-                disabled={busy}
+                disabled={true}
                 trackColor={{ false: "#CBD5E1", true: colors.brand }}
                 thumbColor="#fff"
                 testID="auto-clockin-toggle"
@@ -121,8 +155,8 @@ export default function AutoClockinSettingsScreen() {
           <Text style={styles.infoText}>
             Background updates only run in native builds (EAS). Foreground GPS
             still clocks you in automatically while the app is open.
-            {"\n\n"}Enabled by default for all technicians. Your preference is
-            saved locally on this device.
+            {"\n\n"}Auto Clock-In is required for technicians and cannot be
+            disabled from this device.
             {status ? `\n\nStatus: ${status}` : ""}
           </Text>
         </View>
@@ -161,6 +195,18 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center" },
   title: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.onSurface },
   sub: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 4 },
+  // Phase 29 · locked-state subtext row (icon + copy).
+  lockedSubRow: {
+    flexDirection: "row", alignItems: "flex-start",
+    gap: 6, marginTop: 6,
+  },
+  subLocked: {
+    flex: 1,
+    fontFamily: font.regular,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+    lineHeight: 18,
+  },
   info: {
     flexDirection: "row", gap: spacing.sm, padding: spacing.md, marginTop: spacing.md,
     backgroundColor: colors.surface, borderRadius: radius.md,

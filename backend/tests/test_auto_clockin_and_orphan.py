@@ -23,7 +23,7 @@ def _login(email, pw="password123"):
 
 # ── /auth/me exposes new fields ──────────────────────────────────
 def test_auth_me_tech_has_auto_clockin_true():
-    tok = _login("mike@aquaterra.com")
+    tok = _login("landscaper@aquaterra.com")
     r = requests.get(f"{API}/auth/me",
                       headers={"Authorization": f"Bearer {tok}"}, timeout=15)
     body = r.json()
@@ -49,32 +49,35 @@ def test_auth_me_customer_flags_orphan_when_no_linked_record():
 
 
 # ── PATCH /users/me self-update ─────────────────────────────────
+# Phase 29 · Feb-2026 — techs can no longer disable Auto Clock-In.
+# The endpoint now returns 403 when a tech-role caller submits
+# ``auto_clockin_enabled: false``. Non-tech roles + the tech-flips-
+# it-back-to-True path both stay 200.
 def test_self_patch_auto_clockin_flip():
-    tok = _login("mike@aquaterra.com")
-    try:
-        r = requests.patch(f"{API}/users/me",
-                            json={"auto_clockin_enabled": False},
-                            headers={"Authorization": f"Bearer {tok}"}, timeout=15)
-        assert r.status_code == 200
-        body = r.json()
-        assert body["user"]["auto_clockin_enabled"] is False
-        # Flip back.
-        r2 = requests.patch(f"{API}/users/me",
-                             json={"auto_clockin_enabled": True},
-                             headers={"Authorization": f"Bearer {tok}"}, timeout=15)
-        assert r2.status_code == 200
-        assert r2.json()["user"]["auto_clockin_enabled"] is True
-    finally:
-        _sync_db.users.update_one(
-            {"email": "mike@aquaterra.com"},
-            {"$set": {"auto_clockin_enabled": True}},
-        )
+    tok = _login("landscaper@aquaterra.com")
+    # Phase 29 · disabling as a tech must be rejected with 403.
+    r = requests.patch(f"{API}/users/me",
+                        json={"auto_clockin_enabled": False},
+                        headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+    assert r.status_code == 403, r.text
+    assert "enforced" in r.text.lower() or "cannot be disabled" in r.text.lower()
+    # Setting it back to True (idempotent) still works.
+    r2 = requests.patch(f"{API}/users/me",
+                         json={"auto_clockin_enabled": True},
+                         headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+    assert r2.status_code == 200
+    assert r2.json()["user"]["auto_clockin_enabled"] is True
+    # DB row remains True (belt-and-suspenders — the 403 above must
+    # have written nothing).
+    fresh = _sync_db.users.find_one({"email": "landscaper@aquaterra.com"},
+                                     {"_id": 0, "auto_clockin_enabled": 1})
+    assert fresh["auto_clockin_enabled"] is True
 
 
 # ── PATCH /users/{id} admin update ──────────────────────────────
 def test_admin_patch_auto_clockin_on_tech():
     admin = _login("admin@aquaterra.com")
-    u = _sync_db.users.find_one({"email": "mike@aquaterra.com"},
+    u = _sync_db.users.find_one({"email": "landscaper@aquaterra.com"},
                                   {"_id": 0, "id": 1})
     r = requests.patch(f"{API}/users/{u['id']}",
                         json={"auto_clockin_enabled": False},
@@ -89,7 +92,7 @@ def test_admin_patch_auto_clockin_on_tech():
 
 def test_admin_patch_auto_clockin_type_validation():
     admin = _login("admin@aquaterra.com")
-    u = _sync_db.users.find_one({"email": "mike@aquaterra.com"},
+    u = _sync_db.users.find_one({"email": "landscaper@aquaterra.com"},
                                   {"_id": 0, "id": 1})
     r = requests.patch(f"{API}/users/{u['id']}",
                         json={"auto_clockin_enabled": "not-a-bool"},

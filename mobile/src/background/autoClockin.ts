@@ -55,17 +55,29 @@ async function _defineTask(): Promise<boolean> {
 }
 
 export async function isAutoClockinEnabled(role?: string): Promise<boolean> {
+  // Phase 29 · Feb-2026 — Auto Clock-In is MANDATORY for
+  // technicians. Even if a tech ever flipped the storage key
+  // to ``false`` (via a debug build or a prior UI bug), the
+  // getter short-circuits to ``true`` so runtime behaviour
+  // stays enforced regardless of stored state.
+  if (role === "technician") return true;
   const explicit = await storage.getItem<boolean>(AUTO_CLOCKIN_EXPLICIT_KEY, false);
   if (explicit) {
     // User has toggled at least once — use their saved preference.
     return (await storage.getItem<boolean>(AUTO_CLOCKIN_ENABLED_KEY, false)) === true;
   }
-  // First visit: default ON for techs, OFF for everyone else.
-  return role === "technician";
+  // First visit: default OFF for non-techs (tech branch handled
+  // above via the mandatory short-circuit).
+  return false;
 }
 
-export async function setAutoClockinEnabled(enabled: boolean): Promise<void> {
-  await storage.setItem(AUTO_CLOCKIN_ENABLED_KEY, enabled);
+export async function setAutoClockinEnabled(enabled: boolean, role?: string): Promise<void> {
+  // Phase 29 · Feb-2026 — tech-role callers cannot persist a
+  // ``false`` value. Any attempt is silently coerced to
+  // ``true`` at the persistence layer so a debug-build tamper
+  // still ends up with storage in the correct state.
+  const safe = role === "technician" ? true : enabled;
+  await storage.setItem(AUTO_CLOCKIN_ENABLED_KEY, safe);
   await storage.setItem(AUTO_CLOCKIN_EXPLICIT_KEY, true);
 }
 

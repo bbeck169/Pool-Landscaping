@@ -8,6 +8,130 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-08 — Phase 29 · Enforce Auto Clock-In for Technicians (P1)
+
+Technicians cannot disable Auto Clock-In. Enforced at **three
+independent layers** so a debug-build tamper, storage tamper, or
+API replay can't bypass the rule. Managers / owners / super_admin
+keep their pre-existing self-toggle behaviour.
+
+### Mobile — settings screen
+
+- `mobile/app/(app)/settings/auto-clockin.tsx`
+  - Reads role from `useAuth()`; computes `isTech = role === "technician"`.
+  - `<Switch>` bindings are `value={true} disabled={true}` for
+    techs (was `value={enabled}` / `disabled={busy}`).
+  - Label subtext replaced with a locked-state row:
+    lock icon + `"Enforced by your organization. Contact your
+    manager to change this setting."`, testid
+    `auto-clockin-tech-locked-subtext`.
+  - `onToggle` short-circuits with `if (isTech) return` before
+    touching storage or the background hook — defence-in-depth
+    against deep-link / race paths.
+  - On mount, the effect calls
+    `setAutoClockinEnabled(true, "technician")` to heal any
+    legacy `false` value from a pre-Phase-29 debug build.
+  - Non-tech roles still see the existing "Auto Clock-In is
+    available to technicians" gate — behaviour unchanged.
+  - Uses the already-imported `Ionicons` family for the lock
+    icon — no new icon dependency.
+
+### Mobile — background hook
+
+- `mobile/src/background/autoClockin.ts`
+  - `isAutoClockinEnabled(role)` short-circuits with
+    `return true` when `role === "technician"` — BEFORE any
+    storage read — so a bad storage value cannot leak through
+    on any code path.
+  - `setAutoClockinEnabled(enabled, role)` gained an optional
+    `role` param; when it's `"technician"` the persisted value
+    is coerced to `true` regardless of the caller's input.
+
+### Backend — API refuses to persist tech-disable
+
+- `backend/routers/auto_clockin.py::patch_self`
+  (`PATCH /api/users/me`) — refuses `auto_clockin_enabled: false`
+  when the caller's role is `technician`, returning:
+  ```
+  403 · "Auto Clock-In is enforced for technicians and cannot
+        be disabled. Contact your manager."
+  ```
+  Non-tech roles keep their pre-existing self-toggle. Idempotent
+  `auto_clockin_enabled: true` PATCH still 200s for techs so the
+  mobile screen's heal-storage side-effect can safely re-affirm
+  the flag.
+
+### Web mirror — none needed
+
+`frontend/src/pages/ops/OpsHub.jsx::TechAutoClockinToggle` is an
+**admin-only per-tech toggle on the Team roster** (gated by an
+`editable` prop that's only true for admin/super_admin). It is NOT
+a self-service surface — a tech viewing their own row would see an
+inert dash, not a flip target. No Phase 29 changes needed on the
+web surface. This is documented + asserted in the vitest.
+
+### Tests
+
+- **Vitest** —
+  `frontend/src/test/phase29-auto-clockin-tech-lockdown.test.jsx`
+  (NEW, 9 cases, all green):
+  1. Screen imports `useAuth()` from `@/src/auth` + checks tech
+     role.
+  2. `<Switch>` renders `value={true} disabled={true}` — no more
+     `value={enabled}` / `disabled={busy}` bindings.
+  3. Locked-state subtext copy present + testid attached.
+  4. `onToggle` short-circuits on `if (isTech) return`.
+  5. Mount effect calls
+     `setAutoClockinEnabled(true, "technician")` (heal storage).
+  6. Non-tech gate still renders (behaviour unchanged).
+  7. `isAutoClockinEnabled` `return true` for techs appears
+     BEFORE the storage reads in source order.
+  8. `setAutoClockinEnabled` uses the
+     `role === "technician" ? true : enabled` coercion.
+  9. Web OpsHub `TechAutoClockinToggle` remains admin-only
+     (no Phase 29 change required, documented).
+
+- **Pytest** —
+  `backend/tests/test_phase29_auto_clockin_tech_lockdown.py`
+  (NEW, 4 cases, all green):
+  1. Tech PATCHing `false` → 403; DB row still `true`.
+  2. Tech re-affirming `true` → 200 (idempotent heal path).
+  3. Admin PATCHing `false` → 200 (behaviour unchanged).
+  4. Super-admin PATCHing `false` → 200 (behaviour unchanged).
+
+- **Legacy pytest updated** —
+  `backend/tests/test_auto_clockin_and_orphan.py::test_self_patch_auto_clockin_flip`
+  used to assert a tech CAN flip themselves off. Under Phase 29
+  this is a policy change: the test now expects **403** on
+  `false` from a tech + verifies the DB was untouched. Also
+  fixed a stale seed-email drift in that file
+  (`mike@aquaterra.com` → `landscaper@aquaterra.com`) so it
+  actually runs on the current pod seed.
+
+### Cross-suite regression sweep
+
+- Vitest — Phase 23 (11) + 25 (8) + 25b (9) + 26 (6) + 27 web (15)
+  + 27 mobile (9) + 27 seed (8) + 29 (9) → **75/75 passing**.
+- Pytest — Phase 26 (5) + 29 (4) → **9/9 passing**. Full
+  `test_auto_clockin_and_orphan.py` → 14/14 (transient 15s
+  read-timeout on one run was pod-load, not a real regression).
+
+### Runtime behaviour unaffected
+
+Phase 29 changes ONLY the toggle enforcement path. GPS permission
+prompts, the background TaskManager registration, the fetch to
+`POST /api/workforce/auto-clock-in`, and the 10-second cancel
+toast are all untouched.
+
+### Constraints honoured
+
+- Scope: Phase 29 only. Phase 28 (`eas update`) NOT started.
+- No dispatch / Phase 25b / Phase 27 code touched.
+- No new dependencies (mobile or backend).
+- Grep-lint stays green.
+
+---
+
 ## 2026-08-07 — Phase 25b · JobTrackerTiles geometry rewrite (P0)
 
 Root cause: `aspectRatio: 1` + oversized SVG caused the label to
