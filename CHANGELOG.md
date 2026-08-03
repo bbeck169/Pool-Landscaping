@@ -8,6 +8,135 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-08-09 — Phase 28 · `eas update` OTA migration (P2 · infra)
+
+Enables Over-The-Air JavaScript updates for the Expo mobile app.
+Config-only migration — zero user-visible feature change. Future
+JS-only fixes (screens, hooks, business logic, styles) can now
+ship without a store rebuild.
+
+### Files changed / created
+
+- `mobile/app.json` — added:
+  - `expo.runtimeVersion: { "policy": "appVersion" }` — OTA
+    updates auto-scope to the current `expo.version` (`1.0.0`).
+    Bumping `expo.version` forces a store rebuild;
+    JS-only fixes are seamless.
+  - `expo.updates.url:
+    "https://u.expo.dev/PLACEHOLDER_EXPO_PROJECT_ID"` —
+    placeholder to swap once `eas init` returns the real UUID.
+  - `expo.updates.fallbackToCacheTimeout: 0` — a runtime that
+    hangs on update check is worse than one that ships stale
+    JS. Zero-timeout means the app never blocks on the update
+    fetch.
+  - `expo.updates.checkAutomatically: "ON_LOAD"` — check for
+    updates every foreground.
+
+- `mobile/eas.json` — NEW:
+  - `cli.appVersionSource: "remote"` — EAS-managed version
+    bumps.
+  - Three build profiles: `development` (dev-client, internal),
+    `preview` (internal), `production` (auto-increment).
+  - Each profile pins its own `channel` (`development` /
+    `preview` / `production`) so the store binary knows which
+    update branch to consume.
+  - `update.preview.branch: "preview"` and
+    `update.production.branch: "production"` — the branch
+    mappings `eas update --branch <name>` uses.
+
+- `mobile/package.json` — added `expo-updates: ~29.0.13` (SDK 54
+  compatible per Expo's SDK 54 upgrade guide). `yarn install`
+  ran cleanly.
+
+- `mobile/scripts/validate_eas_update_config.mjs` — NEW: offline
+  config validator (zero network calls) that reads `app.json` /
+  `eas.json` / `package.json` and asserts:
+  1. `expo.updates.url` starts with `https://u.expo.dev/`.
+  2. `expo.runtimeVersion.policy === "appVersion"`.
+  3. `fallbackToCacheTimeout` + `checkAutomatically` set.
+  4. `cli.appVersionSource` declared.
+  5. At least one build profile has a `channel`.
+  6. `expo-updates` in `package.json` dependencies.
+  Exit 0 on all-green, exit 1 with human diagnostics on drift.
+  The lingering `PLACEHOLDER_EXPO_PROJECT_ID` is surfaced as a
+  non-blocking WARNING (deliberate — the runbook documents the
+  swap step).
+
+- `mobile/EAS_UPDATE_RUNBOOK.md` — NEW, 7-section operator guide:
+  1. One-time prereqs (EAS CLI install, `eas login`, `eas init`,
+     PROJECT_ID placeholder swap, `validate_eas_update_config`).
+  2. Publish an update (preview + production + promotion via
+     `eas update:republish`).
+  3. Rollback (`eas update:republish` on the last-known-good
+     UUID).
+  4. OTA-safe vs. store-release-required change matrix.
+  5. Phase 28 config summary.
+  6. Troubleshooting quick reference.
+
+### Placeholder that MUST be swapped before first push
+
+`app.json` ships `expo.updates.url:
+"https://u.expo.dev/PLACEHOLDER_EXPO_PROJECT_ID"`. After
+`eas init` returns the real project UUID, replace
+`PLACEHOLDER_EXPO_PROJECT_ID` with that UUID. See §1d of the
+runbook. The validation script prints a WARNING while the
+placeholder is in place — no other action needed.
+
+### Tests
+
+- **Vitest** — `frontend/src/test/phase28-eas-update-config.test.jsx`
+  (NEW, 12 cases, all green):
+  1. `expo.updates.url` starts with `https://u.expo.dev/`.
+  2. `expo.runtimeVersion.policy === "appVersion"`.
+  3. `expo.updates.fallbackToCacheTimeout: 0` +
+     `checkAutomatically: "ON_LOAD"`.
+  4. `cli.appVersionSource` declared.
+  5. At least one build profile has a `channel`.
+  6. `preview` + `production` build profiles have matching
+     channels.
+  7. `preview` + `production` update branch mappings present.
+  8. `expo-updates` declared as a dependency.
+  9. Uses SDK-54-compatible `29.x` range.
+  10. Runbook file present + non-trivial (>1500 bytes).
+  11. Validation script file present.
+  12. Validation script exits 0 with only the documented
+      placeholder warning.
+
+- **Validation script** — ran cleanly:
+  `✓ EAS Update config validation passed. (1 warning — non-blocking)`.
+
+### Cross-suite regression sweep
+
+Phase 23 (11) + 25 (8) + 25b (9) + 26 (6) + 27 web (15) +
+27 mobile (9) + 27 seed (8) + 28 (12) + 29 (9) →
+**87/87 vitest passing**.
+No backend / web / other-mobile-screen changes; Phase 26 + 29
+pytest suites unaffected.
+
+### Constraints honoured
+
+- Scope: Phase 28 only.
+- No backend / web / other mobile screens touched.
+- No `eas update` push attempted from the pod (no credentials,
+  no network calls to expo.dev).
+- No existing build profile in `eas.json` altered (file was
+  new — nothing to preserve).
+- No new native dependencies (only `expo-updates`, which is
+  first-party Expo + safe to add via `expo install`).
+- Grep-lint stays green.
+
+### Next steps for the operator (out of scope here)
+
+1. `cd /app/mobile && eas login`
+2. `eas init` — get the project UUID.
+3. Swap `PLACEHOLDER_EXPO_PROJECT_ID` in `app.json` for that UUID.
+4. `node scripts/validate_eas_update_config.mjs` — expect
+   `✓ passed` with **zero warnings**.
+5. `eas update --branch preview --message "Phase 28 initial"`.
+6. See the runbook for the full flow.
+
+---
+
 ## 2026-08-08 — Phase 29 · Enforce Auto Clock-In for Technicians (P1)
 
 Technicians cannot disable Auto Clock-In. Enforced at **three
