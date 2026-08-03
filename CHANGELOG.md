@@ -8,6 +8,24 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 40b lint guardrail · `no-restricted-imports` for `@/lib/*`
+
+- Added `frontend/eslint.config.js` (minimal ESLint 9 flat-config) with a
+  single `no-restricted-imports` rule that flags any `@/lib/*` import
+  except the three real modules (`@/lib/utils`, `@/lib/stripeConfig`,
+  `@/lib/checklistType`). Would have caught the failing `@/lib/api`
+  import from Phase 40b at lint stage.
+- Wired `yarn eslint src` into the Phase 32 `frontend-web` CI job so the
+  guardrail runs on every PR and every push to `main`.
+- Scope: intentionally minimal — this is NOT the full ESLint 9 migration
+  for the frontend workspace. Other rules land in a dedicated migration
+  phase. `react-hooks` and `import` plugins are registered as no-ops
+  only to silence inline disable directives sprinkled across the repo.
+- Locked in by `src/test/phase40b-lint-guardrail.test.jsx` (7 tests).
+
+---
+
+
 ## 2026-02-XX — Phase 40b hotfix · Time-off web pages compile fix
 
 - Corrected `@/lib/api` → `@/api` (canonical named export) in
