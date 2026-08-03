@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import api from "@/lib/api";
+import api from "@/api";
 
 const TYPES = ["sick", "vacation", "personal", "unpaid"];
 const STATUS_COLORS = {
