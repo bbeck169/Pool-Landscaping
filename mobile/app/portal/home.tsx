@@ -145,28 +145,48 @@ export default function PortalHome() {
       <Header
         title="My Account"
         subtitle={`Hi, ${user?.name?.split(" ")[0] || ""}`}
-        right={(
-          // Phase 30.3 · header right-slot cluster — bell + sign-out.
-          // Kept as a compact horizontal row so the header's fixed
-          // right area holds both affordances without pushing the
-          // title.
-          <View style={s.headerActions}>
-            <NotificationBell />
-            <Pressable
-              onPress={onSignOutPress}
-              style={({ pressed }) => [
-                s.signOutBtn,
-                { opacity: pressed ? 0.5 : 1 },
-              ]}
-              hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
-              testID="portal-sign-out-button"
-              accessibilityRole="button"
-              accessibilityLabel="Sign out"
-            >
-              <Ionicons name="log-out-outline" size={22} color={colors.onSurface} />
-            </Pressable>
-          </View>
-        )}
+        right={(() => {
+          // Phase 30.3 diagnostic (Feb-2026) — three hypothesis-based
+          // hotfixes (Alert wrap, router.replace race, flexShrink/hitSlop
+          // geometry) all failed on device. User confirms: button VISIBLE
+          // top-right, notification bell (adjacent sibling) works, sign-out
+          // tap fires nothing. Replaced with a bright yellow / red-border
+          // minimum-viable button + a render-time console.log so we can
+          // separate "tap doesn't fire" from "handler crashes silently."
+          // If the yellow box logs [SIGN_OUT_DEBUG] tap: it's a downstream
+          // logout/nav problem. If it doesn't: touch region is being
+          // stolen upstream (Header layout or stale bundle).
+          console.log(
+            "[SIGN_OUT_DEBUG] Header render, right slot present:",
+            true,
+          );
+          return (
+            <View style={s.headerActions}>
+              <NotificationBell />
+              <Pressable
+                testID="portal-sign-out-button"
+                onPress={() => {
+                  console.log(
+                    "[SIGN_OUT_DEBUG] tap fired at",
+                    new Date().toISOString(),
+                  );
+                  Alert.alert("Sign out debug", "Tap fired successfully");
+                }}
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderWidth: 2,
+                  borderColor: "red",
+                  backgroundColor: "yellow",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Ionicons name="log-out-outline" size={24} color="black" />
+              </Pressable>
+            </View>
+          );
+        })()}
       />
       {loading || !data ? (
         <Loading testID="portal-home-loading" />
