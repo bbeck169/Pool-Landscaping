@@ -148,6 +148,8 @@ export const ADMIN_NAV_V2 = [
     { to: "/timesheets?t=timesheets",   label: "Timesheets",       icon: Clock,       feature: "jobs", subsection: "Workforce" },
     { to: "/timesheets?t=timeclock",    label: "Timeclock",        icon: Timer,       feature: "jobs", subsection: "Workforce" },
     { to: "/coverage",          label: "Coverage",         icon: ShieldCheck, feature: "jobs", subsection: "Workforce" },
+    { to: "/time-off",          label: "Time Off",         icon: Clock,       feature: "jobs", subsection: "Workforce" },
+    { to: "/admin/time-off",    label: "Time Off Approvals", icon: ShieldCheck, hard_rule: "admin_only", subsection: "Workforce" },
     { to: "/workforce/timesheets", label: "Workyard Timesheets", icon: Clock,      feature: "jobs", subsection: "Workforce" },
     { to: "/workforce/crew-map",   label: "Crew Map",            icon: MapPinIcon, feature: "jobs", subsection: "Workforce" },
     { to: "/checkins",          label: "Check-ins",        icon: MapPin,      feature: "jobs", subsection: "Workforce" },

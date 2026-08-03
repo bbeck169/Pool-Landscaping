@@ -141,6 +141,8 @@ export const ADMIN_NAV: NavGroup[] = [
       { label: "Equipment",          route: "/equipment",            icon: "hammer-outline",       tier: "t1", testID: "drawer-nav-equipment" },
       { label: "Price Book",         route: "/price-book",           icon: "pricetags-outline",    tier: "t1", testID: "drawer-nav-price-book" },
       { label: "Handbook",           route: "/handbook",             icon: "book-outline",         tier: "t1", testID: "drawer-nav-handbook" },
+      { label: "Time Off",           route: "/time-off",             icon: "leaf-outline",         tier: "t1", testID: "drawer-nav-time-off" },
+      { label: "Time Off Approvals", route: "/admin/time-off",       icon: "checkmark-done-outline", tier: "t2", testID: "drawer-nav-time-off-admin" },
       { label: "Landscape AI",       route: "/landscape",            icon: "leaf-outline",         tier: "t1", testID: "drawer-nav-landscape" },
       { label: "CAD Studio",         route: "/cad",                  icon: "cube-outline",         tier: "t1", testID: "drawer-nav-cad" },
       { label: "Satellite Measure",  route: "/measure",              icon: "resize-outline",       tier: "t1", testID: "drawer-nav-measure" },

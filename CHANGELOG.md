@@ -8,6 +8,101 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 40 · Time-off requests + accrual (backend + wiring)
+
+Odoo-Time-Off-style paid sick-leave module with the aquaterra-specific
+accrual math. Backend + tests + seed + drawer/nav wiring shipped in
+this delivery; web + mobile UI pages queued for **Phase 40b** — the
+drawer entries route to a ``ComingSoonPage`` stub today so the tree
+is complete now.
+
+### Accrual math (default policy, tenant-editable)
+- **Accrual ratio:** 1 hour of paid sick leave per 30 hours worked.
+- **Annual cap:** 24 hours per year (rolling YTD, resets Jan 1). Cap
+  applies to accrued balance, not to used — used hours don't free up
+  cap headroom (matches Odoo "annual entitlement" model).
+- **Waiting period:** 90 days from ``hire_date`` before an employee
+  can submit a balance-drawing request (accrual still runs during
+  the window). Falls back to ``created_at`` if ``hire_date`` is
+  missing so legacy accounts don't get stuck.
+- **Source of worked hours:** existing ``db.time_entries`` ledger
+  (``clock_in_at`` / ``clock_out_at`` / ``breaks[]``). Balance is
+  recomputed on-read — no scheduled job.
+
+### Added
+- **`backend/services/time_off_accrual.py`** — pure-function service
+  exporting ``compute_balance``, ``get_policy``, ``sum_worked_hours_ytd``,
+  ``used_hours_ytd``, ``waiting_period_remaining_days``, and
+  ``DEFAULT_POLICY``. TZ-safe: coerces naive-UTC legacy rows before
+  window comparisons.
+- **`backend/routers/time_off.py`** — mounted at ``/api/time-off``.
+  Endpoints:
+  - ``GET /policy`` — sanitised for tech role.
+  - ``PUT /policy`` — ``require_admin``.
+  - ``GET /balance/me``
+  - ``GET /balance/{user_id}`` — ``require_admin``.
+  - ``GET /requests?scope=me|all&status=…``
+  - ``POST /requests`` — validates waiting-period + balance;
+    error codes ``waiting_period`` / ``insufficient_balance`` /
+    ``bad_date`` / ``date_range``.
+  - ``POST /requests/{id}/approve|reject`` — ``require_admin``,
+    re-checks balance atomically at approval time.
+  - ``POST /requests/{id}/cancel`` — owner-only, refunds an
+    approved request via ``cancelled_after_approval`` audit trail
+    (balance auto-recomputes on next read).
+- **`backend/scripts/seed_phase40_time_off.py`** — seeds the default
+  policy for the aquaterra tenant, backfills ``hire_date`` on
+  ``landscaper@aquaterra.com`` (Luis Marquez) 200 days ago so demo
+  users have usable balance past the waiting period, and inserts 4
+  sample requests (2 pending, 1 approved, 1 rejected). Idempotent —
+  re-running only inserts what's missing.
+- **`backend/tests/test_phase40_time_off.py`** — 9 pytest cases:
+  policy read/upsert + admin-only guard, balance shape, annual-cap
+  clamp, within-balance submit, waiting-period rejection,
+  insufficient-balance rejection, approve/reject/cancel lifecycle
+  including tech-can't-approve + owner-only cancel guardrails.
+  **9 / 9 pass.**
+- **`frontend/src/test/phase40-time-off.test.jsx`** — 14 vitest
+  assertions locking the accrual constants, router endpoint surface,
+  ``require_admin`` gate count, error-code strings, server include
+  list, and the drawer + web-nav wiring below.
+
+### Nav wiring
+- **Web (`frontend/src/nav/adminNav.js`)**: Operations group now
+  includes ``/time-off`` (Time Off, feature: jobs) and
+  ``/admin/time-off`` (Time Off Approvals, ``hard_rule: "admin_only"``).
+- **Mobile (`mobile/src/nav/adminNav.ts`)**: Operations group now
+  includes ``drawer-nav-time-off`` (Tier 1, all roles) and
+  ``drawer-nav-time-off-admin`` (Tier 2, admin-like roles).
+- **Mobile stub routes**: ``mobile/app/time-off.tsx`` and
+  ``mobile/app/admin/time-off.tsx`` — each a one-line re-export of
+  ``ComingSoonPage``. Full UI ships in Phase 40b.
+
+### Data seed (already run against aquaterra)
+```
+seed · created time_off_policy for tenant 3814…
+seed · backfilled hire_date on landscaper@aquaterra.com → 2026-01-15
+seed · inserted 4 sample time_off_requests
+```
+
+### Non-scope (Phase 40b follow-ups)
+- Web page: ``/time-off`` employee balance + history + submit modal.
+- Web page: ``/admin/time-off`` pending queue + approve/reject +
+  policy editor + employee balance table.
+- Mobile screens: ``time-off.tsx`` employee view + admin/time-off queue.
+- Push notifications on approve/reject.
+- QBO payroll export.
+- Calendar visualisation.
+
+### Non-scope confirmed
+- Timesheet/time-clock schema untouched — balance is a pure function
+  of ``db.time_entries``.
+- Phase 32 CI, Phase 39 ToS, Phase 30.4 Alert audit, Live Radar
+  fallback, Dashboard revenue tiles, drawer parity delivery — all
+  untouched.
+
+---
+
 ## 2026-02-XX — Mobile admin drawer parity (Option B · 85 wired) (P1)
 
 Mobile hamburger drawer at ``mobile/app/(app)/more.tsx`` now mirrors
