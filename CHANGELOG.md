@@ -10,6 +10,48 @@ Do not rewrite history — only prepend new entries at the top.
 
 ## 2026-08-10 — Phase 30 · Portal + Admin Avatar Coverage (Option 3 + A) + Phase 30.1 mobile persona correction (P1)
 
+### 2026-08-10 (later) — Phase 30.2 · Mobile portal home next-service consolidation
+
+The mobile portal home had two overlapping next-service surfaces
+that showed slightly different data for the same underlying job.
+Consolidated to a single surface at the higher-up position:
+
+- **Removed** — the compact "Next Service" pressable row
+  (`testID="portal-next-service"`, `s.nextCard` / `s.nextTitle` /
+  `s.nextMeta` styles + Ionicons calendar icon + `<StatusChip>`)
+  that used to sit above Quick Actions. Deleted in its entirety;
+  no conditional / feature-flagged remnant left behind.
+- **Moved** — the richer "Next Service Day" card
+  (`testID="portal-next-service-day"`, date tile + service name +
+  tech avatar chip + address + chevron) previously between the
+  Quick Actions grid and Last Visit. Now hoisted up to occupy
+  the compact row's former position, directly after the finance
+  stat tiles and above Quick Actions.
+- **Preserved** — every internal style, `TechAvatar` chip, and
+  testID on the moved card. Nothing about the card's content or
+  visual treatment changed — only its parent position.
+- **Layout after Phase 30.2**:
+  Finance stats → **Next Service Day card** (Surface B, moved) →
+  Quick Actions → Last Visit → Ask a Concierge.
+
+### Tests
+
+Phase 30 vitest went 14 → **17 cases** with three new Phase 30.2
+assertions (all green):
+1. Compact "Next Service" pressable (Surface A) is fully removed
+   — regression guard on `testID="portal-next-service"` +
+   `s.nextCard` / `s.nextTitle` / `s.nextMeta` style references.
+2. "Next Service Day" card (Surface B) appears exactly once and
+   its source-order position precedes the Quick Actions grid.
+3. Tech avatar chip inside the moved card still carries
+   `testID="portal-tech-avatar-next"`.
+
+Full cross-suite regression sweep — **105/105 vitest passing**
+(was 102 → +3 Phase 30.2). Zero backend / web / other-mobile-file
+changes; scope contained to `mobile/app/portal/home.tsx`.
+
+### 2026-08-10 — Phase 30 · Portal + Admin Avatar Coverage
+
 ### Part A · Web · AI persona coverage
 - `frontend/src/pages/portal/PortalHome.jsx` — swapped two hand-rolled
   `<img src={emp.avatar_url}>` + `<span>{emoji}</span>` blocks for the

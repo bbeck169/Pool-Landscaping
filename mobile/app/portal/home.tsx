@@ -181,41 +181,17 @@ export default function PortalHome() {
             </View>
           </View>
 
-          {/* 3. Next Service (reverted ABOVE Quick Actions · Feb 2026) */}
-          {data.next_service ? (
-            <Pressable style={s.nextCard} onPress={() => router.push(`/job/${data.next_service.id}`)} testID="portal-next-service">
-              <View style={s.nextIcon}>
-                <Ionicons name="calendar" size={20} color={colors.brand} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.nextLabel}>Next Service</Text>
-                <Text style={s.nextTitle} numberOfLines={1}>{data.next_service.title}</Text>
-                <Text style={s.nextMeta}>{(data.next_service.scheduled_date || "").slice(0, 10) || "To be scheduled"}</Text>
-              </View>
-              <StatusChip status={data.next_service.status} />
-            </Pressable>
-          ) : null}
-
-          {/* 4. Quick Actions Grid */}
-          <Text style={s.gridTitle}>Quick Actions</Text>
-          <View style={s.grid}>
-            {QA_SECTIONS.map((sec) => {
-              const badge = badgeFor(sec.key);
-              return (
-                <Pressable key={sec.key} style={s.card} onPress={() => router.push(sec.route as any)} testID={`portal-card-${sec.key}`}>
-                  {badge > 0 ? (
-                    <View style={s.cardBadge}><Text style={s.cardBadgeText}>{badge}</Text></View>
-                  ) : null}
-                  <View style={s.cardIcon}>
-                    <Ionicons name={sec.icon} size={22} color={colors.brand} />
-                  </View>
-                  <Text style={s.cardLabel}>{sec.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          {/* 4b. Next Service Day Tile */}
+          {/* Phase 30.2 · Feb-2026 — the previous compact "Next
+              Service" row (Surface A) that lived here has been
+              removed. The richer "Next Service Day" card (Surface
+              B) is now hoisted up to occupy Surface A's former
+              position, above Quick Actions. Nothing about the
+              card's internal styling / testIDs has changed — only
+              its parent position. Testids preserved:
+              ``portal-next-service-day``,
+              ``portal-next-service-day-detail``,
+              ``portal-next-service-day-empty``,
+              ``portal-tech-avatar-next``. */}
           <View style={s.nextServiceDayCard} testID="portal-next-service-day">
             <View style={s.nextServiceDayHeader}>
               <View style={s.nextServiceDayIcon}>
@@ -275,6 +251,25 @@ export default function PortalHome() {
                 <Text style={s.nextServiceDayEmptyText}>No upcoming service scheduled</Text>
               </View>
             )}
+          </View>
+
+          {/* 4. Quick Actions Grid */}
+          <Text style={s.gridTitle}>Quick Actions</Text>
+          <View style={s.grid}>
+            {QA_SECTIONS.map((sec) => {
+              const badge = badgeFor(sec.key);
+              return (
+                <Pressable key={sec.key} style={s.card} onPress={() => router.push(sec.route as any)} testID={`portal-card-${sec.key}`}>
+                  {badge > 0 ? (
+                    <View style={s.cardBadge}><Text style={s.cardBadgeText}>{badge}</Text></View>
+                  ) : null}
+                  <View style={s.cardIcon}>
+                    <Ionicons name={sec.icon} size={22} color={colors.brand} />
+                  </View>
+                  <Text style={s.cardLabel}>{sec.label}</Text>
+                </Pressable>
+              );
+            })}
           </View>
 
           {/* 5. Last Visit Card */}

@@ -126,4 +126,40 @@ describe("Phase 30 · Part C · Mobile portal avatars", () => {
     // Regression guard against the pre-Phase-30.1 emoji-only render.
     expect(M_HOME).not.toMatch(/<Text\s+style=\{s\.conciergeEmoji\}/);
   });
+
+  // ── Phase 30.2 · consolidated next-service surfaces ────────
+  it("Phase 30.2 · compact 'Next Service' pressable (Surface A) is removed", () => {
+    // The old compact row carried testID="portal-next-service"
+    // AND used `s.nextCard` + `s.nextTitle` + `s.nextMeta` styles.
+    // All three anchors must be gone.
+    expect(M_HOME).not.toMatch(/testID=["']portal-next-service["']/);
+    expect(M_HOME).not.toMatch(/style=\{s\.nextCard\}/);
+    expect(M_HOME).not.toMatch(/style=\{s\.nextTitle\}/);
+    expect(M_HOME).not.toMatch(/style=\{s\.nextMeta\}/);
+  });
+
+  it("Phase 30.2 · 'Next Service Day' card (Surface B) is unique + appears above Quick Actions", () => {
+    // Uniqueness — the card was previously duplicated in intent
+    // by Surface A; after consolidation there is exactly one
+    // next-service surface.
+    const matches = M_HOME.match(/testID=["']portal-next-service-day["']/g);
+    expect(matches).not.toBeNull();
+    expect(matches.length).toBe(1);
+    // Source-order — the Next Service Day card must precede the
+    // Quick Actions grid header in the file.
+    const nextDayIdx = M_HOME.indexOf('testID="portal-next-service-day"');
+    const qaIdx = M_HOME.indexOf("Quick Actions Grid");
+    expect(nextDayIdx).toBeGreaterThan(-1);
+    expect(qaIdx).toBeGreaterThan(-1);
+    expect(nextDayIdx).toBeLessThan(qaIdx);
+  });
+
+  it("Phase 30.2 · tech avatar testID inside the moved card is preserved", () => {
+    // The Phase-30 avatar chip on the tech line still needs to
+    // resolve via `[data-testid|testID='portal-tech-avatar-next']`
+    // at the new position.
+    expect(M_HOME).toMatch(
+      /<TechAvatar[\s\S]*?testID=["']portal-tech-avatar-next["']/,
+    );
+  });
 });
