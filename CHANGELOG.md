@@ -12,83 +12,97 @@ Do not rewrite history — only prepend new entries at the top.
 
 ### 2026-08-10 (later still) — Phase 30.3 · Mobile customer portal sign-out affordance (P1)
 
-Customers landing on the mobile portal home couldn't find a
-sign-out button — one existed on the Profile subpage
-(`testID="portal-logout"`) but was buried behind a nav step.
-Added a discoverable header affordance.
+**Hotfix note (later same day)**: user reported the sign-out button
+was **not clickable at all** on the mobile portal. Root cause was
+a Header/flex geometry bug — not a wiring bug. Details below.
 
-**Placement** — top-right, **immediately to the right of the
-`<NotificationBell />`** icon in the portal home header (per user
-clarification). Both icons live inside a shared
-`<View style={s.headerActions}>` row with an 8 dp gap. No
-alternate bottom-of-page copy exists.
+#### Placement — top-right, adjacent to notification bell
 
-- `mobile/app/portal/home.tsx`
-  - Destructured `logout` from `useAuth()` alongside `user`.
-  - Added `onSignOutPress` handler that pops a native
-    `Alert.alert("Sign out?", "You'll need to log back in to see
-    your account.", [Cancel, {text: "Sign out", style:
-    "destructive", onPress: logout}])` confirmation before
-    invoking the canonical `logout()` (same fn the tech drawer's
-    Sign out button uses at `mobile/app/(app)/more.tsx`).
-  - The `<Pressable testID="portal-sign-out-button">` renders as
-    the second child of the header actions row (bell → sign-out).
-  - Icon: `<Ionicons name="log-out-outline" size={22} />` — the
-    project's mobile icon family is `@expo/vector-icons` (no
-    `lucide-react-native` dep on mobile); `log-out-outline` is
-    the semantic equivalent of lucide's `LogOut`.
-  - Pressable has `hitSlop={{top: 8, right: 8, bottom: 8, left: 8}}`
-    matching the bell's tap footprint.
-  - New styles: `headerActions` (row, gap 8) + `signOutBtn`
-    (pill wrapper, padding 6).
-  - Accessibility: `accessibilityRole="button"` +
-    `accessibilityLabel="Sign out"`.
-  - Testid: `portal-sign-out-button`.
+The sign-out button sits inside a `<View style={s.headerActions}>`
+row alongside `<NotificationBell />`, rendered via the `Header`
+widget's `right` prop.
 
-- **Not touched** — the existing `portal-logout` button on the
-  Profile subpage stays put. Customers can now sign out from
-  either surface, but the header one is the newly discoverable
-  entry point.
+#### Hotfix root cause (tap-not-registering P0)
 
-### Confirmation dialog copy
+`mobile/src/components/widgets.tsx::Header` renders its LEFT
+block with `flex: 1` and the `right` prop as a direct sibling
+with NO explicit width or shrink. Any right-slot wrapper without
+`flexShrink: 0` gets squeezed to sub-pixel width on wide devices
+— the icons are still visually painted, but the touch region is
+0-width so taps land on the flex:1 sibling instead. The bell
+survived because it was rendered directly; wrapping it in my
+Phase-30.3 `headerActions` View re-triggered the squeeze on some
+device widths.
+
+Fix:
+- `s.headerActions` — added `flexShrink: 0`. No
+  `pointerEvents: "none"` / `overflow: "hidden"` on the wrapper
+  (verified via new vitest).
+- `s.signOutBtn` — added `flexShrink: 0`, bumped padding 6 → 8.
+- `<Pressable>` — hitSlop widened to `{top: 12, right: 12,
+  bottom: 12, left: 12}`; added a `pressed`-state opacity for
+  tactile feedback so the customer sees the tap register.
+
+#### Prior wiring diagnosis (superseded but kept as belt-and-suspenders)
+
+The earlier hotfix pass introduced an explicit `router.replace(
+"/login")` in a `finally` block after `await logout()` to guard
+against the layout-gate race on Android. That belt-and-suspenders
+navigation stays — even now that the touch region is fixed, an
+explicit route reset is safer than relying on
+`portal/_layout.tsx`'s `<Redirect />` gate alone.
+
+#### Files touched
+
+- `mobile/app/portal/home.tsx` — `s.headerActions` / `s.signOutBtn`
+  style updates, hitSlop widened to 12 dp on all sides, added
+  `pressed`-state opacity. `doSignOut` async handler with
+  `router.replace("/login")` in `finally` unchanged from the
+  wiring-fix pass.
+
+#### Confirmation dialog copy (unchanged)
 
 ```
 Title:   "Sign out?"
 Body:    "You'll need to log back in to see your account."
 Cancel:  "Cancel"          (style: "cancel")
-Confirm: "Sign out"        (style: "destructive" → calls logout())
+Confirm: "Sign out"        (style: "destructive" → doSignOut)
 ```
 
-### Tests
+#### Tests
 
 - **Vitest** — `frontend/src/test/phase30-3-portal-sign-out.test.jsx`
-  (NEW, **7 cases**, all green):
+  (**12 cases**, all green — was 7, +5 for the touch-target
+  invariants):
   1. `logout` destructured from `useAuth()`.
   2. Pressable with `testID="portal-sign-out-button"` present.
-  3. Sign-out call wrapped in `Alert.alert("Sign out?", ...)` with
-     a destructive-style handler that calls `logout()`.
-  4. Regression — no bare `onPress={logout}` handler.
-  5. Button sits inside `<View style={s.headerActions}>` right
-     after `<NotificationBell />`, AND no stray JSX elements
-     appear between the two icons (adjacency lock).
-  6. Uses `Ionicons name="log-out-outline"` (mobile icon family
-     lock — no accidental import of `lucide-react-native`).
-  7. Regression — exactly ONE `portal-sign-out-button` testID
-     appears in the file (no duplicate bottom-of-page copy).
-  8. Regression — `Profile` subpage `portal-logout` button still
-     present (redundant surface preserved).
+  3. Alert wrap w/ destructive-style `doSignOut` handler.
+  4. `doSignOut` awaits `logout()` AND calls
+     `router.replace("/login")` inside a `finally` (belt-and-
+     suspenders navigation lock).
+  5. Adjacency lock — sign-out right of bell, no stray JSX
+     between them.
+  6. Ionicons `log-out-outline` glyph (mobile icon family lock).
+  7. Exactly one `portal-sign-out-button` testID in the file.
+  8. `Profile` subpage `portal-logout` still present.
+  9. **NEW** — sign-out is a `<Pressable>` (not `<View>`) with
+     an `onPress={onSignOutPress}` prop.
+  10. **NEW** — hitSlop present on all four sides.
+  11. **NEW** — `headerActions` has `flexDirection: "row"` +
+      `flexShrink: 0` + no `pointerEvents: "none"` / `overflow:
+      "hidden"`.
+  12. **NEW** — `signOutBtn` has `flexShrink: 0` + padding ≥ 6.
 
-- **Full cross-suite regression sweep** —
-  Phase 23 (11) + 25 (8) + 25b (9) + 26 (6) +
-  27 web/mobile/seed (15 + 9 + 8) + 28 (13) + 29 (9) +
-  30 (17) + 30.3 (7) → **112/112 vitest passing**.
+- **Full cross-suite regression sweep** — Phase 23 (11) + 25 (8) +
+  25b (9) + 26 (6) + 27 web/mobile/seed (15 + 9 + 8) + 28 (13) +
+  29 (9) + 30 (17) + 30.3 (12) → **117/117 vitest passing**.
 
-### Constraints honoured
+#### Constraints honoured
 
 - No web PortalHome touched.
 - Auth store / `logout()` fn untouched — pure UI wire-up.
-- No analytics / telemetry hooks added.
-- No touching of the 15 deferred tech-facing mobile screens.
+- Placement unchanged (right of notification bell).
+- No new dependencies.
 
 ### 2026-08-10 (later) — Phase 30.2 · Mobile portal home next-service consolidation
 

@@ -38,17 +38,42 @@ describe("Phase 30.3 · Portal home sign-out affordance", () => {
 
   it("wraps the sign-out call in a native Alert.alert confirmation", () => {
     // The Alert MUST include a destructive Sign out action that
-    // calls logout(). A bare `onPress={logout}` would violate the
-    // "confirm before sign-out" spec.
+    // ultimately calls logout(). A bare `onPress={logout}` on the
+    // header button would violate the "confirm before sign-out"
+    // spec.
     expect(M_HOME).toMatch(/Alert\.alert\(\s*["']Sign out\?["']/);
     expect(M_HOME).toMatch(
-      /style:\s*["']destructive["'][\s\S]*?onPress:[\s\S]*?logout\(\)/,
+      /style:\s*["']destructive["'][\s\S]*?onPress:\s*doSignOut/,
     );
     // Regression — no bare `onPress={logout}` handler on the
-    // button (would bypass the confirmation).
+    // header button (would bypass the confirmation).
     expect(M_HOME).not.toMatch(
       /testID=["']portal-sign-out-button["'][\s\S]{0,400}onPress=\{logout\}/,
     );
+  });
+
+  it("Phase 30.3 hotfix · doSignOut awaits logout AND calls router.replace('/login')", () => {
+    // Root cause of the P0 regression: relying solely on the
+    // ``<Redirect href="/login" />`` layout gate raced Android's
+    // Alert dismiss animation on some devices, leaving the
+    // customer on a stale portal home after logout(). The
+    // hotfix keeps the confirmation but adds an explicit
+    // ``router.replace("/login")`` in a ``finally`` so
+    // navigation happens regardless of layout-gate timing.
+    const doSignOutBlock = M_HOME.match(
+      /const\s+doSignOut\s*=\s*React\.useCallback\(\s*async[\s\S]*?\},\s*\[[^\]]*\]\s*\)/,
+    );
+    expect(doSignOutBlock).not.toBeNull();
+    const body = doSignOutBlock[0];
+    // Must await logout() and use router.replace to /login.
+    expect(body).toMatch(/await\s+logout\(\)/);
+    expect(body).toMatch(/router\.replace\(\s*["']\/login["']\s*\)/);
+    // Belt-and-suspenders navigation MUST live in a `finally`
+    // so a thrown/rejected logout still redirects the user
+    // instead of stranding them.
+    expect(body).toMatch(/finally\s*\{[\s\S]*?router\.replace/);
+    // Regression guard against the pre-hotfix `void logout()`.
+    expect(body).not.toMatch(/void\s+logout\(\)/);
   });
 
   it("sits alongside <NotificationBell /> in the header right slot (Placement A)", () => {
@@ -97,6 +122,52 @@ describe("Phase 30.3 · Portal home sign-out affordance", () => {
     const matches = M_HOME.match(/testID=["']portal-sign-out-button["']/g);
     expect(matches).not.toBeNull();
     expect(matches.length).toBe(1);
+  });
+
+  // ── Phase 30.3 hotfix · touch-target invariants ─────────────
+  it("Phase 30.3 hotfix · sign-out is a <Pressable> (not a <View>) with an onPress prop", () => {
+    // The tap-not-registering P0 was diagnosed as the Header's
+    // flex:1 left block squeezing the right-slot child to
+    // sub-pixel width. Guard: the element MUST still be a
+    // Pressable, and its onPress prop MUST reference the
+    // named handler (not be missing).
+    const block = M_HOME.match(
+      /<Pressable[\s\S]*?testID=["']portal-sign-out-button["'][\s\S]*?<\/Pressable>/,
+    );
+    expect(block).not.toBeNull();
+    expect(block[0]).toMatch(/onPress=\{onSignOutPress\}/);
+  });
+
+  it("Phase 30.3 hotfix · hitSlop present on all four sides", () => {
+    const block = M_HOME.match(
+      /<Pressable[\s\S]*?testID=["']portal-sign-out-button["'][\s\S]*?<\/Pressable>/,
+    );
+    // hitSlop must specify top, right, bottom, left explicitly.
+    // A number (`hitSlop={10}`) works too but the brief asked
+    // for the object form so we lock that.
+    expect(block[0]).toMatch(
+      /hitSlop=\{\{\s*top:\s*\d+,\s*right:\s*\d+,\s*bottom:\s*\d+,\s*left:\s*\d+\s*\}\}/,
+    );
+  });
+
+  it("Phase 30.3 hotfix · headerActions has flexDirection:row + flexShrink:0", () => {
+    // Root cause of P0 — right-slot wrapper needs flexShrink:0
+    // so the Header's flex:1 left block can't squeeze it.
+    const body = M_HOME.match(/headerActions\s*:\s*\{([\s\S]*?)\}/)[1];
+    expect(body).toMatch(/flexDirection\s*:\s*["']row["']/);
+    expect(body).toMatch(/flexShrink\s*:\s*0/);
+    // AND no ancestor-blocking pointerEvents:none / overflow:hidden.
+    expect(body).not.toMatch(/pointerEvents\s*:\s*["']none["']/);
+    expect(body).not.toMatch(/overflow\s*:\s*["']hidden["']/);
+  });
+
+  it("Phase 30.3 hotfix · signOutBtn has flexShrink:0 + padding for touch target", () => {
+    const body = M_HOME.match(/signOutBtn\s*:\s*\{([\s\S]*?)\}/)[1];
+    expect(body).toMatch(/flexShrink\s*:\s*0/);
+    // Padding must be >= 6 dp so the tappable area is at least
+    // (22 + 12) = 34 dp square before hitSlop expansion.
+    const pad = parseInt((body.match(/padding\s*:\s*(\d+)/) || [0, "0"])[1], 10);
+    expect(pad).toBeGreaterThanOrEqual(6);
   });
 
   it("regression · Profile subpage sign-out button (testID='portal-logout') still exists", () => {

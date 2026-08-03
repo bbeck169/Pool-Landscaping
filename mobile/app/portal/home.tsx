@@ -59,23 +59,47 @@ const QA_SECTIONS: { key: string; label: string; icon: any; route: string }[] = 
 
 export default function PortalHome() {
   const { user, logout } = useAuth();
+  const router = useRouter();
 
-  // Phase 30.3 · Feb-2026 — customer portal sign-out affordance.
-  // Reuses the canonical ``useAuth().logout`` (same fn used by the
-  // tech drawer's Sign out at ``mobile/app/(app)/more.tsx`` and by
-  // the portal Profile subpage). Wrapped in an Alert so a stray
-  // header tap can't silently blow away the session.
+  // Phase 30.3 hotfix · Feb-2026 — customer portal sign-out.
+  //
+  // Root cause of the initial regression: the Alert wrap alone was
+  // insufficient. The two working sign-outs in the codebase
+  // (``mobile/app/(app)/more.tsx`` tech drawer +
+  // ``mobile/app/portal/profile.tsx`` Profile subpage) both use
+  // ``onPress={logout}`` directly and rely on
+  // ``portal/_layout.tsx``'s ``<Redirect href="/login" />`` gate
+  // to navigate after ``user`` flips to null. My prior wiring
+  // wrapped the call in an ``Alert.alert`` destructive handler,
+  // which on Android can race the state flush and leave the
+  // customer on a stale portal home.
+  //
+  // The fix: keep the confirmation (per the Phase 30.3 spec) but
+  // (a) drop the ``void`` cast so any rejection surfaces, (b) add
+  // an explicit ``router.replace("/login")`` after ``logout()``
+  // as a belt-and-suspenders navigation that does NOT depend on
+  // the layout gate remounting in time.
+  const doSignOut = React.useCallback(async () => {
+    try {
+      await logout();
+    } finally {
+      // Guaranteed navigation regardless of layout-gate timing.
+      // ``replace`` (not ``push``) so the customer cannot go back
+      // to the invalidated portal.
+      router.replace("/login");
+    }
+  }, [logout, router]);
+
   const onSignOutPress = React.useCallback(() => {
     Alert.alert(
       "Sign out?",
       "You'll need to log back in to see your account.",
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Sign out", style: "destructive", onPress: () => { void logout(); } },
+        { text: "Sign out", style: "destructive", onPress: doSignOut },
       ],
     );
-  }, [logout]);
-  const router = useRouter();
+  }, [doSignOut]);
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -130,8 +154,11 @@ export default function PortalHome() {
             <NotificationBell />
             <Pressable
               onPress={onSignOutPress}
-              style={s.signOutBtn}
-              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+              style={({ pressed }) => [
+                s.signOutBtn,
+                { opacity: pressed ? 0.5 : 1 },
+              ]}
+              hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
               testID="portal-sign-out-button"
               accessibilityRole="button"
               accessibilityLabel="Sign out"
@@ -436,13 +463,25 @@ export default function PortalHome() {
 }
 
 const s = StyleSheet.create({
-  // Phase 30.3 · header-right cluster (NotificationBell + Sign out).
-  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  // Phase 30.3 hotfix · header-right cluster. The parent `Header`
+  // component (widgets.tsx:73) renders its LEFT block with
+  // `flex: 1`, so any right-slot child WITHOUT an explicit
+  // `flexShrink: 0` can be squeezed to sub-pixel width on wide
+  // devices — visually still there, but taps route to the flex:1
+  // sibling instead. `flexShrink: 0` + `minWidth`-safe spacing on
+  // both children keeps the touch region intact.
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexShrink: 0,
+  },
   signOutBtn: {
-    padding: 6,
+    padding: 8,
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 0,
   },
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
 
