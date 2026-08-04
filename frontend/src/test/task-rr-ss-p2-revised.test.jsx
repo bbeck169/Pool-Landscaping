@@ -18,7 +18,7 @@
  *   7. Personas bulk — 3 actions emit correct per-eid PATCH shape.
  *   8. Personas bulk — full revert on any per-row failure invariant.
  */
-import { describe, it, expect, jest } from "@jest/globals";
+import { describe, it, expect, jest, vi } from "vitest";
 
 // ═══════════════════════════════════════════════════════════════════
 // Small pure helpers extracted from the shipped components.
@@ -62,7 +62,7 @@ function buildActivePatch(nextActive) {
 // ═══════════════════════════════════════════════════════════════════
 describe("customer credits · issuance", () => {
   it("adjust POST body carries delta_cents + trimmed reason (≥5 chars)", async () => {
-    const spy = jest.fn().mockResolvedValue({ ok: true, balance_cents: 5000 });
+    const spy = vi.fn().mockResolvedValue({ ok: true, balance_cents: 5000 });
     const payload = buildAdjustPayload({ dollars: "10.00", reason: "  gift card refund  " });
     expect(payload).toEqual({ delta_cents: 1000, reason: "gift card refund" });
     await spy("/customers/c-1/credits/adjust", payload);
@@ -81,8 +81,8 @@ describe("customer credits · issuance", () => {
   });
 
   it("re-fetch fires after successful mutation", async () => {
-    const reload = jest.fn();
-    const postSpy = jest.fn().mockResolvedValue({ ok: true });
+    const reload = vi.fn();
+    const postSpy = vi.fn().mockResolvedValue({ ok: true });
     await postSpy("/credits/adjust", { delta_cents: 200, reason: "valid" });
     reload();
     expect(postSpy).toHaveBeenCalled();
@@ -100,7 +100,7 @@ describe("customer credits · issuance", () => {
 
 describe("customer credits · reverse", () => {
   it("reverse POST body carries the trimmed reason", async () => {
-    const spy = jest.fn().mockResolvedValue({ ok: true });
+    const spy = vi.fn().mockResolvedValue({ ok: true });
     const payload = buildReversePayload({ reason: "  duplicate credit issued in error  " });
     expect(payload).toEqual({ reason: "duplicate credit issued in error" });
     await spy("/customers/c-1/credits/entry-1/reverse", payload);
@@ -116,7 +116,7 @@ describe("customer credits · reverse", () => {
   });
 
   it("does NOT POST when reason is short (client-side pre-empt of 400)", async () => {
-    const spy = jest.fn();
+    const spy = vi.fn();
     const submittable = canSubmitReverse({ reason: "hi" });
     if (submittable) {
       await spy("/reverse", { reason: "hi" });
@@ -125,8 +125,8 @@ describe("customer credits · reverse", () => {
   });
 
   it("re-fetches ledger after successful reverse", async () => {
-    const reload = jest.fn();
-    const spy = jest.fn().mockResolvedValue({ ok: true, balance_cents: 1000 });
+    const reload = vi.fn();
+    const spy = vi.fn().mockResolvedValue({ ok: true, balance_cents: 1000 });
     await spy("/reverse", { reason: "valid audit reason" });
     reload();
     expect(reload).toHaveBeenCalledTimes(1);
@@ -139,7 +139,7 @@ describe("customer credits · reverse", () => {
 // ═══════════════════════════════════════════════════════════════════
 describe("ai personas · single-row toggle", () => {
   it("scope PATCH sends {read_access_scope}", async () => {
-    const spy = jest.fn().mockResolvedValue({ ok: true });
+    const spy = vi.fn().mockResolvedValue({ ok: true });
     const patch = buildScopePatch("tenant_all");
     await spy("/ai-employees/eid-1", patch);
     expect(spy).toHaveBeenCalledWith("/ai-employees/eid-1",
@@ -147,7 +147,7 @@ describe("ai personas · single-row toggle", () => {
   });
 
   it("active PATCH sends {active}", async () => {
-    const spy = jest.fn().mockResolvedValue({ ok: true });
+    const spy = vi.fn().mockResolvedValue({ ok: true });
     await spy("/ai-employees/eid-1", buildActivePatch(false));
     expect(spy).toHaveBeenCalledWith("/ai-employees/eid-1",
       expect.objectContaining({ active: false }));
@@ -179,7 +179,7 @@ describe("ai personas · bulk-select actions", () => {
   const visibleIds = ["eid-a", "eid-b", "eid-c"];
 
   it("bulk-activate emits one PATCH {active:true} per selected id", async () => {
-    const spy = jest.fn().mockResolvedValue({ ok: true });
+    const spy = vi.fn().mockResolvedValue({ ok: true });
     for (const eid of visibleIds) {
       await spy(`/ai-employees/${eid}`, { active: true });
     }
@@ -190,7 +190,7 @@ describe("ai personas · bulk-select actions", () => {
   });
 
   it("bulk-deactivate emits {active:false} per selected id", async () => {
-    const spy = jest.fn().mockResolvedValue({ ok: true });
+    const spy = vi.fn().mockResolvedValue({ ok: true });
     for (const eid of visibleIds) {
       await spy(`/ai-employees/${eid}`, { active: false });
     }
@@ -201,7 +201,7 @@ describe("ai personas · bulk-select actions", () => {
   });
 
   it("bulk set-scope emits {read_access_scope} per selected id", async () => {
-    const spy = jest.fn().mockResolvedValue({ ok: true });
+    const spy = vi.fn().mockResolvedValue({ ok: true });
     for (const eid of visibleIds) {
       await spy(`/ai-employees/${eid}`, { read_access_scope: "customer_scoped" });
     }

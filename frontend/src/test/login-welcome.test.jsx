@@ -18,7 +18,7 @@ describe("Login page welcome caption", () => {
   it("shows the Pool & Landscaping of Vistancia LLC welcome headline", () => {
     render(<MemoryRouter><Login /></MemoryRouter>);
     const h = screen.getByTestId("login-welcome-headline");
-    expect(h.textContent).toMatch(/Welcome to Pool & Landscaping of Vistancia LLC/i);
+    expect(h.textContent).toMatch(/Welcome to\s*Pool & Landscaping of Vistancia LLC/i);
   });
 
   it("does NOT render the old clockwork copy", () => {

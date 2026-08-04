@@ -184,6 +184,10 @@ describe("Phase 17 additions", () => {
       target: { value: "t-mike" },
     });
     fireEvent.click(await screen.findByTestId("dispatch-shift-route-btn"));
+    // Wait for the dialog itself before probing its inner controls —
+    // under full-suite parallel load the immediate `findByTestId` on
+    // the inner select can race the dialog's own render.
+    await screen.findByTestId("shift-route-dialog");
     // Fill target tech.
     fireEvent.change(await screen.findByTestId("shift-target-tech-select"), {
       target: { value: "t-tgt" },

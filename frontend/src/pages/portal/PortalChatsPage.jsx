@@ -37,7 +37,12 @@ export default function PortalChatsPage() {
     if (!selected) return;
     api.get(`/portal/chats/${selected.id}/messages`).then((d) => {
       setMessages(d.messages || []);
-      setTimeout(() => scrollRef.current?.scrollTo(0, 9e9), 50);
+      setTimeout(() => {
+        // Guard for jsdom (no `.scrollTo` on plain <div>) — optional chain
+        // catches null but not "method missing on truthy element".
+        const el = scrollRef.current;
+        if (el && typeof el.scrollTo === "function") el.scrollTo(0, 9e9);
+      }, 50);
     });
     api.post(`/portal/chats/${selected.id}/read`).catch(() => {});
     setPending([]);  // reset pending on thread switch

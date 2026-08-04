@@ -8,6 +8,38 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 33 · Test Hygiene (P0.2)
+
+Cleaned up every red / empty vitest file so CI can enforce a green
+baseline going forward.
+
+| File | Before | Action | After |
+| --- | --- | --- | --- |
+| `file-upload-components.test.jsx` | 0 tests (`@jest/globals`) | Converted to vitest, `jest.*` → `vi.*` | 10 pass |
+| `persona-avatar.test.jsx` | 0 tests | Import swap | 5 pass |
+| `phase22-mobile-schedule-gates.test.jsx` | 0 tests | Import swap | 6 pass |
+| `phase34-bulk-select-shared.test.jsx` | 0 tests | Import swap + `jest.` → `vi.` | 122 pass |
+| `preview-demo-logins.test.jsx` | 0 tests | Import swap + `jest.` → `vi.` | 8 pass |
+| `task-rr-ss-p2-revised.test.jsx` | 0 tests | Import swap + `jest.` → `vi.` | 19 pass |
+| `phase34-admin-page-mount-safety.test.jsx` | 0 tests (Jest-only `jest.mock(..., { virtual: true })`) | Excluded from vitest runner per author intent | not collected |
+| `phase34-task-pp-portal-hint.test.jsx` | 0 tests (Jest-only) | Excluded from vitest runner | not collected |
+| `phase34-task-w-forgot-password.test.jsx` | 0 tests (Jest-only) | Excluded from vitest runner | not collected |
+| `invoice-edit-modal.test.jsx` | 6 fail (`api.get(...).then` on undefined; missing `category` on line items) | Added default `getSpy` promise, `invalidateCategoryCache()` between tests, populated `category` on fixture line items | 6 pass |
+| `login-demo-flag.test.jsx` | 4 fail (targets `login-demo-section` — removed in Phase 30) | Deleted — feature intentionally removed, comment on `Login.jsx:24-31` explains | not collected |
+| `login-welcome.test.jsx` | 1 fail (regex expected space, DOM has two block-level `<span>`s adjacent) | Regex updated to `\s*` between segments | 1 pass |
+| `phase10-ui.test.jsx` | 1 fail (`customer-credits-adjust-submit` — AdjustDialog reuses `-issue-` testids) | Test updated to use the real `customer-credits-issue-submit/-amount/-note` IDs | 5 pass |
+| `slice-p19-ai-copilot.test.jsx` | 1 fail (`useAuth` null in CopilotPage) | Mocked `@/auth` with a stub user | 2 pass |
+| `moderation-bulk.test.jsx` | flaky under full-suite (local `vi.clearAllMocks/restoreAllMocks` racing setup.js globals) | Removed the redundant local hooks — setup.js already does the work | 3 pass |
+| `slice-p17-additions.test.jsx` | flaky (`shift-target-tech-select` findByTestId raced dialog render under parallel load) | Added intermediate `findByTestId("shift-route-dialog")` wait | 7 pass |
+| `PortalChatsPage.jsx:40` | uncaught `scrollTo is not a function` in jsdom (optional chain guards null, not missing method) | Guarded with `typeof el.scrollTo === "function"` (single-line prod fix) | no leaked errors |
+
+**Full-suite:** 126/126 test files pass · 942/943 tests pass (1 pre-existing skip) · 0 uncaught errors.
+
+**Scope discipline** — no assertions were weakened; every fix either genuinely repaired the target-under-test, removed an obsolete spec, or wrote a minimal one-liner production guard. No backend / mobile jest suite touched.
+
+---
+
+
 ## 2026-02-XX — Phase 40b lint guardrail · `no-restricted-imports` for `@/lib/*`
 
 - Added `frontend/eslint.config.js` (minimal ESLint 9 flat-config) with a

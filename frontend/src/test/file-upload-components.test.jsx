@@ -1,14 +1,14 @@
 /**
  * Phase F1 · Feb 2026 — Jest specs for the shared file components.
  *
- * Mutable module-level stubs approach: one ``jest.mock`` factory
+ * Mutable module-level stubs approach: one ``vi.mock`` factory
  * at the top that reads live values from ``__stubs``. Individual
  * tests flip ``__stubs.uploadFile`` / etc. between runs. This
  * avoids ``jest.resetModules()``, which nukes React and breaks
  * hooks in the render call.
  */
 import React from "react";
-import { describe, it, expect, jest, beforeEach } from "@jest/globals";
+import { describe, it, expect, jest, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 
 const __stubs = {
@@ -20,7 +20,7 @@ const __stubs = {
   buildAuthedDownloadUrl: (id) => `/api/files/${id}/download?auth=stub`,
 };
 
-jest.mock("@/api/files", () => ({
+vi.mock("@/api/files", () => ({
   uploadFile: (...a) => __stubs.uploadFile(...a),
   deleteFile: (...a) => __stubs.deleteFile(...a),
   listFilesByEntity: (...a) => __stubs.listFilesByEntity(...a),
@@ -28,7 +28,7 @@ jest.mock("@/api/files", () => ({
   revokeBlobUrl: (...a) => __stubs.revokeBlobUrl(...a),
   buildAuthedDownloadUrl: (...a) => __stubs.buildAuthedDownloadUrl(...a),
 }));
-jest.mock("sonner", () => ({ toast: { success: () => {}, error: () => {} } }));
+vi.mock("sonner", () => ({ toast: { success: () => {}, error: () => {} } }));
 
 // Import components AFTER the mocks are declared.
 import { FileUpload } from "@/components/files/FileUpload";
@@ -64,12 +64,12 @@ describe("FileUpload", () => {
   });
 
   it("uploads a valid image with the expected client-call shape (purpose + linked_entity_* passed through)", async () => {
-    const spy = jest.fn(async ({ file }) => ({
+    const spy = vi.fn(async ({ file }) => ({
       id: "f-1", url: "/api/files/f-1/download",
       original_filename: file.name, content_type: file.type, size: file.size,
     }));
     __stubs.uploadFile = spy;
-    const onUploaded = jest.fn();
+    const onUploaded = vi.fn();
     render(<FileUpload purpose="job_photo" linkedEntityType="job"
                         linkedEntityId="job-1" accept="image/*"
                         onUploaded={onUploaded} onError={() => {}} />);
@@ -87,9 +87,9 @@ describe("FileUpload", () => {
   });
 
   it("rejects a > 25 MB file client-side (does NOT call uploadFile)", async () => {
-    const spy = jest.fn();
+    const spy = vi.fn();
     __stubs.uploadFile = spy;
-    const onError = jest.fn();
+    const onError = vi.fn();
     render(<FileUpload accept="image/*" onError={onError} onUploaded={() => {}} />);
     const input = screen.getByTestId("file-upload-input");
     await act(async () => {
@@ -101,9 +101,9 @@ describe("FileUpload", () => {
   });
 
   it("rejects text/plain when accept='image/*' (does NOT call uploadFile)", async () => {
-    const spy = jest.fn();
+    const spy = vi.fn();
     __stubs.uploadFile = spy;
-    const onError = jest.fn();
+    const onError = vi.fn();
     render(<FileUpload accept="image/*" onError={onError} onUploaded={() => {}} />);
     const input = screen.getByTestId("file-upload-input");
     await act(async () => {
@@ -132,7 +132,7 @@ describe("AuthedImage", () => {
   });
 
   it("revokes the blob url on unmount", async () => {
-    const revoke = jest.fn();
+    const revoke = vi.fn();
     __stubs.revokeBlobUrl = revoke;
     __stubs.fetchAsBlob = async () => ({ url: "blob:xyz", contentType: "image/png" });
     const { unmount } = render(<AuthedImage fileId="fid-u" alt="pic" size={40} />);

@@ -18,7 +18,7 @@
  * shared contract so a future refactor can't silently break any of
  * the five surfaces.
  */
-import { describe, it, expect, jest } from "@jest/globals";
+import { describe, it, expect, jest, vi } from "vitest";
 
 // Small pure helpers extracted from the shipped LeadsDashboardPage /
 // InvoicesList / EstimatesList / PaymentsLedger / AutoBilling
@@ -115,7 +115,7 @@ SURFACES.forEach(({ name, endpoint }) => {
     });
 
     it(`sends correct {ids} payload to ${endpoint}`, async () => {
-      const spy = jest.fn().mockResolvedValue({ deleted_count: 3, deleted: visibleIds, failed: [] });
+      const spy = vi.fn().mockResolvedValue({ deleted_count: 3, deleted: visibleIds, failed: [] });
       const sel = new Set(visibleIds);
       const payload = { ids: Array.from(sel) };
       const res = await spy(endpoint, payload);
@@ -124,7 +124,7 @@ SURFACES.forEach(({ name, endpoint }) => {
     });
 
     it("filter-selected mode sends query_selector shape", async () => {
-      const spy = jest.fn().mockResolvedValue({ deleted_count: 42, deleted: [], failed: [] });
+      const spy = vi.fn().mockResolvedValue({ deleted_count: 42, deleted: [], failed: [] });
       const payload = {
         query_selector: { search: "test", status: "unpaid" },
         exclude_ids: [],
@@ -159,7 +159,7 @@ describe("bulk-reschedule · jobs", () => {
   });
 
   it("sends correct { ids, patch: { scheduled_date } } payload", async () => {
-    const spy = jest.fn().mockResolvedValue({ updated_count: 3, updated: jobIds, failed: [] });
+    const spy = vi.fn().mockResolvedValue({ updated_count: 3, updated: jobIds, failed: [] });
     const payload = { ids: jobIds, patch: { scheduled_date: "2026-03-15" } };
     const res = await spy("/jobs/bulk-update", payload);
     expect(spy).toHaveBeenCalledWith("/jobs/bulk-update", expect.objectContaining({
@@ -180,7 +180,7 @@ describe("bulk-reschedule · jobs", () => {
   });
 
   it("filter-selected reschedule sends query_selector + patch shape", async () => {
-    const spy = jest.fn().mockResolvedValue({ updated_count: 42, updated: [], failed: [] });
+    const spy = vi.fn().mockResolvedValue({ updated_count: 42, updated: [], failed: [] });
     const payload = {
       query_selector: { status: "scheduled" },
       exclude_ids: [],
@@ -195,7 +195,7 @@ describe("bulk-reschedule · jobs", () => {
 
   // Feb 2026 · Task LL follow-up — relative-shift mode.
   it("relative-shift sends scheduled_date_shift_days patch (weeks × 7)", async () => {
-    const spy = jest.fn().mockResolvedValue({ updated_count: 3, updated: jobIds, failed: [] });
+    const spy = vi.fn().mockResolvedValue({ updated_count: 3, updated: jobIds, failed: [] });
     // 2 weeks forward = +14 days.
     const shiftValue = 2;
     const shiftUnit = "weeks";
@@ -211,7 +211,7 @@ describe("bulk-reschedule · jobs", () => {
   });
 
   it("relative-shift backward direction sends a negative int", async () => {
-    const spy = jest.fn().mockResolvedValue({ updated_count: 3, updated: jobIds, failed: [] });
+    const spy = vi.fn().mockResolvedValue({ updated_count: 3, updated: jobIds, failed: [] });
     const shiftDays = -1 * 3 * 1; // 3 days back
     await spy("/jobs/bulk-update", {
       ids: jobIds, patch: { scheduled_date_shift_days: shiftDays },
@@ -246,7 +246,7 @@ describe("bulk-reschedule · jobs", () => {
 
   // Task MM · Feb 2026 — anchor-unscheduled flag.
   it("anchor checkbox on adds anchor_unscheduled_from_today to payload", async () => {
-    const spy = jest.fn().mockResolvedValue({
+    const spy = vi.fn().mockResolvedValue({
       updated_count: 5, updated: [], failed: [], anchored_count: 2,
     });
     const anchorUnscheduled = true;
@@ -297,7 +297,7 @@ describe("bulk-select · P1 admin list pages", () => {
   ];
   P1_SURFACES.forEach(({ name, endpoint, patch }) => {
     it(`${name} bulk-update sends correct patch shape`, async () => {
-      const spy = jest.fn().mockResolvedValue({
+      const spy = vi.fn().mockResolvedValue({
         updated_count: 3, updated: ["a", "b", "c"], failed: [],
       });
       await spy(endpoint, { ids: ["a", "b", "c"], patch });
@@ -307,7 +307,7 @@ describe("bulk-select · P1 admin list pages", () => {
       }));
     });
     it(`${name} bulk-delete sends ids-only shape`, async () => {
-      const spy = jest.fn().mockResolvedValue({
+      const spy = vi.fn().mockResolvedValue({
         deleted_count: 3, deleted: ["a", "b", "c"], failed: [],
       });
       const deleteEndpoint = endpoint.replace("/bulk-update", "/bulk-delete");

@@ -1,5 +1,5 @@
 import React from "react";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
@@ -39,8 +39,8 @@ import ModerationCheckinsPage from "@/pages/admin/ModerationCheckinsPage";
 import { api } from "@/api";
 
 describe("ModerationCheckinsPage · bulk", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-  afterEach(() => { vi.restoreAllMocks(); });
+  // setup.js already runs `cleanup()` + `vi.clearAllMocks()` after each
+  // test globally — no local hooks needed.
 
   it("select-all toggles every row checkbox", async () => {
     render(<MemoryRouter><ModerationCheckinsPage /></MemoryRouter>);

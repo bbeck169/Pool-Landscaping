@@ -9,6 +9,10 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock("@/auth", () => ({
+  // CopilotPage destructures `useAuth()` — provide a stub so it doesn't crash.
+  useAuth: () => ({ user: { id: "u-1", full_name: "Test Admin", role: "admin" } }),
+}));
 
 const { apiGetMock, apiPostMock, apiPatchMock, apiDeleteMock } = vi.hoisted(() => ({
   apiGetMock: vi.fn(), apiPostMock: vi.fn(),

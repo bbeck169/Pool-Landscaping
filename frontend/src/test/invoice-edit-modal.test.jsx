@@ -31,10 +31,19 @@ beforeEach(() => {
   patchSpy.mockReset();
   getSpy.mockReset();
   postSpy.mockReset();
+  // InvoiceEditModal → CategoryPicker fires GET /income-categories on
+  // mount. Give the mock a benign default so its `.then()` doesn't
+  // blow up unrelated tests. Individual specs can still override.
+  getSpy.mockResolvedValue({ items: [] });
 });
 afterEach(() => cleanup());
 
 import InvoiceEditModal from "@/components/invoices/InvoiceEditModal";
+import { invalidateCategoryCache } from "@/components/income/CategoryPicker";
+
+// CategoryPicker caches its first fetch at module scope — reset that
+// between suites so a stale mocked promise doesn't leak across tests.
+beforeEach(() => invalidateCategoryCache());
 
 const draftInvoice = () => ({
   id: "inv-e2e-1",
@@ -46,8 +55,8 @@ const draftInvoice = () => ({
   discount_amount: 0,
   discount_type: "fixed",
   line_items: [
-    { description: "Chem service", quantity: 1, unit_price: 100, tax_rate: 0 },
-    { description: "Filter clean", quantity: 2, unit_price: 25, tax_rate: 0 },
+    { description: "Chem service", quantity: 1, unit_price: 100, tax_rate: 0, category: "Chemicals" },
+    { description: "Filter clean", quantity: 2, unit_price: 25, tax_rate: 0, category: "Chemicals" },
   ],
   notes: "",
   memo: "",

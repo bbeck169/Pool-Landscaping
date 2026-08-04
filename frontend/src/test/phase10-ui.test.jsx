@@ -121,19 +121,20 @@ describe("AdjustDialog", () => {
       <AdjustDialog currentBalanceCents={5000} customerId="c1"
                      onClose={() => {}} onSaved={() => {}} />
     );
-    const submit = screen.getByTestId("customer-credits-adjust-submit");
+    // Note: AdjustDialog reuses the "issue" test IDs (same DialogContent).
+    const submit = screen.getByTestId("customer-credits-issue-submit");
     // Empty state — disabled.
     expect(submit).toBeDisabled();
     // Only amount, no reason.
-    fireEvent.change(screen.getByTestId("customer-credits-adjust-amount"),
+    fireEvent.change(screen.getByTestId("customer-credits-issue-amount"),
                        { target: { value: "10" } });
     expect(submit).toBeDisabled();
     // Short reason — disabled.
-    fireEvent.change(screen.getByTestId("customer-credits-adjust-reason"),
+    fireEvent.change(screen.getByTestId("customer-credits-issue-note"),
                        { target: { value: "no" } });
     expect(submit).toBeDisabled();
     // OK reason — enabled.
-    fireEvent.change(screen.getByTestId("customer-credits-adjust-reason"),
+    fireEvent.change(screen.getByTestId("customer-credits-issue-note"),
                        { target: { value: "valid five plus chars" } });
     expect(submit).not.toBeDisabled();
   });

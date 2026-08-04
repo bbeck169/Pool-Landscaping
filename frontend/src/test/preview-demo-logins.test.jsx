@@ -12,7 +12,7 @@
  *       payload that the page then passes to ``login()``.
  */
 import React from "react";
-import { describe, it, expect, jest } from "@jest/globals";
+import { describe, it, expect, jest, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 
 import {
@@ -82,8 +82,8 @@ describe("PreviewDemoLogins · component contract", () => {
   });
 
   it("clicking a button invokes onPick + onSubmitDirect with the account email (auto-populate contract for all 4 chips)", () => {
-    const pickSpy = jest.fn();
-    const submitSpy = jest.fn();
+    const pickSpy = vi.fn();
+    const submitSpy = vi.fn();
     render(
       <PreviewDemoLogins onPick={pickSpy} onSubmitDirect={submitSpy} />,
     );
@@ -112,8 +112,8 @@ describe("PreviewDemoLogins · component contract", () => {
   });
 
   it("respects the `disabled` prop — no callbacks fire", () => {
-    const pickSpy = jest.fn();
-    const submitSpy = jest.fn();
+    const pickSpy = vi.fn();
+    const submitSpy = vi.fn();
     render(
       <PreviewDemoLogins onPick={pickSpy} onSubmitDirect={submitSpy} disabled />,
     );
