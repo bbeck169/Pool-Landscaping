@@ -8,7 +8,57 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
-## 2026-02-XX — Phase 47e · Payments provider kill-switch + regression sweep
+## 2026-02-XX — Phase 49 · Lana AI voice, schedule intent, todos, SMS reminders
+
+Full-stack Lana upgrade. Voice input on mobile, natural-language intent parsing on the backend, per-user admin todos, single-fire SMS reminders on a minute cadence.
+
+### Backend
+
+- **`services/lana/intent.py`** — new. Rule-first classifier returning one of `schedule_job` / `add_todo` / `set_reminder` / `chat`. `dateparser` for natural-language time parsing ("Wednesday at 10am", "tomorrow at 9"). `looks_destructive()` guardrail catches `delete` / `cancel` / `refund` / `remove` / `wipe` / `purge` and short-circuits to a chat redirect ("please use the admin console").
+- **`services/lana/schedule_intent.py`** — new. Fuzzy customer resolution via `difflib.SequenceMatcher` (threshold 0.6, exact-substring boost to 0.85). `preview()` returns a confirmation card; `commit()` routes into `routers.jobs.create_job` — no duplicate create logic.
+- **`services/lana/todos.py`** — new. Per-user `admin_todos` collection. `list_todos`, `create_todo`, `update_todo` (only `text`/`due_at`/`completed` writable — tenant_id/user_id lockdown), `delete_todo`.
+- **`services/lana/reminders.py`** — new. `admin_reminders` collection. `create_reminder`, `list_reminders`, `fire_due_reminders`. Live SMS gated on `LANA_SMS_LIVE=1` env; default is a log-only dry-run that still marks the row `sent=True` so the cron doesn't loop.
+- **`services/lana/reminder_cron.py`** — new. Minute-cadence job registered on the existing APScheduler singleton (the one `automation_engine.register_daily_sweeps` already owns). Zero new infrastructure.
+- **`routers/lana_todos.py`** — new. `GET/POST/PATCH/DELETE /api/lana/todos` + `GET/POST /api/lana/reminders`. Admin/super/manager only via `_require_admin()`.
+- **`routers/business_os.py`** — extended:
+  - `POST /api/business-os/lana/chat` now classifies user turns via `services.lana.intent` BEFORE the chat round-trip. Non-chat intents short-circuit into todos / reminders / a schedule preview card.
+  - New `POST /api/business-os/lana/schedule/commit` — split from `/chat` so the mobile UI can render an explicit Confirm / Cancel step (no single-turn writes).
+- **`models.py`** — new `LanaTodo` + `LanaReminder` Pydantic models.
+- **`server.py`** — mounts `lana_todos.router` on `app` (public prefix `/api`) and registers the reminder cron alongside `automation_engine`'s daily sweeps.
+- **`requirements.txt`** — `dateparser==1.4.1` added.
+
+### Mobile
+
+- **`mobile/app/os/lana.tsx`** — full rewrite:
+  - **Mic button** (`os-lana-mic`) using `expo-speech-recognition` via dynamic `require()` — Expo Go safe (same convention as Phase 38b Mapbox). Voice in Expo Go shows a graceful "Voice unavailable — dev-client build required" alert.
+  - **Confirm modal** for `schedule_job` intents (`os-lana-schedule-confirm-{yes|no}`) — Lana quotes back the parsed customer / service / when; user taps Confirm to write.
+  - **Todos panel** (`os-lana-todos`) bound to `/api/lana/todos` — tap to toggle completion.
+  - **Destructive-guard** — server-side, but UI displays the chat redirect reply verbatim.
+- **`mobile/package.json`** — `expo-speech-recognition@^2.1.1` added. **⚠ Dev-client rebuild required** (see `EXPO_GO_RUNBOOK.md` Phase 49 section).
+
+### Testing
+
+- **`backend/tests/test_phase49_lana_intents.py`** — **15/15 pass**: schedule intent extraction (service + customer + when), reminder intent extraction, todo intent extraction, chat fallback, destructive-token guard, ambiguous-input guard, schedule preview fuzzy match, schedule preview customer-not-found, todos create+list, todos update only-allowed-keys guard, reminders dry-run default, reminders skip not-yet-due, reminders live-flag flips sent_mode, `/api/lana/*` router registration, `/api/business-os/lana/schedule/commit` route registration.
+- **`frontend/src/test/phase49-lana-voice.test.jsx`** — **5/5 pass**: dynamic import of expo-speech-recognition, mic button testids, schedule-confirmation card testids + commit URL, todo list testids + endpoints, graceful fallback copy.
+
+### Environment / config
+
+- `LANA_SMS_LIVE=1` — flip live SMS on. Default: dry-run.
+- No new authentication surfaces; existing admin-role gate reused. `test_credentials.md` untouched.
+
+### Docs
+
+- `mobile/EXPO_GO_RUNBOOK.md` — Phase 49 section added documenting the dev-client rebuild requirement.
+- `/app/memory/PRD.md` — Phase 49 section prepended.
+
+### Non-scope
+- Web parity for Lana voice — mic API varies too much cross-browser; separate phase.
+- Recurring reminders — single-fire only.
+- Multi-turn dialog beyond a single confirm step.
+- Phase 41.1b / 41.2 / 42.4 / 43 / 46 / 47f-onwards remain queued.
+
+---
+
 
 Final slice of the direct-Stripe migration. Formalises the "Lumino/Zapier stays in-tree but dark" rollback path and adds a CI-friendly regression sweep so a future rewrite can't accidentally drag a hosted-link call back onto the customer-facing pay path.
 

@@ -537,6 +537,10 @@ api_router.include_router(reviews_public_alias.router)
 app.include_router(api_router)
 app.include_router(public_social.router)
 
+# Phase 49 · Feb-2026 — Lana todos + reminders REST surface.
+from routers import lana_todos  # noqa: E402
+app.include_router(lana_todos.router)
+
 # SEC-P3-1 hotfix — no wildcard CORS with credentials. Read allowlist from
 # ALLOWED_ORIGINS (comma-separated); auto-append APP_PUBLIC_URL if set.
 _APP_ENV_MW = os.environ.get("APP_ENV", "preview").lower()
@@ -1204,6 +1208,12 @@ async def _background_seed():
             from services import automation_engine as _auto
             await _auto.re_index_rules()
             _auto.register_daily_sweeps(scheduler)
+            # Phase 49 · Feb-2026 — minute-cadence Lana reminder tick.
+            try:
+                from services.lana.reminder_cron import register_lana_reminders_cron
+                register_lana_reminders_cron(scheduler)
+            except Exception as _lana_exc:  # pragma: no cover
+                logger.warning("[lana.reminders.cron] register failed: %s", _lana_exc)
         except Exception as _ae:
             logger.warning(f"automation_engine registration crashed: {_ae}")
 

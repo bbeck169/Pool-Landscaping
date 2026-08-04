@@ -119,6 +119,36 @@ class TechnicianIn(BaseModel):
     avatar: Optional[str] = ""
 
 
+class LanaTodo(BaseModel):
+    """Phase 49 · Feb-2026 — admin-only per-user todos captured by Lana
+    (voice or text). Stored in ``db.admin_todos``. Reminders live in
+    ``db.admin_reminders`` (see :class:`LanaReminder`)."""
+    id: str
+    tenant_id: str
+    user_id: str
+    text: str
+    due_at: Optional[str] = None
+    completed: bool = False
+    created_at: str
+    updated_at: str
+
+
+class LanaReminder(BaseModel):
+    """Phase 49 · Feb-2026 — single-fire SMS reminder. Cron in
+    :mod:`services.lana.reminder_cron` polls every minute; live SMS is
+    gated on ``LANA_SMS_LIVE=1`` (default: dry-run)."""
+    id: str
+    tenant_id: str
+    user_id: str
+    text: str
+    remind_at: str
+    phone: Optional[str] = None
+    sent: bool = False
+    sent_at: Optional[str] = None
+    sent_mode: Optional[str] = None
+    created_at: str
+
+
 class JobIn(BaseModel):
     title: str
     customer_id: str

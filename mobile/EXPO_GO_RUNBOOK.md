@@ -13,6 +13,33 @@ touching TestFlight / Play Store.
    - iOS: <https://apps.apple.com/app/expo-go/id982107779>
    - Android: <https://play.google.com/store/apps/details?id=host.exp.exponent>
 2. **Get the repo checked out locally** on your dev laptop (any recent
+
+## Phase 49 · Feb-2026 — Lana voice input requires the dev-client build
+
+Adding `expo-speech-recognition` to the mobile bundle pulls in a native
+iOS + Android module. Same class of change as Phase 38b's `@rnmapbox/maps`.
+
+**Impact**:
+- Voice input on `mobile/app/os/lana.tsx` (the mic button) requires the
+  EAS **dev-client** build. In plain Expo Go it degrades gracefully to
+  an "Voice unavailable" alert; text input still works.
+- Every other Phase 49 feature (todos panel, schedule-intent confirm
+  flow, reminder-SMS cron) works in Expo Go — voice is the ONLY
+  dev-client-gated bit.
+
+**Rebuild the dev-client:**
+
+```bash
+cd mobile
+npx expo prebuild --clean          # regenerates ios/ and android/
+eas build --profile development --platform ios     # or --platform android
+```
+
+Install the resulting `.ipa` / `.apk` on the test device. QR-code
+Metro launcher works with the dev-client the same way it does with
+Expo Go, but the native modules resolve correctly.
+
+
    Node 18/20 works — no EAS account needed).
 3. **Install once**:
    ```

@@ -1,3 +1,28 @@
+## Phase 49 · Feb-2026 — Lana AI voice, schedule intent, todos, reminders
+
+**Delivered:**
+- Voice input on `mobile/app/os/lana.tsx` via `expo-speech-recognition` (dev-client rebuild required — mirrors Phase 38b Mapbox pattern; docs updated in `mobile/EXPO_GO_RUNBOOK.md`).
+- Intent classification (`services/lana/intent.py`) — rule-first taxonomy: `schedule_job`, `add_todo`, `set_reminder`, `chat`.
+- Schedule flow — Lana quotes a preview card; caller confirms via `POST /api/business-os/lana/schedule/commit`. Routes through the existing `routers.jobs.create_job` — no duplicate create logic.
+- Todos — `GET/POST/PATCH/DELETE /api/lana/todos`, per-user, admin/super/manager only. Stored in `db.admin_todos`.
+- Reminders — `GET/POST /api/lana/reminders` + minute-cadence APScheduler tick registered on the existing scheduler singleton. Live SMS gated on `LANA_SMS_LIVE=1` (default: dry-run — logs but doesn't send).
+- Guardrail — destructive tokens (`delete`, `cancel`, `refund`) short-circuit to a chat reply redirecting the admin to the console.
+
+**Environment:**
+- `LANA_SMS_LIVE=1` (optional) — flip live SMS on.
+- `dateparser==1.4.1` — added to `backend/requirements.txt`.
+- `expo-speech-recognition@^2.1.1` — added to `mobile/package.json`.
+
+**Test counts:** backend 15/15, frontend 5/5.
+
+**Deferred (Phase 49 non-goals):**
+- Web parity for Lana voice (browser SpeechRecognition varies).
+- Recurring reminders (single-fire only).
+- Multi-turn dialog beyond a single confirm step.
+
+---
+
+
 # AquaTerra Pool & Landscaping — CRM PRD
 
 Field-service CRM covering admin, technician (Expo mobile), and customer-portal (React web) surfaces. FastAPI backend on port 8001, React CRA frontend on port 3000, MongoDB via `MONGO_URL`.

@@ -808,6 +808,34 @@ async def kpi_recompute(admin: dict = Depends(require_admin),
 
 
 # ─── Item H · Lana AI chat ────────────────────────────────────────────────
+class LanaScheduleCommitIn(BaseModel):
+    customer_id: str
+    service_type: str
+    scheduled_date: str
+    title: Optional[str] = None
+
+
+@router.post("/business-os/lana/schedule/commit")
+async def lana_schedule_commit(body: LanaScheduleCommitIn,
+                                 user: dict = Depends(get_current_user),
+                                 tenant: dict = Depends(get_current_tenant)):
+    """Phase 49 · Feb-2026 — write a job Lana previewed in a prior
+    turn. Split from ``/lana/chat`` so the mobile UI can render an
+    explicit "Confirm / Cancel" step (per Phase 49 scope: no
+    single-turn write)."""
+    from services.lana import schedule_intent as _sched
+    out = await _sched.commit(
+        db,
+        tenant_id=tenant["id"],
+        actor_user_id=user.get("id"),
+        customer_id=body.customer_id,
+        service_type=body.service_type,
+        scheduled_date=body.scheduled_date,
+        title=body.title,
+    )
+    return out
+
+
 class LanaChatIn(BaseModel):
     message: str
     conversation_id: Optional[str] = None
@@ -818,9 +846,74 @@ async def lana_chat(body: LanaChatIn,
                      user: dict = Depends(get_current_user),
                      tenant: dict = Depends(get_current_tenant)):
     """Chat with Lana — the "COO in a box" AI persona scoped to business ops.
-    Persists per-conversation thread in `lana_conversations`.
-    Uses EMERGENT_LLM_KEY when set; otherwise returns a MOCKED response with
-    the `mocked:true` flag (per spec — never silently mocked)."""
+
+    Phase 49 · Feb-2026 — before the chat round-trip, classify the user
+    turn against a small intent taxonomy (see
+    :mod:`services.lana.intent`). Non-chat intents short-circuit into
+    the todo / reminder services or, for schedule_job, return a
+    preview card the caller confirms via a second call to
+    ``/business-os/lana/schedule/commit``.
+    """
+    # ── Phase 49 intent routing ───────────────────────────────────────
+    from services.lana import intent as _intent
+    from services.lana import todos as _todos_svc
+    from services.lana import reminders as _reminders_svc
+    from services.lana import schedule_intent as _sched
+    if _intent.looks_destructive(body.message):
+        return {
+            "reply": "For deletes / cancels / refunds please use the admin console — "
+                     "I only create and schedule.",
+            "intent": {"kind": "chat"},
+            "mocked": False,
+        }
+    parsed = _intent.classify(body.message)
+    if parsed.kind == "add_todo":
+        row = await _todos_svc.create_todo(
+            db, tenant_id=tenant["id"], user_id=user["id"],
+            text=parsed.args["text"],
+        )
+        return {
+            "reply": f'Added todo: "{row["text"]}"',
+            "intent": {"kind": "add_todo", "todo": row},
+        }
+    if parsed.kind == "set_reminder":
+        row = await _reminders_svc.create_reminder(
+            db, tenant_id=tenant["id"], user_id=user["id"],
+            text=parsed.args["text"],
+            remind_at=parsed.args["remind_at"],
+            phone=user.get("phone"),
+        )
+        return {
+            "reply": f'Reminder set for {row["remind_at"]}: "{row["text"]}"',
+            "intent": {"kind": "set_reminder", "reminder": row},
+        }
+    if parsed.kind == "schedule_job":
+        preview = await _sched.preview(
+            db, tenant_id=tenant["id"],
+            customer_name=parsed.args["customer_name"],
+            service_type=parsed.args["service_type"],
+            scheduled_date=parsed.args["scheduled_date"],
+        )
+        if not preview.get("ok"):
+            return {
+                "reply": f"I couldn't find a customer matching "
+                          f"\"{parsed.args['customer_name']}\". "
+                          "Please try the full name or create the customer first.",
+                "intent": {"kind": "schedule_job", "preview": preview},
+            }
+        p = preview["preview"]
+        return {
+            "reply": (
+                f"Ready to book {p['service_type']} for {p['customer_name']} "
+                f"on {p['scheduled_date']}. Say Confirm to write it."
+            ),
+            "intent": {"kind": "schedule_job", "preview": {
+                "ok": True,
+                **p,
+            }},
+        }
+
+    # ── Falls through to the existing chat path ───────────────────────
     conv_id = body.conversation_id or new_id()
     thread = await db.lana_conversations.find_one(
         {"id": conv_id, "tenant_id": tenant["id"]}, {"_id": 0}

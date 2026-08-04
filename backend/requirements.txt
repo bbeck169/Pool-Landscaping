@@ -5,6 +5,7 @@ aiosignal==1.4.0
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.14.1
+dateparser==1.4.1
 APScheduler==3.11.3
 ast_serialize==0.6.0
 attrs==26.1.0

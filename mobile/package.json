@@ -18,6 +18,7 @@
     "@expo/vector-icons": "15.1.1",
     "@gorhom/bottom-sheet": "5.2.14",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "expo-speech-recognition": "^2.1.1",
     "@react-native-community/datetimepicker": "8.4.4",
     "@rnmapbox/maps": "^10.1.34",
     "@react-native-community/netinfo": "12.0.1",
