@@ -47,3 +47,16 @@ if (typeof window !== "undefined" && !window.ResizeObserver) {
   window.ResizeObserver = RO;
   globalThis.ResizeObserver = RO;
 }
+
+// Phase 50 · Feb-2026 — `lottie-react` transitively imports
+// `lottie-web`, which mounts to an HTMLCanvasElement on load. jsdom
+// does not implement `HTMLCanvasElement.prototype.getContext`, so any
+// test file that indirectly imports `AIAvatar` (via login / AI
+// employees pages) crashes on module load. Globally stubbing
+// `lottie-react` here keeps every unrelated test file green while
+// still letting `phase50-ai-avatar.test.jsx` supply its own
+// per-file `vi.mock("lottie-react", …)` for the assertion path.
+vi.mock("lottie-react", () => ({
+  __esModule: true,
+  default: () => null,
+}));

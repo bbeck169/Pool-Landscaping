@@ -1,3 +1,33 @@
+## Phase 50 · Feb-2026 — Activate AI employees + Lottie animated avatars in all logins
+
+**Delivered:**
+- Idempotent activation backfill `backend/scripts/phase50_activate_ai_employees.py` — flips any `ai_employees` row with `active` in `[false, null, missing]` to `active=True`. Live-DB run reported `0 rows flipped` (all already active). Seed guard test asserts `seed_ai_employees_for_tenant` sets `"active": True`.
+- Shared Lottie idle loop under `frontend/src/assets/lottie/ai/idle.json` + byte-identical copy at `mobile/assets/lottie/ai/idle.json`. Hand-crafted, MIT-licensed — no third-party asset.
+- Web `<AIAvatar>` component (`frontend/src/components/ai/AIAvatar.jsx`) — `lottie-react` idle backdrop with an optional static `src` layered on top.
+- Mobile `<AIAvatar>` component (`mobile/src/components/ai/AIAvatar.tsx`) — `lottie-react-native` (Expo SDK 54 bundles the module — no dev-client rebuild required).
+- Wired into:
+  - Web login role picker — Lana greeter card above `PreviewDemoLogins` demo grid (`[data-testid=login-lana-greeter]`).
+  - Mobile login role picker — matching Lana greeter above the mobile demo section.
+  - Web Business OS > AI Employees list — Lottie avatar replaces the flat emoji in `AiEmployeesList` (`AiOpsPages.jsx`).
+  - Mobile Business OS > AI Employees list — Lottie avatar layered under the camera-overlay in `ai-employees.tsx`.
+- Global vitest mock for `lottie-react` in `frontend/src/test/setup.js` — prevents `lottie-web` from crashing on jsdom's missing canvas support in downstream test files that indirectly import `AIAvatar`.
+
+**Dependencies:**
+- `lottie-react@2.4.1` (web) — already in `frontend/package.json`.
+- `lottie-react-native@7.0.0` (mobile) — already in `mobile/package.json`.
+
+**Test counts:**
+- backend `test_phase50_ai_activation.py`: 5/5 ✓
+- vitest `phase50-ai-avatar.test.jsx`: 3/3 ✓
+- vitest full-suite delta vs. pre-Phase-50 baseline: 0 new failures (10 pre-existing Phase 41.2 failures confirmed unchanged before/after Phase 50 edits).
+
+**Non-goals / deferred:**
+- Per-employee bespoke Lottie animations — the shared idle loop is applied uniformly; a future phase can layer role-specific accents.
+- Backfill of `avatar_url` on the `/ai-ops/employees` endpoint response — the web AI Employees list currently animates without a static image overlay because that endpoint only returns emoji.
+
+---
+
+
 ## Phase 49 · Feb-2026 — Lana AI voice, schedule intent, todos, reminders
 
 **Delivered:**

@@ -4,6 +4,7 @@ import { ArrowLeft, Plus, Send } from 'lucide-react';
 import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import AIAvatar from "@/components/ai/AIAvatar";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useRealtime } from "@/realtime/NotificationSocket";
 import {
@@ -51,7 +52,16 @@ export function AiEmployeesList() {
                 className="rounded-2xl p-4 hover:brightness-95 flex items-start gap-3"
                 style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
                 data-testid={`ai-emp-${e.slug}`}>
-            <div className="text-3xl">{e.avatar || "🤖"}</div>
+            {/* Phase 50 · Feb-2026 — animated Lottie avatar replaces the
+                static emoji. Falls back gracefully — the ``src`` prop
+                is optional; if the row has no ``avatar_url`` the
+                Lottie idle loop is the only visual. */}
+            <AIAvatar
+              size={56}
+              src={e.avatar_url || undefined}
+              alt={e.name}
+              testId={`ai-lottie-avatar-${e.slug || e.id}`}
+            />
             <div>
               <div className="font-semibold" style={{ color: colors.onSurface }}>{e.name}</div>
               <div className="text-xs mt-0.5" style={{ color: colors.muted }}>{e.role}</div>

@@ -11,6 +11,7 @@ import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, IMAGES } from "@/src/theme";
 import { PrimaryButton } from "@/src/components/ui";
 import BrandLogo from "@/src/components/BrandLogo";
+import AIAvatar from "@/src/components/ai/AIAvatar";
 
 export default function Login() {
   const { login } = useAuth();
@@ -167,6 +168,20 @@ export default function Login() {
           <View style={styles.demoSection} testID="demo-login-section">
             <Text style={styles.demoSectionTitle}>DEMO ACCOUNTS</Text>
             <Text style={styles.demoSectionSub}>Tap to sign in instantly</Text>
+            {/* Phase 50 · Feb-2026 — Lana AI greeter above the demo
+                grid. Idle Lottie loop signals that the AI employees
+                are already active. Mirrors the web login treatment. */}
+            <View style={styles.lanaGreeter} testID="login-lana-greeter">
+              <AIAvatar size={40} testID="login-lana-avatar" />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.lanaGreeterTitle}>
+                  Lana &amp; your AI team are online
+                </Text>
+                <Text style={styles.lanaGreeterSub}>
+                  Sign in to see them animate across the app.
+                </Text>
+              </View>
+            </View>
             <View style={styles.demoList}>
               {([
                 { label: "Super Admin", email: "super@aquaterra.com", icon: "shield" as const },
@@ -302,5 +317,27 @@ const styles = StyleSheet.create({
   demoSectionSub: {
     fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted,
     marginBottom: spacing.sm,
+  },
+  lanaGreeter: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.sm + 2,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceSecondary,
+    marginBottom: spacing.sm,
+  },
+  lanaGreeterTitle: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.base,
+    color: colors.onSurface,
+  },
+  lanaGreeterSub: {
+    fontFamily: font.regular,
+    fontSize: fontSize.sm,
+    color: colors.muted,
+    marginTop: 1,
   },
 });

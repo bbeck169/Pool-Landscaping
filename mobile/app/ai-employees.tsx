@@ -22,6 +22,7 @@ import { Header } from "@/src/components/widgets";
 import { FileUpload } from "@/src/components/files/FileUpload";
 import { AuthedImage } from "@/src/components/files/AuthedImage";
 import type { FileRecord } from "@/src/api/files";
+import AIAvatar from "@/src/components/ai/AIAvatar";
 
 function buildPersonaAvatarUrl(fileId: string): string {
   if (!fileId) return "";
@@ -130,19 +131,22 @@ export default function AIEmployees() {
                 }
                 testID={`ai-employee-${item.id}`}
               >
-                {/* Avatar with camera overlay */}
+                {/* Phase 50 · Feb-2026 — animated Lottie avatar replaces
+                    the flat brand-color circle. When the persona has a
+                    custom uploaded ``avatar_url``, ``<AIAvatar>`` layers
+                    the image on top of the idle Lottie loop. */}
                 <View>
-                  {fileId ? (
-                    <AuthedImage
-                      fileId={fileId}
-                      size={52}
-                      style={styles.avatarImg}
-                    />
-                  ) : (
-                    <View style={styles.avatar}>
-                      <Ionicons name={item.icon as any} size={24} color="#fff" />
-                    </View>
-                  )}
+                  <AIAvatar
+                    size={52}
+                    src={
+                      fileId
+                        ? `${(process.env.EXPO_PUBLIC_BACKEND_URL || "").replace(/\/$/, "")}/api/files/${fileId}/download`
+                        : (item.avatar_url && !item.avatar_url.startsWith("/api/files/")
+                            ? item.avatar_url
+                            : undefined)
+                    }
+                    testID={`ai-lottie-avatar-${item.key || item.id}`}
+                  />
                   <Pressable
                     style={styles.cameraOverlay}
                     onPress={() => setAvatarTarget(item)}

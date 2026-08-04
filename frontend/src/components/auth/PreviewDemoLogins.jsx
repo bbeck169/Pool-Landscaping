@@ -19,6 +19,7 @@
  */
 import React from "react";
 import { colors } from "@/theme";
+import AIAvatar from "@/components/ai/AIAvatar";
 
 export const DEMO_ACCOUNTS = [
   {
@@ -63,6 +64,39 @@ export function PreviewDemoLogins({ onPick, onSubmitDirect, disabled }) {
       </div>
       <div className="text-xs mb-3" style={{ color: colors.onSurfaceSecondary }}>
         One-tap sign-in — every account uses <code>password123</code>. Hidden in production.
+      </div>
+      {/* Phase 50 · Feb-2026 — Lana AI greeter above the demo grid. The
+          idle Lottie loop signals that AI employees are always-on and
+          available immediately after sign-in. Kept small + subtle so
+          it doesn't visually compete with the actual demo buttons. */}
+      <div
+        className="flex items-center gap-3 mb-3 px-3 py-2 rounded-lg"
+        style={{
+          backgroundColor: colors.surfaceSecondary,
+          border: `1px solid ${colors.border}`,
+        }}
+        data-testid="login-lana-greeter"
+      >
+        <AIAvatar
+          src="/avatars/personas/lana.jpg"
+          alt="Lana"
+          size={40}
+          testId="login-lana-avatar"
+        />
+        <div style={{ minWidth: 0 }}>
+          <div
+            className="text-sm font-semibold truncate"
+            style={{ color: colors.onSurface }}
+          >
+            Lana &amp; your AI team are online
+          </div>
+          <div
+            className="text-xs truncate"
+            style={{ color: colors.onSurfaceSecondary }}
+          >
+            Sign in to see them animate across the app.
+          </div>
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-2">
         {DEMO_ACCOUNTS.map((acc) => (
