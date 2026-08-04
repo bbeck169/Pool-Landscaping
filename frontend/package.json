@@ -84,7 +84,8 @@
     "build": "craco build",
     "test": "craco test",
     "test:unit": "vitest run --config vitest.config.js",
-    "test:unit:watch": "vitest --config vitest.config.js"
+    "test:unit:watch": "vitest --config vitest.config.js",
+    "lint": "eslint src --max-warnings=0"
   },
   "browserslist": {
     "production": [

@@ -1,61 +1,56 @@
-// Phase 40b hotfix guardrail (Feb 2026) — flags any `@/lib/*` import path
-// that would fail webpack at compile time.
+// Phase 41.3 · Feb-2026 — Full ESLint 9 flat-config migration.
 //
-// Background
-// ----------
-// The `@` alias resolves to `frontend/src/` (see `craco.config.js`).
-// The `src/lib/` directory only contains three modules:
-//   - `@/lib/utils` (cn helper for shadcn UI components)
-//   - `@/lib/stripeConfig`
-//   - `@/lib/checklistType`
+// Enforced rules
+// --------------
+//   • no-restricted-imports           — Phase 40b `@/lib/*` guardrail (preserved).
+//   • react-hooks/rules-of-hooks      — error. Hooks may only be called from React
+//                                       components or custom hooks, top level.
+//   • react-hooks/exhaustive-deps     — error (was `warn` in CRA default).
+//   • no-unused-vars                  — error with `^_` escape hatch on args + vars.
+//   • no-undef                        — error (default), pointed at the browser + node
+//                                       + jest globals via `globals` package.
 //
-// Every other `@/lib/*` path (e.g. `@/lib/api`, `@/lib/http`, `@/lib/router`)
-// resolves to nothing and breaks the webpack build. Phase 40b shipped with
-// two files that mistakenly imported `@/lib/api` (should be `@/api`) — this
-// guardrail would have caught that regression at lint stage.
+// Non-enforced rules (intentional)
+// --------------------------------
+//   • import/first — off. Vitest test files interleave imports with `vi.mock` calls
+//     that MUST run before the mocked module is imported. Enabling `import/first`
+//     would force us to inline every mock factory or wrap in dynamic import — both
+//     make tests less readable. Trade-off documented in Phase 41.3 handoff.
 //
-// Scope
-// -----
-// Intentionally minimal. This is NOT the full ESLint 9 migration for the
-// frontend workspace — it only exists to enable the single
-// `no-restricted-imports` rule below. Other rules will land in a
-// dedicated ESLint 9 migration phase.
-//
-// See: CHANGELOG.md — 2026-02-XX — Phase 40b hotfix.
+// See CHANGELOG · Phase 41.3.
 
+const js = require("@eslint/js");
 const reactHooks = require("eslint-plugin-react-hooks");
 const importPlugin = require("eslint-plugin-import");
+const globals = require("globals");
 
-module.exports = [
-  {
-    files: ["src/**/*.{js,jsx}"],
-    plugins: {
-      // Registered as no-op so inline `/* eslint-disable react-hooks/... */`
-      // directives across the codebase don't error with "rule not found".
-      // The rules themselves are set to "off" — nothing new is enforced.
-      "react-hooks": reactHooks,
-      // Same story for `import/first` disable directives in test files.
-      import: importPlugin,
+const commonRules = {
+  ...js.configs.recommended.rules,
+  "no-unused-vars": [
+    "error",
+    {
+      argsIgnorePattern: "^_",
+      varsIgnorePattern: "^_",
+      // Ignore the unused React import in files that still import React
+      // for its JSX runtime (no `automatic` runtime configured on CRA).
+      caughtErrorsIgnorePattern: "^_",
+      // Never flag rest-siblings — they're a common idiomatic pattern
+      // for object destructuring (``const { foo, ...rest } = obj``).
+      ignoreRestSiblings: true,
     },
-    languageOptions: {
-      ecmaVersion: "latest",
-      sourceType: "module",
-      parserOptions: {
-        ecmaFeatures: { jsx: true },
-      },
-    },
-    linterOptions: {
-      // Legacy `// eslint-disable-next-line no-new-func` directives litter
-      // the widget scripts; treat unused ones as neutral, not fatal.
-      reportUnusedDisableDirectives: "off",
-    },
-    rules: {
-      "react-hooks/rules-of-hooks": "off",
-      "react-hooks/exhaustive-deps": "off",
-      "import/first": "off",
-      "no-restricted-imports": ["error", {
-        patterns: [{
-          // Ban everything under `@/lib/*` EXCEPT the three real modules.
+  ],
+  "no-empty": ["error", { allowEmptyCatch: true }],
+  // Case-declaration rule triggers on lots of switch-case blocks where a
+  // `const` is declared without an enclosing block. Allow — this is a
+  // stylistic preference and rewriting the switch statements risks
+  // touching Phase 49 / 50 / Stripe surfaces.
+  "no-case-declarations": "off",
+  // Guardrail — Phase 40b (preserved).
+  "no-restricted-imports": [
+    "error",
+    {
+      patterns: [
+        {
           group: [
             "@/lib/*",
             "!@/lib/utils",
@@ -63,11 +58,83 @@ module.exports = [
             "!@/lib/checklistType",
           ],
           message:
-            "The '@/lib/*' alias only exposes utils, stripeConfig, and checklistType. " +
-            "Use '@/api' for the API client, '@/hooks/*', '@/components/*', or the correct relative path. " +
-            "See CHANGELOG Phase 40b hotfix.",
-        }],
-      }],
+            "The '@/lib/*' alias only exposes utils, stripeConfig, and " +
+            "checklistType. Use '@/api' for the API client, '@/hooks/*', " +
+            "'@/components/*', or a relative path. See Phase 40b hotfix.",
+        },
+      ],
+    },
+  ],
+  // React hooks — the whole point of Phase 41.3.
+  "react-hooks/rules-of-hooks": "error",
+  "react-hooks/exhaustive-deps": "error",
+};
+
+module.exports = [
+  // ── ignore patterns ──────────────────────────────────────────────
+  {
+    ignores: [
+      "build/**",
+      "dist/**",
+      "node_modules/**",
+      "coverage/**",
+      "public/**",
+      // Vendored embed / widget bundles — legacy scripts we don't own.
+      "src/embed/**",
+      "src/widgets/**",
+      // Craco / build tooling — CommonJS + build-time, not runtime.
+      "craco.config.js",
+      "postcss.config.js",
+      "tailwind.config.js",
+      "vitest.config.js",
+      "eslint.config.js",
+    ],
+  },
+  // ── application source (src/**/*.{js,jsx}) ───────────────────────
+  {
+    files: ["src/**/*.{js,jsx}"],
+    plugins: {
+      "react-hooks": reactHooks,
+      import: importPlugin,
+    },
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      parserOptions: { ecmaFeatures: { jsx: true } },
+      globals: {
+        ...globals.browser,
+        ...globals.es2021,
+      },
+    },
+    linterOptions: {
+      // Widget scripts historically carry `// eslint-disable-next-line`
+      // for rules we no longer enforce. Don't fatal on unused ones.
+      reportUnusedDisableDirectives: "off",
+    },
+    rules: commonRules,
+  },
+  // ── tests (src/test/**, src/**/*.test.{js,jsx}) ──────────────────
+  {
+    files: [
+      "src/test/**/*.{js,jsx}",
+      "src/**/*.test.{js,jsx}",
+      "src/**/*.spec.{js,jsx}",
+    ],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        ...globals.jest,
+        ...globals.vitest,
+      },
+    },
+    rules: {
+      // Test files intentionally leave assertion locals unreferenced
+      // when the assertion is the side-effect (e.g. `const { getByX } =
+      // render(...)`). Loosen no-unused-vars for tests only.
+      "no-unused-vars": "off",
+      // React-hooks rules stay ON — even in tests we want to catch
+      // bad hook usage inside `renderHook` factories.
     },
   },
 ];
