@@ -53,6 +53,32 @@ jobs:
             -m "not live and not destructive and not legacy_iteration" \
             -q
 
+      # Phase 41.4 · Feb-2026 — coverage gate on the ISOLATED-GREEN subset.
+      # The full batch has ~278 known pre-existing failures from the
+      # Phase 47c/48 Stripe cluster and Phase 34 task-suite batch drift
+      # (see Phase 41.1c handoff). Those failures depress coverage
+      # artificially — a test that fails at import doesn't hit its
+      # downstream setup code, so batch failures look like a coverage
+      # drop even when nothing regressed. This gate runs a curated
+      # slice that's known green in isolation and asserts total
+      # coverage stays >= 58% (baseline 60% - 2 pp buffer, Feb-2026).
+      - name: Coverage gate (isolated-green subset · fail-under 58%)
+        working-directory: .
+        run: |
+          python3 -m pytest \
+            backend/tests/test_phase50.py \
+            backend/tests/test_phase50_ai_activation.py \
+            backend/tests/test_phase50_1_avatar_url.py \
+            backend/tests/test_ai_employees_ae1.py \
+            backend/tests/test_ai_employees_ae2.py \
+            backend/tests/test_ai_employees_ae3.py \
+            backend/tests/test_ai_employees_rbac.py \
+            backend/tests/test_admin_users_soft_delete.py \
+            backend/tests/test_phase21_landscape_seed_drift.py \
+            backend/tests/test_invoice_collection_unification.py \
+            --cov=backend --cov-report=term-missing --cov-report=xml \
+            --cov-fail-under=58 -q --tb=short
+
   frontend-web:
     name: frontend-web (vitest)
     runs-on: ubuntu-latest
@@ -76,9 +102,9 @@ jobs:
         working-directory: frontend
         run: yarn lint
 
-      - name: Run vitest
+      - name: Run vitest with coverage gate (Phase 41.4 · Feb-2026 · fail-under baseline-2pp)
         working-directory: frontend
-        run: yarn vitest run --reporter=basic
+        run: yarn test:coverage --reporter=basic
 
   mobile:
     name: mobile (jest)

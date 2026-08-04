@@ -35,8 +35,12 @@ describe("Phase 32 · CI pipeline configuration", () => {
     expect(yml).toMatch(/not legacy_iteration/);
   });
 
-  it("runs the frontend-web job via yarn vitest", () => {
-    expect(yml).toMatch(/yarn vitest run/);
+  it("runs the frontend-web job via yarn vitest / yarn test:coverage", () => {
+    // Phase 41.4 · Feb-2026 — CI was upgraded from
+    // ``yarn vitest run`` to ``yarn test:coverage`` (which fronts
+    // vitest with the ``--coverage`` flag + threshold gate). Either
+    // form is accepted here to stay compatible with any future rename.
+    expect(yml).toMatch(/yarn (vitest run|test:coverage)/);
   });
 
   it("runs the mobile job via yarn test --ci --forceExit", () => {

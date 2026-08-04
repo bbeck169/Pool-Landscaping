@@ -57,6 +57,53 @@ export default defineConfig({
     // times in a row and be caught; a genuinely flaky test wastes
     // ~5s of retry budget per file.
     retry: 2,
+    // Phase 41.4 · Feb-2026 — coverage gate. The gate lives at
+    // ``yarn test:coverage`` and is called from CI on every PR. The
+    // thresholds are baseline-minus-buffer, calibrated once from a
+    // clean run (see ``PHASE41_4_COVERAGE_BASELINE.md``). Regressions
+    // trip the gate; incremental improvements land silently.
+    //
+    // Excluded paths — anything that isn't runtime-testable source:
+    //   * ``src/test/**``          — the test suite itself.
+    //   * ``src/**/*.test.{js,jsx}`` — colocated test files.
+    //   * ``src/index.js``         — CRA bootstrap; hits react-dom.
+    //   * ``src/embed/**`` + ``src/widgets/**`` — vendored bundles
+    //     already excluded from lint (Phase 41.3).
+    //   * ``src/assets/**``        — Lottie JSONs + static imports.
+    //   * ``src/nav/**`` + barrel index files — declarative maps
+    //     with no branching logic to exercise.
+    //   * ``**/*.d.ts`` + type-only files.
+    coverage: {
+      provider: "v8",
+      reporter: ["text-summary", "lcov"],
+      reportsDirectory: "coverage",
+      include: ["src/**/*.{js,jsx}"],
+      exclude: [
+        "src/test/**",
+        "src/**/*.test.{js,jsx}",
+        "src/**/*.spec.{js,jsx}",
+        "src/index.js",
+        "src/embed/**",
+        "src/widgets/**",
+        "src/assets/**",
+        "src/nav/**",
+        "src/**/index.{js,jsx}",
+        "**/*.d.ts",
+      ],
+      // Baseline (Phase 41.4 · Feb-2026 · observed clean run):
+      //   statements 21.17% · branches 64.64% · functions 42.63% ·
+      //   lines 21.17%.
+      // Thresholds set 2-3 pp BELOW baseline so the gate trips on
+      // regressions but tolerates the odd flaky test. Incremental
+      // improvements should raise the floor in a follow-up phase
+      // (Phase 41.4b — "raise the floor" — not scheduled).
+      thresholds: {
+        statements: 18,
+        branches: 62,
+        functions: 39,
+        lines: 18,
+      },
+    },
   },
   resolve: {
     alias: {
