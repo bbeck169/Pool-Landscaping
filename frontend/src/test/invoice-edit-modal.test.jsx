@@ -134,7 +134,7 @@ describe("InvoiceEditModal", () => {
   it("shows Lumino warning when a money field changes and URL was present", () => {
     const inv = {
       ...draftInvoice(),
-      lumino_payment_url: "https://pay.lumino.io/x/y",
+      payment_url: "https://checkout.stripe.com/c/pay/cs_x_y",
     };
     render(<InvoiceEditModal invoice={inv} onClose={() => {}} onSaved={() => {}} />);
     // No warning until a money field changes.

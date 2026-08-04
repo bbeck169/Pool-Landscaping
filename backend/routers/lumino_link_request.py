@@ -62,11 +62,23 @@ async def request_payment_link(
     invoice_id: str,
     user: dict = Depends(get_current_user),
 ):
-    """Re-fire the LZ2 dispatch for a specific invoice.
+    """Phase 47 · Feb-2026 — RESERVED direct-Stripe Checkout flow.
 
-    Auth: any authenticated user. Customer can only trigger this on
-    their own invoices; staff (admin / super_admin) can trigger for
-    any invoice.
+    User has directed every payment surface must route through Stripe
+    directly (no Lumino / Zapier). This endpoint now creates a
+    ``stripe.checkout.Session`` (mode="payment") and returns the
+    ready-to-redirect ``payment_url``. The Zapier catch-hook + Lumino
+    dispatcher modules stay in-tree but no traffic flows to them.
+
+    Response shape:
+        {"payment_url": "https://checkout.stripe.com/…",
+         "checkout_session_id": "cs_test_…",
+         "amount_cents": <balance in cents>,
+         "currency": "usd",
+         "mode": "test" | "live"}
+
+    Auth: any authenticated user. Customer role is scoped to their own
+    invoices; staff can trigger for any invoice.
     """
     if not _rate_limit_check(invoice_id):
         raise HTTPException(429, "rate_limited")
@@ -80,18 +92,43 @@ async def request_payment_link(
         if inv.get("customer_id") != user.get("customer_id"):
             raise HTTPException(403, "not_your_invoice")
 
-    # Load minimal customer doc for the payload.
-    customer = {}
+    # Load minimal customer doc for the payload / Session.
+    customer: dict = {}
     cid = inv.get("customer_id")
     if cid:
         cust = await db.customers.find_one({"id": cid}, {"_id": 0})
         if cust:
             customer = cust
     if not customer:
-        customer = {"id": cid, "name": inv.get("customer_name"),
-                     "email": inv.get("customer_email")}
+        customer = {
+            "id": cid,
+            "name": inv.get("customer_name"),
+            "email": inv.get("customer_email"),
+        }
 
-    result = await dispatch_invoice_link_request(
-        inv, customer, base_return_url="",
-    )
-    return result
+    from services.payments import stripe_charge as stripe_svc
+    try:
+        out = await stripe_svc.create_invoice_checkout_session(
+            tenant_id=inv.get("tenant_id"),
+            invoice=inv,
+            customer=customer,
+        )
+    except ValueError as exc:
+        # Business-logic failures (already paid, missing config, etc.)
+        # surface as 4xx so the frontend renders a specific message
+        # instead of the generic retry copy.
+        code = str(exc)
+        status = 409 if code == "invoice_already_paid" else 400
+        raise HTTPException(status, code)
+    except Exception as exc:
+        # Stripe SDK failure or transient outage — 502 lets the browser
+        # differentiate a "we couldn't reach the gateway" case from a
+        # bad-request case (409/400 above).
+        import logging as _logging
+        _logging.getLogger("phase47").warning(
+            "[phase47] checkout.Session.create failed for invoice=%s: %s",
+            invoice_id, exc,
+        )
+        raise HTTPException(502, "payment_gateway_unavailable")
+
+    return out

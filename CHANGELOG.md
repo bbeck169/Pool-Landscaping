@@ -8,7 +8,52 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
-## 2026-02-XX — Phase 47c · RESTORED public `/portal/add-card` magic-link (direct Stripe)
+## 2026-02-XX — Phase 47 · Pay button → direct Stripe Checkout Session (Zapier bypass)
+
+**P0 hotfix.** The customer-facing "Pay $X" button was polling for a `lumino_payment_url` that never arrived because the upstream Zapier catch-hook was returning 404 (Zap paused / URL rotated). Frontend timed out after 30s with "Payment link generation is delayed." Per user direction (every payment surface must route through Stripe directly, no Lumino / Zapier), Phase 47 rewires the pay flow to call `stripe.checkout.Session.create()` directly and return the Stripe-hosted checkout URL for immediate redirect.
+
+### Backend
+
+- **`services/payments/stripe_charge.py`**
+  - **New `create_invoice_checkout_session(tenant_id, invoice, customer, return_base_url="")`** — creates a Session with `mode="payment"`, `line_items` computed from the invoice balance in cents, `success_url = {APP_PUBLIC_URL}/portal/payment-complete?session_id={CHECKOUT_SESSION_ID}`, `cancel_url = {APP_PUBLIC_URL}/portal/invoices/{invoice_id}`. Metadata stamped on the Session **and** on the auto-created PaymentIntent (`payment_intent_data.metadata`) so the existing `payment_intent.succeeded` webhook branch can reconcile even if the Session-level webhook were somehow missed. Idempotency key `phase47:invoice:{tenant_id}:{invoice_id}:{amount_cents}` guards against retried requests spawning duplicate Sessions. Response fields extracted via `_asdict()` (Phase 42.3 v15-safe helper).
+  - **New `_mark_invoice_paid_from_session(...)`** helper — idempotent invoice-side flip to `payment_status: "paid"` (or `"partial"`), stamps `paid_at`, records `stripe_checkout_session_id` on the quote doc.
+  - **`handle_webhook_event` extended** with a `checkout.session.completed` branch — mirrors an upsert into `db.stripe_charges` keyed on `stripe_checkout_session_id` (idempotent — duplicate delivery is a no-op), calls `_mark_invoice_paid_from_session()`, and writes an audit row into `db.payment_events` with `kind="phase47_checkout_session_completed"`. Only fires the invoice-side update when Stripe reports `payment_status == "paid"` (never on abandoned bank redirects). Events without `crm_invoice_id` metadata are ignored (returns `handled: False`).
+- **`routers/lumino_link_request.py`**
+  - `POST /api/invoices/{id}/request-payment-link` rewritten. Zapier dispatcher call (`dispatch_invoice_link_request`) removed from the route. Now calls `create_invoice_checkout_session()`. Returns `{payment_url, checkout_session_id, amount_cents, currency, mode}`. Business errors surface as clean codes: 404 `invoice_not_found`, 403 `not_your_invoice` (customer ownership), 409 `invoice_already_paid`, 429 `rate_limited`, 502 `payment_gateway_unavailable` (Stripe SDK failure or transient outage).
+  - Router file kept at the same path (`lumino_link_request.py`) so import stability + git history are preserved; only the function body changed.
+
+### Frontend
+
+- **`components/PaymentForm.jsx`** — full rewrite.
+  - Polling logic **completely removed** (was `POLL_INTERVAL_MS = 3000`, `POLL_MAX_ATTEMPTS = 10`, `pollForUrl(...)` — all gone).
+  - `lumino_payment_url` reads gone. Component now reads `payment_url` off the `/request-payment-link` response and calls `window.location.assign(payment_url)` immediately.
+  - Preserved UI states: `payment-form-preparing` (spinner shown while the POST is in flight), `payment-form-error` (friendly copy + retry), `payment-form-retry`, `payment-form-close`.
+  - New friendly-error map: `rate_limited`, `invoice_already_paid`, `invoice_not_found`, `not_your_invoice`, `payment_gateway_unavailable`. Removed dead codes: `not_configured`, `zapier_unreachable`, `already_paid` (renamed to match backend), `TIMEOUT_ERROR` (no more polling → no more timeouts).
+  - Redirect helper exported as `_redirect(url)` for test stubbing.
+- **`components/invoices/InvoiceEditModal.jsx:118`** — renamed the field lookup from `invoice?.lumino_payment_url` → `invoice?.payment_url` so the "money-field changed" warning fires against the new payload shape. (The InvoiceEditModal itself doesn't POST anywhere new — this is a display-only change.)
+- **`test/lumino-pay-flow.test.jsx` → `test/phase47-direct-checkout.test.jsx`** — file renamed (via `mv`, git-history-preserving), body rewritten. New tests: (1) POSTs on mount + redirects, (2) 502 friendly copy + retry re-fires, (3) `invoice_already_paid` → "already paid" copy, (4) preparing spinner between mount and redirect. Regression guards: `PaymentForm.jsx` source has no `lumino_payment_url`, no `POLL_MAX_ATTEMPTS`, no `pollForUrl`, no `retry-after`, no `zapier`; reads `payment_url` off the endpoint response.
+- **`test/invoice-edit-modal.test.jsx`** — fixture updated from `lumino_payment_url` → `payment_url`; behaviour assertion unchanged.
+
+### Preserved / not touched
+- `services/lumino_zapier_dispatcher.py` and `services/payments/lumino_provider.py` are **in-tree but dark** (no runtime traffic).
+- `routers/lumino_invoice_link_callback.py` (inbound Lumino → `/api/webhooks/lumino/invoice-link-created`) still exists but is orphaned — no more outbound Lumino calls means no more inbound callbacks.
+- `routers/lumino_backfill.py` (`POST /api/admin/lumino/backfill-payment-links`) untouched — kept for one-off admin cleanup if the older invoices still carry a stale `lumino_payment_url` field.
+- `services/payments/stripe_charge.py::_persist_charge`, `attach_payment_method`, `create_setup_intent`, `charge_card_on_file`, existing PaymentIntent webhook branch — all untouched.
+
+### Verification
+- **Backend** — `backend/tests/test_phase47_direct_stripe_payment_link.py` → **10/10 pass in 0.35s** (create-session happy path with metadata + idempotency key + URLs, `_asdict` regression, already-paid → 400, missing `APP_PUBLIC_URL` → 500-safe raise, webhook happy path with charge + invoice + audit row, webhook idempotence when invoice is already paid, webhook `unpaid` status doesn't mark invoice, webhook without metadata ignored, router body no longer references Zapier, response payload key contract).
+- **Combined Phase 42 + 44 + 47 + 47c** — **42/42 pass in 4.86s**.
+- **Frontend** — `frontend/src/test/phase47-direct-checkout.test.jsx` → **6/6 pass**. `phase47c-add-card-restore.test.jsx` → **8/8 pass**. `invoice-edit-modal.test.jsx` → **6/6 pass** (fixture updated). Cross-suite total for the touched tests: **20/20**.
+
+### Non-scope
+- Mobile `quote/[id].tsx:84` (`POST /payments/admin/generate-link/{id}` from the Share sheet) — untouched. Slated for Phase 47d.
+- `POST /api/quotes/{qid}/pay` (`quotes.py:604`) — untouched. Slated for Phase 47d audit.
+- `POST /api/customer-portal/payment-methods/ach/attach` — untouched. Slated for Phase 47d audit.
+- `PAYMENTS_PROVIDER_MODE` env kill-switch — slated for Phase 47e.
+- Broad Stripe v15 audit (`Subscription.*`, `Invoice.*`, `Charge.list`, `Customer.retrieve/modify`) — slated for Phase 42.4 (separate delivery).
+
+---
+
 
 **P0 hotfix.** Customer tapped the "Add card" SMS link (Phase 47b merge-tag rendering now works, so the URL resolves correctly) and landed on a blank page. Root cause: Phase LZ4 (Feb 2026) intentionally decommissioned the `/portal/add-card` React route on the promise of a Lumino hosted-payment-link replacement, but the SMS trigger + `build_add_card_link()` were never migrated — the customer-facing link still pointed at the dead route. User has now directed **every payment + card-on-file surface must route through Stripe directly** (no Lumino, no Zapier). Phase 47c restores the page.
 

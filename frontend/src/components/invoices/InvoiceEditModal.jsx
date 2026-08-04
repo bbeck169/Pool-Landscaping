@@ -115,7 +115,7 @@ export default function InvoiceEditModal({ invoice, onClose, onSaved }) {
     [invoice, form],
   );
   const showLuminoWarning =
-    moneyChangedList.length > 0 && Boolean(invoice?.lumino_payment_url);
+    moneyChangedList.length > 0 && Boolean(invoice?.payment_url);
 
   // ── Line item editor helpers ─────────────────────────────────
   const patchItem = (idx, patch) => setForm((f) => ({

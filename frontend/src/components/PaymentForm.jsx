@@ -1,38 +1,41 @@
 /**
- * LZ3 · Feb-2026 — Lumino hosted-checkout redirect flow.
+ * Phase 47 · Feb-2026 — Direct Stripe Checkout Session redirect flow.
  *
- * Replaces the Stripe PaymentElement modal. On mount:
- *   1. If ``invoice.lumino_payment_url`` present → redirect immediately.
- *   2. Otherwise → refetch the invoice once (in case the URL has
- *      landed since props were snapshotted), then POST
- *      /api/invoices/{id}/request-payment-link and poll
- *      /api/quotes/{id} every 3s (up to 30s / 10 tries).
- *   3. On success → redirect. On timeout → error state with retry.
- *   4. Known error codes → user-friendly copy. Raw code stays in
- *      the console for debugging.
+ * User has directed every payment surface to route through Stripe
+ * directly (no Lumino / Zapier). This component replaces the LZ3
+ * polling-for-Lumino flow with an immediate ``POST
+ * /api/invoices/{id}/request-payment-link`` → redirect on the
+ * returned ``payment_url`` (a ``https://checkout.stripe.com/…`` URL).
+ *
+ * Behaviour:
+ *   1. On mount, POST the request-payment-link endpoint.
+ *   2. Backend calls ``stripe.checkout.Session.create(mode="payment",
+ *      metadata={crm_invoice_id, crm_tenant_id, crm_customer_id})``.
+ *      Reconciliation happens webhook-side.
+ *   3. If the response carries ``payment_url`` → redirect immediately.
+ *   4. On failure → error state with a retry button + friendly copy
+ *      mapped from the backend error code (409 already_paid, 400
+ *      invoice_not_found, 502 payment_gateway_unavailable, …).
+ *
+ * There is NO polling anymore. The Session URL is returned in the
+ * same response the browser initiates — waiting-30-seconds-for-Zapier
+ * is gone.
  */
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "@/api";
 
-const POLL_INTERVAL_MS = 3000;
-const POLL_MAX_ATTEMPTS = 10;   // 30 s total
-
 const FRIENDLY_ERRORS = {
   rate_limited:
     "You've tried to generate a payment link too many times in a short window. Please wait a minute and try again.",
-  not_configured:
-    "Payment link generation isn't configured. Please contact support.",
-  already_paid: "This invoice is already paid.",
-  zapier_unreachable:
-    "We couldn't reach our payment provider. Please try again in a moment.",
+  invoice_already_paid: "This invoice is already paid.",
   invoice_not_found: "Invoice not found.",
   not_your_invoice:
     "You don't have permission to pay this invoice. Please contact support.",
+  payment_gateway_unavailable:
+    "We couldn't reach the payment provider. Please try again in a moment.",
 };
 const GENERIC_ERROR =
   "Something went wrong preparing your payment link. Please try again or contact support.";
-const TIMEOUT_ERROR =
-  "Payment link generation is delayed. Please try again in a moment or contact support.";
 
 function friendlyFor(code) {
   if (!code) return GENERIC_ERROR;
@@ -51,150 +54,99 @@ function extractErrorCode(e) {
         return e.data.detail.error;
       }
     }
-    if (typeof e.message === "string" && /rate_limited|not_configured/.test(e.message)) {
-      return e.message;
-    }
-    if (e.status === 429) return "rate_limited";
-    if (e.status === 404) return "invoice_not_found";
-  } catch (_x) { /* noop */ }
-  return null;
-}
-
-export default function PaymentForm({ invoice, invoiceId, source = "authenticated", onClose }) {
-  const [status, setStatus] = useState("idle");   // idle | preparing | error
-  const [errorMsg, setErrorMsg] = useState("");
-  const cancelledRef = useRef(false);
-
-  const inv = invoice || {};
-  const invId = invoiceId || inv.id || "";
-
-  useEffect(() => () => { cancelledRef.current = true; }, []);
-
-  const redirectTo = (url) => {
-    if (!url || cancelledRef.current) return;
-    // eslint-disable-next-line no-console
-    console.log("[LZ3 PaymentForm] redirecting →", url);
-    window.location.assign(url);
-  };
-
-  const pollForUrl = async () => {
-    for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt += 1) {
-      if (cancelledRef.current) return null;
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-      try {
-        const fresh = await api.get(`/quotes/${invId}`);
-        // eslint-disable-next-line no-console
-        console.log("[LZ3 PaymentForm] poll attempt", attempt + 1,
-                     "→ has_url:", !!fresh?.lumino_payment_url);
-        if (fresh?.lumino_payment_url) return fresh.lumino_payment_url;
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn("[LZ3 PaymentForm] poll fetch failed", e);
-      }
+    // Some clients throw with a `.message` that IS the code (e.g.
+    // FastAPI HTTPException(...) → JSON.detail bubbles up as message).
+    if (typeof e.message === "string" && e.message.trim()) {
+      return e.message.trim();
     }
     return null;
-  };
+  } catch (_) {
+    return null;
+  }
+}
 
-  const setFriendlyError = (rawCodeOrErr) => {
-    const code = typeof rawCodeOrErr === "string"
-      ? rawCodeOrErr : extractErrorCode(rawCodeOrErr);
-    // eslint-disable-next-line no-console
-    console.error("[LZ3 PaymentForm] error code:", code, rawCodeOrErr);
-    setStatus("error");
-    setErrorMsg(code ? friendlyFor(code) : GENERIC_ERROR);
-  };
+// Split out so tests can stub window.location.assign.
+export function _redirect(url) {
+  if (typeof window !== "undefined" && url) {
+    window.location.assign(url);
+  }
+}
 
-  const startFlow = async () => {
-    // 1. Fast path — URL already on the passed-in invoice.
-    const existing = inv.lumino_payment_url;
-    if (existing) {
-      redirectTo(existing);
-      return;
-    }
-    setStatus("preparing");
+export default function PaymentForm({ invoice, onClose }) {
+  const [errorMsg, setErrorMsg] = useState("");
+  const [preparing, setPreparing] = useState(true);
+  const startedRef = useRef(false);
+
+  const invId = invoice?.id;
+
+  const start = React.useCallback(async () => {
+    if (!invId) return;
+    setPreparing(true);
     setErrorMsg("");
-    // 2. Server-side re-check — the invoice snapshot the caller
-    //    passed may be stale. If the URL is already there on the
-    //    server, we can redirect without going through the whole
-    //    request-and-poll dance.
-    try {
-      const fresh0 = await api.get(`/quotes/${invId}`);
-      if (fresh0?.lumino_payment_url) {
-        redirectTo(fresh0.lumino_payment_url);
-        return;
-      }
-    } catch (_x) { /* proceed to POST */ }
-    // 3. Ask the backend to trigger the Zap.
     try {
       const result = await api.post(
         `/invoices/${invId}/request-payment-link`, {},
       );
-      if (result?.lumino_payment_url) {
-        redirectTo(result.lumino_payment_url);
+      const url = result?.payment_url;
+      if (url) {
+        _redirect(url);
         return;
       }
-    } catch (e) {
-      setFriendlyError(e);
-      return;
+      // Backend returned 200 but no url — treat as gateway problem.
+      setErrorMsg(friendlyFor("payment_gateway_unavailable"));
+    } catch (err) {
+      const code = extractErrorCode(err);
+      setErrorMsg(friendlyFor(code));
+    } finally {
+      setPreparing(false);
     }
-    // 4. Poll for the URL to appear (Zap runs async).
-    const url = await pollForUrl();
-    if (url) {
-      redirectTo(url);
-    } else {
-      // eslint-disable-next-line no-console
-      console.warn("[LZ3 PaymentForm] poll exhausted without URL");
-      setStatus("error");
-      setErrorMsg(TIMEOUT_ERROR);
-    }
-  };
-
-  // Auto-start when modal opens.
-  useEffect(() => {
-    if (invId && status === "idle") {
-      startFlow();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invId]);
 
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    start();
+  }, [start]);
+
+  const retry = () => {
+    startedRef.current = false;
+    start();
+  };
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.5)" }}
-      onClick={onClose}
-      data-testid="pay-modal-backdrop"
-    >
-      <div
-        className="bg-white max-w-md w-full p-6 rounded-2xl"
-        onClick={(e) => e.stopPropagation()}
-        data-testid="pay-modal"
-      >
-        <h3 className="text-lg font-semibold mb-3">Pay Invoice</h3>
-        {status === "preparing" ? (
-          <div data-testid="pay-preparing" className="text-sm text-gray-700">
-            <div className="animate-pulse mb-2">⏳ Preparing your payment link…</div>
-            <div className="text-xs text-gray-500">
-              This usually takes just a few seconds.
-            </div>
-          </div>
-        ) : null}
-        {status === "error" ? (
-          <div data-testid="pay-error" className="text-sm">
-            <div className="text-red-600 mb-3" data-testid="pay-error-message">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+         data-testid="payment-form-modal">
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+        <h3 className="text-lg font-semibold mb-2" data-testid="payment-form-title">
+          Pay ${((invoice?.total ?? 0) - (invoice?.amount_paid ?? 0)).toFixed(2)}
+        </h3>
+        {preparing ? (
+          <p className="text-sm text-slate-600" data-testid="payment-form-preparing">
+            Preparing your secure payment link…
+          </p>
+        ) : errorMsg ? (
+          <div className="space-y-3">
+            <p className="text-sm text-red-700" data-testid="payment-form-error">
               {errorMsg}
-            </div>
-            <div className="flex gap-2">
+            </p>
+            <div className="flex justify-end gap-2">
+              {onClose ? (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-3 py-1.5 rounded-md border border-slate-300 text-sm"
+                  data-testid="payment-form-close"
+                >
+                  Close
+                </button>
+              ) : null}
               <button
-                onClick={() => { setStatus("idle"); startFlow(); }}
-                data-testid="pay-retry-btn"
-                className="px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold">
+                type="button"
+                onClick={retry}
+                className="px-3 py-1.5 rounded-md bg-slate-900 text-white text-sm"
+                data-testid="payment-form-retry"
+              >
                 Retry
-              </button>
-              <button
-                onClick={onClose}
-                data-testid="pay-close-btn"
-                className="px-3 py-2 rounded-lg border text-sm">
-                Close
               </button>
             </div>
           </div>
