@@ -66,7 +66,18 @@ export function AiEmployeesList() {
               <div className="font-semibold" style={{ color: colors.onSurface }}>{e.name}</div>
               <div className="text-xs mt-0.5" style={{ color: colors.muted }}>{e.role}</div>
               <div className="text-xs mt-1" style={{ color: colors.muted }}>
-                {e.enabled ? "✓ active" : "○ disabled"} · {e.memory_scope}
+                {/* Phase 50.2 · Feb-2026 — read from ``active`` (the
+                    backend's authoritative field written by
+                    ``seed_ai_employees_for_tenant`` and confirmed by
+                    Phase 50's activation migration). The pre-Phase-50
+                    UI read from ``enabled``, which the current seed
+                    stopped writing — every card was rendering a stale
+                    "disabled" label even though the row was active.
+                    Testids expose the state cleanly for parity tests. */}
+                <span data-testid={`ai-emp-state-${e.slug || e.id}`}>
+                  {e.active ? "✓ Active" : "○ Disabled"}
+                </span>
+                {e.memory_scope ? ` · ${e.memory_scope}` : ""}
               </div>
             </div>
           </Link>
