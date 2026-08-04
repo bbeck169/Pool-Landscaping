@@ -1422,19 +1422,69 @@ async def public_add_card_context(token: str):
 
 @router.post("/customers/add-card/{token}/setup-intent")
 async def public_add_card_setup_intent(token: str):
-    """Phase LZ4 (Feb 2026) — retired.
+    """Phase 47c · Feb 2026 — RESTORED after the Phase LZ4 retirement.
+    Direct Stripe SetupIntent flow (no Lumino / Zapier) so the customer
+    can attach a card via the public magic-link page.
 
-    Previously created a Stripe SetupIntent so the customer could
-    attach a card via the SetupElement. Stripe SDK removal has
-    retired this route; new card-on-file capture is handled via
-    Lumino's hosted payment link (see the LZ2 Zapier bridge). We
-    keep the URL registered so any in-flight magic-link that customers
-    still have in their inbox lands on a graceful "unavailable"
-    payload instead of a 500.
+    Auth: JWT-only (no bearer). ``sub="add_card"`` scope verified by
+    :func:`services.add_card_links.decode_add_card_token`.
     """
+    from services.add_card_links import decode_add_card_token
+    from services.payments import stripe_charge as stripe_svc
+    payload = decode_add_card_token(token)
+    try:
+        out = await stripe_svc.create_setup_intent(
+            tenant_id=payload["tenant_id"],
+            customer_id=payload["customer_id"],
+            actor_user_id=None,
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:
+        logger.warning("[phase47c] public setup_intent failed: %s", exc)
+        raise HTTPException(502, "payment_setup_unavailable")
+    # Never expose the internal Stripe customer id via the magic link
+    # payload — the frontend only needs the client_secret + pk.
     return {
-        "client_secret": None,
-        "stripe_customer_id": None,
-        "retired": True,
-        "reason": "stripe_setup_intent_retired_lz4",
+        "client_secret": out.get("client_secret"),
+        "setup_intent_id": out.get("setup_intent_id"),
+        "publishable_key": out.get("publishable_key")
+                                or os.environ.get("STRIPE_PUBLISHABLE_KEY", ""),
+        "mode": out.get("mode"),
+    }
+
+
+@router.post("/customers/add-card/{token}/attach")
+async def public_add_card_attach(token: str, body: dict = Body(...)):
+    """Phase 47c · Feb 2026 — companion attach endpoint for the public
+    magic-link flow. Called by the browser once ``stripe.confirmSetup``
+    returns a ``payment_method`` id. Mirrors the PM into
+    ``db.payment_methods`` via the same helper the authenticated flow uses.
+    """
+    from services.add_card_links import decode_add_card_token
+    from services.payments import stripe_charge as stripe_svc
+    payload = decode_add_card_token(token)
+    pm_id = (body or {}).get("payment_method_id") or ""
+    if not pm_id:
+        raise HTTPException(422, "payment_method_id required")
+    set_default = bool((body or {}).get("set_default", True))
+    try:
+        row = await stripe_svc.attach_payment_method(
+            tenant_id=payload["tenant_id"],
+            customer_id=payload["customer_id"],
+            payment_method_id=pm_id,
+            set_default=set_default,
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:
+        logger.warning("[phase47c] public attach failed: %s", exc)
+        raise HTTPException(502, "attach_failed")
+    # Return only the safe subset (last4 / brand / expiry) — no Stripe ids.
+    return {
+        "last4": row.get("last4") or "",
+        "brand": row.get("brand") or "",
+        "exp_month": row.get("exp_month"),
+        "exp_year": row.get("exp_year"),
+        "is_default": bool(row.get("is_default")),
     }
