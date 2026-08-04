@@ -8,7 +8,78 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
-## 2026-02-XX — Phase 41.1 · Kill vitest flakes (P2 cleanup)
+## 2026-02-XX — Phase 45 · Master Invoices customer pill-grid → searchable multi-select
+
+**Small UX polish** — the "Payers (customers)" section on `/invoices/master/new` was rendering the full customer roster as a wall of pills, which blew up visually at ~30+ customers. Swapped for a shadcn `Popover` + custom multi-select using the same primitives the rest of the app already ships (see `CustomerTagPicker`).
+
+### What changed
+- **`frontend/src/pages/invoices/MasterInvoice.jsx`** — replaced the flat `customers.map(pill)` grid inside `MasterInvoiceNew` with a new co-located `CustomerMultiSelect` component. Same state contract: still a `Set<string>` of customer ids stored in `pickedCustomers`, still calls `toggle(setPickedCustomers)(id)` on flip, still submits as `customer_ids: Array.from(pickedCustomers)` to `POST /invoices/master`. Presentation-only refactor — the backend contract and the surrounding "Open invoices to combine" section are untouched.
+
+### New affordances
+- Search input (case-insensitive substring match on `customer.name`).
+- Selection chips above the trigger, wrap to multiple rows, each with a × remove button.
+- "N selected" counter in the section header.
+- "Select all filtered" (respects the current search) + "Clear all" quick actions.
+- Empty state: `No customers match "<query>"`.
+- Keyboard nav: ↑/↓ to move, Enter to toggle, Escape to close.
+- Dropdown height capped at 320px, scrollable list.
+
+### Preserved
+- `data-testid="master-payer-${id}"` on each option row — any earlier flow / e2e that toggled a payer via that id still works.
+- `master-label`, `master-submit`, `master-invoice-*` testids untouched.
+- The "Pick at least 1 invoice" red-toast guard in `submit()` is unchanged (still fires when `pickedInvoices.size < 1`).
+- No new dependencies — uses the existing shadcn `Popover` primitive already imported elsewhere.
+
+### New testids (Phase 45)
+`master-payer-multiselect`, `master-payer-trigger`, `master-payer-dropdown`, `master-payer-search`, `master-payer-empty`, `master-payer-counter`, `master-payer-select-all`, `master-payer-clear`, `master-payer-clear-inline`, `master-payer-chips`, `master-payer-chip-<id>`, `master-payer-chip-remove-<id>`.
+
+### Verification
+- `frontend/src/test/phase45-master-invoices-dropdown.test.jsx` — 8/8 pass (1.35s).
+- Regression guard included: asserts the old always-visible pill grid is gone (`master-payer-c1` must NOT be in the DOM until the popover opens).
+
+### Non-scope
+Mobile Master Invoices (Phase 35) uses its own picker and was NOT touched. Backend endpoints untouched. Phase 41.2 / 42 / 44 in-flight work not affected.
+
+---
+
+## 2026-02-XX — Phase 44 · Comms Template Sweep (demo-only safety test)
+
+Post-Phase-42 Stripe SDK refresh introduced non-trivial `StripeObject → dict` shape work in `services/payments/stripe_charge.py`. Phase 44 ships a fixture-driven end-to-end sweep of every outbound template class (`invoice_sent`, `invoice_reminder`, `payment_receipt`, `payment_failed`, `job_scheduled`, `job_completed`, `review_request`, `password_reset`, `welcome`, `estimate_sent`) so a template regression from the Stripe upgrade can be caught before it fires at customers.
+
+### Guardrails (defence-in-depth)
+- **Hard allowlist** — every recipient validated against `_COMMS_SWEEP_ALLOWED_EMAILS` (the five `*@aquaterra.com` seed accounts). Any address outside the set raises `_AllowlistViolation` and aborts the whole sweep.
+- **No DB resolution** — recipient sets are literal constants in the script. The exact class of footgun the guard exists to prevent (`db.customers.find_all() → send_email(...)`) cannot happen even by accident.
+- **`X-Emergent-Sweep: phase-44-demo` header** on every outbound message so downstream systems can filter, inspect, and post-hoc detect + quarantine.
+- **Fixture-only bodies** — deterministic "Demo Customer (Phase 44 sweep)", invoice `INV-DEMO-99999`, obvious "not a real notification" footer. Any accidental live send is spotted immediately.
+- **Dry-run by default** — invoking `python3 backend/scripts/phase44_comms_sweep.py` returns exit 0 with `[DRY RUN]` prefix on every attempt and never touches Resend. `--live` requires an explicit flag (and still needs `RESEND_API_KEY` + tenant `comms_env` allow-list).
+
+### Files
+- `backend/scripts/phase44_comms_sweep.py` — the sweep runner (allowlist assertion, template inventory, `_send_one`, `run_sweep`, CLI).
+- `backend/tests/test_phase44_comms_sweep.py` — 14 tests: allowlist enforcement (5), sweep-header enforcement (3), dry-run coverage (3), template inventory sanity (3).
+
+### Verification
+- **Dry run** — `python3 backend/scripts/phase44_comms_sweep.py` → 50 attempts (10 templates × 5 allowlist emails), all `status=dry_run`, exit 0.
+- **pytest** — `backend/tests/test_phase44_comms_sweep.py` → 14/14 pass in 0.06s.
+- **`--live` NOT executed** — awaiting explicit user sign-off before flipping.
+
+---
+
+## 2026-02-XX — Phase 42 · Stripe API refresh + webhook rewiring (paired with Phase 44)
+
+- Bumped `stripe` Python SDK **14.4.1 → 15.4.0** in `requirements.txt`.
+- Centrally pinned `stripe.api_version = "2026-03-25.dahlia"` in `services/payments/stripe_charge.py` (constant `STRIPE_API_VERSION`).
+- Startup log line `[stripe] configured for api_version 2026-03-25.dahlia with secret key ending in ...<last4>` fires on first helper call (verified: `stripe_charge [INFO]: … secret key ending in ...ast4`, SDK reports `stripe.VERSION=15.4.0`).
+- Introduced `_asdict()` helper that tolerates both v14 (`StripeObject inherits dict`) and v15 (`StripeObject no longer inherits dict`) response shapes across PaymentIntent + webhook code paths. See `PHASE42_STRIPE_AUDIT.md` for the full call-site inventory.
+- Diagnostic script: `backend/scripts/verify_stripe_config.py`.
+
+### emergentintegrations dependency conflict (metadata-only)
+
+`emergentintegrations 0.2.0` still pins `stripe<15,>=13.0.0` in its METADATA. **This is metadata-only**: `emergentintegrations.payments.stripe.checkout` was tested against the installed `stripe 15.4.0` and imports/parses fine, and none of `/app/backend` uses that module directly (all Stripe code paths go through the raw SDK via `services/payments/stripe_charge.py`; `emergentintegrations` is only used for `llm.chat`).
+
+**Recommendation: Option A** — leave the constraint as-is. `requirements.txt` already pins `stripe>=15.3.0,<16.0.0`, which pip's resolver honours (with a warning). A follow-up phase can vendor `emergentintegrations` or wait for upstream to bump the pin. **No downgrade.**
+
+---
+
 
 **Target hit — 5/5 consecutive full-suite runs green (1151/1152 pass · 1 skip · 0 fail).** Was 3-file rotating flake baseline (`moderation-bulk`, `slice-p17-additions`, `route-replay-panel`, occasionally `scorecard-leaderboard` / `lumino-pay-flow`) since Phase 33.
 

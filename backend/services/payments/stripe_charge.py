@@ -13,7 +13,7 @@ Design notes
   Corresponding keys: ``STRIPE_SECRET_KEY_TEST`` / ``STRIPE_SECRET_KEY_LIVE``
   and ``STRIPE_WEBHOOK_SECRET_TEST`` / ``STRIPE_WEBHOOK_SECRET_LIVE``.
   When mode-specific keys are missing, we fall back to the pre-injected
-  ``STRIPE_API_KEY`` (default ``sk_test_emergent``) so preview always
+  ``STRIPE_API_KEY`` (no fallback — see ``_UnconfiguredStripeError``) so
   has a working sandbox key.
 * NO db.stripe_payments_live — that legacy LZ4 collection stays retired.
   Every charge attempt is logged into the *fresh* ``db.stripe_charges``
@@ -85,17 +85,28 @@ def _publishable_key() -> str:
     return key
 
 
-def _select_secret_key() -> str:
+def _select_secret_key() -> Optional[str]:
     """Return the Stripe secret key to use for API calls in the current
-    mode. Falls back to ``STRIPE_API_KEY`` (platform-injected sandbox)
-    when a mode-specific override isn't set."""
+    mode. Returns ``None`` when nothing resolves — callers must
+    fail-fast via ``_UnconfiguredStripeError``.
+
+    Phase 42.2 (Feb 2026) · removed the hardcoded placeholder fallback.
+    Silent placeholder keys deferred real failures to request time
+    instead of surfacing at startup — a mis-config should be loud
+    and immediate, not a mystery Stripe 401 in prod.
+    """
     mode = _mode()
     env_key = "STRIPE_SECRET_KEY_LIVE" if mode == "live" else "STRIPE_SECRET_KEY_TEST"
-    return (
+    resolved = (
         (os.environ.get(env_key) or "").strip()
         or (os.environ.get("STRIPE_API_KEY") or "").strip()
-        or "sk_test_emergent"
     )
+    return resolved or None
+
+
+class _UnconfiguredStripeError(RuntimeError):
+    """Raised on the first Stripe API call when no valid secret key
+    resolved from the environment. Phase 42.2 · Feb 2026."""
 
 
 def _select_webhook_secret() -> str:
@@ -106,11 +117,66 @@ def _select_webhook_secret() -> str:
     ).strip()
 
 
+# Phase 42.3 · Feb 2026 — pin api_version centrally. Matches the SDK-
+# shipped default at stripe-python@15.0.0 → insulates the response
+# shape from whoever last touched the Stripe dashboard.
+STRIPE_API_VERSION = "2026-03-25.dahlia"
+
+_STARTUP_LOGGED = False
+
+
 def _init_api_key() -> None:
-    """Assign the SDK-level ``stripe.api_key``. Called lazily on each
-    helper so mid-test env swaps (``monkeypatch.setenv``) take effect."""
-    if _stripe is _stripe_module:
-        _stripe.api_key = _select_secret_key()
+    """Assign the SDK-level ``stripe.api_key`` + ``stripe.api_version``.
+    Called lazily on each helper so mid-test env swaps
+    (``monkeypatch.setenv``) take effect.
+
+    Fail-fast: raises ``_UnconfiguredStripeError`` if no real key
+    resolves. Logs a one-time startup line with api_version + key-tail
+    so a future rotation is auditable from process logs.
+    """
+    global _STARTUP_LOGGED  # noqa: PLW0603
+    if _stripe is not _stripe_module:
+        # Injected stub — tests provide their own methods, no key needed.
+        return
+    key = _select_secret_key()
+    if not key:
+        raise _UnconfiguredStripeError(
+            "No Stripe secret key configured. Set STRIPE_SECRET_KEY_"
+            f"{'LIVE' if _mode() == 'live' else 'TEST'} or STRIPE_API_KEY "
+            "in the process env before calling Stripe helpers."
+        )
+    _stripe.api_key = key
+    _stripe.api_version = STRIPE_API_VERSION
+    if not _STARTUP_LOGGED:
+        logger.info(
+            "[stripe] configured for api_version %s with secret key ending in ...%s",
+            STRIPE_API_VERSION,
+            key[-4:],
+        )
+        _STARTUP_LOGGED = True
+
+
+def _asdict(resp: Any) -> Dict[str, Any]:
+    """Phase 42.3 · Feb 2026 — return a plain dict view of a Stripe
+    response, tolerating both stripe-python v13/v14 (``StripeObject``
+    inherits ``dict``) AND v15+ (``StripeObject`` no longer inherits
+    from ``dict`` — ``.get()`` / ``.items()`` raise ``AttributeError``).
+    """
+    if resp is None:
+        return {}
+    if isinstance(resp, dict):
+        return resp
+    for method in ("to_dict_recursive", "to_dict"):
+        fn = getattr(resp, method, None)
+        if callable(fn):
+            try:
+                out = fn()
+                if isinstance(out, dict):
+                    return out
+            except Exception:  # noqa: BLE001
+                pass
+    # Fall back to attribute scrape for a defensive minimum.
+    return {k: getattr(resp, k) for k in dir(resp) if not k.startswith("_")}
 
 
 async def _to_thread(fn, /, *args, **kwargs):
@@ -157,6 +223,13 @@ async def create_setup_intent(
             {"$set": {"stripe_customer_id": provider_customer_id}},
         )
 
+    # Phase 42.3 · Feb 2026 — deterministic idempotency key so
+    # re-tries within the same day for the same (tenant, customer)
+    # don't proliferate SetupIntents.
+    _si_idem = (
+        f"si:{tenant_id}:{customer_id}:"
+        f"{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+    )
     setup_intent = await _to_thread(
         _stripe.SetupIntent.create,
         customer=provider_customer_id,
@@ -167,10 +240,12 @@ async def create_setup_intent(
             "crm_tenant_id": tenant_id,
             "actor_user_id": actor_user_id or "",
         },
+        idempotency_key=_si_idem,
     )
+    si = _asdict(setup_intent)
     return {
-        "client_secret": setup_intent["client_secret"],
-        "setup_intent_id": setup_intent["id"],
+        "client_secret": si.get("client_secret"),
+        "setup_intent_id": si.get("id"),
         "stripe_customer_id": provider_customer_id,
         "mode": _mode(),
         # Phase 20 · Feb-2026 · Sub-item C — return the publishable key
@@ -220,7 +295,11 @@ async def attach_payment_method(
             raise
 
     pm = await _to_thread(_stripe.PaymentMethod.retrieve, payment_method_id)
-    card = (pm.get("card") or {}) if isinstance(pm, dict) else dict(pm.card or {})
+    # Phase 42.3 · Feb 2026 — v15-safe response scrape.
+    pm_dict = _asdict(pm)
+    card = pm_dict.get("card") or {}
+    if not isinstance(card, dict):
+        card = _asdict(card)
 
     now = datetime.now(timezone.utc).isoformat()
     mirror = {
@@ -398,8 +477,10 @@ async def charge_card_on_file(
             metadata=md,
             idempotency_key=idempotency_key or f"charge:{charge_row_id}",
         )
-        status = intent.get("status") if isinstance(intent, dict) else intent.status
-        payment_intent_id = intent.get("id") if isinstance(intent, dict) else intent.id
+        # Phase 42.3 · Feb 2026 — v15-safe response scrape.
+        pi = _asdict(intent)
+        status = pi.get("status")
+        payment_intent_id = pi.get("id")
         outcome = "succeeded" if status == "succeeded" else status or "unknown"
         await _persist_charge(
             charge_row_id,
@@ -492,9 +573,9 @@ def verify_and_parse_webhook(*, payload: bytes, sig_header: str) -> Dict[str, An
     if not secret:
         raise ValueError("webhook secret not configured for current STRIPE_MODE")
     event = _stripe.Webhook.construct_event(payload, sig_header, secret)
-    if isinstance(event, dict):
-        return event
-    return dict(event)
+    # Phase 42.3 · Feb 2026 — v15-safe scrape. Prior code did
+    # ``dict(event)`` which relied on StripeObject inheriting dict.
+    return _asdict(event)
 
 
 async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -510,8 +591,13 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
         so we never lose a status update even if the API-triggered path
         crashed mid-write.
     """
+    # Phase 42.3 · Feb 2026 — v15-safe scrape. ``event`` may already
+    # be a plain dict (from ``verify_and_parse_webhook``) or a raw
+    # StripeObject if a caller invoked us directly.
+    event = _asdict(event)
     etype = event.get("type") or ""
-    data = ((event.get("data") or {}).get("object")) or {}
+    data_env = _asdict(event.get("data") or {})
+    data = _asdict(data_env.get("object") or {})
     result = {"type": etype, "handled": False}
 
     if etype == "payment_method.attached":

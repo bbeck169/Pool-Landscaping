@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Plus, Layers, DollarSign, Trash2, Link2 } from "lucide-react";
+import { ArrowLeft, Plus, Layers, DollarSign, Trash2, Link2, ChevronDown, X, Search } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from "@/theme";
 import {
@@ -13,6 +13,7 @@ import {
   TextInput,
   Toast,
 } from "@/components/ui-kit";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 // ────── List ──────
 export function MasterInvoicesList() {
@@ -61,6 +62,239 @@ export function MasterInvoicesList() {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+// ────── Phase 45 · Feb 2026 — searchable multi-select for the
+// "Payers (customers)" picker. Replaces the flat pill grid that
+// blew up visually once tenants passed ~30 customers.
+//
+// Contract: props preserve the existing state shape used by
+// `MasterInvoiceNew` — a `Set<string>` of customer ids.
+//
+//   customers        — Array<{id, name}>
+//   selected         — Set<string>
+//   onToggle(id)     — flip a single id
+//   onClearAll()     — drop every selection
+//   onSelectAll(ids) — add the passed ids (filtered by search)
+//
+// The `master-payer-${id}` testid on the option row is preserved so
+// any earlier tests / e2e flows that toggled a payer via that id
+// still work unchanged.
+function CustomerMultiSelect({ customers, selected, onToggle, onClearAll, onSelectAll }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [activeIdx, setActiveIdx] = useState(0);
+  const listRef = useRef(null);
+  const inputRef = useRef(null);
+
+  const q = search.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    if (!q) return customers;
+    return customers.filter((c) => (c.name || "").toLowerCase().includes(q));
+  }, [customers, q]);
+
+  useEffect(() => {
+    if (activeIdx >= filtered.length) setActiveIdx(0);
+  }, [filtered.length, activeIdx]);
+
+  const selectedList = useMemo(
+    () => customers.filter((c) => selected.has(c.id)),
+    [customers, selected]
+  );
+
+  const nameById = useMemo(() => {
+    const m = new Map();
+    customers.forEach((c) => m.set(c.id, c.name));
+    return m;
+  }, [customers]);
+
+  const filteredIds = useMemo(() => filtered.map((c) => c.id), [filtered]);
+  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selected.has(id));
+
+  const onKeyDown = (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.min(filtered.length - 1, i + 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.max(0, i - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const c = filtered[activeIdx];
+      if (c) onToggle(c.id);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div data-testid="master-payer-multiselect">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs uppercase font-semibold" style={{ color: colors.muted }}>
+          Payers (customers)
+        </div>
+        <div className="text-xs font-semibold" data-testid="master-payer-counter" style={{ color: colors.muted }}>
+          {selected.size} selected
+        </div>
+      </div>
+
+      {/* Selection chips — above the trigger, wrap to multiple rows. */}
+      {selectedList.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5 mb-2" data-testid="master-payer-chips">
+          {selectedList.map((c) => (
+            <span
+              key={c.id}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold"
+              style={{
+                backgroundColor: colors.brandTertiary,
+                color: colors.onBrandTertiary,
+                border: `1px solid ${colors.brandTertiary}`,
+              }}
+              data-testid={`master-payer-chip-${c.id}`}
+            >
+              {c.name}
+              <button
+                type="button"
+                onClick={() => onToggle(c.id)}
+                aria-label={`Remove ${c.name}`}
+                className="opacity-70 hover:opacity-100"
+                data-testid={`master-payer-chip-remove-${c.id}`}
+              >
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+          <button
+            type="button"
+            onClick={onClearAll}
+            className="text-xs font-semibold underline"
+            style={{ color: colors.muted }}
+            data-testid="master-payer-clear"
+          >
+            Clear all
+          </button>
+        </div>
+      ) : null}
+
+      <Popover open={open} onOpenChange={(v) => { setOpen(v); if (v) setTimeout(() => inputRef.current?.focus(), 20); }}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="w-full flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm"
+            style={{
+              backgroundColor: colors.surfaceSecondary,
+              color: colors.onSurface,
+              border: `1px solid ${colors.border}`,
+            }}
+            data-testid="master-payer-trigger"
+          >
+            <span className="truncate" style={{ color: selected.size ? colors.onSurface : colors.muted }}>
+              {selected.size === 0
+                ? "Search customers…"
+                : selected.size === 1
+                  ? nameById.get(Array.from(selected)[0]) || "1 selected"
+                  : `${selected.size} customers selected`}
+            </span>
+            <ChevronDown size={14} style={{ color: colors.muted }} />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          className="p-0"
+          align="start"
+          style={{ width: "var(--radix-popover-trigger-width)", maxWidth: 520 }}
+          data-testid="master-payer-dropdown"
+        >
+          <div className="flex items-center gap-2 px-2 py-2 border-b" style={{ borderColor: colors.border }}>
+            <Search size={14} style={{ color: colors.muted }} />
+            <input
+              ref={inputRef}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder="Search customers…"
+              className="flex-1 bg-transparent outline-none text-sm"
+              style={{ color: colors.onSurface }}
+              data-testid="master-payer-search"
+            />
+          </div>
+
+          <div className="flex items-center justify-between px-3 py-1.5 text-[11px] border-b" style={{ borderColor: colors.border, color: colors.muted }}>
+            <span>{filtered.length} of {customers.length} customers</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={filteredIds.length === 0 || allFilteredSelected}
+                onClick={() => onSelectAll(filteredIds)}
+                className="font-semibold underline disabled:opacity-40 disabled:no-underline"
+                style={{ color: colors.brand }}
+                data-testid="master-payer-select-all"
+              >
+                Select all filtered
+              </button>
+              <button
+                type="button"
+                disabled={selected.size === 0}
+                onClick={onClearAll}
+                className="font-semibold underline disabled:opacity-40 disabled:no-underline"
+                style={{ color: colors.muted }}
+                data-testid="master-payer-clear-inline"
+              >
+                Clear all
+              </button>
+            </div>
+          </div>
+
+          <div
+            ref={listRef}
+            className="overflow-y-auto"
+            style={{ maxHeight: 320 }}
+            role="listbox"
+            aria-multiselectable="true"
+          >
+            {filtered.length === 0 ? (
+              <div className="px-3 py-6 text-center text-sm" style={{ color: colors.muted }} data-testid="master-payer-empty">
+                No customers match &ldquo;{search}&rdquo;
+              </div>
+            ) : (
+              filtered.map((c, idx) => {
+                const isSel = selected.has(c.id);
+                const isActive = idx === activeIdx;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    role="option"
+                    aria-selected={isSel}
+                    onClick={() => onToggle(c.id)}
+                    onMouseEnter={() => setActiveIdx(idx)}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm"
+                    style={{
+                      backgroundColor: isActive ? colors.surfaceSecondary : "transparent",
+                      color: colors.onSurface,
+                    }}
+                    data-testid={`master-payer-${c.id}`}
+                  >
+                    <span
+                      className="w-4 h-4 rounded border flex items-center justify-center shrink-0"
+                      style={{
+                        backgroundColor: isSel ? colors.brand : "transparent",
+                        borderColor: isSel ? colors.brand : colors.border,
+                      }}
+                      aria-hidden="true"
+                    >
+                      {isSel ? <span style={{ color: "#fff", fontSize: 10, lineHeight: 1 }}>✓</span> : null}
+                    </span>
+                    <span className="flex-1 truncate">{c.name}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }
@@ -133,27 +367,19 @@ export function MasterInvoiceNew() {
         <TextInput label="LABEL (optional)" value={label} onChange={(e) => setLabel(e.target.value)} testid="master-label" />
       </div>
 
-      {/* Payers */}
+      {/* Payers — Phase 45 · Feb 2026 — searchable multi-select. */}
       <div className="rounded-2xl p-5 mb-4" style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>
-        <div className="text-xs uppercase font-semibold mb-2" style={{ color: colors.muted }}>Payers (customers)</div>
-        <div className="flex flex-wrap gap-2">
-          {customers.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => toggle(setPickedCustomers)(c.id)}
-              className="text-xs font-semibold px-3 py-1.5 rounded-full"
-              style={{
-                backgroundColor: pickedCustomers.has(c.id) ? colors.brandTertiary : colors.surfaceSecondary,
-                color: pickedCustomers.has(c.id) ? colors.onBrandTertiary : colors.onSurfaceSecondary,
-                border: `1px solid ${pickedCustomers.has(c.id) ? colors.brandTertiary : colors.border}`,
-              }}
-              data-testid={`master-payer-${c.id}`}
-            >
-              {c.name}
-            </button>
-          ))}
-        </div>
+        <CustomerMultiSelect
+          customers={customers}
+          selected={pickedCustomers}
+          onToggle={toggle(setPickedCustomers)}
+          onClearAll={() => setPickedCustomers(new Set())}
+          onSelectAll={(ids) => setPickedCustomers((s) => {
+            const next = new Set(s);
+            ids.forEach((id) => next.add(id));
+            return next;
+          })}
+        />
       </div>
 
       {/* Invoices */}
