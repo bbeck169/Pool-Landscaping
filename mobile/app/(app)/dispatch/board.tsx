@@ -24,6 +24,8 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import { TechLoadStrip, TechLoad } from "@/src/components/dispatch/TechLoadStrip";
+import { UnroutedPanel, UnroutedPin } from "@/src/components/dispatch/UnroutedPanel";
 
 type Job = {
   id: string;
@@ -63,15 +65,22 @@ export default function DispatchBoardMobile() {
   const [busyJob, setBusyJob] = useState<string | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [msg, setMsg] = useState<{ text: string; kind: "info" | "err" } | null>(null);
+  // Phase 38 · Feb-2026 — Dispatch parity (P1.4). Lightweight board
+  // load so we can render TechLoadStrip + UnroutedPanel without a
+  // full map. The `/dispatch/board` response drives both.
+  const [boardPins, setBoardPins] = useState<any[]>([]);
+  const [techDirectory, setTechDirectory] = useState<Record<string, any>>({});
+  const [selectedTech, setSelectedTech] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setMsg(null);
     try {
       const today = new Date().toISOString().slice(0, 10);
-      const [jRes, sRes, tRes] = await Promise.all([
+      const [jRes, sRes, tRes, bRes] = await Promise.all([
         api.get("/jobs?limit=500"),
         api.get("/dispatch/settings"),
         api.get("/dispatch/technician-skills"),
+        api.get("/dispatch/board?day=all").catch(() => ({ pins: [], tech_directory: {} })),
       ]);
       const arr: Job[] = Array.isArray(jRes) ? jRes : (jRes.items || jRes.data || []);
       setJobs(arr.filter((j) =>
@@ -103,6 +112,9 @@ export default function DispatchBoardMobile() {
         }
       }
       setTechs(Array.from(byKey.values()));
+      // Phase 38 — hydrate board data for the new sub-panels.
+      setBoardPins(Array.isArray((bRes as any)?.pins) ? (bRes as any).pins : []);
+      setTechDirectory((bRes as any)?.tech_directory || {});
     } catch (e: any) {
       setMsg({ text: e.message || "Failed to load", kind: "err" });
     } finally { setLoading(false); }
@@ -192,6 +204,56 @@ export default function DispatchBoardMobile() {
 
   const jobsPreview = useMemo(() => jobs.slice(0, 100), [jobs]);
 
+  // Phase 38 — derive TechLoadStrip data from board pins + directory.
+  const techLoads: TechLoad[] = useMemo(() => {
+    const bucket = new Map<string, number>();
+    for (const p of boardPins) {
+      const tid = (p.assigned_tech_ids || [])[0];
+      if (!tid) continue;
+      bucket.set(tid, (bucket.get(tid) || 0) + 1);
+    }
+    return Array.from(bucket.entries())
+      .map(([tid, drop_count]) => ({
+        tech_user_id: tid,
+        drop_count,
+        name: techDirectory[tid]?.name || tid.slice(0, 8),
+        color_hex: techDirectory[tid]?.color_hex,
+      }))
+      .sort((a, b) => b.drop_count - a.drop_count);
+  }, [boardPins, techDirectory]);
+
+  const unroutedPins: UnroutedPin[] = useMemo(() => {
+    return boardPins
+      .filter((p: any) => !(p.assigned_tech_ids || []).length)
+      .map((p: any) => ({
+        customer_id: p.customer_id || p.id,
+        customer_name: p.customer_name || p.name || "—",
+        service_days: p.service_days,
+        category_ids: p.category_ids,
+      }));
+  }, [boardPins]);
+
+  const openOptimize = useCallback((techUserId: string) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const name = techDirectory[techUserId]?.name;
+    router.push({
+      pathname: "/dispatch/optimize",
+      params: { tech: techUserId, day: today, techName: name || "" },
+    } as any);
+  }, [techDirectory]);
+
+  const openShiftRoute = useCallback((customerId?: string) => {
+    router.push({
+      pathname: "/dispatch/shift-route",
+      params: {
+        source: selectedTech || techLoads[0]?.tech_user_id || "",
+        sourceName: techDirectory[selectedTech || techLoads[0]?.tech_user_id]?.name || "",
+        customerIds: customerId || "",
+        scope: customerId ? "partial" : "whole_route",
+      },
+    } as any);
+  }, [selectedTech, techLoads, techDirectory]);
+
   if (!isAdmin) {
     return (
       <View style={styles.root}>
@@ -253,6 +315,41 @@ export default function DispatchBoardMobile() {
             </Pressable>
           </View>
         ) : null}
+
+        {/* Phase 38 · Feb-2026 — Dispatch parity (P1.4) tools row. */}
+        <View style={styles.p38Tools} testID="dispatch-tools-row">
+          <Pressable
+            onPress={() => openOptimize(selectedTech || techLoads[0]?.tech_user_id || "")}
+            style={styles.p38Btn}
+            disabled={techLoads.length === 0}
+            testID="dispatch-open-optimize"
+          >
+            <Ionicons name="git-branch-outline" size={16} color={colors.brand} />
+            <Text style={styles.p38BtnText}>Optimize route</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => openShiftRoute()}
+            style={styles.p38Btn}
+            disabled={techLoads.length === 0}
+            testID="dispatch-open-shift-route"
+          >
+            <Ionicons name="swap-horizontal-outline" size={16} color={colors.brand} />
+            <Text style={styles.p38BtnText}>Shift route</Text>
+          </Pressable>
+        </View>
+
+        {/* Phase 38 — Tech load strip. */}
+        <TechLoadStrip
+          loads={techLoads}
+          selectedTechId={selectedTech}
+          onSelect={setSelectedTech}
+        />
+
+        {/* Phase 38 — Unrouted panel. */}
+        <UnroutedPanel
+          pins={unroutedPins}
+          onSelect={(cid) => openShiftRoute(cid)}
+        />
 
         <View style={styles.techsCard} testID="dispatch-techs">
           <Text style={styles.techsTitle}>
@@ -475,5 +572,30 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xs,
     color: colors.muted,
     textAlign: "center",
+  },
+  // Phase 38 · Feb-2026 — Dispatch parity (P1.4).
+  p38Tools: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  p38Btn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  p38BtnText: {
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: colors.brand,
   },
 });

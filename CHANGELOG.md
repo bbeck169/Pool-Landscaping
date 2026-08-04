@@ -8,6 +8,52 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 38 · Mobile Dispatch Parity (P1.4)
+
+### Audit — 6 dispatch surfaces vs mobile state
+
+| # | Surface | Web LOC | Endpoints | Mobile before | Action |
+| - | --- | --- | --- | --- | --- |
+| 1 | OptimizeRouteModal | 240 | POST `/dispatch/route/optimize`, POST `/dispatch/route/apply` | none | **NEW** `app/dispatch/optimize.tsx` (~190 LOC) |
+| 2 | ShiftRouteDialog | 371 | POST `/dispatch/reassign` (incl. conflict + permanent duration flows) | none | **NEW** `app/dispatch/shift-route.tsx` (~210 LOC) |
+| 3 | TechLoadStrip | 83 | derived from `/dispatch/board` | none | **NEW** `src/components/dispatch/TechLoadStrip.tsx` (~90 LOC) |
+| 4 | UnroutedPanel | 297 | derived from `/dispatch/board` | none | **NEW** `src/components/dispatch/UnroutedPanel.tsx` (~85 LOC) |
+| 5 | LiveTechPinsLayer | 148 | GET `/gps/live-positions` | none | **Deferred to Phase 38b** — no map on the board yet, and this would need a map primitive that isn't wired up |
+| 6 | Route apply/optimize actions | (in #1) | (in #1) | none | ✓ (via #1) |
+
+Existing mobile coverage: `mobile/app/(app)/dispatch/board.tsx` (479 LOC — settings + auto-assign) + `weather.tsx` (499). Neither had optimize / shift-route / load-strip / unrouted.
+
+Total new/modified LOC: **~660** across 4 new files + 1 board wire-up + 1 Phase 30.4 debt patch. Under the 1500 / 15 gate.
+
+### Delivered
+
+- **`mobile/app/dispatch/optimize.tsx`** — full preview page: summary card (tech · route date · savings km) + proposed-order leg list with per-leg + cumulative distance + skipped-jobs surface + `showConfirm`-gated apply.
+- **`mobile/app/dispatch/shift-route.tsx`** — source/target/scope/duration pills, permanent-flag acknowledgement gate, `showConfirm` on the permanent path AND on the `existing_override_conflict` retry path, `force` payload handled.
+- **`mobile/src/components/dispatch/TechLoadStrip.tsx`** — horizontal chip strip with color swatch + drop count + selected state; tapping filters via parent callback.
+- **`mobile/src/components/dispatch/UnroutedPanel.tsx`** — compact scrollable panel; tapping a row navigates to Shift Route with `customer_ids` pre-selected + `scope=partial`.
+- **`mobile/app/(app)/dispatch/board.tsx`** wire-up — added a `/dispatch/board` fetch alongside the existing three, memoized `techLoads` + `unroutedPins` derivations, tools row with Optimize + Shift Route buttons, and integrated both new sub-components. Existing auto-assign flow untouched.
+
+### Phase 30.4 completeness patch (opt-in from Phase 37 note)
+
+- **`mobile/app/huddle.tsx`** — removed both `Alert.alert` calls (they silently fail on the user's Android/Expo Go build per Phase 30.4 root cause) and replaced with an inline status banner (no new dep). `Alert` import dropped.
+
+### Non-scope
+
+- **Live pin layer explicitly deferred to Phase 38b.** The mobile board doesn't have a map surface yet, and wiring one up would need either a new Mapbox dep (bumps bundle by ~400KB) or a fresh `react-native-maps` MapView. Out of scope for this delivery; the Phase 38 vitest asserts no new mapping dep sneaks in.
+- No new backend endpoints added.
+- No web dispatch touched.
+
+### Tests
+
+- **NEW** `frontend/src/test/phase38-mobile-dispatch-parity.test.jsx` · **31/31 green**. Locks file existence for the 4 new files, `<Header>` titles, backend endpoint calls, `showConfirm`-only destructive gating (no `Alert.alert` in any Phase 38 code), `strict_admin` role gating on the pages, root testIDs, board wiring (imports, `/dispatch/board` fetch, tools row, `router.push` targets), regression on the pre-existing auto-assign flow, Phase 30.4 completeness on `huddle.tsx` (Alert removed + banner testID + endpoints still called), and — critically — that no new mapping dep landed for Phase 38b's deferred work.
+
+### Follow-up (Phase 38b)
+
+Only remaining item: **Live pin layer** — an interactive map surface on the dispatch board showing GPS-tracked techs. Backend endpoint (`/gps/live-positions`) already exists (backend `phase16_gps` router). Mobile side needs a `MapView` + polling loop. Sized at ~200 LOC + potentially a new dep decision.
+
+---
+
+
 ## 2026-02-XX — Phase 37 · Mobile Business OS Parity (P1.3)
 
 ### Audit — 8 Business OS surfaces vs mobile state

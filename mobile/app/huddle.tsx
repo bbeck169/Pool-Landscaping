@@ -3,12 +3,15 @@
  * yesterday / today / blockers → posts to /api/huddles + huddles/{id}/action-items
  */
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, TextInput, Pressable, ScrollView, Alert } from "react-native";
+import { View, Text, StyleSheet, TextInput, Pressable, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
+// Phase 38 · Feb-2026 · Phase 30.4 completeness — replaced legacy
+// `Alert.alert` (silently fails on user's Android/Expo Go build) with
+// an inline status banner (no new dep).
 
 export default function HuddleScreen() {
   const { user } = useAuth();
@@ -19,6 +22,7 @@ export default function HuddleScreen() {
   const [huddle, setHuddle] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [recentSops, setRecentSops] = useState<any[]>([]);
+  const [statusMsg, setStatusMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   useEffect(() => {
     // Best-effort: check if today's huddle already exists.
@@ -55,10 +59,10 @@ export default function HuddleScreen() {
           huddle_id: h.id, text, owner_user_id: user?.id,
         });
       }
-      Alert.alert("Huddle submitted", `${lines.length} note(s) posted for ${today}.`);
+      setStatusMsg({ kind: "ok", text: `Submitted · ${lines.length} note(s) posted for ${today}.` });
       setYesterday(""); setTodayText(""); setBlockers("");
     } catch (e: any) {
-      Alert.alert("Submit failed", e?.message || "Try again");
+      setStatusMsg({ kind: "err", text: e?.message || "Submit failed — try again." });
     } finally { setBusy(false); }
   };
 
@@ -67,6 +71,14 @@ export default function HuddleScreen() {
                 testID="huddle-screen">
       <Text style={styles.h1}>Daily Huddle</Text>
       <Text style={styles.hint}>{today} · your notes flow to the admin's Business OS.</Text>
+      {statusMsg && (
+        <View
+          style={[styles.banner, statusMsg.kind === "ok" ? styles.bannerOk : styles.bannerErr]}
+          testID="huddle-status-banner"
+        >
+          <Text style={styles.bannerText}>{statusMsg.text}</Text>
+        </View>
+      )}
 
       <View style={styles.card}>
         <Text style={styles.label}>What did you finish yesterday?</Text>
@@ -123,4 +135,11 @@ const styles = StyleSheet.create({
             paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
   sopTitle: { flex: 1, fontFamily: font.semiBold, fontSize: 13, color: colors.onSurface },
   sopCat: { fontFamily: font.regular, fontSize: 11, color: colors.muted },
+  banner: {
+    padding: spacing.sm, borderRadius: radius.sm,
+    marginBottom: spacing.md, borderWidth: 1,
+  },
+  bannerOk: { backgroundColor: "#DCFCE7", borderColor: "#22C55E" },
+  bannerErr: { backgroundColor: "#FEE2E2", borderColor: "#EF4444" },
+  bannerText: { fontFamily: font.medium, fontSize: fontSize.sm, color: colors.onSurface },
 });
