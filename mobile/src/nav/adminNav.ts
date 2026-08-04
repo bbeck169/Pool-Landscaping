@@ -193,11 +193,17 @@ export const ADMIN_NAV: NavGroup[] = [
       { label: "Forecast",           route: "/reports/forecast",     icon: "trending-up-outline",  tier: "t1", testID: "drawer-nav-forecast" },
       { label: "Revenue by Service", route: "/reports/revenue-by-service", icon: "podium-outline", tier: "t1", testID: "drawer-nav-revenue-by-service" },
       { label: "Access History",     route: "/access-history",       icon: "time-outline",         tier: "t1", testID: "drawer-nav-access-history" },
+      // Phase 36 · Feb-2026 — CFO deep-dive parity (P1.2). Each hits
+      // a distinct /api/cfo/* endpoint; they're grouped here because
+      // finance ops is already busy after Phase 35.
+      { label: "CFO · AP Aging",     route: "/cfo/ap-aging",         icon: "wallet-outline",       tier: "t1", testID: "drawer-nav-cfo-ap-aging" },
+      { label: "CFO · Cash Forecast",route: "/cfo/forecast",         icon: "trending-up-outline",  tier: "t1", testID: "drawer-nav-cfo-forecast" },
+      { label: "CFO · Anomalies",    route: "/cfo/anomalies",        icon: "pulse-outline",        tier: "t1", testID: "drawer-nav-cfo-anomalies" },
+      { label: "CFO · Payroll",      route: "/cfo/payroll",          icon: "people-outline",       tier: "t1", testID: "drawer-nav-cfo-payroll" },
+      { label: "CFO · Price Increase",route:"/cfo/price-increase",   icon: "arrow-up-circle-outline",tier: "t1", testID: "drawer-nav-cfo-price-increase" },
       { label: "Check-in Moderation", route: "/admin/moderation/checkins", icon: "checkmark-done-outline", tier: "t2", testID: "drawer-nav-moderation-checkins" },
       { label: "Client Errors",       route: "/admin/diagnostics/errors",  icon: "alert-circle-outline",   tier: "t2", testID: "drawer-nav-diagnostics-errors" },
       { label: "Business Summary",   route: "/reports/business-summary", icon: "stats-chart-outline",  tier: "t3", testID: "drawer-nav-t3-business-summary" },
-      { label: "Recurring Jobs",     route: "/admin/recurring-jobs",   icon: "repeat-outline",         tier: "t3", testID: "drawer-nav-t3-recurring-jobs" },
-      { label: "Vendor Bills",       route: "/admin/finance/bills",    icon: "cash-outline",           tier: "t3", testID: "drawer-nav-t3-vendor-bills" },
     ],
   },
   {

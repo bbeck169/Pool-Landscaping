@@ -8,6 +8,52 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 36 · Mobile CFO Deep-Dives Parity (P1.2)
+
+### Audit — six CFO deep-dives vs mobile state
+
+| # | Surface | Backend endpoint | Web page | Mobile before | Action |
+| - | --- | --- | --- | --- | --- |
+| 1 | Bills | `GET /api/cfo/bills` | `admin/VendorBills.jsx` (229) | Phase 35 shipped `mobile/app/finance/vendor-bills.tsx` | **Hub link only** (no dup) |
+| 2 | AP Aging | `GET /api/cfo/ap-aging` | `admin/CFOReports.jsx` (185) | none | **NEW** `cfo/ap-aging.tsx` |
+| 3 | Forecast | `GET /api/cfo/forecast?horizon=` | `cfo/CFODashboard.jsx` (578) | **Distinct** from `/reports/forecast` (P40, `mobile/app/reports/forecast.tsx`) — cash-flow vs revenue | **NEW** `cfo/forecast.tsx` |
+| 4 | Anomalies | `GET /api/cfo/anomalies?window_days=&z=` | `cfo/CFODashboard.jsx` | none | **NEW** `cfo/anomalies.tsx` |
+| 5 | Payroll | `GET /api/cfo/payroll?period=` | `admin/CFOReports.jsx` | Existing `mobile/app/(app)/payroll/batch.tsx` is the BATCH RUN action (858 LOC); this is the read-only summary | **NEW** `cfo/payroll.tsx` |
+| 6 | Price-Increase | `POST /api/cfo/price-increase-suggestions` | `admin/PricingInsights.jsx` (332) | none | **NEW** `cfo/price-increase.tsx` |
+
+Total new mobile LOC: **~840** across 5 new files + hub extension. Under the 1500 LOC / 15 file gate.
+
+### Delivered
+
+- **`mobile/app/cfo/ap-aging.tsx`** — summary card + 4 aging buckets + open-bill rows.
+- **`mobile/app/cfo/forecast.tsx`** — horizon selector (30/60/90/180 days) + projected in/out/net + per-period buckets. Distinct endpoint from the Phase 40 revenue forecast.
+- **`mobile/app/cfo/anomalies.tsx`** — window (30/60/90/180d) + z-score sensitivity (1.5/2.0/2.5/3.0σ) chip filters + result rows with color-coded z-tag.
+- **`mobile/app/cfo/payroll.tsx`** — MTD/QTD/YTD selector + total wages/hours/avg-rate + by-category breakdown.
+- **`mobile/app/cfo/price-increase.tsx`** — month picker (YYYY-MM) + POST regenerate button + rationale-rich suggestion cards with arrow-forward from current → suggested price.
+- **`mobile/app/(app)/cfo/index.tsx`** — replaced the "live on desktop for now" foot-note with a 6-tile deep-dive navigation block (5 new links + one link out to Phase 35's Vendor Bills page). Existing `/cfo/dashboard` fetch, `<QnAPanel>`, `<ScenarioPanel>` untouched.
+
+All 5 new pages use `<Header>`, `<RoleGate level="strict_admin">`, `<Loading>` / `<EmptyState>`, and zero `Alert.alert` calls.
+
+### Drawer nav diff
+
+**Reports group (`mobile/src/nav/adminNav.ts`):**
+
+Added 5 T1 entries: `CFO · AP Aging`, `CFO · Cash Forecast`, `CFO · Anomalies`, `CFO · Payroll`, `CFO · Price Increase`.
+
+Removed 2 duplicate T3 stubs since Phase 35 already ships them at T1 in the Finance group:
+- `drawer-nav-t3-recurring-jobs` (was `/admin/recurring-jobs`)
+- `drawer-nav-t3-vendor-bills` (was `/admin/finance/bills`)
+
+### Tests
+- **NEW** `frontend/src/test/phase36-mobile-cfo-parity.test.jsx` · **43/43 green**. Source-inspection: each of the 5 new surface files exists, has `<Header>` with correct title, hits the right `/api/cfo/*` endpoint, carries the root testID, is role-gated to `strict_admin`, and does NOT use `Alert.alert`. Locks the 6 hub tiles + the drawer nav flip + regression on the pre-existing `/cfo/dashboard` fetch.
+- **UPDATED** `frontend/src/test/phase-mobile-drawer-parity.test.jsx` · T3 threshold lowered from ≥13 to ≥11 to reflect the 2 legitimate removals in Phase 36. Comment inline explains the running tally. 39/39.
+
+### Non-scope
+Did not touch web CFO pages, backend, Phase 32/33/34/35/39/30.4/Live Radar/Phase 40e. No new backend endpoints added.
+
+---
+
+
 ## 2026-02-XX — Phase 35 · Mobile Finance Ops Parity (P1.1)
 
 ### Audit — six web finance surfaces vs mobile state

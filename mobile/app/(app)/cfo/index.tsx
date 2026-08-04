@@ -24,6 +24,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import QnAPanel from "@/src/components/cfo/QnAPanel";
 import ScenarioPanel from "@/src/components/cfo/ScenarioPanel";
+import { router } from "expo-router";
 
 type Period = "mtd" | "qtd" | "ytd";
 
@@ -176,8 +177,30 @@ export default function CFOMobile() {
             </View>
 
             <Text style={s.footNote}>
-              Forecast · Anomalies · Auto-Categorize live on the desktop for now.
+              Auto-Categorize is desktop-only. Deep-dive views:
             </Text>
+
+            {/* Phase 36 · Feb-2026 — deep-dive navigation tiles. */}
+            <View style={s.deepDives} testID="cfo-deep-dives">
+              {[
+                { label: "AP Aging",           to: "/cfo/ap-aging",       testID: "cfo-link-ap-aging" },
+                { label: "Cash Forecast",      to: "/cfo/forecast",       testID: "cfo-link-forecast" },
+                { label: "Anomalies",          to: "/cfo/anomalies",      testID: "cfo-link-anomalies" },
+                { label: "Payroll (CFO)",      to: "/cfo/payroll",        testID: "cfo-link-payroll" },
+                { label: "Price Increase",     to: "/cfo/price-increase", testID: "cfo-link-price-increase" },
+                { label: "Vendor Bills",       to: "/finance/vendor-bills", testID: "cfo-link-vendor-bills" },
+              ].map((d) => (
+                <Pressable
+                  key={d.to}
+                  onPress={() => router.push(d.to as any)}
+                  style={({ pressed }) => [s.deepDiveTile, pressed && { opacity: 0.7 }]}
+                  testID={d.testID}
+                >
+                  <Text style={s.deepDiveLabel}>{d.label}</Text>
+                  <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+                </Pressable>
+              ))}
+            </View>
 
             {/* Phase 34c — mobile Q&A + Scenario parity. */}
             <QnAPanel period={period} onUsageChange={load} />
@@ -267,5 +290,18 @@ const s = StyleSheet.create({
   footNote: {
     fontFamily: font.regular, fontSize: 11, color: colors.muted,
     marginTop: spacing.lg, textAlign: "center", fontStyle: "italic",
+  },
+  deepDives: {
+    marginTop: spacing.md, gap: spacing.xs,
+    padding: spacing.md, borderRadius: radius.md,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+  },
+  deepDiveTile: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.xs,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
+  deepDiveLabel: {
+    fontFamily: font.medium, fontSize: fontSize.sm, color: colors.onSurface,
   },
 });

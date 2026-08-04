@@ -67,9 +67,12 @@ describe("Nav data · adminNav.ts (source of truth)", () => {
     expect(t1).toBeGreaterThanOrEqual(50);
     expect(t2).toBeGreaterThanOrEqual(20);
     // Phase 35 · Feb-2026 · reclassified Master Invoices + Autobilling
-    // Runs from T3 (web-only stubs) to T1 (real mobile pages); threshold
-    // lowered accordingly. Any further T3 flips should update this too.
-    expect(t3).toBeGreaterThanOrEqual(13);
+    // Runs from T3 (web-only stubs) to T1 (real mobile pages).
+    // Phase 36 · Feb-2026 · removed the duplicate T3 Recurring Jobs
+    // + Vendor Bills stubs since Phase 35 already ships them at T1.
+    // Threshold lowered accordingly. Any further T3 flips should
+    // update this too.
+    expect(t3).toBeGreaterThanOrEqual(11);
     // Sanity: total across the file lines up with what we sized in the delivery.
     expect(t1 + t2 + t3).toBeGreaterThanOrEqual(85);
   });
