@@ -40,6 +40,49 @@ describe("Phase 48 · CustomerDetail.jsx no longer mounts <BusinessCard>", () =>
   });
 });
 
+describe("Phase 48.1 · overview-tab reorder (name → contacts → address)", () => {
+  // Locate source-order positions of the key blocks inside the overview
+  // tab. A negative index means "not found" which is itself a failure.
+  const _pos = (needle) => _detail.indexOf(needle);
+  const _nameSecondary = _pos('data-testid="cd-customer-name-secondary"');
+  const _contactsPanel = _pos("<CustomerContactsPanel");
+  const _addressBlock = _pos('data-testid="cd-address-block"');
+  const _masterBilling = _pos("<MasterBillingCard");
+
+  it("mounts the secondary customer name marker inside the overview tab", () => {
+    expect(_nameSecondary).toBeGreaterThan(0);
+  });
+
+  it("renders CustomerContactsPanel AFTER the secondary customer name", () => {
+    expect(_contactsPanel).toBeGreaterThan(_nameSecondary);
+  });
+
+  it("renders the address block AFTER the CustomerContactsPanel", () => {
+    // Phase 48.1 swaps the pre-existing order — address block was
+    // rendered BEFORE ContactsPanel in Phase 48; now it sits after.
+    expect(_addressBlock).toBeGreaterThan(_contactsPanel);
+    // MasterBillingCard now sits below the address block (pushed down
+    // by the reorder; no longer the first item in the overview tab).
+    expect(_masterBilling).toBeGreaterThan(_addressBlock);
+  });
+
+  it("keeps the h1 customer name in the top header block", () => {
+    // Phase 48.1 adds a secondary name marker inside the overview
+    // tab — the primary h1 in the header stays put so breadcrumbs and
+    // VIP toggle still anchor to the page title.
+    expect(_detail).toMatch(
+      /<h1[^>]*text-3xl[^>]*>\s*\{customer\.name\}\s*<\/h1>/,
+    );
+  });
+
+  it("regression: <BusinessCard> stays unmounted post-reorder", () => {
+    // Phase 48.1 is a visual reorder only — the Phase 48 guarantee
+    // that BusinessCard is unmounted must not regress.
+    expect(_detail).not.toContain('data-testid="cd-business-card-slot"');
+    expect(_detail).not.toMatch(/<BusinessCard\b[^/]*\/>/);
+  });
+});
+
 describe("Phase 48 · CustomerContactsPanel primary + additional groups", () => {
   // TextInput/Button use `testid=` prop (mapped to data-testid in the DOM);
   // raw JSX divs use `data-testid=`. Regex tolerates both.

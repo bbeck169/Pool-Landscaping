@@ -192,10 +192,22 @@ def _stripe_key_is_placeholder(key: str) -> bool:
 
 
 def _stripe_configured() -> bool:
-    """Phase LZ4 (Feb 2026) — Stripe SDK is retired. Always False so
-    the ACH/Financial-Connections endpoints short-circuit into the
-    "not configured" branch the frontend already knows how to render."""
-    return False
+    """Phase 47d · Feb-2026 — RESTORED after the Phase LZ4 retirement.
+
+    User has directed every payment surface to route through Stripe
+    directly. ACH capture via ``stripe.SetupIntent.create(
+    payment_method_types=["us_bank_account"])`` doesn't require the
+    Financial Connections product — the bank account is captured
+    through Stripe Elements' ``PaymentElement`` (or via manual
+    routing/account entry). This helper now reflects whether the
+    Stripe SDK has a usable secret key available.
+    """
+    import os as _os
+    return bool(
+        _os.environ.get("STRIPE_SECRET_KEY_LIVE")
+        or _os.environ.get("STRIPE_SECRET_KEY_TEST")
+        or _os.environ.get("STRIPE_API_KEY")
+    )
 
 
 @router.post(
@@ -208,26 +220,49 @@ async def start_ach_link_session(
 ):
     """Create an ACH bank-verification session for the customer.
 
-    Phase LZ4 · Feb 2026 — the Stripe SDK integration this endpoint
-    relied on (Financial Connections) has been retired. Until an
-    ACH provider is re-wired via Lumino, this endpoint always
-    returns ``{ok: false, reason: "stripe_not_configured"}`` so the
-    frontend continues to render its "Connect bank" disabled state
-    without an error banner.
+    Phase 47d · Feb-2026 — RESTORED. Wires directly to
+    ``stripe.SetupIntent.create(payment_method_types=["us_bank_account"])``
+    via the shared ``services.payments.stripe_charge`` helper. The
+    frontend mounts Stripe's ``PaymentElement`` against the returned
+    ``client_secret`` and handles the routing/account entry UX.
     """
-    _require_customer(user)
-    return {"ok": False, "reason": "stripe_not_configured"}
+    cid = _require_customer(user)
+    if not _stripe_configured():
+        return {"ok": False, "reason": "stripe_not_configured"}
+    from services.payments import stripe_charge as stripe_svc
+    try:
+        out = await stripe_svc.create_setup_intent(
+            tenant_id=tenant["id"],
+            customer_id=cid,
+            actor_user_id=user.get("id"),
+            payment_method_types=["us_bank_account"],
+        )
+    except Exception as exc:
+        import logging as _logging
+        _logging.getLogger("phase47d").warning(
+            "[phase47d] ACH SetupIntent failed for customer=%s: %s", cid, exc)
+        return {"ok": False, "reason": "stripe_error"}
+    return {
+        "ok": True,
+        "client_secret": out.get("client_secret"),
+        "publishable_key": out.get("publishable_key"),
+        "mode": out.get("mode"),
+    }
 
 
 class AchAttachIn(BaseModel):
-    """Payload the frontend posts after the Financial Connections widget
-    resolves with a verified bank account id.  Purely wire-ready — no
-    charges are moved. The endpoint records a ``payment_methods`` doc
-    (``type='ach'``) for the customer with ``verified=false`` so admin
-    can see the connection was requested; the ``verified`` flag flips
-    to ``true`` once we wire the Stripe webhook confirming the account.
+    """Phase 47d · Feb-2026 — Stripe-direct ACH attach payload.
+
+    The frontend posts this after ``stripe.confirmSetup`` returns a
+    ``payment_method`` id from the ``PaymentElement`` (US bank account
+    flow). We mirror the row into ``db.payment_methods`` via the same
+    helper the card-attach flow uses so the "list payment methods"
+    endpoint returns a unified view.
     """
 
+    payment_method_id: str
+    # Kept for backward compatibility with in-flight LZ4 clients that
+    # were still POSTing the Financial-Connections shape. Ignored.
     stripe_bank_account_id: Optional[str] = None
     session_id: Optional[str] = None
 
@@ -238,27 +273,38 @@ async def attach_ach_result(
     user: dict = Depends(get_current_user),
     tenant: dict = Depends(get_current_tenant),
 ):
-    """Persist the Financial Connections resolution as a
-    ``payment_methods`` document. Not wired to any charge path."""
+    """Persist a Stripe US-bank-account PaymentMethod into
+    ``db.payment_methods`` via the shared attach helper. Charges are NOT
+    moved here — the row lands with the standard PM shape and is later
+    reconciled by the Stripe webhook if/when auto-verification completes.
+    """
     cid = _require_customer(user)
     if not _stripe_configured():
-        # Guard rail — the frontend gates this behind the same env
-        # check, but re-verify server-side.
         raise HTTPException(400, "stripe_not_configured")
-
-    doc = {
-        "id": new_id(),
-        "tenant_id": tenant["id"],
-        "customer_id": cid,
-        "type": "ach",
-        "verified": False,
-        "stripe_bank_account_id": body.stripe_bank_account_id,
-        "session_id": body.session_id,
-        "created_at": now_iso(),
+    if not body.payment_method_id:
+        raise HTTPException(422, "payment_method_id required")
+    from services.payments import stripe_charge as stripe_svc
+    try:
+        row = await stripe_svc.attach_payment_method(
+            tenant_id=tenant["id"],
+            customer_id=cid,
+            payment_method_id=body.payment_method_id,
+            set_default=False,  # ACH default-flag stays admin-controlled.
+        )
+    except Exception as exc:
+        import logging as _logging
+        _logging.getLogger("phase47d").warning(
+            "[phase47d] ACH attach failed for customer=%s: %s", cid, exc)
+        raise HTTPException(502, "attach_failed")
+    return {
+        "ok": True,
+        "payment_method": {
+            "last4": row.get("last4") or "",
+            "brand": row.get("brand") or "us_bank_account",
+            "is_default": bool(row.get("is_default")),
+            "type": "ach",
+        },
     }
-    await db.payment_methods.insert_one(doc)
-    doc.pop("_id", None)
-    return {"ok": True, "payment_method": doc}
 
 
 @router.get("/customer-portal/payment-methods")

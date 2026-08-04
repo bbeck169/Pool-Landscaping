@@ -77,11 +77,22 @@ export default function QuoteDetail() {
     }
   };
 
-  // Admin: generate a Stripe payment link to share with the customer
+  // Admin: request a direct Stripe Checkout Session URL to share with
+  // the customer.
+  //
+  // Phase 47d · Feb-2026 — swapped from the mythical
+  // ``/payments/admin/generate-link/{id}`` endpoint (which returned 404
+  // — never existed in the backend) to the Phase-47 Stripe-direct
+  // ``POST /invoices/{id}/request-payment-link`` route. Same response
+  // shape (``{payment_url, checkout_session_id, ...}``) so the Share
+  // sheet handoff is unchanged. Web + mobile now share the same code
+  // path; no Lumino / Zapier round-trip.
   const generateLink = async () => {
     setBusy(true);
     try {
-      const { payment_url } = await api.post(`/payments/admin/generate-link/${id}`);
+      const { payment_url } = await api.post(
+        `/invoices/${id}/request-payment-link`,
+      );
       await Share.share({ message: `Pay your invoice for ${q?.title}: ${payment_url}` });
     } catch (e: any) {
       Alert.alert("Error", e?.message || "Could not create payment link.");

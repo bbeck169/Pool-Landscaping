@@ -408,26 +408,17 @@ export default function CustomerDetail() {
                   business card from the customer profile header per
                   user redesign. Component stays in-tree for other
                   surfaces (tech ToolsHub, marketing card slot). */}
-              <MasterBillingCard
-                customer={customer}
-                onToast={(t) => setToast(t)}
-                onRefreshCustomer={load}
-              />
-              <Info label="Primary address" value={customer.address} />
-              <Info label="Billing address" value={customer.billing_address} />
-              <Info label="Gate code" value={customer.gate_code} />
-              {(customer.secondary_addresses || []).length ? (
-                <div>
-                  <div className="text-xs uppercase font-semibold mb-1" style={{ color: colors.muted }}>
-                    Secondary addresses
-                  </div>
-                  <ul className="space-y-1 text-sm" style={{ color: colors.onSurface }}>
-                    {customer.secondary_addresses.map((a, i) => (
-                      <li key={i}>· {a}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
+              {/* Phase 48.1 · Feb-2026 — customer name is echoed under
+                  the header row, followed immediately by the contact
+                  section, then addresses. Reorder matches user's
+                  layout mockup. */}
+              <div
+                className="text-2xl font-bold"
+                style={{ color: colors.onSurface }}
+                data-testid="cd-customer-name-secondary"
+              >
+                {customer.name}
+              </div>
               <CustomerContactsPanel
                 customer={customer}
                 onSaved={(updated) => {
@@ -435,6 +426,28 @@ export default function CustomerDetail() {
                   setToast({ tone: "success", message: "Contacts saved" });
                 }}
                 onError={(msg) => setToast({ tone: "error", message: msg })}
+              />
+              <div data-testid="cd-address-block" className="space-y-2">
+                <Info label="Primary address" value={customer.address} />
+                <Info label="Billing address" value={customer.billing_address} />
+                <Info label="Gate code" value={customer.gate_code} />
+                {(customer.secondary_addresses || []).length ? (
+                  <div>
+                    <div className="text-xs uppercase font-semibold mb-1" style={{ color: colors.muted }}>
+                      Secondary addresses
+                    </div>
+                    <ul className="space-y-1 text-sm" style={{ color: colors.onSurface }}>
+                      {customer.secondary_addresses.map((a, i) => (
+                        <li key={i}>· {a}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+              <MasterBillingCard
+                customer={customer}
+                onToast={(t) => setToast(t)}
+                onRefreshCustomer={load}
               />
               {/* Phase 12 · Feb 2026 — Card-on-file toggle. Admin +
                   manager only. Tri-state override with a "Reset to

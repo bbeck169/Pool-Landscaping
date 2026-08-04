@@ -8,7 +8,65 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
-## 2026-02-XX — Phase 48 · Admin Customer Contact Page Redesign
+## 2026-02-XX — Phase 48.1 · Overview-tab reorder (name → contacts → address)
+
+Small visual follow-up to Phase 48. User's revised mockup showed the full contact section moving directly below the customer name in the main column (superseding the earlier top-right column idea).
+
+### `frontend/src/pages/customers/CustomerDetail.jsx`
+- **Secondary customer-name marker** (`data-testid="cd-customer-name-secondary"`) added at the top of the overview tab body, echoing `customer.name` in bold below the page-title h1. The primary h1 stays put — it anchors the VIP toggle, breadcrumbs, and mobile edit affordance.
+- **`<CustomerContactsPanel>`** moved to sit directly below the secondary name (previously it lived below the address block).
+- **Address block** (Primary address / Billing address / Gate code / Secondary addresses) now sits AFTER `<CustomerContactsPanel>`. Wrapped in `data-testid="cd-address-block"` so downstream tests can assert its source-order position.
+- **`<MasterBillingCard>`** pushed further down — no longer the first item in the overview tab. All other panels (`<CardOnFileControl>`, `<CustomerServiceNotesCards>`, Notes) unchanged.
+
+### Verification
+- `frontend/src/test/phase48-admin-customer-contact-redesign.test.jsx` — **24/24 pass** (19 Phase-48 + 5 new Phase-48.1 source-order asserts). Regression guard: BusinessCard stays unmounted; h1 name stays in the header block; ContactsPanel renders AFTER the secondary name; address block renders AFTER ContactsPanel; MasterBillingCard renders AFTER the address block.
+
+### Non-scope
+- Backend / models / caps — untouched.
+- Contact panel internal layout — untouched (Phase 48 shape preserved).
+- Phase 47d work in flight — untouched (different files).
+
+---
+
+## 2026-02-XX — Phase 47d · Mobile quote pay + ACH endpoint restoration (direct Stripe)
+
+Third slice of the payment-migration sweep. Two audit findings + one restoration:
+
+### Audit findings
+1. **`POST /quotes/{qid}/pay`** — admin-only manual/offline payment record (cash / check / external card). Zero Stripe interaction, no Lumino / Zapier. **Kept as-is** — this is a ledger endpoint, not a gateway call. Regression test locks that in.
+2. **`POST /payments/admin/generate-link/{id}`** (called by `mobile/app/quote/[id].tsx:84`) — **does not exist as a backend route.** Mobile has been getting 404s since whenever the route was removed. Fixed by pointing mobile at Phase 47's `POST /invoices/{id}/request-payment-link`, which returns the same `{payment_url}` shape.
+3. **ACH endpoints on `customer_portal.py`** — dark under the Phase-LZ4 stub (`_stripe_configured` hard-returned False, both endpoints short-circuited). Per your directive "every payment surface direct Stripe", restored to real `stripe.SetupIntent.create(payment_method_types=["us_bank_account"])` via the shared `services.payments.stripe_charge` helpers.
+
+### Backend
+
+- **`backend/routers/quotes.py`** — no source change. Regression test asserts `pay_quote` body contains no `stripe`/`checkout`/`zapier`/`lumino`/`dispatch_invoice_link_request` and still sets `payment_method="manual"`.
+- **`backend/routers/customer_portal.py`**:
+  - `_stripe_configured()` un-retired. Now reads `STRIPE_SECRET_KEY_LIVE` / `STRIPE_SECRET_KEY_TEST` / `STRIPE_API_KEY` and returns True when any are set.
+  - `start_ach_link_session()` — delegates to `stripe_svc.create_setup_intent(payment_method_types=["us_bank_account"])`. Returns `{ok: True, client_secret, publishable_key, mode}` on success; `{ok: False, reason: "stripe_not_configured"|"stripe_error"}` on gate-fail — the frontend already renders both cases.
+  - `attach_ach_result()` — delegates to `stripe_svc.attach_payment_method(...)`. `AchAttachIn.payment_method_id` is now required; the legacy Financial-Connections fields (`stripe_bank_account_id`, `session_id`) kept as optional back-compat aliases so an in-flight client still parses. `set_default=False` (ACH default remains admin-controlled). Returns the safe subset (`last4`, `brand`, `is_default`, `type="ach"`); internal Stripe ids stripped.
+
+### Mobile
+
+- **`mobile/app/quote/[id].tsx:84`** — `generateLink` swapped from `POST /payments/admin/generate-link/${id}` → `POST /invoices/${id}/request-payment-link`. Same destructure of `payment_url`, same `Share.share(...)` handoff. Comment explains the swap.
+
+### Preserved
+- `POST /quotes/{qid}/pay` untouched (manual/offline ledger — deliberately NOT a Stripe call).
+- Lumino / Zapier modules stay in-tree but dark.
+- `services/payments/stripe_charge.py` untouched — no new helper needed. The Phase 47 `create_invoice_checkout_session` already handles both invoice and quote pay (they're the same doc collection).
+- `AchLinkSessionResp` response model untouched — the added `client_secret` / `publishable_key` / `mode` fields were already declared for the LZ2 shape.
+
+### Verification
+- **Backend** — `backend/tests/test_phase47d_mobile_quote_pay.py` → **8/8 pass in 0.40s**. Covers: `/quotes/pay` audit (manual/offline only), mobile endpoint swap, `_stripe_configured` env behaviour, ACH link-session short-circuit + `us_bank_account` PM type, ACH attach delegation + payload shape, `payment_url` response key contract, no Lumino dispatcher reference in the pay router body.
+- **Frontend** — `frontend/src/test/phase47d-mobile-quote-pay.test.jsx` → **5/5 pass in 0.79s**. Covers: mythical `/payments/admin/generate-link/` gone from runtime code (comments allowed), Phase-47 endpoint URL literal present, `payment_url` destructured, no Lumino/Zapier at runtime, `recordManual` → `/quotes/{id}/pay` preserved.
+
+### Non-scope
+- Full Financial Connections rewiring — deliberately deferred. The `us_bank_account` PaymentMethod flow via Stripe Elements is the modern Stripe pattern; Financial Connections is only needed for instant-verification bank ownership proofs, not routine ACH capture.
+- `PAYMENTS_PROVIDER_MODE` env kill-switch + `grep_no_lumino_in_pay_path` regression pytest + `lumino_payment_url` → `payment_url` fixture cleanup — slated for **Phase 47e**.
+- Broad Stripe v15 audit (`Subscription.*`, `Invoice.*`, `Charge.list`, `Customer.retrieve/modify`) — slated for **Phase 42.4** (separate delivery).
+- Phase 41.1b / 41.2 still paused.
+
+---
+
 
 **UX refresh.** User-provided mockup drove a rework of the customer detail + edit surfaces:
 - Removed the compact company business card slot from the customer profile.
