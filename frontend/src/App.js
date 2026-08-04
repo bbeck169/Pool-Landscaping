@@ -211,9 +211,11 @@ import PublicInstaSchedulePage from "@/pages/public/PublicInstaSchedule";
 import PublicInvoicePay from "@/pages/public/PublicInvoicePay";
 // Phase 22 · Feb 2026 — Public Service Images portal (no auth).
 import ServiceImagesPortalPage from "@/pages/public/ServiceImagesPortalPage";
-// Phase LZ4 (Feb 2026) — AddCardPage removed with the Stripe SDK
-// retirement. The card-on-file flow is now handled by Lumino's
-// hosted payment link, not a SetupIntent-based SetupElement modal.
+// Phase 47c (Feb 2026) — /portal/add-card RESTORED as a direct-Stripe
+// magic-link flow (Elements + SetupIntent). Un-does the Phase LZ4
+// retirement now that the user has directed every payment surface to
+// route through Stripe directly (no Lumino / Zapier).
+import AddCardPage from "@/pages/public/AddCardPage";
 import TeamChatPage from "@/pages/chat/TeamChatPage";
 import {
   SequencesList, SequenceNew, SequenceDetail,
@@ -482,8 +484,9 @@ export default function App() {
           <Route path="/portal/service/:uuid" element={<ServiceImagesPortalPage />} />
 
           {/* Phase 12 · Feb 2026 — public magic-link "Add card" page (no auth). */}
-          {/* /portal/add-card routes removed in Phase LZ4 (Feb 2026);
-              Lumino's hosted payment link replaces the SetupElement flow. */}
+          {/* Phase 47c · Feb 2026 — RESTORED after the Phase LZ4 retirement.
+              Direct Stripe SetupIntent flow (see /pages/public/AddCardPage). */}
+          <Route path="/portal/add-card" element={<AddCardPage />} />
 
           {/* Everything else lives inside the protected shell (side nav + top bar + bottom tabs). */}
           <Route path="/" element={<AppLayout />}>

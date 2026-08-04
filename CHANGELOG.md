@@ -8,7 +8,41 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
-## 2026-02-XX — Phase 45 · Master Invoices customer pill-grid → searchable multi-select
+## 2026-02-XX — Phase 47c · RESTORED public `/portal/add-card` magic-link (direct Stripe)
+
+**P0 hotfix.** Customer tapped the "Add card" SMS link (Phase 47b merge-tag rendering now works, so the URL resolves correctly) and landed on a blank page. Root cause: Phase LZ4 (Feb 2026) intentionally decommissioned the `/portal/add-card` React route on the promise of a Lumino hosted-payment-link replacement, but the SMS trigger + `build_add_card_link()` were never migrated — the customer-facing link still pointed at the dead route. User has now directed **every payment + card-on-file surface must route through Stripe directly** (no Lumino, no Zapier). Phase 47c restores the page.
+
+### Backend (`backend/routers/customers.py`)
+- **`POST /api/customers/add-card/{token}/setup-intent`** — un-retired. Was returning `{"retired": True, "reason": "stripe_setup_intent_retired_lz4"}`; now calls `services.payments.stripe_charge.create_setup_intent(...)` and returns `{client_secret, setup_intent_id, publishable_key, mode}`. The internal Stripe `customer_id` is NOT echoed back (PII guardrail — a link leak shouldn't reveal it). Failures bubble as 4xx (bad token) or 502 (`payment_setup_unavailable`) so the browser gets a clear signal.
+- **`POST /api/customers/add-card/{token}/attach`** — **new endpoint** (companion to the setup-intent route). Public, JWT-scoped. Called by the browser once `stripe.confirmSetup` returns a `payment_method` id. Routes through `services.payments.stripe_charge.attach_payment_method(...)` — same code path the authenticated Stripe flow uses. Returns the safe subset (`last4`, `brand`, `exp_month`, `exp_year`, `is_default`) — internal Stripe ids stripped.
+
+### Frontend (`frontend/src/pages/public/AddCardPage.jsx`, `frontend/src/App.js`)
+- **`AddCardPage.jsx`** — new file. Reads JWT from URL query, hits `GET /customers/add-card/{token}` for context (masked customer name, tenant name, publishable key), hits `POST /customers/add-card/{token}/setup-intent` for the client_secret, mounts Stripe `Elements` + `PaymentElement`, calls `stripe.confirmSetup` on submit, then hits `POST /customers/add-card/{token}/attach` to mirror the PM into `db.payment_methods`. No Bearer token used anywhere — public magic-link only. Explicit UI states for `loading`, `boot-error`, `form`, `error`, `saved`.
+- **`App.js`** — restored `<Route path="/portal/add-card" element={<AddCardPage />} />` and updated the surrounding Phase-LZ4 "removed" comments to "Phase 47c · RESTORED".
+
+### Preserved / not touched
+- The Phase LZ4 stub for `POST /api/customers/add-card/{token}/setup-intent` had a `{"retired": True, "reason": "stripe_setup_intent_retired_lz4"}` shape. Regression test asserts that response body must NEVER return.
+- `services.add_card_links.build_add_card_link()` and the `_SMS_BODY` template are unchanged — they've been pointing at the same URL all along; now that URL routes to a live page again.
+- `services/payments/stripe_charge.py` is unchanged — the existing `create_setup_intent` / `attach_payment_method` helpers are already `_asdict()`-safe from Phase 42.3.
+- Existing authenticated Stripe flow (`POST /api/payments/stripe/setup-intent`, `.../attach`) is unchanged — admin / customer-portal card capture continues to work exactly as before.
+
+### New test testids (Phase 47c)
+`phase47c-add-card-page`, `phase47c-add-card-title`, `phase47c-add-card-greeting`, `phase47c-add-card-loading`, `phase47c-add-card-boot-error`, `phase47c-add-card-form`, `phase47c-add-card-submit`, `phase47c-add-card-error`, `phase47c-add-card-success`.
+
+### Verification
+- **Backend** — `backend/tests/test_phase47c_add_card_link.py` → **9/9 pass in 4.78s**. Covers: retired-stub regression guard, setup-intent happy path (no PII leak), garbage-token → 4xx, helper failure → 502, attach happy path (masked PM only), attach missing pm → 422, attach garbage token → 4xx, attach helper failure → 502, static guard against raw `_stripe.` / `stripe.SetupIntent` in the router.
+- **Frontend** — `frontend/src/test/phase47c-add-card-restore.test.jsx` → **8/8 pass in 0.82s**. Covers: App.js route present, LZ4 "removed" comments gone, page uses `/customers/add-card/*` endpoints only (no Lumino, no Zapier, no Bearer), mounts `Elements` + `PaymentElement` + `confirmSetup`, reads JWT from URL query, gates all 4 UI states via testids, wires off `REACT_APP_BACKEND_URL` (no hard-coded host).
+- **Live tap** — not manually verified (user reviews on-device).
+
+### Phase 47 / 47d / 47e status
+- **Phase 47** (Pay button off Zapier → direct Stripe Checkout Session) — next in the queue.
+- **Phase 47d** (mobile `quote/[id].tsx`, `/quotes/{qid}/pay`, ACH audit) — after 47.
+- **Phase 47e** (`PAYMENTS_PROVIDER_MODE` kill-switch, `lumino_payment_url` → `payment_url` rename) — after 47d.
+- **Phase 42.4** (broad Stripe v15 audit — `Subscription.*`, `Invoice.*`, `Charge.list`, etc.) — separate follow-up delivery, NOT folded in per user instruction.
+- **Phase 41.1b / 41.2** — still paused mid-flight.
+
+---
+
 
 **Small UX polish** — the "Payers (customers)" section on `/invoices/master/new` was rendering the full customer roster as a wall of pills, which blew up visually at ~30+ customers. Swapped for a shadcn `Popover` + custom multi-select using the same primitives the rest of the app already ships (see `CustomerTagPicker`).
 
