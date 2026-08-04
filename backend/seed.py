@@ -196,6 +196,89 @@ async def seed_landscape_tech_carlos():
 # an earlier tenant migration mis-set the department). This function
 # patches only those two users on every boot, non-destructively.
 # ─────────────────────────────────────────────────────────────────────
+async def seed_pool_tech_mike():
+    """Phase 41.1b · Feb 2026 — Idempotent seed of ``mike@aquaterra.com``,
+    the demo POOL-department technician. Mirrors the layout of
+    ``seed_landscape_tech_carlos`` (technicians row + users row) with
+    ``department="pool"``.
+
+    Historical drift: Mike was created inside the one-shot ``seed()``
+    function (see below), which early-returns whenever the ``users``
+    collection is non-empty. Any deployment where another user row
+    landed first (tenant bootstrap, manager seed, etc.) never got
+    Mike — leaving `test_ai_employees_ae1.py` and `test_phase50.py`
+    with a 401-on-login fixture failure. This function backfills him
+    on every boot regardless of whether ``seed()`` short-circuits.
+
+    Gated on ``SEED_DEMO_USERS=1`` for parity with the other demo-user
+    seeds. Never overwrites an existing row's role/name/hash — only
+    ensures the row exists + the linked technician doc exists +
+    non-destructive backfill of ``department``, ``role``, ``tenant_id``,
+    ``active``.
+    """
+    if _os.environ.get("SEED_DEMO_USERS", "0") != "1":
+        from config import logger as _lg
+        _lg.warning("SEED_DEMO_USERS=0 — skipping mike seed. Set the flag to seed dev/preview.")
+        return {"created": False, "reason": "seed_demo_users_disabled"}
+    from utils import hash_password
+    email = "mike@aquaterra.com"
+    tenant = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0})
+    tenant_id = tenant["id"] if tenant else None
+    av = ("https://images.unsplash.com/photo-1494790108377-be9c29b29330"
+          "?crop=entropy&cs=srgb&fm=jpg&w=200&q=85")
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    if existing:
+        upd = {}
+        if (existing.get("department") or "").lower() != "pool":
+            upd["department"] = "pool"
+        if existing.get("role") != "technician":
+            upd["role"] = "technician"
+        if tenant_id and existing.get("tenant_id") != tenant_id:
+            upd["tenant_id"] = tenant_id
+        if not existing.get("active", True):
+            upd["active"] = True
+        # Ensure the login password matches the demo baseline. The
+        # ``auto_heal_demo_passwords_if_needed`` startup step also
+        # heals hashes, but we backstop here in case that step runs
+        # BEFORE this seed on a cold boot (order in server.py).
+        try:
+            from utils import verify_password as _vp
+            if not (existing.get("password_hash")
+                    and _vp("password123", existing["password_hash"])):
+                upd["password_hash"] = hash_password("password123")
+                upd["failed_login_attempts"] = 0
+                upd["lockout_until"] = None
+        except Exception:
+            upd["password_hash"] = hash_password("password123")
+        if upd:
+            await db.users.update_one({"id": existing["id"]}, {"$set": upd})
+        return {"created": False, "reason": "already_seeded", "patched": bool(upd)}
+    tech_id = new_id()
+    await db.technicians.insert_one({
+        "id": tech_id, "name": "Mike Rivera", "email": email,
+        "phone": "480-555-0142", "specialty": "Pool Maintenance",
+        "avatar": av, "active": True, "created_at": now_iso(),
+        "department": "pool",
+        **({"tenant_id": tenant_id} if tenant_id else {}),
+    })
+    await db.users.insert_one({
+        "id": new_id(),
+        "name": "Mike Rivera",
+        "email": email,
+        "password_hash": hash_password("password123"),
+        "role": "technician",
+        "department": "pool",
+        "avatar": av,
+        "technician_id": tech_id,
+        "active": True,
+        "created_at": now_iso(),
+        **({"tenant_id": tenant_id} if tenant_id else {}),
+    })
+    from config import logger as _lg
+    _lg.info("[phase41.1b] seeded mike@aquaterra.com (role=technician, department=pool)")
+    return {"created": True, "email": email}
+
+
 async def align_demo_tech_departments():
     """Idempotent. Ensures ``mike@aquaterra.com`` sits in the ``pool``
     department and ``carlos@aquaterra.com`` sits in ``landscaping``.

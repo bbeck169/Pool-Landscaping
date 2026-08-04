@@ -9,7 +9,7 @@ import os
 import logging
 
 from config import client, db, logger
-from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user, seed_landscape_tech_carlos, auto_heal_demo_passwords_if_needed, seed_prior_readings, seed_phase51k_finance, seed_mike_today_job, align_demo_tech_departments, seed_manager_user
+from seed import seed, seed_extras, seed_tech_today_demo, seed_landscaping_user, seed_landscape_tech_carlos, seed_pool_tech_mike, auto_heal_demo_passwords_if_needed, seed_prior_readings, seed_phase51k_finance, seed_mike_today_job, align_demo_tech_departments, seed_manager_user
 from routers import (
     notifications as notifications_router,
     auth, customers, technicians, jobs, quotes, leads, team, items,
@@ -832,6 +832,13 @@ async def _background_seed():
 
     await step("landscaping_user", seed_landscaping_user())
     await step("landscape_tech_carlos", seed_landscape_tech_carlos())
+    # Phase 41.1b · Feb 2026 — idempotent backfill of mike@aquaterra.com
+    # (pool tech). Historically he lived only inside the one-shot
+    # ``seed()`` bulk seed, which early-returns when users exist —
+    # any deployment where another user was created first never got
+    # Mike, leaving `test_ai_employees_ae1.py` + `test_phase50.py`
+    # with a 401-on-login fixture failure. Now backfilled on every boot.
+    await step("pool_tech_mike", seed_pool_tech_mike())
     # Phase 5A follow-up · Feb 2026 — realign Mike (pool) / Carlos
     # (landscape) + seed the manager role-gate test account. Both are
     # idempotent and safe to run on every boot.
