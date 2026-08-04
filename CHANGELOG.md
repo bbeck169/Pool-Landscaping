@@ -8,6 +8,49 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 37 · Mobile Business OS Parity (P1.3)
+
+### Audit — 8 Business OS surfaces vs mobile state
+
+| # | Surface | Endpoint | Web LOC | Mobile before | Action |
+| - | --- | --- | --- | --- | --- |
+| 1 | `/os/dashboard` | `GET /os/overview` | ~120 (BusinessOS.jsx overview) | none | **NEW** `mobile/app/os/index.tsx` (hub) |
+| 2 | `/os/sops` | `GET/POST /sops`, `POST /sops/generate` | ~180 | none | **NEW** `mobile/app/os/sops.tsx` |
+| 3 | `/os/roles` | `GET/POST /role-definitions` | ~100 | none | **NEW** `mobile/app/os/roles.tsx` |
+| 4 | `/os/scorecards` | `GET/POST /kpi-scorecards` | ~80 | none | **NEW** `mobile/app/os/scorecards.tsx` |
+| 5 | `/os/huddles` | `GET/POST /huddles`, `/agenda`, `/action-items` | ~150 | `mobile/app/huddle.tsx` (126) — technician daily huddle | **Hub link only** — no duplicate |
+| 6 | `/os/leanboards` | `GET /leanboards`, `/leanboards/{id}/cards`, `POST /cards/{id}/move` | ~160 | none | **NEW** `mobile/app/os/leanboards.tsx` |
+| 7 | `/os/sprints` | `GET/POST /sprints`, `POST /sprints/{id}/retro-ai` | ~200 | none | **NEW** `mobile/app/os/sprints.tsx` |
+| 8 | `/os/lana` | `POST /business-os/lana/chat` | 114 (LanaAndPlans.jsx) | none | **NEW** `mobile/app/os/lana.tsx` |
+
+Total mobile LOC: **~980** across 7 new files + 1 hub link entry. Under the 1500 LOC / 15 file gate.
+
+### Delivered
+
+- **`mobile/app/os/index.tsx`** (hub) — GET `/os/overview` summary stats card + 7-tile deep-dive nav.
+- **`mobile/app/os/sops.tsx`** — list + `<Sheet>` add form with both Save + Generate (AI) actions.
+- **`mobile/app/os/roles.tsx`** — list + `<Sheet>` create with multi-line accountabilities parser.
+- **`mobile/app/os/scorecards.tsx`** — list + `<Sheet>` create with color-coded current-vs-target indicator.
+- **`mobile/app/os/leanboards.tsx`** — board picker + backlog / in-progress / done columns + per-card move-to buttons.
+- **`mobile/app/os/sprints.tsx`** — week picker + detail card (theme + goals + retro) + `showConfirm`-gated "Generate AI retro" action.
+- **`mobile/app/os/lana.tsx`** — full chat surface with user/assistant bubbles, KeyboardAvoidingView, POST `/business-os/lana/chat`.
+
+Every new file uses `<Header>`, `<RoleGate level="strict_admin">`, `<Loading>` / `<EmptyState>`, and has zero `Alert.alert` calls. The one destructive-flow trigger (`sprints/retro-ai`) uses `showConfirm` from Phase 30.4.
+
+### Drawer nav
+
+New group **Business OS** appended to `mobile/src/nav/adminNav.ts` with 8 T1 entries (hub + 7 deep-dives). Huddle entry routes to the existing pre-existing `mobile/app/huddle.tsx` — no duplicate. This is the first new top-level nav group added since the Phase 40e drawer parity refactor.
+
+### Tests
+- **NEW** `frontend/src/test/phase37-mobile-os-parity.test.jsx` · **62/62 green**. Locks file existence, `<Header>` titles, backend endpoint calls, root testIDs, `strict_admin` gating, zero `Alert.alert`, 7 hub tile links, drawer group + all 8 nav entries, and a regression net on the pre-existing huddle screen + Phase 35/36 nav entries.
+
+### Non-scope
+- Existing `mobile/app/huddle.tsx` still uses `Alert` (pre-existing Phase 30.4 debt). Not touched — surface link only.
+- No new backend endpoints, no web OS pages touched, no Phase 32/33/34/35/36/39/30.4/Live Radar/Phase 40e touch.
+
+---
+
+
 ## 2026-02-XX — Phase 36 · Mobile CFO Deep-Dives Parity (P1.2)
 
 ### Audit — six CFO deep-dives vs mobile state

@@ -227,6 +227,22 @@ export const ADMIN_NAV: NavGroup[] = [
       { label: "Widget",      route: "/admin/reviews/widget",    icon: "cube-outline",     tier: "t2", testID: "drawer-nav-reviews-widget" },
     ],
   },
+  // Phase 37 · Feb-2026 — Business OS parity (P1.3). New top-level
+  // group; mirrors the web `/os/*` surfaces.
+  {
+    key: "business_os",
+    label: "Business OS",
+    entries: [
+      { label: "OS Hub",       route: "/os",              icon: "apps-outline",           tier: "t1", testID: "drawer-nav-os-hub" },
+      { label: "SOPs",         route: "/os/sops",         icon: "document-text-outline",  tier: "t1", testID: "drawer-nav-os-sops" },
+      { label: "Roles",        route: "/os/roles",        icon: "people-outline",         tier: "t1", testID: "drawer-nav-os-roles" },
+      { label: "Scorecards",   route: "/os/scorecards",   icon: "trophy-outline",         tier: "t1", testID: "drawer-nav-os-scorecards" },
+      { label: "Huddle",       route: "/huddle",          icon: "chatbubbles-outline",    tier: "t1", testID: "drawer-nav-os-huddle" },
+      { label: "Lean Boards",  route: "/os/leanboards",   icon: "grid-outline",           tier: "t1", testID: "drawer-nav-os-leanboards" },
+      { label: "Sprints",      route: "/os/sprints",      icon: "flag-outline",           tier: "t1", testID: "drawer-nav-os-sprints" },
+      { label: "Lana AI",      route: "/os/lana",         icon: "sparkles-outline",       tier: "t1", testID: "drawer-nav-os-lana" },
+    ],
+  },
 ];
 
 // Convenience — flat list for validation/tests.
