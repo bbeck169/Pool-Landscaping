@@ -8,6 +8,65 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 34 · Endpoint Path Normalization (P0.3)
+
+### Audit — cross-client path drifts
+
+| # | Drift | Web calls | Mobile calls | Backend truth | Canonical (chosen) |
+| - | --- | --- | --- | --- | --- |
+| 1 | Public review-request token flow | `/api/reviews/public/r/*` (5 endpoints) | `/api/public/r/*` (returns 404) | Only `/api/reviews/public/r/*` is registered (via `reviews.py` mounted at `/reviews`) | **`/api/reviews/public/r/*`** — matches backend router mount |
+
+The Phase 31 audit also flagged `/api/service-report/*` (singular)
+vs `/api/service-reports/*` (plural) as a candidate drift. On
+inspection **this is not a drift** — the singular namespace hosts AI
+helper actions (`analyze-water-photo`, `recommend-chemicals`,
+`attach-note`) while the plural namespace holds report CRUD
+(`last-readings`, `send-recap`, `media/reorder`). Both web and mobile
+use both namespaces identically. Consolidating them into a single
+prefix is a follow-up hygiene phase, not a Phase 34 concern.
+
+### Fix
+
+- **New file** `backend/routers/reviews_public_alias.py` — mirrors the
+  5 canonical public review-request endpoints at the legacy
+  `/api/public/r/*` prefix. Each alias delegates directly to the
+  canonical handler (no logic duplication) and stamps two headers on
+  the response:
+
+      Deprecation: true
+      Link: </api/reviews/public/r/{...}>; rel="alternate"
+
+- **`backend/server.py`** — mounts the alias router after
+  `marketing_campaigns_router.public_router`.
+- **`mobile/app/portal/review-submit.tsx`** — the 3 client call-sites
+  (`api.get`, `api.post rating`, `api.post google-clicked`) migrated
+  from `/public/r/${token}/*` to `/reviews/public/r/${token}/*`.
+  A comment cross-refs this CHANGELOG entry so `git blame` explains
+  itself.
+- **Retention** — the alias router is a **one-release-cycle safety
+  net**. Delete once mobile builds catch up (Phase 34 + 1).
+
+### Tests
+- `backend/tests/test_phase34_endpoint_aliases.py` — 3 pytest cases,
+  all green. Asserts both paths return 200 with the same JSON shape,
+  the alias carries `Deprecation: true` + `Link` headers, and the
+  canonical does NOT (so devs can tell them apart at the wire).
+- `frontend/src/test/phase34-endpoint-normalization.test.jsx` —
+  10 source-inspection tests, all green. Locks in the mobile call-site
+  paths, the backend alias's 5 routes + Deprecation headers, and that
+  the alias imports from the canonical module (no duplicated logic).
+
+### Non-scope
+Did not touch Phase 32 (CI), 39 (mobile ToS), 30.4 (ConfirmModal),
+Live Radar, or Phase 40e. No web app code changed — only backend +
+mobile + tests. Any pre-existing full-suite vitest flakes
+(`slice-p17-additions`, `moderation-bulk`, `scorecard-leaderboard`,
+`lumino-pay-flow` — all pass in isolation) are unchanged by this
+phase.
+
+---
+
+
 ## 2026-02-XX — Phase 33 · Test Hygiene (P0.2)
 
 Cleaned up every red / empty vitest file so CI can enforce a green

@@ -525,6 +525,15 @@ api_router.include_router(public_social.router)
 # these routes are unauthenticated.
 api_router.include_router(marketing_campaigns_router.public_router)
 
+# Phase 34 · Feb 2026 — Endpoint Path Normalization compat alias.
+# Mobile clients call the 5 public review-request endpoints at
+# ``/api/public/r/*``; the canonical path is ``/api/reviews/public/r/*``.
+# Alias router mirrors the canonical handlers with a ``Deprecation: true``
+# header. See ``routers/reviews_public_alias.py`` — deletable once mobile
+# builds catch up (one release cycle after this phase).
+from routers import reviews_public_alias  # noqa: E402
+api_router.include_router(reviews_public_alias.router)
+
 app.include_router(api_router)
 app.include_router(public_social.router)
 

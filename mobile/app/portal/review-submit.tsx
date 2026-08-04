@@ -52,7 +52,10 @@ export default function ReviewSubmitScreen() {
     if (!token) return;
     (async () => {
       try {
-        const data = await api.get(`/public/r/${token}`);
+        // Phase 34 · Feb 2026 — canonical path is `/reviews/public/r/*`.
+        // The pre-Phase-34 alias `/public/r/*` still works (backend adds
+        // a Deprecation: true header) but should not be used going forward.
+        const data = await api.get(`/reviews/public/r/${token}`);
         setReqData(data);
       } catch (e: any) {
         setError(e?.message || "Invalid or expired review link.");
@@ -67,7 +70,7 @@ export default function ReviewSubmitScreen() {
     setSubmitting(true);
     setError("");
     try {
-      const res = await api.post(`/public/r/${token}/rating`, {
+      const res = await api.post(`/reviews/public/r/${token}/rating`, {
         star_rating: stars,
         comment: comment.trim() || undefined,
       });
@@ -81,7 +84,7 @@ export default function ReviewSubmitScreen() {
 
   const trackGoogleClick = useCallback(async () => {
     if (!token) return;
-    try { await api.post(`/public/r/${token}/google-clicked`, {}); } catch { /* analytics — silent fail */ }
+    try { await api.post(`/reviews/public/r/${token}/google-clicked`, {}); } catch { /* analytics — silent fail */ }
   }, [token]);
 
   if (loading) {
