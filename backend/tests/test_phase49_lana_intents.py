@@ -45,6 +45,110 @@ def test_classify_chat_fallback():
     assert r.kind == "chat"
 
 
+# ── Phase 49 hotfix (P1) — natural phrasing variants ─────────────────
+def test_classify_schedule_intent_when_before_who_variant():
+    """Exact failing message from the tester: time-clause precedes the
+    customer clause. Must classify as schedule_job."""
+    from services.lana.intent import classify
+    now = datetime(2026, 2, 15, 12, 0, tzinfo=timezone.utc)  # Sunday
+    r = classify(
+        "schedule a pool cleaning for tomorrow at 9am for customer Smith",
+        now=now,
+    )
+    assert r.kind == "schedule_job", r
+    assert r.args["service_type"] == "Pool Cleaning"
+    assert "smith" in r.args["customer_name"].lower()
+    # "tomorrow at 9am" resolved against RELATIVE_BASE=2026-02-15 → 2026-02-16 09:00 UTC.
+    assert r.args["scheduled_date"].startswith("2026-02-16")
+
+
+def test_classify_schedule_intent_accepts_four_phrasings():
+    """Guard against regressions across all documented orderings /
+    ``for customer`` variants."""
+    from services.lana.intent import classify
+    now = datetime(2026, 2, 15, 12, 0, tzinfo=timezone.utc)
+    cases = [
+        # who-before-when
+        "schedule a pool clean for Alan Chesebrough Wednesday at 10am",
+        # when-before-who
+        "schedule a pool cleaning for tomorrow at 9am for customer Smith",
+        # 'for customer' prefix, who-first ordering
+        "schedule a repair for customer Alan on Monday at 11am",
+        # bare service + 'book' verb + when-before-who
+        "book an inspection for tomorrow at 2pm for customer Smith",
+    ]
+    for msg in cases:
+        r = classify(msg, now=now)
+        assert r.kind == "schedule_job", (msg, r)
+        assert r.args["customer_name"]
+        assert r.args["scheduled_date"]
+
+
+# ── Phase 49 hotfix (P0) — cron actually fires end-to-end ─────────────
+def test_reminder_cron_tick_fires_and_marks_row_sent(monkeypatch, caplog):
+    """Regression for the ``no current event loop in thread 'asyncio_0'``
+    bug. Drives the cron path (not the fire helper) and asserts the
+    dry-run log line + row state flip."""
+    import asyncio as _asyncio
+    import logging as _logging
+    monkeypatch.delenv("LANA_SMS_LIVE", raising=False)
+
+    from services.lana import reminder_cron
+
+    row = {
+        "id": "r_cron", "user_id": "u", "phone": "+14805551234",
+        "text": "call alan", "remind_at": "2020-01-01T00:00:00+00:00",
+    }
+    admin_reminders = MagicMock()
+    admin_reminders.find.return_value.to_list = AsyncMock(return_value=[row])
+    admin_reminders.update_one = AsyncMock()
+    fake_db = MagicMock(admin_reminders=admin_reminders)
+
+    # Patch the ``from server import db`` inside _tick to return our fake.
+    with patch("server.db", fake_db, create=True):
+        with caplog.at_level(_logging.INFO, logger="lana.reminders"):
+            _asyncio.get_event_loop().run_until_complete(reminder_cron._tick())
+
+    # Row must have flipped to sent=True with dry_run mode.
+    setter = admin_reminders.update_one.await_args.args[1]["$set"]
+    assert setter["sent"] is True
+    assert setter["sent_mode"] == "dry_run"
+    # DRY RUN log line must have been emitted.
+    dry_run_msgs = [
+        r.getMessage() for r in caplog.records
+        if "DRY RUN" in r.getMessage()
+    ]
+    assert dry_run_msgs, "expected a DRY RUN log line from services.lana.reminders"
+
+
+def test_reminder_cron_uses_asyncio_scheduler_native_coroutine_pattern():
+    """Regression guard against the earlier buggy _run wrapper that
+    called ``asyncio.get_event_loop()`` from an APScheduler worker
+    thread. The cron module must feed AsyncIOScheduler a coroutine
+    function directly."""
+    import inspect
+    import re as _re
+    from services.lana import reminder_cron
+    src = inspect.getsource(reminder_cron)
+    # Strip triple-quoted docstrings + line comments — the module
+    # docstring explains WHY the earlier get_event_loop wrapper was
+    # buggy and we only want to catch RUNTIME references.
+    code_only = _re.sub(r'"""[\s\S]*?"""', "", src)
+    code_only = _re.sub(r"#.*$", "", code_only, flags=_re.MULTILINE)
+    # Must NOT call get_event_loop() (thread-loop bug).
+    assert "get_event_loop" not in code_only, \
+        "cron must not call asyncio.get_event_loop from the tick"
+    # Must NOT try to bridge sync→async manually.
+    assert "run_until_complete" not in code_only
+    # Must pass a coroutine function to add_job.
+    assert "async def _tick" in code_only
+    # add_job called with the _tick coroutine function as the first
+    # positional arg (whitespace-tolerant so the exact formatting can
+    # move without tripping the guard).
+    m = _re.search(r"add_job\(\s*_tick\b", code_only)
+    assert m, "add_job must be called with _tick as the first positional arg"
+
+
 def test_looks_destructive_catches_delete_and_cancel():
     from services.lana.intent import looks_destructive
     assert looks_destructive("delete job 123")

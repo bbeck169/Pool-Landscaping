@@ -36,17 +36,38 @@ class LanaIntent:
         return {"kind": self.kind, "args": self.args, "confidence": self.confidence}
 
 
-_SCHEDULE_RE = re.compile(
+_SCHEDULE_RE_STANDARD = re.compile(
     r"^\s*(?:lana[,\s]+)?(?:please\s+)?"
     r"(?:schedule|book|add(?:\s+a)?)\s+"
     r"(?:a\s+)?(?P<service>pool clean|pool cleaning|repair|maintenance|equipment check|"
     r"tile clean|acid wash|drain|filter clean|inspection|service call|visit)\s+"
-    r"for\s+(?P<who>.+?)\s+"
+    r"for\s+(?:customer\s+)?(?P<who>.+?)\s+"
     r"(?:on\s+|at\s+|this\s+|next\s+|tomorrow|today|"
     r"(?=(?:mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)))"
     r"(?P<when>.+?)\s*[.!?]?\s*$",
     re.IGNORECASE,
 )
+
+# Phase 49 hotfix (P1) — natural phrasing "when-before-who":
+#   "schedule a pool cleaning for tomorrow at 9am for customer Smith"
+# Tried BEFORE the standard regex so the greedy standard match can't
+# incorrectly swallow a when-first phrasing (would capture "tomorrow"
+# as ``who`` and "at 9am for customer Smith" as ``when``).
+_SCHEDULE_RE_WHENFIRST = re.compile(
+    r"^\s*(?:lana[,\s]+)?(?:please\s+)?"
+    r"(?:schedule|book|add)\s+"
+    r"(?:an?\s+)?(?P<service>pool clean|pool cleaning|repair|maintenance|equipment check|"
+    r"tile clean|acid wash|drain|filter clean|inspection|service call|visit)\s+"
+    r"for\s+(?P<when>(?:tomorrow|today|this\s+\S+|next\s+\S+|"
+    r"(?:mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\S*)"
+    r"(?:\s+at\s+\S+)?)"
+    r"\s+for\s+(?:customer\s+)?(?P<who>.+?)\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+# Retained under the original name for callers that expected it (tests
+# import the compiled patterns directly for coverage).
+_SCHEDULE_RE = _SCHEDULE_RE_STANDARD
 
 _REMINDER_RE = re.compile(
     r"^\s*(?:lana[,\s]+)?"
@@ -112,20 +133,23 @@ def classify(message: str, *, now: Optional[datetime] = None) -> LanaIntent:
                 confidence=0.9,
             )
 
-    # 2) schedule_job — needs service, customer, when — all parseable.
-    m = _SCHEDULE_RE.match(text)
-    if m:
-        when_iso = parse_when(m.group("when"), now=now)
-        if when_iso:
-            return LanaIntent(
-                "schedule_job",
-                args={
-                    "service_type": _norm_service(m.group("service")),
-                    "customer_name": m.group("who").strip(),
-                    "scheduled_date": when_iso,
-                },
-                confidence=0.85,
-            )
+    # 2) schedule_job — try when-before-who FIRST so the greedy
+    #    standard regex can't swallow that phrasing incorrectly.
+    #    Phase 49 hotfix (P1) accepts both orderings.
+    for _re in (_SCHEDULE_RE_WHENFIRST, _SCHEDULE_RE_STANDARD):
+        m = _re.match(text)
+        if m:
+            when_iso = parse_when(m.group("when"), now=now)
+            if when_iso:
+                return LanaIntent(
+                    "schedule_job",
+                    args={
+                        "service_type": _norm_service(m.group("service")),
+                        "customer_name": m.group("who").strip(),
+                        "scheduled_date": when_iso,
+                    },
+                    confidence=0.85,
+                )
 
     # 3) add_todo — action with no parseable time.
     m = _TODO_RE.match(text)

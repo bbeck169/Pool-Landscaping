@@ -8,7 +8,49 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
-## 2026-02-XX — Phase 49 · Lana AI voice, schedule intent, todos, SMS reminders
+## 2026-02-XX — Phase 49 hotfix · Cron thread-loop bug + regex phrasing coverage + credential drift
+
+Tester report caught 3 issues in the Phase 49 delivery. All addressed; scope not expanded.
+
+### Blocker 1 (P0) — reminder cron never fires — **FIXED**
+
+The old `reminder_cron._run()` wrapped the coroutine in a sync callable that called `asyncio.get_event_loop()` from an APScheduler worker thread. Every minute the tick logged `WARNING:lana.reminders.cron: tick failed: There is no current event loop in thread 'asyncio_0'.` and the row never flipped. Dry-run gate unreachable.
+
+**Fix chosen: Option (c).** The shared scheduler in `server.py:654` is confirmed `AsyncIOScheduler(timezone="UTC")` (line 7 imports `from apscheduler.schedulers.asyncio import AsyncIOScheduler`). `AsyncIOScheduler` runs jobs on its own event loop and natively supports coroutine functions as job callables — no thread/loop bridging needed. The buggy sync `_run()` wrapper is deleted entirely; `add_job(_tick, IntervalTrigger(minutes=1), ...)` now receives the async `_tick` coroutine function directly.
+
+Verified end-to-end: driving `reminder_cron._tick()` with a mocked DB emits `[lana.reminders] DRY RUN — would SMS user=u phone=+14805551234 text='call alan'` and flips the row to `{sent: True, sent_mode: "dry_run"}`.
+
+### Blocker 2 (P1) — intent regex too strict — **FIXED**
+
+`_SCHEDULE_RE` required `who` before `when`, and was greedy — the tester's exact message `"schedule a pool cleaning for tomorrow at 9am for customer Smith"` misclassified as `chat` (or worse, matched with `who="tomorrow"` and `when="at 9am for customer Smith"`).
+
+**Fix:** split into two regexes — `_SCHEDULE_RE_WHENFIRST` for the tester's phrasing, `_SCHEDULE_RE_STANDARD` for the original. Classifier tries when-first FIRST so the greedy standard match can't swallow a when-first message. Both regexes accept `for customer <name>` prefix and `an?` article variants (`book an inspection`, `schedule a pool clean`). No LLM fallback — classifier stays deterministic per instructions.
+
+Verified: `"schedule a pool cleaning for tomorrow at 9am for customer Smith"` → `kind=schedule_job, customer_name="Smith", service_type="Pool Cleaning", scheduled_date=2026-02-16T09:00:00+00:00`.
+
+### Doc drift (P2) — `test_credentials.md` — **FIXED**
+
+Verified all 5 seed accounts via direct `db.users` lookup. Two drifts corrected:
+
+| Email | Was documented as | Actual live role | Corrected |
+|---|---|---|---|
+| `admin@aquaterra.com` | `customer` | **`admin`** | ✅ |
+| `carlos@aquaterra.com` | `admin` | **`technician`** | ✅ |
+| `super@aquaterra.com` | `super_admin` | `super_admin` | (unchanged) |
+| `manager@aquaterra.com` | `admin` | `admin` | (unchanged) |
+| `customer@aquaterra.com` | `customer` | `customer` | (unchanged) |
+
+Also added `landscaper@aquaterra.com` (role=technician) explicitly — it's the seed the Phase 41.1b work already flagged. `mike@aquaterra.com` remains missing from the DB (annotated for Phase 41.1b).
+
+### Verification
+- `backend/tests/test_phase49_lana_intents.py` → **19/19 pass** in 4.97s (previous 15 + 4 new tests: exact tester message, 4-phrasing variants, cron end-to-end DRY RUN, static guard against `get_event_loop` regression).
+- Frontend vitest suite still **100% green** — no mobile files touched.
+
+### Non-scope
+- Phase 50 untouched. Phase 41.1b / 41.2 / 42.4 / 43 / 46 remain queued.
+
+---
+
 
 Full-stack Lana upgrade. Voice input on mobile, natural-language intent parsing on the backend, per-user admin todos, single-fire SMS reminders on a minute cadence.
 
