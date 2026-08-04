@@ -77,8 +77,17 @@
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
         }
+      ],
+      [
+        "@rnmapbox/maps",
+        {
+          "RNMapboxMapsDownloadToken": "$EXPO_PUBLIC_MAPBOX_TOKEN"
+        }
       ]
     ],
+    "extra": {
+      "mapboxToken": "$EXPO_PUBLIC_MAPBOX_TOKEN"
+    },
     "experiments": {
       "typedRoutes": true
     }

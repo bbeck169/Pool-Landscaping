@@ -8,6 +8,104 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 38b · Mobile Live Tech-Position Pins (P1.4b)
+
+> **⚠️ DEV CLIENT REBUILD REQUIRED.** This phase adds the native
+> `@rnmapbox/maps` module. **Plain Expo Go will not load it.** The
+> mobile dispatch board renders a graceful fallback banner
+> (`dispatch-live-map-fallback`) in Expo Go — the rest of the
+> board keeps working — but to actually see the live map you must:
+>
+> 1. Get a Mapbox public token from https://account.mapbox.com/access-tokens/
+> 2. Set `EXPO_PUBLIC_MAPBOX_TOKEN=pk.…` in `mobile/.env`
+> 3. `cd mobile && yarn install`
+> 4. `npx expo prebuild --clean`
+> 5. Rebuild the dev client via `eas build --profile development --platform {ios,android}`
+>
+> Full step-by-step + troubleshooting + rollback lives in
+> `mobile/EXPO_GO_RUNBOOK.md` under the "Phase 38b" heading.
+
+### Package + config
+
+- **`@rnmapbox/maps@^10.1.34`** added to `mobile/package.json`
+  (chosen because it's the canonical Mapbox binding for Expo SDK 54
+  / RN 0.81 / new architecture — the same version was chosen in
+  the Phase 38b pre-flight report).
+- **`mobile/app.json`** — added the `@rnmapbox/maps` config plugin
+  entry with `RNMapboxMapsDownloadToken: "$EXPO_PUBLIC_MAPBOX_TOKEN"`
+  and an `extra.mapboxToken` field so runtime code can read the
+  token from `Constants.expoConfig.extra`.
+- **`mobile/.env`** — appended a documented
+  `EXPO_PUBLIC_MAPBOX_TOKEN=` placeholder (blank by default;
+  wrapper renders the "set your token" banner until it's filled).
+
+### Delivered
+
+- **NEW** `mobile/src/components/dispatch/LiveTechPinsMap.tsx`
+  (~155 LOC) — the real Mapbox map. Renders `<MapboxGL.MapView>` +
+  per-tech `<PointAnnotation>` pins with deterministic color +
+  initials over a white ring. Ships a top-right theme toggle that
+  cycles `streets-v12 → satellite-streets-v12 → dark-v11` and
+  persists the choice under `dispatch_map_style_v1`. GPS-feed-
+  offline chip rendered when the parent flags offline.
+- **NEW** `mobile/src/components/dispatch/LiveTechPinsWrapper.tsx`
+  (~140 LOC) — Expo-Go-safe wrapper. Dynamic `require` of the map
+  module inside try/catch; on failure renders the
+  `dispatch-live-map-fallback` banner pointing at the runbook.
+  Owns the 15-second poll on `GET /api/gps/live-positions`
+  (`useFocusEffect` starts/stops polling on tab focus + cleanup on
+  unmount). Owns the collapsible ~40%-viewport top section with
+  chevron toggle persisted under `dispatch_map_expanded_v1`.
+  Marks pins `is_stale` on 4xx/5xx or empty poll rather than
+  blanking the map (keeps last-known context).
+- **`mobile/app/(app)/dispatch/board.tsx`** — wired
+  `<LiveTechPinsWrapper />` at the top of the ScrollView, above
+  the Phase 38 tools row. Pin taps navigate to
+  `/dispatch/shift-route` pre-populated with the tapped tech's ID
+  + name.
+- **`mobile/EXPO_GO_RUNBOOK.md`** — extended with a full Phase 38b
+  section: one-time enable steps, troubleshooting (3 common
+  errors), CI note, and rollback.
+
+### Error surfaces
+
+| Scenario | Rendered |
+| --- | --- |
+| Expo Go / dev client not rebuilt | `dispatch-live-map-fallback` banner + full runbook pointer |
+| Dev client OK but no token | `dispatch-live-map-no-token` banner inside the map slot |
+| `/api/gps/live-positions` 4xx/5xx | `dispatch-live-map-offline-chip` in-map + existing pins dimmed |
+| Empty poll after non-empty | Same "stale" dimming |
+
+### Tests
+
+- **NEW** `frontend/src/test/phase38b-live-pins.test.jsx` ·
+  **24/24 green**. Locks Mapbox dep version, app.json plugin +
+  extra config, `.env` placeholder, all 5 tile-style rules, token
+  read from safe source + no hard-coded token, wrapper's dynamic
+  require + try/catch pattern, 15-second polling on
+  `/gps/live-positions`, `useFocusEffect` cleanup, AsyncStorage
+  persistence keys (both map style + expanded), all 6 required
+  testIDs, zero `Alert.alert`, ShiftRouteDialog nav on pin tap,
+  and the runbook heading + step count.
+- **UPDATED** `frontend/src/test/phase38-mobile-dispatch-parity.test.jsx` ·
+  The Phase 38 "no new mapping dep" guardrail (which was designed
+  to catch accidental drift) has been reframed as a Phase 38b
+  landing note — asserts the Phase 38b dep IS now present + that
+  the wrapper is wired. 31/31 green.
+- **Full suite** 1148/1152 pass (1 skip, 2 pre-existing flakes
+  unrelated to Phase 38b).
+- **`yarn eslint src`** — clean (Phase 40b guardrail intact).
+
+### Non-scope
+
+No web dispatch touched. No `/api/gps/live-positions` shape
+change. No map integration on other mobile screens. No
+`Alert.alert` anywhere. No touch to Phase 32/33/34/35/36/37/38
+core deliverables beyond the intentional wrapper wire-in.
+
+---
+
+
 ## 2026-02-XX — Phase 38 · Mobile Dispatch Parity (P1.4)
 
 ### Audit — 6 dispatch surfaces vs mobile state

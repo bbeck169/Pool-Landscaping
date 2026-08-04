@@ -26,6 +26,7 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import { TechLoadStrip, TechLoad } from "@/src/components/dispatch/TechLoadStrip";
 import { UnroutedPanel, UnroutedPin } from "@/src/components/dispatch/UnroutedPanel";
+import { LiveTechPinsWrapper } from "@/src/components/dispatch/LiveTechPinsWrapper";
 
 type Job = {
   id: string;
@@ -315,6 +316,16 @@ export default function DispatchBoardMobile() {
             </Pressable>
           </View>
         ) : null}
+
+        {/* Phase 38b · Feb-2026 — Live tech pins on Mapbox (dev-client only). */}
+        <LiveTechPinsWrapper
+          onNavigateToShift={(uid, uname) => {
+            router.push({
+              pathname: "/dispatch/shift-route",
+              params: { source: uid, sourceName: uname, scope: "whole_route" },
+            } as any);
+          }}
+        />
 
         {/* Phase 38 · Feb-2026 — Dispatch parity (P1.4) tools row. */}
         <View style={styles.p38Tools} testID="dispatch-tools-row">

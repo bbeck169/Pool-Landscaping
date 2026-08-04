@@ -110,3 +110,93 @@ short-term testing path.
 - Backend live: `/api/openapi.json` returns 200 with 1,397 paths
 - All 4 seed logins return 200 via curl (see
   `backend/tests/test_demo_login_regression.py`)
+
+---
+
+## Phase 38b · Feb-2026 — Live dispatch map (Mapbox / dev-client only)
+
+The dispatch board's **Live Positions** section uses
+[`@rnmapbox/maps@^10.1.34`](https://github.com/rnmapbox/maps) — a
+native module. **This does NOT work in plain Expo Go**; you must
+rebuild the dev client. Devs still on Expo Go see a graceful
+"Live map requires the dev client" banner (testID
+`dispatch-live-map-fallback`) and the rest of the board keeps
+working.
+
+### One-time enable
+
+1. **Get a Mapbox access token** — sign in at
+   https://account.mapbox.com/access-tokens/ and copy the default
+   public token (starts with `pk.`). The free tier is 50k monthly
+   loads — plenty for this app.
+
+2. **Set the env var** in `mobile/.env`:
+
+   ```
+   EXPO_PUBLIC_MAPBOX_TOKEN=pk.your_actual_token_here
+   ```
+
+   The token is already referenced from `mobile/app.json` under
+   `plugins → @rnmapbox/maps → RNMapboxMapsDownloadToken` and
+   `extra.mapboxToken`. Both read the same env var at prebuild
+   time.
+
+3. **Install the dep** (already added to `package.json` — run once
+   locally if you're on a fresh checkout):
+
+   ```bash
+   cd mobile
+   yarn install
+   ```
+
+4. **Prebuild + rebuild the dev client**:
+
+   ```bash
+   cd mobile
+   npx expo prebuild --clean
+   # then rebuild the native dev client — pick one:
+   eas build --profile development --platform ios
+   eas build --profile development --platform android
+   ```
+
+   The prebuild step mutates `ios/` + `android/` folders with the
+   Mapbox config plugin. Commit the resulting native folders IF
+   your workflow tracks them; otherwise `.gitignore` them and let
+   EAS regenerate on each build.
+
+5. **Verify** by opening the app on the freshly-installed dev
+   client, going to Dispatch → Board. You should see the Live
+   Positions section with the map rendered (or "GPS feed offline"
+   if `/api/gps/live-positions` isn't returning data yet). The
+   fallback banner should NOT show.
+
+### Troubleshooting
+
+- **"Native module RNMBXModule not found"** — you're still on Expo
+  Go. Run steps 3–4 above.
+- **Empty map with no tiles** — token isn't reaching the build.
+  Verify with `npx expo config --json | grep mapbox` — you should
+  see the token literal, not `$EXPO_PUBLIC_MAPBOX_TOKEN`.
+- **"Live map unavailable — set EXPO_PUBLIC_MAPBOX_TOKEN"** —
+  banner rendered by the wrapper when it can't find the token at
+  runtime. Restart Metro after editing `.env`.
+
+### CI note
+
+The prebuild step is heavy. If you're running `expo prebuild` in
+CI and want to skip Mapbox specifically (e.g. because Mapbox's
+private token download requires auth), set
+`NO_MAPBOX_PREBUILD=true` and add a small guard to the config
+plugin loader.
+
+### Rollback
+
+To disable the map entirely without touching mobile code:
+- Set `EXPO_PUBLIC_MAPBOX_TOKEN=` (blank) and rebuild. The wrapper
+  will render `dispatch-live-map-no-token` and the pins won't fetch.
+- To fully remove: `yarn remove @rnmapbox/maps` + delete the plugin
+  entry from `app.json` + delete
+  `mobile/src/components/dispatch/LiveTechPinsMap.tsx` and
+  `LiveTechPinsWrapper.tsx` + drop the import from
+  `mobile/app/(app)/dispatch/board.tsx`.
+

@@ -137,18 +137,20 @@ describe("Phase 38 · Phase 30.4 completeness patch on huddle.tsx", () => {
   });
 });
 
-describe("Phase 38 · Live-pin layer explicitly deferred (38b)", () => {
-  it("no react-native-mapbox / new mapping dep was added", () => {
+describe("Phase 38 · Live-pin layer — Phase 38b landing note", () => {
+  it("Phase 38b subsequently added @rnmapbox/maps — this is the intended landing", () => {
     const pkg = readFileSync(resolve(MOBILE, "package.json"), "utf8");
-    expect(pkg).not.toMatch(/@rnmapbox\/maps/);
-    expect(pkg).not.toMatch(/react-native-mapbox/);
-    // The pre-existing dep (react-native-maps) is unchanged — its
-    // presence is fine; a new one would fail this test.
+    // The pre-existing dep (react-native-maps) is still there.
     expect(pkg).toContain('"react-native-maps"');
+    // Phase 38b added the Mapbox package on top per the follow-up phase.
+    // Test intentionally documents this transition — see CHANGELOG.
+    expect(pkg).toMatch(/"@rnmapbox\/maps"\s*:\s*"\^?10\./);
   });
-  it("no new LivePins component landed in the board file", () => {
+  it("board file references the wrapper (Phase 38b) — no direct LivePins raw layer", () => {
     const src = R("app/(app)/dispatch/board.tsx");
+    // Direct LiveTechPinsLayer (web-side class name) shouldn't appear on mobile.
     expect(src).not.toMatch(/LiveTechPinsLayer/);
-    expect(src).not.toMatch(/LivePins/);
+    // But the Phase 38b wrapper SHOULD be wired now.
+    expect(src).toContain("LiveTechPinsWrapper");
   });
 });
