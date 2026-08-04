@@ -24,7 +24,11 @@ from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException
 
 from config import db
-from services.lumino_zapier_dispatcher import dispatch_invoice_link_request
+# Phase 47 · Feb-2026 — the LZ2 Zapier dispatcher import was removed
+# with the direct-Stripe migration. The dispatcher module itself stays
+# in-tree (see services.lumino_zapier_dispatcher) as an operator-only
+# rollback path gated on PAYMENTS_PROVIDER_MODE, but the router body
+# does NOT reference it any more.
 from utils import get_current_user
 
 router = APIRouter()

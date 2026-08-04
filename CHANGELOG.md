@@ -8,7 +8,37 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
-## 2026-02-XX — Phase 48.1 · Overview-tab reorder (name → contacts → address)
+## 2026-02-XX — Phase 47e · Payments provider kill-switch + regression sweep
+
+Final slice of the direct-Stripe migration. Formalises the "Lumino/Zapier stays in-tree but dark" rollback path and adds a CI-friendly regression sweep so a future rewrite can't accidentally drag a hosted-link call back onto the customer-facing pay path.
+
+### `backend/services/payments/provider_mode.py` (new)
+- `payments_provider_mode() -> str` — reads `PAYMENTS_PROVIDER_MODE` env, normalises typos back to `"stripe_direct"` so a stray env value (e.g. `"stripedirect"`, `"zaper"`, empty) can't silently route real customers to a dark provider.
+- `is_stripe_direct()` / `is_dark_provider_mode()` — convenience predicates.
+- Default: `"stripe_direct"`. Documented values: `"stripe_direct"`, `"lumino"`, `"zapier"`. Setting the env to `"lumino"` or `"zapier"` is an **operator-only rollback path** — no frontend UX depends on it.
+
+### `backend/tests/test_phase47e_no_lumino_in_pay_path.py` (new)
+5 tests:
+1. **Regression sweep** — greps 5 pay-path modules (`routers/lumino_link_request.py`, `routers/customer_portal.py`, `routers/customers.py`, `routers/stripe_router.py`, `services/payments/stripe_charge.py`) with docstrings/comments stripped and asserts none contain `dispatch_invoice_link_request`, `lumino_zapier_dispatcher`, `lumino_provider`, `zapier_invoice_link_webhook_url`, or `zapier_catch_hook`. Immediately caught a stale `from services.lumino_zapier_dispatcher import dispatch_invoice_link_request` in `routers/lumino_link_request.py:27` left over from the Phase 47 rewrite — now removed.
+2. Env default is `stripe_direct`.
+3. Typo / unknown env values fall back to `stripe_direct`.
+4. Documented dark values (`lumino`, `Zapier`, `LUMINO`) are accepted case-insensitively.
+5. Dark modules (`services.lumino_zapier_dispatcher`, `services.payments.lumino_provider`, `routers.lumino_backfill`, `routers.lumino_invoice_link_callback`) all still import cleanly — the rollback path is intact.
+
+### `backend/routers/lumino_link_request.py`
+- Removed stale `from services.lumino_zapier_dispatcher import dispatch_invoice_link_request` (Phase 47 dead import). The dispatcher module itself remains in-tree as the operator-only rollback path.
+
+### Preserved / non-scope
+- `lumino_payment_url` fixture rename on other test files (`test_invoice_edit.py`, `test_lumino_backfill.py`, `test_lz2_dispatcher.py`, `test_lumino_invoice_link_callback.py`) — deliberately NOT touched. Those tests are the coverage for the dark Lumino modules and reference the old key name as part of testing the dark path itself. The **live** fixture rename that mattered (in `frontend/src/test/invoice-edit-modal.test.jsx`) landed in Phase 47.
+- No frontend / mobile changes.
+- Env var not documented in a `.env.example` deliberately — kept as an operator-only lever, not a customer-config surface.
+
+### Verification
+- `backend/tests/test_phase47e_no_lumino_in_pay_path.py` → **5/5 pass**.
+- Combined Phase 47 + 47d + 47e backend suite → **23/23 pass in 0.49s**.
+
+---
+
 
 Small visual follow-up to Phase 48. User's revised mockup showed the full contact section moving directly below the customer name in the main column (superseding the earlier top-right column idea).
 
