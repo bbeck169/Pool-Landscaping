@@ -79,7 +79,10 @@ describe("Login — Demo Accounts Section", () => {
     expect(getByTestId("demo-login-super-admin-btn")).toBeTruthy();
     expect(getByTestId("demo-login-admin-btn")).toBeTruthy();
     expect(getByTestId("demo-login-customer-btn")).toBeTruthy();
-    expect(getByTestId("demo-login-pool-tech-btn")).toBeTruthy();
+    // The demo tech account was renamed from "Pool Tech" →
+    // "Landscape Tech" (email swapped from mike@ → landscaper@) in
+    // an earlier session; testID follows the label kebab-case.
+    expect(getByTestId("demo-login-landscape-tech-btn")).toBeTruthy();
   });
 
   it("hides demo login buttons when EXPO_PUBLIC_ENV=production", () => {

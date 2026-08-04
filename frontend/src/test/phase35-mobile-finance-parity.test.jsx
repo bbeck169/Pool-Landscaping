@@ -28,6 +28,7 @@ const SURFACES = [
     title: "Recurring Jobs",
     endpoints: ['api.get("/recurring-jobs")', "/recurring-jobs/${row.id}", "/generate?through="],
     testId: "recurring-jobs-page",
+    usesPrimitive: true,
   },
   {
     name: "Auto-Billing config",
@@ -70,6 +71,7 @@ const SURFACES = [
     title: "Vendor Bills",
     endpoints: ['api.get("/cfo/bills")', 'api.post("/cfo/bills"'],
     testId: "vendor-bills-page",
+    usesPrimitive: true,
   },
 ];
 
@@ -85,10 +87,19 @@ describe("Phase 35 · Mobile Finance Ops Parity — surface files", () => {
 
       if (s.title) {
         it(`renders a Header whose title text contains "${s.title}"`, () => {
-          // Forgiving check — Header title may be a JSX expression
-          // (e.g. `title={doc?.number || "Master Invoice"}`) or a
-          // literal `title="Recurring Jobs"`. Both accepted.
-          expect(src).toMatch(/<Header\b/);
+          // Phase 41.2 · Feb-2026 — pages migrated onto the shared
+          // ``<AdminListPage>`` primitive no longer mount `<Header>`
+          // inline; the primitive owns it. Accept either the raw
+          // ``<Header>`` OR ``<AdminListPage>`` shape. The title text
+          // MUST still appear in source (as a literal or JSX expr).
+          if (s.usesPrimitive) {
+            expect(src).toMatch(/<AdminListPage\b/);
+          } else {
+            // Forgiving check — Header title may be a JSX expression
+            // (e.g. `title={doc?.number || "Master Invoice"}`) or a
+            // literal `title="Recurring Jobs"`. Both accepted.
+            expect(src).toMatch(/<Header\b/);
+          }
           expect(src).toContain(s.title);
         });
       }

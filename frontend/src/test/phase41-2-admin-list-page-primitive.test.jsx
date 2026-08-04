@@ -59,7 +59,7 @@ const MIGRATED = [
   },
 ];
 
-const _read = (rel: string) => readFileSync(resolve(MOBILE, rel), "utf8");
+const _read = (rel) => readFileSync(resolve(MOBILE, rel), "utf8");
 
 describe("Phase 41.2 · AdminListPage primitive", () => {
   it("primitive file exists at the expected path", () => {
@@ -136,7 +136,7 @@ describe("Phase 41.2 · migrated pages import and use AdminListPage", () => {
 describe("Phase 41.2 · LOC reduction gate", () => {
   // Guard against future untangling of the primitive — if someone adds
   // dozens of lines back into a migrated page, this budget catches it.
-  const BUDGETS: Record<string, number> = {
+  const BUDGETS = {
     "app/finance/recurring-jobs.tsx": 170,
     "app/finance/vendor-bills.tsx": 220,
     "app/os/scorecards.tsx": 110,
