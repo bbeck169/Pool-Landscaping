@@ -4,10 +4,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from "react-router-dom";
-import {
-  ArrowLeft, Plus, Trash2, Upload, FileText, Users,
-  AlertTriangle, CheckCircle2, Download, Printer,
-} from "lucide-react";
+import { ArrowLeft, Trash2, Upload, FileText, Users, AlertTriangle, CheckCircle2, Download, Printer } from "lucide-react";
 import { api, api_base } from "@/api";
 import { colors } from "@/theme";
 import { Gate } from "@/hooks/usePermissions";
@@ -351,7 +348,7 @@ export function CheckPayrollImport() {
                           const tok = await api.post(`/checks/batch/${result.batch.id}/print-token`);
                           window.open(`${api_base()}/checks/batch/${result.batch.id}/print?token=${encodeURIComponent(tok.token)}`,
                                        "_blank");
-                        } catch (e) { /* silent — button surfaces its own error */ }
+                        } catch (_e) { /* silent — button surfaces its own error */ }
                     }}
                     className="px-4 py-2 text-sm font-bold rounded-xl flex items-center gap-1"
                     style={{ backgroundColor: colors.brand, color: "#fff" }}

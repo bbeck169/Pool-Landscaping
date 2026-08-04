@@ -169,5 +169,5 @@ export default function useTelephonyLiveEvents() {
       if (retryTimer) clearTimeout(retryTimer);
       try { es && es.close(); } catch {}
     };
-  }, [user?.id, user?.role]);
+  }, [user?.id, user?.role]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: deps 'user' intentionally omitted (mount-only or stable-ref)
 }

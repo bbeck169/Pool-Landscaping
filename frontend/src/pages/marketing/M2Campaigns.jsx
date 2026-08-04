@@ -1,37 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import {
-  Plus,
-  Send,
-  Pause,
-  Play,
-  Copy,
-  X,
-  ChevronLeft,
-  ChevronRight,
-  BarChart3,
-  Users,
-  Mail,
-  MessageSquare,
-  AlertTriangle,
-  Sparkles,
-  Clock,
-  MousePointerClick,
-  ExternalLink,
-} from "lucide-react";
+import { Plus, Pause, Play, Copy, X, ChevronLeft, ChevronRight, BarChart3, Users, Mail, AlertTriangle, Sparkles, Clock, MousePointerClick, ExternalLink } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
-import {
-  PageHeader,
-  Button,
-  Chip,
-  StatusPill,
-  EmptyState,
-  Skeleton,
-  Toast,
-  TextInput,
-  Modal,
-} from "@/components/ui-kit";
+import { PageHeader, Button, Chip, StatusPill, EmptyState, Skeleton, Toast, TextInput } from "@/components/ui-kit";
 
 /**
  * Marketing M2 UI — Campaigns list / detail / wizard (Feb-2026 ship).
@@ -374,7 +346,7 @@ export function CampaignNew() {
         content: { email_html: form.email_html, sms_body: form.sms_body },
       });
       setPreviewData(r);
-    } catch (e) {
+    } catch (_e) {
       // Fall back to a local dry render if the preview endpoint has a
       // different shape — the linter output is enough to unblock.
       setPreviewData({ subject: form.subject, email_html: form.email_html, warnings: [] });

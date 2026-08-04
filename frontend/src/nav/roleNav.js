@@ -12,13 +12,7 @@
  * visible to the role that owns the section (they're pages the role's
  * primary UI already exposes anyway).
  */
-import {
-  LayoutDashboard, CalendarDays, Users, FileText, Camera, MessageSquare,
-  Home, Wallet, Shield, User, ClipboardList, Wrench, MapPin, Truck,
-  Package, Boxes, Trophy, IdCard,
-  Briefcase, Coins, TrendingUp, ScrollText, BarChart3, GraduationCap,
-  Film,
-} from "lucide-react";
+import { LayoutDashboard, CalendarDays, FileText, Camera, MessageSquare, Home, Wallet, Shield, User, ClipboardList, Wrench, Truck, Package, Boxes, Trophy, IdCard, ScrollText, GraduationCap, Film } from "lucide-react";
 import { ADMIN_NAV_V2 } from "./adminNav";
 
 export const TECH_NAV = [

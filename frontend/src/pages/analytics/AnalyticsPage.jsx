@@ -1,8 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  BarChart, Bar, LineChart, Line, Area, AreaChart, ComposedChart, ReferenceDot,
-  XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend,
-} from "recharts";
+import { Bar, Area, AreaChart, ComposedChart, ReferenceDot, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend } from "recharts";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 

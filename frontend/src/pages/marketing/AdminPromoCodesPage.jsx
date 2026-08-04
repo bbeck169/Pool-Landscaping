@@ -4,10 +4,8 @@
  * List + filter + create/edit dialog + soft-delete. Uses only the
  * existing Phase-10 endpoints (POST/GET/PATCH/DELETE /api/promo-codes).
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Plus, Trash2, Pencil, Search, X as XIcon, Save, Info,
-} from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { Plus, Trash2, Pencil, Search, Save } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
@@ -19,7 +17,7 @@ const TYPE_LABEL = {
   manual: { label: "Manual", bg: "#EEF2FF", fg: "#3730A3" },
   referral_reward: { label: "Referral", bg: "#DCFCE7", fg: "#166534" },
 };
-const KIND_LABEL = {
+const _KIND_LABEL = {
   fixed_credit: "Fixed credit",
   percent_off_invoice: "% off invoice",
   fixed_off_invoice: "Fixed off invoice",

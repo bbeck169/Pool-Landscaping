@@ -1,10 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
-import {
-  ArrowLeft, Plus, Search, Save, Sparkles, Play, Calendar as CalIcon,
-  Link as LinkIcon, Check, X, ExternalLink, Settings, MapPin, Star,
-} from "lucide-react";
+import { ArrowLeft, Search, Save, Sparkles, Calendar as CalIcon, MapPin, Star } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradient } from "@/theme";
 

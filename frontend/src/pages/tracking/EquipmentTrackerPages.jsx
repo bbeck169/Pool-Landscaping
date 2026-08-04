@@ -11,8 +11,8 @@
  *   · Row icon color is theme-per-type (filter=green, salt cell=teal),
  *     NOT status-per-tracker.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import React, { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Filter as FilterIcon,
   Droplets,
@@ -84,7 +84,7 @@ function fmtDate(iso) {
 // ═══════════════════════════════════════════════════════════════════════
 export function EquipmentTrackerListPage({ trackerType }) {
   const theme = TYPE_THEME[trackerType];
-  const nav = useNavigate();
+  const _nav = useNavigate();
 
   const [rows, setRows] = useState([]);
   const [counts, setCounts] = useState({ current: 0, coming_due: 0, past_due: 0 });

@@ -10,7 +10,6 @@ import {
   Toast,
 } from "@/components/ui-kit";
 import { X, Plus, ArrowLeft } from "lucide-react";
-import AddressAutocomplete from "@/components/AddressAutocomplete";
 
 const TAG_PRESETS = ["VIP", "Specialty"];
 

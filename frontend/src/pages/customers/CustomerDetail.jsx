@@ -1,42 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
-import {
-  ArrowLeft,
-  Edit3,
-  Trash2,
-  Mail,
-  Phone,
-  MapPin,
-  BellRing,
-  Beaker,
-  UserPlus,
-  KeyRound,
-  Briefcase,
-  FileText,
-  StickyNote,
-  Droplets,
-  Star,
-  ListChecks,
-  MessageSquare,
-  Home,
-  DollarSign,
-  Sparkles,
-} from "lucide-react";
+import { ArrowLeft, Edit3, Trash2, Mail, Phone, MapPin, BellRing, Beaker, KeyRound, Briefcase, FileText, StickyNote, Droplets, Star, ListChecks, Home, DollarSign } from "lucide-react";
 import { api } from "@/api";
 import { colors } from '@/theme';
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
-import {
-  PageHeader,
-  Button,
-  Modal,
-  TextInput,
-  Skeleton,
-  TagChip,
-  Chip,
-  StatusPill,
-  EmptyState,
-  Toast,
-} from "@/components/ui-kit";
+import { Button, Modal, TextInput, Skeleton, Chip, StatusPill, EmptyState, Toast } from "@/components/ui-kit";
 import { ActivationControl } from "@/components/customers/ActivationControl";
 import CustomerEquipmentLibrary from "@/components/customers/CustomerEquipmentLibrary";
 import CustomerActionDropdowns from "@/components/customers/CustomerActionDropdowns";
@@ -50,11 +18,9 @@ import MasterBillingCard from "./MasterBillingCard";
 import { CustomerCreditsPanel } from "./CustomerCreditsPage";
 import CardOnFileControl from "@/components/customers/CardOnFileControl";
 import CardOnFileWarningBanner from "@/components/customers/CardOnFileWarningBanner";
-import BusinessCard from "@/components/business-card/BusinessCard";
 import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
 import CustomerReviewsTab from "@/components/customers/CustomerReviewsTab";
 import AdminCardCapturePanel from "@/components/customers/AdminCardCapturePanel";
-import { toast as sonnerToast } from "sonner";
 
 const TABS = [
   { k: "overview", label: "Overview", icon: MapPin },
@@ -692,7 +658,7 @@ function PortalAccessPanel({ customer, onDone, onToast, openLogin }) {
       ]);
       setStatus(s || null);
       setHistory((h && h.events) || []);
-    } catch (e) {
+    } catch (_e) {
       // Non-fatal — panel still renders with the legacy customer.has_login flag.
     }
   }, [customer.id]);

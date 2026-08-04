@@ -8,7 +8,7 @@
 //   • Embed snippet section with copy button
 //
 // Backend contract lives in /app/backend/routers/marketing_forms.py.
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { Card } from "@/components/ui/card";
@@ -181,7 +181,7 @@ export default function MarketingFormsPage() {
 }
 
 
-function FormEditorDrawer({ form, onClose, onSaved }) {
+function FormEditorDrawer({ form, onClose, _onSaved }) {
   const [name, setName] = useState(form.name || "");
   const [fields, setFields] = useState(form.fields?.length ? form.fields : [empty_field()]);
   const [submitBtn, setSubmitBtn] = useState(form.submit_button_label || "Send");

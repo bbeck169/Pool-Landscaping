@@ -25,10 +25,7 @@ import {
   useSortable, SortableContext, verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import {
-  Plus, Upload, Search, X, Mail, FileText, ExternalLink, RefreshCw,
-  Trash2, Send,
-} from "lucide-react";
+import { Plus, Upload, Search, X, Mail, RefreshCw, Trash2, Send } from "lucide-react";
 import { api } from "@/api";
 
 const COLUMNS = [
@@ -578,7 +575,7 @@ export default function ProspectsKanbanPage() {
   const [search, setSearch] = React.useState("");
   const [showNew, setShowNew] = React.useState(false);
   const [showImport, setShowImport] = React.useState(false);
-  const [selectedId, setSelectedId] = React.useState(null);
+  const [_selectedId, setSelectedId] = React.useState(null);
   const [selected, setSelected] = React.useState(null);
   const [sendFor, setSendFor] = React.useState(null);
 

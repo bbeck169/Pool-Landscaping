@@ -44,7 +44,7 @@ export default function PricingInsights() {
     finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); setSuggestions([]); setCached(false); }, [month]);
+  useEffect(() => { load(); setSuggestions([]); setCached(false); }, [month]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: load intentionally omitted (mount-only / stable-ref)
 
   const generate = async () => {
     setGenerating(true); setError(null);

@@ -62,7 +62,7 @@ export default function PortalPreferences() {
                            sms_marketing: true, sms_transactional: true },
         category_opt_in: { review_requests: true, sequences: true, campaigns: true },
       }));
-  }, [token, user?.id]);
+  }, [token, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: deps 'user' intentionally omitted (mount-only or stable-ref)
 
   const flipChannel = (key, val) => {
     setPrefs((p) => ({ ...p,

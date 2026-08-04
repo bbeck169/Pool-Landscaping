@@ -45,13 +45,15 @@ describe("Phase 40b · Lint guardrail (no-restricted-imports for @/lib/*)", () =
     expect(cfg).toMatch(/src\/\*\*\/\*\.\{js,jsx\}/);
   });
 
-  it("wires `yarn eslint src` into the CI frontend-web job", () => {
+  it("wires the ESLint guardrail into the CI frontend-web job", () => {
     // The Phase 32 CI file lives in .github/workflows/ci.yml.
     expect(existsSync(CI_PATH)).toBe(true);
     const yml = readFileSync(CI_PATH, "utf8");
     // Step name mentions the guardrail so future readers understand why.
     expect(yml).toMatch(/Run ESLint.*guardrail/);
-    // The command that actually enforces the rule.
-    expect(yml).toMatch(/yarn eslint src/);
+    // Phase 41.3 · Feb-2026 — accept either the old ``yarn eslint src``
+    // or the new ``yarn lint`` (which fronts eslint with
+    // ``--max-warnings=0``).
+    expect(yml).toMatch(/yarn (lint|eslint src)/);
   });
 });

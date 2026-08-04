@@ -64,7 +64,7 @@ async function readGeo() {
 }
 
 export default function LandscapingTimeClock() {
-  const { user } = useAuth();
+  const { _user } = useAuth();
   const [today, setToday] = useState(null);
   const [week, setWeek] = useState(null);
   const [busy, setBusy] = useState(false);

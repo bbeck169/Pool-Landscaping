@@ -4,10 +4,7 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  ArrowLeft, Search, MapPin, Home as HomeIcon, DollarSign,
-  Clock, Save, AlertCircle, Info,
-} from "lucide-react";
+import { ArrowLeft, Search, MapPin, Home as HomeIcon, Clock, Save, AlertCircle, Info } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { ZillowUsageChip } from "@/components/ZillowUsageChip";

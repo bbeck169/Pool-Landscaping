@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/api";
 import { toast } from "sonner";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -314,7 +313,7 @@ function DealCard({ deal, onOpen, onDragStart }) {
   );
 }
 
-function DealDetailDrawer({ deal, onClose, onChanged, pipeline }) {
+function DealDetailDrawer({ deal, onClose, onChanged, _pipeline }) {
   const [current, setCurrent] = useState(deal);
   const [events, setEvents] = useState([]);
   const [busy, setBusy] = useState(false);

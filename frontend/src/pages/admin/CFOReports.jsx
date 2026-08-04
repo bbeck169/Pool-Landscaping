@@ -32,7 +32,7 @@ export default function CFOReports() {
     finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [period]);
+  useEffect(() => { load(); }, [period]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
 
   const cogsRows = cogs ? [
     { label: "Materials (chemicals)", cents: cogs.materials_cents },

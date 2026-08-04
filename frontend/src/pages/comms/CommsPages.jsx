@@ -19,13 +19,7 @@
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import {
-  Mail, MessageSquare, Zap, Send, Plus, Trash2, Copy, Eye, Save,
-  Type as TypeIcon, Heading as HeadingIcon, Image as ImageIcon,
-  MousePointerClick, Minus, MoveVertical, Columns2, Columns3, Share2,
-  Film, ShoppingBag, Layers, ChevronUp, ChevronDown, Play, Search,
-  X as XIcon,
-} from "lucide-react";
+import { Mail, MessageSquare, Zap, Send, Plus, Trash2, Copy, Eye, Save, Type as TypeIcon, Heading as HeadingIcon, Image as ImageIcon, MousePointerClick, Minus, MoveVertical, Columns2, Columns3, Share2, Film, ShoppingBag, Layers, ChevronUp, ChevronDown, Search, X as XIcon } from "lucide-react";
 import { toast as sonnerToast } from "sonner";
 import { colors } from "@/theme";
 import { api } from "@/api";

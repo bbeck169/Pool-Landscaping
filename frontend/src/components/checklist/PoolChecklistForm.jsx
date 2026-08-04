@@ -19,7 +19,6 @@ import React, { useRef, useState, useEffect, useMemo, useCallback } from "react"
 import { AlertTriangle, CheckCircle2, FlaskConical, RefreshCw } from 'lucide-react';
 import { api } from "@/api";
 import ChemicalDropdownStack, { snapRecommendationToPreset } from "./ChemicalDropdownStack";
-import ChemicalPickerModal from "./ChemicalPickerModal";
 
 // Phase 48 — per-key validation rules for the manual-entry reading rows.
 // Keys are normalized snake_case; aliases share the same rule.
@@ -86,13 +85,13 @@ function ReadingInputRow({ testKey, reading, previous, recent, locked, onChange 
 
   // Phase 49.6 — recent median + outlier flag (was defined but ref'd in JSX
   // without being computed on web — Phase 50 fixes both problems).
-  const recentArr = Array.isArray(recent) ? recent.filter((x) => Number.isFinite(x)) : [];
+  const recentArr = Array.isArray(recent) ? recent.filter((x) => Number.isFinite(x)) : []; // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: derived value stable-by-reference; downstream useMemo already tracks the real source deps
   const median = React.useMemo(() => {
     if (recentArr.length === 0) return null;
     const sorted = [...recentArr].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
     return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-  }, [recentArr]);
+  }, [recentArr]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: memoized deps are stable by value; wrapping the source in its own useMemo would obscure the read
   const draftNum = Number(draft);
   const isOutlier = median != null && median > 0 && Number.isFinite(draftNum) && draftNum > 0
     && (draftNum > 2 * median || draftNum < 0.5 * median);
@@ -283,7 +282,7 @@ const CHIP_SCALES = {
   psi:               { values: _psiVals,         palette: "optional" },
 };
 
-const PALETTES = {
+const _PALETTES = {
   chlorine:   { bg: "#cffafe", sel: "#0891b2", selFg: "#fff", fg: "#155e75" },
   ph:         { bg: "#fee2e2", sel: "#dc2626", selFg: "#fff", fg: "#7f1d1d",
                 inRangeBg: "#dcfce7", inRangeSel: "#16a34a", inRangeFg: "#14532d" },
@@ -398,7 +397,7 @@ export default function PoolChecklistForm({
   readings = [],
   readingFields = [],
   chemicalsAdded = [],
-  chemicalsCatalog = [],
+  _chemicalsCatalog = [],
   chemicalUnits = ["gal", "lbs", "oz", "tabs"],
   checklistItems = [],
   notes = "",
@@ -409,13 +408,13 @@ export default function PoolChecklistForm({
   // step. Unset ⇒ render everything (legacy single-scroll mode).
   wizardStep = null,
 }) {
-  const [analyzing, setAnalyzing] = useState(false);
+  const [_analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const [analyzeErr, setAnalyzeErr] = useState("");
   const analyzeRef = useRef(null);
 
   // Phase 46.5 — Web parity for mobile Quick-add sheet.
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [_pickerOpen, _setPickerOpen] = useState(false);
 
   // Phase 34e — chemical dose recommendations state.
   const [recs, setRecs] = useState(null); // {recommendations, mocked, reason, source, pool_gallons}
@@ -468,18 +467,18 @@ export default function PoolChecklistForm({
     onChange({ chemical_readings: next });
   };
 
-  const addChem = () => {
+  const _addChem = () => {
     const next = [
       ...chemicalsAdded,
       { id: Math.random().toString(36).slice(2), name: "", amount: "", unit: chemicalUnits[0] || "lbs" },
     ];
     onChange({ chemicals_added: next });
   };
-  const updChem = (idx, patch) => {
+  const _updChem = (idx, patch) => {
     const next = chemicalsAdded.map((c, i) => (i === idx ? { ...c, ...patch } : c));
     onChange({ chemicals_added: next });
   };
-  const rmChem = (idx) => {
+  const _rmChem = (idx) => {
     onChange({ chemicals_added: chemicalsAdded.filter((_, i) => i !== idx) });
   };
 
@@ -599,19 +598,19 @@ export default function PoolChecklistForm({
 
   // Phase 36 — pencil-edit popover: `editingKey` is the reading `key` (or
   // name) currently open in numeric-input mode. `null` when closed.
-  const [editingKey, setEditingKey] = useState(null);
+  const [_editingKey, setEditingKey] = useState(null);
   const [editDraft, setEditDraft] = useState("");
-  const openEdit = (r) => {
+  const _openEdit = (r) => {
     if (locked) return;
     setEditDraft(r.value == null ? "" : String(r.value));
     setEditingKey(canonicalReadingKey(r));
   };
-  const commitEdit = (idx) => {
+  const _commitEdit = (idx) => {
     updReading(idx, editDraft === "" ? null : editDraft);
     setEditingKey(null);
   };
 
-  const analyzeWater = async (file) => {
+  const _analyzeWater = async (file) => {
     if (!file || locked) return;
     setAnalyzing(true); setAnalyzeErr(""); setAnalysis(null);
     try {

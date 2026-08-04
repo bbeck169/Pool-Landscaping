@@ -1,11 +1,8 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { NavLink, Outlet, Link } from 'react-router-dom';
+import { NavLink, Outlet } from 'react-router-dom';
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
-import {
-  Compass, Zap, Users, ClipboardList, Trello, Rocket, Calendar,
-  Plus, Sparkles, X, ArrowRight, CheckCircle2, Circle, Trash2, Save,
-} from "lucide-react";
+import { Compass, Zap, Users, ClipboardList, Trello, Rocket, Calendar, Plus, Sparkles, X, Circle, Trash2, Save } from "lucide-react";
 
 /* ────────────────────────────────────────────────────────────────────
    Shared UI primitives
@@ -758,7 +755,7 @@ export function SprintsPage() {
   const [creating, setCreating] = useState(false);
   const [active, setActive] = useState(null);
   const load = () => api.get("/sprints").then((r) => { setRows(r); if (r.length && !active) setActive(r[0]); }).catch(() => {});
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
   return (
     <Section
       title="Sprint Planner"

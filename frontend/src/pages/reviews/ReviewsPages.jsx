@@ -12,12 +12,7 @@
  *   - PublicReviewsWidget   (/reviews/:slug      — full-page widget)
  */
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import {
-  Star, MessageSquare, Users as UsersIcon, TrendingUp, Trash2,
-  Plus, X as XIcon, RefreshCw, Search, Copy, ExternalLink, ChevronUp,
-  ChevronDown, Send, Globe, Award, Loader2, CheckCircle2, AlertTriangle,
-} from "lucide-react";
+import { Star, MessageSquare, TrendingUp, Trash2, Plus, X as XIcon, RefreshCw, Search, Copy, ExternalLink, ChevronUp, ChevronDown, Send, Globe, Award, Loader2 } from "lucide-react";
 import { colors } from "@/theme";
 import { api } from "@/api";
 import {
@@ -1150,7 +1145,7 @@ export function ReviewsWidgetPage() {
     try {
       await navigator.clipboard.writeText(text);
       setToast({ tone: "success", message: `${label} copied` });
-    } catch (e) { setToast({ tone: "error", message: "Clipboard blocked" }); }
+    } catch (_e) { setToast({ tone: "error", message: "Clipboard blocked" }); }
   };
 
   return (

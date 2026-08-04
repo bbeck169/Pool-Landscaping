@@ -4,9 +4,7 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 import AIDescriptionRewriteButton from "@/components/ai/AIDescriptionRewriteButton";
-import {
-  RefreshCw, Check, X, MapPin, ShieldCheck, ShieldAlert, Ban, ExternalLink,
-} from "lucide-react";
+import { RefreshCw, Check, X, MapPin, ShieldCheck, ShieldAlert, Ban } from "lucide-react";
 
 /**
  * MR0 · Feb-2026 — Admin moderation queue for public check-ins.
@@ -75,7 +73,7 @@ export default function ModerationCheckinsPage() {
     }
   }, [state, selectedId]);
 
-  React.useEffect(() => { loadList(); /* eslint-disable-next-line */ }, [state]);
+  React.useEffect(() => { loadList(); }, [state]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
 
   // MR-QoL · Feb-2026 — Bulk helpers (declared after loadList so we
   // can reference it in runBulk).

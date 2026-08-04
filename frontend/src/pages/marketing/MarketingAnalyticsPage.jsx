@@ -10,9 +10,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend,
   BarChart, Bar, CartesianGrid,
 } from "recharts";
-import {
-  Sparkles, Star, MousePointerClick, Mail, RefreshCw, Bot,
-} from "lucide-react";
+import { Star, MousePointerClick, Mail, RefreshCw, Bot } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 
@@ -42,7 +40,7 @@ export default function MarketingAnalyticsPage() {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [window]);
+  useEffect(() => { load(); }, [window]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
 
   const refresh = async () => {
     try { await api.post("/marketing/analytics/_cache/clear", {}); } catch {}

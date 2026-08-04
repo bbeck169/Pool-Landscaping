@@ -45,7 +45,7 @@ export default function PortalSignPage() {
       });
       if (!r.ok) throw new Error("submit failed");
       setSignedNow(true);
-    } catch (e) {
+    } catch (_e) {
       setError("Could not submit signature. Please try again.");
     } finally {
       setSubmitting(false);

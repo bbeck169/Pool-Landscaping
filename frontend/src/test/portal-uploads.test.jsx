@@ -35,12 +35,14 @@ vi.mock("@/components/files/FileList", () => ({
     // Phase 41.3 · fire ONCE on mount — hook call must be
     // unconditional to satisfy rules-of-hooks. Effect body guards
     // the ``onChange`` presence itself.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only side effect; captured ``n``/``props`` are stable for this mock's lifetime.
+    // Phase 41.3 · Feb-2026 — this mock intentionally captures ``n`` and
+    // ``props`` at mount and fires ``onChange`` once. Adding either to
+    // the deps array would defeat the mock's purpose.
     React.useEffect(() => {
       if (typeof props.onChange === "function") {
         props.onChange(Array(n).fill({ id: "x", purpose: props.purpose }));
       }
-    }, []);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps -- mount-only test mock; captured deps are stable for this mock's lifetime
     return <div data-testid={`mock-list-${props.purpose}`}
                  data-linked-type={props.linkedEntityType}
                  data-linked-id={props.linkedEntityId}
@@ -78,7 +80,7 @@ describe("PortalBookingPhotos · F2c.1", () => {
     const el = screen.getByTestId("mock-upload-portal_booking_photo");
     expect(el.getAttribute("data-linked-type")).toBe("portal_appointment");
     expect(el.getAttribute("data-linked-id")).toBe("appt-42");
-  });
+  }); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: deps 'n' intentionally omitted (mount-only or stable-ref)
 
   it("multi-file mode with maxFiles=5", () => {
     render(<PortalBookingPhotos appointmentId="appt-1" />);

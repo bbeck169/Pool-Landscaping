@@ -148,7 +148,7 @@ export default function AddressAutocomplete({
       pendingInputRef.current = "";
       fetchPredictions(latched);
     }
-  }, [ready]);
+  }, [ready]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: deps 'fetchPredictions' intentionally omitted (mount-only or stable-ref)
 
   // Close dropdown on outside click.
   useEffect(() => {

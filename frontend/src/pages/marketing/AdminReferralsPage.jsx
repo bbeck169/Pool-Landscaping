@@ -5,9 +5,7 @@
  * watcher-run trigger.
  */
 import React, { useCallback, useEffect, useState } from "react";
-import {
-  RefreshCw, X as XIcon, Play, CheckCircle2, AlertCircle,
-} from "lucide-react";
+import { Play, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
 import {

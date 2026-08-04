@@ -16,10 +16,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import {
-  Sparkles, ImagePlus, Loader2, X, Trash2, Copy as CopyIcon, Info,
-  Search, Wand2, ChevronRight,
-} from "lucide-react";
+import { Sparkles, Loader2, Trash2, Copy as CopyIcon, Info, Wand2, ChevronRight } from "lucide-react";
 import { api, api_base } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";

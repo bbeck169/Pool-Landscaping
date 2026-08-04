@@ -36,7 +36,7 @@ export default function RankHeatmap() {
       if (r.status === "done" || r.status === "failed") { loadList(); }
     }, 1500);
     return () => clearInterval(t);
-  }, [current?.status, current?.id]);
+  }, [current?.status, current?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: deps 'current' intentionally omitted (mount-only or stable-ref)
 
   const start = async () => {
     if (!form.keyword.trim()) return;

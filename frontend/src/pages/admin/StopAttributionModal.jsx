@@ -6,7 +6,7 @@
 // either { job_id } or { unlink: true }.
 import React from "react";
 import { toast } from "sonner";
-import { X, Save, Link2Off, MapPin } from "lucide-react";
+import { X, Link2Off, MapPin } from "lucide-react";
 import { api } from "@/api";
 
 function _haversineM(lat1, lon1, lat2, lon2) {

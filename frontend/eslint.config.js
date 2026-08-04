@@ -28,20 +28,24 @@ const globals = require("globals");
 
 const commonRules = {
   ...js.configs.recommended.rules,
-  // Phase 41.3 · Feb-2026 — the core `no-unused-vars` rule fires on
-  // unused imports AND unused vars but has no autofix. Delegate to
-  // `eslint-plugin-unused-imports` which splits the two concerns.
-  //
-  // The auto-fix side of ``no-unused-imports`` was benched to Phase
-  // 41.3b after we discovered it strips legitimate imports the plugin
-  // can't statically prove are used — specifically ``X as Y`` renamed
-  // lucide-react icons and default-imports rendered as JSX (e.g.
-  // ``import BulkChargeModal from ...`` used as ``<BulkChargeModal />``).
-  // Keeping both rules OFF for now: Phase 41.3b will hand-audit and
-  // delete the ~4084 residual unused-imports safely.
+  // Phase 41.3 · Feb-2026 — Full enforcement. Both rules restored to
+  // ``error``. The auto-fix path is NOT used at CI time; a companion
+  // one-shot audit script (``scripts/phase41_3_strip_unused_imports.py``)
+  // verifies each candidate before deletion.
   "no-unused-vars": "off",
-  "unused-imports/no-unused-imports": "off",
-  "unused-imports/no-unused-vars": "off",
+  "unused-imports/no-unused-imports": "error",
+  "unused-imports/no-unused-vars": [
+    "error",
+    {
+      vars: "all",
+      varsIgnorePattern: "^_",
+      args: "after-used",
+      argsIgnorePattern: "^_",
+      caughtErrors: "all",
+      caughtErrorsIgnorePattern: "^_",
+      ignoreRestSiblings: true,
+    },
+  ],
   "no-empty": ["error", { allowEmptyCatch: true }],
   // Case-declaration rule triggers on lots of switch-case blocks where a
   // `const` is declared without an enclosing block. Allow — this is a
@@ -68,20 +72,9 @@ const commonRules = {
       ],
     },
   ],
-  // React hooks — the whole point of Phase 41.3.
+  // React hooks — Phase 41.3 full enforcement.
   "react-hooks/rules-of-hooks": "error",
-  // Phase 41.3 · Feb-2026 — ``exhaustive-deps`` DEFERRED to Phase 41.3b.
-  // The rule surfaced 45 legitimate memoization/dep gaps across the
-  // frontend workspace. Fixing each requires wrapping the referenced
-  // callback (usually a ``load``/``fetchX`` closure) in
-  // ``useCallback`` and threading it into the effect's deps — real
-  // non-trivial per-site work carrying request-storm risk if the deps
-  // resolve to an unstable identity. That work exceeds the 5-disable
-  // cap of this phase; setting the rule to ``off`` keeps ``yarn lint``
-  // clean while we schedule Phase 41.3b as a dedicated hooks-deps
-  // audit. When 41.3b flips this back to ``error``, the file-by-file
-  // fixes it makes must land in the same PR (no half-fixed state).
-  "react-hooks/exhaustive-deps": "off",
+  "react-hooks/exhaustive-deps": "error",
   // Phase 41.3 · JSX-aware var tracking. Without these, every React
   // component that's only referenced inside JSX (``<Foo />``) is
   // flagged as unused because plain ``no-unused-vars`` doesn't

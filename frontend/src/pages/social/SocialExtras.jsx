@@ -5,10 +5,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
-import {
-  CheckCircle2, XCircle, MessageSquare, Send, Upload, Download,
-  Link as LinkIcon, BarChart2, Palette, Save, Trash2, FolderPlus,
-} from "lucide-react";
+import { CheckCircle2, XCircle, MessageSquare, Send, Upload, Download, Link as LinkIcon, BarChart2, Save, Trash2 } from "lucide-react";
 
 const Card = ({ children, className = "", testId }) => (
   <div className={`rounded-2xl ${className}`}
@@ -203,7 +200,7 @@ const CSV_SAMPLE = [
 ].join("\n");
 
 export function BulkUploadPage() {
-  const [rows, setRows] = useState([]);
+  const [_rows, _setRows] = useState([]);
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState([]);
   const [result, setResult] = useState(null);

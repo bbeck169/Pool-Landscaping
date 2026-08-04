@@ -13,10 +13,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { api } from "@/api";
 import { toast } from "sonner";
 import ClickToCallButton from "@/components/telephony/ClickToCallButton";
-import {
-  Phone, Mail, MapPin, Calendar, User, CheckCircle2, XCircle,
-  Pause, MessageSquarePlus, AlertTriangle, ChevronLeft, RefreshCw,
-} from "lucide-react";
+import { Phone, Mail, MapPin, Calendar, User, CheckCircle2, XCircle, MessageSquarePlus, AlertTriangle, ChevronLeft, RefreshCw } from "lucide-react";
 
 // Phase 34 · Task CC · Feb 2026 — canonical snake_case status enum.
 // Values MUST match backend `_CANONICAL_STATUSES` in routers/leads.py.

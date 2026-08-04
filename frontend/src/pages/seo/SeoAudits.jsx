@@ -3,10 +3,7 @@
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import {
-  Search, Plus, RefreshCw, AlertTriangle, AlertCircle, Info,
-  CheckCircle2, ChevronRight, X, ArrowLeft,
-} from "lucide-react";
+import { Search, Plus, RefreshCw, AlertTriangle, AlertCircle, Info, ChevronRight, X, ArrowLeft } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 
@@ -210,13 +207,13 @@ export function SeoAuditDetail() {
     const p = await api.get(`/seo/audits/${id}/pages?limit=200`);
     setPages(p);
   };
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: load intentionally omitted (mount-only / stable-ref)
 
   useEffect(() => {
     if (!audit || ["done", "failed", "cancelled"].includes(audit.status)) return;
     const t = setInterval(load, 3000);
     return () => clearInterval(t);
-  }, [audit?.status]);
+  }, [audit?.status]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: deps 'audit' intentionally omitted (mount-only or stable-ref)
 
   const allIssues = useMemo(() => {
     const out = [];

@@ -29,7 +29,7 @@ export function AuthProvider({ children }) {
   // useEffect below now ONLY runs the ``/auth/me`` self-heal, it no
   // longer bootstraps ``user``.
   const [user, setUser] = useState(() => _readCachedUserSync());
-  const [loading, setLoading] = useState(false);
+  const [loading, _setLoading] = useState(false);
 
   useEffect(() => {
     // If we bootstrapped from cache, background-refresh /auth/me so

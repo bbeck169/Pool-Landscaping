@@ -89,7 +89,7 @@ export default function CustomerCommunicationsTimeline({ customerId }) {
     }).finally(() => setLoading(false));
   };
 
-  useEffect(() => { setPage(1); loadPage(1); /* eslint-disable-next-line */ }, [customerId]);
+  useEffect(() => { setPage(1); loadPage(1); }, [customerId]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
 
   const hasMore = rows.length < total;
   const loadMore = () => {

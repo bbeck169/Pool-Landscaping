@@ -6,7 +6,7 @@
 // sidebar quiet by default).
 import React from "react";
 import { toast } from "sonner";
-import { AlertTriangle, RotateCcw, X, ChevronDown, ChevronUp } from "lucide-react";
+import { RotateCcw, X, ChevronDown, ChevronUp } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 

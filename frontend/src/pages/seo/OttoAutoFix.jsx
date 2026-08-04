@@ -4,10 +4,7 @@
  */
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import {
-  ArrowLeft, Sparkles, CheckCircle2, XCircle, Download,
-  RefreshCw, AlertTriangle, AlertCircle, Info,
-} from "lucide-react";
+import { ArrowLeft, Sparkles, CheckCircle2, XCircle, Download, AlertTriangle, AlertCircle, Info } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 
@@ -38,7 +35,7 @@ export default function OttoAutoFix() {
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [auditId, filter]);
+  useEffect(() => { load(); }, [auditId, filter]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
 
   const generate = async () => {
     setGenerating(true);

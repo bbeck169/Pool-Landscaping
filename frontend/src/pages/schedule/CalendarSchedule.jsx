@@ -22,8 +22,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Calendar as RBCCalendar, dateFnsLocalizer } from "react-big-calendar";
 import withDragAndDrop from "react-big-calendar/lib/addons/dragAndDrop";
 import "react-big-calendar/lib/addons/dragAndDrop/styles.css";
-import { format, parse, startOfWeek, getDay, addDays, startOfDay, endOfDay,
-         startOfMonth, startOfQuarter, endOfMonth } from "date-fns";
+import { format, parse, startOfWeek, getDay, addDays, startOfDay, endOfDay, startOfQuarter, endOfMonth } from "date-fns";
 import { enUS } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import { Plus, Search, X as XIcon, Filter, ChevronLeft, ChevronRight,
@@ -499,7 +498,7 @@ export default function CalendarSchedule() {
     } finally {
       setRescheduleBusy(false);
     }
-  }, [rescheduleDraft]);
+  }, [rescheduleDraft]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: deps 'load' intentionally omitted (mount-only or stable-ref)
 
   const cancelReschedule = React.useCallback(() => {
     setRescheduleDraft(null);

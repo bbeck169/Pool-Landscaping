@@ -4,7 +4,7 @@
  * Unauthenticated. Same shell as PublicInstaQuote (no AppLayout, no
  * auth). 4 steps: service → date → slot → contact → review.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { CheckCircle2, Loader2, ChevronLeft } from "lucide-react";
 
@@ -24,7 +24,7 @@ function fmtSlotDate(ymd) {
   });
 }
 
-function DatePicker({ cfg, service, value, onChange }) {
+function DatePicker({ cfg, _service, value, onChange }) {
   const rules = cfg.availability_rules || {};
   const maxLead = Number(rules.max_lead_days || 30);
   const blackout = new Set(rules.blackout_dates || []);
@@ -36,7 +36,7 @@ function DatePicker({ cfg, service, value, onChange }) {
     const d = new Date(today);
     d.setDate(d.getDate() + i);
     const ymd = d.toISOString().slice(0, 10);
-    const dow = dowKey[d.getUTCDay()];
+    const _dow = dowKey[d.getUTCDay()];
     // Actually rely on local getDay to match the tenant-perceived weekday.
     const dowLocal = dowKey[d.getDay()];
     const hasWindow = (weekdays[dowLocal] || []).length > 0;

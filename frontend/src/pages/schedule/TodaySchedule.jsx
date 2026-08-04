@@ -18,11 +18,7 @@ import ServiceNotePill from "@/components/schedule/ServiceNotePill";
 // admins/dispatchers can spot the assigned tech at a glance
 // without inflating the card height.
 import TechAvatar from "@/components/common/TechAvatar";
-import {
-  Clock, MapPin, Navigation, Car, Coffee, PlayCircle, StopCircle,
-  AlertTriangle, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare,
-  Key, StickyNote, Route as RouteIcon, RotateCcw, Star,
-} from "lucide-react";
+import { MapPin, Navigation, Car, ChevronRight, ChevronLeft, RefreshCw, CalendarCheck, Square, CheckSquare, Key, StickyNote, Route as RouteIcon, RotateCcw, Star } from "lucide-react";
 
 const GOOGLE_LIBS = ["places"];
 
@@ -121,7 +117,7 @@ export default function TodaySchedule() {
           setAutoToast(r);
           autoToastRef.current = r;
         }
-      } catch (e) { /* ignore transient errors — user can still manual */ }
+      } catch (_e) { /* ignore transient errors — user can still manual */ }
     };
     const watchId = navigator.geolocation.watchPosition(
       tryAuto, () => {}, { enableHighAccuracy: true, maximumAge: 5_000, timeout: 15_000 }
@@ -242,7 +238,7 @@ export default function TodaySchedule() {
     } catch { return 0; }
   };
 
-  const nowY = useMemo(() => yFor(nowIso), [nowIso, minH]);
+  const nowY = useMemo(() => yFor(nowIso), [nowIso, minH]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: yFor intentionally omitted (mount-only / stable-ref)
 
   const s = data?.summary || {};
   const jobItems = useMemo(

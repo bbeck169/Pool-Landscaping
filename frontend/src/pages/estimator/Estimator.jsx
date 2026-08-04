@@ -19,7 +19,7 @@ import MediaUploader from "@/components/media/MediaUploader";
 export function EstimatesList() {
   const navigate = useNavigate();
   const [rows, setRows] = useState(null);
-  const [settings, setSettings] = useState(null);
+  const [_settings, setSettings] = useState(null);
   // Phase 34 · Task BB · Feb 2026 — bulk-select state.
   const [selected, setSelected] = useState(() => new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);

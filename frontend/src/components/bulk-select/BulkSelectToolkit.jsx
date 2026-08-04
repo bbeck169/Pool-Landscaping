@@ -11,10 +11,8 @@
  * (`/app/frontend/src/test/phase34-bulk-select-shared.test.jsx`)
  * auto-covers every new surface.
  */
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { Trash2, X as XIcon, ChevronDown } from "lucide-react";
-import { toast } from "sonner";
-import { api } from "@/api";
 import { colors } from "@/theme";
 
 /** State + helpers hook — one call per surface. */

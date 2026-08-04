@@ -139,7 +139,7 @@ export default function AdminSidebar() {
     const isPinned = pinned.includes(e.to);
     return (
       <div className="flex items-center group" data-testid={`nav-entry-${e.to.replaceAll("/", "-")}`}>
-        <NavLink to={e.to} className={({ isActive }) => "flex-1 flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm"} style={({ isActive }) => ({
+        <NavLink to={e.to} className={({ _isActive }) => "flex-1 flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm"} style={({ isActive }) => ({
           background: isActive ? brandGradientCss : "transparent",
           color: isActive ? "#fff" : colors.onSurface,
           fontWeight: isActive ? 600 : 400,
@@ -405,7 +405,7 @@ function Palette({ flat, recent, onClose }) {
             <div key={sec.heading}>
               <div className="px-4 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider" style={{ color: colors.onSurfaceSecondary }}>{sec.heading}</div>
               {sec.rows.length === 0 && <div className="px-4 py-2 text-xs" style={{ color: colors.onSurfaceSecondary }}>Nothing matches.</div>}
-              {sec.rows.map((row, i) => {
+              {sec.rows.map((row, _i) => {
                 const globalIdx = allRows.indexOf(row);
                 const active = globalIdx === idx;
                 return (

@@ -6,12 +6,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
-import {
-  Facebook, Instagram, Twitter, Linkedin, Youtube, MapPin, Globe,
-  Music2, Send, Sparkles, ImageIcon, CalendarDays, Trash2, Copy, Edit,
-  Save, Clock, Plug, ChevronLeft, ChevronRight, X, Upload,
-  ShieldCheck, Link as LinkIcon, Target,
-} from "lucide-react";
+import { Facebook, Instagram, Twitter, Linkedin, Youtube, MapPin, Globe, Music2, Send, Sparkles, ImageIcon, Trash2, Copy, Save, Clock, Plug, ChevronLeft, ChevronRight, X, Upload, ShieldCheck, Link as LinkIcon, Target } from "lucide-react";
 
 const NETWORKS = [
   { key: "facebook",  label: "Facebook Pages",     icon: Facebook,  limit: 5000 },
@@ -498,7 +493,7 @@ export function LibraryPage() {
   const [items, setItems] = useState([]);
   const [filter, setFilter] = useState("");
   const load = async () => setItems(await api.get(`/social/media${filter ? `?type=${filter}` : ""}`));
-  useEffect(() => { load(); }, [filter]);
+  useEffect(() => { load(); }, [filter]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: load intentionally omitted (mount-only / stable-ref)
   const handleFiles = async (files) => {
     for (const f of files) {
       const b64 = await new Promise((res) => {
@@ -564,9 +559,9 @@ export function LibraryPage() {
 export function DraftsPage() {
   const [rows, setRows] = useState([]);
   const [status, setStatus] = useState("");
-  const navigate = useNavigate();
+  const _navigate = useNavigate();
   const load = async () => setRows(await api.get(`/social/posts${status ? `?status=${status}` : ""}`));
-  useEffect(() => { load(); }, [status]);
+  useEffect(() => { load(); }, [status]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: load intentionally omitted (mount-only / stable-ref)
   const dup = async (id) => { await api.post(`/social/posts/${id}/duplicate`); load(); };
   const del = async (id) => { if (confirm("Delete post?")) { await api.del(`/social/posts/${id}`); load(); } };
   return (

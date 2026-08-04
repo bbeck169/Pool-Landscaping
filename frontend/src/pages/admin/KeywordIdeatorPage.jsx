@@ -14,10 +14,7 @@ import {
   LineChart as ReLineChart, Line, XAxis, YAxis, Tooltip,
   CartesianGrid, ResponsiveContainer,
 } from "recharts";
-import {
-  Search, Copy, Download, RefreshCw, AlertTriangle, Clock,
-  Sparkles, Play,
-} from "lucide-react";
+import { Search, Copy, Download, RefreshCw, AlertTriangle, Clock, Sparkles } from "lucide-react";
 import { api } from "@/api";
 
 const TABS = [

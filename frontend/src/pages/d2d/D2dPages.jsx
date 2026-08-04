@@ -517,7 +517,7 @@ export function D2dSoldLeads() {
       .then((r) => setData({ properties: r?.properties || [], count: r?.count || 0, loading: false, error: null, rateLimited: false }))
       .catch((e) => setData({ properties: [], count: 0, loading: false, error: e.message, rateLimited: String(e?.message || "").includes("429") }));
   };
-  useEffect(() => { load(); }, [zip, days]);
+  useEffect(() => { load(); }, [zip, days]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: load intentionally omitted (mount-only / stable-ref)
   const skip = async (p) => {
     try {
       await api.post(`/d2d/skip/${p.zpid}`);

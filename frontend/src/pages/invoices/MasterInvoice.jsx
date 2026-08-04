@@ -430,7 +430,7 @@ export function MasterInvoiceDetail() {
   const [toast, setToast] = useState(null);
 
   const load = () => api.get(`/invoices/master/${id}`).then(setDoc).catch(() => {});
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: load intentionally omitted (mount-only / stable-ref)
 
   if (!doc) return <div className="max-w-4xl mx-auto p-6"><Skeleton style={{ height: 180 }} /></div>;
 

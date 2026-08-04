@@ -7,10 +7,7 @@
  * "Enrol customers" modal that hits POST /:sid/enrol.
  */
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  Plus, X as XIcon, Save, Trash2, Users, Play, Pause,
-  ArrowUp, ArrowDown, Copy, Send, Eye, ChevronRight, Zap,
-} from "lucide-react";
+import { Plus, X as XIcon, Save, Trash2, Users, Play, Pause, ArrowUp, ArrowDown, Send, Eye, ChevronRight, Zap } from "lucide-react";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { colors, brandGradientCss } from "@/theme";
@@ -826,7 +823,7 @@ function StatusPill({ status }) {
 /* ─────────────────────────────────────────────────────────────────────
    Enrol Modal
    ────────────────────────────────────────────────────────────────── */
-function EnrolModal({ sequenceId, segments, onClose, onDone }) {
+function EnrolModal({ sequenceId, segments, onClose, _onDone }) {
   const [tab, setTab] = useState("customers");
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState([]);

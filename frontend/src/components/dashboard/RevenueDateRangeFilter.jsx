@@ -93,7 +93,7 @@ export default function RevenueDateRangeFilter({ onChange, defaultPreset = "this
   };
 
   // Emit initial value once mounted.
-  useEffect(() => { emit(preset, custom); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { emit(preset, custom); }, []); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
 
   // Close popover on outside click.
   useEffect(() => {

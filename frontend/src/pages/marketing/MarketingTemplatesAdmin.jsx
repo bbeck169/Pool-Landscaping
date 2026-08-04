@@ -11,7 +11,7 @@
  * has an × that removes ALL literal ``{{TOKEN}}`` occurrences (case-
  * insensitive) from the body and re-previews.
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Mail, MessageSquare, Plus, X as XIcon, ArrowLeft, Save, Trash2,
@@ -239,7 +239,7 @@ export function MarketingTemplateDetailPage() {
           missing: res.missing_vars || [],
           unresolved: res.unresolved_tokens || [],
         });
-      } catch (e) {
+      } catch (_e) {
         // Preview failures are non-fatal — just log to state.
         setPreview((p) => ({ ...p, missing: [], unresolved: [] }));
       }

@@ -7,9 +7,7 @@
  */
 import React from "react";
 import { toast } from "sonner";
-import {
-  Plus, X, Archive, ArchiveRestore, Edit3, Save,
-} from "lucide-react";
+import { Plus, X, Archive, Edit3, Save } from "lucide-react";
 import { api } from "@/api";
 
 const VARS = [

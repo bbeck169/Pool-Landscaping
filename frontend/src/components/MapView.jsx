@@ -37,7 +37,7 @@ export default function MapView({
   zoom = 13,
   height = 560,
   layers = [], // [{ key, points: [{id, lat, lng, color, label, subtitle, onClick}], polyline?: [[lat,lng]...] }]
-  onMapClick,
+  _onMapClick,
   testid = "map-view",
 }) {
   const [provider, setProvider] = useState("openstreetmap");

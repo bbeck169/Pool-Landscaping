@@ -6,7 +6,7 @@
  */
 import React from "react";
 import { toast } from "sonner";
-import { RefreshCw, Users, Clock, MapPin, X, Play } from "lucide-react";
+import { RefreshCw, Users, Clock, X, Play } from "lucide-react";
 import { api } from "@/api";
 
 function _fmtHMS(seconds) {

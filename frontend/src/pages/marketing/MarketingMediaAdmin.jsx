@@ -50,7 +50,7 @@ export default function MarketingMediaAdminPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  function toggleSelected(id, extend = false) {
+  function toggleSelected(id, _extend = false) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);

@@ -5,7 +5,7 @@
  * page's tab strip. Balance card + paginated ledger + admin-only
  * "Adjust balance" dialog.
  */
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Plus, ArrowLeft, Save } from "lucide-react";
 import { toast } from "sonner";

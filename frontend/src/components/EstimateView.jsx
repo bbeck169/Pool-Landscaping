@@ -38,9 +38,9 @@ export default function EstimateView({
   token,
   isAdmin = false,
   printable = false,
-  onDeleted,
+  _onDeleted,
 }) {
-  const navigate = useNavigate();
+  const _navigate = useNavigate();
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);

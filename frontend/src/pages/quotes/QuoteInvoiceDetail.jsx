@@ -24,17 +24,7 @@ import PaymentForm from "@/components/PaymentForm";
 import { useAuth } from "@/auth";
 import InvoiceAttachments from "@/components/quotes/InvoiceAttachments";
 import InvoiceEditModal from "@/components/invoices/InvoiceEditModal";
-import {
-  PageHeader,
-  Button,
-  Skeleton,
-  StatusPill,
-  Modal,
-  TextInput,
-  Toast,
-  Chip,
-  EmptyState,
-} from "@/components/ui-kit";
+import { Button, Skeleton, StatusPill, Modal, TextInput, Toast, Chip } from "@/components/ui-kit";
 
 // ─── Pure helpers · exported for Vitest ────────────────────────────────
 // Feb 2026 · P0/P0.5a/P1 — draft-transition fix. These are pulled out
@@ -72,7 +62,7 @@ export function reminderToastCopy({ wasDraftFlippedToSent, emailSent }) {
 }
 
 /** Reused for both /quotes/:id and /invoices/:id — same collection. */
-export default function QuoteInvoiceDetail({ docType = "quote" }) {
+export default function QuoteInvoiceDetail({ _docType = "quote" }) {
   const { id } = useParams();
   const navigate = useNavigate();
   const [doc, setDoc] = useState(null);

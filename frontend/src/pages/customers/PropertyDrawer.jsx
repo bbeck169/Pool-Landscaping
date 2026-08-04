@@ -13,7 +13,7 @@ import React from "react";
 import { X } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
-import { Button, TextInput, Chip } from "@/components/ui-kit";
+import { Button, TextInput } from "@/components/ui-kit";
 
 const TABS = ["Info", "Contact", "Service Notes", "Photos", "Schedule"];
 

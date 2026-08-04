@@ -7,10 +7,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { useNavigate, useParams } from "react-router-dom";
-import {
-  ArrowLeft, Plus, Package, AlertTriangle, ShoppingCart, TrendingUp,
-  BarChart3, Trash2, PenSquare, Boxes, ChevronRight, Truck, PackageOpen,
-} from "lucide-react";
+import { ArrowLeft, Plus, Package, AlertTriangle, ShoppingCart, TrendingUp, BarChart3, Trash2, Boxes, ChevronRight, Truck, PackageOpen } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 
@@ -894,7 +891,7 @@ export function InventoryAlerts() {
   };
   useEffect(() => { load(); }, []);
 
-  const quickPO = (a) => {
+  const quickPO = (_a) => {
     // Prefill: navigate to PO page and open the modal state via URL flag.
     // Simpler: just jump to PO list, admin can add manually with pre-known item.
     nav("/admin/inventory/purchase-orders");

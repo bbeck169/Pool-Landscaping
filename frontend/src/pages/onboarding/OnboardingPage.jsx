@@ -168,7 +168,7 @@ function StepWelcome({ data, setData }) {
   );
 }
 
-function StepIntegrations({ data, setData }) {
+function StepIntegrations({ _data, _setData }) {
   const [live, setLive] = useState({});
   useEffect(() => {
     api.get("/settings/integrations").then(setLive).catch(() => setLive({}));

@@ -8,7 +8,6 @@
  * preview test-scope guard refuses a non-synthetic address.
  */
 import React from "react";
-import { colors } from "@/theme";
 
 const REASON_COPY = {
   keys_not_configured: "Property data provider is not configured yet.",

@@ -42,7 +42,7 @@ export default function AiToolAuditPage() {
   const [personaKey, setPersonaKey] = useState("");
   const [toolName, setToolName] = useState("");
   const [since, setSince] = useState("");
-  const [limit, setLimit] = useState(200);
+  const [limit, _setLimit] = useState(200);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 

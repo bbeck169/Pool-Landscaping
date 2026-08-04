@@ -36,7 +36,7 @@ export default function VanitySlugsPage() {
   const [adding, setAdding] = React.useState("");
   const [addError, setAddError] = React.useState("");
   const [pendingDelete, setPendingDelete] = React.useState(null);
-  const [domainState, setDomainState] = React.useState(null);
+  const [_domainState, setDomainState] = React.useState(null);
   const [domainDraft, setDomainDraft] = React.useState("");
   const [domainSaving, setDomainSaving] = React.useState(false);
   const [domainErr, setDomainErr] = React.useState("");

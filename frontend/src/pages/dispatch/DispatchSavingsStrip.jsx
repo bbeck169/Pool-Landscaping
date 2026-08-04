@@ -4,7 +4,6 @@
 // Reads /api/dispatch/route/savings/weekly (7d default, 30d toggle in the
 // details modal). Sparkline via recharts. Big number is `total_savings_km`.
 import React from "react";
-import { toast } from "sonner";
 import { X, TrendingUp, BarChart3 } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, Tooltip } from "recharts";
 import { api } from "@/api";

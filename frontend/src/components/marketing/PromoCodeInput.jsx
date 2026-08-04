@@ -61,7 +61,7 @@ export default function PromoCodeInput({
       };
       setApplied(state);
       onChange?.(state);
-    } catch (e) {
+    } catch (_e) {
       setError("Could not reach the server. Please try again.");
     } finally {
       setBusy(false);

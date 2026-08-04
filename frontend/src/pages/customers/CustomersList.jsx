@@ -1,35 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
-import {
-  Plus,
-  Search,
-  Upload,
-  Download,
-  Filter,
-  MoreVertical,
-  Users,
-  Tag,
-  Trash2,
-  BellRing,
-  UserCheck,
-  UserX,
-  Star,
-} from "lucide-react";
+import { Plus, Search, Upload, Download, Filter, MoreVertical, Users, Tag, BellRing, UserCheck, UserX, Star } from "lucide-react";
 import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
-import { Gate, usePermissions } from "@/hooks/usePermissions";
-import {
-  PageHeader,
-  TagChip,
-  Chip,
-  Skeleton,
-  EmptyState,
-  Button,
-  Modal,
-  TextInput,
-  Toast,
-} from "@/components/ui-kit";
+import { usePermissions } from "@/hooks/usePermissions";
+import { PageHeader, TagChip, Chip, Skeleton, EmptyState, Button, Modal, Toast } from "@/components/ui-kit";
 import {
   BulkActionBar,
   BulkConfirmModal,

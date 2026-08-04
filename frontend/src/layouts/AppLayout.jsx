@@ -427,7 +427,7 @@ function AppLayout() {
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto" data-testid="admin-sidebar-scroll">
           {((effectiveRole || user.role) === "admin" || (effectiveRole || user.role) === "super_admin") ? (
             <AdminSidebar />
-          ) : nav.map((item, idx) => {
+          ) : nav.map((item, _idx) => {
             if (item.group) {
               return <NavGroup key={`group-${item.group}`} item={item} />;
             }

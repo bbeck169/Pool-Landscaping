@@ -8,7 +8,7 @@ import { colors } from "@/theme";
 const DOW = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
 export default function AEODigestPage() {
-  const [settings, setSettings] = React.useState(null);
+  const [_settings, setSettings] = React.useState(null);
   const [form, setForm] = React.useState({ enabled: false, recipient_emails: "",
     day_of_week: 1, hour_utc: 15, include_negative_snippets: true });
   const [preview, setPreview] = React.useState(null);

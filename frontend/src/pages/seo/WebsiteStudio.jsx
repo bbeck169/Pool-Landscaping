@@ -4,10 +4,7 @@
  */
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import {
-  ArrowLeft, Plus, Sparkles, Eye, Download, Send, FileText, X,
-  Trash2, RefreshCw,
-} from "lucide-react";
+import { ArrowLeft, Plus, Sparkles, Eye, Download, FileText, X, Trash2 } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 
@@ -198,7 +195,7 @@ export function WebsiteStudioEditor() {
     const p = await api.get(`/seo/studio/pages/${id}`);
     setPage(p);
   };
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: load intentionally omitted (mount-only / stable-ref)
 
   if (!page) return (
     <div className="p-6 text-sm" style={{ color: colors.muted }}>Loading…</div>

@@ -477,7 +477,7 @@ function AiCtaBar({ busy, onPhoto, onVoice, onPhotoDataUrl }) {
       mediaRecorderRef.current = mr;
       mr.start();
       setRecording(true);
-    } catch (e) {
+    } catch (_e) {
       toast.error("Couldn't access the microphone — check browser permissions.");
     }
   };

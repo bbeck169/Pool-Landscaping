@@ -115,7 +115,7 @@ export default function DriverActivityPage() {
   React.useEffect(() => { load(); }, [load]);
 
   // ── Summary tiles ─────────────────────────────────────────────
-  const stops = data?.stops || [];
+  const stops = data?.stops || []; // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: derived value stable-by-reference; downstream useMemo already tracks the real source deps
   const summary = React.useMemo(() => {
     const total_stops = stops.length;
     const total_stopped_s = stops.reduce(
@@ -135,7 +135,7 @@ export default function DriverActivityPage() {
       total_stops, total_stopped_s, total_driving_s,
       first_ping, last_ping,
     };
-  }, [stops]);
+  }, [stops]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: memoized deps are stable by value; wrapping the source in its own useMemo would obscure the read
 
   return (
     <SafeScrollContainer

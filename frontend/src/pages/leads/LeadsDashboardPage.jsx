@@ -7,7 +7,7 @@ import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
-import { Search, Filter, ArrowRight, X, Trash2, ChevronDown } from "lucide-react";
+import { Search, ArrowRight, X, Trash2, ChevronDown } from "lucide-react";
 
 const colors = {
   brand: "#0EA5E9",

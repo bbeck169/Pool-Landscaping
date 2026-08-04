@@ -241,7 +241,7 @@ import {
 } from "@/pages/d2d/D2dPages";
 import { DispatchMap, ScheduleMap } from "@/pages/ops/MapPages";
 import NotFound from "@/pages/NotFound";
-import { LeadsList, CheckinsList } from "@/pages/misc/GapClosures";
+import { CheckinsList } from "@/pages/misc/GapClosures";
 import { CommunicationThread, TechnicianProfile, FormsList, FormEditor, PublicForm } from "@/pages/phase14/Phase14Pages";
 import { PermissionsProvider } from "@/hooks/usePermissions";
 import {

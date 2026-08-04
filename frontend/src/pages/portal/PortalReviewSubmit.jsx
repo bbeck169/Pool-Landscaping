@@ -54,7 +54,7 @@ export default function PortalReviewSubmit() {
   };
 
   const isGooglePrompt = result?.next_step === "choose_platform" && rating >= 4;
-  const isInternalThanks = result && !isGooglePrompt;
+  const _isInternalThanks = result && !isGooglePrompt;
   const platforms = result?.choose_platform || [];
   const google = platforms.find((p) => (p.platform || "").toLowerCase() === "google");
   const googleUrl = google?.url || result?.google_review_url || "";

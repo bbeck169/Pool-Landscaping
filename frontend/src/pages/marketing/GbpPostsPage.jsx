@@ -13,10 +13,7 @@
 // Supercool-connected experience).
 import React from "react";
 import { toast } from "sonner";
-import {
-  Wand2, Copy, Trash2, Calendar, CheckCircle, Download,
-  Sparkles, Loader2, X,
-} from "lucide-react";
+import { Wand2, Copy, Trash2, CheckCircle, Download, Sparkles, Loader2, X } from "lucide-react";
 import { api, api_base } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 import { mustConfirm } from "@/components/ui/confirm-dialog";

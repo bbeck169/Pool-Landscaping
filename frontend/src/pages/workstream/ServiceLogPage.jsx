@@ -21,7 +21,7 @@
  * Media carousel: unified images + videos, keyboard-navigable with
  * Left/Right arrows once focused, dot pagination bottom-center.
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowRight, CalendarClock, ChevronLeft, ChevronRight,

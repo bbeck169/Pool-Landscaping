@@ -193,7 +193,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
         savingShownAtRef.current = 0;
         setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1200);
       }, holdMs);
-    } catch (e) {
+    } catch (_e) {
       setSaveState("error");
       savingShownAtRef.current = 0;
     } finally {
@@ -243,7 +243,7 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
         });
         if (!proceed) return;
       }
-    } catch (e) {
+    } catch (_e) {
       // Non-blocking — a network hiccup fetching recent readings must
       // never prevent the tech from closing a job.
     }

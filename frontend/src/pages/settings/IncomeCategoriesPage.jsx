@@ -161,7 +161,7 @@ export default function IncomeCategoriesPage() {
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [includeArchived]);
+  useEffect(() => { load(); }, [includeArchived]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
 
   const archive = async (id) => {
     setBusyId(id);

@@ -40,7 +40,7 @@ export default function ServiceImagesPortalPage() {
         }
         const data = await res.json();
         if (!cancel) setState({ loading: false, error: null, data });
-      } catch (e) {
+      } catch (_e) {
         if (!cancel) {
           setState({
             loading: false,

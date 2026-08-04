@@ -53,7 +53,7 @@ export default function QnAPanel({ period, customStart, customEnd, onUsageChange
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const abortRef = useRef(null);
+  const _abortRef = useRef(null);
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);

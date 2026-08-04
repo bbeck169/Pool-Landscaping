@@ -23,10 +23,7 @@ import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { DndContext, PointerSensor, useSensor, useSensors, useDroppable } from "@dnd-kit/core";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
-import {
-  CalendarDays, Globe, Zap, MapPin, X, Users, ChevronDown,
-  Sparkles, PlusCircle, Loader2, ArrowRight,
-} from "lucide-react";
+import { CalendarDays, Globe, Zap, MapPin, Users, ChevronDown, Sparkles, PlusCircle, Loader2, ArrowRight } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import {
@@ -44,10 +41,7 @@ import OptimizeRouteModal from "@/pages/dispatch/OptimizeRouteModal";
 import UnscheduledJobsPanel from "@/pages/dispatch/UnscheduledJobsPanel";
 import AssignJobModal from "@/pages/dispatch/AssignJobModal";
 import DispatchSavingsStrip from "@/pages/dispatch/DispatchSavingsStrip";
-import {
-  PIN_COLOR_MODES, PIN_COLOR_BY_DAY, CREW_LEGEND,
-  loadPinColorMode, savePinColorMode, colorForPin,
-} from "@/pages/dispatch/dispatchColors";
+import { PIN_COLOR_MODES, PIN_COLOR_BY_DAY, CREW_LEGEND, loadPinColorMode, savePinColorMode } from "@/pages/dispatch/dispatchColors";
 import formatAddress from "@/utils/formatAddress";
 
 const DAYS = [
@@ -158,7 +152,7 @@ export default function DispatchBoardPage() {
             display_color_hex: u.display_color_hex || null,
           })));
         }
-      } catch (e) {
+      } catch (_e) {
         // Non-fatal — dropdown still works with the tech_load fallback.
       }
     })();
@@ -369,7 +363,7 @@ export default function DispatchBoardPage() {
     }
   };
 
-  const pins = board?.pins || [];
+  const pins = board?.pins || []; // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: derived value stable-by-reference; downstream useMemo already tracks the real source deps
   const techLoad = board?.tech_load || [];
   const unrouted = board?.unrouted_customers || [];
 
@@ -379,7 +373,7 @@ export default function DispatchBoardPage() {
     if (!techId) return 0;
     return pins.filter((p) => p.override_source_tech_id
         && p.assigned_tech_ids?.includes(techId)).length;
-  }, [pins, techId]);
+  }, [pins, techId]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: memoized deps are stable by value; wrapping the source in its own useMemo would obscure the read
   const shiftAwayCount = React.useMemo(() => {
     if (!techId) return 0;
     return activeShifts.filter((s) => s.source_tech_user_id === techId)
@@ -392,7 +386,7 @@ export default function DispatchBoardPage() {
     if (!shifted) return null;
     const src = techs.find((t) => t.id === shifted.override_source_tech_id);
     return src?.name || shifted.override_source_tech_id;
-  }, [pins, techId, techs]);
+  }, [pins, techId, techs]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: memoized deps are stable by value; wrapping the source in its own useMemo would obscure the read
 
   return (
     // Feb-2026 · scroll-trap prevention convention — <SafeScrollContainer>

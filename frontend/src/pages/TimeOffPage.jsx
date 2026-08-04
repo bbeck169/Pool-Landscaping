@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { api } from "@/api";
 
 const TYPES = ["sick", "vacation", "personal", "unpaid"];
@@ -22,7 +22,7 @@ export default function TimeOffPage() {
   const [balance, setBalance] = useState(null);
   const [rows, setRows] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [error, setError] = useState("");
+  const [_error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {

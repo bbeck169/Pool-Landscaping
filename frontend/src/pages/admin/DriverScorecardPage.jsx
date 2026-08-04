@@ -49,7 +49,7 @@ function ScoreBadge({ score, testId }) {
 
 function ScoreGauge({ score }) {
   const c = score >= 80 ? "#059669" : score >= 60 ? "#D97706" : "#DC2626";
-  const dash = `${score} ${100 - score}`;
+  const _dash = `${score} ${100 - score}`;
   return (
     <div className="flex items-center justify-center"
          data-testid="scorecard-gauge">

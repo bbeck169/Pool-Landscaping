@@ -105,7 +105,7 @@ export default function RevenueForecastTile({ range }) {
       .then((r) => setTabData(r))
       .catch((e) => setTabErr(e?.message || "Failed to load."))
       .finally(() => setTabBusy(false));
-  }, [activeRange?.start, activeRange?.end]);
+  }, [activeRange?.start, activeRange?.end]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: deps 'activeRange' intentionally omitted (mount-only or stable-ref)
 
   const onTabClick = (key) => {
     setActiveTab((cur) => (cur === key ? null : key));

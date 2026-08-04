@@ -16,20 +16,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  Workflow,
-  RefreshCw,
-  Loader2,
-  Filter,
-  ChevronDown,
-  X as XIcon,
-  Image as ImageIcon,
-  Video,
-  MapPin,
-  User,
-  Star,
-  Calendar as CalendarIcon,
-} from "lucide-react";
+import { Workflow, RefreshCw, Loader2, ChevronDown, X as XIcon, Image as ImageIcon, Video, MapPin, User, Star, Calendar as CalendarIcon } from "lucide-react";
 import { api, TOKEN_KEY } from "@/api";
 import { useAuth } from "@/auth";
 import { Forbidden } from "@/hooks/usePermissions";
@@ -46,7 +33,7 @@ const SORT_OPTIONS = [
   { value: "customer_asc", label: "Customer A → Z" },
   { value: "customer_desc", label: "Customer Z → A" },
 ];
-const STATUS_OPTIONS = ["", "pending", "in_progress", "completed", "cancelled"];
+const _STATUS_OPTIONS = ["", "pending", "in_progress", "completed", "cancelled"];
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 

@@ -10,7 +10,7 @@
  *
  * Emits ``onChange(html)`` for email, ``onChange(text)`` for SMS.
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough,
   Heading1, Heading2, Heading3,
@@ -43,7 +43,7 @@ const COLOR_SWATCHES = [
 const GSM7_BASIC = /^[A-Za-z0-9@£$¥èéùìòÇØøÅå\u0394_\u03a6\u0393\u039b\u03a9\u03a0\u03a8\u03a3\u0398\u039eÆæßÉ !"#¤%&'()*+,\-./:;<=>?¡ÄÖÑÜ§¿äöñüà\n\r ]*$/;
 const GSM7_EXT = /[\^{}\\[\]~|€]/;
 
-export function TemplateEditor({ mode = "email", value = "", onChange, tenantId }) {
+export function TemplateEditor({ mode = "email", value = "", onChange, _tenantId }) {
   // Thin dispatcher — each concrete editor owns its own hooks so we
   // never violate rules-of-hooks with a conditional early return.
   if (mode === "sms") {

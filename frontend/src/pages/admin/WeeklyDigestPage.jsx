@@ -10,7 +10,7 @@
  */
 import React from "react";
 import { toast } from "sonner";
-import { Send, RefreshCw, PlayCircle, Save } from "lucide-react";
+import { Send, PlayCircle, Save } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 

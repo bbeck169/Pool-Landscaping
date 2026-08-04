@@ -34,7 +34,7 @@ export default function AICreditsPage() {
   const isSuper = user?.role === "super_admin";
   const [balance, setBalance] = useState(null);
   const [txns, setTxns] = useState([]);
-  const [cursor, setCursor] = useState(null);
+  const [_cursor, setCursor] = useState(null);
   const [nextCursor, setNextCursor] = useState(null);
   const [feature, setFeature] = useState("");
   const [topupOpen, setTopupOpen] = useState(false);
@@ -48,7 +48,7 @@ export default function AICreditsPage() {
       const d = await api.get("/ai-credits/balance");
       setBalance(d);
       setPlanPicker(d.plan);
-    } catch (e) {
+    } catch (_e) {
       toast.error("Could not load AI credits balance");
     }
   };

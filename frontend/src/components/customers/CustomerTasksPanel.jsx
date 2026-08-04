@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Plus, CheckCircle2, Circle, Clock, Trash2, User } from "lucide-react";
+import { Plus, CheckCircle2, Circle, Clock, Trash2 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button, TextInput, EmptyState, Modal, Toast, Chip } from "@/components/ui-kit";

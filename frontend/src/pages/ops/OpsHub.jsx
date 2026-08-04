@@ -1,20 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import {
-  Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar,
-  Activity, DollarSign, Waves, Package, History, BarChart3, Layers, PlayCircle,
-  ArrowLeft, Plus, Check, X, Trash2, RefreshCw, MapPin, ChevronRight,
-  Link2, Share2, MoreVertical, KeyRound, Eye, EyeOff, Copy as CopyIcon,
-  Undo2, ShieldAlert, Loader2,
-} from "lucide-react";
+import { Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar, Activity, Waves, Package, History, BarChart3, Plus, Trash2, RefreshCw, MapPin, ChevronRight, Link2, Share2, MoreVertical, KeyRound, Eye, EyeOff, Copy as CopyIcon, Undo2, ShieldAlert, Loader2 } from "lucide-react";
 import { api } from "@/api";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { colors, money, brandGradientCss } from "@/theme";
 import { useAuth } from "@/auth";
 import { usePermissions } from "@/hooks/usePermissions";
-import {
-  PageHeader, Button, Skeleton, StatusPill, Chip, EmptyState, TextInput, Modal, Toast, TagChip,
-} from "@/components/ui-kit";
+import { PageHeader, Button, Skeleton, StatusPill, Chip, EmptyState, TextInput, Modal, Toast } from "@/components/ui-kit";
 import { useAttendance } from "@/hooks/useAttendance";
 import WorkstreamJobDrawer from "@/pages/ops/WorkstreamJobDrawer";
 
@@ -128,7 +120,7 @@ function useList(url, deps = []) {
 function Dispatch() {
   const [jobs, refresh] = useList("/jobs");
   const [techs] = useList("/technicians");
-  const [crews] = useList("/crews");
+  const [_crews] = useList("/crews");
   const [picking, setPicking] = useState(null);
   const [toast, setToast] = useState(null);
   const cols = { unassigned: [], assigned: [], progress: [] };
@@ -217,7 +209,7 @@ function Routes() {
     filtered.sort((a, b) => (a.route_order ?? 999) - (b.route_order ?? 999));
     setOrder(filtered);
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [techId, date]);
+  useEffect(() => { load(); }, [techId, date]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
   const move = (i, dir) => { const arr = [...order]; const j = i + dir; if (j < 0 || j >= arr.length) return; [arr[i], arr[j]] = [arr[j], arr[i]]; setOrder(arr); };
   const optimize = async () => {
     setBusy(true);
@@ -610,7 +602,7 @@ function TeamRoster() {
     }
   };
 
-  const CHIPS = [
+  const _CHIPS = [
     { key: "all",            label: "All roles" },
     { key: "pool_tech",      label: "Pool Tech" },
     { key: "landscape_tech", label: "Landscape Tech" },
@@ -620,7 +612,7 @@ function TeamRoster() {
   ];
   // Deduplicate: the "All (Both)" chip filters by `all_admin_both` (custom
   // key). We fix that below to filter to `admin+both` only.
-  const CHIPS_FIXED = [
+  const _CHIPS_FIXED = [
     { key: "all",            label: "All roles" },
     { key: "pool_tech",      label: "Pool Tech" },
     { key: "landscape_tech", label: "Landscape Tech" },
@@ -2111,7 +2103,7 @@ function AvgJobTime() {
 }
 
 /* ═══════════ Compact list helper ═══════════ */
-function SimplePage({ endpoint, title, empty, render, filter }) {
+function SimplePage({ endpoint, _title, empty, render, filter }) {
   const [rows] = useList(endpoint);
   const filtered = filter ? (rows || []).filter(filter) : (rows || []);
   return (

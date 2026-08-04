@@ -5,10 +5,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { useNavigate, useParams } from "react-router-dom";
-import {
-  Sparkles, Plus, Trash2, FileText, Send, Download, ArrowLeft,
-  Wrench, Search, ChevronRight, CheckCircle2, AlertCircle,
-} from "lucide-react";
+import { Sparkles, Plus, Trash2, Send, Download, ArrowLeft, Wrench, ChevronRight, CheckCircle2, AlertCircle } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 
@@ -36,7 +33,7 @@ export default function EstimatorList() {
       setRows(r.items || []);
     } finally { setLoading(false); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [filter]);
+  useEffect(() => { load(); }, [filter]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6" data-testid="estimator-list">

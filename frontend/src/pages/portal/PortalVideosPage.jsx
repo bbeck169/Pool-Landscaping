@@ -46,7 +46,7 @@ export default function PortalVideosPage() {
     }
   };
 
-  useEffect(() => { load(0); /* eslint-disable-next-line */ }, []);
+  useEffect(() => { load(0); }, []); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
 
   const loadMore = () => {
     const next = offset + PAGE;

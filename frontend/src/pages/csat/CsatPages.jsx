@@ -207,7 +207,7 @@ export function PublicCsat() {
       });
       if (!r.ok) throw new Error("submit failed");
       setDone(true);
-    } catch (e) {
+    } catch (_e) {
       setError("Could not submit. Please try again.");
     } finally {
       setSubmitting(false);

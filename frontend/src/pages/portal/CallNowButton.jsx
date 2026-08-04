@@ -10,7 +10,6 @@
 import React, { useEffect, useState } from "react";
 import { Phone } from "lucide-react";
 import { api } from "@/api";
-import { colors } from "@/theme";
 
 /** Format a raw ``+16028874400`` into ``(602) 887-4400`` for display.
  *  Falls back to the raw value when the parse fails. */

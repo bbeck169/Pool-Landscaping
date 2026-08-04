@@ -1,34 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import {
-  ArrowLeft,
-  Edit3,
-  Trash2,
-  MapPin,
-  Clock,
-  User,
-  FileDown,
-  Mail,
-  RotateCw,
-  Play,
-  Check,
-  AlertTriangle,
-  Camera,
-  X as XIcon,
-} from "lucide-react";
+import { ArrowLeft, Trash2, MapPin, Clock, User, FileDown, Mail, RotateCw, Play, Check, AlertTriangle, Camera, X as XIcon } from "lucide-react";
 import { api, TOKEN_KEY } from "@/api";
 import { colors, money } from "@/theme";
-import {
-  PageHeader,
-  Button,
-  Skeleton,
-  StatusPill,
-  Chip,
-  Modal,
-  TextInput,
-  Toast,
-  EmptyState,
-} from "@/components/ui-kit";
+import { Button, Skeleton, StatusPill, Chip, Modal, TextInput, Toast } from "@/components/ui-kit";
 import { useAuth } from "@/auth";
 import { useAttendance } from "@/hooks/useAttendance";
 import JobCostingPanel from "@/pages/budget/JobCostingPanel";

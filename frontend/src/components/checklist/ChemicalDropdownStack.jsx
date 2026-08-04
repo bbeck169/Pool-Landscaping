@@ -20,7 +20,7 @@ import {
   normalizeChemQty,
 } from "./ChemicalPickerModal";
 
-const noOptShim = (label, unit) => `No ${label} added`;
+const noOptShim = (label, _unit) => `No ${label} added`;
 
 // Phase 34e compat — the `add_from_recommendation` flow calls this to
 // pre-snap an LLM-suggested quantity to the closest UI preset. We no
@@ -33,7 +33,7 @@ export default function ChemicalDropdownStack({
   chemicalsAdded = [],
   locked = false,
   onChange,
-  jobId,   // kept for signature compat (inventory reserve wired later)
+  _jobId,   // kept for signature compat (inventory reserve wired later)
 }) {
   const draftsRef = useRef({});
   const [, force] = useState(0);

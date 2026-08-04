@@ -47,7 +47,7 @@ export default function BudgetWizard() {
       gross_profit_cents: grossProfit,
       margin_pct: requiredRevenue > 0 ? Math.round((targetProfit / requiredRevenue) * 1000) / 10 : 0,
     };
-  }, [profitMode, profitPct, profitDollars, opex, opexCents, profitDollarsCents]);
+  }, [profitMode, profitPct, profitDollars, opex, opexCents, profitDollarsCents]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: memoized deps are stable by value; wrapping the source in its own useMemo would obscure the read
 
   const apply = async () => {
     setSubmitting(true); setErr(null);

@@ -146,7 +146,7 @@ export function SequenceDetail() {
     const e = await api.get(`/sequences/${id}/enrollments`);
     setEnr(e || []);
   };
-  useEffect(() => { load(); api.get("/customers").then((r) => setCustomers(Array.isArray(r) ? r : [])); }, [id]);
+  useEffect(() => { load(); api.get("/customers").then((r) => setCustomers(Array.isArray(r) ? r : [])); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: load intentionally omitted (mount-only / stable-ref)
   const enroll = async () => {
     if (!custId) return;
     await api.post(`/sequences/${id}/enroll?customer_id=${custId}`, {});

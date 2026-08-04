@@ -21,9 +21,7 @@
  * The existing admin sidebar + admin top bar remain untouched. This
  * is a THIRD, universal nav surface with per-user personalization.
  */
-import React, {
-  useCallback, useEffect, useMemo, useRef, useState,
-} from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Menu, Search, X, Bookmark, BookmarkCheck } from "lucide-react";
 import {

@@ -87,8 +87,8 @@ function PhotoBucket({ label, purpose, jobId, canDelete, readOnly = false,
 }
 
 export function JobBeforeAfterPhotos({ jobId, user, readOnly = false }) {
-  const [beforeCount, setBeforeCount] = useState(null);
-  const [afterCount, setAfterCount] = useState(null);
+  const [beforeCount, _setBeforeCount] = useState(null);
+  const [afterCount, _setAfterCount] = useState(null);
   if (!jobId) return null;
 
   // Backend enforces the fine-grained (uploader-owned) gate; here we

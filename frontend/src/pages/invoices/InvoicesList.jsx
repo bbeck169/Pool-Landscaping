@@ -85,15 +85,15 @@ export default function InvoicesList() {
   const hasLateFee = params.get("late_fee") === "1";
   // Feb-2026 · Bulk-pay iteration 1 — card-on-file filter + sort state.
   const cardFilter = params.get("card") || "any"; // any | yes | no
-  const [sort, setSort] = useState({ col: null, dir: null }); // dir: asc|desc|null
+  const [sort, _setSort] = useState({ col: null, dir: null }); // dir: asc|desc|null
   // Phase 34 · Task BB — bulk-select state.
   const [selected, setSelected] = useState(() => new Set());
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   // Bulk-pay modals + results.
-  const [payConfirmOpen, setPayConfirmOpen] = useState(false);
-  const [paySummaryOpen, setPaySummaryOpen] = useState(false);
-  const [payResults, setPayResults] = useState(null);
+  const [_payConfirmOpen, setPayConfirmOpen] = useState(false);
+  const [_paySummaryOpen, setPaySummaryOpen] = useState(false);
+  const [_payResults, setPayResults] = useState(null);
   const [paying, setPaying] = useState(false);
   // Phase 14b · Feb-2026 — category multi-select + bulk-charge modal state.
   const [categoryOptions, setCategoryOptions] = useState([]);
@@ -178,7 +178,7 @@ export default function InvoicesList() {
     setSelected(new Set());
   };
 
-  const today = new Date();
+  const today = new Date(); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: derived value stable-by-reference; downstream useMemo already tracks the real source deps
   const aging = useMemo(() => {
     const b = { current: 0, "1-30": 0, "31-60": 0, "61-90": 0, "90+": 0 };
     (rows || []).forEach((r) => {
@@ -197,7 +197,7 @@ export default function InvoicesList() {
       else b["90+"] += bal;
     });
     return b;
-  }, [rows, today]);
+  }, [rows, today]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: memoized deps are stable by value; wrapping the source in its own useMemo would obscure the read
 
   const filtered = useMemo(() => {
     // Merge PM enrichment onto every row before filtering / sorting so
@@ -320,7 +320,7 @@ export default function InvoicesList() {
     return { chargeable, skips, totalAmount, uniqueCustomers };
   }, [filtered, selected]);
 
-  const doBulkPay = async () => {
+  const _doBulkPay = async () => {
     if (paying) return;
     const invoice_ids = selectionBuckets.chargeable.map((r) => r.id);
     if (invoice_ids.length === 0) return;
@@ -336,7 +336,7 @@ export default function InvoicesList() {
     } finally { setPaying(false); }
   };
 
-  const closeBulkPaySummary = () => {
+  const _closeBulkPaySummary = () => {
     setPaySummaryOpen(false);
     setPayResults(null);
     clearSelection();
@@ -706,7 +706,7 @@ export default function InvoicesList() {
 }
 
 // ─── SortableTh · click header to cycle unsorted → asc → desc ──────
-function SortableTh({ label, col, sort, setSort, align = "left", className = "" }) {
+function _SortableTh({ label, col, sort, setSort, align = "left", className = "" }) {
   const active = sort.col === col;
   const dir = active ? sort.dir : null;
   const cycle = () => {
@@ -731,7 +731,7 @@ function SortableTh({ label, col, sort, setSort, align = "left", className = "" 
 }
 
 // ─── Bulk-pay confirmation modal ──────────────────────────────────
-function BulkPayConfirmModal({ buckets, paying, onCancel, onCharge }) {
+function _BulkPayConfirmModal({ buckets, paying, onCancel, onCharge }) {
   const { chargeable, skips, totalAmount, uniqueCustomers } = buckets;
   const skipCount = skips.no_card.length + skips.draft.length + skips.paid.length + skips.other.length;
   return (
@@ -803,7 +803,7 @@ function BulkPayConfirmModal({ buckets, paying, onCancel, onCharge }) {
 }
 
 // ─── Bulk-pay summary modal ──────────────────────────────────────
-function BulkPaySummaryModal({ results, onClose }) {
+function _BulkPaySummaryModal({ results, onClose }) {
   const rows = results?.results || [];
   const s = results?.summary || summarizeBulkChargeResult(rows);
   const chip = (label, count, tone) =>

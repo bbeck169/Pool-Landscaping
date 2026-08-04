@@ -7,9 +7,7 @@
  *   2. Requests table (filters, statuses, cancel action).
  */
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  Save, Send, Star, Ban, Clock, Zap, Mail, MessageSquare,
-} from "lucide-react";
+import { Save, Star, Ban, Mail, MessageSquare } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 
@@ -49,7 +47,7 @@ export default function MarketingReviewRequestsPage() {
   };
 
   useEffect(() => { loadCfg(); loadTemplates(); }, []);
-  useEffect(() => { loadList(); }, [statusFilter]);
+  useEffect(() => { loadList(); }, [statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: loadList intentionally omitted (mount-only / stable-ref)
 
   const templatesByChannel = useMemo(() => ({
     email: templates.filter((t) => t.channel === "email"),

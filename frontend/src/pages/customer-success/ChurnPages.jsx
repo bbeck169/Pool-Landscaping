@@ -5,10 +5,7 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  ArrowLeft, AlertTriangle, Users, Play, RefreshCw, TrendingDown,
-  Sparkles, FileEdit, Copy, Check,
-} from "lucide-react";
+import { ArrowLeft, Play, RefreshCw, TrendingDown, Sparkles, FileEdit, Copy } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 

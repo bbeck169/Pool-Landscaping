@@ -8,11 +8,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
-import {
-  Camera, X, Save, ShieldCheck, ChevronLeft, CheckSquare, Square,
-  MapPin, Key, ClipboardCheck, FlaskConical, Beaker, Plus, Trash2, Timer,
-  Share2, Copy,
-} from "lucide-react";
+import { Camera, X, Save, ShieldCheck, ChevronLeft, CheckSquare, Square, MapPin, Key, ClipboardCheck, FlaskConical, Beaker, Plus, Trash2, Timer, Share2 } from "lucide-react";
 
 const AUTOSAVE_MS = 5000;
 const PHOTO_CAP = 10;
@@ -117,7 +113,7 @@ export default function ServiceReport() {
       setDirty(false);
       setSaveState("saved");
       setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1500);
-    } catch (e) {
+    } catch (_e) {
       setSaveState("error");
     } finally {
       savingRef.current = false;
@@ -143,7 +139,7 @@ export default function ServiceReport() {
   const photoCount = (report.photos || []).length;
   const remaining = PHOTO_CAP - photoCount;
 
-  const updChemistryReading = (idx, patch) => {
+  const _updChemistryReading = (idx, patch) => {
     const next = [...report.chemical_readings];
     next[idx] = { ...next[idx], ...patch, ts: new Date().toISOString() };
     setReport({ ...report, chemical_readings: next });
@@ -260,7 +256,7 @@ export default function ServiceReport() {
       }
       setShareToast("Link copied — you can text this to the customer.");
       setTimeout(() => setShareToast(""), 3000);
-    } catch (e) {
+    } catch (_e) {
       setShareToast("Copy failed — long-press to copy manually.");
       setTimeout(() => setShareToast(""), 3000);
     }

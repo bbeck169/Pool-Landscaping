@@ -38,7 +38,7 @@ export default function AdminAssets() {
 
   const create = async () => {
     if (!form.name.trim()) return;
-    const r = await api.post("/assets", form);
+    const _r = await api.post("/assets", form);
     setShowNew(false); setForm({ name: "", category: "vehicle", asset_tag: "" });
     load();
   };

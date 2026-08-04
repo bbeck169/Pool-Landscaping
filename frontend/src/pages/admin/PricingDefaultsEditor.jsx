@@ -73,7 +73,7 @@ const FIELDS = {
   },
 };
 
-function Row({ section, sectionData, k, unit, tooltip, spec, overrideVal, onChange, onReset }) {
+function Row({ section, _sectionData, k, unit, tooltip, spec, overrideVal, onChange, onReset }) {
   const [showTip, setShowTip] = useState(false);
   const specVal = spec[k];
   const isOverridden = overrideVal !== undefined;

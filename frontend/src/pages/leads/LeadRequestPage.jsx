@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
-import { Link2, Send, MessageSquare, Mail, Copy, RefreshCw, X } from 'lucide-react';
+import { Link2, MessageSquare, Mail, Copy, RefreshCw, X } from 'lucide-react';
 
 const Card = ({ children, className = "", testId }) => (
   <div className={"rounded-2xl " + className}

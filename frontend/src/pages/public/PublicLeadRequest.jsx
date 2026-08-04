@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { colors } from "@/theme";
-import { Send, X, Upload, CheckCircle2, Phone, Mail } from "lucide-react";
+import { X, Upload, CheckCircle2, Phone, Mail } from "lucide-react";
 
 const BASE = process.env.REACT_APP_BACKEND_URL;
 const MAX_FILES = 10;

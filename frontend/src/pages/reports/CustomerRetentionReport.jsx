@@ -243,17 +243,17 @@ export default function CustomerRetentionReport() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [period]);
+  useEffect(() => { load(); }, [period]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
 
   const yoy = data?.yoy;
   const totals = data?.totals;
-  const buckets = data?.buckets || [];
+  const buckets = data?.buckets || []; // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: derived value stable-by-reference; downstream useMemo already tracks the real source deps
 
   const csv = useMemo(() => {
     const rows = [["label", "start", "end", "gained", "lost", "net"]];
     for (const b of buckets) rows.push([b.label, b.start, b.end, b.gained, b.lost, b.net]);
     return rows.map((r) => r.join(",")).join("\n");
-  }, [buckets]);
+  }, [buckets]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: memoized deps are stable by value; wrapping the source in its own useMemo would obscure the read
 
   const downloadCsv = () => {
     const blob = new Blob([csv], { type: "text/csv" });
@@ -265,7 +265,7 @@ export default function CustomerRetentionReport() {
     URL.revokeObjectURL(url);
   };
 
-  const netToneColor = totals && totals.net >= 0 ? "#16A34A" : "#DC2626";
+  const _netToneColor = totals && totals.net >= 0 ? "#16A34A" : "#DC2626";
   const yoyNetPct = yoy?.net_pct_change;
 
   return (

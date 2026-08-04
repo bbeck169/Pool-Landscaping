@@ -193,7 +193,7 @@ export function LandscapeAI() {
    ═══════════════════════════════════════════════════════════════════ */
 export function CadList() {
   const [rows, setRows] = useState(null);
-  const [toast, setToast] = useState("");
+  const [toast, _setToast] = useState("");
   useEffect(() => { api.get("/designs").then((r) => setRows(Array.isArray(r) ? r : [])); }, []);
   const create = async () => {
     const r = await api.post("/designs", { name: "New design" });
@@ -243,7 +243,7 @@ export function CadEditor() {
   const { id } = useParams();
   const [design, setDesign] = useState(null);
   const [tool, setTool] = useState("pointer");
-  const [dragging, setDragging] = useState(null);
+  const [_dragging, _setDragging] = useState(null);
   const [toast, setToast] = useState("");
   const canvasRef = useRef(null);
 
@@ -253,7 +253,7 @@ export function CadEditor() {
   }, [id]);
 
   const canvasSize = { w: 800, h: 500 };
-  const scale = design ? (canvasSize.w / (design.canvas_w_ft || 60)) : 12;
+  const _scale = design ? (canvasSize.w / (design.canvas_w_ft || 60)) : 12;
 
   const onCanvasMouseDown = (e) => {
     if (tool === "pointer" || !design) return;

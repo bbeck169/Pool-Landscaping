@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Bot, Sparkles, Wand2, PlayCircle, ClipboardList, Check } from "lucide-react";
+import { ArrowLeft, Bot, Sparkles, Wand2, PlayCircle, Check } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ const SEASONS = ["spring", "summer", "fall", "winter"];
 
 // ─── Copy Generator ─────────────────────────────────────────────────────
 
-function CopyGenerator({ balance, refreshBalance }) {
+function CopyGenerator({ _balance, refreshBalance }) {
   const [rules, setRules] = useState([]);
   const [selected, setSelected] = useState(null);
   const [tone, setTone] = useState("friendly");

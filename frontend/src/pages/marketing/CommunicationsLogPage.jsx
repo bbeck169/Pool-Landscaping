@@ -19,10 +19,7 @@
  * (gray pill) via the `sms_status_final` field.
  */
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  Mail, MessageSquareText, Loader2, RefreshCw, Download,
-  X, ChevronRight,
-} from "lucide-react";
+import { Mail, MessageSquareText, Loader2, RefreshCw, Download, ChevronRight } from "lucide-react";
 import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -209,7 +206,7 @@ export default function CommunicationsLogPage() {
     }).finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, [params, allowed]);
+  useEffect(() => { load(); }, [params, allowed]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: load intentionally omitted (mount-only / stable-ref)
 
   if (!allowed) return <Forbidden reason="Communications log is admin-only." />;
 

@@ -1,35 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import {
-  Waves,
-  Calendar,
-  Wrench,
-  Receipt,
-  FileText,
-  MessageSquare,
-  ChevronRight,
-  AlertCircle,
-  Plus,
-  Shield,
-  ClipboardCheck,
-  DollarSign,
-  CalendarClock,
-  Wallet,
-  X as XIcon,
-  Send,
-  Sparkles,
-  UserRound,
-  Star,
-  Image as ImageIcon,
-  Video as VideoIcon,
-} from "lucide-react";
+import { Waves, Wrench, Receipt, FileText, MessageSquare, ChevronRight, AlertCircle, Plus, ClipboardCheck, DollarSign, CalendarClock, Wallet, X as XIcon, Send, Sparkles, UserRound, Star, Image as ImageIcon, Video as VideoIcon } from "lucide-react";
 import { api } from "@/api";
 import { brandGradientCss, colors } from '@/theme';
 import { useAuth } from "@/auth";
-import GreetingTile from "@/components/customer/GreetingTile";
 import BusinessCard from "@/components/business-card/BusinessCard";
 import { Skeleton, StatusPill } from '@/components/ui-kit';
-import PortalWalkthrough from "@/pages/portal/PortalWalkthrough";
 import CallNowButton from "@/pages/portal/CallNowButton";
 import ReferralSection from "@/pages/portal/ReferralSection";
 import MyReferralsSection from "@/pages/portal/MyReferralsSection";
@@ -59,7 +35,7 @@ export default function PortalHome() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [data, setData] = useState(null);
-  const [tosStatus, setTosStatus] = useState(null);
+  const [_tosStatus, setTosStatus] = useState(null);
   const [summary, setSummary] = useState(null);
   // Task RR/SS Phase 2 · Feb 2026 — live credit balance via the new
   // customer-portal endpoint. Runs in parallel with /summary so the
@@ -571,7 +547,7 @@ function ActionTile({ icon: Icon, label, tone, onClick, testid, badge }) {
 // Feb-2026 · Slice 3B · Portal account tile.  Compact, single-row-of-4
 // on md+, 2×2 on mobile.  ``alert=true`` swaps the border + label
 // colour red (used by Past Due when > 0).
-function Tile({ label, value, sub, icon: Icon, tone, alert, tooltip, onClick, testid, testidLive }) {
+function Tile({ label, value, sub, icon: Icon, _tone, alert, tooltip, onClick, testid, testidLive }) {
   const borderColor = alert ? colors.error : colors.border;
   const labelColor = alert ? colors.error : colors.muted;
   return (

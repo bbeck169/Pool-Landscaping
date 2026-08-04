@@ -1,9 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  ArrowLeft, Copy, Plus, Trash2, ExternalLink, Check, X,
-  ClipboardList, Palette, Settings, ListChecks,
-} from "lucide-react";
+import { ArrowLeft, Copy, Plus, Trash2, ExternalLink, Check, X, Palette, ListChecks } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button } from "@/components/ui/button";

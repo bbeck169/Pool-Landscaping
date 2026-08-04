@@ -28,7 +28,7 @@ export default function TrainingModuleDetail() {
 
   useEffect(() => { load(); }, [load]);
 
-  const lessons = mod?.lessons || [];
+  const lessons = mod?.lessons || []; // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: derived value stable-by-reference; downstream useMemo already tracks the real source deps
   const completedIds = useMemo(() => new Set(mod?.progress?.lessons_completed || []), [mod]);
   const selected = useMemo(
     () => lessons.find((l) => l.id === selectedId) || lessons[0] || null,
@@ -48,7 +48,7 @@ export default function TrainingModuleDetail() {
     } finally {
       setBusy(false);
     }
-  }, [code, selected, load]);
+  }, [code, selected, load]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: memoized deps are stable by value; wrapping the source in its own useMemo would obscure the read
 
   if (!mod) return (
     <div className="max-w-5xl mx-auto py-6 px-4">

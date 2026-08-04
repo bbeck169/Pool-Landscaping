@@ -2,10 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { toast as sonnerToast } from "sonner";
 import { useNavigate } from "react-router-dom";
-import {
-  ArrowLeft, Download, Search, RefreshCw, Play, Plus, Trash2,
-  Upload, FileDown, ExternalLink, Copy, Check, X as XIcon,
-} from "lucide-react";
+import { ArrowLeft, Download, Search, Play, Plus, Trash2, Upload, FileDown, ExternalLink, Check, X as XIcon } from "lucide-react";
 import { api } from "@/api";
 import { colors, money } from '@/theme';
 import DateRangePicker, { useDateRange } from "@/components/DateRangePicker";
@@ -515,7 +512,7 @@ export function AutoBilling() {
   // bulk-delete, which removes the plan from the active table.
   const [confirmCancelOpen, setConfirmCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
-  const [cancelResult, setCancelResult] = useState(null);
+  const [_cancelResult, setCancelResult] = useState(null);
   const doBulkCancel = async () => {
     setBulkBusy(true);
     try {

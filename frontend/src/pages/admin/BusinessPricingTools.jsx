@@ -12,10 +12,7 @@
  */
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  ArrowLeft, DollarSign, LineChart, TrendingDown, Copy, Download,
-  CheckCircle2, AlertTriangle, TrendingUp, X, Send, Save as SaveIcon, Eye,
-} from "lucide-react";
+import { ArrowLeft, DollarSign, LineChart, TrendingDown, Copy, Download, TrendingUp, X, Send, Save as SaveIcon, Eye } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 

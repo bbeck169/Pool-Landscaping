@@ -23,7 +23,7 @@ function marginTone(pct) {
 
 export default function JobMarginLeaderboard() {
   const [days, setDays] = useState(60);
-  const [limit, setLimit] = useState(20);
+  const [limit, _setLimit] = useState(20);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -46,7 +46,7 @@ export default function JobMarginLeaderboard() {
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [days, limit]);
+  useEffect(() => { load(); }, [days, limit]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
 
   const sortedRows = useMemo(() => {
     const copy = [...rows];

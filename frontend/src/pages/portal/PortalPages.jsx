@@ -24,17 +24,7 @@ import PortalBookingPhotos from "@/components/portal/PortalBookingPhotos";
 import PaymentForm from "@/components/PaymentForm";
 // Phase 30 · Feb-2026 — shared TechAvatar for tech identity chips.
 import TechAvatar from "@/components/common/TechAvatar";
-import {
-  PageHeader,
-  Button,
-  Skeleton,
-  Chip,
-  StatusPill,
-  TextInput,
-  EmptyState,
-  Toast,
-  Modal,
-} from "@/components/ui-kit";
+import { PageHeader, Button, Skeleton, Chip, StatusPill, TextInput, EmptyState, Toast } from "@/components/ui-kit";
 
 // ──────────────── /portal/services ────────────────
 export function PortalServices() {
@@ -42,7 +32,7 @@ export function PortalServices() {
   const [tab, setTab] = useState("upcoming");
   const [jobs, setJobs] = useState(null);
   useEffect(() => {
-    api.get("/portal/home").then((d) => {
+    api.get("/portal/home").then((_d) => {
       api.get("/jobs").then((all) => {
         // /jobs already filters by customer on backend for customer role
         setJobs(all || []);
@@ -683,7 +673,7 @@ export function PortalMessages() {
   // customer portal per product guardrail: no AI-adjacent UI on
   // customer-facing surfaces. Message text is now sent verbatim.
   const [threads, setThreads] = useState(null);
-  const [active, setActive] = useState(null);
+  const [_active, _setActive] = useState(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
@@ -746,7 +736,7 @@ export function PortalMessages() {
 // ──────────────── /portal/profile ────────────────
 export function PortalProfile() {
   const { user, refreshMe } = useAuth();
-  const [customer, setCustomer] = useState(null);
+  const [_customer, setCustomer] = useState(null);
   const [form, setForm] = useState({ first_name: "", last_name: "", email: "", phone: "", address: "" });
   const [initial, setInitial] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -866,7 +856,7 @@ export function PortalProfile() {
     </div>
   );
 }
-function ReadOnly({ label, value }) {
+function _ReadOnly({ label, value }) {
   return (
     <div className="mb-2">
       <div className="text-xs uppercase font-semibold" style={{ color: colors.muted }}>{label}</div>
@@ -878,7 +868,7 @@ function ReadOnly({ label, value }) {
 // ──────────────── /portal/request-service ────────────────
 export function PortalRequestService() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { _user } = useAuth();
   // Phase 34 · Feb-2026 — Task I. The Service Type dropdown has been
   // removed. Customers now describe what they need in a free-text
   // paragraph; the backend defaults ``service_type`` to

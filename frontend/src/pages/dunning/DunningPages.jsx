@@ -5,10 +5,7 @@
 import React, { useEffect, useState } from "react";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { useNavigate } from "react-router-dom";
-import {
-  ArrowLeft, Save, RotateCcw, Send, Pause, Play, AlertTriangle,
-  Zap, Mail, MessageSquare, TrendingDown, ChevronRight, Calendar,
-} from "lucide-react";
+import { ArrowLeft, Save, RotateCcw, Send, Pause, Mail, MessageSquare, TrendingDown, Calendar } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 
@@ -253,7 +250,7 @@ export function DunningQueue() {
       setItems(r.items || []);
     } finally { setLoading(false); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [days]);
+  useEffect(() => { load(); }, [days]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
 
   const sendNow = async (item) => {
     await api.post(`/dunning/invoices/${item.invoice_id}/send-reminder`,

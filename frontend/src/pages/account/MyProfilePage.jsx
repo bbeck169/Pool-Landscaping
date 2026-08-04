@@ -44,7 +44,7 @@ export default function MyProfilePage() {
 
   useEffect(() => {
     api.get("/auth/me").then(setMe).catch(() => setMe(ctxUser || null));
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: deps 'ctxUser' intentionally omitted (mount-only or stable-ref)
 
   const patch = async (fields) => {
     setSaving(true);

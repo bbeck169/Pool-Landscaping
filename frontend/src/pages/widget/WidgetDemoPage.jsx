@@ -31,7 +31,7 @@ export default function WidgetDemoPage() {
             widgetKey = r.data.public_widget_key;
             setKey(widgetKey);
           }
-        } catch (e) {
+        } catch (_e) {
           if (!cancelled) setStatus("no-key");
           return;
         }

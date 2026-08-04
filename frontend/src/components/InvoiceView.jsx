@@ -28,7 +28,7 @@ export default function InvoiceView({ invoiceId, printable = false, magicToken =
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [payOpen, setPayOpen] = useState(false);
-  const [reloadTick, setReloadTick] = useState(0);
+  const [reloadTick, _setReloadTick] = useState(0);
 
   useEffect(() => {
     if (!invoiceId) return;

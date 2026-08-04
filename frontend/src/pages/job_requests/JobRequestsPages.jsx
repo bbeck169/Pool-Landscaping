@@ -26,7 +26,7 @@ const STATUS_TONES = {
 
 export function RequestJobPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { _user } = useAuth();
   const [customers, setCustomers] = useState([]);
   const [form, setForm] = useState({
     customer_id: "",

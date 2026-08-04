@@ -40,7 +40,7 @@ export default function AIBrainPage() {
       toast.error(`Failed to load AI brain: ${e.message || e}`);
     } finally { setLoading(false); }
   }, [activeId]);
-  React.useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  React.useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3 mount-only + explicit param deps
 
   const selectItem = (row) => { setActiveId(row.id); setDraft(row); };
 

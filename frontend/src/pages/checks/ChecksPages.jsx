@@ -7,10 +7,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { mustConfirm, mustAlert } from "@/components/ui/confirm-dialog";
 import { useNavigate, useParams } from "react-router-dom";
-import {
-  ArrowLeft, Plus, Printer, Ban, CheckCircle2, RotateCcw, FileText,
-  DollarSign, Landmark, Users, BarChart3, AlertTriangle, Trash2, Building,
-} from "lucide-react";
+import { ArrowLeft, Plus, Printer, Ban, CheckCircle2, RotateCcw, FileText, Landmark, Users, BarChart3, AlertTriangle, Trash2, Building } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Gate } from "@/hooks/usePermissions";

@@ -13,7 +13,7 @@
 //   • "I understand this is permanent" checkbox — required for
 //     permanent mode; Confirm stays disabled otherwise.
 import React from "react";
-import { X, Sparkles, AlertTriangle, Users, RotateCcw, Check } from "lucide-react";
+import { X, Sparkles, AlertTriangle, RotateCcw, Check } from "lucide-react";
 import { toast } from "sonner";
 import { colors } from "@/theme";
 import { api } from "@/api";

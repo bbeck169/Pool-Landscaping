@@ -15,7 +15,7 @@ import { markTaskComplete, listOnboardingTasks } from "@/api/handbook";
 
 export default function HandbookPage() {
   const { code } = useParams();
-  const navigate = useNavigate();
+  const _navigate = useNavigate();
   const { user } = useAuth();
   const isAdmin = ["admin", "super_admin"].includes(user?.role || "");
 

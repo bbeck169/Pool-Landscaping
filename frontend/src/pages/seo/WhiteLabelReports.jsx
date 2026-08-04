@@ -47,7 +47,7 @@ export default function WhiteLabelReports() {
       setAudits(Array.isArray(a) ? a : (a.items || []));
       setHeatmaps(Array.isArray(h) ? h : (h.items || []));
       setTmaps(Array.isArray(t) ? t : (t.items || []));
-    } catch (e) {
+    } catch (_e) {
       // list endpoints may return either array or {items}; degrade quietly.
     }
   };
@@ -236,7 +236,7 @@ export function WhiteLabelReportDetail() {
     const r = await api.get(`/seo/reports/${id}`);
     setRep(r);
   };
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: load intentionally omitted (mount-only / stable-ref)
 
   if (!rep) return (
     <div className="p-6 text-sm" style={{ color: colors.muted }}>Loading…</div>

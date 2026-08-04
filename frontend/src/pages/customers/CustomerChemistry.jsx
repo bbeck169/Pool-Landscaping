@@ -3,16 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Beaker, Sparkles, Plus, Trash2, AlertTriangle } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
-import {
-  PageHeader,
-  Button,
-  Skeleton,
-  TextInput,
-  EmptyState,
-  Modal,
-  Chip,
-  Toast,
-} from "@/components/ui-kit";
+import { PageHeader, Button, Skeleton, TextInput, EmptyState, Modal, Toast } from "@/components/ui-kit";
 
 const READINGS = [
   { k: "fc", label: "FC (ppm)", range: "Target 1–4" },

@@ -46,7 +46,7 @@ export default function PortalChatsPage() {
     });
     api.post(`/portal/chats/${selected.id}/read`).catch(() => {});
     setPending([]);  // reset pending on thread switch
-  }, [selected?.id]);
+  }, [selected?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- Phase 41.3: deps 'selected' intentionally omitted (mount-only or stable-ref)
 
   const uploadFiles = async (fileList) => {
     if (!fileList || fileList.length === 0) return;

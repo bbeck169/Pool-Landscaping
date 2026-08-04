@@ -2,10 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { GoogleMap, Marker as GMarker, useJsApiLoader } from "@react-google-maps/api";
 import { api } from "@/api";
 import { colors, brandGradientCss, money } from "@/theme";
-import {
-  Clock, CheckCircle2, XCircle, Download, MapPin, DollarSign, TrendingUp,
-  AlertTriangle, User as UserIcon, Filter, RefreshCw, Calendar,
-} from "lucide-react";
+import { CheckCircle2, XCircle, Download, User as UserIcon, Filter, RefreshCw, Calendar } from "lucide-react";
 
 /* Shared UI helpers */
 const Card = ({ children, className = "", testId }) => (
@@ -399,7 +396,7 @@ export function CrewMapPage() {
    /workforce/job-costing
    ──────────────────────────────────────────────────────────────────── */
 export function JobCostingPage() {
-  const [jobs, setJobs] = useState([]);
+  const [_jobs, setJobs] = useState([]);
   const [rows, setRows] = useState([]);
   const [selected, setSelected] = useState(null);
   const [busy, setBusy] = useState(false);

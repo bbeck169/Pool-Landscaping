@@ -1,11 +1,8 @@
 import React from "react";
 import { toast } from "sonner";
-import {
-  Plus, RefreshCw, Trash2, AlertTriangle, MapPin, TrendingUp, Info,
-  Search as SearchIcon,
-} from "lucide-react";
+import { Plus, RefreshCw, Trash2, MapPin, TrendingUp, Info } from "lucide-react";
 import { api } from "@/api";
-import { colors, brandGradientCss } from "@/theme";
+import { colors } from "@/theme";
 import SafeScrollContainer from "@/components/layout/SafeScrollContainer";
 
 /**
