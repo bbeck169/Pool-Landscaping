@@ -404,12 +404,10 @@ export default function CustomerDetail() {
         <div className="p-5">
           {tab === "overview" ? (
             <div className="space-y-4">
-              {/* Feb-2026 · Item 6 — Company business card at the top
-                  of the customer profile column. Downloadable vCard so
-                  customers can save the company contact one-tap. */}
-              <div className="max-w-md" data-testid="cd-business-card-slot">
-                <BusinessCard variant="compact" />
-              </div>
+              {/* Phase 48 · Feb-2026 — removed the compact company
+                  business card from the customer profile header per
+                  user redesign. Component stays in-tree for other
+                  surfaces (tech ToolsHub, marketing card slot). */}
               <MasterBillingCard
                 customer={customer}
                 onToast={(t) => setToast(t)}

@@ -1,88 +1,119 @@
 import React, { useEffect, useState } from "react";
-import { Plus, Trash2, Star } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { Button, TextInput } from "@/components/ui-kit";
 
 /**
- * Multi-contact editor rendered inside the Customer detail Overview tab.
- * Feb-2026 Customer Detail Additions ship.
+ * Phase 48 · Feb-2026 — Customer contact editor, redesigned to match
+ * the user's mockup:
  *
- * Supports up to 2 mobiles + 3 emails per customer, each row carrying a
- * label, is_primary radio, and consent flag (sms_ok / marketing_ok).
- * Saves are debounced to a single PATCH per collection whenever the
- * user clicks "Save contacts" so the wire chatter stays low.
+ *   Email                  <primary email>
+ *   Mobile Phone           <primary mobile>
+ *   Home Phone             <landline>
+ *
+ *   Additional Mobile Phone up to 2
+ *     <mobile 1>
+ *     <mobile 2>
+ *
+ *   Additional Emails up to 3
+ *     <email 1>
+ *     <email 2>
+ *     <email 3>
+ *
+ * Labels bold; input rows non-bold. Uses the existing `mobiles[]` /
+ * `emails[]` array schema — index 0 is the primary (auto-flagged
+ * ``is_primary=true`` on first insert), indices 1..n-1 render as
+ * "additional" rows. ``home_phone`` is a scalar on the customer doc
+ * (Phase 48 addition; see backend models.py).
+ *
+ * Persistence contract preserved: the panel still PATCHes
+ *   /customers/{id}/mobiles  {mobiles: [...]}
+ *   /customers/{id}/emails   {emails:  [...]}
+ * and PATCHes ``home_phone`` via /customers/{id}. Save button appears
+ * only when the panel is dirty.
+ *
+ * MAX_MOBILES = 3 (1 primary + 2 additional).
+ * MAX_EMAILS  = 4 (1 primary + 3 additional).
  */
+const MAX_MOBILES = 3;
+const MAX_EMAILS = 4;
+const MAX_ADDITIONAL_MOBILES = MAX_MOBILES - 1;
+const MAX_ADDITIONAL_EMAILS = MAX_EMAILS - 1;
+
+function _newMobile(isPrimary) {
+  return {
+    number_e164: "",
+    label: isPrimary ? "Primary" : "Secondary",
+    is_primary: !!isPrimary,
+    sms_ok: true,
+  };
+}
+function _newEmail(isPrimary) {
+  return {
+    address: "",
+    label: isPrimary ? "Primary" : "Secondary",
+    is_primary: !!isPrimary,
+    marketing_ok: true,
+  };
+}
+
 export function CustomerContactsPanel({ customer, onSaved, onError }) {
   const [mobiles, setMobiles] = useState([]);
   const [emails, setEmails] = useState([]);
+  const [homePhone, setHomePhone] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    setMobiles(customer?.mobiles || []);
-    setEmails(customer?.emails || []);
-  }, [customer?.id, customer?.mobiles, customer?.emails]);
+    // Seed at least one row so the primary email / mobile inputs
+    // always have a slot to write into. Existing docs with populated
+    // arrays load as-is.
+    const m = (customer?.mobiles && customer.mobiles.length)
+      ? customer.mobiles : [_newMobile(true)];
+    const e = (customer?.emails && customer.emails.length)
+      ? customer.emails : [_newEmail(true)];
+    setMobiles(m);
+    setEmails(e);
+    setHomePhone(customer?.home_phone || "");
+  }, [customer?.id, customer?.mobiles, customer?.emails, customer?.home_phone]);
 
-  const MAX_MOBILES = 2;
-  const MAX_EMAILS = 3;
-
-  const addMobile = () => {
-    if (mobiles.length >= MAX_MOBILES) return;
-    setMobiles((m) => [
-      ...m,
-      {
-        number_e164: "",
-        label: m.length === 0 ? "Primary" : "Secondary",
-        is_primary: m.length === 0,
-        sms_ok: true,
-      },
-    ]);
+  const _updateMobile = (i, patch) => {
+    setMobiles((m) => m.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   };
-  const updateMobile = (i, patch) => {
+  const _updateEmail = (i, patch) => {
+    setEmails((e) => e.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  };
+  const addAdditionalMobile = () => {
     setMobiles((m) => {
-      const next = m.map((r, idx) => (idx === i ? { ...r, ...patch } : r));
-      // Radio semantics for is_primary — only one true.
-      if (patch.is_primary) {
-        return next.map((r, idx) => ({ ...r, is_primary: idx === i }));
-      }
-      return next;
+      if (m.length >= MAX_MOBILES) return m;
+      return [...m, _newMobile(false)];
+    });
+  };
+  const addAdditionalEmail = () => {
+    setEmails((e) => {
+      if (e.length >= MAX_EMAILS) return e;
+      return [...e, _newEmail(false)];
     });
   };
   const removeMobile = (i) => setMobiles((m) => m.filter((_, idx) => idx !== i));
-
-  const addEmail = () => {
-    if (emails.length >= MAX_EMAILS) return;
-    setEmails((e) => [
-      ...e,
-      {
-        address: "",
-        label: e.length === 0 ? "Primary" : "Secondary",
-        is_primary: e.length === 0,
-        marketing_ok: true,
-      },
-    ]);
-  };
-  const updateEmail = (i, patch) => {
-    setEmails((e) => {
-      const next = e.map((r, idx) => (idx === i ? { ...r, ...patch } : r));
-      if (patch.is_primary) {
-        return next.map((r, idx) => ({ ...r, is_primary: idx === i }));
-      }
-      return next;
-    });
-  };
   const removeEmail = (i) => setEmails((e) => e.filter((_, idx) => idx !== i));
 
   const save = async () => {
     setBusy(true);
     try {
       const cid = customer.id;
-      const cleanMobiles = mobiles.filter((m) => (m.number_e164 || "").trim());
-      const cleanEmails = emails.filter((e) => (e.address || "").trim());
+      // Always keep the first entry flagged as primary — the mockup
+      // treats "Mobile Phone" / "Email" as the single primary slot.
+      const normalize = (rows, keyed) => rows.map((r, idx) => ({
+        ...r,
+        is_primary: idx === 0,
+      })).filter((r) => (r[keyed] || "").trim());
+      const cleanMobiles = normalize(mobiles, "number_e164");
+      const cleanEmails = normalize(emails, "address");
       await api.patch(`/customers/${cid}/mobiles`, { mobiles: cleanMobiles });
-      const updated = await api.patch(`/customers/${cid}/emails`, {
-        emails: cleanEmails,
-      });
+      await api.patch(`/customers/${cid}/emails`, { emails: cleanEmails });
+      // home_phone rides on the base customer PATCH.
+      const updated = await api.patch(`/customers/${cid}`, { home_phone: homePhone });
       onSaved?.(updated);
     } catch (e) {
       onError?.(e.message);
@@ -92,170 +123,190 @@ export function CustomerContactsPanel({ customer, onSaved, onError }) {
   };
 
   const dirty =
-    JSON.stringify(mobiles) !== JSON.stringify(customer?.mobiles || []) ||
-    JSON.stringify(emails) !== JSON.stringify(customer?.emails || []);
+    JSON.stringify(mobiles) !== JSON.stringify(customer?.mobiles || (customer ? [_newMobile(true)] : [])) ||
+    JSON.stringify(emails) !== JSON.stringify(customer?.emails || (customer ? [_newEmail(true)] : [])) ||
+    (customer?.home_phone || "") !== homePhone;
+
+  const primaryMobile = mobiles[0] || _newMobile(true);
+  const primaryEmail = emails[0] || _newEmail(true);
+  const additionalMobiles = mobiles.slice(1);
+  const additionalEmails = emails.slice(1);
 
   return (
     <div
-      className="rounded-xl p-4 space-y-4"
+      className="rounded-xl p-4 space-y-5"
       style={{
         backgroundColor: colors.surfaceSecondary,
         border: `1px solid ${colors.border}`,
       }}
       data-testid="customer-contacts-panel"
     >
-      {/* Mobiles */}
-      <section>
+      {/* ── Primary contact group ─────────────────────────────────── */}
+      <section
+        className="grid grid-cols-1 md:grid-cols-[160px_1fr] gap-x-4 gap-y-3 items-center"
+        data-testid="cd-primary-contact-group"
+      >
+        <label
+          className="font-bold text-sm"
+          style={{ color: colors.onSurface }}
+          htmlFor="cd-primary-email"
+        >
+          Email
+        </label>
+        <TextInput
+          id="cd-primary-email"
+          label=""
+          type="email"
+          value={primaryEmail.address || ""}
+          onChange={(e) => _updateEmail(0, { address: e.target.value })}
+          placeholder="owner@example.com"
+          testid="cd-primary-email"
+        />
+
+        <label
+          className="font-bold text-sm"
+          style={{ color: colors.onSurface }}
+          htmlFor="cd-primary-mobile"
+        >
+          Mobile Phone
+        </label>
+        <TextInput
+          id="cd-primary-mobile"
+          label=""
+          value={primaryMobile.number_e164 || ""}
+          onChange={(e) => _updateMobile(0, { number_e164: e.target.value })}
+          placeholder="+14805551234"
+          testid="cd-primary-mobile"
+        />
+
+        <label
+          className="font-bold text-sm"
+          style={{ color: colors.onSurface }}
+          htmlFor="cd-home-phone"
+        >
+          Home Phone
+        </label>
+        <TextInput
+          id="cd-home-phone"
+          label=""
+          value={homePhone}
+          onChange={(e) => setHomePhone(e.target.value)}
+          placeholder="+14805559876"
+          testid="cd-home-phone"
+        />
+      </section>
+
+      {/* ── Additional mobiles ────────────────────────────────────── */}
+      <section data-testid="cd-additional-mobiles-group">
         <div className="flex items-center justify-between mb-2">
-          <div className="text-xs uppercase font-semibold" style={{ color: colors.muted }}>
-            Mobile phones ({mobiles.length}/{MAX_MOBILES})
+          <div className="font-bold text-sm" style={{ color: colors.onSurface }}>
+            Additional Mobile Phone up to {MAX_ADDITIONAL_MOBILES}
           </div>
           <Button
             variant="ghost"
-            onClick={addMobile}
-            disabled={mobiles.length >= MAX_MOBILES}
-            testid="cd-add-mobile"
+            onClick={addAdditionalMobile}
+            disabled={additionalMobiles.length >= MAX_ADDITIONAL_MOBILES}
+            testid="cd-add-additional-mobile"
           >
             <Plus size={12} /> Add mobile
           </Button>
         </div>
-        {mobiles.length === 0 ? (
-          <div className="text-sm" style={{ color: colors.muted }}>
-            No mobiles on file.
+        {additionalMobiles.length === 0 ? (
+          <div
+            className="text-sm"
+            style={{ color: colors.muted }}
+            data-testid="cd-additional-mobiles-empty"
+          >
+            No additional mobile lines yet.
           </div>
         ) : (
           <ul className="space-y-2">
-            {mobiles.map((m, i) => (
-              <li
-                key={i}
-                className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center p-2 rounded-lg"
-                style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-                data-testid={`cd-mobile-row-${i}`}
-              >
-                <div className="md:col-span-2">
-                  <TextInput
-                    label=""
-                    value={m.number_e164 || ""}
-                    onChange={(e) => updateMobile(i, { number_e164: e.target.value })}
-                    placeholder="+14805551234"
-                    testid={`cd-mobile-number-${i}`}
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <TextInput
-                    label=""
-                    value={m.label || ""}
-                    onChange={(e) => updateMobile(i, { label: e.target.value })}
-                    placeholder="Label (Primary / Secondary / …)"
-                    testid={`cd-mobile-label-${i}`}
-                  />
-                </div>
-                <label className="inline-flex items-center gap-1 text-xs" style={{ color: colors.onSurface }}>
-                  <input
-                    type="radio"
-                    checked={!!m.is_primary}
-                    onChange={() => updateMobile(i, { is_primary: true })}
-                    data-testid={`cd-mobile-primary-${i}`}
-                  />
-                  <Star size={12} color={m.is_primary ? "#F59E0B" : colors.muted} /> Primary
-                </label>
-                <label className="inline-flex items-center gap-1 text-xs" style={{ color: colors.onSurface }}>
-                  <input
-                    type="checkbox"
-                    checked={m.sms_ok !== false}
-                    onChange={(e) => updateMobile(i, { sms_ok: e.target.checked })}
-                    data-testid={`cd-mobile-smsok-${i}`}
-                  />
-                  SMS ok
-                </label>
-                <button
-                  onClick={() => removeMobile(i)}
-                  data-testid={`cd-mobile-remove-${i}`}
-                  title="Remove this mobile"
-                  className="justify-self-end"
+            {additionalMobiles.map((m, idx) => {
+              const absIdx = idx + 1;
+              return (
+                <li
+                  key={absIdx}
+                  className="flex items-center gap-2"
+                  data-testid={`cd-additional-mobile-row-${idx}`}
                 >
-                  <Trash2 size={14} color={colors.danger} />
-                </button>
-              </li>
-            ))}
+                  <div className="flex-1">
+                    <TextInput
+                      label=""
+                      value={m.number_e164 || ""}
+                      onChange={(e) => _updateMobile(absIdx, { number_e164: e.target.value })}
+                      placeholder={`Mobile ${idx + 1}`}
+                      testid={`cd-additional-mobile-${idx}`}
+                    />
+                  </div>
+                  <button
+                    onClick={() => removeMobile(absIdx)}
+                    data-testid={`cd-additional-mobile-remove-${idx}`}
+                    title="Remove this mobile"
+                    className="p-1"
+                  >
+                    <Trash2 size={14} color={colors.danger} />
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
 
-      {/* Emails */}
-      <section>
+      {/* ── Additional emails ────────────────────────────────────── */}
+      <section data-testid="cd-additional-emails-group">
         <div className="flex items-center justify-between mb-2">
-          <div className="text-xs uppercase font-semibold" style={{ color: colors.muted }}>
-            Email addresses ({emails.length}/{MAX_EMAILS})
+          <div className="font-bold text-sm" style={{ color: colors.onSurface }}>
+            Additional Emails up to {MAX_ADDITIONAL_EMAILS}
           </div>
           <Button
             variant="ghost"
-            onClick={addEmail}
-            disabled={emails.length >= MAX_EMAILS}
-            testid="cd-add-email"
+            onClick={addAdditionalEmail}
+            disabled={additionalEmails.length >= MAX_ADDITIONAL_EMAILS}
+            testid="cd-add-additional-email"
           >
             <Plus size={12} /> Add email
           </Button>
         </div>
-        {emails.length === 0 ? (
-          <div className="text-sm" style={{ color: colors.muted }}>
-            No emails on file.
+        {additionalEmails.length === 0 ? (
+          <div
+            className="text-sm"
+            style={{ color: colors.muted }}
+            data-testid="cd-additional-emails-empty"
+          >
+            No additional email addresses yet.
           </div>
         ) : (
           <ul className="space-y-2">
-            {emails.map((em, i) => (
-              <li
-                key={i}
-                className="grid grid-cols-1 md:grid-cols-6 gap-2 items-center p-2 rounded-lg"
-                style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
-                data-testid={`cd-email-row-${i}`}
-              >
-                <div className="md:col-span-2">
-                  <TextInput
-                    label=""
-                    value={em.address || ""}
-                    onChange={(e) => updateEmail(i, { address: e.target.value })}
-                    placeholder="owner@example.com"
-                    testid={`cd-email-address-${i}`}
-                  />
-                </div>
-                <div className="md:col-span-2">
-                  <TextInput
-                    label=""
-                    value={em.label || ""}
-                    onChange={(e) => updateEmail(i, { label: e.target.value })}
-                    placeholder="Label (Primary / Billing / Owner / …)"
-                    testid={`cd-email-label-${i}`}
-                  />
-                </div>
-                <label className="inline-flex items-center gap-1 text-xs" style={{ color: colors.onSurface }}>
-                  <input
-                    type="radio"
-                    checked={!!em.is_primary}
-                    onChange={() => updateEmail(i, { is_primary: true })}
-                    data-testid={`cd-email-primary-${i}`}
-                  />
-                  <Star size={12} color={em.is_primary ? "#F59E0B" : colors.muted} /> Primary
-                </label>
-                <label className="inline-flex items-center gap-1 text-xs" style={{ color: colors.onSurface }}>
-                  <input
-                    type="checkbox"
-                    checked={em.marketing_ok !== false}
-                    onChange={(e) => updateEmail(i, { marketing_ok: e.target.checked })}
-                    data-testid={`cd-email-mktok-${i}`}
-                  />
-                  Marketing ok
-                </label>
-                <button
-                  onClick={() => removeEmail(i)}
-                  data-testid={`cd-email-remove-${i}`}
-                  title="Remove this email"
-                  className="justify-self-end"
+            {additionalEmails.map((em, idx) => {
+              const absIdx = idx + 1;
+              return (
+                <li
+                  key={absIdx}
+                  className="flex items-center gap-2"
+                  data-testid={`cd-additional-email-row-${idx}`}
                 >
-                  <Trash2 size={14} color={colors.danger} />
-                </button>
-              </li>
-            ))}
+                  <div className="flex-1">
+                    <TextInput
+                      label=""
+                      type="email"
+                      value={em.address || ""}
+                      onChange={(e) => _updateEmail(absIdx, { address: e.target.value })}
+                      placeholder={`Email ${idx + 1}`}
+                      testid={`cd-additional-email-${idx}`}
+                    />
+                  </div>
+                  <button
+                    onClick={() => removeEmail(absIdx)}
+                    data-testid={`cd-additional-email-remove-${idx}`}
+                    title="Remove this email"
+                    className="p-1"
+                  >
+                    <Trash2 size={14} color={colors.danger} />
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

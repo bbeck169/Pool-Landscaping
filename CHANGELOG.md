@@ -8,7 +8,48 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
-## 2026-02-XX — Phase 47 · Pay button → direct Stripe Checkout Session (Zapier bypass)
+## 2026-02-XX — Phase 48 · Admin Customer Contact Page Redesign
+
+**UX refresh.** User-provided mockup drove a rework of the customer detail + edit surfaces:
+- Removed the compact company business card slot from the customer profile.
+- New contact grouping: **Email · Mobile Phone · Home Phone** (primary), then **Additional Mobile Phone up to 2**, then **Additional Emails up to 3**. Bold labels, non-bold inputs.
+- Structured 4-input address (Address / City / State / Zip) for both Service Address and Billing Address if Different, composed back into the legacy single-string fields on save so nothing downstream breaks.
+
+### Backend
+
+- **`backend/models.py`** — added `home_phone: Optional[str] = ""` to `CustomerIn`. Legacy customer docs without the field read back as an empty string.
+- **`backend/services/customer_multi_contact.py`** — bumped `MAX_MOBILES` (2 → 3) and `MAX_EMAILS` (3 → 4). New cap semantics: 1 primary + N additional. Router cap-check messages inherit the new numbers automatically (they interpolate the constant).
+- **`backend/routers/customers.py`** — no source change; existing 400 message `f"maximum {MAX_MOBILES} mobiles allowed per customer"` now reads "maximum 3" / "maximum 4" verbatim.
+
+### Frontend
+
+- **`frontend/src/pages/customers/CustomerDetail.jsx`** — removed the `<BusinessCard variant="compact" />` mount inside `cd-business-card-slot`. Replaced with an explanatory comment that the component itself stays in-tree (used by the tech ToolsHub and marketing card slot). No other tabs / panels on this page were touched.
+- **`frontend/src/components/customers/CustomerContactsPanel.jsx`** — full rewrite. New visual grouping matching the mockup: primary contact group with three bold labels (`Email`, `Mobile Phone`, `Home Phone`) and their inputs; separate "Additional Mobile Phone up to 2" and "Additional Emails up to 3" groups with add/remove affordances. Primary rows always index-0 of the arrays; save-time normalization enforces `is_primary=true` on row 0 and strips blanks. Old per-row label / primary-radio / SMS-ok / marketing-ok controls **removed** — regression guard asserts they don't return. `home_phone` PATCHes to `/customers/{id}` on save.
+- **`frontend/src/pages/customers/CustomerForm.jsx`** — added `home_phone` field + structured `service_*` / `billing_*` fields (street/city/state/zip). New exported helpers `_parseAddress()` and `_composeAddress()` handle legacy → structured on load and structured → legacy on save. Best-effort parser: if a legacy string doesn't cleanly split (no state+zip tail), the whole string lands in the `street` field so no data is lost. The pre-Phase-48 single-string `cf-billing` input is gone, replaced by the 4-input `cf-billing-address-group`.
+
+### Preserved
+- `BusinessCard.jsx` component itself stays in-tree — a backend regression test asserts the file exists (`backend/tests/test_phase48_customer_fields.py::test_business_card_component_still_present`).
+- `mobiles[]` / `emails[]` array schema, `is_primary` flag, and all PATCH endpoints — unchanged. Only the frontend rendering + cap constants moved.
+- Auto-sync of `customer.email` / `customer.phone` from primary array entries — unchanged (see `services.customer_multi_contact.sync_scalars_from_arrays`).
+
+### New testids (Phase 48)
+`cd-primary-contact-group`, `cd-primary-email`, `cd-primary-mobile`, `cd-home-phone`, `cd-additional-mobiles-group`, `cd-additional-mobiles-empty`, `cd-add-additional-mobile`, `cd-additional-mobile-{i}`, `cd-additional-mobile-remove-{i}`, `cd-additional-emails-group`, `cd-additional-emails-empty`, `cd-add-additional-email`, `cd-additional-email-{i}`, `cd-additional-email-remove-{i}`, `cf-home-phone`, `cf-service-address-group`, `cf-service-street`, `cf-service-city`, `cf-service-state`, `cf-service-zip`, `cf-billing-address-group`, `cf-billing-street`, `cf-billing-city`, `cf-billing-state`, `cf-billing-zip`.
+
+### Removed testids (Phase 48)
+`cd-business-card-slot` (business card unmount), `cd-mobile-label-{i}`, `cd-mobile-primary-{i}`, `cd-mobile-smsok-{i}`, `cd-mobile-remove-{i}`, `cd-email-primary-{i}`, `cd-email-mktok-{i}`, `cd-email-remove-{i}`, `cd-add-mobile`, `cd-add-email`, `cf-address`, `cf-billing`.
+
+### Verification
+- **Backend** — `backend/tests/test_phase48_customer_fields.py` → **8/8 pass in 4.70s**. Covers: `MAX_MOBILES == 3`, `MAX_EMAILS == 4`, `normalize_*` respects new caps, `CustomerIn` accepts `home_phone` + defaults empty, mobiles/emails endpoints still reject over-cap with clean 4xx, `BusinessCard.jsx` file preserved.
+- **Frontend** — `frontend/src/test/phase48-admin-customer-contact-redesign.test.jsx` → **19/19 pass in 0.90s**. Covers: BusinessCard unmounted from CustomerDetail, primary contact group + labels + testids, additional mobiles/emails groups with correct caps, panel MAX_* constants, old per-row controls gone, CustomerForm has 4-input service + billing address, `home_phone` field, `_composeAddress` invoked on save, single-string `cf-billing` input gone, `_parseAddress`/`_composeAddress` round-trip (canonical, ZIP+4, multi-comma streets, un-parseable-strings-preserved-in-street, empty parts skipped).
+- **Cross-suite** — All 5 Phase 42/44/47/47c/48 backend test files pass individually (50 tests total). A batched run trips a pre-existing test-isolation issue on `TestClient(app)` lifecycle — not introduced by Phase 48.
+
+### Non-scope
+- Mobile customer detail page — not touched (`mobile/app/customer/[id]/*` does not currently ship a matching contact form; Phase 48 mockup is web-only per the delivery brief).
+- `is_primary` radio semantics from the old flat panel — deliberately dropped in favour of the mockup's "primary is the top slot" convention.
+- Phase 41.1b / 41.2 remain paused; the Phase 35 source-inspection vitest failures on `Recurring Jobs` / `Vendor Bills` `<Header>` assertions are Phase 41.2 refactor collateral (Header now lives inside `<AdminListPage>`), NOT a Phase 48 regression.
+
+---
+
 
 **P0 hotfix.** The customer-facing "Pay $X" button was polling for a `lumino_payment_url` that never arrived because the upstream Zapier catch-hook was returning 404 (Zap paused / URL rotated). Frontend timed out after 30s with "Payment link generation is delayed." Per user direction (every payment surface must route through Stripe directly, no Lumino / Zapier), Phase 47 rewires the pay flow to call `stripe.checkout.Session.create()` directly and return the Stripe-hosted checkout URL for immediate redirect.
 

@@ -14,6 +14,34 @@ import AddressAutocomplete from "@/components/AddressAutocomplete";
 
 const TAG_PRESETS = ["VIP", "Specialty"];
 
+// Phase 48 · Feb-2026 — best-effort structured/legacy address bridge.
+// Backend stores addresses as a single string; the redesigned form
+// captures them as 4 fields. On save we compose "street, city, state zip";
+// on load we reverse-parse legacy strings. Anything that doesn't cleanly
+// split lands in the ``street`` field so no data is lost.
+export function _parseAddress(addr) {
+  const s = String(addr || "").trim();
+  if (!s) return { street: "", city: "", state: "", zip: "" };
+  const parts = s.split(",").map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return { street: s, city: "", state: "", zip: "" };
+  const street = parts[0];
+  // Last segment likely holds "STATE 12345" or "STATE 12345-6789".
+  const last = parts[parts.length - 1];
+  const stateZip = last.match(/^([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/);
+  if (!stateZip) return { street: s, city: "", state: "", zip: "" };
+  const city = parts.slice(1, parts.length - 1).join(", ");
+  return { street, city, state: stateZip[1].toUpperCase(), zip: stateZip[2] };
+}
+
+export function _composeAddress({ street = "", city = "", state = "", zip = "" }) {
+  const parts = [];
+  if (street.trim()) parts.push(street.trim());
+  if (city.trim()) parts.push(city.trim());
+  const tail = [state.trim(), zip.trim()].filter(Boolean).join(" ");
+  if (tail) parts.push(tail);
+  return parts.join(", ");
+}
+
 /**
  * Combined New + Edit form. `/customers/new` mounts with no id.
  * `/customers/:id/edit` (Phase 2 extra) prefetches the customer.
@@ -32,8 +60,19 @@ export default function CustomerForm() {
     last_name: "",
     email: "",
     phone: "",
+    home_phone: "",
     address: "",
+    // Phase 48 · Feb-2026 — structured address fields (4-input UX).
+    // Composed to ``address`` on save; parsed from ``address`` on load.
+    service_street: "",
+    service_city: "",
+    service_state: "",
+    service_zip: "",
     billing_address: "",
+    billing_street: "",
+    billing_city: "",
+    billing_state: "",
+    billing_zip: "",
     gate_code: "",
     notes: "",
     alert_email: "",
@@ -63,14 +102,25 @@ export default function CustomerForm() {
       const legacyParts = String(c.name || "").split(/\s+/);
       const fallbackFirst = legacyParts[0] || "";
       const fallbackLast = legacyParts.slice(1).join(" ") || "";
+      const svc = _parseAddress(c.address);
+      const bil = _parseAddress(c.billing_address);
       setForm({
         name: c.name || "",
         first_name: c.first_name || fallbackFirst,
         last_name: c.last_name || fallbackLast,
         email: c.email || "",
         phone: c.phone || "",
+        home_phone: c.home_phone || "",
         address: c.address || "",
+        service_street: svc.street,
+        service_city: svc.city,
+        service_state: svc.state,
+        service_zip: svc.zip,
         billing_address: c.billing_address || "",
+        billing_street: bil.street,
+        billing_city: bil.city,
+        billing_state: bil.state,
+        billing_zip: bil.zip,
         gate_code: c.gate_code || "",
         notes: c.notes || "",
         alert_email: c.alert_email || "",
@@ -163,6 +213,23 @@ export default function CustomerForm() {
         last_name: last,
         name: composedName,
         email: (form.email || "").trim().toLowerCase(),
+        // Phase 48 · Feb-2026 — compose structured address fields into
+        // the legacy single-string ``address`` / ``billing_address``
+        // fields so every downstream reader (dispatch board, invoices,
+        // maps, etc.) keeps working without a backend model change.
+        address: _composeAddress({
+          street: form.service_street,
+          city: form.service_city,
+          state: form.service_state,
+          zip: form.service_zip,
+        }) || form.address || "",
+        billing_address: _composeAddress({
+          street: form.billing_street,
+          city: form.billing_city,
+          state: form.billing_state,
+          zip: form.billing_zip,
+        }) || form.billing_address || "",
+        home_phone: (form.home_phone || "").trim(),
         pool_gallons: poolGallonsPayload,
         is_vip: !!form.is_vip,
         is_active: !!form.is_active,
@@ -210,25 +277,36 @@ export default function CustomerForm() {
             <TextInput label="FIRST NAME *" id="first_name" value={form.first_name} onChange={set("first_name")} testid="cf-first-name" />
             <TextInput label="LAST NAME *" id="last_name" value={form.last_name} onChange={set("last_name")} testid="cf-last-name" />
             <TextInput label="PRIMARY EMAIL" id="email" type="email" value={form.email} onChange={set("email")} testid="cf-email" />
-            <TextInput label="PRIMARY PHONE" id="phone" value={form.phone} onChange={set("phone")} testid="cf-phone" />
+            <TextInput label="PRIMARY MOBILE PHONE" id="phone" value={form.phone} onChange={set("phone")} testid="cf-phone" />
+            <TextInput label="HOME PHONE" id="home_phone" value={form.home_phone} onChange={set("home_phone")} testid="cf-home-phone" />
             <TextInput label="GATE CODE" id="gate_code" value={form.gate_code} onChange={set("gate_code")} testid="customer-gate-code-input" />
             <TextInput label="ALERT EMAIL (after-hours)" id="alert_email" type="email" value={form.alert_email} onChange={set("alert_email")} testid="cf-alert-email" />
             <TextInput label="ALERT PHONE / SMS (after-hours)" id="alert_phone" value={form.alert_phone} onChange={set("alert_phone")} testid="cf-alert-phone" />
           </div>
-          <div>
-            <div className="text-xs font-semibold mb-1" style={{ color: colors.onSurfaceSecondary }}>PRIMARY ADDRESS</div>
-            <AddressAutocomplete
-              value={form.address}
-              onChange={(v) => setForm((f) => ({ ...f, address: v }))}
-              onSelect={(p) => setForm((f) => ({
-                ...f, address: p.formatted, lat: p.lat, lng: p.lng,
-                city: p.city, state: p.state, zip: p.zip, place_id: p.place_id,
-              }))}
-              placeholder="Primary service address"
-              testid="cf-address"
-            />
+          {/* Phase 48 · Feb-2026 — Service Address (4-input UX). Composes
+              into the single-string ``address`` field on save. */}
+          <div className="space-y-2" data-testid="cf-service-address-group">
+            <div className="font-bold text-sm" style={{ color: colors.onSurface }}>
+              Service Address
+            </div>
+            <TextInput label="ADDRESS" id="service_street" value={form.service_street} onChange={set("service_street")} testid="cf-service-street" />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <TextInput label="CITY" id="service_city" value={form.service_city} onChange={set("service_city")} testid="cf-service-city" />
+              <TextInput label="STATE" id="service_state" value={form.service_state} onChange={set("service_state")} testid="cf-service-state" />
+              <TextInput label="ZIP CODE" id="service_zip" value={form.service_zip} onChange={set("service_zip")} testid="cf-service-zip" />
+            </div>
           </div>
-          <TextInput label="BILLING ADDRESS" id="billing_address" value={form.billing_address} onChange={set("billing_address")} testid="cf-billing" />
+          <div className="space-y-2" data-testid="cf-billing-address-group">
+            <div className="font-bold text-sm" style={{ color: colors.onSurface }}>
+              Billing Address if Different
+            </div>
+            <TextInput label="ADDRESS" id="billing_street" value={form.billing_street} onChange={set("billing_street")} testid="cf-billing-street" />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <TextInput label="CITY" id="billing_city" value={form.billing_city} onChange={set("billing_city")} testid="cf-billing-city" />
+              <TextInput label="STATE" id="billing_state" value={form.billing_state} onChange={set("billing_state")} testid="cf-billing-state" />
+              <TextInput label="ZIP CODE" id="billing_zip" value={form.billing_zip} onChange={set("billing_zip")} testid="cf-billing-zip" />
+            </div>
+          </div>
           <div>
             <label
               className="text-xs font-semibold tracking-wide mb-1 block"

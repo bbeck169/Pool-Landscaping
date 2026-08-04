@@ -24,8 +24,8 @@ from config import db, logger
 from utils import new_id
 
 
-MAX_MOBILES = 2
-MAX_EMAILS = 3
+MAX_MOBILES = 3
+MAX_EMAILS = 4
 
 
 def _norm_entry_id(e: dict) -> dict:

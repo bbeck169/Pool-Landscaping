@@ -31,6 +31,11 @@ class CustomerIn(BaseModel):
     last_name: Optional[str] = ""
     email: Optional[str] = ""
     phone: Optional[str] = ""
+    # Phase 48 · Feb-2026 — dedicated landline field. Separate from
+    # ``phone`` (which is the primary SMS/voice mobile) and from the
+    # ``mobiles[]`` array (which holds additional mobile lines). Legacy
+    # customer docs without the field read back as empty string.
+    home_phone: Optional[str] = ""
     address: Optional[str] = ""
     billing_address: Optional[str] = ""
     gate_code: Optional[str] = ""
