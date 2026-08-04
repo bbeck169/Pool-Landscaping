@@ -8,6 +8,51 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 35 · Mobile Finance Ops Parity (P1.1)
+
+### Audit — six web finance surfaces vs mobile state
+
+| # | Surface | Web page (LOC) | Mobile state before | Action | Mobile LOC after |
+| - | --- | --- | --- | --- | --- |
+| 1 | Recurring Jobs | `admin/RecurringJobs.jsx` (335) | none | **New** — list + toggle active + generate-now | ~180 |
+| 2 | Auto-Billing config | `finance/FinancePages.jsx` · `AutoBilling` slice (~580) | `mobile/app/auto-billing.tsx` (201) already list + add | Kept as-is (parity-viable) | 201 |
+| 3 | Autobilling Runs | `finance/AutobillingRuns.jsx` (492) | none | **New** — filtered list + bulk-cancel queued runs | ~205 |
+| 4 | Master Invoices List | `invoices/MasterInvoice.jsx` (298) | none | **New** — list + tap-to-detail | ~130 |
+| 4b | Master Invoice Detail | (same file — detail slice) | none | **New** — child rollup + apply-payment | ~200 |
+| 5 | Payments Ledger | `finance/FinancePages.jsx` · `PaymentsLedger` slice (~330) | `mobile/app/payments.tsx` (88) — bare list | Kept as-is (list is primary function) | 88 |
+| 6 | Vendor Bills | `admin/VendorBills.jsx` (229) | none | **New** — list + add via `<Sheet>` bottom-sheet | ~230 |
+
+Total new mobile LOC: **~945**. 5 new files, 2 pre-existing files kept, 1 nav file edited, 1 vitest added, 1 pre-existing drawer-parity vitest threshold adjusted. Well under the 1500 LOC / 15 file gate.
+
+### Delivered
+
+- **`mobile/app/finance/recurring-jobs.tsx`** — GET `/recurring-jobs`, PATCH toggle, POST `/generate?through=…`. Uses `showConfirm` (Phase 30.4) for the destructive generate action. Role: strict_admin.
+- **`mobile/app/finance/autobilling-runs.tsx`** — GET `/autobilling-runs?status=…` with a horizontal chip filter, checkbox-select on queued rows, POST `/autobilling/runs/bulk-cancel`. `showConfirm` gate.
+- **`mobile/app/finance/master-invoices/index.tsx`** — GET `/invoices/master`, tap-to-detail via `router.push`.
+- **`mobile/app/finance/master-invoices/[id].tsx`** — GET `/invoices/master/{id}`, POST `/invoices/master/{id}/apply-payment`. Shows Total / Applied / Balance summary card + child invoice rollup. `showConfirm` gate for the payment.
+- **`mobile/app/finance/vendor-bills.tsx`** — GET/POST `/cfo/bills`, `<Sheet>` bottom-sheet form for the create action.
+
+### Drawer nav flip
+
+| Before (T3 web-only stub) | After (T1 real mobile route) |
+| --- | --- |
+| `/invoices/master` → `drawer-nav-t3-master-invoices` | `/finance/master-invoices` → `drawer-nav-master-invoices` |
+| `/admin/autobilling-runs` → `drawer-nav-t3-autobilling-runs` | `/finance/autobilling-runs` → `drawer-nav-autobilling-runs` |
+| _(not present)_ | `/finance/recurring-jobs` → `drawer-nav-recurring-jobs` (new T1) |
+| _(not present)_ | `/finance/vendor-bills` → `drawer-nav-vendor-bills` (new T1) |
+
+Check Writer / Dunning / Warranty stay T3 — real mobile pages TBD.
+
+### Tests
+- **NEW** `frontend/src/test/phase35-mobile-finance-parity.test.jsx` · **39/39 green**. Source-inspection: each surface's file exists, has `<Header>` with the right title, calls the right backend endpoints, carries the root testID, uses `showConfirm` (never `Alert.alert`) on the 3 destructive surfaces. Locks the 4 drawer nav flips and confirms pre-existing T1 entries are intact.
+- **UPDATED** `frontend/src/test/phase-mobile-drawer-parity.test.jsx` · T3-count threshold lowered from 15 → 13 to reflect the 2 legitimate reclassifications; T1/T2 thresholds and total ≥ 85 unchanged. Comment inline explains why.
+
+### Non-scope
+Did not touch web finance pages, backend, Phase 32/33/34/39/30.4/Live Radar/Phase 40e. No new backend endpoints added.
+
+---
+
+
 ## 2026-02-XX — Phase 34 · Endpoint Path Normalization (P0.3)
 
 ### Audit — cross-client path drifts

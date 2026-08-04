@@ -60,13 +60,16 @@ describe("Nav data · adminNav.ts (source of truth)", () => {
     for (const t of tiers) expect(["t1", "t2", "t3"]).toContain(t);
   });
 
-  it("has T1 + T2 + T3 counts in the Phase-B ballpark (Quick=3 + 85 real + T3)", () => {
+  it("has T1 + T2 + T3 counts in the Phase-B ballpark (Quick=3 + real groups + T3)", () => {
     const count = (t) => (NAV.match(new RegExp(`tier:\\s*"${t}"`, "g")) || []).length;
     const t1 = count("t1"); const t2 = count("t2"); const t3 = count("t3");
     // Quick Access adds three t1 dupes on top of the canonical groups.
     expect(t1).toBeGreaterThanOrEqual(50);
     expect(t2).toBeGreaterThanOrEqual(20);
-    expect(t3).toBeGreaterThanOrEqual(15);
+    // Phase 35 · Feb-2026 · reclassified Master Invoices + Autobilling
+    // Runs from T3 (web-only stubs) to T1 (real mobile pages); threshold
+    // lowered accordingly. Any further T3 flips should update this too.
+    expect(t3).toBeGreaterThanOrEqual(13);
     // Sanity: total across the file lines up with what we sized in the delivery.
     expect(t1 + t2 + t3).toBeGreaterThanOrEqual(85);
   });
