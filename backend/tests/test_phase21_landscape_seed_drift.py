@@ -33,6 +33,55 @@ sys.path.insert(0, str(_BACKEND_DIR / "scripts"))
 import fix_landscape_tech_seed_drift as fix_drift  # noqa: E402
 
 
+# Phase 41.1c · Feb 2026 — batch-bleed isolation.
+#
+# ``fix_drift.run()`` scans the ENTIRE ``users`` collection, not just
+# the ephemeral tenant this file seeds. Real demo users (e.g.
+# ``landscaper@aquaterra.com`` seeded with ``department="landscaping"``
+# by ``backend/seed.py::seed_landscaping_user``) get remapped to
+# ``"landscape_tech"``, and every downstream test that calls
+# ``_require_landscaping()`` — which accepts only ``"landscaping"`` /
+# ``"both"`` — 403s in the batched pytest run.
+#
+# Guard: module-scoped ``autouse=True`` fixture that snapshots the
+# ``department`` field on every non-ephemeral user BEFORE the file's
+# tests run, and restores it verbatim after. Cheap, deterministic,
+# no runtime code touched. Also mirrors the restore onto the linked
+# ``technicians`` docs so tests downstream of this file don't see a
+# split-brain user/tech state.
+@pytest.fixture(scope="module", autouse=True)
+def _restore_real_user_departments_after_phase21():
+    # Snapshot only rows whose email is NOT part of this file's own
+    # ephemeral fixture (the `p21b-*@p21.test` accounts) so we
+    # don't accidentally reintroduce them. Also skip rows with no
+    # ``department`` field at all — they never had one to restore.
+    snapshot_users = [
+        {"id": u["id"], "department": u.get("department")}
+        for u in _sync.users.find(
+            {"email": {"$not": {"$regex": r"@p21\.test$"}}},
+            {"_id": 0, "id": 1, "department": 1, "email": 1},
+        )
+    ]
+    snapshot_techs = [
+        {"id": t["id"], "department": t.get("department")}
+        for t in _sync.technicians.find(
+            {"email": {"$not": {"$regex": r"@p21\.test$"}}},
+            {"_id": 0, "id": 1, "department": 1, "email": 1},
+        )
+    ]
+    yield
+    for row in snapshot_users:
+        _sync.users.update_one(
+            {"id": row["id"]},
+            {"$set": {"department": row["department"]}},
+        )
+    for row in snapshot_techs:
+        _sync.technicians.update_one(
+            {"id": row["id"]},
+            {"$set": {"department": row["department"]}},
+        )
+
+
 @pytest.fixture()
 def seeded_users():
     tid = f"p21b-{uuid.uuid4().hex[:8]}"
