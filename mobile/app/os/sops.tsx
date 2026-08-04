@@ -1,13 +1,13 @@
 // Phase 37 · Feb-2026 — Mobile Business OS · SOPs (P1.3).
+// Phase 41.2 · Feb-2026 — refactored onto the shared `<AdminListPage>`.
 // Web: BusinessOS.jsx SOP slice. Backend: GET/POST /sops, POST /sops/generate.
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TextInput, Pressable } from "react-native";
+import { View, Text, StyleSheet, TextInput } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
-import { Card, Loading, EmptyState, PrimaryButton, Sheet } from "@/src/components/ui";
-import { Header, IconButton } from "@/src/components/widgets";
-import { RoleGate } from "@/src/components/RoleGate";
+import { PrimaryButton, Sheet } from "@/src/components/ui";
+import { AdminListPage } from "@/src/components/layout/AdminListPage";
 
 export default function OsSops() {
   const [rows, setRows] = useState<any[]>([]);
@@ -47,27 +47,20 @@ export default function OsSops() {
   }, [draft, load]);
 
   return (
-    <RoleGate level="strict_admin">
-      <View style={styles.container} testID="os-sops-page">
-        <Header title="SOPs" right={
-          <IconButton icon="add" onPress={() => setAddOpen(true)} testID="os-sops-create" />
-        } />
-        <ScrollView
-          contentContainerStyle={styles.body}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => {
-            setRefreshing(true); await load(); setRefreshing(false);
-          }} />}
-        >
-          {loading ? <Loading /> : rows.length === 0 ? (
-            <EmptyState icon="document-text-outline" title="No SOPs yet" subtitle="Tap + to add or auto-generate one." testID="os-sops-empty" />
-          ) : rows.map((r) => (
-            <View key={r.id} style={styles.row} testID={`os-sop-row-${r.id}`}>
-              <Text style={styles.title}>{r.title || "—"}</Text>
-              {r.topic ? <Text style={styles.topic}>{r.topic}</Text> : null}
-              {r.steps ? <Text style={styles.steps} numberOfLines={3}>{r.steps}</Text> : null}
-            </View>
-          ))}
-        </ScrollView>
+    <AdminListPage
+      title="SOPs"
+      testID="os-sops-page"
+      loading={loading}
+      isEmpty={rows.length === 0}
+      refreshing={refreshing}
+      onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
+      emptyIcon="document-text-outline"
+      emptyTitle="No SOPs yet"
+      emptySubtitle="Tap + to add or auto-generate one."
+      emptyTestID="os-sops-empty"
+      onCreate={() => setAddOpen(true)}
+      createTestID="os-sops-create"
+      sheet={
         <Sheet visible={addOpen} onClose={() => setAddOpen(false)} title="New SOP" testID="os-sops-sheet">
           <View style={{ gap: spacing.md, padding: spacing.lg }}>
             <TextInput placeholder="Title" value={draft.title} onChangeText={(t) => setDraft((d) => ({ ...d, title: t }))} style={styles.input} testID="os-sops-input-title" />
@@ -83,14 +76,20 @@ export default function OsSops() {
             </View>
           </View>
         </Sheet>
-      </View>
-    </RoleGate>
+      }
+    >
+      {rows.map((r) => (
+        <View key={r.id} style={styles.row} testID={`os-sop-row-${r.id}`}>
+          <Text style={styles.title}>{r.title || "—"}</Text>
+          {r.topic ? <Text style={styles.topic}>{r.topic}</Text> : null}
+          {r.steps ? <Text style={styles.steps} numberOfLines={3}>{r.steps}</Text> : null}
+        </View>
+      ))}
+    </AdminListPage>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.surface },
-  body: { padding: spacing.lg, gap: spacing.sm, paddingBottom: spacing["3xl"] },
   row: { padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, gap: 4 },
   title: { fontFamily: font.semibold, fontSize: fontSize.md, color: colors.onSurface },
   topic: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },

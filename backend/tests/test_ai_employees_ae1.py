@@ -23,7 +23,13 @@ def admin_headers():
 
 @pytest.fixture
 def tech_headers():
-    return {"Authorization": f"Bearer {_login('mike@aquaterra.com')}"}
+    # Phase 41.1b · Feb 2026 — `mike@aquaterra.com` was the pre-rename
+    # pool-tech seed; the demo roster now uses `landscaper@aquaterra.com`
+    # (role=technician). Update the fixture to match the actual seed
+    # in `scripts/rotate_demo_passwords.py` / `reset_demo_passwords_to_default.py`
+    # so this and its 3 sibling forbidden-403 tests stop tripping on
+    # a 401 fixture-setup error.
+    return {"Authorization": f"Bearer {_login('landscaper@aquaterra.com')}"}
 
 
 # ─── Roster seed + list ────────────────────────────────────────────────

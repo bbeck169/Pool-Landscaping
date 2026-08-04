@@ -1,22 +1,18 @@
 // Phase 35 · Feb-2026 — Mobile Vendor Bills (P1.1 Finance Parity).
+// Phase 41.2 · Feb-2026 — refactored onto the shared `<AdminListPage>`
+// primitive; row + sheet body unchanged.
 //
 // Web parity: `frontend/src/pages/admin/VendorBills.jsx`.
 // Backend: GET/POST/PATCH `/api/cfo/bills`.
 // Admin / super-admin only.
 import React, { useCallback, useState } from "react";
-import {
-  View, Text, StyleSheet, ScrollView, RefreshControl, TextInput, Pressable,
-} from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { View, Text, StyleSheet, TextInput } from "react-native";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
-import {
-  Card, Loading, EmptyState, PrimaryButton, Sheet,
-} from "@/src/components/ui";
-import { Header, IconButton } from "@/src/components/widgets";
-import { RoleGate } from "@/src/components/RoleGate";
+import { PrimaryButton, Sheet } from "@/src/components/ui";
+import { AdminListPage } from "@/src/components/layout/AdminListPage";
 
 type Bill = {
   id: string;
@@ -85,57 +81,20 @@ export default function VendorBillsMobile() {
   }, [draft, load]);
 
   return (
-    <RoleGate level="strict_admin">
-      <View style={styles.container} testID="vendor-bills-page">
-        <Header title="Vendor Bills" right={
-          <IconButton icon="add" onPress={openCreate} testID="vendor-bills-create" />
-        } />
-        <ScrollView
-          contentContainerStyle={styles.body}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={async () => {
-              setRefreshing(true); await load(); setRefreshing(false);
-            }} />
-          }
-        >
-          {loading ? (
-            <Loading />
-          ) : rows.length === 0 ? (
-            <EmptyState
-              icon="receipt-outline"
-              title="No vendor bills yet"
-              subtitle="Tap + to log an accounts-payable bill."
-              testID="vendor-bills-empty"
-            />
-          ) : (
-            rows.map((r) => (
-              <View
-                key={r.id}
-                style={styles.row}
-                testID={`vendor-bill-row-${r.id}`}
-              >
-                <View style={styles.rowHead}>
-                  <Text style={styles.vendor}>{r.vendor_name}</Text>
-                  <Text style={[
-                    styles.status,
-                    r.status === "paid" ? { color: colors.success } :
-                    r.status === "partial" ? { color: colors.brand } :
-                    r.status === "void" ? { color: colors.muted } :
-                    { color: colors.warning || colors.brand },
-                  ]}>
-                    {(r.status || "open").toUpperCase()}
-                  </Text>
-                </View>
-                <View style={styles.metaRow}>
-                  <Text style={styles.meta}>Due {r.due_date || "—"}</Text>
-                  <Text style={styles.amt}>{money((r.amount_cents || 0) / 100)}</Text>
-                </View>
-                {r.notes ? <Text style={styles.notes} numberOfLines={2}>{r.notes}</Text> : null}
-              </View>
-            ))
-          )}
-        </ScrollView>
-
+    <AdminListPage
+      title="Vendor Bills"
+      testID="vendor-bills-page"
+      loading={loading}
+      isEmpty={rows.length === 0}
+      refreshing={refreshing}
+      onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
+      emptyIcon="receipt-outline"
+      emptyTitle="No vendor bills yet"
+      emptySubtitle="Tap + to log an accounts-payable bill."
+      emptyTestID="vendor-bills-empty"
+      onCreate={openCreate}
+      createTestID="vendor-bills-create"
+      sheet={
         <Sheet
           visible={addOpen}
           onClose={() => setAddOpen(false)}
@@ -185,8 +144,30 @@ export default function VendorBillsMobile() {
             />
           </View>
         </Sheet>
-      </View>
-    </RoleGate>
+      }
+    >
+      {rows.map((r) => (
+        <View key={r.id} style={styles.row} testID={`vendor-bill-row-${r.id}`}>
+          <View style={styles.rowHead}>
+            <Text style={styles.vendor}>{r.vendor_name}</Text>
+            <Text style={[
+              styles.status,
+              r.status === "paid" ? { color: colors.success } :
+              r.status === "partial" ? { color: colors.brand } :
+              r.status === "void" ? { color: colors.muted } :
+              { color: colors.warning || colors.brand },
+            ]}>
+              {(r.status || "open").toUpperCase()}
+            </Text>
+          </View>
+          <View style={styles.metaRow}>
+            <Text style={styles.meta}>Due {r.due_date || "—"}</Text>
+            <Text style={styles.amt}>{money((r.amount_cents || 0) / 100)}</Text>
+          </View>
+          {r.notes ? <Text style={styles.notes} numberOfLines={2}>{r.notes}</Text> : null}
+        </View>
+      ))}
+    </AdminListPage>
   );
 }
 
@@ -202,8 +183,6 @@ function Field({ label, children, testID }: {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.surface },
-  body: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["3xl"] },
   row: {
     padding: spacing.md, borderRadius: radius.md, borderWidth: 1,
     borderColor: colors.border, backgroundColor: colors.surface, gap: spacing.xs,

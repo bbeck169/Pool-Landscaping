@@ -1,13 +1,13 @@
 // Phase 37 · Feb-2026 — Business OS Scorecards (P1.3).
+// Phase 41.2 · Feb-2026 — refactored onto the shared `<AdminListPage>`.
 // Web: BusinessOS.jsx Scorecards slice. Backend: GET/POST /kpi-scorecards.
 import React, { useCallback, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TextInput } from "react-native";
+import { View, Text, StyleSheet, TextInput } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
-import { Loading, EmptyState, PrimaryButton, Sheet } from "@/src/components/ui";
-import { Header, IconButton } from "@/src/components/widgets";
-import { RoleGate } from "@/src/components/RoleGate";
+import { PrimaryButton, Sheet } from "@/src/components/ui";
+import { AdminListPage } from "@/src/components/layout/AdminListPage";
 
 export default function OsScorecards() {
   const [rows, setRows] = useState<any[]>([]);
@@ -41,31 +41,20 @@ export default function OsScorecards() {
   }, [draft, load]);
 
   return (
-    <RoleGate level="strict_admin">
-      <View style={styles.container} testID="os-scorecards-page">
-        <Header title="Scorecards" right={<IconButton icon="add" onPress={() => setAddOpen(true)} testID="os-scorecards-create" />} />
-        <ScrollView
-          contentContainerStyle={styles.body}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => {
-            setRefreshing(true); await load(); setRefreshing(false);
-          }} />}
-        >
-          {loading ? <Loading /> : rows.length === 0 ? (
-            <EmptyState icon="trophy-outline" title="No scorecards yet" subtitle="Tap + to define a KPI to track." testID="os-scorecards-empty" />
-          ) : rows.map((r) => (
-            <View key={r.id} style={styles.row} testID={`os-scorecard-row-${r.id}`}>
-              <View style={styles.head}>
-                <Text style={styles.label}>{r.label || "—"}</Text>
-                <Text style={styles.target}>Target {r.target ?? "—"} {r.unit || ""}</Text>
-              </View>
-              {typeof r.current_value === "number" ? (
-                <Text style={[styles.current, r.current_value >= (r.target || 0) ? { color: colors.success } : { color: colors.error }]}>
-                  Current: {r.current_value} {r.unit || ""}
-                </Text>
-              ) : null}
-            </View>
-          ))}
-        </ScrollView>
+    <AdminListPage
+      title="Scorecards"
+      testID="os-scorecards-page"
+      loading={loading}
+      isEmpty={rows.length === 0}
+      refreshing={refreshing}
+      onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
+      emptyIcon="trophy-outline"
+      emptyTitle="No scorecards yet"
+      emptySubtitle="Tap + to define a KPI to track."
+      emptyTestID="os-scorecards-empty"
+      onCreate={() => setAddOpen(true)}
+      createTestID="os-scorecards-create"
+      sheet={
         <Sheet visible={addOpen} onClose={() => setAddOpen(false)} title="New scorecard" testID="os-scorecards-sheet">
           <View style={{ gap: spacing.md, padding: spacing.lg }}>
             <TextInput placeholder="Label (e.g. NPS)" value={draft.label} onChangeText={(t) => setDraft((d) => ({ ...d, label: t }))} style={styles.input} testID="os-scorecards-input-label" />
@@ -74,14 +63,26 @@ export default function OsScorecards() {
             <PrimaryButton label={busy ? "Saving…" : "Save"} onPress={save} disabled={busy || !draft.label.trim()} testID="os-scorecards-save" />
           </View>
         </Sheet>
-      </View>
-    </RoleGate>
+      }
+    >
+      {rows.map((r) => (
+        <View key={r.id} style={styles.row} testID={`os-scorecard-row-${r.id}`}>
+          <View style={styles.head}>
+            <Text style={styles.label}>{r.label || "—"}</Text>
+            <Text style={styles.target}>Target {r.target ?? "—"} {r.unit || ""}</Text>
+          </View>
+          {typeof r.current_value === "number" ? (
+            <Text style={[styles.current, r.current_value >= (r.target || 0) ? { color: colors.success } : { color: colors.error }]}>
+              Current: {r.current_value} {r.unit || ""}
+            </Text>
+          ) : null}
+        </View>
+      ))}
+    </AdminListPage>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.surface },
-  body: { padding: spacing.lg, gap: spacing.sm, paddingBottom: spacing["3xl"] },
   row: { padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, gap: 4 },
   head: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   label: { fontFamily: font.semibold, fontSize: fontSize.md, color: colors.onSurface },

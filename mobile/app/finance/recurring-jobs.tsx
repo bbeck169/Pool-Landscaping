@@ -1,22 +1,19 @@
 // Phase 35 · Feb-2026 — Mobile Recurring Jobs (P1.1 Finance Parity).
+// Phase 41.2 · Feb-2026 — refactored onto the shared `<AdminListPage>`
+// primitive; row + sheet-less shape unchanged.
 //
 // Web parity: `frontend/src/pages/admin/RecurringJobs.jsx`.
 // Backend: canonical `/api/recurring-jobs` CRUD + POST /generate.
 // Admin / super-admin / manager only.
 import React, { useCallback, useState } from "react";
-import {
-  View, Text, StyleSheet, ScrollView, Pressable, RefreshControl,
-  Switch,
-} from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { View, Text, StyleSheet, Switch } from "react-native";
 import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
-import { Card, Loading, EmptyState, PrimaryButton } from "@/src/components/ui";
-import { Header } from "@/src/components/widgets";
-import { RoleGate } from "@/src/components/RoleGate";
+import { PrimaryButton } from "@/src/components/ui";
 import { showConfirm } from "@/src/components/ConfirmModal";
+import { AdminListPage } from "@/src/components/layout/AdminListPage";
 
 type RecurringJob = {
   id: string;
@@ -33,10 +30,6 @@ type RecurringJob = {
 };
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-function _todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function _cadenceLabel(r: RecurringJob): string {
   if (r.frequency === "weekly" || r.frequency === "biweekly") {
@@ -101,72 +94,54 @@ export default function RecurringJobsMobile() {
   }, [load]);
 
   return (
-    <RoleGate level="strict_admin">
-      <View style={styles.container} testID="recurring-jobs-page">
-        <Header title="Recurring Jobs" />
-        <ScrollView
-          contentContainerStyle={styles.body}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={async () => {
-              setRefreshing(true); await load(); setRefreshing(false);
-            }} />
-          }
-        >
-          <Text style={styles.hint} testID="recurring-hint">
-            Auto-generates a rolling 2-week horizon of jobs (nightly at 02:00 UTC).
-          </Text>
-          {loading ? (
-            <Loading />
-          ) : rows.length === 0 ? (
-            <EmptyState
-              icon="repeat-outline"
-              title="No recurring jobs yet"
-              subtitle="Create templates on the desktop admin page."
-              testID="recurring-empty"
+    <AdminListPage
+      title="Recurring Jobs"
+      testID="recurring-jobs-page"
+      loading={loading}
+      isEmpty={rows.length === 0}
+      refreshing={refreshing}
+      onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }}
+      emptyIcon="repeat-outline"
+      emptyTitle="No recurring jobs yet"
+      emptySubtitle="Create templates on the desktop admin page."
+      emptyTestID="recurring-empty"
+      headerExtra={
+        <Text style={styles.hint} testID="recurring-hint">
+          Auto-generates a rolling 2-week horizon of jobs (nightly at 02:00 UTC).
+        </Text>
+      }
+    >
+      {rows.map((r) => (
+        <View key={r.id} style={styles.row} testID={`recurring-row-${r.id}`}>
+          <View style={styles.rowHead}>
+            <Text style={styles.customer}>{r.customer_name || r.customer_id || "—"}</Text>
+            <Switch
+              value={r.active}
+              onValueChange={() => toggleActive(r)}
+              disabled={busyId === r.id}
+              testID={`recurring-toggle-${r.id}`}
             />
-          ) : (
-            rows.map((r) => (
-              <View
-                key={r.id}
-                style={styles.row}
-                testID={`recurring-row-${r.id}`}
-              >
-                <View style={styles.rowHead}>
-                  <Text style={styles.customer}>
-                    {r.customer_name || r.customer_id || "—"}
-                  </Text>
-                  <Switch
-                    value={r.active}
-                    onValueChange={() => toggleActive(r)}
-                    disabled={busyId === r.id}
-                    testID={`recurring-toggle-${r.id}`}
-                  />
-                </View>
-                <View style={styles.metaRow}>
-                  <Text style={styles.meta}>{_cadenceLabel(r)}</Text>
-                  <Text style={styles.meta}>{money((r.price_cents || 0) / 100)}</Text>
-                </View>
-                {r.notes ? (
-                  <Text style={styles.notes} numberOfLines={2}>{r.notes}</Text>
-                ) : null}
-                <PrimaryButton
-                  label={busyId === r.id ? "Working…" : "Generate now"}
-                  onPress={() => generateNow(r)}
-                  disabled={busyId === r.id || !r.active}
-                  testID={`recurring-generate-${r.id}`}
-                />
-              </View>
-            ))
-          )}
-        </ScrollView>
-      </View>
-    </RoleGate>
+          </View>
+          <View style={styles.metaRow}>
+            <Text style={styles.meta}>{_cadenceLabel(r)}</Text>
+            <Text style={styles.meta}>{money((r.price_cents || 0) / 100)}</Text>
+          </View>
+          {r.notes ? (
+            <Text style={styles.notes} numberOfLines={2}>{r.notes}</Text>
+          ) : null}
+          <PrimaryButton
+            label={busyId === r.id ? "Working…" : "Generate now"}
+            onPress={() => generateNow(r)}
+            disabled={busyId === r.id || !r.active}
+            testID={`recurring-generate-${r.id}`}
+          />
+        </View>
+      ))}
+    </AdminListPage>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.surface },
-  body: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["3xl"] },
   hint: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted },
   row: {
     padding: spacing.md, borderRadius: radius.md, borderWidth: 1,

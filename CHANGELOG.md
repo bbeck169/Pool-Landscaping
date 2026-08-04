@@ -60,7 +60,7 @@ Post-Phase-42 Stripe SDK refresh introduced non-trivial `StripeObject → dict` 
 ### Verification
 - **Dry run** — `python3 backend/scripts/phase44_comms_sweep.py` → 50 attempts (10 templates × 5 allowlist emails), all `status=dry_run`, exit 0.
 - **pytest** — `backend/tests/test_phase44_comms_sweep.py` → 14/14 pass in 0.06s.
-- **`--live` NOT executed** — awaiting explicit user sign-off before flipping.
+- **Live sweep (Feb 2026, post user sign-off)** — `python3 backend/scripts/phase44_comms_sweep.py --live` → **50/50 delivered** via Resend, zero failures. Latency: 49 sends between 140–306ms, one `payment_failed → admin@aquaterra.com` cold-path outlier at 3548ms, one `welcome → landscaper@aquaterra.com` at 1002ms. Every message carried `X-Emergent-Sweep: phase-44-demo` and only hit the 5 allowlist addresses. **All 10 template classes render correctly under the Phase 42 Stripe v15 SDK refresh — no regressions detected.**
 
 ---
 
