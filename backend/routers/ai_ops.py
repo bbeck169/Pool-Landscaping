@@ -101,9 +101,20 @@ async def list_employees(admin: dict = Depends(require_admin),
     # employees on `/ai-employees`. The tenant-scoped seed
     # (`seed_ai_employees_for_tenant`) already guarantees each tenant
     # has one copy of every DEFAULT_EMPLOYEES row.
-    return await db.ai_employees.find(
+    rows = await db.ai_employees.find(
         {"tenant_id": tenant["id"]}, {"_id": 0}
     ).sort("name", 1).to_list(200)
+    # Phase 50.1 · Feb-2026 — null-safe ``avatar_url`` guarantee. Every
+    # row in the response MUST have the key (may be ``null``) so the
+    # web + mobile clients can uniformly layer the static image over
+    # the Lottie backdrop without special-casing "missing key" vs.
+    # "null value". Legacy rows written before the seed added
+    # ``avatar_url`` are backfilled to ``None`` here — the seed itself
+    # keeps writing the real value on the next boot.
+    for r in rows:
+        if "avatar_url" not in r:
+            r["avatar_url"] = None
+    return rows
 
 
 @router.post("/ai-ops/employees")

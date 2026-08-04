@@ -41,6 +41,22 @@ function extractFileId(avatarUrl?: string): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * Phase 50.1 · Feb-2026 — resolve an ``avatar_url`` (either a signed
+ * upload path like ``/api/files/{id}/download`` or a default seed
+ * path like ``/avatars/personas/{key}.jpg``) into a fully-qualified
+ * URL the React-Native ``<Image>`` loader can fetch. Returns
+ * ``undefined`` when the input is null / empty so the ``<AIAvatar>``
+ * component falls back to a Lottie-only render.
+ */
+function resolveAvatarSrc(avatarUrl?: string, fileId?: string | null): string | undefined {
+  const host = (process.env.EXPO_PUBLIC_BACKEND_URL || "").replace(/\/$/, "");
+  if (fileId) return `${host}/api/files/${fileId}/download`;
+  if (!avatarUrl) return undefined;
+  if (/^https?:\/\//i.test(avatarUrl)) return avatarUrl;
+  return `${host}${avatarUrl.startsWith("/") ? "" : "/"}${avatarUrl}`;
+}
+
 export default function AIEmployees() {
   const router = useRouter();
   const [items, setItems] = useState<any[]>([]);
@@ -134,17 +150,16 @@ export default function AIEmployees() {
                 {/* Phase 50 · Feb-2026 — animated Lottie avatar replaces
                     the flat brand-color circle. When the persona has a
                     custom uploaded ``avatar_url``, ``<AIAvatar>`` layers
-                    the image on top of the idle Lottie loop. */}
+                    the image on top of the idle Lottie loop.
+                    Phase 50.1 · avatar_url resolver — prepends the
+                    backend host for app-relative paths (``/avatars/...``,
+                    ``/api/files/...``) so both default seed images and
+                    uploaded files render on the native app. Falls back
+                    to Lottie-only when ``avatar_url`` is null / empty. */}
                 <View>
                   <AIAvatar
                     size={52}
-                    src={
-                      fileId
-                        ? `${(process.env.EXPO_PUBLIC_BACKEND_URL || "").replace(/\/$/, "")}/api/files/${fileId}/download`
-                        : (item.avatar_url && !item.avatar_url.startsWith("/api/files/")
-                            ? item.avatar_url
-                            : undefined)
-                    }
+                    src={resolveAvatarSrc(item.avatar_url, fileId)}
                     testID={`ai-lottie-avatar-${item.key || item.id}`}
                   />
                   <Pressable

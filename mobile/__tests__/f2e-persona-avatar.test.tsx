@@ -75,6 +75,14 @@ jest.mock("@/src/components/files/AuthedImage", () => ({
   },
 }));
 
+// Phase 50 / 50.1 · Feb-2026 — ``lottie-react-native`` is a native
+// module and can't load under jest without a dev-client bridge.
+// Stub it here so the AI-employees list can mount inside jsdom.
+jest.mock("lottie-react-native", () => {
+  const { View } = require("react-native");
+  return { __esModule: true, default: (props: any) => <View {...props} /> };
+});
+
 jest.spyOn(require("react-native").Alert, "alert");
 const Alert = require("react-native").Alert;
 
@@ -164,10 +172,17 @@ describe("F2e · Persona Avatar Upload", () => {
     });
   });
 
-  it("shows AuthedImage for personas with existing avatar_url", async () => {
+  it("renders an <AIAvatar> for personas with existing avatar_url", async () => {
+    // Phase 50 / 50.1 · Feb-2026 — the row-level ``<AuthedImage>`` was
+    // replaced by ``<AIAvatar>`` (Lottie backdrop + optional image
+    // overlay). ``<AuthedImage>`` still appears inside the upload
+    // modal, but the list row now renders the animated avatar. This
+    // test guards that every persona (with or without an
+    // ``avatar_url``) gets its own AIAvatar testID.
     const { getByTestId } = render(<AIEmployees />);
     await waitFor(() => {
-      expect(getByTestId("authed-image-existing-file")).toBeTruthy();
+      expect(getByTestId("ai-lottie-avatar-casey")).toBeTruthy();
+      expect(getByTestId("ai-lottie-avatar-emmie")).toBeTruthy();
     });
   });
 

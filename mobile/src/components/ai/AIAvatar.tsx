@@ -6,7 +6,7 @@
 import React from "react";
 import { View, Image, StyleSheet } from "react-native";
 import LottieView from "lottie-react-native";
-import idle from "@/../assets/lottie/ai/idle.json";
+import idle from "@/assets/lottie/ai/idle.json";
 
 export default function AIAvatar({ src, size = 64, testID }) {
   return (
