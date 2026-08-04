@@ -27,7 +27,7 @@ import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { toast } from "sonner";
 
-function _InnerForm({ apiBase, authToken, customerId, onSuccess, onCancel }) {
+function InnerForm({ apiBase, authToken, customerId, onSuccess, onCancel }) {
   const stripe = useStripe();
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
@@ -199,7 +199,7 @@ export default function StripeAddCardForm({
             stripe={stripePromise}
             options={{ clientSecret, appearance: { theme: "stripe" } }}
           >
-            <_InnerForm
+            <InnerForm
               apiBase={apiBase}
               authToken={authToken}
               customerId={customerId}

@@ -667,7 +667,7 @@ export default function ModerationCheckinsPage() {
 
 
 function _previewMask(street) {
-  const m = String(street || "").match(/^\d[\dA-Za-z\-\/]*\s+/);
+  const m = String(street || "").match(/^\d[\dA-Za-z\-/]*\s+/);
   return m ? String(street).slice(m[0].length).trim() : String(street || "");
 }
 

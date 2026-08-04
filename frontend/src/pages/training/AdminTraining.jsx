@@ -33,7 +33,7 @@ function newId() {
 
 // Slugify + validate codes to match the backend `TrainingModuleIn._check_code`.
 function isValidCode(v) {
-  return /^[a-z0-9][a-z0-9_\-]{1,60}$/.test(v || "");
+  return /^[a-z0-9][a-z0-9_-]{1,60}$/.test(v || "");
 }
 
 export default function AdminTraining() {

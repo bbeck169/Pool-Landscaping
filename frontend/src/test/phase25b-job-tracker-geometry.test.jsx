@@ -35,7 +35,7 @@ const RAW = fs.readFileSync(
   "utf-8",
 );
 
-/** Strip /* … *​/ block comments and // … line comments so regex
+/** Strip block comments and // … line comments so regex
  *  assertions only inspect executable code — not JSDoc that
  *  documents the OLD state (aspectRatio, numberOfLines, etc.).
  */

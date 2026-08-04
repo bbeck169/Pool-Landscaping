@@ -40,8 +40,8 @@ const COLOR_SWATCHES = [
 // GSM-7 basic character set + basic extension characters. Any character
 // outside this set forces the message onto the UCS-2 (Unicode) code
 // path — 70-char segments instead of 160.
-const GSM7_BASIC = /^[A-Za-z0-9@£$¥èéùìòÇØøÅå\u0394_\u03a6\u0393\u039b\u03a9\u03a0\u03a8\u03a3\u0398\u039eÆæßÉ !\"#¤%&'()*+,\-./:;<=>?¡ÄÖÑÜ§¿äöñüà\n\r ]*$/;
-const GSM7_EXT = /[\^{}\\\[\]~|€]/;
+const GSM7_BASIC = /^[A-Za-z0-9@£$¥èéùìòÇØøÅå\u0394_\u03a6\u0393\u039b\u03a9\u03a0\u03a8\u03a3\u0398\u039eÆæßÉ !"#¤%&'()*+,\-./:;<=>?¡ÄÖÑÜ§¿äöñüà\n\r ]*$/;
+const GSM7_EXT = /[\^{}\\[\]~|€]/;
 
 export function TemplateEditor({ mode = "email", value = "", onChange, tenantId }) {
   // Thin dispatcher — each concrete editor owns its own hooks so we

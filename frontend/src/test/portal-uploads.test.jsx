@@ -32,12 +32,15 @@ vi.mock("@/components/files/FileList", () => ({
     // Immediately fire onChange with an array of the mocked length so
     // hideWhenEmpty logic works synchronously in tests.
     const n = listResults[props.purpose] ?? 0;
-    if (typeof props.onChange === "function") {
-      // useEffect equivalent: fire once on mount.
-      React.useEffect(() => {
+    // Phase 41.3 · fire ONCE on mount — hook call must be
+    // unconditional to satisfy rules-of-hooks. Effect body guards
+    // the ``onChange`` presence itself.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only side effect; captured ``n``/``props`` are stable for this mock's lifetime.
+    React.useEffect(() => {
+      if (typeof props.onChange === "function") {
         props.onChange(Array(n).fill({ id: "x", purpose: props.purpose }));
-      }, []);
-    }
+      }
+    }, []);
     return <div data-testid={`mock-list-${props.purpose}`}
                  data-linked-type={props.linkedEntityType}
                  data-linked-id={props.linkedEntityId}

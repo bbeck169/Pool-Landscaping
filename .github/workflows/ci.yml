@@ -72,9 +72,9 @@ jobs:
         working-directory: frontend
         run: yarn install --frozen-lockfile
 
-      - name: Run ESLint (guardrail — no-restricted-imports for `@/lib/*`)
+      - name: Run ESLint (Phase 41.3 · flat-config · rules-of-hooks + @/lib guardrail · zero warnings)
         working-directory: frontend
-        run: yarn eslint src
+        run: yarn lint
 
       - name: Run vitest
         working-directory: frontend

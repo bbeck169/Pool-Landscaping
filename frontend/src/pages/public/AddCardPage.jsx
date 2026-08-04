@@ -33,12 +33,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const _API_BASE = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-function _useToken() {
+function useToken() {
   const { search } = useLocation();
   return useMemo(() => new URLSearchParams(search).get("token") || "", [search]);
 }
 
-function _InnerForm({ token, onSuccess }) {
+function InnerForm({ token, onSuccess }) {
   const stripe = useStripe();
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
@@ -116,7 +116,7 @@ function _InnerForm({ token, onSuccess }) {
 }
 
 export default function AddCardPage() {
-  const token = _useToken();
+  const token = useToken();
   const [ctx, setCtx] = useState(null);         // { tenant_name, customer_name_masked, publishable_key, ... }
   const [clientSecret, setClientSecret] = useState("");
   const [bootError, setBootError] = useState("");
@@ -212,7 +212,7 @@ export default function AddCardPage() {
                 stripe={stripePromise}
                 options={{ clientSecret, appearance: { theme: "stripe" } }}
               >
-                <_InnerForm token={token} onSuccess={() => setSaved(true)} />
+                <InnerForm token={token} onSuccess={() => setSaved(true)} />
               </Elements>
             )}
           </CardContent>
