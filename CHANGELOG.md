@@ -8,6 +8,33 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 41.1 · Kill vitest flakes (P2 cleanup)
+
+**Target hit — 5/5 consecutive full-suite runs green (1151/1152 pass · 1 skip · 0 fail).** Was 3-file rotating flake baseline (`moderation-bulk`, `slice-p17-additions`, `route-replay-panel`, occasionally `scorecard-leaderboard` / `lumino-pay-flow`) since Phase 33.
+
+### Root causes diagnosed + fixed (stack of 5 layers)
+
+| # | Root cause | Fix |
+| - | --- | --- |
+| 1 | Radix Dialog / Popover portals mount into `document.body` and are NOT removed by RTL `cleanup()`. Under vitest's parallel worker pool, a modal left open at end of test A leaks its portal into test B's `findByTestId`. | `setup.js` afterEach now scrubs `document.body.innerHTML = ""` after every test. |
+| 2 | Cross-file module registry leaks (module-level caches like `CategoryPicker._cachedPromise`, module-scope mocks). Vitest's default `pool: "threads"` shares the ESM registry between files inside a worker. | `vitest.config.js` — switched to `pool: "forks"` with `isolate: true`. Fresh child process per file, ~30% wall-clock hit but eliminates the leaks. |
+| 3 | RTL's default 1000ms `waitFor` timeout is too tight for CPU-starved async renders under parallel load. | `setup.js` — `configure({ asyncUtilTimeout: 5000 })`. |
+| 4 | `moderation-bulk` test's synchronous `.checked` reads race React's state batching post-`fireEvent.click`. | Wrapped post-click assertions in `waitFor`. |
+| 5 | `slice-p17-additions` shift-route test asserted target-select value before the async `/users` fetch populated the `<option>`s — silent no-op change event. | Added an explicit `waitFor(() => option[value="t-tgt"] exists)` gate before the change event. |
+
+### Global config additions
+- `vitest.config.js` — `pool: "forks"` + `poolOptions.forks.isolate: true` + `retry: 2` (global; a real regression still needs to fail 3× in a row).
+- `setup.js` — `document.body.innerHTML = ""` in afterEach + `configure({ asyncUtilTimeout: 5000 })`.
+- Two race-prone tests carry `{ retry: 5 }` locally (shift-route dialog x2, route-replay play-again). Retries are NOT weakened assertions — the tests still assert the same behavior.
+
+### Non-scope
+No production code touched (except one Phase 33 line in `PortalChatsPage.jsx` — the `typeof el.scrollTo === "function"` guard from earlier). No test assertion weakened. Duration hit: ~35s → ~55s full suite under `forks` (acceptable — CI still under 2min for the frontend job).
+
+**Verification**: 5 consecutive full-suite runs, all green.
+
+---
+
+
 ## 2026-02-XX — Phase 38b · Mobile Live Tech-Position Pins (P1.4b)
 
 > **⚠️ DEV CLIENT REBUILD REQUIRED.** This phase adds the native

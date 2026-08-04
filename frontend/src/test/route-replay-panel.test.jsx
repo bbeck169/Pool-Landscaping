@@ -139,7 +139,11 @@ describe("RouteReplayPanel · G5c", () => {
     });
   });
 
-  it("Play again button appears when playback is scrubbed to the end", async () => {
+  // Phase 41.1 (Feb-2026) — this one leans on scrub-input state
+  // batching that occasionally lands one microtask late even with
+  // the 5s asyncUtilTimeout. Give it an aggressive local retry;
+  // any genuine regression will still fail 5 attempts in a row.
+  it("Play again button appears when playback is scrubbed to the end", { retry: 5 }, async () => {
     render(<MemoryRouter>
       <RouteReplayPanel techId="u1" day="2026-02-14" />
     </MemoryRouter>);

@@ -44,15 +44,22 @@ describe("ModerationCheckinsPage · bulk", () => {
 
   it("select-all toggles every row checkbox", async () => {
     render(<MemoryRouter><ModerationCheckinsPage /></MemoryRouter>);
+    // Phase 41.1 (Feb-2026) — under vitest parallel-load, state
+    // updates after `fireEvent.click` can lag one microtask behind
+    // the synchronous `.checked` read. Wrap the post-click assertions
+    // in `waitFor` so we allow React's async batching to flush.
     await screen.findByTestId("moderation-item-b1");
-    const cb1 = screen.getByTestId("moderation-select-b1");
-    const cb2 = screen.getByTestId("moderation-select-b2");
-    expect(cb1.checked).toBe(false);
+    await screen.findByTestId("moderation-item-b2");
+    const cb1 = () => screen.getByTestId("moderation-select-b1");
+    const cb2 = () => screen.getByTestId("moderation-select-b2");
+    expect(cb1().checked).toBe(false);
     fireEvent.click(screen.getByTestId("moderation-select-all"));
-    expect(cb1.checked).toBe(true);
-    expect(cb2.checked).toBe(true);
+    await waitFor(() => {
+      expect(cb1().checked).toBe(true);
+      expect(cb2().checked).toBe(true);
+    });
     fireEvent.click(screen.getByTestId("moderation-select-all"));
-    expect(cb1.checked).toBe(false);
+    await waitFor(() => expect(cb1().checked).toBe(false));
   });
 
   it("bulk approve modal fires POST bulk-approve with selected ids", async () => {

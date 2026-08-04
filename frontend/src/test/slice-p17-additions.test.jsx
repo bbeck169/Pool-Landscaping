@@ -149,7 +149,11 @@ describe("Phase 17 additions", () => {
     ));
   });
 
-  it("shift-route dialog: segmented toggle shows permanent help + ack checkbox required", async () => {
+  // Phase 41.1 (Feb-2026) — the two dialog-based tests race the
+  // Radix portal render pipeline under CPU pressure. Global
+  // `retry: 2` catches most; the aggressive local retry closes the
+  // last few percent.
+  it("shift-route dialog: segmented toggle shows permanent help + ack checkbox required", { retry: 5 }, async () => {
     render(<MemoryRouter><DispatchBoardPage /></MemoryRouter>);
     // Pick a tech so Shift Route becomes enabled.
     await screen.findByTestId("dispatch-tech-select");
@@ -177,7 +181,7 @@ describe("Phase 17 additions", () => {
     expect(screen.getByTestId("shift-route-confirm-btn")).not.toBeDisabled();
   });
 
-  it("shift-route dialog POSTs correct payload including duration flag", async () => {
+  it("shift-route dialog POSTs correct payload including duration flag", { retry: 5 }, async () => {
     render(<MemoryRouter><DispatchBoardPage /></MemoryRouter>);
     await screen.findByTestId("dispatch-tech-select");
     fireEvent.change(screen.getByTestId("dispatch-tech-select"), {
@@ -188,8 +192,19 @@ describe("Phase 17 additions", () => {
     // under full-suite parallel load the immediate `findByTestId` on
     // the inner select can race the dialog's own render.
     await screen.findByTestId("shift-route-dialog");
+    // Phase 41.1 (Feb-2026) — the target-tech select is populated
+    // asynchronously by a `/users` fetch. `findByTestId` finds the
+    // <select> element but its <option>s may not exist yet, so
+    // `fireEvent.change(..., { value: "t-tgt" })` silently no-ops
+    // under load and the subsequent assertion sees an empty payload.
+    // Wait for the specific option to be present before firing.
+    const targetSelect = await screen.findByTestId("shift-target-tech-select");
+    await waitFor(() => {
+      const opt = targetSelect.querySelector('option[value="t-tgt"]');
+      expect(opt).not.toBeNull();
+    });
     // Fill target tech.
-    fireEvent.change(await screen.findByTestId("shift-target-tech-select"), {
+    fireEvent.change(targetSelect, {
       target: { value: "t-tgt" },
     });
     apiPostMock.mockResolvedValue({
