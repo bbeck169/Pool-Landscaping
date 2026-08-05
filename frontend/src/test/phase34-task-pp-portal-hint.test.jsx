@@ -9,35 +9,36 @@
  *      empty-state EmptyState component handles that case instead.
  */
 import React from "react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, cleanup, waitFor, screen } from "@testing-library/react";
 
 // Same mocking playbook as the mount-safety suite.
-jest.mock("react-router-dom", () => ({
-  useNavigate: () => jest.fn(),
+vi.mock("react-router-dom", () => ({
+  useNavigate: () => vi.fn(),
   useLocation: () => ({ pathname: "/", search: "", hash: "" }),
   useParams: () => ({}),
-  useSearchParams: () => [new URLSearchParams(), jest.fn()],
+  useSearchParams: () => [new URLSearchParams(), vi.fn()],
   Link: ({ children, ...rest }) => {
     const React = require("react");
     return React.createElement("a", rest, children);
   },
   Navigate: () => null,
-}), { virtual: true });
+}));
 
-jest.mock("lucide-react", () => {
+vi.mock("lucide-react", () => {
   const React = require("react");
   return new Proxy({}, {
     get: () => (props) => React.createElement("span", props),
   });
 });
 
-jest.mock("@/theme", () => ({
+vi.mock("@/theme", () => ({
   colors: new Proxy({}, { get: () => "#000" }),
 }));
 
 // Mutable holder — swap the fetch response between tests.
 const apiState = { rows: [] };
-jest.mock("@/api", () => ({
+vi.mock("@/api", () => ({
   api: {
     get: (path) => {
       if (path && path.includes("service-reports")) {
@@ -50,9 +51,14 @@ jest.mock("@/api", () => ({
 
 // Portal page also uses the shared portal auth hook. Mock it so
 // authenticated-state assumptions don't blow up the render.
-jest.mock("@/auth", () => ({
+vi.mock("@/auth", () => ({
   useAuth: () => ({ user: { id: "u1", role: "customer" }, loading: false }),
-}), { virtual: true });
+}));
+
+// Phase 41.5 · Feb-2026 — static top-level imports (see the
+// admin-page mount-safety file for the timeout rationale under
+// vitest's ``forks`` pool).
+import { PortalServiceReports } from "@/pages/portal/PortalServiceReports";
 
 describe("Task PP · portal service-reports click hint", () => {
   afterEach(() => { cleanup(); apiState.rows = []; });
@@ -67,8 +73,6 @@ describe("Task PP · portal service-reports click hint", () => {
       chemicals: {},
       photos: [],
     }];
-    const { PortalServiceReports } =
-      require("@/pages/portal/PortalServiceReports");
     render(<PortalServiceReports />);
     const hint = await screen.findByTestId("service-reports-click-hint",
                                                     {}, { timeout: 3000 });
@@ -78,8 +82,6 @@ describe("Task PP · portal service-reports click hint", () => {
 
   it("does NOT render the click hint when the list is empty", async () => {
     apiState.rows = [];
-    const { PortalServiceReports } =
-      require("@/pages/portal/PortalServiceReports");
     render(<PortalServiceReports />);
     // Wait a tick so the effect resolves and swaps to empty-state.
     await waitFor(() => {

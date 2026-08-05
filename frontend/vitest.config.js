@@ -12,15 +12,24 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/test/setup.js"],
     include: ["src/**/*.test.{js,jsx}"],
-    // Phase 33 · Feb 2026 — three Task PP/W/OO test files were intentionally
-    // kept in Jest CJS syntax (`jest.mock(..., { virtual: true })`) and run
-    // under `craco test`. Vitest can't collect them without a plugin rewrite;
-    // exclude explicitly so they don't show up as 0-test collection failures.
+    // Phase 41.5 · Feb-2026 — Task W (forgot-password) was ported
+    // to vitest and passes 3/3 under the vitest runner. Tasks OO
+    // (admin-page mount-safety) and PP (portal service-reports hint)
+    // remain Jest-only: both mount full-fat admin/portal pages whose
+    // transitive dep graph (`@/components/ui-kit` + `@/api` +
+    // `@/theme` + `react-router-dom` + `sonner` + `lucide-react` +
+    // page-side hooks) hangs vitest's collection phase indefinitely
+    // in this repo's config (verified with ``--pool=threads`` and
+    // ``--no-file-parallelism`` — same hang). They still run under
+    // ``craco test`` (Jest CRA) which resolves the graph faster.
+    // Excluded here so they don't show up as 0-test collection
+    // failures. A future Phase 41.5b can attack the root cause
+    // (likely a large ``useEffect`` init in one of the ui-kit
+    // components).
     exclude: [
       "**/node_modules/**",
       "src/test/phase34-admin-page-mount-safety.test.jsx",
       "src/test/phase34-task-pp-portal-hint.test.jsx",
-      "src/test/phase34-task-w-forgot-password.test.jsx",
     ],
     // Phase 41.1 (Feb-2026) — kill the last flakes.
     //
