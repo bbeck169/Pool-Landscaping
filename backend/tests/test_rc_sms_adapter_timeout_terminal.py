@@ -24,6 +24,19 @@ from services.sms.rc_adapter import RingCentralSMSAdapter
 from services.ringcentral.rc_client import RingCentralError
 
 
+# Phase 46 · Feb 2026 — Bypass Phase 34 `guard_outbound` for this module.
+# Every test in this file monkeypatches `RingCentralService.send_sms`
+# to raise a mocked exception, so NO live RC traffic is possible.
+# Without this override, `APP_ENV=preview` (the .env default) would
+# cause `guard_outbound` to short-circuit the send to a `dry_run`
+# envelope BEFORE the mocked `send_sms` is ever called, and every
+# retry-loop assertion (calls["n"] == 3, provider_status == "failed",
+# etc.) would fail.
+@pytest.fixture(autouse=True)
+def _phase46_bypass_comms_guard(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+
+
 def _run(coro):
     """Run a coroutine on a fresh event loop (each test isolated)."""
     loop = asyncio.new_event_loop()

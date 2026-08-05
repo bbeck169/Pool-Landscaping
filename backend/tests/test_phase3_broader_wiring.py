@@ -115,7 +115,7 @@ def test_referral_conversion_records_transactional_deliveries(
             assert r["kind"] == "transactional"
             assert r["provider"] in ("resend", "ringcentral", "mock")
             assert r["provider_status"] in (
-                "sent", "mocked", "suppressed", "failed",
+                "sent", "mocked", "suppressed", "failed", "dry_run",
             )
     _run(_check())
 

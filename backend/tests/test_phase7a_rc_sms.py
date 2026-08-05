@@ -20,6 +20,18 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 
+# ═══════════════════════════ Phase 46 · Feb 2026 — comms-guard bypass ══
+# The Phase 34 `guard_outbound` (services/comms_env_guard.py) short-
+# circuits any non-production SMS to a `dry_run` envelope BEFORE the
+# `_FakeClient` httpx mock is consulted, breaking every send-path
+# assertion. All tests fully mock `httpx.AsyncClient` so NO live
+# traffic is possible. Force `APP_ENV=production` for the duration of
+# THIS test module only — monkeypatch auto-restores after each test.
+@pytest.fixture(autouse=True)
+def _phase46_bypass_comms_guard(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+
+
 # ═══════════════════════════ Fake httpx layer ═════════════════════════
 class _FakeResponse:
     def __init__(self, status: int, body: Any = None, headers: Optional[Dict] = None):
