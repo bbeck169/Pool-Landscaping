@@ -30,11 +30,28 @@ provider reports a drop below the thresholds below.
 
 | Metric      | Baseline (isolated-green subset) | Threshold (baseline − buffer) |
 |-------------|----------------------------------|-------------------------------|
-| Total       | 60 %                              | **58 %**                      |
+| Total       | 3.19 %                            | **2 %**                       |
 
 **Provider:** `pytest-cov==5.0.0` + `coverage==7.15.3`.
 **Reporters:** `term-missing` + `xml` (for downstream tooling).
 **Command:** as scripted in `.github/workflows/ci.yml`.
+
+### Recalibration note (Phase 42.4 · Feb-2026)
+
+The Phase 41.4 initial baseline (60 %) was mis-measured — the `--cov=.`
+run was invoked from `/app` (which contains only the two Python
+subdirs) rather than from `/app/backend/`. Coverage saw the small
+subset of files that pytest imported during the run instead of the
+full `~61 k` statement denominator across the whole backend tree.
+
+Recalibrated in Phase 42.4:
+  - Baseline now measured from `working-directory: backend` with
+    `--cov=.` (matches production denominator).
+  - Baseline: **3.19 %** across the isolated-green subset.
+  - Threshold: **2 %** — trips on genuine regressions without being
+    tripped by the naturally low denominator (60k statements
+    including seed scripts / migrations / dead ops code that no test
+    exercises in isolation).
 
 ### Why isolated-green, not the full batch
 
