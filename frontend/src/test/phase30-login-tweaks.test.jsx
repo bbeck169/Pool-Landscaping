@@ -75,16 +75,18 @@ describe("Login page · Phase 30", () => {
     expect(l2px).toBeCloseTo(l1px / 2, 5);
   });
 
-  it("does NOT read /config/public.show_demo_logins from the api module", async () => {
-    // Ensure the useEffect that used to gate the demo block on the
-    // runtime flag is fully gone — no api.get call should fire during
-    // the initial render.
+  it("fetches /config/public on mount to gate the demo-tiles block at runtime (Feb 2026 P0 hotfix)", async () => {
+    // The runtime app_env gate is the correct behavior — we call
+    // /api/config/public on mount and gate the tiles on the
+    // returned ``app_env``. This test locks that contract so a
+    // future refactor can't silently regress back to the
+    // build-time ``process.env.REACT_APP_PUBLIC_ENV`` gate that
+    // leaked the tiles to production.
     const api = (await import("@/api")).api;
     const spy = vi.spyOn(api, "get");
     renderPage();
-    // Wait a microtask for any deferred effect and confirm no call was made.
     await Promise.resolve();
-    expect(spy).not.toHaveBeenCalledWith("/config/public");
+    expect(spy).toHaveBeenCalledWith("/config/public");
   });
 
   it("renders elements in the correct DOM order: [logo] → [Line 1] → [Line 2] → [form]", () => {

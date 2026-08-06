@@ -45,10 +45,25 @@ async def config_public():
     got scooped up when that module was retired. Restored here in
     the natural ``config`` home so the frontend keeps its
     ``show_demo_logins`` gate.
+
+    Feb 2026 · Demo-login P0 hotfix — also expose ``app_env`` so the
+    web + mobile login screens can gate the preview-only demo-tiles
+    section on the SERVER-SIDE ``APP_ENV`` value at RUNTIME instead
+    of a webpack/Metro build-time env var. Build-time envs like
+    ``REACT_APP_PUBLIC_ENV`` / ``EXPO_PUBLIC_ENV`` get baked into
+    the JS bundle whenever the bundle is built with a preview
+    ``.env`` present, and then leak to any production deploy that
+    reuses that bundle. Fetching ``app_env`` from the running
+    backend eliminates that leak entirely. Missing / unknown values
+    fall back to ``"production"`` so the frontend fail-safe path
+    (hide the tiles) is the default.
     """
     raw = (os.getenv("SHOW_DEMO_LOGINS") or "").strip().lower()
     show_demo = raw in ("1", "true", "yes", "on")
-    return {"show_demo_logins": show_demo}
+    app_env = (os.getenv("APP_ENV") or "production").strip().lower()
+    if app_env not in ("production", "preview", "development", "staging", "local", "test"):
+        app_env = "production"
+    return {"show_demo_logins": show_demo, "app_env": app_env}
 
 
 @router.get("/google-maps/health")

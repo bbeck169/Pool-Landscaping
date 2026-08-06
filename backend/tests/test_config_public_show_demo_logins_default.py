@@ -28,9 +28,15 @@ def _preserve_env(monkeypatch):
 
 
 def _call_public():
-    return asyncio.get_event_loop().run_until_complete(_cfg.config_public()) \
-        if not asyncio.get_event_loop().is_closed() \
-        else asyncio.new_event_loop().run_until_complete(_cfg.config_public())
+    """Batch-safe async driver — `asyncio.get_event_loop()` can raise
+    ``RuntimeError: There is no current event loop`` on Py 3.11+ when
+    a prior test in the batch closed the main-thread's default loop.
+    Always create a fresh loop so the helper is order-independent."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_cfg.config_public())
+    finally:
+        loop.close()
 
 
 def test_default_is_false_when_env_var_is_unset(monkeypatch):
@@ -66,16 +72,70 @@ def test_false_for_unknown_or_garbage_values(monkeypatch):
 
 
 def test_response_shape_still_includes_show_demo_logins(monkeypatch):
-    """Post-LZ4 contract — only ``show_demo_logins`` remains.
+    """Post-LZ4 contract — ``show_demo_logins`` + Feb-2026 hotfix
+    adds ``app_env`` to the payload.
 
     The old Phase-4B ``/config/public`` payload also carried
     ``stripe_publishable_key`` / ``stripe_mode`` / ``app_public_url``
     / ``brand_name`` for the checkout modal. Those fields were dropped
-    when the Stripe SDK was retired (Phase LZ4). No frontend surface
-    reads them any more, so this test intentionally narrows to the
-    single field that IS still consumed by the Login screen.
+    when the Stripe SDK was retired (Phase LZ4). The Feb-2026 P0
+    hotfix adds ``app_env`` so the web + mobile login pages can gate
+    the preview-only demo-tiles section at RUNTIME.
     """
     monkeypatch.delenv("SHOW_DEMO_LOGINS", raising=False)
     r = _call_public()
     assert "show_demo_logins" in r
     assert isinstance(r["show_demo_logins"], bool)
+    assert "app_env" in r
+    assert isinstance(r["app_env"], str)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Feb 2026 · Demo-Login P0 hotfix — app_env exposure contract.
+# The web + mobile login gates rely on the SERVER-SIDE runtime value
+# to avoid the build-time env-var leak that shipped the preview
+# tiles to production. Assert the endpoint reports the current
+# APP_ENV verbatim (lower-cased, whitelisted), and falls back to
+# "production" for missing / unknown values so the frontend
+# fail-safe path (hide) is the default.
+# ═══════════════════════════════════════════════════════════════════
+def test_app_env_defaults_to_production_when_unset(monkeypatch):
+    monkeypatch.delenv("APP_ENV", raising=False)
+    r = _call_public()
+    assert r["app_env"] == "production"
+
+
+def test_app_env_reports_preview(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "preview")
+    r = _call_public()
+    assert r["app_env"] == "preview"
+
+
+def test_app_env_reports_development(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+    r = _call_public()
+    assert r["app_env"] == "development"
+
+
+def test_app_env_reports_production(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    r = _call_public()
+    assert r["app_env"] == "production"
+
+
+def test_app_env_is_lowercased(monkeypatch):
+    for v in ("PRODUCTION", "Preview", "  development  "):
+        monkeypatch.setenv("APP_ENV", v)
+        r = _call_public()
+        assert r["app_env"] == v.strip().lower()
+
+
+def test_app_env_unknown_value_falls_back_to_production(monkeypatch):
+    """Whitelist guard — an attacker or a mis-typed env value must
+    never accidentally satisfy ``app_env !== "production"`` on the
+    client. Anything outside the known set is coerced back to the
+    safe default so the tiles stay hidden."""
+    for v in ("weird", "prod", "PRODUCTIION", "somethingnew"):
+        monkeypatch.setenv("APP_ENV", v)
+        r = _call_public()
+        assert r["app_env"] == "production", f"unexpected app_env for env={v!r}: {r['app_env']!r}"

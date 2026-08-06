@@ -22,27 +22,36 @@ import {
 
 
 // ═══════════════════════════════════════════════════════════════════
-// Env-gate predicate (exact literal used inside pages/Login.jsx).
+// Env-gate predicate (Feb 2026 Demo-Login P0 hotfix).
+// The gate is now RUNTIME (fetched from ``/api/config/public``)
+// instead of build-time. Predicate below mirrors the exact literal
+// used inside pages/Login.jsx: ``appEnv !== null && appEnv !== "production"``.
+// Note the fail-closed null branch: if the fetch fails or the value
+// is missing, ``appEnv`` stays null and the tiles are hidden.
 // ═══════════════════════════════════════════════════════════════════
-function isPreviewGateOn(rawEnv) {
-  return String(rawEnv || "").toLowerCase() === "preview";
+function isPreviewGateOn(appEnv) {
+  return appEnv !== null && appEnv !== undefined && String(appEnv).toLowerCase() !== "production";
 }
 
-describe("preview demo logins · env gate predicate", () => {
-  it("returns true only when env is exactly 'preview' (case-insensitive)", () => {
+describe("preview demo logins · runtime app_env gate predicate", () => {
+  it("returns true for non-production env values", () => {
     expect(isPreviewGateOn("preview")).toBe(true);
     expect(isPreviewGateOn("Preview")).toBe(true);
     expect(isPreviewGateOn("PREVIEW")).toBe(true);
+    expect(isPreviewGateOn("development")).toBe(true);
+    expect(isPreviewGateOn("staging")).toBe(true);
+    expect(isPreviewGateOn("local")).toBe(true);
   });
 
-  it("returns false when env is unset / empty / production / other", () => {
-    expect(isPreviewGateOn(undefined)).toBe(false);
-    expect(isPreviewGateOn(null)).toBe(false);
-    expect(isPreviewGateOn("")).toBe(false);
+  it("returns false for production (case-insensitive)", () => {
     expect(isPreviewGateOn("production")).toBe(false);
-    expect(isPreviewGateOn("prod")).toBe(false);
-    expect(isPreviewGateOn("staging")).toBe(false);
-    expect(isPreviewGateOn("dev")).toBe(false);
+    expect(isPreviewGateOn("Production")).toBe(false);
+    expect(isPreviewGateOn("PRODUCTION")).toBe(false);
+  });
+
+  it("returns false when env is unset — fail-closed default", () => {
+    expect(isPreviewGateOn(null)).toBe(false);
+    expect(isPreviewGateOn(undefined)).toBe(false);
   });
 });
 
@@ -150,8 +159,16 @@ describe("preview demo logins · password invariant", () => {
     // Password appears twice (setPassword call + onSubmitDirect call).
     const hits = (src.match(/"password123"/g) || []).length;
     expect(hits).toBeGreaterThanOrEqual(2);
-    // And the demo-logins gate literal is present.
-    expect(src.includes('REACT_APP_PUBLIC_ENV')).toBe(true);
-    expect(src.includes('=== "preview"')).toBe(true);
+    // Feb 2026 Demo-Login P0 hotfix — the gate is now the RUNTIME
+    // ``app_env`` from ``/api/config/public``. Assert both the
+    // fetch call and the "!== production" gate literal are present.
+    expect(src.includes('/config/public')).toBe(true);
+    expect(src.includes('!== "production"')).toBe(true);
+    // Guardrail: the old build-time env-var gate must be gone from
+    // executable code. Comments (which reference the fix rationale)
+    // still mention it — so we assert the specific rendered gate
+    // expression is absent instead of a bare substring match.
+    expect(src.includes('process.env.REACT_APP_PUBLIC_ENV')).toBe(false);
+    expect(src.includes('=== "preview"')).toBe(false);
   });
 });

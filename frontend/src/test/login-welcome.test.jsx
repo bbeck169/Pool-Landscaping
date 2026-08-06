@@ -7,7 +7,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
-vi.mock("@/api", () => ({ api: { post: vi.fn(), get: vi.fn() } }));
+vi.mock("@/api", () => ({ api: { post: vi.fn(), get: vi.fn(() => Promise.resolve({})) } }));
 vi.mock("@/auth", () => ({
   useAuth: () => ({ user: null, login: vi.fn() }),
 }));

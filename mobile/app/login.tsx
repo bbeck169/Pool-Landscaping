@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet, TextInput, Pressable, Platform } from "react-native";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -21,6 +21,30 @@ export default function Login() {
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  // Feb 2026 · Demo-login P0 hotfix — see pages/Login.jsx for the
+  // full rationale. Build-time ``EXPO_PUBLIC_ENV`` is baked into
+  // the bundle at ``eas build`` time and leaks to production;
+  // fetch ``app_env`` from ``/api/config/public`` instead. Default
+  // null → hide the demo tiles (fail-closed).
+  const [appEnv, setAppEnv] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (api as any)
+      .get("/config/public")
+      .then((r: any) => {
+        if (cancelled) return;
+        const v = String(r?.app_env || "").toLowerCase();
+        setAppEnv(v || "production");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAppEnv("production"); // fail-closed
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const showDemoTiles = appEnv !== null && appEnv !== "production";
   // Phase 30 · Feb 2026 — demo-accounts UI removed unconditionally. Manual
   // sign-in still works for the seed accounts; the ``SHOW_DEMO_LOGINS``
   // env flag + ``/config/public`` field are intentionally left alone so
@@ -164,7 +188,7 @@ export default function Login() {
           </Text>
         </View>
 
-        {process.env.EXPO_PUBLIC_ENV === "preview" ? (
+        {showDemoTiles ? (
           <View style={styles.demoSection} testID="demo-login-section">
             <Text style={styles.demoSectionTitle}>DEMO ACCOUNTS</Text>
             <Text style={styles.demoSectionSub}>Tap to sign in instantly</Text>

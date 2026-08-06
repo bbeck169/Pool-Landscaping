@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/auth";
 import { brandGradientCss, colors, font } from "@/theme";
 import { PreviewDemoLogins } from "@/components/auth/PreviewDemoLogins";
+import { api } from "@/api";
 
 // Role -> home landing (mirrors the Expo app's tab targeting).
 function landingFor(role) {
@@ -21,6 +22,32 @@ export default function Login() {
   const [showPw, setShowPw] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // Feb 2026 · Demo-login P0 hotfix — the previous env gate read
+  // the build-time env var REACT_APP_PUBLIC_ENV which was BAKED
+  // INTO THE BUNDLE at build time. When the production deploy
+  // re-used a bundle built with a preview ``.env`` present, the
+  // tiles leaked to production. Fix: fetch the backend's runtime
+  // ``APP_ENV`` from ``/api/config/public`` and gate on that.
+  // Default null → hide (fail-closed). Only show tiles when the
+  // backend explicitly reports a non-production env.
+  const [appEnv, setAppEnv] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/config/public")
+      .then((r) => {
+        if (cancelled) return;
+        const v = String(r?.app_env || "").toLowerCase();
+        setAppEnv(v || "production");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAppEnv("production"); // fail-closed
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const showDemoTiles = appEnv !== null && appEnv !== "production";
   // Phase 30 · Feb 2026 — the DEMO ACCOUNTS block has been removed from
   // the login UI unconditionally. Manual login with the seed emails
   // (admin@aquaterra.com / mike@aquaterra.com / customer@aquaterra.com)
@@ -247,11 +274,14 @@ export default function Login() {
             </Link>
           </p>
 
-          {/* Feb 2026 · Preview demo logins — hidden unless
-              ``REACT_APP_PUBLIC_ENV=preview``. Fail-safe: any value
-              other than the literal string ``preview`` (including
-              unset, empty, or ``production``) hides the block. */}
-          {String(process.env.REACT_APP_PUBLIC_ENV || "").toLowerCase() === "preview" && (
+          {/* Feb 2026 · Demo-login P0 hotfix — gate now reads
+              ``app_env`` from the backend at RUNTIME (see the
+              ``showDemoTiles`` state above). The old build-time
+              env-var gate was baked into the bundle and leaked to
+              production. Fail-safe: if the backend fetch fails or
+              returns nothing, ``appEnv`` stays null and the tiles
+              are hidden. */}
+          {showDemoTiles && (
             <PreviewDemoLogins
               onPick={(email) => {
                 setEmail(email);
