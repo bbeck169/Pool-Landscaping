@@ -18,8 +18,7 @@ BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "http://localhost:8001").
 API = f"{BASE_URL}/api"
 
 
-def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+from tests._phase34_asyncio import batch_safe_run as _run  # Phase 41.1d
 
 
 def _login(email: str, pw: str = "password123") -> str:

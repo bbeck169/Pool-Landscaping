@@ -15,6 +15,8 @@ import os
 import re
 from pathlib import Path
 
+import asyncio
+
 import pytest
 from dotenv import dotenv_values
 from pymongo import MongoClient
@@ -192,6 +194,71 @@ def cleanup_test_data():
     else:
         print("\n[conftest teardown] No test data to purge.")
 
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 41.1d · Feb 2026 — Motor loop rebind hook for full-batch isolation.
+# ═══════════════════════════════════════════════════════════════════════
+# Motor (the async MongoDB driver) binds its `_io_loop` LAZILY on first
+# use to whichever event loop is running at that moment. In the full
+# backend batch, arbitrary earlier tests call `asyncio.run(coro)` which
+# creates + closes fresh event loops. Once the loop Motor bound to is
+# closed, every subsequent Motor call from a different loop raises
+# `RuntimeError: Event loop is closed` — the failure cluster surfaces
+# most visibly in the six Phase 34 tenant-tasks test files whose
+# module-scoped `db` fixtures drive Motor coroutines from sync context.
+#
+# Fix: run a hook BEFORE every test that (1) ensures the current
+# thread has a valid non-closed default event loop, creating a fresh
+# one if the previous test closed it, and (2) rebinds Motor's shared
+# `_io_loop` to that current loop. Attribute-write only; zero
+# behaviour change for tests that already ran green in isolation.
+#
+# Approach (b) — `pytest_runtest_setup` hook. Preferred over a session-
+# scoped autouse fixture because the session-scoped variant fires once
+# and cannot recover after an intervening test closes the loop. The
+# per-test hook is idempotent and costs one Python-level attribute
+# write per test.
+
+def _phase41_1d_ensure_motor_loop():
+    """Ensure the current thread has an open default event loop and
+    pin Motor's shared client `_io_loop` to it. No-op if `config`
+    can't be imported (e.g. during a plugin's own hook phase).
+
+    Skips the rebind if the ``_phase34_asyncio`` helper has already
+    rebuilt Motor's client on a session-persistent loop — the helper
+    owns the client lifecycle in that scenario and this hook must not
+    overwrite its binding.
+    """
+    try:
+        # Check if the phase34 helper has taken over Motor lifecycle.
+        from tests import _phase34_asyncio as _p34a  # noqa: PLC0415
+        if getattr(_p34a, "_REBUILT", False):
+            # Helper owns the loop + client. Just keep the current
+            # loop as the persistent one so other tests' get_event_loop
+            # returns something valid.
+            asyncio.set_event_loop(_p34a._get_persistent_loop())
+            return
+    except Exception:
+        pass
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("closed")
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    try:
+        from config import client as _client  # noqa: PLC0415
+        _client._io_loop = loop
+    except Exception:
+        # config not importable — nothing to rebind; the current
+        # loop is still valid for whatever async work the test does.
+        return
+
+
+def pytest_runtest_setup(item):  # noqa: ARG001 — pytest hook signature
+    """Runs before every test. Cheap, idempotent, self-healing."""
+    _phase41_1d_ensure_motor_loop()
 
 
 def pytest_collection_modifyitems(config, items):

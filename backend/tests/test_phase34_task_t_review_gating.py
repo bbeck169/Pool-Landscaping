@@ -74,7 +74,7 @@ def demo_customer_id() -> str:
         assert c, "no seeded customer found for aquaterra"
         return c["id"]
 
-    return asyncio.get_event_loop().run_until_complete(_go())
+    return _run(_go())  # Phase 41.1d — use batch-safe driver
 
 
 @pytest.fixture(scope="module")
@@ -87,10 +87,7 @@ def db():
     return _db
 
 
-def _run(coro):
-    """Small helper — pytest fixtures here are sync so we drive the
-    Motor coroutines through a fresh event loop for each call."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+from tests._phase34_asyncio import batch_safe_run as _run  # Phase 41.1d · noqa: E402
 
 
 async def _get_aq_tenant_id(db) -> str:
