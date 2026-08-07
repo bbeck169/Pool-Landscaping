@@ -13,7 +13,8 @@ function landingFor(role) {
   return "/";
 }
 
-export default function Login() {
+export default function Login({ variant = "staff" } = {}) {
+  const isCustomerVariant = variant === "customer";
   const navigate = useNavigate();
   const location = useLocation();
   const { login, me } = useAuth();
@@ -30,8 +31,14 @@ export default function Login() {
   // ``APP_ENV`` from ``/api/config/public`` and gate on that.
   // Default null → hide (fail-closed). Only show tiles when the
   // backend explicitly reports a non-production env.
+  //
+  // Feb 2026 · Hotfix #2 (Option C) — the CUSTOMER-facing variant
+  // at ``/portal/login`` NEVER renders the demo-tiles block, and
+  // to keep DOM parity we also skip the ``/config/public`` fetch
+  // entirely on that surface. Staff-facing ``/login`` is unchanged.
   const [appEnv, setAppEnv] = useState(null);
   useEffect(() => {
+    if (isCustomerVariant) return; // customer surface never renders tiles
     let cancelled = false;
     api.get("/config/public")
       .then((r) => {
@@ -46,8 +53,9 @@ export default function Login() {
     return () => {
       cancelled = true;
     };
-  }, []);
-  const showDemoTiles = appEnv !== null && appEnv !== "production";
+  }, [isCustomerVariant]);
+  const showDemoTiles =
+    !isCustomerVariant && appEnv !== null && appEnv !== "production";
   // Phase 30 · Feb 2026 — the DEMO ACCOUNTS block has been removed from
   // the login UI unconditionally. Manual login with the seed emails
   // (admin@aquaterra.com / mike@aquaterra.com / customer@aquaterra.com)
@@ -94,7 +102,8 @@ export default function Login() {
     <div
       className="min-h-screen w-full flex flex-col md:flex-row"
       style={{ fontFamily: font.family, backgroundColor: colors.surface }}
-      data-testid="login-page"
+      data-testid={isCustomerVariant ? "portal-login-page" : "login-page"}
+      data-login-variant={variant}
     >
       {/* Left hero panel */}
       <aside

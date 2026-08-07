@@ -128,7 +128,7 @@ export default function Signup() {
         >
           Already have an account?{" "}
           <Link
-            to="/login"
+            to="/portal/login"
             className="font-semibold"
             style={{ color: colors.brand }}
             data-testid="signup-goto-login"

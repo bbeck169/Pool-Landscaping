@@ -52,7 +52,7 @@ export default function ResetPassword() {
         title: "Password reset",
         description: "Please sign in with your new password.",
       });
-      setTimeout(() => navigate("/login", { replace: true }), 400);
+      setTimeout(() => navigate("/portal/login", { replace: true }), 400);
     } catch (err) {
       setError(err?.message || "Could not reset your password. The link may have expired.");
     } finally {
@@ -185,7 +185,7 @@ export default function ResetPassword() {
         </form>
         <div className="mt-6 text-xs text-center">
           <Link
-            to="/login"
+            to="/portal/login"
             style={{ color: colors.brand }}
             data-testid="reset-password-back-to-login"
           >

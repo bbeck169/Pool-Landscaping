@@ -114,7 +114,7 @@ export default function ForgotPassword() {
         )}
         <div className="mt-6 text-xs text-center">
           <Link
-            to="/login"
+            to="/portal/login"
             style={{ color: colors.brand }}
             data-testid="forgot-password-back-to-login"
           >

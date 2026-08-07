@@ -420,6 +420,11 @@ export default function App() {
         <TelephonyLiveEventsBridge />
         <Routes>
           <Route path="/login" element={<Login />} />
+          {/* Feb 2026 · Hotfix #2 (Option C) — customer-facing login
+              surface. Renders the same Login page but with the
+              demo-tiles block permanently disabled (no gate, no
+              toggle, no render). Backed by the same auth endpoint. */}
+          <Route path="/portal/login" element={<Login variant="customer" />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           {/* Phase 34 · Task T · Feb 2026 — Portal review submit page.
