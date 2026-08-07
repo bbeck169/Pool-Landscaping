@@ -251,6 +251,10 @@ api_router.include_router(_tt_zillow_adapter.router)
 # when EMERGENT_LLM_KEY is missing; upload/download return 503.
 from routers import files as _f0_files  # noqa: E402
 api_router.include_router(_f0_files.router)
+
+# Phase 51a · Feb 2026 — Walkie-Talkie async voice-clip backend.
+from routers import walkie as _p51a_walkie  # noqa: E402
+api_router.include_router(_p51a_walkie.router)
 # Task SS/RR Phase 2 · Feb 2026 — the admin credit issuance /
 # reversal endpoints originally shipped in ``customer_credits_admin``
 # collided with the already-shipped Phase 10 ``/customers/{cid}/
@@ -1354,7 +1358,23 @@ async def startup():
         from scripts.create_session_indexes import ensure_on_boot as _idx_boot
         await _idx_boot()
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"[indexes] boot hook failed (non-fatal): {e}")
+        logger.warning(f"[Phase13-W2] session index create failed: {e}")
+    # Phase 51a · Feb 2026 — Walkie-Talkie indexes + tenant bootstrap.
+    try:
+        from services.walkie.channels import (
+            ensure_indexes as _walkie_ensure_indexes,
+            bootstrap_standard_channels as _walkie_bootstrap,
+        )
+        await _walkie_ensure_indexes(db)
+        # Bootstrap the standard channels for every existing tenant.
+        tenants = await db.tenants.find({}, {"_id": 0, "id": 1}).to_list(length=None)
+        for t in tenants:
+            tid = t.get("id")
+            if tid:
+                await _walkie_bootstrap(db, tid)
+        logger.info(f"[Phase51a] walkie indexes + channels ready across {len(tenants)} tenants")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[Phase51a] walkie bootstrap failed: {e}")
     # Phase 34 · Task L · Feb-2026 — one-line audit banner so it's
     # unmistakable from the boot logs whether outbound comms are
     # LIVE or DRY-RUN in the current environment.
