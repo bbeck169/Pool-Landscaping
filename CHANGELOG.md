@@ -8,6 +8,60 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 51 (a → d) · Walkie-Talkie MVP
+
+Async 5-30 s voice-clip messaging surface. Shipped across web + mobile + backend + Expo push + 24 h defense-in-depth cleanup cron. Complete MVP over four sub-phases; delivery here consolidates the milestones.
+
+### Added
+
+- **Web `/walkie` page** — channel list (all-hands + department + directs) with unread badges, timeline with waveform bars + own-message pill, hold-to-record button (browser `MediaRecorder`), 30 s hard cap, persistent mute toggle backed by `localStorage["walkie_muted"]`, new-direct-chat modal, admin-only all-hands broadcast gate mirrored client-side, 15 s polling.
+- **Mobile `/walkie` screens** — channel list + timeline via `expo-audio@~1.1.1` (SDK 54, custom dev-client rebuild required). AsyncStorage-backed mute persistence, same admin gate, same waveform + own-message contract.
+- **Backend REST surface (5 endpoints under `/api/walkie/*`)** — `GET /channels`, `POST /channels/direct`, `POST /messages` (multipart), `GET /messages`, `POST /messages/{id}/listened`. Role-scoped visibility; customer → 403 on `/channels`.
+- **Admin-only all-hands broadcast gate** — server 403 with `detail = "Only admins can broadcast to all-hands"` for callers whose role is not in `{super_admin, admin, manager}`. Client-side surfaces the same message + disables the record button before send-time.
+- **Mongo collections + indexes** — `walkie_channels` (indexed on `(tenant_id, kind)`, `(tenant_id, department)`, `(tenant_id, member_user_ids)`), `walkie_messages` (TTL index on `expires_at` with `expireAfterSeconds: 0` enforcing native 24 h retention, plus `(tenant_id, channel_id, created_at desc)`), `walkie_receipts` (indexed on `(tenant_id, recipient_user_id, listened_at)` + `(message_id)`).
+- **Tenant bootstrap** — All-Hands + `pool` + `landscape` channels auto-provisioned per tenant on first `GET /channels`; idempotent seed also runs at startup.
+- **Expo push fan-out** — one push per registered recipient device (`data = {type: "walkie", channel_id, message_id}`) triggered from `POST /messages`. Deep-links to `/walkie/{channel_id}` on tap. **Double env gate**: sends only when both `WALKIE_PUSH_LIVE=1` AND `EXPO_PUSH_ACCESS_TOKEN` are set. Otherwise logs dry-run payload. Reuses the Phase 20 `mobile_tokens` collection — no new registration endpoint.
+- **24 h cleanup cron** — 1 min tick registered on the existing `AsyncIOScheduler` singleton in `server.py`. Sweeps orphan `walkie_receipts` (whose message row TTL-expired) and orphan `files` rows tagged `purpose == "walkie_audio"`. Idempotent; logs only when it actually deletes something. Disable-able via `WALKIE_CLEANUP_ENABLED=0`.
+- **Cross-platform parity snapshot tests** — one vitest file + one mobile jest file that source-inspect both trees at test time and lock the shared invariants: channel ordering, 30 s recorder cap, `walkie_muted` key, `BROADCAST_ROLES` set, server-parity error message, waveform fallback contract, and shared testID manifest.
+- **`EXPO_GO_RUNBOOK.md`** — new Phase 51c section documents `expo-audio` native rebuild + push env matrix + device smoke test.
+
+### Env additions
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `WALKIE_PUSH_LIVE` | unset | `=1` → live Expo push fan-out. Otherwise dry-run (logs payload only). |
+| `EXPO_PUSH_ACCESS_TOKEN` | unset | Required alongside `WALKIE_PUSH_LIVE=1`. Missing → second-layer dry-run. |
+| `WALKIE_CLEANUP_ENABLED` | `1` | `=0` disables the defense-in-depth cleanup cron. Mongo TTL still fires. |
+
+### Native deps
+
+- `expo-audio@~1.1.1` (mobile). Custom dev-client rebuild required — Expo Go does NOT ship the module. Mirrors Phase 38b Mapbox + Phase 49 speech-recognition rebuild pattern.
+- No new web deps.
+
+### Test count delta
+
+- Backend curated coverage gate: 151/152 → **168/169** (+17 tests), cov ~2.79 % ≥ 2 % floor.
+- Frontend Vitest: 1272/1272 → **1315/1315** (+43 tests across 5 new files).
+- Mobile Jest: 132/132 → **171/171** (+39 tests across 4 new files).
+- ESLint: exit 0.
+
+### Sub-phase memos
+
+- `memory/PHASE51A_WALKIE_BACKEND.md`
+- `memory/PHASE51B_WALKIE_WEB_UI.md`
+- `memory/PHASE51C_WALKIE_MOBILE.md`
+
+### Non-goals (deferred to future phases)
+
+- WebSocket / SSE push instead of 15 s polling.
+- Threaded "Reply with clip" long-press action.
+- Per-channel "Pinned clip" SOP-broadcast surface.
+- Live-streaming walkie mode (Phase 52 target).
+
+---
+
+
+
 ## 2026-02-XX — Phase 49 hotfix · Cron thread-loop bug + regex phrasing coverage + credential drift
 
 Tester report caught 3 issues in the Phase 49 delivery. All addressed; scope not expanded.

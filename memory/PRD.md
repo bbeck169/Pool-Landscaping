@@ -1,3 +1,73 @@
+## Phase 51 · Feb-2026 — Walkie-Talkie MVP (a → d)
+
+Async 5-30s voice-clip messaging surface for field crews. Ships across web + mobile + backend + push + a 24h defense-in-depth cleanup cron.
+
+**Feature scope**
+- Async voice clips, 5-30 s per clip, hold-to-record / release-to-send.
+- Three channel kinds: **all-hands** (tenant-wide broadcast), **per-department** (`pool` / `landscape`), and **1:1 direct**.
+- **24 h server-side retention** enforced natively by a Mongo TTL index on `walkie_messages.expires_at` (`expireAfterSeconds: 0`).
+- **Admin-only broadcast gate** on `all_hands` (server 403 + client-side button disable + tooltip). Roles allowed: `super_admin`, `admin`, `manager`.
+- **Sender sees own outgoing clips** in the timeline, right-aligned with a `walkie-own-tag` "you" pill.
+- **Auto-play** for new incoming clips in the currently-open channel; suppressed for own messages and when muted.
+- **Persistent mute toggle** — `walkie_muted="1"` in `localStorage` (web) / `AsyncStorage` (mobile).
+- **Waveform peaks** rendered as a bar viz; falls back to a plain progress bar when peaks are absent.
+- **Expo push notifications** to every recipient with a registered device token, gated by two independent env layers (dry-run default). Deep-link to `/walkie/{channel_id}` on tap.
+- **24 h cleanup cron** — 1 min tick attached to the existing `AsyncIOScheduler` singleton; sweeps orphan receipts + orphan `walkie_audio` files whose message rows have been TTL-evicted.
+
+**Env flags (server)**
+| Flag | Default | Effect |
+|------|---------|--------|
+| `WALKIE_PUSH_LIVE` | unset | Set to `1` to enable live Expo pushes. Otherwise the fan-out is dry-run (logs payload only). |
+| `EXPO_PUSH_ACCESS_TOKEN` | unset | Required alongside `WALKIE_PUSH_LIVE=1` for a live push. Missing → second-layer dry-run fallback. |
+| `WALKIE_CLEANUP_ENABLED` | `1` (on) | Set to `0` to disable the 1-minute defense-in-depth cleanup cron. Mongo TTL index still fires natively. |
+
+**Native deps**
+- `expo-audio@~1.1.1` (Expo SDK 54 compatible). Config plugin added to `mobile/app.json` with iOS mic permission text. **Requires a custom dev-client rebuild** — Expo Go does NOT ship the module. Mirrors the Phase 38b Mapbox + Phase 49 speech-recognition rebuild pattern. Runbook section added at `mobile/EXPO_GO_RUNBOOK.md`.
+- No new web deps (uses browser-native `MediaRecorder`).
+
+**API surface — 5 REST endpoints under `/api/walkie/*`**
+| Method | Path | Auth |
+|--------|------|------|
+| `GET` | `/channels` | staff-only; customer → 403 |
+| `POST` | `/channels/direct` | staff-only; idempotent on sorted pair; customer target → 400 |
+| `POST` | `/messages` | multipart; member-of-channel; ≤ 30 s; ≤ 2 MB; mime ∈ {webm, mp4, aac, mpeg, ogg}. All-hands: leadership only (403 otherwise). |
+| `GET` | `/messages?channel_id&since&limit` | 24 h window, caller-scoped (sender OR recipient) |
+| `POST` | `/messages/{id}/listened` | idempotent mark on caller's receipt; 404 if not a recipient |
+
+**Collections + indexes**
+- `walkie_channels` — indexed on `(tenant_id, kind)`, `(tenant_id, department)`, `(tenant_id, member_user_ids)`
+- `walkie_messages` — TTL index on `expires_at` (`expireAfterSeconds: 0`), plus `(tenant_id, channel_id, created_at desc)`
+- `walkie_receipts` — indexed on `(tenant_id, recipient_user_id, listened_at)` + `(message_id)`
+- Push token reuse — the existing `mobile_tokens` collection from Phase 20 is joined at fan-out time. No new registration surface.
+
+**Sub-phase deliverables**
+- **51a** — backend foundation: data model, indexes, 5 REST endpoints, tenant bootstrap, 21 pytest tests.
+- **51b** — web UI (`/walkie`) + admin broadcast gate: main page, hold-to-record, timeline, new-direct modal, sidebar entry with unread badge, 34 vitest tests, 6 backend broadcast-gate tests.
+- **51c** — mobile parity via `expo-audio` + Expo push fan-out: channel list + timeline screens, hold-to-record, tap-through routing, 29 mobile jest tests, 5 backend push tests.
+- **51d** — MVP closeout: 24 h cleanup cron on the existing scheduler, cross-platform parity snapshot tests, PRD + CHANGELOG + runbook docs.
+
+**Test counts (cumulative through 51d)**
+| Suite | Baseline (pre-51) | After 51d | Δ |
+|-------|-------------------|-----------|---|
+| Backend curated coverage gate | 151 / 152 | **168 / 169** (cov ~2.79 %) | **+17** across walkie backend + push + cleanup + broadcast-gate |
+| Frontend Vitest | 1272 / 1272 | **1315 / 1315** | **+43** (34 walkie + 9 parity snapshot) |
+| Mobile Jest | 132 / 132 | **171 / 171** | **+39** (17 helpers + 5 mount + 5 push routing + 10 parity + 2 misc) |
+| ESLint | exit 0 | exit 0 | ✅ |
+
+**Sub-phase memos** (living reference)
+- `/app/memory/PHASE51A_WALKIE_BACKEND.md` — backend foundation + admin gate + push notes
+- `/app/memory/PHASE51B_WALKIE_WEB_UI.md` — web UI + broadcast gate
+- `/app/memory/PHASE51C_WALKIE_MOBILE.md` — mobile + push fan-out
+
+**Non-goals / deferred (candidates for later phases, NOT in 51)**
+- WebSocket / server-sent-event push instead of 15 s polling (fires when > ~50 concurrent techs).
+- "Reply with clip" long-press action for threaded replies.
+- "Pinned clip" per-channel SOP-broadcast surface.
+- Live-streaming walkie (Phase 52).
+
+---
+
+
 ## Phase 50 · Feb-2026 — Activate AI employees + Lottie animated avatars in all logins
 
 **Delivered:**

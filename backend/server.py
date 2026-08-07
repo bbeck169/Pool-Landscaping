@@ -1230,6 +1230,12 @@ async def _background_seed():
                 register_lana_reminders_cron(scheduler)
             except Exception as _lana_exc:  # pragma: no cover
                 logger.warning("[lana.reminders.cron] register failed: %s", _lana_exc)
+            # Phase 51d · Feb-2026 — minute-cadence walkie cleanup tick.
+            try:
+                from services.walkie.cleanup_cron import register_walkie_cleanup_cron
+                register_walkie_cleanup_cron(scheduler)
+            except Exception as _walkie_exc:  # pragma: no cover
+                logger.warning("[walkie.cleanup.cron] register failed: %s", _walkie_exc)
         except Exception as _ae:
             logger.warning(f"automation_engine registration crashed: {_ae}")
 
