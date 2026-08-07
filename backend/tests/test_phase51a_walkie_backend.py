@@ -298,3 +298,75 @@ def test_auto_provision_of_standard_channels_on_first_get(sync_db):
         c["department"] for c in r.json()["channels"] if c["kind"] == "department"
     })
     assert deps == ["landscape", "pool"]
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 51b · Broadcast permission gate — all-hands is admin-only
+# ═══════════════════════════════════════════════════════════════════
+def _get_dept_channel(email: str, dept: str) -> str:
+    r = requests.get(f"{API}/walkie/channels", headers=_hdr(email), timeout=TIMEOUT)
+    for c in r.json()["channels"]:
+        if c["kind"] == "department" and c.get("department") == dept:
+            return c["id"]
+    raise AssertionError(f"no {dept} department channel visible")
+
+
+def _post_clip(email: str, channel_id: str, duration_ms: str = "2000"):
+    return requests.post(
+        f"{API}/walkie/messages",
+        headers=_hdr(email),
+        data={"channel_id": channel_id, "duration_ms": duration_ms},
+        files={"audio_file": ("clip.webm", _wav_bytes(), "audio/webm")},
+        timeout=TIMEOUT,
+    )
+
+
+def test_broadcast_gate_manager_can_post_all_hands():
+    ch_id = _get_all_hands(USERS["manager"])
+    r = _post_clip(USERS["manager"], ch_id)
+    assert r.status_code == 200, r.text
+
+
+def test_broadcast_gate_admin_can_post_all_hands():
+    ch_id = _get_all_hands(USERS["admin"])
+    r = _post_clip(USERS["admin"], ch_id)
+    assert r.status_code == 200, r.text
+
+
+def test_broadcast_gate_super_admin_can_post_all_hands():
+    ch_id = _get_all_hands(USERS["super"])
+    r = _post_clip(USERS["super"], ch_id)
+    assert r.status_code == 200, r.text
+
+
+def test_broadcast_gate_pool_tech_blocked_from_all_hands():
+    ch_id = _get_all_hands(USERS["tech_pool"])
+    r = _post_clip(USERS["tech_pool"], ch_id)
+    assert r.status_code == 403
+    assert "admins" in r.json()["detail"].lower()
+
+
+def test_broadcast_gate_landscape_tech_blocked_from_all_hands():
+    ch_id = _get_all_hands(USERS["tech_land"])
+    r = _post_clip(USERS["tech_land"], ch_id)
+    assert r.status_code == 403
+    assert "admins" in r.json()["detail"].lower()
+
+
+def test_broadcast_gate_tech_can_still_post_to_own_department(sync_db):
+    """Regression guard — the gate must ONLY affect all-hands. Pool
+    techs must still be able to post to the pool department channel
+    and to a direct 1:1 they're a member of."""
+    ch_id = _get_dept_channel(USERS["tech_pool"], "pool")
+    r = _post_clip(USERS["tech_pool"], ch_id)
+    assert r.status_code == 200, r.text
+    # And a direct 1:1 opened by admin → tech_pool.
+    admin_hdr = _hdr(USERS["admin"])
+    tech_uid = _resolve_uid(sync_db, USERS["tech_pool"])
+    dc = requests.post(f"{API}/walkie/channels/direct",
+                      headers=admin_hdr, json={"user_id": tech_uid}, timeout=TIMEOUT)
+    assert dc.status_code == 200
+    dc_id = dc.json()["channel"]["id"]
+    r2 = _post_clip(USERS["tech_pool"], dc_id)
+    assert r2.status_code == 200, r2.text
+

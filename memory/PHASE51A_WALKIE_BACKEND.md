@@ -4,6 +4,14 @@ Async 5-30s voice-clip MVP. Web + mobile parity is deferred; this
 phase is strictly backend + tests. Live streaming lands in Phase 52,
 mobile push in Phase 51c.
 
+> **Phase 51b patch (Feb 2026):** ``POST /api/walkie/messages`` now
+> enforces an **admin-only broadcast gate** on the all-hands channel.
+> Callers whose role is not in ``{super_admin, admin, manager}`` get a
+> **403** with ``detail = "Only admins can broadcast to all-hands"``.
+> Techs / dispatchers can still post to their own department channel
+> and to any direct they're a member of. See test cluster
+> ``test_broadcast_gate_*`` in ``tests/test_phase51a_walkie_backend.py``.
+
 ## Files touched
 
 | Path | Type | Notes |

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from config import db
 from utils import get_current_user
 from services.walkie.channels import (
+    BROADCAST_ROLES,
     STAFF_ROLES,
     get_or_create_direct_channel,
     is_channel_member,
@@ -122,6 +123,13 @@ async def post_message(
         raise HTTPException(404, detail="channel_not_found")
     if not await is_channel_member(channel, user, db):
         raise HTTPException(403, detail="not_a_channel_member")
+    # Phase 51b · Feb 2026 — broadcast gate. All-hands is
+    # leadership-only; techs/dispatchers can still hit their own
+    # department + directs.
+    if channel.get("kind") == "all_hands":
+        role = (user.get("role") or "").lower()
+        if role not in BROADCAST_ROLES:
+            raise HTTPException(403, detail="Only admins can broadcast to all-hands")
 
     # Persist audio via the existing file storage service (same one
     # /api/files/upload uses under the hood).

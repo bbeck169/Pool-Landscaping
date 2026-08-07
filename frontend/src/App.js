@@ -217,6 +217,7 @@ import ServiceImagesPortalPage from "@/pages/public/ServiceImagesPortalPage";
 // route through Stripe directly (no Lumino / Zapier).
 import AddCardPage from "@/pages/public/AddCardPage";
 import TeamChatPage from "@/pages/chat/TeamChatPage";
+import Walkie from "@/pages/walkie/Walkie";
 import {
   SequencesList, SequenceNew, SequenceDetail,
 } from "@/pages/marketing/SequencePages";
@@ -626,6 +627,7 @@ export default function App() {
             <Route path="marketing/instaquote" element={<AdminOnly><InstaQuoteAdminPage /></AdminOnly>} />
             <Route path="marketing/instaschedule" element={<AdminOnly><InstaScheduleAdminPage /></AdminOnly>} />
             <Route path="chat" element={<TeamChatPage />} />
+            <Route path="walkie" element={<Walkie />} />
 
             {/* Phase 8 — SEO + GBP */}
             <Route path="seo" element={<AdminOnly><SeoHub /></AdminOnly>} />

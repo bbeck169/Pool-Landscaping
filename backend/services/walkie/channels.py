@@ -17,6 +17,11 @@ from typing import Any
 
 
 STAFF_ROLES = {"super_admin", "admin", "manager", "technician", "dispatcher", "owner"}
+# Phase 51b · Feb 2026 — Broadcast permission gate.
+# Only leadership roles can post to the tenant-wide ``all_hands``
+# channel. Techs / dispatchers stay limited to their own department
+# and their own directs. Enforced server-side on POST /messages.
+BROADCAST_ROLES = {"super_admin", "admin", "manager"}
 DEPARTMENTS = ("pool", "landscape")
 
 # Feb 2026 · Phase 51a — seeded user rows use ``department="landscaping"``

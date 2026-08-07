@@ -12,7 +12,7 @@
  * visible to the role that owns the section (they're pages the role's
  * primary UI already exposes anyway).
  */
-import { LayoutDashboard, CalendarDays, FileText, Camera, MessageSquare, Home, Wallet, Shield, User, ClipboardList, Wrench, Truck, Package, Boxes, Trophy, IdCard, ScrollText, GraduationCap, Film } from "lucide-react";
+import { LayoutDashboard, CalendarDays, FileText, Camera, MessageSquare, Home, Wallet, Shield, User, ClipboardList, Wrench, Truck, Package, Boxes, Trophy, IdCard, ScrollText, GraduationCap, Film, Radio } from "lucide-react";
 import { ADMIN_NAV_V2 } from "./adminNav";
 
 export const TECH_NAV = [
@@ -22,6 +22,7 @@ export const TECH_NAV = [
     icon: CalendarDays,
     entries: [
       { to: "/schedule", label: "Schedule", icon: CalendarDays },
+      { to: "/walkie", label: "Walkie-Talkie", icon: Radio },
       // Tech Nav 404 fix · Feb 2026 — removed:
       //   /dispatch/board (admin/dispatcher tier — techs shouldn't see the full board)
       //   /inbox         (no proper tech-side inbox yet; follow-up P2)
