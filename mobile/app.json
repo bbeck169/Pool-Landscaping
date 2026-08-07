@@ -83,6 +83,13 @@
         {
           "RNMapboxMapsDownloadToken": "$EXPO_PUBLIC_MAPBOX_TOKEN"
         }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow Pool Landscaping to record audio walkie-talkie clips.",
+          "recordAudioAndroid": true
+        }
       ]
     ],
     "extra": {

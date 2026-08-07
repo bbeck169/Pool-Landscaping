@@ -14,7 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
-from config import db
+from config import db, logger
 from utils import get_current_user
 from services.walkie.channels import (
     BROADCAST_ROLES,
@@ -24,6 +24,7 @@ from services.walkie.channels import (
     list_visible_channels_for_user,
     resolve_recipients,
 )
+from services.walkie.push import fan_out_walkie_push as _fan_out_walkie_push
 
 router = APIRouter(prefix="/walkie", tags=["walkie"])
 
@@ -199,6 +200,23 @@ async def post_message(
             }
             for rid in recipients
         ])
+
+    # ── Phase 51c · Feb 2026 — Expo push fan-out ────────────────────
+    # Best-effort push to every recipient with a registered device
+    # token. Env-gated: real Expo API calls only when
+    # ``WALKIE_PUSH_LIVE=1`` is set on the server. Default is
+    # dry-run (log payload, no network) so CI + local dev stay quiet.
+    if recipients:
+        try:
+            await _fan_out_walkie_push(
+                recipients=recipients,
+                channel=channel,
+                sender=user,
+                message_id=msg_id,
+                duration_ms=int(duration_ms),
+            )
+        except Exception as e:  # pragma: no cover — push must never break send
+            logger.warning(f"[walkie] push fan-out failed: {e}")
 
     # Return a JSON-safe copy (ISO strings for datetimes).
     return {"message": {

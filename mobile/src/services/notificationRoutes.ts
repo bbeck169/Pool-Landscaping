@@ -17,8 +17,10 @@
  */
 export type NotificationLike = {
   kind?: string | null;
+  type?: string | null;
   href?: string | null;
   job_id?: string | null;
+  channel_id?: string | null;
 };
 
 export type UserLike = {
@@ -43,6 +45,17 @@ export function resolveNotificationRoute(
     // Techs (and any non-customer non-admin role) land on their
     // read-only view.
     return "/inventory/my-inventory";
+  }
+
+  // Phase 51c · Feb 2026 — walkie push tap-through.
+  // Backend fan-out sets ``data.type = "walkie"`` + ``data.channel_id``
+  // so we can deep-link straight into the channel timeline. Falls back
+  // to the walkie index if the channel_id is missing (shouldn't happen
+  // in practice but keeps the surface robust).
+  const kindOrType = kind || (notif.type || "").toString();
+  if (kindOrType === "walkie") {
+    if (notif.channel_id) return `/walkie/${notif.channel_id}`;
+    return "/walkie";
   }
 
   // Generic fallbacks preserved from existing behaviour.

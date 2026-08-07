@@ -11,6 +11,15 @@ mobile push in Phase 51c.
 > Techs / dispatchers can still post to their own department channel
 > and to any direct they're a member of. See test cluster
 > ``test_broadcast_gate_*`` in ``tests/test_phase51a_walkie_backend.py``.
+>
+> **Phase 51c patch (Feb 2026):** ``POST /api/walkie/messages`` now
+> also fans out an **Expo push notification** to every recipient
+> with a registered device token in ``mobile_tokens`` (reuses the
+> Phase 20 collection). Env-gated by ``WALKIE_PUSH_LIVE=1`` +
+> ``EXPO_PUSH_ACCESS_TOKEN``. **Default is dry-run** (logs payload,
+> no network). See ``services/walkie/push.py`` +
+> ``tests/test_phase51c_walkie_push.py``. Full mobile parity notes
+> in ``memory/PHASE51C_WALKIE_MOBILE.md``.
 
 ## Files touched
 

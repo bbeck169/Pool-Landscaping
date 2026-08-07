@@ -227,3 +227,38 @@ To disable the map entirely without touching mobile code:
   `LiveTechPinsWrapper.tsx` + drop the import from
   `mobile/app/(app)/dispatch/board.tsx`.
 
+
+---
+
+## Phase 51c · Walkie-Talkie native audio + push (Feb 2026)
+
+**Native module added:** `expo-audio@~1.1.1` (Expo SDK 54 compatible). Auto-installed via `npx expo install expo-audio`. Config plugin auto-added to `app.json` with iOS microphone permission text.
+
+**Expo Go does NOT ship the walkie-talkie microphone recorder.** `expo-audio` is a bare-native module (like `@rnmapbox/maps` from Phase 38b and `expo-speech-recognition` from Phase 49) — you must rebuild the custom dev-client:
+
+```bash
+# From /app/mobile (or wherever your local checkout is):
+eas build --profile development --platform ios
+eas build --profile development --platform android
+```
+
+Distribute the resulting dev-client build via TestFlight internal / Google internal-testing exactly the same way Phase 38b Mapbox + Phase 49 speech-recognition did. Testers who previously installed the dev-client still need to reinstall to pick up the new `expo-audio` native module.
+
+**Push notifications:**
+- Backend fan-out is env-gated by `WALKIE_PUSH_LIVE=1` — DEFAULT is dry-run (logs the push payload, no network hit). This keeps Expo Go / preview / local dev quiet.
+- To enable real pushes on the live server: set `WALKIE_PUSH_LIVE=1` AND `EXPO_PUSH_ACCESS_TOKEN=<your-expo-access-token>`. Both must be present.
+- Device push tokens are stored via the existing `POST /api/mobile-tokens` endpoint (Phase 20). No new endpoint was added.
+- Payload data: `{"type": "walkie", "channel_id": "…", "message_id": "…"}`. Tapping the push deep-links to `/walkie/{channel_id}` via the notification-route resolver (Phase 20 `notificationRoutes.ts`).
+
+**Audio recording specifics on the dev-client:**
+- iOS records in AAC / `.m4a` (`audio/mp4`).
+- Android records in AAC / `.m4a` (`audio/mp4`).
+- Both are already whitelisted by the Phase 51a backend (`POST /api/walkie/messages`).
+- 30-second hard cap enforced client-side; server-side cap enforced on upload.
+
+**Quick smoke test on device:**
+1. Log in as `mike@aquaterra.com` (pool tech) — walkie entry appears.
+2. Open All-Hands — mic is greyed with "Only admins can broadcast to all-hands".
+3. Open Pool Team — hold the mic 2-3 s, release. Clip appears in the timeline.
+4. Log in as `admin@aquaterra.com` on a second device — the clip auto-plays if that device is on the Pool Team screen and unmuted.
+
