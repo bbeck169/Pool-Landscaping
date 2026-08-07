@@ -30,6 +30,15 @@ from services.payments import stripe_charge as stripe_svc
 from utils import get_current_user
 
 router = APIRouter(prefix="/payments/stripe", tags=["payments-stripe"])
+# Feb 2026 · P1 Hotfix #3 — Stripe Dashboard was historically pointed
+# at ``/api/stripe/webhook`` (a legacy short path). The main router
+# above mounts under ``/payments/stripe`` so that legacy URL returns
+# 404 and Stripe retries endlessly, blocking payment-status updates.
+# Expose a THIN alias router at ``/stripe`` that forwards to the same
+# handler. The primary URL remains ``/api/payments/stripe/webhook``;
+# this alias keeps the historical URL working with zero operator
+# action (no Dashboard change required).
+webhook_alias_router = APIRouter(prefix="/stripe", tags=["stripe-webhook-alias"])
 logger = logging.getLogger("stripe_router")
 
 _ADMIN_ROLES = ("admin", "manager", "super_admin")
@@ -268,3 +277,13 @@ async def post_webhook(request: Request):
         raise HTTPException(400, f"invalid signature: {exc}")
     result = await stripe_svc.handle_webhook_event(event)
     return {"ok": True, **result}
+
+
+# Feb 2026 · P1 Hotfix #3 — Legacy-URL alias. Stripe Dashboard was
+# configured with the short path ``/api/stripe/webhook`` before the
+# main router got its ``/payments/stripe`` prefix. Keep that URL live
+# by forwarding to the same handler. Both routes accept the exact
+# same payload + signature and produce identical responses.
+@webhook_alias_router.post("/webhook")
+async def post_webhook_alias(request: Request):
+    return await post_webhook(request)

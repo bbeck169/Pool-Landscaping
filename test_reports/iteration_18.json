@@ -1,0 +1,28 @@
+{
+  "summary": "P1 Hotfix #3 (Stripe webhook legacy-URL alias) verified. All 8 tests in test_stripe_webhook_route_hotfix3.py pass locally against server.app via TestClient. Live preview URL confirms /api/stripe/webhook now returns HTTP 400 with 'invalid signature: Unable to extract timestamp and signatures from header' (previously 404) and produces a byte-identical response to /api/payments/stripe/webhook. No route shadowing found for /api/stripe/webhook anywhere else in the codebase. Regression check on /api/config/public passes (returns {show_demo_logins: true, app_env: 'preview'}, HTTP 200).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_stripe_webhook_route_hotfix3.py",
+    "/app/test_reports/pytest/hotfix3_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Alias router pattern is clean and minimal — single forwarding route delegating to the primary handler. No code duplication introduced.",
+    "Signature-verification path (stripe.Webhook.construct_event) is shared between both routes, so future changes to secret selection (_select_webhook_secret) apply uniformly."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "N/A — webhook signature verification is mocked at stripe.Webhook.construct_event level.",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Hotfix #3 is locked. If Stripe webhook behavior changes, both /api/stripe/webhook (alias) and /api/payments/stripe/webhook (primary) must be checked. Regression suite is test_stripe_webhook_route_hotfix3.py (8 tests). Phase 41.1d WIP remained in git stash (not touched). Prior hotfixes (/api/config/public and /portal/login demo tile suppression) also verified untouched.",
+  "curl_verification": {
+    "live_preview_url": "https://poolscape-audit.preview.emergentagent.com",
+    "alias": "POST /api/stripe/webhook → 400 invalid signature (was 404)",
+    "primary": "POST /api/payments/stripe/webhook → 400 invalid signature",
+    "envelopes_identical": true,
+    "config_public": "200 {show_demo_logins: true, app_env: 'preview'}"
+  }
+}

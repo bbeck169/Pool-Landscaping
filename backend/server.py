@@ -384,6 +384,11 @@ api_router.include_router(_payments_summary_router.router)
 # stays retired (Phase LZ4). Test/live mode split via ``STRIPE_MODE``.
 from routers import stripe_router as _p14a_stripe_router  # noqa: E402
 api_router.include_router(_p14a_stripe_router.router)
+# Feb 2026 · P1 Hotfix #3 — Legacy-URL alias so ``/api/stripe/webhook``
+# (the URL Stripe Dashboard was historically configured to hit)
+# resolves to the same handler as ``/api/payments/stripe/webhook``.
+# See stripe_router.webhook_alias_router for full rationale.
+api_router.include_router(_p14a_stripe_router.webhook_alias_router)
 
 # Phase 14b · Feb-2026 — Invoice filters + bulk charge-card-on-file.
 # Endpoints: /api/invoices/{line-item-categories, bulk-charge-card-on-file,
