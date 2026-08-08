@@ -37,14 +37,33 @@ from utils import get_current_user
 
 router = APIRouter()
 
-_ALLOWED_ROLES = frozenset({"admin", "super_admin"})
+# Phase 53c-fix · Feb-2026 — split role gate so managers can VIEW
+# (GET compute + GET snapshots list + GET snapshot detail) but cannot
+# MUTATE (POST snapshot / PATCH adjustments / PATCH overrides).
+_VIEWER_ROLES = frozenset({"admin", "super_admin", "manager"})
+_EDITOR_ROLES = frozenset({"admin", "super_admin"})
+# Retained alias so any external caller of the private helper keeps
+# the historical semantics (editor-only) — the module is not part of
+# a public contract but a handful of tests reference it by name.
+_ALLOWED_ROLES = _EDITOR_ROLES
 _INDEXES_ENSURED = False
 
 
-def _require_role(user: Dict[str, Any]) -> None:
+def _require_editor(user: Dict[str, Any]) -> None:
     role = (user or {}).get("role") or ""
-    if role not in _ALLOWED_ROLES:
+    if role not in _EDITOR_ROLES:
         raise HTTPException(status_code=403, detail={"error": "forbidden"})
+
+
+def _require_viewer(user: Dict[str, Any]) -> None:
+    role = (user or {}).get("role") or ""
+    if role not in _VIEWER_ROLES:
+        raise HTTPException(status_code=403, detail={"error": "forbidden"})
+
+
+def _require_role(user: Dict[str, Any]) -> None:
+    """Backwards-compat: editor-only gate (POST + PATCH endpoints)."""
+    _require_editor(user)
 
 
 def _require_tenant(user: Dict[str, Any]) -> str:
@@ -125,7 +144,7 @@ async def ebit_compute(
                                             description="cash|accrual"),
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    _require_role(user)
+    _require_viewer(user)
     tenant_id = _require_tenant(user)
     basis = _validate_basis(revenue_basis)
     rf, rt = _resolve_range_or_422(range, from_, to)
@@ -146,7 +165,7 @@ async def ebit_snapshots_list(
     limit: int = Query(50, ge=1, le=500),
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    _require_role(user)
+    _require_viewer(user)
     tenant_id = _require_tenant(user)
     await _ensure_indexes()
 
@@ -175,7 +194,7 @@ async def ebit_snapshot_get(
     snapshot_id: str,
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    _require_role(user)
+    _require_viewer(user)
     tenant_id = _require_tenant(user)
     doc = await db.ebit_snapshots.find_one(
         {"id": snapshot_id, "tenant_id": tenant_id},

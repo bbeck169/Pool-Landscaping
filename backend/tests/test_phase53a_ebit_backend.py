@@ -278,9 +278,11 @@ def test_compute_admin_ok():
     assert r.status_code == 200, r.text
 
 
-def test_compute_manager_forbidden():
+def test_compute_manager_viewable():
+    """Phase 53c-fix · Feb-2026 — managers may VIEW EBIT (GET),
+    they just cannot save/patch (see the POST + PATCH tests below)."""
     r = _compute(USERS["manager"])
-    assert r.status_code == 403
+    assert r.status_code == 200, r.text
 
 
 def test_compute_technician_forbidden():
@@ -293,9 +295,22 @@ def test_compute_customer_forbidden():
     assert r.status_code == 403
 
 
-def test_snapshots_list_forbidden_for_manager():
+def test_snapshots_list_manager_viewable():
+    """Phase 53c-fix · Feb-2026 — managers can list snapshots."""
     r = requests.get(f"{API}/ebit/snapshots",
                      headers=_hdr(USERS["manager"]), timeout=TIMEOUT)
+    assert r.status_code == 200, r.text
+
+
+def test_save_snapshot_forbidden_for_manager():
+    """Phase 53c-fix · Feb-2026 — manager still 403 on write."""
+    r = requests.post(
+        f"{API}/ebit/snapshots",
+        headers=_hdr(USERS["manager"]),
+        json={"range_kind": "custom", "range_from": FIX_FROM,
+              "range_to": FIX_TO},
+        timeout=TIMEOUT,
+    )
     assert r.status_code == 403
 
 
@@ -533,7 +548,7 @@ def test_override_null_falls_back_to_live_and_adjustment(sync_db):
     assert new["opex"] == pytest.approx(910.0, abs=0.01)
 
 
-def test_patch_forbidden_for_manager():
+def test_patch_adjustments_forbidden_for_manager():
     r_save = requests.post(
         f"{API}/ebit/snapshots",
         headers=_hdr(USERS["admin"]),
@@ -549,6 +564,45 @@ def test_patch_forbidden_for_manager():
         timeout=TIMEOUT,
     )
     assert r.status_code == 403
+
+
+def test_patch_overrides_forbidden_for_manager():
+    """Phase 53c-fix · Feb-2026 — cover the second PATCH endpoint too."""
+    r_save = requests.post(
+        f"{API}/ebit/snapshots",
+        headers=_hdr(USERS["admin"]),
+        json={"range_kind": "custom", "range_from": FIX_FROM,
+              "range_to": FIX_TO, "revenue_basis": "cash"},
+        timeout=TIMEOUT,
+    )
+    sid = r_save.json()["id"]
+    r = requests.patch(
+        f"{API}/ebit/snapshots/{sid}/overrides",
+        headers=_hdr(USERS["manager"]),
+        json={"line_overrides": {"opex": 500}},
+        timeout=TIMEOUT,
+    )
+    assert r.status_code == 403
+
+
+def test_snapshot_get_by_id_viewable_by_manager():
+    """Phase 53c-fix · Feb-2026 — GET by id follows the same
+    read-viewer rule as list + compute."""
+    r_save = requests.post(
+        f"{API}/ebit/snapshots",
+        headers=_hdr(USERS["admin"]),
+        json={"range_kind": "custom", "range_from": FIX_FROM,
+              "range_to": FIX_TO, "revenue_basis": "cash"},
+        timeout=TIMEOUT,
+    )
+    sid = r_save.json()["id"]
+    r = requests.get(
+        f"{API}/ebit/snapshots/{sid}",
+        headers=_hdr(USERS["manager"]),
+        timeout=TIMEOUT,
+    )
+    assert r.status_code == 200
+    assert r.json()["id"] == sid
 
 
 # ═══════════════════════════════════════════════════════════════════

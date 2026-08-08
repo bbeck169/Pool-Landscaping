@@ -378,6 +378,22 @@ function AdminOnly({ children }) {
 }
 
 
+// Phase 53c-fix · Feb-2026 — profit-report is the ONLY /admin route
+// managers may reach (they render the EBIT panel read-only, and get
+// the existing profit-report page in view-only mode). All other
+// /admin/* routes stay ``AdminOnly``. This is a targeted rule.
+function AdminOrManagerForProfitReport({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  const role = user?.role || "";
+  const allowed = role === "admin" || role === "super_admin" || role === "manager";
+  if (!user || !allowed) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
+
 // Phase 21 · Feb 2026 · Vanity slug editor — super_admin gated.
 // Anyone else lands on `/` (unauthorized surface for this app).
 function SuperAdminOnly({ children }) {
@@ -995,7 +1011,7 @@ export default function App() {
             {/* LZ5 · Feb-2026 — Lumino payment-link backfill (super_admin only). */}
             <Route path="admin/tools/lumino-backfill" element={<SuperAdminOnly><LuminoBackfillPage /></SuperAdminOnly>} />
             {/* PB1 · Feb-2026 — Profit report (admin-only; internal margin data). */}
-            <Route path="admin/reports/profit" element={<AdminOnly><ProfitReportPage /></AdminOnly>} />
+            <Route path="admin/reports/profit" element={<AdminOrManagerForProfitReport><ProfitReportPage /></AdminOrManagerForProfitReport>} />
             {/* G0 · Feb-2026 — GPS driver-activity settings (admin-only). */}
             <Route path="admin/settings/gps" element={<AdminOnly><GpsSettingsPage /></AdminOnly>} />
             {/* Feb-2026 · Item 6 — Business Card admin editor. */}

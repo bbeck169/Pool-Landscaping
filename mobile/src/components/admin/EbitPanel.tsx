@@ -107,11 +107,17 @@ function EbitLineRow(props: {
   onAdjustmentChange: (v: number) => void;
   onOverrideChange: (v: number | null) => void;
   editable: boolean;
+  readOnly: boolean;
 }) {
   const { lineKey, computed, effective, adjustment, override,
-          onAdjustmentChange, onOverrideChange, editable } = props;
+          onAdjustmentChange, onOverrideChange, editable, readOnly } = props;
   const meta = LINE_META[lineKey];
   const usingOverride = override !== null && override !== undefined;
+  const inputsDisabled = readOnly || !editable;
+  // Phase 53c-fix · Feb-2026 — read-only viewers (role=manager) see
+  // the same inputs but grayed out via ``editable={false}`` — the
+  // TextInput never fires onChangeText.
+  const showEditRow = editable || readOnly;
 
   return (
     <View
@@ -131,7 +137,7 @@ function EbitLineRow(props: {
         </Text>
       </View>
 
-      {editable ? (
+      {showEditRow ? (
         usingOverride ? (
           <View style={styles.rowEdit} testID={`ebit-row-${lineKey}-override-mode`}>
             <Text style={[styles.rowEditLabel, { color: meta.color }]}>Override:</Text>
@@ -139,16 +145,20 @@ function EbitLineRow(props: {
               value={String(override ?? "")}
               onChangeText={(t) => onOverrideChange(t === "" ? 0 : Number(t))}
               keyboardType="numeric"
-              style={styles.rowInput}
+              editable={!inputsDisabled}
+              style={[styles.rowInput, inputsDisabled && styles.rowInputDisabled]}
               testID={`ebit-row-${lineKey}-override-input`}
+              accessibilityHint={readOnly ? "Read-only — contact admin to edit" : undefined}
             />
-            <Pressable
-              onPress={() => onOverrideChange(null)}
-              style={styles.rowFlipBtn}
-              testID={`ebit-row-${lineKey}-override-clear`}
-            >
-              <Text style={styles.rowFlipBtnText}>Clear</Text>
-            </Pressable>
+            {readOnly ? null : (
+              <Pressable
+                onPress={() => onOverrideChange(null)}
+                style={styles.rowFlipBtn}
+                testID={`ebit-row-${lineKey}-override-clear`}
+              >
+                <Text style={styles.rowFlipBtnText}>Clear</Text>
+              </Pressable>
+            )}
           </View>
         ) : (
           <View style={styles.rowEdit} testID={`ebit-row-${lineKey}-adjustment-mode`}>
@@ -157,16 +167,20 @@ function EbitLineRow(props: {
               value={String(adjustment ?? 0)}
               onChangeText={(t) => onAdjustmentChange(t === "" ? 0 : Number(t))}
               keyboardType="numeric"
-              style={styles.rowInput}
+              editable={!inputsDisabled}
+              style={[styles.rowInput, inputsDisabled && styles.rowInputDisabled]}
               testID={`ebit-row-${lineKey}-adjustment-input`}
+              accessibilityHint={readOnly ? "Read-only — contact admin to edit" : undefined}
             />
-            <Pressable
-              onPress={() => onOverrideChange(computed)}
-              style={[styles.rowFlipBtn, { borderColor: meta.color }]}
-              testID={`ebit-row-${lineKey}-flip-override`}
-            >
-              <Text style={[styles.rowFlipBtnText, { color: meta.color }]}>Override</Text>
-            </Pressable>
+            {readOnly ? null : (
+              <Pressable
+                onPress={() => onOverrideChange(computed)}
+                style={[styles.rowFlipBtn, { borderColor: meta.color }]}
+                testID={`ebit-row-${lineKey}-flip-override`}
+              >
+                <Text style={[styles.rowFlipBtnText, { color: meta.color }]}>Override</Text>
+              </Pressable>
+            )}
           </View>
         )
       ) : null}
@@ -487,6 +501,13 @@ export default function EbitPanel() {
             <Text style={styles.livePillText}>live</Text>
           </View>
         )}
+        {/* Phase 53c-fix · Feb-2026 — visible read-only badge for
+             role=manager so it's obvious no save action is present. */}
+        {!canEdit && canView ? (
+          <View style={styles.readonlyPill} testID="ebit-panel-readonly-badge">
+            <Text style={styles.readonlyPillText}>read-only</Text>
+          </View>
+        ) : null}
         <View style={{ flex: 1 }} />
         <Pressable onPress={openVersions} style={styles.headerBtn}
                     testID="ebit-open-versions">
@@ -600,6 +621,7 @@ export default function EbitPanel() {
                 onAdjustmentChange={(v) => setOneAdjustment(k, v)}
                 onOverrideChange={(v) => setOneOverride(k, v)}
                 editable={canEdit && !readonly}
+                readOnly={!canEdit}
               />
             ))}
           </View>
@@ -696,6 +718,11 @@ const styles = StyleSheet.create({
     paddingVertical: 2, borderRadius: 999,
   },
   versionPillText: { color: "#1E3A8A", fontSize: 10, fontFamily: font.bold },
+  readonlyPill: {
+    backgroundColor: "#FEF3C7", paddingHorizontal: spacing.sm,
+    paddingVertical: 2, borderRadius: 999,
+  },
+  readonlyPillText: { color: "#78350F", fontSize: 10, fontFamily: font.bold },
   headerBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,
     paddingHorizontal: spacing.sm, paddingVertical: 4,
@@ -754,6 +781,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4, fontSize: fontSize.sm, fontFamily: font.regular,
     color: colors.onSurface, backgroundColor: colors.surface,
   },
+  rowInputDisabled: { opacity: 0.55, backgroundColor: colors.border },
   rowFlipBtn: {
     borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
     paddingHorizontal: spacing.sm, paddingVertical: 4, backgroundColor: colors.surface,

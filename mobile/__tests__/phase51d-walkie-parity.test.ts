@@ -250,6 +250,22 @@ describe("Phase 53c · mobile ↔ web EBIT panel parity", () => {
     expect(WEB_EBIT).toMatch(/canEdit \|\| role === ["']manager["']/);
     expect(MOBILE_EBIT).toMatch(/canEdit \|\| role === ["']manager["']/);
   });
+
+  // Phase 53c-fix · Feb-2026 — manager read-only rendering parity.
+  it("both surfaces surface the same ebit-panel-readonly-badge testid", () => {
+    expect(WEB_EBIT).toContain("ebit-panel-readonly-badge");
+    expect(MOBILE_EBIT).toContain("ebit-panel-readonly-badge");
+  });
+
+  it("both surfaces pass a readOnly prop to EbitLineRow when !canEdit", () => {
+    // The web + mobile panels both compute readOnly from `!canEdit`
+    // and forward it to the row so managers still see prior edits.
+    expect(WEB_EBIT).toMatch(/readOnly=\{!canEdit\}/);
+    expect(MOBILE_EBIT).toMatch(/readOnly=\{!canEdit\}/);
+    // Row uses ``disabled`` (web) / ``editable={!inputsDisabled}`` (mobile).
+    expect(WEB_EBIT).toMatch(/disabled=\{inputsDisabled\}/);
+    expect(MOBILE_EBIT).toMatch(/editable=\{!inputsDisabled\}/);
+  });
 });
 
 

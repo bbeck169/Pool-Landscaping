@@ -90,12 +90,17 @@ function blankOverrides() {
 // ═══════════════════════════════════════════════════════════════════
 function EbitLineRow({
   lineKey, computed, effective, adjustment, override,
-  onAdjustmentChange, onOverrideChange, canEdit, editable,
+  onAdjustmentChange, onOverrideChange, canEdit, editable, readOnly,
 }) {
   const meta = LINE_META[lineKey];
   const Icon = meta.icon;
   const usingOverride = override !== null && override !== undefined;
-  const overrideAllowed = canEdit;
+  const overrideAllowed = canEdit && !readOnly;
+  const inputsDisabled = readOnly || !editable;
+  // Phase 53c-fix · Feb-2026 — when read-only (e.g. role=manager),
+  // still render the inputs so the viewer can see any prior
+  // adjustments/overrides — just gate them with ``disabled``.
+  const showEditRow = editable || readOnly;
 
   return (
     <div
@@ -120,7 +125,7 @@ function EbitLineRow({
         </span>
       </div>
 
-      {editable ? (
+      {showEditRow ? (
         <div className="flex flex-col gap-2">
           {usingOverride ? (
             <div className="flex items-center gap-2" data-testid={`ebit-row-${lineKey}-override-mode`}>
@@ -132,19 +137,23 @@ function EbitLineRow({
                 step="0.01"
                 value={override ?? ""}
                 onChange={(e) => onOverrideChange(e.target.value === "" ? 0 : Number(e.target.value))}
-                className="flex-1 text-sm px-2 py-1 rounded-md"
+                disabled={inputsDisabled}
+                title={readOnly ? "Read-only — contact admin to edit" : undefined}
+                className="flex-1 text-sm px-2 py-1 rounded-md disabled:cursor-not-allowed disabled:opacity-60"
                 style={{ border: `1px solid ${colors.border}`, background: colors.surface }}
                 data-testid={`ebit-row-${lineKey}-override-input`}
               />
-              <button
-                type="button"
-                onClick={() => onOverrideChange(null)}
-                className="text-xs font-semibold px-2 py-1 rounded-md"
-                style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.muted }}
-                data-testid={`ebit-row-${lineKey}-override-clear`}
-              >
-                Clear override
-              </button>
+              {readOnly ? null : (
+                <button
+                  type="button"
+                  onClick={() => onOverrideChange(null)}
+                  className="text-xs font-semibold px-2 py-1 rounded-md"
+                  style={{ border: `1px solid ${colors.border}`, background: colors.surface, color: colors.muted }}
+                  data-testid={`ebit-row-${lineKey}-override-clear`}
+                >
+                  Clear override
+                </button>
+              )}
             </div>
           ) : (
             <div className="flex items-center gap-2" data-testid={`ebit-row-${lineKey}-adjustment-mode`}>
@@ -156,7 +165,9 @@ function EbitLineRow({
                 step="0.01"
                 value={adjustment ?? 0}
                 onChange={(e) => onAdjustmentChange(e.target.value === "" ? 0 : Number(e.target.value))}
-                className="flex-1 text-sm px-2 py-1 rounded-md"
+                disabled={inputsDisabled}
+                title={readOnly ? "Read-only — contact admin to edit" : undefined}
+                className="flex-1 text-sm px-2 py-1 rounded-md disabled:cursor-not-allowed disabled:opacity-60"
                 style={{ border: `1px solid ${colors.border}`, background: colors.surface }}
                 data-testid={`ebit-row-${lineKey}-adjustment-input`}
               />
@@ -467,6 +478,16 @@ export default function EbitPanel() {
             live
           </span>
         )}
+        {/* Phase 53c-fix · Feb-2026 — visible read-only badge for
+             role=manager so it's obvious no save action is present. */}
+        {!canEdit && canView ? (
+          <span className="text-xs px-2 py-0.5 rounded-full font-bold"
+                 style={{ background: "#FEF3C7", color: "#78350F" }}
+                 title="Read-only — contact admin to edit"
+                 data-testid="ebit-panel-readonly-badge">
+            read-only
+          </span>
+        ) : null}
         <div className="flex-1" />
         <button
           type="button"
@@ -599,6 +620,7 @@ export default function EbitPanel() {
                 onOverrideChange={(v) => setOneOverride(k, v)}
                 canEdit={canEdit}
                 editable={canEdit && !readonly}
+                readOnly={!canEdit}
               />
             ))}
           </div>

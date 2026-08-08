@@ -82,15 +82,25 @@ describe("EbitPanel · role gate", () => {
     expect(screen.getByTestId("ebit-save-btn")).toBeTruthy();
   });
 
-  it("manager sees the panel READ-ONLY (no save button, no adjustment inputs)", async () => {
+  it("manager sees the panel READ-ONLY (inputs disabled, no save/flip)", async () => {
     getMock.mockResolvedValueOnce(LIVE_CASH);
     authState.user = { role: "manager", id: "u1" };
     render(<EbitPanel />);
     await waitFor(() => expect(screen.getByTestId("ebit-panel")).toBeTruthy());
+    // Phase 53c-fix · Feb-2026 — manager sees the adjustment rows
+    // rendered (so prior adjustments are visible) with the inputs
+    // in the ``disabled`` state; save + flip-override are absent.
+    expect(screen.getByTestId("ebit-panel-readonly-badge")).toBeTruthy();
     expect(screen.queryByTestId("ebit-save-btn")).toBeNull();
-    expect(screen.queryByTestId("ebit-row-revenue-adjustment-mode")).toBeNull();
-    // History + exports remain available.
+    for (const k of ["revenue", "cogs", "opex", "depreciation"]) {
+      expect(screen.getByTestId(`ebit-row-${k}-adjustment-mode`)).toBeTruthy();
+      expect(screen.getByTestId(`ebit-row-${k}-adjustment-input`).disabled).toBe(true);
+      expect(screen.queryByTestId(`ebit-row-${k}-flip-override`)).toBeNull();
+    }
+    // History + export buttons remain enabled.
     expect(screen.getByTestId("ebit-open-versions")).toBeTruthy();
+    expect(screen.getByTestId("ebit-export-csv").disabled).toBe(false);
+    expect(screen.getByTestId("ebit-export-pdf").disabled).toBe(false);
   });
 
   it("tech is fully forbidden (no fetch, forbidden banner)", async () => {
