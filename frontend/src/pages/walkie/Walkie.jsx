@@ -13,7 +13,7 @@
  *   the server enforcement in ``routers/walkie.py``).
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Mic, Radio, Users, User, Volume2, VolumeX, Play, Pause, Plus, CheckCircle2, Pin, PinOff } from "lucide-react";
+import { Mic, Radio, Users, User, Volume2, VolumeX, Play, Pause, Plus, CheckCircle2, Pin, PinOff, Reply, X } from "lucide-react";
 import { api, api_base, TOKEN_KEY } from "@/api";
 import { useAuth } from "@/auth";
 import { Button } from "@/components/ui/button";
@@ -25,9 +25,11 @@ import { toast } from "sonner";
 import {
   canPinInChannel,
   canRecordInChannel,
+  canReplyInChannel,
   isMuted,
   isOwnMessage,
   pickAudioMime,
+  replyPreviewLabel,
   setMuted,
   shouldAutoPlay,
   sortChannels,
@@ -78,7 +80,7 @@ function Waveform({ peaks, playing, "data-testid": tid = "walkie-waveform" }) {
   );
 }
 
-function MessageRow({ msg, user, onListened, mutedRef, canPin, onPin, onUnpin }) {
+function MessageRow({ msg, user, onListened, mutedRef, canPin, canReply, onPin, onUnpin, onReply, onScrollToParent }) {
   const own = isOwnMessage(user, msg);
   const audioRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -113,6 +115,7 @@ function MessageRow({ msg, user, onListened, mutedRef, canPin, onPin, onUnpin })
   return (
     <div
       data-testid="walkie-message-row"
+      data-msg-id={msg.id}
       data-own={own ? "1" : "0"}
       data-pinned={msg.is_pinned ? "1" : "0"}
       className={`flex items-center gap-3 px-3 py-2 rounded-lg ${msg.is_pinned ? "border-l-4 border-amber-500 bg-amber-50/60" : own ? "bg-slate-100 flex-row-reverse text-right" : "bg-white"}`}
@@ -126,6 +129,18 @@ function MessageRow({ msg, user, onListened, mutedRef, canPin, onPin, onUnpin })
         {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
       </button>
       <div className="flex-1 min-w-0">
+        {msg.reply_preview && (
+          <button
+            type="button"
+            data-testid="walkie-reply-preview"
+            data-deleted={msg.reply_preview.deleted ? "1" : "0"}
+            onClick={() => !msg.reply_preview.deleted && msg.reply_preview.id && onScrollToParent?.(msg.reply_preview.id)}
+            className="mb-1 text-left w-full text-xs border-l-2 border-slate-300 bg-slate-50 rounded px-2 py-1 text-slate-600 hover:bg-slate-100"
+          >
+            <Reply className="inline h-3 w-3 mr-1" />
+            <span>{replyPreviewLabel(msg.reply_preview)}</span>
+          </button>
+        )}
         <div className="flex items-center gap-2 text-xs text-slate-500">
           {msg.is_pinned && (
             <span
@@ -144,6 +159,17 @@ function MessageRow({ msg, user, onListened, mutedRef, canPin, onPin, onUnpin })
         </div>
         <Waveform peaks={msg.waveform_peaks} playing={playing} />
       </div>
+      {canReply && (
+        <button
+          type="button"
+          onClick={() => onReply?.(msg.id)}
+          data-testid={`walkie-reply-btn-${msg.id}`}
+          title="Reply"
+          className="h-8 w-8 rounded-full grid place-items-center text-slate-400 hover:text-slate-900 hover:bg-slate-100"
+        >
+          <Reply className="h-4 w-4" />
+        </button>
+      )}
       {canPin && (
         msg.is_pinned ? (
           <button
@@ -364,12 +390,38 @@ export default function Walkie() {
   const [messages, setMessages] = useState([]);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const [muted, setMutedState] = useState(() => isMuted());
+  const [replyTarget, setReplyTarget] = useState(null);
   const mutedRef = useRef(muted);
   useEffect(() => { mutedRef.current = muted; }, [muted]);
   const lastSeenIdsRef = useRef(new Set());
 
+  // Clear the reply target whenever the caller switches channels —
+  // a "replying to X" banner leaked across channels would confuse
+  // more than it helps.
+  useEffect(() => { setReplyTarget(null); }, [selectedId]);
+
   const selected = useMemo(() => channels.find((c) => c.id === selectedId), [channels, selectedId]);
   const recordGate = useMemo(() => canRecordInChannel(user, selected), [user, selected]);
+  const replyGate = useMemo(() => canReplyInChannel(user, selected), [user, selected]);
+
+  const replyTargetPreview = useMemo(() => {
+    if (!replyTarget) return null;
+    const t = messages.find((m) => m.id === replyTarget);
+    if (!t) return null;
+    return {
+      id: t.id,
+      sender_display_name: t.sender_name || (isOwnMessage(user, t) ? "you" : "Teammate"),
+      duration_ms: t.duration_ms,
+      deleted: false,
+    };
+  }, [replyTarget, messages, user]);
+
+  const scrollToParent = useCallback((mid) => {
+    try {
+      const el = document.querySelector(`[data-testid="walkie-message-row"][data-msg-id="${mid}"]`);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch { /* jsdom no-op */ }
+  }, []);
 
   const loadChannels = useCallback(async () => {
     try {
@@ -428,6 +480,7 @@ export default function Walkie() {
     fd.append("channel_id", selectedId);
     fd.append("duration_ms", String(duration_ms));
     fd.append("audio_file", new File([blob], `clip.${ext}`, { type: mime }));
+    if (replyTarget) fd.append("reply_to_message_id", replyTarget);
     try {
       const token = localStorage.getItem(TOKEN_KEY) || "";
       const res = await fetch(`${api_base()}/walkie/messages`, {
@@ -440,7 +493,8 @@ export default function Walkie() {
         toast.error(`Send failed (${res.status}) — ${t.slice(0, 120)}`);
         return;
       }
-      toast.success("Clip sent");
+      toast.success(replyTarget ? "Reply sent" : "Clip sent");
+      setReplyTarget(null);
       loadMessages(selectedId, { markFresh: false });
     } catch (e) {
       toast.error(e.message || "Upload failed");
@@ -531,6 +585,9 @@ export default function Walkie() {
                       user={user}
                       mutedRef={mutedRef}
                       canPin={canPinInChannel(user, selected)}
+                      canReply={replyGate.allowed}
+                      onReply={(id) => setReplyTarget(id)}
+                      onScrollToParent={scrollToParent}
                       onPin={async (id) => {
                         try {
                           await api.post(`/walkie/channels/${selectedId}/pin`, { message_id: id });
@@ -559,7 +616,31 @@ export default function Walkie() {
                   ))
                 )}
               </div>
-              <footer className="border-t p-4 flex items-center gap-3">
+              <footer className="border-t p-4 flex flex-col gap-2">
+                {replyTarget && (
+                  <div
+                    data-testid="walkie-reply-banner"
+                    className="flex items-center gap-2 text-sm bg-slate-100 border-l-2 border-slate-400 rounded px-2 py-1 text-slate-700"
+                  >
+                    <Reply className="h-3 w-3" />
+                    <span className="flex-1 truncate">
+                      Replying to{" "}
+                      <span data-testid="walkie-reply-banner-label" className="font-medium">
+                        {replyPreviewLabel(replyTargetPreview) || "message"}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setReplyTarget(null)}
+                      data-testid="walkie-reply-banner-cancel"
+                      title="Cancel reply"
+                      className="h-6 w-6 rounded grid place-items-center text-slate-500 hover:text-slate-900 hover:bg-slate-200"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                )}
+                <div className="flex items-center gap-3">
                 <RecordButton
                   disabled={!recordGate.allowed}
                   disabledReason={recordGate.reason}
@@ -569,6 +650,7 @@ export default function Walkie() {
                   {recordGate.allowed
                     ? "Hold to record · release to send · Esc to cancel · max 30s"
                     : recordGate.reason || "You can't send in this channel"}
+                </div>
                 </div>
               </footer>
             </>

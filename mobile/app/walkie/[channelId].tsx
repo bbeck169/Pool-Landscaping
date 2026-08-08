@@ -35,9 +35,11 @@ import { useAuth } from "@/src/auth";
 import {
   canPinInChannel,
   canRecordInChannel,
+  canReplyInChannel,
   extForMime,
   isMuted,
   isOwnMessage,
+  replyPreviewLabel,
   setMuted,
   shouldAutoPlay,
 } from "@/src/pages/walkie/walkie-helpers";
@@ -57,6 +59,14 @@ type Msg = {
   listened_at?: string | null;
   autoplay?: boolean;
   is_pinned?: boolean;
+  reply_to_message_id?: string | null;
+  reply_preview?: {
+    id?: string | null;
+    sender_user_id?: string | null;
+    sender_display_name?: string | null;
+    duration_ms?: number | null;
+    deleted?: boolean;
+  } | null;
 };
 
 function fmtTime(iso: string): string {
@@ -93,7 +103,7 @@ function Waveform({ peaks, playing, testID }: { peaks?: number[] | null; playing
   );
 }
 
-function MessageRow({ msg, user, mutedRef, onListened, canPin, onPin, onUnpin }: { msg: Msg; user: any; mutedRef: React.MutableRefObject<boolean>; onListened: (id: string) => void; canPin: boolean; onPin: (id: string) => void; onUnpin: () => void }) {
+function MessageRow({ msg, user, mutedRef, onListened, canPin, canReply, onPin, onUnpin, onReply }: { msg: Msg; user: any; mutedRef: React.MutableRefObject<boolean>; onListened: (id: string) => void; canPin: boolean; canReply: boolean; onPin: (id: string) => void; onUnpin: () => void; onReply: (id: string) => void }) {
   const own = isOwnMessage(user, msg);
   const url = `${api_base()}${msg.audio_url}`.replace("/api/api/", "/api/");
   const player = useAudioPlayer(url);
@@ -145,13 +155,21 @@ function MessageRow({ msg, user, mutedRef, onListened, canPin, onPin, onUnpin }:
       <TouchableOpacity
         testID="walkie-message-row"
         activeOpacity={0.9}
-        onLongPress={canPin ? () => setSheetOpen(true) : undefined}
+        onLongPress={(canPin || canReply) ? () => setSheetOpen(true) : undefined}
         style={rowStyle}
       >
         <TouchableOpacity onPress={toggle} style={styles.playBtn} testID="walkie-play-btn">
           <Ionicons name={playing ? "pause" : "play"} size={16} color="#fff" />
         </TouchableOpacity>
         <View style={styles.msgBody}>
+          {msg.reply_preview && (
+            <View testID="walkie-reply-preview" style={styles.replyPreviewBlock}>
+              <Ionicons name="return-up-back" size={12} color={colors.onSurfaceSecondary} />
+              <Text style={styles.replyPreviewText} numberOfLines={1}>
+                {replyPreviewLabel(msg.reply_preview)}
+              </Text>
+            </View>
+          )}
           <View style={styles.msgMeta}>
             {msg.is_pinned && (
               <View testID="walkie-pinned-badge" style={styles.pinBadge}>
@@ -175,7 +193,17 @@ function MessageRow({ msg, user, mutedRef, onListened, canPin, onPin, onUnpin }:
         <Modal transparent animationType="fade" onRequestClose={() => setSheetOpen(false)}>
           <Pressable style={styles.sheetOverlay} onPress={() => setSheetOpen(false)}>
             <View style={styles.sheet} testID="walkie-pin-sheet">
-              {msg.is_pinned ? (
+              {canReply && (
+                <TouchableOpacity
+                  style={styles.sheetItem}
+                  onPress={() => { setSheetOpen(false); onReply(msg.id); }}
+                  testID="walkie-sheet-reply"
+                >
+                  <Ionicons name="return-up-back" size={20} color={colors.onSurface} />
+                  <Text style={styles.sheetLabel}>Reply</Text>
+                </TouchableOpacity>
+              )}
+              {canPin && (msg.is_pinned ? (
                 <TouchableOpacity
                   style={styles.sheetItem}
                   onPress={() => { setSheetOpen(false); onUnpin(); }}
@@ -193,7 +221,7 @@ function MessageRow({ msg, user, mutedRef, onListened, canPin, onPin, onUnpin }:
                   <Ionicons name="pin" size={20} color={colors.onSurface} />
                   <Text style={styles.sheetLabel}>Pin to channel</Text>
                 </TouchableOpacity>
-              )}
+              ))}
               <TouchableOpacity
                 style={styles.sheetItem}
                 onPress={() => setSheetOpen(false)}
@@ -301,6 +329,7 @@ export default function WalkieChannel() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [loading, setLoading] = useState(true);
   const [muted, setMutedState] = useState(false);
+  const [replyTarget, setReplyTarget] = useState<string | null>(null);
   const mutedRef = useRef(false);
   const seenIdsRef = useRef<Set<string>>(new Set());
 
@@ -345,6 +374,14 @@ export default function WalkieChannel() {
   };
 
   const recordGate = canRecordInChannel(user, channel);
+  const replyGate = canReplyInChannel(user, channel);
+  const replyTargetMsg = replyTarget ? messages.find((m) => m.id === replyTarget) : null;
+  const replyTargetPreview = replyTargetMsg ? {
+    id: replyTargetMsg.id,
+    sender_display_name: replyTargetMsg.sender_name || (isOwnMessage(user, replyTargetMsg) ? "you" : "Teammate"),
+    duration_ms: replyTargetMsg.duration_ms,
+    deleted: false,
+  } : null;
 
   const send = async ({ uri, duration_ms, mime }: { uri: string; duration_ms: number; mime: string }) => {
     const ext = extForMime(mime);
@@ -352,6 +389,7 @@ export default function WalkieChannel() {
     fd.append("channel_id", channelId as string);
     fd.append("duration_ms", String(duration_ms));
     fd.append("audio_file", { uri, name: `clip.${ext}`, type: mime } as any);
+    if (replyTarget) fd.append("reply_to_message_id", replyTarget);
     const token = await getAuthToken();
     try {
       const res = await fetch(`${api_base()}/walkie/messages`, {
@@ -360,6 +398,7 @@ export default function WalkieChannel() {
         body: fd,
       });
       if (res.ok) {
+        setReplyTarget(null);
         loadMessages({ markFresh: false });
       }
     } catch { /* silent */ }
@@ -404,6 +443,8 @@ export default function WalkieChannel() {
               user={user}
               mutedRef={mutedRef}
               canPin={canPinInChannel(user, channel)}
+              canReply={replyGate.allowed}
+              onReply={(id) => setReplyTarget(id)}
               onPin={async (id) => {
                 try {
                   await api.post(`/walkie/channels/${channelId}/pin`, { message_id: id });
@@ -423,6 +464,21 @@ export default function WalkieChannel() {
           ))
         )}
       </ScrollView>
+      {replyTarget && (
+        <View testID="walkie-reply-banner" style={styles.replyBanner}>
+          <Ionicons name="return-up-back" size={14} color={colors.onSurfaceSecondary} />
+          <Text style={styles.replyBannerLabel} numberOfLines={1} testID="walkie-reply-banner-label">
+            Replying to {replyPreviewLabel(replyTargetPreview)}
+          </Text>
+          <TouchableOpacity
+            onPress={() => setReplyTarget(null)}
+            testID="walkie-reply-banner-cancel"
+            style={styles.replyBannerCancel}
+          >
+            <Ionicons name="close" size={16} color={colors.onSurfaceSecondary} />
+          </TouchableOpacity>
+        </View>
+      )}
       <RecordFooter
         disabled={!recordGate.allowed}
         disabledReason={recordGate.reason}
@@ -488,6 +544,41 @@ const styles = StyleSheet.create({
   sheetLabel: {
     fontSize: fontSize.base,
     color: colors.onSurface,
+  },
+  replyPreviewBlock: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginBottom: 4,
+    borderLeftWidth: 2,
+    borderLeftColor: colors.borderMuted,
+    backgroundColor: colors.surfaceTertiary,
+    borderRadius: 4,
+  },
+  replyPreviewText: {
+    fontSize: fontSize.sm,
+    color: colors.onSurfaceSecondary,
+    flexShrink: 1,
+  },
+  replyBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderMuted,
+    backgroundColor: colors.surfaceTertiary,
+  },
+  replyBannerLabel: {
+    flex: 1,
+    fontSize: fontSize.sm,
+    color: colors.onSurface,
+  },
+  replyBannerCancel: {
+    padding: 4,
   },
   playBtn: {
     height: 36, width: 36, borderRadius: 999,
