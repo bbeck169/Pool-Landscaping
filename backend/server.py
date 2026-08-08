@@ -232,6 +232,9 @@ from routers import lumino_backfill as _lumino_backfill  # noqa: E402
 api_router.include_router(_lumino_backfill.router)
 from routers import profit_report as _profit_report  # noqa: E402
 api_router.include_router(_profit_report.router)
+# Phase 53a · Feb-2026 — Editable EBIT report backend.
+from routers import ebit as _p53a_ebit  # noqa: E402
+api_router.include_router(_p53a_ebit.router)
 from routers import gps_settings as _gps_settings  # noqa: E402
 api_router.include_router(_gps_settings.router, dependencies=[Depends(_rg)])
 from routers import gps_ingest as _gps_ingest  # noqa: E402
