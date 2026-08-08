@@ -8,6 +8,58 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+## 2026-02-XX — Phase 53 (a → d) · Editable EBIT report MVP
+
+Editable EBIT — Earnings Before Interest and Taxes — layered on top of the existing profit-report surface. Ships across backend + web + mobile with role-gated editing, immutable versioning, and PDF + CSV export. Complete MVP over four sub-phases: 53a backend + audit, 53b editable web UI, 53c mobile parity + demo-manager seed-drift repair, 53c-fix manager read-only rendering, 53d closeout (docs + contract-lock tests).
+
+### Added
+
+- **Backend router `backend/routers/ebit.py`** — 6 endpoints under `/api/ebit/*`:
+  - `GET /compute` (viewer) — live compute, no persistence.
+  - `GET /snapshots` (viewer) — list versioned snapshots.
+  - `GET /snapshots/{id}` (viewer) — fetch one.
+  - `POST /snapshots` (editor) — save NEW version (v1 or v+1).
+  - `PATCH /snapshots/{id}/adjustments` (editor) — new version, deltas merged.
+  - `PATCH /snapshots/{id}/overrides` (editor) — new version, absolutes merged.
+  - Role gates: `EDITOR_ROLES = {super_admin, admin}` / `VIEWER_ROLES = {super_admin, admin, manager}`.
+- **Compute service `backend/services/finance/ebit.py`** — resolves range presets, pulls revenue from `db.quotes` (cash on `paid_at` / accrual on `created_at`), COGS from invoice line-item `wholesale_price_snapshot`, depreciation via free-form `db.checks.category ∈ {depreciation, amortization}` (LLM-override aware), OpEx from the remaining non-voided checks, wages-by-role diagnostic from `db.time_entries × db.users`.
+- **Editable adjustments + overrides** — every save creates a new immutable `ebit_snapshots` version. `line_adjustments` are additive; `line_overrides` are absolute (`null` reverts). Effective EBIT = `revenue − cogs − opex − depreciation`.
+- **MongoDB collection `ebit_snapshots`** with two indexes: `(tenant_id, range_from, range_to, version desc)` and `(tenant_id, saved_at desc)`.
+- **Web EBIT panel** — `frontend/src/components/admin/EbitPanel.jsx` mounted into the existing `ProfitReportPage`. Range picker (monthly/quarterly/custom), basis toggle (cash/accrual), 4 editable rows with adjustment ↔ override modes, effective-EBIT total, save + version-history modal, CSV + PDF export via `window.print()`.
+- **Mobile EBIT panel** — `mobile/src/components/admin/EbitPanel.tsx` mounted into the existing `profit-report.tsx`. Full parity: same testids, same endpoints, CSV via `expo-file-system` + `expo-sharing`, PDF via `expo-print` → `expo-sharing`. **No new native deps.**
+- **Route guard `AdminOrManagerForProfitReport`** in `frontend/src/App.js` — allows manager past `/admin/reports/profit` only. Every other `/admin/*` route stays `AdminOnly`.
+- **Manager read-only rendering (53c-fix)** — adjustment inputs `disabled`, flip/clear/save buttons hidden, yellow `read-only` badge in the panel header, History + CSV + PDF exports remain enabled. Both web + mobile.
+- **Demo-manager seed drift repair (53c)** — `seed_demo_manager()` in `backend/seed.py`. Idempotent, un-gated, ensures `manager@aquaterra.com` resolves to `role=manager` on every boot. Fix for a drift where an unrelated migration had promoted the row to admin.
+- **OpenAPI contract (53d)** — `range` is a `Literal["this_month","last_month","qtd","ytd","monthly","quarterly","custom"]`; `revenue_basis` is a `Literal["cash","accrual"]`. Enum surfaces in `openapi.json`; invalid values return 422 with the full accepted-set message.
+- **Snapshot field `author_display_name`** (53d) — populated from `user.name || user.email` on save. Contract-locked for the versions modal on both surfaces.
+- **Backend tests** — 32 total across `test_phase53a_ebit_backend.py` (25), `test_phase53c_seed_manager.py` (1), `test_phase53d_ebit_contract_lock.py` (6).
+- **Frontend vitest** — `ebit-panel.test.jsx` (14), `ebit-panel-manager-readonly.test.jsx` (7), `phase53d-web-mobile-ebit-parity.test.jsx` (11).
+- **Mobile jest** — `phase53c-mobile-ebit-panel.test.tsx` (13); `phase51d-walkie-parity.test.ts` extended with 15 EBIT parity assertions.
+- **`/app/memory/PHASE53A_EBIT_BACKEND.md`**, **`PHASE53B_EBIT_WEB_UI.md`**, **`PHASE53C_MOBILE_EBIT.md`**, **`PHASE53C_FIX_MANAGER_READONLY.md`**, **`PHASE53C_TRIAGE_NOTE.md`**, **`PHASE53A_TRIAGE_NOTE.md`** — per-phase delivery docs.
+- **PRD.md** — Phase 53 consolidated section prepended (feature scope, endpoints, data model, compute logic, surfaces, non-goals, test coverage).
+
+### Changed
+
+- `backend/routers/ebit.py` — split `_require_role` (editor-only) into `_require_viewer` (used by GETs) + `_require_editor` (used by POST + PATCHes). Backwards-compat alias retained.
+- `mobile/__tests__/phase51-6-mobile-reply-ui.test.tsx` + `mobile/__tests__/phase51c-walkie-mount.test.tsx` — +5-line `jest.setTimeout(15000)` accommodation for batch-scheduler contention. Not a runtime code change; restores mobile jest baseline to 226/226 green. Documented in `PHASE53A_TRIAGE_NOTE.md`.
+- `frontend/src/test/profit-report-page.test.jsx` + `frontend/src/test/profit-report-uncategorized-fix.test.jsx` — URL-routing shim so `/ebit/*` calls from the newly-mounted `<EbitPanel />` land on a benign stub instead of polluting the profit-report mock. Existing assertions untouched.
+- `memory/test_credentials.md` — manager row corrected.
+
+### Fixed
+
+- `manager@aquaterra.com` role drift — before Phase 53c, an unrelated migration had promoted the seeded row to `role=admin`, blocking the manager read-only branch. Repair helper is self-healing on every boot.
+- Route guard on `/admin/reports/profit` — before Phase 53c-fix, `AdminOnly` blocked managers from reaching the profit report at all. Targeted `AdminOrManagerForProfitReport` guard now allows manager for this ONE route without opening any other `/admin/*` route.
+
+### Non-goals (explicitly deferred, tracked in PRD.md)
+
+- Draft/publish workflow; every save is immediately visible. Version history + Fork is the substitute.
+- External accounting sync (QuickBooks / Xero / Sage).
+- Budget-vs-actual variance analysis.
+- Consolidated multi-entity EBIT (parent-tenant roll-up).
+- Automatic period lock (fiscal-year close).
+
+---
+
 ## 2026-02-XX — Phase 51 (a → d) · Walkie-Talkie MVP
 
 Async 5-30 s voice-clip messaging surface. Shipped across web + mobile + backend + Expo push + 24 h defense-in-depth cleanup cron. Complete MVP over four sub-phases; delivery here consolidates the milestones.

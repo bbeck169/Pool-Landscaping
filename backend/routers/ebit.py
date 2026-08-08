@@ -19,7 +19,7 @@ call ANY endpoint. All others → 403.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 import uuid
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -34,6 +34,18 @@ from services.finance.ebit import (
     resolve_range,
 )
 from utils import get_current_user
+
+# Phase 53d · Feb-2026 — OpenAPI contract lock. Exposing the range
+# enum as a ``Literal`` type gives the auto-generated docs the exact
+# accepted values instead of relying on the description string. The
+# runtime behavior is unchanged (``resolve_range`` still owns the
+# validation), but a client generator now knows what to send.
+RangeKind = Literal[
+    "this_month", "last_month", "qtd", "ytd",
+    "monthly", "quarterly", "custom",
+]
+RevenueBasis = Literal["cash", "accrual"]
+
 
 router = APIRouter()
 
@@ -136,12 +148,12 @@ async def _next_version(
 # ═══════════════════════════════════════════════════════════════════
 @router.get("/ebit/compute")
 async def ebit_compute(
-    range: str = Query("this_month",
-                          description="this_month|last_month|qtd|ytd|monthly|quarterly|custom"),
+    range: RangeKind = Query("this_month",
+                              description="Time-range preset. Custom windows require ?from + ?to."),
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
-    revenue_basis: Optional[str] = Query("cash",
-                                            description="cash|accrual"),
+    revenue_basis: RevenueBasis = Query("cash",
+                                          description="cash (paid_at) or accrual (created_at)"),
     user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
     _require_viewer(user)
@@ -218,6 +230,7 @@ async def _save_new_version(
     line_adjustments: Optional[Dict[str, Any]],
     line_overrides: Optional[Dict[str, Any]],
     author_user_id: str,
+    author_display_name: str,
     note: str,
 ) -> Dict[str, Any]:
     await _ensure_indexes()
@@ -247,6 +260,10 @@ async def _save_new_version(
         "line_adjustments": effective["line_adjustments"],
         "line_overrides": effective["line_overrides"],
         "author_user_id": author_user_id,
+        # Phase 53d · Feb-2026 — contract-locked ``author_display_name``.
+        # Falls back gracefully so existing user rows without ``name``
+        # still produce a usable value on the versions modal.
+        "author_display_name": author_display_name or "",
         "saved_at": _now_iso(),
         "note": note or "",
     }
@@ -286,6 +303,7 @@ async def ebit_snapshot_save(
         line_adjustments=body.line_adjustments,
         line_overrides=body.line_overrides,
         author_user_id=(user or {}).get("id") or "",
+        author_display_name=(user or {}).get("name") or (user or {}).get("email") or "",
         note=body.note or "",
     )
     return doc
@@ -341,6 +359,7 @@ async def ebit_snapshot_patch_adjustments(
         line_adjustments=merged_adj,
         line_overrides=prior.get("line_overrides") or {},
         author_user_id=(user or {}).get("id") or "",
+        author_display_name=(user or {}).get("name") or (user or {}).get("email") or "",
         note=body.note or f"adjust: {prior.get('id')}",
     )
     return doc
@@ -378,6 +397,7 @@ async def ebit_snapshot_patch_overrides(
         line_adjustments=prior.get("line_adjustments") or {},
         line_overrides=merged_ovr,
         author_user_id=(user or {}).get("id") or "",
+        author_display_name=(user or {}).get("name") or (user or {}).get("email") or "",
         note=body.note or f"override: {prior.get('id')}",
     )
     return doc

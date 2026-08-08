@@ -1,3 +1,118 @@
+## Phase 53 · Feb-2026 — Editable EBIT report MVP (a → d)
+
+Editable EBIT — Earnings Before Interest and Taxes — layered on top of the existing profit-report surface. Ships across backend + web + mobile with role-gated editing, immutable versioning, and PDF + CSV export. Delivered in four sub-phases (53a backend + web audit, 53b editable web UI, 53c mobile parity + seed-drift repair, 53c-fix manager read-only, 53d MVP closeout doc + contract-lock tests).
+
+**Feature scope**
+- Live compute of EBIT from cash-basis OR accrual-basis invoicing, plus expenses (COGS from line-item snapshots, OpEx + depreciation from `checks`).
+- 4 editable line rows (`revenue`, `cogs`, `opex`, `depreciation`) — the `ADJUSTMENT_KEYS` — with two edit modes per row:
+  - **Adjustment** (default): additive delta on top of the computed value.
+  - **Override**: absolute-value replacement.
+- Effective EBIT recomputes on every edit; formula `revenue − cogs − opex − depreciation`.
+- **Immutable versioning**: every save inserts a new `ebit_snapshots` row with `version = max(existing) + 1`. Prior versions are never mutated. No draft/publish workflow.
+- Version history modal per range on both surfaces; loading an older version puts the editor in read-only, "Fork new version" restores editability.
+- **Range presets**: `monthly` (default), `quarterly`, `custom` (from / to dates) — plus server-accepted `this_month`, `last_month`, `qtd`, `ytd` for API callers.
+- **Revenue basis toggle**: `cash` (default) / `accrual`.
+- **PDF + CSV export**:
+  - Web: `window.print()` (browser Save-as-PDF) + client-side CSV blob download.
+  - Mobile: `expo-print` → `expo-sharing` (PDF) + `expo-file-system/legacy` blob → `expo-sharing` (CSV). **No new native deps** — all three were already bundled from prior phases.
+- **Role gates**:
+  - `EDITOR_ROLES = {super_admin, admin}` — full compute + save + PATCH.
+  - `VIEWER_ROLES = {super_admin, admin, manager}` — GET only. Manager sees the panel with adjustment inputs `disabled`, flip / clear / save controls hidden, yellow `read-only` badge in the header, History + CSV + PDF exports enabled.
+  - Tech + customer are 403 backend-side and rendered as the "EBIT report is admin + manager only" banner client-side.
+
+**Endpoints — `/api/ebit/*`**
+
+| Method | Path | Gate | Purpose |
+|---|---|---|---|
+| GET  | `/ebit/compute?range&from&to&revenue_basis` | viewer | Live compute; no persistence. |
+| GET  | `/ebit/snapshots?range_from&range_to&limit` | viewer | List saved versions (desc). |
+| GET  | `/ebit/snapshots/{id}` | viewer | Fetch one saved snapshot. |
+| POST | `/ebit/snapshots` | editor | Save NEW version (v1 or v+1). |
+| PATCH | `/ebit/snapshots/{id}/adjustments` | editor | Merge deltas → NEW version. |
+| PATCH | `/ebit/snapshots/{id}/overrides` | editor | Merge absolutes → NEW version. |
+
+Web + mobile currently POST every save (never PATCH). PATCH endpoints remain fully tested but reserved for a future "batch quick-edit" tool.
+
+**OpenAPI (Phase 53d)**
+- `range` is a `Literal["this_month", "last_month", "qtd", "ytd", "monthly", "quarterly", "custom"]` — enum surfaces in `openapi.json`, 422 with a full-list error message on drift.
+- `revenue_basis` is a `Literal["cash", "accrual"]` — same treatment.
+
+**Data model — `ebit_snapshots`**
+
+```
+{
+  id                   str (uuid)
+  tenant_id            str
+  range_kind           str (Literal enum, see above)
+  range_from           str (YYYY-MM-DD)
+  range_to             str (YYYY-MM-DD)
+  revenue_basis        str (Literal enum)
+  version              int (1-indexed, monotonic per (tenant, range))
+  revenue              float   ← EFFECTIVE
+  cogs                 float   ← EFFECTIVE
+  opex                 float   ← EFFECTIVE
+  depreciation         float   ← EFFECTIVE
+  ebit                 float   ← revenue - cogs - opex - depreciation
+  breakdown            {invoice_count, line_count, opex_payroll,
+                         opex_other, opex_by_category,
+                         depreciation_by_category, wages_by_role}
+  computed_live        {revenue, cogs, opex, depreciation, ebit}
+                                                        ← pre-edit
+  line_adjustments     {revenue, cogs, opex, depreciation: float}
+  line_overrides       {revenue, cogs, opex, depreciation: float | null}
+  author_user_id       str
+  author_display_name  str  (Phase 53d — contract-locked)
+  saved_at             str (ISO-8601 UTC)
+  note                 str
+}
+```
+
+Indexes (idempotent):
+- `(tenant_id, range_from, range_to, version desc)` → versioned history queries
+- `(tenant_id, saved_at desc)` → recent-first listing
+
+**Compute logic** — `backend/services/finance/ebit.py`
+
+- Revenue (cash) = `Σ quote.total` on `db.quotes` where `doc_type == "invoice"` AND `payment_status == "paid"` bucketed on `paid_at` (falls back to `Σ qty × retail_price_snapshot` when the header total is empty).
+- Revenue (accrual) = same query but `status ∈ {paid, partial, sent, overdue}` bucketed on `created_at`.
+- COGS = `Σ qty × wholesale_price_snapshot` over the same invoice line items — matches the existing `routers/profit_report` definition so the two reports reconcile.
+- Depreciation = `Σ check.amount` for non-voided `db.checks` whose effective category (LLM override in `db.expense_categories` first, else `checks.category`, lowercased) is in `{"depreciation", "amortization"}`.
+- OpEx = every other non-voided check in range.
+- Wages-by-role diagnostic (INFO only, not in EBIT) computed from `db.time_entries × db.users.hourly_rate`, grouped by role.
+
+**Web + mobile surfaces**
+
+| Surface | Route | Primary component | Sub-components |
+|---|---|---|---|
+| Web | `/admin/reports/profit` | `frontend/src/pages/admin/ProfitReportPage.jsx` | `frontend/src/components/admin/EbitPanel.jsx` (renders `<EbitLineRow />` × 4 + `<EbitVersionsModal />`) |
+| Mobile | `/profit-report` | `mobile/app/profit-report.tsx` | `mobile/src/components/admin/EbitPanel.tsx` (same structure) |
+| Route guard (web) | `AdminOrManagerForProfitReport` in `frontend/src/App.js` | targeted to this ONE `/admin/*` route | |
+
+**Seed baseline (Phase 53c fix)**
+- `seed_demo_manager()` in `backend/seed.py` — idempotent role-drift repair. On every boot, ensures `manager@aquaterra.com` resolves to `role=manager, active=True, tenant=aquaterra`. Runs unconditionally (no `SEED_DEMO_USERS` gate) so the demo baseline is self-healing.
+- `test_credentials.md` — manager row corrected.
+
+**Contract locks (Phase 53d)**
+- `backend/tests/test_phase53d_ebit_contract_lock.py` — snapshots the shape of `GET /ebit/compute` + `GET /ebit/snapshots/{id}` responses (every field name + type). Any silent regression fails the test.
+- `frontend/src/test/phase53d-web-mobile-ebit-parity.test.jsx` — source-inspection parity for `ADJUSTMENT_KEYS`, `EDITOR_ROLES`, `VIEWER_ROLES`, `RANGE_ENUM`, `BASIS_VALUES`, `MANAGER_READONLY_TESTIDS`, `MANAGER_HIDDEN_TESTIDS`, EBIT formula literal, POST-only client contract.
+- `mobile/__tests__/phase51d-walkie-parity.test.ts` — same parity assertions on the mobile side.
+
+**Non-goals (explicitly deferred)**
+- Draft / publish workflow — every save is immediately visible; there's no "in-progress" state. Version history + Fork is the substitute.
+- External accounting sync (QuickBooks / Xero / Sage). The compute reads directly from CRM tables; no round-trip.
+- Budget-vs-actual variance analysis. EBIT is a single-figure computation; comparing against a budget line is a separate report.
+- Consolidated multi-entity EBIT (parent-tenant roll-up). Every snapshot is scoped to a single `tenant_id`.
+- Automatic period lock (fiscal year close). Anyone with editor role can save a new version to any range at any time.
+
+**Test coverage**
+- Backend pytest: `test_phase53a_ebit_backend.py` (25 tests — role gates, compute correctness for cash + accrual, save + version, adjustments, overrides + null-fallback, tenant isolation, manager viewer/editor split) + `test_phase53c_seed_manager.py` (1) + `test_phase53d_ebit_contract_lock.py` (6).
+- Frontend vitest: `ebit-panel.test.jsx` (14) + `ebit-panel-manager-readonly.test.jsx` (7) + `phase53d-web-mobile-ebit-parity.test.jsx` (11).
+- Mobile jest: `phase53c-mobile-ebit-panel.test.tsx` (13) + `phase51d-walkie-parity.test.ts` (34, of which 15 are EBIT parity).
+
+
+---
+
+
 ## Phase 51 · Feb-2026 — Walkie-Talkie MVP (a → d)
 
 Async 5-30s voice-clip messaging surface for field crews. Ships across web + mobile + backend + push + a 24h defense-in-depth cleanup cron.

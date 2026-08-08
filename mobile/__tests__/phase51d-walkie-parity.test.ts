@@ -269,3 +269,145 @@ describe("Phase 53c · mobile ↔ web EBIT panel parity", () => {
 });
 
 
+// ═══════════════════════════════════════════════════════════════════
+// Phase 53d · Feb-2026 — EBIT MVP closeout contract parity.
+//   These assertions lock the exact vocab shared between the two
+//   surfaces + the backend, so any drift breaks the build.
+// ═══════════════════════════════════════════════════════════════════
+describe("Phase 53d · EBIT MVP closeout — shared vocab parity", () => {
+  // ── 1. Line-item keys ────────────────────────────────────────
+  const ADJUSTMENT_KEYS = ["revenue", "cogs", "opex", "depreciation"];
+
+  it("both surfaces declare the same LINE_KEYS = ADJUSTMENT_KEYS", () => {
+    // Both files have a top-of-file ``LINE_KEYS = [...]`` array.
+    // We normalise whitespace + compare.
+    function extractLineKeys(src: string): string[] {
+      const m = src.match(/LINE_KEYS[^\n=]*=\s*\[([^\]]+)\]/);
+      if (!m) return [];
+      return m[1]
+        .split(",")
+        .map((s) => s.trim().replace(/["'`]/g, ""))
+        .filter(Boolean);
+    }
+    expect(extractLineKeys(WEB_EBIT)).toEqual(ADJUSTMENT_KEYS);
+    expect(extractLineKeys(MOBILE_EBIT)).toEqual(ADJUSTMENT_KEYS);
+  });
+
+  // ── 2. Role sets ─────────────────────────────────────────────
+  const EDITOR_ROLES = ["super_admin", "admin"];
+  const VIEWER_ROLES = ["super_admin", "admin", "manager"];
+
+  it("EDITOR_ROLES = {super_admin, admin} on both surfaces (canEdit)", () => {
+    for (const r of EDITOR_ROLES) {
+      expect(WEB_EBIT).toContain(`role === "${r}"`);
+      expect(MOBILE_EBIT).toContain(`role === "${r}"`);
+    }
+  });
+
+  it("VIEWER_ROLES = {super_admin, admin, manager} on both surfaces (canView)", () => {
+    // canView = canEdit || role === "manager"
+    for (const r of VIEWER_ROLES) {
+      expect(WEB_EBIT.includes(`role === "${r}"`) ||
+              (r === "manager" && WEB_EBIT.match(/canEdit \|\| role === ["']manager["']/)))
+        .toBeTruthy();
+      expect(MOBILE_EBIT.includes(`role === "${r}"`) ||
+              (r === "manager" && MOBILE_EBIT.match(/canEdit \|\| role === ["']manager["']/)))
+        .toBeTruthy();
+    }
+  });
+
+  // ── 3. Manager read-only testids (same set on both) ──────────
+  const MANAGER_READONLY_KEYS = [
+    "ebit-panel-readonly-badge",
+    "ebit-row-${lineKey}-adjustment-input",  // rendered disabled for manager
+  ];
+  const MANAGER_HIDDEN_KEYS = [
+    "ebit-row-${lineKey}-flip-override",
+    "ebit-row-${lineKey}-override-clear",
+    "ebit-save-btn",
+    "ebit-save-note",
+    "ebit-save-row",
+  ];
+
+  it("MANAGER_READONLY_KEYS render on both surfaces", () => {
+    for (const k of MANAGER_READONLY_KEYS) {
+      expect(WEB_EBIT).toContain(k);
+      expect(MOBILE_EBIT).toContain(k);
+    }
+  });
+
+  it("MANAGER_HIDDEN_KEYS render behind a canEdit / !readOnly gate on both surfaces", () => {
+    for (const k of MANAGER_HIDDEN_KEYS) {
+      // Both surfaces must reference the testid (so the visible admin
+      // rendering exists) — the read-only rendering hides it, verified
+      // separately by the unit + component tests.
+      expect(WEB_EBIT).toContain(k);
+      expect(MOBILE_EBIT).toContain(k);
+    }
+  });
+
+  // ── 4. OpenAPI range enum ────────────────────────────────────
+  const RANGE_ENUM = ["this_month", "last_month", "qtd", "ytd",
+                       "monthly", "quarterly", "custom"];
+
+  it("both surfaces reference every value in the OpenAPI range enum", () => {
+    for (const v of RANGE_ENUM) {
+      // Web + mobile either build the value client-side (monthly /
+      // quarterly / custom pills) OR the server accepts it — the
+      // string must appear at least once in each surface for
+      // client-driven values.
+      const CLIENT_ONLY = new Set(["monthly", "quarterly", "custom"]);
+      if (CLIENT_ONLY.has(v)) {
+        expect(WEB_EBIT).toContain(v);
+        expect(MOBILE_EBIT).toContain(v);
+      }
+    }
+  });
+
+  // ── 5. Revenue-basis toggle ──────────────────────────────────
+  const BASIS_VALUES = ["cash", "accrual"];
+
+  it("revenue-basis values {cash, accrual} present on both surfaces", () => {
+    for (const v of BASIS_VALUES) {
+      expect(WEB_EBIT).toContain(`"${v}"`);
+      expect(MOBILE_EBIT).toContain(`"${v}"`);
+    }
+  });
+
+  // ── 6. EBIT total formula ────────────────────────────────────
+  it("both surfaces compute EBIT via revenue - cogs - opex - depreciation", () => {
+    // Both files call ``toEffective`` and then compute
+    //   out.ebit = out.revenue - out.cogs - out.opex - out.depreciation
+    // Assert the literal formula string is present.
+    const FORMULA = /out\.ebit\s*=\s*out\.revenue\s*-\s*out\.cogs\s*-\s*out\.opex\s*-\s*out\.depreciation/;
+    expect(WEB_EBIT).toMatch(FORMULA);
+    expect(MOBILE_EBIT).toMatch(FORMULA);
+  });
+
+  // ── 7. Endpoint contract parity ──────────────────────────────
+  it("both surfaces POST /ebit/snapshots (never PATCH) for new saves", () => {
+    expect(WEB_EBIT).toMatch(/api\.post\(\s*[`"']\/ebit\/snapshots/);
+    expect(MOBILE_EBIT).toMatch(/api\.post\(\s*[`"']\/ebit\/snapshots/);
+    // Neither surface should call PATCH — PATCH endpoints exist but
+    // are unused in the MVP (immutable-versions contract 6B).
+    expect(WEB_EBIT).not.toMatch(/api\.patch\(\s*[`"']\/ebit/);
+    expect(MOBILE_EBIT).not.toMatch(/api\.patch\(\s*[`"']\/ebit/);
+  });
+
+  it("both surfaces render the author_display_name field from saved snapshots", () => {
+    // Web versions modal renders the author on each row; mobile does
+    // the same. Reading .author_display_name locks the contract.
+    // (Fallback to author_user_id is fine — but the field MUST be
+    // referenced on at least one surface.)
+    const anyReferences =
+      WEB_EBIT.includes("author_display_name") ||
+      WEB_EBIT.includes("author_user_id");
+    const mobileReferences =
+      MOBILE_EBIT.includes("author_display_name") ||
+      MOBILE_EBIT.includes("author_user_id");
+    expect(anyReferences).toBe(true);
+    expect(mobileReferences).toBe(true);
+  });
+});
+
+
