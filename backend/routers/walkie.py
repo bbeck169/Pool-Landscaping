@@ -18,6 +18,7 @@ from config import db, logger
 from utils import get_current_user
 from services.walkie.channels import (
     BROADCAST_ROLES,
+    PIN_ROLES,
     STAFF_ROLES,
     get_or_create_direct_channel,
     is_channel_member,
@@ -57,6 +58,16 @@ class DirectChannelIn(BaseModel):
 
 class ListenedAck(BaseModel):
     ok: bool = True
+
+
+class PinIn(BaseModel):
+    message_id: str
+
+
+def _require_pin_role(user: dict) -> None:
+    role = (user.get("role") or "").lower()
+    if role not in PIN_ROLES:
+        raise HTTPException(403, detail="Only admins can pin messages")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -259,18 +270,33 @@ async def list_messages(
         "created_at": {"$gte": since_dt},
     }
     rows = await db.walkie_messages.find(q, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(length=limit)
+    # Phase 51.5 · Feb 2026 — Pinned messages ALWAYS surface at the
+    # top regardless of ``since=`` window. We fetch the pinned row
+    # separately (if it's not already in ``rows``) and inject it as
+    # the first element with ``is_pinned: true``.
+    pinned_id = channel.get("pinned_message_id")
+    pinned_row = None
+    if pinned_id:
+        # Already in the recent window? Just tag it there. Otherwise
+        # fetch it explicitly so long-lived pins survive filter drift.
+        for r in rows:
+            if r["id"] == pinned_id:
+                pinned_row = r
+                break
+        if pinned_row is None:
+            pinned_row = await db.walkie_messages.find_one({"id": pinned_id}, {"_id": 0})
     # Scope to caller-visible only (sender OR recipient).
     uid = user.get("id") or ""
     msg_ids = [r["id"] for r in rows]
+    if pinned_row and pinned_row["id"] not in msg_ids:
+        msg_ids.append(pinned_row["id"])
     receipts = await db.walkie_receipts.find(
         {"tenant_id": tenant_id, "recipient_user_id": uid, "message_id": {"$in": msg_ids}},
         {"_id": 0, "message_id": 1, "listened_at": 1},
     ).to_list(length=len(msg_ids))
     receipt_map = {r["message_id"]: r for r in receipts}
-    out = []
-    for r in rows:
-        if r["sender_user_id"] != uid and r["id"] not in receipt_map:
-            continue  # not visible to this user
+
+    def _serialize(r: dict) -> dict:
         item = dict(r)
         for k in ("created_at", "expires_at"):
             v = item.get(k)
@@ -279,7 +305,19 @@ async def list_messages(
         item["audio_url"] = f"/api/files/{r['audio_file_id']}/download"
         rec = receipt_map.get(r["id"])
         item["listened_at"] = (rec.get("listened_at") if rec else None)
-        out.append(item)
+        item["is_pinned"] = (pinned_id is not None and r["id"] == pinned_id)
+        return item
+
+    out = []
+    # Pinned first (if visible to caller).
+    if pinned_row and (pinned_row["sender_user_id"] == uid or pinned_row["id"] in receipt_map):
+        out.append(_serialize(pinned_row))
+    for r in rows:
+        if r["id"] == pinned_id:
+            continue  # already emitted at the top
+        if r["sender_user_id"] != uid and r["id"] not in receipt_map:
+            continue  # not visible to this user
+        out.append(_serialize(r))
     return {"messages": out}
 
 
@@ -302,3 +340,86 @@ async def mark_listened(message_id: str, user: dict = Depends(get_current_user))
     if res.matched_count == 0:
         raise HTTPException(404, detail="receipt_not_found")
     return ListenedAck()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 51.5 · Pin / unpin (admin-only)
+# ═══════════════════════════════════════════════════════════════════
+async def _restore_expiry(message_id: str) -> None:
+    """When unpinning, recompute ``expires_at = created_at + 24h`` so
+    Mongo's TTL index picks the row up on its next sweep. If the
+    message is already older than 24h the TTL index will delete it
+    on the very next tick — safer + clearer than us deleting
+    directly here."""
+    row = await db.walkie_messages.find_one({"id": message_id}, {"_id": 0, "created_at": 1})
+    if not row or not row.get("created_at"):
+        return
+    created = row["created_at"]
+    if isinstance(created, str):
+        try:
+            created = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        except Exception:
+            return
+    await db.walkie_messages.update_one(
+        {"id": message_id},
+        {"$set": {"expires_at": created + timedelta(hours=24)}},
+    )
+
+
+@router.post("/channels/{channel_id}/pin")
+async def pin_message(
+    channel_id: str,
+    body: PinIn,
+    user: dict = Depends(get_current_user),
+):
+    _require_staff(user)
+    _require_pin_role(user)
+    channel = await db.walkie_channels.find_one({"id": channel_id}, {"_id": 0})
+    if not channel:
+        raise HTTPException(404, detail="channel_not_found")
+    if not await is_channel_member(channel, user, db):
+        raise HTTPException(403, detail="not_a_channel_member")
+    # Verify the target message exists AND belongs to this channel.
+    msg = await db.walkie_messages.find_one(
+        {"id": body.message_id, "channel_id": channel_id}, {"_id": 0}
+    )
+    if not msg:
+        raise HTTPException(404, detail="message_not_found_in_channel")
+    # Idempotent — pinning the already-pinned message is a no-op.
+    prev = channel.get("pinned_message_id")
+    if prev == body.message_id:
+        return {"ok": True, "pinned_message_id": body.message_id, "unchanged": True}
+    # Auto-unpin the previous pinned message: restore its expires_at.
+    if prev:
+        await _restore_expiry(prev)
+    # Pin the new message: unset expires_at so TTL skips it.
+    await db.walkie_messages.update_one(
+        {"id": body.message_id},
+        {"$unset": {"expires_at": ""}},
+    )
+    await db.walkie_channels.update_one(
+        {"id": channel_id},
+        {"$set": {"pinned_message_id": body.message_id, "updated_at": _now()}},
+    )
+    return {"ok": True, "pinned_message_id": body.message_id, "unchanged": False}
+
+
+@router.delete("/channels/{channel_id}/pin")
+async def unpin_message(channel_id: str, user: dict = Depends(get_current_user)):
+    _require_staff(user)
+    _require_pin_role(user)
+    channel = await db.walkie_channels.find_one({"id": channel_id}, {"_id": 0})
+    if not channel:
+        raise HTTPException(404, detail="channel_not_found")
+    if not await is_channel_member(channel, user, db):
+        raise HTTPException(403, detail="not_a_channel_member")
+    prev = channel.get("pinned_message_id")
+    if not prev:
+        return {"ok": True, "pinned_message_id": None, "unchanged": True}
+    await _restore_expiry(prev)
+    await db.walkie_channels.update_one(
+        {"id": channel_id},
+        {"$set": {"pinned_message_id": None, "updated_at": _now()}},
+    )
+    return {"ok": True, "pinned_message_id": None, "unchanged": False}
+

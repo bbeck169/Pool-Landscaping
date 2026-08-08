@@ -22,6 +22,11 @@ STAFF_ROLES = {"super_admin", "admin", "manager", "technician", "dispatcher", "o
 # channel. Techs / dispatchers stay limited to their own department
 # and their own directs. Enforced server-side on POST /messages.
 BROADCAST_ROLES = {"super_admin", "admin", "manager"}
+# Phase 51.5 · Feb 2026 — Pin permission gate.
+# Same three leadership roles can pin exactly one message per channel.
+# Techs / dispatchers cannot pin. Enforced server-side on the pin
+# endpoints, mirrored client-side to hide the action.
+PIN_ROLES = {"super_admin", "admin", "manager"}
 DEPARTMENTS = ("pool", "landscape")
 
 # Feb 2026 · Phase 51a — seeded user rows use ``department="landscaping"``

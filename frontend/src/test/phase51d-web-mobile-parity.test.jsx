@@ -15,6 +15,7 @@ import path from "path";
 import { describe, it, expect } from "vitest";
 import {
   BROADCAST_ROLES as WEB_BROADCAST_ROLES,
+  PIN_ROLES as WEB_PIN_ROLES,
   AUDIO_MIME_CANDIDATES as WEB_MIME,
   sortChannels as webSort,
 } from "@/pages/walkie/walkie-helpers";
@@ -108,6 +109,34 @@ describe("Phase 51d · web ↔ mobile waveform peaks + fallback contract", () =>
     }
   });
 });
+
+describe("Phase 51.5 · web ↔ mobile pin gate parity", () => {
+  it("PIN_ROLES set is identical on both surfaces", () => {
+    // Web export must be the exact three leadership roles.
+    expect(Array.from(WEB_PIN_ROLES).sort()).toEqual(["admin", "manager", "super_admin"]);
+    // Mobile source must declare the same set literally.
+    expect(MOBILE_HELPERS).toMatch(/PIN_ROLES = new Set\(\[\s*"super_admin",\s*"admin",\s*"manager"\s*\]\)/);
+  });
+
+  it("both surfaces export a canPinInChannel predicate", () => {
+    expect(WEB_HELPERS).toMatch(/export function canPinInChannel/);
+    expect(MOBILE_HELPERS).toMatch(/export function canPinInChannel/);
+  });
+
+  it("both surfaces render a pinned badge (walkie-pinned-badge testID)", () => {
+    expect(WEB_PAGE).toContain("walkie-pinned-badge");
+    expect(MOBILE_CHANNEL).toContain("walkie-pinned-badge");
+  });
+
+  it("both surfaces render pinned rows visually distinct (border-l accent or borderLeftWidth)", () => {
+    // Web uses Tailwind border-l-4 on the pinned row; mobile uses a
+    // borderLeftWidth style. Locking either representation ensures
+    // the pinned row is always visually distinct.
+    expect(WEB_PAGE).toMatch(/border-l-\d|borderLeftWidth/);
+    expect(MOBILE_CHANNEL).toMatch(/borderLeftWidth/);
+  });
+});
+
 
 describe("Phase 51d · surface manifest snapshot", () => {
   it("locks the set of test IDs shared between web and mobile", () => {

@@ -13,7 +13,7 @@
  *   the server enforcement in ``routers/walkie.py``).
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Mic, Radio, Users, User, Volume2, VolumeX, Play, Pause, Plus, CheckCircle2 } from "lucide-react";
+import { Mic, Radio, Users, User, Volume2, VolumeX, Play, Pause, Plus, CheckCircle2, Pin, PinOff } from "lucide-react";
 import { api, api_base, TOKEN_KEY } from "@/api";
 import { useAuth } from "@/auth";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
+  canPinInChannel,
   canRecordInChannel,
   isMuted,
   isOwnMessage,
@@ -77,7 +78,7 @@ function Waveform({ peaks, playing, "data-testid": tid = "walkie-waveform" }) {
   );
 }
 
-function MessageRow({ msg, user, onListened, mutedRef }) {
+function MessageRow({ msg, user, onListened, mutedRef, canPin, onPin, onUnpin }) {
   const own = isOwnMessage(user, msg);
   const audioRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -113,7 +114,8 @@ function MessageRow({ msg, user, onListened, mutedRef }) {
     <div
       data-testid="walkie-message-row"
       data-own={own ? "1" : "0"}
-      className={`flex items-center gap-3 px-3 py-2 rounded-lg ${own ? "bg-slate-100 flex-row-reverse text-right" : "bg-white"}`}
+      data-pinned={msg.is_pinned ? "1" : "0"}
+      className={`flex items-center gap-3 px-3 py-2 rounded-lg ${msg.is_pinned ? "border-l-4 border-amber-500 bg-amber-50/60" : own ? "bg-slate-100 flex-row-reverse text-right" : "bg-white"}`}
     >
       <button
         type="button"
@@ -125,6 +127,14 @@ function MessageRow({ msg, user, onListened, mutedRef }) {
       </button>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 text-xs text-slate-500">
+          {msg.is_pinned && (
+            <span
+              data-testid="walkie-pinned-badge"
+              className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-semibold text-amber-700 bg-amber-100 rounded-full px-2 py-0.5"
+            >
+              <Pin className="h-3 w-3" /> Pinned
+            </span>
+          )}
           <span className="truncate">{msg.sender_name || (own ? "you" : "teammate")}</span>
           {own && (
             <span data-testid="walkie-own-tag" className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">you</span>
@@ -134,6 +144,29 @@ function MessageRow({ msg, user, onListened, mutedRef }) {
         </div>
         <Waveform peaks={msg.waveform_peaks} playing={playing} />
       </div>
+      {canPin && (
+        msg.is_pinned ? (
+          <button
+            type="button"
+            onClick={() => onUnpin?.(msg.id)}
+            data-testid={`walkie-unpin-btn-${msg.id}`}
+            title="Unpin"
+            className="h-8 w-8 rounded-full grid place-items-center text-slate-500 hover:text-slate-900 hover:bg-slate-100"
+          >
+            <PinOff className="h-4 w-4" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onPin?.(msg.id)}
+            data-testid={`walkie-pin-btn-${msg.id}`}
+            title="Pin to channel"
+            className="h-8 w-8 rounded-full grid place-items-center text-slate-400 hover:text-amber-600 hover:bg-amber-50"
+          >
+            <Pin className="h-4 w-4" />
+          </button>
+        )
+      )}
       <audio
         ref={audioRef}
         src={audioUrl}
@@ -497,6 +530,28 @@ export default function Walkie() {
                       msg={m}
                       user={user}
                       mutedRef={mutedRef}
+                      canPin={canPinInChannel(user, selected)}
+                      onPin={async (id) => {
+                        try {
+                          await api.post(`/walkie/channels/${selectedId}/pin`, { message_id: id });
+                          // Optimistic: mark this message pinned, unpin any prior.
+                          setMessages((cur) => cur.map((x) => ({ ...x, is_pinned: x.id === id })));
+                          toast.success("Pinned to channel");
+                          loadMessages(selectedId, { markFresh: false });
+                        } catch (e) {
+                          toast.error(e?.message || "Pin failed");
+                        }
+                      }}
+                      onUnpin={async () => {
+                        try {
+                          await api.del(`/walkie/channels/${selectedId}/pin`);
+                          setMessages((cur) => cur.map((x) => ({ ...x, is_pinned: false })));
+                          toast.success("Unpinned");
+                          loadMessages(selectedId, { markFresh: false });
+                        } catch (e) {
+                          toast.error(e?.message || "Unpin failed");
+                        }
+                      }}
                       onListened={(id) => {
                         setMessages((cur) => cur.map((x) => x.id === id ? { ...x, listened_at: new Date().toISOString() } : x));
                       }}

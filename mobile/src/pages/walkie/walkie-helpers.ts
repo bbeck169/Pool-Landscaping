@@ -14,10 +14,19 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 /** Roles allowed to broadcast to the ``all_hands`` channel. */
 export const BROADCAST_ROLES = new Set(["super_admin", "admin", "manager"]);
 
+/** Phase 51.5 · Feb 2026 — Roles allowed to pin one message per channel. */
+export const PIN_ROLES = new Set(["super_admin", "admin", "manager"]);
+
 /** Staff roles that see the walkie surface at all. */
 export const STAFF_ROLES = new Set([
   "super_admin", "admin", "manager", "owner", "dispatcher", "technician",
 ]);
+
+/** Can the caller pin / unpin messages? Server also enforces. */
+export function canPinInChannel(user: any, _channel?: any): boolean {
+  if (!user) return false;
+  return PIN_ROLES.has((user.role || "").toLowerCase());
+}
 
 /**
  * Preferred audio MIME order for ``expo-audio`` recorder presets.

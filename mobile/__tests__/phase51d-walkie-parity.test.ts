@@ -22,6 +22,7 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
 // eslint-disable-next-line import/first
 import {
   BROADCAST_ROLES as MOBILE_BROADCAST_ROLES,
+  PIN_ROLES as MOBILE_PIN_ROLES,
   AUDIO_MIME_CANDIDATES as MOBILE_MIME,
   sortChannels as mobileSort,
 } from "@/src/pages/walkie/walkie-helpers";
@@ -118,3 +119,24 @@ describe("Phase 51d · mobile ↔ web testID manifest", () => {
     }
   });
 });
+
+describe("Phase 51.5 · mobile ↔ web pin gate parity", () => {
+  it("mobile PIN_ROLES matches the shared three-role set", () => {
+    expect(Array.from(MOBILE_PIN_ROLES).sort()).toEqual(["admin", "manager", "super_admin"]);
+  });
+
+  it("web helpers source declares the same PIN_ROLES set", () => {
+    expect(WEB_HELPERS).toMatch(/PIN_ROLES = new Set\(\[\s*"super_admin",\s*"admin",\s*"manager"\s*\]\)/);
+  });
+
+  it("both surfaces export canPinInChannel", () => {
+    expect(WEB_HELPERS).toMatch(/export function canPinInChannel/);
+    expect(MOBILE_HELPERS).toMatch(/export function canPinInChannel/);
+  });
+
+  it("both surfaces render a walkie-pinned-badge node", () => {
+    expect(WEB_PAGE).toContain("walkie-pinned-badge");
+    expect(MOBILE_CHANNEL).toContain("walkie-pinned-badge");
+  });
+});
+

@@ -9,6 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -32,6 +33,7 @@ import { EmptyState, Loading } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { useAuth } from "@/src/auth";
 import {
+  canPinInChannel,
   canRecordInChannel,
   extForMime,
   isMuted,
@@ -54,6 +56,7 @@ type Msg = {
   created_at: string;
   listened_at?: string | null;
   autoplay?: boolean;
+  is_pinned?: boolean;
 };
 
 function fmtTime(iso: string): string {
@@ -90,11 +93,12 @@ function Waveform({ peaks, playing, testID }: { peaks?: number[] | null; playing
   );
 }
 
-function MessageRow({ msg, user, mutedRef, onListened }: { msg: Msg; user: any; mutedRef: React.MutableRefObject<boolean>; onListened: (id: string) => void }) {
+function MessageRow({ msg, user, mutedRef, onListened, canPin, onPin, onUnpin }: { msg: Msg; user: any; mutedRef: React.MutableRefObject<boolean>; onListened: (id: string) => void; canPin: boolean; onPin: (id: string) => void; onUnpin: () => void }) {
   const own = isOwnMessage(user, msg);
   const url = `${api_base()}${msg.audio_url}`.replace("/api/api/", "/api/");
   const player = useAudioPlayer(url);
   const [playing, setPlaying] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   useEffect(() => {
     // Fire auto-play only when the message is freshly-arrived,
@@ -132,29 +136,76 @@ function MessageRow({ msg, user, mutedRef, onListened }: { msg: Msg; user: any; 
   }, [player, own, msg.id, msg.listened_at, onListened]);
 
   const secs = Math.max(1, Math.round((msg.duration_ms || 0) / 1000));
+  const rowStyle: any[] = [styles.msgRow];
+  if (own) rowStyle.push(styles.msgRowOwn);
+  if (msg.is_pinned) rowStyle.push(styles.msgRowPinned);
 
   return (
-    <View
-      testID="walkie-message-row"
-      style={[styles.msgRow, own && styles.msgRowOwn]}
-    >
-      <TouchableOpacity onPress={toggle} style={styles.playBtn} testID="walkie-play-btn">
-        <Ionicons name={playing ? "pause" : "play"} size={16} color="#fff" />
-      </TouchableOpacity>
-      <View style={styles.msgBody}>
-        <View style={styles.msgMeta}>
-          <Text style={styles.msgSender} numberOfLines={1}>
-            {msg.sender_name || (own ? "you" : "teammate")}
-          </Text>
-          {own && <Text style={styles.ownTag} testID="walkie-own-tag">you</Text>}
-          <Text style={styles.msgTime}>· {fmtTime(msg.created_at)} · {secs}s</Text>
-          {msg.listened_at && !own && (
-            <Ionicons name="checkmark-circle" size={12} color={colors.success} testID="walkie-listened-check" />
-          )}
+    <>
+      <TouchableOpacity
+        testID="walkie-message-row"
+        activeOpacity={0.9}
+        onLongPress={canPin ? () => setSheetOpen(true) : undefined}
+        style={rowStyle}
+      >
+        <TouchableOpacity onPress={toggle} style={styles.playBtn} testID="walkie-play-btn">
+          <Ionicons name={playing ? "pause" : "play"} size={16} color="#fff" />
+        </TouchableOpacity>
+        <View style={styles.msgBody}>
+          <View style={styles.msgMeta}>
+            {msg.is_pinned && (
+              <View testID="walkie-pinned-badge" style={styles.pinBadge}>
+                <Ionicons name="pin" size={10} color={colors.warning || "#B45309"} />
+                <Text style={styles.pinBadgeText}>PINNED</Text>
+              </View>
+            )}
+            <Text style={styles.msgSender} numberOfLines={1}>
+              {msg.sender_name || (own ? "you" : "teammate")}
+            </Text>
+            {own && <Text style={styles.ownTag} testID="walkie-own-tag">you</Text>}
+            <Text style={styles.msgTime}>· {fmtTime(msg.created_at)} · {secs}s</Text>
+            {msg.listened_at && !own && (
+              <Ionicons name="checkmark-circle" size={12} color={colors.success} testID="walkie-listened-check" />
+            )}
+          </View>
+          <Waveform peaks={msg.waveform_peaks} playing={playing} />
         </View>
-        <Waveform peaks={msg.waveform_peaks} playing={playing} />
-      </View>
-    </View>
+      </TouchableOpacity>
+      {sheetOpen && (
+        <Modal transparent animationType="fade" onRequestClose={() => setSheetOpen(false)}>
+          <Pressable style={styles.sheetOverlay} onPress={() => setSheetOpen(false)}>
+            <View style={styles.sheet} testID="walkie-pin-sheet">
+              {msg.is_pinned ? (
+                <TouchableOpacity
+                  style={styles.sheetItem}
+                  onPress={() => { setSheetOpen(false); onUnpin(); }}
+                  testID="walkie-sheet-unpin"
+                >
+                  <Ionicons name="pin-outline" size={20} color={colors.onSurface} />
+                  <Text style={styles.sheetLabel}>Unpin from channel</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.sheetItem}
+                  onPress={() => { setSheetOpen(false); onPin(msg.id); }}
+                  testID="walkie-sheet-pin"
+                >
+                  <Ionicons name="pin" size={20} color={colors.onSurface} />
+                  <Text style={styles.sheetLabel}>Pin to channel</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={styles.sheetItem}
+                onPress={() => setSheetOpen(false)}
+                testID="walkie-sheet-cancel"
+              >
+                <Text style={[styles.sheetLabel, { color: colors.onSurfaceSecondary }]}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Modal>
+      )}
+    </>
   );
 }
 
@@ -352,6 +403,21 @@ export default function WalkieChannel() {
               msg={m}
               user={user}
               mutedRef={mutedRef}
+              canPin={canPinInChannel(user, channel)}
+              onPin={async (id) => {
+                try {
+                  await api.post(`/walkie/channels/${channelId}/pin`, { message_id: id });
+                  setMessages((cur) => cur.map((x) => ({ ...x, is_pinned: x.id === id })));
+                  loadMessages({ markFresh: false });
+                } catch { /* silent */ }
+              }}
+              onUnpin={async () => {
+                try {
+                  await api.del(`/walkie/channels/${channelId}/pin`);
+                  setMessages((cur) => cur.map((x) => ({ ...x, is_pinned: false })));
+                  loadMessages({ markFresh: false });
+                } catch { /* silent */ }
+              }}
               onListened={(id) => setMessages((cur) => cur.map((x) => x.id === id ? { ...x, listened_at: new Date().toISOString() } : x))}
             />
           ))
@@ -380,6 +446,48 @@ const styles = StyleSheet.create({
   msgRowOwn: {
     backgroundColor: colors.surfaceTertiary,
     flexDirection: "row-reverse",
+  },
+  msgRowPinned: {
+    borderLeftWidth: 4,
+    borderLeftColor: colors.warning || "#F59E0B",
+    backgroundColor: (colors as any).warningAlpha || "#FEF3C7",
+  },
+  pinBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 999,
+    backgroundColor: (colors as any).warningAlpha || "#FDE68A",
+  },
+  pinBadgeText: {
+    fontSize: 9,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+    color: colors.warning || "#B45309",
+  },
+  sheetOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: colors.surface,
+    padding: spacing.lg,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    gap: spacing.md,
+  },
+  sheetItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  sheetLabel: {
+    fontSize: fontSize.base,
+    color: colors.onSurface,
   },
   playBtn: {
     height: 36, width: 36, borderRadius: 999,

@@ -12,10 +12,19 @@
 /** Roles that are allowed to broadcast to the ``all_hands`` channel. */
 export const BROADCAST_ROLES = new Set(["super_admin", "admin", "manager"]);
 
+/** Phase 51.5 · Feb 2026 — Roles allowed to pin one message per channel. */
+export const PIN_ROLES = new Set(["super_admin", "admin", "manager"]);
+
 /** Staff roles that see the walkie surface at all. */
 export const STAFF_ROLES = new Set([
   "super_admin", "admin", "manager", "owner", "dispatcher", "technician",
 ]);
+
+/** Can the caller pin / unpin messages? Server also enforces. */
+export function canPinInChannel(user, _channel) {
+  if (!user) return false;
+  return PIN_ROLES.has((user.role || "").toLowerCase());
+}
 
 /** MediaRecorder MIME preference order — first supported wins.
  *
