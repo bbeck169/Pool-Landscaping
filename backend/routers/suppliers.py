@@ -1,0 +1,260 @@
+"""Phase 54a · Feb-2026 — Wholesale supplier pricebook import (skeleton).
+
+Six endpoints under ``/api/suppliers/*``:
+
+    GET    /suppliers                          — list (auto-seeds on first read)
+    GET    /suppliers/{slug}/credentials       — has_credentials + updated_at
+    POST   /suppliers/{slug}/credentials       — save encrypted (never plaintext)
+    DELETE /suppliers/{slug}/credentials       — remove
+    POST   /suppliers/{slug}/sync              — kick manual sync (501 in 54a)
+    GET    /suppliers/{slug}/sync-jobs         — audit log
+
+Role gate: super_admin + admin only on every endpoint (write + read).
+Manager / tech / customer → 403. Rationale: supplier credentials +
+pricing intel are admin-only per user's locked scope.
+
+No supplier network calls anywhere in this file. The sync endpoint
+returns 501 with a pointer to the phase that owns the connector.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+
+from config import db, logger
+from services.suppliers.connector import CONNECTORS, SUPPLIER_SEED
+from services.suppliers.crypto import encrypt
+from utils import get_current_user
+
+router = APIRouter()
+
+_EDITOR_ROLES = frozenset({"admin", "super_admin"})
+_VALID_SLUGS = frozenset(s["slug"] for s in SUPPLIER_SEED)
+_INDEXES_ENSURED = False
+
+
+def _require_admin(user: Dict[str, Any]) -> None:
+    role = (user or {}).get("role") or ""
+    if role not in _EDITOR_ROLES:
+        raise HTTPException(status_code=403, detail={"error": "forbidden"})
+
+
+def _require_tenant(user: Dict[str, Any]) -> str:
+    tid = (user or {}).get("tenant_id") or ""
+    if not tid:
+        raise HTTPException(400, {"error": "missing_tenant"})
+    return tid
+
+
+def _require_slug(slug: str) -> None:
+    if slug not in _VALID_SLUGS:
+        raise HTTPException(404, {"error": "unknown_supplier",
+                                    "known": sorted(_VALID_SLUGS)})
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def _ensure_indexes() -> None:
+    global _INDEXES_ENSURED
+    if _INDEXES_ENSURED:
+        return
+    try:
+        await db.suppliers.create_index(
+            [("tenant_id", 1), ("slug", 1)],
+            name="suppliers_tenant_slug_uniq", unique=True)
+        await db.supplier_credentials.create_index(
+            [("tenant_id", 1), ("supplier_id", 1)],
+            name="suppcred_tenant_supplier_uniq", unique=True)
+        await db.supplier_sync_jobs.create_index(
+            [("tenant_id", 1), ("supplier_id", 1), ("started_at", -1)],
+            name="suppsync_tenant_supplier_started_desc")
+        # Phase 54a — pricebook items get two supplier-aware indexes.
+        await db.items.create_index(
+            [("tenant_id", 1), ("supplier_id", 1)],
+            name="items_tenant_supplier")
+        await db.items.create_index(
+            [("tenant_id", 1), ("external_sku", 1)],
+            name="items_tenant_external_sku",
+            sparse=True)
+    except Exception as e:  # pragma: no cover
+        logger.info(f"[suppliers] index create noop: {e}")
+    _INDEXES_ENSURED = True
+
+
+async def _auto_seed(tenant_id: str) -> None:
+    """Idempotent per-tenant seed of the 5 supplier rows. Called on
+    the first ``GET /suppliers`` — no bootstrap step needed at server
+    startup because a fresh tenant might not exist yet then."""
+    for row in SUPPLIER_SEED:
+        existing = await db.suppliers.find_one(
+            {"tenant_id": tenant_id, "slug": row["slug"]},
+            {"_id": 0, "id": 1},
+        )
+        if existing:
+            continue
+        doc = {
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "slug": row["slug"],
+            "display_name": row["display_name"],
+            "active": False,
+            "sync_frequency": "daily",
+            "last_sync_at": None,
+            "last_sync_status": None,
+            "last_sync_item_count": 0,
+            "created_at": _now_iso(),
+        }
+        try:
+            await db.suppliers.insert_one(doc)
+        except Exception as e:  # pragma: no cover — concurrent insert race
+            logger.info(f"[suppliers] auto-seed race for {row['slug']}: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 1. GET /suppliers — list + auto-seed
+# ═══════════════════════════════════════════════════════════════════
+@router.get("/suppliers")
+async def list_suppliers(user: dict = Depends(get_current_user)) -> List[Dict[str, Any]]:
+    _require_admin(user)
+    tenant_id = _require_tenant(user)
+    await _ensure_indexes()
+    await _auto_seed(tenant_id)
+    rows = await db.suppliers.find(
+        {"tenant_id": tenant_id},
+        {"_id": 0},
+    ).to_list(50)
+    # Preserve the SUPPLIER_SEED order for stable UI sort.
+    order = {s["slug"]: i for i, s in enumerate(SUPPLIER_SEED)}
+    rows.sort(key=lambda r: order.get(r.get("slug"), 999))
+    return rows
+
+
+async def _get_supplier_or_404(tenant_id: str, slug: str) -> Dict[str, Any]:
+    _require_slug(slug)
+    # ensure the row exists (auto-seed catches first-touch)
+    await _auto_seed(tenant_id)
+    row = await db.suppliers.find_one(
+        {"tenant_id": tenant_id, "slug": slug},
+        {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, {"error": "supplier_row_missing"})
+    return row
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 2. GET /suppliers/{slug}/credentials — existence check only
+# ═══════════════════════════════════════════════════════════════════
+@router.get("/suppliers/{slug}/credentials")
+async def get_credentials(
+    slug: str, user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_admin(user)
+    tenant_id = _require_tenant(user)
+    supplier = await _get_supplier_or_404(tenant_id, slug)
+    cred = await db.supplier_credentials.find_one(
+        {"tenant_id": tenant_id, "supplier_id": supplier["id"]},
+        {"_id": 0, "updated_at": 1, "notes": 1},
+    )
+    return {
+        "supplier_slug": slug,
+        "has_credentials": bool(cred),
+        "updated_at": (cred or {}).get("updated_at"),
+        "notes": (cred or {}).get("notes", ""),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 3. POST /suppliers/{slug}/credentials — save encrypted
+# ═══════════════════════════════════════════════════════════════════
+class CredentialBody(BaseModel):
+    username: Optional[str] = None
+    password: Optional[str] = None
+    api_key: Optional[str] = None
+    notes: Optional[str] = ""
+
+
+@router.post("/suppliers/{slug}/credentials")
+async def save_credentials(
+    slug: str, body: CredentialBody,
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_admin(user)
+    tenant_id = _require_tenant(user)
+    supplier = await _get_supplier_or_404(tenant_id, slug)
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "tenant_id": tenant_id,
+        "supplier_id": supplier["id"],
+        "encrypted_username": encrypt(body.username),
+        "encrypted_password": encrypt(body.password),
+        "encrypted_api_key": encrypt(body.api_key),
+        "notes": body.notes or "",
+        "updated_at": _now_iso(),
+    }
+    await db.supplier_credentials.update_one(
+        {"tenant_id": tenant_id, "supplier_id": supplier["id"]},
+        {"$set": doc},
+        upsert=True,
+    )
+    logger.info(f"[suppliers] credentials saved · tenant={tenant_id[:8]} · slug={slug}")
+    return {"ok": True, "supplier_slug": slug, "updated_at": doc["updated_at"]}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 4. DELETE /suppliers/{slug}/credentials
+# ═══════════════════════════════════════════════════════════════════
+@router.delete("/suppliers/{slug}/credentials")
+async def delete_credentials(
+    slug: str, user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_admin(user)
+    tenant_id = _require_tenant(user)
+    supplier = await _get_supplier_or_404(tenant_id, slug)
+    res = await db.supplier_credentials.delete_one(
+        {"tenant_id": tenant_id, "supplier_id": supplier["id"]},
+    )
+    return {"ok": True, "supplier_slug": slug, "deleted_count": res.deleted_count}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 5. POST /suppliers/{slug}/sync — 501 in Phase 54a
+# ═══════════════════════════════════════════════════════════════════
+@router.post("/suppliers/{slug}/sync", status_code=501)
+async def sync_supplier(
+    slug: str, user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_admin(user)
+    tenant_id = _require_tenant(user)
+    await _get_supplier_or_404(tenant_id, slug)
+    connector = CONNECTORS.get(slug)
+    planned = connector.planned_phase if connector else "TBD"
+    raise HTTPException(
+        status_code=501,
+        detail=(f"connector not implemented yet, coming in phase {planned}"),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 6. GET /suppliers/{slug}/sync-jobs — audit log
+# ═══════════════════════════════════════════════════════════════════
+@router.get("/suppliers/{slug}/sync-jobs")
+async def list_sync_jobs(
+    slug: str, limit: int = Query(50, ge=1, le=500),
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_admin(user)
+    tenant_id = _require_tenant(user)
+    supplier = await _get_supplier_or_404(tenant_id, slug)
+    rows = await db.supplier_sync_jobs.find(
+        {"tenant_id": tenant_id, "supplier_id": supplier["id"]},
+        {"_id": 0},
+    ).sort("started_at", -1).to_list(limit)
+    return {"supplier_slug": slug, "jobs": rows, "count": len(rows)}

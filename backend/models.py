@@ -373,6 +373,16 @@ class ItemIn(BaseModel):
     description: Optional[str] = None
     active: Optional[bool] = True
     sku: Optional[str] = None
+    # Phase 54a · Feb-2026 — wholesale-supplier import fields
+    # (additive, all optional). ``supplier_id`` links the item to a
+    # row in the ``suppliers`` collection (``null`` = manually entered,
+    # not imported). ``external_sku`` is the supplier-side SKU used
+    # for dedupe on the next sync. ``last_synced_at`` records the
+    # most-recent successful sync touch. See ``routers/suppliers.py``
+    # and ``services/suppliers/``.
+    supplier_id: Optional[str] = None
+    external_sku: Optional[str] = None
+    last_synced_at: Optional[str] = None
 
 
 class BillingPlanIn(BaseModel):
