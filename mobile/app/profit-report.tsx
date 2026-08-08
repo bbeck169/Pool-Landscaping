@@ -23,6 +23,7 @@ import { api, api_base, getAuthToken } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import EbitPanel from "@/src/components/admin/EbitPanel";
 
 const RANGE_OPTIONS = [
   { key: "this_month", label: "This Month" },
@@ -390,6 +391,8 @@ export default function ProfitReport() {
             </View>
           </>
         ) : null}
+        {/* ── Phase 53c · Editable EBIT panel (parity with 53b web) ── */}
+        <EbitPanel />
       </ScrollView>
     </View>
   );

@@ -353,6 +353,47 @@ async def seed_manager_user():
     return {"created": True, "email": email}
 
 
+async def seed_demo_manager():
+    """Phase 53c · Feb-2026 — role-drift repair for the demo manager
+    account.
+
+    The Phase 5A ``seed_manager_user`` helper only inserts if the email
+    is absent, so once ``manager@aquaterra.com`` was promoted to
+    ``role=admin`` by an unrelated migration (surfaced during Phase 53b
+    E2E verification), no subsequent seed pass could heal the drift.
+    This repair helper enforces the invariant:
+
+        manager@aquaterra.com  ⇒  role == "manager"
+                                  active == True
+                                  tenant == aquaterra
+
+    Idempotent — if the row is already in the correct shape the update
+    is a no-op. Runs unconditionally on boot (no ``SEED_DEMO_USERS``
+    gate) so the demo baseline is self-healing across every environment
+    that runs the seeding pipeline.
+    """
+    email = "manager@aquaterra.com"
+    tenant = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0})
+    tenant_id = tenant["id"] if tenant else None
+    row = await db.users.find_one({"email": email}, {"_id": 0, "role": 1, "active": 1, "tenant_id": 1})
+    if not row:
+        # Nothing to heal — the row wasn't seeded on this env.
+        return {"repaired": False, "reason": "no_row"}
+    updates = {}
+    if row.get("role") != "manager":
+        updates["role"] = "manager"
+    if row.get("active") is False:
+        updates["active"] = True
+    if tenant_id and row.get("tenant_id") != tenant_id:
+        updates["tenant_id"] = tenant_id
+    if not updates:
+        return {"repaired": False, "reason": "already_correct"}
+    await db.users.update_one({"email": email}, {"$set": updates})
+    from config import logger as _lg
+    _lg.info(f"[phase53c] demo-manager role-drift repair applied: {updates}")
+    return {"repaired": True, "updates": updates}
+
+
 async def seed():
     if await db.users.count_documents({}) > 0:
         return

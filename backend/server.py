@@ -856,6 +856,10 @@ async def _background_seed():
     # idempotent and safe to run on every boot.
     await step("align_demo_tech_departments", align_demo_tech_departments())
     await step("seed_manager_user", seed_manager_user())
+    # Phase 53c · Feb-2026 — heal any drift where the demo manager
+    # got promoted to admin by an unrelated migration. Idempotent.
+    from seed import seed_demo_manager as _seed_demo_manager
+    await step("seed_demo_manager", _seed_demo_manager())
     await step("auto_heal_demo_passwords", auto_heal_demo_passwords_if_needed())
     try:
         from comms_seed.seed_comms import seed_comms as _seed_comms

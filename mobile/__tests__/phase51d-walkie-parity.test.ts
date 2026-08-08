@@ -161,3 +161,95 @@ describe("Phase 51.6 · mobile ↔ web reply gate + preview parity", () => {
   });
 });
 
+
+// ═══════════════════════════════════════════════════════════════════
+// Phase 53c · mobile ↔ web EBIT panel parity
+// ═══════════════════════════════════════════════════════════════════
+const WEB_EBIT = readWeb("src/components/admin/EbitPanel.jsx");
+const MOBILE_EBIT = readMobile("src/components/admin/EbitPanel.tsx");
+const WEB_PROFIT_PAGE = readWeb("src/pages/admin/ProfitReportPage.jsx");
+const MOBILE_PROFIT_PAGE = readMobile("app/profit-report.tsx");
+
+describe("Phase 53c · mobile ↔ web EBIT panel parity", () => {
+  it("both surfaces mount an <EbitPanel /> from src/components/admin", () => {
+    expect(WEB_PROFIT_PAGE).toMatch(/import\s+EbitPanel\s+from\s+["']@\/components\/admin\/EbitPanel["']/);
+    expect(MOBILE_PROFIT_PAGE).toMatch(/import\s+EbitPanel\s+from\s+["']@\/src\/components\/admin\/EbitPanel["']/);
+    expect(WEB_PROFIT_PAGE).toContain("<EbitPanel />");
+    expect(MOBILE_PROFIT_PAGE).toContain("<EbitPanel />");
+  });
+
+  it("both surfaces emit the shared line-key testid patterns for every EBIT row", () => {
+    // The four line rows use ``${lineKey}`` interpolation on both
+    // surfaces, so we assert the literal template forms rather than
+    // the four resolved strings — parity is what matters.
+    const PATTERNS = [
+      "ebit-row-${lineKey}",
+      "ebit-row-${lineKey}-computed",
+      "ebit-row-${lineKey}-effective",
+      "ebit-row-${lineKey}-adjustment-mode",
+      "ebit-row-${lineKey}-adjustment-input",
+      "ebit-row-${lineKey}-override-mode",
+      "ebit-row-${lineKey}-override-input",
+      "ebit-row-${lineKey}-override-clear",
+      "ebit-row-${lineKey}-flip-override",
+    ];
+    for (const p of PATTERNS) {
+      expect(WEB_EBIT).toContain(p);
+      expect(MOBILE_EBIT).toContain(p);
+    }
+  });
+
+  it("both surfaces expose the shared panel-level testids", () => {
+    // Panel-level testids are literal on both surfaces. Range pill
+    // testids use ``${r.key}`` interpolation on both, so the
+    // template form is asserted.
+    const SHARED = [
+      "ebit-panel",
+      "ebit-panel-forbidden",
+      "ebit-panel-live-tag",
+      "ebit-panel-loaded-version",
+      "ebit-range-picker",
+      "ebit-range-${r.key}",
+      "ebit-basis-toggle",
+      "ebit-basis-cash",
+      "ebit-basis-accrual",
+      "ebit-rows",
+      "ebit-total-row",
+      "ebit-total-value",
+      "ebit-save-row",
+      "ebit-save-note",
+      "ebit-save-btn",
+      "ebit-fork-btn",
+      "ebit-open-versions",
+      "ebit-export-csv",
+      "ebit-export-pdf",
+      "ebit-versions-modal",
+      "ebit-versions-empty",
+      "ebit-versions-close",
+    ];
+    for (const t of SHARED) {
+      expect(WEB_EBIT).toContain(t);
+      expect(MOBILE_EBIT).toContain(t);
+    }
+  });
+
+  it("both surfaces consume the same 3 EBIT endpoints", () => {
+    expect(WEB_EBIT).toContain("/ebit/compute");
+    expect(WEB_EBIT).toContain("/ebit/snapshots");
+    expect(MOBILE_EBIT).toContain("/ebit/compute");
+    expect(MOBILE_EBIT).toContain("/ebit/snapshots");
+    // Save always POSTs (never PATCH) — matches 6B immutable-versions.
+    expect(WEB_EBIT).toMatch(/api\.post\(\s*[`"']\/ebit\/snapshots/);
+    expect(MOBILE_EBIT).toMatch(/api\.post\(\s*[`"']\/ebit\/snapshots/);
+  });
+
+  it("both surfaces gate edit to super_admin + admin and view to +manager", () => {
+    // canEdit uses the exact same OR expression on both platforms.
+    expect(WEB_EBIT).toMatch(/role === ["']super_admin["'] \|\| role === ["']admin["']/);
+    expect(MOBILE_EBIT).toMatch(/role === ["']super_admin["'] \|\| role === ["']admin["']/);
+    expect(WEB_EBIT).toMatch(/canEdit \|\| role === ["']manager["']/);
+    expect(MOBILE_EBIT).toMatch(/canEdit \|\| role === ["']manager["']/);
+  });
+});
+
+
