@@ -140,3 +140,24 @@ describe("Phase 51.5 · mobile ↔ web pin gate parity", () => {
   });
 });
 
+
+describe("Phase 51.6 · mobile ↔ web reply gate + preview parity", () => {
+  it("both surfaces export canReplyInChannel", () => {
+    expect(WEB_HELPERS).toMatch(/export function canReplyInChannel/);
+    expect(MOBILE_HELPERS).toMatch(/export function canReplyInChannel/);
+  });
+
+  it("both surfaces export normalizeReplyPreview + replyPreviewLabel", () => {
+    expect(WEB_HELPERS).toMatch(/export function normalizeReplyPreview/);
+    expect(MOBILE_HELPERS).toMatch(/export function normalizeReplyPreview/);
+    expect(WEB_HELPERS).toMatch(/export function replyPreviewLabel/);
+    expect(MOBILE_HELPERS).toMatch(/export function replyPreviewLabel/);
+  });
+
+  it("both surfaces render the exact '(original message deleted)' placeholder string", () => {
+    const placeholder = "(original message deleted)";
+    expect(WEB_HELPERS).toContain(placeholder);
+    expect(MOBILE_HELPERS).toContain(placeholder);
+  });
+});
+

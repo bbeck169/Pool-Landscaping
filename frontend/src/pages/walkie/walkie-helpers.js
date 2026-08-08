@@ -26,6 +26,36 @@ export function canPinInChannel(user, _channel) {
   return PIN_ROLES.has((user.role || "").toLowerCase());
 }
 
+/** Phase 51.6 · Feb 2026 — Roles that can post replies in the given channel.
+ * Replies inherit the record permission: if you can record, you can reply.
+ * Broadcast gate still fires — replying in all-hands from a tech is 403. */
+export function canReplyInChannel(user, channel) {
+  return canRecordInChannel(user, channel);
+}
+
+/** Compact shape of the reply-preview surfaced by ``GET /messages``. */
+export function normalizeReplyPreview(preview) {
+  if (!preview) return null;
+  if (preview.deleted) {
+    return { deleted: true, sender_display_name: null, duration_ms: null, id: null };
+  }
+  return {
+    deleted: false,
+    id: preview.id || null,
+    sender_display_name: preview.sender_display_name || "Teammate",
+    duration_ms: Number(preview.duration_ms) || 0,
+  };
+}
+
+/** Human-friendly quote label rendered inside the reply-preview block. */
+export function replyPreviewLabel(preview) {
+  const p = normalizeReplyPreview(preview);
+  if (!p) return "";
+  if (p.deleted) return "(original message deleted)";
+  const secs = Math.max(1, Math.round((p.duration_ms || 0) / 1000));
+  return `${p.sender_display_name} · ${secs}s`;
+}
+
 /** MediaRecorder MIME preference order — first supported wins.
  *
  * Backend accepts webm/mp4/aac/mpeg/ogg. Chrome-family exposes webm/opus

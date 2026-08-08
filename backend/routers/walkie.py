@@ -107,6 +107,7 @@ async def post_message(
     duration_ms: int = Form(...),
     audio_file: UploadFile = File(...),
     waveform_peaks: Optional[str] = Form(None),  # JSON-encoded list
+    reply_to_message_id: Optional[str] = Form(None),  # Phase 51.6 · reply-with-clip
     user: dict = Depends(get_current_user),
 ):
     _require_staff(user)
@@ -142,6 +143,24 @@ async def post_message(
         role = (user.get("role") or "").lower()
         if role not in BROADCAST_ROLES:
             raise HTTPException(403, detail="Only admins can broadcast to all-hands")
+
+    # Phase 51.6 · Feb 2026 — reply-with-clip validation. The reply
+    # target must (a) exist, (b) live in the SAME channel as the
+    # reply, and (c) still be present in Mongo (not TTL-evicted).
+    # A TTL-evicted parent is a 404 — the reply itself is fine to
+    # send as an un-threaded clip, but if the caller explicitly
+    # asked to quote a specific message that no longer exists we
+    # surface the truth instead of silently dropping the pointer.
+    if reply_to_message_id:
+        parent = await db.walkie_messages.find_one(
+            {"id": reply_to_message_id}, {"_id": 0, "channel_id": 1, "tenant_id": 1},
+        )
+        if not parent:
+            raise HTTPException(404, detail="reply_target_not_found")
+        if parent.get("tenant_id") != (user.get("tenant_id") or ""):
+            raise HTTPException(404, detail="reply_target_not_found")
+        if parent.get("channel_id") != channel_id:
+            raise HTTPException(400, detail="reply_target_wrong_channel")
 
     # Persist audio via the existing file storage service (same one
     # /api/files/upload uses under the hood).
@@ -193,6 +212,7 @@ async def post_message(
         "waveform_peaks": peaks,
         "created_at": created_at,
         "expires_at": expires_at,
+        "reply_to_message_id": reply_to_message_id or None,
     }
     await db.walkie_messages.insert_one(dict(msg))
 
@@ -296,6 +316,33 @@ async def list_messages(
     ).to_list(length=len(msg_ids))
     receipt_map = {r["message_id"]: r for r in receipts}
 
+    # Phase 51.6 · reply-with-clip — fetch parent messages referenced
+    # by any reply in the current window in one round-trip. Only IDs
+    # that resolve go into the preview map; missing IDs surface as
+    # ``deleted: True`` on the reply row.
+    parent_ids = [r["reply_to_message_id"] for r in rows if r.get("reply_to_message_id")]
+    if pinned_row and pinned_row.get("reply_to_message_id"):
+        parent_ids.append(pinned_row["reply_to_message_id"])
+    reply_parent_map: dict[str, dict] = {}
+    if parent_ids:
+        parent_rows = await db.walkie_messages.find(
+            {"id": {"$in": parent_ids}, "tenant_id": tenant_id},
+            {"_id": 0, "id": 1, "sender_user_id": 1, "duration_ms": 1},
+        ).to_list(length=len(parent_ids))
+        # Resolve sender display names (best-effort — falls back to email).
+        sender_ids = list({p["sender_user_id"] for p in parent_rows if p.get("sender_user_id")})
+        sender_map: dict[str, str] = {}
+        if sender_ids:
+            urows = await db.users.find(
+                {"id": {"$in": sender_ids}},
+                {"_id": 0, "id": 1, "name": 1, "email": 1},
+            ).to_list(length=len(sender_ids))
+            for u in urows:
+                sender_map[u["id"]] = u.get("name") or u.get("email") or "Teammate"
+        for p in parent_rows:
+            p["sender_display_name"] = sender_map.get(p.get("sender_user_id", ""), "Teammate")
+            reply_parent_map[p["id"]] = p
+
     def _serialize(r: dict) -> dict:
         item = dict(r)
         for k in ("created_at", "expires_at"):
@@ -306,6 +353,30 @@ async def list_messages(
         rec = receipt_map.get(r["id"])
         item["listened_at"] = (rec.get("listened_at") if rec else None)
         item["is_pinned"] = (pinned_id is not None and r["id"] == pinned_id)
+        # Phase 51.6 · reply-with-clip — attach a compact preview of
+        # the parent message. Populated from ``reply_parent_map``
+        # (built in the calling scope). If the parent has TTL-expired
+        # since the reply was sent, ``deleted: True`` is returned and
+        # the other fields are None — the reply itself still renders.
+        rid = item.get("reply_to_message_id")
+        if rid:
+            parent = reply_parent_map.get(rid)
+            if parent:
+                item["reply_preview"] = {
+                    "id": parent.get("id"),
+                    "sender_user_id": parent.get("sender_user_id"),
+                    "sender_display_name": parent.get("sender_display_name"),
+                    "duration_ms": parent.get("duration_ms"),
+                    "deleted": False,
+                }
+            else:
+                item["reply_preview"] = {
+                    "id": None,
+                    "sender_user_id": None,
+                    "sender_display_name": None,
+                    "duration_ms": None,
+                    "deleted": True,
+                }
         return item
 
     out = []

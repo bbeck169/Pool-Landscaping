@@ -133,6 +133,27 @@ describe("Phase 51.5 · web ↔ mobile pin gate parity", () => {
     // borderLeftWidth style. Locking either representation ensures
     // the pinned row is always visually distinct.
     expect(WEB_PAGE).toMatch(/border-l-\d|borderLeftWidth/);
+
+describe("Phase 51.6 · web ↔ mobile reply gate + preview parity", () => {
+  it("both surfaces export canReplyInChannel", () => {
+    expect(WEB_HELPERS).toMatch(/export function canReplyInChannel/);
+    expect(MOBILE_HELPERS).toMatch(/export function canReplyInChannel/);
+  });
+
+  it("both surfaces export normalizeReplyPreview + replyPreviewLabel", () => {
+    expect(WEB_HELPERS).toMatch(/export function normalizeReplyPreview/);
+    expect(MOBILE_HELPERS).toMatch(/export function normalizeReplyPreview/);
+    expect(WEB_HELPERS).toMatch(/export function replyPreviewLabel/);
+    expect(MOBILE_HELPERS).toMatch(/export function replyPreviewLabel/);
+  });
+
+  it("both surfaces render the exact '(original message deleted)' placeholder string", () => {
+    const placeholder = "(original message deleted)";
+    expect(WEB_HELPERS).toContain(placeholder);
+    expect(MOBILE_HELPERS).toContain(placeholder);
+  });
+});
+
     expect(MOBILE_CHANNEL).toMatch(/borderLeftWidth/);
   });
 });

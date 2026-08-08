@@ -28,6 +28,34 @@ export function canPinInChannel(user: any, _channel?: any): boolean {
   return PIN_ROLES.has((user.role || "").toLowerCase());
 }
 
+/** Phase 51.6 · Feb 2026 — Reply permission inherits record permission.
+ * Broadcast gate still fires: replying in all-hands = posting in all-hands. */
+export function canReplyInChannel(user: any, channel: any) {
+  return canRecordInChannel(user, channel);
+}
+
+/** Compact shape of the reply_preview surfaced by ``GET /messages``. */
+export function normalizeReplyPreview(preview: any) {
+  if (!preview) return null;
+  if (preview.deleted) {
+    return { deleted: true, sender_display_name: null, duration_ms: null, id: null };
+  }
+  return {
+    deleted: false,
+    id: preview.id || null,
+    sender_display_name: preview.sender_display_name || "Teammate",
+    duration_ms: Number(preview.duration_ms) || 0,
+  };
+}
+
+export function replyPreviewLabel(preview: any): string {
+  const p = normalizeReplyPreview(preview);
+  if (!p) return "";
+  if (p.deleted) return "(original message deleted)";
+  const secs = Math.max(1, Math.round((p.duration_ms || 0) / 1000));
+  return `${p.sender_display_name} · ${secs}s`;
+}
+
 /**
  * Preferred audio MIME order for ``expo-audio`` recorder presets.
  *
