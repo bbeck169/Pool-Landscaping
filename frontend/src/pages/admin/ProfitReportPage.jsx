@@ -30,6 +30,7 @@ import { api } from "@/api";
 import { colors, money } from "@/theme";
 import { Skeleton } from "@/components/ui-kit";
 import { useAuth } from "@/auth";
+import EbitPanel from "@/components/admin/EbitPanel";
 
 const RANGE_OPTIONS = [
   { key: "this_month", label: "This Month" },
@@ -462,6 +463,9 @@ export default function ProfitReportPage() {
           </div>
         </>
       ) : null}
+
+      {/* ── Phase 53b · Editable EBIT panel (super_admin/admin/manager) ── */}
+      <EbitPanel />
 
       {/* ── PB1-QoL · Uncategorized "Fix" modal ── */}
       {fixModalOpen ? (

@@ -18,8 +18,22 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
-const getMock = vi.fn();
-vi.mock("@/api", () => ({ api: { get: (...a) => getMock(...a) } }));
+// Phase 53b · Feb-2026 — the page now also mounts <EbitPanel /> which
+// calls /ebit/* on mount. Route those calls to a benign response so
+// getMock only records /reports/profit calls.
+const _profitMock = vi.fn();
+const getMock = _profitMock;  // getMock now refers to profit-only calls
+const _routedGet = (url, ...rest) => {
+  if (typeof url === "string" && url.startsWith("/ebit/")) {
+    return Promise.resolve({
+      snapshots: [], count: 0,
+      revenue: 0, cogs: 0, opex: 0, depreciation: 0, ebit: 0,
+      breakdown: {}, line_adjustments: {}, line_overrides: {},
+    });
+  }
+  return _profitMock(url, ...rest);
+};
+vi.mock("@/api", () => ({ api: { get: (u, ...r) => _routedGet(u, ...r), post: () => Promise.resolve({}) } }));
 
 const authState = { user: { role: "super_admin", email: "s@t" } };
 vi.mock("@/auth", () => ({ useAuth: () => authState }));

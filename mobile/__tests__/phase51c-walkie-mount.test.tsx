@@ -11,6 +11,13 @@
 import React from "react";
 import { render, waitFor } from "@testing-library/react-native";
 
+// Phase 53a triage · Feb-2026 — raise per-test timeout to 15s. Batch
+// jest runs put React Native suites under scheduler contention that
+// pushes the first-test wall-clock above jest's default 5s even when
+// CPU time is <1s (isolated runs pass in ~1s). This is a scheduling
+// accommodation, not a code change — the tests themselves are green.
+jest.setTimeout(15000);
+
 // ── Mocks ────────────────────────────────────────────────────────────
 const mockApiGet = jest.fn();
 const mockApiPost = jest.fn();
