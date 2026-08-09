@@ -104,11 +104,23 @@ export default defineConfig({
       // regressions but tolerates the odd flaky test. Incremental
       // improvements should raise the floor in a follow-up phase
       // (Phase 41.4b — "raise the floor" — not scheduled).
+      //
+      // Phase 41.4b · Feb-2026 — RATCHET RAISE.
+      // After Phase 47c hooks, Phase 52.1 Walkie WebRTC, Phase 53
+      // EBIT tile + drill-down, wholesale-pricebook scraping tests,
+      // and the Phase 41.5c T2 drawer wire-up batch, the clean-run
+      // measurement is now:
+      //   statements 23.81% (33258/139629)
+      //   branches   64.69% (4191/6478)
+      //   functions  43.21% (831/1923)
+      //   lines      23.81% (33258/139629)
+      // New floors set to floor(current − 1) per metric — 1-pp
+      // safety margin so a single test flip doesn't red the build.
       thresholds: {
-        statements: 18,
-        branches: 62,
-        functions: 39,
-        lines: 18,
+        statements: 22,
+        branches: 63,
+        functions: 42,
+        lines: 22,
       },
     },
   },

@@ -135,8 +135,14 @@ describe("Phase 53e — EbitTile", () => {
     });
     renderTile();
     const spark = await screen.findByTestId("dashboard-ebit-tile-sparkline");
-    // 6 <rect> bars + 1 <line> baseline
-    expect(spark.querySelectorAll("rect").length).toBe(6);
+    // Phase 53f drill-down: each series point renders TWO <rect>s —
+    // a full-height transparent hit-target (so zero-height bars stay
+    // clickable) + the visible ebit bar. So 6 points × 2 = 12 rects.
+    // Assert one visible-bar rect per point via the per-bar testid
+    // instead, and keep the single <line> zero baseline.
+    expect(spark.querySelectorAll("rect").length).toBe(12);
+    expect(spark.querySelectorAll("[data-testid^='dashboard-ebit-tile-sparkline-bar-']").length)
+      .toBe(6);
     expect(spark.querySelectorAll("line").length).toBe(1);
   });
 

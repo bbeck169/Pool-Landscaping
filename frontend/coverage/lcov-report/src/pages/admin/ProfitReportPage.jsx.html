@@ -23,16 +23,16 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">92.33% </span>
+                <span class="strong">92.55% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>530/574</span>
+                <span class='fraction'>547/591</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">73.19% </span>
+                <span class="strong">67.61% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>71/97</span>
+                <span class='fraction'>71/105</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">92.33% </span>
+                <span class="strong">92.55% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>530/574</span>
+                <span class='fraction'>547/591</span>
             </div>
         
             
@@ -637,7 +637,25 @@
 <a name='L572'></a><a href='#L572'>572</a>
 <a name='L573'></a><a href='#L573'>573</a>
 <a name='L574'></a><a href='#L574'>574</a>
-<a name='L575'></a><a href='#L575'>575</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
+<a name='L575'></a><a href='#L575'>575</a>
+<a name='L576'></a><a href='#L576'>576</a>
+<a name='L577'></a><a href='#L577'>577</a>
+<a name='L578'></a><a href='#L578'>578</a>
+<a name='L579'></a><a href='#L579'>579</a>
+<a name='L580'></a><a href='#L580'>580</a>
+<a name='L581'></a><a href='#L581'>581</a>
+<a name='L582'></a><a href='#L582'>582</a>
+<a name='L583'></a><a href='#L583'>583</a>
+<a name='L584'></a><a href='#L584'>584</a>
+<a name='L585'></a><a href='#L585'>585</a>
+<a name='L586'></a><a href='#L586'>586</a>
+<a name='L587'></a><a href='#L587'>587</a>
+<a name='L588'></a><a href='#L588'>588</a>
+<a name='L589'></a><a href='#L589'>589</a>
+<a name='L590'></a><a href='#L590'>590</a>
+<a name='L591'></a><a href='#L591'>591</a>
+<a name='L592'></a><a href='#L592'>592</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
@@ -714,6 +732,19 @@
 <span class="cline-any cline-yes">40x</span>
 <span class="cline-any cline-yes">40x</span>
 <span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
 <span class="cline-any cline-yes">40x</span>
 <span class="cline-any cline-yes">40x</span>
 <span class="cline-any cline-yes">40x</span>
@@ -1104,6 +1135,9 @@
 <span class="cline-any cline-yes">40x</span>
 <span class="cline-any cline-yes">40x</span>
 <span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
+<span class="cline-any cline-yes">40x</span>
 <span class="cline-any cline-yes">5x</span>
 <span class="cline-any cline-yes">5x</span>
 <span class="cline-any cline-yes">5x</span>
@@ -1243,6 +1277,7 @@ import { api } from "@/api";
 import { colors, money } from "@/theme";
 import { Skeleton } from "@/components/ui-kit";
 import { useAuth } from "@/auth";
+import EbitPanel from "@/components/admin/EbitPanel";
 &nbsp;
 const RANGE_OPTIONS = [
   { key: "this_month", label: "This Month" },
@@ -1289,9 +1324,22 @@ export default function ProfitReportPage() {
   const isAdmin = user?.role === "admin" || user?.role === "super_admin" ||
                     user?.role === "manager";
 &nbsp;
-  const [rangeKey, setRangeKey] = useState("this_month");
-  const [customFrom, setCustomFrom] = useState("");
-  const [customTo, setCustomTo] = useState("");
+  // Phase 53f · Feb-2026 — drill-down entry point. When the URL
+  // carries ``?from=YYYY-MM-DD&amp;to=YYYY-MM-DD`` (Phase 53f EBIT-tile
+  // click), read once on mount and pre-select the custom range so
+  // the report renders scoped to the tapped month.
+  const _urlFrom = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("from"<span class="branch-0 cbranch-no" title="branch not covered" >) : null;</span>
+  const _urlTo = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("to"<span class="branch-0 cbranch-no" title="branch not covered" >) : null;</span>
+  const _dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const _initialFrom = <span class="branch-0 cbranch-no" title="branch not covered" >_urlFrom &amp;&amp; _dateRe.test(_urlFrom<span class="branch-0 cbranch-no" title="branch not covered" >) ? _</span>urlFrom : "</span>";
+  const _initialTo = <span class="branch-0 cbranch-no" title="branch not covered" >_urlTo &amp;&amp; _dateRe.test(_urlTo<span class="branch-0 cbranch-no" title="branch not covered" >) ? _</span>urlTo : "</span>";
+  const _hasDeepLink = Boolean(<span class="branch-0 cbranch-no" title="branch not covered" >_initialFrom &amp;&amp; _initialTo)</span>;
+&nbsp;
+  const [rangeKey, setRangeKey] = useState(<span class="branch-0 cbranch-no" title="branch not covered" >_hasDeepLink ? "custom" : "</span>this_month");
+  const [customFrom, setCustomFrom] = useState(_initialFrom);
+  const [customTo, setCustomTo] = useState(_initialTo);
   const [dimension, setDimension] = useState("service_category");
   const [sort, setSort] = useState({ col: "revenue", dir: "desc" });
   const [busy, setBusy] = useState(false);
@@ -1676,6 +1724,9 @@ export default function ProfitReportPage() {
         &lt;/&gt;
       ) : null}
 &nbsp;
+      {/* ── Phase 53b · Editable EBIT panel (super_admin/admin/manager) ── */}
+      &lt;EbitPanel /&gt;
+&nbsp;
       {/* ── PB1-QoL · Uncategorized "Fix" modal ── */}
       {fixModalOpen ? (
         &lt;div
@@ -1792,7 +1843,7 @@ export default function ProfitReportPage() {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-08-05T01:03:29.268Z
+                at 2026-08-09T18:25:36.668Z
             </div>
         <script src="../../../prettify.js"></script>
         <script>
