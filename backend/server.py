@@ -277,6 +277,12 @@ api_router.include_router(_f0_files.router)
 # Phase 51a · Feb 2026 — Walkie-Talkie async voice-clip backend.
 from routers import walkie as _p51a_walkie  # noqa: E402
 api_router.include_router(_p51a_walkie.router)
+# Phase 52.1a · Feb-2026 — walkie live-streaming signaling WebSocket
+# + live_only-channel creation. Signaling ONLY (audio flows P2P via
+# TURN in Phase 52.1d); backend just brokers SDP offer/answer + ICE
+# candidates through an in-process room dict.
+from routers import walkie_signaling as _p52_1a_signaling  # noqa: E402
+api_router.include_router(_p52_1a_signaling.router)
 # Task SS/RR Phase 2 · Feb 2026 — the admin credit issuance /
 # reversal endpoints originally shipped in ``customer_credits_admin``
 # collided with the already-shipped Phase 10 ``/customers/{cid}/
@@ -1270,6 +1276,14 @@ async def _background_seed():
                 register_walkie_cleanup_cron(scheduler)
             except Exception as _walkie_exc:  # pragma: no cover
                 logger.warning("[walkie.cleanup.cron] register failed: %s", _walkie_exc)
+            # Phase 52.1a · Feb-2026 — 5-min live-session stale-cleanup tick.
+            try:
+                from services.walkie.live_cleanup_cron import register_live_cleanup_cron
+                register_live_cleanup_cron(scheduler)
+            except Exception as _walkie_live_exc:  # pragma: no cover
+                logger.warning(
+                    "[walkie.live.cleanup.cron] register failed: %s", _walkie_live_exc,
+                )
         except Exception as _ae:
             logger.warning(f"automation_engine registration crashed: {_ae}")
 
@@ -1406,6 +1420,12 @@ async def startup():
             bootstrap_standard_channels as _walkie_bootstrap,
         )
         await _walkie_ensure_indexes(db)
+        # Phase 52.1a · Feb-2026 — live-session indexes.
+        try:
+            from routers.walkie_signaling import ensure_live_session_indexes as _live_indexes
+            await _live_indexes()
+        except Exception as _live_idx_exc:  # pragma: no cover
+            logger.warning(f"[Phase52.1a] live-session index bootstrap: {_live_idx_exc}")
         # Bootstrap the standard channels for every existing tenant.
         tenants = await db.tenants.find({}, {"_id": 0, "id": 1}).to_list(length=None)
         for t in tenants:

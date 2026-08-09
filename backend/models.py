@@ -880,3 +880,79 @@ class TrainingCertificate(BaseModel):
     quiz_score: float                # 0.0 – 1.0 (persist as fraction; render as %)
     awarded_at: str
     updated_at: Optional[str] = None
+
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 52.1a · Feb-2026 — Walkie live-streaming models.
+#
+# The existing Phase 51a walkie_channels + walkie_messages collections
+# are stored as raw dicts (no dedicated Pydantic classes). Phase 52.1a
+# introduces the ``walkie_live_sessions`` collection for tracking
+# active WebRTC signaling rooms and adds two flags to ``walkie_channels``.
+# The models below are the canonical serialised shape callers should
+# validate against; collection writes still go through the router
+# helpers so we don't disrupt Phase 51a's write path.
+#
+# `supports_live` defaults to True — existing channels lack the field
+# on Mongo but the from_mongo readers below coerce a missing field to
+# True so every legacy row is "live-capable" by default.
+# `live_only` defaults to False.
+# ═══════════════════════════════════════════════════════════════════
+class WalkieChannel(BaseModel):
+    id: str
+    tenant_id: str
+    kind: str                          # "all_hands" | "department" | "direct" | "live_room"
+    department: Optional[str] = None
+    member_user_ids: List[str] = Field(default_factory=list)
+    name: Optional[str] = None
+    pinned_message_id: Optional[str] = None
+    supports_live: bool = True         # NEW — every channel is live-capable unless flipped off
+    live_only: bool = False            # NEW — dedicated live-only channel (no async posts)
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    @classmethod
+    def from_mongo(cls, doc: Dict[str, Any]) -> "WalkieChannel":
+        """Coerce a raw Mongo row into a WalkieChannel — supplies
+        defaults for the two new fields when reading legacy rows that
+        predate Phase 52.1a."""
+        payload = dict(doc)
+        payload.pop("_id", None)
+        payload.setdefault("supports_live", True)
+        payload.setdefault("live_only", False)
+        payload.setdefault("member_user_ids", [])
+        # created_at / updated_at may be datetime — normalise to ISO
+        for k in ("created_at", "updated_at"):
+            v = payload.get(k)
+            if v is not None and not isinstance(v, str):
+                try:
+                    payload[k] = v.isoformat()
+                except Exception:
+                    payload[k] = None
+        return cls(**payload)
+
+
+class WalkieLiveSession(BaseModel):
+    """A single live WebRTC signaling session for one channel.
+
+    Sessions are open when created (first ``join``) and closed when
+    the last peer leaves. The cleanup cron closes rows that outlive
+    their in-process room (e.g. after a server restart).
+    """
+
+    id: str
+    channel_id: str
+    tenant_id: str
+    started_at: str
+    ended_at: Optional[str] = None
+    started_by_user_id: str
+    participant_user_ids: List[str] = Field(default_factory=list)
+    recording_message_id: Optional[str] = None  # filled by Phase 52.1b/c auto-record
+
+    @classmethod
+    def from_mongo(cls, doc: Dict[str, Any]) -> "WalkieLiveSession":
+        payload = dict(doc)
+        payload.pop("_id", None)
+        payload.setdefault("participant_user_ids", [])
+        return cls(**payload)

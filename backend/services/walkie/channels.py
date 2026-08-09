@@ -123,6 +123,8 @@ def _new_channel(
     kind: str,
     department: str | None = None,
     member_user_ids: list[str] | None = None,
+    supports_live: bool = True,
+    live_only: bool = False,
 ) -> dict:
     import uuid
     now = _now_iso()
@@ -132,6 +134,11 @@ def _new_channel(
         "kind": kind,
         "department": department,
         "member_user_ids": list(member_user_ids or []),
+        # Phase 52.1a · Feb-2026 — every new channel is live-capable
+        # by default. ``live_only`` marks dedicated live-only rooms
+        # (no async posts allowed on the client side).
+        "supports_live": bool(supports_live),
+        "live_only": bool(live_only),
         "created_at": now,
         "updated_at": now,
     }
