@@ -28,8 +28,6 @@ export default defineConfig({
     // components).
     exclude: [
       "**/node_modules/**",
-      "src/test/phase34-admin-page-mount-safety.test.jsx",
-      "src/test/phase34-task-pp-portal-hint.test.jsx",
     ],
     // Phase 41.1 (Feb-2026) — kill the last flakes.
     //

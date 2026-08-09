@@ -27,13 +27,36 @@ vi.mock("react-router-dom", () => ({
 
 vi.mock("lucide-react", () => {
   const React = require("react");
-  return new Proxy({}, {
-    get: () => (props) => React.createElement("span", props),
+  const _passThrough = new Set([
+    "then", "catch", "finally", "$$typeof", "__esModule",
+    Symbol.iterator, Symbol.toPrimitive, Symbol.toStringTag,
+  ]);
+  const _Component = (props) => React.createElement("span", props);
+  return new Proxy({ __esModule: true, default: _Component }, {
+    has: (_target, prop) => !_passThrough.has(prop) && typeof prop !== "symbol",
+    get: (target, prop) => {
+      if (prop === "__esModule") return true;
+      if (typeof prop === "symbol") return undefined;
+      if (_passThrough.has(prop)) return undefined;
+      return _Component;
+    },
+    ownKeys: () => ["__esModule", "default"],
+    getOwnPropertyDescriptor: (target, prop) => {
+      if (prop === "__esModule") return { value: true, enumerable: false, configurable: true };
+      if (prop === "default") return { value: _Component, enumerable: true, configurable: true };
+      return { value: _Component, enumerable: true, configurable: true };
+    },
   });
 });
 
 vi.mock("@/theme", () => ({
-  colors: new Proxy({}, { get: () => "#000" }),
+  colors: new Proxy({}, {
+    get: (_target, prop) => {
+      if (typeof prop === "symbol") return undefined;
+      if (prop === "then" || prop === "catch" || prop === "finally") return undefined;
+      return "#000";
+    },
+  }),
 }));
 
 // Mutable holder — swap the fetch response between tests.

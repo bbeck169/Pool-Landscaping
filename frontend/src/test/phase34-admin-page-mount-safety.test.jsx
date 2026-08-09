@@ -62,18 +62,48 @@ vi.mock("@/api", () => ({
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(),
   { success: vi.fn(), error: vi.fn() }) }));
 
-// Mock lucide-react icons to plain <span> so we don't have to bring
-// in the SVG registry.
+// Mock lucide-react icons. Vitest verifies named exports exist on the
+// mock namespace before serving them, so a naive ``get: () =>
+// Component`` Proxy doesn't work — vitest inspects the namespace
+// (calling ``ownKeys`` / ``has`` on the mock) and errors out with
+// "No 'Waves' export is defined". Fix: use a Proxy that answers
+// ``has`` truthfully for string keys + returns ``undefined`` for
+// well-known thenable-flavored strings + symbols so the module
+// graph resolves cleanly.
 vi.mock("lucide-react", () => {
   const React = require("react");
-  return new Proxy({}, {
-    get: () => (props) => React.createElement("span", props),
+  const _passThrough = new Set([
+    "then", "catch", "finally", "$$typeof", "__esModule",
+    Symbol.iterator, Symbol.toPrimitive, Symbol.toStringTag,
+  ]);
+  const _Component = (props) => React.createElement("span", props);
+  return new Proxy({ __esModule: true, default: _Component }, {
+    has: (_target, prop) => !_passThrough.has(prop) && typeof prop !== "symbol",
+    get: (target, prop) => {
+      if (prop === "__esModule") return true;
+      if (typeof prop === "symbol") return undefined;
+      if (_passThrough.has(prop)) return undefined;
+      return _Component;
+    },
+    ownKeys: () => ["__esModule", "default"],
+    getOwnPropertyDescriptor: (target, prop) => {
+      if (prop === "__esModule") return { value: true, enumerable: false, configurable: true };
+      if (prop === "default") return { value: _Component, enumerable: true, configurable: true };
+      return { value: _Component, enumerable: true, configurable: true };
+    },
   });
 });
 
 // Mock the theme + colors module. Pages import `colors.*` scalars.
+// Same Proxy-guard rationale as the lucide mock above.
 vi.mock("@/theme", () => ({
-  colors: new Proxy({}, { get: () => "#000" }),
+  colors: new Proxy({}, {
+    get: (_target, prop) => {
+      if (typeof prop === "symbol") return undefined;
+      if (prop === "then" || prop === "catch" || prop === "finally") return undefined;
+      return "#000";
+    },
+  }),
 }));
 
 function mountsCleanly(Page, name) {
