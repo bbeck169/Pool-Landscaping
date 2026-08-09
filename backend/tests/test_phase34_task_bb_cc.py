@@ -20,7 +20,13 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 import pytest
-import requests
+
+# Phase 34-migrate-v2 · Phase 34-v2-b (canary) · Feb 2026 — swapped
+# ``requests`` for the in-process ASGI shim. HTTP calls now run on
+# the same event loop Motor is pinned to via ``_phase34_asyncio``,
+# eliminating the batched-run ``ReadTimeout`` cluster and any
+# potential "Task got Future attached to a different loop" bleed.
+from tests._phase34_http_shim import http
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL")
@@ -34,7 +40,7 @@ from tests._phase34_asyncio import batch_safe_run as _run  # Phase 41.1d
 
 
 def _login(email: str, password: str = "password123") -> str:
-    r = requests.post(
+    r = http.post(
         f"{API}/auth/login",
         json={"email": email, "password": password}, timeout=30,
     )
@@ -88,7 +94,7 @@ def aq_customer_id(db, aq_tenant_id):
     "/leads/bulk-delete",
 ])
 def test_bulk_delete_role_gate(customer_headers, path):
-    r = requests.post(
+    r = http.post(
         f"{API}{path}",
         headers={**customer_headers, "Content-Type": "application/json"},
         json={"ids": ["anything"]}, timeout=30,
@@ -114,7 +120,7 @@ def test_invoices_bulk_delete_happy_path(db, super_headers, aq_tenant_id, aq_cus
         return ids
 
     ids = _run(_plant(3))
-    r = requests.post(
+    r = http.post(
         f"{API}/invoices/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": ids}, timeout=30,
@@ -143,7 +149,7 @@ def test_invoices_bulk_delete_mixed_tenant_rejected(db, super_headers, aq_tenant
         "amount_paid": 0.0, "payment_status": "unpaid",
         "created_at": "2026-02-01T00:00:00Z",
     }))
-    r = requests.post(
+    r = http.post(
         f"{API}/invoices/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [other_iid]}, timeout=30,
@@ -167,7 +173,7 @@ def test_estimates_bulk_delete_happy_path(db, super_headers, aq_tenant_id, aq_cu
         })
         return eid
     eid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/estimates/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [eid]}, timeout=30,
@@ -203,7 +209,7 @@ def test_payments_bulk_delete_stripe_locked(db, super_headers, aq_tenant_id, aq_
         })
         return cash_id, stripe_id
     cash_id, stripe_id = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/payments/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [cash_id, stripe_id]}, timeout=30,
@@ -236,7 +242,7 @@ def test_leads_bulk_delete_closed_won_protected(db, super_headers, aq_tenant_id)
         ])
         return new_id_, won_id, lost_id
     new_id_, won_id, lost_id = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/leads/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [new_id_, won_id, lost_id]}, timeout=30,
@@ -264,7 +270,7 @@ def test_bulk_delete_cap_rejects_over_400(super_headers, path):
     the smallest count that must succeed; 401 is the smallest count that
     must fail. We don't need real ids — the cap check runs first."""
     ids = [f"fake-{i}" for i in range(401)]
-    r = requests.post(
+    r = http.post(
         f"{API}{path}",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": ids}, timeout=30,
@@ -284,7 +290,7 @@ def test_bulk_delete_cap_accepts_400(super_headers, path):
     """Post exactly 400 fake ids → 200 with 0 deletions + 400 failures.
     The cap check must pass at 400."""
     ids = [f"boundary-{i}-{uuid.uuid4().hex[:8]}" for i in range(400)]
-    r = requests.post(
+    r = http.post(
         f"{API}{path}",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": ids}, timeout=30,
@@ -324,7 +330,7 @@ def test_lead_patch_normalizes_status(db, super_headers, aq_tenant_id):
         })
         return lid
     lid = _run(_plant())
-    r = requests.patch(
+    r = http.patch(
         f"{API}/leads/{lid}",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"status": "Closed Won"}, timeout=30,
