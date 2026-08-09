@@ -19,6 +19,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
@@ -32,6 +33,7 @@ import { colors, spacing, fontSize, radius } from "@/src/theme";
 import { EmptyState, Loading } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { useAuth } from "@/src/auth";
+import LivePanel, { liveModeKey } from "@/src/pages/walkie/LivePanel";
 import {
   canPinInChannel,
   canRecordInChannel,
@@ -330,10 +332,33 @@ export default function WalkieChannel() {
   const [loading, setLoading] = useState(true);
   const [muted, setMutedState] = useState(false);
   const [replyTarget, setReplyTarget] = useState<string | null>(null);
+  // Phase 52.1c · Feb-2026 — Live-mode toggle. Persisted per channel
+  // in AsyncStorage under the same key convention as web 52.1b.
+  const [liveMode, setLiveMode] = useState(false);
   const mutedRef = useRef(false);
   const seenIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => { (async () => { const v = await isMuted(); setMutedState(v); mutedRef.current = v; })(); }, []);
+
+  // Load persisted live-mode flag on channel change.
+  useEffect(() => {
+    if (!channelId) { setLiveMode(false); return; }
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(liveModeKey(channelId as string));
+        setLiveMode(raw === "1");
+      } catch { setLiveMode(false); }
+    })();
+  }, [channelId]);
+
+  const toggleLiveMode = useCallback(async () => {
+    if (!channelId) return;
+    setLiveMode((cur) => {
+      const next = !cur;
+      AsyncStorage.setItem(liveModeKey(channelId as string), next ? "1" : "0").catch(() => { /* ignore */ });
+      return next;
+    });
+  }, [channelId]);
 
   const loadChannel = useCallback(async () => {
     try {
@@ -479,11 +504,35 @@ export default function WalkieChannel() {
           </TouchableOpacity>
         </View>
       )}
-      <RecordFooter
-        disabled={!recordGate.allowed}
-        disabledReason={recordGate.reason}
-        onSend={send}
-      />
+      {channel?.supports_live !== false && recordGate.allowed ? (
+        <View style={styles.liveToggleRow} testID="walkie-live-toggle-row">
+          <TouchableOpacity
+            testID="walkie-live-mode-toggle"
+            accessibilityRole="switch"
+            accessibilityState={{ checked: liveMode }}
+            onPress={toggleLiveMode}
+            style={styles.liveToggle}
+          >
+            <View style={[styles.liveToggleBox, liveMode && styles.liveToggleBoxOn]}>
+              {liveMode && <Ionicons name="checkmark" size={12} color="#fff" />}
+            </View>
+            <Text style={styles.liveToggleLabel}>Live channel</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+      {liveMode && channel?.supports_live !== false && recordGate.allowed ? (
+        <LivePanel
+          channel={channel}
+          user={user}
+          onExit={toggleLiveMode}
+        />
+      ) : (
+        <RecordFooter
+          disabled={!recordGate.allowed}
+          disabledReason={recordGate.reason}
+          onSend={send}
+        />
+      )}
     </View>
   );
 }
@@ -615,6 +664,28 @@ const styles = StyleSheet.create({
   cancelLabel: { color: colors.onSurfaceSecondary, fontSize: fontSize.sm, textDecorationLine: "underline" },
   footerHint: { color: colors.onSurfaceSecondary, fontSize: fontSize.sm, flex: 1 },
   disabledReason: { color: colors.onSurfaceSecondary, fontSize: fontSize.sm, flex: 1 },
+  liveToggleRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom: 4,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderMuted,
+    backgroundColor: colors.surfaceElevated,
+  },
+  liveToggle: { flexDirection: "row", alignItems: "center", gap: 6 },
+  liveToggleBox: {
+    height: 16, width: 16, borderRadius: 3,
+    borderWidth: 1, borderColor: colors.borderMuted,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: colors.surface,
+  },
+  liveToggleBoxOn: {
+    backgroundColor: colors.success || "#16A34A",
+    borderColor: colors.success || "#16A34A",
+  },
+  liveToggleLabel: { fontSize: fontSize.sm, color: colors.onSurfaceSecondary },
 });
 
 const wave = StyleSheet.create({

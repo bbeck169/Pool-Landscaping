@@ -23,12 +23,13 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Take before and after photos of service jobs",
         "NSPhotoLibraryUsageDescription": "Attach job photos from your library",
-        "NSMicrophoneUsageDescription": "Record video with audio for service documentation",
+        "NSMicrophoneUsageDescription": "Record and stream audio for walkie-talkie live sessions",
         "NSLocationWhenInUseUsageDescription": "Your employer uses this to record location during your shift. Location is only collected while you are clocked in.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Your employer uses this to record location during your shift, including when the app is in the background. Location is only collected while you are clocked in.",
         "UIBackgroundModes": [
           "fetch",
-          "location"
+          "location",
+          "audio"
         ]
       }
     },
@@ -46,6 +47,8 @@
         "CAMERA",
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
+        "FOREGROUND_SERVICE_MICROPHONE",
+        "MODIFY_AUDIO_SETTINGS",
         "POST_NOTIFICATIONS",
         "READ_MEDIA_IMAGES",
         "READ_MEDIA_VIDEO",
@@ -90,7 +93,8 @@
           "microphonePermission": "Allow Pool Landscaping to record audio walkie-talkie clips.",
           "recordAudioAndroid": true
         }
-      ]
+      ],
+      "@config-plugins/react-native-webrtc"
     ],
     "extra": {
       "mapboxToken": "$EXPO_PUBLIC_MAPBOX_TOKEN"

@@ -262,3 +262,54 @@ Distribute the resulting dev-client build via TestFlight internal / Google inter
 3. Open Pool Team — hold the mic 2-3 s, release. Clip appears in the timeline.
 4. Log in as `admin@aquaterra.com` on a second device — the clip auto-plays if that device is on the Pool Team screen and unmuted.
 
+
+---
+
+## Phase 52.1c · Walkie live streaming (WebRTC · Feb 2026)
+
+**Native modules added:**
+- `react-native-webrtc@124.0.6` — WebRTC peer connections, mic capture, ICE handling.
+- `@config-plugins/react-native-webrtc@13.0.0` — Expo prebuild plugin that wires the iOS pods + Android gradle bits.
+
+Both are **dev-client only** (same class as Phase 38b Mapbox / Phase 49 speech-recognition / Phase 51c expo-audio). Expo Go will crash on `RTCPeerConnection` import; the live panel gracefully sits behind the "Live channel" toggle so testers on Expo Go can keep using async clips.
+
+**One-time rebuild:**
+
+```bash
+cd mobile
+npx expo prebuild --clean          # regenerates ios/ + android/ with the new plugin
+eas build --profile development --platform ios
+eas build --profile development --platform android
+```
+
+Distribute via TestFlight internal / Google internal-testing exactly like the prior phases.
+
+**Platform permission diff** (already applied to `app.json`):
+
+*iOS `expo.ios.infoPlist`*
+- `NSMicrophoneUsageDescription` updated to include walkie-talkie live-session copy.
+- `UIBackgroundModes` extended with `"audio"` so the live session survives the OS locking the screen briefly (mic in a live channel).
+
+*Android `expo.android.permissions`*
+- `FOREGROUND_SERVICE_MICROPHONE` — Android 14+ requires this for foregrounded mic capture; without it, opening the live panel crashes on Android 14 devices.
+- `MODIFY_AUDIO_SETTINGS` — required by `react-native-webrtc` for routing audio through the earpiece/speaker.
+
+**Product decisions (locked):**
+- **PTT only on mobile in 52.1c.** VOX (voice-activated) is desktop-only in this slice — see the DECISION comment in `mobile/src/pages/walkie/LivePanel.tsx`. `react-native-webrtc` doesn't ship a WebAudio-equivalent `AnalyserNode`, and adding a native VAD module (or driving VOX through `expo-audio`'s `metering` on a parallel recorder) adds a battery hit that's out of scope for the initial mobile slice. VOX moves to Phase 52.1e follow-up.
+- The VOX pill in the mobile live panel is rendered but disabled, with `accessibilityLabel="VOX voice-activated mode is desktop-only in 52.1c"` so testers understand why it isn't tappable.
+- **Auto-record via `expo-audio`.** MediaRecorder isn't part of react-native-webrtc; instead we run the existing `expo-audio` recorder alongside the WebRTC session, capturing the LOCAL mic. On `session-ended` (or panel unmount) the recorded `.m4a` uploads to `POST /api/walkie/messages` with `metadata:{source:"live_session", session_id}`, so it surfaces in the timeline with the same 24h TTL as an async clip.
+- **Foreground service scope.** The `FOREGROUND_SERVICE_MICROPHONE` permission is present, but a true screen-off background live session would require a native module beyond `react-native-webrtc` — deferred to a follow-up phase. Current UX assumes users hold the phone during a live session (PTT flow), so foregrounded operation is the expected state.
+
+**Bundle-size delta** (measured with `expo prebuild` + `pod install` on a Feb-2026 checkout):
+- iOS: +~9 MB (WebRTC.framework)
+- Android: +~7 MB (libwebrtc.so per ABI)
+- Total dev-client size increase well under the 100 MB PAUSE gate.
+
+**Smoke test on the rebuilt dev-client:**
+1. Log in as `mike@aquaterra.com` (pool tech) on Device A, open Pool Team channel.
+2. Log in as `admin@aquaterra.com` on Device B, open the same channel.
+3. Device A: flip the "Live channel" toggle in the footer.
+4. Device B: flip the "Live channel" toggle. Both devices should see "Live · 2 on channel".
+5. Device A: hold the big "Hold to talk" button and speak — Device B hears the audio in real time.
+6. Both devices: release the toggle. Within a couple seconds, a new `.m4a` clip appears in the Pool Team timeline attributed to the last-out participant.
+
