@@ -203,14 +203,16 @@ def test_credentials_round_trip_and_never_plaintext(sync_db):
 # ═══════════════════════════════════════════════════════════════════
 # Sync endpoints
 # ═══════════════════════════════════════════════════════════════════
-def test_manual_sync_returns_501_with_phase_pointer():
-    r = requests.post(f"{API}/suppliers/poolcorp/sync",
+def test_manual_sync_returns_501_for_not_yet_implemented_connector():
+    # Phase 54b · Feb-2026 — poolcorp is LIVE now (returns 400 without
+    # credentials, or 202 with them). SiteOne / Ewing / Heritage /
+    # ePoolSupply still return 501 with the phase pointer.
+    r = requests.post(f"{API}/suppliers/siteone/sync",
                        headers=_hdr(), timeout=TIMEOUT)
     assert r.status_code == 501
-    body = r.json()
-    detail = body.get("detail", "")
+    detail = r.json().get("detail", "")
     assert "not implemented" in detail.lower()
-    assert "54b" in detail  # poolcorp is planned for 54b
+    assert "54c" in detail  # siteone is planned for 54c
 
 
 def test_sync_endpoint_slug_gates():

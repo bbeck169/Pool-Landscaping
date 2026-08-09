@@ -22,12 +22,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from config import db, logger
 from services.suppliers.connector import CONNECTORS, SUPPLIER_SEED
-from services.suppliers.crypto import encrypt
+from services.suppliers.crypto import decrypt, encrypt
 from utils import get_current_user
 
 router = APIRouter()
@@ -225,20 +225,56 @@ async def delete_credentials(
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 5. POST /suppliers/{slug}/sync — 501 in Phase 54a
+# 5. POST /suppliers/{slug}/sync — Phase 54b: poolcorp is LIVE.
+#    SiteOne / Ewing / Heritage / ePoolSupply still return 501.
 # ═══════════════════════════════════════════════════════════════════
-@router.post("/suppliers/{slug}/sync", status_code=501)
+@router.post("/suppliers/{slug}/sync")
 async def sync_supplier(
-    slug: str, user: dict = Depends(get_current_user),
-) -> Dict[str, Any]:
+    slug: str,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
     _require_admin(user)
     tenant_id = _require_tenant(user)
-    await _get_supplier_or_404(tenant_id, slug)
+    supplier = await _get_supplier_or_404(tenant_id, slug)
     connector = CONNECTORS.get(slug)
-    planned = connector.planned_phase if connector else "TBD"
-    raise HTTPException(
-        status_code=501,
-        detail=(f"connector not implemented yet, coming in phase {planned}"),
+
+    if slug != "poolcorp":
+        planned = connector.planned_phase if connector else "TBD"
+        raise HTTPException(
+            status_code=501,
+            detail=f"connector not implemented yet, coming in phase {planned}",
+        )
+
+    # Phase 54b — Pool360 real sync path. Runs in a background task
+    # so the HTTP call returns 202 within a few ms; operator polls
+    # ``GET /suppliers/poolcorp/sync-jobs`` for status.
+    cred_row = await db.supplier_credentials.find_one(
+        {"tenant_id": tenant_id, "supplier_id": supplier["id"]},
+        {"_id": 0},
+    )
+    if not cred_row:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "no_credentials",
+                     "message": "Save Pool360 credentials before running sync."},
+        )
+    credentials = {
+        "username": decrypt(cred_row.get("encrypted_username")),
+        "password": decrypt(cred_row.get("encrypted_password")),
+        "api_key":  decrypt(cred_row.get("encrypted_api_key")),
+    }
+    from services.suppliers.sync import run_poolcorp_sync, start_sync_job
+    job = await start_sync_job(tenant_id, supplier)
+    background_tasks.add_task(
+        run_poolcorp_sync, tenant_id, supplier, credentials, job["id"],
+    )
+    logger.info(f"[suppliers] sync started · tenant={tenant_id[:8]} · slug={slug} · job={job['id']}")
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=202,
+        content={"job_id": job["id"], "status": "running",
+                  "supplier_slug": slug},
     )
 
 

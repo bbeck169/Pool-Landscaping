@@ -5,6 +5,7 @@ import { colors } from "@/theme";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import ChatAttachmentTile from "@/components/chat/ChatAttachmentTile";
 import { toast } from "sonner";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;

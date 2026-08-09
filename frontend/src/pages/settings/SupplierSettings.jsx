@@ -1,0 +1,431 @@
+/**
+ * Phase 54b · Feb-2026 — Wholesale Supplier Settings.
+ *
+ * Per-supplier cards. Pool360 is fully wired in this phase; the four
+ * other suppliers (SiteOne / Ewing / Heritage / ePoolSupply) render
+ * a "Coming in 54c/d/e" placeholder card.
+ *
+ * Role gate — mirrors the backend router:
+ *   * super_admin / admin  → edit + sync
+ *   * manager              → read-only (form disabled, no action btns)
+ *   * technician / customer → redirected out (App.js route wrapper)
+ *
+ * The legal disclaimer under the credentials form is intentionally
+ * literal — see the Phase 54b spec. Do not rephrase it.
+ */
+import React, { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  ArrowLeft, Save, RefreshCw, PlayCircle, Trash2, CheckCircle2,
+  AlertTriangle, Clock, ShieldAlert,
+} from "lucide-react";
+import { api } from "@/api";
+import { useAuth } from "@/auth";
+import { colors } from "@/theme";
+import { toast } from "sonner";
+
+const LEGAL_DISCLAIMER =
+  "Automated syncing may be subject to your wholesaler's Terms of Service. " +
+  "By connecting, you acknowledge responsibility for compliance with those terms.";
+
+const SUPPORTED_SLUG = "poolcorp";
+
+const PLANNED_LABELS = {
+  siteone:    "Coming in Phase 54c",
+  ewing:      "Coming in Phase 54d",
+  heritage:   "Coming in Phase 54e",
+  epoolsupply: "Coming in Phase 54e",
+};
+
+function formatDT(iso) {
+  if (!iso) return "—";
+  try { return new Date(iso).toLocaleString(); }
+  catch { return iso; }
+}
+
+function StatusPill({ status }) {
+  const map = {
+    success:  { bg: "#DCFCE7", fg: colors.success, label: "Success" },
+    running:  { bg: colors.brandTertiary, fg: colors.onBrandTertiary, label: "Running" },
+    error:    { bg: "#FEE2E2", fg: colors.error, label: "Error" },
+  };
+  const m = map[status] || { bg: colors.surfaceTertiary, fg: colors.onSurfaceSecondary, label: status || "—" };
+  return (
+    <span
+      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+      style={{ backgroundColor: m.bg, color: m.fg }}
+      data-testid={`sync-job-status-${status || "unknown"}`}
+    >
+      {m.label}
+    </span>
+  );
+}
+
+function ComingSoonCard({ supplier }) {
+  return (
+    <div
+      className="rounded-xl p-5"
+      style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+      data-testid={`supplier-card-${supplier.slug}`}
+    >
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-base font-semibold" style={{ color: colors.onSurface }}>
+            {supplier.display_name}
+          </div>
+          <div className="text-sm mt-1" style={{ color: colors.muted }}>
+            {PLANNED_LABELS[supplier.slug] || "Coming soon"}
+          </div>
+        </div>
+        <span
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs"
+          style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurfaceSecondary }}
+          data-testid={`supplier-status-${supplier.slug}`}
+        >
+          <Clock size={12} /> Not connected
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function PoolcorpCard({ supplier, readOnly }) {
+  const [creds, setCreds] = useState({ has_credentials: false, updated_at: null });
+  const [form, setForm] = useState({ username: "", password: "" });
+  const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [jobs, setJobs] = useState([]);
+  const [loadingJobs, setLoadingJobs] = useState(true);
+
+  const refreshJobs = useCallback(async () => {
+    setLoadingJobs(true);
+    try {
+      const r = await api.get(`/suppliers/${supplier.slug}/sync-jobs?limit=10`);
+      setJobs(r.jobs || []);
+    } catch (e) {
+      toast.error(e.message || "Failed to load sync history");
+    } finally {
+      setLoadingJobs(false);
+    }
+  }, [supplier.slug]);
+
+  const refreshCreds = useCallback(async () => {
+    try {
+      const r = await api.get(`/suppliers/${supplier.slug}/credentials`);
+      setCreds(r);
+    } catch (e) {
+      toast.error(e.message || "Failed to load credentials status");
+    }
+  }, [supplier.slug]);
+
+  useEffect(() => { refreshCreds(); refreshJobs(); }, [refreshCreds, refreshJobs]);
+
+  const saveCreds = async () => {
+    if (readOnly) return;
+    if (!form.username || !form.password) {
+      toast.error("Username and password are required.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.post(`/suppliers/${supplier.slug}/credentials`, {
+        username: form.username, password: form.password,
+      });
+      setForm({ username: "", password: "" });
+      await refreshCreds();
+      toast.success("Credentials saved (encrypted at rest).");
+    } catch (e) {
+      toast.error(e.message || "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteCreds = async () => {
+    if (readOnly) return;
+    if (!window.confirm("Remove saved Pool360 credentials? Syncs will stop working until new credentials are provided.")) return;
+    try {
+      await api.delete(`/suppliers/${supplier.slug}/credentials`);
+      await refreshCreds();
+      toast.success("Credentials removed.");
+    } catch (e) {
+      toast.error(e.message || "Delete failed");
+    }
+  };
+
+  const runSync = async () => {
+    if (readOnly) return;
+    setSyncing(true);
+    try {
+      const r = await api.post(`/suppliers/${supplier.slug}/sync`, {});
+      toast.success(`Sync started (job ${String(r.job_id || "").slice(0, 8)}…). Refreshing history in a few seconds.`);
+      // Poll the job list once after a short delay so the operator
+      // sees status transition without a manual refresh.
+      setTimeout(refreshJobs, 3500);
+    } catch (e) {
+      const msg = e?.data?.detail?.message
+        || (typeof e?.data?.detail === "string" ? e.data.detail : "")
+        || e.message
+        || "Sync failed to start";
+      toast.error(msg);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <div
+      className="rounded-xl p-5"
+      style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+      data-testid={`supplier-card-${supplier.slug}`}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+        <div>
+          <div className="text-base font-semibold" style={{ color: colors.onSurface }}>
+            {supplier.display_name}
+          </div>
+          <div className="text-sm mt-1" style={{ color: colors.muted }}>
+            Live wholesale pricebook sync (Playwright headless).
+          </div>
+        </div>
+        <span
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium"
+          style={{
+            backgroundColor: creds.has_credentials ? "#DCFCE7" : colors.surfaceSecondary,
+            color: creds.has_credentials ? colors.success : colors.onSurfaceSecondary,
+          }}
+          data-testid={`supplier-status-${supplier.slug}`}
+        >
+          {creds.has_credentials
+            ? (<><CheckCircle2 size={12} /> Connected</>)
+            : (<><ShieldAlert size={12} /> Not connected</>)}
+        </span>
+      </div>
+
+      {/* Credentials form */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="text-xs" style={{ color: colors.muted }}>Pool360 username</span>
+          <input
+            type="text"
+            autoComplete="off"
+            value={form.username}
+            disabled={readOnly}
+            onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+            placeholder={creds.has_credentials ? "•••••• (saved)" : "your-pool360-username"}
+            className="mt-1 w-full px-3 py-2 rounded-lg text-sm disabled:opacity-60"
+            style={{ border: `1px solid ${colors.border}`, backgroundColor: colors.surface }}
+            data-testid={`supplier-${supplier.slug}-username-input`}
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs" style={{ color: colors.muted }}>Password</span>
+          <input
+            type="password"
+            autoComplete="new-password"
+            value={form.password}
+            disabled={readOnly}
+            onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+            placeholder={creds.has_credentials ? "•••••• (saved)" : "your-pool360-password"}
+            className="mt-1 w-full px-3 py-2 rounded-lg text-sm disabled:opacity-60"
+            style={{ border: `1px solid ${colors.border}`, backgroundColor: colors.surface }}
+            data-testid={`supplier-${supplier.slug}-password-input`}
+          />
+        </label>
+      </div>
+
+      {/* Legal disclaimer — literal per Phase 54b spec */}
+      <p
+        className="text-xs mt-3"
+        style={{ color: colors.muted }}
+        data-testid={`supplier-${supplier.slug}-legal-disclaimer`}
+      >
+        {LEGAL_DISCLAIMER}
+      </p>
+
+      {/* Actions */}
+      {!readOnly && (
+        <div className="flex flex-wrap items-center gap-2 mt-4">
+          <button
+            onClick={saveCreds}
+            disabled={saving || !form.username || !form.password}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+            style={{ backgroundColor: colors.brandPrimary, color: colors.onBrandPrimary }}
+            data-testid={`supplier-${supplier.slug}-save-btn`}
+          >
+            <Save size={14} />
+            {saving ? "Saving…" : "Save credentials"}
+          </button>
+
+          <button
+            onClick={runSync}
+            disabled={syncing || !creds.has_credentials}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+            style={{ backgroundColor: colors.brandSecondary, color: colors.onSurfaceInverse }}
+            data-testid={`supplier-${supplier.slug}-sync-btn`}
+          >
+            <PlayCircle size={14} />
+            {syncing ? "Starting…" : "Sync now"}
+          </button>
+
+          <button
+            onClick={refreshJobs}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm"
+            style={{ border: `1px solid ${colors.border}`, color: colors.onSurface }}
+            data-testid={`supplier-${supplier.slug}-refresh-history-btn`}
+          >
+            <RefreshCw size={14} />
+            Refresh history
+          </button>
+
+          {creds.has_credentials && (
+            <button
+              onClick={deleteCreds}
+              className="ml-auto inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm"
+              style={{ border: `1px solid ${colors.border}`, color: colors.error }}
+              data-testid={`supplier-${supplier.slug}-delete-btn`}
+            >
+              <Trash2 size={14} />
+              Remove
+            </button>
+          )}
+        </div>
+      )}
+
+      {readOnly && (
+        <div
+          className="mt-4 flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
+          style={{ backgroundColor: colors.surfaceSecondary, color: colors.onSurfaceSecondary }}
+          data-testid={`supplier-${supplier.slug}-readonly-notice`}
+        >
+          <AlertTriangle size={14} />
+          Read-only. Ask an admin to change wholesaler credentials or trigger a sync.
+        </div>
+      )}
+
+      {/* Sync history */}
+      <div className="mt-6">
+        <div className="text-sm font-medium mb-2" style={{ color: colors.onSurface }}>
+          Recent syncs
+        </div>
+        <div
+          className="rounded-lg overflow-hidden"
+          style={{ border: `1px solid ${colors.border}` }}
+          data-testid={`supplier-${supplier.slug}-history-table`}
+        >
+          {loadingJobs ? (
+            <div className="p-4 text-sm" style={{ color: colors.muted }}>
+              Loading history…
+            </div>
+          ) : jobs.length === 0 ? (
+            <div className="p-4 text-sm" style={{ color: colors.muted }}
+                 data-testid={`supplier-${supplier.slug}-history-empty`}>
+              No syncs yet.
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead style={{ backgroundColor: colors.surfaceSecondary }}>
+                <tr>
+                  <th className="text-left px-3 py-2" style={{ color: colors.muted }}>Started</th>
+                  <th className="text-left px-3 py-2" style={{ color: colors.muted }}>Status</th>
+                  <th className="text-right px-3 py-2" style={{ color: colors.muted }}>Added</th>
+                  <th className="text-right px-3 py-2" style={{ color: colors.muted }}>Updated</th>
+                  <th className="text-right px-3 py-2" style={{ color: colors.muted }}>Removed</th>
+                  <th className="text-left px-3 py-2" style={{ color: colors.muted }}>Error</th>
+                </tr>
+              </thead>
+              <tbody>
+                {jobs.map((j) => (
+                  <tr key={j.id} style={{ borderTop: `1px solid ${colors.border}` }}
+                      data-testid={`supplier-${supplier.slug}-history-row-${j.id}`}>
+                    <td className="px-3 py-2 whitespace-nowrap">{formatDT(j.started_at)}</td>
+                    <td className="px-3 py-2"><StatusPill status={j.status} /></td>
+                    <td className="px-3 py-2 text-right">{j.items_added || 0}</td>
+                    <td className="px-3 py-2 text-right">{j.items_updated || 0}</td>
+                    <td className="px-3 py-2 text-right">{j.items_removed || 0}</td>
+                    <td className="px-3 py-2 text-xs" style={{ color: colors.error }}>
+                      {j.error_message || ""}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        {creds.updated_at && (
+          <div className="mt-2 text-xs" style={{ color: colors.muted }}
+               data-testid={`supplier-${supplier.slug}-creds-updated-at`}>
+            Credentials last updated {formatDT(creds.updated_at)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function SupplierSettings() {
+  const nav = useNavigate();
+  const { user } = useAuth();
+  const [suppliers, setSuppliers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const role = user?.role || "";
+  const readOnly = role === "manager";
+
+  useEffect(() => {
+    api.get("/suppliers")
+      .then((rows) => { setSuppliers(rows || []); setLoading(false); })
+      .catch((e) => { setError(e.message || "Failed to load suppliers"); setLoading(false); });
+  }, []);
+
+  return (
+    <div className="p-4 md:p-8 max-w-4xl mx-auto" data-testid="supplier-settings-page">
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          onClick={() => nav(-1)}
+          className="p-2 rounded-lg hover:brightness-95"
+          style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}
+          data-testid="supplier-settings-back-btn"
+        >
+          <ArrowLeft size={16} />
+        </button>
+        <div>
+          <div className="text-xl font-semibold" style={{ color: colors.onSurface }}>
+            Wholesale suppliers
+          </div>
+          <div className="text-sm" style={{ color: colors.muted }}>
+            Connect a wholesaler to import pricing into your pricebook.
+          </div>
+        </div>
+      </div>
+
+      {loading && (
+        <div className="p-4 text-sm" style={{ color: colors.muted }}
+             data-testid="supplier-settings-loading">
+          Loading suppliers…
+        </div>
+      )}
+
+      {error && !loading && (
+        <div
+          className="p-4 rounded-lg text-sm"
+          style={{ backgroundColor: "#FEE2E2", color: colors.error }}
+          data-testid="supplier-settings-error"
+        >
+          {error}
+        </div>
+      )}
+
+      {!loading && !error && (
+        <div className="grid gap-4">
+          {suppliers.map((s) =>
+            s.slug === SUPPORTED_SLUG
+              ? <PoolcorpCard key={s.slug} supplier={s} readOnly={readOnly} />
+              : <ComingSoonCard key={s.slug} supplier={s} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
