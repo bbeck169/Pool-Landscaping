@@ -168,6 +168,57 @@ async def ebit_compute(
 
 
 # ═══════════════════════════════════════════════════════════════════
+# 1b. GET /ebit/trend — Phase 53e (dashboard tile support)
+#     Returns N months of EBIT values (default 6, capped 24) in a
+#     single round-trip so dashboards can render a compact sparkline
+#     without firing six sequential /ebit/compute requests.
+# ═══════════════════════════════════════════════════════════════════
+@router.get("/ebit/trend")
+async def ebit_trend(
+    months: int = Query(6, ge=1, le=24,
+                         description="Number of trailing months incl. current."),
+    revenue_basis: RevenueBasis = Query("cash"),
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_viewer(user)
+    tenant_id = _require_tenant(user)
+    basis = _validate_basis(revenue_basis)
+
+    from datetime import datetime, timezone, timedelta as _td
+    now = datetime.now(timezone.utc)
+    # Build [month_start, month_end) tuples going backwards.
+    buckets = []
+    y, m = now.year, now.month
+    for _i in range(months):
+        month_start = datetime(y, m, 1, tzinfo=timezone.utc)
+        if m == 12:
+            next_start = datetime(y + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            next_start = datetime(y, m + 1, 1, tzinfo=timezone.utc)
+        month_end = next_start - _td(seconds=1)
+        buckets.append((month_start, month_end))
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    buckets.reverse()  # oldest → newest
+
+    out = []
+    for (bs, be) in buckets:
+        live = await compute_ebit(
+            db, tenant_id, bs.isoformat(), be.isoformat(), basis)
+        out.append({
+            "month": bs.strftime("%Y-%m"),
+            "revenue": live.get("revenue", 0),
+            "cogs":    live.get("cogs", 0),
+            "opex":    live.get("opex", 0),
+            "depreciation": live.get("depreciation", 0),
+            "ebit":    live.get("ebit", 0),
+        })
+    return {"months": months, "revenue_basis": basis, "series": out}
+
+
+# ═══════════════════════════════════════════════════════════════════
 # 2. GET /ebit/snapshots — list
 # ═══════════════════════════════════════════════════════════════════
 @router.get("/ebit/snapshots")

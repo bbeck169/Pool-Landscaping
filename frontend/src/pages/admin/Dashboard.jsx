@@ -34,6 +34,7 @@ import RevenueDateRangeFilter from "@/components/dashboard/RevenueDateRangeFilte
 import RevenueByCategoryTile from "@/components/dashboard/RevenueByCategoryTile";
 import RevenueForecastTile from "@/components/dashboard/RevenueForecastTile";
 import IncomeByServiceCategoryTile from "@/components/dashboard/IncomeByServiceCategoryTile";
+import EbitTile from "@/components/dashboard/EbitTile";
 import { useAuth } from "@/auth";
 
 function Skeleton({ className = "", style = {} }) {
@@ -471,6 +472,15 @@ export default function AdminDashboard() {
           <ChevronRight size={16} color="#C2410C" />
         </button>
       ) : null}
+
+      {/* Phase 53e · Feb-2026 — EBIT exec-summary tile. Restricted
+          to super_admin + admin (manager sees the full report page
+          but NOT this dashboard tile, per Phase 53e scope). */}
+      {(user?.role === "super_admin" || user?.role === "admin") && (
+        <div className="mb-6" data-testid="dashboard-ebit-tile-slot">
+          <EbitTile />
+        </div>
+      )}
 
       {/* Feb-2026 · Revenue tiles — donut + forecast with a shared
           date-range filter.  Both tiles refetch when the range changes. */}

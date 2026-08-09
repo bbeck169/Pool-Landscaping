@@ -15,6 +15,7 @@ import BudgetHealthCard from "@/src/components/BudgetHealthCard";
 import LandscapingClockWidget from "@/src/components/LandscapingClockWidget";
 import WeatherWidget from "@/src/components/weather/WeatherWidget";
 import CreditsBudgetChip from "@/src/components/ai/CreditsBudgetChip";
+import EbitTile from "@/src/components/dashboard/EbitTile";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -94,6 +95,15 @@ export default function Dashboard() {
               hint="Projected billing by window"
               onPress={() => router.push("/reports/forecast")}
             />
+          </View>
+        ) : null}
+
+        {/* Phase 53e · Feb-2026 — EBIT exec-summary tile. Restricted
+            to super_admin + admin (manager sees the full profit
+            report but NOT this dashboard tile, per Phase 53e scope). */}
+        {(user?.role === "super_admin" || user?.role === "admin") ? (
+          <View testID="dashboard-ebit-tile-slot">
+            <EbitTile />
           </View>
         ) : null}
 
