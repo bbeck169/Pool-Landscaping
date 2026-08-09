@@ -31,7 +31,10 @@ from typing import Any, Dict, Optional
 
 import asyncio
 import pytest
-import requests
+
+# Phase 34-migrate-v2 · Phase 34-v2-c · Feb 2026 — swapped ``requests``
+# for the in-process ASGI shim.
+from tests._phase34_http_shim import http
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL")
@@ -42,7 +45,7 @@ API = f"{BASE_URL}/api/reviews"
 
 
 def _login(email: str, password: str = "password123") -> str:
-    r = requests.post(
+    r = http.post(
         f"{BASE_URL}/api/auth/login",
         json={"email": email, "password": password},
         timeout=30,
@@ -133,7 +136,7 @@ def test_rating_accepts_rating_alias(db, demo_customer_id):
     tenant_id = _run(_get_aq_tenant_id(db))
     doc = _run(_mk_request(db, tenant_id, demo_customer_id))
     token = doc["token"]
-    r = requests.post(
+    r = http.post(
         f"{API}/public/r/{token}/rating",
         json={"rating": 5, "comment": "great service"},
         timeout=30,
@@ -152,7 +155,7 @@ def test_rating_accepts_rating_alias(db, demo_customer_id):
 def test_rating_still_accepts_legacy_star_rating(db, demo_customer_id):
     tenant_id = _run(_get_aq_tenant_id(db))
     doc = _run(_mk_request(db, tenant_id, demo_customer_id))
-    r = requests.post(
+    r = http.post(
         f"{API}/public/r/{doc['token']}/rating",
         json={"star_rating": 2},
         timeout=30,
@@ -168,7 +171,7 @@ def test_rating_still_accepts_legacy_star_rating(db, demo_customer_id):
 def test_rating_returns_choose_platform_for_high(db, demo_customer_id):
     tenant_id = _run(_get_aq_tenant_id(db))
     doc = _run(_mk_request(db, tenant_id, demo_customer_id))
-    r = requests.post(
+    r = http.post(
         f"{API}/public/r/{doc['token']}/rating",
         json={"rating": 4}, timeout=30,
     )
@@ -184,7 +187,7 @@ def test_rating_returns_choose_platform_for_high(db, demo_customer_id):
 def test_rating_missing_payload_422(db, demo_customer_id):
     tenant_id = _run(_get_aq_tenant_id(db))
     doc = _run(_mk_request(db, tenant_id, demo_customer_id))
-    r = requests.post(
+    r = http.post(
         f"{API}/public/r/{doc['token']}/rating",
         json={"comment": "hello"},   # neither rating nor star_rating
         timeout=30,
@@ -198,7 +201,7 @@ def test_rating_missing_payload_422(db, demo_customer_id):
 def test_google_clicked_happy_path(db, demo_customer_id):
     tenant_id = _run(_get_aq_tenant_id(db))
     doc = _run(_mk_request(db, tenant_id, demo_customer_id, star_submitted=5))
-    r = requests.post(
+    r = http.post(
         f"{API}/public/r/{doc['token']}/google-clicked",
         json={}, timeout=30,
     )
@@ -219,12 +222,12 @@ def test_google_clicked_happy_path(db, demo_customer_id):
 def test_google_clicked_is_idempotent(db, demo_customer_id):
     tenant_id = _run(_get_aq_tenant_id(db))
     doc = _run(_mk_request(db, tenant_id, demo_customer_id, star_submitted=5))
-    r1 = requests.post(
+    r1 = http.post(
         f"{API}/public/r/{doc['token']}/google-clicked", json={}, timeout=30,
     )
     assert r1.status_code == 200
     ts = r1.json()["google_click_at"]
-    r2 = requests.post(
+    r2 = http.post(
         f"{API}/public/r/{doc['token']}/google-clicked", json={}, timeout=30,
     )
     assert r2.status_code == 200
@@ -237,7 +240,7 @@ def test_google_clicked_is_idempotent(db, demo_customer_id):
 def test_google_clicked_rejected_for_low_star(db, demo_customer_id):
     tenant_id = _run(_get_aq_tenant_id(db))
     doc = _run(_mk_request(db, tenant_id, demo_customer_id, star_submitted=2))
-    r = requests.post(
+    r = http.post(
         f"{API}/public/r/{doc['token']}/google-clicked", json={}, timeout=30,
     )
     assert r.status_code == 400
@@ -247,7 +250,7 @@ def test_google_clicked_rejected_for_low_star(db, demo_customer_id):
 
 
 def test_google_clicked_unknown_token_404(db):
-    r = requests.post(
+    r = http.post(
         f"{API}/public/r/{uuid.uuid4().hex}/google-clicked",
         json={}, timeout=30,
     )

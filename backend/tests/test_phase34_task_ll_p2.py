@@ -8,7 +8,10 @@ from datetime import datetime, timezone, timedelta
 from typing import List
 
 import pytest
-import requests
+
+# Phase 34-migrate-v2 · Phase 34-v2-c · Feb 2026 — swapped ``requests``
+# for the in-process ASGI shim.
+from tests._phase34_http_shim import http
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL")
@@ -21,7 +24,7 @@ from tests._phase34_asyncio import batch_safe_run as _run  # Phase 41.1d
 
 
 def _login(email: str, pw: str = "password123") -> str:
-    r = requests.post(f"{API}/auth/login",
+    r = http.post(f"{API}/auth/login",
                         json={"email": email, "password": pw}, timeout=30)
     assert r.status_code == 200
     return r.json()["access_token"]
@@ -66,7 +69,7 @@ def test_ll_p2_role_gate(customer_headers, path):
     payload = {"ids": ["x"]}
     if "bulk-update" in path:
         payload["patch"] = {}
-    r = requests.post(
+    r = http.post(
         f"{API}{path}",
         headers={**customer_headers, "Content-Type": "application/json"},
         json=payload, timeout=30,
@@ -92,7 +95,7 @@ def _plant_customer(db, tid, name: str = "LL-cust") -> str:
 
 def test_customers_bulk_update_allow_listed(db, super_headers, tid):
     cids = [_plant_customer(db, tid) for _ in range(2)]
-    r = requests.post(
+    r = http.post(
         f"{API}/customers/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": cids, "patch": {"tag": "commercial",
@@ -111,7 +114,7 @@ def test_customers_bulk_update_allow_listed(db, super_headers, tid):
 
 def test_customers_bulk_update_no_allowed_patch_422(db, super_headers, tid):
     cid = _plant_customer(db, tid)
-    r = requests.post(
+    r = http.post(
         f"{API}/customers/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [cid], "patch": {"email": "hax@example.com"}},
@@ -130,7 +133,7 @@ def test_customers_bulk_delete_locked_by_active_invoice(db, super_headers, tid):
             "created_at": "2026-02-01T00:00:00Z",
         })
     _run(_plant_inv())
-    r = requests.post(
+    r = http.post(
         f"{API}/customers/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [cid]}, timeout=30,
@@ -155,7 +158,7 @@ def test_jobs_bulk_update_status(db, super_headers, tid):
         })
         return jid
     jid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/jobs/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [jid], "patch": {"status": "completed",
@@ -178,7 +181,7 @@ def test_jobs_bulk_delete_active_timer_locked(db, super_headers, tid):
         })
         return jid
     jid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/jobs/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [jid]}, timeout=30,
@@ -211,7 +214,7 @@ def test_jobs_bulk_reschedule_happy_and_locked(db, super_headers, tid):
         ])
         return happy, locked
     happy, _locked = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/jobs/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [happy], "patch": {"scheduled_date": "2026-03-15"}},
@@ -242,7 +245,7 @@ def test_jobs_bulk_reschedule_rejects_unknown_field(db, super_headers, tid):
         })
         return jid
     jid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/jobs/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [jid], "patch": {"internal_notes": "hijack"}},
@@ -275,7 +278,7 @@ def test_jobs_bulk_reschedule_shift_forward(db, super_headers, tid):
         ])
         return a, b
     a, b = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/jobs/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [a, b], "patch": {"scheduled_date_shift_days": 3}},
@@ -305,7 +308,7 @@ def test_jobs_bulk_reschedule_shift_backward(db, super_headers, tid):
         })
         return jid
     jid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/jobs/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [jid], "patch": {"scheduled_date_shift_days": -7}},
@@ -330,7 +333,7 @@ def test_jobs_bulk_reschedule_shift_and_absolute_are_mutually_exclusive(
         })
         return jid
     jid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/jobs/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [jid], "patch": {
@@ -360,7 +363,7 @@ def test_jobs_bulk_reschedule_shift_missing_date_lands_in_failed(
         ])
         return happy, no_date
     happy, no_date = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/jobs/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [happy, no_date],
@@ -388,7 +391,7 @@ def test_jobs_bulk_reschedule_shift_non_integer_rejected(
         })
         return jid
     jid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/jobs/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [jid],
@@ -421,7 +424,7 @@ def test_jobs_bulk_shift_anchor_unscheduled_on_computes_today_plus_shift(
         ])
         return happy, backlog
     happy, backlog = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/jobs/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [happy, backlog], "patch": {
@@ -452,7 +455,7 @@ def test_jobs_bulk_shift_anchor_off_default_still_fails_backlog(
         })
         return backlog
     backlog = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/jobs/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [backlog],
@@ -478,7 +481,7 @@ def test_jobs_bulk_shift_anchor_does_not_rescue_mutex_error(
         })
         return jid
     jid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/jobs/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [jid], "patch": {
@@ -504,7 +507,7 @@ def test_tasks_bulk_update_status(db, super_headers, tid):
         })
         return tskid
     tskid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/tasks/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [tskid], "patch": {"status": "done"}}, timeout=30,
@@ -525,7 +528,7 @@ def test_communications_bulk_archive(db, super_headers, tid):
         })
         return cid
     cid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/communications/bulk-archive",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [cid]}, timeout=30,
@@ -546,7 +549,7 @@ def test_communications_bulk_mark_read(db, super_headers, tid):
         })
         return cid
     cid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/communications/bulk-mark-read",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [cid]}, timeout=30,
@@ -571,7 +574,7 @@ def test_email_templates_bulk_update_allow_listed(db, super_headers, tid):
         return eid
     eid = _run(_plant())
     marker = uuid.uuid4().hex[:8]
-    r = requests.post(
+    r = http.post(
         f"{API}/email-templates/bulk-update",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [eid], "patch": {"category": f"archived-{marker}",
@@ -597,7 +600,7 @@ def test_sms_templates_bulk_delete(db, super_headers, tid):
         })
         return sid
     sid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/sms-templates/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [sid]}, timeout=30,
@@ -625,7 +628,7 @@ def test_email_template_live_drip_locked(db, super_headers, tid):
         })
         return eid
     eid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/email-templates/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [eid]}, timeout=30,

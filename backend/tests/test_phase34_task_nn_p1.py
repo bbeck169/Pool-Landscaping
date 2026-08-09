@@ -12,7 +12,10 @@ import os
 import uuid
 
 import pytest
-import requests
+
+# Phase 34-migrate-v2 · Phase 34-v2-c · Feb 2026 — swapped ``requests``
+# for the in-process ASGI shim.
+from tests._phase34_http_shim import http
 
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "http://localhost:8001").rstrip("/")
 API = f"{BASE_URL}/api"
@@ -22,7 +25,7 @@ from tests._phase34_asyncio import batch_safe_run as _run  # Phase 41.1d
 
 
 def _login(email: str, pw: str = "password123") -> str:
-    r = requests.post(f"{API}/auth/login",
+    r = http.post(f"{API}/auth/login",
                         json={"email": email, "password": pw}, timeout=30)
     assert r.status_code == 200
     return r.json()["access_token"]
@@ -57,7 +60,7 @@ def super_uid():
     """Return the super_admin user id via the /me endpoint so tests
     can reliably identify the actor for self-delete/self-edit guards."""
     hdr = {"Authorization": f"Bearer {_login('super@aquaterra.com')}"}
-    r = requests.get(f"{API}/auth/me", headers=hdr, timeout=30)
+    r = http.get(f"{API}/auth/me", headers=hdr, timeout=30)
     assert r.status_code == 200
     return r.json()["id"]
 
@@ -76,7 +79,7 @@ def test_p1_endpoints_reject_customer_role(customer_headers, path):
     body = {"ids": ["nope"]}
     if "update" in path:
         body["patch"] = {}
-    r = requests.post(f"{API}{path}", headers={**customer_headers,
+    r = http.post(f"{API}{path}", headers={**customer_headers,
                                                        "Content-Type": "application/json"},
                           json=body, timeout=30)
     assert r.status_code in (401, 403)
@@ -94,7 +97,7 @@ def test_reviews_bulk_update_status(db, super_headers, tid):
         })
         return rid
     rid = _run(_plant())
-    r = requests.post(f"{API}/reviews/bulk-update",
+    r = http.post(f"{API}/reviews/bulk-update",
                           headers={**super_headers, "Content-Type": "application/json"},
                           json={"ids": [rid], "patch": {
                               "status": "resolved", "is_public": True,
@@ -112,7 +115,7 @@ def test_reviews_bulk_delete_google_click_locked(db, super_headers, tid):
         })
         return rid
     rid = _run(_plant())
-    r = requests.post(f"{API}/reviews/bulk-delete",
+    r = http.post(f"{API}/reviews/bulk-delete",
                           headers={**super_headers, "Content-Type": "application/json"},
                           json={"ids": [rid]}, timeout=30)
     body = r.json()
@@ -124,7 +127,7 @@ def test_reviews_bulk_delete_google_click_locked(db, super_headers, tid):
 # Users — last-owner guard + self-edit guard
 # ═══════════════════════════════════════════════════════════════════════
 def test_users_bulk_update_rejects_editing_self(super_headers, super_uid):
-    r = requests.post(f"{API}/users/bulk-update",
+    r = http.post(f"{API}/users/bulk-update",
                           headers={**super_headers, "Content-Type": "application/json"},
                           json={"ids": [super_uid],
                                   "patch": {"is_active": False}}, timeout=30)
@@ -146,7 +149,7 @@ def test_users_bulk_delete_rejects_last_owner(db, super_headers, tid):
         })
         return uid
     uid = _run(_plant())
-    r = requests.post(f"{API}/users/bulk-delete",
+    r = http.post(f"{API}/users/bulk-delete",
                           headers={**super_headers, "Content-Type": "application/json"},
                           json={"ids": [uid]}, timeout=30)
     body = r.json()
@@ -155,7 +158,7 @@ def test_users_bulk_delete_rejects_last_owner(db, super_headers, tid):
 
 
 def test_users_bulk_delete_rejects_self(super_headers, super_uid):
-    r = requests.post(f"{API}/users/bulk-delete",
+    r = http.post(f"{API}/users/bulk-delete",
                           headers={**super_headers, "Content-Type": "application/json"},
                           json={"ids": [super_uid]}, timeout=30)
     body = r.json()
@@ -175,7 +178,7 @@ def test_tags_bulk_update_color_and_archive(db, super_headers, tid):
         ])
         return a, b
     a, b = _run(_plant())
-    r = requests.post(f"{API}/customer-tags/bulk-update",
+    r = http.post(f"{API}/customer-tags/bulk-update",
                           headers={**super_headers, "Content-Type": "application/json"},
                           json={"ids": [a, b], "patch": {
                               "color": "#FF00FF", "is_archived": True,
@@ -191,7 +194,7 @@ def test_tags_bulk_delete_happy(db, super_headers, tid):
             "id": tid_, "tenant_id": tid, "name": "NN-tag-del"})
         return tid_
     x = _run(_plant())
-    r = requests.post(f"{API}/customer-tags/bulk-delete",
+    r = http.post(f"{API}/customer-tags/bulk-delete",
                           headers={**super_headers, "Content-Type": "application/json"},
                           json={"ids": [x]}, timeout=30)
     assert r.status_code == 200
@@ -211,7 +214,7 @@ def test_service_reports_bulk_delete_invoice_evidence_locked(
         })
         return sid
     sid = _run(_plant())
-    r = requests.post(f"{API}/service-reports/bulk-delete",
+    r = http.post(f"{API}/service-reports/bulk-delete",
                           headers={**super_headers, "Content-Type": "application/json"},
                           json={"ids": [sid]}, timeout=30)
     body = r.json()
@@ -228,7 +231,7 @@ def test_service_reports_bulk_update_visibility(db, super_headers, tid):
         })
         return sid
     sid = _run(_plant())
-    r = requests.post(f"{API}/service-reports/bulk-update",
+    r = http.post(f"{API}/service-reports/bulk-update",
                           headers={**super_headers, "Content-Type": "application/json"},
                           json={"ids": [sid],
                                   "patch": {"is_customer_visible": True}},
@@ -251,7 +254,7 @@ def test_time_entries_bulk_delete_paid_payroll_locked(
         })
         return te
     te = _run(_plant())
-    r = requests.post(f"{API}/time-entries/bulk-delete",
+    r = http.post(f"{API}/time-entries/bulk-delete",
                           headers={**super_headers, "Content-Type": "application/json"},
                           json={"ids": [te]}, timeout=30)
     body = r.json()
@@ -268,7 +271,7 @@ def test_time_entries_bulk_update_approve(db, super_headers, tid):
         })
         return te
     te = _run(_plant())
-    r = requests.post(f"{API}/time-entries/bulk-update",
+    r = http.post(f"{API}/time-entries/bulk-update",
                           headers={**super_headers, "Content-Type": "application/json"},
                           json={"ids": [te], "patch": {"is_approved": True}},
                           timeout=30)
@@ -285,7 +288,7 @@ def test_time_entries_bulk_update_approve(db, super_headers, tid):
     "/time-entries/bulk-delete",
 ])
 def test_p1_empty_ids_returns_400(super_headers, path):
-    r = requests.post(f"{API}{path}",
+    r = http.post(f"{API}{path}",
                           headers={**super_headers, "Content-Type": "application/json"},
                           json={"ids": []}, timeout=30)
     assert r.status_code == 400
@@ -296,7 +299,7 @@ def test_p1_empty_ids_returns_400(super_headers, path):
     "/service-reports/bulk-update", "/time-entries/bulk-update",
 ])
 def test_p1_empty_patch_returns_422(super_headers, path):
-    r = requests.post(f"{API}{path}",
+    r = http.post(f"{API}{path}",
                           headers={**super_headers, "Content-Type": "application/json"},
                           json={"ids": ["x"], "patch": {"unknown_field": 1}},
                           timeout=30)

@@ -17,7 +17,10 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List
 
 import pytest
-import requests
+
+# Phase 34-migrate-v2 · Phase 34-v2-c · Feb 2026 — swapped ``requests``
+# for the in-process ASGI shim.
+from tests._phase34_http_shim import http
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL")
@@ -31,7 +34,7 @@ from tests._phase34_asyncio import batch_safe_run as _run  # Phase 41.1d
 
 
 def _login(email: str, password: str = "password123") -> str:
-    r = requests.post(
+    r = http.post(
         f"{API}/auth/login",
         json={"email": email, "password": password}, timeout=30,
     )
@@ -101,7 +104,7 @@ def test_jj_ai_ops_list_is_tenant_scoped(super_headers, db, aq_tenant_id):
     """`GET /api/ai-ops/employees` must only return rows for the
     caller's tenant. Pre-Task-JJ it returned every row across every
     tenant."""
-    r = requests.get(f"{API}/ai-ops/employees", headers=super_headers, timeout=30)
+    r = http.get(f"{API}/ai-ops/employees", headers=super_headers, timeout=30)
     assert r.status_code == 200
     rows = r.json()
     # If any rows come back, they must all belong to aquaterra.
@@ -132,7 +135,7 @@ def _plant_item(db, name: str = "KK-item") -> str:
 
 def test_pricebook_patch_happy(db, super_headers):
     iid = _plant_item(db)
-    r = requests.patch(
+    r = http.patch(
         f"{API}/items/{iid}",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"unit_price": 12.50, "description": "updated"}, timeout=30,
@@ -144,7 +147,7 @@ def test_pricebook_patch_happy(db, super_headers):
 
 def test_pricebook_patch_role_gate(db, customer_headers):
     iid = _plant_item(db)
-    r = requests.patch(
+    r = http.patch(
         f"{API}/items/{iid}",
         headers={**customer_headers, "Content-Type": "application/json"},
         json={"unit_price": 1}, timeout=30,
@@ -154,7 +157,7 @@ def test_pricebook_patch_role_gate(db, customer_headers):
 
 def test_pricebook_patch_rejects_negative(db, super_headers):
     iid = _plant_item(db)
-    r = requests.patch(
+    r = http.patch(
         f"{API}/items/{iid}",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"unit_price": -1}, timeout=30,
@@ -164,7 +167,7 @@ def test_pricebook_patch_rejects_negative(db, super_headers):
 
 def test_pricebook_bulk_delete_happy(db, super_headers):
     ids = [_plant_item(db, "KK-bulk") for _ in range(3)]
-    r = requests.post(
+    r = http.post(
         f"{API}/pricebook/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": ids}, timeout=30,
@@ -187,7 +190,7 @@ def test_pricebook_bulk_delete_locked_by_active_invoice(db, super_headers, aq_te
             "created_at": "2026-02-01T00:00:00Z",
         })
     _run(_plant_ref())
-    r = requests.post(
+    r = http.post(
         f"{API}/pricebook/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [iid]}, timeout=30,
@@ -200,7 +203,7 @@ def test_pricebook_bulk_delete_locked_by_active_invoice(db, super_headers, aq_te
 
 
 def test_pricebook_bulk_delete_role_gate(customer_headers):
-    r = requests.post(
+    r = http.post(
         f"{API}/pricebook/bulk-delete",
         headers={**customer_headers, "Content-Type": "application/json"},
         json={"ids": ["x"]}, timeout=30,
@@ -223,7 +226,7 @@ def test_invoices_bulk_delete_query_selector(db, super_headers, aq_tenant_id):
                 "created_at": "2026-02-01T00:00:00Z",
             })
     _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/invoices/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"query_selector": {"search": marker, "status": "unpaid"},
@@ -244,7 +247,7 @@ def test_estimates_bulk_delete_query_selector(db, super_headers, aq_tenant_id):
                 "total": 20.0, "created_at": "2026-02-01T00:00:00Z",
             })
     _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/estimates/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"query_selector": {"search": marker}, "exclude_ids": []},

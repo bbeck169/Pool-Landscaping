@@ -31,7 +31,11 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List
 
 import pytest
-import requests
+
+# Phase 34-migrate-v2 · Phase 34-v2-c · Feb 2026 — swapped ``requests``
+# for the in-process ASGI shim. HTTP calls now run on the same event
+# loop Motor is pinned to via ``_phase34_asyncio``.
+from tests._phase34_http_shim import http
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL")
@@ -45,7 +49,7 @@ from tests._phase34_asyncio import batch_safe_run as _run  # Phase 41.1d
 
 
 def _login(email: str, password: str = "password123") -> str:
-    r = requests.post(
+    r = http.post(
         f"{API}/auth/login",
         json={"email": email, "password": password}, timeout=30,
     )
@@ -96,7 +100,7 @@ def _plant_leads(db, aq_tenant_id, statuses: List[str]) -> List[str]:
 
 def test_bulk_update_status_happy_path(db, super_headers, aq_tenant_id):
     ids = _plant_leads(db, aq_tenant_id, ["new", "contacted", "quoted"])
-    r = requests.post(
+    r = http.post(
         f"{API}/leads/bulk-update-status",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": ids, "new_status": "closed_won"}, timeout=30,
@@ -115,7 +119,7 @@ def test_bulk_update_status_happy_path(db, super_headers, aq_tenant_id):
 def test_bulk_update_status_already_at_target(db, super_headers, aq_tenant_id):
     """A lead already at ``new_status`` is not updated and lands in failed[]."""
     ids = _plant_leads(db, aq_tenant_id, ["closed_won"])
-    r = requests.post(
+    r = http.post(
         f"{API}/leads/bulk-update-status",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": ids, "new_status": "closed_won"}, timeout=30,
@@ -128,7 +132,7 @@ def test_bulk_update_status_already_at_target(db, super_headers, aq_tenant_id):
 
 
 def test_bulk_update_status_rejects_non_canonical(super_headers):
-    r = requests.post(
+    r = http.post(
         f"{API}/leads/bulk-update-status",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": ["x"], "new_status": "qualified"}, timeout=30,
@@ -139,7 +143,7 @@ def test_bulk_update_status_rejects_non_canonical(super_headers):
 
 
 def test_bulk_update_status_role_gate(customer_headers):
-    r = requests.post(
+    r = http.post(
         f"{API}/leads/bulk-update-status",
         headers={**customer_headers, "Content-Type": "application/json"},
         json={"ids": ["x"], "new_status": "closed_won"}, timeout=30,
@@ -149,7 +153,7 @@ def test_bulk_update_status_role_gate(customer_headers):
 
 def test_bulk_update_status_cap_enforced(super_headers):
     ids = [f"cap-{i}" for i in range(401)]
-    r = requests.post(
+    r = http.post(
         f"{API}/leads/bulk-update-status",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": ids, "new_status": "new"}, timeout=30,
@@ -178,7 +182,7 @@ def test_bulk_update_status_query_selector(db, super_headers, aq_tenant_id):
             "status": "new", "created_at": "2026-02-01T00:00:00Z",
         })
     _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/leads/bulk-update-status",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"query_selector": {"search": marker, "unknown_key": "ignored"},
@@ -218,7 +222,7 @@ def test_autobilling_bulk_delete_happy_path(db, super_headers, aq_tenant_id):
             ids.append(pid)
         return ids
     ids = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/autobilling/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": ids}, timeout=30,
@@ -241,7 +245,7 @@ def test_autobilling_bulk_delete_stripe_locked(db, super_headers, aq_tenant_id):
         })
         return pid
     pid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/autobilling/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [pid]}, timeout=30,
@@ -266,7 +270,7 @@ def test_autobilling_bulk_delete_imminent_locked(db, super_headers, aq_tenant_id
         })
         return pid
     pid = _run(_plant())
-    r = requests.post(
+    r = http.post(
         f"{API}/autobilling/bulk-delete",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"ids": [pid]}, timeout=30,
@@ -279,7 +283,7 @@ def test_autobilling_bulk_delete_imminent_locked(db, super_headers, aq_tenant_id
 
 
 def test_autobilling_bulk_delete_role_gate(customer_headers):
-    r = requests.post(
+    r = http.post(
         f"{API}/autobilling/bulk-delete",
         headers={**customer_headers, "Content-Type": "application/json"},
         json={"ids": ["x"]}, timeout=30,
@@ -291,7 +295,7 @@ def test_autobilling_bulk_delete_role_gate(customer_headers):
 # Task GG — google_review_url validation
 # ═══════════════════════════════════════════════════════════════════════
 def test_google_review_url_valid_gpage(super_headers):
-    r = requests.patch(
+    r = http.patch(
         f"{API}/tenants/business-card",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"google_review_url": "https://g.page/r/CXYZ123ABC/review"},
@@ -301,7 +305,7 @@ def test_google_review_url_valid_gpage(super_headers):
 
 
 def test_google_review_url_valid_writereview(super_headers):
-    r = requests.patch(
+    r = http.patch(
         f"{API}/tenants/business-card",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"google_review_url": "https://search.google.com/local/writereview?placeid=ABC"},
@@ -311,7 +315,7 @@ def test_google_review_url_valid_writereview(super_headers):
 
 
 def test_google_review_url_rejects_http(super_headers):
-    r = requests.patch(
+    r = http.patch(
         f"{API}/tenants/business-card",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"google_review_url": "http://g.page/r/X/review"}, timeout=30,
@@ -320,7 +324,7 @@ def test_google_review_url_rejects_http(super_headers):
 
 
 def test_google_review_url_rejects_arbitrary(super_headers):
-    r = requests.patch(
+    r = http.patch(
         f"{API}/tenants/business-card",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"google_review_url": "https://example.com/review-me"}, timeout=30,
@@ -331,7 +335,7 @@ def test_google_review_url_rejects_arbitrary(super_headers):
 def test_google_review_url_allows_empty(super_headers):
     """Setting to empty string (unsetting) is allowed — some tenants
     intentionally clear the field when they haven't set up GBP yet."""
-    r = requests.patch(
+    r = http.patch(
         f"{API}/tenants/business-card",
         headers={**super_headers, "Content-Type": "application/json"},
         json={"google_review_url": ""}, timeout=30,
