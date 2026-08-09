@@ -136,6 +136,18 @@ from routers import ai_brain as _p18_ai_brain  # noqa: E402
 # lower in this file.
 from routers import inventory_reports as _p18_inventory_reports  # noqa: E402
 
+# Phase 47c-hooks · Feb-2026 — Stripe test-hook endpoints (Phase 4b
+# stub install/toggle + a compact /stripe/health). Only imported +
+# mounted when ALLOW_TEST_HOOKS=1 so production never exposes them
+# (mirrors the ringcentral_jwt / quickbooks_cleanup pattern). The
+# APP_ENV=production guard further down force-clears the flag before
+# this module ever gets a chance to import — so a stale .env cannot
+# leak the hooks into a prod build.
+if os.environ.get("ALLOW_TEST_HOOKS") == "1":
+    from routers import stripe_test_hooks as _p47c_stripe_hooks  # noqa: E402
+else:
+    _p47c_stripe_hooks = None  # type: ignore[assignment]
+
 app = FastAPI(
     title="Pool CRM API",
     openapi_url="/api/openapi.json",
@@ -235,6 +247,10 @@ api_router.include_router(_profit_report.router)
 # Phase 53a · Feb-2026 — Editable EBIT report backend.
 from routers import ebit as _p53a_ebit  # noqa: E402
 api_router.include_router(_p53a_ebit.router)
+# Phase 47c-hooks · Feb-2026 — Stripe test hooks. Mount ONLY when the
+# hooks module actually imported (ALLOW_TEST_HOOKS=1 gate above).
+if _p47c_stripe_hooks is not None:
+    api_router.include_router(_p47c_stripe_hooks.router)
 # Phase 54a · Feb-2026 — Wholesale supplier pricebook import (skeleton).
 from routers import suppliers as _p54a_suppliers  # noqa: E402
 api_router.include_router(_p54a_suppliers.router)
