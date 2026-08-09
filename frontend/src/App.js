@@ -55,6 +55,7 @@ import IncomeCategoriesPage from "@/pages/settings/IncomeCategoriesPage";
 import ServiceCategoriesPage from "@/pages/settings/ServiceCategoriesPage";
 import BillingSettings from "@/pages/settings/BillingSettings";
 import SupplierSettings from "@/pages/settings/SupplierSettings";
+import SupplierSyncAnalytics from "@/pages/reports/SupplierSyncAnalytics";
 import AutoVisitEmailSettings from "@/pages/settings/AutoVisitEmailSettings";
 import PortalPhotos from "@/pages/portal/PortalPhotos";
 import PortalReviews from "@/pages/portal/PortalReviews";
@@ -600,6 +601,8 @@ export default function App() {
             <Route path="settings/integrations" element={<AdminOnly><IntegrationsHub /></AdminOnly>} />
             {/* Phase 54b · Feb-2026 — Wholesale supplier settings. */}
             <Route path="settings/suppliers" element={<AdminOrManagerForSuppliers><SupplierSettings /></AdminOrManagerForSuppliers>} />
+            {/* Phase 54g · Feb-2026 — supplier sync analytics dashboard. */}
+            <Route path="reports/supplier-syncs" element={<AdminOrManagerForSuppliers><SupplierSyncAnalytics /></AdminOrManagerForSuppliers>} />
             {/* Phase 26 · Feb 2026 — Supercool MCP OAuth 2.1 (super_admin only). */}
             <Route path="settings/integrations/supercool" element={<SuperAdminOnly><SupercoolIntegrationPage /></SuperAdminOnly>} />
             {/* Phase 21 · Feb 2026 — Vanity slug editor (super_admin only). */}

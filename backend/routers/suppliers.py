@@ -19,7 +19,7 @@ returns 501 with a pointer to the phase that owns the connector.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -440,3 +440,164 @@ async def list_sync_jobs(
         {"_id": 0},
     ).sort("started_at", -1).to_list(limit)
     return {"supplier_slug": slug, "jobs": rows, "count": len(rows)}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 7. GET /suppliers/analytics — Phase 54g.
+# Aggregate view over ``supplier_sync_jobs`` with a per-supplier
+# health signal + 30-day trend. Read-only.
+# ═══════════════════════════════════════════════════════════════════
+# ``datetime`` / ``timezone`` / ``timedelta`` already imported at
+# module top for the sync-history endpoints — no re-import here.
+
+
+def _health_signal(row):
+    """Compute (signal, rationale) from an aggregated supplier row.
+    Thresholds match the scope-locked heuristic:
+      * critical — success_rate<0.6  OR  3+ consecutive errors  OR  last success >3 days ago
+      * warning  — success_rate 0.6-0.9  OR  items dropped >50% vs prior week
+      * healthy  — success_rate>=0.9 AND avg_items>0 in last 7 days
+    """
+    total = row["total_runs"]
+    if total == 0:
+        return "healthy", "no runs in range"
+    sr = row["success_rate"]
+    consec_err = row.get("consecutive_errors", 0)
+    days_since_success = row.get("days_since_last_success")
+    if sr < 0.6:
+        return "critical", f"success rate {sr:.0%} (<60%)"
+    if consec_err >= 3:
+        return "critical", f"{consec_err} consecutive errors"
+    if days_since_success is not None and days_since_success > 3:
+        return "critical", f"no success in {days_since_success} days"
+    items_recent = row.get("avg_items_recent_7d", 0)
+    items_prior = row.get("avg_items_prior_7d", 0)
+    if items_prior > 20 and items_recent < items_prior * 0.5:
+        return "warning", f"items dropped {int((1 - items_recent/items_prior)*100)}% vs prior week"
+    if sr < 0.9:
+        return "warning", f"success rate {sr:.0%} (60-90%)"
+    if row.get("avg_items_added", 0) + row.get("avg_items_updated", 0) == 0 and total >= 3:
+        return "warning", "no items added or updated across recent runs"
+    return "healthy", f"success rate {sr:.0%}"
+
+
+@router.get("/suppliers/analytics")
+async def supplier_analytics(
+    days: int = 30, user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_admin(user)
+    tenant_id = _require_tenant(user)
+
+    # Clamp per scope: 1..90.
+    days = max(1, min(days, 90))
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+    cutoff_iso = cutoff.isoformat()
+    week_cutoff = (now - timedelta(days=7)).isoformat()
+    two_week_cutoff = (now - timedelta(days=14)).isoformat()
+
+    suppliers = await db.suppliers.find(
+        {"tenant_id": tenant_id}, {"_id": 0}).to_list(50)
+
+    out = []
+    for supp in suppliers:
+        jobs = await db.supplier_sync_jobs.find(
+            {"tenant_id": tenant_id, "supplier_id": supp["id"],
+             "started_at": {"$gte": cutoff_iso}},
+            {"_id": 0},
+        ).sort("started_at", 1).to_list(1000)
+
+        total = len(jobs)
+        success = [j for j in jobs if j.get("status") == "success"]
+        errors = [j for j in jobs if j.get("status") == "error"]
+        sr = (len(success) / total) if total else 1.0
+
+        def _avg(field, subset=jobs):
+            vals = [int(j.get(field, 0) or 0) for j in subset]
+            return round(sum(vals) / len(vals), 1) if vals else 0
+
+        # Consecutive-error tail count (from newest backwards until we
+        # hit a success — order jobs desc for this).
+        consec_err = 0
+        for j in sorted(jobs, key=lambda x: x.get("started_at", ""), reverse=True):
+            if j.get("status") == "error":
+                consec_err += 1
+            else:
+                break
+
+        last_success = max((j for j in success),
+                           key=lambda x: x.get("finished_at") or x.get("started_at", ""),
+                           default=None)
+        last_err = max((j for j in errors),
+                       key=lambda x: x.get("finished_at") or x.get("started_at", ""),
+                       default=None)
+        days_since_success = None
+        if last_success:
+            ls = last_success.get("finished_at") or last_success.get("started_at")
+            try:
+                lsdt = datetime.fromisoformat(str(ls).replace("Z", "+00:00"))
+                if lsdt.tzinfo is None:
+                    lsdt = lsdt.replace(tzinfo=timezone.utc)
+                days_since_success = (now - lsdt).days
+            except Exception:
+                pass
+
+        # Sparkline: bucket jobs by ISO date.
+        buckets: Dict[str, Dict[str, int]] = {}
+        for j in jobs:
+            date = str(j.get("started_at", ""))[:10]
+            if not date:
+                continue
+            b = buckets.setdefault(date, {"runs": 0, "success": 0, "error": 0,
+                                          "items_added": 0, "items_updated": 0})
+            b["runs"] += 1
+            if j.get("status") == "success":
+                b["success"] += 1
+            elif j.get("status") == "error":
+                b["error"] += 1
+            b["items_added"] += int(j.get("items_added", 0) or 0)
+            b["items_updated"] += int(j.get("items_updated", 0) or 0)
+        trend_daily = [{"date": d, **b} for d, b in sorted(buckets.items())]
+
+        recent_success = [j for j in success
+                          if str(j.get("started_at", "")) >= week_cutoff]
+        prior_success = [j for j in success
+                         if two_week_cutoff <= str(j.get("started_at", "")) < week_cutoff]
+        avg_items_recent_7d = _avg("items_added", recent_success) + _avg("items_updated", recent_success)
+        avg_items_prior_7d  = _avg("items_added", prior_success)  + _avg("items_updated", prior_success)
+
+        row = {
+            "slug": supp["slug"],
+            "display_name": supp["display_name"],
+            "total_runs": total,
+            "success_count": len(success),
+            "error_count": len(errors),
+            "success_rate": round(sr, 3),
+            "avg_items_added": _avg("items_added"),
+            "avg_items_updated": _avg("items_updated"),
+            "avg_items_removed": _avg("items_removed"),
+            "avg_items_recent_7d": avg_items_recent_7d,
+            "avg_items_prior_7d": avg_items_prior_7d,
+            "consecutive_errors": consec_err,
+            "days_since_last_success": days_since_success,
+            "last_success_at": (last_success or {}).get("finished_at")
+                               or (last_success or {}).get("started_at"),
+            "last_error_at": (last_err or {}).get("finished_at")
+                             or (last_err or {}).get("started_at"),
+            "last_error_message": (last_err or {}).get("error_message"),
+            "trend_daily": trend_daily,
+        }
+        signal, rationale = _health_signal(row)
+        row["health_signal"] = signal
+        row["health_rationale"] = rationale
+        out.append(row)
+
+    # Sort so critical suppliers surface first.
+    order = {"critical": 0, "warning": 1, "healthy": 2}
+    out.sort(key=lambda r: (order.get(r["health_signal"], 3), r["slug"]))
+
+    return {
+        "range_days": days,
+        "generated_at": now.isoformat(),
+        "suppliers": out,
+    }
