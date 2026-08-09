@@ -4,7 +4,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-import requests
+
+# Phase 34-migrate-v2 · Phase 34-v2-d · Feb 2026 — swapped requests
+# for the in-process ASGI shim.
+from tests._phase34_http_shim import http
 from dotenv import dotenv_values
 
 _FE = dotenv_values(Path(__file__).resolve().parents[2] / "frontend" / ".env")
@@ -16,7 +19,7 @@ TECH  = {"email": "mike@aquaterra.com",  "password": "password123"}
 
 
 def _login(creds):
-    r = requests.post(f"{API}/auth/login", json=creds, timeout=30)
+    r = http.post(f"{API}/auth/login", json=creds, timeout=30)
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
 
@@ -45,9 +48,9 @@ def _iso(delta_days=0):
 
 def _cleanup_customer(tok, cid, job_ids=()):
     for jid in job_ids:
-        requests.delete(f"{API}/jobs/{jid}", headers=_auth(tok), timeout=15)
+        http.delete(f"{API}/jobs/{jid}", headers=_auth(tok), timeout=15)
     if cid:
-        requests.delete(f"{API}/customers/{cid}", headers=_auth(tok), timeout=15)
+        http.delete(f"{API}/customers/{cid}", headers=_auth(tok), timeout=15)
 
 
 def _seed(tok, *, future=1, past=0, auto_recurring=False, with_customer_kwargs=None):
@@ -55,12 +58,12 @@ def _seed(tok, *, future=1, past=0, auto_recurring=False, with_customer_kwargs=N
     body = {"name": _mk_name()}
     if with_customer_kwargs:
         body.update(with_customer_kwargs)
-    c = requests.post(f"{API}/customers", json=body,
+    c = http.post(f"{API}/customers", json=body,
                        headers=_auth(tok), timeout=15).json()
     cid = c["id"]
     job_ids = []
     for i in range(future):
-        j = requests.post(f"{API}/jobs",
+        j = http.post(f"{API}/jobs",
                            json={"title": f"future {i}",
                                   "customer_id": cid,
                                   "scheduled_date": _iso(7 + i),
@@ -68,7 +71,7 @@ def _seed(tok, *, future=1, past=0, auto_recurring=False, with_customer_kwargs=N
                            headers=_auth(tok), timeout=15).json()
         job_ids.append(j["id"])
     for i in range(past):
-        j = requests.post(f"{API}/jobs",
+        j = http.post(f"{API}/jobs",
                            json={"title": f"past {i}",
                                   "customer_id": cid,
                                   "scheduled_date": _iso(-14 - i),
@@ -78,7 +81,7 @@ def _seed(tok, *, future=1, past=0, auto_recurring=False, with_customer_kwargs=N
     if auto_recurring and job_ids:
         # Flip auto_recurring on the first future job to simulate a
         # Phase-20 recurring instance.
-        requests.put(f"{API}/jobs/{job_ids[0]}",
+        http.put(f"{API}/jobs/{job_ids[0]}",
                      json={"auto_recurring": True},
                      headers=_auth(tok), timeout=15)
     return cid, job_ids
@@ -86,7 +89,7 @@ def _seed(tok, *, future=1, past=0, auto_recurring=False, with_customer_kwargs=N
 
 # --------------------------------------------------------------------------
 def test_default_customer_is_active(admin_tok):
-    r = requests.post(f"{API}/customers", json={"name": _mk_name()},
+    r = http.post(f"{API}/customers", json={"name": _mk_name()},
                        headers=_auth(admin_tok), timeout=15)
     assert r.status_code == 200
     cid = r.json()["id"]
@@ -100,7 +103,7 @@ def test_deactivate_cancels_future_jobs(admin_tok):
     cid, jobs = _seed(admin_tok, future=3, past=0)
     try:
         # Flip is_active → false via full-body PUT.
-        r = requests.put(f"{API}/customers/{cid}",
+        r = http.put(f"{API}/customers/{cid}",
                           json={"name": "test", "is_active": False},
                           headers=_auth(admin_tok), timeout=15)
         assert r.status_code == 200, r.text
@@ -109,7 +112,7 @@ def test_deactivate_cancels_future_jobs(admin_tok):
         assert body.get("cancelled_job_count") == 3, body
         # All three jobs now cancelled.
         for jid in jobs:
-            j = requests.get(f"{API}/jobs/{jid}", headers=_auth(admin_tok), timeout=15).json()
+            j = http.get(f"{API}/jobs/{jid}", headers=_auth(admin_tok), timeout=15).json()
             assert j["status"] == "cancelled", j
             assert j.get("cancellation_reason") == "Customer marked inactive"
             assert j.get("cancelled_at") is not None
@@ -124,16 +127,16 @@ def test_past_completed_jobs_untouched(admin_tok):
     future_id = jobs[0]
     past_ids = jobs[1:]
     try:
-        r = requests.put(f"{API}/customers/{cid}",
+        r = http.put(f"{API}/customers/{cid}",
                           json={"name": "test", "is_active": False},
                           headers=_auth(admin_tok), timeout=15).json()
         assert r["cancelled_job_count"] == 1  # only the future job
         # Future job cancelled.
-        fj = requests.get(f"{API}/jobs/{future_id}", headers=_auth(admin_tok), timeout=15).json()
+        fj = http.get(f"{API}/jobs/{future_id}", headers=_auth(admin_tok), timeout=15).json()
         assert fj["status"] == "cancelled"
         # Past completed jobs still say "completed".
         for jid in past_ids:
-            pj = requests.get(f"{API}/jobs/{jid}", headers=_auth(admin_tok), timeout=15).json()
+            pj = http.get(f"{API}/jobs/{jid}", headers=_auth(admin_tok), timeout=15).json()
             assert pj["status"] == "completed", pj
     finally:
         _cleanup_customer(admin_tok, cid, jobs)
@@ -142,18 +145,18 @@ def test_past_completed_jobs_untouched(admin_tok):
 def test_reactivate_does_not_restore_cancelled(admin_tok):
     cid, jobs = _seed(admin_tok, future=2, past=0)
     try:
-        requests.put(f"{API}/customers/{cid}",
+        http.put(f"{API}/customers/{cid}",
                      json={"name": "test", "is_active": False},
                      headers=_auth(admin_tok), timeout=15)
         # Reactivate.
-        r = requests.put(f"{API}/customers/{cid}",
+        r = http.put(f"{API}/customers/{cid}",
                           json={"name": "test", "is_active": True},
                           headers=_auth(admin_tok), timeout=15).json()
         assert r["is_active"] is True
         assert "cancelled_job_count" not in r  # only present on the flip-off
         # Cancelled jobs remain cancelled.
         for jid in jobs:
-            j = requests.get(f"{API}/jobs/{jid}", headers=_auth(admin_tok), timeout=15).json()
+            j = http.get(f"{API}/jobs/{jid}", headers=_auth(admin_tok), timeout=15).json()
             assert j["status"] == "cancelled"
     finally:
         _cleanup_customer(admin_tok, cid, jobs)
@@ -162,10 +165,10 @@ def test_reactivate_does_not_restore_cancelled(admin_tok):
 def test_activation_events_logged(admin_tok):
     cid, jobs = _seed(admin_tok, future=1)
     try:
-        requests.put(f"{API}/customers/{cid}",
+        http.put(f"{API}/customers/{cid}",
                      json={"name": "test", "is_active": False},
                      headers=_auth(admin_tok), timeout=15)
-        requests.put(f"{API}/customers/{cid}",
+        http.put(f"{API}/customers/{cid}",
                      json={"name": "test", "is_active": True},
                      headers=_auth(admin_tok), timeout=15)
         # Two events should exist: active→inactive and inactive→active.
@@ -196,7 +199,7 @@ def test_activation_events_logged(admin_tok):
 def test_deactivation_preview(admin_tok):
     cid, jobs = _seed(admin_tok, future=2, past=1)
     try:
-        r = requests.get(f"{API}/customers/{cid}/deactivation-preview",
+        r = http.get(f"{API}/customers/{cid}/deactivation-preview",
                           headers=_auth(admin_tok), timeout=15)
         assert r.status_code == 200, r.text
         p = r.json()
@@ -207,7 +210,7 @@ def test_deactivation_preview(admin_tok):
 
 
 def test_preview_404_unknown_customer(admin_tok):
-    r = requests.get(f"{API}/customers/nonexistent-abc/deactivation-preview",
+    r = http.get(f"{API}/customers/nonexistent-abc/deactivation-preview",
                       headers=_auth(admin_tok), timeout=15)
     assert r.status_code == 404
 
@@ -216,10 +219,10 @@ def test_non_admin_forbidden(tech_tok, admin_tok):
     # Seed with admin, then attempt access with tech.
     cid, jobs = _seed(admin_tok, future=1)
     try:
-        r1 = requests.get(f"{API}/customers/{cid}/deactivation-preview",
+        r1 = http.get(f"{API}/customers/{cid}/deactivation-preview",
                            headers=_auth(tech_tok), timeout=15)
         assert r1.status_code == 403
-        r2 = requests.put(f"{API}/customers/{cid}",
+        r2 = http.put(f"{API}/customers/{cid}",
                            json={"name": "test", "is_active": False},
                            headers=_auth(tech_tok), timeout=15)
         assert r2.status_code == 403

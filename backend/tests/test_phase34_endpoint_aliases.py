@@ -23,7 +23,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 import pytest
-import requests
+
+# Phase 34-migrate-v2 · Phase 34-v2-d · Feb 2026 — swapped ``requests``
+# for the in-process ASGI shim.
+from tests._phase34_http_shim import http
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL")
@@ -101,8 +104,8 @@ def test_alias_get_landing_matches_canonical(db):
     doc = _run(_mk_request(db, tenant_id, customer_id))
     token = doc["token"]
 
-    r_canon = requests.get(f"{CANONICAL}/{token}", timeout=30)
-    r_alias = requests.get(f"{ALIAS}/{token}", timeout=30)
+    r_canon = http.get(f"{CANONICAL}/{token}", timeout=30)
+    r_alias = http.get(f"{ALIAS}/{token}", timeout=30)
 
     assert r_canon.status_code == 200, r_canon.text
     assert r_alias.status_code == 200, r_alias.text
@@ -128,12 +131,12 @@ def test_alias_post_rating_matches_canonical(db):
     doc_canon = _run(_mk_request(db, tenant_id, customer_id))
     doc_alias = _run(_mk_request(db, tenant_id, customer_id))
 
-    r_canon = requests.post(
+    r_canon = http.post(
         f"{CANONICAL}/{doc_canon['token']}/rating",
         json={"star_rating": 5, "comment": "great"},
         timeout=30,
     )
-    r_alias = requests.post(
+    r_alias = http.post(
         f"{ALIAS}/{doc_alias['token']}/rating",
         json={"star_rating": 5, "comment": "great"},
         timeout=30,
@@ -159,12 +162,12 @@ def test_alias_post_google_clicked_matches_canonical(db):
     doc_canon = _run(_mk_request(db, tenant_id, customer_id, star_submitted=5))
     doc_alias = _run(_mk_request(db, tenant_id, customer_id, star_submitted=5))
 
-    r_canon = requests.post(
+    r_canon = http.post(
         f"{CANONICAL}/{doc_canon['token']}/google-clicked",
         json={},
         timeout=30,
     )
-    r_alias = requests.post(
+    r_alias = http.post(
         f"{ALIAS}/{doc_alias['token']}/google-clicked",
         json={},
         timeout=30,

@@ -10,7 +10,10 @@ import uuid
 from pathlib import Path
 
 import pytest
-import requests
+
+# Phase 34-migrate-v2 · Phase 34-v2-d · Feb 2026 — swapped ``requests``
+# for the in-process ASGI shim.
+from tests._phase34_http_shim import http
 from dotenv import dotenv_values
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -23,7 +26,7 @@ TECH    = {"email": "mike@aquaterra.com",  "password": "password123"}
 
 
 def _login(creds):
-    r = requests.post(f"{API}/auth/login", json=creds, timeout=15)
+    r = http.post(f"{API}/auth/login", json=creds, timeout=15)
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
 
@@ -56,7 +59,7 @@ def test_existing_dedup_aquaterra_returns_two_techs(admin_a_tok):
     """Aquaterra fixture DB ships 2 humans (Mike + Sara). The previous
     endpoint returned 3 due to Mike existing in both collections. Now
     it must return exactly 2."""
-    r = requests.get(f"{API}/dispatch/technician-skills",
+    r = http.get(f"{API}/dispatch/technician-skills",
                       headers=_auth(admin_a_tok), timeout=15)
     assert r.status_code == 200, r.text
     items = r.json().get("items", [])
@@ -103,7 +106,7 @@ def test_synthetic_double_row_dedups_to_one(admin_a_tok):
     loop = asyncio.get_event_loop()
     loop.run_until_complete(_seed())
     try:
-        r = requests.get(f"{API}/dispatch/technician-skills",
+        r = http.get(f"{API}/dispatch/technician-skills",
                           headers=_auth(admin_a_tok), timeout=15)
         assert r.status_code == 200, r.text
         items = r.json().get("items", [])
@@ -124,7 +127,7 @@ def test_synthetic_double_row_dedups_to_one(admin_a_tok):
 
 def test_tech_role_forbidden(tech_tok):
     """RBAC guard preserved — non-admins get 403 (existing behavior)."""
-    r = requests.get(f"{API}/dispatch/technician-skills",
+    r = http.get(f"{API}/dispatch/technician-skills",
                       headers=_auth(tech_tok), timeout=15)
     assert r.status_code == 403, r.text
 
@@ -153,7 +156,7 @@ def test_standalone_technician_without_user_still_included(admin_a_tok):
     loop = asyncio.get_event_loop()
     loop.run_until_complete(_seed())
     try:
-        r = requests.get(f"{API}/dispatch/technician-skills",
+        r = http.get(f"{API}/dispatch/technician-skills",
                           headers=_auth(admin_a_tok), timeout=15)
         assert r.status_code == 200
         rows = [i for i in r.json().get("items", [])

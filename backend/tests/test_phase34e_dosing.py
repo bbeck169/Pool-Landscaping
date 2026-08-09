@@ -4,7 +4,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-import requests
+
+# Phase 34-migrate-v2 · Phase 34-v2-d · Feb 2026 — swapped requests
+# for the in-process ASGI shim.
+from tests._phase34_http_shim import http
 from dotenv import dotenv_values
 
 _FE = dotenv_values(Path(__file__).resolve().parents[2] / "frontend" / ".env")
@@ -17,7 +20,7 @@ CUST  = {"email": "customer@aquaterra.com", "password": "password123"}
 
 
 def _login(creds):
-    r = requests.post(f"{API}/auth/login", json=creds, timeout=30)
+    r = http.post(f"{API}/auth/login", json=creds, timeout=30)
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
 
@@ -43,14 +46,14 @@ def _mk_name(): return f"TEST-e-{uuid.uuid4().hex[:8]}"
 
 def _cleanup(tok, cid, jid=None):
     if jid:
-        requests.delete(f"{API}/jobs/{jid}", headers=_auth(tok), timeout=15)
+        http.delete(f"{API}/jobs/{jid}", headers=_auth(tok), timeout=15)
     if cid:
-        requests.delete(f"{API}/customers/{cid}", headers=_auth(tok), timeout=15)
+        http.delete(f"{API}/customers/{cid}", headers=_auth(tok), timeout=15)
 
 
 def test_low_ph_recommends_soda_ash(admin_tok):
     """10k-gallon pool with pH 7.0 → soda-ash recommendation with quantity > 0."""
-    r = requests.post(
+    r = http.post(
         f"{API}/service-report/recommend-chemicals",
         json={
             "readings": {"ph": 7.0},
@@ -75,12 +78,12 @@ def test_quantity_scales_with_pool_gallons(admin_tok):
     same FC deficiency."""
     common = {"readings": {"free_chlorine": 0.5}, "use_llm_phrasing": False}
 
-    r_10k = requests.post(
+    r_10k = http.post(
         f"{API}/service-report/recommend-chemicals",
         json={**common, "pool_gallons": 10000},
         headers=_auth(admin_tok), timeout=30,
     ).json()
-    r_20k = requests.post(
+    r_20k = http.post(
         f"{API}/service-report/recommend-chemicals",
         json={**common, "pool_gallons": 20000},
         headers=_auth(admin_tok), timeout=30,
@@ -93,7 +96,7 @@ def test_quantity_scales_with_pool_gallons(admin_tok):
 
 
 def test_all_in_range_returns_empty(admin_tok):
-    r = requests.post(
+    r = http.post(
         f"{API}/service-report/recommend-chemicals",
         json={
             "readings": {
@@ -114,7 +117,7 @@ def test_all_in_range_returns_empty(admin_tok):
 
 def test_pool_gallons_missing_both_places(admin_tok):
     """No pool_gallons on request AND no job_id → mocked=True with reason."""
-    r = requests.post(
+    r = http.post(
         f"{API}/service-report/recommend-chemicals",
         json={"readings": {"ph": 7.0}, "use_llm_phrasing": False},
         headers=_auth(admin_tok), timeout=30,
@@ -127,15 +130,15 @@ def test_pool_gallons_missing_both_places(admin_tok):
 
 def test_fallback_to_customer_pool_gallons(admin_tok):
     """pool_gallons omitted in the body — resolved from the job → customer."""
-    c = requests.post(f"{API}/customers",
+    c = http.post(f"{API}/customers",
                        json={"name": _mk_name(), "pool_gallons": 18000},
                        headers=_auth(admin_tok), timeout=15).json()
-    j = requests.post(f"{API}/jobs",
+    j = http.post(f"{API}/jobs",
                        json={"title": "svc", "customer_id": c["id"],
                               "scheduled_date": "2026-08-15"},
                        headers=_auth(admin_tok), timeout=15).json()
     try:
-        r = requests.post(
+        r = http.post(
             f"{API}/service-report/recommend-chemicals",
             json={"job_id": j["id"], "readings": {"ph": 7.0},
                     "use_llm_phrasing": False},
@@ -149,7 +152,7 @@ def test_fallback_to_customer_pool_gallons(admin_tok):
 
 
 def test_llm_off_returns_deterministic_only(admin_tok):
-    r = requests.post(
+    r = http.post(
         f"{API}/service-report/recommend-chemicals",
         json={"readings": {"ph": 7.0}, "pool_gallons": 10000,
                 "use_llm_phrasing": False},
@@ -160,7 +163,7 @@ def test_llm_off_returns_deterministic_only(admin_tok):
 
 
 def test_customer_role_forbidden(customer_tok):
-    r = requests.post(
+    r = http.post(
         f"{API}/service-report/recommend-chemicals",
         json={"readings": {"ph": 7.0}, "pool_gallons": 10000,
                 "use_llm_phrasing": False},
@@ -171,7 +174,7 @@ def test_customer_role_forbidden(customer_tok):
 
 def test_technician_allowed(tech_tok):
     """Techs need this in the field — must be allowed."""
-    r = requests.post(
+    r = http.post(
         f"{API}/service-report/recommend-chemicals",
         json={"readings": {"ph": 7.4, "free_chlorine": 2.0},
                 "pool_gallons": 10000, "use_llm_phrasing": False},

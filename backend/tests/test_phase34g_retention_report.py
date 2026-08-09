@@ -4,7 +4,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-import requests
+
+# Phase 34-migrate-v2 · Phase 34-v2-d · Feb 2026 — swapped requests
+# for the in-process ASGI shim.
+from tests._phase34_http_shim import http
 from dotenv import dotenv_values
 
 _FE = dotenv_values(Path(__file__).resolve().parents[2] / "frontend" / ".env")
@@ -17,7 +20,7 @@ SUPER = {"email": "super@aquaterra.com", "password": "password123"}
 
 
 def _login(creds):
-    r = requests.post(f"{API}/auth/login", json=creds, timeout=30)
+    r = http.post(f"{API}/auth/login", json=creds, timeout=30)
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
 
@@ -46,13 +49,13 @@ def _iso_days(delta):
 
 def _cleanup(tok, cids, jids=()):
     for jid in jids:
-        requests.delete(f"{API}/jobs/{jid}", headers=_auth(tok), timeout=15)
+        http.delete(f"{API}/jobs/{jid}", headers=_auth(tok), timeout=15)
     for cid in cids:
-        requests.delete(f"{API}/customers/{cid}", headers=_auth(tok), timeout=15)
+        http.delete(f"{API}/customers/{cid}", headers=_auth(tok), timeout=15)
 
 
 def test_endpoint_basic_shape(admin_tok):
-    r = requests.get(f"{API}/reports/customer-retention?period=month",
+    r = http.get(f"{API}/reports/customer-retention?period=month",
                       headers=_auth(admin_tok), timeout=30)
     assert r.status_code == 200, r.text
     body = r.json()
@@ -69,7 +72,7 @@ def test_gained_and_lost_counts(admin_tok):
     """Seed 3 gained + 2 lost inside the current window and verify totals."""
     # Baseline totals BEFORE seeding — the tenant has legacy data, so we
     # compute a diff, not an absolute.
-    base = requests.get(f"{API}/reports/customer-retention?period=month",
+    base = http.get(f"{API}/reports/customer-retention?period=month",
                         headers=_auth(admin_tok), timeout=30).json()
     base_g = base["totals"]["gained"]
     base_l = base["totals"]["lost"]
@@ -78,7 +81,7 @@ def test_gained_and_lost_counts(admin_tok):
     # window).
     cids = []
     for _ in range(3):
-        r = requests.post(f"{API}/customers",
+        r = http.post(f"{API}/customers",
                            json={"name": _mk_name()},
                            headers=_auth(admin_tok), timeout=15)
         assert r.status_code == 200
@@ -86,12 +89,12 @@ def test_gained_and_lost_counts(admin_tok):
 
     # Seed 2 lost events by flipping is_active on two of them.
     for cid in cids[:2]:
-        requests.put(f"{API}/customers/{cid}",
+        http.put(f"{API}/customers/{cid}",
                      json={"name": "test", "is_active": False},
                      headers=_auth(admin_tok), timeout=15)
 
     try:
-        after = requests.get(f"{API}/reports/customer-retention?period=month",
+        after = http.get(f"{API}/reports/customer-retention?period=month",
                               headers=_auth(admin_tok), timeout=30).json()
         assert after["totals"]["gained"] - base_g == 3, (base, after)
         assert after["totals"]["lost"]   - base_l == 2, (base, after)
@@ -108,7 +111,7 @@ def test_gained_and_lost_counts(admin_tok):
 
 
 def test_period_week(admin_tok):
-    r = requests.get(f"{API}/reports/customer-retention?period=week",
+    r = http.get(f"{API}/reports/customer-retention?period=week",
                       headers=_auth(admin_tok), timeout=30)
     assert r.status_code == 200
     body = r.json()
@@ -121,7 +124,7 @@ def test_period_week(admin_tok):
 
 
 def test_period_year(admin_tok):
-    r = requests.get(f"{API}/reports/customer-retention?period=year",
+    r = http.get(f"{API}/reports/customer-retention?period=year",
                       headers=_auth(admin_tok), timeout=30).json()
     assert r["period"] == "year"
     assert 4 <= len(r["buckets"]) <= 6
@@ -130,7 +133,7 @@ def test_period_year(admin_tok):
 def test_yoy_mocked_when_no_history(admin_tok):
     """Use a start-of-history window that's clearly before the tenant even
     existed to force the insufficient-history branch."""
-    r = requests.get(
+    r = http.get(
         f"{API}/reports/customer-retention?period=month"
         f"&start=1990-01-01&end=1990-12-31",
         headers=_auth(admin_tok), timeout=30,
@@ -146,7 +149,7 @@ def test_yoy_shape_is_valid(admin_tok):
     """The YoY block always has a valid shape: either mocked=True with
     previous_totals=None + a non-empty reason, OR mocked=False with a real
     previous_totals dict."""
-    r = requests.get(f"{API}/reports/customer-retention?period=month",
+    r = http.get(f"{API}/reports/customer-retention?period=month",
                       headers=_auth(admin_tok), timeout=30).json()
     yoy = r["yoy"]
     assert "mocked" in yoy and "reason" in yoy
@@ -160,12 +163,12 @@ def test_yoy_shape_is_valid(admin_tok):
 
 
 def test_invalid_period(admin_tok):
-    r = requests.get(f"{API}/reports/customer-retention?period=fortnight",
+    r = http.get(f"{API}/reports/customer-retention?period=fortnight",
                       headers=_auth(admin_tok), timeout=15)
     assert r.status_code == 400
 
 
 def test_tech_forbidden(tech_tok):
-    r = requests.get(f"{API}/reports/customer-retention?period=month",
+    r = http.get(f"{API}/reports/customer-retention?period=month",
                       headers=_auth(tech_tok), timeout=15)
     assert r.status_code == 403

@@ -5,7 +5,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-import requests
+
+# Phase 34-migrate-v2 · Phase 34-v2-d · Feb 2026 — swapped ``requests``
+# for the in-process ASGI shim.
+from tests._phase34_http_shim import http
 from dotenv import dotenv_values
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -19,7 +22,7 @@ TECH    = {"email": "mike@aquaterra.com",  "password": "password123"}
 
 
 def _login(creds):
-    r = requests.post(f"{API}/auth/login", json=creds, timeout=30)
+    r = http.post(f"{API}/auth/login", json=creds, timeout=30)
     assert r.status_code == 200, r.text
     return r.json()["access_token"]
 
@@ -135,7 +138,7 @@ def _fetch_targets(campaign_id):
 
 def test_threshold_filter_and_write(admin_a_tok, seeded_scores):
     tid, seeds = seeded_scores
-    r = requests.post(f"{API}/churn/create-retention-campaign",
+    r = http.post(f"{API}/churn/create-retention-campaign",
                        headers=_auth(admin_a_tok),
                        json={"channel": "email", "min_risk_score": 60,
                               "max_customers": 10},
@@ -159,7 +162,7 @@ def test_threshold_filter_and_write(admin_a_tok, seeded_scores):
 
 
 def test_max_customers_cap(admin_a_tok, seeded_scores):
-    r = requests.post(f"{API}/churn/create-retention-campaign",
+    r = http.post(f"{API}/churn/create-retention-campaign",
                        headers=_auth(admin_a_tok),
                        json={"channel": "email", "min_risk_score": 60,
                               "max_customers": 1},
@@ -179,7 +182,7 @@ def test_max_customers_cap(admin_a_tok, seeded_scores):
 
 
 def test_zero_matches(admin_a_tok, seeded_scores):
-    r = requests.post(f"{API}/churn/create-retention-campaign",
+    r = http.post(f"{API}/churn/create-retention-campaign",
                        headers=_auth(admin_a_tok),
                        json={"channel": "email", "min_risk_score": 99,
                               "max_customers": 10},
@@ -251,7 +254,7 @@ def test_llm_error_falls_back_but_still_creates(admin_a_tok, seeded_scores, monk
 
 
 def test_tech_forbidden(tech_tok):
-    r = requests.post(f"{API}/churn/create-retention-campaign",
+    r = http.post(f"{API}/churn/create-retention-campaign",
                        headers=_auth(tech_tok),
                        json={"channel": "email"}, timeout=15)
     assert r.status_code == 403
@@ -259,7 +262,7 @@ def test_tech_forbidden(tech_tok):
 
 def test_tenant_isolation(admin_a_tok, admin_b_tok, seeded_scores):
     """A campaign created by aquaterra must NOT be visible to sunbelt."""
-    r = requests.post(f"{API}/churn/create-retention-campaign",
+    r = http.post(f"{API}/churn/create-retention-campaign",
                        headers=_auth(admin_a_tok),
                        json={"channel": "email", "min_risk_score": 60,
                               "max_customers": 10}, timeout=90)
@@ -267,7 +270,7 @@ def test_tenant_isolation(admin_a_tok, admin_b_tok, seeded_scores):
     cid = j["campaign_id"]
     assert cid
     # Sunbelt admin fetches the campaign list — must NOT contain cid.
-    b_list = requests.get(f"{API}/marketing/campaigns",
+    b_list = http.get(f"{API}/marketing/campaigns",
                            headers=_auth(admin_b_tok), timeout=15).json()
     b_ids = [c.get("id") for c in (b_list if isinstance(b_list, list)
                                      else b_list.get("items", []))]
