@@ -226,8 +226,24 @@ async def delete_credentials(
 
 # ═══════════════════════════════════════════════════════════════════
 # 5. POST /suppliers/{slug}/sync — Phase 54b: poolcorp is LIVE.
-#    SiteOne / Ewing / Heritage / ePoolSupply still return 501.
+#    Phase 54c: siteone is LIVE. Ewing / Heritage / ePoolSupply
+#    still return 501.
 # ═══════════════════════════════════════════════════════════════════
+_WIRED_SYNC_SLUGS = frozenset({"poolcorp", "siteone"})
+
+
+def _wired_sync_runner(slug: str):
+    """Return the ``async def run_*_sync`` callable for a wired slug,
+    or ``None`` if the slug hasn't been wired yet."""
+    if slug == "poolcorp":
+        from services.suppliers.sync import run_poolcorp_sync
+        return run_poolcorp_sync
+    if slug == "siteone":
+        from services.suppliers.sync import run_siteone_sync
+        return run_siteone_sync
+    return None
+
+
 @router.post("/suppliers/{slug}/sync")
 async def sync_supplier(
     slug: str,
@@ -239,16 +255,16 @@ async def sync_supplier(
     supplier = await _get_supplier_or_404(tenant_id, slug)
     connector = CONNECTORS.get(slug)
 
-    if slug != "poolcorp":
+    if slug not in _WIRED_SYNC_SLUGS:
         planned = connector.planned_phase if connector else "TBD"
         raise HTTPException(
             status_code=501,
             detail=f"connector not implemented yet, coming in phase {planned}",
         )
 
-    # Phase 54b — Pool360 real sync path. Runs in a background task
-    # so the HTTP call returns 202 within a few ms; operator polls
-    # ``GET /suppliers/poolcorp/sync-jobs`` for status.
+    # Phase 54b / 54c — wired sync path. Runs in a background task so
+    # the HTTP call returns 202 within a few ms; operator polls
+    # ``GET /suppliers/{slug}/sync-jobs`` for status.
     cred_row = await db.supplier_credentials.find_one(
         {"tenant_id": tenant_id, "supplier_id": supplier["id"]},
         {"_id": 0},
@@ -257,17 +273,19 @@ async def sync_supplier(
         raise HTTPException(
             status_code=400,
             detail={"error": "no_credentials",
-                     "message": "Save Pool360 credentials before running sync."},
+                     "message": f"Save {supplier['display_name']} credentials "
+                                 f"before running sync."},
         )
     credentials = {
         "username": decrypt(cred_row.get("encrypted_username")),
         "password": decrypt(cred_row.get("encrypted_password")),
         "api_key":  decrypt(cred_row.get("encrypted_api_key")),
     }
-    from services.suppliers.sync import run_poolcorp_sync, start_sync_job
+    runner = _wired_sync_runner(slug)
+    from services.suppliers.sync import start_sync_job
     job = await start_sync_job(tenant_id, supplier)
     background_tasks.add_task(
-        run_poolcorp_sync, tenant_id, supplier, credentials, job["id"],
+        runner, tenant_id, supplier, credentials, job["id"],
     )
     logger.info(f"[suppliers] sync started · tenant={tenant_id[:8]} · slug={slug} · job={job['id']}")
     from fastapi.responses import JSONResponse
@@ -276,6 +294,85 @@ async def sync_supplier(
         content={"job_id": job["id"], "status": "running",
                   "supplier_slug": slug},
     )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 5b. POST /suppliers/{slug}/test-connection — Phase 54c.
+# Runs ``authenticate()`` only (no catalog walk). Bounded to 15 s so
+# a stuck login page doesn't tie up the request. Same role gate as
+# sync (super_admin + admin). Same no_credentials 400 shape.
+# ═══════════════════════════════════════════════════════════════════
+TEST_CONNECTION_TIMEOUT_S = 15.0
+
+
+@router.post("/suppliers/{slug}/test-connection")
+async def test_supplier_connection(
+    slug: str,
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_admin(user)
+    tenant_id = _require_tenant(user)
+    supplier = await _get_supplier_or_404(tenant_id, slug)
+
+    if slug not in _WIRED_SYNC_SLUGS:
+        connector = CONNECTORS.get(slug)
+        planned = connector.planned_phase if connector else "TBD"
+        raise HTTPException(
+            status_code=501,
+            detail=f"connector not implemented yet, coming in phase {planned}",
+        )
+
+    cred_row = await db.supplier_credentials.find_one(
+        {"tenant_id": tenant_id, "supplier_id": supplier["id"]},
+        {"_id": 0},
+    )
+    if not cred_row:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "no_credentials",
+                     "message": f"Save {supplier['display_name']} credentials "
+                                 f"before testing the connection."},
+        )
+    credentials = {
+        "username": decrypt(cred_row.get("encrypted_username")),
+        "password": decrypt(cred_row.get("encrypted_password")),
+        "api_key":  decrypt(cred_row.get("encrypted_api_key")),
+    }
+
+    connector = CONNECTORS[slug]  # wired instance
+    import asyncio as _asyncio
+    from services.suppliers.poolcorp import (
+        LoginFailedError, LayoutChangedError,
+    )
+
+    async def _do_auth():
+        return await connector.authenticate(credentials)
+
+    try:
+        await _asyncio.wait_for(_do_auth(), timeout=TEST_CONNECTION_TIMEOUT_S)
+    except _asyncio.TimeoutError:
+        return {"ok": False, "error": "timeout", "supplier_slug": slug}
+    except LoginFailedError as e:
+        return {"ok": False, "error": "login_failed",
+                "message": str(e), "supplier_slug": slug}
+    except LayoutChangedError as e:
+        # ``authenticate`` doesn't normally raise this — kept for
+        # completeness; a login-page redesign could surface here.
+        return {"ok": False, "error": "unknown",
+                "message": str(e), "supplier_slug": slug}
+    except Exception as e:
+        msg = f"{type(e).__name__}: {e}"
+        # Best-effort rate-limit classification. Playwright surfaces
+        # 429/503s inside its Response objects; if the connector
+        # raises with the digits in the message, treat as rate limit.
+        low = msg.lower()
+        if "429" in low or "503" in low or "rate" in low or "throttle" in low:
+            return {"ok": False, "error": "rate_limited",
+                    "message": msg, "supplier_slug": slug}
+        return {"ok": False, "error": "unknown",
+                "message": msg, "supplier_slug": slug}
+
+    return {"ok": True, "supplier_slug": slug}
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -204,15 +204,15 @@ def test_credentials_round_trip_and_never_plaintext(sync_db):
 # Sync endpoints
 # ═══════════════════════════════════════════════════════════════════
 def test_manual_sync_returns_501_for_not_yet_implemented_connector():
-    # Phase 54b · Feb-2026 — poolcorp is LIVE now (returns 400 without
-    # credentials, or 202 with them). SiteOne / Ewing / Heritage /
-    # ePoolSupply still return 501 with the phase pointer.
-    r = requests.post(f"{API}/suppliers/siteone/sync",
+    # Phase 54b · Feb-2026 — poolcorp is LIVE. Phase 54c · Feb-2026 —
+    # SiteOne is LIVE. Ewing / Heritage / ePoolSupply still return 501
+    # with the phase pointer.
+    r = requests.post(f"{API}/suppliers/ewing/sync",
                        headers=_hdr(), timeout=TIMEOUT)
     assert r.status_code == 501
     detail = r.json().get("detail", "")
     assert "not implemented" in detail.lower()
-    assert "54c" in detail  # siteone is planned for 54c
+    assert "54d" in detail  # ewing is planned for 54d
 
 
 def test_sync_endpoint_slug_gates():
@@ -269,13 +269,20 @@ def test_tenant_isolation_on_suppliers_and_credentials(sync_db):
 # ═══════════════════════════════════════════════════════════════════
 def test_all_connector_stubs_raise_not_implemented():
     # Import from the app process to exercise the exact same class
-    # instances the router uses.
+    # instances the router uses. Phase 54b wired ``poolcorp`` and
+    # Phase 54c wired ``siteone`` — those two now have real
+    # implementations and are skipped here. The remaining three
+    # slugs must still raise ``NotImplementedError`` until their
+    # respective phases land.
     import sys
     sys.path.insert(0, "/app/backend")
     from services.suppliers.connector import CONNECTORS
 
     assert set(CONNECTORS.keys()) == set(EXPECTED_SLUGS)
+    wired = {"poolcorp", "siteone"}
     for slug, conn in CONNECTORS.items():
+        if slug in wired:
+            continue
         with pytest.raises(NotImplementedError) as ei:
             conn.authenticate({})
         assert conn.display_name in str(ei.value)

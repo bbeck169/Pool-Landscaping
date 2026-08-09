@@ -122,6 +122,29 @@ CONNECTORS: Dict[str, BaseSupplierConnector] = {
 }
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Wired connectors — replace the stub instances above as each phase
+# lands. Import guarded with try/except so ``connector.py`` remains
+# importable in a fresh checkout that hasn't installed Playwright
+# yet (the wired connector modules import ``playwright.async_api``).
+# ═══════════════════════════════════════════════════════════════════
+try:  # Phase 54b — Pool360 wired
+    from services.suppliers.poolcorp import (  # noqa: E402
+        PoolCorpConnector as _WiredPoolCorp,
+    )
+    CONNECTORS["poolcorp"] = _WiredPoolCorp()
+except Exception:  # pragma: no cover — deps missing at import
+    pass
+
+try:  # Phase 54c — SiteOne wired
+    from services.suppliers.siteone import (  # noqa: E402
+        SiteOneConnector as _WiredSiteOne,
+    )
+    CONNECTORS["siteone"] = _WiredSiteOne()
+except Exception:  # pragma: no cover — deps missing at import
+    pass
+
+
 # The canonical seed set. Order preserved so ``GET /api/suppliers``
 # always returns the same admin-facing default sort.
 SUPPLIER_SEED: list[Dict[str, Any]] = [

@@ -136,20 +136,24 @@ async def apply_products_to_pricebook(
     return {"added": added, "updated": updated, "removed": removed}
 
 
-async def run_poolcorp_sync(
+async def run_supplier_sync(
     tenant_id: str, supplier: Dict[str, Any],
     credentials: Dict[str, Any], job_id: str,
+    connector,
 ) -> None:
-    """Full Pool360 sync flow. Called from a FastAPI background task.
+    """Generic supplier sync runner. Used by ``run_poolcorp_sync`` and
+    ``run_siteone_sync`` (Phase 54c) — each variant is a thin wrapper
+    that just instantiates the right connector and delegates here.
 
-    Wraps ``PoolCorpConnector`` — authenticate, walk products,
-    reconcile, finalize the job row. All exceptions are captured
-    into the job row's ``error_message`` so the operator can see
-    what went wrong without tailing server logs."""
+    ``connector`` is a live instance with ``authenticate`` and
+    ``list_products`` coroutines. Any ``LoginFailedError`` /
+    ``LayoutChangedError`` raised from either coroutine is captured
+    onto the job row as an ``error`` status. All other exceptions
+    are captured with their class name for triage.
+    """
     from services.suppliers.poolcorp import (
-        PoolCorpConnector, LoginFailedError, LayoutChangedError,
+        LoginFailedError, LayoutChangedError,
     )
-    connector = PoolCorpConnector()
     try:
         session = await connector.authenticate(credentials)
         products: List[Dict[str, Any]] = []
@@ -190,3 +194,26 @@ async def run_poolcorp_sync(
             job_id, status="error",
             error_message=f"{type(e).__name__}: {e}",
         )
+
+
+async def run_poolcorp_sync(
+    tenant_id: str, supplier: Dict[str, Any],
+    credentials: Dict[str, Any], job_id: str,
+) -> None:
+    """Pool360 sync entry-point — kept as a stable name for Phase 54b
+    callers + tests. Instantiates the Pool360 connector then delegates
+    to ``run_supplier_sync``."""
+    from services.suppliers.poolcorp import PoolCorpConnector
+    connector = PoolCorpConnector()
+    await run_supplier_sync(tenant_id, supplier, credentials, job_id, connector)
+
+
+async def run_siteone_sync(
+    tenant_id: str, supplier: Dict[str, Any],
+    credentials: Dict[str, Any], job_id: str,
+) -> None:
+    """SiteOne sync entry-point (Phase 54c). Thin wrapper on
+    ``run_supplier_sync`` with the wired ``SiteOneConnector``."""
+    from services.suppliers.siteone import SiteOneConnector
+    connector = SiteOneConnector()
+    await run_supplier_sync(tenant_id, supplier, credentials, job_id, connector)

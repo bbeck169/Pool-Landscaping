@@ -66,18 +66,28 @@ function primeApiCalls({
   suppliers = SUPPLIERS_FIXTURE,
   hasCreds = false,
   jobs = [],
+  hasCredsBySlug,
 } = {}) {
+  // ``hasCredsBySlug`` gives per-slug override; the ``hasCreds`` flag
+  // remains a convenience default for the "same for both wired
+  // suppliers" scenario used by earlier tests.
+  const map = hasCredsBySlug || { poolcorp: hasCreds, siteone: hasCreds };
   getMock.mockImplementation((path) => {
     if (path === "/suppliers") return Promise.resolve(suppliers);
-    if (path === "/suppliers/poolcorp/credentials") {
+    const credsMatch = path.match(/^\/suppliers\/([^/]+)\/credentials$/);
+    if (credsMatch) {
+      const slug = credsMatch[1];
+      const has = !!map[slug];
       return Promise.resolve({
-        supplier_slug: "poolcorp",
-        has_credentials: hasCreds,
-        updated_at: hasCreds ? "2026-02-14T10:00:00Z" : null,
+        supplier_slug: slug,
+        has_credentials: has,
+        updated_at: has ? "2026-02-14T10:00:00Z" : null,
       });
     }
-    if (path.startsWith("/suppliers/poolcorp/sync-jobs")) {
-      return Promise.resolve({ supplier_slug: "poolcorp", jobs, count: jobs.length });
+    const jobsMatch = path.match(/^\/suppliers\/([^/]+)\/sync-jobs/);
+    if (jobsMatch) {
+      return Promise.resolve({
+        supplier_slug: jobsMatch[1], jobs, count: jobs.length });
     }
     return Promise.reject(new Error("unmocked GET " + path));
   });
@@ -119,15 +129,22 @@ describe("SupplierSettings — render", () => {
     );
   });
 
-  it("renders coming-soon cards for the four other suppliers", async () => {
+  it("renders coming-soon cards for the three still-unwired suppliers", async () => {
+    // Phase 54c wired SiteOne — poolcorp + siteone render as full
+    // cards; only ewing / heritage / epoolsupply remain coming-soon.
     primeApiCalls();
     renderPage();
-    for (const slug of ["siteone", "ewing", "heritage", "epoolsupply"]) {
+    expect(await screen.findByTestId("supplier-card-poolcorp")).toBeInTheDocument();
+    expect(await screen.findByTestId("supplier-card-siteone")).toBeInTheDocument();
+    for (const slug of ["ewing", "heritage", "epoolsupply"]) {
       expect(await screen.findByTestId(`supplier-card-${slug}`)).toBeInTheDocument();
     }
     // Coming-soon cards do NOT get a credentials form / sync button
-    expect(screen.queryByTestId("supplier-siteone-sync-btn")).toBeNull();
+    expect(screen.queryByTestId("supplier-ewing-sync-btn")).toBeNull();
     expect(screen.queryByTestId("supplier-heritage-username-input")).toBeNull();
+    // SiteOne DOES get one now.
+    expect(await screen.findByTestId("supplier-siteone-sync-btn")).toBeInTheDocument();
+    expect(await screen.findByTestId("supplier-siteone-username-input")).toBeInTheDocument();
   });
 
   it("shows an empty history message when the sync-jobs list is empty", async () => {
@@ -227,6 +244,150 @@ describe("SupplierSettings — manager read-only", () => {
 
     expect(await screen.findByTestId("supplier-poolcorp-readonly-notice"))
       .toBeInTheDocument();
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+// 3b. Phase 54c — SiteOne card wired
+// ═══════════════════════════════════════════════════════════════════
+describe("SupplierSettings — SiteOne wired (Phase 54c)", () => {
+  it("SiteOne card gets the credentials form + legal disclaimer + history", async () => {
+    primeApiCalls();
+    renderPage();
+    expect(await screen.findByTestId("supplier-card-siteone")).toBeInTheDocument();
+    expect(await screen.findByTestId("supplier-siteone-username-input")).toBeInTheDocument();
+    expect(await screen.findByTestId("supplier-siteone-password-input")).toBeInTheDocument();
+    const disc = await screen.findByTestId("supplier-siteone-legal-disclaimer");
+    expect(disc.textContent).toContain(
+      "Automated syncing may be subject to your wholesaler's Terms of Service");
+  });
+
+  it("saves SiteOne credentials via POST /suppliers/siteone/credentials", async () => {
+    primeApiCalls();
+    postMock.mockResolvedValueOnce({ ok: true, supplier_slug: "siteone",
+                                     updated_at: "2026-02-14T11:00:00Z" });
+    renderPage();
+
+    const u = await screen.findByTestId("supplier-siteone-username-input");
+    const p = await screen.findByTestId("supplier-siteone-password-input");
+    fireEvent.change(u, { target: { value: "operator" } });
+    fireEvent.change(p, { target: { value: "s3cret" } });
+
+    fireEvent.click(await screen.findByTestId("supplier-siteone-save-btn"));
+
+    await waitFor(() => {
+      expect(postMock).toHaveBeenCalledWith(
+        "/suppliers/siteone/credentials",
+        { username: "operator", password: "s3cret" },
+      );
+    });
+  });
+
+  it('"Sync now" is disabled for SiteOne when no credentials are saved', async () => {
+    primeApiCalls({ hasCreds: false });
+    renderPage();
+    const syncBtn = await screen.findByTestId("supplier-siteone-sync-btn");
+    expect(syncBtn).toBeDisabled();
+  });
+
+  it("SiteOne Sync now POSTs to /suppliers/siteone/sync when creds present", async () => {
+    primeApiCalls({ hasCreds: true });
+    postMock.mockResolvedValueOnce({
+      job_id: "job-site-abc", status: "running", supplier_slug: "siteone",
+    });
+    renderPage();
+
+    const syncBtn = await screen.findByTestId("supplier-siteone-sync-btn");
+    await waitFor(() => expect(syncBtn).not.toBeDisabled());
+    fireEvent.click(syncBtn);
+    await waitFor(() => {
+      expect(postMock).toHaveBeenCalledWith("/suppliers/siteone/sync", {});
+    });
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+// 3c. Phase 54c — Test-connection button (both wired suppliers)
+// ═══════════════════════════════════════════════════════════════════
+describe("SupplierSettings — Test connection button (Phase 54c)", () => {
+  it("Test connection is disabled when no credentials are saved", async () => {
+    primeApiCalls({ hasCreds: false });
+    renderPage();
+    const btnP = await screen.findByTestId("supplier-poolcorp-test-connection-btn");
+    const btnS = await screen.findByTestId("supplier-siteone-test-connection-btn");
+    expect(btnP).toBeDisabled();
+    expect(btnS).toBeDisabled();
+  });
+
+  it("Pool360 Test connection success renders the connected badge", async () => {
+    primeApiCalls({ hasCredsBySlug: { poolcorp: true, siteone: false } });
+    postMock.mockResolvedValueOnce({ ok: true, supplier_slug: "poolcorp" });
+    renderPage();
+
+    const btn = await screen.findByTestId("supplier-poolcorp-test-connection-btn");
+    await waitFor(() => expect(btn).not.toBeDisabled());
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      expect(postMock).toHaveBeenCalledWith(
+        "/suppliers/poolcorp/test-connection", {});
+    });
+    const badge = await screen.findByTestId("supplier-poolcorp-test-result");
+    expect(badge.textContent).toContain("Connected");
+    expect(toastSuccess).toHaveBeenCalled();
+  });
+
+  it("SiteOne Test connection login_failed renders a red error badge", async () => {
+    primeApiCalls({ hasCredsBySlug: { poolcorp: false, siteone: true } });
+    postMock.mockResolvedValueOnce({
+      ok: false, error: "login_failed", supplier_slug: "siteone",
+    });
+    renderPage();
+
+    const btn = await screen.findByTestId("supplier-siteone-test-connection-btn");
+    await waitFor(() => expect(btn).not.toBeDisabled());
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      expect(postMock).toHaveBeenCalledWith(
+        "/suppliers/siteone/test-connection", {});
+    });
+    const badge = await screen.findByTestId("supplier-siteone-test-result");
+    expect(badge.textContent.toLowerCase()).toContain("login failed");
+    expect(toastError).toHaveBeenCalled();
+  });
+
+  it("Rate-limited failure shows the rate-limit copy in the badge", async () => {
+    primeApiCalls({ hasCredsBySlug: { poolcorp: true, siteone: false } });
+    postMock.mockResolvedValueOnce({
+      ok: false, error: "rate_limited", supplier_slug: "poolcorp",
+    });
+    renderPage();
+    const btn = await screen.findByTestId("supplier-poolcorp-test-connection-btn");
+    await waitFor(() => expect(btn).not.toBeDisabled());
+    fireEvent.click(btn);
+    const badge = await screen.findByTestId("supplier-poolcorp-test-result");
+    await waitFor(() => {
+      expect(badge.textContent.toLowerCase()).toMatch(/rate-?limit/);
+    });
+  });
+
+  it("Timeout failure shows the timeout copy in the badge", async () => {
+    primeApiCalls({ hasCredsBySlug: { poolcorp: false, siteone: true } });
+    postMock.mockResolvedValueOnce({
+      ok: false, error: "timeout", supplier_slug: "siteone",
+    });
+    renderPage();
+    const btn = await screen.findByTestId("supplier-siteone-test-connection-btn");
+    await waitFor(() => expect(btn).not.toBeDisabled());
+    fireEvent.click(btn);
+    const badge = await screen.findByTestId("supplier-siteone-test-result");
+    await waitFor(() => {
+      expect(badge.textContent.toLowerCase()).toContain("timed out");
+    });
   });
 });
 

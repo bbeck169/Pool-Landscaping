@@ -17,7 +17,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Save, RefreshCw, PlayCircle, Trash2, CheckCircle2,
-  AlertTriangle, Clock, ShieldAlert,
+  AlertTriangle, Clock, ShieldAlert, PlugZap,
 } from "lucide-react";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
@@ -28,13 +28,25 @@ const LEGAL_DISCLAIMER =
   "Automated syncing may be subject to your wholesaler's Terms of Service. " +
   "By connecting, you acknowledge responsibility for compliance with those terms.";
 
-const SUPPORTED_SLUG = "poolcorp";
+// Phase 54c · Feb-2026 — SiteOne joined the wired-connector set.
+const WIRED_SLUGS = new Set(["poolcorp", "siteone"]);
 
 const PLANNED_LABELS = {
-  siteone:    "Coming in Phase 54c",
-  ewing:      "Coming in Phase 54d",
-  heritage:   "Coming in Phase 54e",
+  ewing:       "Coming in Phase 54d",
+  heritage:    "Coming in Phase 54e",
   epoolsupply: "Coming in Phase 54e",
+};
+
+const SUPPLIER_TAGLINE = {
+  poolcorp: "Live wholesale pricebook sync (Playwright headless).",
+  siteone:  "SiteOne B2B pricebook sync (Playwright headless).",
+};
+
+const TEST_CONN_ERROR_COPY = {
+  login_failed: "Login failed — check the username and password.",
+  rate_limited: "Rate-limited by the wholesaler. Wait a minute and try again.",
+  timeout:      "Connection timed out (>15 s). The wholesaler may be slow — try again.",
+  unknown:      "Connection failed for an unknown reason. See server logs for details.",
 };
 
 function formatDT(iso) {
@@ -89,11 +101,13 @@ function ComingSoonCard({ supplier }) {
   );
 }
 
-function PoolcorpCard({ supplier, readOnly }) {
+function WiredSupplierCard({ supplier, readOnly }) {
   const [creds, setCreds] = useState({ has_credentials: false, updated_at: null });
   const [form, setForm] = useState({ username: "", password: "" });
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null); // {ok, message}
   const [jobs, setJobs] = useState([]);
   const [loadingJobs, setLoadingJobs] = useState(true);
 
@@ -143,7 +157,7 @@ function PoolcorpCard({ supplier, readOnly }) {
 
   const deleteCreds = async () => {
     if (readOnly) return;
-    if (!window.confirm("Remove saved Pool360 credentials? Syncs will stop working until new credentials are provided.")) return;
+    if (!window.confirm(`Remove saved ${supplier.display_name} credentials? Syncs will stop working until new credentials are provided.`)) return;
     try {
       await api.delete(`/suppliers/${supplier.slug}/credentials`);
       await refreshCreds();
@@ -173,6 +187,32 @@ function PoolcorpCard({ supplier, readOnly }) {
     }
   };
 
+  const runTest = async () => {
+    if (readOnly) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const r = await api.post(`/suppliers/${supplier.slug}/test-connection`, {});
+      if (r.ok) {
+        setTestResult({ ok: true, message: "Connection OK." });
+        toast.success("Connection OK.");
+      } else {
+        const copy = TEST_CONN_ERROR_COPY[r.error] || `Connection failed (${r.error}).`;
+        setTestResult({ ok: false, message: copy });
+        toast.error(copy);
+      }
+    } catch (e) {
+      const msg = e?.data?.detail?.message
+        || (typeof e?.data?.detail === "string" ? e.data.detail : "")
+        || e.message
+        || "Test failed";
+      setTestResult({ ok: false, message: msg });
+      toast.error(msg);
+    } finally {
+      setTesting(false);
+    }
+  };
+
   return (
     <div
       className="rounded-xl p-5"
@@ -185,7 +225,7 @@ function PoolcorpCard({ supplier, readOnly }) {
             {supplier.display_name}
           </div>
           <div className="text-sm mt-1" style={{ color: colors.muted }}>
-            Live wholesale pricebook sync (Playwright headless).
+            {SUPPLIER_TAGLINE[supplier.slug] || "Wholesale pricebook sync."}
           </div>
         </div>
         <span
@@ -205,14 +245,14 @@ function PoolcorpCard({ supplier, readOnly }) {
       {/* Credentials form */}
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block">
-          <span className="text-xs" style={{ color: colors.muted }}>Pool360 username</span>
+          <span className="text-xs" style={{ color: colors.muted }}>{supplier.display_name} username</span>
           <input
             type="text"
             autoComplete="off"
             value={form.username}
             disabled={readOnly}
             onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
-            placeholder={creds.has_credentials ? "•••••• (saved)" : "your-pool360-username"}
+            placeholder={creds.has_credentials ? "•••••• (saved)" : `your-${supplier.slug}-username`}
             className="mt-1 w-full px-3 py-2 rounded-lg text-sm disabled:opacity-60"
             style={{ border: `1px solid ${colors.border}`, backgroundColor: colors.surface }}
             data-testid={`supplier-${supplier.slug}-username-input`}
@@ -226,7 +266,7 @@ function PoolcorpCard({ supplier, readOnly }) {
             value={form.password}
             disabled={readOnly}
             onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-            placeholder={creds.has_credentials ? "•••••• (saved)" : "your-pool360-password"}
+            placeholder={creds.has_credentials ? "•••••• (saved)" : `your-${supplier.slug}-password`}
             className="mt-1 w-full px-3 py-2 rounded-lg text-sm disabled:opacity-60"
             style={{ border: `1px solid ${colors.border}`, backgroundColor: colors.surface }}
             data-testid={`supplier-${supplier.slug}-password-input`}
@@ -267,6 +307,32 @@ function PoolcorpCard({ supplier, readOnly }) {
             <PlayCircle size={14} />
             {syncing ? "Starting…" : "Sync now"}
           </button>
+
+          <button
+            onClick={runTest}
+            disabled={testing || !creds.has_credentials}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+            style={{ border: `1px solid ${colors.border}`, color: colors.onSurface }}
+            data-testid={`supplier-${supplier.slug}-test-connection-btn`}
+          >
+            <PlugZap size={14} />
+            {testing ? "Testing…" : "Test connection"}
+          </button>
+
+          {testResult && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs"
+              style={{
+                backgroundColor: testResult.ok ? "#DCFCE7" : "#FEE2E2",
+                color: testResult.ok ? colors.success : colors.error,
+              }}
+              data-testid={`supplier-${supplier.slug}-test-result`}
+            >
+              {testResult.ok
+                ? <><CheckCircle2 size={12} /> Connected</>
+                : <><AlertTriangle size={12} /> {testResult.message}</>}
+            </span>
+          )}
 
           <button
             onClick={refreshJobs}
@@ -420,8 +486,8 @@ export default function SupplierSettings() {
       {!loading && !error && (
         <div className="grid gap-4">
           {suppliers.map((s) =>
-            s.slug === SUPPORTED_SLUG
-              ? <PoolcorpCard key={s.slug} supplier={s} readOnly={readOnly} />
+            WIRED_SLUGS.has(s.slug)
+              ? <WiredSupplierCard key={s.slug} supplier={s} readOnly={readOnly} />
               : <ComingSoonCard key={s.slug} supplier={s} />
           )}
         </div>
