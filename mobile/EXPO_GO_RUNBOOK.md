@@ -313,3 +313,68 @@ Distribute via TestFlight internal / Google internal-testing exactly like the pr
 5. Device A: hold the big "Hold to talk" button and speak — Device B hears the audio in real time.
 6. Both devices: release the toggle. Within a couple seconds, a new `.m4a` clip appears in the Pool Team timeline attributed to the last-out participant.
 
+
+---
+
+## Phase 52.1d · metered.ca TURN wiring (Feb 2026)
+
+Without TURN, live sessions work on LAN + friendly-NAT clients but **fail for users behind symmetric NAT** (about 8% of consumer connections — mostly LTE hotspots + hotel Wi-Fi). This section wires the metered.ca free tier so those clients relay through a hosted TURN pool instead of trying to connect P2P.
+
+### One-time metered.ca signup
+1. Sign up at <https://dashboard.metered.ca/> — free tier ships 50 GB / month TURN traffic, plenty for the small teams this app targets.
+2. In the dashboard, open **TURN Server → Global TURN Server**.
+3. Copy the credentials block. It looks like:
+   ```json
+   {
+     "urls": [
+       "turn:global.relay.metered.ca:80",
+       "turn:global.relay.metered.ca:443?transport=tcp",
+       "turns:global.relay.metered.ca:443"
+     ],
+     "username": "abcdef1234567890",
+     "credential": "xyz-your-secret-here"
+   }
+   ```
+
+### Backend `.env` config
+Add to `/app/backend/.env` (comma-join the URLs — the backend splits on `,` at request time):
+
+```bash
+METERED_TURN_URLS=turn:global.relay.metered.ca:80,turn:global.relay.metered.ca:443?transport=tcp,turns:global.relay.metered.ca:443
+METERED_TURN_USERNAME=abcdef1234567890
+METERED_TURN_CREDENTIAL=xyz-your-secret-here
+```
+
+⚠️ **Never commit real credentials.** `backend/.env.example` ships placeholder-only rows for these three keys.
+
+### Apply
+```bash
+sudo supervisorctl restart backend
+```
+
+### Verify
+```bash
+curl -s -H "Authorization: Bearer $(curl -s -X POST http://localhost:8001/api/auth/login -H 'Content-Type: application/json' -d '{"email":"admin@aquaterra.com","password":"password123"}' | jq -r .access_token)" \
+  http://localhost:8001/api/walkie/ice-servers | jq
+```
+
+Expected shape (TURN active):
+```json
+{
+  "ice_servers": [
+    { "urls": "stun:stun.l.google.com:19302" },
+    {
+      "urls": ["turn:global.relay.metered.ca:80", "turn:global.relay.metered.ca:443?transport=tcp", "turns:global.relay.metered.ca:443"],
+      "username": "abcdef1234567890",
+      "credential": "xyz-your-secret-here"
+    }
+  ]
+}
+```
+
+Missing any of the three env vars → STUN-only response + a `walkie.signaling metered.ca TURN not configured — STUN-only` log line at boot (safe fallback).
+
+### Fallback behavior
+- **STUN-only** (any TURN env var missing): every P2P audio session works on the same LAN + friendly-NAT scenarios. Symmetric-NAT clients (hotel Wi-Fi, some LTE carriers) will connection-fail after ICE gathering — the client shows a `Live unavailable` state and drops back to async clips.
+- **All three set + valid**: TURN relays symmetric-NAT clients. Latency is ~50-150 ms higher than P2P (relay hop) but that's still well below the 250 ms threshold the walkie UX targets.
+

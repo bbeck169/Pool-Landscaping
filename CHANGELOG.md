@@ -2,6 +2,42 @@
 
 All notable changes to Pool & Landscaping CRM are documented here.
 
+## [Unreleased]
+
+### Phase 52.1 — Live-streaming walkie MVP (a → d) · Feb 2026
+
+**Added**
+- Backend WebSocket signaling endpoint `WS /api/ws/walkie/{channel_id}?token=<jwt>` (Phase 52.1a) — signaling only, media flows P2P via WebRTC. Message types: `join`, `offer`, `answer`, `ice-candidate`, `speaking`, `leave` (client→server) and `session-state`, `peer-joined`, `peer-left`, `offer`, `answer`, `ice-candidate`, `speaking-update`, `session-ended` (server→client).
+- `POST /api/walkie/channels` — creates a `live_only` channel (super_admin + admin only).
+- `GET /api/walkie/ice-servers` — Google STUN baseline + metered.ca TURN entry when the three env vars (`METERED_TURN_URLS`, `METERED_TURN_USERNAME`, `METERED_TURN_CREDENTIAL`) are set (Phase 52.1d).
+- New `walkie_live_sessions` Mongo collection tracking active + closed live sessions with `(tenant_id, channel_id, started_at)` + `(tenant_id, ended_at)` indexes.
+- `walkie_channels.supports_live: bool` (default `True`) + `walkie_channels.live_only: bool` (default `False`) — legacy rows auto-default `supports_live=True` via `WalkieChannel.from_mongo`.
+- `services/walkie/live_cleanup_cron.py` — 5-min APScheduler tick that closes orphaned `ended_at IS NULL` rows after a server restart (env-gated by `WALKIE_LIVE_CLEANUP_ENABLED=1`).
+- `services/walkie/live_events.py::on_session_ended(session_id, reason)` — auto-record extension point (no-op stub in 52.1a; consumed by client-side upload in 52.1b/c).
+- Web live panel (`frontend/src/pages/walkie/LivePanel.jsx`) — PTT default with spacebar + on-screen button, VOX via WebAudio `AnalyserNode` (-50 dBFS threshold, 200 ms hysteresis), full peer-mesh RTC, hidden `<audio autoplay>` per remote peer for browser-native mixing, MediaRecorder-driven auto-record upload on session-end.
+- Mobile live panel (`mobile/src/pages/walkie/LivePanel.tsx`) — same mesh + PTT flow via `react-native-webrtc@124.0.6`, parallel `expo-audio` recorder for auto-record clip. VOX shipped as disabled UI with a "desktop-only in 52.1c" hint — deferred to Phase 52.1e.
+- `react-native-webrtc@124.0.6` + `@config-plugins/react-native-webrtc@13.0.0` — dev-client only; rebuild via `npx expo prebuild --clean` + `eas build --profile development`.
+- `mobile/app.json` platform config: iOS `UIBackgroundModes:["audio"]` + refreshed `NSMicrophoneUsageDescription`. Android `FOREGROUND_SERVICE_MICROPHONE` + `MODIFY_AUDIO_SETTINGS` permissions.
+
+**Docs**
+- `mobile/EXPO_GO_RUNBOOK.md` — new Phase 52.1c section (react-native-webrtc install + rebuild recipe, permission diff, VOX-deferred rationale, bundle-size delta, 6-step smoke test) + Phase 52.1d section (metered.ca signup + env config + verify curl + fallback behavior).
+- `backend/.env.example` — placeholder rows for `METERED_TURN_URLS` + `METERED_TURN_USERNAME` + `METERED_TURN_CREDENTIAL`.
+- `memory/PRD.md` — consolidated Phase 52.1 section covering scope, data model, endpoints, mesh topology limits, non-goals (SFU, live-only-recording-beyond-24h-TTL), env vars, test coverage.
+
+**Tests**
+- Backend `test_phase52_1a_walkie_signaling.py` (20 tests) + `test_phase52_1d_metered_turn.py` (8 tests) — WebSocket join/relay/broadcast, ICE-servers STUN + TURN + partial-env + multi-URL, frame-type snapshot lock.
+- Web vitest `phase52-1b-live-panel.test.jsx` (16 tests) + `phase52-1d-walkie-live-parity.test.jsx` (8 parity assertions).
+- Mobile jest `phase52-1c-mobile-live-panel.test.tsx` (11 tests) + `phase52-1d-walkie-live-parity.test.ts` (8 parity assertions).
+- Global mobile `__mocks__/react-native-webrtc.js` — jest auto-mock keeping other test suites that transitively import the channel page working.
+
+**Non-goals (deferred)**
+- SFU-based scaling beyond ~10 peers per session (a Phase 52.2 effort).
+- VOX (voice-activated) on mobile — moves to Phase 52.1e.
+- Screen-off background mic on Android — requires a dedicated foreground-service native module.
+- Recording of `live_only` channels beyond the standard 24 h `walkie_messages` TTL.
+
+
+
 Format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
 Entries are dated (YYYY-MM-DD, UTC) since we're not cutting semver releases yet.
 Do not rewrite history — only prepend new entries at the top.

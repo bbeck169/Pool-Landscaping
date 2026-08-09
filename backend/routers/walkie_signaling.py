@@ -351,8 +351,25 @@ async def ws_walkie_signaling(
         await _broadcast(room, {"type": "peer-left", "user_id": user_id})
         if not room.peers:
             # Last one out — end the Mongo session + fire the hook.
+            # Emit ``session-ended`` to the departing peer's still-open
+            # WS before we close it. Phase 52.1a documents this frame
+            # in the docstring; the 52.1b/c clients listen for it to
+            # trigger the auto-record flush. On empty-room close the
+            # peer is the only receiver — hence we push it directly
+            # rather than via ``_broadcast`` (which iterates the
+            # already-empty ``room.peers`` map).
             sid = room.session_id
             ROOMS.pop(channel_id, None)
+            try:
+                await ws.send_json({
+                    "type": "session-ended",
+                    "session_id": sid,
+                    "reason": "empty",
+                })
+            except Exception:
+                # WS already closed (client-initiated disconnect) —
+                # session end fires anyway.
+                pass
             await _end_session(sid, reason="empty")
 
 
@@ -402,9 +419,37 @@ async def create_walkie_channel(
 # Index bootstrap (called from server.py at startup)
 # ═══════════════════════════════════════════════════════════════════
 # ═══════════════════════════════════════════════════════════════════
-# ICE servers — STUN today, TURN in Phase 52.1d (metered.ca free tier)
+# ICE servers — STUN today, TURN via metered.ca free tier (Phase 52.1d)
 # ═══════════════════════════════════════════════════════════════════
 _STATIC_ICE_SERVERS = [{"urls": "stun:stun.l.google.com:19302"}]
+
+
+def _load_metered_turn_config() -> list[dict]:
+    """Read the three metered.ca env vars and return zero-or-one TURN
+    entry the client should append to its ``iceServers`` list.
+
+    Env contract (all three MUST be set for TURN to activate):
+      * ``METERED_TURN_URLS``       — comma-separated URL list. e.g.
+                                       ``turn:example.metered.live:80,turn:example.metered.live:443?transport=tcp,turns:example.metered.live:443``
+      * ``METERED_TURN_USERNAME``   — credential username from the
+                                       metered.ca dashboard
+      * ``METERED_TURN_CREDENTIAL`` — matching secret
+
+    A single dict with a URL LIST is returned rather than one entry
+    per URL — this is the ``RTCIceServer`` shape both
+    ``RTCPeerConnection`` (web) and ``react-native-webrtc`` accept.
+
+    Empty/missing → returns ``[]`` so callers safely spread the result.
+    """
+    raw_urls = (os.environ.get("METERED_TURN_URLS") or "").strip()
+    user = (os.environ.get("METERED_TURN_USERNAME") or "").strip()
+    cred = (os.environ.get("METERED_TURN_CREDENTIAL") or "").strip()
+    if not raw_urls or not user or not cred:
+        return []
+    urls = [u.strip() for u in raw_urls.split(",") if u.strip()]
+    if not urls:
+        return []
+    return [{"urls": urls, "username": user, "credential": cred}]
 
 
 @router.get("/walkie/ice-servers")
@@ -412,21 +457,15 @@ async def get_walkie_ice_servers(
     _user: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Return the ICE server config the client should feed into
-    ``RTCPeerConnection``. Phase 52.1a ships a static Google-STUN
-    fallback; Phase 52.1d appends TURN credentials from metered.ca.
+    ``RTCPeerConnection``. Google STUN is always present; TURN is
+    appended when the metered.ca env vars are populated (Phase 52.1d
+    setup). Missing TURN config falls back to STUN-only safely — the
+    peer mesh still works LAN-side but symmetric-NAT clients will
+    fail to connect through the internet.
 
-    Auth: any authenticated user (mirrors ``/api/walkie/channels`` gate)."""
+    Auth: any authenticated user."""
     servers = list(_STATIC_ICE_SERVERS)
-    # Phase 52.1d hook: append TURN entry when the env is populated.
-    turn_url = (os.environ.get("METERED_TURN_URL") or "").strip()
-    turn_user = (os.environ.get("METERED_TURN_USERNAME") or "").strip()
-    turn_cred = (os.environ.get("METERED_TURN_CREDENTIAL") or "").strip()
-    if turn_url and turn_user and turn_cred:
-        servers.append({
-            "urls": turn_url,
-            "username": turn_user,
-            "credential": turn_cred,
-        })
+    servers.extend(_load_metered_turn_config())
     return {"ice_servers": servers}
 
 
@@ -445,3 +484,25 @@ async def ensure_live_session_indexes() -> None:
         )
     except Exception as exc:  # pragma: no cover — index race on cold start
         logger.info("[walkie.signaling] index bootstrap: %s", exc)
+
+    # Phase 52.1d · Feb-2026 — startup warning when TURN env is
+    # partially populated. This is the "log a startup warning + serve
+    # STUN-only" branch. Full-missing is fine (dev-mode STUN-only);
+    # partial-missing usually signals a copy-paste slip.
+    _urls = (os.environ.get("METERED_TURN_URLS") or "").strip()
+    _user = (os.environ.get("METERED_TURN_USERNAME") or "").strip()
+    _cred = (os.environ.get("METERED_TURN_CREDENTIAL") or "").strip()
+    present = [bool(x) for x in (_urls, _user, _cred)]
+    if any(present) and not all(present):
+        logger.warning(
+            "[walkie.signaling] metered.ca TURN partially configured "
+            "(urls=%s, user=%s, cred=%s) — falling back to STUN-only",
+            bool(_urls), bool(_user), bool(_cred),
+        )
+    elif all(present):
+        logger.info("[walkie.signaling] metered.ca TURN configured — TURN active")
+    else:
+        logger.info(
+            "[walkie.signaling] metered.ca TURN not configured — STUN-only "
+            "(safe for LAN + non-symmetric-NAT clients)",
+        )

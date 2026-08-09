@@ -1,3 +1,75 @@
+## Phase 52.1 · Feb-2026 — Live-streaming walkie MVP (a → d)
+
+Real-time voice channels layered onto the async walkie surface Phase 51 shipped. When a user flips the "Live channel" toggle in a walkie channel that supports it, they enter a WebRTC mesh where every peer's audio streams P2P (TURN-relayed via metered.ca when symmetric-NAT clients join). At session end the last-out participant uploads a session recording that surfaces in the channel timeline like any other clip, subject to the 24 h TTL Phase 51a already enforces. Delivered across four sub-phases: **52.1a** backend WebSocket signaling + data model, **52.1b** web client + PTT/VOX + auto-record, **52.1c** mobile client via `react-native-webrtc` (PTT-only in this slice), **52.1d** metered.ca TURN wiring + parity + docs.
+
+**Feature scope**
+- Per-channel "Live channel" toggle in the footer of `Walkie.jsx` + `walkie/[channelId].tsx`. Persistent per-channel in `localStorage["walkie_live_mode_{cid}"]` (web) / `AsyncStorage["walkie_live_mode_{cid}"]` (mobile).
+- PTT default. Web: spacebar keydown + on-screen "Hold to talk" button. Mobile: `onPressIn/onPressOut` on the big talk button.
+- VOX (voice-activated) on web via WebAudio `AnalyserNode` — RMS over 200 ms window vs a -50 dBFS threshold with hysteresis both directions. **VOX deferred on mobile in 52.1c** — mobile ships PTT-only in this slice; VOX moves to Phase 52.1e follow-up (see mobile source header docstring for the DECISION rationale).
+- Multi-speaker mixing: every peer's remote track is auto-played through a hidden `<audio autoplay>` on web + native audio session on mobile — the browser / OS mixes multiple concurrent tracks automatically.
+- Auto-record: `MediaRecorder` (web) / `expo-audio` recorder (mobile) captures the local mic in parallel with the RTC session; on `session-ended` (or panel unmount) the buffer/`.m4a` uploads to `POST /api/walkie/messages` with `metadata:{source:"live_session", session_id}` so the clip surfaces in the timeline.
+- Same async-post role gate for live join — a tech CAN live-talk on their department channel (because they CAN async-post there); a tech CANNOT live-talk on all-hands (because they CANNOT async-post there either). Locked user decision #5 ("no admin gate for live").
+- `live_only` channel kind — new `POST /api/walkie/channels` accepts `{live_only:true}` (super_admin + admin only for creation). Standard channels remain `supports_live:true, live_only:false`.
+
+**Data model additions**
+- `walkie_channels.supports_live: bool` (default `True` — legacy rows get True via `WalkieChannel.from_mongo` coercion).
+- `walkie_channels.live_only: bool` (default `False`).
+- New `walkie_live_sessions` collection: `{id, channel_id, tenant_id, started_by_user_id, started_at, ended_at, participant_user_ids[], recording_message_id}` with indexes on `(tenant_id, channel_id, started_at desc)` + `(tenant_id, ended_at)`.
+- Pydantic models `WalkieChannel` + `WalkieLiveSession` added to `backend/models.py`.
+
+**Backend endpoints — `/api/walkie/*` additions**
+- `WS /api/ws/walkie/{channel_id}?token=<jwt>` — signaling ONLY (no media relay). Client-side JWT via query param.
+- `POST /api/walkie/channels` — create a `live_only` channel (super_admin + admin only).
+- `GET /api/walkie/ice-servers` — Google STUN baseline + metered.ca TURN entry when the three env vars are set. Any authenticated user.
+
+**WebSocket message-type reference**
+- Client → server: `join`, `offer`, `answer`, `ice-candidate`, `speaking`, `leave`.
+- Server → client: `session-state`, `peer-joined`, `peer-left`, `offer`, `answer`, `ice-candidate`, `speaking-update`, `session-ended`.
+- Signaling frame set is snapshot-locked by `backend/tests/test_phase52_1d_metered_turn.py::test_signaling_*_frame_set_snapshot` — any new frame type MUST bump the snapshot deliberately.
+
+**Room state**
+- In-process `dict[channel_id, LiveRoom]` — one FastAPI worker per pod, no Redis needed. Server restart wipes the map; the 5-min `services/walkie/live_cleanup_cron.py` sweeps orphaned `ended_at IS NULL` rows whose `channel_id` no longer maps to a live in-process room.
+
+**Auto-record extension point**
+- `services/walkie/live_events.on_session_ended(session_id, reason)` fires when the last peer leaves. Phase 52.1a shipped a no-op stub; 52.1b/c wire the actual clip upload from the client side (no backend hook change).
+
+**Roles**
+- `super_admin`, `admin` — live-talk on any channel they can async-post to + create `live_only` channels.
+- `manager` — live-talk on their department + directs. No `live_only` channel creation.
+- `technician` — live-talk on their department + directs. No all-hands live-talk (same gate as async broadcast).
+- `customer` — no walkie access (unchanged from Phase 51).
+
+**Mesh topology + non-goals**
+- Full-mesh WebRTC — every participant maintains an `RTCPeerConnection` to every OTHER participant. Practical cap **~10 peers** before we exhaust the browser's peer-connection budget and audio starts stuttering.
+- Beyond ~10 peers a Selective Forwarding Unit (SFU) is required — **out of scope** for the 52.1 MVP; would be a discrete Phase 52.2+ effort covering an SFU deployment (LiveKit / MediaSoup / Janus).
+- Recording of `live_only` channels beyond the 24 h TTL is also **non-goal** for 52.1 — the auto-record clip enters the standard `walkie_messages` bucket and inherits the existing TTL.
+
+**Third-party integrations**
+- **metered.ca free tier TURN** — env-gated via `METERED_TURN_URLS` (comma-separated), `METERED_TURN_USERNAME`, `METERED_TURN_CREDENTIAL`. Missing any → STUN-only fallback + a startup log line. See `mobile/EXPO_GO_RUNBOOK.md#phase-521d-metered.ca-turn-wiring` for the signup + verify recipe.
+- **react-native-webrtc@124.0.6** + `@config-plugins/react-native-webrtc@13.0.0` — dev-client only. iOS: `WebRTC.framework` +~9 MB. Android: `libwebrtc.so` per-ABI +~7 MB. Rebuild via `npx expo prebuild --clean` + `eas build --profile development`.
+
+**Platform permission additions (mobile)**
+- iOS `expo.ios.infoPlist.NSMicrophoneUsageDescription` refreshed for live-session copy.
+- iOS `expo.ios.infoPlist.UIBackgroundModes` extended with `"audio"`.
+- Android `expo.android.permissions` extended with `FOREGROUND_SERVICE_MICROPHONE` + `MODIFY_AUDIO_SETTINGS`. Full screen-off background mic requires a native foreground-service module — **deferred** (current UX assumes phone in-hand for PTT).
+
+**Env vars (backend)**
+```
+METERED_TURN_URLS=              # comma-separated TURN URLs from metered.ca
+METERED_TURN_USERNAME=          # metered.ca credential username
+METERED_TURN_CREDENTIAL=        # metered.ca credential secret
+WALKIE_LIVE_CLEANUP_ENABLED=1   # optional; default on. 5-min stale-cleanup cron
+```
+
+**Test coverage**
+- Backend `test_phase52_1a_walkie_signaling.py` — 20 tests (model round-trip, role gate on `live_only` creation, WebSocket join/relay/broadcast, stale cleanup, ICE-servers auth branches).
+- Backend `test_phase52_1d_metered_turn.py` — 8 tests (STUN-only + all-set + multi-URL + partial + shape snapshot + client/server frame snapshot).
+- Frontend `phase52-1b-live-panel.test.jsx` — 16 tests. `phase52-1d-walkie-live-parity.test.jsx` — 8 parity assertions.
+- Mobile `phase52-1c-mobile-live-panel.test.tsx` — 11 tests. `phase52-1d-walkie-live-parity.test.ts` — 8 parity assertions.
+
+---
+
+
 ## Phase 54 · Feb-2026 — Wholesale supplier pricebook import MVP (a → f)
 
 Automated pricebook ingestion from five North-American pool + landscaping wholesalers via a supplier-agnostic Playwright-driven scraper framework. Delivered across six sub-phases: 54a audit + data-model skeleton, 54b Pool360 connector + Settings UI, 54c SiteOne connector + generic `test-connection` endpoint, 54d Ewing connector + `SUPPLIER_METADATA` config extraction, 54e Heritage + ePoolSupply connectors + APScheduler cron + Chromium install, 54f pricebook UI (web + mobile) supplier column + filter + Sync-all + docs.
