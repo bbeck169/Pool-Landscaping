@@ -150,8 +150,17 @@ class _Http:
              params: Optional[Mapping[str, Any]] = None,
              timeout: Any = None) -> httpx.Response:
         del timeout  # accepted for signature parity; ignored in-process
-        return _request("GET", url, headers=dict(headers or {}),
-                        params=dict(params or {}))
+        # Phase 34-v2-a-fixup · Feb 2026 — pass ``params`` / ``headers``
+        # as ``None`` when empty. httpx documented (surprising) behavior:
+        # ``params={}`` REPLACES the URL's existing ``?key=val`` query
+        # string with the empty dict — silently stripping every
+        # URL-embedded query string the callers rely on. ``None``
+        # preserves the URL's query verbatim. Applied to ``headers``
+        # for consistency even though httpx merges headers rather than
+        # stripping.
+        return _request("GET", url,
+                        headers=(dict(headers) if headers else None),
+                        params=(dict(params) if params else None))
 
     @staticmethod
     def post(url: str, *, json: Any = None,
@@ -161,8 +170,10 @@ class _Http:
               files: Any = None,
               timeout: Any = None) -> httpx.Response:
         del timeout
-        kw: dict[str, Any] = {"headers": dict(headers or {}),
-                              "params": dict(params or {})}
+        kw: dict[str, Any] = {
+            "headers": (dict(headers) if headers else None),
+            "params":  (dict(params)  if params  else None),
+        }
         if json is not None:  kw["json"] = json
         if data is not None:  kw["data"] = data
         if files is not None: kw["files"] = files
@@ -174,8 +185,10 @@ class _Http:
              params: Optional[Mapping[str, Any]] = None,
              timeout: Any = None) -> httpx.Response:
         del timeout
-        kw: dict[str, Any] = {"headers": dict(headers or {}),
-                              "params": dict(params or {})}
+        kw: dict[str, Any] = {
+            "headers": (dict(headers) if headers else None),
+            "params":  (dict(params)  if params  else None),
+        }
         if json is not None: kw["json"] = json
         return _request("PUT", url, **kw)
 
@@ -185,8 +198,10 @@ class _Http:
                params: Optional[Mapping[str, Any]] = None,
                timeout: Any = None) -> httpx.Response:
         del timeout
-        kw: dict[str, Any] = {"headers": dict(headers or {}),
-                              "params": dict(params or {})}
+        kw: dict[str, Any] = {
+            "headers": (dict(headers) if headers else None),
+            "params":  (dict(params)  if params  else None),
+        }
         if json is not None: kw["json"] = json
         return _request("PATCH", url, **kw)
 
@@ -195,8 +210,9 @@ class _Http:
                 params: Optional[Mapping[str, Any]] = None,
                 timeout: Any = None) -> httpx.Response:
         del timeout
-        return _request("DELETE", url, headers=dict(headers or {}),
-                        params=dict(params or {}))
+        return _request("DELETE", url,
+                        headers=(dict(headers) if headers else None),
+                        params=(dict(params) if params else None))
 
 
 # Module-level singleton. Import as ``from tests._phase34_http_shim

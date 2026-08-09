@@ -210,6 +210,80 @@ def test_shim_strips_host_from_absolute_urls(http):
 
 
 # ────────────────────────────────────────────────────────────────────
+# 5b · Phase 34-v2-a-fixup — URL-embedded query strings survive the
+# round-trip. This is the regression the fixup addresses: the pre-fix
+# shim passed ``params={}`` to httpx, which SILENTLY STRIPPED the
+# URL's query string. Only the phase34g retention-report tests actually
+# used URL-embedded queries, so the bug was masked until Phase-d
+# exposed it as 4 "assertion failures" that were really transport bugs.
+# ────────────────────────────────────────────────────────────────────
+def _login_admin(http):
+    r = http.post("/api/auth/login",
+                   json={"email": "admin@aquaterra.com",
+                          "password": "password123"})
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+def test_shim_preserves_url_embedded_query_string(http):
+    """URL-embedded ``?period=fortnight`` must reach the endpoint —
+    the endpoint validates ``period`` against a whitelist and returns
+    400 for anything outside {week, month, year}. Pre-fix the shim
+    stripped the query, endpoint saw default ``period='month'``, and
+    the assertion at Phase-d flipped to red. Post-fix: 400 stands.
+    """
+    hdr = _login_admin(http)
+    r = http.get("/api/reports/customer-retention?period=fortnight",
+                  headers=hdr)
+    assert r.status_code == 400, (
+        f"URL query was stripped: got {r.status_code} with body "
+        f"{r.text[:200]}"
+    )
+
+
+def test_shim_url_query_reaches_endpoint_with_value(http):
+    """``?period=week`` must arrive at the endpoint as ``week`` (not
+    the default ``month``). Locks the positive case of the same
+    fixup: query is not just present, but the value is honoured."""
+    hdr = _login_admin(http)
+    r = http.get("/api/reports/customer-retention?period=week", headers=hdr)
+    assert r.status_code == 200, r.text
+    assert r.json()["period"] == "week", r.json().get("period")
+
+
+def test_shim_url_query_and_params_kwarg_httpx_behaviour(http):
+    """When BOTH a URL-embedded query string AND a ``params=`` kwarg
+    are supplied, httpx 0.28 REPLACES the URL's query with the kwarg
+    (not merges). Locks this documented httpx behaviour so callers
+    know not to mix the two idioms for the same request. Phase-34
+    test files never do this — they use one or the other."""
+    hdr = _login_admin(http)
+    r = http.get(
+        "/api/reports/customer-retention?period=year",
+        headers=hdr,
+        params={"end": "2026-01-01"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # ``params=`` kwarg WINS: URL's ?period=year is dropped, endpoint
+    # sees the default ``period='month'``; ``end`` from the kwarg
+    # arrives cleanly.
+    assert body["period"] == "month"
+    assert body["end"] == "2026-01-01"
+
+
+def test_shim_no_query_no_params_leaves_url_pristine(http):
+    """A plain ``GET /path`` with neither URL query nor kwarg must
+    dispatch WITHOUT synthesising a bogus ``?``. Uses the default
+    retention endpoint — ``period`` defaults to ``month`` server-side,
+    confirming no query was forwarded."""
+    hdr = _login_admin(http)
+    r = http.get("/api/reports/customer-retention", headers=hdr)
+    assert r.status_code == 200, r.text
+    assert r.json()["period"] == "month"
+
+
+# ────────────────────────────────────────────────────────────────────
 # 6 · The batch harness's Motor rebuild has fired by the time we
 #     issued our first shim call. This is the invariant Phase-b
 #     will rely on.
