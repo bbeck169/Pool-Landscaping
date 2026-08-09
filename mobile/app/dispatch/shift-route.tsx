@@ -5,7 +5,7 @@
 // Screen params: source tech + optional day + optional preselected
 // customer_ids. Simplifed mobile version — supports the two most
 // common flows (whole route temp/permanent + partial with pre-selected).
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, TextInput, Pressable,
 } from "react-native";
@@ -35,8 +35,11 @@ export default function ShiftRoutePage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  const preselected = params.customerIds
-    ? String(params.customerIds).split(",").filter(Boolean) : [];
+  const preselected = useMemo(
+    () => (params.customerIds
+      ? String(params.customerIds).split(",").filter(Boolean) : []),
+    [params.customerIds],
+  );
 
   useEffect(() => {
     (async () => {

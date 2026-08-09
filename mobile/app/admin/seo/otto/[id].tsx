@@ -1,5 +1,5 @@
 /** Phase 17C · Mobile — OTTO fix detail with stacked before/after diff. */
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Alert,
 } from "react-native";
@@ -32,7 +32,7 @@ function Inner() {
   const [fix, setFix] = useState<any>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     // Detail endpoint doesn't exist standalone; walk audits to locate.
     const auds = await api.get("/seo/audits");
     const auditList = Array.isArray(auds) ? auds : (auds.items || []);
@@ -42,8 +42,8 @@ function Inner() {
       if (found) { setFix({ ...found, audit_id: a.id }); return; }
     }
     setFix({ __not_found: true });
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
+  }, [id]);
+  useEffect(() => { load(); }, [load]);
 
   const copy = async () => {
     if (!fix?.patch_snippet) return;

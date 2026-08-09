@@ -66,7 +66,11 @@ export default function Jobs() {
   useFocusEffect(
     useCallback(() => {
       load(filter);
-    }, [filter, load, online])
+      // ``online`` is intentionally NOT a dep: the manual refetch
+      // happens via the ``online`` change effect below and pull-to-
+      // refresh — we don't want re-entry to fire when connectivity
+      // toggles mid-focus.
+    }, [filter, load])
   );
 
   // Phase 50.F — bulk-load "last viewed" timestamps from AsyncStorage

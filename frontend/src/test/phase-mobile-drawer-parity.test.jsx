@@ -140,14 +140,17 @@ describe("Drawer render (mobile/app/(app)/more.tsx)", () => {
 });
 
 // ── T2 stub route files exist ──────────────────────────────────────
+// Phase 41.5c · Feb-2026 — 5 T2 stubs were promoted to LIVE screens
+// (RingCentral, Chemical Products, Notification Preferences, Client
+// Errors, Weather). Those files now render real content and no
+// longer re-export ComingSoonPage. The remainder still ship as
+// stubs pending their own wire-up phases.
 const T2_STUB_ROUTES = [
   "/settings/income-categories",
   "/settings/service-categories",
-  "/settings/notifications",
   "/settings/terms",
   "/settings/legal",
   "/settings/maps",
-  "/settings/ringcentral",
   "/admin/reviews",
   "/admin/reviews/requests",
   "/admin/reviews/platforms",
@@ -162,8 +165,13 @@ const T2_STUB_ROUTES = [
   "/admin/appointments",
   "/admin/referrals/analytics",
   "/admin/referrals/settings",
-  "/admin/chemicals",
   "/admin/moderation/checkins",
+];
+
+const T2_LIVE_ROUTES = [
+  "/settings/notifications",
+  "/settings/ringcentral",
+  "/admin/chemicals",
   "/admin/diagnostics/errors",
   "/weather",
 ];
@@ -174,6 +182,16 @@ describe("T2 stub route files exist and re-export ComingSoonPage", () => {
       const p = `mobile/app${r}.tsx`;
       expect(E(p)).toBe(true);
       expect(R(p)).toMatch(/from ["']@\/src\/components\/ComingSoonPage["']/);
+    });
+  }
+});
+
+describe("T2 LIVE route files no longer re-export ComingSoonPage", () => {
+  for (const r of T2_LIVE_ROUTES) {
+    it(`mobile/app${r}.tsx exists and renders real content`, () => {
+      const p = `mobile/app${r}.tsx`;
+      expect(E(p)).toBe(true);
+      expect(R(p)).not.toMatch(/from ["']@\/src\/components\/ComingSoonPage["']/);
     });
   }
 });

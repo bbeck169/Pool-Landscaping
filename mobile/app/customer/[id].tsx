@@ -65,7 +65,7 @@ export default function CustomerDetail() {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, loadCredits]);
 
   useFocusEffect(
     useCallback(() => {

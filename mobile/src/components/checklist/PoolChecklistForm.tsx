@@ -125,7 +125,11 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
   // on step `n` or when wizard mode is off. Keeps section guards to a
   // single readable check downstream.
   const inStep = (n: number) => wizardStep === null || wizardStep === n;
-  const readingFields = (props as any).readingFields || [];
+  const readingFields = useMemo(
+    () => (props as any).readingFields || [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [(props as any).readingFields],
+  );
 
   // Phase 49.0 — Merge the backend template's `chemical_reading_fields`
   // (canonical field list) with any saved `chemical_readings` values so

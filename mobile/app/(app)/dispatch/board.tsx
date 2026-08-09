@@ -241,7 +241,7 @@ export default function DispatchBoardMobile() {
       pathname: "/dispatch/optimize",
       params: { tech: techUserId, day: today, techName: name || "" },
     } as any);
-  }, [techDirectory]);
+  }, [techDirectory, router]);
 
   const openShiftRoute = useCallback((customerId?: string) => {
     router.push({
@@ -253,7 +253,7 @@ export default function DispatchBoardMobile() {
         scope: customerId ? "partial" : "whole_route",
       },
     } as any);
-  }, [selectedTech, techLoads, techDirectory]);
+  }, [selectedTech, techLoads, techDirectory, router]);
 
   if (!isAdmin) {
     return (

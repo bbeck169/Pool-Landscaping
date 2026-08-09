@@ -1,5 +1,5 @@
 /** Phase 17A · Mobile — Audit detail with score rings + tabbed issues/pages/otto. */
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useCallback, useEffect, useState, useMemo } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -30,7 +30,7 @@ function Inner() {
   const [tab, setTab] = useState<Tab>("issues");
   const [busy, setBusy] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const a = await api.get(`/seo/audits/${id}`);
     setAudit(a);
     const p = await api.get(`/seo/audits/${id}/pages?limit=200`);
@@ -39,14 +39,14 @@ function Inner() {
       const o = await api.get(`/seo/otto/fixes/${id}`);
       setOtto(o);
     } catch { /* audit may not exist yet for OTTO */ }
-  };
+  }, [id]);
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
+  useEffect(() => { load(); }, [load]);
   useEffect(() => {
     if (!audit || ["done", "failed", "cancelled"].includes(audit.status)) return;
     const t = setInterval(load, 3500);
     return () => clearInterval(t);
-  }, [audit?.status]);
+  }, [audit, load]);
 
   const allIssues = useMemo(() => {
     const out: any[] = [];

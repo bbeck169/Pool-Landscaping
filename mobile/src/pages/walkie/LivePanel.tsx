@@ -128,7 +128,10 @@ export default function LivePanel({
   const WSCtor = _wsFactory || ((url: string) => new WebSocket(url));
   const RTCCtor = useMemo(() => _rtcFactory || ((cfg: any) => new RTCPeerConnection(cfg)), [_rtcFactory]);
   const getUserMediaFn = _getUserMedia || (async (constraints: any) => mediaDevices.getUserMedia(constraints));
-  const tokenGetter = _tokenGetter || (async () => (await getAuthToken()) || "");
+  const tokenGetter = useMemo(
+    () => _tokenGetter || (async () => (await getAuthToken()) || ""),
+    [_tokenGetter],
+  );
 
   const setTransmit = useCallback((on: boolean) => {
     const s = localStreamRef.current;
@@ -229,6 +232,10 @@ export default function LivePanel({
   useEffect(() => {
     if (!channelId) return;
     let cancelled = false;
+    // Snapshot the ref at effect-setup time so the cleanup below
+    // tears down the SAME peer-connection map that this run wired up
+    // (avoid the ``ref value may have changed by teardown`` footgun).
+    const rtcMap = rtcMapRef.current;
     setStatus("connecting");
 
     (async () => {
@@ -308,7 +315,6 @@ export default function LivePanel({
 
     return () => {
       cancelled = true;
-      const rtcMap = rtcMapRef.current;
       (async () => {
         try { await flushRecordingToClip(); } catch { /* ignore */ }
         try { wsRef.current?.send(JSON.stringify({ type: "leave" })); } catch { /* ignore */ }

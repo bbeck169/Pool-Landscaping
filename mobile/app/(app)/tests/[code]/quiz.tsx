@@ -43,7 +43,10 @@ export default function TrainingQuiz() {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const questions: Question[] = mod?.quiz?.questions || [];
+  const questions: Question[] = useMemo(
+    () => mod?.quiz?.questions || [],
+    [mod?.quiz?.questions],
+  );
   const q = questions[idx];
   const totalQ = questions.length;
   const chosen = q ? answers[q.id] : null;

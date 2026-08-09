@@ -61,6 +61,10 @@ export default function TimeClockScreen() {
         }
       } catch { /* ignore */ }
     })();
+    // Mount-only: ``selectedJob`` is read as the initial-default check,
+    // not to react to updates. Re-running this effect on selection
+    // changes would clobber the picker with the first job again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* G1 — Best-effort resume GPS tracker when screen mounts with open shift */
@@ -76,6 +80,10 @@ export default function TimeClockScreen() {
       GpsTracker.stopTracking();
       setGpsActive(false);
     }
+    // Deliberately keyed on entry?.id: we only re-run when the active
+    // shift row changes identity, not on every autosave that mutates
+    // the entry object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entry?.id]);
 
   /* G1 — Stop callback when server returns 409 */
@@ -152,6 +160,10 @@ export default function TimeClockScreen() {
       if (shiftTimer.current) clearInterval(shiftTimer.current);
       if (pingTimer.current) clearInterval(pingTimer.current);
     };
+    // Deliberately keyed on entry?.id — the ping/timer loop only
+    // needs to restart when a new shift begins, not on every entry
+    // field mutation (e.g. autosaved elapsed time).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entry?.id]);
 
   const requestGps = async (): Promise<{ lat: number; lng: number; acc?: number } | null> => {

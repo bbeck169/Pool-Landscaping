@@ -182,6 +182,10 @@ export default function JobChecklistScreen() {
     const media: any[] = report.media || [];
     setSrPhotos(media.filter((m: any) => m.kind === "photo"));
     setSrVideos(media.filter((m: any) => m.kind === "video"));
+    // Intentionally keyed on report.id — the report object identity
+    // changes on every autosave, but seeding is only needed when the
+    // active report changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [report?.id]);
 
   // ─── Autosave (debounced) ────────────────────────────────────────────

@@ -117,7 +117,10 @@ export default function JobDetail() {
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [load, online])
+      // ``online`` is intentionally NOT a dep — reconnection refetch
+      // happens via a separate effect; including it here would
+      // double-fire on focus + toggle.
+    }, [load])
   );
 
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";

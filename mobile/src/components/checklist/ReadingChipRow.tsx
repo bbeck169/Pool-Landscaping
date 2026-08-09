@@ -130,7 +130,10 @@ export default function ReadingChipRow({
 
   // Phase 49.6 — median of recent 4 values (from bootstrap); flag draft
   // as outlier when > 2× or < 0.5× the median (typo protection).
-  const recentArr = Array.isArray(recent) ? recent.filter((x) => Number.isFinite(x)) : [];
+  const recentArr = useMemo(
+    () => (Array.isArray(recent) ? recent.filter((x) => Number.isFinite(x)) : []),
+    [recent],
+  );
   const median = useMemo(() => {
     if (recentArr.length === 0) return null;
     const sorted = [...recentArr].sort((a, b) => a - b);

@@ -34,7 +34,7 @@ export default function Customers() {
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { load(search); }, [load]));
+  useFocusEffect(useCallback(() => { load(search); }, [load, search]));
 
   const exitSelectMode = () => { setSelectMode(false); bulk.clear(); };
 

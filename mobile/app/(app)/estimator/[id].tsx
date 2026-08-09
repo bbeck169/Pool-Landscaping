@@ -23,11 +23,11 @@ export default function EstimatorDetailMobile() {
   const [e, setE] = useState<any>(null);
   const [busy, setBusy] = useState<string>("");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const r = await api.get(`/estimator/estimates/${id}`);
     setE(r);
-  };
-  useFocusEffect(useCallback(() => { load(); }, [id]));
+  }, [id]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   if (!e) return (
     <View style={styles.root}>

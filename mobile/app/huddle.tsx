@@ -26,6 +26,9 @@ export default function HuddleScreen() {
 
   useEffect(() => {
     // Best-effort: check if today's huddle already exists.
+    // ``today`` is derived from ``new Date()`` at render time. Running
+    // this effect once on mount is intentional — we don't want to
+    // refetch mid-session if the render clock happens to tick over.
     (async () => {
       try {
         const rows = await api.get("/huddles");
@@ -35,6 +38,7 @@ export default function HuddleScreen() {
         setRecentSops((s || []).slice(0, 5));
       } catch { /* ignore */ }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const submit = async () => {
