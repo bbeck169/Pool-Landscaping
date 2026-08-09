@@ -486,7 +486,35 @@ def test_stale_cleanup_preserves_active_sessions(sync_db):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 5. Bad token
+# 6. GET /api/walkie/ice-servers  (Phase 52.1b addition)
+# ═══════════════════════════════════════════════════════════════════
+def test_ice_servers_authed_user_ok(seeded_users):
+    """Any authenticated user can fetch ICE server config."""
+    email = seeded_users["emails"]["tech_pool"]
+    r = requests.get(f"{API}/walkie/ice-servers", headers=_hdr(email), timeout=TIMEOUT)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert isinstance(body.get("ice_servers"), list)
+    # Google STUN is the baseline entry in every response.
+    stun = [e for e in body["ice_servers"] if "stun:" in (e.get("urls") or "")]
+    assert stun, body
+
+
+def test_ice_servers_unauthed_401(sync_db):
+    r = requests.get(f"{API}/walkie/ice-servers", timeout=TIMEOUT)
+    assert r.status_code in (401, 403)
+
+
+def test_ice_servers_customer_ok(seeded_users):
+    """Customer role has NO channel access but the endpoint gate is
+    just ``get_current_user`` — same as any other authed lookup."""
+    email = seeded_users["emails"]["customer"]
+    r = requests.get(f"{API}/walkie/ice-servers", headers=_hdr(email), timeout=TIMEOUT)
+    assert r.status_code == 200
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 7. Bad token
 # ═══════════════════════════════════════════════════════════════════
 def test_ws_bad_token_closes_4401(sync_db):
     ch = _pool_department_channel(sync_db)

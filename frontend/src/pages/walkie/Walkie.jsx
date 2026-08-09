@@ -22,6 +22,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import LivePanel, { liveModeKey } from "./LivePanel";
 import {
   canPinInChannel,
   canRecordInChannel,
@@ -395,6 +396,31 @@ export default function Walkie() {
   useEffect(() => { mutedRef.current = muted; }, [muted]);
   const lastSeenIdsRef = useRef(new Set());
 
+  // Phase 52.1b · Feb-2026 — Live-mode toggle state. Persisted per
+  // channel in localStorage. Only surfaced on channels whose backend
+  // row has ``supports_live !== false`` (default true for legacy
+  // rows via Phase 52.1a's WalkieChannel.from_mongo coercion).
+  const [liveMode, setLiveMode] = useState(false);
+  const currentChannelIdRef = useRef(null);
+  useEffect(() => {
+    currentChannelIdRef.current = selectedId;
+    if (!selectedId) { setLiveMode(false); return; }
+    try {
+      const raw = localStorage.getItem(liveModeKey(selectedId));
+      setLiveMode(raw === "1");
+    } catch { setLiveMode(false); }
+  }, [selectedId]);
+  const toggleLiveMode = useCallback(() => {
+    const cid = currentChannelIdRef.current;
+    setLiveMode((cur) => {
+      const next = !cur;
+      try {
+        if (cid) localStorage.setItem(liveModeKey(cid), next ? "1" : "0");
+      } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
   // Clear the reply target whenever the caller switches channels —
   // a "replying to X" banner leaked across channels would confuse
   // more than it helps.
@@ -616,7 +642,7 @@ export default function Walkie() {
                   ))
                 )}
               </div>
-              <footer className="border-t p-4 flex flex-col gap-2">
+              <footer className="border-t p-4 flex flex-col gap-2" data-testid="walkie-footer">
                 {replyTarget && (
                   <div
                     data-testid="walkie-reply-banner"
@@ -640,18 +666,40 @@ export default function Walkie() {
                     </button>
                   </div>
                 )}
-                <div className="flex items-center gap-3">
-                <RecordButton
-                  disabled={!recordGate.allowed}
-                  disabledReason={recordGate.reason}
-                  onRecorded={onRecorded}
-                />
-                <div className="text-xs text-slate-500">
-                  {recordGate.allowed
-                    ? "Hold to record · release to send · Esc to cancel · max 30s"
-                    : recordGate.reason || "You can't send in this channel"}
-                </div>
-                </div>
+                {selected?.supports_live !== false && recordGate.allowed && (
+                  <div className="flex items-center justify-end">
+                    <label className="flex items-center gap-2 text-xs text-slate-600 select-none">
+                      <input
+                        type="checkbox"
+                        data-testid="walkie-live-mode-toggle"
+                        checked={liveMode}
+                        onChange={toggleLiveMode}
+                        className="h-3 w-3"
+                      />
+                      Live channel
+                    </label>
+                  </div>
+                )}
+                {liveMode && selected?.supports_live !== false ? (
+                  <LivePanel
+                    channel={selected}
+                    user={user}
+                    onExit={() => toggleLiveMode()}
+                  />
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <RecordButton
+                      disabled={!recordGate.allowed}
+                      disabledReason={recordGate.reason}
+                      onRecorded={onRecorded}
+                    />
+                    <div className="text-xs text-slate-500">
+                      {recordGate.allowed
+                        ? "Hold to record · release to send · Esc to cancel · max 30s"
+                        : recordGate.reason || "You can't send in this channel"}
+                    </div>
+                  </div>
+                )}
               </footer>
             </>
           )}

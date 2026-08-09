@@ -401,6 +401,35 @@ async def create_walkie_channel(
 # ═══════════════════════════════════════════════════════════════════
 # Index bootstrap (called from server.py at startup)
 # ═══════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════
+# ICE servers — STUN today, TURN in Phase 52.1d (metered.ca free tier)
+# ═══════════════════════════════════════════════════════════════════
+_STATIC_ICE_SERVERS = [{"urls": "stun:stun.l.google.com:19302"}]
+
+
+@router.get("/walkie/ice-servers")
+async def get_walkie_ice_servers(
+    _user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Return the ICE server config the client should feed into
+    ``RTCPeerConnection``. Phase 52.1a ships a static Google-STUN
+    fallback; Phase 52.1d appends TURN credentials from metered.ca.
+
+    Auth: any authenticated user (mirrors ``/api/walkie/channels`` gate)."""
+    servers = list(_STATIC_ICE_SERVERS)
+    # Phase 52.1d hook: append TURN entry when the env is populated.
+    turn_url = (os.environ.get("METERED_TURN_URL") or "").strip()
+    turn_user = (os.environ.get("METERED_TURN_USERNAME") or "").strip()
+    turn_cred = (os.environ.get("METERED_TURN_CREDENTIAL") or "").strip()
+    if turn_url and turn_user and turn_cred:
+        servers.append({
+            "urls": turn_url,
+            "username": turn_user,
+            "credential": turn_cred,
+        })
+    return {"ice_servers": servers}
+
+
 async def ensure_live_session_indexes() -> None:
     """Idempotent — create the two indexes the live-session collection
     needs. Called from ``server.py``'s startup hook alongside the
