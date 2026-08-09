@@ -12,7 +12,7 @@
  * scope.
  */
 import React, { useEffect, useState, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { TrendingUp, TrendingDown, Minus, ArrowRight, AlertTriangle } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
@@ -28,9 +28,28 @@ function pctDelta(cur, prev) {
   return ((cur - prev) / Math.abs(prev)) * 100;
 }
 
-function Sparkline({ series, testid }) {
+function monthEndISO(monthStr) {
+  // "YYYY-MM" → { from: "YYYY-MM-01", to: "YYYY-MM-<lastday>" }
+  const [y, m] = String(monthStr || "").split("-").map(Number);
+  if (!y || !m) return null;
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const mm = String(m).padStart(2, "0");
+  const dd = String(last).padStart(2, "0");
+  return { from: `${y}-${mm}-01`, to: `${y}-${mm}-${dd}` };
+}
+
+function monthLabel(monthStr) {
+  const [y, m] = String(monthStr || "").split("-").map(Number);
+  if (!y || !m) return monthStr || "";
+  return new Date(Date.UTC(y, m - 1, 1))
+    .toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+function Sparkline({ series, testid, onPickMonth }) {
   // Compact SVG — same pattern as Phase 54g. Bars height ∝ |ebit|;
-  // color green for positive, red for negative.
+  // color green for positive, red for negative. Phase 53f · Feb-2026
+  // — each bar is keyboard-focusable + click/Enter/Space triggers a
+  // drill-down to /admin/reports/profit?from=&to= for that month.
   const w = 220, h = 44, pad = 2;
   if (!series || series.length === 0) {
     return <svg width={w} height={h} data-testid={testid}><rect width={w} height={h} fill="transparent" /></svg>;
@@ -38,6 +57,13 @@ function Sparkline({ series, testid }) {
   const maxAbs = Math.max(...series.map((p) => Math.abs(p.ebit || 0)), 1);
   const bw = Math.max(2, (w - pad * 2) / series.length - 2);
   const zeroY = h / 2;
+  const handleKey = (p) => (ev) => {
+    if (!onPickMonth) return;
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      onPickMonth(p.month);
+    }
+  };
   return (
     <svg width={w} height={h} data-testid={testid}>
       <line x1={pad} x2={w - pad} y1={zeroY} y2={zeroY}
@@ -48,8 +74,22 @@ function Sparkline({ series, testid }) {
         const x = pad + i * (bw + 2);
         const y = v >= 0 ? zeroY - bh : zeroY;
         return (
-          <rect key={p.month} x={x} y={y} width={bw} height={bh}
-                fill={v >= 0 ? "#16A34A" : "#DC2626"} />
+          <g
+            key={p.month}
+            data-testid={`${testid}-bar-${i}`}
+            role={onPickMonth ? "button" : undefined}
+            tabIndex={onPickMonth ? 0 : undefined}
+            aria-label={onPickMonth ? `Open EBIT report for ${monthLabel(p.month)}` : undefined}
+            onClick={onPickMonth ? () => onPickMonth(p.month) : undefined}
+            onKeyDown={onPickMonth ? handleKey(p) : undefined}
+            style={onPickMonth ? { cursor: "pointer", outline: "none" } : undefined}
+          >
+            {/* Full-height hit target so the whole column is clickable
+                even when the ebit bar is 0 pixels tall. */}
+            <rect x={x} y={0} width={bw} height={h} fill="transparent" />
+            <rect x={x} y={y} width={bw} height={bh}
+                  fill={v >= 0 ? "#16A34A" : "#DC2626"} />
+          </g>
         );
       })}
     </svg>
@@ -59,6 +99,15 @@ function Sparkline({ series, testid }) {
 export default function EbitTile() {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const navigate = useNavigate();
+
+  const onPickMonth = useCallback((monthStr) => {
+    const range = monthEndISO(monthStr);
+    if (!range) return;
+    // Phase 53f · Feb-2026 — drill-down. Report page reads ``from``/
+    // ``to`` from the URL on mount and pre-selects the custom range.
+    navigate(`/admin/reports/profit?from=${range.from}&to=${range.to}`);
+  }, [navigate]);
 
   const load = useCallback(() => {
     setError("");
@@ -150,7 +199,7 @@ export default function EbitTile() {
           </div>
 
           <div className="mt-3">
-            <Sparkline series={series} testid="dashboard-ebit-tile-sparkline" />
+            <Sparkline series={series} testid="dashboard-ebit-tile-sparkline" onPickMonth={onPickMonth} />
             <div className="text-[10px] mt-1" style={{ color: colors.muted }}>
               Last {series.length} months · cash-basis
             </div>

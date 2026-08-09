@@ -21,6 +21,7 @@ import * as SharingModule from "expo-sharing";
 
 import { api, api_base, getAuthToken } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { useLocalSearchParams } from "expo-router";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
 import EbitPanel from "@/src/components/admin/EbitPanel";
@@ -41,9 +42,16 @@ export default function ProfitReport() {
   const { user } = useAuth();
   const isAdmin = ADMIN_ROLES.includes(user?.role || "");
 
-  const [rangeKey, setRangeKey] = useState("this_month");
-  const [customFrom, setCustomFrom] = useState("");
-  const [customTo, setCustomTo] = useState("");
+  // Phase 53f · Feb-2026 — mobile EBIT-tile drill-down entry.
+  const _params = useLocalSearchParams<{ from?: string; to?: string }>();
+  const _dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const _urlFrom = typeof _params?.from === "string" && _dateRe.test(_params.from) ? _params.from : "";
+  const _urlTo = typeof _params?.to === "string" && _dateRe.test(_params.to) ? _params.to : "";
+  const _hasDeepLink = Boolean(_urlFrom && _urlTo);
+
+  const [rangeKey, setRangeKey] = useState(_hasDeepLink ? "custom" : "this_month");
+  const [customFrom, setCustomFrom] = useState(_urlFrom);
+  const [customTo, setCustomTo] = useState(_urlTo);
   const [dimension, setDimension] = useState("service_category");
   const [sortCol, setSortCol] = useState("revenue");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");

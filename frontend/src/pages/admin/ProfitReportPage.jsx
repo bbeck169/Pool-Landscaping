@@ -77,9 +77,22 @@ export default function ProfitReportPage() {
   const isAdmin = user?.role === "admin" || user?.role === "super_admin" ||
                     user?.role === "manager";
 
-  const [rangeKey, setRangeKey] = useState("this_month");
-  const [customFrom, setCustomFrom] = useState("");
-  const [customTo, setCustomTo] = useState("");
+  // Phase 53f · Feb-2026 — drill-down entry point. When the URL
+  // carries ``?from=YYYY-MM-DD&to=YYYY-MM-DD`` (Phase 53f EBIT-tile
+  // click), read once on mount and pre-select the custom range so
+  // the report renders scoped to the tapped month.
+  const _urlFrom = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("from") : null;
+  const _urlTo = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("to") : null;
+  const _dateRe = /^\d{4}-\d{2}-\d{2}$/;
+  const _initialFrom = _urlFrom && _dateRe.test(_urlFrom) ? _urlFrom : "";
+  const _initialTo = _urlTo && _dateRe.test(_urlTo) ? _urlTo : "";
+  const _hasDeepLink = Boolean(_initialFrom && _initialTo);
+
+  const [rangeKey, setRangeKey] = useState(_hasDeepLink ? "custom" : "this_month");
+  const [customFrom, setCustomFrom] = useState(_initialFrom);
+  const [customTo, setCustomTo] = useState(_initialTo);
   const [dimension, setDimension] = useState("service_category");
   const [sort, setSort] = useState({ col: "revenue", dir: "desc" });
   const [busy, setBusy] = useState(false);

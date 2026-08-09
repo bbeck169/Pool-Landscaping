@@ -204,15 +204,13 @@ export const ADMIN_NAV: NavGroup[] = [
       { label: "Check-in Moderation", route: "/admin/moderation/checkins", icon: "checkmark-done-outline", tier: "t2", testID: "drawer-nav-moderation-checkins" },
       { label: "Client Errors",       route: "/admin/diagnostics/errors",  icon: "alert-circle-outline",   tier: "t2", testID: "drawer-nav-diagnostics-errors" },
       { label: "Business Summary",   route: "/reports/business-summary", icon: "stats-chart-outline",  tier: "t3", testID: "drawer-nav-t3-business-summary" },
-      // Phase 54g nav follow-up · Feb-2026 — Supplier Syncs entry.
-      // TODO(Phase 54g-B): a dedicated mobile analytics page mirroring
-      // the web /reports/supplier-syncs dashboard doesn't exist yet.
-      // For now the drawer entry deep-links to the existing
-      // /settings/suppliers scaffold (health + last-sync status is
-      // visible there). Role gate omitted → default admin-like roles
-      // (super_admin + admin + manager) — mirrors the web nav's
-      // AdminOrManagerForSuppliers guard.
-      { label: "Supplier Syncs",     route: "/settings/suppliers",       icon: "refresh-circle-outline", tier: "t2", testID: "drawer-nav-supplier-syncs" },
+      // Phase 54g-B · Feb-2026 — Supplier Syncs analytics.
+      // Points at the dedicated mobile screen at
+      // ``app/reports/supplier-syncs.tsx`` (parity with the web
+      // ``/reports/supplier-syncs`` dashboard). Role gate omitted →
+      // default admin-like roles (super_admin + admin + manager),
+      // matching the web ``AdminOrManagerForSuppliers`` guard.
+      { label: "Supplier Syncs",     route: "/reports/supplier-syncs",   icon: "refresh-circle-outline", tier: "t1", testID: "drawer-nav-supplier-syncs" },
     ],
   },
   {

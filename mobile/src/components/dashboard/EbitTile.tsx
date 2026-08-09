@@ -23,6 +23,25 @@ import { useRouter } from "expo-router";
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
+// Phase 53f · Feb-2026 — drill-down helpers. Convert a "YYYY-MM"
+// bucket into a ``{from, to}`` ISO range that the mobile
+// ``/profit-report`` screen can consume as a preselected custom
+// window.
+function monthEndISO(monthStr: string | undefined): { from: string; to: string } | null {
+  const [y, m] = String(monthStr || "").split("-").map(Number);
+  if (!y || !m) return null;
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const mm = String(m).padStart(2, "0");
+  const dd = String(last).padStart(2, "0");
+  return { from: `${y}-${mm}-01`, to: `${y}-${mm}-${dd}` };
+}
+function monthLabel(monthStr: string | undefined): string {
+  const [y, m] = String(monthStr || "").split("-").map(Number);
+  if (!y || !m) return monthStr || "";
+  return new Date(Date.UTC(y, m - 1, 1))
+    .toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
 type TrendPoint = { month: string; ebit: number };
 type TrendResponse = { months: number; revenue_basis: string; series: TrendPoint[] };
 
@@ -141,10 +160,25 @@ export default function EbitTile() {
             {series.map((p, i) => {
               const v = p?.ebit || 0;
               const h = 4 + Math.round((Math.abs(v) / maxAbs) * 32);
+              const onPickMonth = () => {
+                const range = monthEndISO(p?.month);
+                if (!range) return;
+                // Phase 53f · Feb-2026 — drill-down into the full
+                // mobile profit-report screen with a preselected
+                // custom range. The screen reads ``from``/``to``
+                // from ``useLocalSearchParams`` on mount.
+                router.push({
+                  pathname: "/profit-report" as any,
+                  params: { from: range.from, to: range.to },
+                });
+              };
               return (
-                <View
+                <Pressable
                   key={p?.month || String(i)}
                   testID={`dashboard-ebit-tile-sparkline-bar-${i}`}
+                  onPress={onPickMonth}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open EBIT report for ${monthLabel(p?.month)}`}
                   style={[
                     styles.sparkBar,
                     {
