@@ -71,7 +71,9 @@ function primeApiCalls({
   // ``hasCredsBySlug`` gives per-slug override; the ``hasCreds`` flag
   // remains a convenience default for the "same for both wired
   // suppliers" scenario used by earlier tests.
-  const map = hasCredsBySlug || { poolcorp: hasCreds, siteone: hasCreds };
+  const map = hasCredsBySlug || {
+    poolcorp: hasCreds, siteone: hasCreds, ewing: hasCreds,
+  };
   getMock.mockImplementation((path) => {
     if (path === "/suppliers") return Promise.resolve(suppliers);
     const credsMatch = path.match(/^\/suppliers\/([^/]+)\/credentials$/);
@@ -129,22 +131,23 @@ describe("SupplierSettings — render", () => {
     );
   });
 
-  it("renders coming-soon cards for the three still-unwired suppliers", async () => {
-    // Phase 54c wired SiteOne — poolcorp + siteone render as full
-    // cards; only ewing / heritage / epoolsupply remain coming-soon.
+  it("renders coming-soon cards for the two still-unwired suppliers", async () => {
+    // Phase 54d wired Ewing — poolcorp + siteone + ewing render as
+    // full cards; only heritage / epoolsupply remain coming-soon.
     primeApiCalls();
     renderPage();
-    expect(await screen.findByTestId("supplier-card-poolcorp")).toBeInTheDocument();
-    expect(await screen.findByTestId("supplier-card-siteone")).toBeInTheDocument();
-    for (const slug of ["ewing", "heritage", "epoolsupply"]) {
+    for (const slug of ["poolcorp", "siteone", "ewing"]) {
+      expect(await screen.findByTestId(`supplier-card-${slug}`)).toBeInTheDocument();
+    }
+    for (const slug of ["heritage", "epoolsupply"]) {
       expect(await screen.findByTestId(`supplier-card-${slug}`)).toBeInTheDocument();
     }
     // Coming-soon cards do NOT get a credentials form / sync button
-    expect(screen.queryByTestId("supplier-ewing-sync-btn")).toBeNull();
-    expect(screen.queryByTestId("supplier-heritage-username-input")).toBeNull();
-    // SiteOne DOES get one now.
-    expect(await screen.findByTestId("supplier-siteone-sync-btn")).toBeInTheDocument();
-    expect(await screen.findByTestId("supplier-siteone-username-input")).toBeInTheDocument();
+    expect(screen.queryByTestId("supplier-heritage-sync-btn")).toBeNull();
+    expect(screen.queryByTestId("supplier-epoolsupply-username-input")).toBeNull();
+    // Ewing (newly wired) DOES get one now.
+    expect(await screen.findByTestId("supplier-ewing-sync-btn")).toBeInTheDocument();
+    expect(await screen.findByTestId("supplier-ewing-username-input")).toBeInTheDocument();
   });
 
   it("shows an empty history message when the sync-jobs list is empty", async () => {
@@ -388,6 +391,119 @@ describe("SupplierSettings — Test connection button (Phase 54c)", () => {
     await waitFor(() => {
       expect(badge.textContent.toLowerCase()).toContain("timed out");
     });
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+// 3d. Phase 54d — Ewing card wired
+// ═══════════════════════════════════════════════════════════════════
+describe("SupplierSettings — Ewing wired (Phase 54d)", () => {
+  it("Ewing card renders with the metadata tagline + username label", async () => {
+    primeApiCalls();
+    renderPage();
+    expect(await screen.findByTestId("supplier-card-ewing")).toBeInTheDocument();
+    // Label reads from SUPPLIER_METADATA.ewing.username_label
+    const u = await screen.findByTestId("supplier-ewing-username-input");
+    const label = u.closest("label");
+    expect(label.textContent).toMatch(/ewing username/i);
+    // Tagline (metadata) is somewhere in the card
+    const card = await screen.findByTestId("supplier-card-ewing");
+    expect(card.textContent).toMatch(/irrigation|lighting|hardscape/i);
+  });
+
+  it("Ewing Save credentials POSTs to /suppliers/ewing/credentials", async () => {
+    primeApiCalls();
+    postMock.mockResolvedValueOnce({ ok: true, supplier_slug: "ewing",
+                                     updated_at: "2026-02-14T11:00:00Z" });
+    renderPage();
+    fireEvent.change(await screen.findByTestId("supplier-ewing-username-input"),
+                     { target: { value: "eop" } });
+    fireEvent.change(await screen.findByTestId("supplier-ewing-password-input"),
+                     { target: { value: "e-secret" } });
+    fireEvent.click(await screen.findByTestId("supplier-ewing-save-btn"));
+    await waitFor(() => {
+      expect(postMock).toHaveBeenCalledWith(
+        "/suppliers/ewing/credentials",
+        { username: "eop", password: "e-secret" });
+    });
+  });
+
+  it("Ewing Sync now fires POST /suppliers/ewing/sync when creds present", async () => {
+    primeApiCalls({ hasCredsBySlug: { poolcorp: false, siteone: false, ewing: true } });
+    postMock.mockResolvedValueOnce({
+      job_id: "job-ewing-1", status: "running", supplier_slug: "ewing",
+    });
+    renderPage();
+    const syncBtn = await screen.findByTestId("supplier-ewing-sync-btn");
+    await waitFor(() => expect(syncBtn).not.toBeDisabled());
+    fireEvent.click(syncBtn);
+    await waitFor(() => {
+      expect(postMock).toHaveBeenCalledWith("/suppliers/ewing/sync", {});
+    });
+  });
+
+  it("Ewing Test connection fires POST /suppliers/ewing/test-connection", async () => {
+    primeApiCalls({ hasCredsBySlug: { poolcorp: false, siteone: false, ewing: true } });
+    postMock.mockResolvedValueOnce({ ok: true, supplier_slug: "ewing" });
+    renderPage();
+    const btn = await screen.findByTestId("supplier-ewing-test-connection-btn");
+    await waitFor(() => expect(btn).not.toBeDisabled());
+    fireEvent.click(btn);
+    await waitFor(() => {
+      expect(postMock).toHaveBeenCalledWith(
+        "/suppliers/ewing/test-connection", {});
+    });
+    const badge = await screen.findByTestId("supplier-ewing-test-result");
+    expect(badge.textContent).toContain("Connected");
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+// 3e. Phase 54d — SUPPLIER_METADATA shape integrity
+// ═══════════════════════════════════════════════════════════════════
+describe("SUPPLIER_METADATA — Phase 54d config extraction", () => {
+  it("every wired slug has the full field set (no coming_in stub)", async () => {
+    const mod = await import("@/pages/settings/supplier_metadata");
+    const { SUPPLIER_METADATA, WIRED_SLUGS } = mod;
+    const requiredFields = [
+      "display_name", "tagline", "username_label",
+      "username_placeholder", "password_label", "password_placeholder",
+      "delete_confirm_text",
+    ];
+    for (const slug of WIRED_SLUGS) {
+      const entry = SUPPLIER_METADATA[slug];
+      expect(entry, `metadata for wired slug ${slug}`).toBeTruthy();
+      expect(entry.coming_in,
+             `wired slug ${slug} must not have a coming_in stub`).toBeUndefined();
+      for (const f of requiredFields) {
+        expect(entry[f],
+               `wired slug ${slug} missing metadata field ${f}`)
+          .toBeTruthy();
+      }
+    }
+  });
+
+  it("every unwired slug has coming_in + display_name + tagline", async () => {
+    const mod = await import("@/pages/settings/supplier_metadata");
+    const { SUPPLIER_METADATA, WIRED_SLUGS } = mod;
+    const unwired = Object.keys(SUPPLIER_METADATA).filter((s) => !WIRED_SLUGS.has(s));
+    expect(unwired.length).toBeGreaterThan(0);
+    for (const slug of unwired) {
+      const entry = SUPPLIER_METADATA[slug];
+      expect(entry.coming_in).toBeTruthy();
+      expect(entry.display_name).toBeTruthy();
+      expect(entry.tagline).toBeTruthy();
+    }
+  });
+
+  it("WIRED_SLUGS mirrors the backend's _WIRED_SYNC_SLUGS (54b + 54c + 54d)", async () => {
+    const mod = await import("@/pages/settings/supplier_metadata");
+    const { WIRED_SLUGS } = mod;
+    // Set semantics — order-independent equality check.
+    const expected = new Set(["poolcorp", "siteone", "ewing"]);
+    expect(new Set(WIRED_SLUGS)).toEqual(expected);
   });
 });
 

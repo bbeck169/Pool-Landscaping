@@ -363,17 +363,18 @@ def test_test_connection_forbidden_for_manager():
 
 
 def test_test_connection_501_for_unwired_supplier():
-    # Ewing is planned for 54d — still not wired.
-    r_save = requests.post(f"{LOCAL_API}/suppliers/ewing/credentials",
+    # Phase 54d wired Ewing — the next unwired slug is heritage
+    # (planned for 54e).
+    r_save = requests.post(f"{LOCAL_API}/suppliers/heritage/credentials",
                            headers=_hdr(),
                            json={"username": "u", "password": "p"},
                            timeout=TIMEOUT)
     assert r_save.status_code == 200, r_save.text
     try:
-        r = requests.post(f"{LOCAL_API}/suppliers/ewing/test-connection",
+        r = requests.post(f"{LOCAL_API}/suppliers/heritage/test-connection",
                           headers=_hdr(), timeout=TIMEOUT)
         assert r.status_code == 501
-        assert "54d" in r.json().get("detail", "")
+        assert "54e" in r.json().get("detail", "")
     finally:
         _wipe_creds()
 

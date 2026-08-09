@@ -204,15 +204,14 @@ def test_credentials_round_trip_and_never_plaintext(sync_db):
 # Sync endpoints
 # ═══════════════════════════════════════════════════════════════════
 def test_manual_sync_returns_501_for_not_yet_implemented_connector():
-    # Phase 54b · Feb-2026 — poolcorp is LIVE. Phase 54c · Feb-2026 —
-    # SiteOne is LIVE. Ewing / Heritage / ePoolSupply still return 501
-    # with the phase pointer.
-    r = requests.post(f"{API}/suppliers/ewing/sync",
+    # Phase 54b · Feb-2026 — poolcorp is LIVE. Phase 54c — SiteOne LIVE.
+    # Phase 54d — Ewing LIVE. Heritage / ePoolSupply still return 501.
+    r = requests.post(f"{API}/suppliers/heritage/sync",
                        headers=_hdr(), timeout=TIMEOUT)
     assert r.status_code == 501
     detail = r.json().get("detail", "")
     assert "not implemented" in detail.lower()
-    assert "54d" in detail  # ewing is planned for 54d
+    assert "54e" in detail  # heritage is planned for 54e
 
 
 def test_sync_endpoint_slug_gates():
@@ -279,7 +278,7 @@ def test_all_connector_stubs_raise_not_implemented():
     from services.suppliers.connector import CONNECTORS
 
     assert set(CONNECTORS.keys()) == set(EXPECTED_SLUGS)
-    wired = {"poolcorp", "siteone"}
+    wired = {"poolcorp", "siteone", "ewing"}
     for slug, conn in CONNECTORS.items():
         if slug in wired:
             continue

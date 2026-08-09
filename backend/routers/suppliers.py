@@ -229,7 +229,7 @@ async def delete_credentials(
 #    Phase 54c: siteone is LIVE. Ewing / Heritage / ePoolSupply
 #    still return 501.
 # ═══════════════════════════════════════════════════════════════════
-_WIRED_SYNC_SLUGS = frozenset({"poolcorp", "siteone"})
+_WIRED_SYNC_SLUGS = frozenset({"poolcorp", "siteone", "ewing"})
 
 
 def _wired_sync_runner(slug: str):
@@ -241,6 +241,9 @@ def _wired_sync_runner(slug: str):
     if slug == "siteone":
         from services.suppliers.sync import run_siteone_sync
         return run_siteone_sync
+    if slug == "ewing":
+        from services.suppliers.sync import run_ewing_sync
+        return run_ewing_sync
     return None
 
 

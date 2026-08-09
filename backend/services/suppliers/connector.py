@@ -144,6 +144,14 @@ try:  # Phase 54c — SiteOne wired
 except Exception:  # pragma: no cover — deps missing at import
     pass
 
+try:  # Phase 54d — Ewing wired
+    from services.suppliers.ewing import (  # noqa: E402
+        EwingConnector as _WiredEwing,
+    )
+    CONNECTORS["ewing"] = _WiredEwing()
+except Exception:  # pragma: no cover — deps missing at import
+    pass
+
 
 # The canonical seed set. Order preserved so ``GET /api/suppliers``
 # always returns the same admin-facing default sort.

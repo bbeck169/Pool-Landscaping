@@ -23,24 +23,11 @@ import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors } from "@/theme";
 import { toast } from "sonner";
+import { SUPPLIER_METADATA, WIRED_SLUGS } from "./supplier_metadata";
 
 const LEGAL_DISCLAIMER =
   "Automated syncing may be subject to your wholesaler's Terms of Service. " +
   "By connecting, you acknowledge responsibility for compliance with those terms.";
-
-// Phase 54c · Feb-2026 — SiteOne joined the wired-connector set.
-const WIRED_SLUGS = new Set(["poolcorp", "siteone"]);
-
-const PLANNED_LABELS = {
-  ewing:       "Coming in Phase 54d",
-  heritage:    "Coming in Phase 54e",
-  epoolsupply: "Coming in Phase 54e",
-};
-
-const SUPPLIER_TAGLINE = {
-  poolcorp: "Live wholesale pricebook sync (Playwright headless).",
-  siteone:  "SiteOne B2B pricebook sync (Playwright headless).",
-};
 
 const TEST_CONN_ERROR_COPY = {
   login_failed: "Login failed — check the username and password.",
@@ -74,6 +61,10 @@ function StatusPill({ status }) {
 }
 
 function ComingSoonCard({ supplier }) {
+  const meta = SUPPLIER_METADATA[supplier.slug] || {};
+  const label = meta.coming_in
+    ? `Coming in Phase ${meta.coming_in}`
+    : "Coming soon";
   return (
     <div
       className="rounded-xl p-5"
@@ -83,10 +74,10 @@ function ComingSoonCard({ supplier }) {
       <div className="flex items-center justify-between">
         <div>
           <div className="text-base font-semibold" style={{ color: colors.onSurface }}>
-            {supplier.display_name}
+            {meta.display_name || supplier.display_name}
           </div>
           <div className="text-sm mt-1" style={{ color: colors.muted }}>
-            {PLANNED_LABELS[supplier.slug] || "Coming soon"}
+            {label}
           </div>
         </div>
         <span
@@ -102,6 +93,8 @@ function ComingSoonCard({ supplier }) {
 }
 
 function WiredSupplierCard({ supplier, readOnly }) {
+  const meta = SUPPLIER_METADATA[supplier.slug] || {};
+  const displayName = meta.display_name || supplier.display_name;
   const [creds, setCreds] = useState({ has_credentials: false, updated_at: null });
   const [form, setForm] = useState({ username: "", password: "" });
   const [saving, setSaving] = useState(false);
@@ -157,7 +150,8 @@ function WiredSupplierCard({ supplier, readOnly }) {
 
   const deleteCreds = async () => {
     if (readOnly) return;
-    if (!window.confirm(`Remove saved ${supplier.display_name} credentials? Syncs will stop working until new credentials are provided.`)) return;
+    if (!window.confirm(meta.delete_confirm_text
+        || `Remove saved ${displayName} credentials? Syncs will stop working until new credentials are provided.`)) return;
     try {
       await api.delete(`/suppliers/${supplier.slug}/credentials`);
       await refreshCreds();
@@ -222,10 +216,10 @@ function WiredSupplierCard({ supplier, readOnly }) {
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
         <div>
           <div className="text-base font-semibold" style={{ color: colors.onSurface }}>
-            {supplier.display_name}
+            {displayName}
           </div>
           <div className="text-sm mt-1" style={{ color: colors.muted }}>
-            {SUPPLIER_TAGLINE[supplier.slug] || "Wholesale pricebook sync."}
+            {meta.tagline || "Wholesale pricebook sync."}
           </div>
         </div>
         <span
@@ -245,28 +239,36 @@ function WiredSupplierCard({ supplier, readOnly }) {
       {/* Credentials form */}
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block">
-          <span className="text-xs" style={{ color: colors.muted }}>{supplier.display_name} username</span>
+          <span className="text-xs" style={{ color: colors.muted }}>
+            {meta.username_label || `${displayName} username`}
+          </span>
           <input
             type="text"
             autoComplete="off"
             value={form.username}
             disabled={readOnly}
             onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
-            placeholder={creds.has_credentials ? "•••••• (saved)" : `your-${supplier.slug}-username`}
+            placeholder={creds.has_credentials
+              ? "•••••• (saved)"
+              : (meta.username_placeholder || `your-${supplier.slug}-username`)}
             className="mt-1 w-full px-3 py-2 rounded-lg text-sm disabled:opacity-60"
             style={{ border: `1px solid ${colors.border}`, backgroundColor: colors.surface }}
             data-testid={`supplier-${supplier.slug}-username-input`}
           />
         </label>
         <label className="block">
-          <span className="text-xs" style={{ color: colors.muted }}>Password</span>
+          <span className="text-xs" style={{ color: colors.muted }}>
+            {meta.password_label || "Password"}
+          </span>
           <input
             type="password"
             autoComplete="new-password"
             value={form.password}
             disabled={readOnly}
             onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-            placeholder={creds.has_credentials ? "•••••• (saved)" : `your-${supplier.slug}-password`}
+            placeholder={creds.has_credentials
+              ? "•••••• (saved)"
+              : (meta.password_placeholder || `your-${supplier.slug}-password`)}
             className="mt-1 w-full px-3 py-2 rounded-lg text-sm disabled:opacity-60"
             style={{ border: `1px solid ${colors.border}`, backgroundColor: colors.surface }}
             data-testid={`supplier-${supplier.slug}-password-input`}

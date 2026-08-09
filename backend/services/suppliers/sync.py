@@ -217,3 +217,14 @@ async def run_siteone_sync(
     from services.suppliers.siteone import SiteOneConnector
     connector = SiteOneConnector()
     await run_supplier_sync(tenant_id, supplier, credentials, job_id, connector)
+
+
+async def run_ewing_sync(
+    tenant_id: str, supplier: Dict[str, Any],
+    credentials: Dict[str, Any], job_id: str,
+) -> None:
+    """Ewing Irrigation sync entry-point (Phase 54d). Thin wrapper on
+    ``run_supplier_sync`` with the wired ``EwingConnector``."""
+    from services.suppliers.ewing import EwingConnector
+    connector = EwingConnector()
+    await run_supplier_sync(tenant_id, supplier, credentials, job_id, connector)
