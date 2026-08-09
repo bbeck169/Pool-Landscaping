@@ -311,19 +311,15 @@ def test_ewing_sync_202_with_credentials():
 # test-connection endpoint — Ewing branches + unwired-slug 501
 # ═══════════════════════════════════════════════════════════════════
 def test_test_connection_501_for_heritage():
-    # Heritage is planned for 54e — still not wired.
-    r_save = requests.post(f"{LOCAL_API}/suppliers/heritage/credentials",
-                           headers=_hdr(),
-                           json={"username": "u", "password": "p"},
-                           timeout=TIMEOUT)
-    assert r_save.status_code == 200, r_save.text
-    try:
-        r = requests.post(f"{LOCAL_API}/suppliers/heritage/test-connection",
-                          headers=_hdr(), timeout=TIMEOUT)
-        assert r.status_code == 501
-        assert "54e" in r.json().get("detail", "")
-    finally:
-        _wipe_creds()
+    # Phase 54e wired Heritage — the 501-branch is no longer reachable
+    # from a real slug. Confirm the test-connection endpoint returns
+    # a coherent envelope for heritage now (401/400/200), NOT 501.
+    _wipe_creds()  # ensure no-creds path
+    r = requests.post(f"{LOCAL_API}/suppliers/heritage/test-connection",
+                      headers=_hdr(), timeout=TIMEOUT)
+    assert r.status_code == 400
+    detail = r.json().get("detail") or {}
+    assert detail.get("error") == "no_credentials"
 
 
 def test_test_connection_success_ewing():

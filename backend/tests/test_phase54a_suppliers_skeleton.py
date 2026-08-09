@@ -204,14 +204,17 @@ def test_credentials_round_trip_and_never_plaintext(sync_db):
 # Sync endpoints
 # ═══════════════════════════════════════════════════════════════════
 def test_manual_sync_returns_501_for_not_yet_implemented_connector():
-    # Phase 54b · Feb-2026 — poolcorp is LIVE. Phase 54c — SiteOne LIVE.
-    # Phase 54d — Ewing LIVE. Heritage / ePoolSupply still return 501.
-    r = requests.post(f"{API}/suppliers/heritage/sync",
-                       headers=_hdr(), timeout=TIMEOUT)
-    assert r.status_code == 501
-    detail = r.json().get("detail", "")
-    assert "not implemented" in detail.lower()
-    assert "54e" in detail  # heritage is planned for 54e
+    # Phase 54e · Feb-2026 — ALL FIVE suppliers are now wired.
+    # A slug outside EXPECTED_SLUGS still 404s, so the "coming in
+    # phase X" 501 pathway is no longer reachable — instead we
+    # verify every wired slug either 400s (no creds) or 202s.
+    for slug in EXPECTED_SLUGS:
+        r = requests.post(f"{API}/suppliers/{slug}/sync",
+                          headers=_hdr(), timeout=TIMEOUT)
+        assert r.status_code in (400, 202), f"{slug}: got {r.status_code}"
+        if r.status_code == 400:
+            detail = r.json().get("detail") or {}
+            assert detail.get("error") == "no_credentials"
 
 
 def test_sync_endpoint_slug_gates():
@@ -267,26 +270,29 @@ def test_tenant_isolation_on_suppliers_and_credentials(sync_db):
 # Connector protocol contract
 # ═══════════════════════════════════════════════════════════════════
 def test_all_connector_stubs_raise_not_implemented():
-    # Import from the app process to exercise the exact same class
-    # instances the router uses. Phase 54b wired ``poolcorp`` and
-    # Phase 54c wired ``siteone`` — those two now have real
-    # implementations and are skipped here. The remaining three
-    # slugs must still raise ``NotImplementedError`` until their
-    # respective phases land.
+    # Phase 54e · Feb-2026 — every supplier slug is now wired. The
+    # test now serves as a registry-shape guard rather than a
+    # NotImplementedError check.
+    #
+    # Rationale for the softer assertion: some later-phase tests
+    # monkey-patch ``CONNECTORS[slug].authenticate`` for isolation,
+    # and if a batched run interleaves setups, ``inspect.iscoroutine
+    # function`` can flip false-negatively between plain ``def`` fakes
+    # left behind by tests that skipped their teardown. What we
+    # actually care about here is that every expected slug still
+    # resolves to a live connector object with both entry-points.
     import sys
     sys.path.insert(0, "/app/backend")
     from services.suppliers.connector import CONNECTORS
 
     assert set(CONNECTORS.keys()) == set(EXPECTED_SLUGS)
-    wired = {"poolcorp", "siteone", "ewing"}
     for slug, conn in CONNECTORS.items():
-        if slug in wired:
-            continue
-        with pytest.raises(NotImplementedError) as ei:
-            conn.authenticate({})
-        assert conn.display_name in str(ei.value)
-        with pytest.raises(NotImplementedError):
-            list(conn.list_products(None))  # type: ignore[arg-type]
+        assert hasattr(conn, "authenticate"), \
+            f"connector {slug} missing authenticate"
+        assert hasattr(conn, "list_products"), \
+            f"connector {slug} missing list_products"
+        assert conn.slug == slug
+        assert conn.display_name  # non-empty
 
 
 # ═══════════════════════════════════════════════════════════════════

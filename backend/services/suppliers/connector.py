@@ -149,7 +149,23 @@ try:  # Phase 54d — Ewing wired
         EwingConnector as _WiredEwing,
     )
     CONNECTORS["ewing"] = _WiredEwing()
-except Exception:  # pragma: no cover — deps missing at import
+except Exception:  # pragma: no cover
+    pass
+
+try:  # Phase 54e — Heritage wired
+    from services.suppliers.heritage import (  # noqa: E402
+        HeritageConnector as _WiredHeritage,
+    )
+    CONNECTORS["heritage"] = _WiredHeritage()
+except Exception:  # pragma: no cover
+    pass
+
+try:  # Phase 54e — ePoolSupply wired
+    from services.suppliers.epoolsupply import (  # noqa: E402
+        EPoolSupplyConnector as _WiredEPS,
+    )
+    CONNECTORS["epoolsupply"] = _WiredEPS()
+except Exception:  # pragma: no cover
     pass
 
 

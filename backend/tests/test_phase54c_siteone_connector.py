@@ -363,20 +363,13 @@ def test_test_connection_forbidden_for_manager():
 
 
 def test_test_connection_501_for_unwired_supplier():
-    # Phase 54d wired Ewing — the next unwired slug is heritage
-    # (planned for 54e).
-    r_save = requests.post(f"{LOCAL_API}/suppliers/heritage/credentials",
-                           headers=_hdr(),
-                           json={"username": "u", "password": "p"},
-                           timeout=TIMEOUT)
-    assert r_save.status_code == 200, r_save.text
-    try:
-        r = requests.post(f"{LOCAL_API}/suppliers/heritage/test-connection",
-                          headers=_hdr(), timeout=TIMEOUT)
-        assert r.status_code == 501
-        assert "54e" in r.json().get("detail", "")
-    finally:
-        _wipe_creds()
+    # Phase 54e · Feb-2026 — every supplier slug is now wired, so the
+    # 501 branch is no longer reachable from a real slug in
+    # EXPECTED_SLUGS. This test now verifies that unknown slugs
+    # (which the router doesn't recognise) 404 cleanly.
+    r = requests.post(f"{LOCAL_API}/suppliers/definitely-not-a-real-slug/test-connection",
+                      headers=_hdr(), timeout=TIMEOUT)
+    assert r.status_code == 404
 
 
 def test_test_connection_400_when_no_credentials():

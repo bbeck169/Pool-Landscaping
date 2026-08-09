@@ -22,11 +22,13 @@ import { MemoryRouter } from "react-router-dom";
 const getMock = vi.fn();
 const postMock = vi.fn();
 const deleteMock = vi.fn();
+const patchMock = vi.fn();
 vi.mock("@/api", () => ({
   api: {
     get:    (...a) => getMock(...a),
     post:   (...a) => postMock(...a),
     delete: (...a) => deleteMock(...a),
+    patch:  (...a) => patchMock(...a),
   },
 }));
 
@@ -47,11 +49,11 @@ vi.mock("@/auth", () => ({
 import SupplierSettings from "@/pages/settings/SupplierSettings";
 
 const SUPPLIERS_FIXTURE = [
-  { slug: "poolcorp",    display_name: "Pool360 (PoolCorp)" },
-  { slug: "siteone",     display_name: "SiteOne" },
-  { slug: "ewing",       display_name: "Ewing Irrigation" },
-  { slug: "heritage",    display_name: "Heritage Pool Plus" },
-  { slug: "epoolsupply", display_name: "ePoolSupply" },
+  { slug: "poolcorp",    display_name: "Pool360 (PoolCorp)", sync_frequency: "daily" },
+  { slug: "siteone",     display_name: "SiteOne",             sync_frequency: "daily" },
+  { slug: "ewing",       display_name: "Ewing Irrigation",    sync_frequency: "daily" },
+  { slug: "heritage",    display_name: "Heritage Pool Plus",  sync_frequency: "daily" },
+  { slug: "epoolsupply", display_name: "ePoolSupply",         sync_frequency: "daily" },
 ];
 
 function renderPage() {
@@ -73,6 +75,7 @@ function primeApiCalls({
   // suppliers" scenario used by earlier tests.
   const map = hasCredsBySlug || {
     poolcorp: hasCreds, siteone: hasCreds, ewing: hasCreds,
+    heritage: hasCreds, epoolsupply: hasCreds,
   };
   getMock.mockImplementation((path) => {
     if (path === "/suppliers") return Promise.resolve(suppliers);
@@ -99,6 +102,7 @@ beforeEach(() => {
   getMock.mockReset();
   postMock.mockReset();
   deleteMock.mockReset();
+  patchMock.mockReset();
   toastSuccess.mockReset();
   toastError.mockReset();
   mockUser = { role: "admin" };
@@ -131,23 +135,21 @@ describe("SupplierSettings — render", () => {
     );
   });
 
-  it("renders coming-soon cards for the two still-unwired suppliers", async () => {
-    // Phase 54d wired Ewing — poolcorp + siteone + ewing render as
-    // full cards; only heritage / epoolsupply remain coming-soon.
-    primeApiCalls();
+  it("all five suppliers are now wired cards (Phase 54e)", async () => {
+    // Phase 54e wired Heritage + ePoolSupply — every slug renders as
+    // a full WiredSupplierCard now. No more ComingSoonCard variants
+    // for the seed set.
+    primeApiCalls({
+      hasCredsBySlug: { poolcorp: false, siteone: false, ewing: false,
+                        heritage: false, epoolsupply: false },
+    });
     renderPage();
-    for (const slug of ["poolcorp", "siteone", "ewing"]) {
+    for (const slug of ["poolcorp", "siteone", "ewing", "heritage", "epoolsupply"]) {
       expect(await screen.findByTestId(`supplier-card-${slug}`)).toBeInTheDocument();
+      expect(await screen.findByTestId(`supplier-${slug}-username-input`)).toBeInTheDocument();
+      expect(await screen.findByTestId(`supplier-${slug}-sync-btn`)).toBeInTheDocument();
+      expect(await screen.findByTestId(`supplier-${slug}-test-connection-btn`)).toBeInTheDocument();
     }
-    for (const slug of ["heritage", "epoolsupply"]) {
-      expect(await screen.findByTestId(`supplier-card-${slug}`)).toBeInTheDocument();
-    }
-    // Coming-soon cards do NOT get a credentials form / sync button
-    expect(screen.queryByTestId("supplier-heritage-sync-btn")).toBeNull();
-    expect(screen.queryByTestId("supplier-epoolsupply-username-input")).toBeNull();
-    // Ewing (newly wired) DOES get one now.
-    expect(await screen.findByTestId("supplier-ewing-sync-btn")).toBeInTheDocument();
-    expect(await screen.findByTestId("supplier-ewing-username-input")).toBeInTheDocument();
   });
 
   it("shows an empty history message when the sync-jobs list is empty", async () => {
@@ -489,7 +491,9 @@ describe("SUPPLIER_METADATA — Phase 54d config extraction", () => {
     const mod = await import("@/pages/settings/supplier_metadata");
     const { SUPPLIER_METADATA, WIRED_SLUGS } = mod;
     const unwired = Object.keys(SUPPLIER_METADATA).filter((s) => !WIRED_SLUGS.has(s));
-    expect(unwired.length).toBeGreaterThan(0);
+    // Phase 54e wired every base-set slug, so ``unwired`` is
+    // legitimately empty here. Once a Phase 54f/55/... supplier is
+    // added with ``coming_in`` set, this loop kicks in.
     for (const slug of unwired) {
       const entry = SUPPLIER_METADATA[slug];
       expect(entry.coming_in).toBeTruthy();
@@ -498,12 +502,120 @@ describe("SUPPLIER_METADATA — Phase 54d config extraction", () => {
     }
   });
 
-  it("WIRED_SLUGS mirrors the backend's _WIRED_SYNC_SLUGS (54b + 54c + 54d)", async () => {
+  it("WIRED_SLUGS mirrors the backend's _WIRED_SYNC_SLUGS (Phase 54e — all five)", async () => {
     const mod = await import("@/pages/settings/supplier_metadata");
     const { WIRED_SLUGS } = mod;
-    // Set semantics — order-independent equality check.
-    const expected = new Set(["poolcorp", "siteone", "ewing"]);
+    // Phase 54e wired heritage + epoolsupply. All five slugs live now.
+    const expected = new Set([
+      "poolcorp", "siteone", "ewing", "heritage", "epoolsupply"]);
     expect(new Set(WIRED_SLUGS)).toEqual(expected);
+  });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+// 3f. Phase 54e — Heritage + ePoolSupply wired
+// ═══════════════════════════════════════════════════════════════════
+describe("SupplierSettings — Heritage + ePoolSupply wired (Phase 54e)", () => {
+  it.each(["heritage", "epoolsupply"])(
+    "%s card renders with the metadata tagline + username label", async (slug) => {
+      primeApiCalls();
+      renderPage();
+      expect(await screen.findByTestId(`supplier-card-${slug}`)).toBeInTheDocument();
+      const u = await screen.findByTestId(`supplier-${slug}-username-input`);
+      const label = u.closest("label");
+      expect(label.textContent).toMatch(new RegExp(`${slug} username`, "i"));
+    });
+
+  it.each(["heritage", "epoolsupply"])(
+    "%s Sync now fires POST /suppliers/%s/sync when creds present", async (slug) => {
+      const credsBySlug = {
+        poolcorp: false, siteone: false, ewing: false,
+        heritage: false, epoolsupply: false, [slug]: true,
+      };
+      primeApiCalls({ hasCredsBySlug: credsBySlug });
+      postMock.mockResolvedValueOnce({
+        job_id: `job-${slug}-1`, status: "running", supplier_slug: slug });
+      renderPage();
+      const syncBtn = await screen.findByTestId(`supplier-${slug}-sync-btn`);
+      await waitFor(() => expect(syncBtn).not.toBeDisabled());
+      fireEvent.click(syncBtn);
+      await waitFor(() => {
+        expect(postMock).toHaveBeenCalledWith(`/suppliers/${slug}/sync`, {});
+      });
+    });
+
+  it.each(["heritage", "epoolsupply"])(
+    "%s Test connection fires POST /suppliers/%s/test-connection", async (slug) => {
+      const credsBySlug = {
+        poolcorp: false, siteone: false, ewing: false,
+        heritage: false, epoolsupply: false, [slug]: true,
+      };
+      primeApiCalls({ hasCredsBySlug: credsBySlug });
+      postMock.mockResolvedValueOnce({ ok: true, supplier_slug: slug });
+      renderPage();
+      const btn = await screen.findByTestId(`supplier-${slug}-test-connection-btn`);
+      await waitFor(() => expect(btn).not.toBeDisabled());
+      fireEvent.click(btn);
+      await waitFor(() => {
+        expect(postMock).toHaveBeenCalledWith(
+          `/suppliers/${slug}/test-connection`, {});
+      });
+    });
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+// 3g. Phase 54e — Sync frequency dropdown (per-tenant / per-supplier)
+// ═══════════════════════════════════════════════════════════════════
+describe("SupplierSettings — Sync frequency dropdown (Phase 54e)", () => {
+  it("dropdown renders with the seeded frequency for every wired supplier", async () => {
+    primeApiCalls();
+    renderPage();
+    for (const slug of ["poolcorp", "siteone", "ewing", "heritage", "epoolsupply"]) {
+      const sel = await screen.findByTestId(
+        `supplier-${slug}-sync-frequency-select`);
+      expect(sel).toBeInTheDocument();
+      expect(sel.value).toBe("daily");
+    }
+  });
+
+  it("changing the dropdown PATCHes /suppliers/{slug} with the new frequency", async () => {
+    primeApiCalls();
+    patchMock.mockResolvedValueOnce({
+      slug: "heritage", sync_frequency: "weekly", active: true });
+    renderPage();
+    const sel = await screen.findByTestId(
+      "supplier-heritage-sync-frequency-select");
+    fireEvent.change(sel, { target: { value: "weekly" } });
+    await waitFor(() => {
+      expect(patchMock).toHaveBeenCalledWith(
+        "/suppliers/heritage", { sync_frequency: "weekly" });
+    });
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+  });
+
+  it("PATCH failure reverts the optimistic dropdown value + toasts", async () => {
+    primeApiCalls();
+    const err = new Error("Server said no");
+    patchMock.mockRejectedValueOnce(err);
+    renderPage();
+    const sel = await screen.findByTestId(
+      "supplier-ewing-sync-frequency-select");
+    expect(sel.value).toBe("daily");
+    fireEvent.change(sel, { target: { value: "hourly" } });
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    // Reverted back to the seed value.
+    expect(sel.value).toBe("daily");
+  });
+
+  it("dropdown is disabled for manager (read-only)", async () => {
+    mockUser = { role: "manager" };
+    primeApiCalls();
+    renderPage();
+    const sel = await screen.findByTestId(
+      "supplier-poolcorp-sync-frequency-select");
+    expect(sel).toBeDisabled();
   });
 });
 

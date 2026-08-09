@@ -225,11 +225,51 @@ async def delete_credentials(
 
 
 # ═══════════════════════════════════════════════════════════════════
+# 4b. PATCH /suppliers/{slug} — update sync_frequency / active
+#     Phase 54e — introduces per-tenant per-supplier scheduling.
+# ═══════════════════════════════════════════════════════════════════
+class SupplierPatchBody(BaseModel):
+    sync_frequency: Optional[str] = None
+    active: Optional[bool] = None
+
+
+@router.patch("/suppliers/{slug}")
+async def patch_supplier(
+    slug: str, body: SupplierPatchBody,
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_admin(user)
+    tenant_id = _require_tenant(user)
+    supplier = await _get_supplier_or_404(tenant_id, slug)
+
+    update: Dict[str, Any] = {}
+    if body.sync_frequency is not None:
+        if body.sync_frequency not in _VALID_SYNC_FREQ:
+            raise HTTPException(
+                400, {"error": "invalid_sync_frequency",
+                       "allowed": sorted(_VALID_SYNC_FREQ)})
+        update["sync_frequency"] = body.sync_frequency
+    if body.active is not None:
+        update["active"] = bool(body.active)
+    if not update:
+        raise HTTPException(400, {"error": "empty_patch"})
+
+    await db.suppliers.update_one(
+        {"tenant_id": tenant_id, "slug": slug},
+        {"$set": update},
+    )
+    row = await db.suppliers.find_one(
+        {"tenant_id": tenant_id, "slug": slug}, {"_id": 0})
+    return row or {}
+
+
+# ═══════════════════════════════════════════════════════════════════
 # 5. POST /suppliers/{slug}/sync — Phase 54b: poolcorp is LIVE.
 #    Phase 54c: siteone is LIVE. Ewing / Heritage / ePoolSupply
 #    still return 501.
 # ═══════════════════════════════════════════════════════════════════
-_WIRED_SYNC_SLUGS = frozenset({"poolcorp", "siteone", "ewing"})
+_WIRED_SYNC_SLUGS = frozenset({"poolcorp", "siteone", "ewing", "heritage", "epoolsupply"})
+_VALID_SYNC_FREQ = frozenset({"hourly", "daily", "weekly", "manual"})
 
 
 def _wired_sync_runner(slug: str):
@@ -244,6 +284,12 @@ def _wired_sync_runner(slug: str):
     if slug == "ewing":
         from services.suppliers.sync import run_ewing_sync
         return run_ewing_sync
+    if slug == "heritage":
+        from services.suppliers.sync import run_heritage_sync
+        return run_heritage_sync
+    if slug == "epoolsupply":
+        from services.suppliers.sync import run_epoolsupply_sync
+        return run_epoolsupply_sync
     return None
 
 

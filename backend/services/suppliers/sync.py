@@ -228,3 +228,23 @@ async def run_ewing_sync(
     from services.suppliers.ewing import EwingConnector
     connector = EwingConnector()
     await run_supplier_sync(tenant_id, supplier, credentials, job_id, connector)
+
+
+async def run_heritage_sync(
+    tenant_id: str, supplier: Dict[str, Any],
+    credentials: Dict[str, Any], job_id: str,
+) -> None:
+    """Heritage Pool Plus sync entry-point (Phase 54e)."""
+    from services.suppliers.heritage import HeritageConnector
+    connector = HeritageConnector()
+    await run_supplier_sync(tenant_id, supplier, credentials, job_id, connector)
+
+
+async def run_epoolsupply_sync(
+    tenant_id: str, supplier: Dict[str, Any],
+    credentials: Dict[str, Any], job_id: str,
+) -> None:
+    """ePoolSupply sync entry-point (Phase 54e)."""
+    from services.suppliers.epoolsupply import EPoolSupplyConnector
+    connector = EPoolSupplyConnector()
+    await run_supplier_sync(tenant_id, supplier, credentials, job_id, connector)

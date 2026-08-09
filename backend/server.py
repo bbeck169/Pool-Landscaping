@@ -912,6 +912,14 @@ async def _background_seed():
         scheduler.add_job(coverage.revert_expired_coverage, "interval",
                             hours=12, id="coverage_revert",
                             replace_existing=True)
+        # Phase 54e · Feb-2026 — wholesale supplier sync cron (hourly
+        # + daily at 03:00 UTC). Gated by SUPPLIER_SYNC_LIVE=1 —
+        # default OFF everywhere, so the cron ticks fire but log-only.
+        try:
+            from services.suppliers.cron import register_supplier_cron_jobs
+            register_supplier_cron_jobs(scheduler)
+        except Exception as _sce:
+            logger.warning(f"supplier.cron.register_skipped: {_sce}")
         scheduler.add_job(finances.run_late_fee_assessment, "cron",
                             hour=2, minute=0, id="late_fees",
                             replace_existing=True)

@@ -127,6 +127,23 @@ function WiredSupplierCard({ supplier, readOnly }) {
 
   useEffect(() => { refreshCreds(); refreshJobs(); }, [refreshCreds, refreshJobs]);
 
+  const [syncFreq, setSyncFreq] = useState(supplier.sync_frequency || "daily");
+  useEffect(() => {
+    setSyncFreq(supplier.sync_frequency || "daily");
+  }, [supplier.sync_frequency]);
+  const patchFrequency = async (next) => {
+    if (readOnly) return;
+    const prev = syncFreq;
+    setSyncFreq(next); // optimistic
+    try {
+      await api.patch(`/suppliers/${supplier.slug}`, { sync_frequency: next });
+      toast.success(`Sync frequency updated to ${next}.`);
+    } catch (e) {
+      setSyncFreq(prev);
+      toast.error(e.message || "Failed to update sync frequency");
+    }
+  };
+
   const saveCreds = async () => {
     if (readOnly) return;
     if (!form.username || !form.password) {
@@ -370,6 +387,29 @@ function WiredSupplierCard({ supplier, readOnly }) {
           Read-only. Ask an admin to change wholesaler credentials or trigger a sync.
         </div>
       )}
+
+      {/* Sync frequency (Phase 54e) */}
+      <div className="mt-5 flex items-center gap-3">
+        <span className="text-xs" style={{ color: colors.muted }}>
+          Sync frequency
+        </span>
+        <select
+          value={syncFreq}
+          disabled={readOnly}
+          onChange={(e) => patchFrequency(e.target.value)}
+          className="px-2 py-1 rounded-md text-sm disabled:opacity-60"
+          style={{ border: `1px solid ${colors.border}`, backgroundColor: colors.surface }}
+          data-testid={`supplier-${supplier.slug}-sync-frequency-select`}
+        >
+          <option value="hourly">Hourly</option>
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly (Sundays)</option>
+          <option value="manual">Manual only</option>
+        </select>
+        <span className="text-xs" style={{ color: colors.muted }}>
+          Cron runs at 03:00 UTC unless overridden.
+        </span>
+      </div>
 
       {/* Sync history */}
       <div className="mt-6">
