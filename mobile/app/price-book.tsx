@@ -10,6 +10,55 @@ import { Loading, EmptyState, PrimaryButton, Sheet } from "@/src/components/ui";
 import { Header, IconButton } from "@/src/components/widgets";
 import { ImportExport } from "@/src/components/ImportExport";
 
+// Phase 54f · Feb-2026 — supplier badge on pricebook rows (mobile parity).
+const SUPPLIER_LABELS: Record<string, string> = {
+  poolcorp:    "Pool360",
+  siteone:     "SiteOne",
+  ewing:       "Ewing",
+  heritage:    "Heritage",
+  epoolsupply: "ePoolSupply",
+};
+
+const SUPPLIER_BADGE_PALETTE: Record<string, { backgroundColor: string; borderColor: string }> = {
+  poolcorp:    { backgroundColor: "#DBEAFE", borderColor: "#1E3A8A" },
+  siteone:     { backgroundColor: "#DCFCE7", borderColor: "#166534" },
+  ewing:       { backgroundColor: "#FEF3C7", borderColor: "#92400E" },
+  heritage:    { backgroundColor: "#EDE9FE", borderColor: "#5B21B6" },
+  epoolsupply: { backgroundColor: "#FCE7F3", borderColor: "#9D174D" },
+};
+
+function supplierBadgeColor(slug: string) {
+  return SUPPLIER_BADGE_PALETTE[slug] || { backgroundColor: "#E5E7EB", borderColor: "#374151" };
+}
+
+// Phase 54f · Feb-2026 — mobile supplier filter (horizontal chip strip).
+function SupplierFilterChips({
+  value, onChange,
+}: { value: string; onChange: (v: string) => void }) {
+  const options = [
+    { key: "all",    label: "All" },
+    { key: "manual", label: "Manual" },
+    ...Object.keys(SUPPLIER_LABELS).map((slug) =>
+      ({ key: slug, label: SUPPLIER_LABELS[slug] })),
+  ];
+  return (
+    <View style={styles.chipStrip} testID="pb-mobile-supplier-filter">
+      {options.map((o) => (
+        <Pressable
+          key={o.key}
+          onPress={() => onChange(o.key)}
+          style={[styles.chip, value === o.key && styles.chipActive]}
+          testID={`pb-mobile-supplier-chip-${o.key}`}
+        >
+          <Text style={[styles.chipText, value === o.key && styles.chipTextActive]}>
+            {o.label}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 const ADMIN_ROLES = ["admin", "super_admin", "manager"];
 
 export default function PriceBook() {
@@ -24,6 +73,13 @@ export default function PriceBook() {
   const [editItem, setEditItem] = useState<any>(null);
   const [editForm, setEditForm] = useState({ unit_price: "", wholesale_price: "", labor_cost_default: "" });
   const [saving, setSaving] = useState(false);
+  // Phase 54f · Feb-2026 — supplier filter (mobile parity).
+  const [supplierFilter, setSupplierFilter] = useState<string>("all");
+  const filteredItems = items.filter((i) => {
+    if (supplierFilter === "all") return true;
+    if (supplierFilter === "manual") return !i.supplier_slug;
+    return i.supplier_slug === supplierFilter;
+  });
 
   const load = useCallback(async () => {
     try {
@@ -95,14 +151,21 @@ export default function PriceBook() {
           <IconButton icon="add" onPress={() => setAddOpen(true)} testID="add-item-button" />
         </View>
       } />
+      {/* Phase 54f · Feb-2026 — supplier filter chip strip (mobile). */}
+      <SupplierFilterChips value={supplierFilter} onChange={setSupplierFilter} />
       {loading ? (
         <Loading testID="items-loading" />
-      ) : items.length === 0 ? (
-        <EmptyState icon="pricetags-outline" title="No items" subtitle="Add services and parts to your catalog." testID="items-empty" />
+      ) : filteredItems.length === 0 ? (
+        <EmptyState icon="pricetags-outline"
+                    title={items.length === 0 ? "No items" : "No items match this supplier"}
+                    subtitle={items.length === 0
+                      ? "Add services and parts to your catalog."
+                      : "Try a different supplier or 'All'."}
+                    testID="items-empty" />
       ) : (
         <FlatList
           testID="items-list"
-          data={items}
+          data={filteredItems}
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} />}
@@ -110,7 +173,22 @@ export default function PriceBook() {
             <Pressable style={styles.row} testID={`item-${item.id}`} onPress={() => openEdit(item)}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.name}>{item.name}</Text>
-                <Text style={styles.sub}>{item.category} · per {item.unit}</Text>
+                <View style={styles.subRow}>
+                  <Text style={styles.sub}>{item.category} · per {item.unit}</Text>
+                  {item.supplier_slug ? (
+                    <View style={[styles.supplierBadge, supplierBadgeColor(item.supplier_slug)]}
+                          testID={`item-supplier-badge-${item.id}`}>
+                      <Text style={styles.supplierBadgeText}>
+                        {SUPPLIER_LABELS[item.supplier_slug] || item.supplier_slug}
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={[styles.supplierBadge, styles.supplierBadgeManual]}
+                          testID={`item-supplier-badge-${item.id}`}>
+                      <Text style={styles.supplierBadgeText}>Manual</Text>
+                    </View>
+                  )}
+                </View>
                 {isAdmin && (
                   <View style={styles.adminCosts} testID={`item-wholesale-${item.id}`}>
                     <Text style={styles.costLabel}>W: {money(item.wholesale_price || 0)}</Text>
@@ -196,6 +274,15 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.sm },
   name: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
   sub: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
+  subRow: { flexDirection: "row", alignItems: "center", marginTop: 2, gap: 8, flexWrap: "wrap" },
+  supplierBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, borderWidth: 1 },
+  supplierBadgeManual: { backgroundColor: "#E5E7EB", borderColor: "#374151" },
+  supplierBadgeText: { fontFamily: font.regular, fontSize: 10, color: colors.onSurface },
+  chipStrip: { flexDirection: "row", flexWrap: "wrap", gap: 6, paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: spacing.xs },
+  chip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  chipActive: { backgroundColor: colors.brandPrimary, borderColor: colors.brandPrimary },
+  chipText: { fontFamily: font.regular, fontSize: 12, color: colors.onSurface },
+  chipTextActive: { color: colors.onBrandPrimary, fontFamily: font.bold },
   price: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.brand },
   adminCosts: { flexDirection: "row", gap: spacing.md, marginTop: 4 },
   costLabel: { fontFamily: font.regular, fontSize: 11, color: colors.muted },

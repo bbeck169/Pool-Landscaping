@@ -196,12 +196,40 @@ async def run_daily_tick():
     return await _run_tick("daily")
 
 
+def _report_playwright_cache_path() -> str:
+    """Phase 54f addendum · Feb-2026 — log the effective Playwright
+    browser cache path at startup so operators can confirm the
+    persistent-volume mount (or the default location) is what they
+    expect. Honors ``PLAYWRIGHT_BROWSERS_PATH`` when set (native
+    Playwright env var).
+
+    Returns the resolved path string so the smoke-check test can
+    assert on it. Never raises.
+    """
+    import glob
+    override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+    if override:
+        cache_path = override
+    else:
+        cache_path = os.path.expanduser("~/.cache/ms-playwright")
+    chrome_dirs = sorted(glob.glob(
+        os.path.join(cache_path, "chromium-*")))
+    chrome_state = "missing"
+    if chrome_dirs:
+        # e.g. chromium-1228 → "1228"
+        chrome_state = os.path.basename(chrome_dirs[-1]).split("-", 1)[-1]
+    logger.info(
+        f"supplier.playwright: cache_path={cache_path} chromium={chrome_state}")
+    return cache_path
+
+
 def register_supplier_cron_jobs(scheduler) -> None:
     """Wire the two triggers onto the given APScheduler singleton.
 
     Called from ``server.py`` at startup. Idempotent — the scheduler
     library dedupes by job id.
     """
+    _report_playwright_cache_path()
     try:
         scheduler.add_job(
             run_hourly_tick, "cron", minute=0,

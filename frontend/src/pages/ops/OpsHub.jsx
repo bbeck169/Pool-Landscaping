@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar, Activity, Waves, Package, History, BarChart3, Plus, Trash2, RefreshCw, MapPin, ChevronRight, Link2, Share2, MoreVertical, KeyRound, Eye, EyeOff, Copy as CopyIcon, Undo2, ShieldAlert, Loader2 } from "lucide-react";
 import { api } from "@/api";
+import { SUPPLIER_METADATA } from "@/pages/settings/supplier_metadata";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
 import { colors, money, brandGradientCss } from "@/theme";
 import { useAuth } from "@/auth";
@@ -1722,11 +1723,57 @@ function Equipment() {
 }
 
 /* ═══════════ Price Book ═══════════ */
+// Phase 54f · Feb-2026 — SupplierBadge for the pricebook row.
+// One consistent color per slug so operators can eyeball the source
+// of every line item at a glance. Tailwind palette below stays in
+// sync with any dark-mode class overrides via the ``colors`` module.
+const SUPPLIER_BADGE_COLORS = {
+  poolcorp:    { bg: "#DBEAFE", fg: "#1E3A8A" }, // blue
+  siteone:     { bg: "#DCFCE7", fg: "#166534" }, // green
+  ewing:       { bg: "#FEF3C7", fg: "#92400E" }, // amber
+  heritage:    { bg: "#EDE9FE", fg: "#5B21B6" }, // violet
+  epoolsupply: { bg: "#FCE7F3", fg: "#9D174D" }, // pink
+  manual:      { bg: "#E5E7EB", fg: "#374151" }, // slate
+};
+
+function SupplierBadge({ slug, testid }) {
+  const meta = slug ? SUPPLIER_METADATA[slug] : null;
+  const label = meta?.display_name || (slug ? slug : "Manual");
+  const palette = SUPPLIER_BADGE_COLORS[slug || "manual"]
+                  || SUPPLIER_BADGE_COLORS.manual;
+  return (
+    <span
+      className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold"
+      style={{ backgroundColor: palette.bg, color: palette.fg }}
+      data-testid={testid}
+    >
+      {label}
+    </span>
+  );
+}
+
+
 function PriceBook() {
   const [rows, refresh] = useList("/items");
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0, tax_rate: 0, wholesale_price: 0, labor_cost_default: 0 });
   const [toast, setToast] = useState(null);
+  // Phase 54f · Feb-2026 — supplier column + filter.
+  //
+  // ``SUPPLIER_META`` is looked up per-row for the badge label + color.
+  // Filter is client-side to keep the backend contract additive-only
+  // (no ``?supplier_id=`` query-param needed on ``/items``). If we ever
+  // switch to server-side, replace ``filteredRows`` with a fetch.
+  const [supplierFilter, setSupplierFilter] = useState("all");
+  const filteredRows = useMemo(() => {
+    const src = rows || [];
+    if (supplierFilter === "all") return src;
+    if (supplierFilter === "manual")
+      return src.filter((r) => !r.supplier_id);
+    // Filter by supplier slug — items have supplier_slug pinned at
+    // sync time via ``services.suppliers.sync.apply_products``.
+    return src.filter((r) => (r.supplier_slug || "") === supplierFilter);
+  }, [rows, supplierFilter]);
   // PB1 · Feb-2026 — internal cost columns visible only to admins.
   // Uses ``useAuth`` from the app context to gate the two new columns
   // + the two new form fields. Non-admins still see the rest of the
@@ -1741,7 +1788,7 @@ function PriceBook() {
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState({});
-  const visibleIds = (rows || []).map((r) => r.id);
+  const visibleIds = filteredRows.map((r) => r.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
   const indeterminate = visibleIds.some((id) => selectedIds.has(id)) && !allVisibleSelected;
   const selectedCount = selectedIds.size;
@@ -1875,14 +1922,37 @@ function PriceBook() {
             className="cursor-pointer"
           />
           <div className="text-xs uppercase font-semibold" style={{ color: colors.muted }}>
-            Items · {(rows || []).length}
+            Items · {filteredRows.length}
+            {supplierFilter !== "all" && (
+              <span className="ml-1"
+                    style={{ color: colors.muted }}>
+                / {(rows || []).length} total
+              </span>
+            )}
           </div>
+          <select
+            value={supplierFilter}
+            onChange={(e) => setSupplierFilter(e.target.value)}
+            className="ml-2 px-2 py-1 rounded-md text-xs"
+            style={{ border: `1px solid ${colors.border}`, backgroundColor: colors.surface }}
+            data-testid="pb-supplier-filter"
+          >
+            <option value="all">All suppliers</option>
+            <option value="manual">Manual (no supplier)</option>
+            {Object.keys(SUPPLIER_METADATA)
+              .filter((slug) => !SUPPLIER_METADATA[slug].coming_in)
+              .map((slug) => (
+                <option key={slug} value={slug}>
+                  {SUPPLIER_METADATA[slug].display_name}
+                </option>
+              ))}
+          </select>
         </div>
         <Button onClick={() => setOpen(true)} testid="pb-new"><Plus size={14} /> Add new item</Button>
       </div>
       {rows === null ? <Skeleton style={{ height: 160 }} /> :
        <ul className="divide-y" style={{ borderColor: colors.divider }}>
-         {rows.map((r) => (
+         {filteredRows.map((r) => (
            <li key={r.id} className="py-2 flex items-center gap-3"
                 data-testid={`pb-row-${r.id}`}
                 style={{ backgroundColor: selectedIds.has(r.id) ? "#EFF6FF" : "transparent" }}>
@@ -1961,7 +2031,10 @@ function PriceBook() {
                <>
                  <div className="flex-1">
                    <div className="text-sm font-semibold">{r.name}</div>
-                   <div className="text-xs" style={{ color: colors.muted }}>{r.category} · {r.unit}</div>
+                   <div className="text-xs flex items-center gap-2" style={{ color: colors.muted }}>
+                     <span>{r.category} · {r.unit}</span>
+                     <SupplierBadge slug={r.supplier_slug} testid={`pb-supplier-badge-${r.id}`} />
+                   </div>
                  </div>
                  <div className="font-semibold">{money(r.unit_price)}</div>
                 {showInternalCols ? (

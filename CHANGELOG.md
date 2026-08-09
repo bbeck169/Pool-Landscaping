@@ -8,6 +8,57 @@ Do not rewrite history — only prepend new entries at the top.
 
 ---
 
+---
+
+## 2026-02-XX — Phase 54 (a → f) · Wholesale supplier pricebook import MVP
+
+Automated pricebook ingestion from five North-American pool + landscaping wholesalers via a supplier-agnostic Playwright-driven scraper framework. Full MVP delivered across six sub-phases: 54a audit + data-model skeleton, 54b Pool360 connector + Settings UI, 54c SiteOne connector + generic `test-connection` endpoint, 54d Ewing connector + `SUPPLIER_METADATA` config extraction, 54e Heritage + ePoolSupply connectors + APScheduler cron + Chromium install, 54f pricebook UI (web + mobile) supplier column + filter + Sync-all + docs.
+
+### Added
+- **Five wired connectors**: `services/suppliers/{poolcorp,siteone,ewing,heritage,epoolsupply}.py` + their `*_selectors.py` counterparts. `PlaywrightScraperBase` (Phase 54e) — shared scraper base subclassed by heritage + epoolsupply.
+- **Data model**: `suppliers`, `supplier_credentials` (Fernet-encrypted), `supplier_sync_jobs` collections. `items` extended with `supplier_id` / `supplier_slug` / `external_sku` / `last_synced_at`.
+- **REST endpoints** — `GET /suppliers`, `GET|POST|DELETE /suppliers/{slug}/credentials`, `PATCH /suppliers/{slug}` (sync_frequency + active), `POST /suppliers/{slug}/sync` (202 + background task), `POST /suppliers/{slug}/test-connection` (~5 s target, 15 s hard timeout, four error branches), `GET /suppliers/{slug}/sync-jobs`.
+- **APScheduler cron** — `services/suppliers/cron.py` — hourly + 03:00 UTC daily triggers; gated by `SUPPLIER_SYNC_LIVE=1` (default OFF → dry-run). Skips no-credentials, skips <6h-since-last-success, respects per-supplier `sync_frequency` enum (`hourly|daily|weekly|manual`).
+- **Web UI** — `pages/settings/SupplierSettings.jsx` with per-supplier cards (credentials form + save/sync/test/refresh/remove buttons + sync history + sync-frequency dropdown), verbatim ToS disclaimer, super-admin "Sync all suppliers" sequential batch button. `pages/settings/supplier_metadata.js` — single source of truth for per-supplier copy. Pricebook (`OpsHub.jsx`) gains a supplier column (color-coded badge per slug) + supplier filter dropdown (client-side, additive to `/items` contract).
+- **Mobile UI** — `mobile/app/settings/suppliers.tsx` (view-only), `mobile/app/price-book.tsx` supplier badge + chip-strip filter.
+- **Chromium install** — installed to `/root/.cache/ms-playwright/` at ~962 MB total. Backend startup logs `supplier.playwright: cache_path=... chromium=<ver|missing>` so operators can confirm the mount is active.
+- **`PLAYWRIGHT_BROWSERS_PATH` support** (Phase 54f addendum) — Playwright-native env var respected; smoke-check pytests cover default + override paths.
+
+### Changed
+- **Pricebook rows** in web + mobile now render a supplier badge next to `category · unit`. Manual (no supplier_id) items render a slate-colored "Manual" badge.
+- **`connector.py` `CONNECTORS` registry** — all five slugs now point to wired classes (guarded try/except so imports work without Playwright).
+- **`routers/suppliers.py` `_WIRED_SYNC_SLUGS`** — expanded to all five slugs across 54b→e. `_VALID_SYNC_FREQ` set to `{hourly, daily, weekly, manual}`.
+
+### Guardrails
+- Playwright fully mocked in every test — zero live-wholesaler network calls.
+- `SUPPLIER_SYNC_LIVE` stays OFF by default in every environment. Cron ticks fire but log-only until operator flips it.
+- Cron calls sync service functions directly — never self-HTTPs.
+- Manager role remains read-only on Settings > Suppliers; tech + customer redirected. Super-admin required for "Sync all suppliers" (heavier operation).
+- Test-connection endpoint bounded at 15 s via `asyncio.wait_for`.
+- Rate limit: 1 req/sec + exponential backoff to 60 s on 429/503.
+- Legal disclaimer rendered verbatim below every credentials form.
+
+### Operator runbook (also in PRD.md · Phase 54)
+1. Install Chromium — bake into Dockerfile (Option A, ~700 MB image growth) OR mount a persistent volume at `/root/.cache/ms-playwright` (Option B, recommended). See PRD § Operator runbook for full instructions.
+2. Save credentials via `/settings/suppliers` for each wholesaler you want to sync.
+3. Click "Test connection" — expect `{ok: true}` in ~5 s.
+4. Optionally adjust per-supplier `sync_frequency` (default `daily`).
+5. Set `SUPPLIER_SYNC_LIVE=1` in the backend env + `sudo supervisorctl restart backend` when ready to enable real syncs.
+6. Grep `supplier.cron.` in backend logs to monitor tick summaries.
+
+### Test invariants (post-ship)
+- Vitest **1430 / 1430 pass** (from 1389 baseline → +41 across 54b/c/d/e/f).
+- Mobile Jest **240 / 240 pass** (from 236 baseline → +4 in 54f parity tests).
+- Backend Phase 54 curated **87 / 87 pass** (Phase 54a→f including the addendum smoke tests).
+- `yarn lint` exit 0.
+
+### Non-goals
+- No vendor JSON API integrations — selector-based scraping only. Future phases may replace individual connectors with vendor APIs where available (the `PlaywrightScraperBase` + `SUPPLIER_METADATA` map are the seams).
+- No multi-currency.
+- No historical price snapshots — the pricebook stores only the latest sync per SKU. Quote/invoice line items already snapshot price at issue time via the existing Phase 33 pattern.
+
+---
+
 ## 2026-02-XX — Phase 53 (a → d) · Editable EBIT report MVP
 
 Editable EBIT — Earnings Before Interest and Taxes — layered on top of the existing profit-report surface. Ships across backend + web + mobile with role-gated editing, immutable versioning, and PDF + CSV export. Complete MVP over four sub-phases: 53a backend + audit, 53b editable web UI, 53c mobile parity + demo-manager seed-drift repair, 53c-fix manager read-only rendering, 53d closeout (docs + contract-lock tests).

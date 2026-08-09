@@ -461,3 +461,38 @@ def test_cron_hourly_tick_skips_daily_cadence(monkeypatch):
     assert result["skipped_cadence"] >= 1
     assert result["running"] == 0
     _wipe_creds()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Phase 54f addendum · Feb-2026 — Playwright cache-path smoke test
+# ═══════════════════════════════════════════════════════════════════
+def test_playwright_cache_path_defaults_to_default(monkeypatch):
+    """When ``PLAYWRIGHT_BROWSERS_PATH`` is unset, the reporter falls
+    back to ``~/.cache/ms-playwright`` (Playwright's own default)."""
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    resolved = cron_mod._report_playwright_cache_path()
+    assert resolved.endswith(".cache/ms-playwright")
+
+
+def test_playwright_cache_path_honors_env_override(monkeypatch):
+    """When operators mount a persistent volume at a custom path they
+    can set ``PLAYWRIGHT_BROWSERS_PATH`` — the reporter (and Playwright
+    itself, natively) honors it."""
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "/mnt/pw_cache")
+    resolved = cron_mod._report_playwright_cache_path()
+    assert resolved == "/mnt/pw_cache"
+
+
+def test_playwright_cache_path_logs_chromium_version(caplog, monkeypatch):
+    """The startup log line reports whether chromium is present.
+    We rely on the pod's installed chromium from Phase 54e."""
+    import logging
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    with caplog.at_level(logging.INFO):
+        cron_mod._report_playwright_cache_path()
+    # Effective startup log format is
+    # ``supplier.playwright: cache_path=... chromium=<ver|missing>``.
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "supplier.playwright" in text
+    assert "cache_path=" in text
+    assert "chromium=" in text

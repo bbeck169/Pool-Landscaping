@@ -480,12 +480,52 @@ export default function SupplierSettings() {
 
   const role = user?.role || "";
   const readOnly = role === "manager";
+  const isSuperAdmin = role === "super_admin";
+
+  // Phase 54f · Feb-2026 — "Sync all suppliers" state (super_admin only).
+  const [syncingAll, setSyncingAll] = useState(false);
+  const [syncAllProgress, setSyncAllProgress] = useState(null);
+  //   {current: 2, total: 5, label: "SiteOne"} or null
 
   useEffect(() => {
     api.get("/suppliers")
       .then((rows) => { setSuppliers(rows || []); setLoading(false); })
       .catch((e) => { setError(e.message || "Failed to load suppliers"); setLoading(false); });
   }, []);
+
+  const wiredSuppliers = suppliers.filter(
+    (s) => !SUPPLIER_METADATA[s.slug]?.coming_in);
+
+  const syncAll = async () => {
+    if (!isSuperAdmin) return;
+    setSyncingAll(true);
+    let ok = 0, skipped = 0;
+    try {
+      for (let i = 0; i < wiredSuppliers.length; i++) {
+        const s = wiredSuppliers[i];
+        setSyncAllProgress({
+          current: i + 1, total: wiredSuppliers.length,
+          label: SUPPLIER_METADATA[s.slug]?.display_name || s.slug,
+        });
+        try {
+          await api.post(`/suppliers/${s.slug}/sync`, {});
+          ok += 1;
+        } catch (e) {
+          // 400 no_credentials is expected for un-configured suppliers.
+          if (e?.data?.detail?.error === "no_credentials") {
+            skipped += 1;
+          } else {
+            toast.error(`${s.slug}: ${e.message || "sync failed"}`);
+          }
+        }
+      }
+      toast.success(
+        `Sync-all done — ${ok} launched, ${skipped} skipped (no creds).`);
+    } finally {
+      setSyncingAll(false);
+      setSyncAllProgress(null);
+    }
+  };
 
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto" data-testid="supplier-settings-page">
@@ -498,7 +538,7 @@ export default function SupplierSettings() {
         >
           <ArrowLeft size={16} />
         </button>
-        <div>
+        <div className="flex-1">
           <div className="text-xl font-semibold" style={{ color: colors.onSurface }}>
             Wholesale suppliers
           </div>
@@ -506,6 +546,20 @@ export default function SupplierSettings() {
             Connect a wholesaler to import pricing into your pricebook.
           </div>
         </div>
+        {isSuperAdmin && (
+          <button
+            onClick={syncAll}
+            disabled={syncingAll || wiredSuppliers.length === 0}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+            style={{ backgroundColor: colors.brandPrimary, color: colors.onBrandPrimary }}
+            data-testid="supplier-settings-sync-all-btn"
+          >
+            <PlayCircle size={14} />
+            {syncingAll && syncAllProgress
+              ? `Syncing ${syncAllProgress.current} of ${syncAllProgress.total} · ${syncAllProgress.label}…`
+              : "Sync all suppliers"}
+          </button>
+        )}
       </div>
 
       {loading && (

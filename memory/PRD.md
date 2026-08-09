@@ -1,4 +1,95 @@
-## Phase 53 · Feb-2026 — Editable EBIT report MVP (a → d)
+## Phase 54 · Feb-2026 — Wholesale supplier pricebook import MVP (a → f)
+
+Automated pricebook ingestion from five North-American pool + landscaping wholesalers via a supplier-agnostic Playwright-driven scraper framework. Delivered across six sub-phases: 54a audit + data-model skeleton, 54b Pool360 connector + Settings UI, 54c SiteOne connector + generic `test-connection` endpoint, 54d Ewing connector + `SUPPLIER_METADATA` config extraction, 54e Heritage + ePoolSupply connectors + APScheduler cron + Chromium install, 54f pricebook UI (web + mobile) supplier column + filter + Sync-all + docs.
+
+**Feature scope**
+- Five wholesalers wired: **Pool360 (PoolCorp), SiteOne, Ewing Irrigation, Heritage Pool Plus, ePoolSupply**.
+- Playwright headless Chromium scraping with data-only selector config (one file per supplier) — DOM changes are patchable without code changes.
+- Encrypted-at-rest credentials via Fernet (`SUPPLIER_CREDENTIAL_ENCRYPTION_KEY`).
+- Per-tenant, per-supplier `sync_frequency` — enum `[hourly, daily, weekly, manual]`.
+- Manual "Sync now" + generic `test-connection` (~5 s, 15 s hard timeout) + super-admin "Sync all suppliers" sequential batch button.
+- Daily 03:00 UTC + hourly cron (gated by `SUPPLIER_SYNC_LIVE=1`; default OFF).
+- Pricebook rows carry `supplier_slug` + `supplier_id` + `external_sku` + `last_synced_at`; web + mobile pricebook show a color-coded supplier badge + filter.
+- Mobile parity: read-only Settings > Suppliers screen.
+
+**Roles**
+- `super_admin` — full edit + "Sync all suppliers" button.
+- `admin` — full edit + Sync now + Test connection.
+- `manager` — read-only view of Settings > Suppliers (dropdown + inputs disabled).
+- `technician` / `customer` — redirected out of `/settings/suppliers`.
+
+**REST endpoints — `/api/suppliers/*`**
+- `GET /suppliers` — list all supplier rows (auto-seeds 5 canonical slugs on empty read).
+- `GET /suppliers/{slug}/credentials` — has_credentials flag + updated_at (no plaintext).
+- `POST /suppliers/{slug}/credentials` — save encrypted credentials.
+- `DELETE /suppliers/{slug}/credentials` — wipe encrypted credentials.
+- `PATCH /suppliers/{slug}` — update `sync_frequency` (enum-validated) + `active` toggle.
+- `POST /suppliers/{slug}/sync` — 202 + `{job_id, status: "running"}`; kicks Playwright background task.
+- `POST /suppliers/{slug}/test-connection` — success + `login_failed | rate_limited | timeout | unknown` error branches.
+- `GET /suppliers/{slug}/sync-jobs` — last N job rows for history table.
+
+**Data model** (all extend `BaseDocument` per MongoDB adherence guide)
+- `suppliers` — `{id, tenant_id, slug, display_name, active, sync_frequency, last_sync_at, last_sync_status, last_sync_item_count, created_at}`.
+- `supplier_credentials` — Fernet-encrypted `{id, tenant_id, supplier_id, encrypted_username, encrypted_password, encrypted_api_key, encrypted_session_cookies, notes, updated_at}`.
+- `supplier_sync_jobs` — `{id, tenant_id, supplier_id, started_at, finished_at, status, items_added, items_updated, items_removed, error_message}`.
+- `items` (extended) — new fields `supplier_id`, `supplier_slug`, `external_sku`, `last_synced_at`, `deleted_at`, `active`.
+
+**Env gates**
+- `SUPPLIER_SYNC_LIVE=1` — enables the APScheduler daily + hourly cron to actually launch Playwright syncs. Default OFF → dry-run summaries only.
+- `SUPPLIER_CREDENTIAL_ENCRYPTION_KEY` — Fernet key for credential encryption at rest.
+- `PLAYWRIGHT_BROWSERS_PATH` — Playwright-native override for the Chromium cache path. Default: `~/.cache/ms-playwright`. Recommended: mount a persistent volume at this path so the ~700 MB Chromium download warms once per container fleet.
+
+**Cron behavior**
+- Two APScheduler triggers registered at startup on the existing `scheduler` singleton: `supplier_sync_hourly` (top of every hour) + `supplier_sync_daily` (03:00 UTC).
+- Each tick iterates `db.suppliers.find({active: True})` and applies cadence filter + skip rules (in order):
+  1. `sync_frequency == "manual"` → skip.
+  2. Cadence doesn't match this tick → skip.
+  3. Weekly + today isn't Sunday → skip.
+  4. No `supplier_credentials` row → silently skip.
+  5. Last successful sync completed <6 h ago → skip.
+  6. `SUPPLIER_SYNC_LIVE != "1"` → log dry-run, return.
+  7. Otherwise: `start_sync_job` + `asyncio.create_task(runner(...))`.
+- Calls sync service functions directly — never self-HTTPs.
+- Startup emits two log lines: `supplier.playwright: cache_path=... chromium=<ver|missing>` + `supplier.cron.registered hourly=@0min daily=@03:00UTC live=<bool>`.
+
+**Sync frequency enum**
+- `hourly` — runs from the hourly tick.
+- `daily` — runs from the 03:00 UTC daily tick.
+- `weekly` — runs from the 03:00 UTC daily tick, but only on Sunday.
+- `manual` — never runs from cron; requires a manual "Sync now" click.
+
+**Operator runbook**
+
+1. **Install Chromium** (choose one — both are supported):
+   - **Option A · Bake into Dockerfile**: `RUN python -m playwright install --with-deps chromium` at image build time. Image grows by ~700 MB.
+   - **Option B · Persistent volume mount** (recommended): mount a persistent volume at `/root/.cache/ms-playwright` (or wherever `PLAYWRIGHT_BROWSERS_PATH` points if you override). Image stays lean; cache warms via `python -m playwright install chromium` on first container boot with empty mount. Subsequent boots reuse.
+     - Docker example: `docker run -v playwright_cache:/root/.cache/ms-playwright ...`
+     - Kubernetes: mount a `PersistentVolumeClaim` to `/root/.cache/ms-playwright` (or the `PLAYWRIGHT_BROWSERS_PATH` value if overridden). Cache survives pod restarts + fleet-wide replicas share it if the PVC is `ReadWriteMany`.
+     - Verify after first boot: `ls /root/.cache/ms-playwright/chromium-*` should list a `chromium-1228/` directory (version number moves with Playwright releases).
+     - Startup log confirms path: `supplier.playwright: cache_path=/root/.cache/ms-playwright chromium=1228`.
+2. **Save credentials** — operator navigates to `/settings/suppliers`, opens each wholesaler card, enters real username + password, clicks Save. Fernet-encrypted rows land in `supplier_credentials`.
+3. **Test connection** — click "Test connection" on each card. Expect `{ok: true}` in ~5 s. Failure returns a red badge with the classified error (`login_failed | rate_limited | timeout | unknown`).
+4. **Set sync frequency** — dropdown on each wired card. Default `daily`. Manual = never from cron.
+5. **Enable live cron** — flip `SUPPLIER_SYNC_LIVE=1` in the backend env + `sudo supervisorctl restart backend`. The cron ticks were already firing (dry-run logging only); they now start real syncs on their next tick.
+6. **Monitor** — grep `supplier.cron.` in backend logs for tick summaries. Grep `supplier.cron.launch` for individual sync starts. `POST /suppliers/{slug}/sync-jobs` returns job history.
+
+**Legal / ToS caveat**
+The Settings > Suppliers card carries a literal disclaimer under every credentials form: *"Automated syncing may be subject to your wholesaler's Terms of Service. By connecting, you acknowledge responsibility for compliance with those terms."* Operators are responsible for their own ToS compliance. The rate-limit (1 req/sec + exponential backoff up to 60 s on 429/503) is a best-effort courtesy — some wholesalers may still prohibit automated scraping regardless of politeness.
+
+**Non-goals**
+- No real supplier API integrations (no OAuth, no vendor JSON APIs). Selector-based scraping only. Future phases may replace individual connectors with vendor APIs where available; the `PlaywrightScraperBase` interface + `SUPPLIER_METADATA` map are the seams.
+- No multi-currency. All prices assumed USD; the `items.cost` / `items.wholesale_price` are numeric with no currency tag.
+- No historical price snapshots — the pricebook stores only the latest sync's value per SKU. Quote / invoice line items already snapshot price at issue time via the existing Phase 33 pattern.
+
+**Test invariants at end of Phase 54**
+- Vitest **1430 / 1430 pass** (from 1389 baseline → +41 across 54b/c/d/e/f).
+- Mobile Jest **240 / 240 pass** (from 236 baseline → +4 in 54f parity tests).
+- Backend Phase 54 curated **87 / 87 pass** (from 0 at 54a start → 87 across 54a→f including the addendum smoke tests).
+- `yarn lint` exit 0.
+
+---
+
+
 
 Editable EBIT — Earnings Before Interest and Taxes — layered on top of the existing profit-report surface. Ships across backend + web + mobile with role-gated editing, immutable versioning, and PDF + CSV export. Delivered in four sub-phases (53a backend + web audit, 53b editable web UI, 53c mobile parity + seed-drift repair, 53c-fix manager read-only, 53d MVP closeout doc + contract-lock tests).
 
