@@ -54,6 +54,7 @@ import LateFeesSettings from "@/pages/settings/LateFees";
 import IncomeCategoriesPage from "@/pages/settings/IncomeCategoriesPage";
 import PricebookSuppliersAdmin from "@/pages/settings/PricebookSuppliersAdmin";
 import PricebookCostComparison from "@/pages/reports/PricebookCostComparison";
+import SupplierSpendReport from "@/pages/reports/SupplierSpendReport";
 import ServiceCategoriesPage from "@/pages/settings/ServiceCategoriesPage";
 import BillingSettings from "@/pages/settings/BillingSettings";
 import SupplierSettings from "@/pages/settings/SupplierSettings";
@@ -619,6 +620,8 @@ export default function App() {
             <Route path="settings/pricebook-suppliers" element={<AdminOnly><PricebookSuppliersAdmin /></AdminOnly>} />
             {/* Phase 56-c · Aug-2026 — Pricebook Cost Comparison report. */}
             <Route path="admin/reports/pricebook-cost-comparison" element={<AdminOnly><PricebookCostComparison /></AdminOnly>} />
+            {/* Phase 56-d · Aug-2026 — Supplier Spend / Margin report. */}
+            <Route path="admin/reports/supplier-spend" element={<AdminOnly><SupplierSpendReport /></AdminOnly>} />
             <Route path="settings/service-categories" element={<AdminOnly><ServiceCategoriesPage /></AdminOnly>} />
             <Route path="settings/billing" element={<AdminOnly><BillingSettings /></AdminOnly>} />
             <Route path="settings/terms" element={<AdminOnly><TermsSettings /></AdminOnly>} />

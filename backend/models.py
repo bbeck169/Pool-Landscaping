@@ -200,6 +200,13 @@ class LineItem(BaseModel):
     # from a pricebook item, the id sticks so the profit report can
     # resolve the service_category + fall back to the current cost.
     item_id: Optional[str] = None
+    # Phase 56-d · Aug-2026 — dedicated pricebook FK for the
+    # supplier-spend report. Additive alongside the existing
+    # ``item_id`` (which is used broadly). Nullable → legacy line
+    # items grandfather to null and bucket into "Uncategorized" on
+    # the report. Frontend line-item picker plumbs the value when
+    # the user picks a pricebook item from the datalist.
+    pricebook_item_id: Optional[str] = None
     # Feb-2026 · PB1 · Immutable margin snapshots. Written once at
     # create-time (and by the backfill script for historical rows).
     # Once set, the update path must never overwrite them — that

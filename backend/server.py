@@ -243,6 +243,10 @@ api_router.include_router(_pricebook_suppliers.router)
 # Phase 56-c · Aug-2026 — Pricebook Cost Comparison report.
 from routers import pricebook_cost_comparison as _pb_cost_comparison  # noqa: E402
 api_router.include_router(_pb_cost_comparison.router)
+
+# Phase 56-d · Aug-2026 — Supplier Spend / Margin report.
+from routers import pricebook_supplier_spend as _pb_spend  # noqa: E402
+api_router.include_router(_pb_spend.router)
 # Feb 2026 — Admin check-in overrides.
 from routers import admin_checkins as _admin_checkins  # noqa: E402
 api_router.include_router(_admin_checkins.router)

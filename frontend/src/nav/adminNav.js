@@ -257,6 +257,10 @@ export const ADMIN_NAV_V2 = [
     // reports rows (admin + super_admin + manager) via
     // ``manager_only`` hard_rule.
     { to: "/admin/reports/pricebook-cost-comparison", label: "Cost Comparison", icon: Scale, feature: "reports", hard_rule: "manager_only" },
+    // Phase 56-d · Aug-2026 — Supplier spend + margin report.
+    // Tighter role gate than Cost Comparison — admin + super_admin
+    // only, no manager. Cost basis is sensitive.
+    { to: "/admin/reports/supplier-spend", label: "Supplier Spend & Margin", icon: TrendingUp, feature: "reports", hard_rule: "admin_only" },
     // Phase 54g · Feb-2026 — Wholesale supplier sync analytics.
     // Route guard: ``AdminOrManagerForSuppliers`` in App.js → admin +
     // super_admin + manager. Mirror by using ``feature: "reports"``

@@ -184,7 +184,7 @@ export default function QuoteInvoiceNew({ docType = "quote" }) {
                           ...f,
                           line_items: f.line_items.map((x, idx) =>
                             idx === i
-                              ? { ...x, description: chosen.name, unit_price: chosen.unit_price || 0, category: chosen.category || "Pool" }
+                              ? { ...x, description: chosen.name, unit_price: chosen.unit_price || 0, category: chosen.category || "Pool", pricebook_item_id: chosen.id }
                               : x
                           ),
                         }));

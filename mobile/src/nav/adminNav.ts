@@ -231,6 +231,9 @@ export const ADMIN_NAV: NavGroup[] = [
       // Phase 56-c · Aug-2026 — Pricebook Cost Comparison report stub.
       // TODO(Phase 56c-mobile-B): swap to a native t1 screen.
       { label: "Cost Comparison",     route: "/admin/reports/pricebook-cost-comparison", icon: "analytics-outline",     tier: "t2", testID: "drawer-nav-pricebook-cost-comparison" },
+      // Phase 56-d · Aug-2026 — Supplier spend + margin stub.
+      // TODO(Phase 56d-mobile-B): swap to a native t1 screen.
+      { label: "Supplier Spend & Margin", route: "/admin/reports/supplier-spend", icon: "trending-up-outline", tier: "t2", roles: ["super_admin", "admin"], testID: "drawer-nav-supplier-spend" },
     ],
   },
   {
