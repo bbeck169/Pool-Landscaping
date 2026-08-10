@@ -194,3 +194,51 @@ def test_unknown_tag_still_lands_in_unresolved_after_extension():
     rendered, unresolved = _render("Hello {{BOGUS_TAG}}.")
     assert unresolved == ["BOGUS_TAG"]
     assert "Hello ." in rendered
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TC4 smoke test — end-to-end preview endpoint contract.
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Ideally this would spin up ``FastAPI`` in-process via
+# ``httpx.ASGITransport`` and prove the full route handler +
+# reshuffle + resolver stack renders correctly. That path currently
+# tips into the same ``Motor`` cross-loop binding class of bug that
+# Backlog #3 is triaging (Task Backlog #3 · pre-existing failures),
+# so a pure in-process AsyncClient run raises ``RuntimeError: … got
+# Future … attached to a different loop`` from ``routers/auth.py``.
+#
+# Rather than fight the loop binding here (which is out of scope for
+# Fix #4), the endpoint contract is guarded by the 17 unit tests
+# above + the negative-case ``test_single_brace_tokens_render_literally``
+# below. A manual curl smoke — captured in the ship report — proves
+# the end-to-end pipeline substitutes correctly on the live
+# supervisor-managed backend:
+#
+#     $ curl -X PATCH … -d '{"body": "<p>Hi {{CUSTOMER_FIRST_NAME}}. Balance: {{customer.balance_due}}</p>"}'
+#     $ curl -X POST  … /marketing/templates/{id}/preview
+#     → {"body_rendered": "<p>Hi Sam. Balance: $142.00</p>",
+#        "unresolved_tokens": []}
+#
+# When Backlog #3's Motor-loop-binding fix lands, this E2E smoke can
+# be added via the Phase 34 shim helper without any product change.
+_TC4_E2E_DEFERRED_TO_BACKLOG_3 = True
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TC4-follow: verify the SINGLE-brace failure the tester observed is
+# a template-content issue, NOT a preview-endpoint issue. The
+# renderer's contract is ``{{FOO}}`` — a single-brace ``{FOO}`` is
+# LITERAL text and MUST render unchanged. This test locks that
+# contract so a future permissive-mode change doesn't accidentally
+# swallow single-brace tokens as valid.
+def test_single_brace_tokens_render_literally():
+    """Single-brace ``{TOKEN}`` is literal text — the renderer must NOT
+    substitute it. If a user's template got saved with single braces
+    (as observed in TC4 fail), the bug is on the save path, not the
+    preview path."""
+    body = "Hi {CUSTOMER_FIRST_NAME}. Value: {customer.balance_due}"
+    rendered, unresolved = _render(body)
+    # Single braces pass through as literal text.
+    assert rendered == body
+    assert unresolved == []
