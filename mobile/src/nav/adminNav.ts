@@ -211,6 +211,15 @@ export const ADMIN_NAV: NavGroup[] = [
       // default admin-like roles (super_admin + admin + manager),
       // matching the web ``AdminOrManagerForSuppliers`` guard.
       { label: "Supplier Syncs",     route: "/reports/supplier-syncs",   icon: "refresh-circle-outline", tier: "t1", testID: "drawer-nav-supplier-syncs" },
+      // Phase 54h · Aug-2026 — Wholesale Suppliers credentials page.
+      // Sibling of the Supplier Syncs analytics row above — this one
+      // opens the credentials + connection-test surface. Native mobile
+      // screen already exists at ``mobile/app/settings/suppliers.tsx``
+      // so this is a t1 entry (direct native navigation, not a
+      // ComingSoon stub). Default admin-like role gate (super_admin +
+      // admin + manager) matches the web ``AdminOrManagerForSuppliers``
+      // route guard.
+      { label: "Wholesale Suppliers", route: "/settings/suppliers",      icon: "cube-outline",           tier: "t1", testID: "drawer-nav-wholesale-suppliers" },
     ],
   },
   {

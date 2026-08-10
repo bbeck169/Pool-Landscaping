@@ -261,6 +261,14 @@ export const ADMIN_NAV_V2 = [
     // filter and every one of those roles reads the ``reports``
     // feature).
     { to: "/reports/supplier-syncs",       label: "Supplier Syncs",       icon: RefreshCw, feature: "reports", hard_rule: "manager_only" },
+    // Phase 54h · Aug-2026 — Wholesale Suppliers credentials/config page.
+    // Sibling of the analytics-facing "Supplier Syncs" row above —
+    // this one links operators to the credentials + connection-test
+    // surface at ``/settings/suppliers``. Same three-role gate
+    // (admin / super_admin / manager) via ``AdminOrManagerForSuppliers``
+    // in App.js. ``feature: "settings"`` lands the entry in the same
+    // RBAC bucket as neighbouring integrations rows below.
+    { to: "/settings/suppliers",           label: "Wholesale Suppliers", icon: Boxes,     feature: "settings", hard_rule: "manager_only" },
     // PB1 · Feb-2026 — Internal profit report (admin/super_admin only).
     { to: "/admin/reports/profit",         label: "Profit Report",       icon: TrendingUp, feature: "reports", hard_rule: "admin_only" },
     { to: "/admin/cfo/reports",            label: "CFO Reports",         icon: PieChart, feature: "reports" },
