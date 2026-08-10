@@ -32,6 +32,26 @@ from services.suppliers.siteone_selectors import SITEONE as SEL
 
 
 USER_AGENT = "AquaTerra-PriceBook/1.0"
+# Aug-2026 · Fix B-2 — SiteOne's edge rejects the default Chromium
+# HTTP/2 handshake with ``net::ERR_HTTP2_PROTOCOL_ERROR`` (TLS-
+# fingerprint / ALPN-based bot detection). Force HTTP/1.1 by
+# disabling the HTTP/2 feature in the browser launch and by
+# swapping the ``user_agent`` to a stable Chrome UA the site will
+# accept. Other connectors are unaffected — only SiteOne showed
+# this specific failure mode.
+SITEONE_LAUNCH_ARGS = [
+    "--disable-http2",
+    "--disable-features=UseHttp2Streams",
+]
+SITEONE_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+SITEONE_CLIENT_HINTS = {
+    "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Linux"',
+}
 RATE_LIMIT_SECONDS = 1.0
 PAGE_TIMEOUT_MS = 30_000
 MAX_BACKOFF_SECONDS = 60
@@ -63,9 +83,14 @@ class SiteOneConnector(BaseSupplierConnector):
         from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=True)
+            browser = await pw.chromium.launch(
+                headless=True, args=SITEONE_LAUNCH_ARGS,
+            )
             try:
-                context = await browser.new_context(user_agent=USER_AGENT)
+                context = await browser.new_context(
+                    user_agent=SITEONE_USER_AGENT,
+                    extra_http_headers=SITEONE_CLIENT_HINTS,
+                )
                 page = await context.new_page()
                 page.set_default_timeout(PAGE_TIMEOUT_MS)
                 await page.goto(SEL["login_url"])
@@ -98,9 +123,14 @@ class SiteOneConnector(BaseSupplierConnector):
         backoff = 1.0
 
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=True)
+            browser = await pw.chromium.launch(
+                headless=True, args=SITEONE_LAUNCH_ARGS,
+            )
             try:
-                context = await browser.new_context(user_agent=USER_AGENT)
+                context = await browser.new_context(
+                    user_agent=SITEONE_USER_AGENT,
+                    extra_http_headers=SITEONE_CLIENT_HINTS,
+                )
                 if cookies:
                     await context.add_cookies(cookies)
                 page = await context.new_page()

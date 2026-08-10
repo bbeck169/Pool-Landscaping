@@ -347,11 +347,17 @@ async def sync_supplier(
 
 # ═══════════════════════════════════════════════════════════════════
 # 5b. POST /suppliers/{slug}/test-connection — Phase 54c.
-# Runs ``authenticate()`` only (no catalog walk). Bounded to 15 s so
+# Runs ``authenticate()`` only (no catalog walk). Bounded to 45 s so
 # a stuck login page doesn't tie up the request. Same role gate as
 # sync (super_admin + admin). Same no_credentials 400 shape.
+#
+# Aug-2026 · Fix B-1 — bumped from 15 s → 45 s. Cloudflare-fronted
+# supplier logins (Pool360, Heritage) routinely take 20-35 s just to
+# render past the JS challenge; 15 s was inducing spurious timeouts
+# on healthy accounts. Client-side abort remains 60 s downstream so
+# the browser waits slightly past the server budget.
 # ═══════════════════════════════════════════════════════════════════
-TEST_CONNECTION_TIMEOUT_S = 15.0
+TEST_CONNECTION_TIMEOUT_S = 45.0
 
 
 @router.post("/suppliers/{slug}/test-connection")

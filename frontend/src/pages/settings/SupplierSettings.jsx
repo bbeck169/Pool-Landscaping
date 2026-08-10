@@ -333,10 +333,25 @@ function WiredSupplierCard({ supplier, readOnly }) {
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
             style={{ border: `1px solid ${colors.border}`, color: colors.onSurface }}
             data-testid={`supplier-${supplier.slug}-test-connection-btn`}
+            title={`Slug: ${supplier.slug}`}
           >
             <PlugZap size={14} />
-            {testing ? "Testing…" : "Test connection"}
+            {testing ? "Testing…" : `Test connection · ${displayName}`}
           </button>
+
+          {/* Aug-2026 · UX cleanup — surface the raw slug in a small
+              monospace hint next to the button so an admin can
+              correlate the "Pool360" display name to the "poolcorp"
+              slug that shows up in backend logs. */}
+          <code
+            className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+            style={{ backgroundColor: colors.surfaceAlt,
+                      color: colors.muted,
+                      border: `1px solid ${colors.border}` }}
+            data-testid={`supplier-${supplier.slug}-slug-hint`}
+          >
+            {supplier.slug}
+          </code>
 
           {testResult && (
             <span
