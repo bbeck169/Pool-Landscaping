@@ -239,6 +239,10 @@ api_router.include_router(_income_categories.router)
 # Phase 56-a · Aug-2026 — Pricebook Suppliers CRUD.
 from routers import pricebook_suppliers as _pricebook_suppliers  # noqa: E402
 api_router.include_router(_pricebook_suppliers.router)
+
+# Phase 56-c · Aug-2026 — Pricebook Cost Comparison report.
+from routers import pricebook_cost_comparison as _pb_cost_comparison  # noqa: E402
+api_router.include_router(_pb_cost_comparison.router)
 # Feb 2026 — Admin check-in overrides.
 from routers import admin_checkins as _admin_checkins  # noqa: E402
 api_router.include_router(_admin_checkins.router)

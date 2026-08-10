@@ -228,6 +228,9 @@ export const ADMIN_NAV: NavGroup[] = [
       // preflight §3 (no manager).
       // TODO(Phase 56-mobile-B): swap to a t1 native screen.
       { label: "Pricebook Suppliers", route: "/settings/pricebook-suppliers", icon: "storefront-outline",     tier: "t2", roles: ["super_admin", "admin"], testID: "drawer-nav-pricebook-suppliers" },
+      // Phase 56-c · Aug-2026 — Pricebook Cost Comparison report stub.
+      // TODO(Phase 56c-mobile-B): swap to a native t1 screen.
+      { label: "Cost Comparison",     route: "/admin/reports/pricebook-cost-comparison", icon: "analytics-outline",     tier: "t2", testID: "drawer-nav-pricebook-cost-comparison" },
     ],
   },
   {

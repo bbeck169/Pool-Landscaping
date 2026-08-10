@@ -53,6 +53,7 @@ import PaymentHandlesSettings from "@/pages/settings/PaymentHandles";
 import LateFeesSettings from "@/pages/settings/LateFees";
 import IncomeCategoriesPage from "@/pages/settings/IncomeCategoriesPage";
 import PricebookSuppliersAdmin from "@/pages/settings/PricebookSuppliersAdmin";
+import PricebookCostComparison from "@/pages/reports/PricebookCostComparison";
 import ServiceCategoriesPage from "@/pages/settings/ServiceCategoriesPage";
 import BillingSettings from "@/pages/settings/BillingSettings";
 import SupplierSettings from "@/pages/settings/SupplierSettings";
@@ -616,6 +617,8 @@ export default function App() {
             {/* Phase 56-a.5 · Aug-2026 — Pricebook Suppliers admin
                 (vendor CRUD that feeds the Ops Hub Price Book grid). */}
             <Route path="settings/pricebook-suppliers" element={<AdminOnly><PricebookSuppliersAdmin /></AdminOnly>} />
+            {/* Phase 56-c · Aug-2026 — Pricebook Cost Comparison report. */}
+            <Route path="admin/reports/pricebook-cost-comparison" element={<AdminOnly><PricebookCostComparison /></AdminOnly>} />
             <Route path="settings/service-categories" element={<AdminOnly><ServiceCategoriesPage /></AdminOnly>} />
             <Route path="settings/billing" element={<AdminOnly><BillingSettings /></AdminOnly>} />
             <Route path="settings/terms" element={<AdminOnly><TermsSettings /></AdminOnly>} />

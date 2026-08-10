@@ -1,4 +1,4 @@
-import { LayoutDashboard, CalendarDays, Truck, Route, Workflow, DoorOpen, Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers, UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone, Timer as TimerIcon, BarChart3, TrendingUp, PieChart, Megaphone, Palette, MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit, BadgeCheck, Shield, Bell as BellIcon, MapIcon, ScrollText, Grid3x3, Compass, Rss, PencilRuler, Building2, Map as MapPinIcon, Gauge, Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon, Home as HomeIcon, Cloud, LibraryBig, ClipboardList as ClipboardListIcon2, Mail, FlaskConical, GitBranch, Tag, RefreshCw, Store } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, Truck, Route, Workflow, DoorOpen, Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers, UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone, Timer as TimerIcon, BarChart3, TrendingUp, PieChart, Megaphone, Palette, MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit, BadgeCheck, Shield, Bell as BellIcon, MapIcon, ScrollText, Grid3x3, Compass, Rss, PencilRuler, Building2, Map as MapPinIcon, Gauge, Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon, Home as HomeIcon, Cloud, LibraryBig, ClipboardList as ClipboardListIcon2, Mail, FlaskConical, GitBranch, Tag, RefreshCw, Store, Scale } from 'lucide-react';
 
 /**
  * Phase 35 — Admin navigation single-source-of-truth (6-category IA).
@@ -252,6 +252,11 @@ export const ADMIN_NAV_V2 = [
     // MR1+MR2 · Feb-2026 — Public widget embed preview.
     { to: "/admin/moderation/widget-embed", label: "Widget Embed",        icon: Globe, feature: "reports", hard_rule: "manager_only" },
     { to: "/admin/reports/pricing-insights",label: "Pricing Insights",    icon: LineChart, feature: "reports" },
+    // Phase 56-c · Aug-2026 — Pricebook cost comparison (per-item
+    // supplier spread report). Same three-role gate as neighbouring
+    // reports rows (admin + super_admin + manager) via
+    // ``manager_only`` hard_rule.
+    { to: "/admin/reports/pricebook-cost-comparison", label: "Cost Comparison", icon: Scale, feature: "reports", hard_rule: "manager_only" },
     // Phase 54g · Feb-2026 — Wholesale supplier sync analytics.
     // Route guard: ``AdminOrManagerForSuppliers`` in App.js → admin +
     // super_admin + manager. Mirror by using ``feature: "reports"``
