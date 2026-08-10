@@ -34,12 +34,16 @@ import asyncio
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from config import logger
-from services.homeworks.mapping import map_customer, map_property
+from services.homeworks.mapping import (
+    map_customer, map_property, map_job, map_recurring_schedule,
+)
 
 
 LOGIN_URL = "https://secure.copilotcrm.com/login"
 CUSTOMERS_URL = "https://secure.copilotcrm.com/customers"
 PROPERTIES_URL = "https://secure.copilotcrm.com/properties"
+JOBS_URL = "https://secure.copilotcrm.com/jobs"
+RECURRING_URL = "https://secure.copilotcrm.com/recurring"
 USER_AGENT = "AquaTerra-HomeworksImport/1.0"
 
 # PLACEHOLDER selectors — MUST be verified against the live UI once
@@ -68,6 +72,30 @@ SELECTORS: Dict[str, str] = {
     "property_label":            '[data-field="label"]',
     "property_address":          '[data-field="address"]',
     "property_city":             '[data-field="city"]',
+    # Jobs list (Phase 55-c).
+    "job_row":                   '[data-testid="job-row"], tr.job',
+    "job_id_attr":                "data-homeworks-id",
+    "job_customer_ref":           "data-customer-id",
+    "job_property_ref":           "data-property-id",
+    "job_title":                 '[data-field="title"]',
+    "job_description":           '[data-field="description"]',
+    "job_status":                '[data-field="status"]',
+    "job_scheduled_at":          '[data-field="scheduled_at"]',
+    "job_scheduled_end":         '[data-field="scheduled_end"]',
+    "job_duration":              '[data-field="duration_minutes"]',
+    "job_assigned_email":        '[data-field="assigned_to_email"]',
+    "job_service_template":      '[data-field="service_template_hint"]',
+    "job_notes":                 '[data-field="notes"]',
+    # Recurring schedules (Phase 55-c).
+    "rec_row":                   '[data-testid="recurring-row"], tr.recurring',
+    "rec_id_attr":                "data-homeworks-id",
+    "rec_customer_ref":           "data-customer-id",
+    "rec_property_ref":           "data-property-id",
+    "rec_interval_type":         '[data-field="interval_type"]',
+    "rec_interval_days":         '[data-field="interval_days"]',
+    "rec_next_run":              '[data-field="next_run_at"]',
+    "rec_active":                '[data-field="active"]',
+    "rec_service_template":      '[data-field="service_template_hint"]',
     # Pagination.
     "btn_next_page":             'button.pagination-next, [data-testid="page-next"]',
 }
@@ -189,6 +217,71 @@ class CopilotCRMScraper:
                 return
             await asyncio.sleep(RATE_LIMIT_SECONDS)
 
+    async def iter_jobs(
+        self, page: Any,
+    ) -> AsyncIterator[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        """Yield ``(raw, mapped)`` per job. ``raw`` carries
+        ``customer_homeworks_id`` + ``property_homeworks_id`` so the
+        orchestrator can resolve both FKs against the already-staged
+        customer + property rows."""
+        await page.goto(JOBS_URL)
+        page_num = 1
+        yielded = 0
+        while True:
+            rows = await page.query_selector_all(SELECTORS["job_row"])
+            if not rows and page_num == 1:
+                logger.warning(
+                    "[homeworks] no job rows on page 1 — selector drift?")
+                return
+            if not rows:
+                return
+            for row in rows:
+                raw = await self._extract_job(row)
+                if not raw.get("id"):
+                    continue
+                mapped = map_job(raw)
+                yielded += 1
+                yield raw, mapped
+            page_num += 1
+            if not await self._go_next_page(page):
+                logger.info(
+                    f"[homeworks] iter_jobs finished: "
+                    f"{yielded} rows across {page_num - 1} page(s)")
+                return
+            await asyncio.sleep(RATE_LIMIT_SECONDS)
+
+    async def iter_recurring_schedules(
+        self, page: Any,
+    ) -> AsyncIterator[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        """Yield ``(raw, mapped)`` per recurring schedule. Same FK
+        resolution pattern as ``iter_jobs``."""
+        await page.goto(RECURRING_URL)
+        page_num = 1
+        yielded = 0
+        while True:
+            rows = await page.query_selector_all(SELECTORS["rec_row"])
+            if not rows and page_num == 1:
+                logger.warning(
+                    "[homeworks] no recurring rows on page 1 — "
+                    "selector drift?")
+                return
+            if not rows:
+                return
+            for row in rows:
+                raw = await self._extract_recurring(row)
+                if not raw.get("id"):
+                    continue
+                mapped = map_recurring_schedule(raw)
+                yielded += 1
+                yield raw, mapped
+            page_num += 1
+            if not await self._go_next_page(page):
+                logger.info(
+                    f"[homeworks] iter_recurring finished: "
+                    f"{yielded} rows across {page_num - 1} page(s)")
+                return
+            await asyncio.sleep(RATE_LIMIT_SECONDS)
+
     # ─── Extraction helpers ──────────────────────────────────────
     async def _extract_customer(self, row: Any) -> Dict[str, Any]:
         return {
@@ -210,6 +303,48 @@ class CopilotCRMScraper:
             "label": await self._text(row, SELECTORS["property_label"]),
             "address": await self._text(row, SELECTORS["property_address"]),
             "city": await self._text(row, SELECTORS["property_city"]),
+        }
+
+    async def _extract_job(self, row: Any) -> Dict[str, Any]:
+        return {
+            "id": await self._attr(row, SELECTORS["job_id_attr"]),
+            "customer_homeworks_id": await self._attr(
+                row, SELECTORS["job_customer_ref"]),
+            "property_homeworks_id": await self._attr(
+                row, SELECTORS["job_property_ref"]),
+            "title": await self._text(row, SELECTORS["job_title"]),
+            "description": await self._text(
+                row, SELECTORS["job_description"]),
+            "status": await self._text(row, SELECTORS["job_status"]),
+            "scheduled_at": await self._text(
+                row, SELECTORS["job_scheduled_at"]),
+            "scheduled_end": await self._text(
+                row, SELECTORS["job_scheduled_end"]),
+            "duration_minutes": await self._text(
+                row, SELECTORS["job_duration"]),
+            "assigned_to_email": await self._text(
+                row, SELECTORS["job_assigned_email"]),
+            "service_template_hint": await self._text(
+                row, SELECTORS["job_service_template"]),
+            "notes": await self._text(row, SELECTORS["job_notes"]),
+        }
+
+    async def _extract_recurring(self, row: Any) -> Dict[str, Any]:
+        return {
+            "id": await self._attr(row, SELECTORS["rec_id_attr"]),
+            "customer_homeworks_id": await self._attr(
+                row, SELECTORS["rec_customer_ref"]),
+            "property_homeworks_id": await self._attr(
+                row, SELECTORS["rec_property_ref"]),
+            "interval_type": await self._text(
+                row, SELECTORS["rec_interval_type"]),
+            "interval_days": await self._text(
+                row, SELECTORS["rec_interval_days"]),
+            "next_run_at": await self._text(
+                row, SELECTORS["rec_next_run"]),
+            "active": await self._text(row, SELECTORS["rec_active"]),
+            "service_template_hint": await self._text(
+                row, SELECTORS["rec_service_template"]),
         }
 
     async def _go_next_page(self, page: Any) -> bool:

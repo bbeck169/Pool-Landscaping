@@ -497,10 +497,15 @@ async def _run_scrape(  # pragma: no cover — exercised via injected fake
     object (see ``test_homeworks_scraper.py``) — no Playwright runtime
     is required for the unit tests.
     """
-    from services.homeworks.dedupe import dedupe_customer
+    from services.homeworks.dedupe import (
+        dedupe_customer, dedupe_by_homeworks_id,
+    )
 
     from playwright.async_api import async_playwright   # type: ignore
-    scraped: Dict[str, int] = {"customers": 0, "properties": 0}
+    scraped: Dict[str, int] = {
+        "customers": 0, "properties": 0,
+        "jobs": 0, "recurring_schedules": 0,
+    }
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
         try:
@@ -513,6 +518,7 @@ async def _run_scrape(  # pragma: no cover — exercised via injected fake
                     pass
             page = await context.new_page()
             await scraper.authenticate(page)
+            # FK-safe order: customers → properties → jobs → recurring.
             async for raw, mapped in scraper.iter_customers(page):
                 await _persist_customer_row(
                     tenant_id, batch_id, raw, mapped, dedupe_customer)
@@ -521,6 +527,14 @@ async def _run_scrape(  # pragma: no cover — exercised via injected fake
                 await _persist_property_row(
                     tenant_id, batch_id, raw, mapped)
                 scraped["properties"] += 1
+            async for raw, mapped in scraper.iter_jobs(page):
+                await _persist_job_row(
+                    tenant_id, batch_id, raw, mapped, dedupe_by_homeworks_id)
+                scraped["jobs"] += 1
+            async for raw, mapped in scraper.iter_recurring_schedules(page):
+                await _persist_recurring_row(
+                    tenant_id, batch_id, raw, mapped, dedupe_by_homeworks_id)
+                scraped["recurring_schedules"] += 1
         finally:
             await browser.close()
     return scraped
@@ -587,6 +601,11 @@ async def _persist_property_row(
             elif parent.get("dedupe_status") == "new":
                 parent_target_id = (parent.get("mapped_payload") or {}).get("id")
     mapped["customer_id"] = parent_target_id
+    # Pre-assign a UUID so downstream ``jobs`` + ``recurring_schedules``
+    # staging rows can FK-resolve against this property before the
+    # commit engine inserts.
+    if not mapped.get("id"):
+        mapped["id"] = uuid.uuid4().hex
 
     doc = {
         "id": uuid.uuid4().hex,
@@ -598,6 +617,125 @@ async def _persist_property_row(
         "mapped_payload": mapped,
         "dedupe_status": "new",
         "matched_target_id": None,
+        "imported_at": None,
+        "commit_error": None,
+    }
+    await db.homeworks_staging.insert_one(doc)
+
+
+async def _resolve_parent_ids(
+    tenant_id: str, batch_id: str, raw: Dict[str, Any],
+) -> tuple:
+    """Return ``(customer_target_id, property_target_id)`` by looking
+    up already-staged customer + property rows in the same batch.
+
+    Semantics for each FK:
+      * If the parent staging row is ``matched``, use its
+        ``matched_target_id`` — the existing target row.
+      * If ``new``, use the pre-assigned ``mapped_payload.id`` so the
+        commit engine can insert child rows referring to the same UUID.
+      * If the parent isn't staged yet (scrape-order violation), the
+        FK is left ``None`` and the row imports as orphaned — flagged
+        later by the dry-run warnings pane.
+    """
+    def _resolve(row):
+        if not row:
+            return None
+        ds = row.get("dedupe_status")
+        if ds == "matched":
+            return row.get("matched_target_id")
+        if ds == "new":
+            return (row.get("mapped_payload") or {}).get("id")
+        return None
+
+    parent_customer_id: Optional[str] = None
+    parent_property_id: Optional[str] = None
+    cust_hw = raw.get("customer_homeworks_id")
+    prop_hw = raw.get("property_homeworks_id")
+    if cust_hw:
+        cust = await db.homeworks_staging.find_one(
+            {"tenant_id": tenant_id, "batch_id": batch_id,
+              "entity_type": "customers", "homeworks_id": cust_hw},
+            {"_id": 0, "dedupe_status": 1, "matched_target_id": 1,
+              "mapped_payload": 1},
+        )
+        parent_customer_id = _resolve(cust)
+    if prop_hw:
+        prop = await db.homeworks_staging.find_one(
+            {"tenant_id": tenant_id, "batch_id": batch_id,
+              "entity_type": "properties", "homeworks_id": prop_hw},
+            {"_id": 0, "dedupe_status": 1, "matched_target_id": 1,
+              "mapped_payload": 1},
+        )
+        parent_property_id = _resolve(prop)
+    return parent_customer_id, parent_property_id
+
+
+async def _persist_job_row(
+    tenant_id: str, batch_id: str,
+    raw: Dict[str, Any], mapped: Dict[str, Any],
+    dedupe_fn: Any,
+) -> None:
+    """Insert a job staging row.
+
+    Dedupe by ``(tenant_id, homeworks_id)`` in the ``jobs`` collection
+    — jobs are Homeworks-authoritative so a UI-level fuzzy match would
+    only cause noise. Parent FKs (``customer_id`` + ``property_id``)
+    are resolved from the SAME batch's staged customers / properties.
+    """
+    hw_id = raw.get("id")
+    ds, matched_id = await dedupe_fn(tenant_id, "jobs", hw_id, db)
+    parent_customer, parent_property = await _resolve_parent_ids(
+        tenant_id, batch_id, raw)
+    mapped["customer_id"] = parent_customer
+    if parent_property:
+        mapped["property_id"] = parent_property
+    if ds == "new" and not mapped.get("id"):
+        mapped["id"] = uuid.uuid4().hex
+    doc = {
+        "id": uuid.uuid4().hex,
+        "tenant_id": tenant_id,
+        "batch_id": batch_id,
+        "entity_type": "jobs",
+        "homeworks_id": hw_id,
+        "raw_payload": raw,
+        "mapped_payload": mapped,
+        "dedupe_status": ds,
+        "matched_target_id": matched_id,
+        "imported_at": None,
+        "commit_error": None,
+    }
+    await db.homeworks_staging.insert_one(doc)
+
+
+async def _persist_recurring_row(
+    tenant_id: str, batch_id: str,
+    raw: Dict[str, Any], mapped: Dict[str, Any],
+    dedupe_fn: Any,
+) -> None:
+    """Insert a recurring schedule staging row with the same FK-
+    resolution semantics as ``_persist_job_row``. Dedupe is against
+    the ``recurring_schedules`` collection by ``homeworks_id``."""
+    hw_id = raw.get("id")
+    ds, matched_id = await dedupe_fn(
+        tenant_id, "recurring_schedules", hw_id, db)
+    parent_customer, parent_property = await _resolve_parent_ids(
+        tenant_id, batch_id, raw)
+    mapped["customer_id"] = parent_customer
+    if parent_property:
+        mapped["property_id"] = parent_property
+    if ds == "new" and not mapped.get("id"):
+        mapped["id"] = uuid.uuid4().hex
+    doc = {
+        "id": uuid.uuid4().hex,
+        "tenant_id": tenant_id,
+        "batch_id": batch_id,
+        "entity_type": "recurring_schedules",
+        "homeworks_id": hw_id,
+        "raw_payload": raw,
+        "mapped_payload": mapped,
+        "dedupe_status": ds,
+        "matched_target_id": matched_id,
         "imported_at": None,
         "commit_error": None,
     }
@@ -692,7 +830,10 @@ async def scrape_batch(
                                     "message": str(e)[:200]})
 
     # Success — build entity_counts_total from staging + flip to paused.
-    counts_total: Dict[str, int] = {"customers": 0, "properties": 0}
+    counts_total: Dict[str, int] = {
+        "customers": 0, "properties": 0,
+        "jobs": 0, "recurring_schedules": 0,
+    }
     async for _row in db.homeworks_staging.find(
         {"tenant_id": tenant["id"], "batch_id": batch_id},
         {"_id": 0, "entity_type": 1},

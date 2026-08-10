@@ -88,3 +88,76 @@ def map_property(
     if mapped["address"] and not any(mapped["address"].values()):
         mapped["address"] = None
     return {k: v for k, v in mapped.items() if v is not None}
+
+
+def map_job(
+    raw: Dict[str, Any],
+    customer_target_id: Optional[str] = None,
+    property_target_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Map Homeworks job / work order → AquaTerra ``jobs`` shape.
+
+    FK ids are resolved by the orchestrator via a staging-lookup
+    against ``homeworks_staging.entity_type == customers|properties``.
+    The commit engine (Phase 55-f) then applies this payload verbatim.
+    """
+    title = _s(raw.get("title")) or _s(raw.get("service_template_hint")) \
+        or "Homeworks job"
+    status = _s(raw.get("status")).lower() or "pending"
+    mapped: Dict[str, Any] = {
+        "title": title,
+        "customer_id": customer_target_id,
+        "property_id": property_target_id,
+        "service_type": _s(raw.get("service_template_hint"))
+                            or _s(raw.get("service_type")) or None,
+        "scheduled_date": _s(raw.get("scheduled_at")) or None,
+        "scheduled_end": _s(raw.get("scheduled_end")) or None,
+        "duration_minutes": raw.get("duration_minutes"),
+        "assigned_to_email": _s(raw.get("assigned_to_email")) or None,
+        "status": status,
+        "notes": _s(raw.get("notes")) or _s(raw.get("description")) or None,
+        "homeworks_id": _s(raw.get("id")) or None,
+        "homeworks_created_at": _s(raw.get("created_at")) or None,
+        "service_template_hint": _s(raw.get("service_template_hint")) or None,
+    }
+    return {k: v for k, v in mapped.items()
+             if v is not None and v != ""}
+
+
+def map_recurring_schedule(
+    raw: Dict[str, Any],
+    customer_target_id: Optional[str] = None,
+    property_target_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Map Homeworks recurring plan → AquaTerra ``recurring_schedules``.
+
+    ``interval_type`` is coerced to one of ``weekly / biweekly /
+    monthly / custom``. ``interval_days`` is passed through as-is (or
+    inferred from ``interval_type`` when missing) so the recurring
+    engine at commit time doesn't have to re-parse a Homeworks-shaped
+    frequency string.
+    """
+    interval_type = _s(raw.get("interval_type")).lower() or "custom"
+    if interval_type not in ("weekly", "biweekly", "monthly", "custom"):
+        interval_type = "custom"
+    default_days = {
+        "weekly": 7, "biweekly": 14, "monthly": 30, "custom": None,
+    }
+    interval_days = raw.get("interval_days")
+    if interval_days is None:
+        interval_days = default_days.get(interval_type)
+    active = raw.get("active")
+    if active is None:
+        active = True
+    mapped: Dict[str, Any] = {
+        "customer_id": customer_target_id,
+        "property_id": property_target_id,
+        "interval_type": interval_type,
+        "interval_days": interval_days,
+        "next_run_at": _s(raw.get("next_run_at")) or None,
+        "active": bool(active),
+        "service_template_hint": _s(raw.get("service_template_hint")) or None,
+        "homeworks_id": _s(raw.get("id")) or None,
+        "homeworks_created_at": _s(raw.get("created_at")) or None,
+    }
+    return {k: v for k, v in mapped.items() if v is not None}

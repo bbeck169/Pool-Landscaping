@@ -163,6 +163,19 @@ describe("HomeworksImport · Phase 55-a scaffold", () => {
     expect(within(modal).getByTestId("hw-new-batch-entity-jobs"))
       .toBeTruthy();
 
+    // Phase 55-c — the modal exposes all 4 core-entity checkboxes,
+    // AND they're pre-selected by default (spec: "All 8 selected
+    // by default").
+    ["customers", "properties", "jobs", "recurring_schedules"].forEach(
+      (t) => {
+        const cb = within(modal).getByTestId(`hw-new-batch-entity-${t}`);
+        expect(cb).toBeTruthy();
+        // Default-checked so the operator gets the full sweep on
+        // day-1 commits without extra clicks.
+        expect(cb.checked).toBe(true);
+      },
+    );
+
     // Untick everything except "customers" — verify the POST body.
     ["properties", "jobs", "recurring_schedules", "invoices",
      "payments", "quotes", "attachments"].forEach((t) => {
@@ -421,4 +434,44 @@ describe("HomeworksImport · Phase 55-b scrape + challenge", () => {
     expect(screen.getByTestId("challenge-modal-slug").textContent)
       .toBe("homeworks");
   });
+});
+
+
+// ═════════════════════════════════════════════════════════════════
+// Phase 55-c — Jobs + Recurring Schedule checkboxes in new-batch modal
+// ═════════════════════════════════════════════════════════════════
+describe("HomeworksImport · Phase 55-c entity coverage", () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    postMock.mockReset();
+  });
+  afterEach(() => { cleanup(); });
+
+  it("new-batch modal exposes jobs + recurring_schedules checkboxes",
+    async () => {
+      getMock.mockImplementation((url) => {
+        if (url === "/imports/homeworks/batches") {
+          return Promise.resolve({ batches: [] });
+        }
+        return Promise.resolve({ has_credentials: false });
+      });
+
+      renderPage();
+      await waitFor(() => screen.getByTestId("hw-new-batch-btn"));
+      fireEvent.click(screen.getByTestId("hw-new-batch-btn"));
+
+      const modal = await screen.findByTestId("hw-new-batch-modal");
+      // Phase 55-c specifically ships the ``jobs`` +
+      // ``recurring_schedules`` entity types. The rest are 55-b or
+      // future-phase — but all 8 render because the design surface
+      // is stable from 55-a.
+      const jobsCb = within(modal).getByTestId("hw-new-batch-entity-jobs");
+      const recCb = within(modal).getByTestId(
+        "hw-new-batch-entity-recurring_schedules");
+      expect(jobsCb).toBeTruthy();
+      expect(recCb).toBeTruthy();
+      // Default-checked (matches ``ALL_ENTITY_TYPES`` seed).
+      expect(jobsCb.checked).toBe(true);
+      expect(recCb.checked).toBe(true);
+    });
 });

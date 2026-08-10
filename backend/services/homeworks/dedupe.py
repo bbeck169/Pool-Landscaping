@@ -95,3 +95,35 @@ async def dedupe_customer(
 
     # Single-key match to multiple customers → conflict too.
     return "conflict", None
+
+
+async def dedupe_by_homeworks_id(
+    tenant_id: str, collection_name: str, homeworks_id: Any, db_ref: Any,
+) -> Tuple[str, Optional[str]]:
+    """Compound (``tenant_id``, ``homeworks_id``) dedupe used by every
+    Homeworks-authoritative entity (jobs + recurring in Phase 55-c;
+    quotes / invoices / payments in Phase 55-d).
+
+    Rules:
+      * zero-match  → ``("new", None)``.
+      * one-match   → ``("matched", <target_id>)``.
+      * multi-match → ``("conflict", None)`` — should be impossible
+        given Homeworks authoritatively assigns each id, but guarded
+        so the commit engine can flag the row for review.
+    """
+    hw_id = str(homeworks_id).strip() if homeworks_id else ""
+    if not hw_id:
+        return "new", None
+    coll = db_ref[collection_name]
+    matches: list = []
+    async for c in coll.find(
+        {"tenant_id": tenant_id, "homeworks_id": hw_id},
+        {"_id": 0, "id": 1},
+    ):
+        if c.get("id"):
+            matches.append(c["id"])
+    if not matches:
+        return "new", None
+    if len(matches) == 1:
+        return "matched", matches[0]
+    return "conflict", None
