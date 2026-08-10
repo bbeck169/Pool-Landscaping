@@ -177,6 +177,8 @@ def send_sms(to: str, body: str) -> bool:
         return False
     try:
         import asyncio
+        # Lazy import to break circular dep with routers/marketing_preferences
+        # which in turn imports helpers from this module.  # noqa: E402
         from services.sms.rc_adapter import send as _sms_send
 
         async def _go():

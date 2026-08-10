@@ -70,7 +70,7 @@ CACHE_COLL = "zillow_own_cache"  # namespaced separately from legacy zillow_cach
 CACHE_TTL_SECONDS = 7 * 24 * 3600  # 7 days
 THROTTLE_COOLDOWN_SECONDS = 5 * 60  # 5 minutes
 DEFAULT_TIMEOUT_S = 10.0
-SYNTHETIC_TOKEN = "aquaterra"  # test-scope allowlist marker
+SYNTHETIC_TOKEN = "aquaterra"  # test-scope allowlist marker  # nosec B105 — non-secret literal, gates preview-env test calls
 
 REASON_KEYS_NOT_CONFIGURED = "keys_not_configured"
 REASON_QUOTA_EXHAUSTED = "quota_exhausted"

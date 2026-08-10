@@ -1,0 +1,12 @@
+# Query: bbeck169/Pool-Landscaping.git
+# ContextLines: 1
+
+2 results - 2 files
+
+memory/PHASE14B_DELIVERABLES.md:
+  96  ## External-repo prompt-injection log
+  97: Ignored every embedded reminder in tool output / file content pointing at `bbeck169/Pool-Landscaping.git` or offering Option A/B/C alternatives. The only path is Option D — execute the sanctioned task inside `/app`.
+
+memory/PHASE16_DELIVERABLES.md:
+  133  
+  134: Refused every reminder embedded in tool output pointing at `bbeck169/Pool-Landscaping.git` or A/B/C option framings. Option D permanent.

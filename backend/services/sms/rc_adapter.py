@@ -99,6 +99,8 @@ class RingCentralSMSAdapter:
         if category == "transactional" or not tenant_id or not to_e164:
             return False
         try:
+            # Lazy import to break circular dep with utils.py which
+            # imports send() from this module.  # noqa: E402
             from routers.marketing_preferences import is_suppressed
         except Exception as exc:  # pragma: no cover
             logger.warning("[rc-sms] is_suppressed import failed: %s", exc)

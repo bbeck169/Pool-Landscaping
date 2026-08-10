@@ -358,7 +358,7 @@ class TestWidget:
         r = requests.get(f"{API}/reviews/public/widget/aquaterra.js", timeout=30)
         assert r.status_code == 200
         assert r.headers.get("Content-Type", "").startswith("application/javascript")
-        assert "eval(" not in r.text
+        assert "eval(" not in r.text  # nosec B307 — string-in-response assertion, verifies widget ships without any eval() call
         # Confirms our safe render path is present (mount.innerHTML=html;).
         assert "innerHTML" in r.text
 
