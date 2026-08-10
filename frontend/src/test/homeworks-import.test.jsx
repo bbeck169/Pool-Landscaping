@@ -177,3 +177,126 @@ describe("HomeworksImport · Phase 55-a scaffold", () => {
     expect(screen.getByTestId("hw-batch-rollback-batch-abc123")).toBeTruthy();
   });
 });
+
+
+// ═════════════════════════════════════════════════════════════════
+// Phase 55-f — Dry-run + Commit + Progress polling
+// ═════════════════════════════════════════════════════════════════
+describe("HomeworksImport · Phase 55-f detail drawer", () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    postMock.mockReset();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  function seedListMock(batchState) {
+    const batch = {
+      id: "batch-detail-1", state: batchState,
+      entity_types_planned: ["customers"],
+      started_at: null,
+    };
+    const dryrun = {
+      batch_id: "batch-detail-1", state: batchState,
+      entity_counts: {
+        customers: { new: 3, matched: 1, conflict: 1, total: 5 },
+      },
+      warnings: [],
+      error_count: 0,
+    };
+    const progress = {
+      batch_id: "batch-detail-1", state: batchState,
+      entity_counts_completed: {},
+      entity_counts_total: {},
+      current_entity_type: null,
+      error_count: 0,
+    };
+    getMock.mockImplementation((url) => {
+      if (url === "/imports/homeworks/batches") {
+        return Promise.resolve({ batches: [batch] });
+      }
+      if (url === "/imports/homeworks/credentials") {
+        return Promise.resolve({ has_credentials: false });
+      }
+      if (url === `/imports/homeworks/batches/${batch.id}/dryrun`) {
+        return Promise.resolve(dryrun);
+      }
+      if (url === `/imports/homeworks/batches/${batch.id}/progress`) {
+        return Promise.resolve(progress);
+      }
+      return Promise.resolve({});
+    });
+    return { batch, dryrun, progress };
+  }
+
+  it("renders the dry-run report table when the drawer opens", async () => {
+    seedListMock("paused");
+    renderPage();
+
+    await waitFor(() => screen.getByTestId("hw-batch-view-batch-detail-1"));
+    fireEvent.click(screen.getByTestId("hw-batch-view-batch-detail-1"));
+
+    const drawer = await screen.findByTestId("hw-detail-drawer");
+    await waitFor(() => {
+      expect(within(drawer).getByTestId("hw-detail-dryrun-table"))
+        .toBeTruthy();
+    });
+    // Row for customers with per-status counts.
+    const row = within(drawer).getByTestId("hw-detail-row-customers");
+    expect(row.textContent).toContain("customers");
+    expect(row.textContent).toContain("3");   // new
+    expect(row.textContent).toContain("5");   // total
+  });
+
+  it("disables the Commit button unless state == paused", async () => {
+    seedListMock("pending");
+    renderPage();
+
+    await waitFor(() => screen.getByTestId("hw-batch-view-batch-detail-1"));
+    fireEvent.click(screen.getByTestId("hw-batch-view-batch-detail-1"));
+
+    await screen.findByTestId("hw-detail-drawer");
+    // With batch in "pending" state, neither commit nor resume CTAs
+    // render — canCommit==false, canResume==false.
+    expect(screen.queryByTestId("hw-commit-btn")).toBeNull();
+    expect(screen.queryByTestId("hw-resume-btn")).toBeNull();
+  });
+
+  it("polls the /progress endpoint every 2s once commit is clicked", async () => {
+    seedListMock("paused");
+    postMock.mockResolvedValue({
+      ok: true, batch_id: "batch-detail-1", state: "committed",
+      entity_counts_completed: { customers: 5 }, error_count: 0,
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    renderPage();
+    await waitFor(() => screen.getByTestId("hw-batch-view-batch-detail-1"));
+    fireEvent.click(screen.getByTestId("hw-batch-view-batch-detail-1"));
+
+    const drawer = await screen.findByTestId("hw-detail-drawer");
+    await waitFor(() =>
+      expect(within(drawer).getByTestId("hw-commit-btn")).toBeTruthy());
+
+    // Snapshot initial progress-endpoint call count from the opening
+    // parallel-fetch, then click commit.
+    const progressUrl = "/imports/homeworks/batches/batch-detail-1/progress";
+    const baselineCalls = getMock.mock.calls
+      .filter(([u]) => u === progressUrl).length;
+
+    fireEvent.click(within(drawer).getByTestId("hw-commit-btn"));
+
+    // Fast-forward 2s → one poll tick.
+    await vi.advanceTimersByTimeAsync(2100);
+    await waitFor(() => {
+      const now = getMock.mock.calls
+        .filter(([u]) => u === progressUrl).length;
+      expect(now).toBeGreaterThan(baselineCalls);
+    });
+    // The POST /commit call fired.
+    expect(postMock).toHaveBeenCalledWith(
+      "/imports/homeworks/batches/batch-detail-1/commit", {});
+  });
+});

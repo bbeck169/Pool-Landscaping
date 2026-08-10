@@ -43,6 +43,135 @@ _COLLECTIONS_WITH_BATCH_ID = (
     "customer_notes", "job_notes", "homeworks_staging",
 )
 
+# Phase 55-f · Commit engine.
+#
+# Entity → target collection map. ``attachments`` is intentionally
+# absent because photo/media handoff is Phase 55-e, not 55-f.
+_ENTITY_TO_COLLECTION: Dict[str, str] = {
+    "customers": "customers",
+    "properties": "properties",
+    "jobs": "jobs",
+    "recurring_schedules": "recurring_schedules",
+    "invoices": "invoices",
+    "payments": "payments",
+    "quotes": "quotes",
+}
+
+# FK-safe processing order. Customers come first because every other
+# entity references them; jobs come before invoices because invoice
+# lines can reference completed jobs; payments come last because they
+# reference invoices.
+_ENTITY_ORDER: List[str] = [
+    "customers", "properties", "recurring_schedules",
+    "jobs", "quotes", "invoices", "payments",
+]
+
+# Customer merge policy — spec-locked in Phase 55 design doc §4.1:
+# "MERGE (extend tags, append notes, DO NOT overwrite first/last name
+# or address unless empty)." These fields are protected from
+# destructive overwrites when ``dedupe_status == matched``.
+_PROTECTED_CUSTOMER_FIELDS = frozenset({
+    "first_name", "last_name", "name", "email", "phone",
+    "billing_address", "address",
+})
+
+
+def _customer_merge_update(existing: Dict[str, Any],
+                            mapped: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the $set patch to merge ``mapped`` onto ``existing``
+    without overwriting protected non-null fields. Tags dedupe-merge,
+    notes append."""
+    upd: Dict[str, Any] = {}
+    for k, v in (mapped or {}).items():
+        if k in _PROTECTED_CUSTOMER_FIELDS:
+            if v and not existing.get(k):
+                upd[k] = v
+            continue
+        if k == "tags":
+            merged = sorted({*(existing.get("tags") or []),
+                              *(v or [])})
+            upd["tags"] = merged
+            continue
+        if k == "notes":
+            existing_notes = existing.get("notes") or ""
+            if v and v not in existing_notes:
+                combined = (f"{existing_notes}\n{v}".strip()
+                              if existing_notes else v)
+                upd["notes"] = combined
+            continue
+        if v is not None:
+            upd[k] = v
+    return upd
+
+
+def _generic_merge_update(existing: Dict[str, Any],
+                           mapped: Dict[str, Any]) -> Dict[str, Any]:
+    """Conservative merge for non-customer entities — only fill blanks."""
+    upd: Dict[str, Any] = {}
+    for k, v in (mapped or {}).items():
+        if v is not None and not existing.get(k):
+            upd[k] = v
+    return upd
+
+
+async def _process_staging_row(
+    row: Dict[str, Any], tenant_id: str, batch_id: str,
+) -> Dict[str, Any]:
+    """Apply one staging row to its target collection.
+
+    Returns ``{"ok": bool, "err": Optional[str], "outcome": str}``.
+    * ``ok == True``, ``err == None``  → clean success (new/matched).
+    * ``ok == True``, ``err == str``   → intentional skip (conflict,
+      unknown entity type, matched-but-missing target). Row is marked
+      as ``imported_at``; ``commit_error`` records the reason. Resume
+      will NOT retry.
+    * ``ok == False``                  → unexpected exception; row is
+      NOT marked ``imported_at``. Resume WILL retry.
+    """
+    et = row.get("entity_type") or ""
+    coll_name = _ENTITY_TO_COLLECTION.get(et)
+    if not coll_name:
+        return {"ok": True, "err": "unknown_entity_type",
+                 "outcome": "skipped"}
+    ds = row.get("dedupe_status") or "new"
+    if ds == "conflict":
+        return {"ok": True, "err": "conflict_skipped",
+                 "outcome": "skipped"}
+    mapped = row.get("mapped_payload") or {}
+    coll = db[coll_name]
+    try:
+        if ds == "matched":
+            target_id = row.get("matched_target_id")
+            if not target_id:
+                return {"ok": True, "err": "matched_but_no_target_id",
+                         "outcome": "skipped"}
+            existing = await coll.find_one(
+                {"tenant_id": tenant_id, "id": target_id},
+                {"_id": 0},
+            )
+            if not existing:
+                return {"ok": True, "err": "matched_target_missing",
+                         "outcome": "skipped"}
+            merge = (_customer_merge_update(existing, mapped)
+                      if et == "customers"
+                      else _generic_merge_update(existing, mapped))
+            if merge:
+                merge["import_batch_id"] = batch_id
+                await coll.update_one(
+                    {"tenant_id": tenant_id, "id": target_id},
+                    {"$set": merge},
+                )
+            return {"ok": True, "err": None, "outcome": "merged"}
+        # Default → dedupe_status == "new" → insert.
+        doc = dict(mapped)
+        doc["tenant_id"] = tenant_id
+        doc["import_batch_id"] = batch_id
+        doc.setdefault("id", uuid.uuid4().hex)
+        await coll.insert_one(doc)
+        return {"ok": True, "err": None, "outcome": "inserted"}
+    except Exception as e:                                          # noqa: BLE001
+        return {"ok": False, "err": str(e)[:200], "outcome": "error"}
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -144,10 +273,14 @@ async def rollback_batch(
 
     purged: Dict[str, int] = {}
     for coll_name in _COLLECTIONS_WITH_BATCH_ID:
+        # Staging rows carry ``batch_id`` (they're OWNED by the batch);
+        # every other collection carries the ``import_batch_id`` FK
+        # (added in Phase 55-a).
+        fk_key = "batch_id" if coll_name == "homeworks_staging" \
+            else "import_batch_id"
         try:
             r = await db[coll_name].delete_many(
-                {"tenant_id": tenant["id"],
-                 "import_batch_id": batch_id},
+                {"tenant_id": tenant["id"], fk_key: batch_id},
             )
             purged[coll_name] = int(getattr(r, "deleted_count", 0) or 0)
         except Exception as e:                                    # noqa: BLE001
@@ -162,6 +295,176 @@ async def rollback_batch(
                     "purged_counts": purged}},
     )
     return {"ok": True, "batch_id": batch_id, "purged_counts": purged}
+
+
+# ─── Dry-run + Commit + Progress (Phase 55-f) ──────────────────────────
+@router.get("/imports/homeworks/batches/{batch_id}/dryrun")
+async def dryrun_report(
+    batch_id: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Aggregate staging rows for the batch by ``entity_type`` ×
+    ``dedupe_status`` and surface warnings (prior commit errors,
+    matched-but-missing targets)."""
+    batch = await db.import_batches.find_one(
+        {"tenant_id": tenant["id"], "id": batch_id},
+        {"_id": 0},
+    )
+    if not batch:
+        raise HTTPException(404, {"error": "batch_not_found"})
+    counts: Dict[str, Dict[str, int]] = {}
+    warnings: List[Dict[str, Any]] = []
+    cursor = db.homeworks_staging.find(
+        {"tenant_id": tenant["id"], "batch_id": batch_id},
+        {"_id": 0},
+    )
+    async for row in cursor:
+        et = row.get("entity_type") or "unknown"
+        ds = row.get("dedupe_status") or "new"
+        bucket = counts.setdefault(et, {
+            "new": 0, "matched": 0, "conflict": 0, "total": 0,
+        })
+        if ds in bucket:
+            bucket[ds] += 1
+        else:
+            bucket[ds] = bucket.get(ds, 0) + 1
+        bucket["total"] += 1
+        if row.get("commit_error"):
+            warnings.append({
+                "type": "prior_commit_error",
+                "staging_id": row.get("id"),
+                "entity_type": et,
+                "error": row.get("commit_error"),
+            })
+    return {
+        "batch_id": batch_id, "state": batch.get("state"),
+        "entity_counts": counts, "warnings": warnings,
+        "error_count": batch.get("error_count") or 0,
+    }
+
+
+@router.post("/imports/homeworks/batches/{batch_id}/commit")
+async def commit_batch(
+    batch_id: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Iterate staging rows, apply ``mapped_payload`` to the target
+    collections. Only valid from ``paused`` state, or from
+    ``committed`` state when unprocessed rows exist (resume path)."""
+    batch = await db.import_batches.find_one(
+        {"tenant_id": tenant["id"], "id": batch_id},
+        {"_id": 0},
+    )
+    if not batch:
+        raise HTTPException(404, {"error": "batch_not_found"})
+    state = batch.get("state") or "pending"
+    if state not in ("paused", "committed"):
+        raise HTTPException(400, {"error": "not_committable",
+                                    "state": state})
+
+    now_start = _now_iso()
+    if not batch.get("started_at"):
+        await db.import_batches.update_one(
+            {"tenant_id": tenant["id"], "id": batch_id},
+            {"$set": {"started_at": now_start}},
+        )
+
+    completed = dict(batch.get("entity_counts_completed") or {})
+    error_count = int(batch.get("error_count") or 0)
+
+    # Process in FK-safe order per entity type. Only rows without
+    # ``imported_at`` are pulled → resume-safe.
+    for et in _ENTITY_ORDER:
+        cursor = db.homeworks_staging.find(
+            {"tenant_id": tenant["id"], "batch_id": batch_id,
+              "entity_type": et, "imported_at": None},
+            {"_id": 0},
+        )
+        et_done = int(completed.get(et, 0))
+        rows_in_et: List[Dict[str, Any]] = []
+        async for row in cursor:
+            rows_in_et.append(row)
+        for idx, row in enumerate(rows_in_et):
+            result = await _process_staging_row(row, tenant["id"], batch_id)
+            update_row: Dict[str, Any] = {}
+            if result["ok"]:
+                update_row["imported_at"] = _now_iso()
+                if result.get("err"):
+                    update_row["commit_error"] = result["err"]
+                et_done += 1
+            else:
+                update_row["commit_error"] = result.get("err") \
+                    or "unknown_error"
+                error_count += 1
+            await db.homeworks_staging.update_one(
+                {"tenant_id": tenant["id"], "id": row["id"]},
+                {"$set": update_row},
+            )
+            completed[et] = et_done
+            # Cheap 50-row heartbeat back onto the batch doc — powers
+            # the ``/progress`` poll on the client.
+            if (idx + 1) % 50 == 0:
+                await db.import_batches.update_one(
+                    {"tenant_id": tenant["id"], "id": batch_id},
+                    {"$set": {
+                        "entity_counts_completed": completed,
+                        "current_entity_type": et,
+                        "error_count": error_count,
+                    }},
+                )
+        # End-of-entity heartbeat.
+        await db.import_batches.update_one(
+            {"tenant_id": tenant["id"], "id": batch_id},
+            {"$set": {
+                "entity_counts_completed": completed,
+                "current_entity_type": et,
+                "error_count": error_count,
+            }},
+        )
+
+    now_end = _now_iso()
+    await db.import_batches.update_one(
+        {"tenant_id": tenant["id"], "id": batch_id},
+        {"$set": {
+            "state": "committed",
+            "completed_at": now_end,
+            "entity_counts_completed": completed,
+            "error_count": error_count,
+        }},
+    )
+    return {
+        "ok": True, "batch_id": batch_id, "state": "committed",
+        "entity_counts_completed": completed, "error_count": error_count,
+    }
+
+
+@router.get("/imports/homeworks/batches/{batch_id}/progress")
+async def batch_progress(
+    batch_id: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Cheap poll target. Frontend hits this every 2s while state is
+    still ``paused`` (mid-commit) and stops once ``state == committed``
+    or ``rolled_back``."""
+    row = await db.import_batches.find_one(
+        {"tenant_id": tenant["id"], "id": batch_id},
+        {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, {"error": "batch_not_found"})
+    return {
+        "batch_id": batch_id,
+        "state": row.get("state"),
+        "entity_counts_completed": row.get("entity_counts_completed") or {},
+        "entity_counts_total": row.get("entity_counts_total") or {},
+        "current_entity_type": row.get("current_entity_type"),
+        "error_count": row.get("error_count") or 0,
+        "started_at": row.get("started_at"),
+        "completed_at": row.get("completed_at"),
+    }
 
 
 # ─── Credentials (Fernet-encrypted) ─────────────────────────────────────

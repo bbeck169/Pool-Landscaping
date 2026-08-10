@@ -9,8 +9,8 @@
  * Batches created here stay in ``pending`` state — 55-b lands the
  * customer scraper that flips them to ``running``.
  */
-import React, { useCallback, useEffect, useState } from "react";
-import { Download, Plus, RotateCcw } from "lucide-react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Download, Plus, RotateCcw, Eye, Play } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { PageHeader } from "@/components/ui-kit";
@@ -60,6 +60,22 @@ export default function HomeworksImport() {
   const [newBusy, setNewBusy] = useState(false);
   const [rollbackTarget, setRollbackTarget] = useState(null);
   const [rollbackBusy, setRollbackBusy] = useState(false);
+  // Phase 55-f — Batch detail drawer + dry-run + commit + progress poll.
+  const [detailTarget, setDetailTarget] = useState(null);
+  const [detailReport, setDetailReport] = useState(null);
+  const [detailBusy, setDetailBusy] = useState(false);
+  const [commitBusy, setCommitBusy] = useState(false);
+  const [progress, setProgress] = useState(null);
+  const pollRef = useRef(null);
+
+  const clearPoll = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearPoll(), [clearPoll]);
 
   const loadBatches = useCallback(async () => {
     setLoading(true); setError("");
@@ -127,6 +143,76 @@ export default function HomeworksImport() {
       setRollbackTarget(null);
       await loadBatches();
     } finally { setRollbackBusy(false); }
+  };
+
+  // Phase 55-f — Load dry-run + progress for a batch.
+  const openDetail = useCallback(async (batch) => {
+    setDetailTarget(batch);
+    setDetailReport(null);
+    setProgress(null);
+    setDetailBusy(true);
+    try {
+      const [rep, prog] = await Promise.all([
+        api.get(`/imports/homeworks/batches/${batch.id}/dryrun`),
+        api.get(`/imports/homeworks/batches/${batch.id}/progress`),
+      ]);
+      setDetailReport(rep || null);
+      setProgress(prog || null);
+    } catch (e) {
+      setError(e?.message || "Failed to load batch detail.");
+    } finally { setDetailBusy(false); }
+  }, []);
+
+  const closeDetail = useCallback(() => {
+    clearPoll();
+    setDetailTarget(null);
+    setDetailReport(null);
+    setProgress(null);
+  }, [clearPoll]);
+
+  const startProgressPoll = useCallback((batchId) => {
+    clearPoll();
+    pollRef.current = setInterval(async () => {
+      try {
+        const p = await api.get(
+          `/imports/homeworks/batches/${batchId}/progress`);
+        setProgress(p || null);
+        if (p && (p.state === "committed" || p.state === "rolled_back")) {
+          clearPoll();
+          await loadBatches();
+          // Also refresh dryrun to reflect final warnings + counts.
+          try {
+            const rep = await api.get(
+              `/imports/homeworks/batches/${batchId}/dryrun`);
+            setDetailReport(rep || null);
+          } catch { /* non-fatal */ }
+        }
+      } catch { /* non-fatal — next tick will retry */ }
+    }, 2000);
+  }, [clearPoll, loadBatches]);
+
+  const doCommit = async () => {
+    if (!detailTarget || commitBusy) return;
+    setCommitBusy(true);
+    startProgressPoll(detailTarget.id);
+    try {
+      await api.post(
+        `/imports/homeworks/batches/${detailTarget.id}/commit`, {});
+      // Final refresh — poll will also catch this but do one deterministic
+      // update so the UI doesn't feel laggy.
+      const [rep, prog] = await Promise.all([
+        api.get(`/imports/homeworks/batches/${detailTarget.id}/dryrun`),
+        api.get(`/imports/homeworks/batches/${detailTarget.id}/progress`),
+      ]);
+      setDetailReport(rep || null);
+      setProgress(prog || null);
+      await loadBatches();
+    } catch (e) {
+      setError(e?.message || "Commit failed.");
+    } finally {
+      setCommitBusy(false);
+      clearPoll();
+    }
   };
 
   return (
@@ -255,6 +341,16 @@ export default function HomeworksImport() {
                     {b.started_at ? b.started_at.slice(0, 16) : "—"}
                   </td>
                   <td className="px-3 py-2 text-right">
+                    <button
+                      type="button"
+                      onClick={() => openDetail(b)}
+                      title="View dry-run + progress"
+                      className="inline-flex items-center gap-0.5 text-[11px] font-bold mr-3"
+                      style={{ color: colors.brand, textDecoration: "underline" }}
+                      data-testid={`hw-batch-view-${b.id}`}
+                    >
+                      <Eye size={11} /> View
+                    </button>
                     {b.state !== "rolled_back" ? (
                       <button
                         type="button"
@@ -356,10 +452,22 @@ export default function HomeworksImport() {
                 style={{ color: colors.onSurface }}>
               Rollback batch {rollbackTarget.id.slice(0, 8)}?
             </h2>
-            <p className="text-sm mb-4" style={{ color: colors.muted }}>
-              Every row inserted under this batch will be permanently
-              deleted. This action is idempotent — safe to run twice.
-            </p>
+            {(() => {
+              const counts = rollbackTarget?.entity_counts_completed || {};
+              const totalRows = Object.values(counts).reduce(
+                (a, n) => a + (Number(n) || 0), 0);
+              const collectionsTouched = Object.keys(counts).filter(
+                (k) => (Number(counts[k]) || 0) > 0).length;
+              return (
+                <p className="text-sm mb-4" style={{ color: colors.muted }}
+                    data-testid="hw-rollback-warning">
+                  This will delete {totalRows} imported record
+                  {totalRows === 1 ? "" : "s"} across {collectionsTouched}
+                  {" "}collection{collectionsTouched === 1 ? "" : "s"}.
+                  Idempotent — safe to run twice.
+                </p>
+              );
+            })()}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
@@ -381,6 +489,183 @@ export default function HomeworksImport() {
                 {rollbackBusy ? "Rolling back…" : "Confirm rollback"}
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Batch detail drawer (Phase 55-f) ─────────────────── */}
+      {detailTarget ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(15,23,42,0.55)" }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget && !commitBusy)
+                                    closeDetail(); }}
+          data-testid="hw-detail-drawer"
+        >
+          <div
+            className="w-full max-w-2xl rounded-2xl p-6 shadow-2xl bg-white max-h-[85vh] overflow-y-auto"
+            style={{ border: `1px solid ${colors.border}` }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <h2 className="text-lg font-bold"
+                    style={{ color: colors.onSurface }}>
+                  Batch {detailTarget.id.slice(0, 8)} · Dry-run report
+                </h2>
+                <div className="text-xs mt-1" style={{ color: colors.muted }}>
+                  State:{" "}
+                  <StatePill
+                    state={(progress?.state) || detailTarget.state}
+                    id={`detail-${detailTarget.id}`}
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeDetail}
+                disabled={commitBusy}
+                className="text-xs font-bold px-2 py-1 rounded-md bg-slate-100"
+                data-testid="hw-detail-close"
+              >
+                Close
+              </button>
+            </div>
+
+            {detailBusy && !detailReport ? (
+              <div className="text-sm py-6 text-center"
+                    style={{ color: colors.muted }}
+                    data-testid="hw-detail-loading">
+                Loading dry-run…
+              </div>
+            ) : detailReport ? (
+              <>
+                <table className="w-full text-xs mb-4 rounded overflow-hidden"
+                        style={{ border: `1px solid ${colors.border}` }}
+                        data-testid="hw-detail-dryrun-table">
+                  <thead style={{ background: colors.surfaceSecondary }}>
+                    <tr>
+                      <th className="text-left px-3 py-2" style={{ color: colors.muted }}>Entity</th>
+                      <th className="text-right px-3 py-2" style={{ color: colors.muted }}>New</th>
+                      <th className="text-right px-3 py-2" style={{ color: colors.muted }}>Matched</th>
+                      <th className="text-right px-3 py-2" style={{ color: colors.muted }}>Conflict</th>
+                      <th className="text-right px-3 py-2" style={{ color: colors.muted }}>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(detailReport.entity_counts || {}).map(
+                      ([et, c]) => (
+                        <tr key={et}
+                             data-testid={`hw-detail-row-${et}`}>
+                          <td className="px-3 py-2 font-semibold"
+                              style={{ color: colors.onSurface }}>{et}</td>
+                          <td className="px-3 py-2 text-right"
+                              style={{ color: colors.onSurface }}>{c.new || 0}</td>
+                          <td className="px-3 py-2 text-right"
+                              style={{ color: colors.onSurface }}>{c.matched || 0}</td>
+                          <td className="px-3 py-2 text-right"
+                              style={{ color: c.conflict ? "#DC2626" : colors.onSurface }}>
+                            {c.conflict || 0}
+                          </td>
+                          <td className="px-3 py-2 text-right font-bold"
+                              style={{ color: colors.onSurface }}>{c.total || 0}</td>
+                        </tr>
+                      ),
+                    )}
+                    {Object.keys(detailReport.entity_counts || {}).length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-3 py-4 text-center"
+                             style={{ color: colors.muted }}
+                             data-testid="hw-detail-empty">
+                          No staging rows yet. Run the Copilot CRM scraper first.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+
+                {progress ? (
+                  <div className="rounded-md p-3 text-xs mb-4"
+                        style={{ background: colors.surfaceSecondary,
+                                  color: colors.onSurface }}
+                        data-testid="hw-detail-progress">
+                    <div className="font-bold mb-1">Progress</div>
+                    {Object.entries(progress.entity_counts_completed || {})
+                      .length === 0 ? (
+                      <div style={{ color: colors.muted }}>Not yet started.</div>
+                    ) : (
+                      Object.entries(progress.entity_counts_completed || {}).map(
+                        ([et, done]) => {
+                          const total = (detailReport.entity_counts?.[et]?.total) ?? 0;
+                          return (
+                            <div key={et}
+                                  className="flex justify-between py-0.5"
+                                  data-testid={`hw-progress-row-${et}`}>
+                              <span>{et}</span>
+                              <span>{done} / {total || "?"}</span>
+                            </div>
+                          );
+                        })
+                    )}
+                    {progress.error_count > 0 ? (
+                      <div className="mt-2 font-bold"
+                            style={{ color: "#DC2626" }}
+                            data-testid="hw-progress-errors">
+                        {progress.error_count} error
+                        {progress.error_count === 1 ? "" : "s"} during commit —
+                        Resume to retry unprocessed rows.
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {(detailReport.warnings || []).length > 0 ? (
+                  <div className="rounded-md p-3 text-xs mb-4"
+                        style={{ background: "#FEF3C7",
+                                  color: "#92400E" }}
+                        data-testid="hw-detail-warnings">
+                    <div className="font-bold mb-1">
+                      {detailReport.warnings.length} warning
+                      {detailReport.warnings.length === 1 ? "" : "s"}
+                    </div>
+                    {detailReport.warnings.slice(0, 5).map((w, i) => (
+                      <div key={i}>
+                        [{w.entity_type}] {w.error}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+
+            {/* Commit / Resume CTA */}
+            {(() => {
+              const state = progress?.state || detailReport?.state
+                             || detailTarget.state;
+              const canCommit = state === "paused";
+              const canResume = state === "committed"
+                                 && (progress?.error_count || 0) > 0;
+              if (!canCommit && !canResume) return null;
+              return (
+                <div className="flex justify-end gap-2 pt-2 border-t"
+                      style={{ borderColor: colors.border }}>
+                  <button
+                    type="button"
+                    onClick={doCommit}
+                    disabled={commitBusy}
+                    className="inline-flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-60"
+                    style={{ background: colors.brand }}
+                    data-testid={canResume ? "hw-resume-btn"
+                                             : "hw-commit-btn"}
+                  >
+                    <Play size={12} />
+                    {commitBusy ? "Committing…"
+                                : canResume ? "Resume commit"
+                                             : "Commit batch"}
+                  </button>
+                </div>
+              );
+            })()}
           </div>
         </div>
       ) : null}
