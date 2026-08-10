@@ -372,10 +372,11 @@ class ItemIn(BaseModel):
     # Feb-2026 · PB1 · Internal cost fields (admin-only surface).
     wholesale_price: Optional[float] = 0.0
     labor_cost_default: Optional[float] = 0.0
-    # Legacy ``cost``/``tax_rate``/``description``/``active``/``sku``
-    # are accepted for backward compatibility with the existing
-    # Pricebook UI which sends them via POST /items.
-    cost: Optional[float] = 0.0
+    # Legacy ``tax_rate``/``description``/``active``/``sku`` are accepted
+    # for backward compatibility with the existing Pricebook UI which
+    # sends them via POST /items. Phase 56-e · Aug-2026 — legacy
+    # ``cost`` removed from the write contract; existing rows in
+    # Mongo may still have the field but new writes never set it.
     tax_rate: Optional[float] = 0.0
     description: Optional[str] = None
     active: Optional[bool] = True

@@ -84,7 +84,6 @@ class ItemPatch(BaseModel):
     category: Optional[str] = None
     unit: Optional[str] = None
     unit_price: Optional[float] = None
-    cost: Optional[float] = None
     tax_rate: Optional[float] = None
     description: Optional[str] = None
     active: Optional[bool] = None
@@ -206,8 +205,6 @@ async def patch_item(iid: str, body: ItemPatch,
         raise HTTPException(400, "No fields to update")
     if "unit_price" in upd and upd["unit_price"] < 0:
         raise HTTPException(422, "unit_price must be ≥ 0")
-    if "cost" in upd and upd["cost"] < 0:
-        raise HTTPException(422, "cost must be ≥ 0")
     if "tax_rate" in upd and (upd["tax_rate"] < 0 or upd["tax_rate"] > 100):
         raise HTTPException(422, "tax_rate must be between 0 and 100")
     # PB1 · Feb-2026 — wholesale + labor cost validation.

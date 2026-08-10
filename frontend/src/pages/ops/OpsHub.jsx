@@ -1761,7 +1761,7 @@ export function PriceBook() {
   //   grid; ``supplier_prices`` is an object keyed by slug → dollar
   //   string ("" = empty, excluded from payload).
   const [form, setForm] = useState({
-    name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0,
+    name: "", category: "Pool", unit: "each", unit_price: 0,
     tax_rate: 0, wholesale_price: 0, labor_cost_default: 0,
     service_category_id: "", income_category_id: "",
     supplier_prices: {},
@@ -1886,7 +1886,7 @@ export function PriceBook() {
     setEditingId(row.id);
     setEditDraft({
       name: row.name || "", category: row.category || "", unit: row.unit || "",
-      unit_price: row.unit_price || 0, cost: row.cost || 0,
+      unit_price: row.unit_price || 0,
       tax_rate: row.tax_rate || 0, active: row.active !== false,
       wholesale_price: row.wholesale_price || 0,
       labor_cost_default: row.labor_cost_default || 0,
@@ -1897,14 +1897,11 @@ export function PriceBook() {
     // mirrors the backend's PATCH /api/items/{iid} guards. Keeps error
     // toast copy identical to the server so QA regressions surface
     // the same message regardless of where the check fires.
-    const costN = Number(editDraft.cost);
+    // Phase 56-e · Aug-2026 — legacy ``cost`` removed. Wholesale +
+    // labor cost + tax rate are the surviving numeric fields.
     const taxN = Number(editDraft.tax_rate);
     const wpN = Number(editDraft.wholesale_price ?? 0);
     const laborN = Number(editDraft.labor_cost_default ?? 0);
-    if (Number.isNaN(costN) || costN < 0) {
-      setToast({ tone: "error", message: "Cost must be a number ≥ 0" });
-      return;
-    }
     if (Number.isNaN(taxN) || taxN < 0 || taxN > 100) {
       setToast({ tone: "error", message: "Tax rate must be between 0 and 100" });
       return;
@@ -1921,7 +1918,6 @@ export function PriceBook() {
       await api.patch(`/items/${rowId}`, {
         ...editDraft,
         unit_price: Number(editDraft.unit_price) || 0,
-        cost: costN,
         tax_rate: taxN,
         wholesale_price: wpN,
         labor_cost_default: laborN,
@@ -1978,14 +1974,10 @@ export function PriceBook() {
     } finally { setPricesBusy(false); }
   };
   const save = async () => {
-    const costN = Number(form.cost);
+    // Phase 56-e · Aug-2026 — legacy ``cost`` field removed.
     const taxN = Number(form.tax_rate);
     if (!form.service_category_id) {
       setToast({ tone: "error", message: "Please select a service category" });
-      return;
-    }
-    if (Number.isNaN(costN) || costN < 0) {
-      setToast({ tone: "error", message: "Cost must be a number ≥ 0" });
       return;
     }
     if (Number.isNaN(taxN) || taxN < 0 || taxN > 100) {
@@ -2009,14 +2001,13 @@ export function PriceBook() {
       await api.post("/items", {
         ...form,
         unit_price: Number(form.unit_price) || 0,
-        cost: costN,
         tax_rate: taxN,
         income_category_id: form.income_category_id || null,
         supplier_prices,
       });
       setOpen(false);
       setForm({
-        name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0,
+        name: "", category: "Pool", unit: "each", unit_price: 0,
         tax_rate: 0, service_category_id: "",
         income_category_id: "", supplier_prices: {},
       });
@@ -2119,13 +2110,6 @@ export function PriceBook() {
                           data-testid={`pb-edit-price-${r.id}`}
                           aria-label="Unit price ($)"
                           title="Unit price ($)" />
-                 <input value={editDraft.cost} type="number" step="0.01" min="0"
-                          onChange={(e) => setEditDraft({ ...editDraft, cost: e.target.value })}
-                          className="w-24 border pl-5 pr-2 py-1 text-sm rounded text-right"
-                          data-testid={`pb-edit-cost-${r.id}`}
-                          placeholder="cost"
-                          aria-label="Cost ($)"
-                          title="Cost ($)" />
                  <input value={editDraft.tax_rate} type="number" step="0.01" min="0" max="100"
                           onChange={(e) => setEditDraft({ ...editDraft, tax_rate: e.target.value })}
                           className="w-20 border px-2 py-1 text-sm rounded text-right"
