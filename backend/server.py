@@ -247,6 +247,10 @@ api_router.include_router(_pb_cost_comparison.router)
 # Phase 56-d · Aug-2026 — Supplier Spend / Margin report.
 from routers import pricebook_supplier_spend as _pb_spend  # noqa: E402
 api_router.include_router(_pb_spend.router)
+
+# Phase 55-a · Aug-2026 — Homeworks (Copilot CRM) importer scaffold.
+from routers import homeworks_import as _homeworks_import  # noqa: E402
+api_router.include_router(_homeworks_import.router)
 # Feb 2026 — Admin check-in overrides.
 from routers import admin_checkins as _admin_checkins  # noqa: E402
 api_router.include_router(_admin_checkins.router)

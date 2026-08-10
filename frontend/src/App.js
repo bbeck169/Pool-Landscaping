@@ -59,6 +59,8 @@ import ServiceCategoriesPage from "@/pages/settings/ServiceCategoriesPage";
 import BillingSettings from "@/pages/settings/BillingSettings";
 import SupplierSettings from "@/pages/settings/SupplierSettings";
 import SupplierSyncAnalytics from "@/pages/reports/SupplierSyncAnalytics";
+// Phase 55-a · Aug-2026 — Homeworks (Copilot CRM) importer scaffold.
+import HomeworksImport from "@/pages/settings/HomeworksImport";
 import AutoVisitEmailSettings from "@/pages/settings/AutoVisitEmailSettings";
 import PortalPhotos from "@/pages/portal/PortalPhotos";
 import PortalReviews from "@/pages/portal/PortalReviews";
@@ -618,6 +620,8 @@ export default function App() {
             {/* Phase 56-a.5 · Aug-2026 — Pricebook Suppliers admin
                 (vendor CRUD that feeds the Ops Hub Price Book grid). */}
             <Route path="settings/pricebook-suppliers" element={<AdminOnly><PricebookSuppliersAdmin /></AdminOnly>} />
+            {/* Phase 55-a · Aug-2026 — Homeworks (Copilot CRM) importer. */}
+            <Route path="settings/import/homeworks" element={<AdminOnly><HomeworksImport /></AdminOnly>} />
             {/* Phase 56-c · Aug-2026 — Pricebook Cost Comparison report. */}
             <Route path="admin/reports/pricebook-cost-comparison" element={<AdminOnly><PricebookCostComparison /></AdminOnly>} />
             {/* Phase 56-d · Aug-2026 — Supplier Spend / Margin report. */}

@@ -86,6 +86,9 @@ class PropertyIn(BaseModel):
     service_notes: Optional[Dict[str, Optional[str]]] = None
     photo_urls: Optional[List[str]] = None
     video_urls: Optional[List[str]] = None
+    # Phase 55-a · Aug-2026 — Homeworks importer FK. Nullable; enables
+    # per-batch rollback via ``delete_many({import_batch_id: X})``.
+    import_batch_id: Optional[str] = None
 
 
 class PropertyPatch(BaseModel):

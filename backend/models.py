@@ -88,6 +88,11 @@ class CustomerIn(BaseModel):
     # flips this to False via PUT /api/customers/{id}, the router cascades a
     # cancellation over all future scheduled jobs and deactivates recurring
     # templates. Missing/legacy docs read back as True (assumed active).
+    # Phase 55-a · Aug-2026 — Homeworks importer FK. Nullable; set by
+    # the Copilot CRM importer so a single ``rollback`` on the batch
+    # can ``delete_many({import_batch_id: X})``. Legacy customers read
+    # back as ``None``.
+    import_batch_id: Optional[str] = None
     is_active: Optional[bool] = True
 
     @field_validator("pool_gallons")
@@ -164,6 +169,9 @@ class JobIn(BaseModel):
     # "required when customer has ≥2 properties" rule and auto-assigns
     # when exactly 1 property exists.
     property_id: Optional[str] = None
+    # Phase 55-a · Aug-2026 — Homeworks importer FK. Nullable; enables
+    # per-batch rollback via ``delete_many({import_batch_id: X})``.
+    import_batch_id: Optional[str] = None
 
 
 class JobUpdate(BaseModel):
@@ -232,6 +240,10 @@ class QuoteIn(BaseModel):
     # the customer owns multiple, callers should send an explicit id;
     # leaving it null is allowed (consolidated-across-properties case).
     property_id: Optional[str] = None
+    # Phase 55-a · Aug-2026 — Homeworks importer FK. Nullable; covers
+    # BOTH quotes and invoices (same collection family). Enables
+    # per-batch rollback.
+    import_batch_id: Optional[str] = None
 
 
 class QuoteUpdate(BaseModel):
