@@ -1,4 +1,4 @@
-import { LayoutDashboard, CalendarDays, Truck, Route, Workflow, DoorOpen, Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers, UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone, Timer as TimerIcon, BarChart3, TrendingUp, PieChart, Megaphone, Palette, MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit, BadgeCheck, Shield, Bell as BellIcon, MapIcon, ScrollText, Grid3x3, Compass, Rss, PencilRuler, Building2, Map as MapPinIcon, Gauge, Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon, Home as HomeIcon, Cloud, LibraryBig, ClipboardList as ClipboardListIcon2, Mail, FlaskConical, GitBranch, Tag, RefreshCw } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, Truck, Route, Workflow, DoorOpen, Users, UserPlus, FileText, Calculator, Receipt, CreditCard, Repeat, DollarSign, Zap, Layers, UsersRound, UserCog, Clock, Timer, ShieldCheck, Wrench, BookOpen, Cog, Waves, History, CalendarClock, LineChart, Phone, Timer as TimerIcon, BarChart3, TrendingUp, PieChart, Megaphone, Palette, MessageSquare, Bell, CheckSquare, Bot, ListChecks, Send, Star as StarIcon, Sparkles, Ruler, Image, MapPin, Sun, IdCard, Search as SearchIcon, Globe, FileEdit, BadgeCheck, Shield, Bell as BellIcon, MapIcon, ScrollText, Grid3x3, Compass, Rss, PencilRuler, Building2, Map as MapPinIcon, Gauge, Boxes, AlertTriangle as AlertTriangleIcon, ShoppingCart as ShoppingCartIcon, Home as HomeIcon, Cloud, LibraryBig, ClipboardList as ClipboardListIcon2, Mail, FlaskConical, GitBranch, Tag, RefreshCw, Store } from 'lucide-react';
 
 /**
  * Phase 35 — Admin navigation single-source-of-truth (6-category IA).
@@ -269,6 +269,11 @@ export const ADMIN_NAV_V2 = [
     // in App.js. ``feature: "settings"`` lands the entry in the same
     // RBAC bucket as neighbouring integrations rows below.
     { to: "/settings/suppliers",           label: "Wholesale Suppliers", icon: Boxes,     feature: "settings", hard_rule: "manager_only" },
+    // Phase 56-a.5 · Aug-2026 — Pricebook Suppliers admin (vendor CRUD
+    // that feeds the Ops Hub Price Book multi-supplier grid). Sibling
+    // of the Wholesale Suppliers row above, but tighter role gate
+    // (admin + super_admin only, no manager) per preflight §3.
+    { to: "/settings/pricebook-suppliers", label: "Pricebook Suppliers", icon: Store,     feature: "settings", hard_rule: "admin_only" },
     // PB1 · Feb-2026 — Internal profit report (admin/super_admin only).
     { to: "/admin/reports/profit",         label: "Profit Report",       icon: TrendingUp, feature: "reports", hard_rule: "admin_only" },
     { to: "/admin/cfo/reports",            label: "CFO Reports",         icon: PieChart, feature: "reports" },

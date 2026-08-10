@@ -220,6 +220,14 @@ export const ADMIN_NAV: NavGroup[] = [
       // admin + manager) matches the web ``AdminOrManagerForSuppliers``
       // route guard.
       { label: "Wholesale Suppliers", route: "/settings/suppliers",      icon: "cube-outline",           tier: "t1", testID: "drawer-nav-wholesale-suppliers" },
+      // Phase 56-a.5 · Aug-2026 — Pricebook Suppliers admin drawer stub.
+      // ComingSoon (t2) — native mobile screen is a TODO for
+      // Phase 56-mobile-B; web-side lands the full CRUD at
+      // ``/settings/pricebook-suppliers``. Role gate is tighter than
+      // Wholesale Suppliers — ``super_admin + admin`` only per
+      // preflight §3 (no manager).
+      // TODO(Phase 56-mobile-B): swap to a t1 native screen.
+      { label: "Pricebook Suppliers", route: "/settings/pricebook-suppliers", icon: "storefront-outline",     tier: "t2", roles: ["super_admin", "admin"], testID: "drawer-nav-pricebook-suppliers" },
     ],
   },
   {
