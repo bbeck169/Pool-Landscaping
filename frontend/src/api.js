@@ -99,10 +99,9 @@ async function request(path, options = {}, timeoutMs = 30000) {
         .join(" ");
     } else if (msg && typeof msg === "object") {
       // FastAPI custom-shape details like `{code, msg}` (e.g. 403 not_landscaping).
-      msg = msg.msg || msg.message || msg.code || null;
+      msg = msg.msg || msg.message || msg.code || msg.error || null;
     }
     if (typeof msg !== "string" || !msg) msg = `Request failed (${res.status})`;
-
     // Feb-2026 · Zombie-session hotfix — global 401 interceptor.
     // Only fires when:
     //   1. Status is 401.

@@ -1753,11 +1753,29 @@ function SupplierBadge({ slug, testid }) {
 }
 
 
-function PriceBook() {
+export function PriceBook() {
   const [rows, refresh] = useList("/items");
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0, tax_rate: 0, wholesale_price: 0, labor_cost_default: 0 });
+  const [form, setForm] = useState({ name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0, tax_rate: 0, wholesale_price: 0, labor_cost_default: 0, service_category_id: "" });
   const [toast, setToast] = useState(null);
+  // Aug-2026 · Fix P1 — Pricebook create requires ``service_category_id``.
+  // Fetch the active service categories once on mount and expose
+  // them to the "New item" modal's <select>. Archived categories
+  // are filtered client-side so a category recently retired won't
+  // still appear as a picker option even if the server response
+  // included it. If the fetch fails or the list is empty, disable
+  // Save and show an inline hint linking to /settings/service-
+  // categories so an admin can seed one.
+  const [serviceCats, setServiceCats] = useState(null); // null = loading, [] = empty, [...] = loaded
+  const [serviceCatsError, setServiceCatsError] = useState("");
+  useEffect(() => {
+    api.get("/service-categories")
+      .then((r) => {
+        const raw = Array.isArray(r) ? r : (r?.categories || r?.items || []);
+        setServiceCats(raw.filter((c) => !c.is_archived));
+      })
+      .catch((e) => setServiceCatsError(e?.message || "Failed to load service categories"));
+  }, []);
   // Phase 54f · Feb-2026 — supplier column + filter.
   //
   // ``SUPPLIER_META`` is looked up per-row for the badge label + color.
@@ -1871,6 +1889,10 @@ function PriceBook() {
   const save = async () => {
     const costN = Number(form.cost);
     const taxN = Number(form.tax_rate);
+    if (!form.service_category_id) {
+      setToast({ tone: "error", message: "Please select a service category" });
+      return;
+    }
     if (Number.isNaN(costN) || costN < 0) {
       setToast({ tone: "error", message: "Cost must be a number ≥ 0" });
       return;
@@ -1887,7 +1909,7 @@ function PriceBook() {
         tax_rate: taxN,
       });
       setOpen(false);
-      setForm({ name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0, tax_rate: 0 });
+      setForm({ name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0, tax_rate: 0, service_category_id: "" });
       refresh();
     } catch (e) { setToast({ tone: "error", message: e.message }); }
   };
@@ -2125,9 +2147,48 @@ function PriceBook() {
         </div>
       ) : null}
       <Modal open={open} onClose={() => setOpen(false)} title="New item"
-        footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save} testid="pb-new-save">Save</Button></>}>
+        footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save} testid="pb-new-save" disabled={!form.service_category_id || (serviceCats !== null && serviceCats.length === 0)}>Save</Button></>}>
         <div className="space-y-2">
           <TextInput label="NAME" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} testid="pb-new-name" />
+          {/* Aug-2026 · Fix P1 — required service category picker. */}
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wide mb-1"
+                    style={{ color: colors.muted }}>
+              Service Category *
+            </label>
+            <select
+              value={form.service_category_id}
+              onChange={(e) => setForm({ ...form, service_category_id: e.target.value })}
+              className="w-full px-3 py-2 rounded-md text-sm"
+              style={{ background: colors.surface,
+                        border: `1px solid ${colors.border}`,
+                        color: colors.onSurface }}
+              data-testid="pb-new-service-category"
+              disabled={serviceCats === null || (serviceCats !== null && serviceCats.length === 0)}
+            >
+              <option value="">
+                {serviceCats === null ? "Loading…" : "Select a service category…"}
+              </option>
+              {(serviceCats || []).map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            {serviceCatsError ? (
+              <div className="text-xs mt-1" style={{ color: "#B91C1C" }}
+                    data-testid="pb-new-service-category-error">
+                {serviceCatsError}
+              </div>
+            ) : null}
+            {serviceCats !== null && serviceCats.length === 0 && !serviceCatsError ? (
+              <div className="text-xs mt-1" style={{ color: "#B45309" }}
+                    data-testid="pb-new-service-category-empty">
+                No service categories available. Ask an admin to add one at
+                {" "}<a href="/settings/service-categories" className="underline">
+                  /settings/service-categories
+                </a>.
+              </div>
+            ) : null}
+          </div>
           <TextInput label="CATEGORY" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} testid="pb-new-category" />
           <TextInput label="UNIT" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} testid="pb-new-unit" />
           <TextInput label="UNIT PRICE ($)" type="number" step="0.01" min="0" value={form.unit_price} onChange={(e) => setForm({ ...form, unit_price: e.target.value })} testid="pb-new-price" />
