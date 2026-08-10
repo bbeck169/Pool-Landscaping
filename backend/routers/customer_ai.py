@@ -18,6 +18,7 @@ admin group.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -375,7 +376,6 @@ def _format_context_for_prompt(ctx: Dict[str, Any]) -> str:
     easier for the model to quote exact numbers back to the customer
     without paraphrasing them.
     """
-    import json
     return (
         "You have been given the CALLER CUSTOMER's own data below in "
         "JSON. Answer only from this payload; do not invent numbers "
@@ -742,7 +742,7 @@ async def send_customer_message(
             payload = outcome.get("result") if "result" in outcome else outcome
             follow = (
                 f"Tool `{tname}` returned:\n"
-                f"```json\n{__import__('json').dumps(payload, default=str)[:3000]}\n```\n"
+                f"```json\n{json.dumps(payload, default=str)[:3000]}\n```\n"
                 "Answer the user's question with this data. If it "
                 "doesn't help, offer to escalate."
             )

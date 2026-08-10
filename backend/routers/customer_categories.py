@@ -58,7 +58,7 @@ _DAY_NAMES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 def _pick_color(name: str) -> str:
     # MD5 for stable non-security identifier (not password/signature)
-    h = int(hashlib.md5(name.strip().lower().encode()).hexdigest(), 16)
+    h = int(hashlib.md5(name.strip().lower().encode()).hexdigest(), 16)  # noqa: S324 — non-security cache-key hash
     return _PALETTE[h % len(_PALETTE)]
 
 

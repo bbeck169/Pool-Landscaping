@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, Response
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
+import re
 
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
@@ -93,7 +94,7 @@ async def list_quotes(user: dict = Depends(get_current_user),
             q["$and"] = q.get("$and", []) + [{
                 "$or": [
                     {"line_items": {"$elemMatch": {"category": {
-                        "$regex": f"^{__import__('re').escape(c)}$",
+                        "$regex": f"^{re.escape(c)}$",
                         "$options": "i"}}}}
                     for c in cats
                 ]

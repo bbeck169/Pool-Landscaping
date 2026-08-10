@@ -85,10 +85,10 @@ def _active_is_false(user: dict) -> bool:
     now = _t.time()
     hit = _ACTIVE_CACHE.get(uid)
     if hit and (now - hit[0]) < _ACTIVE_TTL:
-        return hit[1] is False
+        return hit[1] == False  # noqa: E712 — explicit False match (not None/0/'')
     active = user.get("active")
     _ACTIVE_CACHE[uid] = (now, active)
-    return active is False
+    return active == False  # noqa: E712 — explicit False match (not None/0/'')
 
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:

@@ -147,8 +147,8 @@ def test_cache_hit_short_circuits_http(adapter_env):
     client = za.ZillowClient(http_client=fake_http)
 
     r = _run(client.search_by_address("742 aquaterra way"))
-    assert r["unavailable"] is False
-    assert r["cached"] is True
+    assert not r["unavailable"]
+    assert r["cached"]
     assert r["data"] == OWN_SEARCH_OK
     assert fake_http.calls == []
 
@@ -163,8 +163,8 @@ def test_cache_miss_writes_fresh_entry_and_uses_x_api_key(adapter_env):
 
     r = _run(client.search_by_address("100 aquaterra ave"))
 
-    assert r["unavailable"] is False
-    assert r["cached"] is False
+    assert not r["unavailable"]
+    assert not r["cached"]
     assert r["data"] == OWN_SEARCH_OK
     assert len(fake_http.calls) == 1
 
@@ -194,7 +194,7 @@ def test_property_detail_hits_property_endpoint(adapter_env):
     client = za.ZillowClient(http_client=fake_http)
 
     r = _run(client.property_detail("own-detail-1-aquaterra"))
-    assert r["unavailable"] is False
+    assert not r["unavailable"]
     assert r["data"] == OWN_PROPERTY_OK
 
     call = fake_http.calls[0]
@@ -211,7 +211,7 @@ def test_zestimate_reuses_property_endpoint(adapter_env):
     client = za.ZillowClient(http_client=fake_http)
 
     r = _run(client.zestimate("own-detail-1-aquaterra"))
-    assert r["unavailable"] is False
+    assert not r["unavailable"]
     assert r["data"] == OWN_ZESTIMATE_OK
     assert fake_http.calls[0]["url"] == f"{za.PROVIDER_BASE_URL}/property"
 
@@ -274,7 +274,7 @@ def test_test_scope_allowlist_env(adapter_env, monkeypatch):
     client = za.ZillowClient(http_client=fake_http)
 
     r = _run(client.search_by_address("742 Evergreen Terrace, Springfield"))
-    assert r["unavailable"] is False
+    assert not r["unavailable"]
     assert r["data"] == OWN_SEARCH_OK
 
 
@@ -288,7 +288,7 @@ def test_production_env_skips_test_scope_guard(adapter_env, monkeypatch):
     client = za.ZillowClient(http_client=fake_http)
 
     r = _run(client.search_by_address("742 Evergreen Terrace, Springfield"))
-    assert r["unavailable"] is False
+    assert not r["unavailable"]
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -307,8 +307,8 @@ def test_ttl_expiry_forces_refresh(adapter_env):
     client = za.ZillowClient(http_client=fake_http)
 
     r = _run(client.search_by_address("300 aquaterra st"))
-    assert r["unavailable"] is False
-    assert r["cached"] is False
+    assert not r["unavailable"]
+    assert not r["cached"]
     assert r["data"] == fresh
     assert len(fake_http.calls) == 1
 
@@ -383,7 +383,7 @@ def test_key_resolution_falls_back_to_base_env(adapter_env, monkeypatch):
     fake_http = _FakeAsyncClient([_FakeResponse(200, OWN_SEARCH_OK)])
     client = za.ZillowClient(http_client=fake_http)
     r = _run(client.search_by_address("400 aquaterra"))
-    assert r["unavailable"] is False
+    assert not r["unavailable"]
     assert fake_http.calls[0]["headers"] == {"x-api-key": "fallback-key-xxx"}
 
 
@@ -398,8 +398,8 @@ def test_second_call_hits_cache(adapter_env):
     r1 = _run(client.search_by_address("77 aquaterra ln"))
     r2 = _run(client.search_by_address("77 aquaterra ln"))
 
-    assert r1["cached"] is False
-    assert r2["cached"] is True
+    assert not r1["cached"]
+    assert r2["cached"]
     assert r2["data"] == OWN_SEARCH_OK
     assert len(fake_http.calls) == 1
 
@@ -417,7 +417,7 @@ def test_replace_me_placeholder_treated_as_not_configured(adapter_env, monkeypat
     za._reset_placeholder_warning_for_tests()
 
     # keys_configured() must report False.
-    assert za.keys_configured() is False
+    assert not za.keys_configured()
     # Startup banner reflects the guard.
     assert "keys_configured=False" in za.startup_log_line()
 
@@ -440,7 +440,7 @@ def test_replace_me_placeholder_falls_back_to_base_env_variant(adapter_env, monk
     monkeypatch.setenv("OPENWEB_NINJA_API_KEY",
                           "REPLACE_ME_WITH_ROTATED_OPENWEBNINJA_KEY")
     za._reset_placeholder_warning_for_tests()
-    assert za.keys_configured() is False
+    assert not za.keys_configured()
 
 
 def test_placeholder_warning_is_one_shot_per_process(adapter_env, monkeypatch, caplog):

@@ -88,7 +88,7 @@ def test_tech_within_daily_cap_allowed():
         tenant, tech, *_ = await _seed_tenant_and_users()
         try:
             caps = await check_caps(tech, tenant)
-            assert caps["allowed"] is True
+            assert caps["allowed"]
             assert caps["reason"] is None
             assert caps["usage"]["tech_daily_cap"] == TECH_DAILY_CAP
             assert caps["usage"]["tech_monthly_cap"] == TECH_MONTHLY_CAP
@@ -107,7 +107,7 @@ def test_tech_hits_daily_cap_denied_with_reset():
             for i in range(TECH_DAILY_CAP):
                 await log_call(tech, tenant, "/property/lookup", f"addr {i}")
             caps = await check_caps(tech, tenant)
-            assert caps["allowed"] is False
+            assert not caps["allowed"]
             assert caps["reason"] == "tech_daily_cap"
             assert caps["reset_at"] is not None
             assert caps["reset_at"] > _now().isoformat()
@@ -126,7 +126,7 @@ def test_tenant_budget_reaches_100pct_denied_for_admin():
             for i in range(TENANT_MONTHLY_BUDGET_DEFAULT):
                 await log_call(admin, tenant, "/property/lookup", f"a{i}")
             caps = await check_caps(admin, tenant)
-            assert caps["allowed"] is False
+            assert not caps["allowed"]
             assert caps["reason"] == "tenant_budget_exhausted"
             assert caps["tenant_used"] >= TENANT_MONTHLY_BUDGET_DEFAULT
             # Admin trying `override_budget=True` — MUST NOT unlock
@@ -134,7 +134,7 @@ def test_tenant_budget_reaches_100pct_denied_for_admin():
             still = await apply_override_or_fail(
                 caps, admin, tenant, "/property/lookup", "x", True
             )
-            assert still["allowed"] is False
+            assert not still["allowed"]
         finally:
             await _cleanup(tenant["id"])
     _run(go())
@@ -149,8 +149,8 @@ def test_tenant_budget_warns_at_90pct():
             for i in range(900):
                 await log_call(admin, tenant, "/property/lookup", f"a{i}")
             caps = await check_caps(tech, tenant)
-            assert caps["allowed"] is True
-            assert caps["budget_warning"] is True
+            assert caps["allowed"]
+            assert caps["budget_warning"]
             assert caps["tenant_pct"] >= 0.90
         finally:
             await _cleanup(tenant["id"])
@@ -165,12 +165,12 @@ def test_super_admin_override_writes_audit_event():
             for i in range(TENANT_MONTHLY_BUDGET_DEFAULT):
                 await log_call(admin, tenant, "/property/lookup", f"a{i}")
             caps = await check_caps(sadmin, tenant)
-            assert caps["allowed"] is False
+            assert not caps["allowed"]
             unlocked = await apply_override_or_fail(
                 caps, sadmin, tenant, "/property/lookup",
                 "123 test st", override_budget=True,
             )
-            assert unlocked["allowed"] is True
+            assert unlocked["allowed"]
             assert unlocked["reason"] is None
             assert unlocked.get("override_audit_id")
             db = _mongo()

@@ -29,7 +29,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from config import db, logger
 from routers.tenants import get_current_tenant
 from utils import get_current_user, new_id, now_iso, require_admin
-from models import *  # noqa: F403,F405  # LeadIn / LeadUpdate / etc.
+from models import (
+    ConvertJobIn, ConvertQuoteIn, LeadCloseLostIn, LeadIn,
+    LeadNoteIn, LeadUpdate, PublicLeadIn,
+)  # LeadIn / LeadUpdate / etc.
 
 router = APIRouter()
 

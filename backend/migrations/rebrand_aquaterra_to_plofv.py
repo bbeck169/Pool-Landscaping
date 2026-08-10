@@ -61,24 +61,13 @@ EMAIL_SENDER = {
 INTERNAL_LEAD_EMAIL = "brian@plofv.com"
 
 
-async def run() -> Dict[str, Any]:
-    """Runs the migration on every boot. Idempotent."""
-    report: Dict[str, Any] = {
-        "tenant_found": False,
-        "name_changed": False,
-        "slug_alias_added": False,
-        "business_card_fields_added": [],
-        "email_sender_set": False,
-        "internal_lead_email_set": False,
-        "primary_app_domain_field_added": False,
-    }
-
-    tenant = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0})
-    if not tenant:
-        logger.info("[phase21] aquaterra tenant not found — skipping rebrand migration")
-        return report
-    report["tenant_found"] = True
-
+def _apply_tenant_config_updates(
+    tenant: Dict[str, Any], report: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Compute the ``$set`` patch that rebrands tenant metadata +
+    settings. Split out from ``run()`` (Batch 2 · complexity refactor)
+    so the config-vs-DB concerns are isolated. Mutates ``report`` in
+    place with per-field booleans + lists."""
     sets: Dict[str, Any] = {}
     settings = tenant.get("settings") or {}
     card = settings.get("business_card") or {}
@@ -115,35 +104,27 @@ async def run() -> Dict[str, Any]:
         sets["settings.email_sender"] = EMAIL_SENDER
         report["email_sender_set"] = True
 
-    # 5. Internal lead notification email verify.
+    # 5. Internal lead notification email.
     if lead_notif.get("email_to") != INTERNAL_LEAD_EMAIL:
         sets["settings.internal_lead_notifications.email_to"] = INTERNAL_LEAD_EMAIL
         report["internal_lead_email_set"] = True
 
-    # 6. Primary app domain — Phase 21 activation. Sets the tenant's
-    #    ``primary_app_domain`` to ``https://app.plofv.com`` ONLY when
-    #    it is currently unset (either missing or explicitly None).
-    #    Idempotent: once an admin overrides the value in the UI, we
-    #    never overwrite it.
-    if "primary_app_domain" not in settings or settings.get("primary_app_domain") is None:
+    # 6. Primary app domain — set only when currently unset.
+    if "primary_app_domain" not in settings \
+            or settings.get("primary_app_domain") is None:
         sets["settings.primary_app_domain"] = PRIMARY_APP_DOMAIN
         report["primary_app_domain_field_added"] = True
 
-    if sets:
-        sets["updated_at"] = now_iso()
-        sets["rebrand_phase21_applied_at"] = now_iso()
-        await db.tenants.update_one({"id": tenant["id"]}, {"$set": sets})
-        logger.info(
-            "[phase21] rebrand applied — tenant=%s changes=%s",
-            tenant["id"], sorted(list(sets.keys())),
-        )
-    else:
-        logger.info("[phase21] rebrand already applied — no changes")
+    return sets
 
-    # 7. Refresh the seeded ai_knowledge_base company_profile doc IFF
-    #    it still holds the AquaTerra-branded seed content AND was
-    #    never edited by a human (``created_by == "system"``). Admin
-    #    edits are preserved.
+
+async def _refresh_ai_knowledge_base_seed(
+    tenant: Dict[str, Any], report: Dict[str, Any],
+) -> None:
+    """Rewrite the seeded ``ai_knowledge_base`` company_profile doc iff
+    it still carries the AquaTerra-branded seed AND was never edited
+    by a human. Admin edits are preserved. Split out from ``run()``
+    for the same reason as ``_apply_tenant_config_updates``."""
     kb_updates = await db.ai_knowledge_base.update_many(
         {
             "tenant_id": tenant["id"],
@@ -175,4 +156,43 @@ async def run() -> Dict[str, Any]:
             report["ai_knowledge_base_profiles_rebranded"],
         )
 
+
+async def run() -> Dict[str, Any]:
+    """Runs the migration on every boot. Idempotent.
+
+    Orchestrates two extracted helpers (Batch 2 · complexity refactor):
+      * ``_apply_tenant_config_updates`` — tenant metadata + settings
+      * ``_refresh_ai_knowledge_base_seed`` — company_profile refresh
+    """
+    report: Dict[str, Any] = {
+        "tenant_found": False,
+        "name_changed": False,
+        "slug_alias_added": False,
+        "business_card_fields_added": [],
+        "email_sender_set": False,
+        "internal_lead_email_set": False,
+        "primary_app_domain_field_added": False,
+    }
+
+    tenant = await db.tenants.find_one({"slug": "aquaterra"}, {"_id": 0})
+    if not tenant:
+        logger.info(
+            "[phase21] aquaterra tenant not found — skipping rebrand migration")
+        return report
+    report["tenant_found"] = True
+
+    sets = _apply_tenant_config_updates(tenant, report)
+
+    if sets:
+        sets["updated_at"] = now_iso()
+        sets["rebrand_phase21_applied_at"] = now_iso()
+        await db.tenants.update_one({"id": tenant["id"]}, {"$set": sets})
+        logger.info(
+            "[phase21] rebrand applied — tenant=%s changes=%s",
+            tenant["id"], sorted(list(sets.keys())),
+        )
+    else:
+        logger.info("[phase21] rebrand already applied — no changes")
+
+    await _refresh_ai_knowledge_base_seed(tenant, report)
     return report

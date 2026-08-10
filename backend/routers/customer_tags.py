@@ -52,7 +52,7 @@ def _pick_color(name: str) -> str:
     """Deterministic palette pick — same name → same color across
     reloads. Uses a stable md5 hash mod palette length."""
     # MD5 for stable non-security identifier (not password/signature)
-    h = int(hashlib.md5(name.strip().lower().encode()).hexdigest(), 16)
+    h = int(hashlib.md5(name.strip().lower().encode()).hexdigest(), 16)  # noqa: S324 — non-security cache-key hash
     return _PALETTE[h % len(_PALETTE)]
 
 

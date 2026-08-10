@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import secrets
 import string
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -371,69 +371,47 @@ async def undelete_user(
     return {"ok": True, "user_id": uid, "restored_at": now_iso()}
 
 
-async def _perform_soft_delete(uid: str, user: Dict[str, Any]) -> Dict[str, Any]:
-    """Shared soft-delete implementation used by BOTH the legacy DELETE
-    handler and the new POST /soft-delete endpoint. Enforces the full
-    permission matrix from the Feb-2026 Team page brief:
+def _check_soft_delete_permissions(
+    user: Dict[str, Any], target: Dict[str, Any], live_supers: int,
+) -> None:
+    """Raise HTTPException if the caller cannot soft-delete ``target``.
 
-    * Caller must be ``admin`` or ``super_admin``.
-    * Caller cannot delete themselves → 400.
-    * Regular ``admin`` can only delete tech targets → 403 otherwise.
-    * Only a ``super_admin`` may delete another ``super_admin``.
-    * The last remaining live ``super_admin`` in a tenant cannot be
-      deleted (would lock the tenant out of super-only surfaces) → 409.
-    * Cross-tenant deletes require ``super_admin`` → 403.
-
-    Cascade behavior (unchanged from the legacy handler):
-      * Any scheduled/active/in-progress job assigned to the target is
-        reassigned to an ``"unassigned"`` placeholder tech id.
-      * Any active/scheduled ``route_assignment_overrides`` involving
-        the target are canceled with ``reason=owner_deleted``.
-
-    Sets ``deleted_at``, ``deleted_by_user_id``, ``roster_hidden=true``,
-    ``sessions_revoked_at`` on the target and writes an audit row.
+    Extracted from ``_perform_soft_delete`` (Batch 2 · complexity
+    refactor) so the permission matrix from the Feb-2026 Team page
+    brief lives in one auditable place.
     """
-    _require_admin(user)
-    if uid == user.get("id"):
-        raise HTTPException(400, "You cannot delete your own user")
-
-    target = await db.users.find_one({"id": uid}, {"_id": 0})
-    if not target:
-        raise HTTPException(404, "User not found")
-    if target.get("deleted_at"):
-        return {"ok": True, "user_id": uid, "already_deleted": True}
-
     caller_role = (user.get("role") or "").lower()
-
     # Regular admin can only delete tech rows.
     if caller_role == "admin" and not _is_tech_target(target):
-        raise HTTPException(403,
+        raise HTTPException(
+            403,
             "Admins can only delete technicians. Ask a super_admin "
-            "to remove admins or managers.")
-
+            "to remove admins or managers.",
+        )
     # Guardrail: block deletion of the last super_admin in a tenant.
-    if target.get("role") == "super_admin":
-        live_supers = await db.users.count_documents({
-            "tenant_id": target.get("tenant_id"),
-            "role": "super_admin",
-            "$or": [{"deleted_at": None}, {"deleted_at": {"$exists": False}}],
-        })
-        if live_supers <= 1:
-            raise HTTPException(409, "Cannot delete the last super_admin in this tenant")
-
+    if target.get("role") == "super_admin" and live_supers <= 1:
+        raise HTTPException(
+            409, "Cannot delete the last super_admin in this tenant")
     # A regular admin cannot delete a super_admin.
-    if target.get("role") == "super_admin" and user.get("role") != "super_admin":
-        raise HTTPException(403, "Only a super_admin can delete another super_admin")
-
+    if target.get("role") == "super_admin" \
+            and user.get("role") != "super_admin":
+        raise HTTPException(
+            403, "Only a super_admin can delete another super_admin")
     # Cross-tenant delete requires super_admin.
-    if user.get("role") == "admin":
-        if target.get("tenant_id") != user.get("tenant_id"):
-            raise HTTPException(403, "Cross-tenant delete requires super_admin")
+    if user.get("role") == "admin" \
+            and target.get("tenant_id") != user.get("tenant_id"):
+        raise HTTPException(
+            403, "Cross-tenant delete requires super_admin")
 
-    # Cascade — reassign any scheduled jobs to an "Unassigned"
-    # placeholder tech id so schedule + dispatch don't break.
+
+async def _cascade_soft_delete_reassignments(
+    uid: str, target: Dict[str, Any],
+) -> List[str]:
+    """Reassign in-flight jobs + cancel active route overrides that
+    reference the deleted user. Returns the list of reassigned job ids
+    for the audit trail. Extracted from ``_perform_soft_delete``."""
     unassigned_placeholder = "unassigned"
-    reassigned_jobs: list = []
+    reassigned_jobs: List[str] = []
     async for j in db.jobs.find({
         "tenant_id": target.get("tenant_id"),
         "$or": [{"technician_id": target.get("id")},
@@ -449,7 +427,6 @@ async def _perform_soft_delete(uid: str, user: Dict[str, Any]) -> Dict[str, Any]
                         "reassigned_from_user_id": uid,
                         "reassigned_at": now_iso()}},
         )
-    # Cancel active route_assignment_overrides involving the user.
     try:
         await db.route_assignment_overrides.update_many(
             {"tenant_id": target.get("tenant_id"),
@@ -462,6 +439,43 @@ async def _perform_soft_delete(uid: str, user: Dict[str, Any]) -> Dict[str, Any]
         )
     except Exception as e:
         logger.warning(f"delete_user override cancel failed: {e}")
+    return reassigned_jobs
+
+
+async def _perform_soft_delete(uid: str, user: Dict[str, Any]) -> Dict[str, Any]:
+    """Shared soft-delete implementation used by BOTH the legacy DELETE
+    handler and the new POST /soft-delete endpoint. Enforces the full
+    permission matrix from the Feb-2026 Team page brief (delegated to
+    ``_check_soft_delete_permissions``) and cascades in-flight jobs +
+    route overrides (delegated to
+    ``_cascade_soft_delete_reassignments``).
+
+    Sets ``deleted_at``, ``deleted_by_user_id``, ``roster_hidden=true``,
+    ``sessions_revoked_at`` on the target and writes an audit row.
+    """
+    _require_admin(user)
+    if uid == user.get("id"):
+        raise HTTPException(400, "You cannot delete your own user")
+
+    target = await db.users.find_one({"id": uid}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "User not found")
+    if target.get("deleted_at"):
+        return {"ok": True, "user_id": uid, "already_deleted": True}
+
+    # Count live super_admins in the target tenant BEFORE permission
+    # check so the last-super_admin guardrail can fire.
+    live_supers = 0
+    if target.get("role") == "super_admin":
+        live_supers = await db.users.count_documents({
+            "tenant_id": target.get("tenant_id"),
+            "role": "super_admin",
+            "$or": [{"deleted_at": None},
+                     {"deleted_at": {"$exists": False}}],
+        })
+    _check_soft_delete_permissions(user, target, live_supers)
+
+    reassigned_jobs = await _cascade_soft_delete_reassignments(uid, target)
 
     deleted_at = now_iso()
     await db.users.update_one(

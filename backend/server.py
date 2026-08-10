@@ -3,6 +3,7 @@ from fastapi import FastAPI, APIRouter, Depends
 # include_router() time on every GPS router except gps_ingest (POST /gps/pings
 # stays open to techs).
 from utils import require_gps_read as _rg
+from utils import new_id as _utils_new_id, now_iso as _utils_now_iso
 from starlette.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import os
@@ -1106,12 +1107,12 @@ async def _background_seed():
                     exists = await db.leads.find_one({"phone": phone, "source": "rc-contact-sync"})
                     if exists: continue
                     await db.leads.insert_one({
-                        "id": __import__("utils").new_id(),
+                        "id": _utils_new_id(),
                         "source": "rc-contact-sync",
                         "phone": phone,
                         "name": f"{r.get('firstName','')} {r.get('lastName','')}".strip() or "Unknown",
                         "email": r.get("email"),
-                        "created_at": __import__("utils").now_iso(),
+                        "created_at": _utils_now_iso(),
                         "status": "new",
                     })
             except Exception:
