@@ -235,6 +235,10 @@ api_router.include_router(_dashboard_revenue.router)
 # Feb 2026 — Income category picklist + enforcement.
 from routers import income_categories as _income_categories  # noqa: E402
 api_router.include_router(_income_categories.router)
+
+# Phase 56-a · Aug-2026 — Pricebook Suppliers CRUD.
+from routers import pricebook_suppliers as _pricebook_suppliers  # noqa: E402
+api_router.include_router(_pricebook_suppliers.router)
 # Feb 2026 — Admin check-in overrides.
 from routers import admin_checkins as _admin_checkins  # noqa: E402
 api_router.include_router(_admin_checkins.router)
@@ -917,6 +921,17 @@ async def _background_seed():
         await step("directory_catalogue", _dir_seed())
     except Exception as _e:
         logger.warning(f"directory_seed skipped: {_e}")
+
+    # Phase 56-a · Aug-2026 — Pricebook Suppliers per-tenant seed.
+    # Idempotent: inserts the 13 default rows only if tenant has zero
+    # docs. Respects user-side deletes (no re-seed once populated).
+    try:
+        from services.pricebook_suppliers_seed import (
+            seed_all_tenants as _seed_pb_suppliers,
+        )
+        await step("pricebook_suppliers", _seed_pb_suppliers())
+    except Exception as _e:                                       # noqa: BLE001
+        logger.warning(f"pricebook_suppliers seed skipped: {_e}")
 
     # Scheduler registration (needs the DB but not auth).
     try:

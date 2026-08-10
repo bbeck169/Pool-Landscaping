@@ -956,3 +956,50 @@ class WalkieLiveSession(BaseModel):
         payload.pop("_id", None)
         payload.setdefault("participant_user_ids", [])
         return cls(**payload)
+
+
+# ─── Phase 56-a · Aug-2026 — Pricebook Suppliers ────────────────────────
+class PricebookSupplierIn(BaseModel):
+    """Body for POST /api/pricebook/suppliers.
+
+    Both ``slug`` and ``income_category_id`` are write-once — enforced
+    at the router layer (PATCH ignores these fields even if sent).
+    """
+    slug: str
+    display_name: str
+    income_category_id: str
+
+
+class PricebookSupplierPatch(BaseModel):
+    """Body for PATCH /api/pricebook/suppliers/{id}.
+
+    Only ``display_name`` and ``is_active`` are patchable. ``slug`` +
+    ``income_category_id`` are write-once and rejected here silently
+    (router does not read them off the model).
+    """
+    display_name: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class PricebookSupplier(BaseModel):
+    """Persistence shape for ``db.pricebook_suppliers``.
+
+    Soft-delete columns mirror Fix #5 (Autobilling Runs) verbatim:
+    ``deleted_at``, ``deleted_by_user_id``, ``restored_at``,
+    ``restored_by_user_id``. ``is_seed=True`` marks the 13 built-in
+    rows that ``seed_pricebook_suppliers`` inserts on first-boot.
+    """
+    id: str
+    tenant_id: str
+    slug: str
+    display_name: str
+    income_category_id: str
+    is_active: bool = True
+    is_seed: bool = False
+    deleted_at: Optional[str] = None
+    deleted_by_user_id: Optional[str] = None
+    restored_at: Optional[str] = None
+    restored_by_user_id: Optional[str] = None
+    created_at: Optional[str] = None
+    created_by_user_id: Optional[str] = None
+    updated_at: Optional[str] = None
