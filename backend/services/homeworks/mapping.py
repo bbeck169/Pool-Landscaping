@@ -161,3 +161,145 @@ def map_recurring_schedule(
         "homeworks_created_at": _s(raw.get("created_at")) or None,
     }
     return {k: v for k, v in mapped.items() if v is not None}
+
+
+def _num(v: Any) -> Optional[float]:
+    """Coerce ``str/int/float`` to float. Returns ``None`` on failure."""
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _map_line_items(rows: Any) -> List[Dict[str, Any]]:
+    """Map a Homeworks line-items array (invoice + quote share the
+    shape). Each line preserves ``homeworks_id`` so we can dedupe
+    inside the invoice on a re-scrape."""
+    if not rows:
+        return []
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        line: Dict[str, Any] = {
+            "description": _s(r.get("description")) or "",
+            "quantity": _num(r.get("quantity")) or 1.0,
+            "unit_price": _num(r.get("unit_price")) or 0.0,
+            "category": _s(r.get("category")) or "Homeworks",
+            "taxable": bool(r.get("taxable", True)),
+            "tax_rate": _num(r.get("tax_rate")) or 0.0,
+            # Immutable margin snapshots — preserved verbatim from
+            # Homeworks so historical margin reports don't drift.
+            "wholesale_price_snapshot": _num(r.get("wholesale_price_snapshot")),
+            "retail_price_snapshot":    _num(r.get("retail_price_snapshot")),
+            "labor_cost_snapshot":      _num(r.get("labor_cost_snapshot")),
+            "homeworks_line_id": _s(r.get("id")) or None,
+        }
+        out.append({k: v for k, v in line.items() if v is not None})
+    return out
+
+
+def map_invoice(
+    raw: Dict[str, Any],
+    customer_target_id: Optional[str] = None,
+    job_target_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Map Homeworks invoice → AquaTerra ``invoices`` shape.
+
+    Invoice number is preserved verbatim (the customer knows it) and
+    line-item snapshots are copied through untouched — the commit
+    engine (Phase 55-f) never regenerates them.
+    """
+    line_items = _map_line_items(raw.get("line_items"))
+    status = _s(raw.get("status")).lower() or "sent"
+    mapped: Dict[str, Any] = {
+        "customer_id": customer_target_id,
+        "job_id": job_target_id,
+        "invoice_number": _s(raw.get("invoice_number")) or None,
+        "title": _s(raw.get("title"))
+                  or f"Homeworks invoice {_s(raw.get('invoice_number')) or ''}".strip()
+                  or "Homeworks invoice",
+        "doc_type": "invoice",
+        "status": status,
+        "line_items": line_items,
+        "tax_rate": _num(raw.get("tax_rate")) or 0.0,
+        "subtotal_cents": raw.get("subtotal_cents"),
+        "total_cents": raw.get("total_cents"),
+        "due_date": _s(raw.get("due_date")) or None,
+        "issued_at": _s(raw.get("issued_at")) or None,
+        "notes": _s(raw.get("notes")) or None,
+        "terms": _s(raw.get("terms")) or None,
+        "homeworks_id": _s(raw.get("id")) or None,
+        "homeworks_quote_id": _s(raw.get("quote_id")) or None,
+    }
+    return {k: v for k, v in mapped.items()
+             if v is not None and v != ""}
+
+
+def map_quote(
+    raw: Dict[str, Any],
+    customer_target_id: Optional[str] = None,
+    property_target_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Map Homeworks estimate/quote → AquaTerra ``quotes`` shape.
+
+    Same headers + line-item mapper as invoices — quotes are pre-
+    invoices in Copilot CRM terminology.
+    """
+    line_items = _map_line_items(raw.get("line_items"))
+    status = _s(raw.get("status")).lower() or "draft"
+    mapped: Dict[str, Any] = {
+        "customer_id": customer_target_id,
+        "property_id": property_target_id,
+        "title": _s(raw.get("title")) or "Homeworks quote",
+        "doc_type": "quote",
+        "status": status,
+        "line_items": line_items,
+        "tax_rate": _num(raw.get("tax_rate")) or 0.0,
+        "subtotal_cents": raw.get("subtotal_cents"),
+        "total_cents": raw.get("total_cents"),
+        "notes": _s(raw.get("notes")) or None,
+        "terms": _s(raw.get("terms")) or None,
+        "issued_at": _s(raw.get("issued_at")) or None,
+        "homeworks_id": _s(raw.get("id")) or None,
+    }
+    return {k: v for k, v in mapped.items()
+             if v is not None and v != ""}
+
+
+def map_payment(
+    raw: Dict[str, Any],
+    invoice_target_id: Optional[str] = None,
+    customer_target_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Map Homeworks payment → AquaTerra ``payments`` shape.
+
+    Passthrough for ``stripe_charge_id`` — if the source Copilot CRM
+    tenant also runs on Stripe (per user's confirmation flow), the
+    external charge id lands verbatim so historical reconciliation
+    reports match cent-for-cent.
+    """
+    amount_cents = raw.get("amount_cents")
+    if amount_cents is None and raw.get("amount") is not None:
+        try:
+            amount_cents = int(round(float(raw["amount"]) * 100))
+        except (TypeError, ValueError):
+            amount_cents = None
+    mapped: Dict[str, Any] = {
+        "invoice_id": invoice_target_id,
+        "customer_id": customer_target_id,
+        "amount_cents": amount_cents,
+        "amount": _num(raw.get("amount")),
+        "method": _s(raw.get("method")).lower() or None,
+        "applied_at": _s(raw.get("applied_at"))
+                       or _s(raw.get("paid_at")) or None,
+        "transaction_ref": _s(raw.get("transaction_ref"))
+                            or _s(raw.get("reference")) or None,
+        "stripe_charge_id": _s(raw.get("stripe_charge_id")) or None,
+        "notes": _s(raw.get("notes")) or None,
+        "homeworks_id": _s(raw.get("id")) or None,
+        "homeworks_invoice_id": _s(raw.get("invoice_id")) or None,
+    }
+    return {k: v for k, v in mapped.items() if v is not None}

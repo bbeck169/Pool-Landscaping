@@ -475,3 +475,44 @@ describe("HomeworksImport · Phase 55-c entity coverage", () => {
       expect(recCb.checked).toBe(true);
     });
 });
+
+
+// ═════════════════════════════════════════════════════════════════
+// Phase 55-d — All 8 entity checkboxes present + default-checked
+// ═════════════════════════════════════════════════════════════════
+describe("HomeworksImport · Phase 55-d entity coverage", () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    postMock.mockReset();
+  });
+  afterEach(() => { cleanup(); });
+
+  it("new-batch modal exposes quotes + invoices + payments + attachments "
+     + "checkboxes default-checked", async () => {
+    getMock.mockImplementation((url) => {
+      if (url === "/imports/homeworks/batches") {
+        return Promise.resolve({ batches: [] });
+      }
+      return Promise.resolve({ has_credentials: false });
+    });
+
+    renderPage();
+    await waitFor(() => screen.getByTestId("hw-new-batch-btn"));
+    fireEvent.click(screen.getByTestId("hw-new-batch-btn"));
+
+    const modal = await screen.findByTestId("hw-new-batch-modal");
+    // The three 55-d entities live alongside the four already-shipped
+    // from 55-a/b/c PLUS attachments which is 55-e placeholder.
+    ["quotes", "invoices", "payments", "attachments"].forEach((t) => {
+      const cb = within(modal).getByTestId(`hw-new-batch-entity-${t}`);
+      expect(cb).toBeTruthy();
+      expect(cb.checked).toBe(true);
+    });
+    // All 8 checkboxes render — full-sweep default.
+    ["customers", "properties", "jobs", "recurring_schedules",
+     "quotes", "invoices", "payments", "attachments"].forEach((t) => {
+      expect(within(modal).getByTestId(`hw-new-batch-entity-${t}`))
+        .toBeTruthy();
+    });
+  });
+});

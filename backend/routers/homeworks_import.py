@@ -137,6 +137,17 @@ async def _process_staging_row(
     if ds == "conflict":
         return {"ok": True, "err": "conflict_skipped",
                  "outcome": "skipped"}
+    # Phase 55-d · Aug-2026 — invoices + quotes carry line-item
+    # subarrays that would double-append if merged. Historical
+    # invoices should NEVER be re-imported, so on a ``matched``
+    # dedupe (someone tried to reimport an existing invoice by
+    # ``homeworks_id``), skip the row cleanly with an explicit
+    # marker and let the operator investigate via the dry-run
+    # warnings pane.
+    if ds == "matched" and et in ("invoices", "quotes"):
+        return {"ok": True,
+                 "err": "matched_invoice_or_quote_skipped_insert_only",
+                 "outcome": "skipped"}
     mapped = row.get("mapped_payload") or {}
     coll = db[coll_name]
     try:
@@ -505,6 +516,7 @@ async def _run_scrape(  # pragma: no cover — exercised via injected fake
     scraped: Dict[str, int] = {
         "customers": 0, "properties": 0,
         "jobs": 0, "recurring_schedules": 0,
+        "quotes": 0, "invoices": 0, "payments": 0,
     }
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
@@ -518,7 +530,8 @@ async def _run_scrape(  # pragma: no cover — exercised via injected fake
                     pass
             page = await context.new_page()
             await scraper.authenticate(page)
-            # FK-safe order: customers → properties → jobs → recurring.
+            # FK-safe order: customers → properties → jobs → recurring
+            # → quotes → invoices → payments.
             async for raw, mapped in scraper.iter_customers(page):
                 await _persist_customer_row(
                     tenant_id, batch_id, raw, mapped, dedupe_customer)
@@ -535,6 +548,18 @@ async def _run_scrape(  # pragma: no cover — exercised via injected fake
                 await _persist_recurring_row(
                     tenant_id, batch_id, raw, mapped, dedupe_by_homeworks_id)
                 scraped["recurring_schedules"] += 1
+            async for raw, mapped in scraper.iter_quotes(page):
+                await _persist_quote_row(
+                    tenant_id, batch_id, raw, mapped, dedupe_by_homeworks_id)
+                scraped["quotes"] += 1
+            async for raw, mapped in scraper.iter_invoices(page):
+                await _persist_invoice_row(
+                    tenant_id, batch_id, raw, mapped, dedupe_by_homeworks_id)
+                scraped["invoices"] += 1
+            async for raw, mapped in scraper.iter_payments(page):
+                await _persist_payment_row(
+                    tenant_id, batch_id, raw, mapped, dedupe_by_homeworks_id)
+                scraped["payments"] += 1
         finally:
             await browser.close()
     return scraped
@@ -626,10 +651,11 @@ async def _persist_property_row(
 async def _resolve_parent_ids(
     tenant_id: str, batch_id: str, raw: Dict[str, Any],
 ) -> tuple:
-    """Return ``(customer_target_id, property_target_id)`` by looking
-    up already-staged customer + property rows in the same batch.
+    """Return ``(customer_target_id, property_target_id,
+    job_target_id, invoice_target_id)`` by looking up already-staged
+    parent rows in the same batch.
 
-    Semantics for each FK:
+    Semantics for each FK (applied identically per parent):
       * If the parent staging row is ``matched``, use its
         ``matched_target_id`` — the existing target row.
       * If ``new``, use the pre-assigned ``mapped_payload.id`` so the
@@ -648,27 +674,27 @@ async def _resolve_parent_ids(
             return (row.get("mapped_payload") or {}).get("id")
         return None
 
-    parent_customer_id: Optional[str] = None
-    parent_property_id: Optional[str] = None
-    cust_hw = raw.get("customer_homeworks_id")
-    prop_hw = raw.get("property_homeworks_id")
-    if cust_hw:
-        cust = await db.homeworks_staging.find_one(
+    async def _lookup(entity_type: str, hw_id: Optional[str]):
+        if not hw_id:
+            return None
+        row = await db.homeworks_staging.find_one(
             {"tenant_id": tenant_id, "batch_id": batch_id,
-              "entity_type": "customers", "homeworks_id": cust_hw},
+              "entity_type": entity_type, "homeworks_id": hw_id},
             {"_id": 0, "dedupe_status": 1, "matched_target_id": 1,
               "mapped_payload": 1},
         )
-        parent_customer_id = _resolve(cust)
-    if prop_hw:
-        prop = await db.homeworks_staging.find_one(
-            {"tenant_id": tenant_id, "batch_id": batch_id,
-              "entity_type": "properties", "homeworks_id": prop_hw},
-            {"_id": 0, "dedupe_status": 1, "matched_target_id": 1,
-              "mapped_payload": 1},
-        )
-        parent_property_id = _resolve(prop)
-    return parent_customer_id, parent_property_id
+        return _resolve(row)
+
+    parent_customer_id = await _lookup(
+        "customers", raw.get("customer_homeworks_id"))
+    parent_property_id = await _lookup(
+        "properties", raw.get("property_homeworks_id"))
+    parent_job_id = await _lookup(
+        "jobs", raw.get("job_homeworks_id"))
+    parent_invoice_id = await _lookup(
+        "invoices", raw.get("invoice_homeworks_id"))
+    return (parent_customer_id, parent_property_id,
+             parent_job_id, parent_invoice_id)
 
 
 async def _persist_job_row(
@@ -685,7 +711,7 @@ async def _persist_job_row(
     """
     hw_id = raw.get("id")
     ds, matched_id = await dedupe_fn(tenant_id, "jobs", hw_id, db)
-    parent_customer, parent_property = await _resolve_parent_ids(
+    parent_customer, parent_property, _job, _inv = await _resolve_parent_ids(
         tenant_id, batch_id, raw)
     mapped["customer_id"] = parent_customer
     if parent_property:
@@ -719,7 +745,7 @@ async def _persist_recurring_row(
     hw_id = raw.get("id")
     ds, matched_id = await dedupe_fn(
         tenant_id, "recurring_schedules", hw_id, db)
-    parent_customer, parent_property = await _resolve_parent_ids(
+    parent_customer, parent_property, _job, _inv = await _resolve_parent_ids(
         tenant_id, batch_id, raw)
     mapped["customer_id"] = parent_customer
     if parent_property:
@@ -731,6 +757,105 @@ async def _persist_recurring_row(
         "tenant_id": tenant_id,
         "batch_id": batch_id,
         "entity_type": "recurring_schedules",
+        "homeworks_id": hw_id,
+        "raw_payload": raw,
+        "mapped_payload": mapped,
+        "dedupe_status": ds,
+        "matched_target_id": matched_id,
+        "imported_at": None,
+        "commit_error": None,
+    }
+    await db.homeworks_staging.insert_one(doc)
+
+
+async def _persist_quote_row(
+    tenant_id: str, batch_id: str,
+    raw: Dict[str, Any], mapped: Dict[str, Any],
+    dedupe_fn: Any,
+) -> None:
+    """Insert a quote staging row. Dedupe on ``(tenant_id,
+    homeworks_id)`` in ``quotes``. Parent FKs resolved from staged
+    customers + properties."""
+    hw_id = raw.get("id")
+    ds, matched_id = await dedupe_fn(tenant_id, "quotes", hw_id, db)
+    parent_customer, parent_property, _job, _inv = await _resolve_parent_ids(
+        tenant_id, batch_id, raw)
+    mapped["customer_id"] = parent_customer
+    if parent_property:
+        mapped["property_id"] = parent_property
+    if ds == "new" and not mapped.get("id"):
+        mapped["id"] = uuid.uuid4().hex
+    doc = {
+        "id": uuid.uuid4().hex,
+        "tenant_id": tenant_id,
+        "batch_id": batch_id,
+        "entity_type": "quotes",
+        "homeworks_id": hw_id,
+        "raw_payload": raw,
+        "mapped_payload": mapped,
+        "dedupe_status": ds,
+        "matched_target_id": matched_id,
+        "imported_at": None,
+        "commit_error": None,
+    }
+    await db.homeworks_staging.insert_one(doc)
+
+
+async def _persist_invoice_row(
+    tenant_id: str, batch_id: str,
+    raw: Dict[str, Any], mapped: Dict[str, Any],
+    dedupe_fn: Any,
+) -> None:
+    """Insert an invoice staging row. Parent FKs resolved from staged
+    customers + jobs. Dedupe on ``(tenant_id, homeworks_id)`` in the
+    ``invoices`` collection."""
+    hw_id = raw.get("id")
+    ds, matched_id = await dedupe_fn(tenant_id, "invoices", hw_id, db)
+    parent_customer, _prop, parent_job, _inv = await _resolve_parent_ids(
+        tenant_id, batch_id, raw)
+    mapped["customer_id"] = parent_customer
+    if parent_job:
+        mapped["job_id"] = parent_job
+    if ds == "new" and not mapped.get("id"):
+        mapped["id"] = uuid.uuid4().hex
+    doc = {
+        "id": uuid.uuid4().hex,
+        "tenant_id": tenant_id,
+        "batch_id": batch_id,
+        "entity_type": "invoices",
+        "homeworks_id": hw_id,
+        "raw_payload": raw,
+        "mapped_payload": mapped,
+        "dedupe_status": ds,
+        "matched_target_id": matched_id,
+        "imported_at": None,
+        "commit_error": None,
+    }
+    await db.homeworks_staging.insert_one(doc)
+
+
+async def _persist_payment_row(
+    tenant_id: str, batch_id: str,
+    raw: Dict[str, Any], mapped: Dict[str, Any],
+    dedupe_fn: Any,
+) -> None:
+    """Insert a payment staging row. FK to invoice is resolved via
+    the parent-lookup helper. Dedupe on ``(tenant_id, homeworks_id)``
+    in the ``payments`` collection — Stripe charge ids passthrough."""
+    hw_id = raw.get("id")
+    ds, matched_id = await dedupe_fn(tenant_id, "payments", hw_id, db)
+    parent_customer, _prop, _job, parent_invoice = await _resolve_parent_ids(
+        tenant_id, batch_id, raw)
+    if parent_customer:
+        mapped["customer_id"] = parent_customer
+    mapped["invoice_id"] = parent_invoice
+    if ds == "new" and not mapped.get("id"):
+        mapped["id"] = uuid.uuid4().hex
+    doc = {
+        "id": uuid.uuid4().hex,
+        "tenant_id": tenant_id,
+        "batch_id": batch_id,
+        "entity_type": "payments",
         "homeworks_id": hw_id,
         "raw_payload": raw,
         "mapped_payload": mapped,
@@ -833,6 +958,7 @@ async def scrape_batch(
     counts_total: Dict[str, int] = {
         "customers": 0, "properties": 0,
         "jobs": 0, "recurring_schedules": 0,
+        "quotes": 0, "invoices": 0, "payments": 0,
     }
     async for _row in db.homeworks_staging.find(
         {"tenant_id": tenant["id"], "batch_id": batch_id},

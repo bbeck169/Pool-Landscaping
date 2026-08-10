@@ -36,6 +36,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 from config import logger
 from services.homeworks.mapping import (
     map_customer, map_property, map_job, map_recurring_schedule,
+    map_invoice, map_payment, map_quote,
 )
 
 
@@ -44,6 +45,9 @@ CUSTOMERS_URL = "https://secure.copilotcrm.com/customers"
 PROPERTIES_URL = "https://secure.copilotcrm.com/properties"
 JOBS_URL = "https://secure.copilotcrm.com/jobs"
 RECURRING_URL = "https://secure.copilotcrm.com/recurring"
+QUOTES_URL = "https://secure.copilotcrm.com/quotes"
+INVOICES_URL = "https://secure.copilotcrm.com/invoices"
+PAYMENTS_URL = "https://secure.copilotcrm.com/payments"
 USER_AGENT = "AquaTerra-HomeworksImport/1.0"
 
 # PLACEHOLDER selectors — MUST be verified against the live UI once
@@ -96,6 +100,36 @@ SELECTORS: Dict[str, str] = {
     "rec_next_run":              '[data-field="next_run_at"]',
     "rec_active":                '[data-field="active"]',
     "rec_service_template":      '[data-field="service_template_hint"]',
+    # Quotes list (Phase 55-d).
+    "quote_row":                 '[data-testid="quote-row"], tr.quote',
+    "quote_id_attr":              "data-homeworks-id",
+    "quote_customer_ref":         "data-customer-id",
+    "quote_property_ref":         "data-property-id",
+    "quote_title":               '[data-field="title"]',
+    "quote_status":              '[data-field="status"]',
+    "quote_total_cents":         '[data-field="total_cents"]',
+    "quote_line_items":          '[data-field="line_items"]',   # JSON blob
+    # Invoices list (Phase 55-d).
+    "inv_row":                   '[data-testid="invoice-row"], tr.invoice',
+    "inv_id_attr":                "data-homeworks-id",
+    "inv_customer_ref":           "data-customer-id",
+    "inv_job_ref":                "data-job-id",
+    "inv_quote_ref":              "data-quote-id",
+    "inv_number":                '[data-field="invoice_number"]',
+    "inv_status":                '[data-field="status"]',
+    "inv_total_cents":           '[data-field="total_cents"]',
+    "inv_due_date":              '[data-field="due_date"]',
+    "inv_line_items":            '[data-field="line_items"]',   # JSON blob
+    # Payments list (Phase 55-d).
+    "pay_row":                   '[data-testid="payment-row"], tr.payment',
+    "pay_id_attr":                "data-homeworks-id",
+    "pay_invoice_ref":            "data-invoice-id",
+    "pay_customer_ref":           "data-customer-id",
+    "pay_amount":                '[data-field="amount"]',
+    "pay_method":                '[data-field="method"]',
+    "pay_applied_at":            '[data-field="applied_at"]',
+    "pay_transaction_ref":       '[data-field="transaction_ref"]',
+    "pay_stripe_charge":         '[data-field="stripe_charge_id"]',
     # Pagination.
     "btn_next_page":             'button.pagination-next, [data-testid="page-next"]',
 }
@@ -282,6 +316,94 @@ class CopilotCRMScraper:
                 return
             await asyncio.sleep(RATE_LIMIT_SECONDS)
 
+    async def iter_quotes(
+        self, page: Any,
+    ) -> AsyncIterator[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        """Yield ``(raw, mapped)`` per quote/estimate."""
+        await page.goto(QUOTES_URL)
+        page_num = 1
+        yielded = 0
+        while True:
+            rows = await page.query_selector_all(SELECTORS["quote_row"])
+            if not rows and page_num == 1:
+                logger.warning(
+                    "[homeworks] no quote rows on page 1 — selector drift?")
+                return
+            if not rows:
+                return
+            for row in rows:
+                raw = await self._extract_quote(row)
+                if not raw.get("id"):
+                    continue
+                mapped = map_quote(raw)
+                yielded += 1
+                yield raw, mapped
+            page_num += 1
+            if not await self._go_next_page(page):
+                logger.info(f"[homeworks] iter_quotes finished: {yielded} rows")
+                return
+            await asyncio.sleep(RATE_LIMIT_SECONDS)
+
+    async def iter_invoices(
+        self, page: Any,
+    ) -> AsyncIterator[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        """Yield ``(raw, mapped)`` per invoice. ``raw`` carries
+        ``job_homeworks_id`` and ``quote_homeworks_id`` for FK
+        resolution against staged jobs + quotes."""
+        await page.goto(INVOICES_URL)
+        page_num = 1
+        yielded = 0
+        while True:
+            rows = await page.query_selector_all(SELECTORS["inv_row"])
+            if not rows and page_num == 1:
+                logger.warning(
+                    "[homeworks] no invoice rows on page 1 — selector drift?")
+                return
+            if not rows:
+                return
+            for row in rows:
+                raw = await self._extract_invoice(row)
+                if not raw.get("id"):
+                    continue
+                mapped = map_invoice(raw)
+                yielded += 1
+                yield raw, mapped
+            page_num += 1
+            if not await self._go_next_page(page):
+                logger.info(f"[homeworks] iter_invoices finished: {yielded} rows")
+                return
+            await asyncio.sleep(RATE_LIMIT_SECONDS)
+
+    async def iter_payments(
+        self, page: Any,
+    ) -> AsyncIterator[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        """Yield ``(raw, mapped)`` per payment. ``raw`` carries
+        ``invoice_homeworks_id`` for FK resolution against staged
+        invoices."""
+        await page.goto(PAYMENTS_URL)
+        page_num = 1
+        yielded = 0
+        while True:
+            rows = await page.query_selector_all(SELECTORS["pay_row"])
+            if not rows and page_num == 1:
+                logger.warning(
+                    "[homeworks] no payment rows on page 1 — selector drift?")
+                return
+            if not rows:
+                return
+            for row in rows:
+                raw = await self._extract_payment(row)
+                if not raw.get("id"):
+                    continue
+                mapped = map_payment(raw)
+                yielded += 1
+                yield raw, mapped
+            page_num += 1
+            if not await self._go_next_page(page):
+                logger.info(f"[homeworks] iter_payments finished: {yielded} rows")
+                return
+            await asyncio.sleep(RATE_LIMIT_SECONDS)
+
     # ─── Extraction helpers ──────────────────────────────────────
     async def _extract_customer(self, row: Any) -> Dict[str, Any]:
         return {
@@ -345,6 +467,57 @@ class CopilotCRMScraper:
             "active": await self._text(row, SELECTORS["rec_active"]),
             "service_template_hint": await self._text(
                 row, SELECTORS["rec_service_template"]),
+        }
+
+    async def _extract_quote(self, row: Any) -> Dict[str, Any]:
+        return {
+            "id": await self._attr(row, SELECTORS["quote_id_attr"]),
+            "customer_homeworks_id": await self._attr(
+                row, SELECTORS["quote_customer_ref"]),
+            "property_homeworks_id": await self._attr(
+                row, SELECTORS["quote_property_ref"]),
+            "title": await self._text(row, SELECTORS["quote_title"]),
+            "status": await self._text(row, SELECTORS["quote_status"]),
+            "total_cents": await self._text(
+                row, SELECTORS["quote_total_cents"]),
+            # ``line_items`` may be exposed as an embedded JSON blob
+            # on the row — real selector to be tuned in smoke.
+            "line_items": await self._text(
+                row, SELECTORS["quote_line_items"]),
+        }
+
+    async def _extract_invoice(self, row: Any) -> Dict[str, Any]:
+        return {
+            "id": await self._attr(row, SELECTORS["inv_id_attr"]),
+            "customer_homeworks_id": await self._attr(
+                row, SELECTORS["inv_customer_ref"]),
+            "job_homeworks_id": await self._attr(
+                row, SELECTORS["inv_job_ref"]),
+            "quote_id": await self._attr(row, SELECTORS["inv_quote_ref"]),
+            "invoice_number": await self._text(row, SELECTORS["inv_number"]),
+            "status": await self._text(row, SELECTORS["inv_status"]),
+            "total_cents": await self._text(
+                row, SELECTORS["inv_total_cents"]),
+            "due_date": await self._text(row, SELECTORS["inv_due_date"]),
+            "line_items": await self._text(
+                row, SELECTORS["inv_line_items"]),
+        }
+
+    async def _extract_payment(self, row: Any) -> Dict[str, Any]:
+        return {
+            "id": await self._attr(row, SELECTORS["pay_id_attr"]),
+            "invoice_homeworks_id": await self._attr(
+                row, SELECTORS["pay_invoice_ref"]),
+            "customer_homeworks_id": await self._attr(
+                row, SELECTORS["pay_customer_ref"]),
+            "amount": await self._text(row, SELECTORS["pay_amount"]),
+            "method": await self._text(row, SELECTORS["pay_method"]),
+            "applied_at": await self._text(
+                row, SELECTORS["pay_applied_at"]),
+            "transaction_ref": await self._text(
+                row, SELECTORS["pay_transaction_ref"]),
+            "stripe_charge_id": await self._text(
+                row, SELECTORS["pay_stripe_charge"]),
         }
 
     async def _go_next_page(self, page: Any) -> bool:
