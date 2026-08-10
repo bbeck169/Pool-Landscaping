@@ -168,7 +168,14 @@ def test_find_invoice_dual_reads_only_from_quotes():
 
 # ── 4. Promo code redeem writes to db.quotes only (B1 dual-push fix) ─
 def test_promo_redeem_writes_to_quotes_only():
-    tok = _login("manager@aquaterra.com")
+    # Task D-1 · seed drift fix — the seed used to have manager@
+    # doubling as the shop-owner admin. The Feb-2026 rebrand split
+    # roles cleanly: manager@ is role=manager now, admin@ is the
+    # role=admin surface. Promo-code CRUD requires role=admin.
+    # Using super@ instead of admin@ because the current admin@
+    # seed row has a pathologically slow bcrypt hash (~34 s per
+    # login vs 0.24 s for super@) — filed as follow-up seed cleanup.
+    tok = _login("super@aquaterra.com")
     # Pull the manager's tenant_id.
     me = requests.get(f"{API}/auth/me",
                        headers={"Authorization": f"Bearer {tok}"},
@@ -237,9 +244,13 @@ def test_reconciliation_log_role_guard():
                               timeout=10)
             assert r.status_code == 403, f"{email}: {r.status_code}"
 
-        # admin / super_admin account passes (manager@aquaterra is role=admin
-        # despite the email — the shop-owner slot in the seed).
-        tok = _login("manager@aquaterra.com")
+        # admin / super_admin account passes. Task D-1 · seed drift
+        # fix — the reconciliation-log endpoint was tightened to
+        # super_admin-only, and the Feb-2026 seed rebrand split
+        # manager@ (role=manager) from super@ (role=super_admin).
+        # The old test comment claimed manager@ was the shop-owner
+        # admin — stale.
+        tok = _login("super@aquaterra.com")
         r = requests.get(f"{API}/admin/invoice-reconciliation-log",
                           headers={"Authorization": f"Bearer {tok}"},
                           timeout=10)

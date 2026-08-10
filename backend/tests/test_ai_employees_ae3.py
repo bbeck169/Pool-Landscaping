@@ -322,13 +322,33 @@ def test_dexter_snapshot_scoped_to_current_tenant(admin_headers):
 
 def test_ae3_tenant_scoping_no_cross_tenant_data(admin_headers):
     """A super-quick sanity check that Buddy's rollup didn't grab
-    numbers from another tenant. We compare Buddy's total_deals to
-    the direct GET /api/deals count."""
-    r = requests.get(f"{API}/deals", headers=admin_headers, timeout=15)
-    if r.status_code != 200:
-        pytest.skip("deals endpoint unavailable")
-    payload = r.json()
-    ground = len(payload) if isinstance(payload, list) else int(payload.get("count", 0))
+    numbers from another tenant.
+
+    Task D-1 · test drift fix — the previous ground-truth query hit
+    ``GET /api/deals`` which is capped at ``limit=200`` (see
+    ``routers/pipelines.py::list_deals``). Its top-level ``count``
+    field is ``len(rows)`` on the PAGINATED slice, NOT the true
+    tenant total. Any tenant with > 200 deals produces a false
+    positive here. Fixed by ground-truthing via pymongo directly —
+    same query Buddy runs under the hood.
+    """
+    import os
+    from pymongo import MongoClient
+    from dotenv import dotenv_values
+
+    _env = {**dotenv_values(os.path.join(os.path.dirname(__file__),
+                                              "..", ".env")),
+             **os.environ}
+    _db = MongoClient(_env["MONGO_URL"])[_env["DB_NAME"]]
+    # Resolve the admin's tenant_id via the /auth/me endpoint.
+    me = requests.get(f"{API}/auth/me", headers=admin_headers, timeout=10)
+    if me.status_code != 200:
+        pytest.skip("/auth/me endpoint unavailable")
+    tid = me.json().get("tenant_id")
+    if not tid:
+        pytest.skip("no tenant_id resolvable for admin")
+    ground = _db.deals.count_documents({"tenant_id": tid})
+
     eid = _emp_id(admin_headers, "buddy")
     c = _new_conv(admin_headers, eid)
     r = _send(admin_headers, eid, c["id"], "brief",
@@ -336,8 +356,10 @@ def test_ae3_tenant_scoping_no_cross_tenant_data(admin_headers):
                 action_params={"days": 365})
     assert r.status_code == 201
     signals = r.json()["action"]["draft"]["signals"]
+    # Buddy's tenant-scoped aggregation MUST match the true tenant
+    # total. A leak would show Buddy > ground.
     assert signals["deals"]["total_deals"] == ground, \
-        f"tenant leak: buddy={signals['deals']['total_deals']} vs api={ground}"
+        f"tenant leak: buddy={signals['deals']['total_deals']} vs db={ground}"
 
 
 # ─── Non-shipped actions still return polite stubs ────────────────────
