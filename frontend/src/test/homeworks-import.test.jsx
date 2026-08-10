@@ -46,6 +46,21 @@ vi.mock("@/components/ui-kit", () => ({
   ),
 }));
 
+// Phase 55-b — challenge modal mocked as a lightweight stub so we
+// can assert it renders WITHOUT dragging in the api-token minting
+// side-effects the real modal fires on mount.
+vi.mock("@/components/suppliers/ChallengeHandoffModal", () => ({
+  default: ({ slug, displayName, onClose }) => (
+    <div data-testid="challenge-handoff-modal">
+      <div data-testid="challenge-modal-slug">{slug}</div>
+      <div>{displayName}</div>
+      <button onClick={onClose} data-testid="challenge-modal-close">
+        Close
+      </button>
+    </div>
+  ),
+}));
+
 import HomeworksImport from "@/pages/settings/HomeworksImport";
 
 
@@ -298,5 +313,112 @@ describe("HomeworksImport · Phase 55-f detail drawer", () => {
     // The POST /commit call fired.
     expect(postMock).toHaveBeenCalledWith(
       "/imports/homeworks/batches/batch-detail-1/commit", {});
+  });
+});
+
+
+// ═════════════════════════════════════════════════════════════════
+// Phase 55-b — Scrape button + challenge handoff modal
+// ═════════════════════════════════════════════════════════════════
+describe("HomeworksImport · Phase 55-b scrape + challenge", () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    postMock.mockReset();
+  });
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  function seedListMockPending() {
+    const batch = {
+      id: "batch-scrape-1", state: "pending",
+      entity_types_planned: ["customers", "properties"],
+      started_at: null,
+    };
+    getMock.mockImplementation((url) => {
+      if (url === "/imports/homeworks/batches") {
+        return Promise.resolve({ batches: [batch] });
+      }
+      if (url === "/imports/homeworks/credentials") {
+        return Promise.resolve({ has_credentials: true,
+                                   email: "admin@copilotcrm.com" });
+      }
+      if (url === `/imports/homeworks/batches/${batch.id}/dryrun`) {
+        return Promise.resolve({
+          batch_id: batch.id, state: "pending",
+          entity_counts: {}, warnings: [], error_count: 0,
+        });
+      }
+      if (url === `/imports/homeworks/batches/${batch.id}/progress`) {
+        return Promise.resolve({
+          batch_id: batch.id, state: "pending",
+          entity_counts_completed: {},
+          entity_counts_total: {},
+          entity_counts_scraped: {},
+          error_count: 0,
+        });
+      }
+      return Promise.resolve({});
+    });
+    return batch;
+  }
+
+  it("shows the Scrape button when state == pending and fires POST /scrape",
+    async () => {
+      const batch = seedListMockPending();
+      postMock.mockResolvedValue({
+        ok: true, state: "paused",
+        entity_counts_scraped: { customers: 3, properties: 2 },
+      });
+
+      renderPage();
+      await waitFor(() =>
+        screen.getByTestId(`hw-batch-view-${batch.id}`));
+      fireEvent.click(screen.getByTestId(`hw-batch-view-${batch.id}`));
+
+      const drawer = await screen.findByTestId("hw-detail-drawer");
+      await waitFor(() =>
+        expect(within(drawer).getByTestId("hw-scrape-btn"))
+          .toBeTruthy());
+      // Commit button is NOT rendered while state is pending.
+      expect(screen.queryByTestId("hw-commit-btn")).toBeNull();
+
+      fireEvent.click(within(drawer).getByTestId("hw-scrape-btn"));
+
+      await waitFor(() => {
+        expect(postMock).toHaveBeenCalledWith(
+          `/imports/homeworks/batches/${batch.id}/scrape`, {});
+      });
+    });
+
+  it("opens the Challenge Handoff modal when scrape returns "
+     + "challenge_required", async () => {
+    const batch = seedListMockPending();
+    postMock.mockResolvedValue({
+      ok: false,
+      challenge_required: true,
+      challenge_id: "abc123",
+      slug: "homeworks",
+      ttl_hint_minutes: 30,
+    });
+
+    renderPage();
+    await waitFor(() =>
+      screen.getByTestId(`hw-batch-view-${batch.id}`));
+    fireEvent.click(screen.getByTestId(`hw-batch-view-${batch.id}`));
+
+    const drawer = await screen.findByTestId("hw-detail-drawer");
+    await waitFor(() =>
+      expect(within(drawer).getByTestId("hw-scrape-btn")).toBeTruthy());
+    fireEvent.click(within(drawer).getByTestId("hw-scrape-btn"));
+
+    // Challenge modal renders with the homeworks slug.
+    await waitFor(() => {
+      expect(screen.getByTestId("challenge-handoff-modal"))
+        .toBeTruthy();
+    });
+    expect(screen.getByTestId("challenge-modal-slug").textContent)
+      .toBe("homeworks");
   });
 });

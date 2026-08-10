@@ -460,10 +460,257 @@ async def batch_progress(
         "state": row.get("state"),
         "entity_counts_completed": row.get("entity_counts_completed") or {},
         "entity_counts_total": row.get("entity_counts_total") or {},
+        "entity_counts_scraped": row.get("entity_counts_scraped") or {},
         "current_entity_type": row.get("current_entity_type"),
         "error_count": row.get("error_count") or 0,
         "started_at": row.get("started_at"),
         "completed_at": row.get("completed_at"),
+        "challenge_required": row.get("state") == "paused_challenge",
+    }
+
+
+# ─── Scrape orchestrator (Phase 55-b) ──────────────────────────────────
+async def _resolve_credentials(
+    tenant_id: str,
+) -> Optional[Dict[str, str]]:
+    """Load Fernet-encrypted Copilot CRM credentials from
+    ``homeworks_credentials`` and return the decrypted pair."""
+    row = await db.homeworks_credentials.find_one(
+        {"tenant_id": tenant_id},
+        {"_id": 0, "encrypted_email": 1, "encrypted_password": 1},
+    )
+    if not row:
+        return None
+    email = decrypt(row.get("encrypted_email"))
+    password = decrypt(row.get("encrypted_password"))
+    if not email or not password:
+        return None
+    return {"email": email, "password": password}
+
+
+async def _run_scrape(  # pragma: no cover — exercised via injected fake
+    batch_id: str, tenant_id: str, scraper: Any,
+) -> Dict[str, Any]:
+    """Iterate the scraper + persist staging rows + apply dedupe.
+
+    Kept as a standalone function so tests can inject a fake scraper
+    object (see ``test_homeworks_scraper.py``) — no Playwright runtime
+    is required for the unit tests.
+    """
+    from services.homeworks.dedupe import dedupe_customer
+
+    from playwright.async_api import async_playwright   # type: ignore
+    scraped: Dict[str, int] = {"customers": 0, "properties": 0}
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            context = await browser.new_context(
+                user_agent="AquaTerra-HomeworksImport/1.0")
+            if scraper.session_cookies:
+                try:
+                    await context.add_cookies(scraper.session_cookies)
+                except Exception:                                    # noqa: BLE001
+                    pass
+            page = await context.new_page()
+            await scraper.authenticate(page)
+            async for raw, mapped in scraper.iter_customers(page):
+                await _persist_customer_row(
+                    tenant_id, batch_id, raw, mapped, dedupe_customer)
+                scraped["customers"] += 1
+            async for raw, mapped in scraper.iter_properties(page):
+                await _persist_property_row(
+                    tenant_id, batch_id, raw, mapped)
+                scraped["properties"] += 1
+        finally:
+            await browser.close()
+    return scraped
+
+
+async def _persist_customer_row(
+    tenant_id: str, batch_id: str,
+    raw: Dict[str, Any], mapped: Dict[str, Any],
+    dedupe_fn: Any,
+) -> None:
+    """Insert a customer staging row + resolve dedupe. Pre-assigns a
+    UUID on ``new`` rows so downstream property rows can FK-link
+    before the commit engine runs."""
+    ds, matched = await dedupe_fn(tenant_id, mapped, db)
+    # Pre-assign the future customer id on ``new`` rows so property
+    # staging rows can reference it BEFORE the commit engine inserts.
+    if ds == "new" and not mapped.get("id"):
+        mapped["id"] = uuid.uuid4().hex
+    doc = {
+        "id": uuid.uuid4().hex,
+        "tenant_id": tenant_id,
+        "batch_id": batch_id,
+        "entity_type": "customers",
+        "homeworks_id": raw.get("id"),
+        "raw_payload": raw,
+        "mapped_payload": mapped,
+        "dedupe_status": ds,
+        "matched_target_id": matched,
+        "imported_at": None,
+        "commit_error": None,
+    }
+    await db.homeworks_staging.insert_one(doc)
+
+
+async def _persist_property_row(
+    tenant_id: str, batch_id: str,
+    raw: Dict[str, Any], mapped: Dict[str, Any],
+) -> None:
+    """Insert a property staging row with parent-customer FK resolved
+    via lookup into the same batch's customer staging rows. Dedupe:
+    ``homeworks_id`` in ``(tenant_id, batch_id)`` scope — properties
+    NEVER dedupe by address."""
+    hw_id = raw.get("id")
+    existing = await db.homeworks_staging.find_one(
+        {"tenant_id": tenant_id, "batch_id": batch_id,
+          "entity_type": "properties", "homeworks_id": hw_id},
+    )
+    if existing:
+        return  # duplicate scrape
+
+    parent_hw_id = raw.get("customer_homeworks_id")
+    parent_target_id: Optional[str] = None
+    if parent_hw_id:
+        parent = await db.homeworks_staging.find_one(
+            {"tenant_id": tenant_id, "batch_id": batch_id,
+              "entity_type": "customers",
+              "homeworks_id": parent_hw_id},
+            {"_id": 0, "matched_target_id": 1, "mapped_payload": 1,
+              "dedupe_status": 1},
+        )
+        if parent:
+            if parent.get("dedupe_status") == "matched":
+                parent_target_id = parent.get("matched_target_id")
+            elif parent.get("dedupe_status") == "new":
+                parent_target_id = (parent.get("mapped_payload") or {}).get("id")
+    mapped["customer_id"] = parent_target_id
+
+    doc = {
+        "id": uuid.uuid4().hex,
+        "tenant_id": tenant_id,
+        "batch_id": batch_id,
+        "entity_type": "properties",
+        "homeworks_id": hw_id,
+        "raw_payload": raw,
+        "mapped_payload": mapped,
+        "dedupe_status": "new",
+        "matched_target_id": None,
+        "imported_at": None,
+        "commit_error": None,
+    }
+    await db.homeworks_staging.insert_one(doc)
+
+
+@router.post("/imports/homeworks/batches/{batch_id}/scrape")
+async def scrape_batch(
+    batch_id: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+) -> Dict[str, Any]:
+    """Fire the Copilot CRM scraper for ``customers + properties``.
+
+    State transitions:
+      * ``pending`` → ``running`` at entry, → ``paused`` on success.
+      * ``paused_challenge`` → ``running`` at entry (retry after
+        operator solves the challenge via bookmarklet), → ``paused``
+        on success.
+      * ``running`` → 409 (concurrent scrape).
+      * Any other → 400 ``not_scrapable``.
+
+    On ``SupplierChallengeRequired`` the batch flips to
+    ``paused_challenge`` and the response body carries
+    ``{challenge_required: true, challenge_id, ttl_hint_minutes: 30}``
+    so the frontend can open the Phase 54h-b handoff modal
+    targeting the ``homeworks`` slug.
+    """
+    from services.homeworks.copilot_scraper import CopilotCRMScraper
+    from services.suppliers.sessions import get_active_session
+    from services.suppliers.challenge import SupplierChallengeRequired
+
+    batch = await db.import_batches.find_one(
+        {"tenant_id": tenant["id"], "id": batch_id},
+        {"_id": 0},
+    )
+    if not batch:
+        raise HTTPException(404, {"error": "batch_not_found"})
+    state = batch.get("state") or "pending"
+    if state == "running":
+        raise HTTPException(409, {"error": "scrape_in_progress"})
+    if state not in ("pending", "paused_challenge"):
+        raise HTTPException(400, {"error": "not_scrapable",
+                                    "state": state})
+
+    creds = await _resolve_credentials(tenant["id"])
+    if not creds:
+        raise HTTPException(400, {"error": "no_credentials",
+                                    "message": (
+                                        "Save your Copilot CRM login "
+                                        "before scraping.")})
+
+    session_cookies = await get_active_session(
+        tenant["id"], "homeworks") or []
+    scraper = CopilotCRMScraper(
+        tenant_id=tenant["id"],
+        email=creds["email"], password=creds["password"],
+        session_cookies=session_cookies,
+    )
+
+    now = _now_iso()
+    await db.import_batches.update_one(
+        {"tenant_id": tenant["id"], "id": batch_id},
+        {"$set": {"state": "running",
+                    "started_at": batch.get("started_at") or now}},
+    )
+
+    try:
+        scraped = await _run_scrape(batch_id, tenant["id"], scraper)
+    except SupplierChallengeRequired as e:
+        await db.import_batches.update_one(
+            {"tenant_id": tenant["id"], "id": batch_id},
+            {"$set": {"state": "paused_challenge"}},
+        )
+        return {
+            "ok": False,
+            "challenge_required": True,
+            "challenge_id": e.challenge_id,
+            "slug": "homeworks",
+            "supplier_slug": "homeworks",
+            "batch_id": batch_id,
+            "ttl_hint_minutes": 30,
+        }
+    except Exception as e:                                          # noqa: BLE001
+        logger.warning(f"[homeworks scrape] {batch_id}: {e}")
+        await db.import_batches.update_one(
+            {"tenant_id": tenant["id"], "id": batch_id},
+            {"$set": {"state": "pending",
+                        "last_scrape_error": str(e)[:400]}},
+        )
+        raise HTTPException(500, {"error": "scrape_failed",
+                                    "message": str(e)[:200]})
+
+    # Success — build entity_counts_total from staging + flip to paused.
+    counts_total: Dict[str, int] = {"customers": 0, "properties": 0}
+    async for _row in db.homeworks_staging.find(
+        {"tenant_id": tenant["id"], "batch_id": batch_id},
+        {"_id": 0, "entity_type": 1},
+    ):
+        et = _row.get("entity_type")
+        if et in counts_total:
+            counts_total[et] = counts_total.get(et, 0) + 1
+
+    await db.import_batches.update_one(
+        {"tenant_id": tenant["id"], "id": batch_id},
+        {"$set": {"state": "paused",
+                    "entity_counts_scraped": scraped,
+                    "entity_counts_total": counts_total}},
+    )
+    return {
+        "ok": True, "batch_id": batch_id, "state": "paused",
+        "entity_counts_scraped": scraped,
+        "entity_counts_total": counts_total,
     }
 
 

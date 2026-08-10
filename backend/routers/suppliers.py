@@ -539,6 +539,14 @@ class _SessionUpsertIn(BaseModel):
 
 
 def _assert_handoff_supported(slug: str) -> None:
+    # Phase 55-b · Aug-2026 — the Homeworks (Copilot CRM) importer
+    # rides on the same challenge-handoff plumbing (session store,
+    # bookmarklet, import-token JWT) as the wholesale suppliers even
+    # though ``homeworks`` isn't a wholesale connector. Whitelist the
+    # slug here so the operator's bookmarklet can POST cookies into
+    # ``supplier_sessions`` without a wholesale-supplier registration.
+    if slug == "homeworks":
+        return
     connector = CONNECTORS.get(slug)
     if connector is None:
         raise HTTPException(404, {"error": "unknown_supplier",
@@ -599,7 +607,10 @@ async def upsert_supplier_session(
     _require_session_role(user)
     tenant_id = _require_tenant(user)
     _assert_handoff_supported(slug)
-    await _get_supplier_or_404(tenant_id, slug)
+    # Phase 55-b · Aug-2026 — the ``homeworks`` slug rides the same
+    # session upload path but has no row in ``pricebook_suppliers``.
+    if slug != "homeworks":
+        await _get_supplier_or_404(tenant_id, slug)
 
     normalized: List[Dict[str, Any]] = []
     for c in body.cookies:

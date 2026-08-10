@@ -10,10 +10,11 @@
  * customer scraper that flips them to ``running``.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Download, Plus, RotateCcw, Eye, Play } from "lucide-react";
+import { Download, Plus, RotateCcw, Eye, Play, Cloud } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import { PageHeader } from "@/components/ui-kit";
+import ChallengeHandoffModal from "@/components/suppliers/ChallengeHandoffModal";
 
 
 const ALL_ENTITY_TYPES = [
@@ -22,12 +23,13 @@ const ALL_ENTITY_TYPES = [
 ];
 
 const STATE_PALETTE = {
-  pending:      { bg: "#F1F5F9", fg: "#475569" },
-  running:      { bg: "#DBEAFE", fg: "#1E40AF" },
-  paused:       { bg: "#FEF3C7", fg: "#92400E" },
-  committed:    { bg: "#DCFCE7", fg: "#166534" },
-  rolled_back:  { bg: "#E5E7EB", fg: "#6B7280" },
-  failed:       { bg: "#FEE2E2", fg: "#991B1B" },
+  pending:            { bg: "#F1F5F9", fg: "#475569" },
+  running:            { bg: "#DBEAFE", fg: "#1E40AF" },
+  paused:             { bg: "#FEF3C7", fg: "#92400E" },
+  paused_challenge:   { bg: "#FCE7F3", fg: "#9D174D" },
+  committed:          { bg: "#DCFCE7", fg: "#166534" },
+  rolled_back:        { bg: "#E5E7EB", fg: "#6B7280" },
+  failed:             { bg: "#FEE2E2", fg: "#991B1B" },
 };
 
 
@@ -67,6 +69,9 @@ export default function HomeworksImport() {
   const [commitBusy, setCommitBusy] = useState(false);
   const [progress, setProgress] = useState(null);
   const pollRef = useRef(null);
+  // Phase 55-b — Scrape orchestrator + challenge handoff.
+  const [scrapeBusy, setScrapeBusy] = useState(false);
+  const [challengeInfo, setChallengeInfo] = useState(null);   // {slug}
 
   const clearPoll = useCallback(() => {
     if (pollRef.current) {
@@ -211,6 +216,36 @@ export default function HomeworksImport() {
       setError(e?.message || "Commit failed.");
     } finally {
       setCommitBusy(false);
+      clearPoll();
+    }
+  };
+
+  // Phase 55-b — Kick off the Copilot CRM scraper. If the response
+  // carries ``challenge_required``, open the Phase 54h-b handoff
+  // modal so the operator can push cookies via bookmarklet, then
+  // retry via ``onRetry``.
+  const doScrape = async () => {
+    if (!detailTarget || scrapeBusy) return;
+    setScrapeBusy(true);
+    startProgressPoll(detailTarget.id);
+    try {
+      const r = await api.post(
+        `/imports/homeworks/batches/${detailTarget.id}/scrape`, {});
+      if (r && r.challenge_required) {
+        setChallengeInfo({ slug: r.slug || "homeworks" });
+      }
+      // Refresh detail regardless.
+      const [rep, prog] = await Promise.all([
+        api.get(`/imports/homeworks/batches/${detailTarget.id}/dryrun`),
+        api.get(`/imports/homeworks/batches/${detailTarget.id}/progress`),
+      ]);
+      setDetailReport(rep || null);
+      setProgress(prog || null);
+      await loadBatches();
+    } catch (e) {
+      setError(e?.message || "Scrape failed.");
+    } finally {
+      setScrapeBusy(false);
       clearPoll();
     }
   };
@@ -638,36 +673,70 @@ export default function HomeworksImport() {
               </>
             ) : null}
 
-            {/* Commit / Resume CTA */}
+            {/* Commit / Resume / Scrape CTA */}
             {(() => {
               const state = progress?.state || detailReport?.state
                              || detailTarget.state;
               const canCommit = state === "paused";
               const canResume = state === "committed"
                                  && (progress?.error_count || 0) > 0;
-              if (!canCommit && !canResume) return null;
+              const canScrape = state === "pending"
+                                 || state === "paused_challenge";
+              if (!canCommit && !canResume && !canScrape) return null;
               return (
                 <div className="flex justify-end gap-2 pt-2 border-t"
                       style={{ borderColor: colors.border }}>
-                  <button
-                    type="button"
-                    onClick={doCommit}
-                    disabled={commitBusy}
-                    className="inline-flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-60"
-                    style={{ background: colors.brand }}
-                    data-testid={canResume ? "hw-resume-btn"
-                                             : "hw-commit-btn"}
-                  >
-                    <Play size={12} />
-                    {commitBusy ? "Committing…"
-                                : canResume ? "Resume commit"
-                                             : "Commit batch"}
-                  </button>
+                  {canScrape ? (
+                    <button
+                      type="button"
+                      onClick={doScrape}
+                      disabled={scrapeBusy}
+                      className="inline-flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-60"
+                      style={{ background: "#7C3AED" }}
+                      data-testid="hw-scrape-btn"
+                    >
+                      <Cloud size={12} />
+                      {scrapeBusy ? "Scraping…"
+                                    : state === "paused_challenge"
+                                      ? "Retry after handoff"
+                                      : "Scrape from Copilot CRM"}
+                    </button>
+                  ) : null}
+                  {(canCommit || canResume) ? (
+                    <button
+                      type="button"
+                      onClick={doCommit}
+                      disabled={commitBusy}
+                      className="inline-flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-60"
+                      style={{ background: colors.brand }}
+                      data-testid={canResume ? "hw-resume-btn"
+                                                : "hw-commit-btn"}
+                    >
+                      <Play size={12} />
+                      {commitBusy ? "Committing…"
+                                  : canResume ? "Resume commit"
+                                                : "Commit batch"}
+                    </button>
+                  ) : null}
                 </div>
               );
             })()}
           </div>
         </div>
+      ) : null}
+
+      {/* ── Challenge handoff modal (Phase 55-b · Copilot CRM) ── */}
+      {challengeInfo ? (
+        <ChallengeHandoffModal
+          slug={challengeInfo.slug || "homeworks"}
+          displayName="Homeworks (Copilot CRM)"
+          loginUrl="https://secure.copilotcrm.com/login"
+          onClose={() => setChallengeInfo(null)}
+          onRetry={() => {
+            setChallengeInfo(null);
+            if (detailTarget) doScrape();
+          }}
+        />
       ) : null}
     </div>
   );
