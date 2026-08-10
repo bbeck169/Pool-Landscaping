@@ -67,6 +67,15 @@ export default function Login({ variant = "staff" } = {}) {
 
   const forced = location.state?.from;
 
+  // Feb-2026 · Zombie-session hotfix — surface a friendly banner when
+  // the user landed here via the api.js 401 interceptor
+  // (?reason=expired). Query-string driven so it survives a full
+  // page reload triggered by ``window.location.assign``.
+  const expiredBanner = React.useMemo(() => {
+    const params = new URLSearchParams(location.search || "");
+    return params.get("reason") === "expired";
+  }, [location.search]);
+
   const onSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -163,6 +172,21 @@ export default function Login({ variant = "staff" } = {}) {
           <h2 className="text-3xl font-bold mb-8" style={{ color: colors.onSurface }}>
             Sign in to your console
           </h2>
+
+          {expiredBanner && (
+            <div
+              className="text-sm px-3 py-2 rounded-lg mb-4"
+              style={{
+                backgroundColor: "#FEF3C7",
+                color: "#78350F",
+                border: "1px solid #FDE68A",
+              }}
+              role="status"
+              data-testid="login-session-expired-banner"
+            >
+              Your session has expired. Please sign in again.
+            </div>
+          )}
 
           <form onSubmit={onSubmit} className="space-y-4" data-testid="login-form">
             <div>

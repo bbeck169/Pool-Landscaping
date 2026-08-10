@@ -44,9 +44,31 @@ export function AuthProvider({ children }) {
           localStorage.setItem(USER_KEY, JSON.stringify(fresh));
           setUser(fresh);
         }
-      } catch { /* keep cached copy */ }
+      } catch (e) {
+        // Feb-2026 · Zombie-session hotfix — if /auth/me itself returned
+        // 401 with a known auth-token failure, clear the cached user
+        // right now instead of silently keeping a dead session. Other
+        // errors (network, 5xx) still get swallowed for offline
+        // resilience — matches prior behavior.
+        const status = e?.status;
+        const msg = (e?.message || "").toLowerCase();
+        const isAuthTokenFailure =
+          status === 401 && (
+            msg === "token expired" ||
+            msg === "invalid token" ||
+            msg === "account_deleted" ||
+            msg === "account is deactivated"
+          );
+        if (isAuthTokenFailure) {
+          // api.js has already fired the interceptor + redirect at
+          // this point; local state cleanup keeps the tree consistent
+          // for the microtask before the location.assign takes effect.
+          logout();
+        }
+        /* else: keep cached copy */
+      }
     })();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- logout() is stable within provider scope; effect must run once on mount.
 
   const persist = (accessToken, u) => {
     localStorage.setItem(TOKEN_KEY, accessToken);
