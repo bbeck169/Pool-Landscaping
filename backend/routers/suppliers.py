@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from config import db, logger
@@ -475,7 +475,54 @@ async def test_supplier_connection(
 # is enforced per-connector via ``SUPPORTS_CHALLENGE_HANDOFF``;
 # non-opt-in suppliers (Ewing, ePoolSupply) return 400 on POST with
 # ``supplier_does_not_support_handoff``.
+#
+# Phase 54h-b · Aug-2026 — bookmarklet auth. The
+# ``POST /suppliers/{slug}/sessions`` endpoint additionally accepts
+# an ``?import_token=`` query param (5-min JWT with ``purpose:
+# supplier_session_import`` claim) so the bookmarklet — which runs
+# in the SUPPLIER'S tab, not the CRM's — can post cookies without
+# needing the operator's full-strength Authorization header.
 # ═══════════════════════════════════════════════════════════════════
+IMPORT_TOKEN_TTL_MINUTES = 5
+IMPORT_TOKEN_PURPOSE = "supplier_session_import"
+
+
+def _issue_import_token(user: Dict[str, Any]) -> Dict[str, Any]:
+    """Mint a 5-min JWT scoped to POST /suppliers/*/sessions only.
+    Reuses the app's JWT_SECRET/JWT_ALGO — no key sprawl."""
+    import jwt as _jwt
+    from datetime import datetime, timedelta, timezone
+    from config import JWT_SECRET, JWT_ALGO
+    exp = datetime.now(timezone.utc) + timedelta(
+        minutes=IMPORT_TOKEN_TTL_MINUTES)
+    payload = {
+        "purpose": IMPORT_TOKEN_PURPOSE,
+        "sub": user["id"],
+        "tenant_id": user.get("tenant_id"),
+        "role": user.get("role"),
+        "email": user.get("email"),
+        "exp": exp,
+    }
+    token = _jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+    return {"token": token, "expires_at": exp.isoformat()}
+
+
+def _decode_import_token(token: str) -> Optional[Dict[str, Any]]:
+    """Return the JWT payload iff purpose claim matches. None on
+    any failure so the caller can treat it uniformly as ``invalid``."""
+    if not token:
+        return None
+    import jwt as _jwt
+    from config import JWT_SECRET, JWT_ALGO
+    try:
+        payload = _jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except _jwt.PyJWTError:
+        return None
+    if payload.get("purpose") != IMPORT_TOKEN_PURPOSE:
+        return None
+    return payload
+
+
 class _SessionCookieIn(BaseModel):
     name: str
     value: str
@@ -511,15 +558,49 @@ def _assert_handoff_supported(slug: str) -> None:
 async def upsert_supplier_session(
     slug: str,
     body: _SessionUpsertIn,
-    user: dict = Depends(get_current_user),
+    import_token: Optional[str] = Query(None),
+    request: Request = None,       # type: ignore[assignment]
 ) -> Dict[str, Any]:
+    # Phase 54h-b · Aug-2026 — bookmarklet path.
+    # Priority: Authorization header (via ``get_current_user``) first.
+    # If absent OR bearer decode fails, fall back to ``?import_token=``.
+    # This lets the bookmarklet — which runs in the supplier's tab
+    # and can't easily forward the operator's session cookie — POST
+    # cookies with a narrowly-scoped 5-min JWT instead.
+    user: Optional[Dict[str, Any]] = None
+    auth_hdr = ""
+    if request is not None:
+        auth_hdr = request.headers.get("Authorization") or ""
+    if auth_hdr.lower().startswith("bearer "):
+        raw = auth_hdr.split(" ", 1)[1].strip()
+        import jwt as _jwt
+        from config import JWT_SECRET, JWT_ALGO
+        try:
+            payload = _jwt.decode(raw, JWT_SECRET,
+                                    algorithms=[JWT_ALGO])
+            if payload.get("purpose") is None:  # standard user JWT
+                user = await db.users.find_one(
+                    {"id": payload.get("sub")},
+                    {"_id": 0, "password_hash": 0},
+                )
+        except _jwt.PyJWTError:
+            user = None
+    if user is None and import_token:
+        claims = _decode_import_token(import_token)
+        if claims is None:
+            raise HTTPException(403, {"error": "invalid_import_token"})
+        user = {"id": claims.get("sub"),
+                 "email": claims.get("email"),
+                 "role": claims.get("role"),
+                 "tenant_id": claims.get("tenant_id")}
+    if user is None:
+        raise HTTPException(401, {"error": "unauthenticated"})
+
     _require_session_role(user)
     tenant_id = _require_tenant(user)
     _assert_handoff_supported(slug)
     await _get_supplier_or_404(tenant_id, slug)
 
-    # Normalize to plain dicts for the Playwright ``add_cookies`` API
-    # + drop None-valued keys (Playwright rejects them).
     normalized: List[Dict[str, Any]] = []
     for c in body.cookies:
         row = {k: v for k, v in c.model_dump().items() if v is not None}
@@ -531,6 +612,18 @@ async def upsert_supplier_session(
         cookies=normalized, user_id=(user or {}).get("id"),
     )
     return {"ok": True, "supplier_slug": slug, **result}
+
+
+@router.post("/suppliers/sessions/import-token")
+async def issue_supplier_session_import_token(
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Phase 54h-b · Aug-2026 — Mint a 5-min JWT the bookmarklet
+    embeds in its ``fetch`` URL. Role gate mirrors the session
+    endpoints (admin + super_admin + manager)."""
+    _require_session_role(user)
+    _require_tenant(user)
+    return _issue_import_token(user)
 
 
 @router.get("/suppliers/{slug}/sessions/status")

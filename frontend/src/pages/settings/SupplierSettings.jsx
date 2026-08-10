@@ -24,6 +24,7 @@ import { useAuth } from "@/auth";
 import { colors } from "@/theme";
 import { toast } from "sonner";
 import { SUPPLIER_METADATA, WIRED_SLUGS } from "./supplier_metadata";
+import ChallengeHandoffModal from "@/components/suppliers/ChallengeHandoffModal";
 
 const LEGAL_DISCLAIMER =
   "Automated syncing may be subject to your wholesaler's Terms of Service. " +
@@ -207,6 +208,13 @@ function WiredSupplierCard({ supplier, readOnly }) {
       if (r.ok) {
         setTestResult({ ok: true, message: "Connection OK." });
         toast.success("Connection OK.");
+      } else if (r.challenge_required) {
+        // Phase 54h-b · Aug-2026 — Turnstile handoff flow. Open the
+        // modal so the operator can solve in their own browser + POST
+        // cookies back via bookmarklet or DevTools paste.
+        setChallengeOpen(true);
+        setTestResult({ ok: false,
+                         message: "Challenge required — see modal." });
       } else {
         const copy = TEST_CONN_ERROR_COPY[r.error] || `Connection failed (${r.error}).`;
         setTestResult({ ok: false, message: copy });
@@ -223,6 +231,7 @@ function WiredSupplierCard({ supplier, readOnly }) {
       setTesting(false);
     }
   };
+  const [challengeOpen, setChallengeOpen] = useState(false);
 
   return (
     <div
@@ -482,6 +491,18 @@ function WiredSupplierCard({ supplier, readOnly }) {
           </div>
         )}
       </div>
+      {/* Phase 54h-b · Aug-2026 — Turnstile handoff modal. Opens
+          when ``runTest`` sees ``challenge_required: true`` on the
+          test-connection response. */}
+      {challengeOpen ? (
+        <ChallengeHandoffModal
+          slug={supplier.slug}
+          displayName={displayName}
+          loginUrl={meta.login_url}
+          onClose={() => setChallengeOpen(false)}
+          onRetry={() => { setChallengeOpen(false); runTest(); }}
+        />
+      ) : null}
     </div>
   );
 }
