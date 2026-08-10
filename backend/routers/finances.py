@@ -1003,6 +1003,18 @@ async def list_autobilling_runs(
     plan_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     since: Optional[str] = Query(None, description="ISO date lower bound."),
+    include_deleted: bool = Query(
+        False,
+        description=(
+            "Aug-2026 · Soft-delete surface — when True, soft-deleted "
+            "rows (``deleted_at`` set) are included in the response. "
+            "Only ``admin`` / ``super_admin`` / ``owner`` roles are "
+            "allowed to opt in; the guard is already enforced by "
+            "``require_admin`` on this endpoint. Defaults to False so "
+            "the audit view hides deleted rows unless the operator "
+            "explicitly asks to see them."
+        ),
+    ),
     user: dict = Depends(require_admin),
     tenant: dict = Depends(get_current_tenant),
 ):
@@ -1015,6 +1027,11 @@ async def list_autobilling_runs(
         q["status"] = status
     if since:
         q["ts"] = {"$gte": since}
+    if not include_deleted:
+        # Default view hides soft-deleted rows. ``None`` / missing key
+        # / ``False`` all count as "not deleted"; only a truthy
+        # ``deleted_at`` string is treated as deleted.
+        q["deleted_at"] = {"$in": [None, ""]}
     rows = await db.autobilling_runs.find(q, {"_id": 0}).sort("ts", -1).to_list(2000)
     return rows
 
@@ -1360,3 +1377,157 @@ async def bulk_cancel_autobilling_runs(body: _AutobillingBulkCancelIn,
     return {"cancelled": len(cancelled), "skipped": len(skipped),
               "results": results}
 
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Aug-2026 · Autobilling Runs — SOFT-DELETE (admin + super_admin).
+#
+# Distinct from the /autobilling/runs/bulk-cancel endpoint above:
+#   * bulk-cancel  — state-machine transition on eligible statuses
+#                    (pending/scheduled/queued) so a run doesn't fire.
+#   * soft-delete  — audit-preserving hide from the default list view.
+#     Applies to ANY status including fired/completed/failed. No
+#     "running soon" guard for admin/super_admin — the entire point
+#     is that these roles can hide historical clutter without losing
+#     it for auditors. Restore is symmetric and role-gated the same
+#     way.
+# ═════════════════════════════════════════════════════════════════════════
+_AUTOBILLING_RUNS_BULK_DELETE_CAP = 500
+
+
+class _AutobillingRunsBulkDeleteIn(_AutobillingBulkBase):
+    ids: List[str]
+
+
+async def _write_runs_softdelete_audit(*, kind: str, target_id: str,
+                                       user: dict, tenant: dict) -> None:
+    try:
+        await db.audits.insert_one({
+            "id": new_id(),
+            "kind": kind,
+            "tenant_id": tenant["id"],
+            "target_id": target_id,
+            "actor_user_id": user.get("id"),
+            "actor_email": user.get("email"),
+            "at": now_iso(),
+        })
+    except Exception as e:                                            # noqa: BLE001
+        logger.warning(f"{kind} audit failed for {target_id}: {e}")
+
+
+@router.post("/autobilling/runs/bulk-delete",
+              operation_id="autobillingRuns.bulkDelete")
+async def bulk_delete_autobilling_runs(
+    body: _AutobillingRunsBulkDeleteIn,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Bulk soft-delete autobilling audit rows.
+
+    Sets ``deleted_at``, ``deleted_by_user_id`` on each matched row.
+    Idempotent — a row already marked ``deleted_at`` is returned as
+    ``skipped: already_deleted``. No status/eligibility guards — the
+    audit log entry exists forever regardless of what state the run
+    itself was in when the operator hid it.
+    """
+    ids = list(body.ids or [])
+    if not ids:
+        raise HTTPException(400, "ids is empty")
+    if len(ids) > _AUTOBILLING_RUNS_BULK_DELETE_CAP:
+        raise HTTPException(
+            400,
+            f"bulk-delete capped at {_AUTOBILLING_RUNS_BULK_DELETE_CAP} rows per call",
+        )
+
+    deleted: List[str] = []
+    skipped: List[dict] = []
+    results: List[dict] = []
+    when = now_iso()
+
+    for rid in ids:
+        row = await db.autobilling_runs.find_one(
+            {"id": rid, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "deleted_at": 1},
+        )
+        if not row:
+            entry = {"id": rid, "status": "skipped", "reason": "not_found"}
+            skipped.append(entry)
+            results.append(entry)
+            continue
+        if row.get("deleted_at"):
+            entry = {"id": rid, "status": "skipped",
+                      "reason": "already_deleted"}
+            skipped.append(entry)
+            results.append(entry)
+            continue
+        try:
+            await db.autobilling_runs.update_one(
+                {"id": rid, "tenant_id": tenant["id"]},
+                {"$set": {"deleted_at": when,
+                            "deleted_by_user_id": user.get("id")}},
+            )
+            await _write_runs_softdelete_audit(
+                kind="autobilling_runs_soft_delete", target_id=rid,
+                user=user, tenant=tenant,
+            )
+            deleted.append(rid)
+            results.append({"id": rid, "status": "deleted", "reason": None})
+        except Exception as e:                                        # noqa: BLE001
+            entry = {"id": rid, "status": "skipped",
+                      "reason": f"error: {e}"}
+            skipped.append(entry)
+            results.append(entry)
+
+    return {"deleted": len(deleted), "skipped": len(skipped),
+              "results": results}
+
+
+@router.delete("/autobilling/runs/{rid}",
+                operation_id="autobillingRuns.softDelete")
+async def soft_delete_autobilling_run(
+    rid: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Per-row soft-delete convenience — wraps the same code path as
+    the bulk endpoint, returning a single-row result envelope for the
+    admin UI's trash-icon flow."""
+    body = _AutobillingRunsBulkDeleteIn(ids=[rid])
+    envelope = await bulk_delete_autobilling_runs(body, user=user, tenant=tenant)
+    result = (envelope.get("results") or [{}])[0]
+    if result.get("status") == "skipped" and result.get("reason") == "not_found":
+        raise HTTPException(404, "Autobilling run not found")
+    return {"ok": True, "id": rid, "result": result}
+
+
+@router.post("/autobilling/runs/{rid}/restore",
+              operation_id="autobillingRuns.restore")
+async def restore_autobilling_run(
+    rid: str,
+    user: dict = Depends(require_admin),
+    tenant: dict = Depends(get_current_tenant),
+):
+    """Undo a prior soft-delete. Only ``admin`` / ``super_admin`` /
+    ``owner`` per ``require_admin``. Idempotent — a row that is NOT
+    currently deleted is returned as ``already_active`` with no DB
+    write."""
+    row = await db.autobilling_runs.find_one(
+        {"id": rid, "tenant_id": tenant["id"]},
+        {"_id": 0, "id": 1, "deleted_at": 1},
+    )
+    if not row:
+        raise HTTPException(404, "Autobilling run not found")
+    if not row.get("deleted_at"):
+        return {"ok": True, "id": rid, "already_active": True}
+    await db.autobilling_runs.update_one(
+        {"id": rid, "tenant_id": tenant["id"]},
+        {"$set": {"deleted_at": None,
+                    "restored_at": now_iso(),
+                    "restored_by_user_id": user.get("id")},
+          "$unset": {"deleted_by_user_id": ""}},
+    )
+    await _write_runs_softdelete_audit(
+        kind="autobilling_runs_restore", target_id=rid,
+        user=user, tenant=tenant,
+    )
+    return {"ok": True, "id": rid, "restored": True}

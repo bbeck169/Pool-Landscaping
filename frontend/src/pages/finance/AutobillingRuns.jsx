@@ -13,9 +13,10 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Download, Repeat, XCircle } from "lucide-react";
+import { ArrowLeft, Download, Repeat, XCircle, Trash2, RotateCcw } from "lucide-react";
 import { toast as sonnerToast } from "sonner";
 import { api } from "@/api";
+import { useAuth } from "@/auth";
 import { colors } from "@/theme";
 import { PageHeader } from "@/components/ui-kit";
 
@@ -59,6 +60,8 @@ function StatusPill({ status }) {
 }
 
 export default function AutobillingRuns() {
+  const { user } = useAuth();
+  const canSoftDelete = ["admin", "super_admin", "owner"].includes(user?.role);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -66,6 +69,8 @@ export default function AutobillingRuns() {
   const [statusFilter, setStatusFilter] = useState(""); // "" = all
   const [since, setSince] = useState("");
   const [sort, setSort] = useState({ key: "ts", dir: "desc" });
+  // Aug-2026 · Soft-delete surface — default hides deleted rows.
+  const [showDeleted, setShowDeleted] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError("");
@@ -74,6 +79,7 @@ export default function AutobillingRuns() {
       if (planFilter) qs.set("plan_id", planFilter);
       if (statusFilter) qs.set("status", statusFilter);
       if (since) qs.set("since", since);
+      if (showDeleted) qs.set("include_deleted", "true");
       const r = await api.get(`/autobilling-runs${qs.toString() ? `?${qs}` : ""}`);
       setRows(Array.isArray(r) ? r : []);
     } catch (e) {
@@ -81,7 +87,7 @@ export default function AutobillingRuns() {
     } finally {
       setLoading(false);
     }
-  }, [planFilter, statusFilter, since]);
+  }, [planFilter, statusFilter, since, showDeleted]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -182,6 +188,98 @@ export default function AutobillingRuns() {
     }
   };
 
+  // Aug-2026 · Soft-delete state — per-row + bulk + restore.
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [deleteTargetId, setDeleteTargetId] = useState(null); // null → bulk
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [confirmRestoreOpen, setConfirmRestoreOpen] = useState(false);
+  const [restoreTargetId, setRestoreTargetId] = useState(null);
+  const [restoreBusy, setRestoreBusy] = useState(false);
+
+  const openRowDelete = (id) => {
+    setDeleteTargetId(id);
+    setConfirmDeleteOpen(true);
+  };
+  const openBulkDelete = () => {
+    setDeleteTargetId(null);
+    setConfirmDeleteOpen(true);
+  };
+  const closeDeleteConfirm = () => {
+    if (deleteBusy) return;
+    setConfirmDeleteOpen(false);
+    setDeleteTargetId(null);
+  };
+
+  const doSoftDelete = async () => {
+    setDeleteBusy(true);
+    try {
+      if (deleteTargetId) {
+        await api.del(`/autobilling/runs/${deleteTargetId}`);
+        sonnerToast.success("Run deleted");
+        setRows((prev) => showDeleted
+          ? prev.map((r) => (r.id === deleteTargetId
+              ? { ...r, deleted_at: new Date().toISOString() }
+              : r))
+          : prev.filter((r) => r.id !== deleteTargetId),
+        );
+      } else {
+        const ids = Array.from(selectedIds);
+        const res = await api.post("/autobilling/runs/bulk-delete", { ids });
+        const d = res.deleted || 0;
+        const s = res.skipped || 0;
+        sonnerToast[s === 0 ? "success" : "info"](
+          `${d} deleted${s ? ` · ${s} skipped` : ""}`,
+        );
+        const doneSet = new Set(
+          (res.results || [])
+            .filter((r) => r.status === "deleted")
+            .map((r) => r.id),
+        );
+        setRows((prev) => showDeleted
+          ? prev.map((r) => (doneSet.has(r.id)
+              ? { ...r, deleted_at: new Date().toISOString() }
+              : r))
+          : prev.filter((r) => !doneSet.has(r.id)),
+        );
+        clearSelection();
+      }
+      setConfirmDeleteOpen(false);
+      setDeleteTargetId(null);
+    } catch (e) {
+      sonnerToast.error(e?.message || "Delete failed");
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
+  const openRestore = (id) => {
+    setRestoreTargetId(id);
+    setConfirmRestoreOpen(true);
+  };
+  const closeRestoreConfirm = () => {
+    if (restoreBusy) return;
+    setConfirmRestoreOpen(false);
+    setRestoreTargetId(null);
+  };
+  const doRestore = async () => {
+    if (!restoreTargetId) return;
+    setRestoreBusy(true);
+    try {
+      await api.post(`/autobilling/runs/${restoreTargetId}/restore`, {});
+      sonnerToast.success("Run restored");
+      setRows((prev) => prev.map((r) => (r.id === restoreTargetId
+        ? { ...r, deleted_at: null, restored_at: new Date().toISOString() }
+        : r)));
+      setConfirmRestoreOpen(false);
+      setRestoreTargetId(null);
+    } catch (e) {
+      sonnerToast.error(e?.message || "Restore failed");
+    } finally {
+      setRestoreBusy(false);
+    }
+  };
+
+
   const exportCsv = () => {
     const header = ["Timestamp", "Plan", "Schedule", "Anchor date", "Current month", "Status", "Message", "Invoice"];
     const body = sorted.map((r) => [
@@ -274,6 +372,35 @@ export default function AutobillingRuns() {
 
         <div className="flex-1" />
 
+        {canSoftDelete ? (
+          <label
+            className="inline-flex items-center gap-2 text-xs font-semibold cursor-pointer"
+            style={{ color: colors.onSurface }}
+            data-testid="autobilling-runs-show-deleted-label"
+          >
+            <input
+              type="checkbox"
+              checked={showDeleted}
+              onChange={(e) => setShowDeleted(e.target.checked)}
+              data-testid="autobilling-runs-show-deleted-toggle"
+              className="cursor-pointer"
+            />
+            Show deleted
+          </label>
+        ) : null}
+
+        {canSoftDelete && selectedCount > 0 ? (
+          <button
+            type="button"
+            onClick={openBulkDelete}
+            className="inline-flex items-center gap-1 text-xs font-bold px-3 py-2 rounded-md"
+            style={{ background: "#DC2626", color: "#fff", border: 0 }}
+            data-testid="autobilling-runs-bulk-delete-button"
+          >
+            <Trash2 size={12} /> Delete Selected ({selectedCount})
+          </button>
+        ) : null}
+
         <button
           type="button"
           onClick={exportCsv}
@@ -324,22 +451,40 @@ export default function AutobillingRuns() {
                     {sort.key === c.k ? (sort.dir === "asc" ? " ↑" : " ↓") : ""}
                   </th>
                 ))}
+                {canSoftDelete ? (
+                  <th
+                    className="text-right px-3 py-2 w-14"
+                    style={{ color: colors.muted }}
+                    data-testid="autobilling-runs-col-actions"
+                  >
+                    &nbsp;
+                  </th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
               {sorted.length === 0 ? (
                 <tr>
-                  <td colSpan={COLS.length + 1} className="px-3 py-6 text-center"
+                  <td colSpan={COLS.length + (canSoftDelete ? 2 : 1)} className="px-3 py-6 text-center"
                       style={{ color: colors.muted }}
                       data-testid="autobilling-runs-empty">
                     No autobilling runs yet. Runs appear here when the daily
                     scheduler fires a plan or an admin uses "Run now".
                   </td>
                 </tr>
-              ) : sorted.map((r) => (
+              ) : sorted.map((r) => {
+                const isDeleted = Boolean(r.deleted_at);
+                const rowBg = selectedIds.has(r.id)
+                  ? "#EFF6FF"
+                  : (isDeleted ? "#F9FAFB" : "transparent");
+                const mutedFg = isDeleted ? "#9CA3AF" : colors.onSurface;
+                const mutedSub = isDeleted ? "#B0B7C0" : colors.muted;
+                const strike = isDeleted ? { textDecoration: "line-through" } : {};
+                return (
                 <tr key={r.id}
                      data-testid={`autobilling-runs-row-${r.id}`}
-                     style={{ backgroundColor: selectedIds.has(r.id) ? "#EFF6FF" : "transparent" }}>
+                     data-deleted={isDeleted ? "true" : "false"}
+                     style={{ backgroundColor: rowBg }}>
                   <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
@@ -350,18 +495,60 @@ export default function AutobillingRuns() {
                       className="cursor-pointer"
                     />
                   </td>
-                  <td className="px-3 py-2" style={{ color: colors.onSurface }}>{fmtTs(r.ts)}</td>
-                  <td className="px-3 py-2 font-bold" style={{ color: colors.onSurface }}>
+                  <td className="px-3 py-2" style={{ color: mutedFg }}>{fmtTs(r.ts)}</td>
+                  <td className="px-3 py-2 font-bold" style={{ color: mutedFg }}>
                     {r.plan_name || r.plan_id || "—"}
                   </td>
-                  <td className="px-3 py-2" style={{ color: colors.muted }}>
+                  <td className="px-3 py-2" style={{ color: mutedSub }}>
                     {SCHEDULE_LABELS[r.run_schedule] || r.run_schedule || "—"}
                   </td>
-                  <td className="px-3 py-2" style={{ color: colors.muted }}>{r.anchor_date || "—"}</td>
-                  <td className="px-3 py-2"><StatusPill status={r.status} /></td>
-                  <td className="px-3 py-2" style={{ color: colors.muted }}>{r.message || "—"}</td>
+                  <td className="px-3 py-2" style={{ color: mutedSub }}>{r.anchor_date || "—"}</td>
+                  <td className="px-3 py-2">
+                    {isDeleted ? (
+                      <span
+                        className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide"
+                        style={{ backgroundColor: "#E5E7EB", color: "#6B7280" }}
+                        data-testid={`autobilling-runs-row-deleted-pill-${r.id}`}
+                      >
+                        Deleted
+                      </span>
+                    ) : <StatusPill status={r.status} />}
+                  </td>
+                  <td className="px-3 py-2" style={{ color: mutedSub, ...strike }}>
+                    {r.message || "—"}
+                  </td>
+                  {canSoftDelete ? (
+                    <td className="px-3 py-2 text-right whitespace-nowrap"
+                        onClick={(e) => e.stopPropagation()}>
+                      {isDeleted ? (
+                        <button
+                          type="button"
+                          onClick={() => openRestore(r.id)}
+                          aria-label={`Restore run ${r.id}`}
+                          title="Restore"
+                          className="inline-flex items-center justify-center p-1.5 rounded-md hover:bg-slate-100"
+                          style={{ color: "#0F766E" }}
+                          data-testid={`autobilling-runs-row-restore-${r.id}`}
+                        >
+                          <RotateCcw size={14} />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openRowDelete(r.id)}
+                          aria-label={`Delete run ${r.id}`}
+                          title="Delete"
+                          className="inline-flex items-center justify-center p-1.5 rounded-md hover:bg-red-50"
+                          style={{ color: "#DC2626" }}
+                          data-testid={`autobilling-runs-row-delete-${r.id}`}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </td>
+                  ) : null}
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
         </div>
@@ -485,6 +672,111 @@ export default function AutobillingRuns() {
           >
             Dismiss
           </button>
+        </div>
+      ) : null}
+
+      {/* Aug-2026 · Soft-delete confirmation modal — per-row + bulk. */}
+      {confirmDeleteOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(15,23,42,0.55)" }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) closeDeleteConfirm(); }}
+          data-testid="autobilling-runs-delete-confirm"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+            style={{ background: "#fff", border: `1px solid ${colors.border}` }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold mb-2" style={{ color: colors.onSurface }}
+                data-testid="autobilling-runs-delete-confirm-title">
+              {deleteTargetId
+                ? "Delete this autobill run?"
+                : `Delete ${selectedCount} autobill run${selectedCount === 1 ? "" : "s"}?`}
+            </h2>
+            <p className="text-sm mb-4" style={{ color: colors.muted }}>
+              {deleteTargetId
+                ? "This will be soft-deleted and hidden from the default view but preserved for auditing."
+                : "Same soft-delete semantics — hidden from the default view but preserved for auditing."}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeDeleteConfirm}
+                disabled={deleteBusy}
+                className="px-4 py-2 rounded-lg text-sm font-semibold"
+                style={{ background: colors.surface,
+                          border: `1px solid ${colors.border}`,
+                          color: colors.onSurface,
+                          opacity: deleteBusy ? 0.5 : 1 }}
+                data-testid="autobilling-runs-delete-cancel-btn"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={doSoftDelete}
+                disabled={deleteBusy}
+                className="px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-60"
+                style={{ backgroundColor: "#DC2626" }}
+                data-testid="autobilling-runs-delete-confirm-btn"
+              >
+                {deleteBusy
+                  ? "Deleting…"
+                  : deleteTargetId
+                    ? "Confirm"
+                    : `Confirm (${selectedCount})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Aug-2026 · Restore confirmation modal (deleted rows only). */}
+      {confirmRestoreOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(15,23,42,0.55)" }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) closeRestoreConfirm(); }}
+          data-testid="autobilling-runs-restore-confirm"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+            style={{ background: "#fff", border: `1px solid ${colors.border}` }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold mb-2" style={{ color: colors.onSurface }}>
+              Restore this autobill run?
+            </h2>
+            <p className="text-sm mb-4" style={{ color: colors.muted }}>
+              Restore this autobill run to the default view?
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeRestoreConfirm}
+                disabled={restoreBusy}
+                className="px-4 py-2 rounded-lg text-sm font-semibold"
+                style={{ background: colors.surface,
+                          border: `1px solid ${colors.border}`,
+                          color: colors.onSurface,
+                          opacity: restoreBusy ? 0.5 : 1 }}
+                data-testid="autobilling-runs-restore-cancel-btn"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={doRestore}
+                disabled={restoreBusy}
+                className="px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-60"
+                style={{ backgroundColor: "#0F766E" }}
+                data-testid="autobilling-runs-restore-confirm-btn"
+              >
+                {restoreBusy ? "Restoring…" : "Confirm"}
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
