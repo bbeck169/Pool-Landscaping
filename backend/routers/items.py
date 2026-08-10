@@ -29,6 +29,10 @@ async def create_item(body: ItemIn, user: dict = Depends(require_admin)):
     from routers.service_categories import validate_service_category
     tenant_id = user.get("tenant_id") or ""
     await validate_service_category(tenant_id, doc.get("service_category_id"))
+    # Phase 56-b · Aug-2026 — Multi-supplier pricing validation.
+    doc["supplier_prices"] = await _validate_supplier_prices(
+        tenant_id, doc.get("income_category_id"), doc.get("supplier_prices"),
+    )
     doc.update({"id": new_id(), "created_at": now_iso()})
     if tenant_id:
         doc["tenant_id"] = tenant_id
@@ -95,6 +99,94 @@ class ItemPatch(BaseModel):
     # Both admin-gated and NEVER surfaced on customer-facing views.
     wholesale_price: Optional[float] = None
     labor_cost_default: Optional[float] = None
+    # Phase 56-b · Aug-2026 — Multi-supplier pricing patch.
+    income_category_id: Optional[str] = None
+    supplier_prices: Optional[List[dict]] = None
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Phase 56-b · Aug-2026 — Multi-supplier pricing validators.
+#
+# Rules (locked in preflight §4):
+#   1. Every ``supplier_prices[i].supplier_slug`` must reference a
+#      non-deleted row in ``db.pricebook_suppliers`` on this tenant.
+#      Unknown slugs → 400 ``unknown_supplier``.
+#   2. Every supplier's ``income_category_id`` must equal the item's
+#      ``income_category_id``. Mismatch → 400
+#      ``supplier_income_category_mismatch``.
+#   3. Empty ``supplier_prices=[]`` is legal (item has no prices).
+#   4. Duplicates on the same slug → 400 ``duplicate_supplier_slug``
+#      (defensive — prevents shadow-row bugs downstream).
+#   5. ``cost_cents`` must be an int ≥ 0.
+#
+# Soft-deleted suppliers are IGNORED at validation time on WRITES —
+# they'd be a mismatch (deleted row can't match a category). But
+# EXISTING supplier_prices on an item are preserved on READS even if
+# the supplier is later soft-deleted; the frontend renders a
+# "(deleted supplier)" pill.
+# ═════════════════════════════════════════════════════════════════════════
+async def _validate_supplier_prices(
+    tenant_id: str,
+    income_category_id: Optional[str],
+    supplier_prices: Optional[List[dict]],
+) -> List[dict]:
+    """Return a normalized list of ``{supplier_slug, cost_cents}`` docs
+    or raise HTTPException(400) with a friendly ``detail`` payload."""
+    if not supplier_prices:
+        return []
+    if not income_category_id:
+        # Silent guard — items without an income_category cannot carry
+        # supplier_prices. Reject early with a friendly detail rather
+        # than half-persisting.
+        raise HTTPException(400, {
+            "error": "supplier_prices_without_income_category",
+            "message": ("supplier_prices requires income_category_id "
+                         "to be set on the item"),
+        })
+
+    seen: set = set()
+    out: List[dict] = []
+    for row in supplier_prices:
+        slug = str((row or {}).get("supplier_slug") or "").strip().lower()
+        if not slug:
+            raise HTTPException(400, {"error": "invalid_supplier_slug",
+                                        "message": "supplier_slug required"})
+        if slug in seen:
+            raise HTTPException(400, {"error": "duplicate_supplier_slug",
+                                        "supplier_slug": slug})
+        seen.add(slug)
+        try:
+            cents = int((row or {}).get("cost_cents") or 0)
+        except (TypeError, ValueError) as e:
+            raise HTTPException(400, {"error": "invalid_cost_cents",
+                                        "supplier_slug": slug}) from e
+        if cents < 0:
+            raise HTTPException(422, {"error": "invalid_cost_cents",
+                                        "supplier_slug": slug,
+                                        "message": "cost_cents must be ≥ 0"})
+
+        sup = await db.pricebook_suppliers.find_one(
+            {"tenant_id": tenant_id, "slug": slug,
+              "deleted_at": {"$in": [None, ""]}},
+            {"_id": 0, "slug": 1, "income_category_id": 1},
+        )
+        if not sup:
+            raise HTTPException(400, {"error": "unknown_supplier",
+                                        "supplier_slug": slug})
+        if sup.get("income_category_id") != income_category_id:
+            # Look up the expected category name to make the friendly
+            # detail actionable (matches preflight lock).
+            cat = await db.income_categories.find_one(
+                {"tenant_id": tenant_id, "id": sup["income_category_id"]},
+                {"_id": 0, "name": 1},
+            ) or {}
+            raise HTTPException(400, {
+                "error": "supplier_income_category_mismatch",
+                "supplier_slug": slug,
+                "expected_category": cat.get("name") or sup["income_category_id"],
+            })
+        out.append({"supplier_slug": slug, "cost_cents": cents})
+    return out
 
 
 @router.patch("/items/{iid}", operation_id="pricebook.patch")
@@ -140,6 +232,18 @@ async def patch_item(iid: str, body: ItemPatch,
         from routers.service_categories import validate_service_category
         await validate_service_category(row.get("tenant_id") or user.get("tenant_id") or "",
                                           upd["service_category_id"])
+    # Phase 56-b · Aug-2026 — Multi-supplier pricing patch validation.
+    # If the caller sends supplier_prices, validate against the
+    # income_category the item is (or is becoming) attached to. If
+    # the patch also flips income_category_id, use the NEW value —
+    # otherwise fall back to the row's existing value.
+    if "supplier_prices" in upd:
+        effective_cat = upd.get("income_category_id",
+                                  row.get("income_category_id"))
+        upd["supplier_prices"] = await _validate_supplier_prices(
+            row.get("tenant_id") or user.get("tenant_id") or "",
+            effective_cat, upd["supplier_prices"],
+        )
     upd["updated_at"] = now_iso()
     upd["updated_by_user_id"] = user.get("id")
     await db.items.update_one({"id": iid}, {"$set": upd})

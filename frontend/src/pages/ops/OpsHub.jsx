@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar, Activity, Waves, Package, History, BarChart3, Plus, Trash2, RefreshCw, MapPin, ChevronRight, Link2, Share2, MoreVertical, KeyRound, Eye, EyeOff, Copy as CopyIcon, Undo2, ShieldAlert, Loader2 } from "lucide-react";
+import { Users2, Truck, Route, Wrench, ClipboardList, Timer, Clock, Calendar, Activity, Waves, Package, History, BarChart3, Plus, Trash2, RefreshCw, MapPin, ChevronRight, Link2, Share2, MoreVertical, KeyRound, Eye, EyeOff, Copy as CopyIcon, Undo2, ShieldAlert, Loader2, DollarSign } from "lucide-react";
 import { api } from "@/api";
 import { SUPPLIER_METADATA } from "@/pages/settings/supplier_metadata";
 import { mustConfirm } from "@/components/ui/confirm-dialog";
@@ -1756,7 +1756,16 @@ function SupplierBadge({ slug, testid }) {
 export function PriceBook() {
   const [rows, refresh] = useList("/items");
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0, tax_rate: 0, wholesale_price: 0, labor_cost_default: 0, service_category_id: "" });
+  // Phase 56-b · Aug-2026 — Multi-supplier pricing form state.
+  //   ``income_category_id`` drives which suppliers appear in the
+  //   grid; ``supplier_prices`` is an object keyed by slug → dollar
+  //   string ("" = empty, excluded from payload).
+  const [form, setForm] = useState({
+    name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0,
+    tax_rate: 0, wholesale_price: 0, labor_cost_default: 0,
+    service_category_id: "", income_category_id: "",
+    supplier_prices: {},
+  });
   const [toast, setToast] = useState(null);
   // Aug-2026 · Fix P1 — Pricebook create requires ``service_category_id``.
   // Fetch the active service categories once on mount and expose
@@ -1776,6 +1785,37 @@ export function PriceBook() {
       })
       .catch((e) => setServiceCatsError(e?.message || "Failed to load service categories"));
   }, []);
+
+  // Phase 56-b · Aug-2026 — Income Categories + Pricebook Suppliers
+  // feed the Add-item modal supplier grid + the list summary line.
+  // Both fetched once on mount; refetched only if the user re-opens
+  // the modal after a supplier CRUD change (out of scope for 56-b).
+  const [incomeCats, setIncomeCats] = useState([]);      // [{id, name, is_archived}]
+  const [pricebookSuppliers, setPricebookSuppliers] = useState([]);  // all non-deleted suppliers
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.get("/income-categories");
+        const raw = Array.isArray(r) ? r : (r?.items || []);
+        setIncomeCats(raw.filter((c) => !c.is_archived));
+      } catch { setIncomeCats([]); }
+    })();
+    (async () => {
+      try {
+        const r = await api.get("/pricebook/suppliers");
+        setPricebookSuppliers(Array.isArray(r) ? r : []);
+      } catch { setPricebookSuppliers([]); }
+    })();
+  }, []);
+  // Suppliers for the currently-selected income_category on the
+  // Add-item modal — active + non-deleted only.
+  const modalSuppliers = useMemo(() => {
+    if (!form.income_category_id) return [];
+    return pricebookSuppliers.filter(
+      (s) => s.income_category_id === form.income_category_id &&
+             !s.deleted_at && s.is_active !== false,
+    );
+  }, [pricebookSuppliers, form.income_category_id]);
   // Phase 54f · Feb-2026 — supplier column + filter.
   //
   // ``SUPPLIER_META`` is looked up per-row for the badge label + color.
@@ -1806,6 +1846,13 @@ export function PriceBook() {
   const [busy, setBusy] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState({});
+  // Phase 56-b · Aug-2026 — per-row Supplier Prices edit modal.
+  // Opens separately from the inline row-edit so we can render the
+  // full N-supplier grid comfortably. Deleted suppliers linked to
+  // the item are shown but their input is read-only + labelled.
+  const [pricesModalRow, setPricesModalRow] = useState(null);
+  const [pricesDraft, setPricesDraft] = useState({});   // slug → dollar string
+  const [pricesBusy, setPricesBusy] = useState(false);
   const visibleIds = filteredRows.map((r) => r.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
   const indeterminate = visibleIds.some((id) => selectedIds.has(id)) && !allVisibleSelected;
@@ -1886,6 +1933,50 @@ export function PriceBook() {
     }
   };
   const cancelEdit = () => { setEditingId(null); setEditDraft({}); };
+
+  // Phase 56-b · Aug-2026 — Supplier Prices modal handlers.
+  const openPrices = (row) => {
+    // Seed the draft from the row's persisted supplier_prices —
+    // cents→dollars, keyed by slug.
+    const seed = {};
+    for (const p of row.supplier_prices || []) {
+      seed[p.supplier_slug] = ((p.cost_cents || 0) / 100).toFixed(2);
+    }
+    setPricesDraft(seed);
+    setPricesModalRow(row);
+  };
+  const closePrices = () => {
+    if (pricesBusy) return;
+    setPricesModalRow(null);
+    setPricesDraft({});
+  };
+  const savePrices = async () => {
+    if (!pricesModalRow) return;
+    setPricesBusy(true);
+    try {
+      const supplier_prices = Object.entries(pricesDraft)
+        .map(([slug, raw]) => {
+          const v = String(raw ?? "").trim();
+          if (v === "") return null;
+          const dollars = Number(v);
+          if (Number.isNaN(dollars) || dollars < 0) return null;
+          return { supplier_slug: slug,
+                    cost_cents: Math.round(dollars * 100) };
+        })
+        .filter(Boolean);
+      await api.patch(`/items/${pricesModalRow.id}`, { supplier_prices });
+      setToast({ tone: "success", message: "Supplier prices updated" });
+      setPricesModalRow(null);
+      setPricesDraft({});
+      refresh();
+    } catch (e) {
+      const detail = e?.data?.detail;
+      const msg = (detail && detail.error === "supplier_income_category_mismatch")
+        ? `Supplier "${detail.supplier_slug}" belongs to ${detail.expected_category}, not this item's category.`
+        : (e?.message || "Save failed");
+      setToast({ tone: "error", message: msg });
+    } finally { setPricesBusy(false); }
+  };
   const save = async () => {
     const costN = Number(form.cost);
     const taxN = Number(form.tax_rate);
@@ -1901,15 +1992,34 @@ export function PriceBook() {
       setToast({ tone: "error", message: "Tax rate must be between 0 and 100" });
       return;
     }
+    // Phase 56-b · Aug-2026 — Multi-supplier payload assembly.
+    // Only include suppliers where the user typed a non-empty value.
+    // Empty / whitespace / 0 with blank → excluded. Dollars→cents.
+    const supplier_prices = Object.entries(form.supplier_prices || {})
+      .map(([slug, raw]) => {
+        const v = String(raw ?? "").trim();
+        if (v === "") return null;
+        const dollars = Number(v);
+        if (Number.isNaN(dollars) || dollars < 0) return null;
+        return { supplier_slug: slug,
+                  cost_cents: Math.round(dollars * 100) };
+      })
+      .filter(Boolean);
     try {
       await api.post("/items", {
         ...form,
         unit_price: Number(form.unit_price) || 0,
         cost: costN,
         tax_rate: taxN,
+        income_category_id: form.income_category_id || null,
+        supplier_prices,
       });
       setOpen(false);
-      setForm({ name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0, tax_rate: 0, service_category_id: "" });
+      setForm({
+        name: "", category: "Pool", unit: "each", unit_price: 0, cost: 0,
+        tax_rate: 0, service_category_id: "",
+        income_category_id: "", supplier_prices: {},
+      });
       refresh();
     } catch (e) { setToast({ tone: "error", message: e.message }); }
   };
@@ -2057,6 +2167,8 @@ export function PriceBook() {
                      <span>{r.category} · {r.unit}</span>
                      <SupplierBadge slug={r.supplier_slug} testid={`pb-supplier-badge-${r.id}`} />
                    </div>
+                   {/* Phase 56-b · Aug-2026 — Multi-supplier summary. */}
+                   <SupplierPriceSummary row={r} testid={`pb-supplier-summary-${r.id}`} />
                  </div>
                  <div className="font-semibold">{money(r.unit_price)}</div>
                 {showInternalCols ? (
@@ -2079,6 +2191,15 @@ export function PriceBook() {
                             className="text-xs font-semibold underline"
                             style={{ color: colors.muted }}
                             data-testid={`pb-edit-${r.id}`}>Edit</button>
+                 <button
+                   type="button"
+                   onClick={() => openPrices(r)}
+                   className="p-1.5 rounded-md hover:bg-slate-100"
+                   title="Supplier prices"
+                   data-testid={`pb-prices-${r.id}`}
+                 >
+                   <DollarSign size={14} style={{ color: colors.brand }} />
+                 </button>
                  <button
                    type="button"
                    onClick={() => delRow(r)}
@@ -2189,17 +2310,300 @@ export function PriceBook() {
               </div>
             ) : null}
           </div>
+          {/* Phase 56-b · Aug-2026 — Income Category picker.
+              Drives which suppliers appear in the grid below.
+              Switching this dropdown wipes the supplier_prices state
+              so stale entries from a different category can't leak. */}
+          <div>
+            <label className="block text-[10px] font-bold uppercase tracking-wide mb-1"
+                    style={{ color: colors.muted }}>
+              Income Category *
+            </label>
+            <select
+              value={form.income_category_id}
+              onChange={(e) => setForm({
+                ...form,
+                income_category_id: e.target.value,
+                supplier_prices: {},
+              })}
+              className="w-full px-3 py-2 rounded-md text-sm"
+              style={{ background: colors.surface,
+                        border: `1px solid ${colors.border}`,
+                        color: colors.onSurface }}
+              data-testid="pb-new-income-category"
+            >
+              <option value="">Select an income category…</option>
+              {incomeCats.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
           <TextInput label="CATEGORY" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} testid="pb-new-category" />
           <TextInput label="UNIT" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} testid="pb-new-unit" />
           <TextInput label="UNIT PRICE ($)" type="number" step="0.01" min="0" value={form.unit_price} onChange={(e) => setForm({ ...form, unit_price: e.target.value })} testid="pb-new-price" />
-          <TextInput label="COST ($)" type="number" step="0.01" min="0" value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} testid="pb-new-cost" />
+          {/* Legacy ``cost``/``tax_rate`` — kept in form state for
+              backend contract, hidden from UI per preflight §3. */}
           <TextInput label="TAX RATE (%)" type="number" step="0.01" min="0" max="100" value={form.tax_rate} onChange={(e) => setForm({ ...form, tax_rate: e.target.value })} testid="pb-new-tax" />
+          {/* Phase 56-b · Supplier prices grid. Only renders when the
+              user picks an income_category. Empty grid (unknown cat)
+              stays hidden. */}
+          {form.income_category_id && modalSuppliers.length > 0 ? (
+            <div className="pt-3 mt-2"
+                  style={{ borderTop: `1px solid ${colors.divider}` }}
+                  data-testid="pb-new-supplier-grid">
+              <div className="text-[10px] font-bold uppercase tracking-wide mb-2"
+                    style={{ color: colors.muted }}>
+                {(incomeCats.find((c) => c.id === form.income_category_id) || {}).name}
+                {" "}Supplier Prices
+              </div>
+              <div className="space-y-1.5">
+                {modalSuppliers.map((s) => (
+                  <div key={s.id}
+                        className="flex items-center gap-2"
+                        data-testid={`pb-new-supplier-row-${s.slug}`}>
+                    <label className="text-xs font-semibold flex-1"
+                            style={{ color: colors.onSurface }}>
+                      {s.display_name}
+                    </label>
+                    <span className="text-xs" style={{ color: colors.muted }}>$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={form.supplier_prices[s.slug] ?? ""}
+                      onChange={(e) => setForm({
+                        ...form,
+                        supplier_prices: {
+                          ...form.supplier_prices,
+                          [s.slug]: e.target.value,
+                        },
+                      })}
+                      placeholder="0.00"
+                      className="w-24 border px-2 py-1 text-sm rounded text-right"
+                      data-testid={`pb-new-supplier-input-${s.slug}`}
+                      aria-label={`${s.display_name} price`}
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] mt-2" style={{ color: colors.muted }}>
+                Leave a supplier blank to skip it. You can edit prices
+                per supplier later via the "Prices" button on each row.
+              </p>
+            </div>
+          ) : null}
         </div>
       </Modal>
+      {/* Phase 56-b · Aug-2026 — Supplier Prices edit modal per row.
+          Opens from the "$" icon on each list row. Pre-populates
+          from the item's ``supplier_prices`` (cents → dollar string).
+          Deleted suppliers whose prices are already on the item
+          appear as read-only rows with a "(deleted supplier)" pill. */}
+      {pricesModalRow ? (
+        <SupplierPricesEditModal
+          row={pricesModalRow}
+          incomeCats={incomeCats}
+          pricebookSuppliers={pricebookSuppliers}
+          draft={pricesDraft}
+          onChange={setPricesDraft}
+          onClose={closePrices}
+          onSave={savePrices}
+          busy={pricesBusy}
+        />
+      ) : null}
       <Toast toast={toast} onClose={() => setToast(null)} />
     </Card>
   );
 }
+
+// ─── Phase 56-b · Aug-2026 — SupplierPriceSummary ───────────────────────
+// Compact one-liner rendered below the row's category / unit line.
+// Uses money() so it matches the rest of Ops Hub's currency format.
+function SupplierPriceSummary({ row, testid }) {
+  const prices = Array.isArray(row?.supplier_prices) ? row.supplier_prices : [];
+  if (prices.length === 0) {
+    return (
+      <div className="text-[11px] italic mt-0.5"
+            style={{ color: colors.muted }}
+            data-testid={testid}>
+        No supplier prices set
+      </div>
+    );
+  }
+  const cents = prices.map((p) => Number(p.cost_cents) || 0);
+  const lo = Math.min(...cents) / 100;
+  const hi = Math.max(...cents) / 100;
+  const range = lo === hi
+    ? `at ${money(lo)}`
+    : `min ${money(lo)} · max ${money(hi)}`;
+  return (
+    <div className="text-[11px] mt-0.5"
+          style={{ color: colors.muted }}
+          data-testid={testid}>
+      {prices.length} supplier price{prices.length === 1 ? "" : "s"} · {range}
+    </div>
+  );
+}
+
+
+// ─── Phase 56-b · Aug-2026 — SupplierPricesEditModal ────────────────────
+// Per-row supplier prices grid. Renders EVERY supplier for the item's
+// income_category (active + non-deleted) PLUS any deleted suppliers
+// whose prices are already on this item (read-only "(deleted)" pill).
+function SupplierPricesEditModal({
+  row, incomeCats, pricebookSuppliers,
+  draft, onChange, onClose, onSave, busy,
+}) {
+  const cat = incomeCats.find((c) => c.id === row.income_category_id);
+  const catName = cat?.name || "Uncategorized";
+  const activeSuppliers = pricebookSuppliers.filter(
+    (s) => s.income_category_id === row.income_category_id &&
+           !s.deleted_at && s.is_active !== false,
+  );
+  const activeSlugSet = new Set(activeSuppliers.map((s) => s.slug));
+  const orphanRows = (row.supplier_prices || [])
+    .filter((p) => !activeSlugSet.has(p.supplier_slug))
+    .map((p) => {
+      const meta = pricebookSuppliers.find(
+        (s) => s.slug === p.supplier_slug,
+      );
+      return {
+        slug: p.supplier_slug,
+        display_name: meta?.display_name || p.supplier_slug,
+        cost_cents: p.cost_cents,
+      };
+    });
+
+  const setSlugValue = (slug, val) => onChange({ ...draft, [slug]: val });
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4"
+      style={{ background: "rgba(15,23,42,0.55)" }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      data-testid="pb-prices-modal"
+    >
+      <div
+        className="w-full max-w-md rounded-2xl p-6 shadow-2xl bg-white max-h-[85vh] overflow-y-auto"
+        style={{ border: `1px solid ${colors.border}` }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3">
+          <h2 className="text-lg font-bold" style={{ color: colors.onSurface }}>
+            Supplier prices — {row.name}
+          </h2>
+          <p className="text-xs mt-0.5" style={{ color: colors.muted }}>
+            Income category:{" "}
+            <span className="font-semibold"
+                  data-testid="pb-prices-modal-category">
+              {catName}
+            </span>
+          </p>
+        </div>
+
+        {!row.income_category_id ? (
+          <div className="rounded-lg p-3 text-xs"
+                style={{ background: "#FEF3C7", color: "#92400E",
+                          border: "1px solid #FCD34D" }}
+                data-testid="pb-prices-modal-uncategorized">
+            This item has no income category set. Assign one via the
+            row's Edit button before adding supplier prices.
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {activeSuppliers.length === 0 && orphanRows.length === 0 ? (
+              <div className="text-xs italic"
+                    style={{ color: colors.muted }}
+                    data-testid="pb-prices-modal-empty">
+                No suppliers configured for {catName}. Ask an admin to
+                add one at{" "}
+                <a href="/settings/pricebook-suppliers"
+                    className="underline">
+                  /settings/pricebook-suppliers
+                </a>.
+              </div>
+            ) : null}
+            {activeSuppliers.map((s) => (
+              <div key={s.id}
+                    className="flex items-center gap-2"
+                    data-testid={`pb-prices-modal-row-${s.slug}`}>
+                <label className="text-xs font-semibold flex-1"
+                        style={{ color: colors.onSurface }}>
+                  {s.display_name}
+                </label>
+                <span className="text-xs" style={{ color: colors.muted }}>$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={draft[s.slug] ?? ""}
+                  onChange={(e) => setSlugValue(s.slug, e.target.value)}
+                  placeholder="0.00"
+                  className="w-24 border px-2 py-1 text-sm rounded text-right"
+                  data-testid={`pb-prices-modal-input-${s.slug}`}
+                  aria-label={`${s.display_name} price`}
+                />
+              </div>
+            ))}
+            {orphanRows.map((o) => (
+              <div key={o.slug}
+                    className="flex items-center gap-2"
+                    data-testid={`pb-prices-modal-orphan-${o.slug}`}
+                    style={{ opacity: 0.7 }}>
+                <label className="text-xs font-semibold flex-1"
+                        style={{ color: colors.onSurface }}>
+                  {o.display_name}
+                  <span
+                    className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase"
+                    style={{ backgroundColor: "#E5E7EB", color: "#6B7280" }}
+                    data-testid={`pb-prices-modal-orphan-pill-${o.slug}`}
+                  >
+                    Deleted supplier
+                  </span>
+                </label>
+                <span className="text-xs" style={{ color: colors.muted }}>$</span>
+                <input
+                  type="text"
+                  value={((o.cost_cents || 0) / 100).toFixed(2)}
+                  readOnly
+                  disabled
+                  className="w-24 border px-2 py-1 text-sm rounded text-right"
+                  style={{ background: colors.surface,
+                            color: colors.muted }}
+                  data-testid={`pb-prices-modal-orphan-input-${o.slug}`}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="px-4 py-2 rounded-lg text-sm font-semibold bg-slate-100"
+            data-testid="pb-prices-modal-cancel"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={busy || !row.income_category_id}
+            className="px-4 py-2 rounded-lg text-sm font-bold text-white disabled:opacity-60"
+            style={{ backgroundColor: colors.brand }}
+            data-testid="pb-prices-modal-save"
+          >
+            {busy ? "Saving…" : "Save prices"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 
 /* ═══════════ Log history / Job Timers / Avg Job Time ═══════════ */
 function LogHistory() {

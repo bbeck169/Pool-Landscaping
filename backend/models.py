@@ -383,6 +383,19 @@ class ItemIn(BaseModel):
     supplier_id: Optional[str] = None
     external_sku: Optional[str] = None
     last_synced_at: Optional[str] = None
+    # Phase 56-b · Aug-2026 — Multi-supplier pricing.
+    #   ``income_category_id`` — soft-link to db.income_categories.
+    #                            Drives which suppliers appear on the
+    #                            "Add item" modal supplier grid.
+    #                            Nullable → legacy items grandfather
+    #                            to "Uncategorized" in list views.
+    #   ``supplier_prices``    — per-supplier cost, subdoc list of
+    #                            ``{"supplier_slug": str, "cost_cents": int}``.
+    #                            Empty list = no supplier prices.
+    #                            Validated against pricebook_suppliers
+    #                            in ``routers/items.py`` on writes.
+    income_category_id: Optional[str] = None
+    supplier_prices: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class BillingPlanIn(BaseModel):
