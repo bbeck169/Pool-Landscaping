@@ -52,6 +52,17 @@ vi.mock("@/components/ui-kit", () => ({
   Skeleton: (p) => <div {...p} />,
 }));
 
+// Task E · Aug-2026 — ``AutobillingRuns.jsx`` calls ``useAuth()`` for
+// the Fix #5 soft-delete role gate. Without this mock the hook
+// returns ``null`` in the test render tree and the destructure
+// ``const { user } = useAuth()`` throws. Admin role → sees the
+// bulk-cancel + soft-delete UX exercised by the tests below.
+vi.mock("@/auth", () => ({
+  useAuth: () => ({ user: { id: "u-admin", email: "admin@x",
+                              role: "admin" } }),
+  AuthProvider: ({ children }) => children,
+}));
+
 import AutobillingRuns from "@/pages/finance/AutobillingRuns";
 
 beforeEach(() => {
