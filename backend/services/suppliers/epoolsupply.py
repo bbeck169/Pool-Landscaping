@@ -15,6 +15,9 @@ class EPoolSupplyConnector(PlaywrightScraperBase):
     display_name = "ePoolSupply"
     planned_phase = "54e"
     SELECTORS = EPOOLSUPPLY
+    # Phase 54h-a · Aug-2026 — ePoolSupply stays on the scripted
+    # login flow. No Turnstile handoff modal for this supplier.
+    SUPPORTS_CHALLENGE_HANDOFF = False
 
 
 __all__ = ["EPoolSupplyConnector", "LoginFailedError", "LayoutChangedError"]

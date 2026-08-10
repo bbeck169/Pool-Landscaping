@@ -16,6 +16,8 @@ class HeritageConnector(PlaywrightScraperBase):
     display_name = "Heritage Pool Plus"
     planned_phase = "54e"
     SELECTORS = HERITAGE
+    # Phase 54h-a · Aug-2026 — Cloudflare Turnstile handoff opt-in.
+    SUPPORTS_CHALLENGE_HANDOFF = True
 
 
 __all__ = ["HeritageConnector", "LoginFailedError", "LayoutChangedError"]

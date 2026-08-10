@@ -42,6 +42,9 @@ class EwingConnector(BaseSupplierConnector):
     slug = "ewing"
     display_name = "Ewing Irrigation"
     planned_phase = "54d"
+    # Phase 54h-a · Aug-2026 — Ewing stays on scripted flow. No
+    # Turnstile handoff for this supplier.
+    SUPPORTS_CHALLENGE_HANDOFF = False
 
     async def authenticate(self, credentials: Dict[str, Any]) -> SupplierSession:
         username = (credentials or {}).get("username") or ""

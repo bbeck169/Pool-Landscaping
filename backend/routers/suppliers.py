@@ -43,6 +43,19 @@ def _require_admin(user: Dict[str, Any]) -> None:
         raise HTTPException(status_code=403, detail={"error": "forbidden"})
 
 
+# Phase 54h-a · Aug-2026 — Turnstile handoff session role gate is
+# LOOSER than the credentials role gate: admin + super_admin +
+# manager. Managers routinely trigger the daily sync and are the
+# operators who'll paste cookies through the Phase 54h-b bookmarklet.
+_SESSION_ROLES = frozenset({"admin", "super_admin", "manager"})
+
+
+def _require_session_role(user: Dict[str, Any]) -> None:
+    role = (user or {}).get("role") or ""
+    if role not in _SESSION_ROLES:
+        raise HTTPException(status_code=403, detail={"error": "forbidden"})
+
+
 def _require_tenant(user: Dict[str, Any]) -> str:
     tid = (user or {}).get("tenant_id") or ""
     if not tid:
@@ -394,11 +407,22 @@ async def test_supplier_connection(
         "api_key":  decrypt(cred_row.get("encrypted_api_key")),
     }
 
+    # Phase 54h-a · Aug-2026 — cookie-jar rehydration. When a valid
+    # (unexpired) session exists for this tenant+supplier, hand its
+    # cookies to the connector so it can skip scripted login + the
+    # Turnstile challenge. Falls through to scripted flow if the
+    # session is stale or missing.
+    from services.suppliers.sessions import get_active_session
+    _session_cookies = await get_active_session(tenant_id, slug)
+    if _session_cookies:
+        credentials["_session_cookies"] = _session_cookies
+
     connector = CONNECTORS[slug]  # wired instance
     import asyncio as _asyncio
     from services.suppliers.poolcorp import (
         LoginFailedError, LayoutChangedError,
     )
+    from services.suppliers.challenge import SupplierChallengeRequired
 
     async def _do_auth():
         return await connector.authenticate(credentials)
@@ -407,6 +431,16 @@ async def test_supplier_connection(
         await _asyncio.wait_for(_do_auth(), timeout=TEST_CONNECTION_TIMEOUT_S)
     except _asyncio.TimeoutError:
         return {"ok": False, "error": "timeout", "supplier_slug": slug}
+    except SupplierChallengeRequired as e:
+        # Phase 54h-a — map to the friendly shape the frontend needs
+        # (Phase 54h-b modal picks this up + opens the bookmarklet UX).
+        return {
+            "ok": False,
+            "challenge_required": True,
+            "challenge_id": e.challenge_id,
+            "supplier_slug": slug,
+            "ttl_hint_minutes": 30,
+        }
     except LoginFailedError as e:
         return {"ok": False, "error": "login_failed",
                 "message": str(e), "supplier_slug": slug}
@@ -428,6 +462,101 @@ async def test_supplier_connection(
                 "message": msg, "supplier_slug": slug}
 
     return {"ok": True, "supplier_slug": slug}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 5c. Phase 54h-a · Aug-2026 — Cloudflare Turnstile session handoff.
+#     POST   /suppliers/{slug}/sessions          — upload cookies
+#     GET    /suppliers/{slug}/sessions/status   — banner countdown
+#     DELETE /suppliers/{slug}/sessions          — force re-challenge
+#
+# Role gate is looser than the credentials CRUD — admin + super_admin
+# + manager (managers routinely trigger daily sync). Handoff-opt-in
+# is enforced per-connector via ``SUPPORTS_CHALLENGE_HANDOFF``;
+# non-opt-in suppliers (Ewing, ePoolSupply) return 400 on POST with
+# ``supplier_does_not_support_handoff``.
+# ═══════════════════════════════════════════════════════════════════
+class _SessionCookieIn(BaseModel):
+    name: str
+    value: str
+    domain: Optional[str] = None
+    path: Optional[str] = None
+    expires: Optional[float] = None
+    secure: Optional[bool] = None
+    httpOnly: Optional[bool] = None
+    sameSite: Optional[str] = None
+
+
+class _SessionUpsertIn(BaseModel):
+    cookies: List[_SessionCookieIn]
+
+
+def _assert_handoff_supported(slug: str) -> None:
+    connector = CONNECTORS.get(slug)
+    if connector is None:
+        raise HTTPException(404, {"error": "unknown_supplier",
+                                    "supplier_slug": slug})
+    if not getattr(connector, "SUPPORTS_CHALLENGE_HANDOFF", False):
+        raise HTTPException(400, {
+            "error": "supplier_does_not_support_handoff",
+            "supplier_slug": slug,
+            "message": (
+                f"{getattr(connector, 'display_name', slug)} uses the "
+                "scripted-login flow only — no manual cookie import."
+            ),
+        })
+
+
+@router.post("/suppliers/{slug}/sessions")
+async def upsert_supplier_session(
+    slug: str,
+    body: _SessionUpsertIn,
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_session_role(user)
+    tenant_id = _require_tenant(user)
+    _assert_handoff_supported(slug)
+    await _get_supplier_or_404(tenant_id, slug)
+
+    # Normalize to plain dicts for the Playwright ``add_cookies`` API
+    # + drop None-valued keys (Playwright rejects them).
+    normalized: List[Dict[str, Any]] = []
+    for c in body.cookies:
+        row = {k: v for k, v in c.model_dump().items() if v is not None}
+        normalized.append(row)
+
+    from services.suppliers.sessions import upsert_session
+    result = await upsert_session(
+        tenant_id=tenant_id, supplier_slug=slug,
+        cookies=normalized, user_id=(user or {}).get("id"),
+    )
+    return {"ok": True, "supplier_slug": slug, **result}
+
+
+@router.get("/suppliers/{slug}/sessions/status")
+async def get_supplier_session_status(
+    slug: str,
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_session_role(user)
+    tenant_id = _require_tenant(user)
+    await _get_supplier_or_404(tenant_id, slug)
+    from services.suppliers.sessions import session_status
+    status = await session_status(tenant_id, slug)
+    return {"supplier_slug": slug, **status}
+
+
+@router.delete("/suppliers/{slug}/sessions")
+async def delete_supplier_session(
+    slug: str,
+    user: dict = Depends(get_current_user),
+) -> Dict[str, Any]:
+    _require_session_role(user)
+    tenant_id = _require_tenant(user)
+    await _get_supplier_or_404(tenant_id, slug)
+    from services.suppliers.sessions import delete_session
+    deleted = await delete_session(tenant_id, slug)
+    return {"ok": True, "supplier_slug": slug, "deleted": deleted}
 
 
 # ═══════════════════════════════════════════════════════════════════

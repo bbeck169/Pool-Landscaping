@@ -72,15 +72,23 @@ class SiteOneConnector(BaseSupplierConnector):
     slug = "siteone"
     display_name = "SiteOne"
     planned_phase = "54c"
+    # Phase 54h-a · Aug-2026 — Cloudflare Turnstile handoff opt-in.
+    SUPPORTS_CHALLENGE_HANDOFF = True
 
     async def authenticate(self, credentials: Dict[str, Any]) -> SupplierSession:
         username = (credentials or {}).get("username") or ""
         password = (credentials or {}).get("password") or ""
+        # Phase 54h-a — optional cookie-jar rehydration.
+        session_cookies = (credentials or {}).get("_session_cookies") or []
         if not username or not password:
-            raise LoginFailedError(
-                "Login failed — missing username or password")
+            if not session_cookies:
+                raise LoginFailedError(
+                    "Login failed — missing username or password")
 
         from playwright.async_api import async_playwright, TimeoutError as PWTimeout
+        from services.suppliers.challenge import (
+            detect_challenge_on_page, SupplierChallengeRequired,
+        )
 
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(
@@ -91,9 +99,18 @@ class SiteOneConnector(BaseSupplierConnector):
                     user_agent=SITEONE_USER_AGENT,
                     extra_http_headers=SITEONE_CLIENT_HINTS,
                 )
+                if session_cookies:
+                    try:
+                        await context.add_cookies(session_cookies)
+                    except Exception:                             # noqa: BLE001
+                        pass
                 page = await context.new_page()
                 page.set_default_timeout(PAGE_TIMEOUT_MS)
                 await page.goto(SEL["login_url"])
+                await detect_challenge_on_page(
+                    page, self.slug,
+                    username_selector=SEL["input_username"],
+                )
                 await page.fill(SEL["input_username"], username)
                 await page.fill(SEL["input_password"], password)
                 await page.click(SEL["btn_submit"])

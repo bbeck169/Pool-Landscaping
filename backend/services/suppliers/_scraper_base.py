@@ -46,20 +46,42 @@ class PlaywrightScraperBase(BaseSupplierConnector):
     async def authenticate(self, credentials: Dict[str, Any]) -> SupplierSession:
         username = (credentials or {}).get("username") or ""
         password = (credentials or {}).get("password") or ""
+        # Phase 54h-a · Aug-2026 — optional cookie-jar rehydration.
+        # When ``_session_cookies`` is present in the credentials dict
+        # (the router injects it from ``supplier_sessions``), the
+        # subclass gets a chance to skip the scripted login entirely.
+        session_cookies = (credentials or {}).get("_session_cookies") or []
         if not username or not password:
-            raise LoginFailedError(
-                "Login failed — missing username or password")
+            if not session_cookies:
+                raise LoginFailedError(
+                    "Login failed — missing username or password")
 
         from playwright.async_api import async_playwright, TimeoutError as PWTimeout
+        from services.suppliers.challenge import (
+            detect_challenge_on_page, SupplierChallengeRequired,
+        )
         sel = self.SELECTORS
 
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=True)
             try:
                 context = await browser.new_context(user_agent=self.USER_AGENT)
+                if session_cookies:
+                    try:
+                        await context.add_cookies(session_cookies)
+                    except Exception:                             # noqa: BLE001
+                        pass
                 page = await context.new_page()
                 page.set_default_timeout(self.PAGE_TIMEOUT_MS)
                 await page.goto(sel["login_url"])
+                # Only opted-in subclasses run the challenge detector.
+                # ePoolSupply overrides ``SUPPORTS_CHALLENGE_HANDOFF``
+                # to False so it stays on the scripted flow verbatim.
+                if getattr(self, "SUPPORTS_CHALLENGE_HANDOFF", False):
+                    await detect_challenge_on_page(
+                        page, self.slug,
+                        username_selector=sel["input_username"],
+                    )
                 await page.fill(sel["input_username"], username)
                 await page.fill(sel["input_password"], password)
                 await page.click(sel["btn_submit"])

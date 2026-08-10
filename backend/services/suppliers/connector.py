@@ -63,6 +63,10 @@ class BaseSupplierConnector:
     slug: str = ""
     display_name: str = ""
     planned_phase: str = ""
+    # Phase 54h-a · Aug-2026 — default OFF for the Cloudflare Turnstile
+    # handoff modal. Only Pool360 / SiteOne / Heritage opt in
+    # (SUPPORTS_CHALLENGE_HANDOFF = True on those subclasses).
+    SUPPORTS_CHALLENGE_HANDOFF: bool = False
 
     def _not_yet(self, method: str) -> "None":
         raise NotImplementedError(
