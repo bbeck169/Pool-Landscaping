@@ -316,18 +316,62 @@ async def preview_template(
     # Mustache pass has a chance to null it out. The legacy pass
     # then handles any remaining ``{{customer.first_name}}`` dotted
     # tokens.
+    # Aug-2026 · Preview-fidelity fix — forward the sample context's
+    # ``job``, ``event``, ``service_report`` sub-dicts AND the extended
+    # customer address block so Job / Event / Service-record merge
+    # tags (SERVICE_TITLE, SERVICE_NAME, JOB_DATE, JOB_TIME,
+    # EVENT_TITLE, EVENT_NOTES, SERVICE_RECORD_IMAGES, CUSTOMER_ADDRESS)
+    # resolve in the composer preview instead of being flagged as
+    # unresolved. Backward-compatible: unset keys forward as empty.
     demo_ctx = build_merge_ctx(
         customer={
             "name": ((ctx.get("customer") or {}).get("first_name", "") + " "
                      + (ctx.get("customer") or {}).get("last_name", "")).strip(),
             "first_name": (ctx.get("customer") or {}).get("first_name"),
             "last_name": (ctx.get("customer") or {}).get("last_name"),
+            # Aug-2026 · dot-notation preview fix — legacy Mustache
+            # templates use ``{{customer.full_name}}`` (and neighbours).
+            # Preserve the original key so the renderer's Step-2
+            # nested-dotted lookup finds it. The catalog UPPERCASE
+            # path (CUSTOMER_FULL_NAME) already worked because it has
+            # its own resolver.
+            "full_name": (ctx.get("customer") or {}).get("full_name"),
             "email": (ctx.get("customer") or {}).get("email"),
             "phone": (ctx.get("customer") or {}).get("phone"),
+            # Aug-2026 · dot-notation preview fix — the ``balance_due``
+            # key was previously renamed to ``open_balance`` during
+            # this reshuffle so ``{{customer.balance_due}}`` couldn't
+            # walk the nested lookup. Keep BOTH keys so:
+            #   • ``{{CUSTOMER_ACCOUNT_BALANCE}}`` (catalog resolver
+            #     reads ``open_balance``) — unchanged.
+            #   • ``{{customer.balance_due}}`` (dot-notation) — now
+            #     resolves to the original sample value.
             "open_balance": (ctx.get("customer") or {}).get("balance_due", 0),
+            "balance_due": (ctx.get("customer") or {}).get("balance_due"),
+            # Address fields — CUSTOMER_ADDRESS / CUSTOMER_STREET /
+            # CUSTOMER_CITY / CUSTOMER_STATE / CUSTOMER_ZIP resolvers.
+            "address_line_1": (ctx.get("customer") or {}).get("address_line_1"),
+            "address": (ctx.get("customer") or {}).get("address"),
+            "city": (ctx.get("customer") or {}).get("city"),
+            "state": (ctx.get("customer") or {}).get("state"),
+            "zip": (ctx.get("customer") or {}).get("zip"),
         },
         tenant=ctx.get("tenant") or {},
         invoice=ctx.get("invoice"),
+        job=ctx.get("job"),
+        event=ctx.get("event"),
+        service_report=ctx.get("service_report"),
+        # Aug-2026 · flat top-level keys used by legacy dotted-style
+        # templates (``{{next_service_date}}``, ``{{next_service_type}}``)
+        # AND UPPERCASE fallthrough (``{{NEXT_SERVICE_DATE}}``). These
+        # aren't Catalog-registered tags but the resolver's flat-key
+        # cascade honors them — they just need to survive the demo_ctx
+        # reshuffle. ``build_merge_ctx`` accepts ``**extra`` so we
+        # pass any flat keys through verbatim.
+        next_service_date=ctx.get("next_service_date"),
+        next_service_type=ctx.get("next_service_type"),
+        # ADD_CARD_LINK resolver reads flat ``ctx["add_card_link"]``.
+        add_card_link=ctx.get("add_card_link"),
     )
     pre_subject, sub_missing = render_uppercase_tags(row.get("subject") or "", demo_ctx)
     pre_body, body_missing = render_uppercase_tags(row.get("body") or "", demo_ctx)
@@ -431,18 +475,35 @@ async def test_send_template(
         raise HTTPException(400, "Recipient 'to' is required")
 
     ctx_in = body.sample_context or DEFAULT_SAMPLE_CONTEXT
+    # Aug-2026 · Preview-fidelity fix — mirrors the /preview endpoint
+    # change so test-sends use the same enriched sample context as the
+    # composer preview. Job / Event / Service-record tags now resolve
+    # in test-send rendering when the caller omits sample_context.
     demo_ctx = build_merge_ctx(
         customer={
             "name": ((ctx_in.get("customer") or {}).get("first_name", "") + " "
                      + (ctx_in.get("customer") or {}).get("last_name", "")).strip(),
             "first_name": (ctx_in.get("customer") or {}).get("first_name"),
             "last_name": (ctx_in.get("customer") or {}).get("last_name"),
+            "full_name": (ctx_in.get("customer") or {}).get("full_name"),
             "email": to_field if row.get("channel") == "email" else (ctx_in.get("customer") or {}).get("email"),
             "phone": to_field if row.get("channel") == "sms" else (ctx_in.get("customer") or {}).get("phone"),
             "open_balance": (ctx_in.get("customer") or {}).get("balance_due", 0),
+            "balance_due": (ctx_in.get("customer") or {}).get("balance_due"),
+            "address_line_1": (ctx_in.get("customer") or {}).get("address_line_1"),
+            "address": (ctx_in.get("customer") or {}).get("address"),
+            "city": (ctx_in.get("customer") or {}).get("city"),
+            "state": (ctx_in.get("customer") or {}).get("state"),
+            "zip": (ctx_in.get("customer") or {}).get("zip"),
         },
         tenant=ctx_in.get("tenant") or {"name": tenant.get("name")},
         invoice=ctx_in.get("invoice"),
+        job=ctx_in.get("job"),
+        event=ctx_in.get("event"),
+        service_report=ctx_in.get("service_report"),
+        next_service_date=ctx_in.get("next_service_date"),
+        next_service_type=ctx_in.get("next_service_type"),
+        add_card_link=ctx_in.get("add_card_link"),
     )
     pre_subject, sub_missing = render_uppercase_tags(
         row.get("subject") or "", demo_ctx,

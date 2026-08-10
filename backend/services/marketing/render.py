@@ -89,13 +89,86 @@ DEFAULT_SAMPLE_CONTEXT: Dict[str, Any] = {
         "email": "sam@example.com",
         "phone": "+1 (555) 010-4444",
         "balance_due": "$142.00",
+        # Aug-2026 · Preview-fidelity fix — CUSTOMER_ADDRESS reads
+        # ``address_line_1`` + ``city`` + ``state`` + ``zip`` (Phase 8+
+        # split schema). Seed a Vistancia-flavoured sample so the
+        # composer preview substitutes the tag instead of flagging it
+        # as unresolved.
+        "address_line_1": "12345 W Sample Way",
+        "city": "Peoria",
+        "state": "AZ",
+        "zip": "85383",
+        "address": "12345 W Sample Way, Peoria, AZ 85383",  # legacy flat
     },
     "next_service_date": "2026-08-05",
     "next_service_type": "Pool Cleaning",
+    # Aug-2026 · Preview-fidelity fix — Job-category merge tags
+    # (SERVICE_TITLE, SERVICE_NAME, JOB_DATE, JOB_TIME) resolve off
+    # ``ctx["job"]``. Prior to this addition the preview endpoint's
+    # sample context omitted ``job`` entirely, so all four tags fell
+    # through to empty and were flagged as "unresolved" in the
+    # Marketing Templates composer — even though the tag catalog
+    # supports them and real send-time rendering resolves them
+    # correctly. This block seeds the same pool-service sample used
+    # elsewhere (Vistancia tenant) so the preview matches what the
+    # customer will actually receive.
+    "job": {
+        "id": "job-sample-preview",
+        "service_template": {
+            "title": "Weekly Pool Cleaning",
+            "name": "Weekly Cleaning",
+        },
+        "service_name": "Weekly Cleaning",
+        "service_type": "cleaning",
+        "title": "Weekly Pool Service",
+        # JOB_DATE / JOB_TIME resolvers cascade over these fields.
+        "scheduled_date": "2026-08-12",
+        "scheduled_at": "2026-08-12T09:00:00-07:00",
+        "scheduled_end": "2026-08-12T11:00:00-07:00",
+        "duration_minutes": 120,
+    },
+    "service_title": "Weekly Pool Cleaning",
+    "service_name": "Weekly Cleaning",
+    # Aug-2026 · Preview-fidelity fix — ADD_CARD_LINK resolves from
+    # the flat ``ctx["add_card_link"]`` key populated at real send
+    # time by ``routers.customers.send_card_add_link``. Seed a sample
+    # magic-link URL so the preview substitutes to a real URL instead
+    # of flagging the tag as unresolved.
+    "add_card_link": "https://app.example.com/portal/add-card?token=sample-magic-link-token",
+    # Aug-2026 · Preview-fidelity fix — EVENT_* tags resolve off
+    # ``ctx["event"]``.
+    "event": {
+        "title": "Community Pool Grand Reopening",
+        "date": "2026-08-15",
+        "time": "10:00",
+        "property_address": "12345 W Sample Way, Peoria, AZ 85383",
+        "notes": "Complimentary chemistry check + splash-pad demo.",
+    },
+    # Aug-2026 · Preview-fidelity fix — SERVICE_RECORD_IMAGES resolver
+    # renders an HTML thumbnail block using tenant public URL +
+    # ``service_report.public_uuid`` + photos/videos. Seed one
+    # non-private photo so the preview substitutes to a real
+    # ``<table>`` snippet instead of an empty string.
+    "service_report": {
+        "public_uuid": "sample-service-report-uuid",
+        "photos": [
+            {
+                "url": "https://images.example.com/sample-photo.jpg",
+                "thumbnail_url": "https://images.example.com/sample-photo-thumb.jpg",
+                "tags": ["public"],
+            },
+        ],
+        "videos": [],
+    },
     "tenant": {
         "name": "Pool & Landscaping of Vistancia",
         "phone": "+1 (623) 555-0100",
         "google_review_url": "https://g.page/r/example/review",
+        # SERVICE_RECORD_IMAGES resolver needs a public app domain to
+        # build the ``/portal/service/{uuid}`` click target. Preview
+        # context supplies a stable sample host so the resolver renders
+        # instead of falling back to an empty string.
+        "settings": {"primary_app_domain": "https://app.example.com"},
     },
     "unsubscribe_url": "/portal/preferences?token=example",
 }

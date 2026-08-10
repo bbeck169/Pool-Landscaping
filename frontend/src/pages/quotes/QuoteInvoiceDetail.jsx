@@ -204,7 +204,13 @@ export default function QuoteInvoiceDetail({ _docType = "quote" }) {
 
   const generateLink = async () => {
     try {
-      const r = await api.post(`/payments/admin/generate-link/${id}`);
+      // Aug-2026 · Phase 47 direct-Stripe migration cleanup — the
+      // legacy ``/payments/admin/generate-link/{id}`` endpoint was
+      // retired when the Lumino/Zapier hop was removed. Both the
+      // "Pay $X" flow (PaymentForm) and this share-a-link toolbar
+      // button now use the same ``/invoices/{id}/request-payment-link``
+      // Session-creating endpoint. Response field is ``payment_url``.
+      const r = await api.post(`/invoices/${id}/request-payment-link`, {});
       setLinkUrl(r.payment_url);
       setLinkOpen(true);
     } catch (e) {

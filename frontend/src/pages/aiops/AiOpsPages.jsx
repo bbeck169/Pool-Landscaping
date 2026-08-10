@@ -42,10 +42,33 @@ function H({ title, subtitle, right }) {
 // ─── AI Employees ──────────────────────────────────────────────────────────
 export function AiEmployeesList() {
   const [rows, setRows] = useState([]);
-  useEffect(() => { api.get("/ai-ops/employees").then((r) => setRows(Array.isArray(r) ? r : [])); }, []);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    // Aug-2026 · Silent-empty guard — a 401 or transient fetch failure
+    // used to leave the grid rendering as an empty state indistinguishable
+    // from "no AI Employees for this tenant". Now surface the error
+    // inline so operators can tell an outage from a legitimately empty
+    // list. The 401 auth-token case is already caught upstream by the
+    // api.js interceptor (Fix A · Feb-2026) which redirects to /login;
+    // this catch handles everything else (network, 5xx, non-auth 401).
+    api.get("/ai-ops/employees")
+      .then((r) => { setRows(Array.isArray(r) ? r : []); setErr(""); })
+      .catch((e) => setErr(e?.message || "Couldn't load AI Employees"));
+  }, []);
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto" data-testid="ai-employees-list">
       <H title="AI Employees" subtitle="Persistent AI personas with role-specific prompts + guardrails" />
+      {err ? (
+        <div
+          className="rounded-xl p-3 mb-4 text-sm"
+          style={{ backgroundColor: "#FEE2E2", color: "#7F1D1D",
+                    border: "1px solid #FCA5A5" }}
+          data-testid="ai-employees-error"
+          role="status"
+        >
+          {err}
+        </div>
+      ) : null}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {rows.map((e) => (
           <Link key={e.id} to={`/ai-employees/${e.id}`}
