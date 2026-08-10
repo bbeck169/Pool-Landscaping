@@ -77,3 +77,10 @@ export const WIRED_SLUGS = new Set(
     (slug) => !SUPPLIER_METADATA[slug].coming_in,
   ),
 );
+
+// Phase 54h-d · Aug-2026 — Cloudflare Turnstile handoff-opt-in
+// slugs. Mirrors the ``SUPPORTS_CHALLENGE_HANDOFF = True`` set on
+// the backend connectors (poolcorp / siteone / heritage). The
+// session-status pill + Clear-session action only render for these
+// three; Ewing + ePoolSupply are silent.
+export const HANDOFF_SLUGS = new Set(["poolcorp", "siteone", "heritage"]);

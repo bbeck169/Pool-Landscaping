@@ -23,8 +23,9 @@ import { api } from "@/api";
 import { useAuth } from "@/auth";
 import { colors } from "@/theme";
 import { toast } from "sonner";
-import { SUPPLIER_METADATA, WIRED_SLUGS } from "./supplier_metadata";
+import { SUPPLIER_METADATA, WIRED_SLUGS, HANDOFF_SLUGS } from "./supplier_metadata";
 import ChallengeHandoffModal from "@/components/suppliers/ChallengeHandoffModal";
+import SessionStatusPill from "@/components/suppliers/SessionStatusPill";
 
 const LEGAL_DISCLAIMER =
   "Automated syncing may be subject to your wholesaler's Terms of Service. " +
@@ -347,6 +348,18 @@ function WiredSupplierCard({ supplier, readOnly }) {
             <PlugZap size={14} />
             {testing ? "Testing…" : `Test connection · ${displayName}`}
           </button>
+
+          {/* Phase 54h-d · Aug-2026 — Turnstile session status pill.
+              Silent for non-opt-in suppliers (Ewing / ePoolSupply) —
+              they never cache sessions. */}
+          {HANDOFF_SLUGS.has(supplier.slug) ? (
+            <SessionStatusPill
+              slug={supplier.slug}
+              displayName={displayName}
+              canManage={!readOnly}
+              onRetry={runTest}
+            />
+          ) : null}
 
           {/* Aug-2026 · UX cleanup — surface the raw slug in a small
               monospace hint next to the button so an admin can
