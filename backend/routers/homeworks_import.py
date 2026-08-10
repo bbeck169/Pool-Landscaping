@@ -40,7 +40,10 @@ VALID_ENTITY_TYPES = frozenset({
 _COLLECTIONS_WITH_BATCH_ID = (
     "customers", "properties", "customer_locations", "jobs",
     "recurring_schedules", "invoices", "payments", "quotes",
-    "customer_notes", "job_notes", "homeworks_staging",
+    "customer_notes", "job_notes",
+    # Phase 55-e — Homeworks-owned photo table.
+    "homeworks_photos",
+    "homeworks_staging",
 )
 
 # Phase 55-f · Commit engine.
@@ -55,6 +58,13 @@ _ENTITY_TO_COLLECTION: Dict[str, str] = {
     "invoices": "invoices",
     "payments": "payments",
     "quotes": "quotes",
+    # Phase 55-e — notes route to two collections depending on
+    # parent_type (see ``_persist_note_row``). We register only the
+    # ``customer_notes`` mapping here for the DEFAULT case; the persist
+    # helper detects the ``job`` parent and swaps the target coll.
+    "customer_notes": "customer_notes",
+    "job_notes": "job_notes",
+    "photos": "homeworks_photos",
 }
 
 # FK-safe processing order. Customers come first because every other
@@ -64,6 +74,7 @@ _ENTITY_TO_COLLECTION: Dict[str, str] = {
 _ENTITY_ORDER: List[str] = [
     "customers", "properties", "recurring_schedules",
     "jobs", "quotes", "invoices", "payments",
+    "customer_notes", "job_notes", "photos",
 ]
 
 # Customer merge policy — spec-locked in Phase 55 design doc §4.1:
@@ -282,6 +293,25 @@ async def rollback_batch(
         return {"ok": True, "batch_id": batch_id,
                  "already_rolled_back": True, "purged_counts": {}}
 
+    # Phase 55-e · Aug-2026 — object-storage purge PLAN.
+    # Collect the paths BEFORE deleting the staging rows in the
+    # collection-loop below, otherwise the cursor comes up empty
+    # (``homeworks_staging`` is in ``_COLLECTIONS_WITH_BATCH_ID``).
+    photo_paths: List[str] = []
+    try:
+        cursor = db.homeworks_staging.find(
+            {"tenant_id": tenant["id"], "batch_id": batch_id,
+              "entity_type": "photos",
+              "storage_url": {"$exists": True}},
+            {"_id": 0, "storage_url": 1},
+        )
+        async for photo in cursor:
+            path = photo.get("storage_url")
+            if path:
+                photo_paths.append(path)
+    except Exception as e:                                        # noqa: BLE001
+        logger.warning(f"[homeworks rollback] storage plan: {e}")
+
     purged: Dict[str, int] = {}
     for coll_name in _COLLECTIONS_WITH_BATCH_ID:
         # Staging rows carry ``batch_id`` (they're OWNED by the batch);
@@ -298,14 +328,38 @@ async def rollback_batch(
             logger.warning(f"[homeworks rollback] {coll_name}: {e}")
             purged[coll_name] = 0
 
+    # Phase 55-e · Aug-2026 — object-storage purge EXECUTE. Best-effort;
+    # log + continue on individual failures (DB rollback always
+    # succeeds first).
+    storage_deleted = 0
+    storage_failed = 0
+    try:
+        from services.object_storage import delete_object
+        for path in photo_paths:
+            try:
+                if delete_object(path):
+                    storage_deleted += 1
+                else:
+                    storage_failed += 1
+            except Exception as e:                                # noqa: BLE001
+                logger.warning(
+                    f"[homeworks rollback] storage delete {path}: {e}")
+                storage_failed += 1
+    except Exception as e:                                        # noqa: BLE001
+        logger.warning(f"[homeworks rollback] storage purge: {e}")
+
     await db.import_batches.update_one(
         {"id": batch_id, "tenant_id": tenant["id"]},
         {"$set": {"state": "rolled_back",
                     "rolled_back_at": _now_iso(),
                     "rolled_back_by_user_id": user.get("id"),
-                    "purged_counts": purged}},
+                    "purged_counts": purged,
+                    "storage_purged": storage_deleted,
+                    "storage_failed": storage_failed}},
     )
-    return {"ok": True, "batch_id": batch_id, "purged_counts": purged}
+    return {"ok": True, "batch_id": batch_id, "purged_counts": purged,
+             "storage_purged": storage_deleted,
+             "storage_failed": storage_failed}
 
 
 # ─── Dry-run + Commit + Progress (Phase 55-f) ──────────────────────────
@@ -517,6 +571,7 @@ async def _run_scrape(  # pragma: no cover — exercised via injected fake
         "customers": 0, "properties": 0,
         "jobs": 0, "recurring_schedules": 0,
         "quotes": 0, "invoices": 0, "payments": 0,
+        "notes": 0, "attachments": 0,
     }
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
@@ -560,6 +615,14 @@ async def _run_scrape(  # pragma: no cover — exercised via injected fake
                 await _persist_payment_row(
                     tenant_id, batch_id, raw, mapped, dedupe_by_homeworks_id)
                 scraped["payments"] += 1
+            async for raw, mapped in scraper.iter_notes(page):
+                await _persist_note_row(
+                    tenant_id, batch_id, raw, mapped, dedupe_by_homeworks_id)
+                scraped["notes"] += 1
+            async for raw, mapped in scraper.iter_attachments(page):
+                await _persist_attachment_row(
+                    tenant_id, batch_id, raw, mapped, dedupe_by_homeworks_id)
+                scraped["attachments"] += 1
         finally:
             await browser.close()
     return scraped
@@ -867,6 +930,129 @@ async def _persist_payment_row(
     await db.homeworks_staging.insert_one(doc)
 
 
+async def _persist_note_row(
+    tenant_id: str, batch_id: str,
+    raw: Dict[str, Any], mapped: Dict[str, Any],
+    dedupe_fn: Any,
+) -> None:
+    """Insert a note staging row. Routes into ``customer_notes`` or
+    ``job_notes`` based on Homeworks' declared parent_type. Dedupe
+    is against the destination collection by ``homeworks_id``."""
+    from services.homeworks.mapping import (
+        collection_for_note_parent, map_note,
+    )
+    hw_id = raw.get("id")
+    parent_type = raw.get("parent_type") or "customer"
+    target_coll = collection_for_note_parent(parent_type)
+    ds, matched_id = await dedupe_fn(
+        tenant_id, target_coll, hw_id, db)
+    parent_customer, _prop, parent_job, _inv = await _resolve_parent_ids(
+        tenant_id, batch_id, raw)
+    # Re-run the mapper with the resolved parent target id so the
+    # ``customer_id`` / ``job_id`` FK is stamped correctly.
+    parent_target = parent_job if parent_type == "job" else parent_customer
+    mapped = map_note(raw, parent_type, parent_target)
+    if ds == "new" and not mapped.get("id"):
+        mapped["id"] = uuid.uuid4().hex
+    entity_type = ("job_notes" if parent_type == "job"
+                    else "customer_notes")
+    doc = {
+        "id": uuid.uuid4().hex,
+        "tenant_id": tenant_id,
+        "batch_id": batch_id,
+        "entity_type": entity_type,
+        "homeworks_id": hw_id,
+        "raw_payload": raw,
+        "mapped_payload": mapped,
+        "dedupe_status": ds,
+        "matched_target_id": matched_id,
+        "imported_at": None,
+        "commit_error": None,
+    }
+    await db.homeworks_staging.insert_one(doc)
+
+
+async def _persist_attachment_row(
+    tenant_id: str, batch_id: str,
+    raw: Dict[str, Any], mapped: Dict[str, Any],
+    dedupe_fn: Any,
+) -> None:
+    """Insert an attachment staging row + copy the photo into our
+    object storage.
+
+    Failure modes are commit-friendly:
+      * Download timeout / HTTP error → row lands with
+        ``commit_error = "photo_download_failed"``, ``storage_url = None``.
+      * Photo > 25 MB → ``commit_error = "photo_too_large"``.
+      * Storage-upload failure → ``commit_error = "storage_upload_failed"``.
+    In all three, the row still commits so the metadata isn't lost.
+    """
+    from services.homeworks.copilot_scraper import download_photo
+    from services.object_storage import put_object
+    from services.homeworks.mapping import map_photo
+
+    hw_id = raw.get("id")
+    parent_type = raw.get("parent_type") or "job"
+    ds, matched_id = await dedupe_fn(
+        tenant_id, "homeworks_photos", hw_id, db)
+    parent_customer, _prop, parent_job, _inv = await _resolve_parent_ids(
+        tenant_id, batch_id, raw)
+    parent_target = parent_job if parent_type == "job" else parent_customer
+
+    storage_url: Optional[str] = None
+    commit_error: Optional[str] = None
+    url = raw.get("url") or raw.get("original_url")
+    # Skip download entirely on ``matched`` rows — we already have
+    # the blob from the prior successful import (per spec: never
+    # re-download an existing photo).
+    if url and ds != "matched":
+        try:
+            data, mime = download_photo(url)
+            ext = (mime.split("/")[-1] if "/" in mime else "bin") \
+                    .replace("+", "").split(";")[0][:8] or "bin"
+            storage_path = (
+                f"homeworks_import/{tenant_id}/{batch_id}/photos/"
+                f"{hw_id}.{ext}")
+            try:
+                put_object(storage_path, data, mime)
+                storage_url = storage_path
+            except Exception as e:                                  # noqa: BLE001
+                logger.warning(f"[homeworks photo] upload failed: {e}")
+                commit_error = "storage_upload_failed"
+        except ValueError as e:
+            commit_error = str(e)   # photo_too_large
+        except Exception as e:                                      # noqa: BLE001
+            logger.warning(f"[homeworks photo] download failed: {e}")
+            commit_error = "photo_download_failed"
+
+    mapped = map_photo(raw, parent_type, parent_target,
+                         storage_url=storage_url)
+    if ds == "new" and not mapped.get("id"):
+        mapped["id"] = uuid.uuid4().hex
+
+    doc = {
+        "id": uuid.uuid4().hex,
+        "tenant_id": tenant_id,
+        "batch_id": batch_id,
+        "entity_type": "photos",
+        "homeworks_id": hw_id,
+        "raw_payload": raw,
+        "mapped_payload": mapped,
+        "dedupe_status": ds,
+        "matched_target_id": matched_id,
+        # Photo staging is IMMEDIATE-COMMIT-STYLE: the blob is
+        # already in object storage, so the metadata row is treated
+        # as imported at scrape time. If commit_error is set the
+        # row is preserved for the operator to inspect via dryrun
+        # warnings but the metadata still lands in ``homeworks_photos``
+        # on commit (via ``_generic_merge_update``'s new-row path).
+        "imported_at": None,
+        "commit_error": commit_error,
+        "storage_url": storage_url,
+    }
+    await db.homeworks_staging.insert_one(doc)
+
+
 @router.post("/imports/homeworks/batches/{batch_id}/scrape")
 async def scrape_batch(
     batch_id: str,
@@ -959,6 +1145,7 @@ async def scrape_batch(
         "customers": 0, "properties": 0,
         "jobs": 0, "recurring_schedules": 0,
         "quotes": 0, "invoices": 0, "payments": 0,
+        "customer_notes": 0, "job_notes": 0, "photos": 0,
     }
     async for _row in db.homeworks_staging.find(
         {"tenant_id": tenant["id"], "batch_id": batch_id},

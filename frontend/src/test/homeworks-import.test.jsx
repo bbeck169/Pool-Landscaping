@@ -516,3 +516,46 @@ describe("HomeworksImport · Phase 55-d entity coverage", () => {
     });
   });
 });
+
+
+// ═════════════════════════════════════════════════════════════════
+// Phase 55-e — Rollback warning mentions photos when count > 0
+// ═════════════════════════════════════════════════════════════════
+describe("HomeworksImport · Phase 55-e photo purge warning", () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    postMock.mockReset();
+  });
+  afterEach(() => { cleanup(); });
+
+  it("rollback confirmation surfaces photo count when attachments > 0",
+    async () => {
+      const batch = {
+        id: "batch-photos-1", state: "committed",
+        entity_types_planned: ["customers", "attachments"],
+        entity_counts_completed: {
+          customers: 12, properties: 4, photos: 47,
+        },
+        started_at: "2026-08-01",
+      };
+      getMock.mockImplementation((url) => {
+        if (url === "/imports/homeworks/batches") {
+          return Promise.resolve({ batches: [batch] });
+        }
+        return Promise.resolve({ has_credentials: true });
+      });
+
+      renderPage();
+      await waitFor(() =>
+        screen.getByTestId(`hw-batch-rollback-${batch.id}`));
+      fireEvent.click(screen.getByTestId(`hw-batch-rollback-${batch.id}`));
+
+      const warning = await screen.findByTestId("hw-rollback-warning");
+      // Text mentions total record count + photo callout.
+      expect(warning.textContent).toContain("63");   // 12 + 4 + 47
+      // Dedicated photo-count node for testability + emphasis.
+      const photoNode = screen.getByTestId("hw-rollback-photo-count");
+      expect(photoNode.textContent).toContain("47 photos");
+      expect(warning.textContent).toContain("from storage");
+    });
+});

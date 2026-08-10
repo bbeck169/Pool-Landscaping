@@ -303,3 +303,66 @@ def map_payment(
         "homeworks_invoice_id": _s(raw.get("invoice_id")) or None,
     }
     return {k: v for k, v in mapped.items() if v is not None}
+
+
+# ─── Notes + Photos (Phase 55-e) ────────────────────────────────
+def collection_for_note_parent(parent_type: str) -> str:
+    """Route a note into ``customer_notes`` or ``job_notes`` based on
+    its Homeworks parent-entity type. Invoice / quote notes fall
+    back onto ``customer_notes`` so they're still tenant-searchable."""
+    if parent_type == "job":
+        return "job_notes"
+    return "customer_notes"
+
+
+def map_note(
+    raw: Dict[str, Any],
+    parent_type: str,
+    parent_target_id: Optional[str],
+) -> Dict[str, Any]:
+    """Map Homeworks note → AquaTerra ``customer_notes`` or
+    ``job_notes`` shape (parent_type routes the collection). Both
+    collections share this field shape."""
+    mapped: Dict[str, Any] = {
+        "parent_type": parent_type,
+        "text": _s(raw.get("text")) or _s(raw.get("body")) or "",
+        "created_at": _s(raw.get("created_at")) or None,
+        "author_email": _s(raw.get("author_email"))
+                         or _s(raw.get("author")) or None,
+        "homeworks_id": _s(raw.get("id")) or None,
+    }
+    # Set FK under the collection-specific key so the target
+    # collection's queries by ``customer_id`` / ``job_id`` still hit.
+    if parent_type == "job":
+        mapped["job_id"] = parent_target_id
+    else:
+        mapped["customer_id"] = parent_target_id
+    return {k: v for k, v in mapped.items() if v is not None}
+
+
+def map_photo(
+    raw: Dict[str, Any],
+    parent_type: str,
+    parent_target_id: Optional[str],
+    storage_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Map Homeworks attachment → AquaTerra ``homeworks_photos`` shape.
+
+    ``storage_url`` is the post-download blob path in our object
+    storage; when ``None`` (download failed) the caller stamps a
+    ``photo_download_failed`` marker so the metadata still lands.
+    """
+    mapped: Dict[str, Any] = {
+        "parent_type": parent_type,
+        "parent_id": parent_target_id,
+        "original_url": _s(raw.get("url"))
+                         or _s(raw.get("original_url")) or None,
+        "storage_url": storage_url,
+        "caption": _s(raw.get("caption")) or None,
+        "taken_at": _s(raw.get("taken_at"))
+                     or _s(raw.get("created_at")) or None,
+        "mime_type": _s(raw.get("mime_type")) or None,
+        "size_bytes": raw.get("size_bytes"),
+        "homeworks_id": _s(raw.get("id")) or None,
+    }
+    return {k: v for k, v in mapped.items() if v is not None}

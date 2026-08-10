@@ -36,7 +36,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 from config import logger
 from services.homeworks.mapping import (
     map_customer, map_property, map_job, map_recurring_schedule,
-    map_invoice, map_payment, map_quote,
+    map_invoice, map_payment, map_quote, map_note, map_photo,
 )
 
 
@@ -48,6 +48,13 @@ RECURRING_URL = "https://secure.copilotcrm.com/recurring"
 QUOTES_URL = "https://secure.copilotcrm.com/quotes"
 INVOICES_URL = "https://secure.copilotcrm.com/invoices"
 PAYMENTS_URL = "https://secure.copilotcrm.com/payments"
+NOTES_URL = "https://secure.copilotcrm.com/notes"
+ATTACHMENTS_URL = "https://secure.copilotcrm.com/attachments"
+
+# Phase 55-e — per-photo size cap. Anything larger is skipped with
+# a ``photo_too_large`` commit error rather than blowing our
+# object-storage bill on a Copilot user's misdrop of a raw video.
+PHOTO_MAX_BYTES = 25 * 1024 * 1024
 USER_AGENT = "AquaTerra-HomeworksImport/1.0"
 
 # PLACEHOLDER selectors — MUST be verified against the live UI once
@@ -130,6 +137,28 @@ SELECTORS: Dict[str, str] = {
     "pay_applied_at":            '[data-field="applied_at"]',
     "pay_transaction_ref":       '[data-field="transaction_ref"]',
     "pay_stripe_charge":         '[data-field="stripe_charge_id"]',
+    # Notes list (Phase 55-e).
+    "note_row":                  '[data-testid="note-row"], tr.note',
+    "note_id_attr":               "data-homeworks-id",
+    "note_parent_type_attr":      "data-parent-type",
+    "note_customer_ref":          "data-customer-id",
+    "note_job_ref":               "data-job-id",
+    "note_invoice_ref":           "data-invoice-id",
+    "note_quote_ref":             "data-quote-id",
+    "note_text":                 '[data-field="text"]',
+    "note_created_at":           '[data-field="created_at"]',
+    "note_author":               '[data-field="author_email"]',
+    # Attachments / photos list (Phase 55-e).
+    "att_row":                   '[data-testid="attachment-row"], tr.attachment',
+    "att_id_attr":                "data-homeworks-id",
+    "att_parent_type_attr":       "data-parent-type",
+    "att_customer_ref":           "data-customer-id",
+    "att_job_ref":                "data-job-id",
+    "att_url_attr":               "data-url",
+    "att_caption":               '[data-field="caption"]',
+    "att_mime_type_attr":         "data-mime-type",
+    "att_size_attr":              "data-size-bytes",
+    "att_taken_at":              '[data-field="taken_at"]',
     # Pagination.
     "btn_next_page":             'button.pagination-next, [data-testid="page-next"]',
 }
@@ -404,6 +433,77 @@ class CopilotCRMScraper:
                 return
             await asyncio.sleep(RATE_LIMIT_SECONDS)
 
+    async def iter_notes(
+        self, page: Any,
+    ) -> AsyncIterator[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        """Yield ``(raw, mapped)`` per note. ``raw`` carries
+        ``parent_type`` + all four possible parent-FKs so the
+        orchestrator can route the row to ``customer_notes`` vs
+        ``job_notes`` and resolve the parent target id."""
+        await page.goto(NOTES_URL)
+        page_num = 1
+        yielded = 0
+        while True:
+            rows = await page.query_selector_all(SELECTORS["note_row"])
+            if not rows and page_num == 1:
+                logger.warning(
+                    "[homeworks] no note rows on page 1 — selector drift?")
+                return
+            if not rows:
+                return
+            for row in rows:
+                raw = await self._extract_note(row)
+                if not raw.get("id"):
+                    continue
+                # Parent target id is resolved by the orchestrator —
+                # the mapper here just stubs the type.
+                mapped = map_note(raw, raw.get("parent_type") or "customer",
+                                    None)
+                yielded += 1
+                yield raw, mapped
+            page_num += 1
+            if not await self._go_next_page(page):
+                logger.info(f"[homeworks] iter_notes finished: {yielded} rows")
+                return
+            await asyncio.sleep(RATE_LIMIT_SECONDS)
+
+    async def iter_attachments(
+        self, page: Any,
+    ) -> AsyncIterator[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        """Yield ``(raw, mapped)`` per attachment/photo. ``raw``
+        carries the source ``url`` — the orchestrator downloads it
+        during the persist step so a rollback can purge blobs
+        alongside metadata."""
+        await page.goto(ATTACHMENTS_URL)
+        page_num = 1
+        yielded = 0
+        while True:
+            rows = await page.query_selector_all(SELECTORS["att_row"])
+            if not rows and page_num == 1:
+                logger.warning(
+                    "[homeworks] no attachment rows on page 1 — "
+                    "selector drift?")
+                return
+            if not rows:
+                return
+            for row in rows:
+                raw = await self._extract_attachment(row)
+                if not raw.get("id"):
+                    continue
+                # storage_url is None here — assigned by the
+                # orchestrator after successful download+upload.
+                mapped = map_photo(
+                    raw, raw.get("parent_type") or "job",
+                    None, storage_url=None)
+                yielded += 1
+                yield raw, mapped
+            page_num += 1
+            if not await self._go_next_page(page):
+                logger.info(
+                    f"[homeworks] iter_attachments finished: {yielded} rows")
+                return
+            await asyncio.sleep(RATE_LIMIT_SECONDS)
+
     # ─── Extraction helpers ──────────────────────────────────────
     async def _extract_customer(self, row: Any) -> Dict[str, Any]:
         return {
@@ -519,6 +619,89 @@ class CopilotCRMScraper:
             "stripe_charge_id": await self._text(
                 row, SELECTORS["pay_stripe_charge"]),
         }
+
+    async def _extract_note(self, row: Any) -> Dict[str, Any]:
+        parent_type = await self._attr(row, SELECTORS["note_parent_type_attr"])
+        return {
+            "id": await self._attr(row, SELECTORS["note_id_attr"]),
+            "parent_type": (parent_type or "customer").lower(),
+            "customer_homeworks_id": await self._attr(
+                row, SELECTORS["note_customer_ref"]),
+            "job_homeworks_id": await self._attr(
+                row, SELECTORS["note_job_ref"]),
+            "invoice_homeworks_id": await self._attr(
+                row, SELECTORS["note_invoice_ref"]),
+            "quote_homeworks_id": await self._attr(
+                row, SELECTORS["note_quote_ref"]),
+            "text": await self._text(row, SELECTORS["note_text"]),
+            "created_at": await self._text(
+                row, SELECTORS["note_created_at"]),
+            "author_email": await self._text(
+                row, SELECTORS["note_author"]),
+        }
+
+    async def _extract_attachment(self, row: Any) -> Dict[str, Any]:
+        parent_type = await self._attr(row, SELECTORS["att_parent_type_attr"])
+        size = await self._attr(row, SELECTORS["att_size_attr"])
+        try:
+            size_bytes = int(size) if size else None
+        except (TypeError, ValueError):
+            size_bytes = None
+        return {
+            "id": await self._attr(row, SELECTORS["att_id_attr"]),
+            "parent_type": (parent_type or "job").lower(),
+            "customer_homeworks_id": await self._attr(
+                row, SELECTORS["att_customer_ref"]),
+            "job_homeworks_id": await self._attr(
+                row, SELECTORS["att_job_ref"]),
+            "url": await self._attr(row, SELECTORS["att_url_attr"]),
+            "caption": await self._text(row, SELECTORS["att_caption"]),
+            "mime_type": await self._attr(row, SELECTORS["att_mime_type_attr"]),
+            "size_bytes": size_bytes,
+            "taken_at": await self._text(row, SELECTORS["att_taken_at"]),
+        }
+
+
+async def download_photo(url: str) -> Tuple[bytes, str]:
+    """Download a photo from a Copilot CRM CDN URL.
+
+    Returns ``(bytes, mime_type)``. Raises:
+      * ``ValueError("photo_too_large")`` when the response body
+        exceeds ``PHOTO_MAX_BYTES`` (25 MB).
+      * ``RuntimeError("photo_download_failed: <detail>")`` for any
+        HTTP / transport / timeout error.
+
+    Kept as a module-level helper (not a method) so tests can
+    monkey-patch a synthetic downloader without instantiating the
+    full ``CopilotCRMScraper``.
+    """
+    import requests
+
+    try:
+        resp = requests.get(url, timeout=60, stream=True)
+    except Exception as e:                                          # noqa: BLE001
+        raise RuntimeError(f"photo_download_failed: {e}") from e
+    if resp.status_code >= 400:
+        raise RuntimeError(
+            f"photo_download_failed: HTTP {resp.status_code}")
+    content_length = resp.headers.get("Content-Length")
+    if content_length:
+        try:
+            if int(content_length) > PHOTO_MAX_BYTES:
+                raise ValueError("photo_too_large")
+        except (TypeError, ValueError) as e:
+            if str(e) == "photo_too_large":
+                raise
+    # Stream + cap.
+    buf = bytearray()
+    for chunk in resp.iter_content(chunk_size=64 * 1024):
+        if not chunk:
+            continue
+        buf.extend(chunk)
+        if len(buf) > PHOTO_MAX_BYTES:
+            raise ValueError("photo_too_large")
+    mime = resp.headers.get("Content-Type") or "application/octet-stream"
+    return bytes(buf), mime
 
     async def _go_next_page(self, page: Any) -> bool:
         """Click Next if available. Returns True when a click landed,

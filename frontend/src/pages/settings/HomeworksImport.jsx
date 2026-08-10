@@ -493,13 +493,26 @@ export default function HomeworksImport() {
                 (a, n) => a + (Number(n) || 0), 0);
               const collectionsTouched = Object.keys(counts).filter(
                 (k) => (Number(counts[k]) || 0) > 0).length;
+              // Phase 55-e — surface photo count separately so the
+              // operator knows blobs will leave storage too (not
+              // just DB rows).
+              const photoCount = Number(counts.photos || 0);
               return (
                 <p className="text-sm mb-4" style={{ color: colors.muted }}
                     data-testid="hw-rollback-warning">
                   This will delete {totalRows} imported record
                   {totalRows === 1 ? "" : "s"} across {collectionsTouched}
-                  {" "}collection{collectionsTouched === 1 ? "" : "s"}.
-                  Idempotent — safe to run twice.
+                  {" "}collection{collectionsTouched === 1 ? "" : "s"}
+                  {photoCount > 0 ? (
+                    <>
+                      {", including "}
+                      <strong data-testid="hw-rollback-photo-count">
+                        {photoCount} photo{photoCount === 1 ? "" : "s"}
+                      </strong>
+                      {" from storage"}
+                    </>
+                  ) : null}
+                  . Idempotent — safe to run twice.
                 </p>
               );
             })()}

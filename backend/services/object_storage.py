@@ -166,3 +166,38 @@ def get_object(path: str) -> tuple[bytes, str]:
             f"get_object failed [{resp.status_code}]: {resp.text[:400]}"
         )
     return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+
+def delete_object(path: str) -> bool:
+    """Delete a stored blob. Returns ``True`` on success or when the
+    object was already absent (404). Callers treat ``False`` as a
+    non-fatal storage error (log + continue). Used by the Phase 55-e
+    Homeworks rollback path to purge imported photos.
+    """
+    if not is_ready():
+        init_storage()
+        if not is_ready():
+            logger.warning(
+                "[object_storage] delete_object skipped — not initialised")
+            return False
+
+    def _do_delete():
+        return requests.delete(
+            f"{STORAGE_URL}/objects/{path}",
+            headers=_headers_for(), timeout=60,
+        )
+
+    resp = _do_delete()
+    if resp.status_code == 403:
+        logger.info(
+            "[object_storage] DELETE got 403; re-initialising and retrying")
+        init_storage(force=True)
+        resp = _do_delete()
+    if resp.status_code == 404:
+        return True   # already gone — idempotent success
+    if resp.status_code >= 400:
+        logger.warning(
+            f"[object_storage] delete_object failed "
+            f"[{resp.status_code}]: {resp.text[:200]}")
+        return False
+    return True
