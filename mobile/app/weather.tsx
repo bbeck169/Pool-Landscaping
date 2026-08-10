@@ -61,8 +61,13 @@ const RISK_FG: Record<string, string> = {
 
 export default function WeatherScreen() {
   const { user } = useAuth();
-  // Mirror the web ``<AdminOnly>`` guard verbatim.
-  const isAdmin = user?.role === "admin" || (user?.role as any) === "super_admin";
+  // Phase 41.5c-fixup · Feb 2026 — widened from admin/super_admin to
+  // admin/super_admin/manager to match the drawer's default nav role
+  // set and the intent-aligned web guard ``AdminOrManagerForWeather``.
+  // Managers own scheduling decisions; the risk grid + reschedule
+  // recommendations are the primary consumers.
+  const role = user?.role;
+  const isAdmin = role === "admin" || role === "super_admin" || role === "manager";
 
   const [risk, setRisk] = useState<{ days: RiskDay[] } | null>(null);
   const [recs, setRecs] = useState<Reschedule | null>(null);

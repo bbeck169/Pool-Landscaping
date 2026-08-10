@@ -396,6 +396,24 @@ function AdminOrManagerForProfitReport({ children }) {
 }
 
 
+// Phase 41.5c-fixup · Feb 2026 — /weather page. Field managers make
+// scheduling decisions off the risk grid + reschedule-recommendations
+// (both endpoints back /weather); the existing ``<AdminOnly>`` here
+// was inherited boilerplate. Targeted widen to admin/super_admin/manager
+// mirrors the pattern used for AdminOrManagerForProfitReport and
+// AdminOrManagerForSuppliers.
+function AdminOrManagerForWeather({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  const role = user?.role || "";
+  const allowed = role === "admin" || role === "super_admin" || role === "manager";
+  if (!user || !allowed) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
+
 // Phase 54b · Feb-2026 — wholesale supplier settings. Admin/super_admin
 // edit; manager renders the page read-only (form disabled, action
 // buttons hidden — enforced INSIDE ``SupplierSettings.jsx``);
@@ -951,7 +969,7 @@ export default function App() {
             <Route path="measure" element={<AdminOnly><SatelliteMeasure /></AdminOnly>} />
             <Route path="virtual-bid" element={<AdminOnly><VirtualBid /></AdminOnly>} />
             <Route path="card" element={<AdminOnly><DigitalCardList /></AdminOnly>} />
-            <Route path="weather" element={<AdminOnly><WeatherHub /></AdminOnly>} />
+            <Route path="weather" element={<AdminOrManagerForWeather><WeatherHub /></AdminOrManagerForWeather>} />
 
             {/* Shared placeholders (later phases) */}
             <Route

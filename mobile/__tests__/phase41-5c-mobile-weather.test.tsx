@@ -190,4 +190,27 @@ describe("Phase 41.5c · mobile Weather page", () => {
     expect(getByTestId("weather-page-role-gate")).toBeTruthy();
     expect(mockApiGet).not.toHaveBeenCalled();
   });
+
+  // Phase 41.5c-fixup · Feb 2026 — role gate widened to include
+  // ``manager`` so the drawer entry and the page gate agree.
+  it("manager loads the page (widened per Phase 41.5c-fixup)", async () => {
+    mockUser = { id: "u_m", role: "manager", email: "m@ex.com" };
+    mockApiGet
+      .mockResolvedValueOnce({ days: RISK_DAYS })
+      .mockResolvedValueOnce({ suggested: [], poor_days: [] });
+    const { getByTestId, queryByTestId } = render(<WeatherScreen />);
+    await waitFor(() => expect(mockApiGet).toHaveBeenCalledTimes(2));
+    expect(getByTestId("weather-page")).toBeTruthy();
+    expect(queryByTestId("weather-page-role-gate")).toBeNull();
+  });
+
+  it("super_admin loads the page", async () => {
+    mockUser = { id: "u_sa", role: "super_admin", email: "s@ex.com" };
+    mockApiGet
+      .mockResolvedValueOnce({ days: RISK_DAYS })
+      .mockResolvedValueOnce({ suggested: [], poor_days: [] });
+    const { getByTestId } = render(<WeatherScreen />);
+    await waitFor(() => expect(mockApiGet).toHaveBeenCalledTimes(2));
+    expect(getByTestId("weather-page")).toBeTruthy();
+  });
 });
