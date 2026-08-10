@@ -76,7 +76,7 @@ export default function VisitRecapModal({
           <View style={{ padding: spacing.md }}>
             <Text style={styles.subCopy}>
               Text or email <Text style={styles.bold}>{customer?.name || "the customer"}</Text>{" "}
-              a summary of today's visit — chemicals added, water readings
+              a summary of today&apos;s visit — chemicals added, water readings
               {includePhotos ? " and up to 3 photos" : ""}.
             </Text>
 

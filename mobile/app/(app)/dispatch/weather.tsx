@@ -215,7 +215,7 @@ export default function WeatherRescheduleMobile() {
             {proposed.length === 0 ? (
               <View style={styles.emptyCard} testID="weather-no-proposed">
                 <Text style={styles.emptyText}>No pending weather proposals.</Text>
-                <Text style={styles.emptySub}>Tap "Run weather scan" to check today + tomorrow's outdoor jobs.</Text>
+                <Text style={styles.emptySub}>Tap &quot;Run weather scan&quot; to check today + tomorrow&apos;s outdoor jobs.</Text>
               </View>
             ) : proposed.map((ev) => (
               <EventCard

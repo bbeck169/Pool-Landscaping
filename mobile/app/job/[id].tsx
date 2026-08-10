@@ -11,12 +11,17 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { useAttendance } from "@/src/hooks/useAttendance";
 import { useOnline, queuePhoto, pendingForJob, flushPendingPhotos, getCachedJobs, cacheJob, getCachedJob, queueMutation, flushPendingMutations } from "@/src/offline";
-import { colors, spacing, money, IMAGES } from "@/src/theme";
+import { colors, spacing, money, IMAGES , colors as themeColors, spacing as themeSpacing, radius as themeRadius, font as themeFont } from "@/src/theme";
 import { Loading, StatusChip, PrimaryButton, Sheet } from "@/src/components/ui";
 import { styles } from "@/src/components/job/styles";
-import { colors as themeColors, spacing as themeSpacing, radius as themeRadius, font as themeFont } from "@/src/theme";
 import { JobBeforeAfterPhotos } from "@/src/components/files";
 import FieldReport from "@/src/components/job/FieldReport";
+import MaintenanceLog from "@/src/components/job/MaintenanceLog";
+import ServiceIssues from "@/src/components/job/ServiceIssues";
+import PhotoCarousel from "@/src/components/job/PhotoCarousel";
+import Row from "@/src/components/job/Row";
+import JobTimerCard from "@/src/components/job/JobTimerCard";
+import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 
 // Phase 49.0 — inline styles for the "Open Service Report" CTA. Kept
 // local so we don't touch the shared `styles` module.
@@ -36,12 +41,6 @@ const openReportBtnText = {
   color: "#fff",
   letterSpacing: 0.7,
 };
-import MaintenanceLog from "@/src/components/job/MaintenanceLog";
-import ServiceIssues from "@/src/components/job/ServiceIssues";
-import PhotoCarousel from "@/src/components/job/PhotoCarousel";
-import Row from "@/src/components/job/Row";
-import JobTimerCard from "@/src/components/job/JobTimerCard";
-import VideoMediaUploader from "@/src/components/media/VideoMediaUploader";
 
 export default function JobDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();

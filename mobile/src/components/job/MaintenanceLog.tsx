@@ -1,11 +1,12 @@
 import React, { useState } from "react";
-import { View, Text, Pressable, TextInput, Platform, ScrollView } from "react-native";
+import { View, Text, Pressable, TextInput, Platform, ScrollView , StyleSheet } from "react-native";
 import { Image } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { api } from "@/src/api";
 import { styles as jobStyles } from "./styles";
+
 
 const CONDITIONS: Record<string, string[]> = {
   filter: ["Clean", "Light debris", "Heavy debris", "Needs replacement"],
@@ -192,7 +193,7 @@ export default function MaintenanceLog({
           <Ionicons name={saving ? "hourglass-outline" : "save-outline"} size={16} color="#fff" />
           <Text style={ml.saveText}>{saving ? "Saving…" : savedAt ? "Update Log" : "Save Log"}</Text>
         </Pressable>
-        {!online ? <Text style={jobStyles.offlineHint}>You're offline — reconnect to save this log.</Text> : null}
+        {!online ? <Text style={jobStyles.offlineHint}>You&apos;re offline — reconnect to save this log.</Text> : null}
       </View>
     </>
   );
@@ -220,8 +221,6 @@ function PhotoStrip({ photos }: { photos: any[] }) {
     </ScrollView>
   );
 }
-
-import { StyleSheet } from "react-native";
 const ml = StyleSheet.create({
   fieldRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   fieldLabel: { fontFamily: font.semibold, fontSize: fontSize.base, color: colors.onSurface },

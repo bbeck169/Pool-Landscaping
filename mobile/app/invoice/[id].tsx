@@ -10,7 +10,7 @@
  */
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  View, Text, ScrollView, StyleSheet, TouchableOpacity,
+  View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput,
   ActivityIndicator, Alert, Linking, Modal, Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";

@@ -20,6 +20,8 @@ import { useAuth } from "@/src/auth";
 import { AdminOnly } from "@/src/components/AdminOnly";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Sheet, PrimaryButton } from "@/src/components/ui";
+// Resolved by Metro via .native.tsx / .web.tsx platform extensions.
+// eslint-disable-next-line import/no-unresolved
 import MeasureMap from "@/src/components/measure/MeasureMap";
 
 type Coord = { latitude: number; longitude: number };

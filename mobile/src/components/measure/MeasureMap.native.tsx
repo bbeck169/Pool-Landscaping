@@ -2,6 +2,9 @@ import React from "react";
 import { StyleSheet } from "react-native";
 import MapView, { Marker, Polyline, Polygon } from "react-native-maps";
 
+// small numbered vertex dot
+import { View, Text } from "react-native";
+
 type Coord = { latitude: number; longitude: number };
 
 export default function MeasureMap({
@@ -45,9 +48,6 @@ export default function MeasureMap({
     </MapView>
   );
 }
-
-// small numbered vertex dot
-import { View, Text } from "react-native";
 function MarkerDot({ index }: { index: number }) {
   return (
     <View style={dotStyles.dot}>

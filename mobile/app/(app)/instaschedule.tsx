@@ -141,7 +141,7 @@ export default function InstaScheduleMobile() {
                   {selected.contact?.phone}
                 </Text>
                 {selected.notes && (
-                  <Text style={styles.detailNote}>"{selected.notes}"</Text>
+                  <Text style={styles.detailNote}>&quot;{selected.notes}&quot;</Text>
                 )}
                 <View style={styles.breakRow}>
                   <Text style={styles.breakLbl}>

@@ -5,9 +5,8 @@ import { useFocusEffect } from "expo-router";
 
 import { api } from "@/src/api";
 import { colors, spacing, radius, font, fontSize, money } from "@/src/theme";
-import { Loading } from "@/src/components/ui";
+import { Loading , StatusChip as Chip } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
-import { StatusChip as Chip } from "@/src/components/ui";
 
 export default function Reports() {
   const [data, setData] = useState<any>(null);

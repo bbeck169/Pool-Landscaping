@@ -122,7 +122,7 @@ export default function PortalPhotos() {
           ListEmptyComponent={() => (
             <View style={styles.empty}>
               <Ionicons name="image-outline" size={40} color={colors.muted} />
-              <Text style={styles.emptyText}>No photos yet. After your next visit, they'll appear here.</Text>
+              <Text style={styles.emptyText}>No photos yet. After your next visit, they&apos;ll appear here.</Text>
             </View>
           )}
         />

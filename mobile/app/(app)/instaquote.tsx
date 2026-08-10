@@ -164,7 +164,7 @@ export default function InstaQuoteMobile() {
                 </Text>
                 {selected.contact?.notes && (
                   <Text style={styles.detailNote}>
-                    "{selected.contact.notes}"
+                    &quot;{selected.contact.notes}&quot;
                   </Text>
                 )}
                 {(selected.computed_breakdown_json || []).map((b: any, i: number) => (

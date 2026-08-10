@@ -286,7 +286,7 @@ export default function EstimateViewScreen() {
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={s.modalOverlay}>
           <View style={s.modalCard}>
             <Text style={s.modalTitle}>Request Changes</Text>
-            <Text style={s.modalHelp}>Tell us what you'd like changed.</Text>
+            <Text style={s.modalHelp}>Tell us what you&apos;d like changed.</Text>
             <TextInput style={s.modalInput} value={changesMsg} onChangeText={setChangesMsg} multiline numberOfLines={4} placeholder="Describe the changes..." placeholderTextColor={colors.muted} testID="estimate-changes-message" />
             <View style={s.modalActions}>
               <TouchableOpacity onPress={() => setChangesOpen(false)} style={s.modalCancel}><Text style={s.modalCancelText}>Cancel</Text></TouchableOpacity>

@@ -74,7 +74,7 @@ export default function CommunicationThread() {
       {aiPaused ? (
         <View style={styles.pausedBanner} testID="ai-paused-banner">
           <Ionicons name="person" size={14} color={colors.brand} />
-          <Text style={styles.pausedText}>AI paused — you're replying as a human.</Text>
+          <Text style={styles.pausedText}>AI paused — you&apos;re replying as a human.</Text>
         </View>
       ) : null}
       {loading ? (

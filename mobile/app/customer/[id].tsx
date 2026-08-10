@@ -566,7 +566,7 @@ export default function CustomerDetail() {
 
       <Sheet visible={confirmImp} onClose={() => setConfirmImp(false)} title="View as customer" testID="impersonate-confirm-sheet">
         <Text style={styles.sheetHint}>
-          You'll be switched into {c.name}'s portal to see exactly what they see (services, invoices, documents). An orange banner will let you return to admin anytime. Payments and card changes are disabled while viewing.
+          You&apos;ll be switched into {c.name}&apos;s portal to see exactly what they see (services, invoices, documents). An orange banner will let you return to admin anytime. Payments and card changes are disabled while viewing.
         </Text>
         <View style={{ height: spacing.md }} />
         <PrimaryButton title="View as customer" icon="eye-outline" onPress={doImpersonate} loading={impersonating} testID="impersonate-confirm-button" />

@@ -16,7 +16,7 @@
  */
 import { Platform } from "react-native";
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+ 
 const impl = Platform.OS === "web"
   ? require("./MapCanvas.web").default
   : require("./MapCanvas.native").default;

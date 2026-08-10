@@ -20,7 +20,7 @@ type Todo = { id: string; text: string; completed: boolean; created_at: string; 
 // Phase 38b Mapbox convention.
 let _speech: any = null;
 try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+   
   _speech = require("expo-speech-recognition");
 } catch (_) {
   _speech = null;

@@ -105,7 +105,7 @@ export function LiveTechPinsWrapper({
         <Ionicons name="map-outline" size={18} color={colors.muted} />
         <Text style={styles.fallbackTitle}>Live map requires the dev client</Text>
         <Text style={styles.fallbackSub}>
-          Expo Go can't load @rnmapbox/maps. Rebuild the dev client
+          Expo Go can&apos;t load @rnmapbox/maps. Rebuild the dev client
           per mobile/EXPO_GO_RUNBOOK.md to enable this section.
         </Text>
       </View>

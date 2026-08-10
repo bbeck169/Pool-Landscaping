@@ -98,7 +98,7 @@ export default function SeoStudio() {
     }
   };
 
-  const useKeyword = (k: string) => {
+  const applyKeyword = (k: string) => {
     setKw(k);
     setTab("articles");
     setGenOpen(true);
@@ -244,7 +244,7 @@ export default function SeoStudio() {
                     {k.intent} · ~{k.volume}/mo · KD {k.difficulty}
                   </Text>
                 </View>
-                <Pressable style={styles.useBtn} onPress={() => useKeyword(k.keyword)} testID={`seo-use-kw-${i}`}>
+                <Pressable style={styles.useBtn} onPress={() => applyKeyword(k.keyword)} testID={`seo-use-kw-${i}`}>
                   <Text style={styles.useBtnText}>Write</Text>
                 </Pressable>
               </Card>

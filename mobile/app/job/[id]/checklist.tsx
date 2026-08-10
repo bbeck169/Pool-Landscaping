@@ -389,7 +389,7 @@ export default function JobChecklistScreen() {
     return (
       <View style={styles.centered} testID="checklist-forbidden">
         <Ionicons name="lock-closed-outline" size={40} color={colors.muted} />
-        <Text style={styles.forbiddenText}>You don't have permission to open this checklist.</Text>
+        <Text style={styles.forbiddenText}>You don&apos;t have permission to open this checklist.</Text>
       </View>
     );
   }

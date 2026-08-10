@@ -17,7 +17,7 @@ import { Card, Loading, EmptyState } from "@/src/components/ui";
 import { Header } from "@/src/components/widgets";
 import { RoleGate } from "@/src/components/RoleGate";
 
-const HORIZONS: Array<{ days: number; label: string }> = [
+const HORIZONS: { days: number; label: string }[] = [
   { days: 30,  label: "30d"  },
   { days: 60,  label: "60d"  },
   { days: 90,  label: "90d"  },

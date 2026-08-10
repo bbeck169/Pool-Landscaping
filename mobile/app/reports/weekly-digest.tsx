@@ -169,7 +169,7 @@ export default function WeeklyDigest() {
                   ))}
                 </>
               ) : (
-                <Text style={styles.hint}>Tap Preview to render this week's digest.</Text>
+                <Text style={styles.hint}>Tap Preview to render this week&apos;s digest.</Text>
               )}
             </Card>
           </ScrollView>

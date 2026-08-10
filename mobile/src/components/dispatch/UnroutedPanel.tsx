@@ -32,7 +32,7 @@ export function UnroutedPanel({
       </View>
       {pins.length === 0 ? (
         <Text style={styles.empty} testID="dispatch-unrouted-empty">
-          Every visible pin is on a tech's route.
+          Every visible pin is on a tech&apos;s route.
         </Text>
       ) : (
         <ScrollView style={styles.scroll} nestedScrollEnabled>

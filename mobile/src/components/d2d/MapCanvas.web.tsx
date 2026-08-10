@@ -8,7 +8,7 @@ export default function MapCanvas(_props: any) {
   return (
     <View style={styles.wrap}>
       <Ionicons name="map-outline" size={28} color={colors.muted} />
-      <Text style={styles.text}>Interactive map opens in the mobile app.{"\n"}Log doors below — they'll appear as pins on your device.</Text>
+      <Text style={styles.text}>Interactive map opens in the mobile app.{"\n"}Log doors below — they&apos;ll appear as pins on your device.</Text>
     </View>
   );
 }

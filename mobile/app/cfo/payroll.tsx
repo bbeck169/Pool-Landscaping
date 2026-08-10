@@ -20,7 +20,7 @@ import { RoleGate } from "@/src/components/RoleGate";
 
 type Period = "mtd" | "qtd" | "ytd";
 
-const PERIODS: Array<{ key: Period; label: string }> = [
+const PERIODS: { key: Period; label: string }[] = [
   { key: "mtd", label: "MTD" },
   { key: "qtd", label: "QTD" },
   { key: "ytd", label: "YTD" },

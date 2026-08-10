@@ -224,7 +224,7 @@ export default function LandscapingTimeClockScreen() {
           </View>
 
           <View style={styles.card} testID="landscape-time-clock-recent">
-            <Text style={styles.h2}>Today's punches</Text>
+            <Text style={styles.h2}>Today&apos;s punches</Text>
             {(today?.punches || []).length === 0 ? (
               <Text style={styles.muted}>No punches yet today.</Text>
             ) : (today?.punches || []).map((p) => (

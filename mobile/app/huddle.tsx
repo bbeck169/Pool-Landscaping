@@ -74,7 +74,7 @@ export default function HuddleScreen() {
     <ScrollView style={styles.root} contentContainerStyle={{ padding: spacing.lg, paddingBottom: 120 }}
                 testID="huddle-screen">
       <Text style={styles.h1}>Daily Huddle</Text>
-      <Text style={styles.hint}>{today} · your notes flow to the admin's Business OS.</Text>
+      <Text style={styles.hint}>{today} · your notes flow to the admin&apos;s Business OS.</Text>
       {statusMsg && (
         <View
           style={[styles.banner, statusMsg.kind === "ok" ? styles.bannerOk : styles.bannerErr]}

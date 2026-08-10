@@ -96,7 +96,7 @@ export default function CreditsIndex() {
               <View style={s.warn}>
                 <Ionicons name="alert-circle-outline" size={18} color="#B45309" />
                 <Text style={s.warnText}>
-                  You're near or below the low-balance threshold. Top up from the
+                  You&apos;re near or below the low-balance threshold. Top up from the
                   web admin.
                 </Text>
               </View>

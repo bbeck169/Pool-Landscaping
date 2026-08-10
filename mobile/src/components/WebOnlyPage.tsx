@@ -35,7 +35,7 @@ export default function WebOnlyPage() {
           <Text style={s.title}>{title}</Text>
           <Text style={s.copy}>
             This feature lives on the web admin console. The mobile bundle
-            hasn't been given a ``EXPO_PUBLIC_WEB_URL`` yet, so we can't
+            hasn&apos;t been given a ``EXPO_PUBLIC_WEB_URL`` yet, so we can&apos;t
             open it here directly — ask an admin for the URL.
           </Text>
         </View>

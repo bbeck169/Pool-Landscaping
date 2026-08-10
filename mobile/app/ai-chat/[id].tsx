@@ -76,7 +76,7 @@ export default function AIChat() {
             <View style={styles.emptyAvatar}>
               <Ionicons name="sparkles" size={28} color={colors.brand} />
             </View>
-            <Text style={styles.emptyTitle}>Hi, I'm {name} 👋</Text>
+            <Text style={styles.emptyTitle}>Hi, I&apos;m {name} 👋</Text>
             <Text style={styles.emptySub}>Ask me anything or try one of these:</Text>
             <View style={styles.suggestions}>
               {(SUGGESTIONS[employeeId] || []).map((s) => (

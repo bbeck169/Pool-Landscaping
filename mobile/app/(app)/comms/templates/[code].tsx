@@ -15,8 +15,7 @@ import {
   Modal,
   Platform,
 } from "react-native";
-import { useLocalSearchParams } from "expo-router";
-import { useFocusEffect } from "expo-router";
+import { useLocalSearchParams , useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 

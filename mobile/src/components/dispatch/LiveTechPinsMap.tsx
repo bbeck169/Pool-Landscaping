@@ -21,10 +21,10 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 
 // Dynamic require — throws in Expo Go where the native module isn't
 // present. Parent catches and renders the fallback banner.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+ 
 const MapboxGL: any = require("@rnmapbox/maps").default;
 
-const STYLES: Array<{ url: string; label: string; icon: string }> = [
+const STYLES: { url: string; label: string; icon: string }[] = [
   { url: "mapbox://styles/mapbox/streets-v12",           label: "Streets",    icon: "map-outline" },
   { url: "mapbox://styles/mapbox/satellite-streets-v12", label: "Satellite",  icon: "earth-outline" },
   { url: "mapbox://styles/mapbox/dark-v11",              label: "Dark",       icon: "moon-outline" },

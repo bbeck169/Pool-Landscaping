@@ -59,7 +59,7 @@ export default function MyOnboarding() {
       <View style={styles.empty}>
         <Ionicons name="clipboard-outline" size={40} color={colors.muted} />
         <Text style={styles.emptyText}>
-          No active onboarding assignments. If you're new, ask your admin.
+          No active onboarding assignments. If you&apos;re new, ask your admin.
         </Text>
       </View>
     </View>
@@ -193,7 +193,7 @@ function StepSheet({ open, onClose, onComplete, onQuiz }: {
           {step.kind === "doc_upload" ? (
             <View>
               <Text style={styles.sheetDesc}>
-                Upload via Files, then tap "Mark complete" once submitted.
+                Upload via Files, then tap &quot;Mark complete&quot; once submitted.
               </Text>
               <Pressable style={styles.doneBtn}
                          onPress={() => onComplete(a, step.id)}

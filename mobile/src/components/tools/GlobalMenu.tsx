@@ -143,7 +143,7 @@ export const GlobalMenu: React.FC = () => {
             {confirmingLogout ? (
               <View testID="mobile-menu-logout-confirm-inline" style={styles.logoutConfirmWrap}>
                 <Text style={styles.logoutConfirmTitle}>Log out?</Text>
-                <Text style={styles.logoutConfirmDesc}>You'll need to sign in again.</Text>
+                <Text style={styles.logoutConfirmDesc}>You&apos;ll need to sign in again.</Text>
                 <View style={styles.logoutConfirmRow}>
                   <Pressable
                     onPress={() => setConfirmingLogout(false)}

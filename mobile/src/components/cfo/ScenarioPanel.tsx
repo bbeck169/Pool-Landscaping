@@ -24,12 +24,12 @@ import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 type Customer = { customer_id?: string; customer_name?: string; total?: number };
 type ScenarioResult = {
   assumptions?: string[];
-  monthly_delta?: Array<{
+  monthly_delta?: {
     month: number;
     revenue_delta?: number;
     expense_delta?: number;
     net_delta?: number;
-  }>;
+  }[];
   annual?: {
     revenue_delta?: number;
     expense_delta?: number;

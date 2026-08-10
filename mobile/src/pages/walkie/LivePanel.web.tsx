@@ -47,7 +47,7 @@ export default function LivePanel({
         </TouchableOpacity>
       </View>
       <Text style={styles.body}>
-        WebRTC live channels aren't available in the Expo web preview.
+        WebRTC live channels aren&apos;t available in the Expo web preview.
         Open the native dev-client to join a live session — async
         walkie clips still work here.
       </Text>

@@ -27,7 +27,7 @@ type Run = {
   total_amount_cents?: number;
 };
 
-const FILTERS: Array<{ key: string; label: string }> = [
+const FILTERS: { key: string; label: string }[] = [
   { key: "", label: "All" },
   { key: "queued", label: "Queued" },
   { key: "running", label: "Running" },
