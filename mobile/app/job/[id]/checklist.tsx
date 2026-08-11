@@ -272,6 +272,25 @@ export default function JobChecklistScreen() {
     scheduleAutosave();
   }, [scheduleAutosave]);
 
+  // Feb-2026 · Checklist reclassifier (mobile parity with web
+  // ChecklistModal.handleReclassify) — writes `service_type` on the
+  // job via PUT /api/jobs/{id} and refetches both job + report so the
+  // Chemical Readings section repopulates from the fresh template.
+  const handleReclassify = useCallback(async (nextServiceType: string) => {
+    if (!id || !nextServiceType) return;
+    try { await flushSave(); } catch { /* non-blocking */ }
+    await api.put(`/jobs/${id}`, { service_type: nextServiceType });
+    const [j, r] = await Promise.all([
+      api.get(`/jobs/${id}`),
+      api.get(`/jobs/${id}/service-report`),
+    ]);
+    setJob(j);
+    setReport(r);
+    reportRef.current = r;
+    dirtyRef.current = false;
+    setSaveState("idle");
+  }, [id, flushSave]);
+
   // ─── Save draft (explicit) ───────────────────────────────────────────
   const saveDraft = async () => {
     dirtyRef.current = true;
@@ -413,6 +432,15 @@ export default function JobChecklistScreen() {
   const locked = !!report.submitted_at;
   const clientType: ChecklistType = getChecklistType(job);
   const backendKind: string = report.template || "generic";
+  // Feb-2026 · Checklist reclassifier — mirrors ChecklistModal's rule:
+  // admins/managers can always retag; techs only when the job is
+  // theirs (matches routers/jobs.py::update_job:925 403 boundary).
+  const role: string = user?.role || "";
+  const canEditServiceType: boolean = !locked && (
+    role === "admin" || role === "super_admin" || role === "manager" ||
+    (role === "technician" && !!user?.technician_id
+      && user.technician_id === job.technician_id)
+  );
 
   return (
     <View style={styles.root}>
@@ -597,6 +625,9 @@ export default function JobChecklistScreen() {
               notes={report.notes || ""}
               observations={report.observations || {}}
               onChange={patchReport}
+              template={backendKind}
+              canEditServiceType={canEditServiceType}
+              onReclassify={handleReclassify}
             />
           )}
           {clientType === "landscaping" && (

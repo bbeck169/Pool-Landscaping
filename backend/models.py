@@ -179,6 +179,15 @@ class JobUpdate(BaseModel):
     technician_id: Optional[str] = None
     notes: Optional[str] = None
     scheduled_date: Optional[str] = None
+    # Feb-2026 · Checklist reclassification — added so a tech (or admin)
+    # can retag a misclassified job from the Job Checklist "Chemical
+    # Readings" empty-state picker. The backend `_detect_template()` in
+    # routers/service_reports.py keys off `service_type`/`job_type`/
+    # `title`, so mutating this field is what makes the readings input
+    # matrix repopulate on the next GET. Tech-scope is already enforced
+    # by the ownership guard at routers/jobs.py::update_job (403 when
+    # `job.technician_id != user.technician_id`).
+    service_type: Optional[str] = None
 
 
 class JobArriveIn(BaseModel):

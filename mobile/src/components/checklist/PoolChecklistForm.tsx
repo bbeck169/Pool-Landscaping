@@ -104,6 +104,11 @@ export type PoolChecklistFormProps = {
   // Phase 56.7 — when set (1..6), only render the section matching
   // that step. `null` (default) ⇒ render everything (legacy scroll).
   wizardStep?: number | null;
+  // Feb-2026 · Checklist reclassifier — parity with the web branch. See
+  // frontend/src/components/checklist/PoolChecklistForm.jsx.
+  template?: string | null;
+  canEditServiceType?: boolean;
+  onReclassify?: ((nextServiceType: string) => Promise<void> | void) | null;
   onChange: (patch: Partial<{
     chemical_readings: Reading[];
     chemicals_added: ChemAdded[];
@@ -121,6 +126,9 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
   } = props;
   const internalNotes = props.internalNotes || "";
   const wizardStep = props.wizardStep ?? null;
+  // Feb-2026 · Checklist reclassifier — busy flag between picker tap
+  // and parent PATCH+refetch (see props.onReclassify).
+  const [reclassifyBusy, setReclassifyBusy] = useState(false);
   // Helper: `inStep(n)` returns true when we're either in wizard mode
   // on step `n` or when wizard mode is off. Keeps section guards to a
   // single readable check downstream.
@@ -373,6 +381,56 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
       {/* Chemical Readings — Wizard step 1 (mobile renders as a
           single scroll; the caller does not wire `wizardStep`). */}
       <Text style={styles.sectionTitle}>Chemical Readings</Text>
+      {/* Feb-2026 · Checklist reclassifier — inline picker mirrors the
+          web empty-state block. Trigger conditions match web: the
+          backend template must be "generic" AND readingFields must be
+          empty. */}
+      {(readingFields || []).length === 0 && props.template === "generic" ? (
+        <View style={styles.reclassifyCard} testID="pool-service-type-picker-block">
+          <Text style={styles.reclassifyTitle}>
+            This job isn&apos;t classified as Pool or Landscape
+          </Text>
+          <Text style={styles.reclassifyBody}>
+            Set its Service Type to enable chemical readings.
+          </Text>
+          {props.canEditServiceType && props.onReclassify ? (
+            <View style={styles.reclassifyRow} testID="pool-service-type-picker">
+              {[
+                { value: "Pool Service",      label: "Pool Service" },
+                { value: "Landscape Service", label: "Landscape Service" },
+                { value: "Other",             label: "Other" },
+              ].map((opt) => (
+                <Pressable
+                  key={opt.value}
+                  disabled={reclassifyBusy || locked}
+                  onPress={async () => {
+                    if (reclassifyBusy || locked) return;
+                    setReclassifyBusy(true);
+                    try { await props.onReclassify!(opt.value); }
+                    finally { setReclassifyBusy(false); }
+                  }}
+                  style={[
+                    styles.reclassifyChip,
+                    (locked || reclassifyBusy) && { opacity: 0.6 },
+                  ]}
+                  testID={`pool-service-type-set-${opt.value.toLowerCase().replace(/\s+/g, "-")}`}
+                >
+                  <Text style={styles.reclassifyChipText}>{opt.label}</Text>
+                </Pressable>
+              ))}
+              {reclassifyBusy ? (
+                <Text style={styles.reclassifyBusyText} testID="pool-service-type-picker-busy">
+                  Applying…
+                </Text>
+              ) : null}
+            </View>
+          ) : (
+            <Text style={styles.reclassifyReadonly} testID="pool-service-type-readonly-hint">
+              Ask an admin to set Service Type.
+            </Text>
+          )}
+        </View>
+      ) : null}
       <View>
         {mergedReadings.map((r, i) => {
           // Phase 37 — canonical snake_case key for testid parity with web.
@@ -777,6 +835,60 @@ export default function PoolChecklistForm(props: PoolChecklistFormProps) {
 }
 
 const styles = StyleSheet.create({
+  // Feb-2026 · Checklist reclassifier — inline picker card shown in
+  // the Chemical Readings section when the report's backend template
+  // is "generic" and there are no reading fields to render.
+  reclassifyCard: {
+    marginBottom: spacing.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+    borderRadius: radius.md,
+    backgroundColor: "#FEF3C7",
+  },
+  reclassifyTitle: {
+    fontFamily: font.bold,
+    fontSize: fontSize.sm,
+    color: "#92400E",
+    marginBottom: 4,
+  },
+  reclassifyBody: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: "#92400E",
+    marginBottom: spacing.sm,
+  },
+  reclassifyRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 6,
+  },
+  reclassifyChip: {
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    borderRadius: 999,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    backgroundColor: "#fff",
+  },
+  reclassifyChipText: {
+    fontFamily: font.bold,
+    fontSize: 11,
+    color: colors.onSurface,
+  },
+  reclassifyBusyText: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: "#92400E",
+    marginLeft: 4,
+  },
+  reclassifyReadonly: {
+    fontFamily: font.regular,
+    fontSize: 11,
+    color: colors.muted,
+    fontStyle: "italic",
+  },
   // Phase 56.10-mobile — Visible algae toggle card + Algae Protocol
   // sub-section rendered in Recommended Chemicals. Colors mirror the
   // web PoolChecklistForm palette (yellow-tinted for light / red for

@@ -222,6 +222,30 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
     scheduleAutosave();
   }, [scheduleAutosave]);
 
+  // Feb-2026 · Checklist reclassifier — invoked from the Chemical
+  // Readings empty-state picker when the tech (or admin) retags a
+  // misclassified job. Writes `service_type` on the job via the
+  // existing `PUT /api/jobs/{jid}` endpoint (Feb-2026 model whitelist
+  // extension), then re-fetches BOTH the job + the service-report so
+  // the reading-field matrix repopulates from the fresh template.
+  const handleReclassify = useCallback(async (nextServiceType) => {
+    if (!jobId || !nextServiceType) return;
+    // Flush any pending checklist edits before we swap in a new
+    // report snapshot — otherwise the autosave-in-flight would race
+    // the refetch and stomp the newly-hydrated `chemical_reading_fields`.
+    try { await flushSave(); } catch { /* non-blocking */ }
+    await api.put(`/jobs/${jobId}`, { service_type: nextServiceType });
+    const [j, r] = await Promise.all([
+      api.get(`/jobs/${jobId}`),
+      api.get(`/jobs/${jobId}/service-report`),
+    ]);
+    setJob(j);
+    setReport(r);
+    reportRef.current = r;
+    dirtyRef.current = false;
+    setSaveState("idle");
+  }, [jobId, flushSave]);
+
   const saveDraft = async () => {
     dirtyRef.current = true;
     await flushSave();
@@ -455,6 +479,17 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
     const clientType = getChecklistType(job);
     const locked = !!report.submitted_at;
 
+    // Feb-2026 · Checklist reclassifier — admins/managers can always
+    // retag; technicians only when the job is assigned to them (matches
+    // the 403 boundary at `routers/jobs.py::update_job:925`). Locked
+    // reports never expose the picker — the report is submitted and
+    // no further edits are permitted.
+    const canEditServiceType = !locked && (
+      role === "admin" || role === "super_admin" || role === "manager" ||
+      (role === "technician" && !!user?.technician_id
+        && user.technician_id === job.technician_id)
+    );
+
     // Phase 56.6 — pool jobs default to the 6-step wizard. Tack on
     // `?legacy=true` to any route hosting the modal to fall back to the
     // old single-scroll form. Landscape / generic clients keep the
@@ -483,6 +518,9 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
             onSaveExit={onClose}
             onCloseJob={closeJob}
             submitting={submitting}
+            template={report?.template || null}
+            canEditServiceType={canEditServiceType}
+            onReclassify={handleReclassify}
           />
         ) : (
           <>
@@ -516,6 +554,9 @@ export default function ChecklistModal({ jobId, open, onClose, onSubmitted }) {
             checklistItems={report.checklist_items || []}
             notes={report.notes || ""}
             onChange={patchReport}
+            template={report?.template || null}
+            canEditServiceType={canEditServiceType}
+            onReclassify={handleReclassify}
           />
         )}
         {clientType === "landscaping" && (

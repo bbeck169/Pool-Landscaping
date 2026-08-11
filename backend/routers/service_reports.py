@@ -306,6 +306,22 @@ async def get_service_report(jid: str,
         existing = await _bootstrap_report(tenant["id"], job, tech_id)
         await db.service_reports.insert_one(existing)
         existing.pop("_id", None)
+    else:
+        # Feb-2026 · Checklist reclassifier — if the tech (or admin) has
+        # since retagged the job's ``service_type``/``job_type``/``title``
+        # via the empty-state picker in the Chemical Readings section, the
+        # bootstrap-time ``template`` field on the report is stale. Auto-
+        # heal for open reports so the field list on the next line
+        # reflects the CURRENT classification. Submitted reports are
+        # locked and keep whatever template was frozen at submit.
+        if not existing.get("submitted_at"):
+            current_kind = _detect_template(job)
+            if existing.get("template") != current_kind:
+                await db.service_reports.update_one(
+                    {"tenant_id": tenant["id"], "job_id": jid, "tech_id": tech_id},
+                    {"$set": {"template": current_kind, "updated_at": now_iso()}},
+                )
+                existing["template"] = current_kind
     # Attach live job.photos + tenant template metadata so the UI can render
     # dropdowns for chemical readings + chemicals-added catalog.
     existing["photos"] = job.get("photos") or []

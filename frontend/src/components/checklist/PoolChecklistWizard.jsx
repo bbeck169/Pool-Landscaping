@@ -54,6 +54,12 @@ export default function PoolChecklistWizard({
   onSaveExit,
   onCloseJob,
   submitting,
+  // Feb-2026 · Checklist reclassifier — forwarded to
+  // <PoolChecklistForm> so the Chemical Readings empty-state picker
+  // works inside the wizard too.
+  template = null,
+  canEditServiceType = false,
+  onReclassify = null,
 }) {
   // `report.wizard_step` is the persistent cursor. Falls back to step 1
   // when unset. Clamp between 1 and 6 for safety.
@@ -195,6 +201,9 @@ export default function PoolChecklistWizard({
             observations={report?.observations || {}}
             onChange={onChange}
             wizardStep={step}
+            template={template}
+            canEditServiceType={canEditServiceType}
+            onReclassify={onReclassify}
           />
         )}
         {step === 6 ? (

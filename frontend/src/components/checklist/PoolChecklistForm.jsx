@@ -407,11 +407,24 @@ export default function PoolChecklistForm({
   // Phase 56.6 — when set (1..6), only render the section matching that
   // step. Unset ⇒ render everything (legacy single-scroll mode).
   wizardStep = null,
+  // Feb-2026 · Checklist reclassifier — when the report's backend
+  // template is ``generic`` AND ``readingFields`` is empty, render an
+  // inline picker so the tech (or admin) can retag the job's
+  // ``service_type`` and repopulate the chemistry section without
+  // leaving the checklist. Callers that don't wire ``onReclassify`` opt
+  // out; the section falls back to the legacy silent empty state.
+  template = null,
+  canEditServiceType = false,
+  onReclassify = null,
 }) {
   const [_analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const [analyzeErr, setAnalyzeErr] = useState("");
   const analyzeRef = useRef(null);
+
+  // Feb-2026 · Checklist reclassifier — busy flag flips true between
+  // the picker tap and the parent's PATCH+refetch completing.
+  const [reclassifyBusy, setReclassifyBusy] = useState(false);
 
   // Phase 46.5 — Web parity for mobile Quick-add sheet.
   const [_pickerOpen, _setPickerOpen] = useState(false);
@@ -656,6 +669,73 @@ export default function PoolChecklistForm({
         <div className="text-sm font-bold mb-3" style={{ color: colors.onSurface }}>
           Chemical Readings
         </div>
+        {/* Feb-2026 · Checklist reclassifier — inline "Service Type"
+            picker shown ONLY when the report's backend template is
+            ``generic`` AND the field list is empty. A tenant that has
+            genuinely customised a pool template down to zero readings
+            (``template === "pool"`` + ``readingFields=[]``) falls
+            through to the legacy silent empty state — that's a
+            different bug and should not be masked here. */}
+        {(readingFields || []).length === 0 && template === "generic" ? (
+          <div
+            className="rounded-md p-3 mb-3"
+            style={{ background: colors.warnBg, border: "1px solid #FCD34D" }}
+            data-testid="pool-service-type-picker-block"
+          >
+            <div className="text-sm font-bold mb-1" style={{ color: colors.warnText }}>
+              This job isn&apos;t classified as Pool or Landscape
+            </div>
+            <div className="text-xs mb-2" style={{ color: colors.warnText }}>
+              Set its Service Type to enable chemical readings.
+            </div>
+            {canEditServiceType && onReclassify ? (
+              <div className="flex items-center gap-2 flex-wrap" data-testid="pool-service-type-picker">
+                {[
+                  { value: "Pool Service",      label: "Pool Service" },
+                  { value: "Landscape Service", label: "Landscape Service" },
+                  { value: "Other",             label: "Other" },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    disabled={reclassifyBusy || locked}
+                    onClick={async () => {
+                      if (reclassifyBusy || locked) return;
+                      setReclassifyBusy(true);
+                      try { await onReclassify(opt.value); } finally { setReclassifyBusy(false); }
+                    }}
+                    className="text-xs font-bold px-3 py-1.5 rounded-full transition"
+                    style={{
+                      background: "#fff",
+                      color: colors.onSurface,
+                      border: `1.5px solid ${colors.border}`,
+                      cursor: (locked || reclassifyBusy) ? "not-allowed" : "pointer",
+                      opacity: reclassifyBusy ? 0.6 : 1,
+                    }}
+                    data-testid={`pool-service-type-set-${opt.value.toLowerCase().replace(/\s+/g, "-")}`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+                {reclassifyBusy ? (
+                  <span
+                    className="text-xs"
+                    style={{ color: colors.warnText }}
+                    data-testid="pool-service-type-picker-busy"
+                  >Applying…</span>
+                ) : null}
+              </div>
+            ) : (
+              <div
+                className="text-xs italic"
+                style={{ color: colors.muted }}
+                data-testid="pool-service-type-readonly-hint"
+              >
+                Ask an admin to set Service Type.
+              </div>
+            )}
+          </div>
+        ) : null}
         <div className="space-y-3">
           {mergedReadings.map((r, i) => {
             const key = canonicalReadingKey(r);
