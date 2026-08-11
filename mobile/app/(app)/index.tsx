@@ -23,11 +23,25 @@ export default function Dashboard() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Feb-2026 P0 · fetch-failure guard. Previously the `load` callback
+  // had no `catch`, so a throwing `/dashboard` call (401 after token
+  // expiry, network drop, backend hiccup) would leave `data === null`
+  // AND `loading === false` (via `finally`), and the main render tried
+  // to read `data.revenue` → uncaught null-deref redbox. We now capture
+  // the failure and the guarded render below surfaces an empty state
+  // instead of dereferencing null.
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
+      setError(null);
       const d = await api.get("/dashboard");
       setData(d);
+    } catch (e: any) {
+      // 401 is handled at the api layer (clears token + fires logout
+      // callback registered by AuthProvider). Any other failure just
+      // needs a user-visible message with a pull-to-refresh retry.
+      setError(e?.message || "Dashboard unavailable — pull down to retry.");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -51,6 +65,36 @@ export default function Dashboard() {
         right={<CreditsBudgetChip />}
       />
         <Loading testID="dashboard-loading" />
+      </View>
+    );
+  }
+
+  // Feb-2026 P0 — even after `loading` clears, `data` can still be
+  // null (fetch threw). Render a pull-to-refresh empty state instead
+  // of falling through to a null-deref in the main render.
+  if (!data) {
+    return (
+      <View style={styles.root}>
+        <Header title="Dashboard" subtitle={`Hi, ${user?.name?.split(" ")[0] || ""}`}
+          right={<CreditsBudgetChip />}
+        />
+        <ScrollView
+          testID="dashboard-scroll"
+          contentContainerStyle={{ padding: spacing.lg, flexGrow: 1, justifyContent: "center" }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => { setRefreshing(true); load(); }}
+            />
+          }
+        >
+          <View style={styles.emptyState} testID="dashboard-empty">
+            <Ionicons name="cloud-offline-outline" size={36} color={colors.muted} />
+            <Text style={styles.emptyText}>
+              {error || "Dashboard unavailable — pull down to retry."}
+            </Text>
+          </View>
+        </ScrollView>
       </View>
     );
   }
@@ -116,22 +160,22 @@ export default function Dashboard() {
           <View style={styles.heroInner}>
             <Text style={styles.heroLabel}>Total Revenue</Text>
             <Text style={styles.heroValue} testID="dashboard-revenue">
-              {money(data.revenue)}
+              {money(data.revenue ?? 0)}
             </Text>
             <View style={styles.heroRow}>
               <View style={styles.heroPill}>
                 <Ionicons name="flash" size={14} color="#fff" />
-                <Text style={styles.heroPillText}>{data.active_jobs} active jobs</Text>
+                <Text style={styles.heroPillText}>{data.active_jobs ?? 0} active jobs</Text>
               </View>
               <View style={styles.heroPill}>
                 <Ionicons name="time-outline" size={14} color="#fff" />
-                <Text style={styles.heroPillText}>{money(data.outstanding)} due</Text>
+                <Text style={styles.heroPillText}>{money(data.outstanding ?? 0)} due</Text>
               </View>
             </View>
           </View>
         </View>
 
-        {data.requested_jobs > 0 ? (
+        {(data.requested_jobs ?? 0) > 0 ? (
           <Pressable style={styles.requestBanner} onPress={() => router.push("/(app)/jobs")} testID="new-requests-banner">
             <View style={styles.requestIcon}>
               <Ionicons name="notifications" size={18} color="#C2410C" />
@@ -144,15 +188,15 @@ export default function Dashboard() {
         ) : null}
 
         <View style={styles.grid}>
-          <Kpi icon="briefcase" label="Active Jobs" value={data.active_jobs} onPress={() => router.push("/(app)/jobs")} />
-          <Kpi icon="hourglass-outline" label="Pending" value={data.pending_jobs} onPress={() => router.push("/(app)/jobs")} />
-          <Kpi icon="people" label="Customers" value={data.total_customers} onPress={() => router.push("/(app)/customers")} />
-          <Kpi icon="construct" label="Technicians" value={data.total_technicians} onPress={() => router.push("/technicians")} />
+          <Kpi icon="briefcase" label="Active Jobs" value={data.active_jobs ?? 0} onPress={() => router.push("/(app)/jobs")} />
+          <Kpi icon="hourglass-outline" label="Pending" value={data.pending_jobs ?? 0} onPress={() => router.push("/(app)/jobs")} />
+          <Kpi icon="people" label="Customers" value={data.total_customers ?? 0} onPress={() => router.push("/(app)/customers")} />
+          <Kpi icon="construct" label="Technicians" value={data.total_technicians ?? 0} onPress={() => router.push("/technicians")} />
         </View>
 
         <ReferralRevenueTile />
 
-        <RevenueChart series={data.revenue_series || []} outstanding={data.outstanding} />
+        <RevenueChart series={data.revenue_series || []} outstanding={data.outstanding ?? 0} />
 
         <PaymentsWidget onOpen={() => router.push("/payments")} onOpenInvoice={(id: string) => router.push(`/quote/${id}`)} />
 
@@ -669,6 +713,19 @@ function ReferralRevenueTile() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  emptyState: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: spacing["2xl"],
+    gap: spacing.sm,
+  },
+  emptyText: {
+    fontFamily: font.medium,
+    fontSize: fontSize.base,
+    color: colors.muted,
+    textAlign: "center",
+    maxWidth: 320,
+  },
   revenueTiles: { gap: spacing.sm, marginBottom: spacing.lg },
   revenueTile: {
     flexDirection: "row",
