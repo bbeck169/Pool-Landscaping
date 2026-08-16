@@ -25,7 +25,6 @@ export default function Customers() {
   const [selectMode, setSelectMode] = useState(false);
   // Bulk-inactive confirm modal state (mobile mirror of the web modal).
   const [inactiveModalOpen, setInactiveModalOpen] = useState(false);
-  const [inactiveTyped, setInactiveTyped] = useState("");
   const [inactiveBusy, setInactiveBusy] = useState(false);
 
   const visibleIds = useMemo(() => items.map((i) => i.id), [items]);
@@ -61,12 +60,9 @@ export default function Customers() {
     ]);
   };
 
-  // Feb-2026 · Bulk mark-inactive. Uses an in-app Modal with a
-  // "type INACTIVATE" text gate rather than Alert.alert — matches
-  // the web hard-confirm modal and prevents accidental fat-finger
-  // taps that would cascade job cancellations for many customers.
+  // Feb-2026 · Bulk mark-inactive. Plain Confirm / Cancel modal per
+  // user feedback — no typed-word gate.
   const openInactiveModal = () => {
-    setInactiveTyped("");
     setInactiveModalOpen(true);
   };
 
@@ -206,8 +202,7 @@ export default function Customers() {
             </Text>
             <Text style={styles.modalSub}>
               These customers will move to the Inactive tab and their
-              scheduled jobs may be cancelled. This action cannot be
-              undone via a single tap.
+              scheduled jobs may be cancelled.
             </Text>
 
             {/* First 5 preview */}
@@ -229,19 +224,6 @@ export default function Customers() {
               ) : null}
             </View>
 
-            <Text style={styles.modalLabel}>
-              Type INACTIVATE to confirm
-            </Text>
-            <TextInput
-              testID="bulk-mark-inactive-type-gate"
-              value={inactiveTyped}
-              onChangeText={setInactiveTyped}
-              autoCapitalize="characters"
-              placeholder="INACTIVATE"
-              placeholderTextColor={colors.muted}
-              style={styles.modalInput}
-            />
-
             <View style={styles.modalActions}>
               <Pressable
                 testID="bulk-mark-inactive-cancel"
@@ -252,12 +234,12 @@ export default function Customers() {
               </Pressable>
               <Pressable
                 testID="bulk-mark-inactive-confirm"
-                disabled={inactiveTyped !== "INACTIVATE" || inactiveBusy}
+                disabled={inactiveBusy}
                 onPress={doBulkInactive}
                 style={[
                   styles.modalBtn,
                   styles.modalBtnDanger,
-                  (inactiveTyped !== "INACTIVATE" || inactiveBusy) && { opacity: 0.4 },
+                  inactiveBusy && { opacity: 0.4 },
                 ]}
               >
                 <Text style={styles.modalBtnDangerText}>

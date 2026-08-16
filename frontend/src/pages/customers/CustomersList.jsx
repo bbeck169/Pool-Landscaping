@@ -156,12 +156,10 @@ export default function CustomersList() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [lockedFailures, setLockedFailures] = useState({});
 
-  // Feb-2026 · Bulk-mark-inactive — hard-confirm modal state. The
-  // modal ships its own inline "type INACTIVATE" gate (a plain Y/N
-  // isn't enough friction for a status flip that cascades cancels
-  // downstream jobs).
+  // Feb-2026 · Bulk-mark-inactive — plain Confirm/Cancel modal state.
+  // The prior "type INACTIVATE" gate was removed per user feedback —
+  // the header count + first-5 preview is enough friction on its own.
   const [confirmInactiveOpen, setConfirmInactiveOpen] = useState(false);
-  const [inactiveTypedConfirm, setInactiveTypedConfirm] = useState("");
   const [bulkInactiveBusy, setBulkInactiveBusy] = useState(false);
 
   const bulk = async (action, extra = {}) => {
@@ -257,7 +255,6 @@ export default function CustomersList() {
       );
       setSelected(new Set());
       setConfirmInactiveOpen(false);
-      setInactiveTypedConfirm("");
       loadCounts();
     } catch (e) {
       // Rollback — restore pre-flip state for every row we optimistically
@@ -782,7 +779,6 @@ export default function CustomersList() {
           ...(isAdminOrManager && tab !== "inactive" ? [{
             key: "mark-inactive", label: "Mark inactive",
             onClick: () => {
-              setInactiveTypedConfirm("");
               setConfirmInactiveOpen(true);
             },
           }] : []),
@@ -800,9 +796,10 @@ export default function CustomersList() {
         busy={bulkBusy}
       />
 
-      {/* Feb-2026 · Bulk-mark-inactive hard-confirm modal (with
-          "type INACTIVATE" gate — stricter than plain Y/N because
-          the flip cascades job cancellations downstream). */}
+      {/* Feb-2026 · Bulk-mark-inactive hard-confirm modal. Simplified
+          per user feedback to a plain Confirm / Cancel — the header
+          count + first-5 name preview provide enough context; the
+          typed-word gate was unnecessary friction. */}
       {confirmInactiveOpen ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center px-4"
@@ -810,7 +807,6 @@ export default function CustomersList() {
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) {
               setConfirmInactiveOpen(false);
-              setInactiveTypedConfirm("");
             }
           }}
           data-testid="bulk-mark-inactive-modal"
@@ -828,9 +824,7 @@ export default function CustomersList() {
             <p className="text-sm mt-2"
                style={{ color: colors.onSurfaceSecondary || colors.muted }}>
               These customers will move to the Inactive tab and their
-              scheduled jobs may be cancelled. This action cannot be
-              undone via a single click — you'd have to reactivate each
-              customer individually.
+              scheduled jobs may be cancelled.
             </p>
 
             {/* First 5 preview */}
@@ -853,30 +847,10 @@ export default function CustomersList() {
               ) : null}
             </ul>
 
-            <label className="block mt-4 text-xs font-semibold"
-                   style={{ color: colors.onSurface }}>
-              Type <span className="font-mono">INACTIVATE</span> to confirm
-            </label>
-            <input
-              type="text"
-              autoFocus
-              value={inactiveTypedConfirm}
-              onChange={(e) => setInactiveTypedConfirm(e.target.value)}
-              className="mt-1 w-full px-3 py-2 rounded-lg text-sm"
-              style={{ backgroundColor: colors.surfaceSecondary,
-                        border: `1px solid ${colors.border}`,
-                        color: colors.onSurface }}
-              placeholder="INACTIVATE"
-              data-testid="bulk-mark-inactive-type-gate"
-            />
-
             <div className="mt-5 flex items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  setConfirmInactiveOpen(false);
-                  setInactiveTypedConfirm("");
-                }}
+                onClick={() => setConfirmInactiveOpen(false)}
                 className="px-4 py-2 rounded-xl text-sm font-semibold"
                 style={{ backgroundColor: colors.surfaceSecondary,
                           color: colors.onSurface }}
@@ -886,7 +860,7 @@ export default function CustomersList() {
               </button>
               <button
                 type="button"
-                disabled={inactiveTypedConfirm !== "INACTIVATE" || bulkInactiveBusy}
+                disabled={bulkInactiveBusy}
                 onClick={doBulkInactive}
                 className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-40"
                 style={{ backgroundColor: "#B45309" }}
