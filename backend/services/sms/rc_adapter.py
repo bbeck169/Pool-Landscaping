@@ -151,6 +151,27 @@ class RingCentralSMSAdapter:
             return {"provider": "ringcentral", "provider_status": "suppressed",
                     "provider_response_id": None, "attempts": 0, "error": None}
 
+        # Feb-2026 · Comms whitelist gate (P0 safety directive).
+        try:
+            from services.comms.gate import is_comm_allowed
+            allowed = await is_comm_allowed(
+                recipient_identifier={
+                    "customer_id": customer_id,
+                    "phone": addr_e164,
+                },
+                comm_type="sms",
+                tenant_id=tenant_id,
+                provider="ringcentral",
+                trigger_action=category,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[rc-sms] gate errored — failing closed: %s", exc)
+            allowed = False
+        if not allowed:
+            return {"provider": "ringcentral",
+                    "provider_status": "suppressed_not_demo",
+                    "provider_response_id": None, "attempts": 0, "error": None}
+
         # Phase 34 · Task L · Feb-2026 — outbound safety guard.
         # ``APP_ENV != production`` (or non-allow-listed number) blocks
         # the send. Prevents preview / dev / staging from firing SMS

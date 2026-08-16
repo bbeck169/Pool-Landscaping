@@ -189,6 +189,31 @@ class ResendEmailAdapter:
                     "provider_response_id": None, "attempts": 0,
                     "error": None}
 
+        # Feb-2026 · Comms whitelist gate (P0 safety directive).
+        # Only recipients flagged ``is_demo_account=True`` may receive
+        # comms; everyone else silently no-ops with a
+        # ``comms_suppression_log`` row. Fail-closed on any error.
+        try:
+            from services.comms.gate import is_comm_allowed
+            allowed = await is_comm_allowed(
+                recipient_identifier={
+                    "customer_id": customer_id,
+                    "email": addr,
+                },
+                comm_type="email",
+                tenant_id=tenant_id,
+                provider="resend",
+                trigger_action=category,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[resend] gate errored — failing closed: %s", exc)
+            allowed = False
+        if not allowed:
+            return {"provider": "resend",
+                    "provider_status": "suppressed_not_demo",
+                    "provider_response_id": None, "attempts": 0,
+                    "error": None}
+
         # Phase 34 · Task L · Feb-2026 — outbound safety guard.
         # When ``APP_ENV != production`` (or when the recipient is not
         # explicitly allow-listed via ``COMMS_TEST_ALLOWLIST_EMAILS``),

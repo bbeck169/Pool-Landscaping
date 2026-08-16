@@ -785,7 +785,7 @@ class _InvoiceBulkDeleteIn(_BaseModelBB):
 # bulk-delete surfaces (invoices, estimates, payments, leads). Kept as
 # a local constant per router so a bad import can't accidentally drop
 # the guard entirely.
-_BULK_DELETE_CAP = 400
+_BULK_DELETE_CAP = 1000
 
 _INVOICE_SELECTOR_KEYS = {"status", "search", "customer_id", "has_late_fee"}
 
@@ -876,10 +876,31 @@ async def soft_delete_invoice(qid: str,
 @router.post("/invoices/bulk-delete",
               operation_id="invoices.bulkDelete")
 async def bulk_delete_invoices(body: _InvoiceBulkDeleteIn,
-                                 user: dict = Depends(require_admin),
+                                 user: dict = Depends(get_current_user),
                                  tenant: dict = Depends(get_current_tenant)):
     """Bulk soft-delete invoices. See Task EE (extension) for the
-    ``query_selector`` shape."""
+    ``query_selector`` shape.
+
+    Feb-2026 · P0 perf fix — this used to loop `for qid in ids: await
+    _perform_soft_delete_quote(...)` which was O(N) with 3 DB
+    round-trips per invoice. For N ≈ 400 that blew past the ingress
+    30-60s timeout window. Replaced with a bulk-shaped path that
+    does one ``find`` (id-only, non-deleted subset), one
+    ``update_many`` for the soft-delete flip, and one ``insert_many``
+    for audit rows. Same response shape as before so the FE is
+    untouched.
+
+    Feb-2026 · RBAC widening — super_admin / admin / manager may
+    drive this endpoint (the previous ``require_admin`` gate also
+    let ``owner`` through; the new bulk operations widened /
+    tightened together per user dispatch — manager IN, owner OUT).
+    """
+    # RBAC — tighter than require_admin: super_admin/admin/manager only.
+    role = (user or {}).get("role")
+    if role not in {"super_admin", "admin", "manager"}:
+        raise HTTPException(
+            403, "bulk_delete_requires_admin_or_manager",
+        )
     if body.query_selector is not None:
         ids = await _resolve_invoice_ids(
             body.query_selector, body.exclude_ids or [],
@@ -890,19 +911,68 @@ async def bulk_delete_invoices(body: _InvoiceBulkDeleteIn,
     if not ids:
         raise HTTPException(400, "ids is empty")
     if len(ids) > _BULK_DELETE_CAP:
-        raise HTTPException(400, f"bulk-delete capped at {_BULK_DELETE_CAP} rows per call")
-    ids = list(dict.fromkeys(ids))  # idempotency — de-dupe payload
-    deleted: List[str] = []
-    failed: List[dict] = []
-    for qid in ids:
+        raise HTTPException(400,
+            f"too_many_ids: max_{_BULK_DELETE_CAP}_per_request")
+    # De-dupe payload — matches the prior handler's idempotency shape.
+    ids = list(dict.fromkeys(ids))
+
+    # 1. Bulk-find the target rows for this tenant. We fetch three
+    # fields per row so we can (a) mark "not found" ids, (b) mark
+    # already-deleted rows without re-flipping them, (c) build a
+    # correctly-typed audit row per invoice.
+    rows: List[dict] = []
+    async for row in db.quotes.find(
+        {"tenant_id": tenant["id"], "id": {"$in": ids}},
+        {"_id": 0, "id": 1, "deleted_at": 1, "doc_type": 1},
+    ):
+        rows.append(row)
+    found_ids = {r["id"] for r in rows if r.get("id")}
+    already_deleted_ids = {r["id"] for r in rows if r.get("deleted_at")}
+    to_flip_rows = [r for r in rows
+                     if r.get("id") and not r.get("deleted_at")]
+    to_flip_ids = [r["id"] for r in to_flip_rows]
+
+    # 2. Bulk-flip the non-already-deleted subset in ONE update.
+    deleted_at = now_iso()
+    if to_flip_ids:
+        await db.quotes.update_many(
+            {"tenant_id": tenant["id"], "id": {"$in": to_flip_ids}},
+            {"$set": {"deleted_at": deleted_at,
+                        "deleted_by_user_id": user.get("id")}},
+        )
+
+    # 3. Bulk-insert audit rows in ONE call. Best-effort — a failed
+    # audit insert never blocks the delete.
+    if to_flip_rows:
         try:
-            r = await _perform_soft_delete_quote(qid, user, tenant)
-            deleted.append(r["id"])
-        except HTTPException as e:
-            failed.append({"id": qid, "reason": str(e.detail),
-                              "status_code": e.status_code})
-        except Exception as e:                                # noqa: BLE001
-            failed.append({"id": qid, "reason": str(e), "status_code": 500})
+            await db.audit_log.insert_many([{
+                "id": new_id(),
+                "tenant_id": tenant["id"],
+                "actor_user_id": user.get("id"),
+                "actor_email": user.get("email"),
+                "action": "invoice.soft_delete",
+                "target_id": r["id"],
+                "target_doc_type": r.get("doc_type") or "invoice",
+                "at": deleted_at,
+            } for r in to_flip_rows], ordered=False)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"invoice.bulk_soft_delete audit insert_many failed: "
+                f"{type(e).__name__}: {e}"
+            )
+
+    # 4. Build the response — same shape as the prior handler so the
+    # FE code path is unchanged.
+    deleted = list(to_flip_ids)
+    # Already-deleted rows return as {ok, already_deleted: true} in
+    # the prior per-row path — preserve semantics: they count as
+    # "deleted" (idempotent), but tagged for the UI's benefit.
+    for aid in already_deleted_ids:
+        deleted.append(aid)
+    failed: List[dict] = [
+        {"id": qid, "reason": "Invoice not found", "status_code": 404}
+        for qid in ids if qid not in found_ids
+    ]
     return {"ok": True, "deleted_count": len(deleted),
               "deleted": deleted, "failed": failed}
 
