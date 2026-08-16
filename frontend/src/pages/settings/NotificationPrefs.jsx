@@ -11,6 +11,7 @@ import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Bell, Mail, MessageSquare, Save, Smartphone, Undo2 } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
+import CommsWhitelistBanner from "@/components/comms/CommsWhitelistBanner";
 
 const CHANNELS = [
   { key: "bell",  label: "Bell",  Icon: Bell,           hint: "In-app inbox + realtime toast" },
@@ -131,6 +132,10 @@ export default function NotificationPrefs() {
           </button>
         </div>
       </div>
+
+      {/* Queue Item 4 · Feb-2026 — outbound comms whitelist banner.
+          Warns admins that comms are demo-only + shows live counts. */}
+      <CommsWhitelistBanner />
 
       <div className="rounded-2xl overflow-hidden"
            style={{ backgroundColor: colors.surface, border: `1px solid ${colors.border}` }}>

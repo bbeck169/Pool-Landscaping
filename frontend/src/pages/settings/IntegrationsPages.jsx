@@ -4,6 +4,7 @@ import { Sparkles } from "lucide-react";
 import { api } from "@/api";
 import { colors, brandGradientCss } from "@/theme";
 import HomeworksIntegrationCard from "@/components/settings/HomeworksIntegrationCard";
+import HomeworksImportCenter from "@/components/settings/HomeworksImportCenter";
 
 function Card({ children, testid, className = "" }) {
   return (
@@ -153,6 +154,10 @@ export function IntegrationsHub() {
 
       {/* Feb-2026 · Phase 1a — Homeworks (MCP) OAuth integration card. */}
       <HomeworksIntegrationCard />
+
+      {/* Queue Item 5 · Feb-2026 — Unified Homeworks Import Center
+          (dry-run + queue + polling for all customer importers). */}
+      {user?.role === "super_admin" ? <HomeworksImportCenter /> : null}
 
       <Card testid="geocode-backfill-card">
         <h2 className="text-lg font-bold mb-1">Geocode backfill</h2>

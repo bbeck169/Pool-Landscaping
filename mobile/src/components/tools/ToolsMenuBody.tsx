@@ -102,6 +102,31 @@ export const ToolsMenuBody: React.FC<Props> = ({ variant = "tab", onNavigate, qu
   return (
     <View style={styles.wrap}>
       <SearchBar onQueryChange={setQuery} testID={searchTestID} />
+      {/* Queue Item 6 · Feb-2026 — Dashboard shortcut. Rendered
+          directly under the search input on every drawer/tab so
+          a Home affordance always sits at the top of the mobile
+          menu. Hidden mid-search so search results stay tidy. */}
+      {!query ? (
+        <Pressable
+          onPress={() => {
+            const route = "/(app)" as any;
+            if (onNavigate) {
+              onNavigate({
+                key: "dashboard", route,
+                label: "Dashboard", desc: "", icon: "home-outline",
+              } as any);
+            } else {
+              router.push(route);
+            }
+          }}
+          style={dashStyles.row}
+          testID="mobile-menu-dashboard-link"
+        >
+          <Ionicons name="home-outline" size={16} color={colors.onSurface} />
+          <Text style={dashStyles.label}>Dashboard</Text>
+          <Ionicons name="chevron-forward" size={14} color={colors.muted} />
+        </Pressable>
+      ) : null}
       <ScrollView
         contentContainerStyle={{ paddingBottom: spacing["3xl"] }}
         keyboardShouldPersistTaps="handled"
@@ -270,4 +295,30 @@ const qaStyles = StyleSheet.create({
     borderRadius: radius.pill, marginRight: spacing.sm,
   },
   chipText: { fontFamily: font.bold, fontSize: 12, color: "#fff" },
+});
+
+// Queue Item 6 · Feb-2026 — Dashboard shortcut row styling. Matches
+// the visual density of the search input above so the two feel
+// like a stacked pair.
+const dashStyles = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  label: {
+    flex: 1,
+    fontFamily: font.semibold,
+    fontSize: fontSize.sm,
+    color: colors.onSurface,
+  },
 });

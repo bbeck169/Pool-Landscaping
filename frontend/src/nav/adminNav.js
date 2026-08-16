@@ -191,6 +191,7 @@ export const ADMIN_NAV_V2 = [
     { to: "/settings/onboarding",   label: "Onboarding",    icon: Sparkles,   feature: "settings", subsection: "Settings" },
     { to: "/settings/tenant",       label: "Tenant Brand",  icon: Sparkles,   feature: "settings", subsection: "Settings" },
     { to: "/tenants",               label: "Tenants (super)", icon: Shield,   feature: "settings", hard_rule: "super_admin_only", subsection: "Settings" },
+    { to: "/admin/comms/suppression-log", label: "Comms Suppression Log", icon: Shield, feature: "settings", hard_rule: "super_admin_only", subsection: "Settings" },
     { to: "/access-settings",       label: "Access Settings", icon: Shield,   feature: "permissions", subsection: "Settings" },
     { to: "/settings/integrations", label: "Integrations",    icon: Compass,  feature: "settings", subsection: "Settings" },
     // Phase 55-a · Aug-2026 — Homeworks (Copilot CRM) importer.

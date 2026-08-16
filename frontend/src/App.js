@@ -31,6 +31,7 @@ import JobDetail from "@/pages/jobs/JobDetail";
 import JobsList from "@/pages/jobs/JobsList";
 import AdminUsersList from "@/pages/admin/AdminUsersList";
 import AdminTagsList from "@/pages/admin/AdminTagsList";
+import AdminCommsSuppressionLog from "@/pages/admin/AdminCommsSuppressionLog";
 import AdminServiceReportsList from "@/pages/admin/AdminServiceReportsList";
 import AdminTimeEntriesList from "@/pages/admin/AdminTimeEntriesList";
 import ReflowHistoryPage from "@/pages/admin/ReflowHistoryPage";
@@ -580,6 +581,9 @@ export default function App() {
             {/* Task OO · Feb 2026 — P1 bulk-select admin surfaces. */}
             <Route path="admin/users" element={<AdminOnly><AdminUsersList /></AdminOnly>} />
             <Route path="admin/tags" element={<AdminOnly><AdminTagsList /></AdminOnly>} />
+            {/* Queue Item 4 · Feb-2026 — comms whitelist Suppression
+                Log viewer, super_admin-only per P0 safety directive. */}
+            <Route path="admin/comms/suppression-log" element={<SuperAdminOnly><AdminCommsSuppressionLog /></SuperAdminOnly>} />
             <Route path="admin/service-reports" element={<AdminOnly><AdminServiceReportsList /></AdminOnly>} />
             <Route path="admin/time-entries" element={<AdminOnly><AdminTimeEntriesList /></AdminOnly>} />
             <Route path="admin/reflow-history" element={<AdminOnly><ReflowHistoryPage /></AdminOnly>} />

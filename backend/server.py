@@ -201,6 +201,12 @@ from routers import integrations_homeworks_imports as _hw_imports  # noqa: E402
 api_router.include_router(_hw_imports.router)
 from routers import integrations_homeworks_active_imports as _hw_active_imports  # noqa: E402
 api_router.include_router(_hw_active_imports.router)
+# Queue Item 5 · Feb-2026 — Delta Sync + Pricebook (income items)
+# importer surfaces. Both live under super_admin.
+from routers import integrations_homeworks_delta_sync as _hw_delta_sync  # noqa: E402
+api_router.include_router(_hw_delta_sync.router)
+from routers import integrations_homeworks_income_items as _hw_income_items  # noqa: E402
+api_router.include_router(_hw_income_items.router)
 from routers import comms_admin as _comms_admin  # noqa: E402
 api_router.include_router(_comms_admin.router)
 from routers import media_gen as _phaseb_media_router  # noqa: E402

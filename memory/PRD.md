@@ -1,3 +1,107 @@
+## Queue Items 2–6 · Feb-2026 — Tags CRUD + Comms polish + Import Center + Dashboard nav
+
+Full-run through the user's prioritized frontend queue (`2 3 4 5 6`) in a
+single session. All six items shipped web-side; item 6 shipped both web
+and mobile per user brief.
+
+**Task 2 — `/admin/tags` CRUD page (P0, web only)**
+- `frontend/src/pages/admin/AdminTagsList.jsx` extended to expose a full
+  CRUD surface on top of the existing bulk-select toolbar.
+- New Tag modal with name (1–40 char validation) + 12-swatch palette
+  (mirrors backend `_PALETTE` plus the two system colors).
+- Per-row inline Edit + Delete affordances. Delete uses a hard-confirm
+  modal that renders live usage_count copy.
+- System tags (`is_system:true` → "Active" / "Inactive") locked: 🔒 icon
+  + `SYSTEM` badge + disabled buttons + `SYSTEM_LOCK_TOOLTIP` tooltip.
+- Search input auto-appears when tag count > 10 (147 tags on aquaterra
+  → visible).
+- Error handling routes `duplicate_tag_name` + `system_tag_readonly`
+  backend codes to human-readable toasts.
+- Vitest: `src/test/queue-item-2-admin-tags-crud.test.jsx` (10/10 green).
+
+**Task 3 — Customer detail Tags section (P1, web only)**
+- New `frontend/src/components/customers/CustomerTagsCard.jsx` — a
+  labeled Overview card that wraps the existing `CustomerTagPicker`.
+- Chip render + combobox + inline "Create new: <query>" all preserved
+  via re-use of the picker (no duplication).
+- Empty-state copy nudges toward the picker's create affordance.
+- Tag-count pill in the header for at-a-glance density.
+- Mounted in Overview between `CustomerContactsPanel` and the address
+  block on `CustomerDetail.jsx`.
+- Vitest: `src/test/queue-item-3-customer-detail-tags-section.test.jsx`
+  (7/7 green).
+
+**Task 4 — Comms UI polish (P1, web only)**
+- `frontend/src/components/comms/CommsWhitelistBanner.jsx` — red
+  "outbound comms gated" banner reading `GET /api/comms/whitelist/status`.
+  Live count chips for users/customers flagged demo + suppressed_24h.
+  Mounted at `/settings/notifications` and at the top of the
+  Suppression Log page.
+- `frontend/src/components/comms/DemoAccountToggle.jsx` — reusable
+  pill toggle wired to `PATCH /api/comms/demo-flag`. Hard-confirm
+  modal with enable/disable-differentiated copy and audit-log note.
+  Mounted on `CustomerDetail.jsx` header row (customer scope) and as
+  a new "Comms" column on `AdminUsersList.jsx` (user scope).
+- `frontend/src/pages/admin/AdminCommsSuppressionLog.jsx` — paginated
+  + filterable (type / recipient / provider) viewer at
+  `/admin/comms/suppression-log`, super_admin-gated via `SuperAdminOnly`.
+  50/page + prev/next controls + range summary. Nav link added to
+  `nav/adminNav.js` under Settings (super_admin_only).
+- Vitest: `src/test/queue-item-4-comms-ui-polish.test.jsx` (16/16 green).
+
+**Task 5 — Homeworks Import Center + Delta Sync + Pricebook (P1)**
+- Backend `services/homeworks_mcp/delta_sync_importer.py` — thin wrapper
+  that runs `active_customers_importer.run_full()` and
+  `inactive_customers_importer.run_full()` back-to-back under a single
+  `homeworks_import_runs` doc keyed `kind: "delta_sync"`. Idempotency
+  contract (skip-if-`original_id`-exists) delivers the delta for free
+  without server-side cursor tracking.
+- Backend router `routers/integrations_homeworks_delta_sync.py` mounted
+  at `/api/integrations/homeworks/imports/delta-sync` with the same six
+  endpoints (dry-run/run/cancel/status/active/history) + 15-minute
+  dry-run gate. Super_admin only.
+- Backend stub router `routers/integrations_homeworks_income_items.py`
+  mounted at `/api/integrations/homeworks/imports/income-items`. The
+  `/run` endpoint returns HTTP 501 with `pricebook_importer_not_yet_
+  implemented` so the FE can render a "Coming soon" badge without a
+  code branch. Read endpoints (active/history/status) all functional
+  and return zero-work responses.
+- Operator launcher `scripts/homeworks_run_delta_sync.py` — mirrors the
+  existing `homeworks_run_import.py` nohup shape.
+- Frontend `frontend/src/components/settings/HomeworksImportCenter.jsx` —
+  four-button panel with per-row dry-run → confirm-modal (showing
+  count/existing/duration) → POST /run → live status polling every 3s.
+  Pricebook button marked "Coming soon" + disabled with tooltip.
+- Panel mounted on `IntegrationsHub` behind a `user?.role ===
+  "super_admin"` gate.
+- Vitest: `src/test/queue-item-5-homeworks-import-center.test.jsx`
+  (18/18 green). cURL-verified: `GET /delta-sync/active → []`,
+  `POST /income-items/run → HTTP 501`.
+
+**Task 6 — Dashboard nav shortcut (P2, web + mobile)**
+- Web: `frontend/src/layouts/AdminSidebar.jsx` renders a `NavLink to="/"`
+  with the `HomeIcon` directly under the palette trigger, above the
+  pinned block. Live-verified via screenshot.
+- Mobile: `mobile/src/components/tools/ToolsMenuBody.tsx` renders a
+  `Pressable` with the `home-outline` icon directly under the
+  `SearchBar`, routing to the `/(app)` group index. Hidden mid-search
+  so results stay tidy.
+- Vitest: `src/test/queue-item-6-dashboard-nav.test.jsx` (8/8 green).
+
+**Aggregate test results**: 66/66 Vitest tests pass across all six new
+suites plus the pre-existing `phase34-admin-page-mount-safety.test.jsx`
+regression guard.
+
+**Known deferred work**:
+- Pricebook importer proper (server-side implementation replacing the
+  stub 501) — scheduled next P1 slice.
+- Mobile UI for Tag CRUD (item 2), Customer Tags section (item 3), and
+  Comms UI polish (item 4) — deferred to P2 per user brief.
+- Consolidation refactor of active + inactive importers into a
+  config-driven module — deferred; delta-sync wrapper is intentionally
+  minimal so it can graduate cleanly post-consolidation.
+
+
 ## Phase 52.1 · Feb-2026 — Live-streaming walkie MVP (a → d)
 
 Real-time voice channels layered onto the async walkie surface Phase 51 shipped. When a user flips the "Live channel" toggle in a walkie channel that supports it, they enter a WebRTC mesh where every peer's audio streams P2P (TURN-relayed via metered.ca when symmetric-NAT clients join). At session end the last-out participant uploads a session recording that surfaces in the channel timeline like any other clip, subject to the 24 h TTL Phase 51a already enforces. Delivered across four sub-phases: **52.1a** backend WebSocket signaling + data model, **52.1b** web client + PTT/VOX + auto-record, **52.1c** mobile client via `react-native-webrtc` (PTT-only in this slice), **52.1d** metered.ca TURN wiring + parity + docs.

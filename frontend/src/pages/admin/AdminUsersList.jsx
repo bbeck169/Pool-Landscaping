@@ -25,6 +25,7 @@ import SuggestDepartmentsModal from "./SuggestDepartmentsModal";
 // (adds an audit trail via /api/admin/apply-department-suggestions).
 import ReviewDepartmentSuggestionsModal
   from "@/components/admin/SuggestDepartmentsModal";
+import DemoAccountToggle from "@/components/comms/DemoAccountToggle";
 
 const ROLE_OPTIONS = [
   { value: "tech", label: "Technician" },
@@ -172,11 +173,12 @@ export default function AdminUsersList() {
               <th className="text-left px-3 py-2 font-semibold hidden md:table-cell" style={{ color: colors.onSurfaceSecondary }}>Email</th>
               <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Role</th>
               <th className="text-left px-3 py-2 font-semibold hidden lg:table-cell" style={{ color: colors.onSurfaceSecondary }}>Active</th>
+              <th className="text-left px-3 py-2 font-semibold" style={{ color: colors.onSurfaceSecondary }}>Comms</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && rows !== null ? (
-              <tr><td colSpan={5} className="px-3 py-6 text-center text-sm"
+              <tr><td colSpan={6} className="px-3 py-6 text-center text-sm"
                        style={{ color: colors.muted }} data-testid="admin-users-empty">
                 No users match this filter.
               </td></tr>
@@ -208,6 +210,23 @@ export default function AdminUsersList() {
                 </td>
                 <td className="px-3 py-3 hidden lg:table-cell text-xs" style={{ color: colors.muted }}>
                   {r.is_active !== false ? "Active" : "Inactive"}
+                </td>
+                <td className="px-3 py-3">
+                  {/* Queue Item 4 · Feb-2026 — outbound-comms
+                      whitelist toggle. Confirms with hard modal. */}
+                  <DemoAccountToggle
+                    recordType="user"
+                    recordId={r.id}
+                    isDemo={!!r.is_demo_account}
+                    recordLabel={r.name || r.email || r.id}
+                    size="sm"
+                    onChange={(nextVal) => {
+                      // Reflect the change locally so the toggle
+                      // paints ON immediately without a full refetch.
+                      setRows((prev) => (prev || []).map((row) =>
+                        row.id === r.id ? { ...row, is_demo_account: nextVal } : row));
+                    }}
+                  />
                 </td>
               </tr>
             ))}

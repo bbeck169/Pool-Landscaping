@@ -9,6 +9,8 @@ import { ActivationControl } from "@/components/customers/ActivationControl";
 import CustomerEquipmentLibrary from "@/components/customers/CustomerEquipmentLibrary";
 import CustomerActionDropdowns from "@/components/customers/CustomerActionDropdowns";
 import CustomerTagPicker from "@/components/customers/CustomerTagPicker";
+import CustomerTagsCard from "@/components/customers/CustomerTagsCard";
+import DemoAccountToggle from "@/components/comms/DemoAccountToggle";
 import CustomerCommunicationsTimeline from "@/components/customers/CustomerCommunicationsTimeline";
 import CustomerTasksPanel from "@/components/customers/CustomerTasksPanel";
 import CustomerContactsPanel from "@/components/customers/CustomerContactsPanel";
@@ -236,6 +238,20 @@ export default function CustomerDetail() {
               />
               {customer.waitlisted ? <Chip label="Waitlist" tone="warning" /> : null}
               {customer.has_login ? <Chip label="Portal enabled" tone="success" /> : null}
+              {/* Queue Item 4 · Feb-2026 — outbound-comms whitelist
+                  toggle. Flipping this changes whether Resend + RC
+                  send outbound comms to this customer. Hard-confirm
+                  modal is built into the component. */}
+              <DemoAccountToggle
+                recordType="customer"
+                recordId={customer.id}
+                isDemo={!!customer.is_demo_account}
+                recordLabel={customer.name || "this customer"}
+                size="sm"
+                onChange={(nextVal) =>
+                  setCustomer((c) => c ? { ...c, is_demo_account: nextVal } : c)
+                }
+              />
             </div>
           </div>
           <div className="flex flex-col items-end gap-2">
@@ -392,6 +408,17 @@ export default function CustomerDetail() {
                   setToast({ tone: "success", message: "Contacts saved" });
                 }}
                 onError={(msg) => setToast({ tone: "error", message: msg })}
+              />
+              {/* Queue Item 3 · Feb-2026 — dedicated Tags section on
+                  the customer detail page. Chip render + combobox +
+                  inline "Create new: <query>" all live inside
+                  CustomerTagPicker; this card just gives it a
+                  labelled home in the Overview stack. */}
+              <CustomerTagsCard
+                customer={customer}
+                onChange={(nextTags) =>
+                  setCustomer((c) => c ? { ...c, tags: nextTags } : c)
+                }
               />
               <div data-testid="cd-address-block" className="space-y-2">
                 <Info label="Primary address" value={customer.address} />
