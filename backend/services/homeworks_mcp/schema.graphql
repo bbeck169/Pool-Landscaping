@@ -1,0 +1,4858 @@
+schema {
+  query: Query
+  mutation: Mutation
+}
+
+"Account status - controls app access (ACTIVE, PAST_DUE, EXPIRED, CANCEL_REQUESTED, CANCELLED, BANNED, INACTIVE, SIGNUP_INCOMPLETE)"
+enum AccountStatus {
+  ACTIVE
+  PAST_DUE
+  EXPIRED
+  CANCEL_REQUESTED
+  CANCELLED
+  BANNED
+  INACTIVE
+  SIGNUP_INCOMPLETE
+}
+
+type Address {
+  street1: String!
+  street2: String!
+  city: String
+  state: String
+  county: String
+  zip: String!
+  country: String!
+}
+
+input AddressFilter {
+  street1: StringFilter
+  street2: StringFilter
+  city: StringFilter
+  state: StringFilter
+  county: StringFilter
+  zip: StringFilter
+  country: StringFilter
+}
+
+input AddressInput {
+  street1: String
+  street2: String
+  city: String
+  state: String
+  country: String
+  zip: String
+}
+
+input AddressSort {
+  street1: SortOrder
+  street2: SortOrder
+  city: SortOrder
+  state: SortOrder
+  county: SortOrder
+  zip: SortOrder
+  country: SortOrder
+}
+
+type AiChat {
+  id: SafeInt!
+  messages(orderBy: [AiMessageSort!], take: SafeInt, skip: SafeInt): [AiMessage!]!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+input AiChatSort {
+  id: SortOrder
+  createdAt: SortOrder
+  updatedAt: SortOrder
+}
+
+input AiContextInput {
+  objects: [AiContextObjectInput!]
+  intents: [AiIntent!]
+  dateRange: DateRangeInput
+  sessionId: String
+  responseFormat: AiResponseFormat
+  metadata: JSON
+}
+
+input AiContextObjectInput {
+  objectType: ObjectType!
+  objectIds: [SafeInt!]
+}
+
+"Intent hint that scopes which schema types and operations are pre-loaded for the AI."
+enum AiIntent {
+  DISPATCH
+  FIELD_WORK
+  INVOICING
+  ESTIMATING
+  CUSTOMERS
+  PRICING
+  TEAM
+  REPORTING
+  COMMUNICATIONS
+  GENERAL
+}
+
+type AiMessage {
+  id: SafeInt!
+  senderType: AiMessageSenderType!
+  text: String!
+  createdAt: DateTime!
+}
+
+enum AiMessageSenderType {
+  USER
+  ASSISTANT
+}
+
+input AiMessageSort {
+  id: SortOrder
+  senderType: SortOrder
+  createdAt: SortOrder
+}
+
+enum AiResponseFormat {
+  MARKDOWN
+  PLAIN_TEXT
+}
+
+type ApiTrial {
+  active: Boolean!
+  trialStartedAt: DateTime
+  trialEndsAt: Date
+  daysRemaining: Int!
+}
+
+type AppEvent {
+  id: SafeInt!
+  companyId: SafeInt
+  customerId: SafeInt
+  type: AppEventType!
+  objectId: SafeInt
+  objectType: ObjectType!
+  actorType: AppEventActorType!
+  actorId: SafeInt
+  data: JSON
+  initiatedAt: DateTime!
+  createdAt: DateTime
+}
+
+type AppEventActor {
+  id: SafeInt
+  name: String
+  email: String
+}
+
+enum AppEventActorType {
+  ADMIN
+  CUSTOMER
+  SYSTEM
+  USER
+}
+
+input AppEventSort {
+  initiatedAt: SortOrder
+  createdAt: SortOrder
+}
+
+enum AppEventType {
+  ADMIN_CREATED
+  ADMIN_DELETED
+  ADMIN_UPDATED
+  COMPANY_CREATED
+  COMPANY_UPDATED
+  CUSTOMER_ADDED_RATING
+  CUSTOMER_CREATED
+  CUSTOMER_MARKED_INACTIVE
+  CUSTOMER_PAYMENT_DECLINED
+  CUSTOMER_PAYMENT_METHOD_ADDED
+  CUSTOMER_PAYMENT_METHOD_REMOVED
+  CUSTOMER_PAYMENT_RECEIVED
+  CUSTOMER_SMS_RECEIVED
+  CUSTOMER_UPDATED
+  ESTIMATE_ACCEPTED
+  ESTIMATE_CHANGES_REQUESTED
+  ESTIMATE_CREATED
+  ESTIMATE_DECLINED
+  ESTIMATE_DELETED
+  ESTIMATE_DEPOSIT_RECEIVED
+  ESTIMATE_DRAFTED
+  ESTIMATE_INVOICED
+  ESTIMATE_LINE_ADDED
+  ESTIMATE_LINE_CREATED
+  ESTIMATE_LINE_DELETED
+  ESTIMATE_LINE_REMOVED
+  ESTIMATE_LINE_UPDATED
+  ESTIMATE_NOT_RESPONDED
+  ESTIMATE_PENDING
+  ESTIMATE_RESPONDED
+  ESTIMATE_SENT
+  ESTIMATE_SERVICE
+  ESTIMATE_UPDATED
+  ESTIMATE_VIEWED
+  EVENT_ASSIGNED
+  EVENT_CLOSED
+  EVENT_COMPLETED
+  EVENT_CREATED
+  EVENT_DELETED
+  EVENT_OPENED
+  EVENT_SKIPPED
+  EVENT_TIMER_STARTED
+  EVENT_TIMER_STOPPED
+  EVENT_UPDATED
+  INVOICE_CREATED
+  INVOICE_VIEWED
+  MCP_QUERY_EXECUTED
+  PAYMENT_DECLINED
+  PAYMENT_RECEIVED
+  RATING_CREATED
+  ROUTE_CREATED
+  SUBSCRIPTION_CANCELLED
+  SUBSCRIPTION_CREATED
+  SUBSCRIPTION_DOWNGRADED
+  SUBSCRIPTION_UNCANCELLED
+  SUBSCRIPTION_UPGRADED
+  TIME_ENTRY_CREATED
+  TIME_ENTRY_DELETED
+  TIME_ENTRY_UPDATED
+  USER_CREATED
+  USER_DELETED
+  USER_IMPERSONATED
+  USER_UPDATED
+  WORK_REQUEST_CREATED
+}
+
+"Unit of measurement for property area fields (size, pavedSize, houseSize, etc.)."
+enum AreaMeasurement {
+  SQ_FEET
+  SQ_METERS
+  ACRES
+  HECTARES
+}
+
+type AuthResponse {
+  accessToken: String!
+  refreshToken: String
+  tokenType: String!
+  expiresIn: Int
+}
+
+enum AutoChargePolicy {
+  INHERIT
+  DISABLED
+  USE_COMPANY
+}
+
+type BeforeAndAfter {
+  id: SafeInt!
+  beforeDescription: String
+  afterDescription: String
+  isClientVisible: Boolean!
+  eventId: SafeInt!
+  event: Event!
+  beforeMedia: [Media!]
+  afterMedia: [Media!]
+}
+
+input BeforeAndAfterSort {
+  id: SortOrder
+  afterDescription: SortOrder
+  beforeDescription: SortOrder
+  isClientVisible: SortOrder
+}
+
+input BeforeAndAfterWhere {
+  id: IntFilter
+  afterDescription: StringFilter
+  beforeDescription: StringFilter
+  isClientVisible: Boolean
+  AND: [BeforeAndAfterWhere!]
+  OR: [BeforeAndAfterWhere!]
+  NOT: [BeforeAndAfterWhere!]
+}
+
+"The `BigInt` scalar type represents non-fractional signed whole numeric values."
+scalar BigInt
+
+input BillingAddressInput {
+  postalCode: String!
+  country: String!
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+}
+
+"The `Boolean` scalar type represents `true` or `false`."
+scalar Boolean
+
+type ClockInOutAction {
+  id: SafeInt!
+  type: ClockInOutType!
+  userId: SafeInt!
+  user: User!
+  createdAt: DateTime!
+  location: Location
+}
+
+enum ClockInOutType {
+  CLOCK_IN
+  CLOCK_OUT
+}
+
+type Company {
+  id: SafeInt!
+  name: String!
+  email: String!
+  isBanned: Boolean!
+  isActive: Boolean
+  accountStatus: AccountStatus!
+  subscription: CompanySubscription
+  address: Address!
+  location: Location
+  zip: String!
+  phone: String
+  mobile: String
+  tier: Tier!
+  paypalEmail: String!
+  isPaypalEnabled: Boolean!
+  fax: String
+  timezone: String!
+  dformat: String!
+  tformat: String!
+  dsep: String!
+  tsep: String!
+  dateFormat: String!
+  timeFormat: String!
+  decimalSeparator: String!
+  thousandsSeparator: String!
+  currency: String
+  latitude: String
+  longitude: String
+  logo: File!
+  www: String!
+  stripeCustomerId: String!
+  showInvoiceStatus: SafeInt!
+  hideInvoiceOutstandingBalance: SafeInt!
+  invoiceDueDate: SafeInt!
+  profilePic: String!
+  facebook: String!
+  twitter: String!
+  instagram: String!
+  googleReviewLink: String
+  showTips: Boolean!
+  showCustomFields: Boolean!
+  workDays: CompanyWorkDays!
+  workDaysAction: CompanyWorkDaysAction!
+  depositRequirement: DepositRequirement!
+  depositThreshold: Decimal!
+  depositAmount: Decimal!
+  depositPercentage: Boolean!
+  paymentMethodRequired: Boolean!
+  showAddCredit: Boolean!
+  settings: CompanySettings
+  customNaming: CustomNaming
+  plan: Plan
+  pendingPlan: Plan
+  isPlanCancelled: Boolean!
+  isPlanExpired: Boolean!
+  planPeriodEndsAt: DateTime
+  stripeSubscription: JSON
+  stripeSubscriptions: [JSON!]!
+  registrationDate: DateTime!
+  activeUsers: SafeInt!
+  userSeatsPurchased: Int!
+  stripeDefaultPaymentMethod: StripePaymentMethod
+  stamps: SafeInt!
+  twilio: Twilio!
+  quickbooks: QuickBooks
+  taxId: String!
+  abn: String!
+  isFirst: Boolean!
+  useCompanyAddressAsDepot: Boolean!
+  routeStartLocation: Location
+  routeEndLocation: Location
+  isPriceMatrixEnabled: Boolean!
+  apiTrial: ApiTrial
+}
+
+input CompanyContactInput {
+  name: String!
+  website: String
+  phone: String
+  source: RegistrationSource
+  sourceOther: String
+  sourceStimulus: String
+  street1: String!
+  street2: String
+  city: String!
+  state: String!
+  zip: String!
+  country: String!
+  latitude: Float
+  longitude: Float
+}
+
+type CompanySettings {
+  id: SafeInt!
+  invoiceNotes: String!
+  invoiceTerms: String!
+  estimateNotes: String!
+  estimateTerms: String!
+  weekStart: SafeInt!
+  colorClose: String!
+  colorVisit: String!
+  colorTask: String!
+  colorMeet: String!
+  colorMaint: String!
+  colorInvoice: String!
+  invoiceGrouping: InvoiceGrouping!
+  invoiceDueDate: String!
+  invoicePastDueLateFee: String!
+  invoiceTermsRed: Boolean!
+  estimateTermsRed: Boolean!
+  defaultInvoiceServiceDate: Boolean
+  showLivechat: Boolean!
+  showGettingStarted: Boolean!
+  showWrsd: JSON
+  hideWrf: Boolean!
+  invoiceDatePolicy: InvoiceDatePolicy!
+  eventInvoiceDateSource: EventInvoiceDateSource!
+  enablePublicWrf: Boolean!
+  workingHours: String!
+  showEstimateBudgetedHours: Boolean
+  showInvoiceBudgetedHours: Boolean
+  showEstimateQuantityPerHour: Boolean
+  showInvoiceQuantityPerHour: Boolean
+  showEstimateCostRate: Boolean
+  showInvoiceCostRate: Boolean
+}
+
+type CompanyStripeSetupIntent {
+  clientSecret: String!
+  setupIntentId: String!
+  customerSessionClientSecret: String!
+}
+
+type CompanySubscription {
+  planPriceId: String!
+  pendingPriceId: String
+  status: SubscriptionStatus!
+  stripeSubscriptionId: String
+  pastDueAmountCents: SafeInt!
+  gracePeriodEndsOn: DateTime
+  planPeriodEndsOn: DateTime
+  nextChargeOn: DateTime
+  cardExpMonth: Int
+  cardExpYear: Int
+  plan: Plan!
+  pendingPlan: Plan
+  tier: Tier!
+  pendingTier: Tier
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  lastPaymentError: PaymentError
+  nextInvoiceAmountCents: SafeInt
+  monthlyPeriodStartedAt: DateTime
+  monthlyPeriodEndsAt: DateTime
+  monthlyUsage: SubscriptionMonthlyUsage
+}
+
+"Which days of the week the company operates."
+enum CompanyWorkDays {
+  WORK_ALL_DAYS
+  NO_WORK_ON_SATURDAY
+  NO_WORK_ON_SUNDAY
+  NO_WORK_WEEKEND
+}
+
+"What happens to events that fall on a company off day."
+enum CompanyWorkDaysAction {
+  SKIP
+  MOVE_TO_FRIDAY
+  MOVE_TO_MONDAY
+  MOVE_TO_FRIDAY_OR_MONDAY
+}
+
+type ComplianceInquiryError {
+  status: Int!
+  message: String!
+  code: Int
+  moreInfo: String
+}
+
+"https://www.twilio.com/docs/messaging/compliance/toll-free/compliance-embeddable-onboarding#initialize-complianceinquiry-api-for-toll-free-verification"
+type ComplianceInquiryResponse {
+  data: TwilioComplianceInquiry
+  error: ComplianceInquiryError
+}
+
+"A [longitude, latitude] coordinate pair."
+input CoordinateInput {
+  longitude: Float!
+  latitude: Float!
+  label: String
+}
+
+input CreateEstimateInput {
+  number: SafeInt
+  purchaseOrder: String
+  customerId: SafeInt!
+  date: DateTime
+  internalNotes: String
+  title: String
+  notes: String
+  terms: String
+  discountPercent: Decimal
+  requestId: SafeInt
+  tags: String
+  payInFullEnabled: Boolean
+}
+
+input CreateEventInput {
+  type: EventType!
+  title: String
+  status: CreateEventStatus
+  startDate: LocalDate!
+  startTime: LocalTime
+  endDate: LocalDate
+  budgetedHours: Decimal
+  customerId: SafeInt
+  propertyId: SafeInt
+  equipmentId: SafeInt
+  workRequestId: SafeInt
+  estimateId: SafeInt
+  contractId: SafeInt
+  crewId: SafeInt
+  userIds: [SafeInt!]
+  description: String
+  categoryId: SafeInt
+  locationName: String
+  color: String
+  isInvoiceable: Boolean
+  tags: [String!]
+  mediaFileKeys: [String!]
+  maintenanceCost: Decimal
+  formIds: [SafeInt!]
+  lineItems: [CreateEventLineItemInput!]
+}
+
+input CreateEventLineItemInput {
+  itemId: SafeInt!
+  price: Decimal!
+  quantity: Decimal!
+  budgetedHours: Decimal
+  tax: Decimal
+  description: String
+  estimateLineId: SafeInt
+}
+
+"Subset of EventStatus valid on create."
+enum CreateEventStatus {
+  OPEN
+  WAITLISTED
+}
+
+input CreateUserInput {
+  email: String!
+  password: String!
+  firstName: String!
+  lastName: String!
+  role: UserRole
+  hireDate: Date
+  birthDate: Date
+}
+
+type Crew {
+  id: SafeInt!
+  name: String!
+  description: String
+  notes: String!
+  lp4Id: String!
+  isDeleted: Boolean!
+  deletedAt: DateTime
+  tags: String!
+  list: String!
+  color: String
+  eventCount(where: EventFilter): SafeInt!
+  events(where: EventFilter = {isDeleted: false}, orderBy: [EventSort!], take: SafeInt = 1000, skip: SafeInt): [Event!]
+  users(where: UserFilter = {isDeleted: false}, orderBy: [UserSort!], take: SafeInt = 1000, skip: SafeInt): [User!]
+  members(take: SafeInt = 1000, skip: SafeInt): [CrewMember!]
+}
+
+input CrewFilter {
+  id: IntFilter
+  name: StringFilter
+  isDeleted: Boolean
+  events: EventFilter
+  AND: [CrewFilter!]
+  OR: [CrewFilter!]
+  NOT: CrewFilter
+}
+
+"Deprecated. Use Crew.users instead."
+type CrewMember {
+  id: SafeInt!
+  crewId: SafeInt!
+  userId: SafeInt!
+  user: User!
+}
+
+"Sort options for Crew. Used standalone for crew queries and nested in EventSort."
+input CrewSort {
+  id: SortOrder
+  name: SortOrder
+}
+
+enum Currency {
+  USD
+  CAD
+  EUR
+  GBP
+  AUD
+  CHF
+  CZK
+  DKK
+  HKD
+  HUF
+  JPY
+  NOK
+  NZD
+  PLN
+  SEK
+  SGD
+  RUB
+  UAH
+  ZAR
+  CNY
+  INR
+  SRD
+}
+
+type CustomField {
+  id: SafeInt!
+  name: String
+  type: CustomFieldType
+  textValue: String!
+  integerValue: SafeInt!
+  decimalValue: Decimal!
+  dateValue: Date
+  dynamicCustomField: DynamicCustomField
+}
+
+"Input for setting a custom field value on create/update."
+input CustomFieldInput {
+  fieldId: SafeInt!
+  textValue: String
+  intValue: SafeInt
+  decimalValue: Decimal
+  dateValue: LocalDate
+}
+
+enum CustomFieldType {
+  NONE
+  DATE
+  CHECKBOX
+  DEC
+  INT
+  TEXT
+}
+
+type CustomNaming {
+  customer: String
+  customers: String
+  invoice: String
+  invoices: String
+  estimate: String
+  estimates: String
+  employee: String
+  employees: String
+  crew: String
+  crews: String
+  itemsAndService: String
+  itemsAndServices: String
+  equipment: String
+  equipments: String
+  tax: String
+  taxes: String
+}
+
+type Customer {
+  id: SafeInt!
+  email: String!
+  ccEmail: String!
+  ccEmail1: String!
+  ccEmail2: String!
+  ccEmail3: String!
+  fullName: String!
+  firstName: String!
+  lastName: String!
+  dateRegistered: DateTime
+  address: Address!
+  location: Location
+  phone: String!
+  fax: String!
+  cell: String!
+  customerType: CustomerType
+  customerTypeId: SafeInt
+  sourceId: SafeInt
+  status: CustomerStatus!
+  description: String!
+  isDeleted: Boolean!
+  discount: Decimal!
+  credit: Decimal!
+  portalKey: String!
+  lastLogin: DateTime
+  outstanding: Decimal!
+  lifetimePaid: Decimal!
+  pastDue: Decimal!
+  pic: String!
+  createdAt: DateTime
+  updatedAt: DateTime
+  quickbooksModifiedAt: DateTime
+  lastUpdated: DateTime
+  www: String!
+  title: String!
+  invoiceTerms: String!
+  number: String!
+  cellFull: String!
+  tags: [String!]!
+  portalNeedsLogin: Boolean!
+  loginEmail: String!
+  isReceivePhone: Boolean!
+  isReceiveEmail: Boolean!
+  isReceiveText: Boolean!
+  hasPaymentMethod: Boolean
+  hideInvoiceOutstandingBalance: SafeInt!
+  showTotalDue: Boolean
+  showInvoiceStatus: SafeInt!
+  pastDueTerms: SafeInt!
+  pastDueValue: Decimal!
+  pastDueValueType: String!
+  invoiceDueDate: SafeInt!
+  showCreditAvailable: Boolean!
+  autoCreditApply: Boolean!
+  autoChargePolicy: AutoChargePolicy!
+  autoChargeEnabledAt: DateTime
+  showTips: Boolean!
+  deletedAt: DateTime
+  pastDueTermsConvertAt: DateTime
+  pastDueTermsConvertType: String
+  pastDueTermsSettingsArchive: String
+  allowAch: Boolean!
+  ratingRequestSentAt: DateTime
+  portalNeedsPaymentMethod: Boolean!
+  paymentMethodRequired: Boolean!
+  depositThreshold: Decimal!
+  depositAmount: Decimal!
+  depositPercentage: Boolean!
+  receiveMarketingEmails: Boolean!
+  properties(where: PropertyFilter, orderBy: [PropertySort!], take: SafeInt = 1000, skip: SafeInt): [Property!]
+  source: CustomerSource
+  eventCount(where: EventFilter): SafeInt!
+  payments(where: PaymentFilter = {isDeleted: false}, orderBy: [PaymentSort!], take: SafeInt = 1000, skip: SafeInt): [Payment!]!
+  stripePaymentMethods: [StripePaymentMethod!]!
+  stripePaymentSources(type: StripePaymentSourceType): [StripePaymentSource!]!
+}
+
+input CustomerFilter {
+  id: IntFilter
+  email: StringFilter
+  fullName: StringFilter
+  firstName: StringFilter
+  lastName: StringFilter
+  dateRegistered: DateTimeFilter
+  address: AddressFilter
+  phone: StringFilter
+  fax: StringFilter
+  cell: StringFilter
+  customerTypeId: IntFilter
+  status: CustomerStatusFilter
+  description: StringFilter
+  tags: TagsFilter
+  isDeleted: Boolean
+  events: EventFilter
+  updatedAt: DateTimeFilter
+  AND: [CustomerFilter!]
+  OR: [CustomerFilter!]
+  NOT: CustomerFilter
+}
+
+"Input for creating or updating a customer. All fields are optional for updates; provide at minimum fullName or firstName+lastName when creating."
+input CustomerInput {
+  fullName: String
+  firstName: String
+  lastName: String
+  email: String
+  phone: String
+  cell: String
+  fax: String
+  address: AddressInput
+  customerTypeId: SafeInt
+  sourceId: SafeInt
+  description: String
+  discount: Decimal
+  isReceivePhone: Boolean
+  isReceiveEmail: Boolean
+  isReceiveText: Boolean
+  ccEmail: String
+  ccEmail1: String
+  ccEmail2: String
+  ccEmail3: String
+  isTaxExempt: SafeInt
+}
+
+type CustomerReportAvgAggregate {
+  credit: Decimal
+  discount: Decimal
+}
+
+input CustomerReportAvgOrderBy {
+  credit: SortOrder
+  discount: SortOrder
+}
+
+type CustomerReportCountAggregate {
+  id: SafeInt
+}
+
+input CustomerReportCountOrderBy {
+  id: SortOrder
+}
+
+type CustomerReportMaxAggregate {
+  credit: Decimal
+}
+
+input CustomerReportMaxOrderBy {
+  credit: SortOrder
+}
+
+type CustomerReportMinAggregate {
+  credit: Decimal
+}
+
+input CustomerReportMinOrderBy {
+  credit: SortOrder
+}
+
+input CustomerReportOrderBy {
+  customerTypeId: SortOrder
+  sourceId: SortOrder
+  status: SortOrder
+  isDeleted: SortOrder
+  country: SortOrder
+  state: SortOrder
+  city: SortOrder
+  zip: SortOrder
+  _count: CustomerReportCountOrderBy
+  _sum: CustomerReportSumOrderBy
+  _avg: CustomerReportAvgOrderBy
+  _min: CustomerReportMinOrderBy
+  _max: CustomerReportMaxOrderBy
+}
+
+"A single row in a customer report. Each row represents one group determined by the"
+type CustomerReportRow {
+  customerTypeId: SafeInt
+  sourceId: SafeInt
+  status: CustomerStatus
+  isDeleted: Boolean
+  country: String
+  state: String
+  city: String
+  zip: String
+  customerType: CustomerType
+  source: CustomerSource
+  _count: CustomerReportCountAggregate
+  _sum: CustomerReportSumAggregate
+  _avg: CustomerReportAvgAggregate
+  _min: CustomerReportMinAggregate
+  _max: CustomerReportMaxAggregate
+  count: CustomerReportCountAggregate
+  sum: CustomerReportSumAggregate
+  avg: CustomerReportAvgAggregate
+  min: CustomerReportMinAggregate
+  max: CustomerReportMaxAggregate
+}
+
+type CustomerReportSumAggregate {
+  credit: Decimal
+}
+
+input CustomerReportSumOrderBy {
+  credit: SortOrder
+}
+
+input CustomerSort {
+  id: SortOrder
+  firstName: SortOrder
+  lastName: SortOrder
+  fullName: SortOrder
+  email: SortOrder
+  updatedAt: SortOrder
+  createdAt: SortOrder
+}
+
+type CustomerSource {
+  id: SafeInt!
+  name: String!
+  isVisible: Boolean
+}
+
+"Status of a customer account."
+enum CustomerStatus {
+  INACTIVE
+  ACTIVE
+  WRITTEN_OFF
+  PENDING_APPROVAL
+}
+
+input CustomerStatusFilter {
+  equals: CustomerStatus
+  not: CustomerStatus
+  in: [CustomerStatus!]
+  notIn: [CustomerStatus!]
+}
+
+type CustomerType {
+  id: SafeInt!
+  name: String!
+}
+
+"A date string, such as 2007-12-03, compliant with the `full-date` format outlined in section 5.6 of the RFC 3339 profile of the ISO 8601 standard for representation of dates and times using the Gregorian calendar."
+scalar Date
+
+"Generic filters for calendar date fields (YYYY-MM-DD)."
+input DateFilter {
+  equals: Date
+  not: Date
+  in: [Date!]
+  notIn: [Date!]
+  lt: Date
+  lte: Date
+  gt: Date
+  gte: Date
+}
+
+input DateRangeInput {
+  start: DateTime!
+  end: DateTime!
+}
+
+"A date-time string at UTC, such as 2007-12-03T10:15:30Z, compliant with the `date-time` format outlined in section 5.6 of the RFC 3339 profile of the ISO 8601 standard for representation of dates and times using the Gregorian calendar."
+scalar DateTime
+
+"Generic filters for datetime fields using ISO format YYYY-MM-DDTHH:MM:SSZ"
+input DateTimeFilter {
+  equals: DateTime
+  not: DateTime
+  in: [DateTime!]
+  notIn: [DateTime!]
+  lt: DateTime
+  lte: DateTime
+  gt: DateTime
+  gte: DateTime
+}
+
+"The `Decimal` scalar type to represent precise numeric values."
+scalar Decimal
+
+"Generic filters for decimal fields"
+input DecimalFilter {
+  equals: Decimal
+  not: Decimal
+  in: [Decimal!]
+  notIn: [Decimal!]
+  lt: Decimal
+  lte: Decimal
+  gt: Decimal
+  gte: Decimal
+}
+
+enum DepositRequirement {
+  NONE
+  ALL
+  PER_CUSTOMER
+}
+
+"A leg of a route between two consecutive waypoints."
+type DirectionsLeg {
+  startLabel: String
+  endLabel: String
+  distanceMeters: Int!
+  distanceMiles: Float!
+  durationSeconds: Int!
+  steps: [DirectionsStep!]!
+}
+
+"Drive time and distance for an ordered set of waypoints."
+type DirectionsResult {
+  totalMeters: Int!
+  totalMiles: Float!
+  totalDurationSeconds: Int!
+  totalTime: String!
+  totalCost: Float
+  legs: [DirectionsLeg!]!
+  geometry: String
+}
+
+"A turn-by-turn maneuver step within a route leg."
+type DirectionsStep {
+  instruction: String!
+  maneuverType: String!
+  maneuverModifier: String
+  distanceMeters: Int!
+  durationSeconds: Int!
+  geometry: String
+}
+
+type DispatchNote {
+  message: String!
+  author: String!
+  date: DateTime!
+}
+
+input DispatchNoteInput {
+  message: String!
+  date: DateTime
+}
+
+type Document {
+  id: SafeInt!
+  companyId: SafeInt!
+  description: String!
+  text: String!
+  date: DateTime!
+  customerId: SafeInt
+  name: String!
+  isArchived: Boolean!
+  sentEmail: Boolean!
+  snailMail: Boolean!
+  view: Boolean
+}
+
+type DynamicCustomField {
+  id: SafeInt!
+  name: String!
+  type: CustomFieldType!
+}
+
+"A piece of equipment or vehicle belonging to a company."
+type Equipment {
+  id: SafeInt!
+  companyId: SafeInt!
+  crewId: SafeInt
+  name: String
+  type: Int
+  status: Int
+}
+
+type Estimate {
+  id: SafeInt!
+  number: SafeInt!
+  purchaseOrder: String!
+  date: Date!
+  status: EstimateStatus!
+  title: String
+  notes: String!
+  terms: String!
+  subtotal: Decimal!
+  discountPercent: Decimal!
+  discountAmount: Decimal!
+  tax: Decimal!
+  total: Decimal!
+  totalOwed: Decimal!
+  paidAmount: Decimal!
+  depositOwed: Decimal!
+  depositRequirement: Decimal!
+  payInFullEnabled: Boolean!
+  isArchived: Boolean!
+  hasBeenViewed: Boolean!
+  requested: EstimateChangeRequested!
+  requestedChanges: String
+  createdAt: DateTime
+  updatedAt: DateTime
+  requestedAt: DateTime
+  acceptedAt: DateTime
+  lineItems(where: EstimateLineItemFilter, orderBy: [EstimateLineItemSort!] = [{sortOrder: asc}, {id: asc}]): [EstimateLineItem!]!
+  media(where: MediaWhere, orderBy: [MediaSort!], take: SafeInt = 1000, skip: SafeInt): [Media!]!
+  history(where: EstimateHistoryFilter, orderBy: [EstimateHistorySort!], take: SafeInt = 1000, skip: SafeInt): [EstimateHistory!]!
+  customFields: [CustomField!]!
+  customerId: SafeInt!
+  customer: Customer!
+  internalNotes: String
+  isSent: Boolean!
+  sentEmail: Boolean!
+  sentSms: Boolean!
+  sentSnailMail: Boolean!
+  invoiceId: SafeInt!
+  requestId: SafeInt
+  invoiceNumber: SafeInt!
+  isDeleted: Boolean!
+  tags: String!
+  emailSubject: String!
+  emailMessage: String!
+  droppedOffAtProperty: Boolean!
+  emailOpened: Boolean!
+  sentCopyLink: Boolean!
+  budgetedHoursTotal: Decimal
+  budgetedHoursCost: Decimal
+  profit: Decimal
+  visitCost: Decimal
+}
+
+enum EstimateAction {
+  CREATE
+  ACCEPT
+  DECLINE
+  EMAIL
+  EMAIL_OPEN
+  VIEW
+  UPDATE
+  REQUEST_CHANGES
+  SMS
+  INVOICE
+  ARCHIVE
+  MARK_EMAIL
+  MARK_NOTSENT
+  DROPPED_OFF
+  UNARCHIVE
+  MAIL
+  PENDING
+  MARK_MAIL
+  LINK_COPY
+}
+
+input EstimateActionFilter {
+  equals: EstimateAction
+  not: EstimateAction
+  in: [EstimateAction!]
+  notIn: [EstimateAction!]
+}
+
+enum EstimateActionReason {
+  PRICING
+  SCHEDULING
+  OTHER
+}
+
+input EstimateActionReasonFilter {
+  equals: EstimateActionReason
+  not: EstimateActionReason
+  in: [EstimateActionReason!]
+  notIn: [EstimateActionReason!]
+}
+
+enum EstimateChangeRequested {
+  NO_CHANGE_REQUESTED
+  CHANGE_APPLIED
+  CHANGE_REQUESTED
+}
+
+input EstimateFilter {
+  id: IntFilter
+  estimateId: IntFilter
+  number: IntFilter
+  purchaseOrder: StringFilter
+  propertyId: IntFilter
+  date: DateFilter
+  status: EstimateStatusFilter
+  title: StringFilter
+  notes: StringFilter
+  terms: StringFilter
+  isArchived: Boolean
+  isDeleted: Boolean
+  subtotal: DecimalFilter
+  discountPercent: DecimalFilter
+  discountAmount: DecimalFilter
+  tax: DecimalFilter
+  total: DecimalFilter
+  hasBeenViewed: Boolean
+  requestedChanges: StringFilter
+  createdAt: DateTimeFilter
+  updatedAt: DateTimeFilter
+  requestedAt: DateTimeFilter
+  hasUnscheduledLineItems: Boolean
+  AND: [EstimateFilter!]
+  OR: [EstimateFilter!]
+  NOT: [EstimateFilter!]
+  customerId: IntFilter
+  customer: CustomerFilter
+  internalNotes: StringFilter
+  isSent: Boolean
+  invoiceId: IntFilter
+  sentCopyLink: Boolean
+  sentEmail: Boolean
+  sentSnailMail: Boolean
+  sentSms: Boolean
+  budgetedHoursTotal: DecimalFilter
+  budgetedHoursCost: DecimalFilter
+  acceptedAt: DateTimeFilter
+}
+
+type EstimateHistory {
+  id: SafeInt!
+  date: DateTime
+  action: EstimateAction
+  actionReason: EstimateActionReason
+  comment: String
+  userId: SafeInt
+  customerId: SafeInt
+  user: EstimateHistoryUser
+  customer: EstimateHistoryUser
+}
+
+input EstimateHistoryFilter {
+  id: IntFilter
+  estimateId: IntFilter
+  action: EstimateActionFilter
+  actionReason: EstimateActionReasonFilter
+  date: DateTimeFilter
+}
+
+input EstimateHistorySort {
+  id: SortOrder
+  date: SortOrder
+}
+
+type EstimateHistoryUser {
+  id: SafeInt!
+  fullName: String
+}
+
+type EstimateLineItem {
+  id: SafeInt!
+  eventId: SafeInt
+  eventIsRecurring: Boolean!
+  date: Date!
+  eventItemId: SafeInt
+  itemId: SafeInt
+  name: String!
+  description: String!
+  sortOrder: SafeInt!
+  cost: Decimal!
+  quantity: Decimal!
+  budgetedHours: Decimal
+  taxPercent1: Decimal!
+  taxPercent2: Decimal!
+  taxPrice1: Decimal!
+  taxPrice2: Decimal!
+  subtotal: Decimal!
+  subtotalWithTax: Decimal!
+  subtotalWithDiscount: Decimal!
+  propertyId: SafeInt
+  property: Property
+  isRecommended: Boolean!
+  removed: EstimateLineItemRemoved!
+  estimateId: SafeInt!
+  estimate: Estimate!
+  item: Item
+  eventStatus: EstimateLineItemEventStatus!
+  routeSuggestions(startDate: LocalDate, endDate: LocalDate, eventFilter: EventFilter, fastMode: Boolean): [SchedulingDateSuggestion!]!
+}
+
+enum EstimateLineItemEventStatus {
+  NO_EVENT
+  EVENT_CREATED
+  EVENT_OVERRIDE
+  UNKNOWN
+}
+
+input EstimateLineItemEventStatusFilter {
+  equals: EstimateLineItemEventStatus
+  not: EstimateLineItemEventStatus
+  in: [EstimateLineItemEventStatus!]
+  notIn: [EstimateLineItemEventStatus!]
+}
+
+input EstimateLineItemFilter {
+  id: IntFilter
+  estimateId: IntFilter
+  estimate: EstimateFilter
+  date: DateFilter
+  itemId: IntFilter
+  item: ItemFilter
+  name: StringFilter
+  description: StringFilter
+  cost: DecimalFilter
+  quantity: DecimalFilter
+  budgetedHours: DecimalFilter
+  subtotal: DecimalFilter
+  subtotalWithTax: DecimalFilter
+  subtotalWithDiscount: DecimalFilter
+  propertyId: IntFilter
+  property: PropertyFilter
+  removed: EstimateLineItemRemovedFilter
+  AND: [EstimateLineItemFilter!]
+  OR: [EstimateLineItemFilter!]
+  NOT: [EstimateLineItemFilter!]
+  eventId: IntFilter
+  eventIsRecurring: Boolean
+  eventItemId: IntFilter
+  eventStatus: EstimateLineItemEventStatusFilter
+}
+
+input EstimateLineItemInput {
+  name: String
+  description: String
+  date: DateTime
+  cost: Decimal
+  quantity: Decimal
+  taxPercent1: Decimal
+  taxPercent2: Decimal
+  itemId: SafeInt
+  sortOrder: SafeInt
+  propertyId: SafeInt
+}
+
+enum EstimateLineItemRemoved {
+  RETAINED
+  REMOVED
+  RETAINED_AND_ACCEPTED
+}
+
+input EstimateLineItemRemovedFilter {
+  equals: EstimateLineItemRemoved
+  not: EstimateLineItemRemoved
+  in: [EstimateLineItemRemoved!]
+  notIn: [EstimateLineItemRemoved!]
+}
+
+input EstimateLineItemSort {
+  id: SortOrder
+  estimateId: SortOrder
+  estimate: EstimateSort
+  propertyId: SortOrder
+  property: PropertySort
+  date: SortOrder
+  itemId: SortOrder
+  item: ItemSort
+  name: SortOrder
+  description: SortOrder
+  sortOrder: SortOrder
+  cost: SortOrder
+  quantity: SortOrder
+  budgetedHours: SortOrder
+  subtotal: SortOrder
+  subtotalWithTax: SortOrder
+  subtotalWithDiscount: SortOrder
+}
+
+"Print style for estimate PDFs: clean (no stub) or with payment stub."
+enum EstimatePrintStyle {
+  CLEAN
+  WITH_PAYMENT_STUB
+}
+
+type EstimateReportAvgAggregate {
+  subtotal: Decimal
+  total: Decimal
+  tax: Decimal
+  discountAmount: Decimal
+  profit: Decimal
+  budgetedHoursTotal: Decimal
+  budgetedHoursCost: Decimal
+}
+
+input EstimateReportAvgOrderBy {
+  subtotal: SortOrder
+  total: SortOrder
+  tax: SortOrder
+  discountAmount: SortOrder
+  profit: SortOrder
+  budgetedHoursTotal: SortOrder
+  budgetedHoursCost: SortOrder
+}
+
+type EstimateReportCountAggregate {
+  id: SafeInt!
+}
+
+input EstimateReportCountOrderBy {
+  id: SortOrder
+}
+
+type EstimateReportMaxAggregate {
+  date: Date
+  subtotal: Decimal
+  total: Decimal
+  tax: Decimal
+  discountAmount: Decimal
+  profit: Decimal
+  budgetedHoursTotal: Decimal
+  budgetedHoursCost: Decimal
+}
+
+input EstimateReportMaxOrderBy {
+  date: SortOrder
+  subtotal: SortOrder
+  total: SortOrder
+  tax: SortOrder
+  discountAmount: SortOrder
+  profit: SortOrder
+  budgetedHoursTotal: SortOrder
+  budgetedHoursCost: SortOrder
+}
+
+type EstimateReportMinAggregate {
+  date: Date
+  subtotal: Decimal
+  total: Decimal
+  tax: Decimal
+  discountAmount: Decimal
+  profit: Decimal
+  budgetedHoursTotal: Decimal
+  budgetedHoursCost: Decimal
+}
+
+input EstimateReportMinOrderBy {
+  date: SortOrder
+  subtotal: SortOrder
+  total: SortOrder
+  tax: SortOrder
+  discountAmount: SortOrder
+  profit: SortOrder
+  budgetedHoursTotal: SortOrder
+  budgetedHoursCost: SortOrder
+}
+
+input EstimateReportOrderBy {
+  status: SortOrder
+  customerId: SortOrder
+  date: SortOrder
+  isSent: SortOrder
+  count: EstimateReportCountOrderBy
+  sum: EstimateReportSumOrderBy
+  avg: EstimateReportAvgOrderBy
+  min: EstimateReportMinOrderBy
+  max: EstimateReportMaxOrderBy
+}
+
+type EstimateReportRow {
+  status: EstimateStatus
+  customerId: SafeInt
+  date: Date
+  isSent: Boolean
+  customer: Customer
+  _count: EstimateReportCountAggregate
+  _sum: EstimateReportSumAggregate
+  _avg: EstimateReportAvgAggregate
+  _min: EstimateReportMinAggregate
+  _max: EstimateReportMaxAggregate
+  count: EstimateReportCountAggregate
+  sum: EstimateReportSumAggregate
+  avg: EstimateReportAvgAggregate
+  min: EstimateReportMinAggregate
+  max: EstimateReportMaxAggregate
+}
+
+type EstimateReportSumAggregate {
+  subtotal: Decimal
+  total: Decimal
+  tax: Decimal
+  discountAmount: Decimal
+  profit: Decimal
+  budgetedHoursTotal: Decimal
+  budgetedHoursCost: Decimal
+}
+
+input EstimateReportSumOrderBy {
+  subtotal: SortOrder
+  total: SortOrder
+  tax: SortOrder
+  discountAmount: SortOrder
+  profit: SortOrder
+  budgetedHoursTotal: SortOrder
+  budgetedHoursCost: SortOrder
+}
+
+enum EstimateSendMethod {
+  EMAIL
+  MAIL
+  SMS
+}
+
+type EstimateSendResult {
+  estimateId: SafeInt!
+  status: EstimateSendStatus!
+  errorMessage: String
+}
+
+type EstimateSendResults {
+  results: [EstimateSendResult!]!
+}
+
+enum EstimateSendStatus {
+  QUEUED
+  SENT
+  ERROR
+}
+
+enum EstimateSentByType {
+  EMAIL
+  MAIL
+  DROPPED_OFF
+  NOT_SENT
+}
+
+input EstimateSort {
+  id: SortOrder
+  title: SortOrder
+  number: SortOrder
+  purchaseOrder: SortOrder
+  status: SortOrder
+  date: SortOrder
+  subtotal: SortOrder
+  discountPercent: SortOrder
+  discountAmount: SortOrder
+  tax: SortOrder
+  total: SortOrder
+  createdAt: SortOrder
+  updatedAt: SortOrder
+  requestedAt: SortOrder
+  customer: CustomerSort
+  acceptedAt: SortOrder
+}
+
+enum EstimateStatus {
+  DRAFT
+  PENDING
+  ACCEPTED
+  DECLINED
+  INVOICED
+  CHANGE_REQUESTED
+  CHANGE_UPDATED
+}
+
+input EstimateStatusFilter {
+  equals: EstimateStatus
+  not: EstimateStatus
+  in: [EstimateStatus!]
+  notIn: [EstimateStatus!]
+}
+
+type Event {
+  id: SafeInt!
+  propertyId: SafeInt
+  property: Property
+  location: Location
+  hasTime: Boolean!
+  startDate: LocalDate!
+  startTime: LocalTime
+  startDateTime: LocalDateTime!
+  endDate: LocalDate
+  endTime: LocalTime!
+  endDateTime: LocalDateTime
+  title: String!
+  recurringEventId: SafeInt
+  recurringId: SafeInt
+  type: EventType!
+  workRequestId: SafeInt
+  requestId: SafeInt
+  description: String!
+  cost: Decimal!
+  subtotal: Decimal!
+  total: Decimal!
+  equipmentId: SafeInt
+  maintenanceCost: Decimal!
+  isInvoiceable: Boolean!
+  invoiceId: SafeInt
+  invoice: Invoice
+  budgetedHours: Decimal!
+  sortId: SafeInt!
+  sortOrder: SafeInt!
+  contractId: SafeInt
+  isNotServiced: Boolean!
+  isClosed: Boolean!
+  isSkipped: Boolean!
+  isCancelled: Boolean!
+  isWaitlisted: Boolean!
+  notServicedReason: String!
+  closedAt: DateTime
+  skippedDate: LocalDate
+  skippedAt: DateTime
+  skippedReason: String
+  programId: SafeInt
+  estimateId: SafeInt
+  categoryId: SafeInt
+  beforeVisitCount: SafeInt!
+  isDeleted: Boolean!
+  createdAt: DateTime!
+  updatedAt: DateTime
+  estimate: Estimate
+  lineItems(where: EventItemFilter = {isDeleted: false}, orderBy: [EventItemSort!], take: SafeInt = 1000, skip: SafeInt): [EventItem!]!
+  eventItems(where: EventItemFilter = {isDeleted: false}, orderBy: [EventItemSort!], take: SafeInt = 1000, skip: SafeInt): [EventItem!]!
+  media(where: MediaWhere, orderBy: [MediaSort!], take: SafeInt = 1000, skip: SafeInt): [Media!]!
+  beforeAndAfters(where: BeforeAndAfterWhere, orderBy: [BeforeAndAfterSort!], take: SafeInt = 1000, skip: SafeInt): [BeforeAndAfter!]!
+  status: EventStatus!
+  waitlistDueStatus: WaitlistDueStatus
+  tags: [String!]!
+  customFields: [CustomField!]!
+  recurringEventPosition: RecurringEventPosition
+  forms: [EventForm!]!
+  customerId: SafeInt
+  customer: Customer
+  createdByUserId: SafeInt!
+  createdByUser: User!
+  lastUpdatedByUserId: SafeInt
+  lastUpdatedByUser: User
+  crewId: SafeInt
+  crew: Crew
+  color: String!
+  completedByUserId: SafeInt
+  completedByUser: User
+  category: EventCategory
+  employees: [EventEmployee!]!
+  users(where: UserFilter, orderBy: [UserSort!], take: SafeInt = 1000, skip: SafeInt): [User!]!
+  dispatchNotes: [DispatchNote!]
+  timeEntries(where: TimeEntryFilter, orderBy: [TimeEntrySort!], take: SafeInt = 1000, skip: SafeInt): [TimeEntry!]!
+  timeEntryTotals: TimeEntryTotals!
+  recurringEvent: RecurringEvent
+  routeStops(where: RouteStopFilter, orderBy: [RouteStopSort!], take: SafeInt = 1000, skip: SafeInt): [RouteStop!]!
+  routeSuggestions(startDate: LocalDate, endDate: LocalDate, eventFilter: EventFilter, fastMode: Boolean): [SchedulingDateSuggestion!]!
+  latestUpsellHistory: UpsellHistory
+}
+
+"A category that can be assigned to an event (e.g. a TODO or Meeting category)."
+type EventCategory {
+  id: SafeInt!
+  name: String!
+  type: EventType!
+  companyId: SafeInt!
+}
+
+"Deprecated. Use Event.users instead."
+type EventEmployee {
+  id: SafeInt!
+  eventId: SafeInt!
+  employeeUserId: SafeInt!
+  user: User
+  createdAt: DateTime!
+}
+
+input EventEmployeeFilter {
+  employeeUserId: IntFilter
+}
+
+input EventFilter {
+  id: IntFilter
+  type: EventTypeFilter
+  title: StringFilter
+  status: EventStatusFilter
+  waitlistDueStatus: WaitlistDueStatusFilter
+  propertyId: IntFilter
+  categoryId: IntFilter
+  estimateId: IntFilter
+  startDate: DateFilter
+  startDateTime: DateTimeFilter
+  endDateTime: DateTimeFilter
+  endDate: DateFilter
+  budgetedHours: DecimalFilter
+  lineItems: EventItemFilter
+  users: UserFilter
+  isDeleted: Boolean
+  AND: [EventFilter!]
+  OR: [EventFilter!]
+  NOT: [EventFilter!]
+  customerId: IntFilter
+  customer: CustomerFilter
+  crewId: IntFilter
+  dispatchNotes: StringFilter
+  description: StringFilter
+  invoiceId: IntFilter
+  recurringEventId: IntFilter
+  isInvoiced: Boolean
+  tags: TagsFilter
+  hasRunningTimers: Boolean
+  hasTimeEntries: Boolean
+  isRecurring: Boolean
+  updatedAt: DateTimeFilter
+  createdAt: DateTimeFilter
+}
+
+type EventForm {
+  id: SafeInt!
+  eventId: SafeInt!
+  formId: SafeInt
+  formName: String
+  submittedContent: String
+  submittedSignature: String
+  submittedByUserId: SafeInt
+  createdAt: DateTime
+  updatedAt: DateTime
+  content: String!
+  form: Form
+  event: Event
+  submittedByUser: User
+}
+
+"Controls which date is used on invoice line items when an event is invoiced."
+enum EventInvoiceDateSource {
+  SCHEDULED_DATE
+  CLOSED_DATE
+  PROMPT_USER
+}
+
+"Event line item"
+type EventItem {
+  id: SafeInt!
+  eventId: SafeInt!
+  itemId: SafeInt!
+  name: String!
+  description: String
+  price: Decimal!
+  quantity: Decimal!
+  tax: Decimal
+  total: Decimal!
+  budgetedHours: Decimal
+  isDeleted: Boolean!
+  deletedAt: DateTime
+  createdAt: DateTime!
+  updatedAt: DateTime
+  event: Event!
+  item: Item
+}
+
+input EventItemFilter {
+  id: IntFilter
+  name: StringFilter
+  itemId: IntFilter
+  item: ItemFilter
+  isDeleted: Boolean
+}
+
+input EventItemSort {
+  id: SortOrder
+  name: SortOrder
+}
+
+type EventReportAvgAggregate {
+  budgetedHours: Decimal
+}
+
+input EventReportAvgOrderBy {
+  budgetedHours: SortOrder
+}
+
+type EventReportCountAggregate {
+  _all: SafeInt!
+  id: SafeInt!
+}
+
+input EventReportCountOrderBy {
+  id: SortOrder
+}
+
+type EventReportMaxAggregate {
+  startDate: Date
+  startDateTime: LocalDateTime
+  budgetedHours: Decimal
+}
+
+input EventReportMaxOrderBy {
+  startDate: SortOrder
+  startDateTime: SortOrder
+  budgetedHours: SortOrder
+}
+
+type EventReportMinAggregate {
+  startDate: Date
+  startDateTime: LocalDateTime
+  budgetedHours: Decimal
+}
+
+input EventReportMinOrderBy {
+  startDate: SortOrder
+  startDateTime: SortOrder
+  budgetedHours: SortOrder
+}
+
+input EventReportOrderBy {
+  status: SortOrder
+  type: SortOrder
+  customerId: SortOrder
+  crewId: SortOrder
+  propertyId: SortOrder
+  recurringEventId: SortOrder
+  completedByUserId: SortOrder
+  categoryId: SortOrder
+  year: SortOrder
+  month: SortOrder
+  startDate: SortOrder
+  count: EventReportCountOrderBy
+  sum: EventReportSumOrderBy
+  avg: EventReportAvgOrderBy
+  min: EventReportMinOrderBy
+  max: EventReportMaxOrderBy
+}
+
+type EventReportRow {
+  status: EventStatus
+  type: EventType
+  customerId: SafeInt
+  crewId: SafeInt
+  propertyId: SafeInt
+  recurringEventId: SafeInt
+  completedByUserId: SafeInt
+  categoryId: SafeInt
+  budgetedHours: Decimal
+  isInvoiceable: Boolean
+  year: Int
+  month: Int
+  startDate: Date
+  customer: Customer
+  crew: Crew
+  property: Property
+  completedByUser: User
+  _count: EventReportCountAggregate
+  _sum: EventReportSumAggregate
+  _avg: EventReportAvgAggregate
+  _min: EventReportMinAggregate
+  _max: EventReportMaxAggregate
+  count: EventReportCountAggregate
+  sum: EventReportSumAggregate
+  avg: EventReportAvgAggregate
+  min: EventReportMinAggregate
+  max: EventReportMaxAggregate
+}
+
+type EventReportSumAggregate {
+  budgetedHours: Decimal
+  total: Decimal
+  timeEntrySeconds: SafeInt
+}
+
+input EventReportSumOrderBy {
+  budgetedHours: SortOrder
+}
+
+input EventSort {
+  id: SortOrder
+  title: SortOrder
+  startDate: SortOrder
+  startDateTime: SortOrder
+  startTime: SortOrder
+  endDate: SortOrder
+  endDateTime: SortOrder
+  sortOrder: SortOrder
+  status: SortOrder
+  budgetedHours: SortOrder
+  type: SortOrder
+  property: PropertySort
+  recurringEvent: RecurringEventSort
+  customer: CustomerSort
+  timeEntriesCount: SortOrder
+  crew: CrewSort
+  location: LocationSort
+  updatedAt: SortOrder
+  createdAt: SortOrder
+}
+
+"CLOSED='Complete' to users. OPEN and CLOSED the billable, serviceable events. Most searches and reporting should filter to OPEN, CLOSED and/or SKIPPED"
+enum EventStatus {
+  WAITLISTED
+  OPEN
+  SKIPPED
+  CLOSED
+  CANCELLED
+  DELETED
+}
+
+"Most searches and reporting should filter to OPEN, CLOSED and/or SKIPPED"
+input EventStatusFilter {
+  equals: EventStatus
+  not: EventStatus
+  in: [EventStatus!]
+  notIn: [EventStatus!]
+}
+
+enum EventType {
+  VISIT
+  TODO
+  MEETING
+  MAINTENANCE
+  WORK_REQUEST
+}
+
+input EventTypeFilter {
+  equals: EventType
+  not: EventType
+  in: [EventType!]
+  notIn: [EventType!]
+}
+
+input EventWhere {
+  id: IntFilter
+  title: StringFilter
+  status: EventStatusFilter
+  isDeleted: Boolean
+}
+
+type File implements FileInterface {
+  size: SafeInt
+  contentType: String
+  thumb(height: SafeInt = 1200, width: SafeInt = 1200, quality: SafeInt): String
+  url: String!
+}
+
+interface FileInterface {
+  size: SafeInt
+  contentType: String
+  thumb(height: SafeInt = 1200, width: SafeInt = 1200, quality: SafeInt): String
+  url: String!
+}
+
+"The `Float` scalar type represents signed double-precision fractional values as specified by [IEEE 754](https://en.wikipedia.org/wiki/IEEE_floating_point)."
+scalar Float
+
+type Form {
+  id: SafeInt!
+  name: String!
+  content: String!
+  editors: [FormEditorType!]!
+}
+
+enum FormEditorType {
+  COMPANY_OWNER
+  EMPLOYEES
+  PROPERTY_OWNER
+  ALL
+}
+
+"The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `"4"`) or integer (such as `4`) input value will be accepted as an ID."
+scalar ID
+
+"The `Int` scalar type represents non-fractional signed whole numeric values. Int can represent values between -(2^31) and 2^31 - 1."
+scalar Int
+
+"Generic filters for number fields"
+input IntFilter {
+  equals: SafeInt
+  not: SafeInt
+  in: [SafeInt!]
+  notIn: [SafeInt!]
+  lt: SafeInt
+  lte: SafeInt
+  gt: SafeInt
+  gte: SafeInt
+}
+
+type Invoice {
+  id: SafeInt!
+  number: SafeInt
+  purchaseOrder: String!
+  date: Date!
+  status: InvoiceStatus!
+  title: String
+  notes: String!
+  terms: String!
+  subtotal: Decimal!
+  discountPercent: Decimal!
+  discountAmount: Decimal!
+  tax: Decimal!
+  total: Decimal!
+  paidAmount: Decimal!
+  isSent: Boolean!
+  hasBeenViewed: Boolean!
+  contract: SafeInt
+  isDeleted: SafeInt!
+  lateFee: Decimal!
+  processingFee: Decimal!
+  propertyId: SafeInt
+  updatedAt: DateTime
+  lastUpdated: DateTime
+  lastAutoChargeAttempt: DateTime
+  autoChargedAt: DateTime
+  sentAt: DateTime
+  sorted: Boolean!
+  lateFeeRule: SafeInt!
+  lateFeeRuleVersion: SafeInt!
+  createdAt: DateTime
+  daysPastDue: Int!
+  dueDate: DateTime
+  media(where: MediaWhere, orderBy: [MediaSort!], take: SafeInt = 1000, skip: SafeInt): [Media!]!
+  lineItems(where: InvoiceLineItemFilter, orderBy: [InvoiceLineItemSort!], take: SafeInt = 1000, skip: SafeInt): [InvoiceLineItem!]!
+  history(where: InvoiceHistoryFilter, orderBy: [InvoiceHistorySort!], take: SafeInt = 1000, skip: SafeInt): [InvoiceHistory!]!
+  customFields: [CustomField!]!
+  payments(where: PaymentFilter = {isDeleted: false}, orderBy: [PaymentSort!], take: SafeInt = 1000, skip: SafeInt): [Payment!]!
+  customerId: SafeInt!
+  internalNotes: String
+  sentEmail: Boolean!
+  isArchived: Boolean!
+  sentSnailMail: Boolean!
+  droppedOffAtProperty: Boolean!
+  tags: String!
+  emailSubject: String!
+  sentSms: Boolean!
+  emailMessage: String!
+  quickbooksLastSynced: DateTime
+  quickbooksId: SafeInt
+  quickbooksSyncStatus: QuickbooksSyncStatus
+  quickbooksMeta: String
+  quickbooksSyncFailedCount: SafeInt!
+  quickbooksSyncFailedMessage: String
+  isImportedFromQuickbooks: Boolean!
+  autoSendReadyAt: DateTime
+  autoSentAt: DateTime
+  emailOpen: Boolean!
+  source: String
+  sentCopyLink: Boolean!
+}
+
+enum InvoiceDatePolicy {
+  DATE_SENT
+  LAST_SERVICE_DATE
+  NO_CHANGE
+}
+
+input InvoiceFilter {
+  id: IntFilter
+  number: IntFilter
+  purchaseOrder: StringFilter
+  date: DateFilter
+  status: InvoiceStatusFilter
+  title: StringFilter
+  isArchived: Boolean
+  isDeleted: IntFilter
+  updatedAt: DateTimeFilter
+  createdAt: DateTimeFilter
+  customerId: IntFilter
+}
+
+enum InvoiceGrouping {
+  PER_VISIT
+  BY_CUSTOMER
+  BY_PROPERTY
+  BY_PROPERTY_AND_ASSET
+}
+
+type InvoiceHistory {
+  id: SafeInt!
+  date: DateTime
+  action: InvoiceHistoryAction
+  actionReason: String
+  comment: String
+  userId: SafeInt
+  customerId: SafeInt
+  user: InvoiceHistoryUser
+  customer: InvoiceHistoryUser
+  meta: String
+  payment: Payment
+  invoice: Invoice
+}
+
+enum InvoiceHistoryAction {
+  ARCHIVE
+  CANCEL
+  COMBINED
+  CREATE
+  DROPPED_OFF
+  EMAIL
+  EMAIL_OPEN
+  LINK_COPY
+  MAIL
+  MARK_DRAFT
+  MARK_EMAIL
+  MARK_MAIL
+  MARK_NOTSEND
+  MARK_WRITTENOFF
+  PAYMENT
+  PROCESSING_FEE
+  REFUND
+  SMS
+  UNARCHIVE
+  UPDATE
+  VIEW
+  STRIPE_PAYMENT_FAILED
+}
+
+input InvoiceHistoryFilter {
+  id: IntFilter
+  action: StringFilter
+}
+
+input InvoiceHistorySort {
+  id: SortOrder
+  date: SortOrder
+}
+
+type InvoiceHistoryUser {
+  id: SafeInt!
+  fullName: String
+}
+
+type InvoiceLineItem {
+  id: SafeInt!
+  eventId: SafeInt
+  eventServiceId: SafeInt
+  eventIsRecurring: Boolean!
+  date: Date
+  itemId: SafeInt
+  name: String!
+  description: String!
+  cost: Decimal!
+  quantity: Decimal!
+  budgetedHours: Decimal
+  taxPercent1: Decimal!
+  taxPercent2: Decimal!
+  taxPrice1: Decimal!
+  taxPrice2: Decimal!
+  subtotal: Decimal!
+  subtotalWithTax: Decimal!
+  subtotalWithDiscount: Decimal!
+  propertyId: SafeInt
+  property: Property
+  isRecommended: Boolean!
+  removed: EstimateLineItemRemoved!
+  lineItemOrder: SafeInt!
+}
+
+input InvoiceLineItemFilter {
+  id: IntFilter
+  name: StringFilter
+}
+
+input InvoiceLineItemSort {
+  id: SortOrder
+  name: SortOrder
+  lineItemOrder: SortOrder
+}
+
+type InvoiceReportAvgAggregate {
+  subtotal: Decimal
+  total: Decimal
+  tax: Decimal
+  discountAmount: Decimal
+  paidAmount: Decimal
+  lateFee: Decimal
+  processingFee: Decimal
+}
+
+input InvoiceReportAvgOrderBy {
+  subtotal: SortOrder
+  total: SortOrder
+  tax: SortOrder
+  discountAmount: SortOrder
+  paidAmount: SortOrder
+  lateFee: SortOrder
+  processingFee: SortOrder
+}
+
+type InvoiceReportCountAggregate {
+  id: SafeInt!
+}
+
+input InvoiceReportCountOrderBy {
+  id: SortOrder
+}
+
+type InvoiceReportMaxAggregate {
+  date: Date
+  subtotal: Decimal
+  total: Decimal
+  tax: Decimal
+  discountAmount: Decimal
+  paidAmount: Decimal
+  lateFee: Decimal
+  processingFee: Decimal
+}
+
+input InvoiceReportMaxOrderBy {
+  date: SortOrder
+  subtotal: SortOrder
+  total: SortOrder
+  tax: SortOrder
+  discountAmount: SortOrder
+  paidAmount: SortOrder
+  lateFee: SortOrder
+  processingFee: SortOrder
+}
+
+type InvoiceReportMinAggregate {
+  date: Date
+  subtotal: Decimal
+  total: Decimal
+  tax: Decimal
+  discountAmount: Decimal
+  paidAmount: Decimal
+  lateFee: Decimal
+  processingFee: Decimal
+}
+
+input InvoiceReportMinOrderBy {
+  date: SortOrder
+  subtotal: SortOrder
+  total: SortOrder
+  tax: SortOrder
+  discountAmount: SortOrder
+  paidAmount: SortOrder
+  lateFee: SortOrder
+  processingFee: SortOrder
+}
+
+input InvoiceReportOrderBy {
+  status: SortOrder
+  customerId: SortOrder
+  propertyId: SortOrder
+  date: SortOrder
+  isSent: SortOrder
+  source: SortOrder
+  count: InvoiceReportCountOrderBy
+  sum: InvoiceReportSumOrderBy
+  avg: InvoiceReportAvgOrderBy
+  min: InvoiceReportMinOrderBy
+  max: InvoiceReportMaxOrderBy
+}
+
+type InvoiceReportRow {
+  status: InvoiceStatus
+  customerId: SafeInt
+  propertyId: SafeInt
+  date: Date
+  isSent: Boolean
+  source: String
+  customer: Customer
+  property: Property
+  _count: InvoiceReportCountAggregate
+  _sum: InvoiceReportSumAggregate
+  _avg: InvoiceReportAvgAggregate
+  _min: InvoiceReportMinAggregate
+  _max: InvoiceReportMaxAggregate
+  count: InvoiceReportCountAggregate
+  sum: InvoiceReportSumAggregate
+  avg: InvoiceReportAvgAggregate
+  min: InvoiceReportMinAggregate
+  max: InvoiceReportMaxAggregate
+}
+
+type InvoiceReportSumAggregate {
+  subtotal: Decimal
+  total: Decimal
+  tax: Decimal
+  discountAmount: Decimal
+  paidAmount: Decimal
+  lateFee: Decimal
+  processingFee: Decimal
+}
+
+input InvoiceReportSumOrderBy {
+  subtotal: SortOrder
+  total: SortOrder
+  tax: SortOrder
+  discountAmount: SortOrder
+  paidAmount: SortOrder
+  lateFee: SortOrder
+  processingFee: SortOrder
+}
+
+input InvoiceSort {
+  id: SortOrder
+  number: SortOrder
+  purchaseOrder: SortOrder
+  companyId: SortOrder
+  customerId: SortOrder
+  date: SortOrder
+  status: SortOrder
+  title: SortOrder
+  sent: SortOrder
+  updatedAt: SortOrder
+  createdAt: SortOrder
+}
+
+enum InvoiceStatus {
+  DRAFT
+  PENDING
+  PAID
+  PARTIALLY_PAID
+  PAST_DUE
+  WRITE_OFF
+}
+
+input InvoiceStatusFilter {
+  equals: InvoiceStatus
+  not: InvoiceStatus
+  in: [InvoiceStatus!]
+  notIn: [InvoiceStatus!]
+}
+
+type Item {
+  id: SafeInt!
+  categoryId: SafeInt!
+  category: ItemCategory
+  type: ItemType!
+  name: String!
+  description: String!
+  price: Decimal!
+  quantity: Decimal!
+  budgetedHours: Decimal
+  tax1: Decimal!
+  taxId1: SafeInt!
+  tax2: Decimal!
+  taxId2: SafeInt!
+  unit: String!
+  supplier: String!
+  supplierId: SafeInt!
+  materialCost: Decimal!
+  equipmentCost: Decimal!
+  subcontractCost: Decimal!
+  isDeleted: Boolean!
+  inventory: Boolean!
+  tags: String!
+  wholesaleCost: Decimal!
+  inventoryOnHand: SafeInt!
+  markup: Decimal!
+  markupType: ItemMarkupType!
+  isGlobal: Boolean!
+  isTaxable: Boolean!
+  color: String
+  rateChargedP4p: Decimal!
+  eventCount(where: EventFilter): SafeInt!
+}
+
+type ItemCategory {
+  id: SafeInt!
+  name: String!
+  description: String!
+  isRoot: Boolean!
+  items(where: ItemFilter = {isDeleted: false}, orderBy: [ItemSort!], take: SafeInt = 1000, skip: SafeInt): [Item!]!
+}
+
+input ItemCategoryFilter {
+  id: IntFilter
+}
+
+input ItemCategorySort {
+  id: SortOrder
+  name: SortOrder
+}
+
+input ItemFilter {
+  category: ItemCategoryFilter
+  events: EventFilter
+  id: IntFilter
+  isDeleted: Boolean
+  name: StringFilter
+  description: StringFilter
+  price: DecimalFilter
+  rateChargedP4p: DecimalFilter
+  inventoryOnHand: IntFilter
+  wholesaleCost: DecimalFilter
+  markup: DecimalFilter
+  AND: [ItemFilter!]
+  OR: [ItemFilter!]
+  NOT: ItemFilter
+}
+
+enum ItemMarkupType {
+  NONE
+  PERCENTAGE
+  FLAT
+}
+
+type ItemPackage {
+  id: Int!
+  name: String
+  description: String!
+  categoryId: Int!
+  itemIds: [SafeInt!]!
+  items: [Item!]!
+  isDeleted: Boolean!
+  createdAt: DateTime!
+}
+
+input ItemPackageFilter {
+  id: IntFilter
+  name: StringFilter
+  categoryId: IntFilter
+  isDeleted: Boolean
+  AND: [ItemPackageFilter!]
+  OR: [ItemPackageFilter!]
+  NOT: ItemPackageFilter
+}
+
+input ItemPackageSort {
+  id: SortOrder
+  name: SortOrder
+  createdAt: SortOrder
+}
+
+input ItemSort {
+  id: SortOrder
+  name: SortOrder
+  categoryId: SortOrder
+  category: ItemCategorySort
+}
+
+enum ItemType {
+  SERVICE
+  ITEM
+  LABOR
+  OTHER
+}
+
+"The `JSON` scalar type represents JSON values as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf)."
+scalar JSON
+
+"A local date string (i.e., with no associated timezone) in `YYYY-MM-DD` format, e.g. `2020-01-01`."
+scalar LocalDate
+
+"A local date-time string (i.e., with no associated timezone) in `YYYY-MM-DDTHH:mm:ss` format, e.g. `2020-01-01T00:00:00`."
+scalar LocalDateTime
+
+"A local time string (i.e., with no associated timezone) in 24-hr `HH:mm[:ss[.SSS]]` format, e.g. `14:25` or `14:25:06` or `14:25:06.123`."
+scalar LocalTime
+
+type Location {
+  name: String
+  latitude: Decimal!
+  longitude: Decimal!
+}
+
+input LocationInput {
+  latitude: Decimal!
+  longitude: Decimal!
+}
+
+input LocationSort {
+  name: SortOrder
+}
+
+type Media implements FileInterface {
+  id: SafeInt!
+  companyId: SafeInt!
+  module: MediaModule!
+  objectId: SafeInt!
+  fileName: String!
+  size: SafeInt
+  contentType: String
+  thumb(height: SafeInt = 1200, width: SafeInt = 1200, quality: SafeInt): String
+  url: String!
+  description: String!
+  uploadedAt: DateTime
+  movedToFolderAt: DateTime
+}
+
+enum MediaModule {
+  TEMPORARY
+  BEFORE_AFTER
+  CUSTOMER
+  INVOICE
+  VISIT
+  ASSET
+  EQUIPMENT
+  ESTIMATE
+  EXPENSE
+  RECURRING
+  VENDOR
+  CHEMICAL
+  CHEMICAL_APP
+}
+
+input MediaSort {
+  fileName: SortOrder
+  size: SortOrder
+  contentType: SortOrder
+  uploadedAt: SortOrder
+}
+
+input MediaWhere {
+  fileName: StringFilter
+  size: IntFilter
+  description: StringFilter
+  uploadedAt: DateTimeFilter
+}
+
+enum MockTwilioError {
+  PN_NOT_PROVIDED
+  PN_NOT_WITH_ISV
+  PN_NOT_TOLLFREE
+  PN_STATUS_IS_NOT_IN_USE
+  NOTIFICATION_EMAIL_NOT_PROVIDED
+  VERIFICATION_NOT_RESUBMITTABLE
+  TRIAL_ACCOUNT
+  GENERIC
+}
+
+type Mutation {
+  signUp(input: SignUpInput!): SignUpResult!
+  updateContactInfo(companyContact: CompanyContactInput!, userContact: UserContactInput!): Company!
+  pingMutation: String!
+  createUpload(contentType: String!, size: SafeInt!): TempFile!
+  sendAiMessage(message: String!, chatId: SafeInt, responseFormat: AiResponseFormat, contextData: JSON): AiChat!
+  createCustomer(input: CustomerInput!): Customer!
+  updateCustomer(customerId: SafeInt!, input: CustomerInput!): Customer!
+  createEstimate(input: CreateEstimateInput): Estimate!
+  updateEstimate(estimateId: SafeInt!, input: UpdateEstimateInput): Estimate!
+  deleteEstimate(estimateId: SafeInt!): Estimate!
+  acceptEstimate(estimateId: SafeInt!): Estimate!
+  setEstimateStatusToDraft(estimateId: SafeInt!): Estimate!
+  setEstimateStatusToInvoiced(estimateId: SafeInt!): Estimate!
+  copyEstimate(estimateId: SafeInt!): Estimate!
+  restoreEstimate(estimateId: SafeInt!): Estimate!
+  markEstimateAsCopyLinkSent(estimateId: SafeInt!): Estimate!
+  createInvoiceFromEstimate(estimateId: SafeInt!): Invoice!
+  toggleEstimateLineItem(estimateId: SafeInt!, lineItemId: SafeInt!, include: Boolean!): Estimate!
+  setEstimateStatusToPending(estimateId: SafeInt!): Estimate!
+  setEstimateStatusToChangesRequested(estimateId: SafeInt!, requestedChanges: String!): Estimate!
+  setEstimateStatusToChangesUpdated(estimateId: SafeInt!): Estimate!
+  declineEstimate(estimateId: SafeInt!, reason: EstimateActionReason!, comment: String): Estimate!
+  acceptEstimates(estimateIds: [SafeInt!]!): [Estimate!]!
+  archiveEstimates(estimateIds: [SafeInt!]!): [Estimate!]!
+  unarchiveEstimates(estimateIds: [SafeInt!]!): [Estimate!]!
+  deleteEstimates(estimateIds: [SafeInt!]!): [Estimate!]!
+  createEstimateLineItem(estimateId: SafeInt!, input: EstimateLineItemInput): Estimate!
+  updateEstimateLineItem(estimateId: SafeInt!, lineItemId: SafeInt!, input: EstimateLineItemInput): Estimate!
+  setEstimateLineItemEventStatus(estimateId: SafeInt!, lineItemId: SafeInt!, eventStatus: EstimateLineItemEventStatus!, eventId: SafeInt): EstimateLineItem!
+  deleteEstimateLineItem(estimateId: SafeInt!, lineItemId: SafeInt!): Estimate!
+  createEstimateListPdf(estimateIds: [SafeInt!]!): String!
+  createEstimatesPdf(estimateIds: [SafeInt!]!, style: EstimatePrintStyle = CLEAN): String!
+  sendEstimates(estimateIds: [SafeInt!]!, sendMethod: EstimateSendMethod!): EstimateSendResults!
+  markEstimatesAsSent(estimateIds: [SafeInt!]!, sentByType: EstimateSentByType!): [Estimate!]!
+  declineEstimates(estimateIds: [SafeInt!]!, reason: EstimateActionReason!, comment: String): [Estimate!]!
+  updateBeforeDescription(beforeAndAfterId: SafeInt!, description: String!): BeforeAndAfter!
+  updateAfterDescription(beforeAndAfterId: SafeInt!, description: String!): BeforeAndAfter!
+  addBeforeMedia(beforeAndAfterId: SafeInt!, tempFileName: String!): BeforeAndAfter!
+  addAfterMedia(beforeAndAfterId: SafeInt!, tempFileName: String!): BeforeAndAfter!
+  removeAfterMedia(beforeAndAfterId: SafeInt!, mediaId: SafeInt!): BeforeAndAfter!
+  removeBeforeMedia(beforeAndAfterId: SafeInt!, mediaId: SafeInt!): BeforeAndAfter!
+  removeBeforeAndAfter(beforeAndAfterId: SafeInt!): BeforeAndAfter!
+  addBeforeAndAfter(eventId: SafeInt!): BeforeAndAfter!
+  updateIsClientVisible(beforeAndAfterId: SafeInt!, isClientVisible: Boolean!): BeforeAndAfter!
+  updateEventForm(eventFormId: SafeInt!, content: String!, signature: String): EventForm!
+  createEvent(input: CreateEventInput!): Event!
+  addEventForm(eventId: SafeInt!, formId: SafeInt!): Event!
+  removeEventForm(eventId: SafeInt!, formId: SafeInt!): Event!
+  updateEventDescription(eventId: SafeInt!, description: String!): Event!
+  updateEventStatus(eventId: SafeInt!, status: EventStatus!, at: DateTime): Event!
+  updateEventStatuses(eventIds: [SafeInt!]!, status: EventStatus!, at: DateTime): [Event!]!
+  closeEvent(eventId: SafeInt!, at: DateTime, invoiceDateSource: EventInvoiceDateSource): Event!
+  closeEvents(eventIds: [SafeInt!]!, at: DateTime, invoiceDateSource: EventInvoiceDateSource): [Event!]!
+  reopenEvents(eventIds: [SafeInt!]!): [Event!]!
+  reopenEvent(eventId: SafeInt!): Event!
+  skipEvent(eventId: SafeInt!, skippedReason: String!, at: DateTime): Event!
+  skipEvents(eventIds: [SafeInt!]!, skippedReason: String!, at: DateTime): [Event!]!
+  createEventDispatchNote(eventId: SafeInt!, input: DispatchNoteInput!): Event!
+  updateEventSkippedReason(eventId: SafeInt!, skippedReason: String!, at: DateTime): Event!
+  scheduleEvents(eventIds: [SafeInt!]!, startDate: LocalDate!): [Event!]!
+  scheduleEvent(eventId: SafeInt!, startDate: LocalDate!, startTime: LocalTime, endDate: LocalDate, budgetedHours: SafeInt): Event!
+  addEventMedia(eventId: SafeInt!, tempFileName: String!): Event!
+  removeEventMedia(eventId: SafeInt!, mediaId: SafeInt!): Event!
+  deleteEvents(eventIds: [SafeInt!]!): [SafeInt!]!
+  copyEvents(eventIds: [SafeInt!]!): [Event!]!
+  assignEventsCrew(eventIds: [SafeInt!]!, crewId: SafeInt): [Event!]!
+  assignEventCrew(eventId: SafeInt!, crewId: SafeInt): Event!
+  assignEventsUsers(eventIds: [SafeInt!]!, userIds: [SafeInt!]!): [Event!]!
+  assignEventUsers(eventId: SafeInt!, userIds: [SafeInt!]!): Event!
+  addEventTag(eventId: SafeInt!, tag: String!): Event!
+  removeEventTag(eventId: SafeInt!, tag: String!): Event!
+  addRecurringEventTag(recurringEventId: SafeInt!, tag: String!): RecurringEvent!
+  removeRecurringEventTag(recurringEventId: SafeInt!, tag: String!): RecurringEvent!
+  createEventsPdf(eventIds: [SafeInt!]!, showPrices: Boolean): String!
+  deleteItems(itemIds: [SafeInt!]!): Boolean!
+  restoreItems(itemIds: [SafeInt!]!): Boolean!
+  adjustItemPrices(itemIds: [SafeInt!]!, amount: Decimal!, isPercent: Boolean = false, updateOpenEventItems: Boolean = false): Boolean!
+  deletePayment(paymentId: SafeInt!): Payment!
+  deletePayments(paymentIds: [SafeInt!]!): [Payment!]!
+  createPaymentsPdf(paymentIds: [SafeInt!], where: PaymentFilter, orderBy: [PaymentSort!]): String
+  createProperty(input: PropertyInput!): Property!
+  addPropertyMedia(propertyId: SafeInt!, tempFileName: String!): Property!
+  removePropertyMedia(propertyId: SafeInt!, mediaId: SafeInt!): Property!
+  saveRoute(date: LocalDate!, eventIds: [SafeInt!]!, repeatEveryWeeks: Int): Route!
+  removeEventRoutes(eventIds: [SafeInt!]!, repeatEveryWeeks: Int, date: LocalDate): [Event!]!
+  removeEventRoute(eventId: SafeInt!, date: LocalDate!): Boolean
+  createStripeCompanySetupIntent: CompanyStripeSetupIntent!
+  syncStripeCompanySetupIntent(setupIntentId: String!, billingAddress: BillingAddressInput!, setAsDefault: Boolean = true): StripePaymentMethod!
+  createPlanSubscription(tier: SubscriptionTier!, billingInterval: BillingInterval!, promoCode: String): Company!
+  updatePlanSubscription(tier: SubscriptionTier!, billingInterval: BillingInterval!): Company!
+  clearPendingPlanDowngrade: Company!
+  cancelPlanSubscription: Company!
+  clearPendingPlanCancellation: Company!
+  retrySubscriptionPayment(paymentMethodId: String): RetryPaymentResult!
+  generateTestProperties(customerId: Int!, dataset: PropertyDataSet!): [Property!]!
+  generateTestEvents(customerId: Int, startDate: LocalDate): [Event!]!
+  addTimeEntry(input: TimeEntryInput!): TimeEntry!
+  updateTimeEntry(timeEntryId: SafeInt!, input: UpdateTimeEntryInput!): TimeEntry!
+  clockIn(location: LocationInput, at: DateTime): ClockInOutAction
+  clockOut(location: LocationInput, at: DateTime): ClockInOutAction
+  clockInUser(userId: SafeInt!, location: LocationInput, at: DateTime): ClockInOutAction
+  clockOutUser(userId: SafeInt!, location: LocationInput, at: DateTime): ClockInOutAction
+  startGlobalTimer(categoryId: SafeInt, location: LocationInput, at: DateTime): TimeEntry!
+  startEventTimer(eventId: SafeInt!, location: LocationInput, at: DateTime): TimeEntry!
+  stopTimer(location: LocationInput, at: DateTime): TimeEntry
+  deleteTimeEntry(timeEntryId: SafeInt!): Boolean!
+  deleteTimeEntries(timeEntryIds: [SafeInt!]!): Boolean!
+  createTwilioComplianceInquiry(mockError: MockTwilioError): ComplianceInquiryResponse
+  submitUpsell(input: SubmitUpsellInput!): UpsellHistory!
+  overrideUserDayCapacity(userId: SafeInt!, date: Date!, capacityHours: Decimal!): UserDayOverride!
+  deleteUserDayOverride(userId: SafeInt!, date: Date!): Boolean!
+  createUser(input: CreateUserInput!): User!
+  deleteUser(userId: SafeInt!): Boolean!
+  updateAdditionalUsersCount: Company!
+  setScheduleColors(input: SetScheduleColorsInput!): User!
+}
+
+"Nearest event on the same day, ranked by drive time (or crow-flies in fastMode)."
+type NearbyEvent {
+  eventId: SafeInt!
+  event: Event
+  distanceMeters: Int!
+  distanceMiles: Float!
+  driveTimeSeconds: Int
+  driveDistanceMeters: Int
+  driveDistanceMiles: Float
+  routeStop: RouteStop
+}
+
+enum ObjectType {
+  ADMIN
+  COMPANY
+  CREW
+  CUSTOMER
+  CUSTOMER_PAYMENT_METHOD
+  EQUIPMENT
+  ESTIMATE
+  EVENT
+  INVOICE
+  PAYMENT
+  RATING
+  RECURRING_EVENT
+  TIME_ENTRY
+  UNKNOWN
+  USER
+  VENDOR
+  WORK_REQUEST
+}
+
+"A named, annually-recurring date range used to pause recurring event series."
+type OffSeason {
+  id: SafeInt!
+  name: String!
+  startMonth: Int!
+  startDay: Int!
+  endMonth: Int!
+  endDay: Int!
+}
+
+input OffSeasonFilter {
+  id: IntFilter
+  name: StringFilter
+}
+
+input OffSeasonSort {
+  id: SortOrder
+  name: SortOrder
+  startMonth: SortOrder
+  startDay: SortOrder
+  endMonth: SortOrder
+  endDay: SortOrder
+}
+
+"Result of an optimize route call — events reordered by Mapbox Optimization V2 plus route metrics."
+type OptimizeRouteResult {
+  orderedEvents: [Event!]!
+  totalMeters: Int!
+  totalMiles: Float!
+  totalDurationSeconds: Int!
+  totalTime: String!
+  legs: [DirectionsLeg!]!
+  geometry: String
+}
+
+type Order {
+  id: SafeInt!
+  date: DateTime!
+  companyId: SafeInt
+  userId: SafeInt!
+  status: String!
+  productId: SafeInt!
+  productSku: String!
+  plan: Plan
+  productName: String!
+  quantity: SafeInt!
+  amount: Decimal!
+  paymentType: OrderPaymentType!
+  transactionId: String!
+  last4: String!
+  isRecurring: Boolean!
+  isStoreOrder: Boolean!
+  gateway: OrderGateway!
+  stripeInvoiceId: String!
+  requiresShipping: Boolean!
+  receiptUrl: String
+}
+
+input OrderFilter {
+  id: IntFilter
+  companyId: IntFilter
+  date: DateTimeFilter
+  status: StringFilter
+  productSku: StringFilter
+  productName: StringFilter
+  amount: DecimalFilter
+  transactionId: StringFilter
+  requiresShipping: Boolean
+  AND: [OrderFilter!]
+  OR: [OrderFilter!]
+  NOT: [OrderFilter!]
+}
+
+enum OrderGateway {
+  AUTHORIZE
+  STRIPE
+}
+
+enum OrderPaymentType {
+  EMPTY
+  PAYPAL
+  VISA
+  MASTERCARD
+  AMEX
+  DISCOVER
+  UNKNOWN
+}
+
+input OrderSort {
+  id: SortOrder
+  date: SortOrder
+  status: SortOrder
+  amount: SortOrder
+  companyId: SortOrder
+  productSku: SortOrder
+  productName: SortOrder
+}
+
+type Payment {
+  id: SafeInt!
+  customerId: SafeInt
+  customer: Customer
+  method: PaymentMethod
+  date: Date!
+  totalAmount: Decimal!
+  invoiceAmount: Decimal!
+  invoiceId: SafeInt
+  creditAmount: Decimal!
+  notes: String!
+  details: String
+  isRefund: Boolean!
+  refundedAt: DateTime
+  tipAmount: Decimal!
+  processFeeCharged: Decimal!
+  processFeeChargedTo: PaymentProcessFeePayer
+  paidAmount: Decimal!
+  createdAt: DateTime
+  updatedAt: DateTime
+  invoice: Invoice
+  userId: SafeInt
+  expenseId: SafeInt
+  payee: PaymentPayee
+}
+
+"Last payment failure details (resolved on demand from Stripe)"
+type PaymentError {
+  code: String
+  declineCode: String
+  message: String
+}
+
+input PaymentFilter {
+  id: IntFilter
+  method: PaymentMethodFilter
+  date: DateFilter
+  totalAmount: DecimalFilter
+  invoiceAmount: DecimalFilter
+  creditAmount: DecimalFilter
+  notes: StringFilter
+  details: StringFilter
+  isRefund: Boolean
+  isDeleted: Boolean
+  refundedAt: DateTimeFilter
+  tipAmount: DecimalFilter
+  processFeeCharged: DecimalFilter
+  customerId: IntFilter
+  invoiceId: IntFilter
+  expenseId: IntFilter
+  updatedAt: DateTimeFilter
+  createdAt: DateTimeFilter
+  isExpensePayment: Boolean
+  hasTip: Boolean
+}
+
+enum PaymentMethod {
+  CASH
+  CHECK
+  CREDIT_CARD
+  CUSTOMER_CREDIT_BALANCE
+  ACH_TRANSFER
+  PAYPAL
+  OTHER
+  DEBIT_CARD
+  DIRECT_DEBIT
+  BACS
+  VENMO
+  WISETACK
+  ZELLE
+  CASH_APP
+  APPLE_PAY
+  EFT
+}
+
+input PaymentMethodFilter {
+  equals: PaymentMethod
+  not: PaymentMethod
+  in: [PaymentMethod!]
+  notIn: [PaymentMethod!]
+}
+
+type PaymentPayee {
+  type: PaymentPayeeType!
+  id: SafeInt!
+  name: String!
+}
+
+enum PaymentPayeeType {
+  CUSTOMER
+  VENDOR
+  EQUIPMENT
+  EMPLOYEE
+}
+
+enum PaymentProcessFeePayer {
+  CUSTOMER
+}
+
+type PaymentReportAvgAggregate {
+  totalAmount: Decimal
+  invoiceAmount: Decimal
+  creditAmount: Decimal
+  tipAmount: Decimal
+  processFeeCharged: Decimal
+}
+
+input PaymentReportAvgOrderBy {
+  totalAmount: SortOrder
+  invoiceAmount: SortOrder
+  creditAmount: SortOrder
+  tipAmount: SortOrder
+  processFeeCharged: SortOrder
+}
+
+type PaymentReportCountAggregate {
+  id: SafeInt!
+}
+
+input PaymentReportCountOrderBy {
+  id: SortOrder
+}
+
+type PaymentReportMaxAggregate {
+  date: Date
+  totalAmount: Decimal
+  invoiceAmount: Decimal
+  creditAmount: Decimal
+  tipAmount: Decimal
+  processFeeCharged: Decimal
+}
+
+input PaymentReportMaxOrderBy {
+  date: SortOrder
+  totalAmount: SortOrder
+  invoiceAmount: SortOrder
+  creditAmount: SortOrder
+  tipAmount: SortOrder
+  processFeeCharged: SortOrder
+}
+
+type PaymentReportMinAggregate {
+  date: Date
+  totalAmount: Decimal
+  invoiceAmount: Decimal
+  creditAmount: Decimal
+  tipAmount: Decimal
+  processFeeCharged: Decimal
+}
+
+input PaymentReportMinOrderBy {
+  date: SortOrder
+  totalAmount: SortOrder
+  invoiceAmount: SortOrder
+  creditAmount: SortOrder
+  tipAmount: SortOrder
+  processFeeCharged: SortOrder
+}
+
+input PaymentReportOrderBy {
+  date: SortOrder
+  method: SortOrder
+  customerId: SortOrder
+  isRefund: SortOrder
+  count: PaymentReportCountOrderBy
+  sum: PaymentReportSumOrderBy
+  avg: PaymentReportAvgOrderBy
+  min: PaymentReportMinOrderBy
+  max: PaymentReportMaxOrderBy
+}
+
+type PaymentReportRow {
+  date: Date
+  method: PaymentMethod
+  customerId: SafeInt
+  customer: Customer
+  isRefund: Boolean
+  _count: PaymentReportCountAggregate
+  _sum: PaymentReportSumAggregate
+  _avg: PaymentReportAvgAggregate
+  _min: PaymentReportMinAggregate
+  _max: PaymentReportMaxAggregate
+  count: PaymentReportCountAggregate
+  sum: PaymentReportSumAggregate
+  avg: PaymentReportAvgAggregate
+  min: PaymentReportMinAggregate
+  max: PaymentReportMaxAggregate
+}
+
+type PaymentReportSumAggregate {
+  totalAmount: Decimal
+  invoiceAmount: Decimal
+  creditAmount: Decimal
+  tipAmount: Decimal
+  processFeeCharged: Decimal
+}
+
+input PaymentReportSumOrderBy {
+  totalAmount: SortOrder
+  invoiceAmount: SortOrder
+  creditAmount: SortOrder
+  tipAmount: SortOrder
+  processFeeCharged: SortOrder
+}
+
+input PaymentSort {
+  id: SortOrder
+  method: SortOrder
+  date: SortOrder
+  totalAmount: SortOrder
+  invoiceAmount: SortOrder
+  creditAmount: SortOrder
+  refundedAt: SortOrder
+  tipAmount: SortOrder
+  processFeeCharged: SortOrder
+  createdAt: SortOrder
+  updatedAt: SortOrder
+}
+
+enum Permission {
+  READ
+  UPDATE
+  CREATE
+  DELETE
+}
+
+"Calendar-specific permissions for the CALENDAR page."
+enum PermissionCalendar {
+  ACCESS_ALL
+  CREATE
+  UPDATE
+  COMPLETE_AND_INVOICE
+  SKIP
+  DELETE
+}
+
+"Time-tracking-specific permissions. Always includes READ_OWN."
+enum PermissionTimeTracking {
+  READ_OWN
+  READ_ALL
+  EDIT_OWN
+  EDIT_ALL
+}
+
+type Permissions {
+  calendar: [PermissionCalendar!]!
+  customers: [Permission!]!
+  estimates: [Permission!]!
+  expenses: [Permission!]!
+  invoices: [Permission!]!
+  payments: [Permission!]!
+  settings: [Permission!]!
+  timeTracking: [PermissionTimeTracking!]!
+  automations: [Permission!]!
+  backup: [Permission!]!
+  billingSettings: [Permission!]!
+  calculator: [Permission!]!
+  chemicalApplications: [Permission!]!
+  chemicalTracking: [Permission!]!
+  cloudStorage: [Permission!]!
+  contracts: [Permission!]!
+  crews: [Permission!]!
+  customFields: [Permission!]!
+  dispatchBoard: [Permission!]!
+  documents: [Permission!]!
+  emails: [Permission!]!
+  users: [Permission!]!
+  equipment: [Permission!]!
+  items: [Permission!]!
+  kpiCockpit: [Permission!]!
+  marketplace: [Permission!]!
+  notes: [Permission!]!
+  properties: [Permission!]!
+  reports: [Permission!]!
+  texts: [Permission!]!
+  visitForms: [Permission!]!
+  vendors: [Permission!]!
+  franchises: [Permission!]!
+  canSkipEvents: Boolean!
+}
+
+type Plan {
+  sku: String!
+  name: String!
+  description: String!
+  price: Decimal!
+  tier: Tier!
+  billingInterval: BillingInterval!
+  isCurrent: Boolean!
+  isFreeTrial: Boolean!
+  isAddon: Boolean!
+}
+
+"Details of the discount a promo code applies, for display during checkout."
+type PromoCodeDetails {
+  code: String!
+  description: String!
+  percentOff: Float
+  amountOffCents: SafeInt
+  currency: String
+  duration: PromoCodeDuration!
+  durationInMonths: Int
+}
+
+"How long a promo code's discount applies."
+enum PromoCodeDuration {
+  ONCE
+  REPEATING
+  FOREVER
+}
+
+"Why a promo code could not be applied during checkout. Present only when isValid is false."
+type PromoCodeError {
+  reason: PromoCodeErrorReason!
+  message: String!
+}
+
+"Why a promo code could not be applied at checkout (set only when isValid is false)."
+enum PromoCodeErrorReason {
+  INVALID
+  NOT_APPLICABLE
+  UNAVAILABLE
+}
+
+"Result of validating a promo code against a plan during checkout."
+type PromoCodeValidation {
+  isValid: Boolean!
+  originalTotalCents: SafeInt
+  discountedTotalCents: SafeInt
+  details: PromoCodeDetails
+  error: PromoCodeError
+}
+
+type Property {
+  id: SafeInt!
+  requestId: SafeInt
+  name: String!
+  address: Address
+  location: Location
+  size: Decimal!
+  sizeType: AreaMeasurement!
+  pavedSize: Decimal!
+  pavedSizeType: AreaMeasurement!
+  houseSize: Decimal!
+  houseSizeType: AreaMeasurement!
+  plantingSize: Decimal!
+  plantingSizeType: AreaMeasurement!
+  roofAreaSize: Decimal!
+  roofAreaSizeType: AreaMeasurement!
+  roofPerimeterSize: Decimal!
+  roofPerimeterSizeType: AreaMeasurement!
+  drivewayWalkwaySize: Decimal!
+  drivewayWalkwaySizeType: AreaMeasurement!
+  roofPitch: SafeInt
+  fence: String
+  storiesTall: SafeInt
+  notes: String!
+  deletedStatus: PropertyDeletedStatus!
+  isActive: Boolean!
+  tags: String!
+  tax1: Decimal!
+  tax2: Decimal!
+  tax3: Decimal!
+  taxTotal: Decimal!
+  createdAt: DateTime
+  updatedAt: DateTime
+  media(where: MediaWhere, orderBy: [MediaSort!], take: SafeInt = 1000, skip: SafeInt): [Media!]!
+  customer: Customer
+  customerId: SafeInt!
+  lastServiceDate: DateTime
+  propertyCrews: [PropertyCrew!]!
+}
+
+type PropertyCrew {
+  id: SafeInt!
+  crewId: SafeInt!
+  companyId: SafeInt!
+  assignedAt: DateTime
+  status: SafeInt!
+  notes: String
+}
+
+enum PropertyDataSet {
+  SAN_FRANCISCO_USA
+  CHICAGO_USA
+  PORTLAND_USA
+  LONDON_UK
+}
+
+"Deletion/archive status of a property."
+enum PropertyDeletedStatus {
+  ACTIVE
+  DELETED
+  CUSTOMER_DEACTIVATED
+}
+
+input PropertyFilter {
+  id: IntFilter
+  address: AddressFilter
+  name: StringFilter
+  deletedStatus: PropertyDeletedStatus
+  isActive: Boolean
+  customerId: IntFilter
+  customer: CustomerFilter
+  size: DecimalFilter
+}
+
+"Input for creating a property. `customerId` and `name` are required; all other fields are optional."
+input PropertyInput {
+  customerId: SafeInt!
+  name: String!
+  address: AddressInput
+  notes: String
+  sizeType: AreaMeasurement
+  tags: [String!]
+  customFields: [CustomFieldInput!]
+  crewIds: [SafeInt!]
+  mediaFileKeys: [String!]
+}
+
+input PropertySort {
+  id: SortOrder
+  name: SortOrder
+  address: AddressSort
+  createdAt: SortOrder
+  updatedAt: SortOrder
+}
+
+type Query {
+  userExists(email: String!): Boolean!
+  ping: String!
+  stripe: Stripe
+  subscription: CompanySubscription
+  aiChat(id: SafeInt!): AiChat!
+  aiChats(orderBy: [AiChatSort!], take: SafeInt = 1000, skip: SafeInt): [AiChat!]!
+  company: Company!
+  crews(where: CrewFilter = {isDeleted: false}, skip: SafeInt, take: SafeInt, orderBy: [CrewSort!]): [Crew]
+  customerReport(where: CustomerFilter, orderBy: [CustomerReportOrderBy!], take: SafeInt, skip: SafeInt): [CustomerReportRow!]!
+  customers(where: CustomerFilter = {isDeleted: false}, skip: SafeInt, take: SafeInt = 1000, orderBy: [CustomerSort!]): [Customer!]!
+  estimateReport(where: EstimateFilter, orderBy: [EstimateReportOrderBy!], take: SafeInt, skip: SafeInt): [EstimateReportRow!]!
+  estimates(where: EstimateFilter = {isArchived: false, isDeleted: false}, skip: SafeInt, take: SafeInt = 1000, orderBy: [EstimateSort!]): [Estimate!]!
+  estimate(estimateId: SafeInt!): Estimate!
+  estimateLineItems(where: EstimateLineItemFilter, skip: SafeInt, take: SafeInt = 1000, orderBy: [EstimateLineItemSort!]): [EstimateLineItem!]!
+  eventForms(eventId: SafeInt!): [EventForm!]!
+  eventForm(eventFormId: SafeInt!): EventForm
+  events(where: EventFilter, orderBy: [EventSort!], take: SafeInt = 1000, skip: SafeInt): [Event!]!
+  eventsByUserId(userId: SafeInt!, where: EventFilter, orderBy: [EventSort!], take: SafeInt = 1000, skip: SafeInt): [Event!]!
+  eventsByEmployeeUserId(userId: SafeInt!, filter: EventFilter, orderBy: [EventSort!], take: SafeInt = 1000, skip: SafeInt): [Event!]!
+  eventReport(where: EventFilter, orderBy: [EventReportOrderBy!], take: SafeInt, skip: SafeInt): [EventReportRow!]!
+  offSeasons(where: OffSeasonFilter, orderBy: [OffSeasonSort!], take: Int, skip: Int): [OffSeason!]!
+  recurringEvents(where: RecurringEventFilter, orderBy: [RecurringEventSort!], take: Int, skip: Int): [RecurringEvent!]!
+  recurringEvent(id: SafeInt!): RecurringEvent
+  invoiceReport(where: InvoiceFilter, orderBy: [InvoiceReportOrderBy!], take: SafeInt, skip: SafeInt): [InvoiceReportRow!]!
+  invoices(where: InvoiceFilter = {isArchived: false}, take: SafeInt = 1000, skip: SafeInt, orderBy: [InvoiceSort!]): [Invoice!]!
+  invoice(invoiceId: SafeInt!): Invoice!
+  items(where: ItemFilter = {isDeleted: false}, orderBy: [ItemSort!], take: SafeInt = 1000, skip: SafeInt): [Item!]!
+  itemPackages(where: ItemPackageFilter = {isDeleted: false}, orderBy: [ItemPackageSort!], take: SafeInt = 1000, skip: SafeInt): [ItemPackage!]!
+  orders(where: OrderFilter, orderBy: [OrderSort!] = [{date: desc}, {id: desc}], take: SafeInt = 1000, skip: SafeInt): [Order!]!
+  paymentReport(where: PaymentFilter, orderBy: [PaymentReportOrderBy!], take: SafeInt, skip: SafeInt): [PaymentReportRow!]!
+  payments(where: PaymentFilter, orderBy: [PaymentSort!], take: SafeInt, skip: SafeInt): [Payment!]!
+  plans: [Plan!]!
+  properties(where: PropertyFilter, orderBy: [PropertySort!], take: SafeInt = 1000, skip: SafeInt): [Property!]!
+  property(id: SafeInt!): Property
+  routeReport(where: RouteFilter, orderBy: [RouteReportOrderBy!], take: SafeInt, skip: SafeInt): [RouteReportRow!]!
+  route(routeId: SafeInt!): Route!
+  routes(where: RouteFilter, orderBy: [RouteSort!], take: SafeInt = 1000, skip: SafeInt): [Route!]!
+  directions(waypoints: [CoordinateInput!]!, departAt: DateTime, costPerGallon: Float, milesPerGallon: Float): DirectionsResult!
+  optimizedRoute(eventIds: [SafeInt!]!, departAt: DateTime, startLocation: CoordinateInput, endLocation: CoordinateInput): OptimizeRouteResult!
+  smsReport(where: SmsFilter, orderBy: [SmsReportOrderBy!], take: SafeInt, skip: SafeInt): [SmsReportRow!]!
+  smsMessages(where: SmsFilter, orderBy: [SmsSort!], take: SafeInt = 100, skip: SafeInt): [Sms!]!
+  validatePromoCode(tier: SubscriptionTier!, billingInterval: BillingInterval!, promoCode: String!): PromoCodeValidation!
+  tags(where: TagFilter, orderBy: [TagOrderBy!], take: Int, skip: Int): [Tag!]!
+  timeEntryReport(where: TimeEntryFilter, orderBy: [TimeEntryReportOrderBy!], take: SafeInt, skip: SafeInt): [TimeEntryReportRow!]!
+  timeEntryCategories(orderBy: [TimeEntryCategorySort]): [TimeEntryCategory!]!
+  timeEntryCategoryByName(name: String!): TimeEntryCategory
+  timeEntriesByEmployeeUserId(userId: SafeInt!, take: SafeInt = 1000, skip: SafeInt, where: TimeEntryFilter, orderBy: [TimeEntrySort!]): [TimeEntry!]!
+  timeEntry(timeEntryId: SafeInt!): TimeEntry
+  isClockedIn(at: DateTime): Boolean!
+  runningTimer(where: TimeEntryFilter): TimeEntry
+  activeTimeEntry(where: TimeEntryFilter, at: DateTime): TimeEntry
+  timeEntries(where: TimeEntryFilter, orderBy: [TimeEntrySort!], take: SafeInt = 100, skip: SafeInt): [TimeEntry!]!
+  twilioVerifications: [TwilioVerification!]
+  upsells(where: UpsellFilter, orderBy: [UpsellSort!], take: SafeInt, skip: SafeInt): [Upsell!]!
+  userDayOverrides(where: UserDayOverrideFilter, orderBy: [UserDayOverrideSort!], take: SafeInt = 1000, skip: SafeInt): [UserDayOverride!]!
+  employees(where: UserFilter = {isDeleted: false}, orderBy: [UserSort!], take: SafeInt = 1000, skip: SafeInt): [User]
+  user: User
+  userById(userId: SafeInt!): User
+  users(where: UserFilter = {isDeleted: false}, orderBy: [UserSort!], take: SafeInt = 1000, skip: SafeInt): [User!]!
+  lookupTaxRate(zip: String, propertyId: Int, city: String, county: String, address: String, stateCode: String): TaxRateLookupResult!
+}
+
+"QuickBooks status (read-only, null if not connected)"
+type QuickBooks {
+  isConnected: Boolean!
+  invoicesLastDownloaded: DateTime
+  invoicesSyncFailedCount: Int!
+  customersLastDownloaded: DateTime
+  customersSyncFailedCount: Int!
+  paymentsLastDownloaded: DateTime
+  paymentsSyncFailedCount: Int!
+  expiredAt: DateTime
+}
+
+"QuickBooks item mapping sync state for an invoice line item."
+enum QuickbooksSyncStatus {
+  MAPPING_PENDING
+  MAPPING_COMPLETE
+}
+
+type Rating {
+  id: SafeInt!
+  value: Float!
+  note: String!
+  createdAt: DateTime!
+  serviceName: String!
+}
+
+enum RecurringDailyOption {
+  EVERY_N_DAYS
+  EVERY_WEEKDAY
+}
+
+type RecurringEvent {
+  id: SafeInt!
+  companyId: SafeInt!
+  propertyId: SafeInt
+  property: Property
+  title: String!
+  type: EventType!
+  description: String!
+  location: String!
+  startDate: Date!
+  dateStart: Date!
+  endDate: Date!
+  startDateTime: DateTime!
+  endDateTime: DateTime
+  hasTime: Boolean!
+  startTime: LocalTime!
+  endTime: LocalTime!
+  frequency: RecurringFrequency!
+  dailyOption: RecurringDailyOption!
+  dailyDaysCount: Int!
+  weeklyCount: Int!
+  weekday1: Boolean!
+  weekday2: Boolean!
+  weekday3: Boolean!
+  weekday4: Boolean!
+  weekday5: Boolean!
+  weekday6: Boolean!
+  weekday7: Boolean!
+  monthlyOption: RecurringMonthlyOption
+  monthDay: Int!
+  monthCount1: Int!
+  monthDayNumber: RecurringOrdinal
+  monthWeekDay: RecurringWeekday
+  monthCount2: Int!
+  yearlyOption: RecurringYearlyOption
+  yearMonth1: RecurringMonth
+  yearDay: Int!
+  yearDayNumber: RecurringOrdinal
+  yearWeekDay: RecurringWeekday
+  yearMonth2: RecurringMonth
+  isInfinite: Boolean!
+  isCancelled: Boolean!
+  cancelledAt: DateTime
+  maintenanceCost: Decimal!
+  maintenanceTax1: Decimal!
+  maintenanceTax1Amount: Decimal!
+  maintenanceTax2: Decimal!
+  maintenanceTax2Amount: Decimal!
+  isInvoiceable: Boolean!
+  budgetedHours: Decimal!
+  equipmentId: SafeInt
+  estimateId: SafeInt
+  workRequestId: SafeInt
+  requestId: SafeInt
+  contractId: SafeInt
+  isChemicalApplication: Boolean!
+  lineItems(where: RecurringEventItemFilter, orderBy: [RecurringEventItemSort!], take: SafeInt = 1000, skip: SafeInt): [RecurringEventItem!]!
+  events(where: EventFilter, orderBy: [EventSort!], take: SafeInt = 1000, skip: SafeInt): [Event!]!
+  eventCount: Int!
+  eventsCount: Int!
+  tags: [String!]!
+  offSeasonId: SafeInt
+  offSeason: OffSeason
+  status: RecurringSeriesStatus!
+  customerId: SafeInt
+  customer: Customer
+  crewId: SafeInt
+  crew: Crew
+  color: String!
+  users(where: UserFilter, take: SafeInt = 1000, skip: SafeInt): [User!]!
+}
+
+input RecurringEventFilter {
+  id: IntFilter
+  companyId: IntFilter
+  propertyId: IntFilter
+  isCancelled: Boolean
+  isInfinite: Boolean
+  startDateTime: DateTimeFilter
+  endDateTime: DateTimeFilter
+  startDate: DateFilter
+  endDate: DateFilter
+  title: StringFilter
+  type: EventTypeFilter
+  estimateId: IntFilter
+  tags: TagsFilter
+  AND: [RecurringEventFilter!]
+  OR: [RecurringEventFilter!]
+  NOT: RecurringEventFilter
+  customerId: IntFilter
+  crewId: IntFilter
+}
+
+type RecurringEventItem {
+  id: SafeInt!
+  companyId: SafeInt!
+  recurringEventId: SafeInt!
+  itemId: SafeInt
+  item: Item
+  name: String
+  description: String
+  price: Decimal!
+  tax: Decimal
+  total: Decimal
+  quantity: Decimal!
+}
+
+input RecurringEventItemFilter {
+  id: IntFilter
+  name: StringFilter
+}
+
+input RecurringEventItemSort {
+  id: SortOrder
+  name: SortOrder
+}
+
+"Position of an event within its recurring series"
+type RecurringEventPosition {
+  position: Int!
+  total: Int
+}
+
+input RecurringEventSort {
+  id: SortOrder
+  startDateTime: SortOrder
+  endDateTime: SortOrder
+  startDate: SortOrder
+  endDate: SortOrder
+  title: SortOrder
+  startTime: SortOrder
+  frequency: SortOrder
+  customer: CustomerSort
+  propertyId: SortOrder
+  customerId: SortOrder
+}
+
+type RecurringEventUser {
+  id: SafeInt!
+  companyId: SafeInt!
+  recurringEventId: SafeInt!
+  userId: SafeInt!
+  user: User!
+}
+
+enum RecurringFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum RecurringMonth {
+  JAN
+  FEB
+  MAR
+  APR
+  MAY
+  JUN
+  JUL
+  AUG
+  SEP
+  OCT
+  NOV
+  DEC
+}
+
+enum RecurringMonthlyOption {
+  ON_DAY_OF_MONTH
+  ON_WEEKDAY_OF_MONTH
+}
+
+enum RecurringOrdinal {
+  FIRST
+  SECOND
+  THIRD
+  FOURTH
+  LAST
+}
+
+"The series-level status of a recurring event, derived at query time."
+enum RecurringSeriesStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+}
+
+enum RecurringWeekday {
+  SUN
+  MON
+  TUE
+  WED
+  THU
+  FRI
+  SAT
+}
+
+enum RecurringYearlyOption {
+  ON_MONTH_DAY
+  ON_MONTH_WEEKDAY
+}
+
+enum RegistrationSource {
+  GOOGLE
+  PODCAST
+  REFERRAL
+  SEARCH
+  SOCIAL_MEDIA
+  YOUTUBE_MIKE_ANDES
+  YOUTUBE_HOME_SERVICE_MILLIONAIRE
+  INSTAGRAM
+  FACEBOOK
+  EMAIL
+  FREE_COURSES
+  REFERRAL_WORD_OF_MOUTH
+  OTHER
+}
+
+type RetryPaymentResult {
+  success: Boolean!
+  invoiceId: String
+  error: String
+  declineCode: String
+}
+
+type Route {
+  id: SafeInt!
+  crewId: SafeInt
+  equipmentId: SafeInt
+  costPerGallon: Decimal
+  milesPerGallon: Decimal
+  date: LocalDate
+  totalMiles: Decimal
+  totalMeters: Int
+  totalCost: Decimal
+  totalTime: String
+  totalDriveSeconds: Int
+  budgetedHours: Float!
+  routeStopCount: Int!
+  routeStops: [RouteStop!]!
+  crew: Crew
+  equipment: Equipment
+  directions: DirectionsResult
+  returnLeg: DirectionsLeg
+}
+
+input RouteFilter {
+  id: IntFilter
+  crewId: IntFilter
+  equipmentId: IntFilter
+  date: DateFilter
+  stops: RouteStopFilter
+  AND: [RouteFilter!]
+  OR: [RouteFilter!]
+  NOT: RouteFilter
+}
+
+"Cheapest insertion point for a new stop on an existing route."
+type RouteInsertionSuggestion {
+  route: Route
+  insertAfterStop: Int!
+  extraSeconds: Int!
+  extraMeters: Int!
+  extraMiles: Float!
+  patchDirections: DirectionsResult
+}
+
+"Result container for the routeSuggestions query."
+type RouteInsertionSuggestions {
+  nearbyEvents: [NearbyEvent!]!
+  routes: [RouteInsertionSuggestion!]!
+}
+
+type RouteReportAvgAggregate {
+  totalMiles: Float
+  totalCost: Float
+  totalDriveSeconds: Float
+  totalStops: Float
+}
+
+input RouteReportAvgOrderBy {
+  totalMiles: SortOrder
+  totalCost: SortOrder
+  totalDriveSeconds: SortOrder
+  totalStops: SortOrder
+}
+
+type RouteReportCountAggregate {
+  id: SafeInt!
+}
+
+input RouteReportCountOrderBy {
+  id: SortOrder
+}
+
+type RouteReportMaxAggregate {
+  totalMiles: Decimal
+  totalCost: Decimal
+  totalDriveSeconds: SafeInt
+  totalStops: SafeInt
+  date: LocalDate
+}
+
+input RouteReportMaxOrderBy {
+  totalMiles: SortOrder
+  totalCost: SortOrder
+  totalDriveSeconds: SortOrder
+  totalStops: SortOrder
+  date: SortOrder
+}
+
+type RouteReportMinAggregate {
+  totalMiles: Decimal
+  totalCost: Decimal
+  totalDriveSeconds: SafeInt
+  totalStops: SafeInt
+  date: LocalDate
+}
+
+input RouteReportMinOrderBy {
+  totalMiles: SortOrder
+  totalCost: SortOrder
+  totalDriveSeconds: SortOrder
+  totalStops: SortOrder
+  date: SortOrder
+}
+
+input RouteReportOrderBy {
+  crewId: SortOrder
+  equipmentId: SortOrder
+  date: SortOrder
+  count: RouteReportCountOrderBy
+  sum: RouteReportSumOrderBy
+  avg: RouteReportAvgOrderBy
+  min: RouteReportMinOrderBy
+  max: RouteReportMaxOrderBy
+}
+
+"A single row in a route report. Each row represents one group determined by the"
+type RouteReportRow {
+  crewId: SafeInt
+  equipmentId: SafeInt
+  date: LocalDate
+  crew: Crew
+  equipment: Equipment
+  _count: RouteReportCountAggregate
+  _sum: RouteReportSumAggregate
+  _avg: RouteReportAvgAggregate
+  _min: RouteReportMinAggregate
+  _max: RouteReportMaxAggregate
+  count: RouteReportCountAggregate
+  sum: RouteReportSumAggregate
+  avg: RouteReportAvgAggregate
+  min: RouteReportMinAggregate
+  max: RouteReportMaxAggregate
+}
+
+type RouteReportSumAggregate {
+  totalMiles: Decimal
+  totalCost: Decimal
+  totalDriveSeconds: SafeInt
+  totalStops: SafeInt
+}
+
+input RouteReportSumOrderBy {
+  totalMiles: SortOrder
+  totalCost: SortOrder
+  totalDriveSeconds: SortOrder
+  totalStops: SortOrder
+}
+
+input RouteSort {
+  id: SortOrder
+  date: SortOrder
+}
+
+type RouteStop {
+  id: SafeInt!
+  routeId: SafeInt!
+  eventId: SafeInt!
+  stopOrder: Int!
+  routeDate: LocalDate!
+  driveTimeSeconds: Int
+  driveDistanceMeters: Int
+  driveDistanceMiles: Float
+  estimatedArrivalAt: DateTime
+  estimatedDepartureAt: DateTime
+  event: Event
+  leg: DirectionsLeg
+}
+
+input RouteStopFilter {
+  id: IntFilter
+  routeId: IntFilter
+  eventId: IntFilter
+  routeDate: DateFilter
+  event: EventFilter
+  AND: [RouteStopFilter!]
+  OR: [RouteStopFilter!]
+  NOT: RouteStopFilter
+}
+
+input RouteStopSort {
+  id: SortOrder
+  stopOrder: SortOrder
+  routeDate: SortOrder
+}
+
+"The `SafeInt` scalar type represents non-fractional signed whole numeric values that are considered safe as defined by the ECMAScript specification."
+scalar SafeInt
+
+"Per-event-type color overrides for the schedule view."
+type ScheduleColors {
+  visit: String!
+  todo: String!
+  meeting: String!
+  maintenance: String!
+}
+
+input ScheduleColorsInput {
+  visit: String
+  todo: String
+  meeting: String
+  maintenance: String
+}
+
+"A single day ranked by cost of inserting a new stop."
+type SchedulingDateSuggestion {
+  date: LocalDate!
+  routes: [RouteInsertionSuggestion!]!
+  nearbyEvents: [NearbyEvent!]!
+  pairInsertionSeconds: Int
+  pairInsertionMeters: Int
+  pairInsertionMiles: Float
+  patchDirections: DirectionsResult
+  depotSeconds: Int!
+  depotMeters: Int!
+  depotMiles: Float!
+}
+
+input SetScheduleColorsInput {
+  scheduleColors: ScheduleColorsInput!
+}
+
+input SignUpInput {
+  email: String!
+  password: String!
+  recaptchaToken: String!
+}
+
+type SignUpResult {
+  userId: SafeInt!
+  companyId: SafeInt!
+  accessToken: String!
+  refreshToken: String!
+  tokenType: String!
+  expiresIn: Int!
+}
+
+type Sms {
+  id: SafeInt!
+  customerId: SafeInt
+  customer: Customer
+  counterPartyUserId: SafeInt
+  counterPartyUser: User
+  sentByUserId: SafeInt
+  sentByUser: User
+  pcsId: SafeInt!
+  sid: String!
+  to: String!
+  from: String!
+  text: String!
+  notes: String
+  status: SmsStatus!
+  direction: SmsDirection!
+  segments: SafeInt!
+  isViewed: Boolean!
+  isDone: Boolean!
+  stripeStatus: SmsStripeStatus!
+  conversationId: String
+  counterparty: String
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  sentAt: DateTime!
+}
+
+enum SmsDirection {
+  IN
+  OUT
+}
+
+input SmsDirectionFilter {
+  equals: SmsDirection
+  not: SmsDirection
+  in: [SmsDirection!]
+  notIn: [SmsDirection!]
+}
+
+input SmsFilter {
+  id: IntFilter
+  customerId: IntFilter
+  counterPartyUserId: IntFilter
+  counterPartyUser: UserFilter
+  sentByUserId: IntFilter
+  sentByUser: UserFilter
+  direction: SmsDirection
+  status: SmsStatus
+  stripeStatus: SmsStripeStatus
+  isViewed: Boolean
+  isDone: Boolean
+  createdAt: DateTimeFilter
+  sentAt: DateTimeFilter
+  conversationId: String
+  AND: [SmsFilter!]
+  OR: [SmsFilter!]
+  NOT: SmsFilter
+}
+
+type SmsReportAvgAggregate {
+  segments: Float
+}
+
+input SmsReportAvgOrderBy {
+  segments: SortOrder
+}
+
+type SmsReportCountAggregate {
+  id: SafeInt!
+}
+
+input SmsReportCountOrderBy {
+  id: SortOrder
+}
+
+type SmsReportMaxAggregate {
+  segments: SafeInt
+  createdAt: DateTime
+  sentAt: DateTime
+}
+
+input SmsReportMaxOrderBy {
+  segments: SortOrder
+  createdAt: SortOrder
+  sentAt: SortOrder
+}
+
+type SmsReportMinAggregate {
+  segments: SafeInt
+  createdAt: DateTime
+  sentAt: DateTime
+}
+
+input SmsReportMinOrderBy {
+  segments: SortOrder
+  createdAt: SortOrder
+  sentAt: SortOrder
+}
+
+input SmsReportOrderBy {
+  direction: SortOrder
+  status: SortOrder
+  stripeStatus: SortOrder
+  customerId: SortOrder
+  counterPartyUserId: SortOrder
+  sentByUserId: SortOrder
+  conversationId: SortOrder
+  isViewed: SortOrder
+  isDone: SortOrder
+  count: SmsReportCountOrderBy
+  sum: SmsReportSumOrderBy
+  avg: SmsReportAvgOrderBy
+  min: SmsReportMinOrderBy
+  max: SmsReportMaxOrderBy
+}
+
+type SmsReportRow {
+  direction: SmsDirection
+  status: SmsStatus
+  stripeStatus: SmsStripeStatus
+  customerId: SafeInt
+  counterPartyUserId: SafeInt
+  sentByUserId: SafeInt
+  conversationId: String
+  isViewed: Boolean
+  isDone: Boolean
+  customer: Customer
+  counterPartyUser: User
+  sentByUser: User
+  _count: SmsReportCountAggregate
+  _sum: SmsReportSumAggregate
+  _avg: SmsReportAvgAggregate
+  _min: SmsReportMinAggregate
+  _max: SmsReportMaxAggregate
+  count: SmsReportCountAggregate
+  sum: SmsReportSumAggregate
+  avg: SmsReportAvgAggregate
+  min: SmsReportMinAggregate
+  max: SmsReportMaxAggregate
+}
+
+type SmsReportSumAggregate {
+  segments: SafeInt
+}
+
+input SmsReportSumOrderBy {
+  segments: SortOrder
+}
+
+input SmsSort {
+  id: SortOrder
+  createdAt: SortOrder
+  sentAt: SortOrder
+  customerId: SortOrder
+  direction: SortOrder
+}
+
+enum SmsStatus {
+  SENT
+  DELIVERED
+  FAILED
+  QUEUED
+  SENDING
+  UNDELIVERED
+  RECEIVING
+  RECEIVED
+  ACCEPTED
+  SCHEDULED
+  READ
+  PARTIALLY_DELIVERED
+  CANCELED
+}
+
+input SmsStatusFilter {
+  equals: SmsStatus
+  not: SmsStatus
+  in: [SmsStatus!]
+  notIn: [SmsStatus!]
+}
+
+enum SmsStripeStatus {
+  EXEMPT
+  PENDING
+  POSTED
+}
+
+input SmsStripeStatusFilter {
+  equals: SmsStripeStatus
+  not: SmsStripeStatus
+  in: [SmsStripeStatus!]
+  notIn: [SmsStripeStatus!]
+}
+
+"Generic sort order"
+enum SortOrder {
+  asc
+  desc
+}
+
+"The `String` scalar type represents textual data, represented as UTF-8 character sequences. The String type is most often used by GraphQL to represent free-form human-readable text."
+scalar String
+
+"Generic filters for string fields"
+input StringFilter {
+  equals: String
+  not: String
+  in: [String!]
+  notIn: [String!]
+  lt: String
+  lte: String
+  gt: String
+  gte: String
+  contains: String
+  startsWith: String
+  endsWith: String
+}
+
+"Company connected stripe information"
+type Stripe {
+  id: SafeInt!
+  publishableKey: String
+  stripeAccountId: String
+}
+
+"A bank account object from Stripe."
+type StripeBankAccount {
+  id: String!
+  object: StripePaymentSourceType!
+  account_holder_name: String
+  account_holder_type: StripeBankAccountHolderType
+  account_type: String
+  available_payout_methods: [String]
+  bank_name: String
+  country: String
+  currency: Currency
+  customer: String
+  default_for_currency: Boolean
+  deleted: Boolean
+  fingerprint: String
+  last4: String!
+  metadata: JSON
+  routing_number: String
+  status: StripeBankAccountStatus!
+}
+
+enum StripeBankAccountHolderType {
+  individual
+  company
+}
+
+enum StripeBankAccountStatus {
+  new
+  validated
+  verified
+  verification_failed
+  errored
+}
+
+"A card object from Stripe."
+type StripeCard {
+  id: String!
+  object: StripePaymentSourceType!
+  allow_redisplay: String
+  available_payout_methods: [String]
+  brand: String!
+  country: String
+  currency: Currency
+  customer: String
+  cvc_check: String
+  default_for_currency: Boolean
+  deleted: Boolean
+  description: String
+  dynamic_last4: String
+  exp_month: Int!
+  exp_year: Int!
+  fingerprint: String
+  funding: String!
+  iin: String
+  issuer: String
+  last4: String!
+  metadata: JSON
+  name: String
+  regulated_status: String
+  status: String
+  tokenization_method: String
+}
+
+type StripeIntent {
+  stripeIntentId: String!
+  stripeCustomerId: String!
+  clientSecret: String
+  customerSessionClientSecret: String
+  type: StripeIntentType!
+  customerId: SafeInt!
+  invoiceId: SafeInt
+  estimateId: SafeInt
+  status: StripePaymentIntentStatus!
+  errorType: String
+  errorCode: String
+  errorMessage: String
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+enum StripeIntentType {
+  PAYMENT
+  SETUP
+}
+
+type StripePaymentIntent {
+  stripeIntentId: String!
+  clientSecret: String!
+  stripeConnectAccountId: String!
+  customerSessionClientSecret: String
+  subtotal: SafeInt!
+  tip: SafeInt!
+  stripeProcessingFee: SafeInt!
+  customerProcessingFee: SafeInt!
+  applicationFee: SafeInt!
+  amount: SafeInt!
+  currency: Currency!
+  paymentMethodType: StripePaymentMethodType
+  walletType: StripeWalletType
+}
+
+enum StripePaymentIntentStatus {
+  canceled
+  processing
+  requires_action
+  requires_capture
+  requires_confirmation
+  requires_payment_method
+  succeeded
+}
+
+type StripePaymentMethod {
+  id: String!
+  object: String!
+  type: StripePaymentMethodType!
+  created: DateTime!
+  allow_redisplay: StripePaymentMethodAllowRedisplay
+  livemode: Boolean!
+  metadata: JSON
+  billing_details: JSON!
+  status: StripePaymentMethodStatus
+  card: JSON
+  acss_debit: JSON
+  affirm: JSON
+  afterpay_clearpay: JSON
+  alipay: JSON
+  alma: JSON
+  amazon_pay: JSON
+  au_becs_debit: JSON
+  bacs_debit: JSON
+  bancontact: JSON
+  blik: JSON
+  boleto: JSON
+  card_present: JSON
+  cashapp: JSON
+  customer_balance: JSON
+  eps: JSON
+  fpx: JSON
+  giropay: JSON
+  grabpay: JSON
+  ideal: JSON
+  interac_present: JSON
+  kakao_pay: JSON
+  klarna: JSON
+  konbini: JSON
+  kr_card: JSON
+  link: JSON
+  mobilepay: JSON
+  multibanco: JSON
+  naver_pay: JSON
+  oxxo: JSON
+  p24: JSON
+  pay_by_bank: JSON
+  payco: JSON
+  paynow: JSON
+  paypal: JSON
+  pix: JSON
+  promptpay: JSON
+  revolut_pay: JSON
+  samsung_pay: JSON
+  sepa_debit: JSON
+  sofort: JSON
+  swish: JSON
+  twint: JSON
+  us_bank_account: JSON
+  wechat_pay: JSON
+  zip: JSON
+}
+
+enum StripePaymentMethodAllowRedisplay {
+  always
+  limited
+  unspecified
+}
+
+enum StripePaymentMethodStatus {
+  VERIFIED
+  UNVERIFIED
+  PENDING_VERIFICATION
+}
+
+enum StripePaymentMethodType {
+  billie
+  card
+  crypto
+  acss_debit
+  affirm
+  afterpay_clearpay
+  alipay
+  alma
+  amazon_pay
+  au_becs_debit
+  bacs_debit
+  bancontact
+  blik
+  boleto
+  card_present
+  cashapp
+  customer_balance
+  eps
+  fpx
+  giropay
+  grabpay
+  ideal
+  interac_present
+  kakao_pay
+  klarna
+  konbini
+  kr_card
+  link
+  mobilepay
+  multibanco
+  naver_pay
+  nz_bank_account
+  oxxo
+  p24
+  pay_by_bank
+  payco
+  paynow
+  paypal
+  pix
+  promptpay
+  revolut_pay
+  samsung_pay
+  satispay
+  sepa_debit
+  sofort
+  swish
+  twint
+  us_bank_account
+  wechat_pay
+  zip
+}
+
+union StripePaymentSource = StripeCard | StripeBankAccount
+
+enum StripePaymentSourceType {
+  bank_account
+  card
+}
+
+type StripeSetupIntent {
+  stripeIntentId: String!
+  clientSecret: String!
+  stripeConnectAccountId: String!
+  customerSessionClientSecret: String!
+}
+
+type StripeSourceObject {
+  id: ID!
+  object: String!
+  type: String
+  usage: String
+  status: String
+}
+
+type StripeSubscription {
+  subscriptionId: String!
+  status: String!
+  currentPeriodEnd: DateTime!
+}
+
+type StripeSubscriptionPhase {
+  tier: Tier!
+  planPriceId: String!
+  planFrequency: BillingInterval!
+  additionalUsers: SafeInt!
+  startDate: DateTime!
+  endDate: DateTime!
+}
+
+enum StripeWalletType {
+  apple_pay
+  google_pay
+  cash_app_pay
+  samsung_pay
+  link
+  masterpass
+  visa_checkout
+  amex_express_checkout
+}
+
+input SubmitUpsellInput {
+  upsellId: SafeInt!
+  eventId: SafeInt!
+  customerId: SafeInt!
+}
+
+"Approximate usage and cost picture for the current monthly billing period."
+type SubscriptionMonthlyUsage {
+  smsMessagesSent: SafeInt!
+  smsSegmentsSent: SafeInt!
+  approximateSmsCost: Decimal!
+  activeUserSeats: SafeInt!
+  additionalUserSeats: SafeInt!
+  approximateUserSeatCost: Decimal!
+}
+
+"Mirrors Stripe subscription statuses plus CANCEL_REQUESTED for scheduled cancellations"
+enum SubscriptionStatus {
+  CURRENT
+  PAST_DUE
+  UNPAID
+  CANCELLED
+  CANCEL_REQUESTED
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  TRIALING
+  PAUSED
+}
+
+enum SubscriptionTier {
+  ENTERPRISE_LEGACY
+  PRO
+  STARTER
+  SOLO
+  GROWTH
+  ENTERPRISE
+}
+
+type Tag {
+  id: SafeInt!
+  tag: String!
+  createdAt: DateTime
+  updatedAt: DateTime
+  objectTagCount(type: TagObjectType): SafeInt!
+  hasEvents: Boolean!
+  hasCustomers: Boolean!
+  hasRecurringEvents: Boolean!
+  eventCount(where: EventFilter): SafeInt!
+  events(where: EventFilter, orderBy: [EventSort!], take: SafeInt, skip: SafeInt): [Event!]!
+  customerCount(where: CustomerFilter): SafeInt!
+  customers(where: CustomerFilter, orderBy: [CustomerSort!], take: SafeInt, skip: SafeInt): [Customer!]!
+  recurringEventCount(where: RecurringEventFilter): SafeInt!
+  recurringEvents(where: RecurringEventFilter, orderBy: [RecurringEventSort!], take: SafeInt, skip: SafeInt): [RecurringEvent!]!
+}
+
+input TagFilter {
+  tag: StringFilter
+  hasEvents: Boolean
+  hasCustomers: Boolean
+  hasRecurringEvents: Boolean
+}
+
+enum TagObjectType {
+  ASSET
+  CREW
+  CUSTOMER
+  EVENT
+  RECURRING_EVENT
+  VENDOR
+}
+
+input TagOrderBy {
+  id: SortOrder
+  tag: SortOrder
+  createdAt: SortOrder
+  updatedAt: SortOrder
+  objectTagCount: SortOrder
+}
+
+input TagsFilter {
+  in: [String!]
+  notIn: [String!]
+}
+
+"Tax rate breakdown returned by the ZipTax integration."
+type TaxRateLookupResult {
+  county: Decimal!
+  city: Decimal!
+  state: Decimal!
+  totalTax: Decimal!
+  statusCode: Int
+  statusMessage: String
+  fromCache: Boolean!
+}
+
+type TempFile {
+  key: String!
+  contentType: String!
+  uploadUrl: String!
+  downloadUrl: String
+  expires: SafeInt!
+}
+
+type Tier {
+  id: SubscriptionTier!
+  level: Int!
+  name: String!
+  features: TierFeatures!
+  smsPrice: Decimal!
+  additionalUserSeatPrice: Decimal!
+}
+
+type TierFeatures {
+  generalContactLimit: Int!
+  hasCommunicationAccess: Boolean!
+  hasApplicationFee: Boolean!
+  hasCustomerPortal: Boolean!
+  hasSimpleAutomations: Boolean!
+  hasUpsells: Boolean!
+  hasEmailTemplates: Boolean!
+  hasEmailLinks: Boolean!
+  hasIntercom: Boolean!
+  hasTipping: Boolean!
+  hasBackups: Boolean!
+  hasProTimer: Boolean!
+  hasRouteOptimization: Boolean!
+  hasChemicalApplication: Boolean!
+  hasPaymentMethodRequired: Boolean!
+  hasSMS: Boolean!
+  hasQuickbooksSync: Boolean!
+  hasPriceMatrix: Boolean!
+  hasAutoCharge: Boolean!
+  hasACHPayments: Boolean!
+  hasAdvancedAutomations: Boolean!
+  hasPassThroughFees: Boolean!
+  hasPayInFull: Boolean!
+  hasWorkRequests: Boolean!
+  hasEstimateDeposits: Boolean!
+  hasCallNotes: Boolean!
+  hasWaitlist: Boolean!
+  includedUsers: Int!
+  includedSmsSegments: Int!
+  hasApiAccess: Boolean!
+  hasApiTrial: Boolean!
+  workRequests: Boolean
+  payInFull: Boolean
+  tipping: Boolean
+}
+
+"A time string at UTC, such as 10:15:30Z, compliant with the `full-time` format outlined in section 5.6 of the RFC 3339profile of the ISO 8601 standard for representation of dates and times using the Gregorian calendar."
+scalar Time
+
+type TimeEntry {
+  id: SafeInt!
+  type: TimeEntryType!
+  userId: SafeInt!
+  user: User!
+  categoryId: SafeInt
+  category: TimeEntryCategory
+  eventId: SafeInt
+  event: Event
+  customerId: SafeInt
+  customer: Customer
+  propertyId: SafeInt
+  property: Property
+  reviewerUserId: SafeInt
+  paymentId: SafeInt
+  bonusPaymentId: SafeInt
+  startedAt: DateTime!
+  endedAt: DateTime
+  totalSeconds: SafeInt!
+  acceptedAt: DateTime
+  deniedAt: DateTime
+  hourlyRate: Decimal
+  paymentAmount: Decimal
+  bonusPaymentAmount: Decimal!
+  location: Location
+  notes: String
+}
+
+type TimeEntryCategory {
+  id: SafeInt!
+  name: String!
+  color: String!
+  isDeletable: Boolean!
+}
+
+input TimeEntryCategorySort {
+  name: SortOrder
+  id: SortOrder
+}
+
+input TimeEntryFilter {
+  id: IntFilter
+  userId: IntFilter
+  categoryId: IntFilter
+  eventId: IntFilter
+  customerId: IntFilter
+  propertyId: IntFilter
+  reviewerUserId: IntFilter
+  paymentId: IntFilter
+  bonusPaymentId: IntFilter
+  startedAt: DateTimeFilter
+  endedAt: DateTimeFilter
+  totalSeconds: IntFilter
+  acceptedAt: DateTimeFilter
+  deniedAt: DateTimeFilter
+  hourlyRate: DecimalFilter
+  paymentAmount: DecimalFilter
+  bonusPaymentAmount: DecimalFilter
+  notes: String
+  user: UserFilter
+  isRunning: Boolean
+}
+
+input TimeEntryInput {
+  categoryId: SafeInt
+  eventId: SafeInt
+  customerId: SafeInt
+  propertyId: SafeInt
+  startedAt: DateTime!
+  endedAt: DateTime
+  location: LocationInput
+  notes: String
+  userId: SafeInt
+  hourlyRate: Decimal
+}
+
+type TimeEntryReportAvgAggregate {
+  totalSeconds: Float
+  hourlyRate: Decimal
+  paymentAmount: Decimal
+  bonusPaymentAmount: Decimal
+}
+
+input TimeEntryReportAvgOrderBy {
+  totalSeconds: SortOrder
+  hourlyRate: SortOrder
+  paymentAmount: SortOrder
+  bonusPaymentAmount: SortOrder
+}
+
+type TimeEntryReportCountAggregate {
+  id: SafeInt!
+}
+
+input TimeEntryReportCountOrderBy {
+  id: SortOrder
+}
+
+type TimeEntryReportMaxAggregate {
+  totalSeconds: SafeInt
+  hourlyRate: Decimal
+  paymentAmount: Decimal
+  startedAt: LocalDateTime
+  endedAt: LocalDateTime
+}
+
+input TimeEntryReportMaxOrderBy {
+  totalSeconds: SortOrder
+  hourlyRate: SortOrder
+  paymentAmount: SortOrder
+  startedAt: SortOrder
+  endedAt: SortOrder
+}
+
+type TimeEntryReportMinAggregate {
+  totalSeconds: SafeInt
+  hourlyRate: Decimal
+  paymentAmount: Decimal
+  startedAt: LocalDateTime
+  endedAt: LocalDateTime
+}
+
+input TimeEntryReportMinOrderBy {
+  totalSeconds: SortOrder
+  hourlyRate: SortOrder
+  paymentAmount: SortOrder
+  startedAt: SortOrder
+  endedAt: SortOrder
+}
+
+input TimeEntryReportOrderBy {
+  userId: SortOrder
+  categoryId: SortOrder
+  eventId: SortOrder
+  customerId: SortOrder
+  propertyId: SortOrder
+  count: TimeEntryReportCountOrderBy
+  sum: TimeEntryReportSumOrderBy
+  avg: TimeEntryReportAvgOrderBy
+  min: TimeEntryReportMinOrderBy
+  max: TimeEntryReportMaxOrderBy
+}
+
+type TimeEntryReportRow {
+  userId: SafeInt
+  categoryId: SafeInt
+  eventId: SafeInt
+  customerId: SafeInt
+  propertyId: SafeInt
+  user: User
+  category: TimeEntryCategory
+  event: Event
+  customer: Customer
+  property: Property
+  _count: TimeEntryReportCountAggregate
+  _sum: TimeEntryReportSumAggregate
+  _avg: TimeEntryReportAvgAggregate
+  _min: TimeEntryReportMinAggregate
+  _max: TimeEntryReportMaxAggregate
+  count: TimeEntryReportCountAggregate
+  sum: TimeEntryReportSumAggregate
+  avg: TimeEntryReportAvgAggregate
+  min: TimeEntryReportMinAggregate
+  max: TimeEntryReportMaxAggregate
+}
+
+type TimeEntryReportSumAggregate {
+  totalSeconds: SafeInt
+  paymentAmount: Decimal
+  bonusPaymentAmount: Decimal
+}
+
+input TimeEntryReportSumOrderBy {
+  totalSeconds: SortOrder
+  paymentAmount: SortOrder
+  bonusPaymentAmount: SortOrder
+}
+
+input TimeEntrySort {
+  timeStart: SortOrder
+  timeEnd: SortOrder
+  id: SortOrder
+}
+
+type TimeEntryTotals {
+  pastTimeEntries: SafeInt!
+  pastTimeEntrySeconds: SafeInt!
+  runningTimers: SafeInt!
+  runningTimerSeconds: SafeInt!
+  totalSeconds: SafeInt!
+  at: DateTime!
+}
+
+enum TimeEntryType {
+  GLOBAL_TIMER
+  EVENT_TIMER
+}
+
+"Twilio/SMS configuration (read-only)"
+type Twilio {
+  number: String!
+  sms: Boolean!
+  unlimitedTexts: Boolean
+  periodStart: DateTime
+  expiredAt: DateTime
+  subAccountSid: String
+  messagingServiceSid: String
+  hasSubAccountToken: Boolean!
+}
+
+type TwilioComplianceInquiry {
+  id: SafeInt!
+  companyId: SafeInt!
+  subAccountSid: String!
+  phoneNumber: String!
+  inquiryId: String
+  inquirySessionToken: String
+  sessionTokenUpdated: DateTime
+  registrationId: String
+  url: String
+  createdAt: DateTime
+  updatedAt: DateTime
+}
+
+type TwilioRejectionReason {
+  code: Int
+  reason: String
+}
+
+"See https://www.twilio.com/docs/messaging/compliance/toll-free/api-onboarding#create-a-tfv-request"
+type TwilioVerification {
+  sid: String
+  accountSid: String
+  customerProfileSid: String
+  trustProductSid: String
+  dateCreated: DateTime
+  dateUpdated: DateTime
+  regulatedItemSid: String
+  businessName: String
+  businessStreetAddress: String
+  businessStreetAddress2: String
+  businessCity: String
+  businessStateProvinceRegion: String
+  businessPostalCode: String
+  businessCountry: String
+  businessWebsite: String
+  businessContactFirstName: String
+  businessContactLastName: String
+  businessContactEmail: String
+  businessContactPhone: String
+  notificationEmail: String
+  useCaseCategories: [String]
+  useCaseSummary: String
+  productionMessageSample: String
+  optInImageUrls: [String]
+  optInType: String
+  messageVolume: String
+  additionalInformation: String
+  tollfreePhoneNumberSid: String
+  tollfreePhoneNumber: String
+  status: String
+  url: String
+  rejectionReason: String
+  rejectionReasons: [TwilioRejectionReason]
+  errorCode: Int
+  editExpiration: DateTime
+  editAllowed: Boolean
+  businessRegistrationNumber: String
+  businessRegistrationAuthority: String
+  businessRegistrationCountry: String
+  businessType: String
+  businessRegistrationPhoneNumber: String
+  doingBusinessAs: String
+  optInConfirmationMessage: String
+  helpMessageSample: String
+  privacyPolicyUrl: String
+  termsAndConditionsUrl: String
+  ageGatedContent: String
+  optInKeywords: String
+}
+
+input UpdateEstimateInput {
+  number: SafeInt
+  purchaseOrder: String
+  customerId: SafeInt
+  date: DateTime
+  internalNotes: String
+  title: String
+  notes: String
+  terms: String
+  discountPercent: Decimal
+  requestId: SafeInt
+  tags: String
+  payInFullEnabled: Boolean
+}
+
+input UpdateTimeEntryInput {
+  startedAt: DateTime
+  endedAt: DateTime
+  notes: String
+  hourlyRate: Decimal
+}
+
+type Upsell {
+  id: SafeInt!
+  companyId: SafeInt!
+  name: String!
+  emailTemplate: SafeInt!
+  textTemplate: SafeInt!
+  emailActive: Boolean!
+  textActive: Boolean!
+  createdAt: DateTime
+  updatedAt: DateTime
+  reviewRequired: Boolean!
+}
+
+input UpsellFilter {
+  id: IntFilter
+  name: StringFilter
+  reviewRequired: Boolean
+  emailActive: Boolean
+  textActive: Boolean
+}
+
+type UpsellHistory {
+  id: SafeInt!
+  upsellId: SafeInt!
+  companyId: SafeInt!
+  customerId: SafeInt!
+  senderUserId: SafeInt!
+  eventId: SafeInt!
+  sentTime: BigInt!
+  name: String!
+  wasSent: Boolean!
+  upsell: Upsell
+  customer: Customer
+  senderUser: User
+  event: Event
+}
+
+input UpsellSort {
+  id: SortOrder
+  name: SortOrder
+  createdAt: SortOrder
+}
+
+"Shared User type used by both Admin and Company APIs."
+type User {
+  id: SafeInt!
+  email: String!
+  firstName: String!
+  lastName: String!
+  role: UserRole!
+  status: UserStatus!
+  address: Address!
+  phone: String!
+  fax: String!
+  cell: String!
+  contactEmail: String!
+  notes: String
+  title: String!
+  picture: File!
+  lastLogin: DateTime!
+  votes: SafeInt!
+  isDeleted: Boolean!
+  license: String
+  tags: String!
+  partner: SafeInt!
+  latitude: String
+  longitude: String
+  lastKnownLocation: Location
+  locationStoredAt: DateTime
+  locationLastFetchAttemptedAt: DateTime
+  inactiveDate: DateTime
+  dashboardLimit: SafeInt!
+  dayColor: String!
+  scheduleDefaultColor: String!
+  color: String
+  allowUpsells: Boolean!
+  company: Company!
+  estimateHistory(where: EstimateHistoryFilter, orderBy: [EstimateHistorySort!], take: SafeInt = 1000, skip: SafeInt): [EstimateHistory]
+  permissions: Permissions!
+  dayOverrides(where: UserDayOverrideFilter, orderBy: [UserDayOverrideSort!], take: SafeInt = 1000, skip: SafeInt): [UserDayOverride!]!
+  hireDate: Date!
+  birthDate: Date!
+  rate: Decimal!
+  rateType: String!
+  payPerfType: SafeInt!
+  payPerf: String!
+  dailyCapacityHours: Decimal!
+  weeklyCapacityHours: SafeInt!
+  excludeFromCapacity: Boolean!
+  clockInRequired: Boolean!
+  scheduleColors: ScheduleColors
+  scheduleColor: String
+  eventCount(where: EventFilter): SafeInt!
+  events(where: EventFilter = {isDeleted: false}, orderBy: [EventSort!], take: SafeInt = 1000, skip: SafeInt): [Event]
+  recurringEvents(where: RecurringEventFilter, orderBy: [RecurringEventSort!], take: SafeInt = 1000, skip: SafeInt): [RecurringEvent]
+  crews(where: CrewFilter = {isDeleted: false}, orderBy: [CrewSort!], take: SafeInt = 1000, skip: SafeInt): [Crew]
+}
+
+input UserContactInput {
+  firstName: String!
+  lastName: String!
+}
+
+type UserDayOverride {
+  id: SafeInt!
+  userId: SafeInt!
+  date: Date!
+  capacityHours: Decimal!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+input UserDayOverrideFilter {
+  id: IntFilter
+  userId: IntFilter
+  date: DateFilter
+  capacityHours: DecimalFilter
+  AND: [UserDayOverrideFilter!]
+  OR: [UserDayOverrideFilter!]
+  NOT: UserDayOverrideFilter
+}
+
+input UserDayOverrideSort {
+  id: SortOrder
+  userId: SortOrder
+  date: SortOrder
+  capacityHours: SortOrder
+}
+
+input UserFilter {
+  id: IntFilter
+  email: StringFilter
+  firstName: StringFilter
+  lastName: StringFilter
+  status: UserStatus
+  isDeleted: Boolean
+  lastLogin: DateTimeFilter
+  role: UserRoleFilter
+  events: EventFilter
+  excludeFromCapacity: Boolean
+  search: String
+  AND: [UserFilter!]
+  OR: [UserFilter!]
+  NOT: UserFilter
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  EMPLOYEE
+}
+
+input UserRoleFilter {
+  equals: UserRole
+  not: UserRole
+  in: [UserRole!]
+  notIn: [UserRole!]
+}
+
+input UserSort {
+  id: SortOrder
+  email: SortOrder
+  firstName: SortOrder
+  lastName: SortOrder
+  role: SortOrder
+  status: SortOrder
+  isDeleted: SortOrder
+  lastLogin: SortOrder
+}
+
+enum UserStatus {
+  BLOCKED
+  ACTIVE
+  SUSPENDED
+  ADDON_ACTIVE
+}
+
+enum WaitlistDueStatus {
+  UPCOMING
+  DUE_SOON
+  OVERDUE
+}
+
+input WaitlistDueStatusFilter {
+  equals: WaitlistDueStatus
+  not: WaitlistDueStatus
+  in: [WaitlistDueStatus!]
+  notIn: [WaitlistDueStatus!]
+}

@@ -190,6 +190,11 @@ from routers import ai_media_estimator as _p25_ai_media_router  # noqa: E402
 api_router.include_router(_p25_ai_media_router.router)
 from routers import integrations_supercool as _p26_supercool_router  # noqa: E402
 api_router.include_router(_p26_supercool_router.router)
+# Feb-2026 · Phase 1a — Homeworks (MCP via api.home.works) OAuth
+# lifecycle (DCR + authcode + PKCE). Token exchange only — MCP
+# tools/list / tools/call land in Phase 1b.
+from routers import integrations_homeworks_oauth as _hw_mcp_oauth  # noqa: E402
+api_router.include_router(_hw_mcp_oauth.router)
 from routers import media_gen as _phaseb_media_router  # noqa: E402
 api_router.include_router(_phaseb_media_router.router)
 # Phase 22 · Feb 2026 — Public Service Images portal endpoint. Mounted
