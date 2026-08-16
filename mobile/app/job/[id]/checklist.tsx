@@ -435,7 +435,9 @@ export default function JobChecklistScreen() {
   // Feb-2026 · Checklist reclassifier — mirrors ChecklistModal's rule:
   // admins/managers can always retag; techs only when the job is
   // theirs (matches routers/jobs.py::update_job:925 403 boundary).
-  const role: string = user?.role || "";
+  // `role` is already declared at line 89 (component top scope) — reuse
+  // it here rather than shadowing (fixes the eas-export SyntaxError
+  // from the prior ticket).
   const canEditServiceType: boolean = !locked && (
     role === "admin" || role === "super_admin" || role === "manager" ||
     (role === "technician" && !!user?.technician_id
