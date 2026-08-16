@@ -199,6 +199,8 @@ api_router.include_router(_hw_mcp_oauth.router)
 # cancel + status + history + active).
 from routers import integrations_homeworks_imports as _hw_imports  # noqa: E402
 api_router.include_router(_hw_imports.router)
+from routers import integrations_homeworks_active_imports as _hw_active_imports  # noqa: E402
+api_router.include_router(_hw_active_imports.router)
 from routers import media_gen as _phaseb_media_router  # noqa: E402
 api_router.include_router(_phaseb_media_router.router)
 # Phase 22 · Feb 2026 — Public Service Images portal endpoint. Mounted

@@ -203,3 +203,73 @@ query CustomerEstimates($customerId: SafeInt!) {
 # Status enum values that constitute "not active" per Homeworks'
 # ``CustomerStatus`` enum. Exported so tests can lock the mapping.
 INACTIVE_STATUS_VALUES: tuple = ("INACTIVE", "WRITTEN_OFF")
+
+# ── Phase 1b-B (Feb 2026): Active-customers filter ──────────────────
+# CustomerStatus enum only exposes 4 values: INACTIVE, ACTIVE,
+# WRITTEN_OFF, PENDING_APPROVAL. The user's "ACTIVE + LEAD + PROSPECT"
+# request maps best to ACTIVE + PENDING_APPROVAL — "lead" / "prospect"
+# do not exist as enum values (they live in `CustomerSource` /
+# `CustomerType` tables). See dispatch report for rationale.
+ACTIVE_STATUS_VALUES: tuple = ("ACTIVE", "PENDING_APPROVAL")
+
+ACTIVE_COUNT_PAGE_QUERY = """
+query CountActivePage($skip: SafeInt!, $take: SafeInt!) {
+  customers(
+    where: {
+      status: { in: [ACTIVE, PENDING_APPROVAL] },
+      isDeleted: false
+    }
+    orderBy: [{ id: asc }]
+    skip: $skip
+    take: $take
+  ) {
+    id
+  }
+}
+""".strip()
+
+ACTIVE_CUSTOMER_PAGE_QUERY = """
+query ActiveCustomerPage($skip: SafeInt!, $take: SafeInt!) {
+  customers(
+    where: {
+      status: { in: [ACTIVE, PENDING_APPROVAL] },
+      isDeleted: false
+    }
+    orderBy: [{ id: asc }]
+    skip: $skip
+    take: $take
+  ) {
+    id
+    email
+    ccEmail
+    fullName
+    firstName
+    lastName
+    dateRegistered
+    phone
+    cell
+    fax
+    address { street1 street2 city state zip country }
+    location { latitude longitude }
+    status
+    description
+    discount
+    credit
+    outstanding
+    lifetimePaid
+    pastDue
+    createdAt
+    updatedAt
+    lastUpdated
+    www
+    title
+    invoiceTerms
+    number
+    customerType { id name }
+    isReceivePhone
+    isReceiveEmail
+    isReceiveText
+  }
+}
+""".strip()
+
