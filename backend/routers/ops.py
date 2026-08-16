@@ -27,14 +27,48 @@ class CrewIn(BaseModel):
 
 
 @router.get("/crews")
-async def list_crews(user: dict = Depends(get_current_user)):
-    crews = await db.crews.find({}, {"_id": 0}).sort("name", 1).to_list(200)
+async def list_crews(user: dict = Depends(get_current_user),
+                      tenant: dict = Depends(get_current_tenant)):
+    """List crews for the current tenant.
+
+    Feb-2026 · P0 fix — added ``tenant_id`` filter (the prior
+    ``find({})`` leaked crews across tenants). The technician join
+    is also tenant-scoped so seed rows from other tenants can't
+    surface as "members".
+    """
+    tid = tenant["id"]
+    crews = await db.crews.find(
+        {"tenant_id": tid}, {"_id": 0},
+    ).sort("name", 1).to_list(200)
     if not crews:
         return []
-    tech_ids = {tid for c in crews for tid in (c.get("tech_ids") or [])}
+    tech_ids = {t for c in crews for t in (c.get("tech_ids") or [])}
     techs = await db.technicians.find(
-        {"id": {"$in": list(tech_ids)}}, {"_id": 0}
+        {"tenant_id": tid, "id": {"$in": list(tech_ids)}},
+        {"_id": 0},
     ).to_list(500) if tech_ids else []
+    # Also resolve user-synthesized member ids (Feb-2026 union fix in
+    # /technicians). A crew "member" may be a raw user id when the
+    # user has no technicians row yet.
+    if tech_ids:
+        async for u in db.users.find(
+            {"tenant_id": tid, "id": {"$in": list(tech_ids)}},
+            {"_id": 0, "id": 1, "email": 1, "first_name": 1,
+             "last_name": 1, "name": 1, "phone": 1, "role": 1},
+        ):
+            techs.append({
+                "id": u.get("id"),
+                "user_id": u.get("id"),
+                "name": (u.get("name")
+                          or " ".join([u.get("first_name") or "",
+                                        u.get("last_name") or ""]).strip()
+                          or u.get("email") or "Unnamed"),
+                "email": u.get("email"),
+                "phone": u.get("phone"),
+                "role": u.get("role"),
+                "tenant_id": tid,
+                "synthesized_from_users": True,
+            })
     tmap = {t["id"]: t for t in techs}
     for c in crews:
         c["members"] = [tmap[t] for t in (c.get("tech_ids") or []) if t in tmap]
