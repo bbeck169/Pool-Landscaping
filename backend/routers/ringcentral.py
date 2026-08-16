@@ -888,6 +888,23 @@ async def ringout(body: RingOutBody,
                  or (body.from_number or os.getenv("RC_FROM_NUMBER") or "")
     if not from_num:
         raise HTTPException(400, "RC_FROM_NUMBER unset and no from_number provided")
+    # Feb-2026 · Comms whitelist gate (P0 safety directive).
+    try:
+        from services.comms.gate import is_comm_allowed
+        allowed = await is_comm_allowed(
+            recipient_identifier={"customer_id": body.customer_id,
+                                     "phone": dest},
+            comm_type="voice",
+            tenant_id=tenant["id"],
+            provider="ringcentral",
+            trigger_action="ringout",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"rc ringout gate errored — failing closed: {e}")
+        allowed = False
+    if not allowed:
+        return {"mocked": True, "reason": "suppressed_not_demo",
+                 "phone_number": dest}
     try:
         platform = get_rc_platform()
         resp = platform.post(

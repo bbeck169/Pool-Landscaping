@@ -56,6 +56,23 @@ async def send_email(tenant_id: str, to_email: str, subject: str, html: str,
     if headers:
         payload["headers"] = headers
 
+    # Feb-2026 · Comms whitelist gate (P0 safety directive).
+    try:
+        from services.comms.gate import is_comm_allowed
+        allowed = await is_comm_allowed(
+            recipient_identifier=to_email,
+            comm_type="email",
+            tenant_id=tenant_id,
+            provider="resend",
+            trigger_action="comms_email_adapter",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            f"comms_email_adapter: gate errored — failing closed: {e}")
+        allowed = False
+    if not allowed:
+        return {"status": "suppressed_not_demo", "provider_id": None}
+
     try:
         import resend  # type: ignore
         resend.api_key = key

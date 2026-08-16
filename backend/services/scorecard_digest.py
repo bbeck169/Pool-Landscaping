@@ -325,6 +325,24 @@ async def _default_resend_send(to_list: List[str], subject: str,
     key = os.environ.get("RESEND_API_KEY")
     if not key:
         return {"ok": False, "error": "resend_not_configured"}
+    # Feb-2026 · Comms whitelist gate (P0). Per-recipient check —
+    # if ANY recipient in ``to_list`` isn't a demo account, block
+    # the whole send. Digest emails are batched by tenant; a batch
+    # with even one real customer would leak.
+    try:
+        from services.comms.gate import is_comm_allowed
+        for r in to_list or []:
+            ok = await is_comm_allowed(
+                recipient_identifier=r,
+                comm_type="email",
+                provider="resend",
+                trigger_action="scorecard_digest",
+            )
+            if not ok:
+                return {"ok": False, "error": "suppressed_not_demo",
+                          "recipient": r}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"gate_error:{str(e)[:80]}"}
     import httpx
     try:
         async with httpx.AsyncClient() as c:

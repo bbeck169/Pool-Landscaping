@@ -456,6 +456,32 @@ async def _dispatch_email(tenant_id: Optional[str], user_id: str, subject: str,
         })
         return
     try:
+        # Feb-2026 · Comms whitelist gate (P0 safety directive).
+        try:
+            from services.comms.gate import is_comm_allowed
+            allowed = await is_comm_allowed(
+                recipient_identifier={"user_id": user_id, "email": to_addr},
+                comm_type="email",
+                tenant_id=tenant_id,
+                provider="resend",
+                trigger_action=f"notification:{kind}",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"notif email gate errored — failing closed: {e}")
+            allowed = False
+        if not allowed:
+            await db.email_delivery_log.insert_one({
+                "id": new_id(),
+                "kind": f"notification:{kind}",
+                "tenant_id": tenant_id,
+                "user_id": user_id,
+                "to": to_addr,
+                "subject": subject,
+                "mocked": True,
+                "reason": "suppressed_not_demo",
+                "created_at": _n(),
+            })
+            return
         import resend  # type: ignore
         resend.api_key = resend_key
         resend.Emails.send({
@@ -509,15 +535,31 @@ async def _dispatch_sms(tenant_id: Optional[str], user_id: str, body: str, kind:
         "kind": f"notification:{kind}",
     }
     if enabled:
+        # Feb-2026 · Comms whitelist gate (P0 safety directive).
         try:
-            platform = get_rc_platform()
-            platform.post("/restapi/v1.0/account/~/extension/~/sms",
-                          {"from": {"phoneNumber": row["from_number"]},
-                           "to": [{"phoneNumber": to}],
-                           "text": body})
-        except Exception as e:
-            logger.warning(f"notif sms send failed: {type(e).__name__}")
-            row["delivery_status"] = "failed"
+            from services.comms.gate import is_comm_allowed
+            allowed = await is_comm_allowed(
+                recipient_identifier={"user_id": user_id, "phone": to},
+                comm_type="sms",
+                tenant_id=tenant_id,
+                provider="ringcentral",
+                trigger_action=f"notification:{kind}",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"notif sms gate errored — failing closed: {e}")
+            allowed = False
+        if not allowed:
+            row["delivery_status"] = "suppressed_not_demo"
+        else:
+            try:
+                platform = get_rc_platform()
+                platform.post("/restapi/v1.0/account/~/extension/~/sms",
+                              {"from": {"phoneNumber": row["from_number"]},
+                               "to": [{"phoneNumber": to}],
+                               "text": body})
+            except Exception as e:
+                logger.warning(f"notif sms send failed: {type(e).__name__}")
+                row["delivery_status"] = "failed"
     await db.sms_messages.insert_one(row)
 
 

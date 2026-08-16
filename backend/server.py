@@ -201,6 +201,8 @@ from routers import integrations_homeworks_imports as _hw_imports  # noqa: E402
 api_router.include_router(_hw_imports.router)
 from routers import integrations_homeworks_active_imports as _hw_active_imports  # noqa: E402
 api_router.include_router(_hw_active_imports.router)
+from routers import comms_admin as _comms_admin  # noqa: E402
+api_router.include_router(_comms_admin.router)
 from routers import media_gen as _phaseb_media_router  # noqa: E402
 api_router.include_router(_phaseb_media_router.router)
 # Phase 22 · Feb 2026 — Public Service Images portal endpoint. Mounted
@@ -1482,6 +1484,17 @@ async def startup():
         logger.info(startup_banner())
     except Exception as e:  # pragma: no cover
         logger.warning(f"comms_env_guard startup_banner failed: {e}")
+
+    # Feb-2026 · Comms whitelist SDK-level safety net (P0 directive).
+    # Monkey-patches ``resend.Emails.send`` so every direct SDK call
+    # in the codebase (~13 sites that bypass the adapter chokepoint)
+    # is gated by ``is_comm_allowed``. Idempotent + fail-closed.
+    try:
+        from services.comms.sdk_intercept import install_resend_gate
+        install_resend_gate()
+        logger.info("[comms.gate] resend SDK monkey-patch installed")
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"[comms.gate] SDK monkey-patch install failed: {e}")
     # Task TT · Feb 2026 — Zillow adapter armed banner. Reads env
     # freshly at boot; a supervisor restart flips ``keys_configured``
     # from False → True the moment RapidAPI env is populated.
