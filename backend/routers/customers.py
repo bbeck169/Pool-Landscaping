@@ -395,28 +395,25 @@ async def customers_bulk_status(body: CustomerBulkStatusIn,
         )
 
     now = now_iso()
-    q_all = {"id": {"$in": ids}, "tenant_id": tenant["id"]}
-    # Matched = customer ids that actually exist in this tenant. We
-    # compute this BEFORE the update so the response's ``matched``
-    # counter is stable regardless of what the update touches.
-    matched_count = await db.customers.count_documents(q_all)
+    # Feb-2026 · Route through the central helper so the Active/
+    # Inactive system tags stay in sync with the status flip.
+    from routers.customer_tags import apply_customer_status
+    result = await apply_customer_status(
+        tenant_id=tenant["id"],
+        customer_ids=ids,
+        target_status="inactive",
+        actor_id=(user or {}).get("id"),
+    )
+    matched_count = result["matched"]
+    modified_count = result["modified"]
 
-    # Only mutate rows that aren't already inactive — this makes the
-    # ``modified`` counter honestly report "how many customers did we
-    # actually change" (idempotent second calls report 0).
-    q_change = {
-        **q_all,
-        "$or": [
-            {"is_active": {"$ne": False}},
-            {"status": {"$ne": "inactive"}},
-        ],
-    }
-    upd = {"$set": {
-        "is_active": False,
-        "status": "inactive",
-        "updated_at": now,
-    }}
-    res = await db.customers.update_many(q_change, upd)
+    # Simulate the old `res` shape so the audit-log block below is
+    # untouched.
+    class _R:
+        pass
+    res = _R()
+    res.matched_count = matched_count
+    res.modified_count = modified_count
 
     # One audit-log entry per bulk operation (not per customer).
     try:
