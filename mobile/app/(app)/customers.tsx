@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from "react";
-import { View, Text, StyleSheet, FlatList, TextInput, RefreshControl, Pressable, Platform, Alert } from "react-native";
+import { View, Text, StyleSheet, FlatList, TextInput, RefreshControl, Pressable, Platform, Alert, Modal } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 
@@ -15,11 +15,18 @@ export default function Customers() {
   const router = useRouter();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin" || user?.role === "super_admin";
+  // Feb-2026 · Bulk-mark-inactive — manager is included per the dispatch
+  // spec (super_admin / admin / manager permitted; tech / customer blocked).
+  const isAdminOrManager = isAdmin || user?.role === "manager";
   const [items, setItems] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
+  // Bulk-inactive confirm modal state (mobile mirror of the web modal).
+  const [inactiveModalOpen, setInactiveModalOpen] = useState(false);
+  const [inactiveTyped, setInactiveTyped] = useState("");
+  const [inactiveBusy, setInactiveBusy] = useState(false);
 
   const visibleIds = useMemo(() => items.map((i) => i.id), [items]);
   const bulk = useBulkSelect(visibleIds);
@@ -52,6 +59,50 @@ export default function Customers() {
         },
       },
     ]);
+  };
+
+  // Feb-2026 · Bulk mark-inactive. Uses an in-app Modal with a
+  // "type INACTIVATE" text gate rather than Alert.alert — matches
+  // the web hard-confirm modal and prevents accidental fat-finger
+  // taps that would cascade job cancellations for many customers.
+  const openInactiveModal = () => {
+    setInactiveTyped("");
+    setInactiveModalOpen(true);
+  };
+
+  const doBulkInactive = async () => {
+    const ids = [...bulk.selected];
+    if (!ids.length) return;
+    // Snapshot for rollback.
+    const pre = new Map(items
+      .filter((i) => bulk.selected.has(i.id))
+      .map((i) => [i.id, { is_active: i.is_active, status: i.status }]));
+    setInactiveBusy(true);
+    // Optimistic — drop from current list (mobile shows a flat list).
+    setItems((prev) => prev.map((r) => bulk.selected.has(r.id)
+        ? { ...r, is_active: false, status: "inactive" }
+        : r));
+    try {
+      const res = await api.patch("/customers/bulk-status", {
+        customer_ids: ids, target_status: "inactive",
+      });
+      const n = res?.modified ?? res?.matched ?? 0;
+      Alert.alert(
+        "Marked inactive",
+        `${n} customer${n === 1 ? "" : "s"} marked inactive.`,
+      );
+      setInactiveModalOpen(false);
+      exitSelectMode();
+      load(search);
+    } catch (e: any) {
+      // Rollback: restore pre-flip state, notify.
+      setItems((prev) => prev.map((r) =>
+        pre.has(r.id) ? { ...r, ...(pre.get(r.id) as object) } : r,
+      ));
+      Alert.alert("Error", e?.message || "Bulk mark inactive failed");
+    } finally {
+      setInactiveBusy(false);
+    }
   };
 
   return (
@@ -131,9 +182,92 @@ export default function Customers() {
         count={bulk.count}
         onClear={exitSelectMode}
         actions={[
+          ...(isAdminOrManager ? [{
+            key: "bulk-mark-inactive-customers",
+            label: "Mark inactive",
+            icon: "person-remove-outline" as const,
+            onPress: openInactiveModal,
+          }] : []),
           { key: "bulk-delete-customers", label: "Delete", icon: "trash-outline", tone: "danger", onPress: bulkDelete },
         ]}
       />
+
+      {/* Feb-2026 · Bulk-mark-inactive hard-confirm modal (mobile). */}
+      <Modal
+        visible={inactiveModalOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setInactiveModalOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard} testID="bulk-mark-inactive-modal">
+            <Text style={styles.modalTitle}>
+              Mark {bulk.count} customer{bulk.count === 1 ? "" : "s"} inactive?
+            </Text>
+            <Text style={styles.modalSub}>
+              These customers will move to the Inactive tab and their
+              scheduled jobs may be cancelled. This action cannot be
+              undone via a single tap.
+            </Text>
+
+            {/* First 5 preview */}
+            <View style={{ marginTop: spacing.sm }}
+                  testID="bulk-mark-inactive-preview-list">
+              {items
+                .filter((i) => bulk.selected.has(i.id))
+                .slice(0, 5)
+                .map((i) => (
+                  <Text key={i.id} style={styles.modalListRow}
+                        numberOfLines={1}>
+                    · {i.name || i.email || i.id}
+                  </Text>
+                ))}
+              {bulk.count > 5 ? (
+                <Text style={styles.modalListMore}>
+                  … and {bulk.count - 5} more
+                </Text>
+              ) : null}
+            </View>
+
+            <Text style={styles.modalLabel}>
+              Type INACTIVATE to confirm
+            </Text>
+            <TextInput
+              testID="bulk-mark-inactive-type-gate"
+              value={inactiveTyped}
+              onChangeText={setInactiveTyped}
+              autoCapitalize="characters"
+              placeholder="INACTIVATE"
+              placeholderTextColor={colors.muted}
+              style={styles.modalInput}
+            />
+
+            <View style={styles.modalActions}>
+              <Pressable
+                testID="bulk-mark-inactive-cancel"
+                onPress={() => setInactiveModalOpen(false)}
+                style={[styles.modalBtn, styles.modalBtnGhost]}
+              >
+                <Text style={styles.modalBtnGhostText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                testID="bulk-mark-inactive-confirm"
+                disabled={inactiveTyped !== "INACTIVATE" || inactiveBusy}
+                onPress={doBulkInactive}
+                style={[
+                  styles.modalBtn,
+                  styles.modalBtnDanger,
+                  (inactiveTyped !== "INACTIVATE" || inactiveBusy) && { opacity: 0.4 },
+                ]}
+              >
+                <Text style={styles.modalBtnDangerText}>
+                  {inactiveBusy ? "Marking…" : `Mark ${bulk.count} inactive`}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -158,4 +292,63 @@ const styles = StyleSheet.create({
   avatarText: { fontFamily: font.bold, fontSize: fontSize.lg, color: colors.brand },
   name: { fontFamily: font.semibold, fontSize: fontSize.lg, color: colors.onSurface },
   sub: { fontFamily: font.regular, fontSize: fontSize.sm, color: colors.muted, marginTop: 2 },
+  // Feb-2026 · Bulk-mark-inactive modal.
+  modalBackdrop: {
+    flex: 1, backgroundColor: "rgba(15,23,42,0.55)",
+    alignItems: "center", justifyContent: "center", padding: spacing.lg,
+  },
+  modalCard: {
+    width: "100%", maxWidth: 480,
+    backgroundColor: colors.surface, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.border,
+    padding: spacing.lg,
+  },
+  modalTitle: {
+    fontFamily: font.bold, fontSize: fontSize.xl, color: colors.onSurface,
+  },
+  modalSub: {
+    fontFamily: font.regular, fontSize: fontSize.sm,
+    color: colors.muted, marginTop: spacing.xs,
+  },
+  modalListRow: {
+    fontFamily: font.regular, fontSize: fontSize.sm,
+    color: colors.onSurface, marginTop: 2,
+  },
+  modalListMore: {
+    fontFamily: font.regular, fontSize: fontSize.xs,
+    color: colors.muted, fontStyle: "italic", marginTop: 4,
+  },
+  modalLabel: {
+    fontFamily: font.semibold, fontSize: fontSize.xs,
+    color: colors.onSurface, marginTop: spacing.md,
+  },
+  modalInput: {
+    marginTop: spacing.xs,
+    borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    fontFamily: font.regular, fontSize: fontSize.base,
+    color: colors.onSurface,
+    ...(Platform.OS === "web" ? { outlineStyle: "none" as any } : {}),
+  },
+  modalActions: {
+    flexDirection: "row", justifyContent: "flex-end",
+    gap: spacing.sm, marginTop: spacing.lg,
+  },
+  modalBtn: {
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+  },
+  modalBtnGhost: {
+    backgroundColor: colors.surfaceSecondary,
+  },
+  modalBtnGhostText: {
+    fontFamily: font.semibold, fontSize: fontSize.sm,
+    color: colors.onSurface,
+  },
+  modalBtnDanger: { backgroundColor: "#B45309" },
+  modalBtnDangerText: {
+    fontFamily: font.bold, fontSize: fontSize.sm, color: "#FFFFFF",
+  },
 });

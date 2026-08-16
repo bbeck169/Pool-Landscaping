@@ -337,6 +337,116 @@ async def customers_bulk(body: CustomerBulkAction,
     raise HTTPException(400, f"Unknown action: {body.action}")
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Feb-2026 · Bulk status change (Customers list floating action bar).
+# Small, generic-shaped endpoint that today only permits
+# ``target_status == "inactive"`` — the enum-widening is a future
+# concern and is guarded by an explicit 400.
+# ─────────────────────────────────────────────────────────────────────
+class CustomerBulkStatusIn(BaseModel):
+    customer_ids: List[str]
+    target_status: str  # today only "inactive" is accepted; see TODO.
+
+
+# Roles allowed to bulk-change customer status. Tighter than
+# ``require_admin`` (which permits ``owner``) — dispatch says only
+# super_admin / admin / manager can drive this. ``owner`` is
+# excluded on purpose so the endpoint's blast radius matches the
+# ops org chart.
+_BULK_STATUS_ROLES = {"super_admin", "admin", "manager"}
+_BULK_STATUS_MAX_IDS = 500
+
+
+@router.patch("/customers/bulk-status")
+async def customers_bulk_status(body: CustomerBulkStatusIn,
+                                 user: dict = Depends(get_current_user),
+                                 tenant: dict = Depends(get_current_tenant)):
+    """Feb-2026 · Bulk-mark a selection of customers as inactive.
+
+    Idempotent: setting ``inactive`` on customers that are already
+    inactive is a no-op — the response reports ``matched`` vs
+    ``modified`` so the UI can show the right toast without erroring.
+    Tenant-scoped by construction (every query includes
+    ``tenant_id``). Homeworks-imported customers retain their
+    ``imported_from`` / ``original_id`` fields — only ``is_active``
+    + ``status`` + ``updated_at`` change here.
+    """
+    role = (user or {}).get("role")
+    if role not in _BULK_STATUS_ROLES:
+        raise HTTPException(403, "bulk_status_change_requires_admin_or_manager")
+
+    ids = list(body.customer_ids or [])
+    if not ids:
+        return {"matched": 0, "modified": 0, "requested": 0}
+    if len(ids) > _BULK_STATUS_MAX_IDS:
+        raise HTTPException(
+            400,
+            f"too_many_ids: max_{_BULK_STATUS_MAX_IDS}_per_request",
+        )
+
+    # TODO(Feb-2026 · Phase 34+): widen this to accept any customer
+    # status enum value once the product surface has a UI for
+    # transitions other than "→ inactive" (e.g. reactivate, mark VIP).
+    # Keep the 400 as-is until then so we don't ship a footgun.
+    if body.target_status != "inactive":
+        raise HTTPException(
+            400,
+            "unsupported_target_status: only 'inactive' is permitted in this release",
+        )
+
+    now = now_iso()
+    q_all = {"id": {"$in": ids}, "tenant_id": tenant["id"]}
+    # Matched = customer ids that actually exist in this tenant. We
+    # compute this BEFORE the update so the response's ``matched``
+    # counter is stable regardless of what the update touches.
+    matched_count = await db.customers.count_documents(q_all)
+
+    # Only mutate rows that aren't already inactive — this makes the
+    # ``modified`` counter honestly report "how many customers did we
+    # actually change" (idempotent second calls report 0).
+    q_change = {
+        **q_all,
+        "$or": [
+            {"is_active": {"$ne": False}},
+            {"status": {"$ne": "inactive"}},
+        ],
+    }
+    upd = {"$set": {
+        "is_active": False,
+        "status": "inactive",
+        "updated_at": now,
+    }}
+    res = await db.customers.update_many(q_change, upd)
+
+    # One audit-log entry per bulk operation (not per customer).
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id(),
+            "tenant_id": tenant["id"],
+            "event": "bulk_status_change",
+            "target_status": "inactive",
+            "count": int(matched_count),
+            "requested_count": len(ids),
+            "modified_count": int(res.modified_count),
+            "actor_id": (user or {}).get("id"),
+            "actor_email": (user or {}).get("email"),
+            "actor_role": role,
+            # Log only the first 100 ids to keep the doc bounded even
+            # on 500-id batches (5x compression at the cap).
+            "customer_ids": ids[:100],
+            "customer_ids_truncated": len(ids) > 100,
+            "created_at": now,
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[bulk_status] audit insert failed: %s", exc)
+
+    return {
+        "matched": int(matched_count),
+        "modified": int(res.modified_count),
+        "requested": len(ids),
+    }
+
+
 @router.post("/customers")
 async def create_customer(body: CustomerIn,
                           user: dict = Depends(require_admin),

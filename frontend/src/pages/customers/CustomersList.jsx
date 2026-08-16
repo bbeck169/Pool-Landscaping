@@ -156,6 +156,14 @@ export default function CustomersList() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [lockedFailures, setLockedFailures] = useState({});
 
+  // Feb-2026 · Bulk-mark-inactive — hard-confirm modal state. The
+  // modal ships its own inline "type INACTIVATE" gate (a plain Y/N
+  // isn't enough friction for a status flip that cascades cancels
+  // downstream jobs).
+  const [confirmInactiveOpen, setConfirmInactiveOpen] = useState(false);
+  const [inactiveTypedConfirm, setInactiveTypedConfirm] = useState("");
+  const [bulkInactiveBusy, setBulkInactiveBusy] = useState(false);
+
   const bulk = async (action, extra = {}) => {
     if (!selected.size) return;
     try {
@@ -217,6 +225,54 @@ export default function CustomersList() {
       setSelected(new Set());
       load();
     } catch (e) { sonnerToast.error(e?.message || "Reassign failed"); }
+  };
+
+  // Feb-2026 · Bulk-mark-inactive — optimistic UI + rollback on error.
+  // The typed "INACTIVATE" gate is enforced on the modal itself; this
+  // handler assumes the caller already validated it.
+  const doBulkInactive = async () => {
+    if (!selected.size) return;
+    const ids = Array.from(selected);
+    // Snapshot pre-flip state for rollback.
+    const pre = new Map(
+      (rows || []).filter((r) => ids.includes(r.id))
+        .map((r) => [r.id, { is_active: r.is_active, status: r.status }]),
+    );
+    // Optimistic — flip in-place. When the user is on the Active
+    // tab, the rows visually "leave" this tab (they still exist in
+    // Inactive). Cheapest way: drop them from the list.
+    setRows((prev) => (prev || [])
+      .map((r) => ids.includes(r.id)
+        ? { ...r, is_active: false, status: "inactive" }
+        : r)
+      .filter((r) => tab === "active" ? r.is_active !== false : true));
+    setBulkInactiveBusy(true);
+    try {
+      const res = await api.patch("/customers/bulk-status", {
+        customer_ids: ids, target_status: "inactive",
+      });
+      const n = res.modified ?? res.matched ?? 0;
+      sonnerToast.success(
+        `${n} customer${n === 1 ? "" : "s"} marked inactive`,
+      );
+      setSelected(new Set());
+      setConfirmInactiveOpen(false);
+      setInactiveTypedConfirm("");
+      loadCounts();
+    } catch (e) {
+      // Rollback — restore pre-flip state for every row we optimistically
+      // mutated. If the tab was Active, we need to re-inject the dropped
+      // rows too — so re-fetch to be safe.
+      sonnerToast.error(e?.message || "Bulk mark inactive failed");
+      await load();
+      // Restore the map onto the freshly-loaded rows in case load() missed
+      // any (server-side lag). Best-effort.
+      setRows((prev) => (prev || []).map((r) =>
+        pre.has(r.id) ? { ...r, ...pre.get(r.id) } : r,
+      ));
+    } finally {
+      setBulkInactiveBusy(false);
+    }
   };
 
   const doExport = async () => {
@@ -720,6 +776,16 @@ export default function CustomersList() {
             dropdown: [{ value: "", label: "Unassigned" }],
             onClick: (v) => doBulkOwner(v || null),
           }] : []),
+          // Feb-2026 · Mark inactive — only shown to admin/manager and
+          // only when the current tab isn't already "inactive" (no-op
+          // to flip inactives to inactive again from the UI).
+          ...(isAdminOrManager && tab !== "inactive" ? [{
+            key: "mark-inactive", label: "Mark inactive",
+            onClick: () => {
+              setInactiveTypedConfirm("");
+              setConfirmInactiveOpen(true);
+            },
+          }] : []),
           { key: "delete", label: "Delete selected", tone: "danger",
             onClick: () => setConfirmDeleteOpen(true) },
         ]}
@@ -733,6 +799,106 @@ export default function CustomersList() {
         confirmLabel={bulkBusy ? "Deleting…" : `Delete ${selected.size}`}
         busy={bulkBusy}
       />
+
+      {/* Feb-2026 · Bulk-mark-inactive hard-confirm modal (with
+          "type INACTIVATE" gate — stricter than plain Y/N because
+          the flip cascades job cancellations downstream). */}
+      {confirmInactiveOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(15,23,42,0.55)" }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              setConfirmInactiveOpen(false);
+              setInactiveTypedConfirm("");
+            }
+          }}
+          data-testid="bulk-mark-inactive-modal"
+        >
+          <div
+            className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+            style={{ backgroundColor: colors.surface,
+                      border: `1px solid ${colors.border}` }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold"
+                style={{ color: colors.onSurface }}>
+              Mark {selected.size} customer{selected.size === 1 ? "" : "s"} inactive?
+            </h2>
+            <p className="text-sm mt-2"
+               style={{ color: colors.onSurfaceSecondary || colors.muted }}>
+              These customers will move to the Inactive tab and their
+              scheduled jobs may be cancelled. This action cannot be
+              undone via a single click — you'd have to reactivate each
+              customer individually.
+            </p>
+
+            {/* First 5 preview */}
+            <ul className="mt-3 text-sm space-y-1"
+                style={{ color: colors.onSurface }}
+                data-testid="bulk-mark-inactive-preview-list">
+              {(rows || [])
+                .filter((r) => selected.has(r.id))
+                .slice(0, 5)
+                .map((r) => (
+                  <li key={r.id} className="truncate">
+                    · {r.name || r.first_name || r.email || r.id}
+                  </li>
+                ))}
+              {selected.size > 5 ? (
+                <li className="text-xs italic"
+                    style={{ color: colors.muted }}>
+                  … and {selected.size - 5} more
+                </li>
+              ) : null}
+            </ul>
+
+            <label className="block mt-4 text-xs font-semibold"
+                   style={{ color: colors.onSurface }}>
+              Type <span className="font-mono">INACTIVATE</span> to confirm
+            </label>
+            <input
+              type="text"
+              autoFocus
+              value={inactiveTypedConfirm}
+              onChange={(e) => setInactiveTypedConfirm(e.target.value)}
+              className="mt-1 w-full px-3 py-2 rounded-lg text-sm"
+              style={{ backgroundColor: colors.surfaceSecondary,
+                        border: `1px solid ${colors.border}`,
+                        color: colors.onSurface }}
+              placeholder="INACTIVATE"
+              data-testid="bulk-mark-inactive-type-gate"
+            />
+
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmInactiveOpen(false);
+                  setInactiveTypedConfirm("");
+                }}
+                className="px-4 py-2 rounded-xl text-sm font-semibold"
+                style={{ backgroundColor: colors.surfaceSecondary,
+                          color: colors.onSurface }}
+                data-testid="bulk-mark-inactive-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={inactiveTypedConfirm !== "INACTIVATE" || bulkInactiveBusy}
+                onClick={doBulkInactive}
+                className="px-4 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-40"
+                style={{ backgroundColor: "#B45309" }}
+                data-testid="bulk-mark-inactive-confirm"
+              >
+                {bulkInactiveBusy ? "Marking…" :
+                  `Mark ${selected.size} inactive`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
