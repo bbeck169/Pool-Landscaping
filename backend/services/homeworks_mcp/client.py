@@ -348,7 +348,11 @@ async def gql_query(
     async with HomeworksMCPClient(
         tenant_id=tenant_id, user_id=user_id,
     ) as mcp:
-        raw = await mcp.call_tool("Execute GraphQL Query", args)
+        # Feb-2026 · Homeworks MCP exposes ``query-graphql`` (read-only)
+        # and ``mutate-graphql`` (writes). The old ``execute-graphql``
+        # tool is DEPRECATED. Phase 1a/1b uses reads only, so we always
+        # hit ``query-graphql``.
+        raw = await mcp.call_tool("query-graphql", args)
     # MCP tool results are shaped as
     # {"content": [{"type": "text", "text": "<json>"}], "isError": bool}
     # per the 2025-06-18 spec. Some servers also return {"structuredContent": ...}.

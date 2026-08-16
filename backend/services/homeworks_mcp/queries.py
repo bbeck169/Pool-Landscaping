@@ -25,21 +25,28 @@ time, Feb-2026):
 from __future__ import annotations
 
 # Total count of inactive-or-written-off customers (excluding soft-
-# deleted). Used by the dry-run to size the import.
-COUNT_QUERY = """
-query CountInactive {
+# deleted). Homeworks does NOT expose a scalar ``customerCount`` on
+# their public schema, so we paginate id-only pages of 1000 and count.
+# One page (~1000 rows) is cheap; even 10 pages is <10 s.
+COUNT_PAGE_QUERY = """
+query CountInactivePage($skip: SafeInt!, $take: SafeInt!) {
   customers(
     where: {
       status: { in: [INACTIVE, WRITTEN_OFF] },
       isDeleted: false
     }
-    take: 1000
-    skip: 0
+    orderBy: [{ id: asc }]
+    skip: $skip
+    take: $take
   ) {
     id
   }
 }
 """.strip()
+
+# Backwards-compatible alias — tests / callers can keep referring to
+# ``COUNT_QUERY`` while getting the paginated shape.
+COUNT_QUERY = COUNT_PAGE_QUERY
 
 # Customer core query — full profile block. `pic` is a URL string; we
 # fetch the bytes in a separate HTTP call (see importer).
@@ -64,8 +71,8 @@ query InactiveCustomerPage($skip: SafeInt!, $take: SafeInt!) {
     phone
     cell
     fax
-    address { street city state zip country }
-    location { lat lng }
+    address { street1 street2 city state zip country }
+    location { latitude longitude }
     status
     description
     discount
@@ -109,7 +116,7 @@ query CustomerEvents($customerId: SafeInt!) {
     endDate
     endDateTime
     description
-    dispatchNotes { id note createdAt }
+    dispatchNotes { message author date }
     budgetedHours
     lineItems { id description quantity price total }
   }
