@@ -56,10 +56,12 @@ async def list_technicians(user: dict = Depends(get_current_user),
     async for u in db.users.find(
         {"tenant_id": tid,
          "role": {"$in": ASSIGNABLE_ROLES},
-         # Feb-2026 P0 fix — the users collection contains deactivated
-         # rows keyed on ``active: False`` (e.g. ``deact_*@…``
-         # placeholders left behind by seed churn). Exclude them so
-         # the picker only shows live team members.
+         # Skip migration-artifact rows (``lastowner-*@t.local``) —
+         # they aren't real team members, just tenant-ownership
+         # placeholders left behind by seed churn. Not caught by the
+         # earlier data-hygiene sweep because their domain is
+         # ``@t.local``, not ``@aquaterra.com`` / ``@plofv.com``.
+         "email": {"$not": {"$regex": "@t\\.local$", "$options": "i"}},
          "$and": [
              {"$or": [{"deleted_at": None},
                         {"deleted_at": {"$exists": False}}]},
@@ -91,7 +93,26 @@ async def list_technicians(user: dict = Depends(get_current_user),
         })
 
     docs = tech_docs + synth_docs
-    docs.sort(key=lambda d: (d.get("name") or "").lower())
+    # Feb-2026 · Dedupe by email — the ``db.technicians`` collection
+    # has legacy duplicate rows (e.g. 4× "Carlos Rivera" seed rows)
+    # that visually crowd out real team members in every picker.
+    seen_emails: set = set()
+    deduped: list = []
+    for d in docs:
+        e = (d.get("email") or "").strip().lower()
+        if e and e in seen_emails:
+            continue
+        if e:
+            seen_emails.add(e)
+        deduped.append(d)
+    # Sort: field-worker roles first (technician / landscaper),
+    # then admin / manager / super_admin, then alphabetical inside
+    # each bucket. Prioritizes the "assign this job" audience.
+    def _sort_key(d: dict) -> tuple:
+        r = (d.get("role") or "").lower()
+        rank = 0 if r in {"technician", "landscaper"} else 1
+        return (rank, (d.get("name") or "").lower())
+    docs = sorted(deduped, key=_sort_key)
 
     # Enrich each real tech row with the linked user's display color
     # (unchanged from the prior behavior) + active-jobs count.
