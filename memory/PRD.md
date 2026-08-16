@@ -1,3 +1,98 @@
+## Task A + B · Feb-2026 — Real Pricebook importer + Auto-launcher dispatcher
+
+Follow-on to Queue Item 5. Replaces the 501 stub with a fully-working
+Homeworks income-items importer, and adds an APScheduler dispatcher
+that eliminates the operator-driven nohup workflow.
+
+**Task A — Real Pricebook importer**
+- `services/homeworks_mcp/queries.py` extended with `ITEM_PAGE_QUERY`
+  + `ITEM_COUNT_PAGE_QUERY` (filter `isDeleted:false`) + the four-
+  value `ITEM_TYPE_VALUES` enum (SERVICE, ITEM, LABOR, OTHER).
+- `services/homeworks_mcp/pricebook_importer.py` — full driver
+  mirroring the customer importers (rate-limited, checkpointed,
+  cancel-flag-aware, poison-pill tolerant, cascade auto-stop after 5
+  consecutive page failures).
+  - Skip-by-`homeworks_original_id` for idempotency.
+  - Skip-by-name-collision (case-insensitive, trimmed) against any
+    non-Homeworks `db.items` row on the tenant; logs
+    `name_collision_with_existing_item` to `error_log`.
+  - Fuzzy service-category match against `db.service_categories`
+    (case + whitespace insensitive).
+  - Unknown categories fall to a lazy-created
+    `Homeworks (unmapped)` catch-all service category (idempotent).
+  - Stores raw Homeworks cost breakdown in `homeworks_costs` blob
+    (materialCost / equipmentCost / subcontractCost / wholesaleCost
+    / markup / markupType / tax1 / tax2) so nothing is lost.
+  - Leaves `supplier_prices: []` intentionally — populating it
+    requires a `pricebook_suppliers` row + matching income_category,
+    both tenant-configured; admins can add supplier prices post-import.
+- `routers/integrations_homeworks_income_items.py` — replaces the
+  501 stub. Enforces the five sanity gates on `POST /run`
+  (`gate_min_count`, `gate_max_count`, `gate_latency`,
+  `gate_collisions`, `dry_run_fatal`) via `_apply_sanity_gates`,
+  raising HTTP 412 with a stable reason string on trip.
+- `scripts/homeworks_run_pricebook.py` — manual escape-hatch
+  launcher kept for debugging.
+
+**Live smoke test on the aquaterra tenant (super@aquaterra.com):**
+- Dry-run reported 681 items, 0 existing, 0% name-collision, 185ms
+  sample latency, no fatal_error. All five gates passed.
+- Auto-launched (count ≤ 5,000 per the user's brief).
+- Dispatcher picked up the queued run within one tick.
+- Full run completed in ~15 s: 681 scanned / 681 imported / 0 skipped
+  / 0 failed. Landed in `db.items` split as SERVICE=643, ITEM=35,
+  LABOR=3. Catch-all category created.
+- Idempotency verified: 2nd dry-run reported
+  `existing_in_aquaterra_by_original_id: 681` — a re-run would skip
+  everything.
+
+**Task B — Homeworks import dispatcher**
+- `services/homeworks_mcp/import_dispatcher.py` — APScheduler job
+  registered from `server.py` alongside `register_lumino_reconciler`.
+  Polls `db.homeworks_import_runs` every 30 s for `status="queued"`
+  and drives the correct importer's `run_full` inline.
+  - **Atomic queued → running flip** via
+    `update_one({run_id, status:"queued"}, {$set:{status:"running"}})`.
+    A lost race returns `modified_count == 0`; second dispatcher
+    cannot double-execute.
+  - **Per-tenant concurrency guard** — skips any queued run whose
+    tenant already has another `status="running"` run.
+  - **Fire-and-forget execution** so the polling loop is not held
+    open by multi-hour imports.
+  - **Crash recovery**: unhandled `run_full` exceptions push
+    `dispatcher_crash` onto `error_log` and flip the doc to `failed`.
+  - **Unknown-kind poison-pill guard**: docs with an unmapped
+    `kind` are flipped to `failed` so they don't get re-picked-up
+    every 30 s forever.
+  - Manual `scripts/homeworks_run_*.py` launchers kept in-tree as
+    debugging escape hatches — the dispatcher is now the standard
+    path triggered by the FE's `POST /run`.
+- `server.py` — registers the dispatcher inside the same try/except
+  block as the lumino reconciler; startup log now shows
+  `INFO:homeworks_mcp.dispatcher:[dispatcher] homeworks_import_dispatcher registered (interval=30s)`.
+
+**Frontend update**
+- `HomeworksImportCenter.jsx` — pricebook row's `kind` flipped from
+  `income_items` to `pricebook` (matches the backend run-doc kind).
+  `comingSoon:true` removed; the button is now a live-runnable
+  dry-run → confirm → queue → poll surface identical to the other
+  three importers.
+
+**Test coverage added**
+- `backend/tests/test_pricebook_importer.py` — 6 pytest cases
+  (dry-run counts, name-collision skip, fuzzy category match,
+  catch-all creation, idempotent double-run, cascade auto-stop).
+- `backend/tests/test_import_dispatcher.py` — 6 pytest cases
+  (pick-up flow, atomic flip lost race, per-tenant concurrency
+  guard, cross-tenant no-conflict, crash → failed, unknown-kind
+  poison-pill).
+- `frontend/src/test/task-a-b-pricebook-and-dispatcher.test.jsx` —
+  23 source-inspection vitest cases locking in the new behaviour
+  and preventing regressions on both.
+
+**Aggregate: 82/82 Vitest + 12/12 pytest = 94/94 green.**
+
+
 ## Queue Items 2–6 · Feb-2026 — Tags CRUD + Comms polish + Import Center + Dashboard nav
 
 Full-run through the user's prioritized frontend queue (`2 3 4 5 6`) in a

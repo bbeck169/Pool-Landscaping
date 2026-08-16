@@ -80,19 +80,25 @@ describe("Queue Item 5 · Homeworks Import Center", () => {
     });
   });
 
-  describe("income_items router (stub)", () => {
+  describe("income_items router (real pricebook importer)", () => {
     const src = read(income_router);
     const prefix = "/integrations/homeworks/imports/income-items";
     it(`mounts under ${prefix}`, () => {
       expect(src).toContain(`prefix="${prefix}"`);
     });
-    it("returns 501 on POST /run so the FE can render a Coming soon badge", () => {
-      expect(src).toContain("HTTPException(501");
-      expect(src).toContain("pricebook_importer_not_yet_implemented");
+    it("wires the pricebook_importer + enforces the 15-minute dry-run gate", () => {
+      expect(src).toContain("from services.homeworks_mcp import pricebook_importer");
+      expect(src).toContain("dry_run_required_within_15_minutes_before_run");
     });
-    it("dry-run responds truthfully (not_implemented + zeros)", () => {
-      expect(src).toContain('"not_implemented": True');
-      expect(src).toContain('"total_item_count"');
+    it("applies the five sanity gates on POST /run", () => {
+      // Gate names from the user brief are surfaced in the router's
+      // gate-check helper.
+      expect(src).toContain("_apply_sanity_gates");
+      expect(src).toContain("gate_min_count");
+      expect(src).toContain("gate_max_count");
+      expect(src).toContain("gate_latency");
+      expect(src).toContain("gate_collisions");
+      expect(src).toContain("dry_run_fatal");
     });
   });
 
@@ -119,7 +125,11 @@ describe("Queue Item 5 · Homeworks Import Center", () => {
       expect(src).toContain('key: "income-items"');
     });
     it("flags pricebook as Coming soon (comingSoon:true + disabled button)", () => {
-      expect(src).toMatch(/comingSoon:\s*true/);
+      // Task A replaced the stub with the real importer, so the
+      // Coming-soon badge is no longer expected on any importer.
+      expect(src).not.toMatch(/comingSoon:\s*true/);
+      // The templated testID stays in place so any future
+      // comingSoon:true reintroduction gets picked up by matchers.
       expect(src).toContain('data-testid={`homeworks-import-badge-comingsoon-${importer.key}`}');
     });
     it("uses dry-run → confirm modal → POST /run sequence", () => {

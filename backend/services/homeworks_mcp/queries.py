@@ -273,3 +273,57 @@ query ActiveCustomerPage($skip: SafeInt!, $take: SafeInt!) {
 }
 """.strip()
 
+
+# ── Feb-2026 · Queue Item 5b (pricebook / income items) ──────────────
+# Homeworks exposes income items through the top-level ``items``
+# query. The ``ItemFilter`` type defaults ``isDeleted`` to ``false``
+# server-side (see schema.graphql `type Query { items(where: ItemFilter
+# = {isDeleted: false}, …) }`), so passing an explicit filter is
+# defensive-not-required; we send it anyway so the query is
+# self-describing and immune to any future default change.
+#
+# ItemType enum values (locked to the schema): SERVICE, ITEM, LABOR,
+# OTHER.
+ITEM_TYPE_VALUES: tuple = ("SERVICE", "ITEM", "LABOR", "OTHER")
+
+ITEM_COUNT_PAGE_QUERY = """
+query CountItemsPage($skip: SafeInt!, $take: SafeInt!) {
+  items(
+    where: { isDeleted: false }
+    orderBy: [{ id: asc }]
+    skip: $skip
+    take: $take
+  ) {
+    id
+  }
+}
+""".strip()
+
+ITEM_PAGE_QUERY = """
+query ItemPage($skip: SafeInt!, $take: SafeInt!) {
+  items(
+    where: { isDeleted: false }
+    orderBy: [{ id: asc }]
+    skip: $skip
+    take: $take
+  ) {
+    id
+    name
+    description
+    type
+    price
+    unit
+    tax1
+    tax2
+    isTaxable
+    materialCost
+    equipmentCost
+    subcontractCost
+    wholesaleCost
+    markup
+    markupType
+    category { id name }
+  }
+}
+""".strip()
+

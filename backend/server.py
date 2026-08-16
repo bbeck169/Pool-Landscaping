@@ -1217,6 +1217,17 @@ async def _background_seed():
             register_lumino_reconciler_job(scheduler)
         except Exception as e:                                    # noqa: BLE001
             logger.warning(f"[task-qq] lumino reconciler cron install failed: {e}")
+        # Queue Item 5c · Feb-2026 — Homeworks Import Dispatcher.
+        # Replaces the operator-driven nohup workflow: polls every 30s
+        # for ``status=queued`` docs on ``homeworks_import_runs`` and
+        # drives the correct importer's ``run_full`` inline. Manual
+        # ``scripts/homeworks_run_*.py`` launchers stay in-tree as
+        # debugging escape hatches.
+        try:
+            from services.homeworks_mcp.import_dispatcher import register_dispatcher
+            register_dispatcher(scheduler)
+        except Exception as e:                                    # noqa: BLE001
+            logger.warning(f"[queue-item-5c] homeworks import dispatcher install failed: {e}")
         # Phase 52.A — monthly pricing insights digest (1st @ 09:00 UTC).
         from services.monthly_pricing_digest import run_monthly_pricing_digest
         scheduler.add_job(

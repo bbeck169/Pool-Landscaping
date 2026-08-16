@@ -61,10 +61,9 @@ const IMPORTERS = [
     key: "income-items",
     slug: "income-items",
     label: "Import Income Items (Pricebook)",
-    hint: "Pulls the Homeworks income-items catalog into the pricebook.",
+    hint: "Pulls the Homeworks income-items catalog into the pricebook. Skips items already imported or colliding by name with an existing pricebook entry.",
     Icon: Package,
-    kind: "income_items",
-    comingSoon: true,
+    kind: "pricebook",
   },
 ];
 
