@@ -12,7 +12,8 @@
  * have sent it, and the block reason.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ShieldAlert, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { ShieldAlert, RefreshCw, ChevronLeft, ChevronRight, X as XIcon } from "lucide-react";
 import { api } from "@/api";
 import { colors } from "@/theme";
 import CommsWhitelistBanner from "@/components/comms/CommsWhitelistBanner";
@@ -56,6 +57,15 @@ export default function AdminCommsSuppressionLog() {
   const [commType, setCommType] = useState("");
   const [recipientType, setRecipientType] = useState("");
   const [provider, setProvider] = useState("");
+  // Task 4 · Feb-2026 — pre-filter by ``recipient_id`` when the log
+  // page is opened via the DemoAccountToggle's deep-link.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const recipientId = searchParams.get("recipient_id") || "";
+  const clearRecipientFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("recipient_id");
+    setSearchParams(next, { replace: true });
+  };
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -66,6 +76,7 @@ export default function AdminCommsSuppressionLog() {
       if (commType) params.set("comm_type", commType);
       if (recipientType) params.set("recipient_type", recipientType);
       if (provider) params.set("provider", provider);
+      if (recipientId) params.set("recipient_id", recipientId);
       const r = await api.get(`/comms/suppression-log?${params.toString()}`);
       setRows(Array.isArray(r?.rows) ? r.rows : []);
       setTotal(Number(r?.total || 0));
@@ -73,13 +84,13 @@ export default function AdminCommsSuppressionLog() {
       setRows([]);
       setTotal(0);
     } finally { setBusy(false); }
-  }, [skip, commType, recipientType, provider]);
+  }, [skip, commType, recipientType, provider, recipientId]);
 
   useEffect(() => { load(); }, [load]);
 
   // Reset paging whenever a filter changes so the user isn't stuck
   // on a page that no longer has data.
-  useEffect(() => { setSkip(0); }, [commType, recipientType, provider]);
+  useEffect(() => { setSkip(0); }, [commType, recipientType, provider, recipientId]);
 
   const currentPage = Math.floor(skip / PAGE_SIZE) + 1;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -120,6 +131,30 @@ export default function AdminCommsSuppressionLog() {
       </div>
 
       <CommsWhitelistBanner />
+
+      {/* Task 4 · Feb-2026 — Active recipient_id filter chip. */}
+      {recipientId ? (
+        <div
+          className="mb-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold"
+          style={{
+            backgroundColor: colors.brandTertiary,
+            color: colors.onBrandTertiary,
+            border: `1px solid ${colors.border}`,
+          }}
+          data-testid="admin-suppression-log-recipient-filter-chip"
+        >
+          <span>Filtered to recipient: <b>{recipientId.slice(0, 12)}…</b></span>
+          <button
+            type="button"
+            onClick={clearRecipientFilter}
+            className="opacity-70 hover:opacity-100"
+            aria-label="Clear recipient filter"
+            data-testid="admin-suppression-log-recipient-filter-clear"
+          >
+            <XIcon size={12} />
+          </button>
+        </div>
+      ) : null}
 
       {/* Filter row */}
       <div

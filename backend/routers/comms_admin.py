@@ -47,6 +47,7 @@ async def list_suppression_log(
     comm_type: Optional[str] = Query(None),
     recipient_type: Optional[str] = Query(None),
     provider: Optional[str] = Query(None),
+    recipient_id: Optional[str] = Query(None),
 ):
     _require_super(user)
     q: Dict[str, Any] = {"tenant_id": user.get("tenant_id")}
@@ -56,6 +57,8 @@ async def list_suppression_log(
         q["recipient_type"] = recipient_type
     if provider:
         q["provider"] = provider
+    if recipient_id:
+        q["recipient_id"] = recipient_id
     total = await db.comms_suppression_log.count_documents(q)
     rows = await db.comms_suppression_log.find(
         q, {"_id": 0},

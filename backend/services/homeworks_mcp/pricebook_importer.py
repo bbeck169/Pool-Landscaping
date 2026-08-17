@@ -59,6 +59,7 @@ from typing import Any, Dict, List, Optional
 from config import db
 from services.homeworks_mcp import queries
 from services.homeworks_mcp.client import gql_query, MCPError, MCPToolError
+from services.homeworks_mcp import importer_base
 
 logger = logging.getLogger("homeworks_mcp.pricebook_importer")
 
@@ -448,151 +449,46 @@ async def _import_one_item(
 
 
 # ── Driver ───────────────────────────────────────────────────────────
+# Task 3 · Feb-2026 — Pricebook uses the shared paged-driver from
+# ``importer_base``. The subclass-specific glue (mapping, dedup,
+# category resolution) lives entirely in ``_import_one_item``.
+_PRICEBOOK_DRIVER_CONFIG = importer_base.PagedDriverConfig(
+    kind="pricebook",
+    page_query=queries.ITEM_PAGE_QUERY,
+    page_key="items",
+    page_size=PAGE_SIZE,
+    rate_limit_qps=RATE_LIMIT_QPS,
+    checkpoint_every_s=CHECKPOINT_EVERY_S,
+    cascade_stop_after=CASCADE_STOP_AFTER_CONSECUTIVE_FAILS,
+    page_retries=3,
+    counter_scanned="items_scanned",
+    counter_failed="items_failed",
+)
+
+
 async def run_full(*, tenant_id: str, user_id: Optional[str],
                     run_id: str) -> Counters:
-    limiter = _RateLimiter(RATE_LIMIT_QPS)
     counters = Counters()
-    consecutive_fails = 0
-    last_ckpt_t = time.monotonic()
-
-    doc = await _load_run(run_id)
-    if not doc:
-        raise RuntimeError(f"run_not_found:{run_id}")
-    counters = Counters(**(doc.get("counters") or {}))
-    skip = int(doc.get("resume_cursor") or 0)
-    if doc.get("status") == "queued":
-        await _checkpoint(run_id, counters=counters, resume_cursor=skip,
-                           status="running")
-
-    # Load the category lookup once. Refreshed only when the catch-all
-    # gets created inside the loop — cheap enough to rebuild.
     cat_lookup = await _load_service_categories(tenant_id)
     cat_cache: Dict[str, str] = {}
 
-    while True:
-        if await _cancel_flag_set(run_id):
-            await _checkpoint(run_id, counters=counters, resume_cursor=skip,
-                               status="cancelled", finished_at=_now_iso())
-            return counters
-
-        await limiter.wait()
-        # Page retry with halving-take fallback (same shape as the
-        # customer importers).
-        page = None
-        _PAGE_RETRIES = 3
-        effective_take = PAGE_SIZE
-        last_page_exc: Optional[Exception] = None
-        while effective_take >= 1:
-            last_page_exc = None
-            for retry in range(_PAGE_RETRIES):
-                try:
-                    page = await gql_query(
-                        tenant_id=tenant_id,
-                        query=queries.ITEM_PAGE_QUERY,
-                        variables={"skip": skip, "take": effective_take},
-                        user_id=user_id,
-                    )
-                    last_page_exc = None
-                    break
-                except (MCPError, MCPToolError) as exc:
-                    last_page_exc = exc
-                    if retry < _PAGE_RETRIES - 1:
-                        backoff = 2.0 * (2 ** retry)
-                        logger.warning(
-                            "[pricebook] page fetch skip=%d take=%d "
-                            "retry=%d/%d err=%s — backing off %.1fs",
-                            skip, effective_take, retry + 1,
-                            _PAGE_RETRIES, str(exc)[:120], backoff,
-                        )
-                        await asyncio.sleep(backoff)
-            if last_page_exc is None:
-                break
-            if effective_take == 1:
-                break
-            effective_take = max(1, effective_take // 2)
-            logger.warning(
-                "[pricebook] halving page size skip=%d → take=%d",
-                skip, effective_take,
-            )
-        if last_page_exc is not None:
-            logger.error(
-                "[pricebook] poison-pill row at skip=%d take=1 err=%s "
-                "— skipping and advancing",
-                skip, str(last_page_exc)[:200],
-            )
-            counters.items_scanned += 1
-            counters.items_failed += 1
-            await _checkpoint(
-                run_id, counters=counters, resume_cursor=skip + 1,
-                error={"stage": "poison_pill_page",
-                       "skip": skip, "take": 1,
-                       "error": str(last_page_exc)[:500],
-                       "at": _now_iso()},
-            )
-            consecutive_fails += 1
-            if consecutive_fails >= CASCADE_STOP_AFTER_CONSECUTIVE_FAILS:
-                await _checkpoint(
-                    run_id, counters=counters, resume_cursor=skip + 1,
-                    status="paused_needs_attention",
-                    error={"stage": "cascade_stop",
-                           "reason": "5+ consecutive page failures",
-                           "at": _now_iso()},
-                )
-                return counters
-            skip += 1
-            continue
-        consecutive_fails = 0
-
-        rows: List[Dict[str, Any]] = (page or {}).get("items") or []
-        if not rows:
-            # End of stream.
-            await _checkpoint(
-                run_id, counters=counters, resume_cursor=skip,
-                status="completed", finished_at=_now_iso(),
-            )
-            return counters
-
-        for it in rows:
-            counters.items_scanned += 1
-            try:
-                err = await _import_one_item(
-                    tenant_id=tenant_id, item=it, counters=counters,
-                    cat_lookup=cat_lookup, cat_cache=cat_cache,
-                )
-                if err:
-                    await _checkpoint(
-                        run_id, counters=counters,
-                        resume_cursor=skip + counters.items_scanned,
-                        error=err,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                counters.items_failed += 1
-                await _checkpoint(
-                    run_id, counters=counters,
-                    resume_cursor=skip + counters.items_scanned,
-                    error={"stage": "import_item",
-                           "homeworks_original_id": str(it.get("id")),
-                           "error": str(exc)[:500],
-                           "at": _now_iso()},
-                )
-
-        skip += len(rows)
-        # Time-based checkpoint (cheaper than per-row).
-        if (time.monotonic() - last_ckpt_t) >= CHECKPOINT_EVERY_S:
-            await _checkpoint(run_id, counters=counters, resume_cursor=skip)
-            last_ckpt_t = time.monotonic()
-
-        # Refresh the category lookup if the catch-all was just seeded
-        # this loop.
+    async def _import_one(row: Dict[str, Any], ctrs: Counters):
+        # Refresh the category lookup lazily when the catch-all was
+        # freshly seeded in the last iteration.
+        nonlocal cat_lookup
         if cat_cache.get("__signalled__"):
             cat_lookup = await _load_service_categories(tenant_id)
             cat_cache.pop("__signalled__", None)
+        return await _import_one_item(
+            tenant_id=tenant_id, item=row, counters=ctrs,
+            cat_lookup=cat_lookup, cat_cache=cat_cache,
+        )
 
-        if len(rows) < effective_take:
-            # Under-full page ⇒ end of stream. Same guard the customer
-            # importer uses.
-            await _checkpoint(
-                run_id, counters=counters, resume_cursor=skip,
-                status="completed", finished_at=_now_iso(),
-            )
-            return counters
+    return await importer_base.run_paged_driver(
+        db=db, gql_query=gql_query,
+        tenant_id=tenant_id, user_id=user_id, run_id=run_id,
+        config=_PRICEBOOK_DRIVER_CONFIG,
+        counters=counters,
+        import_one_fn=_import_one,
+        exceptions=(MCPError, MCPToolError),
+    )

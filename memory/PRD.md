@@ -1,3 +1,97 @@
+## Follow-up bundle · Feb-2026 — Items 5, 2, 4, 3, 1 (progressive delivery)
+
+Five follow-ups to the Task A + B ship, delivered in the user's
+priority-ordered sequence (tiniest first, biggest last).
+
+**Item 5 — "Run now" dispatcher trigger** (~5 min)
+- `routers/integrations_homeworks_dispatcher.py` — POST `/api/integrations/homeworks/imports/dispatcher/tick`.
+- Super_admin only. 5-second per-process cooldown (`_COOLDOWN_S`) so
+  button-mashing can't stampede the scheduler. Returns
+  `{ok:true, cooldown:true, retry_in_s:<n>}` when hit inside the
+  cooldown window; else invokes `dispatcher_tick()` and returns the
+  summary payload.
+- Frontend `HomeworksImportCenter.jsx` renders a "Run now (N)" button
+  next to the panel title, visible only when the tenant has queued
+  runs. Includes the Zap icon and a tooltip.
+- **cURL verified**: tick 1 → `started:1, unknown_kind:1`; tick 2
+  (immediate) → `cooldown:true, retry_in_s:4.8`.
+
+**Item 2 — Confirm-modal delta headline** (~15 min)
+- `HomeworksImportCenter.jsx` — extended the confirm modal to
+  compute `newCount = max(0, total - existing)` and render a large
+  headline chip.
+- Yellow ("no new records") vs. green ("N new record(s)") states
+  make no-op re-runs impossible to miss.
+- `data-testid="homeworks-import-delta-headline"` +
+  `homeworks-import-delta-count` for downstream tests.
+
+**Item 4 — Suppression Log deep-link from Demo toggle** (~20 min)
+- Backend `routers/comms_admin.py` — added `recipient_id` query
+  parameter to the suppression-log filter.
+- Frontend `DemoAccountToggle.jsx` — new `Eye` icon "Blocked" link
+  wrapped in a `<span>` next to the toggle. Route:
+  `/admin/comms/suppression-log?recipient_id=<id>`. Opt-out via
+  `showSuppressionLink={false}` prop.
+- `AdminCommsSuppressionLog.jsx` — reads `recipient_id` from
+  `useSearchParams`, passes it into the API call, renders a
+  dismissible filter chip at the top of the page so admins know
+  they're seeing a filtered view.
+
+**Item 3 — Config-driven importer base class refactor** (~1 hr)
+- `services/homeworks_mcp/importer_base.py` — shared runtime
+  primitives extracted:
+  * `RateLimiter` (qps gate)
+  * `load_run` / `checkpoint` / `cancel_flag_set` (run-doc IO)
+  * `PagedDriverConfig` (dataclass — the "config subclass" surface)
+  * `run_paged_driver` (generic paged driver: retry with halving-
+    take fallback, poison-pill tolerance, cascade auto-stop, cancel-
+    flag polling, resume-cursor honouring, time-based checkpointing).
+- `pricebook_importer.py` — migrated. `run_full` body reduced from
+  ~130 lines to ~30, delegates to `importer_base.run_paged_driver`.
+- **Active/inactive customer importers deferred** to a follow-up
+  slice because their child-entity fanout (jobs / invoices /
+  payments / quotes) shares a page boundary with the parent and
+  doesn't fit the generic `import_one_fn` shape without a deeper
+  refactor. Documented in the module docstring.
+- **No external contract change**: all router paths + response
+  shapes + kind strings unchanged.
+- **Live smoke-tested against Homeworks**: pricebook dry-run still
+  returns `total_item_count:681`, `existing_in_aquaterra_by_original_id:681`,
+  no fatal_error.
+- New pytest: `test_importer_base.py` (6 cases: RateLimiter QPS,
+  checkpoint serialisation, cancel_flag_set for all stop statuses,
+  driver happy path, cancel-flag halt, cascade auto-stop). All 6
+  existing pricebook + all 6 dispatcher + all 3 customer importer
+  tests still pass.
+
+**Item 1 — Mobile mirror bundle** (~4 hrs → delivered in ~2 hrs by
+scoping to highest-value bits)
+- `mobile/app/admin/tags.tsx` — replaced `ComingSoonPage` stub with
+  full CRUD parity: New Tag modal (12-swatch palette + 40-char
+  input), inline Edit + Delete via icon buttons, hard-confirm modal
+  with live usage count copy, system-tag lock (icon + `System`
+  badge + disabled actions), search input at >10 tags. Same
+  backend endpoints as the web page.
+- `mobile/src/components/customers/CustomerTagsSection.tsx` — chip
+  render + tap-to-add bottom sheet with search + inline
+  "Create new: <query>" affordance. Mounted on
+  `mobile/app/customer/[id].tsx`.
+- `mobile/src/components/comms/CommsWhitelistBanner.tsx` — red
+  alert-role banner with live counts. Mounted at top of
+  `mobile/app/settings/notifications.tsx`.
+- `mobile/src/components/comms/DemoAccountToggle.tsx` — compact
+  pill toggle + native Modal hard-confirm. Mounted on the mobile
+  customer detail page next to the Tags section.
+- **Suppression Log viewer NOT mirrored** to mobile — it's a
+  super_admin edge-case page that works fine on the existing
+  responsive web version when accessed from mobile browsers.
+- Jest source-inspection: `mobile/__tests__/task-1-mobile-mirror.test.ts`
+  — 16 cases across all four new mobile files.
+
+**Aggregate: 25 backend pytest + 99 web vitest + 16 mobile Jest =
+140/140 green.**
+
+
 ## Task A + B · Feb-2026 — Real Pricebook importer + Auto-launcher dispatcher
 
 Follow-on to Queue Item 5. Replaces the 501 stub with a fully-working

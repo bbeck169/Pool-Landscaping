@@ -207,6 +207,10 @@ from routers import integrations_homeworks_delta_sync as _hw_delta_sync  # noqa:
 api_router.include_router(_hw_delta_sync.router)
 from routers import integrations_homeworks_income_items as _hw_income_items  # noqa: E402
 api_router.include_router(_hw_income_items.router)
+# Task 5 · Feb-2026 — "Run now" dispatcher trigger (super_admin only,
+# 5-second cooldown). Complements the 30-second scheduled tick.
+from routers import integrations_homeworks_dispatcher as _hw_dispatcher_router  # noqa: E402
+api_router.include_router(_hw_dispatcher_router.router)
 from routers import comms_admin as _comms_admin  # noqa: E402
 api_router.include_router(_comms_admin.router)
 from routers import media_gen as _phaseb_media_router  # noqa: E402

@@ -24,7 +24,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ImportIcon, Users, RefreshCw, Package, PlayCircle, X as XIcon,
-  Loader2, CheckCircle2, AlertTriangle, ChevronRight,
+  Loader2, CheckCircle2, AlertTriangle, ChevronRight, Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/api";
@@ -91,6 +91,15 @@ function ConfirmRunModal({ importer, dryRun, onCancel, onConfirm, busy }) {
   const existing = dryRun?.existing_in_aquaterra_by_original_id;
   const est = dryRun?.estimated_duration_minutes;
   const fatal = dryRun?.fatal_error || dryRun?.reason;
+  // Task 2 · Feb-2026 — surface the delta prominently so a super_admin
+  // sees "N candidates · M already imported · X NEW" at a glance and
+  // stops running no-op re-imports.
+  const knownCount = typeof count === "number" ? count : null;
+  const knownExisting = typeof existing === "number" ? existing : null;
+  const newCount = (knownCount !== null && knownExisting !== null)
+    ? Math.max(0, knownCount - knownExisting)
+    : null;
+  const isNoop = newCount === 0 && knownCount !== null;
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center px-4"
@@ -153,6 +162,35 @@ function ConfirmRunModal({ importer, dryRun, onCancel, onConfirm, busy }) {
           <SummaryRow label="Already imported (will be skipped)" value={humanCount(existing)} />
           <SummaryRow label="Estimated duration" value={est != null ? `${est} min` : "—"} />
         </div>
+
+        {/* Task 2 · Feb-2026 — Delta headline. Makes "no new records"
+            re-runs impossible to miss. */}
+        {newCount !== null ? (
+          <div
+            className="rounded-xl p-3 mt-3 flex items-center gap-3"
+            style={{
+              backgroundColor: isNoop ? "#FEF3C7" : "#DCFCE7",
+              border: `1px solid ${isNoop ? "#FDE68A" : "#86EFAC"}`,
+            }}
+            data-testid="homeworks-import-delta-headline"
+          >
+            <div
+              className="text-2xl font-bold shrink-0"
+              style={{ color: isNoop ? "#92400E" : "#166534" }}
+              data-testid="homeworks-import-delta-count"
+            >
+              {humanCount(newCount)}
+            </div>
+            <div className="text-xs" style={{ color: isNoop ? "#92400E" : "#166534" }}>
+              <b>{isNoop ? "No new records" : "new record" + (newCount === 1 ? "" : "s")}</b>{" "}
+              to import.
+              <div className="opacity-80 mt-0.5">
+                {humanCount(count)} candidates · {humanCount(existing)}{" "}
+                already in AquaTerra
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <p className="text-[11px] mt-3" style={{ color: colors.muted }}>
           A queued run document is created immediately. The processing
@@ -321,6 +359,44 @@ function ImporterRow({ importer, onLaunch }) {
 export default function HomeworksImportCenter() {
   const [modal, setModal] = useState(null); // { importer, dryRun }
   const [busy, setBusy] = useState(false);
+  const [queuedCount, setQueuedCount] = useState(0);
+  const [tickBusy, setTickBusy] = useState(false);
+
+  const refreshQueued = useCallback(async () => {
+    let total = 0;
+    for (const imp of IMPORTERS) {
+      try {
+        const r = await api.get(
+          `/integrations/homeworks/imports/${imp.slug}/active`,
+        );
+        total += ((r?.active_runs || []).filter(
+          (x) => x.status === "queued")).length;
+      } catch { /* silent */ }
+    }
+    setQueuedCount(total);
+  }, []);
+  useEffect(() => {
+    refreshQueued();
+    const t = setInterval(refreshQueued, POLL_INTERVAL_MS);
+    return () => clearInterval(t);
+  }, [refreshQueued]);
+
+  const runNow = async () => {
+    setTickBusy(true);
+    try {
+      const r = await api.post("/integrations/homeworks/imports/dispatcher/tick");
+      if (r?.cooldown) {
+        toast.info(`Dispatcher just ran — retry in ${r.retry_in_s}s`);
+      } else {
+        const s = r?.summary || {};
+        toast.success(
+          `Dispatcher tick: started ${s.started || 0}, skipped ${s.skipped_concurrency || 0}`,
+        );
+        refreshQueued();
+      }
+    } catch (e) { toast.error(e?.message || "Manual tick failed"); }
+    finally { setTickBusy(false); }
+  };
 
   const onLaunch = (importer, dryRun) => setModal({ importer, dryRun });
   const cancel = () => { if (!busy) setModal(null); };
@@ -355,9 +431,25 @@ export default function HomeworksImportCenter() {
     >
       <div className="flex items-center gap-2 mb-1">
         <ImportIcon size={16} style={{ color: colors.onSurface }} />
-        <div className="font-bold text-base" style={{ color: colors.onSurface }}>
+        <div className="font-bold text-base flex-1" style={{ color: colors.onSurface }}>
           Homeworks Import Center
         </div>
+        {/* Task 5 · Feb-2026 — Manual "Run now" trigger. Only
+            surfaces when the tenant has queued runs waiting. */}
+        {queuedCount > 0 ? (
+          <button
+            type="button"
+            onClick={runNow}
+            disabled={tickBusy}
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 text-white disabled:opacity-60"
+            style={{ backgroundColor: colors.brandSecondary }}
+            data-testid="homeworks-import-run-now-btn"
+            title={`Runs the dispatcher immediately instead of waiting up to 30s. ${queuedCount} run${queuedCount === 1 ? "" : "s"} queued.`}
+          >
+            <Zap size={12} />
+            {tickBusy ? "Running…" : `Run now (${queuedCount})`}
+          </button>
+        ) : null}
       </div>
       <p className="text-xs" style={{ color: colors.muted }}>
         Super-admin only. Each button opens a dry-run preview before

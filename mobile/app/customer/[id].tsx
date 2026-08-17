@@ -14,6 +14,8 @@ import MultiContact from "@/src/components/customers/MultiContact";
 import CustomerTasks from "@/src/components/customers/CustomerTasks";
 import ServiceNotes from "@/src/components/customers/ServiceNotes";
 import SendCreateSheet from "@/src/components/customers/SendCreateSheet";
+import CustomerTagsSection from "@/src/components/customers/CustomerTagsSection";
+import DemoAccountToggle from "@/src/components/comms/DemoAccountToggle";
 
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -549,6 +551,28 @@ export default function CustomerDetail() {
         {/* Phase 56.11-mobile — Equipment photo library section. */}
         <Text style={styles.sectionTitle}>Equipment</Text>
         <CustomerEquipmentLibrary customerId={id as string} />
+
+        {/* Task 1 · Feb-2026 — Customer Tags section. Chip render +
+            tap-to-add bottom sheet + inline "Create new: <query>". */}
+        <CustomerTagsSection
+          customerId={id as string}
+          value={c.tags || []}
+          onChange={(nextTags) => setC((prev: any) => (prev ? { ...prev, tags: nextTags } : prev))}
+        />
+
+        {/* Task 1 · Feb-2026 — Outbound-comms Demo whitelist toggle
+            with hard-confirm modal. Same contract as web. */}
+        <View style={{ marginHorizontal: 16, marginBottom: 12,
+                        flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Text style={{ fontSize: 12, color: "#71717A" }}>Comms:</Text>
+          <DemoAccountToggle
+            recordType="customer"
+            recordId={id as string}
+            isDemo={!!c.is_demo_account}
+            recordLabel={c.name || "this customer"}
+            onChange={(next) => setC((prev: any) => (prev ? { ...prev, is_demo_account: next } : prev))}
+          />
+        </View>
 
         {/* A5. Tasks tab */}
         <CustomerTasks customerId={id as string} />

@@ -26,6 +26,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { colors, spacing, radius, font, fontSize } from "@/src/theme";
 import { Header } from "@/src/components/widgets";
+import CommsWhitelistBanner from "@/src/components/comms/CommsWhitelistBanner";
 
 type Channel = "bell" | "push" | "email" | "sms";
 type ChannelMap = Partial<Record<Channel, boolean>>;
@@ -170,6 +171,8 @@ export default function NotificationPrefsScreen() {
           testID="notif-prefs-scroll"
           contentContainerStyle={{ padding: spacing.lg, paddingBottom: spacing["3xl"] }}
         >
+          {/* Task 1 · Feb-2026 — Outbound comms whitelist banner. */}
+          <CommsWhitelistBanner />
           {toast ? (
             <View style={[s.toast,
                           { backgroundColor: toast.ok ? "#DCFCE7" : "#FEE2E2" }]}

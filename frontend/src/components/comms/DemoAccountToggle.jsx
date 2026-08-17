@@ -17,8 +17,9 @@
  *   compact      — boolean, hides the outer "Demo" label copy
  */
 import React, { useState } from "react";
-import { ShieldCheck, ShieldOff, X as XIcon } from "lucide-react";
+import { ShieldCheck, ShieldOff, X as XIcon, Eye } from "lucide-react";
 import { toast } from "sonner";
+import { Link } from "react-router-dom";
 import { api } from "@/api";
 import { colors } from "@/theme";
 
@@ -30,6 +31,7 @@ export default function DemoAccountToggle({
   onChange,
   size = "md",
   compact = false,
+  showSuppressionLink = true,
 }) {
   const [pending, setPending] = useState(false);
   const [modal, setModal] = useState({ open: false, nextValue: null });
@@ -67,6 +69,7 @@ export default function DemoAccountToggle({
 
   return (
     <>
+      <span className="inline-flex items-center gap-1">
       <button
         type="button"
         onClick={openConfirm}
@@ -91,6 +94,29 @@ export default function DemoAccountToggle({
         )}
         {compact ? null : (active ? "Demo: ON" : "Demo: OFF")}
       </button>
+      {/* Task 4 · Feb-2026 — Deep-link to the Suppression Log
+          pre-filtered to this record. Super_admin gets a working
+          landing; admin + manager still see the link but the log
+          page enforces super_admin-only rendering (existing RBAC). */}
+      {showSuppressionLink ? (
+        <Link
+          to={`/admin/comms/suppression-log?recipient_id=${encodeURIComponent(recordId)}`}
+          className={`inline-flex items-center gap-1 rounded-md font-semibold ${
+            isSm ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-xs"
+          }`}
+          style={{
+            backgroundColor: colors.surfaceSecondary,
+            color: colors.onSurfaceSecondary,
+            border: `1px solid ${colors.border}`,
+          }}
+          title="View outbound comms suppressed for this record"
+          data-testid={`demo-flag-suppression-link-${recordType}-${recordId}`}
+        >
+          <Eye size={iconSize - 2} />
+          {compact ? null : "Blocked"}
+        </Link>
+      ) : null}
+      </span>
 
       {modal.open ? (
         <div
