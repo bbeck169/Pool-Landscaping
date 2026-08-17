@@ -76,26 +76,36 @@ async def list_crews(user: dict = Depends(get_current_user),
 
 
 @router.post("/crews")
-async def create_crew(body: CrewIn, user: dict = Depends(require_admin)):
+async def create_crew(body: CrewIn, user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    # Feb-2026 · P0 fix — write ``tenant_id`` on create. list_crews
+    # filters by tenant_id (P0 fix earlier this phase), so a doc
+    # inserted without tenant_id becomes invisible on the very next
+    # GET → the user sees "crews not saving". Mirror the tenant-
+    # scoping already applied to /technicians and /jobs.
     doc = body.dict()
-    doc.update({"id": new_id(), "created_at": now_iso()})
+    doc.update({"id": new_id(), "tenant_id": tenant["id"], "created_at": now_iso()})
     await db.crews.insert_one(doc)
     doc.pop("_id", None)
     return doc
 
 
 @router.patch("/crews/{cid}")
-async def update_crew(cid: str, body: dict, user: dict = Depends(require_admin)):
+async def update_crew(cid: str, body: dict, user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
     body["updated_at"] = now_iso()
-    r = await db.crews.update_one({"id": cid}, {"$set": body})
+    # Feb-2026 · P0 fix — scope the update to the caller's tenant so
+    # a stale/foreign crew id can't mutate rows across tenants.
+    r = await db.crews.update_one({"id": cid, "tenant_id": tenant["id"]}, {"$set": body})
     if r.matched_count == 0:
         raise HTTPException(404, "Crew not found")
-    return await db.crews.find_one({"id": cid}, {"_id": 0})
+    return await db.crews.find_one({"id": cid, "tenant_id": tenant["id"]}, {"_id": 0})
 
 
 @router.delete("/crews/{cid}")
-async def delete_crew(cid: str, user: dict = Depends(require_admin)):
-    r = await db.crews.delete_one({"id": cid})
+async def delete_crew(cid: str, user: dict = Depends(require_admin),
+                       tenant: dict = Depends(get_current_tenant)):
+    r = await db.crews.delete_one({"id": cid, "tenant_id": tenant["id"]})
     if r.deleted_count == 0:
         raise HTTPException(404, "Crew not found")
     return {"ok": True}
