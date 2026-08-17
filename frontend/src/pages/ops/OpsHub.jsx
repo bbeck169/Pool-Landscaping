@@ -1997,6 +1997,18 @@ export function PriceBook() {
                   cost_cents: Math.round(dollars * 100) };
       })
       .filter(Boolean);
+    // Feb-2026 P0 fix — client-side guard mirroring the backend's
+    // ``supplier_prices_without_income_category`` 400. Without this,
+    // any stale ``supplier_prices`` state (e.g. race between the
+    // income-cat reset and a Save click) surfaces as an unfriendly
+    // raw JSON error toast. Also gates the button visually below.
+    if (supplier_prices.length > 0 && !form.income_category_id) {
+      setToast({
+        tone: "error",
+        message: "Pick an Income Category before entering supplier prices, or clear the supplier price fields.",
+      });
+      return;
+    }
     try {
       await api.post("/items", {
         ...form,
@@ -2012,7 +2024,31 @@ export function PriceBook() {
         income_category_id: "", supplier_prices: {},
       });
       refresh();
-    } catch (e) { setToast({ tone: "error", message: e.message }); }
+    } catch (e) {
+      // Feb-2026 P0 fix — unwrap the backend's structured error payload
+      // (``{detail: {error, message, ...}}``) into a human toast rather
+      // than dumping the raw JSON stringified onto the user.
+      let msg = e?.message || "Save failed";
+      try {
+        const parsed = typeof msg === "string" && msg.startsWith("{")
+          ? JSON.parse(msg) : null;
+        const d = parsed?.detail ?? parsed;
+        if (d?.error === "supplier_prices_without_income_category") {
+          msg = "Pick an Income Category before entering supplier prices.";
+        } else if (d?.error === "supplier_income_category_mismatch") {
+          msg = `Supplier ${d.supplier_slug} isn't configured for the "${d.expected_category}" income category. Pick a different supplier or income category.`;
+        } else if (d?.error === "unknown_supplier") {
+          msg = `Supplier ${d.supplier_slug} isn't configured for this tenant.`;
+        } else if (d?.error === "duplicate_supplier_slug") {
+          msg = `Duplicate supplier row: ${d.supplier_slug}.`;
+        } else if (d?.error === "invalid_cost_cents") {
+          msg = `Invalid cost value for ${d.supplier_slug || "supplier"}.`;
+        } else if (d?.message) {
+          msg = d.message;
+        }
+      } catch { /* keep raw msg */ }
+      setToast({ tone: "error", message: msg });
+    }
   };
   // BUG B fix (Feb-2026) — soft-delete a pricebook row with a
   // HEAVY (type "DELETE") confirmation.
@@ -2252,7 +2288,15 @@ export function PriceBook() {
         </div>
       ) : null}
       <Modal open={open} onClose={() => setOpen(false)} title="New item"
-        footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save} testid="pb-new-save" disabled={!form.service_category_id || (serviceCats !== null && serviceCats.length === 0)}>Save</Button></>}>
+        footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save} testid="pb-new-save" disabled={
+          !form.service_category_id
+          || (serviceCats !== null && serviceCats.length === 0)
+          // Feb-2026 P0 fix — block Save when supplier_prices carries
+          // any non-empty value but no income_category is picked.
+          || (!form.income_category_id
+              && Object.values(form.supplier_prices || {})
+                   .some((v) => String(v ?? "").trim() !== ""))
+        }>Save</Button></>}>
         <div className="space-y-2">
           <TextInput label="NAME" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} testid="pb-new-name" />
           {/* Aug-2026 · Fix P1 — required service category picker. */}
