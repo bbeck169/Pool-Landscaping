@@ -399,127 +399,47 @@ async def _import_one_customer(
 # ── Run driver ───────────────────────────────────────────────────────
 async def run_full(*, tenant_id: str, user_id: Optional[str],
                     run_id: str) -> Counters:
+    """Task 1 (Feb-2026) — thin wrapper over
+    ``importer_base.run_paged_driver``. Symmetric with the inactive
+    importer; the per-row parent + child fanout lives in
+    ``_import_one_customer``.
+    """
+    from services.homeworks_mcp import importer_base
     limiter = _RateLimiter(RATE_LIMIT_QPS)
     counters = Counters()
-    consecutive_fails = 0
-    last_ckpt_t = time.monotonic()
 
-    doc = await _load_run(run_id)
-    if not doc:
-        raise RuntimeError(f"run_not_found:{run_id}")
-    counters = Counters(**(doc.get("counters") or {}))
-    skip = int(doc.get("resume_cursor") or 0)
-    if doc.get("status") == "queued":
-        await _checkpoint(run_id, counters=counters, resume_cursor=skip,
-                           status="running")
+    async def _adapter(row, ctrs):
+        if row.get("id") is None:
+            ctrs.customers_failed += 1
+            return {
+                "stage": "customer_missing_id",
+                "row_id": None,
+                "at": _now_iso(),
+            }
+        await _import_one_customer(
+            tenant_id=tenant_id, user_id=user_id,
+            customer=row, limiter=limiter, counters=ctrs,
+        )
+        return None
 
-    while True:
-        if await _cancel_flag_set(run_id):
-            await _checkpoint(run_id, counters=counters, resume_cursor=skip,
-                               status="cancelled", finished_at=_now_iso())
-            return counters
-
-        await limiter.wait()
-        page = None
-        _PAGE_RETRIES = 3
-        effective_take = PAGE_SIZE
-        last_page_exc: Optional[Exception] = None
-        while effective_take >= 1:
-            last_page_exc = None
-            for retry in range(_PAGE_RETRIES):
-                try:
-                    page = await gql_query(
-                        tenant_id=tenant_id,
-                        query=queries.ACTIVE_CUSTOMER_PAGE_QUERY,
-                        variables={"skip": skip, "take": effective_take},
-                        user_id=user_id,
-                    )
-                    last_page_exc = None
-                    break
-                except (MCPError, MCPToolError) as exc:
-                    last_page_exc = exc
-                    if retry < _PAGE_RETRIES - 1:
-                        backoff = 2.0 * (2 ** retry)
-                        logger.warning(
-                            "[active-importer] page fetch skip=%d take=%d "
-                            "retry=%d/%d err=%s — backing off %.1fs",
-                            skip, effective_take, retry + 1,
-                            _PAGE_RETRIES, str(exc)[:120], backoff,
-                        )
-                        await asyncio.sleep(backoff)
-            if last_page_exc is None:
-                break
-            if effective_take == 1:
-                break
-            effective_take = max(1, effective_take // 2)
-            logger.warning(
-                "[active-importer] halving page size skip=%d → take=%d",
-                skip, effective_take,
-            )
-        if last_page_exc is not None:
-            logger.error(
-                "[active-importer] poison-pill row at skip=%d take=1 "
-                "err=%s — skipping row and advancing",
-                skip, str(last_page_exc)[:200],
-            )
-            counters.customers_scanned += 1
-            counters.customers_failed += 1
-            await _checkpoint(
-                run_id, counters=counters, resume_cursor=skip + 1,
-                error={"stage": "poison_pill_page",
-                       "skip": skip, "take": 1,
-                       "error": str(last_page_exc)[:500],
-                       "at": _now_iso()},
-            )
-            skip += 1
-            continue
-
-        rows = (page or {}).get("customers") or []
-        if not rows:
-            await _checkpoint(run_id, counters=counters, resume_cursor=skip,
-                               status="succeeded", finished_at=_now_iso())
-            return counters
-
-        for c in rows:
-            counters.customers_scanned += 1
-            try:
-                await _import_one_customer(
-                    tenant_id=tenant_id, user_id=user_id,
-                    customer=c, limiter=limiter, counters=counters,
-                )
-                consecutive_fails = 0
-            except Exception as exc:  # noqa: BLE001
-                counters.customers_failed += 1
-                consecutive_fails += 1
-                await _checkpoint(
-                    run_id, counters=counters, resume_cursor=skip,
-                    error={"customer_original_id": str(c.get("id")),
-                           "error": str(exc), "at": _now_iso()},
-                )
-                if consecutive_fails >= CASCADE_STOP_AFTER_CONSECUTIVE_FAILS:
-                    await _checkpoint(
-                        run_id, counters=counters, resume_cursor=skip,
-                        status="paused_needs_attention",
-                        finished_at=_now_iso(),
-                    )
-                    return counters
-            n_since = counters.customers_scanned % CHECKPOINT_EVERY_N
-            if (n_since == 0 or
-                (time.monotonic() - last_ckpt_t) >= CHECKPOINT_EVERY_S):
-                await _checkpoint(
-                    run_id, counters=counters, resume_cursor=skip,
-                )
-                last_ckpt_t = time.monotonic()
-
-            if await _cancel_flag_set(run_id):
-                await _checkpoint(
-                    run_id, counters=counters, resume_cursor=skip,
-                    status="cancelled", finished_at=_now_iso(),
-                )
-                return counters
-
-        skip += len(rows)
-        if len(rows) < effective_take:
-            await _checkpoint(run_id, counters=counters, resume_cursor=skip,
-                               status="succeeded", finished_at=_now_iso())
-            return counters
+    config = importer_base.PagedDriverConfig(
+        kind="active_customers",
+        page_query=queries.ACTIVE_CUSTOMER_PAGE_QUERY,
+        page_key="customers",
+        page_size=PAGE_SIZE,
+        rate_limit_qps=RATE_LIMIT_QPS,
+        checkpoint_every_s=CHECKPOINT_EVERY_S,
+        cascade_stop_after=CASCADE_STOP_AFTER_CONSECUTIVE_FAILS,
+        page_retries=3,
+        counter_scanned="customers_scanned",
+        counter_failed="customers_failed",
+        terminal_success_status="succeeded",
+        cascade_stop_on_row_error=True,
+    )
+    return await importer_base.run_paged_driver(
+        db=db, gql_query=gql_query,
+        tenant_id=tenant_id, user_id=user_id, run_id=run_id,
+        config=config, counters=counters,
+        import_one_fn=_adapter,
+        exceptions=(MCPError, MCPToolError),
+    )

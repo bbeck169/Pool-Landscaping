@@ -130,6 +130,16 @@ class PagedDriverConfig:
     # Bookkeeping field names on the subclass's ``Counters`` dataclass.
     counter_scanned: str
     counter_failed: str
+    # Terminal status written on natural end-of-stream / under-full
+    # page. Customer importers use ``"succeeded"``; pricebook /
+    # delta_sync use ``"completed"``. Kept as config to preserve the
+    # zero-external-contract-change promise of the Feb-2026 refactor.
+    terminal_success_status: str = "completed"
+    # If True, per-row exceptions in ``import_one_fn`` count toward
+    # the same cascade_stop counter as page-fetch failures. Customer
+    # importers use this to detect a run of broken customer rows and
+    # halt for human attention; the pricebook importer does not.
+    cascade_stop_on_row_error: bool = False
 
 
 async def run_paged_driver(
@@ -244,7 +254,8 @@ async def run_paged_driver(
         if not rows:
             await checkpoint(
                 db, run_id, counters=counters, resume_cursor=skip,
-                status="completed", finished_at=_now_iso(),
+                status=config.terminal_success_status,
+                finished_at=_now_iso(),
             )
             return counters
 
@@ -259,6 +270,10 @@ async def run_paged_driver(
                         resume_cursor=skip + rows.index(row) + 1,
                         error=err,
                     )
+                # A clean row resets the row-level cascade counter
+                # when the subclass opted in.
+                if config.cascade_stop_on_row_error:
+                    consecutive_fails = 0
             except Exception as exc:  # noqa: BLE001
                 setattr(counters, config.counter_failed,
                            getattr(counters, config.counter_failed) + 1)
@@ -270,6 +285,30 @@ async def run_paged_driver(
                            "error": str(exc)[:500],
                            "at": _now_iso()},
                 )
+                if config.cascade_stop_on_row_error:
+                    consecutive_fails += 1
+                    if consecutive_fails >= config.cascade_stop_after:
+                        await checkpoint(
+                            db, run_id, counters=counters,
+                            resume_cursor=skip + rows.index(row) + 1,
+                            status="paused_needs_attention",
+                            error={"stage": "cascade_stop",
+                                     "reason": f"{config.cascade_stop_after}+ consecutive row failures",
+                                     "at": _now_iso()},
+                            finished_at=_now_iso(),
+                        )
+                        return counters
+
+            # Cancel-flag polled per-row so a mid-page cancel takes
+            # effect promptly (matches the pre-refactor behaviour of
+            # the customer importers).
+            if await cancel_flag_set(db, run_id):
+                await checkpoint(
+                    db, run_id, counters=counters,
+                    resume_cursor=skip + rows.index(row) + 1,
+                    status="cancelled", finished_at=_now_iso(),
+                )
+                return counters
 
         skip += len(rows)
         if (time.monotonic() - last_ckpt_t) >= config.checkpoint_every_s:
@@ -280,6 +319,7 @@ async def run_paged_driver(
         if len(rows) < effective_take:
             await checkpoint(
                 db, run_id, counters=counters, resume_cursor=skip,
-                status="completed", finished_at=_now_iso(),
+                status=config.terminal_success_status,
+                finished_at=_now_iso(),
             )
             return counters
