@@ -6,6 +6,7 @@ import { api } from "@/api";
 import { colors } from "@/theme";
 import { usePermissions } from "@/hooks/usePermissions";
 import { PageHeader, TagChip, Chip, Skeleton, EmptyState, Button, Modal, Toast } from "@/components/ui-kit";
+import CustomersTagFilterDropdown from "@/components/customers/CustomersTagFilterDropdown";
 import {
   BulkActionBar,
   BulkConfirmModal,
@@ -60,7 +61,6 @@ export default function CustomersList() {
         .filter(Boolean));
     } catch { return new Set(); }
   });
-  const [tagSearch, setTagSearch] = useState("");
   const [q, setQ] = useState("");
   const [tag, setTag] = useState("");
   const [scope, setScope] = useState("all"); // all | waitlist | unscheduled
@@ -156,17 +156,9 @@ export default function CustomersList() {
     } catch { /* silent */ }
   }, [selectedTags]);
 
-  // AND filter on tag membership. System tags pinned first in the
-  // chip render, everything else alphabetical.
-  const sortedTags = useMemo(() => {
-    const s = tagSearch.trim().toLowerCase();
-    const rows_ = allTags
-      .filter((t) => !s || (t.name || "").toLowerCase().includes(s));
-    return rows_.slice().sort((a, b) => {
-      if (!!a.is_system !== !!b.is_system) return a.is_system ? -1 : 1;
-      return (a.name || "").localeCompare(b.name || "");
-    });
-  }, [allTags, tagSearch]);
+  // AND filter on tag membership. Tag rendering (system-first,
+  // alphabetical, search-filtered) is owned by
+  // ``CustomersTagFilterDropdown`` — no local sortedTags needed.
 
   const cities = useMemo(() => {
     const s = new Set();
@@ -600,83 +592,16 @@ export default function CustomersList() {
           />
         ) : (
           <>
-          {/* Feb-2026 · Tag chip filter bar. System tags pinned
-              first, others alphabetical; multi-select AND; URL sync;
-              search box shown when > 10 tags. */}
+          {/* Feb-2026 P1 · Customers list Tag filter — swap from
+              147-chip bar to a searchable multi-select dropdown.
+              System tags pinned; multi-select AND semantics + URL
+              sync preserved verbatim. */}
           {allTags.length > 0 && (
-            <div className="mb-3 rounded-2xl p-3"
-                  style={{ backgroundColor: colors.surface,
-                            border: `1px solid ${colors.border}` }}
-                  data-testid="customers-tag-chipbar">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-xs font-semibold"
-                     style={{ color: colors.onSurfaceSecondary || colors.muted }}>
-                  Filter by tag ({selectedTags.size ?
-                    `${selectedTags.size} selected · AND` :
-                    "click chips to filter"})
-                </div>
-                {selectedTags.size > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setSelectedTags(new Set())}
-                    className="text-xs underline"
-                    style={{ color: colors.onSurfaceSecondary || colors.muted }}
-                    data-testid="customers-tag-clear-all"
-                  >Clear all</button>
-                )}
-              </div>
-              {allTags.length > 10 && (
-                <input
-                  type="text"
-                  value={tagSearch}
-                  onChange={(e) => setTagSearch(e.target.value)}
-                  placeholder={`Search ${allTags.length} tags…`}
-                  className="w-full px-2 py-1 rounded-lg text-xs mb-2"
-                  style={{ backgroundColor: colors.surfaceSecondary,
-                            border: `1px solid ${colors.border}`,
-                            color: colors.onSurface }}
-                  data-testid="customers-tag-search"
-                />
-              )}
-              <div className="flex flex-wrap gap-2">
-                {sortedTags.map((t) => {
-                  const active = selectedTags.has(t.name);
-                  return (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => {
-                        const next = new Set(selectedTags);
-                        if (next.has(t.name)) next.delete(t.name);
-                        else next.add(t.name);
-                        setSelectedTags(next);
-                      }}
-                      className="text-xs font-medium rounded-full px-3 py-1 transition-all"
-                      style={{
-                        backgroundColor: active ? (t.color || "#94a3b8") : "transparent",
-                        border: `1px solid ${t.color || colors.border}`,
-                        color: active ? "#fff" : (colors.onSurface),
-                        opacity: active ? 1 : 0.85,
-                      }}
-                      data-testid={`customers-tag-chip-${t.name}`}
-                      title={t.is_system ? "System tag" : ""}
-                    >
-                      {t.is_system && (
-                        <span aria-hidden="true" className="mr-1">🔒</span>
-                      )}
-                      {t.name}
-                      <span className="ml-1 opacity-60">({t.usage_count ?? 0})</span>
-                    </button>
-                  );
-                })}
-                {sortedTags.length === 0 && (
-                  <span className="text-xs italic"
-                        style={{ color: colors.muted }}>
-                    No tags match "{tagSearch}"
-                  </span>
-                )}
-              </div>
-            </div>
+            <CustomersTagFilterDropdown
+              allTags={allTags}
+              selectedTags={selectedTags}
+              setSelectedTags={setSelectedTags}
+            />
           )}
           <table className="w-full text-sm" data-testid="customers-table">
             <thead>
