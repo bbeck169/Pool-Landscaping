@@ -1021,6 +1021,21 @@ async def update_job(jid: str, body: JobUpdate,
                 await log_cleaning_from_job(fresh)
             except Exception as _et:
                 logger.warning(f"equipment tracker auto-log failed: {_et}")
+            # Feb-2026 · Auto-extend recurring series on the last
+            # unfinished occurrence. Fire-and-forget so the PATCH
+            # response isn't blocked on the generator round-trip.
+            # Idempotent via the partial-unique jobs index + an
+            # in-process per-template lock.
+            try:
+                import asyncio as _asyncio
+                from services.recurring_autogen import (
+                    maybe_extend_recurring_series,
+                )
+                _asyncio.create_task(
+                    maybe_extend_recurring_series(jid, tenant["id"])
+                )
+            except Exception as _rx:
+                logger.warning(f"recurring auto-extend schedule failed: {_rx}")
             # Phase 22 · 2026-08-02 · Sub-item C — auto-create + charge
             # invoice on job complete. Never crashes this handler:
             # the helper swallows all exceptions and writes an audit row.

@@ -18,6 +18,15 @@ const src = fs.readFileSync(
 );
 
 describe("Routes tab · enrichment", () => {
+  it("wires the enrichment endpoint when a specific tech is selected", () => {
+    // The load() body must hit /routes/{techId}/stops?date=... when
+    // techId is truthy. Legacy /jobs client-filter path stays for the
+    // "All techs" fallback only.
+    expect(src).toMatch(
+      /if\s*\(techId\)\s*\{[\s\S]{0,200}api\.get\(`\/routes\/\$\{techId\}\/stops\?date=\$\{date\}`\)/,
+    );
+  });
+
   it("renders customer name as the primary line", () => {
     expect(src).toMatch(/data-testid=\{`route-\$\{j\.id\}-customer`\}/);
   });

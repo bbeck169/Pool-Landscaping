@@ -234,17 +234,52 @@ async def get_route_stops(
         {"_id": 0, "id": 1, "technician_id": 1,
          "name": 1, "display_color_hex": 1},
     ) or {}
+    # Feb-2026 · Routes enrichment · tech-id fragmentation fallback.
+    # ``/api/technicians`` surfaces the ``technicians`` collection id,
+    # which may differ from the ``users`` row id for the same human.
+    # When ``users`` misses on ``tech_id``, look up the technicians
+    # collection so ``tech_name`` + ``tech_color_hex`` still populate
+    # (the durable fix is in ``/app/memory/known_issues.md``).
+    if not tech_user:
+        tech_row = await db.technicians.find_one(
+            {"id": tech_id, "tenant_id": tenant["id"]},
+            {"_id": 0, "id": 1, "user_id": 1,
+             "name": 1, "display_color_hex": 1},
+        ) or {}
+        if tech_row:
+            tech_user = {
+                "id": tech_row.get("user_id") or tech_row.get("id"),
+                "technician_id": tech_row.get("id"),
+                "name": tech_row.get("name"),
+                "display_color_hex": tech_row.get("display_color_hex"),
+            }
     tid = tech_user.get("technician_id") or tech_id
+    # ``user_side_id`` is the ``users`` row id when we resolved from
+    # ``technicians`` — jobs seeded against either id must match.
+    user_side_id = tech_user.get("id") or tech_id
 
     q = {
         "tenant_id": tenant["id"],
         "$or": [
             {"technician_id": tech_id},
             {"technician_id": tid},
+            {"technician_id": user_side_id},
             {"assigned_technician_id": tech_id},
+            {"assigned_technician_id": user_side_id},
         ],
         "status": {"$nin": ["completed", "cancelled"]},
-        "scheduled_start": {"$gte": day_start, "$lte": day_end},
+        # Feb-2026 · Routes enrichment · match jobs stored with
+        # either the ``scheduled_start`` datetime (post-optimizer)
+        # or the flat ``scheduled_date`` ISO string (legacy seeds +
+        # recurring-generator writes). Without this the enrichment
+        # endpoint silently drops any job that never hit the
+        # optimizer, which is most of them.
+        "$and": [{
+            "$or": [
+                {"scheduled_start": {"$gte": day_start, "$lte": day_end}},
+                {"scheduled_date": date_str},
+            ],
+        }],
     }
     jobs = await db.jobs.find(q, {"_id": 0}).sort(
         [("route_order", 1), ("scheduled_start", 1)]

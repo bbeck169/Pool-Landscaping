@@ -213,8 +213,33 @@ function Routes() {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
   const [order, setOrder] = useState(null);
+  const [routeMeta, setRouteMeta] = useState({ tech_name: null, tech_color_hex: null });
   const [toast, setToast] = useState(null);
   const load = async () => {
+    // Feb-2026 · Routes tab wiring · when a specific tech is selected,
+    // use the enrichment endpoint (single call, tech name + color
+    // baked into the response, deleted-customer address fallback).
+    // "All techs" keeps the legacy /jobs client-filter path.
+    if (techId) {
+      const r = await api.get(`/routes/${techId}/stops?date=${date}`).catch(() => null);
+      if (r) {
+        const mapped = (r.stops || []).map((s) => ({
+          id: s.job_id,
+          title: s.title,
+          customer_name: s.customer_display_name || s.customer_name,
+          technician_name: r.tech_name || null,
+          technician_color_hex: r.tech_color_hex || null,
+          address: s.address,
+          scheduled_date: date,
+          route_order: s.route_order ?? 999,
+          status: s.status,
+        })).sort((a, b) => a.route_order - b.route_order);
+        setRouteMeta({ tech_name: r.tech_name, tech_color_hex: r.tech_color_hex });
+        setOrder(mapped);
+        return;
+      }
+    }
+    setRouteMeta({ tech_name: null, tech_color_hex: null });
     const j = await api.get("/jobs").catch(() => []);
     const filtered = (j || []).filter((x) => (x.scheduled_date || "").startsWith(date) && (!techId || x.technician_id === techId));
     filtered.sort((a, b) => (a.route_order ?? 999) - (b.route_order ?? 999));
