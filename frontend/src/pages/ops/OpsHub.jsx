@@ -13,6 +13,16 @@ import WorkstreamJobDrawer from "@/pages/ops/WorkstreamJobDrawer";
 
 /* ═══ Ops hub – one page, many tabs. Kept compact by construction. ═══ */
 
+
+// Feb-2026 · Crew color-picker presets. 12 hand-picked hues that stay
+// legible on both light and dark theme surfaces. Users can still paste
+// an arbitrary hex via the fallback text input.
+const CREW_COLOR_PRESETS = [
+  "#0284C7", "#7C3AED", "#DB2777", "#DC2626",
+  "#EA580C", "#CA8A04", "#16A34A", "#059669",
+  "#0891B2", "#4338CA", "#475569", "#0F766E",
+];
+
 const SECTIONS = [
   { k: "dispatch",   label: "Dispatch",     icon: Truck },
   { k: "schedule",   label: "Schedule",     icon: Calendar },
@@ -420,16 +430,18 @@ function Crews() {
   const openNew = () => { setEditing(null); setForm({ name: "", color: "#0284C7", tech_ids: [] }); setOpen(true); };
   const openEdit = (c) => { setEditing(c); setForm({ name: c.name, color: c.color || "#0284C7", tech_ids: c.tech_ids || [] }); setOpen(true); };
   const save = async () => {
-    try {
-      if (editing) await api.put(`/crews/${editing.id}`, form);   // PATCH endpoint mapped to PUT via router; use fetch-style below
-    } catch {}
+    // Feb-2026 · Crew-save P0 fix. The prior implementation did TWO
+    // things: (1) ``api.put('/crews/…')`` inside a try/except that
+    // silently swallowed the 405 (no PUT route on the backend), and
+    // (2) a raw ``fetch(..., PATCH)`` that DOESN'T throw on 4xx/5xx —
+    // so a server-side rejection surfaced as a false "Saved" toast
+    // and the members never landed. Use ``api.patch`` which routes
+    // through the standard ``request()`` wrapper (throws on ≥400) so
+    // failures now surface as red toasts and successes actually
+    // round-trip.
     try {
       if (editing) {
-        // Use api.request via api.post PATCH not directly available — call via fetch:
-        const token = localStorage.getItem("token");
-        await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/crews/${editing.id}`, {
-          method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(form),
-        });
+        await api.patch(`/crews/${editing.id}`, form);
       } else {
         await api.post("/crews", form);
       }
@@ -468,7 +480,30 @@ function Crews() {
         footer={<><Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={save} testid="crew-save">Save</Button></>}>
         <div className="space-y-3">
           <TextInput label="NAME" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} testid="crew-name" />
-          <TextInput label="COLOR (hex)" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} />
+          {/* Feb-2026 · Crew color picker parity with Team members.
+              12-swatch grid + hex fallback. No new deps — same
+              pattern as ``ColorSwatchInline`` for users. Backend
+              ``crews.color`` already exists in the schema. */}
+          <div>
+            <div className="text-xs font-semibold mb-2" style={{ color: colors.muted }}>COLOR</div>
+            <div className="flex flex-wrap gap-2 mb-2" data-testid="crew-color-swatches">
+              {CREW_COLOR_PRESETS.map((hex) => {
+                const active = (form.color || "").toUpperCase() === hex.toUpperCase();
+                return (
+                  <button key={hex} type="button" onClick={() => setForm({ ...form, color: hex })}
+                          data-testid={`crew-color-swatch-${hex.slice(1).toLowerCase()}`}
+                          aria-label={`Set crew color ${hex}`}
+                          className="w-6 h-6 rounded-full transition-transform"
+                          style={{ backgroundColor: hex,
+                                    outline: active ? `2px solid ${colors.onSurface}` : "none",
+                                    outlineOffset: "2px" }} />
+                );
+              })}
+            </div>
+            <TextInput label="HEX (custom)" value={form.color}
+                        onChange={(e) => setForm({ ...form, color: e.target.value })}
+                        testid="crew-color-hex" />
+          </div>
           <div>
             <div className="text-xs font-semibold mb-2" style={{ color: colors.muted }}>MEMBERS</div>
             <div className="flex flex-wrap gap-2">
