@@ -85,7 +85,7 @@ function MeasureScreen() {
   const [searching, setSearching] = useState(false);
 
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const [saveOpen, setSaveOpen] = useState(false);
   const [mName, setMName] = useState("");
   const [attachId, setAttachId] = useState<string | null>(null);

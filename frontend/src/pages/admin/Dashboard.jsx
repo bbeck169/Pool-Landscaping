@@ -398,7 +398,7 @@ export default function AdminDashboard() {
           added noise to the admin dashboard.  `<WeatherWidget5Day>`
           still lives at `/pages/aitools/WeatherWidget5Day.jsx` and is
           reachable from AI Tools when needed. */}
-      {user?.role === "admin" && (
+      {(user?.role === "admin" || user?.role === "super_admin") && (
         <div className="mb-6">
           <LiveWeatherWidget user={user} />
         </div>

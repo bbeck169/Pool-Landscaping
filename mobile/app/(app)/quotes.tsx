@@ -17,7 +17,7 @@ const FILTERS = [
 
 export default function Quotes() {
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const router = useRouter();
   const [items, setItems] = useState<any[]>([]);
   const [filter, setFilter] = useState("all");

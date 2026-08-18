@@ -190,9 +190,24 @@ export default function ScheduleJobEditModal({
             data-testid="schedule-job-edit-tech"
           >
             <option value="">Unassigned</option>
-            {techs.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
+            {techs.map((t) => {
+              // Feb-2026 · Assignable-user widen — admin / super_admin
+              // / manager rows now appear in the picker alongside
+              // techs (they're working owners, not just office
+              // roles). Suffix a role hint so admins stand out.
+              const r = String(t.role || "").toLowerCase();
+              const suffix =
+                r === "super_admin" ? " (Super Admin)"
+                  : r === "admin"    ? " (Admin)"
+                  : r === "manager"  ? " (Manager)"
+                  : "";
+              return (
+                <option key={t.id} value={t.id}
+                        data-testid={`schedule-job-edit-tech-opt-${t.id}`}>
+                  {t.name}{suffix}
+                </option>
+              );
+            })}
           </select>
         </div>
         <div>

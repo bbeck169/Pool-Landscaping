@@ -188,7 +188,7 @@ export function TechnicianProfile() {
   const [err, setErr] = useState("");
 
   const isSelf = user?.role === "technician" && (user?.id === id || user?.technician_id === id);
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const canView = isAdmin || isSelf;
 
   useEffect(() => {

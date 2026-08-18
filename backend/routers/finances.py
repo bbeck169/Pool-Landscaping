@@ -201,7 +201,7 @@ async def get_income_categories() -> list:
 
 @router.get("/income-categories")
 async def list_income_categories(user: dict = Depends(get_current_user)):
-    if user.get("role") not in ("admin", "technician"):
+    if user.get("role") not in ("admin", "super_admin", "technician"):
         raise HTTPException(403, "Not allowed")
     return {"categories": await get_income_categories()}
 
@@ -375,7 +375,7 @@ def _strip_cost(doc: dict) -> dict:
 
 @router.get("/repairs")
 async def list_repairs(user: dict = Depends(get_current_user), status: Optional[str] = None):
-    if user.get("role") not in ("admin", "technician"):
+    if user.get("role") not in ("admin", "super_admin", "technician"):
         raise HTTPException(403, "Not allowed")
     q = {} if not status or status == "all" else {"status": status}
     if user.get("role") == "technician":
@@ -388,7 +388,7 @@ async def list_repairs(user: dict = Depends(get_current_user), status: Optional[
 
 @router.post("/repairs")
 async def create_repair(body: RepairIn, user: dict = Depends(get_current_user)):
-    if user.get("role") not in ("admin", "technician"):
+    if user.get("role") not in ("admin", "super_admin", "technician"):
         raise HTTPException(403, "Not allowed")
     cust = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
     if not cust:
@@ -412,7 +412,7 @@ async def create_repair(body: RepairIn, user: dict = Depends(get_current_user)):
 
 @router.put("/repairs/{rid}")
 async def update_repair(rid: str, body: RepairUpdate, user: dict = Depends(get_current_user)):
-    if user.get("role") not in ("admin", "technician"):
+    if user.get("role") not in ("admin", "super_admin", "technician"):
         raise HTTPException(403, "Not allowed")
     existing = await db.repairs.find_one({"id": rid}, {"_id": 0})
     if not existing:

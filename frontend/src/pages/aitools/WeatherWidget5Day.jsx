@@ -49,7 +49,7 @@ export default function WeatherWidget5Day({ role = "admin" }) {
   const load = () => {
     api.get(`/weather/risk?lat=${coords.lat}&lng=${coords.lng}&days=5`)
        .then(setData).catch(() => setData({ days: [] }));
-    if (role === "admin") {
+    if (role === "admin" || role === "super_admin") {
       api.get("/weather/reschedule-recommendations")
          .then(setRecs).catch(() => setRecs({ suggested: [] }));
     }
@@ -87,7 +87,7 @@ export default function WeatherWidget5Day({ role = "admin" }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {role === "admin" && affectedCount > 0 && (
+          {(role === "admin" || role === "super_admin") && affectedCount > 0 && (
             <button onClick={() => navigate("/schedule")}
                     className="text-[10px] font-bold uppercase px-2 py-1 rounded"
                     style={{ backgroundColor: TONE.poor.bg, color: TONE.poor.fg }}
@@ -133,7 +133,7 @@ export default function WeatherWidget5Day({ role = "admin" }) {
           {days.map((d, i) => {
             const tone = TONE[d.service_risk_rating] || TONE.fair;
             const Icon = iconFor(d.code, d.label);
-            const clickable = role === "admin";
+            const clickable = role === "admin" || role === "super_admin";
             return (
               <button key={d.date || i}
                       onClick={() => clickable && navigate(`/schedule?date=${d.date}`)}

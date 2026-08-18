@@ -147,16 +147,28 @@ export default function ScheduleJobEditSheet({ open, job, onClose, onSaved, onDe
             >
               <Text style={!form.technician_id ? chipTextActive : chipText}>Unassigned</Text>
             </Pressable>
-            {techs.map((t: any) => (
-              <Pressable
-                key={t.id}
-                onPress={() => setField("technician_id")(t.id)}
-                style={[chip, form.technician_id === t.id && chipActive]}
-                testID={`schedule-job-edit-tech-${t.id}`}
-              >
-                <Text style={form.technician_id === t.id ? chipTextActive : chipText}>{t.name}</Text>
-              </Pressable>
-            ))}
+            {techs.map((t: any) => {
+              // Feb-2026 · Assignable-user widen — same role suffix
+              // as the web modal so admins stand out in the picker.
+              const r = String(t.role || "").toLowerCase();
+              const suffix =
+                r === "super_admin" ? " (Super Admin)"
+                  : r === "admin"    ? " (Admin)"
+                  : r === "manager"  ? " (Manager)"
+                  : "";
+              return (
+                <Pressable
+                  key={t.id}
+                  onPress={() => setField("technician_id")(t.id)}
+                  style={[chip, form.technician_id === t.id && chipActive]}
+                  testID={`schedule-job-edit-tech-${t.id}`}
+                >
+                  <Text style={form.technician_id === t.id ? chipTextActive : chipText}>
+                    {t.name}{suffix}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
         </View>
 

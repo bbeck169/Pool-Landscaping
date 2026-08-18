@@ -19,7 +19,7 @@ export default function More() {
   const router = useRouter();
   const [pushEnabled, setPushEnabled] = useState(true);
   const role = (user?.role as string) || "";
-  const isAdmin = role === "admin";
+  const isAdmin = role === "admin" || role === "super_admin";
   const isSuperAdmin = role === "super_admin";
   const isTech = role === "technician";
   const isMarketing = role === "marketing";
