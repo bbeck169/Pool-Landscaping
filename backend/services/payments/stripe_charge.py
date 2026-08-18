@@ -598,6 +598,7 @@ async def charge_card_on_file(
             await _mark_invoice_paid(
                 tenant_id=tenant_id, invoice_id=invoice_id,
                 amount_cents=amount_cents, paid_at=now,
+                payment_intent_id=payment_intent_id,
             )
         return {
             "ok": status == "succeeded",
@@ -837,11 +838,35 @@ async def _mark_invoice_paid_from_session(
 async def _mark_invoice_paid(*, tenant_id: str, invoice_id: str,
                               amount_cents: int, paid_at: str,
                               payment_intent_id: Optional[str] = None) -> bool:
+    """Increment ``quotes.amount_paid`` idempotently per PaymentIntent.
+
+    Feb-2026 · double-count fix — the belt-and-suspenders sync path
+    inside ``charge_card_on_file`` AND the async ``payment_intent.
+    succeeded`` webhook both call this helper for the same PI, so a
+    naïve ``prior + delta`` write doubles ``amount_paid`` on a $0.50
+    charge to $1.00. We now dedupe on ``stripe_payment_intent_id``
+    via a per-invoice ``paid_from_intents`` set: if the incoming PI
+    is already recorded on the invoice, this is a no-op.
+
+    Missing / falsy ``payment_intent_id`` falls back to the legacy
+    ``$or`` idempotency guard for backwards compatibility (checkout
+    session paths that don't carry a PI yet).
+    """
     inv = await db.quotes.find_one(
         {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice"},
-        {"_id": 0, "amount_paid": 1, "total": 1, "payment_status": 1},
+        {"_id": 0, "amount_paid": 1, "total": 1, "payment_status": 1,
+         "paid_from_intents": 1},
     )
     if not inv:
+        return False
+    seen_intents = set(inv.get("paid_from_intents") or [])
+    if payment_intent_id and payment_intent_id in seen_intents:
+        # Replay / dual-path duplicate — the invoice already has this
+        # PI's amount counted. No-op, safe on both sync+webhook races.
+        logger.debug(
+            "[stripe] _mark_invoice_paid noop pi=%s already in "
+            "paid_from_intents for invoice=%s", payment_intent_id, invoice_id,
+        )
         return False
     prior = float(inv.get("amount_paid") or 0)
     new_paid = round(prior + (int(amount_cents) / 100.0), 2)
@@ -856,14 +881,23 @@ async def _mark_invoice_paid(*, tenant_id: str, invoice_id: str,
         set_doc["paid_at"] = paid_at
     if payment_intent_id:
         set_doc["stripe_payment_intent_id"] = payment_intent_id
-    r = await db.quotes.update_one(
-        {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice",
-         # Idempotency guard — the update only fires if the invoice
-         # isn't already flipped past this state.
-         "$or": [{"payment_status": {"$ne": "paid"}},
-                 {"amount_paid": {"$lt": new_paid}}]},
-        {"$set": set_doc},
-    )
+
+    # Atomic write. When we have a PI id, ``$addToSet`` is the
+    # source-of-truth for "this PI has already flipped the invoice"
+    # — and the match filter blocks a concurrent second writer that
+    # slipped past the read-time check above.
+    update_doc: dict = {"$set": set_doc}
+    match: dict = {"id": invoice_id, "tenant_id": tenant_id,
+                   "doc_type": "invoice"}
+    if payment_intent_id:
+        update_doc["$addToSet"] = {"paid_from_intents": payment_intent_id}
+        # If a racing writer already added this PI, don't reapply.
+        match["paid_from_intents"] = {"$ne": payment_intent_id}
+    else:
+        # Legacy fallback for callers that don't pass a PI id.
+        match["$or"] = [{"payment_status": {"$ne": "paid"}},
+                        {"amount_paid": {"$lt": new_paid}}]
+    r = await db.quotes.update_one(match, update_doc)
     return bool(r.modified_count)
 
 
@@ -878,23 +912,52 @@ async def _mark_invoice_failed(*, tenant_id: str, invoice_id: str,
 
 
 async def _apply_refund_to_invoice(*, tenant_id: str, invoice_id: str,
-                                     refund_cents: int, fully_refunded: bool) -> None:
+                                     refund_cents: int, fully_refunded: bool,
+                                     refund_key: str) -> bool:
+    """Reduce ``quotes.amount_paid`` for a refund event, idempotent
+    on ``refund_key``.
+
+    Feb-2026 · replay fix — ``charge.refunded`` webhook retries
+    (Stripe re-delivers on any non-2xx or when the operator clicks
+    "Resend") re-invoke this handler with an identical payload. The
+    prior code blindly subtracted ``amount_refunded`` again → double
+    reduction. We now dedupe on a caller-computed ``refund_key`` via
+    a per-invoice ``refunded_from_intents`` set. The key is stable
+    per Stripe event so any replay is a no-op.
+
+    Choice: keep the key in ``refunded_from_intents`` (audit trail)
+    rather than remove it on partial→full transitions. That mirrors
+    how ``paid_from_intents`` records the *forward* audit and keeps
+    the ledger reconstructable from Mongo alone.
+    """
     inv = await db.quotes.find_one(
         {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice"},
-        {"_id": 0, "amount_paid": 1},
+        {"_id": 0, "amount_paid": 1, "refunded_from_intents": 1},
     )
     if not inv:
-        return
+        return False
+    seen_refunds = set(inv.get("refunded_from_intents") or [])
+    if refund_key in seen_refunds:
+        logger.debug(
+            "[stripe] _apply_refund_to_invoice noop key=%s already applied "
+            "to invoice=%s", refund_key, invoice_id,
+        )
+        return False
     prior = float(inv.get("amount_paid") or 0)
     new_paid = round(max(prior - (int(refund_cents) / 100.0), 0.0), 2)
-    await db.quotes.update_one(
-        {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice"},
+    r = await db.quotes.update_one(
+        {"id": invoice_id, "tenant_id": tenant_id, "doc_type": "invoice",
+         # Racing-writer guard: only apply if the key isn't already
+         # in the audit set.
+         "refunded_from_intents": {"$ne": refund_key}},
         {"$set": {
             "amount_paid": 0.0 if fully_refunded else new_paid,
             "payment_status": "refunded" if fully_refunded else "partially_refunded",
             "refunded_at": datetime.now(timezone.utc).isoformat(),
-        }},
+         },
+         "$addToSet": {"refunded_from_intents": refund_key}},
     )
+    return bool(r.modified_count)
 
 
 def verify_and_parse_webhook(*, payload: bytes, sig_header: str) -> Dict[str, Any]:
@@ -1070,10 +1133,19 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
         amount_orig = int(row.get("amount_cents") or 0)
         # ``charge.refunded``: ``amount_refunded`` lives on the top-
         # level charge. ``refund.updated``: payload IS the refund.
+        # Compute a per-event refund_key that is stable across
+        # webhook replays so ``_apply_refund_to_invoice`` can dedupe.
         if etype == "charge.refunded":
             amount_refunded = int(data.get("amount_refunded") or 0)
+            refund_key = f"chr:{pi_id}:{amount_refunded}"
         else:
             amount_refunded = int(data.get("amount") or 0)
+            # Prefer the refund's stable Stripe id (``re_...``); fall
+            # back to a synthetic tuple if the payload is stripped.
+            refund_key = (
+                f"re:{data.get('id')}" if data.get("id")
+                else f"reu:{pi_id}:{amount_refunded}"
+            )
         full = amount_orig > 0 and amount_refunded >= amount_orig
         new_status = "refunded" if full else "partially_refunded"
         await db.stripe_charges.update_one(
@@ -1089,6 +1161,7 @@ async def handle_webhook_event(event: Dict[str, Any]) -> Dict[str, Any]:
             await _apply_refund_to_invoice(
                 tenant_id=row["tenant_id"], invoice_id=row["invoice_id"],
                 refund_cents=amount_refunded, fully_refunded=full,
+                refund_key=refund_key,
             )
         result["handled"] = True
         return result

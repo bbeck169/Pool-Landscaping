@@ -263,11 +263,11 @@ async def post_charge(
         # Feb-2026 · FIX 1 — return 409 + existing PI so callers
         # can render "already paid" instead of double-charging.
         raise HTTPException(409, {
-            "detail": "invoice already charged",
+            "detail": "invoice already paid",
             "payment_intent_id": exc.payment_intent_id,
         })
     except stripe_svc.InvoiceAlreadyPaidError as exc:
-        raise HTTPException(409, {"detail": str(exc)})
+        raise HTTPException(409, {"detail": "invoice already paid"})
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     except Exception as exc:  # noqa: BLE001
