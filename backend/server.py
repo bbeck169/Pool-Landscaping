@@ -1497,6 +1497,29 @@ async def startup():
         logger.info(f"[Phase51a] walkie indexes + channels ready across {len(tenants)} tenants")
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[Phase51a] walkie bootstrap failed: {e}")
+
+    # Feb-2026 · Task A · idempotent partial-unique-index migration on
+    # ``db.jobs.(recurring_template_id, scheduled_date)``. Lazy-fires
+    # from any /recurring-jobs/* handler too, but running at startup
+    # closes the P0 timing gap where a legacy sparse-unique index
+    # could still be live on a freshly-deployed pod until the first
+    # recurring-jobs call. Idempotent: no-op when the partial index
+    # is already present.
+    try:
+        from routers.recurring_jobs import _ensure_indexes as _rj_ensure_indexes
+        await _rj_ensure_indexes()
+        idx_info = await db.jobs.index_information()
+        _rj_target = idx_info.get("recurring_template_id_1_scheduled_date_1")
+        _rj_shape = (
+            "partial" if _rj_target and _rj_target.get("partialFilterExpression")
+            else ("legacy-sparse" if _rj_target else "missing")
+        )
+        logger.info(
+            f"[startup._ensure_indexes] recurring_template_id_1_scheduled_date_1 "
+            f"shape={_rj_shape} indexes={sorted(idx_info.keys())}"
+        )
+    except Exception as _rj_idx_exc:  # noqa: BLE001
+        logger.warning(f"[startup._ensure_indexes] {_rj_idx_exc}")
     # Phase 34 · Task L · Feb-2026 — one-line audit banner so it's
     # unmistakable from the boot logs whether outbound comms are
     # LIVE or DRY-RUN in the current environment.

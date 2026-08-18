@@ -4,6 +4,8 @@ from pydantic import BaseModel, ConfigDict
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 
+from pymongo.errors import DuplicateKeyError
+
 from config import db, logger, EMERGENT_LLM_KEY
 from utils import (now_iso, new_id, hash_password, verify_password, create_token,
                    get_current_user, require_admin, send_sms, notify_customer, auth_response,
@@ -526,7 +528,20 @@ async def create_job(body: JobIn,
         doc["technician_avatar"] = tech.get("avatar", "") if tech else ""
     doc["technician_name"] = tech_name
     doc.update({"id": new_id(), "tenant_id": tenant["id"], "photos": [], "created_at": now_iso()})
-    await db.jobs.insert_one(doc)
+    try:
+        await db.jobs.insert_one(doc)
+    except DuplicateKeyError:
+        # Feb-2026 · Task B · graceful DuplicateKeyError → 409.
+        # The partial-unique index on ``(recurring_template_id,
+        # scheduled_date)`` is the only source of E11000 here (non-
+        # recurring jobs are unconstrained). If a recurring-series
+        # occurrence for this date already exists, surface it as a
+        # 409 conflict instead of letting Motor's raw exception
+        # bubble up as an ASGI 500.
+        raise HTTPException(
+            status_code=409,
+            detail="A job for this recurring template already exists on this date.",
+        )
     # Phase 26.1 — auto-assign on create if enabled.
     try:
         from routers.dispatch import maybe_auto_assign_on_create

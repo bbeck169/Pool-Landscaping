@@ -272,15 +272,45 @@ async def sync_all_tenants(platform: str) -> Dict[str, Any]:
 
 # Feb-2026 · P1 asyncio-in-thread fix.
 #
-# The prior revision fired ``_fire_async`` from a plain lambda job.
-# ``AsyncIOScheduler`` invokes non-coroutine callables on a worker
-# thread, and that thread has no event loop → ``asyncio.get_event_loop()``
-# raised ``RuntimeError: There is no current event loop in thread
-# 'asyncio_N'`` and the sync silently dropped. Three daily crons + a
-# weekly churn scan all hit this. Fix mirrors the earlier Phase-49
-# ``reminder_cron.py`` remediation: give APScheduler the coroutine
-# functions directly. ``AsyncIOScheduler`` schedules coroutine jobs
-# on its own event loop, so no thread/loop bridging is needed.
+# APScheduler's ``AsyncIOScheduler`` awaits coroutine callables on its
+# own event loop, so the preferred pattern is to hand it the coroutine
+# functions directly (below). We ALSO keep an explicit ``_fire_async``
+# helper for any legacy caller that must synchronously drive a
+# coroutine from a bare worker thread (e.g. APScheduler's
+# ``ThreadPoolExecutor`` when a job is misconfigured, or ad-hoc backfill
+# scripts). The safe pattern spins up a *fresh* event loop for the
+# fire so ``asyncio.get_event_loop()`` inside the coroutine can no
+# longer raise ``RuntimeError: There is no current event loop in
+# thread 'asyncio_N'``.
+
+
+def _fire_async(coro_factory):
+    """Safely drive an async coroutine from a synchronous context.
+
+    ``coro_factory`` must be a zero-arg callable that returns a fresh
+    coroutine (APScheduler-style — required so the coroutine is not
+    reused across fires). Creates a fresh event loop, sets it as the
+    current thread's loop, awaits the coroutine to completion, then
+    closes the loop.
+
+    Returns the coroutine's return value; propagates any exception the
+    coroutine raises (the caller is expected to log/swallow as
+    appropriate).
+    """
+    import asyncio
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro_factory())
+    finally:
+        try:
+            loop.close()
+        finally:
+            # Detach the closed loop from the current thread so a
+            # subsequent ``get_event_loop()`` call doesn't return a
+            # closed reference (which would itself raise).
+            asyncio.set_event_loop(None)
+
 
 async def _sync_google() -> None:
     await sync_all_tenants("google")
